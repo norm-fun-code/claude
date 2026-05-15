@@ -75,15 +75,16 @@ export function useHealthData(): HealthData & { refetch: () => void } {
   const fetchData = useCallback(() => {
     setData((prev) => ({ ...prev, loading: true, error: null }));
 
-    AppleHealthKit.initHealthKit(PERMISSIONS, (initErr) => {
-      if (initErr) {
-        setData((prev) => ({
-          ...prev,
-          loading: false,
-          error: 'HealthKit permission denied or unavailable',
-        }));
-        return;
-      }
+    try {
+      AppleHealthKit.initHealthKit(PERMISSIONS, (initErr) => {
+        if (initErr) {
+          setData((prev) => ({
+            ...prev,
+            loading: false,
+            error: 'HealthKit unavailable — connect your Apple Watch on device',
+          }));
+          return;
+        }
 
       const today = getStartOfDay();
       const startDate = today.toISOString();
@@ -186,7 +187,14 @@ export function useHealthData(): HealthData & { refetch: () => void } {
           checkDone();
         }
       );
-    });
+      });
+    } catch (e) {
+      setData((prev) => ({
+        ...prev,
+        loading: false,
+        error: 'HealthKit unavailable on this device',
+      }));
+    }
   }, []);
 
   useEffect(() => {
