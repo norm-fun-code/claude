@@ -114,9 +114,9 @@ export function useHealthData(): HealthData & { refetch: () => void } {
         }
       }
 
-      // HRV — most recent sample, look back 7 days
+      // HRV — most recent sample, look back 7 days; unit must be 'millisecond'
       AppleHealthKit.getHeartRateVariabilitySamples(
-        { startDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), endDate: now },
+        { unit: 'millisecond', startDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), endDate: now },
         (err, results: HealthValue[]) => {
           if (!err && results && results.length > 0) {
             const sorted = [...results].sort(
