@@ -43,7 +43,7 @@ Analyze the above and return a JSON object with EXACTLY these fields. Return ONL
     {
       "name": "Newsletter sender name",
       "title": "Article or edition title",
-      "summary": "8-12 sentence deeply detailed summary. Extract every specific data point, dollar figure, percentage, company name, person, and argument. Write like a premium financial analyst briefing — dense, factual, no fluff."
+      "summary": "150-200 word summary — detailed enough to replace reading the original. Extract every specific data point, dollar figure, percentage, company name, and key argument. Cover the main story, supporting evidence, and any implications or conclusions the author draws. Write in crisp, dense prose — no bullet points, no fluff, no filler sentences."
     }
   ],
   "urgentEmails": [
