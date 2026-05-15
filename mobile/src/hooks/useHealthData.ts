@@ -114,16 +114,14 @@ export function useHealthData(): HealthData & { refetch: () => void } {
         }
       }
 
-      // HRV — most recent sample, look back 7 days; unit must be 'millisecond'
+      // HRV — daily average of today's samples (matches what Apple shows in Health app)
       AppleHealthKit.getHeartRateVariabilitySamples(
-        { unit: 'millisecond', startDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), endDate: now },
+        { unit: 'millisecond', startDate, endDate: now },
         (err, results: HealthValue[]) => {
           if (!err && results && results.length > 0) {
-            const sorted = [...results].sort(
-              (a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
-            );
+            const avg = results.reduce((sum, r) => sum + r.value, 0) / results.length;
             // Values come back in seconds regardless of unit option — convert to ms
-            hrv = Math.round(sorted[0].value * 1000);
+            hrv = Math.round(avg * 1000);
           }
           checkDone();
         }
