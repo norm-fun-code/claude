@@ -118,6 +118,7 @@ export function useHealthData(): HealthData & { refetch: () => void } {
       AppleHealthKit.getHeartRateVariabilitySamples(
         { unit: 'millisecond', startDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), endDate: now },
         (err, results: HealthValue[]) => {
+          console.log('[HRV] err:', err, 'results:', JSON.stringify(results?.slice(0, 3)));
           if (!err && results && results.length > 0) {
             const sorted = [...results].sort(
               (a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
