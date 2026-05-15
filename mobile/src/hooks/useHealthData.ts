@@ -128,12 +128,19 @@ export function useHealthData(): HealthData & { refetch: () => void } {
         }
       );
 
-      // Resting heart rate — look back 7 days for most recent
+      // Resting heart rate — returns array, pick most recent
       AppleHealthKit.getRestingHeartRate(
-        { startDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), date: now },
-        (err, result: HealthValue) => {
-          if (!err && result) {
-            restingHR = Math.round(result.value);
+        { startDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), endDate: now },
+        (err, results: HealthValue | HealthValue[]) => {
+          if (!err && results) {
+            if (Array.isArray(results) && results.length > 0) {
+              const sorted = [...results].sort(
+                (a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
+              );
+              restingHR = Math.round(sorted[0].value);
+            } else if (!Array.isArray(results) && (results as HealthValue).value) {
+              restingHR = Math.round((results as HealthValue).value);
+            }
           }
           checkDone();
         }
