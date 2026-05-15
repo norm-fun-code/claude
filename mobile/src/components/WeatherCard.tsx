@@ -1,0 +1,209 @@
+import React from 'react';
+import { View, Text, StyleSheet, ScrollView, useColorScheme } from 'react-native';
+import { getColors, spacing, radius, typography } from '../theme';
+import { SectionHeader } from './SectionHeader';
+import type { Weather } from '../hooks/useBriefing';
+
+interface Props {
+  weather: Weather | null;
+}
+
+function conditionToEmoji(condition: string): string {
+  const lower = condition.toLowerCase();
+  if (lower.includes('thunder')) return '⛈';
+  if (lower.includes('heavy rain')) return '🌧';
+  if (lower.includes('rain') || lower.includes('shower') || lower.includes('drizzle')) return '🌦';
+  if (lower.includes('snow')) return '❄️';
+  if (lower.includes('fog') || lower.includes('haze') || lower.includes('smoky') || lower.includes('dusty')) return '🌫';
+  if (lower.includes('clear')) return '☀️';
+  if (lower.includes('mostly clear') || lower.includes('mostly cloudy')) return '🌤';
+  if (lower.includes('partly')) return '⛅️';
+  if (lower.includes('cloudy')) return '☁️';
+  if (lower.includes('windy') || lower.includes('breezy')) return '💨';
+  return '🌡';
+}
+
+export function WeatherCard({ weather }: Props) {
+  const isDark = useColorScheme() === 'dark';
+  const c = getColors(isDark);
+
+  if (!weather) {
+    return (
+      <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+        <SectionHeader emoji="🌤" title="Weather" />
+        <Text style={[styles.unavailable, { color: c.subtext }]}>Weather unavailable</Text>
+      </View>
+    );
+  }
+
+  const emoji = conditionToEmoji(weather.condition);
+
+  return (
+    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+      <SectionHeader emoji="🌤" title="Weather" />
+
+      {/* Main temperature */}
+      <View style={styles.mainRow}>
+        <View>
+          <View style={styles.tempRow}>
+            <Text style={[styles.tempLarge, { color: c.text }]}>{weather.temp}°</Text>
+            <Text style={styles.conditionEmoji}>{emoji}</Text>
+          </View>
+          <Text style={[styles.condition, { color: c.subtext }]}>{weather.condition}</Text>
+          <Text style={[styles.feelsLike, { color: c.subtext }]}>
+            Feels like {weather.feelsLike}° · H:{weather.high ?? '—'}° L:{weather.low ?? '—'}°
+          </Text>
+        </View>
+
+        <View style={styles.rightStats}>
+          <View style={styles.statItem}>
+            <Text style={[styles.statValue, { color: c.text }]}>{weather.humidity}%</Text>
+            <Text style={[styles.statLabel, { color: c.subtext }]}>Humidity</Text>
+          </View>
+          {weather.uvIndex !== null && (
+            <View style={styles.statItem}>
+              <Text style={[styles.statValue, { color: c.text }]}>{weather.uvIndex}</Text>
+              <Text style={[styles.statLabel, { color: c.subtext }]}>UV Index</Text>
+            </View>
+          )}
+        </View>
+      </View>
+
+      {/* Sunrise / Sunset */}
+      {(weather.sunrise || weather.sunset) && (
+        <View style={styles.sunRow}>
+          {weather.sunrise && (
+            <View style={styles.sunItem}>
+              <Text style={styles.sunEmoji}>🌅</Text>
+              <Text style={[styles.sunTime, { color: c.subtext }]}>{weather.sunrise}</Text>
+            </View>
+          )}
+          {weather.sunset && (
+            <View style={styles.sunItem}>
+              <Text style={styles.sunEmoji}>🌇</Text>
+              <Text style={[styles.sunTime, { color: c.subtext }]}>{weather.sunset}</Text>
+            </View>
+          )}
+        </View>
+      )}
+
+      {/* Hourly forecast */}
+      {weather.hourly.length > 0 && (
+        <>
+          <View style={[styles.divider, { backgroundColor: c.border }]} />
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.hourlyContainer}
+          >
+            {weather.hourly.map((hour, index) => (
+              <View key={index} style={styles.hourItem}>
+                <Text style={[styles.hourTime, { color: c.subtext }]}>{hour.time}</Text>
+                <Text style={styles.hourEmoji}>{conditionToEmoji(hour.condition)}</Text>
+                <Text style={[styles.hourTemp, { color: c.text }]}>{hour.temp}°</Text>
+              </View>
+            ))}
+          </ScrollView>
+        </>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  card: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  mainRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: spacing.sm,
+  },
+  tempRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
+  tempLarge: {
+    fontSize: 64,
+    fontWeight: '300',
+    letterSpacing: -3,
+    lineHeight: 68,
+  },
+  conditionEmoji: {
+    fontSize: 32,
+    marginTop: spacing.sm,
+  },
+  condition: {
+    ...typography.subtitle,
+    marginBottom: spacing.xs,
+  },
+  feelsLike: {
+    ...typography.caption,
+    fontSize: 13,
+  },
+  rightStats: {
+    gap: spacing.md,
+    alignItems: 'flex-end',
+  },
+  statItem: {
+    alignItems: 'flex-end',
+  },
+  statValue: {
+    ...typography.subtitle,
+    fontWeight: '600',
+  },
+  statLabel: {
+    ...typography.caption,
+  },
+  sunRow: {
+    flexDirection: 'row',
+    gap: spacing.lg,
+    marginBottom: spacing.sm,
+  },
+  sunItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  sunEmoji: {
+    fontSize: 14,
+  },
+  sunTime: {
+    ...typography.caption,
+    fontSize: 13,
+  },
+  divider: {
+    height: 1,
+    marginVertical: spacing.sm,
+  },
+  hourlyContainer: {
+    gap: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  hourItem: {
+    alignItems: 'center',
+    gap: spacing.xs,
+    minWidth: 52,
+  },
+  hourTime: {
+    ...typography.caption,
+    fontSize: 11,
+  },
+  hourEmoji: {
+    fontSize: 18,
+  },
+  hourTemp: {
+    ...typography.subtitle,
+    fontSize: 15,
+  },
+  unavailable: {
+    ...typography.body,
+    fontStyle: 'italic',
+    paddingVertical: spacing.sm,
+  },
+});

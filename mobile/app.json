@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "Morning",
+    "slug": "morning",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#F9F8F6"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.norm.morning",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSHealthShareUsageDescription": "Morning Dashboard reads your HRV, resting heart rate, sleep, steps, and active calories to personalize your daily workout recommendation.",
+        "NSHealthUpdateUsageDescription": "Morning Dashboard does not write health data."
+      },
+      "entitlements": {
+        "com.apple.developer.healthkit": true,
+        "com.apple.developer.healthkit.background-delivery": true
+      }
+    },
+    "plugins": [
+      [
+        "react-native-health",
+        {
+          "isClinicalDataEnabled": false
+        }
+      ]
+    ],
+    "assetBundlePatterns": ["**/*"]
+  }
+}

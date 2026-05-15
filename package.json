@@ -1,0 +1,11 @@
+{
+  "name": "morning-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "backend": "cd backend && node server.js",
+    "get-tokens": "cd backend && node scripts/get-google-tokens.js",
+    "mobile": "cd mobile && npx expo start",
+    "mobile:ios": "cd mobile && npx expo run:ios"
+  }
+}
