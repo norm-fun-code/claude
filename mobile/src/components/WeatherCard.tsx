@@ -8,6 +8,21 @@ interface Props {
   weather: Weather | null;
 }
 
+function getOutfitAdvice(temp: number, condition: string): { outfit: string; note: string } {
+  const lower = condition.toLowerCase();
+  const isRain = lower.includes('rain') || lower.includes('shower') || lower.includes('drizzle') || lower.includes('thunder');
+  const isSnow = lower.includes('snow') || lower.includes('flurr');
+
+  if (isSnow || temp <= 20) return { outfit: '🧥🧣🧤', note: 'Heavy coat, scarf, gloves' };
+  if (temp <= 32) return { outfit: '🧥🧣', note: 'Heavy coat and scarf' };
+  if (temp <= 45) return { outfit: isRain ? '🧥☂️' : '🧥', note: isRain ? 'Warm coat, bring umbrella' : 'Warm coat' };
+  if (temp <= 55) return { outfit: isRain ? '🧤☂️' : '🧤', note: isRain ? 'Light jacket, umbrella' : 'Light jacket or fleece' };
+  if (temp <= 65) return { outfit: isRain ? '👕☂️' : '👕🧥', note: isRain ? 'Layer up, umbrella' : 'Layers — warm out, cool inside' };
+  if (temp <= 75) return { outfit: isRain ? '👕☂️' : '👕', note: isRain ? 'T-shirt, grab an umbrella' : 'T-shirt weather' };
+  if (temp <= 85) return { outfit: '👕🕶', note: 'Light clothes, sunglasses' };
+  return { outfit: '🩳🕶💧', note: 'Shorts, shades, stay hydrated' };
+}
+
 function conditionToEmoji(condition: string): string {
   const lower = condition.toLowerCase();
   if (lower.includes('thunder')) return '⛈';
@@ -86,6 +101,17 @@ export function WeatherCard({ weather }: Props) {
           )}
         </View>
       )}
+
+      {/* Outfit recommendation */}
+      {(() => {
+        const { outfit, note } = getOutfitAdvice(weather.temp, weather.condition);
+        return (
+          <View style={[styles.outfitRow, { backgroundColor: isDark ? '#1A1A18' : '#F5F5F2', borderColor: c.border }]}>
+            <Text style={styles.outfitEmoji}>{outfit}</Text>
+            <Text style={[styles.outfitNote, { color: c.subtext }]}>{note}</Text>
+          </View>
+        );
+      })()}
 
       {/* Hourly forecast */}
       {weather.hourly.length > 0 && (
@@ -205,5 +231,24 @@ const styles = StyleSheet.create({
     ...typography.body,
     fontStyle: 'italic',
     paddingVertical: spacing.sm,
+  },
+  outfitRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs + 2,
+    marginBottom: spacing.sm,
+  },
+  outfitEmoji: {
+    fontSize: 20,
+    letterSpacing: 2,
+  },
+  outfitNote: {
+    ...typography.caption,
+    fontSize: 13,
+    flex: 1,
   },
 });
