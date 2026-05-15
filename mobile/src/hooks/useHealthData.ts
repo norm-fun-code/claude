@@ -114,9 +114,9 @@ export function useHealthData(): HealthData & { refetch: () => void } {
         }
       }
 
-      // HRV — most recent sample
+      // HRV — most recent sample, look back 7 days
       AppleHealthKit.getHeartRateVariabilitySamples(
-        { startDate: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), endDate: now },
+        { startDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), endDate: now },
         (err, results: HealthValue[]) => {
           if (!err && results && results.length > 0) {
             const sorted = [...results].sort(
@@ -128,9 +128,9 @@ export function useHealthData(): HealthData & { refetch: () => void } {
         }
       );
 
-      // Resting heart rate
+      // Resting heart rate — look back 7 days for most recent
       AppleHealthKit.getRestingHeartRate(
-        { date: now },
+        { startDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), date: now },
         (err, result: HealthValue) => {
           if (!err && result) {
             restingHR = Math.round(result.value);
