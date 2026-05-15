@@ -154,9 +154,9 @@ export function useHealthData(): HealthData & { refetch: () => void } {
         },
         (err, results: HealthValue[]) => {
           if (!err && results && results.length > 0) {
-            // Filter to "asleep" stages (value === 3 is ASLEEP in HK)
+            // Filter to actual sleep stages (not INBED)
             const asleepSamples = results.filter(
-              (s) => s.value === 3 || s.value === 4 || s.value === 5
+              (s) => s.value === 'ASLEEP' || s.value === 'DEEP' || s.value === 'CORE' || s.value === 'REM'
             );
             if (asleepSamples.length > 0) {
               const totalMs = asleepSamples.reduce((sum, s) => {
