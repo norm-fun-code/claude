@@ -43,7 +43,7 @@ Analyze the above and return a JSON object with EXACTLY these fields. Return ONL
     {
       "name": "Newsletter sender name",
       "title": "Article or edition title",
-      "summary": "3-5 sentence dense summary of the key points"
+      "summary": "8-12 sentence deeply detailed summary. Extract every specific data point, dollar figure, percentage, company name, person, and argument. Write like a premium financial analyst briefing — dense, factual, no fluff."
     }
   ],
   "urgentEmails": [
@@ -63,7 +63,7 @@ Analyze the above and return a JSON object with EXACTLY these fields. Return ONL
 }
 
 Rules:
-- newsletters: Include emails that appear to be newsletters, digests, or content publications. Exclude personal emails, receipts, and notifications.
+- newsletters: Include emails that appear to be newsletters, digests, or content publications. Exclude personal emails, receipts, and notifications. For each newsletter, go deep — extract every named company, person, statistic, dollar amount, and key argument from the email body.
 - urgentEmails: Include emails that require a response or action today. Exclude newsletters and FYI emails.
 - financeSummary: Extract any finance, market, economic, or business news from emails. If none, return 1-3 general observations about the day's financial context based on what's available. Never return an empty array — always have 1-3 items.
 - quoteInsight: Be specific, not generic. Reference the actual quote content.
