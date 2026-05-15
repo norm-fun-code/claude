@@ -86,7 +86,7 @@ async function generateBriefing(emailData, notionText, quote, currentDay, workou
       ],
       generationConfig: {
         temperature: 0.4,
-        maxOutputTokens: 4096,
+        maxOutputTokens: 16384,
         responseMimeType: 'application/json',
       },
     },
