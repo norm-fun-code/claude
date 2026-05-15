@@ -68,7 +68,7 @@ export function useHealthData(): HealthData & { refetch: () => void } {
     sleepQuality: null,
     steps: null,
     activeCalories: null,
-    loading: true,
+    loading: false,
     error: null,
   });
 
@@ -197,9 +197,6 @@ export function useHealthData(): HealthData & { refetch: () => void } {
     }
   }, []);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
+  // No auto-fetch on mount — only refreshes on pull-to-refresh
   return { ...data, refetch: fetchData };
 }

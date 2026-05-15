@@ -77,7 +77,7 @@ export interface BriefingState {
 
 export function useBriefing(): BriefingState {
   const [data, setData] = useState<BriefingData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchBriefing = useCallback(async () => {
@@ -109,9 +109,6 @@ export function useBriefing(): BriefingState {
     }
   }, []);
 
-  useEffect(() => {
-    fetchBriefing();
-  }, [fetchBriefing]);
-
+  // No auto-fetch on mount — only refreshes on pull-to-refresh
   return { data, loading, error, refetch: fetchBriefing };
 }
