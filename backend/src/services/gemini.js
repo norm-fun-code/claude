@@ -97,6 +97,9 @@ async function generateBriefing(emailData, notionText, quote, currentDay, workou
   );
 
   const rawText = res.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  console.log('[gemini] raw response length:', rawText.length);
+  console.log('[gemini] first 300 chars:', rawText.slice(0, 300));
+  console.log('[gemini] finish reason:', res.data.candidates?.[0]?.finishReason);
 
   // Strip any accidental markdown fences
   const cleaned = rawText
