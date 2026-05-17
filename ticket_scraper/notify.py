@@ -156,12 +156,45 @@ def alert(repo: str, token: str, listings: Iterable[Listing]) -> List[str]:
     return created
 
 
+def email_scraper_failure(summary: str) -> None:
+    gmail_address = os.environ.get("GMAIL_ADDRESS")
+    app_password = os.environ.get("GMAIL_APP_PASSWORD")
+    notify_email = os.environ.get("NOTIFY_EMAIL") or gmail_address
+    if not gmail_address or not app_password:
+        log.warning("GMAIL creds missing; skipping scraper-failure email")
+        return
+    msg = MIMEText(
+        "Daily scraper ran but every source returned zero listings.\n\n"
+        "This usually means anti-bot defenses are blocking the GitHub Actions\n"
+        "runner. The scraper is still alive — you'd see no email at all if it\n"
+        "had crashed.\n\n"
+        + summary
+    )
+    msg["Subject"] = "[Ticket Watcher] Scraper alive but found no listings today"
+    msg["From"] = gmail_address
+    msg["To"] = notify_email
+    ctx = ssl.create_default_context()
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as smtp:
+            smtp.ehlo()
+            smtp.starttls(context=ctx)
+            smtp.login(gmail_address, app_password)
+            smtp.sendmail(gmail_address, notify_email, msg.as_string())
+        log.info("Scraper-failure email sent to %s", notify_email)
+    except Exception as e:
+        log.warning("Scraper-failure email send failed: %s", e)
+
+
 def report_scrape_failure(repo: str, token: str, summary: str) -> None:
     """Open a tracking issue when EVERY source returned zero listings.
 
     Helps catch silent scraper rot. Deduped against an open issue with the
-    same title.
+    same title. Also emails the user so silent failures don't go unnoticed.
     """
+    email_scraper_failure(summary)
+    if not repo or not token:
+        log.warning("Repo/token missing; skipping scraper-failure issue")
+        return
     title = "[scraper-health] All sources returned no listings"
     r = requests.get(
         f"{API}/repos/{repo}/issues",
@@ -169,11 +202,19 @@ def report_scrape_failure(repo: str, token: str, summary: str) -> None:
         params={"state": "open", "labels": LABEL, "per_page": 100},
         timeout=15,
     )
-    if r.status_code == 200 and any(i.get("title") == title for i in r.json()):
+    if r.status_code != 200:
+        log.warning("Scraper-failure list issues failed: %d %s", r.status_code, r.text[:200])
+    elif any(i.get("title") == title for i in r.json()):
+        log.info("Scraper-failure issue already open; skipping")
         return
-    requests.post(
+    _ensure_label(repo, token)
+    r2 = requests.post(
         f"{API}/repos/{repo}/issues",
         headers=_headers(token),
         json={"title": title, "body": summary, "labels": [LABEL]},
         timeout=15,
     )
+    if r2.status_code in (200, 201):
+        log.info("Scraper-failure issue created: %s", r2.json().get("html_url", ""))
+    else:
+        log.warning("Scraper-failure issue create failed: %d %s", r2.status_code, r2.text[:200])

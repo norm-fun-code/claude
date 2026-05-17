@@ -70,13 +70,13 @@ def main() -> int:
             log.info("Created %d new issue(s)", len(created))
         else:
             log.warning("GITHUB_REPOSITORY / GITHUB_TOKEN not set; skipping issue creation")
-    elif sum(per_source_counts.values()) == 0 and repo and token:
+    elif sum(per_source_counts.values()) == 0:
         summary = (
             "Daily ticket scrape found zero listings across every source. "
             "Likely causes: scraper selectors stale, anti-bot block, or event not yet listed.\n\n"
             f"Counts: {per_source_counts}"
         )
-        report_scrape_failure(repo, token, summary)
+        report_scrape_failure(repo or "", token or "", summary)
 
     return 0
 
