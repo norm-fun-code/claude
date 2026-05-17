@@ -30,12 +30,14 @@ def session() -> requests.Session:
     return s
 
 
-def get(url: str, render_js: bool = False, premium_proxy: bool = False, timeout: int = 60, **kwargs) -> requests.Response:
+def get(url: str, render_js: bool = False, premium_proxy: bool = False,
+        timeout: int = 60, sb_params: dict | None = None, **kwargs) -> requests.Response:
     """Fetch url, routing through ScrapingBee if SCRAPINGBEE_API_KEY is set.
 
     render_js=True costs 5 credits vs 1. premium_proxy=True costs 25 credits
     but uses residential IPs that bypass Cloudflare/DataDome. Use only when
-    a regular proxy gets 403/500.
+    a regular proxy gets 403/500. sb_params passes extra ScrapingBee API
+    parameters (e.g. wait=5000, wait_for=".listing").
     """
     api_key = os.environ.get("SCRAPINGBEE_API_KEY")
     if api_key:
@@ -53,6 +55,8 @@ def get(url: str, render_js: bool = False, premium_proxy: bool = False, timeout:
             "premium_proxy": "true" if premium_proxy else "false",
             "block_ads": "true",
         }
+        if sb_params:
+            params.update(sb_params)
         log.info("ScrapingBee → %s (render_js=%s, premium=%s)", target_url, render_js, premium_proxy)
         resp = requests.get(SCRAPINGBEE_API, params=params, timeout=timeout, **kwargs)
         if resp.status_code != 200:

@@ -50,26 +50,42 @@ def _parse(html: str) -> List[Listing]:
         log.warning("Vivid Seats: __NEXT_DATA__ JSON parse failed")
         return []
 
-    # Log top-level keys to help debug structure changes
     props = data.get("props", {}).get("pageProps", {})
     log.info("Vivid Seats __NEXT_DATA__ pageProps keys: %s", list(props.keys())[:20])
 
-    # Listings live under initialProductionDetailsData
     ipdd = props.get("initialProductionDetailsData", {})
-    if ipdd:
-        log.info("Vivid Seats initialProductionDetailsData keys: %s",
-                 list(ipdd.keys())[:20] if isinstance(ipdd, dict) else type(ipdd).__name__)
+    if isinstance(ipdd, dict):
+        log.info("Vivid Seats initialProductionDetailsData keys: %s", list(ipdd.keys())[:20])
+        inner = ipdd.get("data", {})
+        if isinstance(inner, dict):
+            log.info("Vivid Seats data keys: %s", list(inner.keys())[:20])
+            for k, v in list(inner.items())[:8]:
+                if isinstance(v, list) and v:
+                    sample = v[0]
+                    log.info("Vivid Seats data.%s (list len=%d) sample keys: %s",
+                             k, len(v),
+                             list(sample.keys())[:15] if isinstance(sample, dict) else repr(sample)[:80])
+                elif isinstance(v, dict):
+                    log.info("Vivid Seats data.%s keys: %s", k, list(v.keys())[:15])
+        elif isinstance(inner, list) and inner:
+            sample = inner[0]
+            log.info("Vivid Seats data is list len=%d sample keys: %s",
+                     len(inner),
+                     list(sample.keys())[:15] if isinstance(sample, dict) else repr(sample)[:80])
 
     out: List[Listing] = []
     for node in _walk(data):
         try:
-            qty = int(node.get("quantity") or node.get("availableQty") or node.get("availableTickets") or 0)
+            qty = int(node.get("quantity") or node.get("availableQty") or
+                      node.get("availableTickets") or node.get("ticketQuantity") or 0)
             price = (node.get("price") or node.get("currentPrice") or
-                     node.get("listingPrice") or node.get("amount"))
+                     node.get("listingPrice") or node.get("amount") or
+                     node.get("listPrice") or node.get("priceWithFees"))
             if isinstance(price, dict):
-                price = price.get("amount") or price.get("value")
-            section = str(node.get("section") or node.get("sectionName") or "")
-            row = node.get("row")
+                price = price.get("amount") or price.get("value") or price.get("total")
+            section = str(node.get("section") or node.get("sectionName") or
+                          node.get("sectionAlias") or "")
+            row = node.get("row") or node.get("rowId")
             if not section or qty <= 0 or not price:
                 continue
             out.append(Listing(
@@ -87,9 +103,8 @@ def _parse(html: str) -> List[Listing]:
 
 def _walk(obj):
     if isinstance(obj, dict):
-        has_section = "section" in obj or "sectionName" in obj
-        has_qty = ("quantity" in obj or "availableQty" in obj or
-                   "availableTickets" in obj)
+        has_section = any(k in obj for k in ("section", "sectionName", "sectionAlias"))
+        has_qty = any(k in obj for k in ("quantity", "availableQty", "availableTickets", "ticketQuantity"))
         if has_section and has_qty:
             yield obj
         for v in obj.values():

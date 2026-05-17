@@ -144,37 +144,58 @@ def _parse_rsc_payloads(html: str) -> List[Listing]:
         return []
     log.info("TickPick: found %d RSC chunks", len(chunks))
     out: List[Listing] = []
-    for chunk in chunks:
-        # Each chunk is a JS-escaped JSON string. Unescape and try to find listings.
+    decoder = json.JSONDecoder()
+    for i, chunk in enumerate(chunks):
         try:
             unescaped = bytes(chunk, "utf-8").decode("unicode_escape")
         except Exception:
             unescaped = chunk
-        # Look for blocks that look like listings, e.g. {"section":"5","quantity":2,"price":250}
-        for jm in re.finditer(
-            r'\{[^{}]*?"section"\s*:\s*"[^"]+"[^{}]*?"(?:price|p)"\s*:\s*[\d.]+[^{}]*?\}',
-            unescaped,
-        ):
+
+        if i < 5:
+            log.info("TickPick RSC chunk[%d] (len=%d) preview: %.250s",
+                     i, len(unescaped), re.sub(r'\s+', ' ', unescaped[:250]))
+
+        # Strip RSC row-ID prefix like "1:" or "2:I" before the JSON payload
+        text = re.sub(r'^\d+:[A-Za-z]?', '', unescaped.strip())
+
+        # Scan the text for all top-level JSON objects/arrays using raw_decode
+        pos = 0
+        while pos < len(text):
+            # Find next { or [
+            idx = text.find('{', pos)
+            arr_idx = text.find('[', pos)
+            if idx == -1 and arr_idx == -1:
+                break
+            if idx == -1:
+                idx = arr_idx
+            elif arr_idx != -1:
+                idx = min(idx, arr_idx)
             try:
-                obj = json.loads(jm.group(0))
+                obj, end_pos = decoder.raw_decode(text, idx)
+                if isinstance(obj, (dict, list)):
+                    for node in _walk(obj):
+                        try:
+                            section = str(node.get("section") or node.get("s") or "")
+                            qty = int(node.get("quantity") or node.get("q") or 0)
+                            price = node.get("price") or node.get("p")
+                            row = node.get("row") or node.get("r")
+                            if not section or qty <= 0 or not price:
+                                continue
+                            out.append(Listing(
+                                source="tickpick",
+                                section=section,
+                                row=str(row) if row else None,
+                                quantity=qty,
+                                price_per_ticket=float(price),
+                                url=EVENT_URL,
+                            ))
+                        except (TypeError, ValueError):
+                            continue
+                pos = end_pos
             except json.JSONDecodeError:
-                continue
-            try:
-                section = str(obj.get("section") or obj.get("s") or "")
-                qty = int(obj.get("quantity") or obj.get("q") or 0)
-                price = obj.get("price") or obj.get("p")
-                if not section or qty <= 0 or not price:
-                    continue
-                out.append(Listing(
-                    source="tickpick",
-                    section=section,
-                    row=str(obj.get("row") or obj.get("r") or "") or None,
-                    quantity=qty,
-                    price_per_ticket=float(price),
-                    url=EVENT_URL,
-                ))
-            except (TypeError, ValueError):
-                continue
+                pos = idx + 1
     if out:
         log.info("TickPick: parsed %d listings from RSC payloads", len(out))
+    else:
+        log.info("TickPick: 0 listings from RSC — check chunk previews above")
     return out
