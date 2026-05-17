@@ -15,7 +15,7 @@ import sys
 from typing import List
 
 from .models import Listing, matches
-from .notify import alert, report_scrape_failure
+from .notify import alert, email_alert, report_scrape_failure
 from .sources import seatgeek, ticketmaster, stubhub, vividseats, tickpick
 
 logging.basicConfig(
@@ -64,6 +64,7 @@ def main() -> int:
     token = os.environ.get("GITHUB_TOKEN")
 
     if matching:
+        email_alert(matching)
         if repo and token:
             created = alert(repo, token, matching)
             log.info("Created %d new issue(s)", len(created))

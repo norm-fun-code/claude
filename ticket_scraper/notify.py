@@ -1,10 +1,13 @@
-"""GitHub issue creation with per-listing dedupe.
+"""GitHub issue creation and email alerts.
 
-Avoids re-alerting on the same listing by searching open issues with the
-configured label and a fingerprint embedded in the title.
+Issue creation dedupes by fingerprint embedded in the title.
+Email uses Gmail SMTP with an App Password (no extra deps).
 """
 import logging
 import os
+import smtplib
+import ssl
+from email.mime.text import MIMEText
 from typing import Iterable, List
 
 import requests
@@ -77,6 +80,52 @@ def _body_for(listing: Listing) -> str:
         "_Filter: sections 1–9 or 100–139, qty ≥ 2, < $300/ticket._",
     ]
     return "\n".join(lines)
+
+
+def _email_body(listings: List[Listing]) -> str:
+    lines = [
+        f"🎟  {len(listings)} matching Noah Kahan ticket listing(s) found!",
+        "Event: July 19, 2026 — Citi Field",
+        "Filter: sections 1–9 or 100–139, qty ≥ 2, < $300/ticket",
+        "",
+    ]
+    for l in listings:
+        lines += [
+            f"Source:  {l.source}",
+            f"Section: {l.section}  Row: {l.row or 'n/a'}",
+            f"Qty:     {l.quantity}",
+            f"Price:   ${l.price_per_ticket:.2f}/ticket  (total ${l.quantity * l.price_per_ticket:.2f})",
+        ]
+        if l.url:
+            lines.append(f"Link:    {l.url}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def email_alert(listings: List[Listing]) -> None:
+    gmail_address = os.environ.get("GMAIL_ADDRESS")
+    app_password = os.environ.get("GMAIL_APP_PASSWORD")
+    notify_email = os.environ.get("NOTIFY_EMAIL") or gmail_address
+
+    if not gmail_address or not app_password:
+        log.warning("GMAIL_ADDRESS / GMAIL_APP_PASSWORD not set; skipping email")
+        return
+
+    msg = MIMEText(_email_body(listings))
+    msg["Subject"] = f"[Ticket Alert] {len(listings)} Noah Kahan listing(s) under $300 in target sections"
+    msg["From"] = gmail_address
+    msg["To"] = notify_email
+
+    ctx = ssl.create_default_context()
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as smtp:
+            smtp.ehlo()
+            smtp.starttls(context=ctx)
+            smtp.login(gmail_address, app_password)
+            smtp.sendmail(gmail_address, notify_email, msg.as_string())
+        log.info("Email sent to %s", notify_email)
+    except Exception as e:
+        log.warning("Email send failed: %s", e)
 
 
 def alert(repo: str, token: str, listings: Iterable[Listing]) -> List[str]:
