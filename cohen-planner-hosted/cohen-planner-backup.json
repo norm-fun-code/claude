@@ -1,0 +1,33 @@
+{
+  "exportedAt": "2026-05-17T21:41:59.951Z",
+  "plannerState": {},
+  "scenarios": [],
+  "advisorChats": {
+    "chats": {
+      "mp982fza4a2s6x": {
+        "id": "mp982fza4a2s6x",
+        "title": "i have $45k left on a PLOC for which interest is o…",
+        "messages": [
+          {
+            "role": "user",
+            "content": "i have $45k left on a PLOC for which interest is only 2.5% should i fully pay it down or keep my invested stock?"
+          },
+          {
+            "role": "assistant",
+            "content": "Keep the stock invested. With a 2.5% rate, you're getting nearly free money by historical standards, and the after-tax cost is even lower since PLOC interest is deductible up to $100K.\n\nYour current portfolio allocation suggests you're comfortable with equity risk, and mathematically you should earn more than 2.5% over time with your FXAIX/individual stock mix. Even in a conservative scenario, the expected return differential favors staying invested.\n\nMore importantly, looking at your cash flow projections - you have 17 deficit years ahead with a peak $94K shortfall. Keeping that $45K invested maintains your cushion for those lean periods rather than reducing debt that's already very manageable. Your effective borrowing cost after tax deduction is probably closer to 1.6-1.8%, which is essentially inflation-hedged debt.\n\nThe only argument for paying it down would be psychological peace of mind, but given your analytical approach to planning, I'd keep riding the cheap leverage and let compound returns work in your favor."
+          }
+        ],
+        "createdAt": 1778988915046,
+        "updatedAt": 1778988923618
+      },
+      "mp984j0ihcqgwe": {
+        "id": "mp984j0ihcqgwe",
+        "title": "New conversation",
+        "messages": [],
+        "createdAt": 1778989012290,
+        "updatedAt": 1778989012290
+      }
+    },
+    "activeId": "mp984j0ihcqgwe"
+  }
+}
