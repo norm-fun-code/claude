@@ -1,16 +1,11 @@
-"""Vivid Seats scraper — best effort.
-
-Vivid Seats renders listings via internal hermes/* XHRs that require a
-fresh session cookie. We try the public production page and parse the
-embedded __NEXT_DATA__ JSON. May break without notice.
-"""
+"""Vivid Seats scraper — uses ScrapingBee with JS rendering."""
 import json
 import logging
 import re
 from typing import List
 
 from ..models import Listing
-from ._http import session
+from ._http import get
 
 log = logging.getLogger(__name__)
 
@@ -19,17 +14,18 @@ SEARCH_URL = "https://www.vividseats.com/search"
 
 def _find_event_url(query: str, date_iso: str) -> str | None:
     try:
-        r = session().get(SEARCH_URL, params={"searchTerm": query}, timeout=20)
+        r = get(SEARCH_URL, render_js=True, params={"searchTerm": query}, timeout=60)
         if r.status_code != 200:
+            log.info("Vivid Seats search returned %d", r.status_code)
             return None
     except Exception as e:
         log.warning("Vivid search failed: %s", e)
         return None
-    # production URLs: /noah-kahan-tickets/concerts/.../production/1234567
-    for m in re.finditer(r'href="(/[^"]*?/production/(\d+))"', r.text):
-        href = m.group(1)
-        if date_iso in r.text:
-            return "https://www.vividseats.com" + href
+    candidates = list(re.finditer(r'href="(/[^"]*?/production/(\d+))"', r.text))
+    if not candidates:
+        return None
+    if date_iso in r.text:
+        return "https://www.vividseats.com" + candidates[0].group(1)
     return None
 
 
@@ -39,7 +35,7 @@ def fetch(date_iso: str, query: str = "Noah Kahan Citi Field") -> List[Listing]:
         log.info("Vivid Seats: no event URL found")
         return []
     try:
-        r = session().get(event_url, timeout=25)
+        r = get(event_url, render_js=True, timeout=60)
         if r.status_code != 200:
             log.info("Vivid Seats event page returned %d", r.status_code)
             return []
@@ -49,6 +45,7 @@ def fetch(date_iso: str, query: str = "Noah Kahan Citi Field") -> List[Listing]:
 
     m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.S)
     if not m:
+        log.info("Vivid Seats: __NEXT_DATA__ not found on event page")
         return []
     try:
         data = json.loads(m.group(1))

@@ -9,6 +9,9 @@
 #      NOTIFY_EMAIL          address to receive alerts (can equal GMAIL_ADDRESS)
 #      SEATGEEK_CLIENT_ID    optional — free from https://seatgeek.com/account/develop
 #      TICKETMASTER_API_KEY  optional — free from https://developer-acct.ticketmaster.com
+#      SCRAPINGBEE_API_KEY   optional — free tier (1000 credits) from
+#                            https://app.scrapingbee.com. Without it, the
+#                            resale-site scrapers will be blocked by anti-bot.
 # 2. Settings → Actions → General → Workflow permissions → "Read and write".
 # 3. Subscribe to the `noah-kahan-ticket-alert` label so you get notified.
 #
@@ -71,4 +74,5 @@ jobs:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+          SCRAPINGBEE_API_KEY: ${{ secrets.SCRAPINGBEE_API_KEY }}
         run: python -m ticket_scraper.scrape

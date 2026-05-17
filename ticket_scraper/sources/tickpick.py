@@ -1,36 +1,33 @@
 """TickPick scraper.
 
-TickPick has a relatively permissive internal JSON API that backs their
-event page. Endpoint shape (as of writing):
-  GET https://www.tickpick.com/api/event-info/{eventId}/
-  GET https://www.tickpick.com/api/event-listings/{eventId}/
-The site's search results contain event URLs of the form
-/buy/<slug>/<eventId>/
+TickPick has a relatively permissive JSON API. Search page is plain HTML
+so we don't need JS rendering for the event-id lookup.
 """
 import logging
 import re
 from typing import List
 
 from ..models import Listing
-from ._http import session
+from ._http import get
 
 log = logging.getLogger(__name__)
 
 
 def _search_event_id(query: str, date_iso: str) -> str | None:
     try:
-        r = session().get(
+        r = get(
             "https://www.tickpick.com/search/",
+            render_js=False,
             params={"q": query},
-            timeout=20,
+            timeout=40,
         )
         if r.status_code != 200:
+            log.info("TickPick search returned %d", r.status_code)
             return None
     except Exception as e:
         log.warning("TickPick search failed: %s", e)
         return None
     for m in re.finditer(r'/buy/[^/"]+/(\d+)/?', r.text):
-        # Verify date appears in surrounding HTML to avoid wrong event
         if date_iso in r.text or _date_human(date_iso) in r.text:
             return m.group(1)
     return None
@@ -51,10 +48,11 @@ def fetch(date_iso: str, query: str = "Noah Kahan Citi Field") -> List[Listing]:
         return []
 
     try:
-        r = session().get(
+        r = get(
             f"https://www.tickpick.com/api/event-listings/{event_id}/",
+            render_js=False,
             headers={"Accept": "application/json", "Referer": "https://www.tickpick.com/"},
-            timeout=25,
+            timeout=40,
         )
         if r.status_code != 200:
             log.info("TickPick listings API returned %d", r.status_code)

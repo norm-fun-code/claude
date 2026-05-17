@@ -13,7 +13,7 @@ import re
 from typing import List
 
 from ..models import Listing
-from ._http import session
+from ._http import get, session
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ def fetch(date_iso: str, performer_slug: str = "noah-kahan", venue_slug: str = "
         return []
 
     try:
-        html = session().get(event_url, timeout=20).text
+        html = get(event_url, render_js=True, timeout=60).text
     except Exception as e:
         log.warning("SeatGeek page fetch failed: %s", e)
         return []
