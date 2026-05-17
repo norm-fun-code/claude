@@ -53,11 +53,17 @@ def fetch(date_iso: str, query: str = "Noah Kahan Citi Field") -> List[Listing]:
     html = r.text
     patterns = {
         "__NEXT_DATA__": bool(re.search(r'id="__NEXT_DATA__"', html)),
+        "__next_f.push": bool(re.search(r"self\.__next_f\.push", html)),
         "APP_DATA": bool(re.search(r"window\.APP_DATA", html)),
-        "TICKPICK": bool(re.search(r"tickpick", html[:2000], re.I)),
+        "tp_state": bool(re.search(r"window\.tp_?state", html, re.I)),
     }
-    log.info("TickPick page patterns: %s | snippet: %.200s", patterns,
-             re.sub(r'\s+', ' ', html[:400]))
+    log.info("TickPick page patterns: %s", patterns)
+
+    # Try Next.js App Router RSC payloads — they push JSON chunks into __next_f
+    rsc_listings = _parse_rsc_payloads(html)
+    if rsc_listings:
+        return rsc_listings
+
     m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
     if not m:
         m = re.search(r'window\.APP_DATA\s*=\s*(\{.*?\});\s*</script>', html, re.S)
@@ -129,3 +135,46 @@ def _walk(obj):
     elif isinstance(obj, list):
         for item in obj:
             yield from _walk(item)
+
+
+def _parse_rsc_payloads(html: str) -> List[Listing]:
+    """Extract listings from Next.js App Router RSC chunks pushed into __next_f."""
+    chunks = re.findall(r'self\.__next_f\.push\(\[\s*\d+\s*,\s*"((?:[^"\\]|\\.)*)"', html)
+    if not chunks:
+        return []
+    log.info("TickPick: found %d RSC chunks", len(chunks))
+    out: List[Listing] = []
+    for chunk in chunks:
+        # Each chunk is a JS-escaped JSON string. Unescape and try to find listings.
+        try:
+            unescaped = bytes(chunk, "utf-8").decode("unicode_escape")
+        except Exception:
+            unescaped = chunk
+        # Look for blocks that look like listings, e.g. {"section":"5","quantity":2,"price":250}
+        for jm in re.finditer(
+            r'\{[^{}]*?"section"\s*:\s*"[^"]+"[^{}]*?"(?:price|p)"\s*:\s*[\d.]+[^{}]*?\}',
+            unescaped,
+        ):
+            try:
+                obj = json.loads(jm.group(0))
+            except json.JSONDecodeError:
+                continue
+            try:
+                section = str(obj.get("section") or obj.get("s") or "")
+                qty = int(obj.get("quantity") or obj.get("q") or 0)
+                price = obj.get("price") or obj.get("p")
+                if not section or qty <= 0 or not price:
+                    continue
+                out.append(Listing(
+                    source="tickpick",
+                    section=section,
+                    row=str(obj.get("row") or obj.get("r") or "") or None,
+                    quantity=qty,
+                    price_per_ticket=float(price),
+                    url=EVENT_URL,
+                ))
+            except (TypeError, ValueError):
+                continue
+    if out:
+        log.info("TickPick: parsed %d listings from RSC payloads", len(out))
+    return out

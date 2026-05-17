@@ -54,6 +54,12 @@ def _parse(html: str) -> List[Listing]:
     props = data.get("props", {}).get("pageProps", {})
     log.info("Vivid Seats __NEXT_DATA__ pageProps keys: %s", list(props.keys())[:20])
 
+    # Listings live under initialProductionDetailsData
+    ipdd = props.get("initialProductionDetailsData", {})
+    if ipdd:
+        log.info("Vivid Seats initialProductionDetailsData keys: %s",
+                 list(ipdd.keys())[:20] if isinstance(ipdd, dict) else type(ipdd).__name__)
+
     out: List[Listing] = []
     for node in _walk(data):
         try:

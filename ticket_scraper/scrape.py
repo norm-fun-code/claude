@@ -24,8 +24,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("scrape")
 
+# SeatGeek dropped: fully blocked by Cloudflare even with ScrapingBee premium_proxy.
+# Ticketmaster kept (free, cheap) but the show isn't on TM as primary; usually 0 results.
 SOURCES = [
-    ("seatgeek", lambda d: seatgeek.fetch(d)),
     ("ticketmaster", lambda d: ticketmaster.fetch(d)),
     ("stubhub", lambda d: stubhub.fetch(d)),
     ("vividseats", lambda d: vividseats.fetch(d)),
