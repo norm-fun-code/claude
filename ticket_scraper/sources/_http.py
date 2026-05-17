@@ -30,32 +30,33 @@ def session() -> requests.Session:
     return s
 
 
-def get(url: str, render_js: bool = False, timeout: int = 40, **kwargs) -> requests.Response:
+def get(url: str, render_js: bool = False, premium_proxy: bool = False, timeout: int = 60, **kwargs) -> requests.Response:
     """Fetch url, routing through ScrapingBee if SCRAPINGBEE_API_KEY is set.
 
-    render_js=True costs 5 ScrapingBee credits vs 1 for False. Use True
-    only for React/Next.js pages where listings aren't in the initial HTML.
+    render_js=True costs 5 credits vs 1. premium_proxy=True costs 25 credits
+    but uses residential IPs that bypass Cloudflare/DataDome. Use only when
+    a regular proxy gets 403/500.
     """
     api_key = os.environ.get("SCRAPINGBEE_API_KEY")
     if api_key:
-        params = {
-            "api_key": api_key,
-            "url": url,
-            "render_js": "true" if render_js else "false",
-            "premium_proxy": "false",
-            "block_ads": "true",
-        }
-        # Pass any caller-supplied params by appending them to the target URL
+        # Merge caller-supplied params into the target URL
         caller_params = kwargs.pop("params", None)
+        target_url = url
         if caller_params:
             from urllib.parse import urlencode
             sep = "&" if "?" in url else "?"
-            params["url"] = url + sep + urlencode(caller_params)
-        log.debug("ScrapingBee → %s (render_js=%s)", params["url"], render_js)
+            target_url = url + sep + urlencode(caller_params)
+        params = {
+            "api_key": api_key,
+            "url": target_url,
+            "render_js": "true" if render_js else "false",
+            "premium_proxy": "true" if premium_proxy else "false",
+            "block_ads": "true",
+        }
+        log.info("ScrapingBee → %s (render_js=%s, premium=%s)", target_url, render_js, premium_proxy)
         resp = requests.get(SCRAPINGBEE_API, params=params, timeout=timeout, **kwargs)
-        if resp.status_code == 200:
-            return resp
-        log.warning("ScrapingBee returned %d for %s", resp.status_code, url)
+        if resp.status_code != 200:
+            log.warning("ScrapingBee returned %d for %s", resp.status_code, target_url)
         return resp
     # Fallback: plain requests
     s = session()

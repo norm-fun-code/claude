@@ -1,4 +1,4 @@
-"""Vivid Seats scraper — uses ScrapingBee with JS rendering."""
+"""Vivid Seats scraper — uses hardcoded production ID."""
 import json
 import logging
 import re
@@ -9,54 +9,54 @@ from ._http import get
 
 log = logging.getLogger(__name__)
 
-SEARCH_URL = "https://www.vividseats.com/search"
-
-
-def _find_event_url(query: str, date_iso: str) -> str | None:
-    try:
-        r = get(SEARCH_URL, render_js=True, params={"searchTerm": query}, timeout=60)
-        if r.status_code != 200:
-            log.info("Vivid Seats search returned %d", r.status_code)
-            return None
-    except Exception as e:
-        log.warning("Vivid search failed: %s", e)
-        return None
-    candidates = list(re.finditer(r'href="(/[^"]*?/production/(\d+))"', r.text))
-    if not candidates:
-        return None
-    if date_iso in r.text:
-        return "https://www.vividseats.com" + candidates[0].group(1)
-    return None
+EVENT_URL = "https://www.vividseats.com/noah-kahan-tickets-flushing-citi-field-7-19-2026--concerts-pop/production/6642335"
 
 
 def fetch(date_iso: str, query: str = "Noah Kahan Citi Field") -> List[Listing]:
-    event_url = _find_event_url(query, date_iso)
-    if not event_url:
-        log.info("Vivid Seats: no event URL found")
-        return []
-    try:
-        r = get(event_url, render_js=True, timeout=60)
-        if r.status_code != 200:
-            log.info("Vivid Seats event page returned %d", r.status_code)
-            return []
-    except Exception as e:
-        log.warning("Vivid Seats event page failed: %s", e)
-        return []
+    html = _fetch_html(premium=False)
+    listings = _parse(html) if html else []
+    if listings:
+        log.info("Vivid Seats: parsed %d listings", len(listings))
+        return listings
 
-    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.S)
+    log.info("Vivid Seats: retrying with premium_proxy")
+    html = _fetch_html(premium=True)
+    listings = _parse(html) if html else []
+    log.info("Vivid Seats: parsed %d listings (premium)", len(listings))
+    return listings
+
+
+def _fetch_html(premium: bool) -> str | None:
+    try:
+        r = get(EVENT_URL, render_js=True, premium_proxy=premium, timeout=90)
+        if r.status_code != 200:
+            log.info("Vivid Seats event page returned %d (premium=%s)", r.status_code, premium)
+            return None
+        return r.text
+    except Exception as e:
+        log.warning("Vivid Seats event page fetch failed: %s", e)
+        return None
+
+
+def _parse(html: str) -> List[Listing]:
+    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
     if not m:
-        log.info("Vivid Seats: __NEXT_DATA__ not found on event page")
+        log.info("Vivid Seats: __NEXT_DATA__ not found")
         return []
     try:
         data = json.loads(m.group(1))
     except json.JSONDecodeError:
+        log.warning("Vivid Seats: __NEXT_DATA__ JSON parse failed")
         return []
 
     out: List[Listing] = []
     for node in _walk(data):
         try:
-            qty = int(node.get("quantity") or node.get("availableQty") or 0)
-            price = node.get("price") or node.get("currentPrice") or node.get("listingPrice")
+            qty = int(node.get("quantity") or node.get("availableQty") or node.get("availableTickets") or 0)
+            price = (node.get("price") or node.get("currentPrice") or
+                     node.get("listingPrice") or node.get("amount"))
+            if isinstance(price, dict):
+                price = price.get("amount") or price.get("value")
             section = str(node.get("section") or node.get("sectionName") or "")
             row = node.get("row")
             if not section or qty <= 0 or not price:
@@ -67,17 +67,19 @@ def fetch(date_iso: str, query: str = "Noah Kahan Citi Field") -> List[Listing]:
                 row=str(row) if row else None,
                 quantity=qty,
                 price_per_ticket=float(price),
-                url=event_url,
+                url=EVENT_URL,
             ))
         except (TypeError, ValueError):
             continue
-    log.info("Vivid Seats: parsed %d listings", len(out))
     return out
 
 
 def _walk(obj):
     if isinstance(obj, dict):
-        if "section" in obj and ("quantity" in obj or "availableQty" in obj):
+        has_section = "section" in obj or "sectionName" in obj
+        has_qty = ("quantity" in obj or "availableQty" in obj or
+                   "availableTickets" in obj)
+        if has_section and has_qty:
             yield obj
         for v in obj.values():
             yield from _walk(v)
