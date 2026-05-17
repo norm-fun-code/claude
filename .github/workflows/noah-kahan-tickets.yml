@@ -36,6 +36,10 @@ on:
         description: "Event date (YYYY-MM-DD)"
         required: false
         default: "2026-07-19"
+      max_price:
+        description: "Max price per ticket (raise temporarily for testing)"
+        required: false
+        default: "300"
 
 permissions:
   contents: read
@@ -64,6 +68,7 @@ jobs:
           TICKETMASTER_API_KEY: ${{ secrets.TICKETMASTER_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EVENT_DATE: ${{ inputs.event_date || '2026-07-19' }}
+          MAX_PRICE_PER_TICKET: ${{ inputs.max_price || '300' }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
