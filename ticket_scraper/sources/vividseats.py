@@ -41,13 +41,18 @@ def _fetch_html(premium: bool) -> str | None:
 def _parse(html: str) -> List[Listing]:
     m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
     if not m:
-        log.info("Vivid Seats: __NEXT_DATA__ not found")
+        log.info("Vivid Seats: __NEXT_DATA__ not found | snippet: %.200s",
+                 re.sub(r'\s+', ' ', html[:400]))
         return []
     try:
         data = json.loads(m.group(1))
     except json.JSONDecodeError:
         log.warning("Vivid Seats: __NEXT_DATA__ JSON parse failed")
         return []
+
+    # Log top-level keys to help debug structure changes
+    props = data.get("props", {}).get("pageProps", {})
+    log.info("Vivid Seats __NEXT_DATA__ pageProps keys: %s", list(props.keys())[:20])
 
     out: List[Listing] = []
     for node in _walk(data):

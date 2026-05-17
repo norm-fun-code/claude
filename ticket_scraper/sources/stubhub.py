@@ -45,9 +45,24 @@ def _fetch_html(premium: bool) -> str | None:
 
 
 def _parse(html: str) -> List[Listing]:
+    # Log what data patterns are present to help diagnose structure changes
+    patterns = {
+        "__NEXT_DATA__": bool(re.search(r'id="__NEXT_DATA__"', html)),
+        "REDUX_STATE": bool(re.search(r"__REDUX_STATE__", html)),
+        "SH_DATA": bool(re.search(r"window\.SH_DATA", html)),
+        "application/json": bool(re.search(r'type="application/json"', html)),
+        "application/ld+json": bool(re.search(r'type="application/ld\+json"', html)),
+    }
+    log.info("StubHub page patterns: %s | snippet: %.200s", patterns, re.sub(r'\s+', ' ', html[html.find('<body'):html.find('<body')+400] if '<body' in html else html[:400]))
+
     m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
     if not m:
-        log.info("StubHub: __NEXT_DATA__ not found on event page")
+        # Try alternate Redux/SPA state patterns
+        m = re.search(r'window\.__REDUX_STATE__\s*=\s*(\{.*?\});\s*</script>', html, re.S)
+    if not m:
+        m = re.search(r'window\.SH_DATA\s*=\s*(\{.*?\});\s*</script>', html, re.S)
+    if not m:
+        log.info("StubHub: no known data pattern found on event page")
         return []
     try:
         data = json.loads(m.group(1))

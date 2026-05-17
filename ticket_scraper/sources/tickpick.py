@@ -50,9 +50,19 @@ def fetch(date_iso: str, query: str = "Noah Kahan Citi Field") -> List[Listing]:
         log.warning("TickPick event page fetch failed: %s", e)
         return []
 
-    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.S)
+    html = r.text
+    patterns = {
+        "__NEXT_DATA__": bool(re.search(r'id="__NEXT_DATA__"', html)),
+        "APP_DATA": bool(re.search(r"window\.APP_DATA", html)),
+        "TICKPICK": bool(re.search(r"tickpick", html[:2000], re.I)),
+    }
+    log.info("TickPick page patterns: %s | snippet: %.200s", patterns,
+             re.sub(r'\s+', ' ', html[:400]))
+    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
     if not m:
-        log.info("TickPick: __NEXT_DATA__ not found on event page")
+        m = re.search(r'window\.APP_DATA\s*=\s*(\{.*?\});\s*</script>', html, re.S)
+    if not m:
+        log.info("TickPick: no known data pattern found on event page")
         return []
     try:
         data = json.loads(m.group(1))
