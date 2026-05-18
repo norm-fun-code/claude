@@ -13,6 +13,7 @@ const app = express();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // ── Middleware ──────────────────────────────────────────────────────────────
+app.set('trust proxy', 1); // trust Railway's proxy for secure cookies
 app.use(compression());
 app.use(express.json({ limit: '2mb' }));
 
@@ -29,7 +30,7 @@ app.use(session({
   cookie: {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    sameSite: 'lax',
     maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
   },
 }));
