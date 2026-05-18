@@ -533,7 +533,7 @@ async function deleteScenario(i){
 
 function toggleCompare(){compareMode=!compareMode;buildControls();render();savePlannerState()}
 
-function chartOpts(){return{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#425466',font:{size:8.5,family:'Inter'},boxWidth:8}},tooltip:{backgroundColor:'#0a2540',borderColor:'#0a2540',borderWidth:0,titleFont:{size:10,family:'Inter'},bodyFont:{size:9,family:'Inter'},titleColor:'#fff',bodyColor:'#fff',padding:8,callbacks:{label:c=>c.dataset.label+': $'+(c.raw||0).toLocaleString()+'K'}}},scales:{x:{ticks:{color:'#8898aa',font:{size:8,family:'Inter'},maxRotation:45},grid:{display:false}},y:{ticks:{color:'#8898aa',font:{size:8,family:'Inter'},callback:v=>'$'+v+'K'},grid:{color:'#e6ebf1'}}}}}
+function chartOpts(){return{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#425466',font:{size:8.5,family:'Inter'},boxWidth:8}},tooltip:{backgroundColor:'#0a2540',borderColor:'#0a2540',borderWidth:0,titleFont:{size:10,family:'Inter'},bodyFont:{size:9,family:'Inter'},titleColor:'#fff',bodyColor:'#fff',padding:8,callbacks:{label:c=>c.dataset.label+': $'+(c.raw||0).toLocaleString()+'K'}}},scales:{x:{ticks:{color:'#8898aa',font:{size:8,family:'Inter'},maxRotation:45},grid:{display:false}},y:{min:0,ticks:{color:'#8898aa',font:{size:8,family:'Inter'},stepSize:500,callback:v=>'$'+v+'K'},grid:{color:'#e6ebf1'}}}}}
 
 function render(){
   const{R,tT,tC,tTx,tS,dp,mm}=run(P);
