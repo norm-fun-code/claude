@@ -533,7 +533,9 @@ async function deleteScenario(i){
 
 function toggleCompare(){compareMode=!compareMode;buildControls();render();savePlannerState()}
 
-function chartOpts(){return{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#425466',font:{size:8.5,family:'Inter'},boxWidth:8}},tooltip:{backgroundColor:'#0a2540',borderColor:'#0a2540',borderWidth:0,titleFont:{size:10,family:'Inter'},bodyFont:{size:9,family:'Inter'},titleColor:'#fff',bodyColor:'#fff',padding:8,callbacks:{label:c=>c.dataset.label+': $'+(c.raw||0).toLocaleString()+'K'}}},scales:{x:{ticks:{color:'#8898aa',font:{size:8,family:'Inter'},maxRotation:45},grid:{display:false}},y:{min:0,ticks:{color:'#8898aa',font:{size:8,family:'Inter'},stepSize:500,callback:v=>'$'+v+'K'},grid:{color:'#e6ebf1'}}}}}
+function fmtK(v){const a=Math.abs(v);const s=v<0?'-':'';if(a>=1000)return s+'$'+(a/1000).toFixed(1).replace(/\.0$/,'')+'M';return s+'$'+a+'K'}
+function chartOpts(){return{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#425466',font:{size:8.5,family:'Inter'},boxWidth:8}},tooltip:{backgroundColor:'#0a2540',borderColor:'#0a2540',borderWidth:0,titleFont:{size:10,family:'Inter'},bodyFont:{size:9,family:'Inter'},titleColor:'#fff',bodyColor:'#fff',padding:8,callbacks:{label:c=>c.dataset.label+': $'+(c.raw||0).toLocaleString()+'K'}}},scales:{x:{ticks:{color:'#8898aa',font:{size:8,family:'Inter'},maxRotation:45},grid:{display:false}},y:{ticks:{color:'#8898aa',font:{size:8,family:'Inter'},stepSize:500,callback:v=>fmtK(v)},grid:{color:'#e6ebf1'}}}}}
+function posOpts(){const o=chartOpts();o.scales.y.min=0;return o}
 
 function render(){
   const{R,tT,tC,tTx,tS,dp,mm}=run(P);
@@ -564,16 +566,18 @@ function render(){
   ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';
   const ctx=document.getElementById('cv').getContext('2d');const opts=chartOpts();
   if(activeTab==='nw'){
+    const po=posOpts();
     const ds=[{label:'Total NW',data:R.map(r=>Math.round(r.nw/1000)),borderColor:'#635bff',backgroundColor:'rgba(99,91,255,.06)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2.5},{label:'Liquid',data:R.map(r=>Math.round(r.liq/1000)),borderColor:'#0073e6',backgroundColor:'rgba(0,115,230,.04)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2},{label:'Equity',data:R.map(r=>Math.round(r.eq/1000)),borderColor:'#7c3aed',fill:false,tension:.3,pointRadius:1,borderWidth:1.5,borderDash:[4,3]}];
     if(compareMode)scenarios.forEach(s=>{ds.push({label:s.name+' Liquid',data:s.results.R.map(r=>Math.round(r.liq/1000)),borderColor:s.color,fill:false,tension:.3,pointRadius:3,pointBackgroundColor:s.color,borderWidth:3.5})});
-    charts.main=new Chart(ctx,{type:'line',data:{labels,datasets:ds},options:opts});
+    charts.main=new Chart(ctx,{type:'line',data:{labels,datasets:ds},options:po});
   } else if(activeTab==='tuition'){
+    const po=posOpts();
     const ds=[{label:'Tuition',data:R.map(r=>Math.round(r.tu/1000)),backgroundColor:'rgba(205,61,100,.6)',borderRadius:2},{label:'Childcare',data:R.map(r=>Math.round(r.cc/1000)),backgroundColor:'rgba(191,105,0,.5)',borderRadius:2}];
     if(compareMode)scenarios.forEach(s=>{ds.push({label:s.name,data:s.results.R.map(r=>Math.round(r.tu/1000)),type:'line',borderColor:s.color,fill:false,tension:.3,pointRadius:2,pointBackgroundColor:s.color,borderWidth:3})});
-    opts.scales.x={stacked:true,...opts.scales.x};opts.scales.y={stacked:true,...opts.scales.y};
-    charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:ds},options:opts});
+    po.scales.x={stacked:true,...po.scales.x};po.scales.y={stacked:true,...po.scales.y};
+    charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:ds},options:po});
   } else if(activeTab==='income'){
-    charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:[{label:'Norm Gross',data:R.map(r=>Math.round(r.normG/1000)),backgroundColor:'rgba(0,115,230,.6)',borderRadius:2},{label:'Nancy Gross',data:R.map(r=>Math.round(r.nancyG/1000)),backgroundColor:'rgba(124,58,237,.6)',borderRadius:2},{label:'Tax',data:R.map(r=>-Math.round(r.tax/1000)),backgroundColor:'rgba(205,61,100,.5)',borderRadius:2}]},options:{...opts,scales:{x:{stacked:true,...opts.scales.x},y:{stacked:true,...opts.scales.y,ticks:{...opts.scales.y.ticks,callback:v=>(v>=0?'':'-')+'$'+Math.abs(v)+'K'}}}}});
+    charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:[{label:'Norm Gross',data:R.map(r=>Math.round(r.normG/1000)),backgroundColor:'rgba(0,115,230,.6)',borderRadius:2},{label:'Nancy Gross',data:R.map(r=>Math.round(r.nancyG/1000)),backgroundColor:'rgba(124,58,237,.6)',borderRadius:2},{label:'Tax',data:R.map(r=>-Math.round(r.tax/1000)),backgroundColor:'rgba(205,61,100,.5)',borderRadius:2}]},options:{...opts,scales:{x:{stacked:true,...opts.scales.x},y:{stacked:true,...opts.scales.y,ticks:{...opts.scales.y.ticks,callback:v=>fmtK(v)}}}}});
   } else if(activeTab==='cashflow'){
     const ds=[{label:'Surplus',data:R.map(r=>Math.round(r.surp/1000)),backgroundColor:R.map(r=>r.surp>=0?'rgba(26,135,84,.6)':'rgba(205,61,100,.6)'),borderRadius:2}];
     if(compareMode)scenarios.forEach(s=>{ds.push({label:s.name,data:s.results.R.map(r=>Math.round(r.surp/1000)),type:'line',borderColor:s.color,fill:false,tension:.3,pointRadius:2,pointBackgroundColor:s.color,borderWidth:3})});
