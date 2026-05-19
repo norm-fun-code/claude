@@ -565,11 +565,15 @@ function render(){
     ca.innerHTML=`<div class="tw"><table><thead><tr>${['Yr','Norm','Nancy','Gross','Tax','Eff%','Net','Housing','Living','CC','Tuition','TotExp','Surplus','Liquid','Eq','NW'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{const bg=r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';return `<tr style="background:${bg}"><td style="font-weight:700;color:var(--tx)">${r.yr}</td><td style="color:var(--b)">${fmt(r.normG)}</td><td style="color:var(--p)">${fmt(r.nancyG)}</td><td>${fmt(r.gross)}</td><td style="color:var(--r)">${fmt(r.tax)}</td><td style="color:var(--a)">${(r.effRate*100).toFixed(1)}%</td><td style="color:var(--g)">${fmt(r.inc)}</td><td>${fmt(r.h)}</td><td>${fmt(r.liv)}</td><td style="color:${r.cc>0?'var(--a)':'var(--t3)'}">${r.cc>0?fmt(r.cc):'—'}</td><td style="color:${r.tu>100000?'var(--r)':r.tu>0?'var(--a)':'var(--t3)'}">${r.tu>0?fmt(r.tu):'—'}</td><td>${fmt(r.totE)}</td><td style="color:${r.surp>=0?'var(--g)':'var(--r)'};font-weight:600">${r.surp>=0?'+':''}${fmt(r.surp)}</td><td style="color:var(--b)">${fmt(r.liq)}</td><td style="color:var(--p)">${r.eq>0?fmt(r.eq):'—'}</td><td style="color:var(--g);font-weight:600">${fmt(r.nw)}</td></tr>`}).join('')}</tbody></table></div>`;return}
   ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';
   const ctx=document.getElementById('cv').getContext('2d');const opts=chartOpts();
+  // Prepend planStartYear-1 as a synthetic starting point showing initial liquid
+  const sy0=P.planStartYear||2026;
+  const nwLabels=[String(sy0-1),...labels];
+  const startLiqK=Math.round(P.startingLiquid/1000);
   if(activeTab==='nw'){
     const po=posOpts();
-    const ds=[{label:'Total NW',data:R.map(r=>Math.round(r.nw/1000)),borderColor:'#635bff',backgroundColor:'rgba(99,91,255,.06)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2.5},{label:'Liquid',data:R.map(r=>Math.round(r.liq/1000)),borderColor:'#0073e6',backgroundColor:'rgba(0,115,230,.04)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2},{label:'Equity',data:R.map(r=>Math.round(r.eq/1000)),borderColor:'#7c3aed',fill:false,tension:.3,pointRadius:1,borderWidth:1.5,borderDash:[4,3]}];
-    if(compareMode)scenarios.forEach(s=>{ds.push({label:s.name+' Liquid',data:s.results.R.map(r=>Math.round(r.liq/1000)),borderColor:s.color,fill:false,tension:.3,pointRadius:3,pointBackgroundColor:s.color,borderWidth:3.5})});
-    charts.main=new Chart(ctx,{type:'line',data:{labels,datasets:ds},options:po});
+    const ds=[{label:'Total NW',data:[startLiqK,...R.map(r=>Math.round(r.nw/1000))],borderColor:'#635bff',backgroundColor:'rgba(99,91,255,.06)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2.5},{label:'Liquid',data:[startLiqK,...R.map(r=>Math.round(r.liq/1000))],borderColor:'#0073e6',backgroundColor:'rgba(0,115,230,.04)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2},{label:'Equity',data:[0,...R.map(r=>Math.round(r.eq/1000))],borderColor:'#7c3aed',fill:false,tension:.3,pointRadius:1,borderWidth:1.5,borderDash:[4,3]}];
+    if(compareMode)scenarios.forEach(s=>{const sLiq=Math.round((s.params.startingLiquid||P.startingLiquid)/1000);ds.push({label:s.name+' Liquid',data:[sLiq,...s.results.R.map(r=>Math.round(r.liq/1000))],borderColor:s.color,fill:false,tension:.3,pointRadius:3,pointBackgroundColor:s.color,borderWidth:3.5})});
+    charts.main=new Chart(ctx,{type:'line',data:{labels:nwLabels,datasets:ds},options:po});
   } else if(activeTab==='tuition'){
     const po=posOpts();
     const ds=[{label:'Tuition',data:R.map(r=>Math.round(r.tu/1000)),backgroundColor:'rgba(205,61,100,.6)',borderRadius:2},{label:'Childcare',data:R.map(r=>Math.round(r.cc/1000)),backgroundColor:'rgba(191,105,0,.5)',borderRadius:2}];
