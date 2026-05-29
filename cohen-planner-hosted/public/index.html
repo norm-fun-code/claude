@@ -704,19 +704,30 @@ function render(){
     if(mcView){
       // Monte Carlo stress band — overlays p10–p90 NW cone + median
       const mc=runMonteCarlo(P);
+      const dfl=(v,i)=>inflationView?Math.round(v/Math.pow(1.03,i)/1000):Math.round(v/1000);
+      const planK=[startLiqK,...R.map(r=>deflK(r.nw,r.yr))];
+      const p50K=[startLiqK,...mc.band.p50.map(dfl)];
+      const p90K=[startLiqK,...mc.band.p90.map(dfl)];
+      const p10K=[startLiqK,...mc.band.p10.map(dfl)];
+      // Cap y-axis near the plan/median scale so the extreme p90 tail doesn't dominate.
+      const refMax=Math.max(...planK,...p50K);
+      const capK=Math.ceil(refMax*1.3/500)*500;
+      const clipped=Math.max(...p90K)>capK;
       ca.innerHTML=`<div id="mcInfo" style="display:flex;gap:14px;flex-wrap:wrap;font-size:10px;color:var(--t2);margin-bottom:8px;padding:8px 10px;background:var(--s2);border:1px solid var(--bd);border-radius:6px">
         <span><strong style="color:var(--tx)">${mc.trials}</strong> trials · <strong>${(mc.vol*100).toFixed(0)}%</strong> annual vol</span>
         <span>NW @ ${R[R.length-1].yr}: <strong style="color:var(--r)">${fmt(mc.finalP10)}</strong> (p10) · <strong style="color:var(--tx)">${fmt(mc.finalP50)}</strong> (median) · <strong style="color:var(--g)">${fmt(mc.finalP90)}</strong> (p90)</span>
         <span>Liquid floor p10: <strong style="color:${mc.liqFloorP10<0?'var(--r)':'var(--a)'}">${fmt(mc.liqFloorP10)}</strong></span>
         <span>Risk of running out of liquid: <strong style="color:${mc.ruinPct>5?'var(--r)':'var(--g)'}">${mc.ruinPct.toFixed(1)}%</strong></span>
+        ${clipped?`<span style="color:var(--t3);font-style:italic">chart capped at ${fmtK(capK)} — p90 tail extends to ${fmt(mc.finalP90)}</span>`:''}
       </div><canvas id="cv" style="height:300px"></canvas>`;
       const ctx2=document.getElementById('cv').getContext('2d');
-      const dfl=(v,i)=>inflationView?Math.round(v/Math.pow(1.03,i)/1000):Math.round(v/1000);
+      po.scales.y.max=capK;
+      po.scales.y.ticks.stepSize=Math.max(500,Math.ceil(capK/9/500)*500); // ~9 gridlines, fits like the original
       const ds=[
-        {label:'p10',data:[startLiqK,...mc.band.p10.map(dfl)],borderColor:'rgba(205,61,100,.4)',backgroundColor:'rgba(205,61,100,.0)',fill:false,tension:.3,pointRadius:0,borderWidth:1},
-        {label:'p10–p90 range',data:[startLiqK,...mc.band.p90.map(dfl)],borderColor:'rgba(26,135,84,.4)',backgroundColor:'rgba(99,91,255,.10)',fill:'-1',tension:.3,pointRadius:0,borderWidth:1},
-        {label:'Median (p50)',data:[startLiqK,...mc.band.p50.map(dfl)],borderColor:'#635bff',fill:false,tension:.3,pointRadius:0,borderWidth:2.5},
-        {label:'Your plan (6% flat)',data:[startLiqK,...R.map(r=>deflK(r.nw,r.yr))],borderColor:'#0a2540',fill:false,tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[5,3]}
+        {label:'p10',data:p10K,borderColor:'rgba(205,61,100,.4)',backgroundColor:'rgba(205,61,100,.0)',fill:false,tension:.3,pointRadius:0,borderWidth:1},
+        {label:'p10–p90 range',data:p90K,borderColor:'rgba(26,135,84,.4)',backgroundColor:'rgba(99,91,255,.10)',fill:'-1',tension:.3,pointRadius:0,borderWidth:1},
+        {label:'Median (p50)',data:p50K,borderColor:'#635bff',fill:false,tension:.3,pointRadius:0,borderWidth:2.5},
+        {label:'Your plan (6% flat)',data:planK,borderColor:'#0a2540',fill:false,tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[5,3]}
       ];
       charts.main=new Chart(ctx2,{type:'line',data:{labels:nwLabels,datasets:ds},options:po});
       document.getElementById('summaries').innerHTML=mcSummaryCards(mc);
