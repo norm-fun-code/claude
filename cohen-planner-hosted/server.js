@@ -1,10 +1,16 @@
 'use strict';
 require('dotenv').config();
 
+if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
+  console.error('FATAL: SESSION_SECRET env var must be set in production');
+  process.exit(1);
+}
+
 const express = require('express');
 const session = require('express-session');
 const PgSession = require('connect-pg-simple')(session);
 const compression = require('compression');
+const rateLimit = require('express-rate-limit');
 const Anthropic = require('@anthropic-ai/sdk');
 const path = require('path');
 const db = require('./db');
@@ -34,6 +40,14 @@ app.use(session({
     maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
   },
 }));
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: 'Too many login attempts. Try again in 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 function requireAuth(req, res, next) {
   if (req.session && req.session.authenticated) return next();
@@ -104,7 +118,7 @@ async function login() {
 </html>`);
 });
 
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', loginLimiter, async (req, res) => {
   const { password } = req.body;
   if (password === process.env.APP_PASSWORD) {
     req.session.authenticated = true;
@@ -288,28 +302,10 @@ app.post('/api/advisor/message', requireAuth, async (req, res) => {
   if (!chatId || !message) return res.status(400).json({ error: 'chatId and message required' });
 
   try {
-    // Persist user message
-    await db.query(
-      `UPDATE advisor_chats
-       SET messages = messages || $1::jsonb, updated_at = NOW()
-       WHERE id = $2`,
-      [JSON.stringify([{ role: 'user', content: message }]), chatId]
-    );
-
-    // Update title on first message
-    const countRes = await db.query(
-      `SELECT jsonb_array_length(messages) AS cnt FROM advisor_chats WHERE id = $1`,
-      [chatId]
-    );
-    if (countRes.rows[0]?.cnt === 1) {
-      const title = message.slice(0, 60) + (message.length > 60 ? '…' : '');
-      await db.query('UPDATE advisor_chats SET title=$1 WHERE id=$2', [title, chatId]);
-    }
-
-    // Call Anthropic
+    // Call Anthropic first — only persist to DB if it succeeds (prevents orphaned messages)
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 1800,
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4000,
       system: systemPrompt,
       messages: messages,
     });
@@ -319,19 +315,33 @@ app.post('/api/advisor/message', requireAuth, async (req, res) => {
       .map(b => b.text)
       .join('\n');
 
-    // Persist assistant reply
+    // Persist user message + assistant reply together as an atomic pair
+    const pair = [
+      { role: 'user', content: message },
+      { role: 'assistant', content: reply },
+    ];
     await db.query(
       `UPDATE advisor_chats
        SET messages = messages || $1::jsonb, updated_at = NOW()
        WHERE id = $2`,
-      [JSON.stringify([{ role: 'assistant', content: reply }]), chatId]
+      [JSON.stringify(pair), chatId]
     );
+
+    // Update title when this is the first exchange
+    const countRes = await db.query(
+      `SELECT jsonb_array_length(messages) AS cnt FROM advisor_chats WHERE id = $1`,
+      [chatId]
+    );
+    if ((countRes.rows[0]?.cnt || 0) <= 2) {
+      const title = message.slice(0, 60) + (message.length > 60 ? '…' : '');
+      await db.query('UPDATE advisor_chats SET title=$1 WHERE id=$2', [title, chatId]);
+    }
 
     res.json({ reply, usage: response.usage });
   } catch (err) {
     console.error('Advisor message error:', err);
-    const message = err.message || 'Anthropic API error';
-    res.status(500).json({ error: message.slice(0, 200) });
+    const msg = err.message || 'Anthropic API error';
+    res.status(500).json({ error: msg.slice(0, 200) });
   }
 });
 

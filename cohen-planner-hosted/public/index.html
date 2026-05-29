@@ -266,6 +266,7 @@ const D={
   propTaxBase:18000,maintBase:10000,homeAppreciation:.03,
   suburbAutoBoost:3500,suburbInsBoost:1500,suburbUtilBoost:2500,
   investReturn:.06,capGainsTaxRate:.345,costBasisPct:.55,
+  k401Start:210000,
 };
 let P={...D};let scenarios=[];let compareMode=false;let activeScenarioIdx=-1;
 
@@ -374,7 +375,7 @@ function run(p){
   const baseYr=sy+4; // year when rolling model hands off to base+growth
   const kids=[p.kid1Birth];if(p.numKids>=2)kids.push(p.kid2Birth);if(p.numKids>=3)kids.push(p.kid3Birth);if(p.numKids>=4)kids.push(p.kid4Birth);
   const dp=p.homePrice*(p.downPctg/100),ma=p.homePrice-dp,am=mPmt(ma,p.mortgageRate/100);
-  let liq=p.startingLiquid,k401=210000,tT=0,tC=0,tTx=0,tS=0;const R=[];
+  let liq=p.startingLiquid,k401=p.k401Start||210000,tT=0,tC=0,tTx=0,tS=0;const R=[];
   for(let yr=sy;yr<=2058;yr++){
     const nk=kids.filter(k=>yr>=k).length;
     const yIdx=yr-sy;
@@ -437,8 +438,10 @@ function run(p){
 }
 
 // ═══ UI ═══
-let activeTab='nw';let charts={};
+let activeTab='nw';let charts={};let inflationView=false;
 function destroyCharts(){Object.values(charts).forEach(c=>c&&c.destroy());charts={}}
+function deflK(v,yr){if(!inflationView)return Math.round(v/1000);const sy=P.planStartYear||2026;return Math.round(v/Math.pow(1.03,yr-sy)/1000)}
+function toggleInflation(){inflationView=!inflationView;const b=document.getElementById('inflBtn');if(b)b.textContent=inflationView?'Nominal $':'Real $';render()}
 
 function buildControls(){
   const s=(l,k,mn,mx,st,fn)=>`<div class="sr"><div class="sh"><span class="sl">${l}</span><span class="sv" id="v_${k}">${fn?fn(P[k]):P[k]}</span></div><input type="range" id="s_${k}" min="${mn}" max="${mx}" step="${st}" value="${P[k]}" oninput="U('${k}',this.value)"></div>`;
@@ -448,6 +451,7 @@ function buildControls(){
   h+=`<div style="margin-bottom:8px"><button class="btn btn-g" onclick="saveScenario()" style="margin-bottom:3px">💾 Save as New</button>`;
   if(activeScenarioIdx>=0)h+=`<button class="btn" onclick="updateScenario(${activeScenarioIdx})" style="margin-bottom:3px;border-color:rgba(245,183,49,.3);color:var(--a)">🔄 Update "${scenarios[activeScenarioIdx]?.name||''}"</button>`;
   if(scenarios.length>0)h+=`<button class="btn" onclick="toggleCompare()" style="margin-bottom:3px">${compareMode?'Exit Compare':'📊 Compare'}</button>`;
+  h+=`<button class="btn" onclick="rollForward()" style="margin-bottom:3px;border-color:rgba(8,145,178,.3);color:var(--c);background:#e0f7fa">📅 Roll Forward → ${sy+1}</button>`;
   h+=`</div>`;
   h+=`<div class="st">👶 Kids</div>`;
   h+=s('# of kids','numKids',1,4,1);h+=s('Kid 1 born','kid1Birth',2026,2030,1);
@@ -481,7 +485,7 @@ function buildControls(){
   h+=`<div class="st">🏠 Home</div>`;
   h+=s('Purchase year','homePurchaseYear',2028,2035,1)+s('Price','homePrice',1000000,3000000,50000,v=>'$'+(v/1e6).toFixed(2)+'M')+s('Down %','downPctg',20,60,5,v=>v+'%')+s('Mortgage rate','mortgageRate',3,8,.25,v=>v+'%')+s('Property tax/yr','propTaxBase',8000,50000,1000,fmtF);
   h+=`<div class="st">📈 Returns & Tax</div>`;
-  h+=s('Portfolio return','investReturn',.03,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Home appreciation','homeAppreciation',.01,.05,.005,v=>(v*100).toFixed(1)+'%')+s('Starting liquid','startingLiquid',500000,2000000,50000,fmtF)+s('NYC rent','nycRent',4000,8000,100,v=>'$'+v.toLocaleString()+'/mo');
+  h+=s('Portfolio return','investReturn',.03,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Home appreciation','homeAppreciation',.01,.05,.005,v=>(v*100).toFixed(1)+'%')+s('Starting liquid','startingLiquid',500000,2000000,50000,fmtF)+s('Starting 401k','k401Start',0,500000,10000,fmtF)+s('NYC rent','nycRent',4000,8000,100,v=>'$'+v.toLocaleString()+'/mo');
   h+=`<div style="height:1px;background:var(--bd);margin:4px 0"></div>`;
   h+=s('Cap gains rate (sales)','capGainsTaxRate',.15,.35,.005,v=>(v*100).toFixed(1)+'%')+s('Cost basis %','costBasisPct',.30,.80,.05,v=>(v*100).toFixed(0)+'%');
   h+=`<div style="height:1px;background:var(--bd);margin:6px 0"></div>`;
@@ -496,7 +500,22 @@ async function resetAll(){
   buildControls();render();
 }
 
-const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,nannyEndAge:v=>v+' yrs',nannyHourlyRate:v=>'$'+v,nannyDaysPerWeek:null,daycareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normCashY0:fmtF,normStockY0:fmtF,normCashY1:fmtF,normStockY1:fmtF,normCashY2:fmtF,normStockY2:fmtF,normCashY3:fmtF,normStockY3:fmtF,normCashBase:fmtF,normStockBase:fmtF,normGrowth:v=>(v*100).toFixed(1)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo',capGainsTaxRate:v=>(v*100).toFixed(1)+'%',costBasisPct:v=>(v*100).toFixed(0)+'%'};
+function rollForward(){
+  const nextYear=(P.planStartYear||2026)+1;
+  if(!confirm(`Roll plan forward to ${nextYear}?\n\nThis will:\n• Shift income inputs: Y1→Y0, Y2→Y1, Y3→Y2\n• Set new Y3 to base rates\n\nYou'll be prompted to update Starting Liquid.`))return;
+  const liqStr=prompt(`Update Starting Liquid for Jan ${nextYear}\n(enter your actual current wealth):`,P.startingLiquid.toLocaleString());
+  // Shift Norm income forward
+  P.normCashY0=P.normCashY1;P.normCashY1=P.normCashY2;P.normCashY2=P.normCashY3;P.normCashY3=P.normCashBase;
+  P.normStockY0=P.normStockY1;P.normStockY1=P.normStockY2;P.normStockY2=P.normStockY3;P.normStockY3=P.normStockBase;
+  // Shift Nancy W2 forward
+  P.nancyW2Y0=P.nancyW2Y1;P.nancyW2Y1=P.nancyW2Y2;P.nancyW2Y2=P.nancyW2Y3;
+  // Advance plan year
+  P.planStartYear=nextYear;
+  if(liqStr!==null){const v=parseFloat(String(liqStr).replace(/[,$\s]/g,''));if(!isNaN(v)&&v>0)P.startingLiquid=v}
+  buildControls();render();savePlannerState();
+}
+
+const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,nannyEndAge:v=>v+' yrs',nannyHourlyRate:v=>'$'+v,nannyDaysPerWeek:null,daycareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normCashY0:fmtF,normStockY0:fmtF,normCashY1:fmtF,normStockY1:fmtF,normCashY2:fmtF,normStockY2:fmtF,normCashY3:fmtF,normStockY3:fmtF,normCashBase:fmtF,normStockBase:fmtF,normGrowth:v=>(v*100).toFixed(1)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo',capGainsTaxRate:v=>(v*100).toFixed(1)+'%',costBasisPct:v=>(v*100).toFixed(0)+'%'};
 
 function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'+key);const fn=SF[key];if(el&&fn)el.textContent=fn(P[key]);else if(el)el.textContent=P[key];if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear')buildControls();activeScenarioIdx=-1;render();savePlannerState()}
 
@@ -543,7 +562,7 @@ function render(){
   const peak=R.reduce((a,b)=>b.tu>a.tu?b:a),minL=R.reduce((a,b)=>b.liq<a.liq?b:a);
   const r26=R[0];
   document.getElementById('kpis').innerHTML=`
-    <div class="kpi"><div class="kpi-l">📊 2026 Eff Tax</div><div class="kpi-v" style="color:var(--a)">${(r26.effRate*100).toFixed(1)}%</div><div class="kpi-s">${fmtF(r26.tax)} on ${fmtF(r26.gross)}</div></div>
+    <div class="kpi"><div class="kpi-l">📊 ${r26.yr} Eff Tax</div><div class="kpi-v" style="color:var(--a)">${(r26.effRate*100).toFixed(1)}%</div><div class="kpi-s">${fmtF(r26.tax)} on ${fmtF(r26.gross)}</div></div>
     <div class="kpi"><div class="kpi-l">🏠 Post-Down</div><div class="kpi-v" style="color:${pliq>800000?'var(--g)':'var(--a)'}">${fmt(pliq)}</div><div class="kpi-s">${P.homePurchaseYear}</div></div>
     <div class="kpi"><div class="kpi-l">🎓 Tuition</div><div class="kpi-v" style="color:var(--r)">${fmt(tT)}</div><div class="kpi-s">${P.numKids} kids</div></div>
     <div class="kpi"><div class="kpi-l">💸 Tax on Sales</div><div class="kpi-v" style="color:var(--r)">${fmt(tTx)}</div><div class="kpi-s">${fmt(tS)} sold</div></div>
@@ -554,7 +573,7 @@ function render(){
   const _sy=P.planStartYear||2026;const _by=_sy+4;
   if(np)np.textContent=`${_by}: ${fmtF(Math.round((P.normCashBase??275000)+(P.normStockBase??150000)))} · ${_by+10}: ${fmtF(Math.round((P.normCashBase??275000)*(1+P.normGrowth)**10+(P.normStockBase??150000)))}`;
   const nap=document.getElementById('nancy_preview');
-  if(nap){const nc=Math.min(P.nancyMaxClients,P.nancyRampClients+(P.nancyMaxClients-P.nancyRampClients)*Math.max(0,Math.min(1,(2035-P.nancyRampYear)/P.nancyRampYears)));nap.textContent=`2035: ~${Math.round(nc)} clients → ${fmtF(Math.round(nc*P.nancyHourlyRate*P.nancyWeeksPerYear))} gross`}
+  if(nap){const matYr=P.nancyRampYear+P.nancyRampYears;const nc=Math.min(P.nancyMaxClients,P.nancyRampClients+(P.nancyMaxClients-P.nancyRampClients)*Math.max(0,Math.min(1,(matYr-P.nancyRampYear)/P.nancyRampYears)));nap.textContent=`${matYr}: ~${Math.round(nc)} clients → ${fmtF(Math.round(nc*P.nancyHourlyRate*P.nancyWeeksPerYear))} gross`}
   let sc='';if(scenarios.length>0){sc='<div class="scenario-bar"><span style="font-size:7px;color:var(--t3);font-weight:600">SAVED:</span>';
     scenarios.forEach((s,i)=>{const isA=activeScenarioIdx===i;sc+=`<div class="scenario-chip" onclick="loadScenario(${i})" style="border-color:${isA?s.color:s.color+'40'};color:${s.color};${isA?'background:'+s.color+'15':''}"><span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:${s.color}"></span>${s.name}${isA?' ✓':''}<span class="x" onclick="event.stopPropagation();deleteScenario(${i})">✕</span></div>`});
     if(activeScenarioIdx===-1)sc+=`<span style="font-size:7px;color:var(--t3);font-style:italic;padding:3px">● Unsaved</span>`;sc+='</div>'}
@@ -571,8 +590,8 @@ function render(){
   const startLiqK=Math.round(P.startingLiquid/1000);
   if(activeTab==='nw'){
     const po=posOpts();
-    const ds=[{label:'Total NW',data:[startLiqK,...R.map(r=>Math.round(r.nw/1000))],borderColor:'#635bff',backgroundColor:'rgba(99,91,255,.06)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2.5},{label:'Liquid',data:[startLiqK,...R.map(r=>Math.round(r.liq/1000))],borderColor:'#0073e6',backgroundColor:'rgba(0,115,230,.04)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2},{label:'Equity',data:[0,...R.map(r=>Math.round(r.eq/1000))],borderColor:'#7c3aed',fill:false,tension:.3,pointRadius:1,borderWidth:1.5,borderDash:[4,3]}];
-    if(compareMode)scenarios.forEach(s=>{const sLiq=Math.round((s.params.startingLiquid||P.startingLiquid)/1000);ds.push({label:s.name+' Liquid',data:[sLiq,...s.results.R.map(r=>Math.round(r.liq/1000))],borderColor:s.color,fill:false,tension:.3,pointRadius:3,pointBackgroundColor:s.color,borderWidth:3.5})});
+    const ds=[{label:'Total NW'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.nw,r.yr))],borderColor:'#635bff',backgroundColor:'rgba(99,91,255,.06)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2.5},{label:'Liquid'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.liq,r.yr))],borderColor:'#0073e6',backgroundColor:'rgba(0,115,230,.04)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2},{label:'Equity'+(inflationView?' (real)':''),data:[0,...R.map(r=>deflK(r.eq,r.yr))],borderColor:'#7c3aed',fill:false,tension:.3,pointRadius:1,borderWidth:1.5,borderDash:[4,3]}];
+    if(compareMode)scenarios.forEach(s=>{const sLiq=Math.round((s.params.startingLiquid||P.startingLiquid)/1000);ds.push({label:s.name+' Liquid',data:[sLiq,...s.results.R.map(r=>deflK(r.liq,r.yr))],borderColor:s.color,fill:false,tension:.3,pointRadius:3,pointBackgroundColor:s.color,borderWidth:3.5})});
     charts.main=new Chart(ctx,{type:'line',data:{labels:nwLabels,datasets:ds},options:po});
   } else if(activeTab==='tuition'){
     const po=posOpts();
@@ -602,6 +621,7 @@ document.getElementById('main').innerHTML=`
     <button data-tab="cashflow" onclick="setTab('cashflow')">💸 Cash Flow</button>
     <button data-tab="table" onclick="setTab('table')">📋 Table</button>
     <button data-tab="advisor" onclick="setTab('advisor')">🤖 AI Advisor</button>
+    <button id="inflBtn" onclick="toggleInflation()" style="margin-left:auto;font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit">Real $</button>
   </div>
   <div class="cc" id="chartArea"><canvas id="cv" style="height:300px"></canvas></div>
   <div class="sg" id="summaries"></div>`;
@@ -672,7 +692,7 @@ function advMarkdown(text){
 function buildLiveContext(R,P){
   const y26=R[0];
   const y30=R.find(r=>r.yr===P.homePurchaseYear)||R[4];
-  const y43=R.find(r=>r.yr===2043);
+  const peakTuition=R.reduce((a,b)=>b.tu>a.tu?b:a);
   const y58=R[R.length-1];
   const deficitYrs=R.filter(r=>r.surp<0).length;
   const totalDef=R.filter(r=>r.surp<0).reduce((a,b)=>a+Math.abs(b.surp),0);
@@ -695,8 +715,8 @@ INCOME (${planSY} base year)
 
 LIFECYCLE PROJECTIONS (current plan)
 • Starting liquid NW: ${fmt(P.startingLiquid)}
-• Net worth at 2058: ${fmt(y58.nw)} ($${(y58.nw/1e6).toFixed(2)}M)
-• 401k at 2058: ${fmt(y58.k401)}
+• Net worth at ${y58.yr}: ${fmt(y58.nw)} ($${(y58.nw/1e6).toFixed(2)}M)
+• 401k at ${y58.yr}: ${fmt(y58.k401)}
 • Grand total at 65: ${fmt(y58.nw+y58.k401)}
 • Deficit years over lifecycle: ${deficitYrs}
 • Worst single year: ${fmt(worst)} (peak crunch)
@@ -715,7 +735,7 @@ HOME PURCHASE PLAN
 KIDS & TUITION
 • ${P.numKids} kids planned, births: ${P.kid1Birth}, ${P.kid2Birth}${P.numKids>=3?', '+P.kid3Birth:''}${P.numKids>=4?', '+P.kid4Birth:''}
 • Total lifecycle tuition: ${fmt(totTuit)}
-${y43?`• Peak tuition year (2043): ${fmt(y43.tu)} (3 kids overlapping)`:''}
+${peakTuition.tu>0?`• Peak tuition year (${peakTuition.yr}): ${fmt(peakTuition.tu)} (${peakTuition.kiy} kids in school)`:''}
 • Yeshiva: Barkai. Kid 1 enters Ganon at age ${P.kid1YeshivaStartAge}, Kids 2+ enter Orot at age ${P.yeshivaStartAge}
 • Tuition rates (2026): Orot/Ganon ~$12-14K, K $25K, 1st-5th $32K, 6-8th $36K, HS $40K
 • Tuition inflation: ${(P.tuitionInflation*100).toFixed(1)}%/yr
@@ -744,7 +764,7 @@ CURRENT HOLDINGS (recent snapshot from his portfolio)
 • Coinbase ~$36K: SOL $15.5K, ETH $10.5K, LINK $10.3K (no BTC by choice)
 • Stripe RSUs ~$555K (earmarked for Brooklyn down payment)
 • Private investments ~$42K
-• 401k ~$210K
+• 401k ~${fmt(P.k401Start||210000)} (starting balance)
 
 INVESTING PRINCIPLES NORM OPERATES BY
 • Core/satellite: ~65% FXAIX index, ~35% high-conviction names
@@ -769,7 +789,7 @@ INVESTING PRINCIPLES NORM OPERATES BY
 function renderAdvisorTab(R,P){
   const ca=document.getElementById('chartArea');
   ca.innerHTML=`<div class="adv-toolbar">
-    <span class="ctx-pill">Context: <strong>LIVE</strong> · ${R.length}yr plan · $${(R[R.length-1].nw/1e6).toFixed(1)}M @ 2058</span>
+    <span class="ctx-pill">Context: <strong>LIVE</strong> · ${R.length}yr plan · $${(R[R.length-1].nw/1e6).toFixed(1)}M @ ${R[R.length-1].yr}</span>
     <button onclick="advExportChats()">📥 Export</button>
     <button onclick="advImportChats()">📤 Import</button>
   </div>
