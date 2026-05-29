@@ -33,6 +33,15 @@ async function initSchema() {
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS snapshots (
+      id TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      plan_year INT,
+      params JSONB NOT NULL DEFAULT '{}',
+      summary JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
   `);
 }
 

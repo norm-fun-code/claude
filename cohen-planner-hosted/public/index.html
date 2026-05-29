@@ -64,6 +64,19 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 .tabs button{padding:6px 12px;border-radius:5px;font-size:11px;font-weight:500;cursor:pointer;border:none;background:transparent;color:var(--t2);font-family:inherit;transition:all .12s}
 .tabs button:hover{color:var(--tx);background:var(--s3)}
 .tabs button.active{background:var(--accent);color:#fff;font-weight:600}
+#mcBtn.active{background:var(--p)!important;color:#fff!important;border-color:var(--p)!important}
+.snap-bar{display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap;align-items:center}
+.snap-chip{padding:4px 9px;border-radius:6px;font-size:9.5px;font-weight:500;cursor:pointer;border:1px solid rgba(8,145,178,.3);background:#e0f7fa;color:var(--c);display:flex;align-items:center;gap:4px;font-family:inherit;transition:all .12s}
+.snap-chip.active{background:var(--c);color:#fff}
+.snap-chip .x{font-size:8px;opacity:.6;margin-left:3px}.snap-chip .x:hover{opacity:1;color:var(--r)}
+@media print{
+  body{padding:0;font-size:11px}
+  .panel,.tabs button#mcBtn,.tabs button#inflBtn,.logout-btn,.sync-pill,.adv-input-area,.scenario-bar,.snap-bar{display:none!important}
+  .tabs button:not(.active){display:none}
+  .layout{grid-template-columns:1fr;display:block}
+  .cc,.kpi,.sc{box-shadow:none;border-color:#ccc}
+  @page{margin:1.2cm}
+}
 .cc{background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:12px;box-shadow:var(--shadow-sm)}
 .sg{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .sc{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:11px;box-shadow:var(--shadow-sm)}
@@ -177,10 +190,31 @@ function bracketTax(income,brackets){let t=0,p=0;for(const[top,r]of brackets){co
 
 function calcTax(grossIncome,p,yr,numKids){
   const pretax=p.pretax401k+p.pretaxBenefits;
-  const agi=grossIncome-pretax;
+  const normW2=p._normW2||0;const nancyW2=p._nancyW2||0;const nancySE=p._nancySE||0;
+  const overhead=p._nancyOverhead||0;
+  // ── FICA / SE tax (computed first: half of SE tax is deductible above the line) ──
+  const ssCap=184500;
+  const normSS=Math.min(normW2,ssCap)*.062;
+  const normMed=normW2*.0145;
+  let nancySS=0,nancyMed=0,seTaxHalf=0;
+  if(nancySE>0){
+    const seBase=nancySE*.9235;
+    nancySS=Math.min(seBase,ssCap)*.124;
+    nancyMed=seBase*.029;
+    seTaxHalf=.5*(nancySS+nancyMed);
+  } else {
+    nancySS=Math.min(nancyW2,ssCap)*.062;
+    nancyMed=nancyW2*.0145;
+  }
+  const combinedMedWages=normW2+(nancySE>0?nancySE*.9235:nancyW2);
+  const addlMedicare=Math.max(0,combinedMedWages-250000)*.009;
+  const totalFICA=normSS+normMed+nancySS+nancyMed+addlMedicare;
+  // ── AGI: SE income is already net of Schedule C overhead; deduct half SE tax ──
+  const agi=Math.max(0,(normW2+nancyW2+nancySE)-pretax-seTaxHalf);
+  // ── Itemized deductions: SALT (capped, OBBBA phaseout, $10K floor) + mortgage int + charity ──
   const saltBase=40400;
   const saltPhaseout=Math.max(0,(agi-505000)*0.30);
-  const saltCap=Math.max(0,saltBase-saltPhaseout);
+  const saltCap=Math.max(10000,saltBase-saltPhaseout);
   let mortInt=0,deductibleMortInt=0;
   if(yr>=p.homePurchaseYear){
     const mortAmt=p.homePrice*(1-p.downPctg/100);
@@ -192,52 +226,33 @@ function calcTax(grossIncome,p,yr,numKids){
     const mortCap=750000;
     deductibleMortInt=mortInt*Math.min(1,mortCap/mortAmt);
   }
-  const itemized=saltCap+deductibleMortInt;
+  const sy=p.planStartYear||2026;
+  const charityPaid=(p.baseCharity||0)*(1+(p.expenseInflation||0))**(yr-sy);
+  const deductibleCharity=Math.max(0,charityPaid-0.005*agi); // OBBBA 2026: 0.5% AGI floor for itemizers
+  const itemized=saltCap+deductibleMortInt+deductibleCharity;
   const stdDeduct=32200;
   const deduction=Math.max(stdDeduct,itemized);
+  // ── QBI (SSTB phaseout; base reduced by half SE tax) ──
   let qbi=0;
-  if(p.nancySoloPractice&&yr>=p.nancyRampYear){
-    const yrsIn=yr-p.nancyRampYear;
-    let cl=yrsIn<0?0:yrsIn>=p.nancyRampYears?p.nancyMaxClients:p.nancyRampClients+(p.nancyMaxClients-p.nancyRampClients)*(yrsIn/p.nancyRampYears);
-    const nancyGross=cl*p.nancyHourlyRate*p.nancyWeeksPerYear;
-    const overhead=p.nancyPracticeOverhead+(yr>=p.homePurchaseYear?p.nancyHomeOfficeDeduct:0);
-    const seNet=Math.max(0,nancyGross-overhead);
-    if(seNet>0){
-      const qbiBase=seNet*p.nancyQBIRate;
-      if(agi<383900)qbi=qbiBase;
-      else if(agi<483900)qbi=qbiBase*(1-(agi-383900)/100000);
-    }
+  if(nancySE>0){
+    const qbiBase=Math.max(0,nancySE-seTaxHalf)*p.nancyQBIRate;
+    if(agi<383900)qbi=qbiBase;
+    else if(agi<483900)qbi=qbiBase*(1-(agi-383900)/100000);
   }
   const fedTaxable=Math.max(0,agi-deduction-qbi);
   let federal=bracketTax(fedTaxable,FED_BR);
   if(numKids>0){
-    let ctc=numKids*2000;
-    if(agi>400000)ctc=Math.max(0,ctc-(agi-400000)/1000*50);
+    let ctc=numKids*2200; // OBBBA 2025+: $2,200/child under 17
+    if(agi>400000)ctc=Math.max(0,ctc-Math.ceil((agi-400000)/1000)*50);
     federal=Math.max(0,federal-ctc);
   }
   const nysTaxable=Math.max(0,agi-16050);
   const stateT=bracketTax(nysTaxable,NYS_BR);
   const cityT=bracketTax(nysTaxable,NYC_BR);
-  const normW2=p._normW2||0;const nancyW2=p._nancyW2||0;const nancySE=p._nancySE||0;
-  const ssCap=184500;
-  const normSS=Math.min(normW2,ssCap)*.062;
-  const normMed=normW2*.0145;
-  let nancySS=0,nancyMed=0;
-  if(nancySE>0){
-    const seBase=nancySE*.9235;
-    nancySS=Math.min(seBase,ssCap)*.124;
-    nancyMed=seBase*.029;
-  } else {
-    nancySS=Math.min(nancyW2,ssCap)*.062;
-    nancyMed=nancyW2*.0145;
-  }
-  const combinedMedWages=normW2+(nancySE>0?nancySE*.9235:nancyW2);
-  const addlMedicare=Math.max(0,combinedMedWages-250000)*.009;
-  const totalFICA=normSS+normMed+nancySS+nancyMed+addlMedicare;
   const incomeTax=federal+stateT+cityT;
   const allInTax=incomeTax+Math.max(0,totalFICA);
   const effRate=grossIncome>0?allInTax/grossIncome:0;
-  const net=grossIncome-allInTax-pretax;
+  const net=grossIncome-allInTax-pretax-overhead; // overhead is a real business cash outflow
   return{allInTax:Math.round(allInTax),incomeTax:Math.round(incomeTax),fica:Math.round(Math.max(0,totalFICA)),federal:Math.round(federal),state:Math.round(stateT),city:Math.round(cityT),effRate,net:Math.round(net),gross:Math.round(grossIncome),agi:Math.round(agi),deduction:Math.round(deduction),qbi:Math.round(qbi),saltCap:Math.round(saltCap),mortInt:Math.round(mortInt),itemizing:itemized>stdDeduct};
 }
 
@@ -267,6 +282,7 @@ const D={
   suburbAutoBoost:3500,suburbInsBoost:1500,suburbUtilBoost:2500,
   investReturn:.06,capGainsTaxRate:.345,costBasisPct:.55,
   k401Start:210000,
+  mcVol:.14,
 };
 let P={...D};let scenarios=[];let compareMode=false;let activeScenarioIdx=-1;
 
@@ -370,7 +386,7 @@ function mBal(pr,r,yp,ty=30){if(yp>=ty||pr<=0)return 0;const m=r/12,n=ty*12,pp=y
 const fmt=n=>Math.abs(n)>=1e6?`$${(n/1e6).toFixed(2)}M`:Math.abs(n)>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${Math.round(n)}`;
 const fmtF=n=>`$${Math.round(n).toLocaleString()}`;
 
-function run(p){
+function run(p,rets){
   const sy=p.planStartYear||2026;
   const baseYr=sy+4; // year when rolling model hands off to base+growth
   const kids=[p.kid1Birth];if(p.numKids>=2)kids.push(p.kid2Birth);if(p.numKids>=3)kids.push(p.kid3Birth);if(p.numKids>=4)kids.push(p.kid4Birth);
@@ -383,20 +399,22 @@ function run(p){
     if(yIdx<4){normCash=p['normCashY'+yIdx]??p.normCashBase;normStock=p['normStockY'+yIdx]??p.normStockBase}
     else{normCash=(p.normCashBase??275000)*(1+p.normGrowth)**(yr-baseYr);normStock=p.normStockBase??150000}
     const normW2=normCash+normStock;
-    let nancyGross,nancyIsSolo=false,nancySENet=0;
+    let nancyGross,nancyIsSolo=false,nancySENet=0,nancyOH=0;
     if(yIdx<4&&yr<p.nancyRampYear){nancyGross=p['nancyW2Y'+yIdx]??100000}
     else{
       nancyIsSolo=p.nancySoloPractice===1;
       const yrsIn=yr-p.nancyRampYear;
       let cl=yrsIn<0?0:yrsIn>=p.nancyRampYears?p.nancyMaxClients:p.nancyRampClients+(p.nancyMaxClients-p.nancyRampClients)*(yrsIn/p.nancyRampYears);
       nancyGross=Math.round(cl*p.nancyHourlyRate*p.nancyWeeksPerYear);
-      if(nancyIsSolo){const oh=p.nancyPracticeOverhead+(yr>=p.homePurchaseYear?p.nancyHomeOfficeDeduct:0);nancySENet=Math.max(0,nancyGross-oh)}
+      if(nancyIsSolo){nancyOH=p.nancyPracticeOverhead+(yr>=p.homePurchaseYear?p.nancyHomeOfficeDeduct:0);nancySENet=Math.max(0,nancyGross-nancyOH)}
     }
     const grossIncome=normW2+nancyGross;
-    const taxP={...p,_normW2:normW2,_nancyW2:nancyIsSolo?0:nancyGross,_nancySE:nancyIsSolo?nancySENet:0};
-    const tax=calcTax(grossIncome,taxP,yr,nk);
+    const ctcKids=kids.filter(k=>yr>=k&&(yr-k)<17).length;
+    const taxP={...p,_normW2:normW2,_nancyW2:nancyIsSolo?0:nancyGross,_nancySE:nancyIsSolo?nancySENet:0,_nancyOverhead:nancyIsSolo?nancyOH:0};
+    const tax=calcTax(grossIncome,taxP,yr,ctcKids);
     const inc=tax.net;
-    k401+=p.pretax401k+p.company401kMatch;k401*=(1+p.investReturn);
+    const ret=rets?rets[yIdx]:p.investReturn; // Monte Carlo: per-year random return
+    k401+=p.pretax401k+p.company401kMatch;k401*=(1+ret);
     const sub=yr>=p.homePurchaseYear;
     let h=sub?am+p.propTaxBase*1.02**(yr-p.homePurchaseYear)+p.maintBase*1.02**(yr-p.homePurchaseYear):p.nycRent*12;
     const inf=(1+p.expenseInflation)**(yr-sy);
@@ -429,7 +447,7 @@ function run(p){
     const totE=h+liv+cc+tu,surp=inc-totE;
     if(yr===p.homePurchaseYear)liq-=dp;
     let txS=0,sold=0;if(surp>=0){liq+=surp}else{const def=Math.abs(surp),gp=1-p.costBasisPct,td=gp*p.capGainsTaxRate,gs=def/(1-td);txS=gs-def;sold=gs;liq-=gs}
-    liq*=(1+p.investReturn);tTx+=txS;tS+=sold;
+    liq*=(1+ret);tTx+=txS;tS+=sold;
     let hv=0,mb=0,eq=0;if(sub){const yo=yr-p.homePurchaseYear+1;hv=p.homePrice*(1+p.homeAppreciation)**yo;mb=mBal(ma,p.mortgageRate/100,yo);eq=hv-mb}
     const kiy=kids.filter((k,ki)=>{const a=yr-k;const sa=ki===0?p.kid1YeshivaStartAge:p.yeshivaStartAge;return a>=sa&&a<=p.yeshivaEndAge}).length;
     R.push({yr,normG:Math.round(normW2),nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,inc,h:Math.round(h),liv:Math.round(liv),cc:Math.round(cc),tu:Math.round(tu),totE:Math.round(totE),surp:Math.round(surp),txS:Math.round(txS),sold:Math.round(sold),liq:Math.round(liq),eq:Math.round(eq),nw:Math.round(liq+eq),k401:Math.round(k401),kiy,nk});
@@ -437,11 +455,102 @@ function run(p){
   return{R,tT:Math.round(tT),tC:Math.round(tC),tTx:Math.round(tTx),tS:Math.round(tS),am,dp,mm:am/12};
 }
 
+// ═══ MONTE CARLO — sequence-of-returns stress ═══
+// Each trial draws a fresh sequence of annual portfolio returns from a normal
+// distribution (mean=investReturn, sd=mcVol). Bad early returns hurt more
+// because deficits force stock sales in down markets — that's the sequence risk.
+let _mcCache=null;
+function randNorm(mean,sd){ // Box-Muller
+  let u=0,v=0;while(u===0)u=Math.random();while(v===0)v=Math.random();
+  return mean+sd*Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+}
+function runMonteCarlo(p,trials=600){
+  const sy=p.planStartYear||2026;const nYears=2058-sy+1;
+  const vol=p.mcVol??.14;const mean=p.investReturn;
+  const nwPaths=[],liqPaths=[],finalNW=[],floorLiq=[];let ruin=0;
+  for(let t=0;t<trials;t++){
+    const rets=[];for(let i=0;i<nYears;i++)rets.push(Math.max(-.6,randNorm(mean,vol)));
+    const{R}=run(p,rets);
+    nwPaths.push(R.map(r=>r.nw));liqPaths.push(R.map(r=>r.liq));
+    finalNW.push(R[R.length-1].nw);
+    const minLiq=Math.min(...R.map(r=>r.liq));floorLiq.push(minLiq);
+    if(minLiq<0)ruin++;
+  }
+  // Per-year percentiles of net worth
+  const pct=(arr,q)=>{const s=[...arr].sort((a,b)=>a-b);const idx=(s.length-1)*q;const lo=Math.floor(idx),hi=Math.ceil(idx);return s[lo]+(s[hi]-s[lo])*(idx-lo)};
+  const band={p10:[],p50:[],p90:[]};
+  for(let y=0;y<nYears;y++){
+    const col=nwPaths.map(path=>path[y]);
+    band.p10.push(pct(col,.10));band.p50.push(pct(col,.50));band.p90.push(pct(col,.90));
+  }
+  finalNW.sort((a,b)=>a-b);
+  return{band,trials,vol,
+    finalP10:pct(finalNW,.10),finalP50:pct(finalNW,.50),finalP90:pct(finalNW,.90),
+    ruinPct:ruin/trials*100,
+    liqFloorP10:pct(floorLiq,.10)};
+}
+
 // ═══ UI ═══
-let activeTab='nw';let charts={};let inflationView=false;
+let activeTab='nw';let charts={};let inflationView=false;let mcView=false;let snapshots=[];let overlaySnapId=null;
 function destroyCharts(){Object.values(charts).forEach(c=>c&&c.destroy());charts={}}
 function deflK(v,yr){if(!inflationView)return Math.round(v/1000);const sy=P.planStartYear||2026;return Math.round(v/Math.pow(1.03,yr-sy)/1000)}
 function toggleInflation(){inflationView=!inflationView;const b=document.getElementById('inflBtn');if(b)b.textContent=inflationView?'Nominal $':'Real $';render()}
+function toggleMC(){mcView=!mcView;const b=document.getElementById('mcBtn');if(b)b.classList.toggle('active',mcView);render()}
+
+function mcSummaryCards(mc){
+  const spread=mc.finalP90-mc.finalP10;
+  return `<div class="sc"><h3>🎲 Monte Carlo</h3><p>${mc.trials} trials · ${(mc.vol*100).toFixed(0)}% annual volatility<br>Each year's return drawn from N(${(P.investReturn*100).toFixed(1)}%, ${(mc.vol*100).toFixed(0)}%)</p></div>
+    <div class="sc"><h3>📊 Outcome Range @ 2058</h3><p>p10 <span class="mono" style="color:var(--r)">${fmt(mc.finalP10)}</span> → p90 <span class="mono" style="color:var(--g)">${fmt(mc.finalP90)}</span><br><em style="font-size:7.5px;color:var(--t3)">${fmt(spread)} spread · ${fmt(mc.finalP50)} median</em></p></div>
+    <div class="sc"><h3>⚠️ Sequence Risk</h3><p>Liquid runs negative in <span class="mono" style="color:${mc.ruinPct>5?'var(--r)':'var(--g)'}">${mc.ruinPct.toFixed(1)}%</span> of paths<br><em style="font-size:7.5px;color:var(--t3)">p10 liquid floor: ${fmt(mc.liqFloorP10)}</em></p></div>`;
+}
+
+// ═══ CSV EXPORT ═══
+function exportCSV(){
+  const{R}=run(P);
+  const cols=['Year','Norm Gross','Nancy Gross','Total Gross','All-in Tax','Eff Rate %','Net Income','Housing','Living','Childcare','Tuition','Total Expenses','Surplus','Stock Sold','Tax on Sales','Liquid','Home Equity','Net Worth','401k'];
+  const rows=R.map(r=>[r.yr,r.normG,r.nancyG,r.gross,r.tax,(r.effRate*100).toFixed(2),r.inc,r.h,r.liv,r.cc,r.tu,r.totE,r.surp,r.sold,r.txS,r.liq,r.eq,r.nw,r.k401]);
+  const csv=[cols.join(','),...rows.map(r=>r.join(','))].join('\n');
+  const blob=new Blob([csv],{type:'text/csv'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=`cohen-planner-${(P.planStartYear||2026)}-projection.csv`;a.click();
+}
+
+// ═══ ANNUAL SNAPSHOT HISTORY ═══
+async function loadSnapshots(){
+  try{const res=await fetch('/api/snapshots');if(res.ok)snapshots=await res.json()}catch(e){snapshots=[]}
+}
+async function saveSnapshot(silent){
+  const{R,tT}=run(P);const last=R[R.length-1];
+  const def=R.filter(r=>r.surp<0).length;
+  const dflt=`${P.planStartYear||2026} plan · ${new Date().toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`;
+  let label=dflt;
+  if(!silent){const r=prompt('Snapshot label (a dated copy you can compare against later):',dflt);if(r===null)return;label=r.trim()||dflt}
+  const summary={finalNW:last.nw,final401k:last.k401,totalTuition:tT,deficitYears:def,startingLiquid:P.startingLiquid,liqFloor:Math.min(...R.map(r=>r.liq))};
+  const snap={id:advUuid(),label,planYear:P.planStartYear||2026,params:{...P},summary};
+  try{await fetch('/api/snapshots',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(snap)});}catch(e){}
+  snapshots.push({...snap,plan_year:snap.planYear,created_at:new Date().toISOString()});
+  renderSnapshotBar();
+  if(!silent)alert(`📸 Snapshot saved: "${label}"\n\nUse the chip below the KPIs to overlay it on the Net Worth chart and compare your projection over time.`);
+}
+async function deleteSnapshot(id){
+  const s=snapshots.find(x=>x.id===id);if(!s)return;
+  if(!confirm(`Delete snapshot "${s.label}"?`))return;
+  try{await fetch('/api/snapshots/'+id,{method:'DELETE'});}catch(e){}
+  snapshots=snapshots.filter(x=>x.id!==id);
+  if(overlaySnapId===id)overlaySnapId=null;
+  renderSnapshotBar();render();
+}
+function toggleOverlaySnap(id){overlaySnapId=overlaySnapId===id?null:id;if(activeTab!=='nw'){activeTab='nw';document.querySelectorAll('.tabs button[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab==='nw'))}render()}
+function renderSnapshotBar(){
+  const el=document.getElementById('snapshotBar');if(!el)return;
+  if(!snapshots.length){el.innerHTML='';return}
+  let h='<div class="snap-bar"><span style="font-size:7px;color:var(--t3);font-weight:600">📸 SNAPSHOTS:</span>';
+  [...snapshots].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)).forEach(s=>{
+    const sum=s.summary||{};const isA=overlaySnapId===s.id;
+    h+=`<div class="snap-chip ${isA?'active':''}" onclick="toggleOverlaySnap('${s.id}')" title="NW @2058: ${sum.finalNW?fmt(sum.finalNW):'—'} · click to ${isA?'hide':'overlay on chart'}">${advEscape(s.label)}${isA?' ✓':''}<span class="x" onclick="event.stopPropagation();deleteSnapshot('${s.id}')">✕</span></div>`;
+  });
+  h+='</div>';el.innerHTML=h;
+}
 
 function buildControls(){
   const s=(l,k,mn,mx,st,fn)=>`<div class="sr"><div class="sh"><span class="sl">${l}</span><span class="sv" id="v_${k}">${fn?fn(P[k]):P[k]}</span></div><input type="range" id="s_${k}" min="${mn}" max="${mx}" step="${st}" value="${P[k]}" oninput="U('${k}',this.value)"></div>`;
@@ -485,7 +594,7 @@ function buildControls(){
   h+=`<div class="st">🏠 Home</div>`;
   h+=s('Purchase year','homePurchaseYear',2028,2035,1)+s('Price','homePrice',1000000,3000000,50000,v=>'$'+(v/1e6).toFixed(2)+'M')+s('Down %','downPctg',20,60,5,v=>v+'%')+s('Mortgage rate','mortgageRate',3,8,.25,v=>v+'%')+s('Property tax/yr','propTaxBase',8000,50000,1000,fmtF);
   h+=`<div class="st">📈 Returns & Tax</div>`;
-  h+=s('Portfolio return','investReturn',.03,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Home appreciation','homeAppreciation',.01,.05,.005,v=>(v*100).toFixed(1)+'%')+s('Starting liquid','startingLiquid',500000,2000000,50000,fmtF)+s('Starting 401k','k401Start',0,500000,10000,fmtF)+s('NYC rent','nycRent',4000,8000,100,v=>'$'+v.toLocaleString()+'/mo');
+  h+=s('Portfolio return','investReturn',.03,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Return volatility (MC)','mcVol',.05,.25,.01,v=>(v*100).toFixed(0)+'%')+s('Home appreciation','homeAppreciation',.01,.05,.005,v=>(v*100).toFixed(1)+'%')+s('Starting liquid','startingLiquid',500000,2000000,50000,fmtF)+s('Starting 401k','k401Start',0,500000,10000,fmtF)+s('NYC rent','nycRent',4000,8000,100,v=>'$'+v.toLocaleString()+'/mo');
   h+=`<div style="height:1px;background:var(--bd);margin:4px 0"></div>`;
   h+=s('Cap gains rate (sales)','capGainsTaxRate',.15,.35,.005,v=>(v*100).toFixed(1)+'%')+s('Cost basis %','costBasisPct',.30,.80,.05,v=>(v*100).toFixed(0)+'%');
   h+=`<div style="height:1px;background:var(--bd);margin:6px 0"></div>`;
@@ -501,8 +610,9 @@ async function resetAll(){
 }
 
 function rollForward(){
-  const nextYear=(P.planStartYear||2026)+1;
-  if(!confirm(`Roll plan forward to ${nextYear}?\n\nThis will:\n• Shift income inputs: Y1→Y0, Y2→Y1, Y3→Y2\n• Set new Y3 to base rates\n\nYou'll be prompted to update Starting Liquid.`))return;
+  const curYear=P.planStartYear||2026;const nextYear=curYear+1;
+  if(!confirm(`Roll plan forward to ${nextYear}?\n\nThis will:\n• Save a dated snapshot of the ${curYear} plan (for projected-vs-actual)\n• Shift income inputs: Y1→Y0, Y2→Y1, Y3→Y2\n• Set new Y3 to base rates\n\nYou'll be prompted to update Starting Liquid.`))return;
+  saveSnapshot(true); // auto-archive the plan year being closed out
   const liqStr=prompt(`Update Starting Liquid for Jan ${nextYear}\n(enter your actual current wealth):`,P.startingLiquid.toLocaleString());
   // Shift Norm income forward
   P.normCashY0=P.normCashY1;P.normCashY1=P.normCashY2;P.normCashY2=P.normCashY3;P.normCashY3=P.normCashBase;
@@ -515,7 +625,7 @@ function rollForward(){
   buildControls();render();savePlannerState();
 }
 
-const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,nannyEndAge:v=>v+' yrs',nannyHourlyRate:v=>'$'+v,nannyDaysPerWeek:null,daycareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normCashY0:fmtF,normStockY0:fmtF,normCashY1:fmtF,normStockY1:fmtF,normCashY2:fmtF,normStockY2:fmtF,normCashY3:fmtF,normStockY3:fmtF,normCashBase:fmtF,normStockBase:fmtF,normGrowth:v=>(v*100).toFixed(1)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo',capGainsTaxRate:v=>(v*100).toFixed(1)+'%',costBasisPct:v=>(v*100).toFixed(0)+'%'};
+const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,nannyEndAge:v=>v+' yrs',nannyHourlyRate:v=>'$'+v,nannyDaysPerWeek:null,daycareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normCashY0:fmtF,normStockY0:fmtF,normCashY1:fmtF,normStockY1:fmtF,normCashY2:fmtF,normStockY2:fmtF,normCashY3:fmtF,normStockY3:fmtF,normCashBase:fmtF,normStockBase:fmtF,normGrowth:v=>(v*100).toFixed(1)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',mcVol:v=>(v*100).toFixed(0)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo',capGainsTaxRate:v=>(v*100).toFixed(1)+'%',costBasisPct:v=>(v*100).toFixed(0)+'%'};
 
 function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'+key);const fn=SF[key];if(el&&fn)el.textContent=fn(P[key]);else if(el)el.textContent=P[key];if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear')buildControls();activeScenarioIdx=-1;render();savePlannerState()}
 
@@ -578,6 +688,7 @@ function render(){
     scenarios.forEach((s,i)=>{const isA=activeScenarioIdx===i;sc+=`<div class="scenario-chip" onclick="loadScenario(${i})" style="border-color:${isA?s.color:s.color+'40'};color:${s.color};${isA?'background:'+s.color+'15':''}"><span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:${s.color}"></span>${s.name}${isA?' ✓':''}<span class="x" onclick="event.stopPropagation();deleteScenario(${i})">✕</span></div>`});
     if(activeScenarioIdx===-1)sc+=`<span style="font-size:7px;color:var(--t3);font-style:italic;padding:3px">● Unsaved</span>`;sc+='</div>'}
   document.getElementById('scenarioBar').innerHTML=sc;
+  renderSnapshotBar();
   const labels=R.map(r=>String(r.yr));destroyCharts();const ca=document.getElementById('chartArea');
   if(activeTab==='advisor'){renderAdvisorTab(R,P);return}
   if(activeTab==='table'){
@@ -590,8 +701,31 @@ function render(){
   const startLiqK=Math.round(P.startingLiquid/1000);
   if(activeTab==='nw'){
     const po=posOpts();
+    if(mcView){
+      // Monte Carlo stress band — overlays p10–p90 NW cone + median
+      const mc=runMonteCarlo(P);
+      ca.innerHTML=`<div id="mcInfo" style="display:flex;gap:14px;flex-wrap:wrap;font-size:10px;color:var(--t2);margin-bottom:8px;padding:8px 10px;background:var(--s2);border:1px solid var(--bd);border-radius:6px">
+        <span><strong style="color:var(--tx)">${mc.trials}</strong> trials · <strong>${(mc.vol*100).toFixed(0)}%</strong> annual vol</span>
+        <span>NW @ ${R[R.length-1].yr}: <strong style="color:var(--r)">${fmt(mc.finalP10)}</strong> (p10) · <strong style="color:var(--tx)">${fmt(mc.finalP50)}</strong> (median) · <strong style="color:var(--g)">${fmt(mc.finalP90)}</strong> (p90)</span>
+        <span>Liquid floor p10: <strong style="color:${mc.liqFloorP10<0?'var(--r)':'var(--a)'}">${fmt(mc.liqFloorP10)}</strong></span>
+        <span>Risk of running out of liquid: <strong style="color:${mc.ruinPct>5?'var(--r)':'var(--g)'}">${mc.ruinPct.toFixed(1)}%</strong></span>
+      </div><canvas id="cv" style="height:300px"></canvas>`;
+      const ctx2=document.getElementById('cv').getContext('2d');
+      const dfl=(v,i)=>inflationView?Math.round(v/Math.pow(1.03,i)/1000):Math.round(v/1000);
+      const ds=[
+        {label:'p10',data:[startLiqK,...mc.band.p10.map(dfl)],borderColor:'rgba(205,61,100,.4)',backgroundColor:'rgba(205,61,100,.0)',fill:false,tension:.3,pointRadius:0,borderWidth:1},
+        {label:'p10–p90 range',data:[startLiqK,...mc.band.p90.map(dfl)],borderColor:'rgba(26,135,84,.4)',backgroundColor:'rgba(99,91,255,.10)',fill:'-1',tension:.3,pointRadius:0,borderWidth:1},
+        {label:'Median (p50)',data:[startLiqK,...mc.band.p50.map(dfl)],borderColor:'#635bff',fill:false,tension:.3,pointRadius:0,borderWidth:2.5},
+        {label:'Your plan (6% flat)',data:[startLiqK,...R.map(r=>deflK(r.nw,r.yr))],borderColor:'#0a2540',fill:false,tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[5,3]}
+      ];
+      charts.main=new Chart(ctx2,{type:'line',data:{labels:nwLabels,datasets:ds},options:po});
+      document.getElementById('summaries').innerHTML=mcSummaryCards(mc);
+      return;
+    }
     const ds=[{label:'Total NW'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.nw,r.yr))],borderColor:'#635bff',backgroundColor:'rgba(99,91,255,.06)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2.5},{label:'Liquid'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.liq,r.yr))],borderColor:'#0073e6',backgroundColor:'rgba(0,115,230,.04)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2},{label:'Equity'+(inflationView?' (real)':''),data:[0,...R.map(r=>deflK(r.eq,r.yr))],borderColor:'#7c3aed',fill:false,tension:.3,pointRadius:1,borderWidth:1.5,borderDash:[4,3]}];
     if(compareMode)scenarios.forEach(s=>{const sLiq=Math.round((s.params.startingLiquid||P.startingLiquid)/1000);ds.push({label:s.name+' Liquid',data:[sLiq,...s.results.R.map(r=>deflK(r.liq,r.yr))],borderColor:s.color,fill:false,tension:.3,pointRadius:3,pointBackgroundColor:s.color,borderWidth:3.5})});
+    // Snapshot overlay — compare a saved projection against the current plan
+    if(overlaySnapId){const sn=snapshots.find(x=>x.id===overlaySnapId);if(sn&&sn.params){const sr=run({...D,...migrateP(sn.params)});const so=String((sn.params.planStartYear||sy0)-1);ds.push({label:'📸 '+sn.label+' (NW)',data:[Math.round((sn.params.startingLiquid||P.startingLiquid)/1000),...sr.R.map(r=>deflK(r.nw,r.yr))],borderColor:'#bf6900',fill:false,tension:.3,pointRadius:0,borderWidth:2,borderDash:[6,3]})}}
     charts.main=new Chart(ctx,{type:'line',data:{labels:nwLabels,datasets:ds},options:po});
   } else if(activeTab==='tuition'){
     const po=posOpts();
@@ -613,7 +747,7 @@ function render(){
 }
 function setTab(t){activeTab=t;document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));render();savePlannerState()}
 document.getElementById('main').innerHTML=`
-  <div class="kpi-grid" id="kpis"></div><div id="scenarioBar"></div>
+  <div class="kpi-grid" id="kpis"></div><div id="scenarioBar"></div><div id="snapshotBar"></div>
   <div class="tabs">
     <button class="active" data-tab="nw" onclick="setTab('nw')">📈 Net Worth</button>
     <button data-tab="tuition" onclick="setTab('tuition')">🎓 Tuition</button>
@@ -621,7 +755,11 @@ document.getElementById('main').innerHTML=`
     <button data-tab="cashflow" onclick="setTab('cashflow')">💸 Cash Flow</button>
     <button data-tab="table" onclick="setTab('table')">📋 Table</button>
     <button data-tab="advisor" onclick="setTab('advisor')">🤖 AI Advisor</button>
-    <button id="inflBtn" onclick="toggleInflation()" style="margin-left:auto;font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit">Real $</button>
+    <button id="mcBtn" onclick="toggleMC()" style="margin-left:auto;font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Monte Carlo stress band (Net Worth tab)">🎲 Monte Carlo</button>
+    <button id="inflBtn" onclick="toggleInflation()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit">Real $</button>
+    <button onclick="exportCSV()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Download projection table as CSV">⬇ CSV</button>
+    <button onclick="window.print()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Print / Save as PDF">🖨 PDF</button>
+    <button onclick="saveSnapshot()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid rgba(8,145,178,.3);background:#e0f7fa;color:var(--c);cursor:pointer;font-family:inherit" title="Save a dated copy of this plan">📸 Snapshot</button>
   </div>
   <div class="cc" id="chartArea"><canvas id="cv" style="height:300px"></canvas></div>
   <div class="sg" id="summaries"></div>`;
@@ -1031,7 +1169,7 @@ async function advSend(){
 
 // ═══ INIT ═══
 loadAdvisorState();
-loadFromServer();
+loadSnapshots().then(()=>{loadFromServer()});
 </script>
 </body>
 </html>

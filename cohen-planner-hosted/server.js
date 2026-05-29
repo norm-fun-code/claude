@@ -224,6 +224,43 @@ app.delete('/api/scenarios/:id', requireAuth, async (req, res) => {
   }
 });
 
+// ── Snapshots (annual history) ──────────────────────────────────────────────
+app.get('/api/snapshots', requireAuth, async (req, res) => {
+  try {
+    const result = await db.query('SELECT * FROM snapshots ORDER BY created_at ASC');
+    res.json(result.rows);
+  } catch (err) {
+    console.error('GET snapshots error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+app.post('/api/snapshots', requireAuth, async (req, res) => {
+  try {
+    const { id, label, planYear, params, summary } = req.body;
+    await db.query(
+      `INSERT INTO snapshots (id, label, plan_year, params, summary)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (id) DO UPDATE SET label=$2, plan_year=$3, params=$4, summary=$5`,
+      [id, label, planYear, JSON.stringify(params), JSON.stringify(summary)]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('POST snapshot error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+app.delete('/api/snapshots/:id', requireAuth, async (req, res) => {
+  try {
+    await db.query('DELETE FROM snapshots WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('DELETE snapshot error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 // ── Advisor chats ─────────────────────────────────────────────────────────────
 app.get('/api/chats', requireAuth, async (req, res) => {
   try {
