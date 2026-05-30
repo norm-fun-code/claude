@@ -9,6 +9,17 @@ briefing app and is evolving into a lifelong personal operating system.
 > data spine that *remembers*, with an intelligence layer on top. See
 > [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
+## Getting started
+
+Turning it on takes ~15 minutes — **[`docs/SETUP.md`](docs/SETUP.md)** is a
+plain-language, step-by-step guide (no technical background needed).
+
+```bash
+./setup.sh --demo                      # start the DB, migrate, load sample data
+npm --prefix backend run doctor        # see what's ready and what needs a key
+npm --prefix backend start             # run the server
+```
+
 ## Architecture
 
 ```
