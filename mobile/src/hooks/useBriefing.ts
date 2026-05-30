@@ -60,6 +60,11 @@ export interface Insight {
   confidence: number | null;
 }
 
+export interface LeverageAction {
+  title: string;
+  detail: string | null;
+}
+
 export interface BriefingData {
   date: string;
   weather: Weather | null;
@@ -73,6 +78,7 @@ export interface BriefingData {
   quote: string;
   notionText: string;
   notionPageTitle: string;
+  leverageActions: LeverageAction[];
   insights: Insight[];
   errors?: { service: string; error: string }[];
 }

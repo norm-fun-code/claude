@@ -99,7 +99,9 @@ Two ingestion modes:
 | `POST /api/ingest/run` | Run all server-side connectors |
 | `GET /api/metrics?domain=&metric=&from=&to=&agg=` | Query a series (raw or daily-bucketed) |
 | `GET /api/findings?status=` | Intelligence findings |
-| `POST /api/analyze` | Run the intelligence layer (trends + correlations) |
+| `POST /api/analyze` | Run the intelligence layer (trends + correlations + leverage) |
+| `POST /api/checkin` | Daily subjective check-in (mood/energy/focus + note) |
+| `GET /api/actions` | Ranked highest-leverage actions |
 | `GET /api/sources` | Registered sources + sync status |
 
 ## Intelligence layer
@@ -135,7 +137,10 @@ automatically after each ingest.
   Next candidates: Oura/Whoop for health depth.
 - **Phase 2 — Intelligence.** Rolling trends + cross-domain correlations
   (incl. 1-day lag) written to `findings`; briefing surfaces them as insights. ✅
-- **Phase 3 — Reviews & forecasting.** Weekly review, quarterly "board of
+- **Phase 3 — Check-in + leverage engine.** 10-second mood/energy/focus
+  check-in (the subjective signal) + the ranked "highest leverage action" engine
+  (impact × confidence × ease) on the briefing front page. ✅
+- **Phase 3.5 — Reviews & forecasting.** Weekly review, quarterly "board of
   directors" review, goal achievement-probability forecasts.
 - **Phase 4 — Agents & chat.** Conversational interface and pluggable specialist
   agents (Investment Analyst, Career Coach, ...) on the shared spine.

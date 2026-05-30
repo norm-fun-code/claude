@@ -16,6 +16,8 @@ import { useHealthData } from './src/hooks/useHealthData';
 import { getColors, spacing } from './src/theme';
 
 import { Header } from './src/components/Header';
+import { LeverageCard } from './src/components/LeverageCard';
+import { CheckinCard } from './src/components/CheckinCard';
 import { HealthCard } from './src/components/HealthCard';
 import { WeatherCard } from './src/components/WeatherCard';
 import { WorkoutCard } from './src/components/WorkoutCard';
@@ -63,6 +65,17 @@ export default function App() {
         showsVerticalScrollIndicator={false}
       >
         <Header date={briefing.data?.date ?? today} isRefreshing={isRefreshing} />
+
+        {/* Highest leverage actions — the front page */}
+        {briefing.data && (
+          <LeverageCard
+            actions={briefing.data.leverageActions ?? []}
+            insights={briefing.data.insights ?? []}
+          />
+        )}
+
+        {/* Daily check-in — the subjective signal */}
+        <CheckinCard />
 
         {/* Health — always shown (on-device data) */}
         <HealthCard health={health} />

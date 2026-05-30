@@ -15,6 +15,8 @@ const metricsStore = require('./src/store/metrics');
 const findingsStore = require('./src/store/findings');
 const sourcesStore = require('./src/store/sources');
 const { mapHealthPayload, SOURCE: HEALTH_SOURCE } = require('./src/ingest/health');
+const { mapCheckin, SOURCE: CHECKIN_SOURCE } = require('./src/ingest/checkin');
+const documentsStore = require('./src/store/documents');
 const { runIngest } = require('./src/ingest/run');
 const { analyze } = require('./src/intelligence/analyze');
 
@@ -48,6 +50,24 @@ app.post('/api/ingest/health', async (req, res) => {
     const written = await metricsStore.insertMetrics(rows);
     await sourcesStore.markSync(HEALTH_SOURCE);
     res.json({ written });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Daily subjective check-in (mood / energy / focus + optional journal note).
+app.post('/api/checkin', async (req, res) => {
+  try {
+    await sourcesStore.registerSource({
+      id: CHECKIN_SOURCE,
+      domain: 'wellbeing',
+      displayName: 'Daily Check-in',
+    });
+    const { metrics, document } = mapCheckin(req.body, { ts: req.query.ts });
+    const written = await metricsStore.insertMetrics(metrics);
+    if (document) await documentsStore.upsertDocument(document);
+    await sourcesStore.markSync(CHECKIN_SOURCE);
+    res.json({ written, journaled: Boolean(document) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -102,6 +122,20 @@ app.get('/api/findings', async (req, res) => {
 app.post('/api/analyze', async (req, res) => {
   try {
     res.json(await analyze());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// The ranked "highest leverage actions" — the core NormOS question.
+app.get('/api/actions', async (req, res) => {
+  try {
+    const open = await findingsStore.listFindings({ status: 'open' });
+    const actions = open
+      .filter((f) => f.type === 'leverage')
+      .sort((a, b) => (a.evidence?.rank ?? 99) - (b.evidence?.rank ?? 99))
+      .map((f) => ({ title: f.title, detail: f.detail, score: f.evidence?.score, domains: f.domains }));
+    res.json({ actions });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -172,9 +206,16 @@ app.get('/api/briefing', async (req, res) => {
 
   // Surface the intelligence layer's current findings (from the last analysis).
   let insights = [];
+  let leverageActions = [];
   try {
     const open = await findingsStore.listFindings({ status: 'open' });
+    leverageActions = open
+      .filter((f) => f.type === 'leverage')
+      .sort((a, b) => (a.evidence?.rank ?? 99) - (b.evidence?.rank ?? 99))
+      .slice(0, 3)
+      .map((f) => ({ title: f.title, detail: f.detail }));
     insights = open
+      .filter((f) => f.type !== 'leverage')
       .slice(0, 6)
       .map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence }));
   } catch (err) {
@@ -194,6 +235,7 @@ app.get('/api/briefing', async (req, res) => {
     quote: quoteData.quote,
     notionText: notionData.text,
     notionPageTitle: notionData.pageTitle,
+    leverageActions,
     insights,
   };
 

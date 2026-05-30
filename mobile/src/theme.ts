@@ -1,19 +1,22 @@
+// Stripe-inspired palette: blurple accent (#635BFF), deep navy ink (#0A2540),
+// soft light background (#F6F9FC). Light-first for readability.
 export const colors = {
-  background: '#F9F8F6',
+  background: '#F6F9FC', // Stripe light
   card: '#FFFFFF',
-  border: '#EAEAEA',
-  text: '#1A1A1A',
-  subtext: '#666666',
-  accent: '#000000',
-  green: '#22C55E',
-  yellow: '#EAB308',
-  red: '#EF4444',
-  // Dark mode variants
-  backgroundDark: '#111110',
-  cardDark: '#1C1C1A',
-  borderDark: '#2A2A28',
-  textDark: '#F0EFE9',
-  subtextDark: '#9A9A90',
+  border: '#E6EBF1', // Stripe hairline
+  text: '#0A2540', // Stripe navy ink
+  subtext: '#425466', // Stripe slate
+  accent: '#635BFF', // Stripe blurple
+  accentSoft: '#EFEEFF', // tint for accent backgrounds
+  green: '#00A86B',
+  yellow: '#E8A400',
+  red: '#E25950',
+  // Dark mode variants (navy, not black — keeps the Stripe feel)
+  backgroundDark: '#0A2540',
+  cardDark: '#0E2E4D',
+  borderDark: '#1F3A5F',
+  textDark: '#F6F9FC',
+  subtextDark: '#8C9CB3',
 };
 
 export const spacing = {
@@ -70,7 +73,8 @@ export function getColors(isDark: boolean) {
     border: isDark ? colors.borderDark : colors.border,
     text: isDark ? colors.textDark : colors.text,
     subtext: isDark ? colors.subtextDark : colors.subtext,
-    accent: isDark ? colors.textDark : colors.accent,
+    accent: colors.accent, // blurple in both modes
+    accentSoft: isDark ? colors.borderDark : colors.accentSoft,
     green: colors.green,
     yellow: colors.yellow,
     red: colors.red,

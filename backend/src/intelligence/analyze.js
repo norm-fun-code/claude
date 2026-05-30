@@ -8,6 +8,7 @@
 require('dotenv').config();
 const stats = require('./stats');
 const cat = require('./catalog');
+const { rankActions } = require('./leverage');
 
 const DEFAULTS = {
   loadDays: 60, // history window pulled from the spine
@@ -155,17 +156,36 @@ async function analyze(opts = {}) {
 
   const trends = computeTrends(seriesByKey, o);
   const correlations = computeCorrelations(seriesByKey, o);
-  const all = [...trends, ...correlations];
 
+  // Rank the highest-leverage actions from the findings + any off-track goals.
+  const latestByKey = {};
+  for (const [key, series] of Object.entries(seriesByKey)) {
+    if (series.length) latestByKey[key] = Number(series[series.length - 1].value);
+  }
+  let goals = [];
+  try {
+    const r = await require('../db').query(`SELECT * FROM goals WHERE status = 'active'`);
+    goals = r.rows;
+  } catch {
+    // goals table optional / empty
+  }
+  const actions = rankActions([...trends, ...correlations], { goals, latestByKey });
+
+  const all = [...trends, ...correlations, ...actions];
   const windowStart = from;
   const windowEnd = new Date();
 
-  await findingsStore.supersedeAuto(['trend', 'correlation']);
+  await findingsStore.supersedeAuto(['trend', 'correlation', 'leverage']);
   for (const f of all) {
     await findingsStore.createFinding({ ...f, windowStart, windowEnd });
   }
 
-  return { metrics: Object.keys(seriesByKey).length, trends: trends.length, correlations: correlations.length };
+  return {
+    metrics: Object.keys(seriesByKey).length,
+    trends: trends.length,
+    correlations: correlations.length,
+    actions: actions.length,
+  };
 }
 
 module.exports = { analyze, computeTrends, computeCorrelations, DEFAULTS };
@@ -175,7 +195,9 @@ if (require.main === module) {
   const { pool } = require('../db');
   analyze()
     .then((s) =>
-      console.log(`Analyzed ${s.metrics} metrics → ${s.trends} trends, ${s.correlations} correlations.`)
+      console.log(
+        `Analyzed ${s.metrics} metrics → ${s.trends} trends, ${s.correlations} correlations, ${s.actions} leverage actions.`
+      )
     )
     .catch((err) => {
       console.error('Analyze failed:', err.message);
