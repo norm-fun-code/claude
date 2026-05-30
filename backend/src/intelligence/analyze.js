@@ -17,6 +17,7 @@ const DEFAULTS = {
   corrWindow: 30, // days considered for correlation
   corrMinN: 10, // min aligned day-pairs
   corrMinAbsR: 0.5, // |r| >= 0.5 to report
+  corrGateAbsR: 0.3, // each half must reach this for a correlation to be "confirmed"
   corrLags: [0, 1], // test same-day and next-day
   maxCorrelations: 12,
 };
@@ -94,11 +95,30 @@ function computeCorrelations(seriesByKey, opts = {}) {
         if (n < o.corrMinN) continue;
         const r = stats.pearson(xs, ys);
         if (r == null) continue;
-        if (!best || Math.abs(r) > Math.abs(best.r)) best = { r, n, lag };
+        if (!best || Math.abs(r) > Math.abs(best.r)) best = { r, n, lag, xs, ys };
       }
       if (!best || Math.abs(best.r) < o.corrMinAbsR) continue;
 
-      candidates.push({ keyA: keys[i], keyB: keys[j], ...best });
+      // Confirmation gate: split the aligned series in half; the relationship
+      // must hold (same sign, |r| >= gate) on BOTH halves to be "confirmed".
+      // Guards against spurious one-off correlations (multiple-comparisons trap).
+      const mid = Math.floor(best.xs.length / 2);
+      const r1 = stats.pearson(best.xs.slice(0, mid), best.ys.slice(0, mid));
+      const r2 = stats.pearson(best.xs.slice(mid), best.ys.slice(mid));
+      const confirmed =
+        r1 != null &&
+        r2 != null &&
+        Math.sign(r1) === Math.sign(r2) &&
+        Math.min(Math.abs(r1), Math.abs(r2)) >= o.corrGateAbsR;
+
+      candidates.push({
+        keyA: keys[i],
+        keyB: keys[j],
+        r: best.r,
+        n: best.n,
+        lag: best.lag,
+        confirmed,
+      });
     }
   }
 
@@ -113,13 +133,14 @@ function computeCorrelations(seriesByKey, opts = {}) {
     const sign = c.r >= 0 ? 'positive' : 'negative';
     const lagNote = c.lag === 0 ? 'same-day' : `${labelB} ${c.lag}d later`;
     const domains = [...new Set([a.domain, b.domain])];
+    const status = c.confirmed ? ' [confirmed]' : ' [candidate — needs an experiment]';
 
     return {
       type: 'correlation',
       domains,
-      title: `${labelA} ↔ ${labelB}: ${strength} ${sign} correlation`,
-      detail: `${labelA} and ${labelB} move ${sign === 'positive' ? 'together' : 'inversely'} (r=${round(c.r)}, n=${c.n}, ${lagNote}). Association, not proof of cause.`,
-      confidence: Math.abs(c.r),
+      title: `${labelA} ↔ ${labelB}: ${strength} ${sign} correlation${status}`,
+      detail: `${labelA} and ${labelB} move ${sign === 'positive' ? 'together' : 'inversely'} (r=${round(c.r)}, n=${c.n}, ${lagNote}). ${c.confirmed ? 'Held on both halves of the window.' : 'Not yet confirmed on a holdout.'} Association, not proof of cause.`,
+      confidence: Math.abs(c.r) * (c.confirmed ? 1 : 0.6),
       evidence: {
         auto: true,
         kind: 'correlation',
@@ -128,6 +149,7 @@ function computeCorrelations(seriesByKey, opts = {}) {
         r: round(c.r, 3),
         n: c.n,
         lag: c.lag,
+        confirmed: c.confirmed,
         crossDomain: domains.length > 1,
       },
     };

@@ -80,6 +80,9 @@ function fromTrend(f) {
 function fromCorrelation(f) {
   const ev = f.evidence || {};
   if (ev.kind !== 'correlation' || ev.r == null) return null;
+  // Only act on correlations that survived the confirmation gate. Unconfirmed
+  // candidates become experiment proposals instead of actions.
+  if (ev.confirmed === false) return null;
 
   // Identify which side is the lever and which is the outcome.
   let lever, outcome;

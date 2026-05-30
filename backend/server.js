@@ -22,6 +22,9 @@ const { runIngest } = require('./src/ingest/run');
 const { analyze } = require('./src/intelligence/analyze');
 const { embedPending } = require('./src/intelligence/embeddings');
 const { ask } = require('./src/chat/ask');
+const annotationsStore = require('./src/store/annotations');
+const experimentsStore = require('./src/store/experiments');
+const experiments = require('./src/intelligence/experiments');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -144,6 +147,87 @@ app.post('/api/chat', async (req, res) => {
   try {
     const { question, history } = req.body || {};
     res.json(await ask(question, { history }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Life context (annotations) -----------------------------------------
+
+app.post('/api/annotations', async (req, res) => {
+  try {
+    const { startTs, endTs, category, label, note } = req.body || {};
+    if (!startTs || !category || !label) {
+      return res.status(400).json({ error: 'startTs, category, and label are required' });
+    }
+    const id = await annotationsStore.createAnnotation({ startTs, endTs, category, label, note });
+    res.json({ id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/annotations', async (req, res) => {
+  try {
+    res.json({ annotations: await annotationsStore.listAnnotations({ from: req.query.from, to: req.query.to }) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Experiments (the hypothesis loop) -----------------------------------
+
+app.get('/api/experiments', async (req, res) => {
+  try {
+    res.json({ experiments: await experimentsStore.listExperiments({ status: req.query.status }) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Generate experiment proposals from unconfirmed correlations.
+app.post('/api/experiments/propose', async (req, res) => {
+  try {
+    res.json(await experiments.proposeExperiments());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create a custom experiment, or start a proposed one.
+app.post('/api/experiments', async (req, res) => {
+  try {
+    const id = await experimentsStore.createExperiment(req.body || {});
+    res.json({ id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Start a proposed experiment (sets running + dates).
+app.post('/api/experiments/:id/start', async (req, res) => {
+  try {
+    const { testDays = 14 } = req.body || {};
+    const start = new Date();
+    const end = new Date();
+    end.setDate(end.getDate() + Number(testDays));
+    await experimentsStore.updateExperiment(req.params.id, {
+      status: 'running',
+      startDate: start.toISOString().slice(0, 10),
+      endDate: end.toISOString().slice(0, 10),
+    });
+    res.json({ ok: true, startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Evaluate a single experiment now.
+app.post('/api/experiments/:id/evaluate', async (req, res) => {
+  try {
+    const exp = await experimentsStore.getExperiment(req.params.id);
+    if (!exp) return res.status(404).json({ error: 'not found' });
+    res.json(await experiments.evaluateExperiment(exp));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -308,7 +392,14 @@ app.get('/api/briefing', async (req, res) => {
       });
     })
     .then(() => analyze())
-    .then((s) => s && console.log(`[analyze] ${s.trends} trends, ${s.correlations} correlations, ${s.actions} actions`))
+    .then((s) => {
+      if (s) console.log(`[analyze] ${s.trends} trends, ${s.correlations} correlations, ${s.actions} actions`);
+      // Propose experiments from unconfirmed correlations; evaluate due ones.
+      return Promise.all([
+        experiments.proposeExperiments().catch((e) => console.error('[propose]', e.message)),
+        experiments.evaluateDue().catch((e) => console.error('[evaluate]', e.message)),
+      ]);
+    })
     .catch((err) => console.error('[ingest/analyze] failed:', err.message));
 });
 

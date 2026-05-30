@@ -5,6 +5,7 @@
 const llm = require('../llm');
 const documents = require('../store/documents');
 const findingsStore = require('../store/findings');
+const annotationsStore = require('../store/annotations');
 
 const SYSTEM = `You are NormOS — the user's personal chief of staff, executive coach, and data scientist.
 Answer using ONLY the context provided (their own metrics, findings, and library).
@@ -18,13 +19,22 @@ function snippet(text, n = 400) {
 }
 
 /** Pure: assemble the prompt from retrieved context. Exported for testing. */
-function buildPrompt({ question, findings = [], docs = [], history = [] }) {
+function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [] }) {
   const parts = [];
 
   if (findings.length) {
     parts.push(
       'WHAT YOUR DATA CURRENTLY SHOWS (findings):\n' +
         findings.map((f) => `- [${f.type}] ${f.title}${f.detail ? ` — ${f.detail}` : ''}`).join('\n')
+    );
+  }
+
+  if (annotations.length) {
+    parts.push(
+      'LIFE CONTEXT (events that may explain anomalies):\n' +
+        annotations
+          .map((a) => `- ${a.category}: ${a.label}${a.note ? ` (${a.note})` : ''}`)
+          .join('\n')
     );
   }
 
@@ -63,15 +73,22 @@ async function ask(question, { history = [], k = 8 } = {}) {
     console.error('[chat] retrieval failed:', err.message);
   }
 
-  // Pull current findings as data context.
+  // Pull current findings + recent life context.
   let findings = [];
+  let annotations = [];
   try {
     findings = await findingsStore.listFindings({ status: 'open' });
   } catch {
     /* findings optional */
   }
+  try {
+    const from = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+    annotations = await annotationsStore.listAnnotations({ from, limit: 20 });
+  } catch {
+    /* annotations optional */
+  }
 
-  const { system, prompt } = buildPrompt({ question, findings, docs, history });
+  const { system, prompt } = buildPrompt({ question, findings, docs, annotations, history });
   const answer = await llm.generateText({ system, prompt, temperature: 0.3, maxTokens: 900 });
 
   return {

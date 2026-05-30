@@ -104,6 +104,11 @@ Two ingestion modes:
 | `GET /api/actions` | Ranked highest-leverage actions |
 | `POST /api/chat` | Life chat — RAG answer over your data + library |
 | `POST /api/embed` | Backfill document embeddings |
+| `GET/POST /api/annotations` | Life context (travel, illness, deadlines) |
+| `GET /api/experiments` | List self-experiments |
+| `POST /api/experiments/propose` | Generate experiments from unconfirmed correlations |
+| `POST /api/experiments/:id/start` | Start a proposed experiment |
+| `POST /api/experiments/:id/evaluate` | Issue a verdict |
 | `GET /api/sources` | Registered sources + sync status |
 
 ## LLM layer
@@ -152,6 +157,21 @@ writes a fresh set. The daily briefing surfaces the current open findings as
 `insights`. Runs on demand (`npm run analyze` / `POST /api/analyze`) and
 automatically after each ingest.
 
+**Confirmation gate (trust):** a correlation is split in half; it's marked
+`confirmed` only if it holds (same sign, |r| ≥ gate) on *both* halves — a holdout
+guard against the multiple-comparisons trap. Only confirmed correlations become
+leverage actions; unconfirmed ones become experiment proposals.
+
+**Experiment loop (`intelligence/experiments.js`):** unconfirmed lever↔outcome
+correlations become proposed self-experiments. When run, NormOS compares the
+outcome during the test window to the baseline (Cohen's d + percent change) and
+issues a verdict — confirmed / refuted / inconclusive. This closes the
+"track whether hypotheses prove true" loop.
+
+**Context layer (`store/annotations.js`):** life events (travel, illness,
+deadlines) are recorded and fed into chat context so anomalies are explainable
+rather than misread.
+
 ## Roadmap
 
 - **Phase 0 — Foundation (this milestone).** DB + canonical schema + connector
@@ -170,7 +190,7 @@ automatically after each ingest.
   layer (Claude/Gemini/Ollama), document embeddings, RAG life chat, and
   relevant-not-random highlight selection. ✅
 - **Phase 5 — Experiments + trust.** Hypothesis/experiment loop, correlation
-  confirmation gate (holdout), and a context/annotations layer.
+  confirmation gate (holdout), and a context/annotations layer. ✅
 - **Phase 6 — Forecasting + proactive nudges.** Goal achievement probabilities
   and push notifications that deliver the right insight at the right moment.
 - **Future — Specialist agents.** Investment Analyst, Career Coach, etc. on the
