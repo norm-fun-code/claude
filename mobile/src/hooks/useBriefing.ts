@@ -133,6 +133,7 @@ export interface BriefingData {
   leverageActions: LeverageAction[];
   insights: Insight[];
   wealthInsights?: Insight[];
+  healthInsights?: Insight[];
   forecasts: Forecast[];
   relevantHighlight: RelevantHighlight | null;
   weeklyReview: WeeklyReview | null;

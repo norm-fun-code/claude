@@ -55,15 +55,24 @@ function clean(s) {
     .trim();
 }
 
-// Minimal RSS parse — pull <item> titles + links. Avoids an XML dependency.
-function parseRss(xml, source, max) {
+// Is an RSS pubDate the current day in the given timezone?
+function isToday(pubDate, tz) {
+  if (!pubDate) return false;
+  const d = new Date(pubDate);
+  if (isNaN(d)) return false;
+  const fmt = (x) => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(x);
+  return fmt(d) === fmt(new Date());
+}
+
+// Minimal RSS parse — pull <item> title/link/pubDate. Avoids an XML dependency.
+function parseRss(xml, source) {
   const items = [];
   const blocks = xml.split(/<item[\s>]/i).slice(1);
   for (const block of blocks) {
     const title = clean((block.match(/<title>([\s\S]*?)<\/title>/i) || [])[1]);
     const link = clean((block.match(/<link>([\s\S]*?)<\/link>/i) || [])[1]);
-    if (title) items.push({ title, url: link || null, source });
-    if (items.length >= max) break;
+    const pubDate = clean((block.match(/<pubDate>([\s\S]*?)<\/pubDate>/i) || [])[1]);
+    if (title) items.push({ title, url: link || null, source, pubDate });
   }
   return items;
 }
@@ -74,16 +83,22 @@ const HEADLINE_FEEDS = [
 ];
 
 async function fetchHeadlines(limit = 5) {
+  const tz = process.env.TZ || 'America/New_York';
+  const collected = [];
   for (const feed of HEADLINE_FEEDS) {
     try {
       const { data } = await axios.get(feed.url, { headers: { 'User-Agent': UA }, timeout: 8000 });
-      const items = parseRss(String(data), feed.source, limit);
-      if (items.length) return items;
+      collected.push(...parseRss(String(data), feed.source));
     } catch {
       // try the next feed
     }
   }
-  return [];
+  if (!collected.length) return [];
+  // Prefer stories published today; if markets are quiet/early, fall back to the
+  // freshest available so the card is never empty.
+  const todays = collected.filter((it) => isToday(it.pubDate, tz));
+  const pick = (todays.length ? todays : collected).slice(0, limit);
+  return pick.map(({ title, url, source }) => ({ title, url, source }));
 }
 
 // Returns { indices: [...], headlines: [...] } — either may be empty.

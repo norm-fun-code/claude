@@ -35,6 +35,7 @@ import { QuoteCard } from './src/components/QuoteCard';
 import { NotionCard } from './src/components/NotionCard';
 import { NewsletterList } from './src/components/NewsletterList';
 import { MarketsCard } from './src/components/MarketsCard';
+import { IndicesCard } from './src/components/IndicesCard';
 import { AdvisorCard } from './src/components/AdvisorCard';
 import { UrgentEmailsCard } from './src/components/UrgentEmailsCard';
 
@@ -67,6 +68,7 @@ export default function App() {
         return (
           <>
             <HealthCard health={health} />
+            <InsightsCard insights={d?.healthInsights ?? []} />
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} />
           </>
         );
@@ -75,6 +77,7 @@ export default function App() {
           <>
             <WealthCard wealth={d?.wealth ?? null} />
             <AdvisorCard />
+            <IndicesCard markets={d?.markets} />
             <MarketsCard markets={d?.markets} />
             <InsightsCard insights={d?.wealthInsights ?? []} />
             {!d?.wealth && (
@@ -106,11 +109,11 @@ export default function App() {
       default:
         return (
           <>
+            <WeatherCard weather={d?.weather ?? null} />
             <CheckinCard />
             <HabitsCard />
             {d && <LeverageCard actions={d.leverageActions ?? []} insights={[]} />}
             {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
-            <WeatherCard weather={d?.weather ?? null} />
             {d && d.calendar.length > 0 && <CalendarCard events={d.calendar} />}
             {d && <UrgentEmailsCard emails={d.urgentEmails} />}
             {d && <NewsletterList newsletters={d.newsletters} />}

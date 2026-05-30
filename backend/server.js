@@ -476,6 +476,7 @@ app.get('/api/briefing', async (req, res) => {
   // Surface the intelligence layer's current findings (from the last analysis).
   let insights = [];
   let wealthInsights = [];
+  let healthInsights = [];
   let leverageActions = [];
   let forecasts = [];
   try {
@@ -509,6 +510,12 @@ app.get('/api/briefing', async (req, res) => {
     wealthInsights = insightPool
       .filter((f) => Array.isArray(f.domains) && f.domains.includes('wealth'))
       .slice(0, 5)
+      .map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains }));
+
+    // Health/wellbeing/habits findings for the Health tab.
+    healthInsights = insightPool
+      .filter((f) => Array.isArray(f.domains) && f.domains.some((dn) => ['health', 'wellbeing', 'habits'].includes(dn)))
+      .slice(0, 6)
       .map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains }));
   } catch (err) {
     console.error('[insights] failed:', err.message);
@@ -583,6 +590,7 @@ app.get('/api/briefing', async (req, res) => {
     leverageActions,
     insights,
     wealthInsights,
+    healthInsights,
     forecasts,
     relevantHighlight,
     weeklyReview,
