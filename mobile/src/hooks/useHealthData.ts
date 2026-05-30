@@ -142,7 +142,7 @@ export function useHealthData(): HealthData & { refetch: () => void } {
 
       // HRV — daily average of today's samples (matches what Apple shows in Health app)
       AppleHealthKit.getHeartRateVariabilitySamples(
-        { unit: 'millisecond', startDate, endDate: now },
+        { unit: 'millisecond', startDate, endDate: now } as any,
         (err, results: HealthValue[]) => {
           if (!err && results && results.length > 0) {
             const avg = results.reduce((sum, r) => sum + r.value, 0) / results.length;
@@ -181,7 +181,7 @@ export function useHealthData(): HealthData & { refetch: () => void } {
           if (!err && results && results.length > 0) {
             // Filter to actual sleep stages (not INBED)
             const asleepSamples = results.filter(
-              (s) => s.value === 'ASLEEP' || s.value === 'DEEP' || s.value === 'CORE' || s.value === 'REM'
+              (s: any) => s.value === 'ASLEEP' || s.value === 'DEEP' || s.value === 'CORE' || s.value === 'REM'
             );
             if (asleepSamples.length > 0) {
               const totalMs = asleepSamples.reduce((sum, s) => {

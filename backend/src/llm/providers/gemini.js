@@ -10,7 +10,7 @@ function key() {
 }
 
 async function generateText({ system, prompt, temperature = 0.4, maxTokens = 1024 }) {
-  const model = process.env.GEMINI_CHAT_MODEL || 'gemini-1.5-flash';
+  const model = process.env.GEMINI_CHAT_MODEL || 'gemini-3.1';
   const { data } = await axios.post(
     `${BASE}/models/${model}:generateContent?key=${key()}`,
     {

@@ -12,6 +12,7 @@
     "analyze": "node src/intelligence/analyze.js",
     "embed": "node src/intelligence/embeddings.js",
     "nudge": "node src/notify/run.js",
+    "review": "node src/intelligence/review.js",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {

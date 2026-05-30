@@ -76,32 +76,49 @@ function fromTrend(f) {
 
 const BUILDERS = { forecast: fromForecast, leverage: fromLeverage, trend: fromTrend };
 
+/** A gentle daily reminder to log the check-in — the subjective signal every
+ *  cross-domain question depends on. Keyed per-day so it fires at most once. */
+function checkinReminder(asOf = new Date()) {
+  const day = asOf.toISOString().slice(0, 10);
+  return {
+    key: `checkin:${day}`,
+    title: '10-second check-in',
+    body: "How's your mood, energy, and focus today? Three taps keeps NormOS honest.",
+    priority: 0.5,
+    basis: { type: 'checkin', day },
+  };
+}
+
 /**
  * Build ranked, de-duplicated nudge candidates from open findings.
  *
  * @param {object} args
  * @param {Array} args.findings - open findings (DB-shaped: {type, title, detail, confidence, evidence})
  * @param {Set<string>} [args.recentKeys] - dedup_keys already delivered recently (suppressed)
+ * @param {boolean} [args.hasCheckinToday] - if false, add a check-in reminder candidate
+ * @param {Date} [args.asOf] - reference time (for the check-in key)
  * @param {number} [args.max] - cap on nudges per run
  * @param {number} [args.minPriority] - drop candidates below this
  * @returns {Array<{key, title, body, priority, basis}>}
  */
-function buildNudges({ findings = [], recentKeys = new Set(), ...opts } = {}) {
+function buildNudges({ findings = [], recentKeys = new Set(), hasCheckinToday = true, asOf = new Date(), ...opts } = {}) {
   const o = { ...DEFAULTS, ...opts };
 
   // One candidate per finding, via the builder for its type.
   const byKey = new Map();
-  for (const f of findings) {
-    const build = BUILDERS[f.type];
-    if (!build) continue;
-    const cand = build(f);
-    if (!cand) continue;
-    if (cand.priority < o.minPriority) continue;
-    if (recentKeys.has(cand.key)) continue; // don't nag with the same insight
-    // If two findings map to the same key, keep the louder one.
+  const consider = (cand) => {
+    if (!cand) return;
+    if (cand.priority < o.minPriority) return;
+    if (recentKeys.has(cand.key)) return; // don't nag with the same insight
     const prev = byKey.get(cand.key);
     if (!prev || cand.priority > prev.priority) byKey.set(cand.key, cand);
+  };
+
+  for (const f of findings) {
+    const build = BUILDERS[f.type];
+    if (build) consider(build(f));
   }
+  if (!hasCheckinToday) consider(checkinReminder(asOf));
 
   return [...byKey.values()]
     .sort((a, b) => b.priority - a.priority)
@@ -117,4 +134,4 @@ function withinQuietHours(date = new Date(), { startHour = 21, endHour = 7 } = {
   return startHour > endHour ? h >= startHour || h < endHour : h >= startHour && h < endHour;
 }
 
-module.exports = { buildNudges, withinQuietHours, slugify, DEFAULTS };
+module.exports = { buildNudges, withinQuietHours, checkinReminder, slugify, DEFAULTS };

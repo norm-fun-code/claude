@@ -68,6 +68,25 @@ test('low-confidence findings fall below the interrupt threshold', () => {
   assert.equal(buildNudges({ findings: [weakTrend] }).length, 0);
 });
 
+test('adds a check-in reminder only when none logged today', () => {
+  const none = buildNudges({ findings: [], hasCheckinToday: false, asOf: new Date('2026-05-30T08:00:00Z') });
+  assert.equal(none.length, 1);
+  assert.match(none[0].key, /^checkin:2026-05-30$/);
+  assert.match(none[0].body, /mood, energy, and focus/i);
+
+  const done = buildNudges({ findings: [], hasCheckinToday: true });
+  assert.equal(done.length, 0);
+});
+
+test('check-in reminder is suppressed once already sent today', () => {
+  const out = buildNudges({
+    findings: [], hasCheckinToday: false,
+    asOf: new Date('2026-05-30T08:00:00Z'),
+    recentKeys: new Set(['checkin:2026-05-30']),
+  });
+  assert.equal(out.length, 0);
+});
+
 test('quiet hours wrap midnight (21:00–07:00 by default)', () => {
   assert.equal(withinQuietHours(new Date('2026-05-30T03:00:00')), true);
   assert.equal(withinQuietHours(new Date('2026-05-30T22:00:00')), true);

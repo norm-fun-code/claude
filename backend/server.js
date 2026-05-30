@@ -7,7 +7,7 @@ const { fetchCalendarEvents } = require('./src/services/calendar');
 const { fetchRandomNotionPage } = require('./src/services/notion');
 const { fetchRandomQuote } = require('./src/services/googleDoc');
 const { fetchWeather } = require('./src/services/weather');
-const { generateBriefing } = require('./src/services/gemini');
+const { generateBriefing } = require('./src/services/briefing-ai');
 const { getTodayWorkout } = require('./src/services/workout');
 
 const db = require('./src/db');
@@ -28,6 +28,9 @@ const experiments = require('./src/intelligence/experiments');
 const devicesStore = require('./src/store/devices');
 const nudgesStore = require('./src/store/nudges');
 const { runNudges } = require('./src/notify/run');
+const surfacedStore = require('./src/store/surfaced');
+const briefingsStore = require('./src/store/briefings');
+const { runReview } = require('./src/intelligence/review');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -302,6 +305,24 @@ app.post('/api/nudges/run', async (req, res) => {
   }
 });
 
+// Weekly review — the reflective narrative.
+app.get('/api/review', async (req, res) => {
+  try {
+    const wr = await briefingsStore.latestBriefing(req.query.kind || 'weekly');
+    res.json(wr ? { ...wr.content, generatedAt: wr.generated_at } : null);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/review/run', async (req, res) => {
+  try {
+    res.json(await runReview());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/sources', async (req, res) => {
   try {
     res.json({ sources: await sourcesStore.listSources() });
@@ -386,33 +407,44 @@ app.get('/api/briefing', async (req, res) => {
         probability: f.confidence,
         status: f.evidence?.status ?? null,
       }));
-    insights = open
-      .filter((f) => f.type !== 'leverage' && f.type !== 'forecast')
-      .slice(0, 6)
-      .map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence }));
+
+    // Insights rotate: prefer ones not shown in the last 30 days so the card
+    // stays fresh, falling back to the rest if you've seen them all.
+    const insightPool = open.filter((f) => f.type !== 'leverage' && f.type !== 'forecast');
+    const seenInsights = await surfacedStore.recentRefs('insight', 30);
+    const chosen = surfacedStore.pickFresh(insightPool, seenInsights, { max: 6, keyFn: (f) => f.title });
+    insights = chosen.map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence }));
+    if (insights.length) await surfacedStore.record('insight', insights.map((i) => i.title));
   } catch (err) {
     console.error('[insights] failed:', err.message);
   }
 
   // Relevant-not-random: surface the library highlight that speaks to today's
-  // top action (semantic search), instead of a random page. Best-effort.
+  // top action (semantic search) — and never repeat one within 30 days.
   let relevantHighlight = null;
   try {
     const theme = leverageActions[0]?.title || quoteData.quote || 'focus, growth, leverage';
     const [vec] = await llm.embed([theme]);
     if (vec) {
-      const hits = await documentsStore.searchSimilar(vec, { k: 1, domain: 'learning' });
-      if (hits[0]) {
-        relevantHighlight = {
-          title: hits[0].title,
-          author: hits[0].author,
-          content: hits[0].content,
-          url: hits[0].url,
-        };
+      const hits = await documentsStore.searchSimilar(vec, { k: 25, domain: 'learning' });
+      const seen = await surfacedStore.recentRefs('highlight', 30);
+      const [pick] = surfacedStore.pickFresh(hits, seen, { max: 1, keyFn: (h) => h.id });
+      if (pick) {
+        relevantHighlight = { title: pick.title, author: pick.author, content: pick.content, url: pick.url };
+        await surfacedStore.record('highlight', pick.id);
       }
     }
   } catch (err) {
     console.error('[relevantHighlight] failed:', err.message);
+  }
+
+  // Latest weekly review (generated separately on a weekly cadence).
+  let weeklyReview = null;
+  try {
+    const wr = await briefingsStore.latestBriefing('weekly');
+    if (wr) weeklyReview = { ...wr.content, generatedAt: wr.generated_at };
+  } catch (err) {
+    console.error('[weeklyReview] failed:', err.message);
   }
 
   const response = {
@@ -432,6 +464,7 @@ app.get('/api/briefing', async (req, res) => {
     insights,
     forecasts,
     relevantHighlight,
+    weeklyReview,
   };
 
   if (errors.length > 0) {

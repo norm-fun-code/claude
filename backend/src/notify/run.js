@@ -4,11 +4,26 @@
 // Use as a CLI on a morning schedule (`npm run nudge` via cron/launchd at ~7am)
 // or trigger via POST /api/nudges/run. Honors quiet hours unless forced.
 require('dotenv').config();
+const { query } = require('../db');
 const findingsStore = require('../store/findings');
 const nudgesStore = require('../store/nudges');
 const devicesStore = require('../store/devices');
 const { buildNudges, withinQuietHours } = require('../intelligence/nudges');
 const { sendPush } = require('./expo');
+
+/** Has the subjective check-in been logged today? Fail-safe: assume yes on error
+ *  so we never nag the user because of a DB hiccup. */
+async function checkinLoggedToday(asOf = new Date()) {
+  try {
+    const { rows } = await query(
+      `SELECT 1 FROM metrics WHERE source = 'checkin' AND ts::date = $1::date LIMIT 1`,
+      [asOf.toISOString().slice(0, 10)]
+    );
+    return rows.length > 0;
+  } catch {
+    return true;
+  }
+}
 
 /**
  * @param {{ asOf?: Date, send?: boolean, force?: boolean, dedupDays?: number }} [opts]
@@ -24,7 +39,8 @@ async function runNudges(opts = {}) {
 
   const findings = await findingsStore.listFindings({ status: 'open', limit: 200 });
   const recentKeys = await nudgesStore.recentlySentKeys(dedupDays);
-  const candidates = buildNudges({ findings, recentKeys, asOf });
+  const hasCheckinToday = await checkinLoggedToday(asOf);
+  const candidates = buildNudges({ findings, recentKeys, hasCheckinToday, asOf });
 
   if (candidates.length === 0) {
     return { generated: 0, sent: 0, nudges: [] };
