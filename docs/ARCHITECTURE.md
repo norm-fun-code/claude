@@ -102,6 +102,7 @@ Two ingestion modes:
 | `POST /api/analyze` | Run the intelligence layer (trends + correlations + leverage) |
 | `POST /api/checkin` | Daily subjective check-in (mood/energy/focus + note) |
 | `GET /api/actions` | Ranked highest-leverage actions |
+| `GET /api/forecasts` | Goal achievement-probability forecasts (most at-risk first) |
 | `POST /api/chat` | Life chat — RAG answer over your data + library |
 | `POST /api/embed` | Backfill document embeddings |
 | `GET/POST /api/annotations` | Life context (travel, illness, deadlines) |
@@ -143,6 +144,21 @@ same retrieval to surface the highlight most **relevant** to today's top action
   daily aggregation (sum for flows like steps/meetings, avg otherwise).
 - `analyze.js` — `computeTrends` / `computeCorrelations` (pure) + `analyze()`
   orchestrator that loads daily series, computes findings, and persists them.
+- `forecast.js` — `forecastGoal` / `computeForecasts` (pure): projects each
+  metric-bound goal's recent trend to its `target_date` and reports an
+  achievement probability + projected crossing date.
+
+**Forecasts (goal achievement probability):** for every active goal bound to a
+metric, NormOS fits a least-squares trend over recent history, projects it to
+the goal's `target_date`, and models the projected value as normally
+distributed with uncertainty that grows with the horizon. The achievement
+probability is `Φ` of the standardized gap to target (direction-aware, so
+"lower is better" goals like body fat are handled correctly). Goals with no
+date still get a projected crossing date; goals with too little history are
+surfaced as `insufficient_data` rather than guessed. Forecasts are persisted as
+`forecast` findings each analyze run and served most-at-risk-first at
+`GET /api/forecasts`. The pure math (`stats.linearFit`, `stats.normalCdf`,
+`forecastGoal`) is unit-tested under `backend/test/` (`npm test`).
 
 **Trends:** per metric, compares the last 7 days' mean to the prior 7 and
 reports material moves (≥10%), labeled improving/worsening by direction of good.
@@ -184,15 +200,18 @@ rather than misread.
 - **Phase 3 — Check-in + leverage engine.** 10-second mood/energy/focus
   check-in (the subjective signal) + the ranked "highest leverage action" engine
   (impact × confidence × ease) on the briefing front page. ✅
-- **Phase 3.5 — Reviews & forecasting.** Weekly review, quarterly "board of
-  directors" review, goal achievement-probability forecasts.
+- **Phase 3.5 — Reviews & forecasting.** Goal achievement-probability forecasts
+  shipped (`forecast.js` + `GET /api/forecasts`). ✅ (partial)
+  Still open: weekly review and quarterly "board of directors" review narratives.
 - **Phase 4 — LLM abstraction + knowledge graph + chat.** Provider-agnostic LLM
   layer (Claude/Gemini/Ollama), document embeddings, RAG life chat, and
   relevant-not-random highlight selection. ✅
 - **Phase 5 — Experiments + trust.** Hypothesis/experiment loop, correlation
   confirmation gate (holdout), and a context/annotations layer. ✅
-- **Phase 6 — Forecasting + proactive nudges.** Goal achievement probabilities
-  and push notifications that deliver the right insight at the right moment.
+- **Phase 6 — Forecasting + proactive nudges.** Goal achievement-probability
+  forecasting engine done (`intelligence/forecast.js`, `GET /api/forecasts`,
+  surfaced in the analyze run). ✅ (forecasting)
+  Next: push notifications that deliver the right insight at the right moment.
 - **Future — Specialist agents.** Investment Analyst, Career Coach, etc. on the
   shared spine.
 

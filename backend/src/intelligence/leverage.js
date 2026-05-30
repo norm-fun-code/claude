@@ -6,6 +6,7 @@
 // then ranked. Pure and deterministic so it's unit-testable; narrative polish
 // can be layered on by the LLM later.
 const cat = require('./catalog');
+const { formatDate } = require('../util/date');
 
 // Outcomes we want to move, and the levers we can directly pull.
 const OUTCOMES = new Set([
@@ -48,21 +49,6 @@ function clamp01(n) {
 function round(n, d = 2) {
   const f = 10 ** d;
   return Math.round(n * f) / f;
-}
-
-// A goal's target_date arrives as a JS Date (Postgres DATE column) or an ISO
-// string. Render it as a clean, human label like "May 30, 2026". Use UTC so a
-// date-only value doesn't slip to the previous day in negative-offset zones.
-function formatDate(value) {
-  if (!value) return null;
-  const d = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    timeZone: 'UTC',
-  });
 }
 
 // Action from a worsening trend: reverse the decline.

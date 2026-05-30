@@ -9,6 +9,7 @@ require('dotenv').config();
 const stats = require('./stats');
 const cat = require('./catalog');
 const { rankActions } = require('./leverage');
+const { computeForecasts } = require('./forecast');
 
 const DEFAULTS = {
   loadDays: 60, // history window pulled from the spine
@@ -193,11 +194,14 @@ async function analyze(opts = {}) {
   }
   const actions = rankActions([...trends, ...correlations], { goals, latestByKey });
 
-  const all = [...trends, ...correlations, ...actions];
+  // Goal achievement-probability forecasts from the same loaded series.
+  const forecasts = computeForecasts(goals, seriesByKey);
+
+  const all = [...trends, ...correlations, ...actions, ...forecasts];
   const windowStart = from;
   const windowEnd = new Date();
 
-  await findingsStore.supersedeAuto(['trend', 'correlation', 'leverage']);
+  await findingsStore.supersedeAuto(['trend', 'correlation', 'leverage', 'forecast']);
   for (const f of all) {
     await findingsStore.createFinding({ ...f, windowStart, windowEnd });
   }
@@ -207,6 +211,7 @@ async function analyze(opts = {}) {
     trends: trends.length,
     correlations: correlations.length,
     actions: actions.length,
+    forecasts: forecasts.length,
   };
 }
 
@@ -218,7 +223,7 @@ if (require.main === module) {
   analyze()
     .then((s) =>
       console.log(
-        `Analyzed ${s.metrics} metrics → ${s.trends} trends, ${s.correlations} correlations, ${s.actions} leverage actions.`
+        `Analyzed ${s.metrics} metrics → ${s.trends} trends, ${s.correlations} correlations, ${s.actions} leverage actions, ${s.forecasts} forecasts.`
       )
     )
     .catch((err) => {

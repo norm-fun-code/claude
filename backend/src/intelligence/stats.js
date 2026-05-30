@@ -50,6 +50,50 @@ function linregSlope(values) {
   return num / den;
 }
 
+/**
+ * Least-squares fit of values against their index (per step). Returns
+ * { slope, intercept, residualStd, n } or null if underdetermined. `residualStd`
+ * is the spread of points around the fitted line — the raw material for a
+ * forecast's uncertainty.
+ */
+function linearFit(values) {
+  const n = values.length;
+  if (n < 2) return null;
+  const xs = values.map((_, i) => i);
+  const mx = mean(xs);
+  const my = mean(values);
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < n; i++) {
+    num += (xs[i] - mx) * (values[i] - my);
+    den += (xs[i] - mx) ** 2;
+  }
+  if (den === 0) return null;
+  const slope = num / den;
+  const intercept = my - slope * mx;
+  // Residual standard deviation (n-2 dof for a fitted line).
+  let ss = 0;
+  for (let i = 0; i < n; i++) {
+    const pred = intercept + slope * xs[i];
+    ss += (values[i] - pred) ** 2;
+  }
+  const residualStd = n > 2 ? Math.sqrt(ss / (n - 2)) : 0;
+  return { slope, intercept, residualStd, n };
+}
+
+/**
+ * Standard normal CDF Φ(z) via the Abramowitz & Stegun 7.1.26 approximation
+ * (max abs error ~7.5e-8). Returns P(Z ≤ z) for Z ~ N(0,1).
+ */
+function normalCdf(z) {
+  if (!Number.isFinite(z)) return z > 0 ? 1 : 0;
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const d = 0.3989422804014327 * Math.exp(-(z * z) / 2);
+  const p =
+    d * t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  return z >= 0 ? 1 - p : p;
+}
+
 function dayKey(d) {
   return new Date(d).toISOString().slice(0, 10);
 }
@@ -111,4 +155,14 @@ function trendStats(series, window = 7) {
   };
 }
 
-module.exports = { mean, std, pearson, linregSlope, alignByDay, trendStats, dayKey };
+module.exports = {
+  mean,
+  std,
+  pearson,
+  linregSlope,
+  linearFit,
+  normalCdf,
+  alignByDay,
+  trendStats,
+  dayKey,
+};

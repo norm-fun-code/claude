@@ -247,6 +247,26 @@ app.get('/api/actions', async (req, res) => {
   }
 });
 
+// Goal achievement-probability forecasts (latest analyze run).
+app.get('/api/forecasts', async (req, res) => {
+  try {
+    const open = await findingsStore.listFindings({ status: 'open' });
+    const forecasts = open
+      .filter((f) => f.type === 'forecast')
+      .map((f) => ({
+        title: f.title,
+        detail: f.detail,
+        probability: f.confidence,
+        domains: f.domains,
+        ...f.evidence,
+      }))
+      .sort((a, b) => (a.probability ?? 1) - (b.probability ?? 1)); // most at-risk first
+    res.json({ forecasts });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/sources', async (req, res) => {
   try {
     res.json({ sources: await sourcesStore.listSources() });
