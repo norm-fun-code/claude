@@ -709,20 +709,21 @@ function render(){
       const p50K=[startLiqK,...mc.band.p50.map(dfl)];
       const p90K=[startLiqK,...mc.band.p90.map(dfl)];
       const p10K=[startLiqK,...mc.band.p10.map(dfl)];
-      // Cap y-axis near the plan/median scale so the extreme p90 tail doesn't dominate.
-      const refMax=Math.max(...planK,...p50K);
-      const capK=Math.ceil(refMax*1.3/500)*500;
-      const clipped=Math.max(...p90K)>capK;
+      // Fit the full p90 range by picking a step size that gives ~8 clean gridlines.
+      const trueMax=Math.max(...p90K);
+      const rawStep=trueMax/8;
+      const mag=Math.pow(10,Math.floor(Math.log10(rawStep)));
+      const stepK=Math.ceil(rawStep/mag)*mag; // round up to nearest order-of-magnitude unit
+      const maxK=Math.ceil(trueMax/stepK)*stepK;
       ca.innerHTML=`<div id="mcInfo" style="display:flex;gap:14px;flex-wrap:wrap;font-size:10px;color:var(--t2);margin-bottom:8px;padding:8px 10px;background:var(--s2);border:1px solid var(--bd);border-radius:6px">
         <span><strong style="color:var(--tx)">${mc.trials}</strong> trials · <strong>${(mc.vol*100).toFixed(0)}%</strong> annual vol</span>
         <span>NW @ ${R[R.length-1].yr}: <strong style="color:var(--r)">${fmt(mc.finalP10)}</strong> (p10) · <strong style="color:var(--tx)">${fmt(mc.finalP50)}</strong> (median) · <strong style="color:var(--g)">${fmt(mc.finalP90)}</strong> (p90)</span>
         <span>Liquid floor p10: <strong style="color:${mc.liqFloorP10<0?'var(--r)':'var(--a)'}">${fmt(mc.liqFloorP10)}</strong></span>
         <span>Risk of running out of liquid: <strong style="color:${mc.ruinPct>5?'var(--r)':'var(--g)'}">${mc.ruinPct.toFixed(1)}%</strong></span>
-        ${clipped?`<span style="color:var(--t3);font-style:italic">chart capped at ${fmtK(capK)} — p90 tail extends to ${fmt(mc.finalP90)}</span>`:''}
       </div><canvas id="cv" style="height:300px"></canvas>`;
       const ctx2=document.getElementById('cv').getContext('2d');
-      po.scales.y.max=capK;
-      po.scales.y.ticks.stepSize=Math.max(500,Math.ceil(capK/9/500)*500); // ~9 gridlines, fits like the original
+      po.scales.y.max=maxK;
+      po.scales.y.ticks.stepSize=stepK;
       const ds=[
         {label:'p10',data:p10K,borderColor:'rgba(205,61,100,.4)',backgroundColor:'rgba(205,61,100,.0)',fill:false,tension:.3,pointRadius:0,borderWidth:1},
         {label:'p10–p90 range',data:p90K,borderColor:'rgba(26,135,84,.4)',backgroundColor:'rgba(99,91,255,.10)',fill:'-1',tension:.3,pointRadius:0,borderWidth:1},
