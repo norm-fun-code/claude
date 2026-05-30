@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -17,11 +17,33 @@ import { SectionHeader } from './SectionHeader';
 // model and stays in sync with your scenarios — nothing to duplicate here.
 const ADVISOR_URL = 'https://claude-production-7130.up.railway.app/';
 
+// Open straight into the AI Advisor tab and hide the parameters panel + tab bar
+// so the embed is advisor-only. The planner switches views via setTab('advisor');
+// params still live in memory (the model reads them), we just hide their UI.
+const FOCUS_ADVISOR = `
+(function(){
+  try{
+    if(!document.getElementById('normos-adv-css')){
+      var s=document.createElement('style'); s.id='normos-adv-css';
+      s.innerHTML='#controls{display:none!important}.layout{grid-template-columns:1fr!important}.tabs{display:none!important}';
+      document.head.appendChild(s);
+    }
+    var n=0, iv=setInterval(function(){
+      n++;
+      if(typeof setTab==='function'){ try{setTab('advisor');}catch(e){} clearInterval(iv); }
+      if(n>50) clearInterval(iv);
+    },120);
+  }catch(e){}
+  true;
+})();
+`;
+
 export function AdvisorCard() {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const webRef = useRef<WebView>(null);
 
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }, shadow(isDark)]}>
@@ -50,8 +72,14 @@ export function AdvisorCard() {
           </View>
           <View style={{ flex: 1 }}>
             <WebView
+              ref={webRef}
               source={{ uri: ADVISOR_URL }}
-              onLoadEnd={() => setLoading(false)}
+              onLoadEnd={() => {
+                setLoading(false);
+                // Re-run after every navigation (e.g. after the login page).
+                webRef.current?.injectJavaScript(FOCUS_ADVISOR);
+              }}
+              injectedJavaScript={FOCUS_ADVISOR}
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
               domStorageEnabled
