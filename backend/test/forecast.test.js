@@ -87,6 +87,19 @@ test('too little history → insufficient_data, null confidence', () => {
   assert.equal(f.confidence, null);
 });
 
+test('wrong-way trend omits the misleading projected value', () => {
+  // HRV declining, but the goal wants it higher → don't print "projected 7ms".
+  const series = ramp(50, -0.4, 30);
+  const goal = {
+    id: 'g7', domain: 'health', metric: 'hrv', title: 'Raise HRV',
+    target_value: 70, baseline_value: 50, target_date: targetDate(40), unit: 'ms',
+  };
+  const f = forecastGoal(goal, series, { asOf: ASOF });
+  assert.ok(f.confidence < 0.2, 'should be unlikely');
+  assert.doesNotMatch(f.detail, /Projected/, 'no projection when heading the wrong way');
+  assert.match(f.detail, /doesn't reach the target/);
+});
+
 test('non-metric goal is skipped', () => {
   assert.equal(forecastGoal({ id: 'x', title: 'vague', domain: 'life' }, [], {}), null);
 });

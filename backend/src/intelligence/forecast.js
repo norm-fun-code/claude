@@ -145,9 +145,14 @@ function forecastGoal(goal, series = [], opts = {}) {
   const etaPhrase = projectedDate
     ? `At this rate it crosses the target around ${formatDate(projectedDate)}.`
     : `At this rate it doesn't reach the target.`;
+  // Only show a projected value when the trend is actually heading toward the
+  // target — a straight-line projection of a wrong-way trend is misleading
+  // (e.g. "projected 7ms" from declining HRV).
+  const headingToward = needUp ? slopePerDay > 0 : slopePerDay < 0;
+  const showProjection = projectedValue != null && (headingToward || achieved);
   const detail =
     `Now ${round(current)}${u} → target ${round(target)}${u}. ${trendPhrase}. ${etaPhrase}` +
-    (projectedValue != null ? ` Projected ${round(projectedValue)}${u}${byClause}.` : '');
+    (showProjection ? ` Projected ${round(projectedValue)}${u}${byClause}.` : '');
 
   return {
     ...base,

@@ -6,7 +6,17 @@
 -- content (books, highlights, notes, newsletters) lands in `documents` with vector
 -- embeddings for the knowledge graph / semantic search.
 
-CREATE EXTENSION IF NOT EXISTS timescaledb;
+-- TimescaleDB is an optional optimization (a hypertable for the metrics
+-- time-series). Every query uses standard SQL (date_trunc), so NormOS runs
+-- correctly on vanilla Postgres too — skip it gracefully if unavailable.
+DO $$
+BEGIN
+  CREATE EXTENSION IF NOT EXISTS timescaledb;
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE 'TimescaleDB unavailable; continuing on vanilla Postgres (metrics stays a plain table).';
+END $$;
+
+-- pgvector is required (knowledge-corpus embeddings).
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- ---------------------------------------------------------------------------
@@ -37,7 +47,14 @@ CREATE TABLE IF NOT EXISTS metrics (
   PRIMARY KEY (ts, domain, metric, source)
 );
 
-SELECT create_hypertable('metrics', 'ts', if_not_exists => TRUE);
+-- Promote metrics to a TimescaleDB hypertable when the extension is present;
+-- otherwise it stays a normal table (correct, just not as fast at large scale).
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb') THEN
+    PERFORM create_hypertable('metrics', 'ts', if_not_exists => TRUE);
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_metrics_domain_metric_ts ON metrics (domain, metric, ts DESC);
 
 -- ---------------------------------------------------------------------------
