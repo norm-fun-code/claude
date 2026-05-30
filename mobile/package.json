@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "expo": "~52.0.0",
+    "expo-asset": "~11.0.1",
     "expo-device": "~7.0.0",
     "expo-haptics": "~14.0.0",
     "expo-linear-gradient": "~14.0.0",
