@@ -215,6 +215,24 @@ function mapFile({ headers, records }) {
   return { kind: 'unknown', metrics: [], documents: [] };
 }
 
+/**
+ * Pure: turn raw CSV text (one uploaded Monarch export) into metrics+documents.
+ * Used by the upload endpoint so the cloud can ingest a file it never sees on
+ * disk. Mirrors the per-file branch of sync().
+ */
+function importText(text) {
+  const parsed = parseCsvObjects(text);
+  const kind = detectKind(parsed.headers);
+  if (kind === 'transactions') {
+    const { metrics, documents } = mapTransactions(parsed.records);
+    return { kind, rows: parsed.records.length, metrics: dedupeMetrics(metrics), documents };
+  }
+  if (kind === 'balances') {
+    return { kind, rows: parsed.records.length, metrics: dedupeMetrics(mapBalances(parsed.records).metrics), documents: [] };
+  }
+  return { kind: 'unknown', rows: parsed.records.length, metrics: [], documents: [] };
+}
+
 /** De-dupe metrics so the bulk insert never sees a repeated (ts, metric) key. */
 function dedupeMetrics(metrics) {
   const byKey = new Map();
@@ -289,6 +307,7 @@ module.exports = {
   mapTransactions,
   mapBalances,
   mapFile,
+  importText,
   dedupeMetrics,
   parseAmount,
   parseDay,

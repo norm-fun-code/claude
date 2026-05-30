@@ -19,6 +19,7 @@ const { mapCheckin, SOURCE: CHECKIN_SOURCE } = require('./src/ingest/checkin');
 const documentsStore = require('./src/store/documents');
 const llm = require('./src/llm');
 const { runIngest } = require('./src/ingest/run');
+const monarch = require('./src/connectors/monarch');
 const { analyze } = require('./src/intelligence/analyze');
 const { embedPending } = require('./src/intelligence/embeddings');
 const { ask } = require('./src/chat/ask');
@@ -110,6 +111,32 @@ app.post('/api/ingest/metrics', async (req, res) => {
 app.post('/api/ingest/run', async (req, res) => {
   try {
     res.json({ results: await runIngest() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Monarch CSV upload: POST the raw CSV body (transactions OR balances export).
+// The cloud can't see files on your Mac, so this is how the monthly export
+// reaches it — `curl --data-binary @export.csv`. Idempotent: re-uploading the
+// same month overwrites the same daily metrics rather than double-counting.
+app.post('/api/import/monarch', express.text({ type: '*/*', limit: '25mb' }), async (req, res) => {
+  try {
+    const text = typeof req.body === 'string' ? req.body : '';
+    if (!text.trim()) return res.status(400).json({ error: 'send the CSV as the request body' });
+    const { kind, rows, metrics, documents } = monarch.importText(text);
+    if (kind === 'unknown') {
+      return res.status(422).json({ error: 'could not recognize this as a Monarch transactions or balances export', rows });
+    }
+    await sourcesStore.registerSource({ id: 'monarch', domain: 'wealth', displayName: 'Monarch (CSV import)' });
+    const written = await metricsStore.insertMetrics(metrics);
+    let docs = 0;
+    for (const doc of documents) {
+      if (await documentsStore.upsertDocument(doc)) docs++;
+    }
+    await sourcesStore.markSync('monarch');
+    const summary = await analyze();
+    res.json({ kind, rows, metrics: written, documents: docs, analyzed: summary || null });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
