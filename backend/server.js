@@ -116,6 +116,34 @@ app.post('/api/habits', async (req, res) => {
   }
 });
 
+// What you've already logged *today* (in your timezone), so the app can
+// pre-fill the habit stack instead of starting blank each time you open it.
+app.get('/api/habits/today', async (req, res) => {
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const { rows } = await db.query(
+      `SELECT metric, value FROM metrics
+       WHERE domain = 'habits'
+         AND (ts AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
+       ORDER BY ts ASC`,
+      [tz]
+    );
+    const v = {};
+    for (const r of rows) v[r.metric] = Number(r.value); // latest wins
+    res.json({
+      logged: rows.length > 0,
+      morningTM: v.morning_tm === 1,
+      afternoonTM: v.afternoon_tm === 1,
+      gratitude: v.gratitude === 1,
+      coldShower: v.cold_shower === 1,
+      exercise: v.exercise === 1,
+      eatHealthy: Number.isFinite(v.eat_healthy) ? v.eat_healthy : null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Generic canonical metric ingestion for any future source.
 app.post('/api/ingest/metrics', async (req, res) => {
   try {

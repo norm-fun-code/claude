@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { API_BASE, authHeaders } from '../config';
 
 const HABITS_URL = `${API_BASE}/api/habits`;
+const HABITS_TODAY_URL = `${API_BASE}/api/habits/today`;
 
 type Binary = 'morningTM' | 'afternoonTM' | 'gratitude' | 'coldShower' | 'exercise';
 
@@ -30,6 +31,33 @@ export function HabitsCard() {
   });
   const [eatHealthy, setEatHealthy] = useState<number | null>(null);
   const [saved, setSaved] = useState(false);
+
+  // Pre-fill with whatever was already logged today (survives reopening).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(HABITS_TODAY_URL, { headers: authHeaders() });
+        if (!res.ok) return;
+        const t = await res.json();
+        if (cancelled || !t?.logged) return;
+        setChecked({
+          morningTM: !!t.morningTM,
+          afternoonTM: !!t.afternoonTM,
+          gratitude: !!t.gratitude,
+          coldShower: !!t.coldShower,
+          exercise: !!t.exercise,
+        });
+        if (Number.isFinite(t.eatHealthy)) setEatHealthy(t.eatHealthy);
+        setSaved(true);
+      } catch {
+        // offline — start blank
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function toggle(key: Binary) {
     setChecked((prev) => ({ ...prev, [key]: !prev[key] }));
