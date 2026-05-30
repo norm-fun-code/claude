@@ -224,7 +224,7 @@ The judgement (which insight, how urgent, dedup, quiet hours) is unit-tested in
   framework; existing data now persists. ✅
 - **Phase 1 — Ingestion breadth.** Readwise + Notion (learning), Plaid (wealth),
   Apple Health rounded out and persisted from the mobile app. ✅
-  Next candidates: Oura/Whoop for health depth.
+  (Apple Health is the health source — no third-party wearables planned.)
 - **Phase 2 — Intelligence.** Rolling trends + cross-domain correlations
   (incl. 1-day lag) written to `findings`; briefing surfaces them as insights. ✅
 - **Phase 3 — Check-in + leverage engine.** 10-second mood/energy/focus

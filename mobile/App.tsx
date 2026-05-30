@@ -17,6 +17,7 @@ import { getColors, spacing } from './src/theme';
 
 import { Header } from './src/components/Header';
 import { LeverageCard } from './src/components/LeverageCard';
+import { ForecastCard } from './src/components/ForecastCard';
 import { ChatCard } from './src/components/ChatCard';
 import { CheckinCard } from './src/components/CheckinCard';
 import { HealthCard } from './src/components/HealthCard';
@@ -76,6 +77,9 @@ export default function App() {
             insights={briefing.data.insights ?? []}
           />
         )}
+
+        {/* Goal forecasts — where current trends are headed */}
+        {briefing.data && <ForecastCard forecasts={briefing.data.forecasts ?? []} />}
 
         {/* Daily check-in — the subjective signal */}
         <CheckinCard />

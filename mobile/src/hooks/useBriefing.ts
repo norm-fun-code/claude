@@ -72,6 +72,13 @@ export interface RelevantHighlight {
   url: string | null;
 }
 
+export interface Forecast {
+  title: string;
+  detail: string | null;
+  probability: number | null;
+  status: string | null; // on_track | at_risk | off_track | on_pace | stalled | insufficient_data
+}
+
 export interface BriefingData {
   date: string;
   weather: Weather | null;
@@ -87,6 +94,7 @@ export interface BriefingData {
   notionPageTitle: string;
   leverageActions: LeverageAction[];
   insights: Insight[];
+  forecasts: Forecast[];
   relevantHighlight: RelevantHighlight | null;
   errors?: { service: string; error: string }[];
 }

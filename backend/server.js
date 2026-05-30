@@ -368,6 +368,7 @@ app.get('/api/briefing', async (req, res) => {
   // Surface the intelligence layer's current findings (from the last analysis).
   let insights = [];
   let leverageActions = [];
+  let forecasts = [];
   try {
     const open = await findingsStore.listFindings({ status: 'open' });
     leverageActions = open
@@ -375,8 +376,18 @@ app.get('/api/briefing', async (req, res) => {
       .sort((a, b) => (a.evidence?.rank ?? 99) - (b.evidence?.rank ?? 99))
       .slice(0, 3)
       .map((f) => ({ title: f.title, detail: f.detail }));
+    forecasts = open
+      .filter((f) => f.type === 'forecast')
+      .sort((a, b) => (a.confidence ?? 1) - (b.confidence ?? 1)) // most at-risk first
+      .slice(0, 5)
+      .map((f) => ({
+        title: f.title,
+        detail: f.detail,
+        probability: f.confidence,
+        status: f.evidence?.status ?? null,
+      }));
     insights = open
-      .filter((f) => f.type !== 'leverage')
+      .filter((f) => f.type !== 'leverage' && f.type !== 'forecast')
       .slice(0, 6)
       .map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence }));
   } catch (err) {
@@ -419,6 +430,7 @@ app.get('/api/briefing', async (req, res) => {
     notionPageTitle: notionData.pageTitle,
     leverageActions,
     insights,
+    forecasts,
     relevantHighlight,
   };
 
