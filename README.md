@@ -1,15 +1,49 @@
-# Morning Dashboard
+# NormOS
 
-A personal mobile morning briefing app for iPhone. Pulls Gmail newsletters, Notion wisdom, Google Calendar events, Apple Watch health data, and weather into a single beautiful daily dashboard — powered by Gemini AI.
+A personal intelligence platform. NormOS accumulates your life data across
+health, wealth, productivity, and learning, discovers relationships in it, and
+surfaces the highest-leverage action to take next. It began as a morning
+briefing app and is evolving into a lifelong personal operating system.
+
+> **Design north star:** not another dashboard that re-fetches and forgets — a
+> data spine that *remembers*, with an intelligence layer on top. See
+> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Architecture
 
 ```
-backend/   Node.js server (runs on your Mac)
+backend/   Node.js API + data spine (Postgres/TimescaleDB/pgvector)
 mobile/    Expo React Native app (runs on your iPhone)
+docs/      Architecture & roadmap
 ```
 
-The mobile app connects to the backend over your local network. The backend handles all API calls (Gmail, Notion, Gemini, Google Calendar, Weather). The mobile app adds on-device HealthKit data (HRV, sleep, steps, resting HR).
+The mobile app connects to the backend over your local network. The backend
+handles all API calls (Gmail, Notion, Gemini, Google Calendar, Weather),
+persists every observation into a canonical time-series + document store, and
+exposes query/ingestion endpoints. The mobile app adds on-device HealthKit data
+(HRV, sleep, steps, resting HR), which it pushes to the backend to persist.
+
+---
+
+## 0. Database (the data spine)
+
+NormOS is self-hosted: your data lives on your machine. The spine is Postgres +
+TimescaleDB + pgvector, run via Docker.
+
+```bash
+# from the repo root
+docker compose up -d                 # start Postgres + TimescaleDB + pgvector
+npm --prefix backend install         # install backend deps (includes pg)
+npm --prefix backend run migrate     # apply the schema
+```
+
+Then ingest on demand or on a schedule:
+
+```bash
+npm --prefix backend run ingest      # run all server-side connectors
+```
+
+`DATABASE_URL` in `backend/.env` defaults to the docker-compose credentials.
 
 ---
 

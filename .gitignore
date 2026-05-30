@@ -1,0 +1,13 @@
+# Dependencies
+node_modules/
+
+# Environment / secrets
+.env
+.env.local
+*.p8
+
+# Logs
+*.log
+
+# OS / editor
+.DS_Store

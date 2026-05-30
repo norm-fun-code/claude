@@ -1,0 +1,28 @@
+# NormOS self-hosted data spine.
+# Postgres + TimescaleDB (time-series metrics) + pgvector (knowledge embeddings),
+# all in a single container. Runs on your own machine — your data never leaves it.
+#
+#   docker compose up -d        # start the database
+#   npm --prefix backend run migrate   # apply schema
+#
+services:
+  db:
+    image: timescale/timescaledb-ha:pg16
+    container_name: normos-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-normos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-normos}
+      POSTGRES_DB: ${POSTGRES_DB:-normos}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - normos-data:/home/postgres/pgdata/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-normos} -d ${POSTGRES_DB:-normos}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  normos-data:

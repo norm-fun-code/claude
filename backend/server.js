@@ -10,14 +10,99 @@ const { fetchWeather } = require('./src/services/weather');
 const { generateBriefing } = require('./src/services/gemini');
 const { getTodayWorkout } = require('./src/services/workout');
 
+const db = require('./src/db');
+const metricsStore = require('./src/store/metrics');
+const findingsStore = require('./src/store/findings');
+const sourcesStore = require('./src/store/sources');
+const { mapHealthPayload, SOURCE: HEALTH_SOURCE } = require('./src/ingest/health');
+const { runIngest } = require('./src/ingest/run');
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/api/health', async (req, res) => {
+  let database = 'down';
+  try {
+    database = (await db.ping()) ? 'ok' : 'down';
+  } catch (err) {
+    database = `error: ${err.message}`;
+  }
+  res.json({ status: 'ok', database, timestamp: new Date().toISOString() });
+});
+
+// --- Ingestion -----------------------------------------------------------
+
+// Mobile app posts on-device HealthKit data here so it persists to the spine.
+app.post('/api/ingest/health', async (req, res) => {
+  try {
+    await sourcesStore.registerSource({
+      id: HEALTH_SOURCE,
+      domain: 'health',
+      displayName: 'Apple Health',
+    });
+    const rows = mapHealthPayload(req.body, { ts: req.query.ts });
+    const written = await metricsStore.insertMetrics(rows);
+    await sourcesStore.markSync(HEALTH_SOURCE);
+    res.json({ written });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Generic canonical metric ingestion for any future source.
+app.post('/api/ingest/metrics', async (req, res) => {
+  try {
+    const written = await metricsStore.insertMetrics(req.body);
+    res.json({ written });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Trigger all server-side connectors on demand.
+app.post('/api/ingest/run', async (req, res) => {
+  try {
+    res.json({ results: await runIngest() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Querying the spine --------------------------------------------------
+
+// GET /api/metrics?domain=health&metric=hrv&from=...&to=...&agg=avg
+app.get('/api/metrics', async (req, res) => {
+  const { domain, metric, from, to, agg } = req.query;
+  if (!domain || !metric) {
+    return res.status(400).json({ error: 'domain and metric are required' });
+  }
+  try {
+    const series = agg
+      ? await metricsStore.dailyAggregate({ domain, metric, from, to, agg })
+      : await metricsStore.getSeries({ domain, metric, from, to });
+    res.json({ domain, metric, series });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/findings', async (req, res) => {
+  try {
+    res.json({ findings: await findingsStore.listFindings({ status: req.query.status }) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/sources', async (req, res) => {
+  try {
+    res.json({ sources: await sourcesStore.listSources() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/briefing', async (req, res) => {
@@ -95,9 +180,25 @@ app.get('/api/briefing', async (req, res) => {
   }
 
   res.json(response);
+
+  // Persist the briefing for history, and capture today's data into the spine.
+  // Fire-and-forget: never let persistence failures affect the live response.
+  db.query(
+    `INSERT INTO briefings (kind, content) VALUES ('daily', $1)`,
+    [response]
+  ).catch((err) => console.error('[persist briefing] failed:', err.message));
+
+  runIngest()
+    .then((results) => {
+      const summary = results
+        .map((r) => (r.error ? `${r.id}:err` : `${r.id}:${r.metrics}m/${r.documents}d`))
+        .join(' ');
+      console.log(`[ingest] ${summary}`);
+    })
+    .catch((err) => console.error('[ingest] failed:', err.message));
 });
 
 app.listen(PORT, () => {
-  console.log(`Morning Dashboard backend running on http://localhost:${PORT}`);
+  console.log(`NormOS backend running on http://localhost:${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/api/health`);
 });
