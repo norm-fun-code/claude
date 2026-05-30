@@ -38,6 +38,17 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 
+// Optional bearer-token auth. Off by default (fine for localhost); set
+// NORMOS_API_TOKEN to require `Authorization: Bearer <token>` on every /api
+// route except the health check — important if you ever host this on a VPS.
+app.use('/api', (req, res, next) => {
+  const token = process.env.NORMOS_API_TOKEN;
+  if (!token || req.path === '/health') return next();
+  const auth = req.get('authorization') || '';
+  if (auth === `Bearer ${token}`) return next();
+  return res.status(401).json({ error: 'unauthorized' });
+});
+
 app.get('/api/health', async (req, res) => {
   let database = 'down';
   try {

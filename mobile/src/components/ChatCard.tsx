@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import { CHAT_URL } from '../config';
+import { CHAT_URL, authHeaders } from '../config';
 
 const SUGGESTIONS = [
   'Why was my focus lower last week?',
@@ -33,7 +33,7 @@ export function ChatCard() {
     try {
       const res = await fetch(CHAT_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ question: q }),
       });
       const json = await res.json();

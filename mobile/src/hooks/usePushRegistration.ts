@@ -5,7 +5,7 @@ import { useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
-import { DEVICE_REGISTER_URL } from '../config';
+import { DEVICE_REGISTER_URL, authHeaders } from '../config';
 
 // Show notifications even when the app is foregrounded.
 Notifications.setNotificationHandler({
@@ -56,7 +56,7 @@ export function usePushRegistration() {
         if (!pushToken) return;
         await fetch(DEVICE_REGISTER_URL, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: authHeaders(),
           body: JSON.stringify({ pushToken, platform: Platform.OS, label: Device.modelName }),
         });
       } catch {

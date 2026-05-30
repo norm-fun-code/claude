@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+
+    services:
+      db:
+        # pgvector image = Postgres 16 + pgvector. NormOS makes TimescaleDB
+        # optional, so vanilla Postgres + pgvector is enough for CI.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: normos
+          POSTGRES_PASSWORD: normos
+          POSTGRES_DB: normos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U normos -d normos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://normos:normos@localhost:5432/normos
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm install --no-audit --no-fund
+
+      - name: Unit tests
+        working-directory: backend
+        run: npm test
+
+      - name: Migrate schema
+        working-directory: backend
+        run: npm run migrate
+
+      - name: End-to-end smoke (seed → analyze)
+        working-directory: backend
+        run: |
+          npm run seed
+          npm run analyze
+
+  mobile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install mobile deps
+        working-directory: mobile
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        working-directory: mobile
+        run: npx tsc --noEmit

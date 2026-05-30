@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { BRIEFING_URL } from '../config';
+import { BRIEFING_URL, authHeaders } from '../config';
 
 const API_URL = BRIEFING_URL;
 
@@ -131,14 +131,16 @@ export function useBriefing(): BriefingState {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchBriefing = useCallback(async () => {
+  const fetchBriefing = useCallback(async (force = false) => {
     setLoading(true);
     setError(null);
 
     try {
-      const response = await fetch(API_URL, {
+      // Default load uses the server cache (instant); pull-to-refresh forces fresh.
+      const url = force ? `${API_URL}?refresh=1` : API_URL;
+      const response = await fetch(url, {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
       });
 
       if (!response.ok) {
@@ -150,16 +152,15 @@ export function useBriefing(): BriefingState {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       setError(message);
-
-      // If we already have stale data, keep showing it
-      if (!data) {
-        setData(null);
-      }
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // No auto-fetch on mount — only refreshes on pull-to-refresh
-  return { data, loading, error, refetch: fetchBriefing };
+  // Fetch the (cached, instant) briefing on mount; pull-to-refresh forces fresh.
+  useEffect(() => {
+    fetchBriefing(false);
+  }, [fetchBriefing]);
+
+  return { data, loading, error, refetch: () => fetchBriefing(true) };
 }

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, Pressable, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import { CHECKIN_URL } from '../config';
+import { CHECKIN_URL, authHeaders } from '../config';
 
 type Scores = { mood: number | null; energy: number | null; focus: number | null };
 const DIMENSIONS: { key: keyof Scores; label: string }[] = [
@@ -29,7 +29,7 @@ export function CheckinCard() {
     try {
       await fetch(CHECKIN_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify(next),
       });
       setSaved(true);

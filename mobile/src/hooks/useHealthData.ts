@@ -3,7 +3,7 @@ import AppleHealthKit, {
   HealthKitPermissions,
   HealthValue,
 } from 'react-native-health';
-import { HEALTH_INGEST_URL } from '../config';
+import { HEALTH_INGEST_URL, authHeaders } from '../config';
 
 // Persist on-device HealthKit readings to the NormOS spine. Canonical metric
 // names match backend/src/ingest/health.js. Fire-and-forget: never block the UI.
@@ -13,7 +13,7 @@ async function pushHealthData(rows: { metric: string; value: number; unit: strin
   try {
     await fetch(HEALTH_INGEST_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify(payload),
     });
   } catch {
