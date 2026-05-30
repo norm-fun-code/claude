@@ -447,6 +447,31 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[weeklyReview] failed:', err.message);
   }
 
+  // Wealth snapshot for the Wealth tab (from the canonical spine — Monarch etc.).
+  let wealth = null;
+  try {
+    const sum = (arr) => arr.reduce((s, r) => s + Number(r.value), 0);
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const nw = await metricsStore.latest({ domain: 'wealth', metric: 'net_worth' });
+    const nwPrev = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'net_worth', from: monthAgo, to: weekAgo, agg: 'avg' });
+    const spend = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: weekAgo, agg: 'sum' });
+    const income = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'income', from: weekAgo, agg: 'sum' });
+    if (nw || spend.length) {
+      const netWorth = nw ? Number(nw.value) : null;
+      const priorNw = nwPrev.length ? sum(nwPrev) / nwPrev.length : null;
+      wealth = {
+        netWorth,
+        netWorthChange: netWorth != null && priorNw ? Math.round((netWorth - priorNw)) : null,
+        spendingThisWeek: Math.round(sum(spend)),
+        incomeThisWeek: Math.round(sum(income)),
+        cashflowThisWeek: Math.round(sum(income) - sum(spend)),
+      };
+    }
+  } catch (err) {
+    console.error('[wealth] failed:', err.message);
+  }
+
   const response = {
     date: dateLabel,
     weather,
@@ -465,6 +490,7 @@ app.get('/api/briefing', async (req, res) => {
     forecasts,
     relevantHighlight,
     weeklyReview,
+    wealth,
   };
 
   if (errors.length > 0) {

@@ -79,6 +79,24 @@ export interface Forecast {
   status: string | null; // on_track | at_risk | off_track | on_pace | stalled | insufficient_data
 }
 
+export interface WeeklyReview {
+  headline: string;
+  narrative: string;
+  wins?: string[];
+  watchouts?: string[];
+  focus?: string[];
+  metrics?: { label: string; thisWeek: number; lastWeek: number | null; change: number | null; goodWhen: string | null }[];
+  generatedAt?: string;
+}
+
+export interface Wealth {
+  netWorth: number | null;
+  netWorthChange: number | null;
+  spendingThisWeek: number;
+  incomeThisWeek: number;
+  cashflowThisWeek: number;
+}
+
 export interface BriefingData {
   date: string;
   weather: Weather | null;
@@ -96,6 +114,8 @@ export interface BriefingData {
   insights: Insight[];
   forecasts: Forecast[];
   relevantHighlight: RelevantHighlight | null;
+  weeklyReview: WeeklyReview | null;
+  wealth: Wealth | null;
   errors?: { service: string; error: string }[];
 }
 

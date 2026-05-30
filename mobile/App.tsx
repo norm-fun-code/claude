@@ -1,4 +1,4 @@
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ScrollView,
   StyleSheet,
@@ -13,12 +13,17 @@ import { StatusBar } from 'expo-status-bar';
 
 import { useBriefing } from './src/hooks/useBriefing';
 import { useHealthData } from './src/hooks/useHealthData';
+import { usePushRegistration } from './src/hooks/usePushRegistration';
 import { getColors, spacing } from './src/theme';
 
 import { Header } from './src/components/Header';
+import { TabBar, TabKey, TABS } from './src/components/TabBar';
 import { LeverageCard } from './src/components/LeverageCard';
 import { ForecastCard } from './src/components/ForecastCard';
 import { LibraryCard } from './src/components/LibraryCard';
+import { ReviewCard } from './src/components/ReviewCard';
+import { WealthCard } from './src/components/WealthCard';
+import { InsightsCard } from './src/components/InsightsCard';
 import { ChatCard } from './src/components/ChatCard';
 import { CheckinCard } from './src/components/CheckinCard';
 import { HealthCard } from './src/components/HealthCard';
@@ -30,7 +35,6 @@ import { NotionCard } from './src/components/NotionCard';
 import { NewsletterList } from './src/components/NewsletterList';
 import { FinanceCard } from './src/components/FinanceCard';
 import { UrgentEmailsCard } from './src/components/UrgentEmailsCard';
-import { usePushRegistration } from './src/hooks/usePushRegistration';
 
 export default function App() {
   const isDark = useColorScheme() === 'dark';
@@ -40,6 +44,7 @@ export default function App() {
   const health = useHealthData();
   usePushRegistration(); // register this phone for proactive nudges
 
+  const [tab, setTab] = useState<TabKey>('today');
   const isRefreshing = briefing.loading || health.loading;
 
   const onRefresh = useCallback(() => {
@@ -48,11 +53,84 @@ export default function App() {
   }, [briefing, health]);
 
   const today = new Date().toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
+    weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   });
+
+  const d = briefing.data;
+  const tabTitle = TABS.find((t) => t.key === tab)?.label ?? '';
+
+  const renderTab = () => {
+    switch (tab) {
+      case 'health':
+        return (
+          <>
+            <HealthCard health={health} />
+            <WeatherCard weather={d?.weather ?? null} />
+            {d?.workout && <WorkoutCard workout={d.workout} hrvStatus={health.hrvStatus} />}
+            <CalendarCard events={d?.calendar ?? []} />
+          </>
+        );
+      case 'wealth':
+        return (
+          <>
+            <WealthCard wealth={d?.wealth ?? null} />
+            {d?.financeSummary && d.financeSummary.length > 0 && <FinanceCard items={d.financeSummary} />}
+            {!d?.wealth && (
+              <EmptyNote c={c} text="Drop your Monarch export in backend/imports/monarch/ and run ingest to see net worth, spending, and cashflow here." />
+            )}
+          </>
+        );
+      case 'wisdom':
+        return (
+          <>
+            {d?.relevantHighlight && <LibraryCard highlight={d.relevantHighlight} />}
+            <ChatCard />
+            {(d?.quote || d?.quoteInsight) && <QuoteCard quote={d!.quote} insight={d!.quoteInsight} />}
+            {(d?.notionText || d?.notionInsight) && (
+              <NotionCard pageTitle={d?.notionPageTitle ?? ''} notionText={d!.notionText} insight={d!.notionInsight} />
+            )}
+            {d && <NewsletterList newsletters={d.newsletters} />}
+          </>
+        );
+      case 'insights':
+        return (
+          <>
+            <ReviewCard review={d?.weeklyReview ?? null} />
+            <ForecastCard forecasts={d?.forecasts ?? []} />
+            <InsightsCard insights={d?.insights ?? []} />
+            {!d && !briefing.loading && <EmptyNote c={c} text="Insights appear after your first analyze run." />}
+          </>
+        );
+      case 'today':
+      default:
+        return (
+          <>
+            <CheckinCard />
+            {d && <LeverageCard actions={d.leverageActions ?? []} insights={[]} />}
+            {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
+            <ReviewCard review={d?.weeklyReview ?? null} compact />
+            {d && <UrgentEmailsCard emails={d.urgentEmails} />}
+            {d?.relevantHighlight && <LibraryCard highlight={d.relevantHighlight} />}
+
+            {briefing.error && !d && (
+              <View style={[styles.errorBox, { borderColor: c.border, backgroundColor: c.card }]}>
+                <Text style={[styles.errorTitle, { color: c.text }]}>Cannot reach backend</Text>
+                <Text style={[styles.errorMsg, { color: c.subtext }]}>
+                  Make sure the backend is running:{'\n'}cd backend && node server.js
+                </Text>
+                <Text style={[styles.errorDetail, { color: c.subtext }]}>{briefing.error}</Text>
+              </View>
+            )}
+            {briefing.loading && !d && (
+              <View style={styles.loadingBlock}>
+                <ActivityIndicator color={c.subtext} />
+                <Text style={[styles.loadingText, { color: c.subtext }]}>Generating your briefing…</Text>
+              </View>
+            )}
+          </>
+        );
+    }
+  };
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: c.background }]}>
@@ -60,153 +138,46 @@ export default function App() {
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[styles.content, { backgroundColor: c.background }]}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefreshing}
-            onRefresh={onRefresh}
-            tintColor={c.subtext}
-          />
-        }
+        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={c.subtext} />}
         showsVerticalScrollIndicator={false}
       >
-        <Header date={briefing.data?.date ?? today} isRefreshing={isRefreshing} />
-
-        {/* Highest leverage actions — the front page */}
-        {briefing.data && (
-          <LeverageCard
-            actions={briefing.data.leverageActions ?? []}
-            insights={briefing.data.insights ?? []}
-          />
-        )}
-
-        {/* Goal forecasts — where current trends are headed */}
-        {briefing.data && <ForecastCard forecasts={briefing.data.forecasts ?? []} />}
-
-        {/* Relevant-not-random highlight from your Readwise + Notion library */}
-        {briefing.data?.relevantHighlight && (
-          <LibraryCard highlight={briefing.data.relevantHighlight} />
-        )}
-
-        {/* Daily check-in — the subjective signal */}
-        <CheckinCard />
-
-        {/* Ask NormOS — chat grounded in your data + library */}
-        <ChatCard />
-
-        {/* Health — always shown (on-device data) */}
-        <HealthCard health={health} />
-
-        {/* Weather */}
-        <WeatherCard weather={briefing.data?.weather ?? null} />
-
-        {/* Workout — combines server plan with local HRV */}
-        {briefing.data?.workout && (
-          <WorkoutCard workout={briefing.data.workout} hrvStatus={health.hrvStatus} />
-        )}
-
-        {/* Calendar */}
-        <CalendarCard events={briefing.data?.calendar ?? []} />
-
-        {/* Quote */}
-        {(briefing.data?.quote || briefing.data?.quoteInsight) && (
-          <QuoteCard
-            quote={briefing.data.quote}
-            insight={briefing.data.quoteInsight}
-          />
-        )}
-
-        {/* Notion */}
-        {(briefing.data?.notionText || briefing.data?.notionInsight) && (
-          <NotionCard
-            pageTitle={briefing.data?.notionPageTitle ?? ''}
-            notionText={briefing.data.notionText}
-            insight={briefing.data.notionInsight}
-          />
-        )}
-
-        {/* Newsletters */}
-        {briefing.data && (
-          <NewsletterList newsletters={briefing.data.newsletters} />
-        )}
-
-        {/* Finance */}
-        {briefing.data?.financeSummary && briefing.data.financeSummary.length > 0 && (
-          <FinanceCard items={briefing.data.financeSummary} />
-        )}
-
-        {/* Urgent emails */}
-        {briefing.data && (
-          <UrgentEmailsCard emails={briefing.data.urgentEmails} />
-        )}
-
-        {/* Backend error notice */}
-        {briefing.error && !briefing.data && (
-          <View style={[styles.errorBox, { borderColor: c.border, backgroundColor: c.card }]}>
-            <Text style={[styles.errorTitle, { color: c.text }]}>Cannot reach backend</Text>
-            <Text style={[styles.errorMsg, { color: c.subtext }]}>
-              Make sure the backend is running:{'\n'}cd backend && node server.js
-            </Text>
-            <Text style={[styles.errorDetail, { color: c.subtext }]}>{briefing.error}</Text>
-          </View>
-        )}
-
-        {/* Loading state (first load, no data yet) */}
-        {briefing.loading && !briefing.data && (
-          <View style={styles.loadingBlock}>
-            <ActivityIndicator color={c.subtext} />
-            <Text style={[styles.loadingText, { color: c.subtext }]}>
-              Generating your briefing…
-            </Text>
-          </View>
-        )}
-
+        <Header date={d?.date ?? today} isRefreshing={isRefreshing} />
+        <Text style={[styles.tabTitle, { color: c.text }]}>{tabTitle}</Text>
+        {renderTab()}
         <View style={styles.footer} />
       </ScrollView>
+
+      <TabBar active={tab} onChange={setTab} />
     </SafeAreaView>
   );
 }
 
+function EmptyNote({ c, text }: { c: ReturnType<typeof getColors>; text: string }) {
+  return (
+    <View style={[styles.empty, { borderColor: c.border, backgroundColor: c.card }]}>
+      <Text style={[styles.emptyText, { color: c.subtext }]}>{text}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-  },
-  scroll: {
-    flex: 1,
-  },
-  content: {
-    paddingHorizontal: spacing.md,
-    paddingBottom: spacing.xl,
-  },
-  errorBox: {
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: spacing.md,
+  safe: { flex: 1 },
+  scroll: { flex: 1 },
+  content: { paddingHorizontal: spacing.md, paddingBottom: spacing.xl },
+  tabTitle: {
+    fontSize: 28,
+    fontWeight: '700',
+    letterSpacing: -0.5,
     marginBottom: spacing.md,
+    marginTop: spacing.xs,
   },
-  errorTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: spacing.xs,
-  },
-  errorMsg: {
-    fontSize: 14,
-    lineHeight: 21,
-    marginBottom: spacing.sm,
-  },
-  errorDetail: {
-    fontSize: 12,
-    fontStyle: 'italic',
-  },
-  loadingBlock: {
-    alignItems: 'center',
-    paddingVertical: spacing.xl,
-    gap: spacing.md,
-  },
-  loadingText: {
-    fontSize: 14,
-    fontStyle: 'italic',
-  },
-  footer: {
-    height: spacing.xl,
-  },
+  errorBox: { borderWidth: 1, borderRadius: 12, padding: spacing.md, marginBottom: spacing.md },
+  errorTitle: { fontSize: 16, fontWeight: '600', marginBottom: spacing.xs },
+  errorMsg: { fontSize: 14, lineHeight: 21, marginBottom: spacing.sm },
+  errorDetail: { fontSize: 12, fontStyle: 'italic' },
+  loadingBlock: { alignItems: 'center', paddingVertical: spacing.xl, gap: spacing.md },
+  loadingText: { fontSize: 14, fontStyle: 'italic' },
+  empty: { borderWidth: 1, borderRadius: 14, padding: spacing.lg, marginBottom: spacing.md },
+  emptyText: { fontSize: 14, lineHeight: 21, fontStyle: 'italic' },
+  footer: { height: spacing.lg },
 });

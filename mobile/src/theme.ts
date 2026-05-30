@@ -66,6 +66,26 @@ export const typography = {
   },
 };
 
+// Soft, Apple-style elevation for cards and the floating tab bar.
+export function shadow(isDark: boolean, level: 'card' | 'bar' = 'card') {
+  if (isDark) return { borderWidth: 1 };
+  const card = {
+    shadowColor: '#0A2540',
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  };
+  const bar = {
+    shadowColor: '#0A2540',
+    shadowOpacity: 0.1,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: -2 },
+    elevation: 12,
+  };
+  return level === 'bar' ? bar : card;
+}
+
 export function getColors(isDark: boolean) {
   return {
     background: isDark ? colors.backgroundDark : colors.background,
