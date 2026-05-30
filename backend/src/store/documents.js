@@ -72,6 +72,31 @@ async function searchSimilar(embedding, { k = 8, domain = null } = {}) {
   return rows;
 }
 
+/** Documents still missing an embedding (for the embedding backfill job). */
+async function listWithoutEmbedding(limit = 100) {
+  const { rows } = await query(
+    `SELECT id, title, content FROM documents
+      WHERE embedding IS NULL
+      ORDER BY ingested_at ASC
+      LIMIT $1`,
+    [limit]
+  );
+  return rows;
+}
+
+/** Attach an embedding to a document. */
+async function setEmbedding(id, embedding) {
+  await query(`UPDATE documents SET embedding = $2::vector WHERE id = $1`, [
+    id,
+    toVectorLiteral(embedding),
+  ]);
+}
+
+async function countMissingEmbeddings() {
+  const { rows } = await query(`SELECT count(*)::int AS n FROM documents WHERE embedding IS NULL`);
+  return rows[0]?.n ?? 0;
+}
+
 /** Most recent documents, optionally scoped to a domain. */
 async function recent({ domain = null, limit = 20 } = {}) {
   const { rows } = await query(
@@ -85,4 +110,11 @@ async function recent({ domain = null, limit = 20 } = {}) {
   return rows;
 }
 
-module.exports = { upsertDocument, searchSimilar, recent };
+module.exports = {
+  upsertDocument,
+  searchSimilar,
+  recent,
+  listWithoutEmbedding,
+  setEmbedding,
+  countMissingEmbeddings,
+};

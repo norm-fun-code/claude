@@ -65,6 +65,13 @@ export interface LeverageAction {
   detail: string | null;
 }
 
+export interface RelevantHighlight {
+  title: string | null;
+  author: string | null;
+  content: string;
+  url: string | null;
+}
+
 export interface BriefingData {
   date: string;
   weather: Weather | null;
@@ -80,6 +87,7 @@ export interface BriefingData {
   notionPageTitle: string;
   leverageActions: LeverageAction[];
   insights: Insight[];
+  relevantHighlight: RelevantHighlight | null;
   errors?: { service: string; error: string }[];
 }
 

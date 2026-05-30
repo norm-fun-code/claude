@@ -102,7 +102,31 @@ Two ingestion modes:
 | `POST /api/analyze` | Run the intelligence layer (trends + correlations + leverage) |
 | `POST /api/checkin` | Daily subjective check-in (mood/energy/focus + note) |
 | `GET /api/actions` | Ranked highest-leverage actions |
+| `POST /api/chat` | Life chat — RAG answer over your data + library |
+| `POST /api/embed` | Backfill document embeddings |
 | `GET /api/sources` | Registered sources + sync status |
+
+## LLM layer
+
+`backend/src/llm/` is provider-agnostic so the model is a config choice, not a
+rewrite:
+
+- **Chat/reasoning** (`LLM_PROVIDER`): `anthropic` (Claude — default when
+  `ANTHROPIC_API_KEY` is set), `gemini`, or `ollama` (fully local).
+- **Embeddings** (`EMBED_PROVIDER`): `gemini` (text-embedding-004) or `ollama`
+  (nomic-embed-text) — both 768-dim to match `documents.embedding`.
+
+Privacy: point both at `ollama` and your most sensitive analysis never leaves
+the machine.
+
+### Knowledge graph + life chat
+
+`intelligence/embeddings.js` backfills embeddings for documents (run after
+ingest, or `npm run embed`). `chat/ask.js` answers questions by fusing the
+current findings, semantically-retrieved library documents (Readwise + Notion +
+journal), and the question — grounded, with sources. The daily briefing uses the
+same retrieval to surface the highlight most **relevant** to today's top action
+(replacing the old random pick).
 
 ## Intelligence layer
 
@@ -142,8 +166,15 @@ automatically after each ingest.
   (impact × confidence × ease) on the briefing front page. ✅
 - **Phase 3.5 — Reviews & forecasting.** Weekly review, quarterly "board of
   directors" review, goal achievement-probability forecasts.
-- **Phase 4 — Agents & chat.** Conversational interface and pluggable specialist
-  agents (Investment Analyst, Career Coach, ...) on the shared spine.
+- **Phase 4 — LLM abstraction + knowledge graph + chat.** Provider-agnostic LLM
+  layer (Claude/Gemini/Ollama), document embeddings, RAG life chat, and
+  relevant-not-random highlight selection. ✅
+- **Phase 5 — Experiments + trust.** Hypothesis/experiment loop, correlation
+  confirmation gate (holdout), and a context/annotations layer.
+- **Phase 6 — Forecasting + proactive nudges.** Goal achievement probabilities
+  and push notifications that deliver the right insight at the right moment.
+- **Future — Specialist agents.** Investment Analyst, Career Coach, etc. on the
+  shared spine.
 
 ## Decisions on record
 

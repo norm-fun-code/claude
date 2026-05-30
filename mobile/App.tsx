@@ -17,6 +17,7 @@ import { getColors, spacing } from './src/theme';
 
 import { Header } from './src/components/Header';
 import { LeverageCard } from './src/components/LeverageCard';
+import { ChatCard } from './src/components/ChatCard';
 import { CheckinCard } from './src/components/CheckinCard';
 import { HealthCard } from './src/components/HealthCard';
 import { WeatherCard } from './src/components/WeatherCard';
@@ -76,6 +77,9 @@ export default function App() {
 
         {/* Daily check-in — the subjective signal */}
         <CheckinCard />
+
+        {/* Ask NormOS — chat grounded in your data + library */}
+        <ChatCard />
 
         {/* Health — always shown (on-device data) */}
         <HealthCard health={health} />

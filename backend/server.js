@@ -17,8 +17,11 @@ const sourcesStore = require('./src/store/sources');
 const { mapHealthPayload, SOURCE: HEALTH_SOURCE } = require('./src/ingest/health');
 const { mapCheckin, SOURCE: CHECKIN_SOURCE } = require('./src/ingest/checkin');
 const documentsStore = require('./src/store/documents');
+const llm = require('./src/llm');
 const { runIngest } = require('./src/ingest/run');
 const { analyze } = require('./src/intelligence/analyze');
+const { embedPending } = require('./src/intelligence/embeddings');
+const { ask } = require('./src/chat/ask');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -127,6 +130,25 @@ app.post('/api/analyze', async (req, res) => {
   }
 });
 
+// Backfill embeddings for the knowledge graph / chat retrieval.
+app.post('/api/embed', async (req, res) => {
+  try {
+    res.json(await embedPending());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Life chat — ask questions across your data + library.
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { question, history } = req.body || {};
+    res.json(await ask(question, { history }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // The ranked "highest leverage actions" — the core NormOS question.
 app.get('/api/actions', async (req, res) => {
   try {
@@ -222,6 +244,27 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[insights] failed:', err.message);
   }
 
+  // Relevant-not-random: surface the library highlight that speaks to today's
+  // top action (semantic search), instead of a random page. Best-effort.
+  let relevantHighlight = null;
+  try {
+    const theme = leverageActions[0]?.title || quoteData.quote || 'focus, growth, leverage';
+    const [vec] = await llm.embed([theme]);
+    if (vec) {
+      const hits = await documentsStore.searchSimilar(vec, { k: 1, domain: 'learning' });
+      if (hits[0]) {
+        relevantHighlight = {
+          title: hits[0].title,
+          author: hits[0].author,
+          content: hits[0].content,
+          url: hits[0].url,
+        };
+      }
+    }
+  } catch (err) {
+    console.error('[relevantHighlight] failed:', err.message);
+  }
+
   const response = {
     date: dateLabel,
     weather,
@@ -237,6 +280,7 @@ app.get('/api/briefing', async (req, res) => {
     notionPageTitle: notionData.pageTitle,
     leverageActions,
     insights,
+    relevantHighlight,
   };
 
   if (errors.length > 0) {
@@ -258,10 +302,13 @@ app.get('/api/briefing', async (req, res) => {
         .map((r) => (r.error ? `${r.id}:err` : `${r.id}:${r.metrics}m/${r.documents}d`))
         .join(' ');
       console.log(`[ingest] ${summary}`);
-      // Refresh findings once new data has landed.
-      return analyze();
+      // Embed new documents (best-effort), then refresh findings.
+      return embedPending({ maxBatches: 4 }).catch((e) => {
+        console.error('[embed] failed:', e.message);
+      });
     })
-    .then((s) => s && console.log(`[analyze] ${s.trends} trends, ${s.correlations} correlations`))
+    .then(() => analyze())
+    .then((s) => s && console.log(`[analyze] ${s.trends} trends, ${s.correlations} correlations, ${s.actions} actions`))
     .catch((err) => console.error('[ingest/analyze] failed:', err.message));
 });
 
