@@ -16,6 +16,7 @@ const findingsStore = require('./src/store/findings');
 const sourcesStore = require('./src/store/sources');
 const { mapHealthPayload, SOURCE: HEALTH_SOURCE } = require('./src/ingest/health');
 const { runIngest } = require('./src/ingest/run');
+const { analyze } = require('./src/intelligence/analyze');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -97,6 +98,15 @@ app.get('/api/findings', async (req, res) => {
   }
 });
 
+// Run the intelligence layer (trends + correlations) on demand.
+app.post('/api/analyze', async (req, res) => {
+  try {
+    res.json(await analyze());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/sources', async (req, res) => {
   try {
     res.json({ sources: await sourcesStore.listSources() });
@@ -160,6 +170,17 @@ app.get('/api/briefing', async (req, res) => {
     errors.push({ service: 'gemini', error: err.message });
   }
 
+  // Surface the intelligence layer's current findings (from the last analysis).
+  let insights = [];
+  try {
+    const open = await findingsStore.listFindings({ status: 'open' });
+    insights = open
+      .slice(0, 6)
+      .map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence }));
+  } catch (err) {
+    console.error('[insights] failed:', err.message);
+  }
+
   const response = {
     date: dateLabel,
     weather,
@@ -173,6 +194,7 @@ app.get('/api/briefing', async (req, res) => {
     quote: quoteData.quote,
     notionText: notionData.text,
     notionPageTitle: notionData.pageTitle,
+    insights,
   };
 
   if (errors.length > 0) {
@@ -194,8 +216,11 @@ app.get('/api/briefing', async (req, res) => {
         .map((r) => (r.error ? `${r.id}:err` : `${r.id}:${r.metrics}m/${r.documents}d`))
         .join(' ');
       console.log(`[ingest] ${summary}`);
+      // Refresh findings once new data has landed.
+      return analyze();
     })
-    .catch((err) => console.error('[ingest] failed:', err.message));
+    .then((s) => s && console.log(`[analyze] ${s.trends} trends, ${s.correlations} correlations`))
+    .catch((err) => console.error('[ingest/analyze] failed:', err.message));
 });
 
 app.listen(PORT, () => {

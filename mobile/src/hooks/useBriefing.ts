@@ -53,6 +53,13 @@ export interface UrgentEmail {
   action: string;
 }
 
+export interface Insight {
+  type: string;
+  title: string;
+  detail: string | null;
+  confidence: number | null;
+}
+
 export interface BriefingData {
   date: string;
   weather: Weather | null;
@@ -66,6 +73,7 @@ export interface BriefingData {
   quote: string;
   notionText: string;
   notionPageTitle: string;
+  insights: Insight[];
   errors?: { service: string; error: string }[];
 }
 

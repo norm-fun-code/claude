@@ -76,8 +76,9 @@ async function latest({ domain, metric }) {
 /** Daily-bucketed aggregate for a metric (avg/min/max/sum), for trend math. */
 async function dailyAggregate({ domain, metric, from, to, agg = 'avg' }) {
   const fn = ['avg', 'min', 'max', 'sum'].includes(agg) ? agg : 'avg';
+  // date_trunc keeps this portable (works with or without TimescaleDB).
   const { rows } = await query(
-    `SELECT time_bucket('1 day', ts) AS day, ${fn}(value) AS value
+    `SELECT date_trunc('day', ts) AS day, ${fn}(value) AS value
        FROM metrics
       WHERE domain = $1 AND metric = $2
         AND ($3::timestamptz IS NULL OR ts >= $3)
@@ -89,4 +90,12 @@ async function dailyAggregate({ domain, metric, from, to, agg = 'avg' }) {
   return rows;
 }
 
-module.exports = { insertMetrics, getSeries, latest, dailyAggregate };
+/** Distinct (domain, metric) pairs present in the spine. */
+async function listMetricKeys() {
+  const { rows } = await query(
+    `SELECT DISTINCT domain, metric FROM metrics ORDER BY domain, metric`
+  );
+  return rows;
+}
+
+module.exports = { insertMetrics, getSeries, latest, dailyAggregate, listMetricKeys };

@@ -39,4 +39,22 @@ async function updateStatus(id, status) {
   await query('UPDATE findings SET status = $2 WHERE id = $1', [id, status]);
 }
 
-module.exports = { createFinding, listFindings, updateStatus };
+/**
+ * Mark previously auto-generated, still-open findings as superseded. Called at
+ * the start of an analysis run so the latest run reflects the current picture
+ * while history is preserved (not deleted). User-curated findings (no auto flag)
+ * are left untouched.
+ */
+async function supersedeAuto(types = null) {
+  const { rowCount } = await query(
+    `UPDATE findings
+        SET status = 'superseded'
+      WHERE status = 'open'
+        AND (evidence->>'auto') = 'true'
+        AND ($1::text[] IS NULL OR type = ANY($1))`,
+    [types]
+  );
+  return rowCount;
+}
+
+module.exports = { createFinding, listFindings, updateStatus, supersedeAuto };

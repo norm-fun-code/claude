@@ -99,7 +99,32 @@ Two ingestion modes:
 | `POST /api/ingest/run` | Run all server-side connectors |
 | `GET /api/metrics?domain=&metric=&from=&to=&agg=` | Query a series (raw or daily-bucketed) |
 | `GET /api/findings?status=` | Intelligence findings |
+| `POST /api/analyze` | Run the intelligence layer (trends + correlations) |
 | `GET /api/sources` | Registered sources + sync status |
+
+## Intelligence layer
+
+`backend/src/intelligence/` turns the metrics spine into **findings**:
+
+- `stats.js` — pure statistics (Pearson correlation, linear-fit slope, day
+  alignment with lag, recent-vs-prior trend). No I/O, fully unit-tested.
+- `catalog.js` — human labels + "direction of good" per metric, and per-metric
+  daily aggregation (sum for flows like steps/meetings, avg otherwise).
+- `analyze.js` — `computeTrends` / `computeCorrelations` (pure) + `analyze()`
+  orchestrator that loads daily series, computes findings, and persists them.
+
+**Trends:** per metric, compares the last 7 days' mean to the prior 7 and
+reports material moves (≥10%), labeled improving/worsening by direction of good.
+
+**Correlations:** all metric pairs over a 30-day window, Pearson at same-day and
+1-day lag (e.g. last night's sleep → today's focus), keeping the strongest lag
+where |r| ≥ 0.5 and n ≥ 10. Cross-domain pairs are flagged. Findings carry a
+caveat that association isn't causation.
+
+Each run supersedes the prior auto-generated findings (preserving history) and
+writes a fresh set. The daily briefing surfaces the current open findings as
+`insights`. Runs on demand (`npm run analyze` / `POST /api/analyze`) and
+automatically after each ingest.
 
 ## Roadmap
 
@@ -108,8 +133,8 @@ Two ingestion modes:
 - **Phase 1 — Ingestion breadth.** Readwise + Notion (learning), Plaid (wealth),
   Apple Health rounded out and persisted from the mobile app. ✅
   Next candidates: Oura/Whoop for health depth.
-- **Phase 2 — Intelligence.** Rolling trends, first cross-domain correlations,
-  the `findings` table populated; briefing reads from history.
+- **Phase 2 — Intelligence.** Rolling trends + cross-domain correlations
+  (incl. 1-day lag) written to `findings`; briefing surfaces them as insights. ✅
 - **Phase 3 — Reviews & forecasting.** Weekly review, quarterly "board of
   directors" review, goal achievement-probability forecasts.
 - **Phase 4 — Agents & chat.** Conversational interface and pluggable specialist
