@@ -5,18 +5,27 @@ require('dotenv').config();
 const { connectors } = require('../connectors');
 const { insertMetrics } = require('../store/metrics');
 const { upsertDocument } = require('../store/documents');
-const { registerSource, markSync } = require('../store/sources');
+const { registerSource, markSync, getSource, updateConfig } = require('../store/sources');
 
 async function runConnector(c) {
   await registerSource({ id: c.id, domain: c.domain, displayName: c.displayName });
   try {
-    const { metrics = [], documents = [] } = await c.sync();
+    // Give the connector its prior state for incremental syncs.
+    const source = await getSource(c.id);
+    const ctx = {
+      lastSyncAt: source?.last_sync_at ?? null,
+      config: source?.config ?? {},
+    };
+
+    const { metrics = [], documents = [], config } = (await c.sync(ctx)) || {};
     const written = await insertMetrics(metrics);
     let docs = 0;
     for (const doc of documents) {
       const id = await upsertDocument(doc);
       if (id) docs++;
     }
+    // Persist any cursor/state the connector wants to remember for next run.
+    if (config) await updateConfig(c.id, config);
     await markSync(c.id);
     return { id: c.id, metrics: written, documents: docs };
   } catch (err) {

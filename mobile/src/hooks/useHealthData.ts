@@ -3,6 +3,23 @@ import AppleHealthKit, {
   HealthKitPermissions,
   HealthValue,
 } from 'react-native-health';
+import { HEALTH_INGEST_URL } from '../config';
+
+// Persist on-device HealthKit readings to the NormOS spine. Canonical metric
+// names match backend/src/ingest/health.js. Fire-and-forget: never block the UI.
+async function pushHealthData(rows: { metric: string; value: number; unit: string }[]) {
+  const payload = rows.filter((r) => r.value != null && Number.isFinite(r.value));
+  if (payload.length === 0) return;
+  try {
+    await fetch(HEALTH_INGEST_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    // offline / backend down — the next refresh will resend
+  }
+}
 
 export type HRVStatus = 'green' | 'yellow' | 'red' | 'unknown';
 
@@ -111,6 +128,15 @@ export function useHealthData(): HealthData & { refetch: () => void } {
             loading: false,
             error: null,
           });
+
+          // Persist these readings so they accumulate as history.
+          pushHealthData([
+            { metric: 'hrv', value: hrv as number, unit: 'ms' },
+            { metric: 'resting_hr', value: restingHR as number, unit: 'bpm' },
+            { metric: 'sleep_hours', value: sleepHours as number, unit: 'hours' },
+            { metric: 'steps', value: steps as number, unit: 'count' },
+            { metric: 'active_energy', value: activeCalories as number, unit: 'kcal' },
+          ]);
         }
       }
 

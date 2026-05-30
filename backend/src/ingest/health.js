@@ -7,17 +7,29 @@ const DOMAIN = 'health';
 
 // Known HealthKit-ish fields -> canonical metric name + unit.
 const FIELD_MAP = {
+  // Heart / recovery
   hrv: ['hrv', 'ms'],
   heartRateVariability: ['hrv', 'ms'],
   restingHeartRate: ['resting_hr', 'bpm'],
   restingHr: ['resting_hr', 'bpm'],
+  respiratoryRate: ['respiratory_rate', 'breaths_per_min'],
+  vo2Max: ['vo2_max', 'ml_kg_min'],
+  // Sleep
   sleepHours: ['sleep_hours', 'hours'],
   sleep: ['sleep_hours', 'hours'],
+  deepSleepHours: ['deep_sleep_hours', 'hours'],
+  remSleepHours: ['rem_sleep_hours', 'hours'],
+  // Activity
   steps: ['steps', 'count'],
   activeEnergy: ['active_energy', 'kcal'],
   activeCalories: ['active_energy', 'kcal'],
+  exerciseMinutes: ['exercise_minutes', 'minutes'],
+  mindfulMinutes: ['mindful_minutes', 'minutes'],
+  // Body
   weight: ['weight', 'lb'],
   bodyWeight: ['weight', 'lb'],
+  bodyFat: ['body_fat', 'percent'],
+  bodyFatPercentage: ['body_fat', 'percent'],
 };
 
 function mapHealthPayload(body, { ts } = {}) {

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
+import { BRIEFING_URL } from '../config';
 
-const API_URL = 'http://192.168.1.4:3001/api/briefing';
+const API_URL = BRIEFING_URL;
 
 export interface WeatherHour {
   time: string;

@@ -65,15 +65,28 @@ Tables (`backend/src/db/migrations/001_init.sql`):
 
 ## Ingestion
 
-A connector implements `{ id, domain, displayName, async sync() → { metrics, documents } }`
+A connector implements
+`{ id, domain, displayName, async sync(ctx) → { metrics, documents, config? } }`
 and is registered in `backend/src/connectors/index.js`. The runner
 (`backend/src/ingest/run.js`) executes every connector, persists results, and
-records sync status.
+records sync status. `ctx = { lastSyncAt, config }` enables incremental syncs;
+a returned `config` patch (e.g. a Plaid cursor) is merged back into the source.
 
 Two ingestion modes:
-- **Server-pulled** (calendar, weather today): run on a schedule or via `POST /api/ingest/run`.
+- **Server-pulled**: run on a schedule (`npm run ingest`) or via `POST /api/ingest/run`.
 - **Device-pushed** (Apple Health): the mobile app POSTs HealthKit reads to
   `POST /api/ingest/health`, mapped to canonical rows in `backend/src/ingest/health.js`.
+
+### Connectors
+
+| Connector | Domain | Mode | Emits |
+|---|---|---|---|
+| `apple_health` | health | device-pushed | hrv, resting_hr, sleep_hours, steps, active_energy, vo2_max, body_fat, … |
+| `plaid` | wealth | server, incremental | net_worth/assets/liabilities/cash/investments metrics + transaction documents |
+| `readwise` | learning | server, incremental | highlight documents (Kindle, articles, podcasts) + sync counts |
+| `notion` | learning | server, incremental | "wisdom" page documents + page counts |
+| `google_calendar` | productivity | server | calendar_events, meetings + event documents |
+| `weather` | environment | server | temperature, humidity, uv_index (context for correlations) |
 
 ## API surface
 
@@ -92,9 +105,9 @@ Two ingestion modes:
 
 - **Phase 0 — Foundation (this milestone).** DB + canonical schema + connector
   framework; existing data now persists. ✅
-- **Phase 1 — Ingestion breadth.** Oura/Whoop (health depth), Readwise (learning),
-  one wealth source (Plaid or Monarch export). The recommended highest-coverage
-  integrations: Readwise (learning) + Plaid/Monarch (wealth).
+- **Phase 1 — Ingestion breadth.** Readwise + Notion (learning), Plaid (wealth),
+  Apple Health rounded out and persisted from the mobile app. ✅
+  Next candidates: Oura/Whoop for health depth.
 - **Phase 2 — Intelligence.** Rolling trends, first cross-domain correlations,
   the `findings` table populated; briefing reads from history.
 - **Phase 3 — Reviews & forecasting.** Weekly review, quarterly "board of

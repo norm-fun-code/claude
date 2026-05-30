@@ -26,9 +26,22 @@ async function markSync(id, { error = null } = {}) {
   );
 }
 
+async function getSource(id) {
+  const { rows } = await query('SELECT * FROM sources WHERE id = $1', [id]);
+  return rows[0] ?? null;
+}
+
+/** Shallow-merge a patch into a source's JSONB config (e.g. sync cursors). */
+async function updateConfig(id, patch) {
+  await query(
+    `UPDATE sources SET config = config || $2 WHERE id = $1`,
+    [id, patch || {}]
+  );
+}
+
 async function listSources() {
   const { rows } = await query('SELECT * FROM sources ORDER BY domain, id');
   return rows;
 }
 
-module.exports = { registerSource, markSync, listSources };
+module.exports = { registerSource, markSync, getSource, updateConfig, listSources };

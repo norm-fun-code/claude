@@ -72,6 +72,10 @@ Open `.env` and fill in the values:
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | [Google Cloud Console](https://console.cloud.google.com) → APIs & Services → Credentials → OAuth 2.0 Client ID (Desktop app type) |
 | `GOOGLE_DOC_ID` | The ID from your Google Doc URL |
 | `WEATHER_LAT` / `WEATHER_LON` | Your coordinates (decimal degrees) |
+| `READWISE_TOKEN` | [readwise.io/access_token](https://readwise.io/access_token) — Learning connector (Kindle, articles, podcasts) |
+| `PLAID_CLIENT_ID` / `PLAID_SECRET` | [Plaid Dashboard](https://dashboard.plaid.com) → Team Settings → Keys — Wealth connector |
+| `PLAID_ENV` / `PLAID_ACCESS_TOKENS` | `sandbox`/`development`/`production`; one access_token per institution (via Plaid Link), comma-separated |
+| `NOTION_WISDOM_PAGE_ID` | Optional — parent page of your Notion "wisdom" sub-pages (defaults to `NOTION_PAGE_ID`) |
 
 ### Get Google OAuth tokens (one-time)
 

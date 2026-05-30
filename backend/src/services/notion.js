@@ -64,4 +64,56 @@ async function fetchRandomNotionPage() {
   };
 }
 
-module.exports = { fetchRandomNotionPage };
+// List every child page under the wisdom parent (paginated), cheaply —
+// returns descriptors only, so the caller can fetch text for changed pages.
+async function listWisdomPages() {
+  const notion = getNotionClient();
+  const pageId = process.env.NOTION_WISDOM_PAGE_ID || process.env.NOTION_PAGE_ID;
+
+  const pages = [];
+  let cursor;
+  do {
+    const res = await notion.blocks.children.list({
+      block_id: pageId,
+      page_size: 100,
+      start_cursor: cursor,
+    });
+    for (const block of res.results) {
+      if (block.type === 'child_page') {
+        pages.push({
+          id: block.id,
+          title: block.child_page?.title || 'Untitled',
+          lastEdited: block.last_edited_time || null,
+        });
+      }
+    }
+    cursor = res.has_more ? res.next_cursor : undefined;
+  } while (cursor);
+
+  return pages;
+}
+
+// Fetch and flatten the full text of a single page (paginated blocks).
+async function fetchPageText(blockId) {
+  const notion = getNotionClient();
+  const blocks = [];
+  let cursor;
+  do {
+    const res = await notion.blocks.children.list({
+      block_id: blockId,
+      page_size: 100,
+      start_cursor: cursor,
+    });
+    blocks.push(...res.results);
+    cursor = res.has_more ? res.next_cursor : undefined;
+  } while (cursor);
+
+  return extractTextFromBlocks(blocks);
+}
+
+module.exports = {
+  fetchRandomNotionPage,
+  listWisdomPages,
+  fetchPageText,
+  extractTextFromBlocks,
+};
