@@ -62,6 +62,25 @@ test('transaction document ids are stable across re-import', () => {
   assert.equal(a, b);
 });
 
+test('mapBalances handles Monarch long format (Date, Balance, Account) as a net-worth series', () => {
+  // Confirmed real Monarch balances export shape: one row per account, no Type
+  // column, liabilities exported as negative. Net worth = sum of balances/date.
+  const { metrics } = m.mapBalances([
+    { Date: '2026-04-30', Account: 'Brokerage', Balance: '150000' },
+    { Date: '2026-04-30', Account: 'Checking', Balance: '12000' },
+    { Date: '2026-04-30', Account: 'Visa', Balance: '-5000' },
+    { Date: '2026-05-31', Account: 'Brokerage', Balance: '158000' },
+    { Date: '2026-05-31', Account: 'Checking', Balance: '11000' },
+    { Date: '2026-05-31', Account: 'Visa', Balance: '-4200' },
+  ]);
+  const nw = (day) =>
+    metrics.find((x) => x.metric === 'net_worth' && x.ts.toISOString().startsWith(day))?.value;
+  assert.equal(nw('2026-04-30'), 157000); // 150000 + 12000 - 5000
+  assert.equal(nw('2026-05-31'), 164800); // 158000 + 11000 - 4200
+  // A point per date → a trend, not a single snapshot.
+  assert.equal(metrics.filter((x) => x.metric === 'net_worth').length, 2);
+});
+
 test('mapBalances uses a Net Worth column when present', () => {
   const { metrics } = m.mapBalances([{ Date: '2026-05-31', 'Net Worth': '$250,000' }]);
   const nw = metrics.find((x) => x.metric === 'net_worth');

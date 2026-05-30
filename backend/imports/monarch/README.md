@@ -17,9 +17,11 @@ NormOS auto-detects the file type, so you don't have to configure anything:
   → becomes daily **spending**, **income**, and **net cashflow**, plus a
   searchable record of every transaction (so you can ask the life chat
   "what did I spend on travel last month?").
-- **Balances / Net worth** (a `Net Worth` column, or per-account balances)
-  → becomes **net worth** snapshots (and assets/liabilities when the export
-  includes account types).
+- **Balances** (`Date, Balance, Account` — one row per account)
+  → becomes your **net worth** over time (NormOS sums the account balances for
+  each date; credit-card/loan balances export as negative, so they subtract
+  correctly). If the file includes history, you get a net-worth *trend*, not
+  just one number.
 
 ## Cadence
 
