@@ -7,32 +7,49 @@ const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36';
 
 const INDICES = [
-  { symbol: '^GSPC', label: 'S&P 500' },
-  { symbol: '^IXIC', label: 'NASDAQ' },
+  { symbol: '^GSPC', stooq: '^spx', label: 'S&P 500' },
+  { symbol: '^IXIC', stooq: '^ndq', label: 'NASDAQ' },
 ];
 
-// Yahoo Finance chart endpoint — no key required. Returns the latest price and
-// the prior close, from which we derive the day's change.
-async function fetchIndex({ symbol, label }) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
-  const { data } = await axios.get(url, {
-    headers: { 'User-Agent': UA },
-    timeout: 8000,
-  });
-  const meta = data?.chart?.result?.[0]?.meta;
-  if (!meta) throw new Error(`no data for ${symbol}`);
-  const price = meta.regularMarketPrice;
-  const prev = meta.chartPreviousClose ?? meta.previousClose;
+function quote(label, symbol, price, prev) {
   if (!Number.isFinite(price) || !Number.isFinite(prev)) throw new Error(`bad quote for ${symbol}`);
   const change = price - prev;
-  const changePct = prev ? (change / prev) * 100 : 0;
   return {
     label,
     symbol,
     price: Math.round(price * 100) / 100,
     change: Math.round(change * 100) / 100,
-    changePct: Math.round(changePct * 100) / 100,
+    changePct: Math.round((prev ? (change / prev) * 100 : 0) * 100) / 100,
   };
+}
+
+// Primary: Yahoo Finance chart endpoint (real-time, no key). Latest price + prior close.
+async function fetchYahoo({ symbol, label }) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
+  const { data } = await axios.get(url, { headers: { 'User-Agent': UA }, timeout: 8000 });
+  const meta = data?.chart?.result?.[0]?.meta;
+  if (!meta) throw new Error(`no data for ${symbol}`);
+  return quote(label, symbol, meta.regularMarketPrice, meta.chartPreviousClose ?? meta.previousClose);
+}
+
+// Fallback: Stooq daily history CSV (very permissive, no key). Last two closes
+// give the day's change. EOD rather than intraday, but reliable when Yahoo blocks.
+async function fetchStooq({ stooq, symbol, label }) {
+  const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooq)}&i=d`;
+  const { data } = await axios.get(url, { headers: { 'User-Agent': UA }, timeout: 8000 });
+  const lines = String(data).trim().split('\n').filter(Boolean);
+  if (lines.length < 3) throw new Error(`stooq no data for ${stooq}`);
+  const rows = lines.slice(1).map((l) => l.split(','));
+  const close = (r) => parseFloat(r[4]); // Date,Open,High,Low,Close,Volume
+  return quote(label, symbol, close(rows[rows.length - 1]), close(rows[rows.length - 2]));
+}
+
+async function fetchIndex(idx) {
+  try {
+    return await fetchYahoo(idx);
+  } catch {
+    return await fetchStooq(idx);
+  }
 }
 
 async function fetchIndices() {
