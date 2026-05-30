@@ -545,4 +545,21 @@ app.listen(PORT, () => {
   console.log(`Health check: http://localhost:${PORT}/api/health`);
   // Optional self-running morning routine (cloud deploys; ENABLE_SCHEDULER=true).
   require('./src/scheduler').start();
+
+  // One-setting demo data: set SEED_DEMO_ON_BOOT=true to populate realistic
+  // sample data + findings so the app shows a full dashboard on first open.
+  // Idempotent (only touches 'seed' rows); turn the flag off once real data flows.
+  if (process.env.SEED_DEMO_ON_BOOT === 'true') {
+    (async () => {
+      try {
+        const { seed } = require('./src/db/seed');
+        const { analyze } = require('./src/intelligence/analyze');
+        const s = await seed();
+        await analyze();
+        console.log(`[demo] seeded ${s.metrics} metrics + ${s.goals} goals and analyzed.`);
+      } catch (err) {
+        console.error('[demo] seed-on-boot failed:', err.message);
+      }
+    })();
+  }
 });

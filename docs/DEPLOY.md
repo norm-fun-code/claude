@@ -4,12 +4,47 @@ This hosts the NormOS "brain" (backend + database) on a small private always-on
 server, so the iPhone app works 24/7 — even with your Mac off. It's still *your*
 server; the API token means only your phone can reach it.
 
-We use **Render** because it deploys straight from your GitHub repo with no
-servers to manage. Cost is ~$7/mo for the always-on service + a small Postgres.
+Two easy options — **Railway** (recommended if you already use it) or **Render**.
+Both deploy straight from your GitHub repo with no servers to manage. Cost is a
+few dollars a month for an always-on instance + a small Postgres.
 
 ---
 
-## Part A — Deploy the brain (one time, ~10 min)
+## Option A — Railway (recommended)
+
+Railway needs Postgres **with the `pgvector` extension** (its default Postgres
+doesn't include it), so we use a pgvector Postgres image.
+
+1. **New Project** → **Deploy from GitHub repo** → pick `claude`.
+2. On that service: **Settings → Root Directory = `backend`**. Railway auto-detects
+   Node and uses the included `backend/railway.json` (it runs migrations, starts
+   the server, and health-checks `/api/health`).
+3. **Add the database:** in the project, **New → Database → Add PostgreSQL**, *or*
+   for guaranteed pgvector, **New → Docker Image → `pgvector/pgvector:pg16`** with
+   variables `POSTGRES_USER=normos`, `POSTGRES_PASSWORD=<choose one>`,
+   `POSTGRES_DB=normos`, and a Volume mounted at `/var/lib/postgresql/data`.
+4. **Connect them:** on the **backend** service → **Variables**, add:
+   - `DATABASE_URL` → reference the database's connection string
+     (`${{Postgres.DATABASE_URL}}`), or build it from the DB vars:
+     `postgresql://normos:<password>@<db-private-host>:5432/normos`
+   - `NORMOS_API_TOKEN` → click generate, or type a long random string (copy it)
+   - `ENABLE_SCHEDULER` = `true`   ·   `TZ` = your timezone (e.g. `America/New_York`)
+   - `LLM_PROVIDER` = `anthropic`  ·  `ANTHROPIC_API_KEY` = your Claude key
+   - (optional) `GEMINI_API_KEY`, `NOTION_API_KEY`, `NOTION_PAGE_ID`, `READWISE_TOKEN`
+   - **To see the demo first:** `SEED_DEMO_ON_BOOT` = `true` (turn it off later)
+5. Railway redeploys. Watch **Deploy Logs** for `NormOS backend running` and
+   `[demo] seeded …`. Then open **`https://<your-railway-url>/api/health`** — you
+   want `{"status":"ok","database":"ok"}`.
+
+> If the deploy log shows a `vector` extension error during migrate, your Postgres
+> doesn't have pgvector — switch the DB to the `pgvector/pgvector:pg16` image
+> (step 3, second option) and redeploy.
+
+Grab your **service URL** and the **`NORMOS_API_TOKEN`** for the phone app (Part B).
+
+---
+
+## Option B — Render (one time, ~10 min)
 
 1. **Make a Render account** → [render.com](https://render.com), sign up with
    GitHub (the account that owns the `claude` repo).
