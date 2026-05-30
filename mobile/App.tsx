@@ -18,6 +18,7 @@ import { getColors, spacing } from './src/theme';
 import { Header } from './src/components/Header';
 import { LeverageCard } from './src/components/LeverageCard';
 import { ForecastCard } from './src/components/ForecastCard';
+import { LibraryCard } from './src/components/LibraryCard';
 import { ChatCard } from './src/components/ChatCard';
 import { CheckinCard } from './src/components/CheckinCard';
 import { HealthCard } from './src/components/HealthCard';
@@ -80,6 +81,11 @@ export default function App() {
 
         {/* Goal forecasts — where current trends are headed */}
         {briefing.data && <ForecastCard forecasts={briefing.data.forecasts ?? []} />}
+
+        {/* Relevant-not-random highlight from your Readwise + Notion library */}
+        {briefing.data?.relevantHighlight && (
+          <LibraryCard highlight={briefing.data.relevantHighlight} />
+        )}
 
         {/* Daily check-in — the subjective signal */}
         <CheckinCard />
