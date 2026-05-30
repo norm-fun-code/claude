@@ -1,0 +1,48 @@
+# NormOS one-click cloud deploy (Render Blueprint).
+# In Render: New → Blueprint → connect this repo. It creates the backend web
+# service + a private Postgres, wires DATABASE_URL, generates an API token, and
+# runs migrations on every deploy. Then paste your AI key in the dashboard.
+#
+# Postgres here is vanilla + pgvector (NormOS makes TimescaleDB optional), which
+# Render's managed Postgres supports.
+services:
+  - type: web
+    name: normos
+    runtime: node
+    rootDir: backend
+    plan: starter # always-on (the free plan sleeps, which breaks push nudges)
+    region: oregon
+    buildCommand: npm install
+    preDeployCommand: npm run migrate # apply schema before each deploy
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: normos-db
+          property: connectionString
+      - key: NORMOS_API_TOKEN # required on a public server; auto-generated, copy into the app
+        generateValue: true
+      - key: ENABLE_SCHEDULER # run the morning routine + weekly review in-process
+        value: 'true'
+      - key: TZ # so "7am" means your 7am — change to your timezone
+        value: America/New_York
+      - key: LLM_PROVIDER
+        value: anthropic
+      # Secrets — set these in the Render dashboard (sync:false keeps them out of git):
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY # used for embeddings (library search/chat)
+        sync: false
+      - key: NOTION_API_KEY
+        sync: false
+      - key: NOTION_PAGE_ID
+        sync: false
+      - key: READWISE_TOKEN
+        sync: false
+
+databases:
+  - name: normos-db
+    plan: basic-256mb # smallest paid tier; the free tier expires after 90 days
+    postgresMajorVersion: '16'

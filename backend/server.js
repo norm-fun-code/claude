@@ -543,4 +543,6 @@ app.get('/api/briefing', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`NormOS backend running on http://localhost:${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/api/health`);
+  // Optional self-running morning routine (cloud deploys; ENABLE_SCHEDULER=true).
+  require('./src/scheduler').start();
 });
