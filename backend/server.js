@@ -17,6 +17,7 @@ const findingsStore = require('./src/store/findings');
 const sourcesStore = require('./src/store/sources');
 const { mapHealthPayload, SOURCE: HEALTH_SOURCE } = require('./src/ingest/health');
 const { mapCheckin, SOURCE: CHECKIN_SOURCE } = require('./src/ingest/checkin');
+const { mapHabits, SOURCE: HABITS_SOURCE } = require('./src/ingest/habits');
 const documentsStore = require('./src/store/documents');
 const llm = require('./src/llm');
 const { runIngest } = require('./src/ingest/run');
@@ -93,6 +94,23 @@ app.post('/api/checkin', async (req, res) => {
     if (document) await documentsStore.upsertDocument(document);
     await sourcesStore.markSync(CHECKIN_SOURCE);
     res.json({ written, journaled: Boolean(document) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// End-of-day habit stack (5 binary habits + eat-healthy 1–5 → daily metrics).
+app.post('/api/habits', async (req, res) => {
+  try {
+    await sourcesStore.registerSource({
+      id: HABITS_SOURCE,
+      domain: 'habits',
+      displayName: 'Habit Stack',
+    });
+    const { metrics } = mapHabits(req.body, { ts: req.query.ts });
+    const written = await metricsStore.insertMetrics(metrics);
+    await sourcesStore.markSync(HABITS_SOURCE);
+    res.json({ written });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -26,6 +26,7 @@ import { WealthCard } from './src/components/WealthCard';
 import { InsightsCard } from './src/components/InsightsCard';
 import { ChatCard } from './src/components/ChatCard';
 import { CheckinCard } from './src/components/CheckinCard';
+import { HabitsCard } from './src/components/HabitsCard';
 import { HealthCard } from './src/components/HealthCard';
 import { WeatherCard } from './src/components/WeatherCard';
 import { WorkoutsPanel } from './src/components/WorkoutsPanel';
@@ -106,6 +107,7 @@ export default function App() {
         return (
           <>
             <CheckinCard />
+            <HabitsCard />
             {d && <LeverageCard actions={d.leverageActions ?? []} insights={[]} />}
             {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
             <WeatherCard weather={d?.weather ?? null} />
