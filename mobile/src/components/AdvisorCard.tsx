@@ -7,6 +7,8 @@ import {
   Modal,
   ActivityIndicator,
   SafeAreaView,
+  KeyboardAvoidingView,
+  Platform,
   useColorScheme,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
@@ -17,17 +19,32 @@ import { SectionHeader } from './SectionHeader';
 // model and stays in sync with your scenarios — nothing to duplicate here.
 const ADVISOR_URL = 'https://claude-production-7130.up.railway.app/';
 
-// Open straight into the AI Advisor tab and hide the parameters panel + tab bar
-// so the embed is advisor-only. The planner switches views via setTab('advisor');
-// params still live in memory (the model reads them), we just hide their UI.
+// Open straight into the AI Advisor tab, hide the desktop chrome, and reflow the
+// advisor into a full-height mobile chat: messages scroll, input pinned at the
+// bottom. The planner switches views via setTab('advisor'); params still live in
+// memory (the model reads them), we just hide their UI.
 const FOCUS_ADVISOR = `
 (function(){
   try{
-    if(!document.getElementById('normos-adv-css')){
-      var s=document.createElement('style'); s.id='normos-adv-css';
-      s.innerHTML='#controls{display:none!important}.layout{grid-template-columns:1fr!important}.tabs{display:none!important}';
-      document.head.appendChild(s);
-    }
+    var css='html,body{height:100%!important;margin:0!important;overflow:hidden!important}'
+      +'#controls,.tabs,.kpi-grid{display:none!important}'
+      +'.layout{display:block!important;height:100%!important;gap:0!important;padding:0!important}'
+      +'#main{height:100%!important;margin:0!important}'
+      +'#chartArea{height:100%!important;display:flex!important;flex-direction:column!important}'
+      +'.adv-toolbar{flex-wrap:wrap}'
+      +'.adv-wrap{flex:1!important;height:auto!important;min-height:0!important;border:none!important;border-radius:0!important;display:grid!important;grid-template-columns:1fr!important;grid-template-rows:auto 1fr!important}'
+      +'.adv-rail{display:flex!important;flex-direction:row!important;align-items:center;border-right:none!important;border-bottom:1px solid var(--bd)!important;overflow-x:auto;max-height:58px}'
+      +'.adv-rail-hdr{border-bottom:none!important;padding:6px 10px;flex:0 0 auto}'
+      +'.adv-rail-list{display:flex!important;flex-direction:row!important;gap:6px;overflow-x:auto;flex:1;padding:6px}'
+      +'.adv-rail-item{margin-bottom:0!important;white-space:nowrap;flex:0 0 auto;max-width:160px}'
+      +'.adv-rail-title{white-space:nowrap}'
+      +'.adv-rail-footer{display:none!important}'
+      +'.adv-main{height:100%!important;min-height:0!important}'
+      +'.adv-msgs{flex:1!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch}'
+      +'.adv-input-area{padding-bottom:env(safe-area-inset-bottom,8px)!important}';
+    var s=document.getElementById('normos-adv-css');
+    if(!s){ s=document.createElement('style'); s.id='normos-adv-css'; document.head.appendChild(s); }
+    s.innerHTML=css;
     var n=0, iv=setInterval(function(){
       n++;
       if(typeof setTab==='function'){ try{setTab('advisor');}catch(e){} clearInterval(iv); }
@@ -70,7 +87,10 @@ export function AdvisorCard() {
               <Text style={[styles.close, { color: c.accent }]}>Done</Text>
             </TouchableOpacity>
           </View>
-          <View style={{ flex: 1 }}>
+          <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
             <WebView
               ref={webRef}
               source={{ uri: ADVISOR_URL }}
@@ -92,7 +112,7 @@ export function AdvisorCard() {
                 <Text style={[styles.loadingText, { color: c.subtext }]}>Loading your advisor…</Text>
               </View>
             )}
-          </View>
+          </KeyboardAvoidingView>
         </SafeAreaView>
       </Modal>
     </View>
