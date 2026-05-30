@@ -50,6 +50,21 @@ function round(n, d = 2) {
   return Math.round(n * f) / f;
 }
 
+// A goal's target_date arrives as a JS Date (Postgres DATE column) or an ISO
+// string. Render it as a clean, human label like "May 30, 2026". Use UTC so a
+// date-only value doesn't slip to the previous day in negative-offset zones.
+function formatDate(value) {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
 // Action from a worsening trend: reverse the decline.
 function fromTrend(f) {
   const ev = f.evidence || {};
@@ -136,7 +151,10 @@ function fromGoal(goal, latestByKey = {}) {
 
   return {
     title: `Close the gap on: ${goal.title}`,
-    detail: `${Math.round(progress * 100)}% to target (${cat.label(goal.domain, goal.metric)} ${round(current)} → ${round(goal.target_value)}${goal.target_date ? `, by ${goal.target_date}` : ''}).`,
+    detail: (() => {
+      const by = formatDate(goal.target_date);
+      return `${Math.round(progress * 100)}% to target (${cat.label(goal.domain, goal.metric)} ${round(current)} → ${round(goal.target_value)}${by ? `, by ${by}` : ''}).`;
+    })(),
     domains: [goal.domain],
     impact,
     confidence: 0.8,
