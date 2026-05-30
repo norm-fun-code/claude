@@ -64,39 +64,52 @@ async function fetchRandomNotionPage() {
   };
 }
 
-// List every child page under the wisdom parent (paginated), cheaply —
-// returns descriptors only, so the caller can fetch text for changed pages.
+// Pull a readable title off any page object (works for pages under a page and
+// database rows, where the title property can be named anything).
+function getTitle(page) {
+  const props = page.properties || {};
+  for (const key of Object.keys(props)) {
+    if (props[key]?.type === 'title') {
+      const t = (props[key].title || []).map((x) => x.plain_text).join('').trim();
+      if (t) return t;
+    }
+  }
+  return 'Untitled';
+}
+
+// Enumerate EVERY page the integration can see (the whole shared subtree, at any
+// nesting depth) via the search API — far cheaper and deeper than walking
+// child_page blocks one level at a time. Share only your wisdom parent with the
+// integration to scope this to your wisdom tree.
 async function listWisdomPages() {
   const notion = getNotionClient();
-  const pageId = process.env.NOTION_WISDOM_PAGE_ID || process.env.NOTION_PAGE_ID;
-
   const pages = [];
   let cursor;
   do {
-    const res = await notion.blocks.children.list({
-      block_id: pageId,
+    const res = await notion.search({
+      filter: { property: 'object', value: 'page' },
       page_size: 100,
       start_cursor: cursor,
     });
-    for (const block of res.results) {
-      if (block.type === 'child_page') {
-        pages.push({
-          id: block.id,
-          title: block.child_page?.title || 'Untitled',
-          lastEdited: block.last_edited_time || null,
-        });
-      }
+    for (const p of res.results) {
+      pages.push({
+        id: p.id,
+        title: getTitle(p),
+        lastEdited: p.last_edited_time || null,
+      });
     }
     cursor = res.has_more ? res.next_cursor : undefined;
   } while (cursor);
-
   return pages;
 }
 
-// Fetch and flatten the full text of a single page (paginated blocks).
-async function fetchPageText(blockId) {
+// Fetch and flatten the full text of a page, recursing into nested blocks
+// (toggles, columns, sub-lists) but NOT into sub-pages/databases — those are
+// captured as their own documents by listWisdomPages().
+async function fetchPageText(blockId, depth = 0) {
+  if (depth > 6) return '';
   const notion = getNotionClient();
-  const blocks = [];
+  const lines = [];
   let cursor;
   do {
     const res = await notion.blocks.children.list({
@@ -104,11 +117,24 @@ async function fetchPageText(blockId) {
       page_size: 100,
       start_cursor: cursor,
     });
-    blocks.push(...res.results);
+    for (const block of res.results) {
+      const type = block.type;
+      const content = block[type];
+      if (content?.rich_text) {
+        const text = content.rich_text.map((rt) => rt.plain_text).join('').trim();
+        if (text) {
+          lines.push((type === 'bulleted_list_item' || type === 'numbered_list_item') ? `• ${text}` : text);
+        }
+      }
+      if (block.has_children && type !== 'child_page' && type !== 'child_database') {
+        const sub = await fetchPageText(block.id, depth + 1);
+        if (sub) lines.push(sub);
+      }
+    }
     cursor = res.has_more ? res.next_cursor : undefined;
   } while (cursor);
 
-  return extractTextFromBlocks(blocks);
+  return lines.join('\n');
 }
 
 module.exports = {
