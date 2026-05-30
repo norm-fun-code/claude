@@ -25,6 +25,9 @@ const CATALOG = {
   'wealth:liabilities': { label: 'Liabilities', goodWhen: 'down' },
   'wealth:cash': { label: 'Cash', goodWhen: null },
   'wealth:investments': { label: 'Investments', goodWhen: 'up' },
+  'wealth:spending': { label: 'Spending', goodWhen: null },
+  'wealth:income': { label: 'Income', goodWhen: 'up' },
+  'wealth:net_cashflow': { label: 'Net cashflow', goodWhen: 'up' },
   'productivity:meetings': { label: 'Meetings', goodWhen: null },
   'productivity:calendar_events': { label: 'Calendar events', goodWhen: null },
   'learning:highlights_synced': { label: 'Highlights captured', goodWhen: 'up' },
@@ -47,6 +50,9 @@ const SUM_METRICS = new Set([
   'books_synced',
   'notion_pages',
   'notion_pages_synced',
+  'spending',
+  'income',
+  'net_cashflow',
 ]);
 
 function key(domain, metric) {

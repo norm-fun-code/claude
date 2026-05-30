@@ -8,10 +8,14 @@
 const calendar = require('./calendar');
 const weather = require('./weather');
 const readwise = require('./readwise');
-const plaid = require('./plaid');
+const monarch = require('./monarch');
 const notion = require('./notion');
 
-const connectors = [calendar, weather, readwise, plaid, notion];
+// Wealth source: Monarch (monthly CSV import) is primary — it aggregates every
+// institution plus manual accounts Plaid can't see. The Plaid connector
+// (./plaid) is kept in the codebase but dormant (not registered) so the two
+// never double-count; re-add it here if you ever want intra-month freshness.
+const connectors = [calendar, weather, readwise, monarch, notion];
 
 function getConnector(id) {
   return connectors.find((c) => c.id === id) || null;

@@ -72,17 +72,21 @@ and is registered in `backend/src/connectors/index.js`. The runner
 records sync status. `ctx = { lastSyncAt, config }` enables incremental syncs;
 a returned `config` patch (e.g. a Plaid cursor) is merged back into the source.
 
-Two ingestion modes:
+Three ingestion modes:
 - **Server-pulled**: run on a schedule (`npm run ingest`) or via `POST /api/ingest/run`.
 - **Device-pushed** (Apple Health): the mobile app POSTs HealthKit reads to
   `POST /api/ingest/health`, mapped to canonical rows in `backend/src/ingest/health.js`.
+- **File-drop** (Monarch): export a CSV from Monarch and drop it into
+  `backend/imports/monarch/`; the `monarch` connector auto-detects and imports it
+  on the next `npm run ingest`, remembering processed files by content hash.
 
 ### Connectors
 
 | Connector | Domain | Mode | Emits |
 |---|---|---|---|
 | `apple_health` | health | device-pushed | hrv, resting_hr, sleep_hours, steps, active_energy, vo2_max, body_fat, … |
-| `plaid` | wealth | server, incremental | net_worth/assets/liabilities/cash/investments metrics + transaction documents |
+| `monarch` | wealth | file-drop (monthly CSV) | net_worth/assets/liabilities + daily spending/income/net_cashflow + transaction documents |
+| `plaid` *(dormant)* | wealth | server, incremental | net_worth/assets/liabilities/cash/investments + transaction documents — kept in code, unregistered, so it doesn't double-count Monarch |
 | `readwise` | learning | server, incremental | highlight documents (Kindle, articles, podcasts) + sync counts |
 | `notion` | learning | server, incremental | "wisdom" page documents + page counts |
 | `google_calendar` | productivity | server | calendar_events, meetings + event documents |

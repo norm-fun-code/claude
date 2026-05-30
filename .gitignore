@@ -11,3 +11,9 @@ node_modules/
 
 # OS / editor
 .DS_Store
+
+# Personal data drops (Monarch / finance exports) — never commit these
+backend/imports/**/*.csv
+backend/imports/**/*.xlsx
+backend/imports/**/*.json
+!backend/imports/**/README.md
