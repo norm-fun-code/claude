@@ -5,11 +5,11 @@ import { getColors, spacing, radius, shadow } from '../theme';
 export type TabKey = 'today' | 'health' | 'wealth' | 'wisdom' | 'insights';
 
 export const TABS: { key: TabKey; label: string; icon: string }[] = [
-  { key: 'today', label: 'Today', icon: '◎' },
+  { key: 'today', label: 'Today', icon: '☀' },
   { key: 'health', label: 'Health', icon: '❤' },
-  { key: 'wealth', label: 'Wealth', icon: '◆' },
-  { key: 'wisdom', label: 'Wisdom', icon: '✦' },
-  { key: 'insights', label: 'Insights', icon: '↗' },
+  { key: 'wealth', label: 'Wealth', icon: '$' },
+  { key: 'wisdom', label: 'Wisdom', icon: '🧠' },
+  { key: 'insights', label: 'Insights', icon: '✦' },
 ];
 
 interface Props {

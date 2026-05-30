@@ -7,6 +7,7 @@ const { fetchCalendarEvents } = require('./src/services/calendar');
 const { fetchRandomNotionPage } = require('./src/services/notion');
 const { fetchRandomQuote } = require('./src/services/googleDoc');
 const { fetchWeather } = require('./src/services/weather');
+const { fetchMarkets } = require('./src/services/markets');
 const { generateBriefing } = require('./src/services/briefing-ai');
 const { getTodayWorkout } = require('./src/services/workout');
 
@@ -386,13 +387,14 @@ app.get('/api/briefing', async (req, res) => {
   const workout = getTodayWorkout();
 
   // Fetch all independent data sources in parallel
-  const [weatherResult, calendarResult, notionResult, quoteResult, emailResult] =
+  const [weatherResult, calendarResult, notionResult, quoteResult, emailResult, marketsResult] =
     await Promise.allSettled([
       fetchWeather(),
       fetchCalendarEvents(),
       fetchRandomNotionPage(),
       fetchRandomQuote(),
       fetchGmailThreads(),
+      fetchMarkets(),
     ]);
 
   function unwrap(result, name) {
@@ -407,6 +409,7 @@ app.get('/api/briefing', async (req, res) => {
   const notionData = unwrap(notionResult, 'notion') ?? { text: '', pageTitle: 'Notion' };
   const quoteData = unwrap(quoteResult, 'googleDoc') ?? { quote: '' };
   const emails = unwrap(emailResult, 'gmail') ?? [];
+  const markets = unwrap(marketsResult, 'markets');
 
   // Call Gemini with whatever data we have
   let geminiResult = null;
@@ -426,6 +429,7 @@ app.get('/api/briefing', async (req, res) => {
 
   // Surface the intelligence layer's current findings (from the last analysis).
   let insights = [];
+  let wealthInsights = [];
   let leverageActions = [];
   let forecasts = [];
   try {
@@ -451,8 +455,15 @@ app.get('/api/briefing', async (req, res) => {
     const insightPool = open.filter((f) => f.type !== 'leverage' && f.type !== 'forecast');
     const seenInsights = await surfacedStore.recentRefs('insight', 30);
     const chosen = surfacedStore.pickFresh(insightPool, seenInsights, { max: 6, keyFn: (f) => f.title });
-    insights = chosen.map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence }));
+    insights = chosen.map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains }));
     if (insights.length) await surfacedStore.record('insight', insights.map((i) => i.title));
+
+    // Wealth/spending insights for the Wealth tab — all open wealth-domain
+    // findings (not rotated), so money patterns always show where you'd look.
+    wealthInsights = insightPool
+      .filter((f) => Array.isArray(f.domains) && f.domains.includes('wealth'))
+      .slice(0, 5)
+      .map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains }));
   } catch (err) {
     console.error('[insights] failed:', err.message);
   }
@@ -525,10 +536,12 @@ app.get('/api/briefing', async (req, res) => {
     notionPageTitle: notionData.pageTitle,
     leverageActions,
     insights,
+    wealthInsights,
     forecasts,
     relevantHighlight,
     weeklyReview,
     wealth,
+    markets,
   };
 
   if (errors.length > 0) {

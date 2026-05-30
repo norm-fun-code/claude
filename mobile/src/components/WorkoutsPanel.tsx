@@ -1,0 +1,1153 @@
+import React, { useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { getColors, spacing, radius } from '../theme';
+import {
+  getTodaysWorkout,
+  HRV_ZONES,
+  WEEKLY_SCHEDULE,
+  type AnySession,
+  type StrengthSession,
+  type Zone2Session,
+  type IntervalsSession,
+  type MobilitySession,
+  type RestSession,
+  type Exercise,
+  type HRVZone,
+} from '../data/workouts';
+
+interface Props {
+  hrv: number | null;
+  isDark: boolean;
+}
+
+const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+const WORKOUT_TYPE_COLORS: Record<string, string> = {
+  zone2: '#1D9E75',
+  mobility: '#534AB7',
+  intervals: '#993C1D',
+  push: '#0C447C',
+  hinge_pull: '#0C447C',
+  rest: '#666666',
+};
+
+function getWeekDayWorkoutId(dayIndex: number): string {
+  const scheduleDay = (dayIndex + 1) % 7;
+  return WEEKLY_SCHEDULE[scheduleDay] ?? 'rest';
+}
+
+function getWorkoutShortLabel(id: string): string {
+  switch (id) {
+    case 'zone2': return 'Zone 2';
+    case 'mobility': return 'Mobility';
+    case 'intervals': return 'Intervals';
+    case 'push': return 'Push';
+    case 'hinge_pull': return 'Hinge+Pull';
+    case 'rest': return 'Rest';
+    default: return 'Rest';
+  }
+}
+
+const ET_TZ = 'America/New_York';
+
+// JS day-of-week (0=Sun..6=Sat) in Eastern Time, matching the backend.
+function getEasternDay(): number {
+  const wd = new Intl.DateTimeFormat('en-US', { timeZone: ET_TZ, weekday: 'short' }).format(new Date());
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(wd);
+}
+
+// Today's date as YYYY-MM-DD in Eastern Time.
+function getEasternDateString(offsetDays = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return new Intl.DateTimeFormat('en-CA', { timeZone: ET_TZ }).format(d);
+}
+
+function getTodayDayIndex(): number {
+  const jsDay = getEasternDay();
+  return (jsDay + 6) % 7;
+}
+
+function getDateKey(dayIndex: number): string {
+  const todayIndex = getTodayDayIndex();
+  return getEasternDateString(dayIndex - todayIndex);
+}
+
+function Checkbox({
+  checked,
+  onPress,
+  accentColor,
+}: {
+  checked: boolean;
+  onPress: () => void;
+  accentColor: string;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      style={[
+        cbStyles.box,
+        checked
+          ? { backgroundColor: accentColor, borderColor: accentColor }
+          : { backgroundColor: 'transparent', borderColor: '#999' },
+      ]}
+      activeOpacity={0.7}
+    >
+      {checked && <Text style={cbStyles.check}>✓</Text>}
+    </TouchableOpacity>
+  );
+}
+
+const cbStyles = StyleSheet.create({
+  box: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  check: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 16,
+  },
+});
+
+function WeeklyStrip({
+  c,
+  isDark,
+  weeklyCompleted,
+  selectedDayIndex,
+  onDayPress,
+}: {
+  c: ReturnType<typeof getColors>;
+  isDark: boolean;
+  weeklyCompleted: Record<string, boolean>;
+  selectedDayIndex: number;
+  onDayPress: (dayIndex: number) => void;
+}) {
+  const todayIndex = getTodayDayIndex();
+
+  return (
+    <View style={stripStyles.row}>
+      {DAY_LABELS.map((day, i) => {
+        const isToday = i === todayIndex;
+        const isSelected = i === selectedDayIndex;
+        const isPast = i < todayIndex;
+        const dateKey = getDateKey(i);
+        const done = !!weeklyCompleted[dateKey];
+        const workoutId = getWeekDayWorkoutId(i);
+        const dotColor = WORKOUT_TYPE_COLORS[workoutId] ?? '#666';
+        const shortLabel = getWorkoutShortLabel(workoutId);
+
+        return (
+          <TouchableOpacity
+            key={day}
+            style={[
+              stripStyles.dayCell,
+              {
+                backgroundColor: isSelected
+                  ? isDark ? '#1C2A3A' : '#EBF3FF'
+                  : c.card,
+                borderColor: isSelected ? '#0C447C' : isToday ? '#0C447C' : c.border,
+                borderWidth: isSelected || isToday ? 1.5 : 1,
+              },
+            ]}
+            onPress={() => onDayPress(i)}
+            activeOpacity={0.7}
+          >
+            <Text style={[stripStyles.dayName, { color: isSelected || isToday ? '#0C447C' : c.subtext }]}>
+              {isToday ? 'Today' : day}
+            </Text>
+            {done ? (
+              <Text style={stripStyles.checkmark}>✓</Text>
+            ) : (
+              <View style={[stripStyles.dot, { backgroundColor: dotColor, opacity: isPast ? 0.4 : 1 }]} />
+            )}
+            <Text
+              style={[
+                stripStyles.typeLabel,
+                { color: isPast || isSelected ? dotColor : c.subtext },
+              ]}
+              numberOfLines={1}
+            >
+              {shortLabel}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
+const stripStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    gap: 4,
+    marginBottom: spacing.md,
+  },
+  dayCell: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 2,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: 4,
+  },
+  dayName: {
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+  dot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  checkmark: {
+    fontSize: 12,
+    color: '#1D9E75',
+    fontWeight: '700',
+    lineHeight: 14,
+  },
+  typeLabel: {
+    fontSize: 8,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+});
+
+function HRVHeaderCard({
+  c,
+  isDark,
+  hrv,
+  zone,
+  workoutLabel,
+  workoutDuration,
+  override,
+}: {
+  c: ReturnType<typeof getColors>;
+  isDark: boolean;
+  hrv: number | null;
+  zone: HRVZone;
+  workoutLabel: string;
+  workoutDuration?: string;
+  override?: string;
+}) {
+  const bgTag = isDark ? '#2A2A28' : '#F3F3F0';
+
+  const zoneConfig =
+    zone !== 'unknown'
+      ? HRV_ZONES[zone as 'green' | 'yellow' | 'red']
+      : null;
+
+  return (
+    <View style={[cardStyles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+      <Text style={[cardStyles.workoutLabel, { color: c.text }]}>{workoutLabel}</Text>
+      {workoutDuration && (
+        <View style={[cardStyles.durationTag, { backgroundColor: bgTag }]}>
+          <Text style={[cardStyles.durationText, { color: c.subtext }]}>⏱ {workoutDuration}</Text>
+        </View>
+      )}
+
+      <View style={cardStyles.zoneRow}>
+        {zoneConfig ? (
+          <View style={[cardStyles.zonePill, { backgroundColor: zoneConfig.color + '22', borderColor: zoneConfig.color }]}>
+            <Text style={[cardStyles.zoneText, { color: zoneConfig.color }]}>
+              {zone.toUpperCase()} · {hrv} ms
+            </Text>
+          </View>
+        ) : (
+          <View style={[cardStyles.zonePill, { backgroundColor: bgTag, borderColor: c.border }]}>
+            <Text style={[cardStyles.zoneText, { color: c.subtext }]}>HRV unknown</Text>
+          </View>
+        )}
+      </View>
+
+      {zoneConfig ? (
+        <Text style={[cardStyles.instruction, { color: c.subtext }]}>{zoneConfig.instruction}</Text>
+      ) : (
+        <Text style={[cardStyles.instruction, { color: c.subtext }]}>
+          No HRV data — showing scheduled workout.
+        </Text>
+      )}
+
+      {override && (
+        <View style={[cardStyles.overrideBanner, { backgroundColor: isDark ? '#2A1A0A' : '#FFF4E5', borderColor: '#BA7517' }]}>
+          <Text style={[cardStyles.overrideText, { color: '#BA7517' }]}>{override}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+const cardStyles = StyleSheet.create({
+  card: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    gap: spacing.sm,
+  },
+  workoutLabel: {
+    fontSize: 20,
+    fontWeight: '700',
+    letterSpacing: -0.4,
+  },
+  durationTag: {
+    alignSelf: 'flex-start',
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  durationText: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  zoneRow: {
+    flexDirection: 'row',
+    marginTop: spacing.xs,
+  },
+  zonePill: {
+    borderRadius: 20,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  zoneText: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  instruction: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  overrideBanner: {
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    padding: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  overrideText: {
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+});
+
+function ExerciseRow({
+  exercise,
+  completed,
+  cueOpen,
+  onToggleComplete,
+  onToggleCue,
+  isYellow,
+  showSetsDimmed,
+  c,
+  isDark,
+}: {
+  exercise: Exercise;
+  completed: boolean;
+  cueOpen: boolean;
+  onToggleComplete: () => void;
+  onToggleCue: () => void;
+  isYellow: boolean;
+  showSetsDimmed: boolean;
+  c: ReturnType<typeof getColors>;
+  isDark: boolean;
+}) {
+  const bgTag = isDark ? '#2A2A28' : '#F3F3F0';
+  const setsText = isYellow && showSetsDimmed
+    ? exercise.sets.replace(/^3/, '2')
+    : exercise.sets;
+  const dimmed = isYellow && showSetsDimmed;
+
+  return (
+    <View style={[exStyles.row, { borderColor: c.border }]}>
+      <View style={exStyles.topLine}>
+        <Checkbox checked={completed} onPress={onToggleComplete} accentColor="#1D9E75" />
+        <TouchableOpacity onPress={onToggleCue} style={exStyles.nameWrap} activeOpacity={0.7}>
+          <Text style={[exStyles.name, { color: c.text, textDecorationLine: completed ? 'line-through' : 'none', opacity: completed ? 0.5 : 1 }]}>
+            {exercise.name}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={exStyles.tagsRow}>
+        <View style={[exStyles.tag, { backgroundColor: bgTag }]}>
+          <Text style={[exStyles.tagText, { color: c.subtext, textDecorationLine: dimmed ? 'line-through' : 'none' }]}>
+            {setsText}
+          </Text>
+        </View>
+        {exercise.rest && (
+          <View style={[exStyles.tag, { backgroundColor: bgTag }]}>
+            <Text style={[exStyles.tagText, { color: c.subtext }]}>{exercise.rest} rest</Text>
+          </View>
+        )}
+        {exercise.load && (
+          <View style={[exStyles.tag, { backgroundColor: bgTag }]}>
+            <Text style={[exStyles.tagText, { color: c.subtext }]}>{exercise.load}</Text>
+          </View>
+        )}
+      </View>
+
+      {cueOpen && exercise.cue && (
+        <View style={[exStyles.cueBox, { backgroundColor: isDark ? '#1C1C1A' : '#F9F8F6', borderColor: c.border }]}>
+          <Text style={[exStyles.cueText, { color: c.subtext }]}>{exercise.cue}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+const exStyles = StyleSheet.create({
+  row: {
+    borderBottomWidth: 1,
+    paddingVertical: spacing.sm,
+    gap: spacing.xs,
+  },
+  topLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  nameWrap: {
+    flex: 1,
+  },
+  name: {
+    fontSize: 15,
+    fontWeight: '600',
+    letterSpacing: -0.2,
+  },
+  tagsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    paddingLeft: 30,
+  },
+  tag: {
+    borderRadius: radius.sm,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  tagText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  cueBox: {
+    marginLeft: 30,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    padding: spacing.sm,
+  },
+  cueText: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+});
+
+function CollapsibleSection({
+  title,
+  c,
+  isDark,
+  children,
+}: {
+  title: string;
+  c: ReturnType<typeof getColors>;
+  isDark: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(true);
+  const bg = isDark ? '#2A2A28' : '#F3F3F0';
+
+  return (
+    <View style={{ marginBottom: spacing.md }}>
+      <TouchableOpacity
+        onPress={() => setOpen((v) => !v)}
+        style={[sectStyles.header, { backgroundColor: bg }]}
+        activeOpacity={0.7}
+      >
+        <Text style={[sectStyles.headerText, { color: c.text }]}>{title}</Text>
+        <Text style={[sectStyles.chevron, { color: c.subtext }]}>{open ? '▲' : '▼'}</Text>
+      </TouchableOpacity>
+      {open && <View>{children}</View>}
+    </View>
+  );
+}
+
+const sectStyles = StyleSheet.create({
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  headerText: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  chevron: {
+    fontSize: 11,
+  },
+});
+
+function StrengthContent({
+  session,
+  zone,
+  completedExercises,
+  expandedCues,
+  onToggleComplete,
+  onToggleCue,
+  c,
+  isDark,
+}: {
+  session: StrengthSession;
+  zone: HRVZone;
+  completedExercises: Set<string>;
+  expandedCues: Set<string>;
+  onToggleComplete: (name: string) => void;
+  onToggleCue: (name: string) => void;
+  c: ReturnType<typeof getColors>;
+  isDark: boolean;
+}) {
+  const isYellow = zone === 'yellow';
+
+  return (
+    <View>
+      <CollapsibleSection title="Warm-up" c={c} isDark={isDark}>
+        {session.warmup.map((ex) => (
+          <ExerciseRow
+            key={ex.name}
+            exercise={ex}
+            completed={completedExercises.has(ex.name)}
+            cueOpen={expandedCues.has(ex.name)}
+            onToggleComplete={() => onToggleComplete(ex.name)}
+            onToggleCue={() => onToggleCue(ex.name)}
+            isYellow={false}
+            showSetsDimmed={false}
+            c={c}
+            isDark={isDark}
+          />
+        ))}
+      </CollapsibleSection>
+
+      <CollapsibleSection title="Working Sets" c={c} isDark={isDark}>
+        {isYellow && (
+          <View style={[strengthStyles.yellowBanner, { backgroundColor: isDark ? '#2A1A0A' : '#FFF4E5' }]}>
+            <Text style={strengthStyles.yellowBannerText}>Yellow HRV — 2 sets per exercise, load –20%</Text>
+          </View>
+        )}
+        {session.working.map((ex) => {
+          const dimThirdSet = isYellow && ex.sets.startsWith('3');
+          return (
+            <ExerciseRow
+              key={ex.name}
+              exercise={ex}
+              completed={completedExercises.has(ex.name)}
+              cueOpen={expandedCues.has(ex.name)}
+              onToggleComplete={() => onToggleComplete(ex.name)}
+              onToggleCue={() => onToggleCue(ex.name)}
+              isYellow={isYellow}
+              showSetsDimmed={dimThirdSet}
+              c={c}
+              isDark={isDark}
+            />
+          );
+        })}
+      </CollapsibleSection>
+    </View>
+  );
+}
+
+const strengthStyles = StyleSheet.create({
+  yellowBanner: {
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  yellowBannerText: {
+    color: '#BA7517',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+});
+
+function Zone2Content({
+  session,
+  c,
+  isDark,
+}: {
+  session: Zone2Session;
+  c: ReturnType<typeof getColors>;
+  isDark: boolean;
+}) {
+  const bg = isDark ? '#0D1F15' : '#EBF7F2';
+
+  return (
+    <View style={[z2Styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+      <View style={[z2Styles.hrBand, { backgroundColor: bg }]}>
+        <Text style={z2Styles.hrLabel}>Target HR</Text>
+        <Text style={z2Styles.hrRange}>135 – 145 BPM</Text>
+      </View>
+      {session.details.map((d, i) => (
+        <View key={i} style={z2Styles.bulletRow}>
+          <Text style={[z2Styles.bullet, { color: '#1D9E75' }]}>•</Text>
+          <Text style={[z2Styles.bulletText, { color: c.subtext }]}>{d}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+const z2Styles = StyleSheet.create({
+  card: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    padding: spacing.md,
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  hrBand: {
+    borderRadius: radius.md,
+    padding: spacing.md,
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  hrLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    color: '#1D9E75',
+    marginBottom: 2,
+  },
+  hrRange: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#1D9E75',
+    letterSpacing: -0.5,
+  },
+  bulletRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  bullet: {
+    fontSize: 16,
+    lineHeight: 22,
+  },
+  bulletText: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 21,
+  },
+});
+
+function IntervalsContent({
+  session,
+  zone,
+  c,
+  isDark,
+}: {
+  session: IntervalsSession;
+  zone: HRVZone;
+  c: ReturnType<typeof getColors>;
+  isDark: boolean;
+}) {
+  const isYellow = zone === 'yellow';
+
+  function phaseColor(phase: string): string {
+    const p = phase.toLowerCase();
+    if (p.startsWith('interval')) return '#993C1D';
+    if (p.startsWith('recovery')) return '#1D9E75';
+    return '#5A7A9A';
+  }
+
+  return (
+    <View style={{ marginBottom: spacing.md }}>
+      <View style={[intStyles.equipBox, { backgroundColor: isDark ? '#2A2A28' : '#F3F3F0', borderColor: c.border }]}>
+        <Text style={[intStyles.equipText, { color: c.subtext }]}>Equipment: {session.equipment}</Text>
+      </View>
+
+      {isYellow && (
+        <View style={[intStyles.yellowBanner, { backgroundColor: isDark ? '#2A1A0A' : '#FFF4E5' }]}>
+          <Text style={intStyles.yellowText}>{session.note_yellow_hrv}</Text>
+        </View>
+      )}
+
+      {session.phases.map((p, i) => {
+        const color = phaseColor(p.phase);
+        return (
+          <View
+            key={i}
+            style={[intStyles.phaseCard, { backgroundColor: c.card, borderColor: c.border, borderLeftColor: color }]}
+          >
+            <View style={intStyles.phaseLeft}>
+              <Text style={[intStyles.phaseName, { color: c.text }]}>{p.phase}</Text>
+              <Text style={[intStyles.phaseDuration, { color: c.subtext }]}>{p.duration}</Text>
+              <Text style={[intStyles.phaseNote, { color: c.subtext }]}>{p.note}</Text>
+            </View>
+            <View style={[intStyles.hrBox, { backgroundColor: color + '22' }]}>
+              <Text style={[intStyles.hrText, { color }]}>{p.hr}</Text>
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+const intStyles = StyleSheet.create({
+  equipBox: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  equipText: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  yellowBanner: {
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  yellowText: {
+    color: '#BA7517',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  phaseCard: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderLeftWidth: 4,
+    padding: spacing.sm,
+    marginBottom: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  phaseLeft: {
+    flex: 1,
+    gap: 2,
+  },
+  phaseName: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  phaseDuration: {
+    fontSize: 12,
+  },
+  phaseNote: {
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  hrBox: {
+    borderRadius: radius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignItems: 'center',
+    minWidth: 90,
+  },
+  hrText: {
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+});
+
+function MobilityContent({
+  session,
+  completedExercises,
+  onToggleComplete,
+  c,
+  isDark,
+}: {
+  session: MobilitySession;
+  completedExercises: Set<string>;
+  onToggleComplete: (name: string) => void;
+  c: ReturnType<typeof getColors>;
+  isDark: boolean;
+}) {
+  return (
+    <View style={{ marginBottom: spacing.md }}>
+      <View style={[mobStyles.noteBox, { backgroundColor: isDark ? '#2A2A28' : '#F3F3F0' }]}>
+        <Text style={[mobStyles.noteText, { color: c.subtext }]}>{session.note}</Text>
+      </View>
+      <View style={[mobStyles.list, { backgroundColor: c.card, borderColor: c.border }]}>
+        {session.exercises.map((ex, i) => {
+          const done = completedExercises.has(ex.name);
+          return (
+            <View
+              key={ex.name}
+              style={[
+                mobStyles.exRow,
+                { borderBottomWidth: i < session.exercises.length - 1 ? 1 : 0, borderColor: c.border },
+              ]}
+            >
+              <View style={mobStyles.topLine}>
+                <Checkbox checked={done} onPress={() => onToggleComplete(ex.name)} accentColor="#534AB7" />
+                <View style={mobStyles.info}>
+                  <Text style={[mobStyles.name, { color: c.text, opacity: done ? 0.5 : 1, textDecorationLine: done ? 'line-through' : 'none' }]}>
+                    {ex.name}
+                  </Text>
+                  <Text style={[mobStyles.sets, { color: c.subtext }]}>{ex.sets}</Text>
+                </View>
+              </View>
+              <Text style={[mobStyles.cue, { color: c.subtext }]}>{ex.cue}</Text>
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+const mobStyles = StyleSheet.create({
+  noteBox: {
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  noteText: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  list: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+  },
+  exRow: {
+    paddingVertical: spacing.sm,
+    gap: spacing.xs,
+  },
+  topLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  info: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  name: {
+    fontSize: 14,
+    fontWeight: '600',
+    flex: 1,
+  },
+  sets: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  cue: {
+    fontSize: 12,
+    lineHeight: 17,
+    paddingLeft: 30,
+  },
+});
+
+function RestContent({
+  session,
+  c,
+  isDark,
+}: {
+  session: RestSession;
+  c: ReturnType<typeof getColors>;
+  isDark: boolean;
+}) {
+  return (
+    <View style={[restStyles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+      <Text style={restStyles.icon}>🛌</Text>
+      <Text style={[restStyles.note, { color: c.subtext }]}>{session.note}</Text>
+      <View style={[restStyles.reminder, { backgroundColor: isDark ? '#2A2A28' : '#F3F3F0' }]}>
+        <Text style={[restStyles.reminderText, { color: c.subtext }]}>
+          Check your daily non-negotiables below.
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+const restStyles = StyleSheet.create({
+  card: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    padding: spacing.md,
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+    alignItems: 'center',
+  },
+  icon: {
+    fontSize: 40,
+  },
+  note: {
+    fontSize: 14,
+    lineHeight: 21,
+    textAlign: 'center',
+  },
+  reminder: {
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+    width: '100%',
+  },
+  reminderText: {
+    fontSize: 13,
+    textAlign: 'center',
+  },
+});
+
+function NonNegotiablesStrip({
+  c,
+  isDark,
+  values,
+  onChange,
+}: {
+  c: ReturnType<typeof getColors>;
+  isDark: boolean;
+  values: { chinTucks: boolean; walk: boolean; noLateTraining: boolean };
+  onChange: (key: keyof typeof values) => void;
+}) {
+  const items: { key: keyof typeof values; label: string; sub: string }[] = [
+    { key: 'chinTucks', label: 'Chin tucks', sub: '2×10 at desk (2–3× today)' },
+    { key: 'walk', label: 'Walk', sub: 'At least 10 min' },
+    { key: 'noLateTraining', label: 'No training after 6pm', sub: '' },
+  ];
+
+  return (
+    <View style={[nnStyles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+      <Text style={[nnStyles.title, { color: c.text }]}>Daily Non-Negotiables</Text>
+      {items.map((item) => (
+        <TouchableOpacity
+          key={item.key}
+          style={nnStyles.row}
+          onPress={() => onChange(item.key)}
+          activeOpacity={0.7}
+        >
+          <Checkbox
+            checked={values[item.key]}
+            onPress={() => onChange(item.key)}
+            accentColor="#0C447C"
+          />
+          <View style={{ flex: 1 }}>
+            <Text style={[nnStyles.label, { color: c.text }]}>{item.label}</Text>
+            {item.sub ? (
+              <Text style={[nnStyles.sub, { color: c.subtext }]}>{item.sub}</Text>
+            ) : null}
+          </View>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+
+const nnStyles = StyleSheet.create({
+  card: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    gap: spacing.sm,
+  },
+  title: {
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+    marginBottom: spacing.xs,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: 2,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  sub: {
+    fontSize: 12,
+    marginTop: 1,
+  },
+});
+
+function renderWorkoutContent(
+  workout: AnySession,
+  zone: HRVZone,
+  completedExercises: Set<string>,
+  expandedCues: Set<string>,
+  onToggleComplete: (name: string) => void,
+  onToggleCue: (name: string) => void,
+  c: ReturnType<typeof getColors>,
+  isDark: boolean,
+) {
+  if (workout.id === 'push' || workout.id === 'hinge_pull') {
+    return (
+      <StrengthContent
+        session={workout as StrengthSession}
+        zone={zone}
+        completedExercises={completedExercises}
+        expandedCues={expandedCues}
+        onToggleComplete={onToggleComplete}
+        onToggleCue={onToggleCue}
+        c={c}
+        isDark={isDark}
+      />
+    );
+  }
+  if (workout.id === 'zone2') {
+    return <Zone2Content session={workout as Zone2Session} c={c} isDark={isDark} />;
+  }
+  if (workout.id === 'intervals') {
+    return <IntervalsContent session={workout as IntervalsSession} zone={zone} c={c} isDark={isDark} />;
+  }
+  if (workout.id === 'mobility') {
+    return (
+      <MobilityContent
+        session={workout as MobilitySession}
+        completedExercises={completedExercises}
+        onToggleComplete={onToggleComplete}
+        c={c}
+        isDark={isDark}
+      />
+    );
+  }
+  if (workout.id === 'rest') {
+    return <RestContent session={workout as RestSession} c={c} isDark={isDark} />;
+  }
+  return null;
+}
+
+// Full day-by-day workout view (HRV-aware) — embedded in the Health tab.
+export function WorkoutsPanel({ hrv, isDark }: Props) {
+  const c = getColors(isDark);
+  const todayDayIndex = getTodayDayIndex();
+
+  const [selectedDayIndex, setSelectedDayIndex] = useState(todayDayIndex);
+  const [completedExercises, setCompletedExercises] = useState<Set<string>>(new Set());
+  const [expandedCues, setExpandedCues] = useState<Set<string>>(new Set());
+  const [nonNegotiables, setNonNegotiables] = useState({
+    chinTucks: false,
+    walk: false,
+    noLateTraining: false,
+  });
+  const [weeklyCompleted, setWeeklyCompleted] = useState<Record<string, boolean>>({});
+
+  const isViewingToday = selectedDayIndex === todayDayIndex;
+  // Convert strip day index (Mon=0) to JS day-of-week (Sun=0) for the selected day
+  const selectedJsDay = (selectedDayIndex + 1) % 7;
+  // Only apply HRV logic for today — for other days show the scheduled workout
+  const { workout, zone, override } = getTodaysWorkout(selectedJsDay, isViewingToday ? hrv : null);
+
+  function handleDayPress(dayIndex: number) {
+    setSelectedDayIndex(dayIndex);
+    setCompletedExercises(new Set());
+    setExpandedCues(new Set());
+  }
+
+  function toggleExercise(name: string) {
+    setCompletedExercises((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
+  function toggleCue(name: string) {
+    setExpandedCues((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
+  function toggleNonNeg(key: keyof typeof nonNegotiables) {
+    setNonNegotiables((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  function handleMarkDone(dateKey: string) {
+    setWeeklyCompleted((prev) => ({ ...prev, [dateKey]: !prev[dateKey] }));
+  }
+
+  const duration = 'duration' in workout ? (workout as any).duration : undefined;
+  const dateKey = getDateKey(selectedDayIndex);
+  const done = !!weeklyCompleted[dateKey];
+
+  return (
+    <View>
+      <WeeklyStrip
+        c={c}
+        isDark={isDark}
+        weeklyCompleted={weeklyCompleted}
+        selectedDayIndex={selectedDayIndex}
+        onDayPress={handleDayPress}
+      />
+
+      <HRVHeaderCard
+        c={c}
+        isDark={isDark}
+        hrv={hrv}
+        zone={zone}
+        workoutLabel={workout.label}
+        workoutDuration={duration}
+        override={override}
+      />
+
+      <TouchableOpacity
+        onPress={() => handleMarkDone(dateKey)}
+        style={[markDoneStyles.btn, { borderColor: done ? '#1D9E75' : c.border, backgroundColor: done ? '#1D9E7515' : 'transparent' }]}
+        activeOpacity={0.7}
+      >
+        <Text style={[markDoneStyles.label, { color: done ? '#1D9E75' : c.subtext }]}>
+          {done ? '✓ Marked complete' : 'Mark as complete'}
+        </Text>
+      </TouchableOpacity>
+
+      {renderWorkoutContent(
+        workout,
+        zone,
+        completedExercises,
+        expandedCues,
+        toggleExercise,
+        toggleCue,
+        c,
+        isDark,
+      )}
+
+      <NonNegotiablesStrip
+        c={c}
+        isDark={isDark}
+        values={nonNegotiables}
+        onChange={toggleNonNeg}
+      />
+    </View>
+  );
+}
+
+const markDoneStyles = StyleSheet.create({
+  btn: {
+    alignSelf: 'center',
+    borderWidth: 1,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+});

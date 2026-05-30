@@ -47,7 +47,7 @@ export function ChatCard() {
 
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
-      <SectionHeader emoji="💬" title="Ask NormOS" />
+      <SectionHeader emoji="💬" title="Ask NormOS" preserveCase />
 
       <View style={[styles.inputRow, { borderColor: c.border }]}>
         <TextInput

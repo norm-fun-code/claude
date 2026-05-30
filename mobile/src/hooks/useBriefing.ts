@@ -58,6 +58,26 @@ export interface Insight {
   title: string;
   detail: string | null;
   confidence: number | null;
+  domains?: string[];
+}
+
+export interface MarketIndex {
+  label: string;
+  symbol: string;
+  price: number;
+  change: number;
+  changePct: number;
+}
+
+export interface MarketHeadline {
+  title: string;
+  url: string | null;
+  source: string;
+}
+
+export interface Markets {
+  indices: MarketIndex[];
+  headlines: MarketHeadline[];
 }
 
 export interface LeverageAction {
@@ -112,10 +132,12 @@ export interface BriefingData {
   notionPageTitle: string;
   leverageActions: LeverageAction[];
   insights: Insight[];
+  wealthInsights?: Insight[];
   forecasts: Forecast[];
   relevantHighlight: RelevantHighlight | null;
   weeklyReview: WeeklyReview | null;
   wealth: Wealth | null;
+  markets?: Markets | null;
   errors?: { service: string; error: string }[];
 }
 

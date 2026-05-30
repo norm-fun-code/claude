@@ -28,12 +28,12 @@ import { ChatCard } from './src/components/ChatCard';
 import { CheckinCard } from './src/components/CheckinCard';
 import { HealthCard } from './src/components/HealthCard';
 import { WeatherCard } from './src/components/WeatherCard';
-import { WorkoutCard } from './src/components/WorkoutCard';
+import { WorkoutsPanel } from './src/components/WorkoutsPanel';
 import { CalendarCard } from './src/components/CalendarCard';
 import { QuoteCard } from './src/components/QuoteCard';
 import { NotionCard } from './src/components/NotionCard';
 import { NewsletterList } from './src/components/NewsletterList';
-import { FinanceCard } from './src/components/FinanceCard';
+import { MarketsCard } from './src/components/MarketsCard';
 import { UrgentEmailsCard } from './src/components/UrgentEmailsCard';
 
 export default function App() {
@@ -65,18 +65,17 @@ export default function App() {
         return (
           <>
             <HealthCard health={health} />
-            <WeatherCard weather={d?.weather ?? null} />
-            {d?.workout && <WorkoutCard workout={d.workout} hrvStatus={health.hrvStatus} />}
-            <CalendarCard events={d?.calendar ?? []} />
+            <WorkoutsPanel hrv={health.hrv} isDark={isDark} />
           </>
         );
       case 'wealth':
         return (
           <>
             <WealthCard wealth={d?.wealth ?? null} />
-            {d?.financeSummary && d.financeSummary.length > 0 && <FinanceCard items={d.financeSummary} />}
+            <MarketsCard markets={d?.markets} />
+            <InsightsCard insights={d?.wealthInsights ?? []} />
             {!d?.wealth && (
-              <EmptyNote c={c} text="Drop your Monarch export in backend/imports/monarch/ and run ingest to see net worth, spending, and cashflow here." />
+              <EmptyNote c={c} text="Connect Monarch (your monthly export) to see net worth, spending, and cashflow here." />
             )}
           </>
         );
@@ -89,7 +88,6 @@ export default function App() {
             {(d?.notionText || d?.notionInsight) && (
               <NotionCard pageTitle={d?.notionPageTitle ?? ''} notionText={d!.notionText} insight={d!.notionInsight} />
             )}
-            {d && <NewsletterList newsletters={d.newsletters} />}
           </>
         );
       case 'insights':
@@ -108,8 +106,11 @@ export default function App() {
             <CheckinCard />
             {d && <LeverageCard actions={d.leverageActions ?? []} insights={[]} />}
             {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
-            <ReviewCard review={d?.weeklyReview ?? null} compact />
+            <WeatherCard weather={d?.weather ?? null} />
+            {d && d.calendar.length > 0 && <CalendarCard events={d.calendar} />}
             {d && <UrgentEmailsCard emails={d.urgentEmails} />}
+            {d && <NewsletterList newsletters={d.newsletters} />}
+            <ReviewCard review={d?.weeklyReview ?? null} compact />
             {d?.relevantHighlight && <LibraryCard highlight={d.relevantHighlight} />}
 
             {briefing.error && !d && (

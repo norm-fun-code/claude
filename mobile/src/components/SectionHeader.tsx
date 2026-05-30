@@ -5,16 +5,17 @@ import { getColors, spacing, typography } from '../theme';
 interface Props {
   emoji: string;
   title: string;
+  preserveCase?: boolean;
 }
 
-export function SectionHeader({ emoji, title }: Props) {
+export function SectionHeader({ emoji, title, preserveCase }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
   return (
     <View style={styles.container}>
       <Text style={styles.emoji}>{emoji}</Text>
-      <Text style={[styles.title, { color: c.text }]}>{title}</Text>
+      <Text style={[styles.title, { color: c.text }, preserveCase && styles.preserve]}>{title}</Text>
     </View>
   );
 }
@@ -33,5 +34,10 @@ const styles = StyleSheet.create({
   title: {
     ...typography.label,
     fontSize: 13,
+  },
+  preserve: {
+    textTransform: 'none',
+    fontSize: 15,
+    letterSpacing: -0.2,
   },
 });
