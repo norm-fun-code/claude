@@ -25,6 +25,9 @@ const { ask } = require('./src/chat/ask');
 const annotationsStore = require('./src/store/annotations');
 const experimentsStore = require('./src/store/experiments');
 const experiments = require('./src/intelligence/experiments');
+const devicesStore = require('./src/store/devices');
+const nudgesStore = require('./src/store/nudges');
+const { runNudges } = require('./src/notify/run');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -262,6 +265,38 @@ app.get('/api/forecasts', async (req, res) => {
       }))
       .sort((a, b) => (a.probability ?? 1) - (b.probability ?? 1)); // most at-risk first
     res.json({ forecasts });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Register a phone's Expo push token so NormOS can reach out proactively.
+app.post('/api/devices/register', async (req, res) => {
+  try {
+    const { pushToken, platform, label } = req.body || {};
+    if (!pushToken) return res.status(400).json({ error: 'pushToken required' });
+    const id = await devicesStore.registerDevice({ pushToken, platform, label });
+    res.json({ ok: true, id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Recent nudges (the proactive-message log).
+app.get('/api/nudges', async (req, res) => {
+  try {
+    res.json({ nudges: await nudgesStore.listNudges({ limit: Number(req.query.limit) || 50 }) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Generate + (optionally) send today's nudges. Cron hits this each morning;
+// pass { force, dryRun } to override quiet hours or preview without sending.
+app.post('/api/nudges/run', async (req, res) => {
+  try {
+    const { force = false, dryRun = false } = req.body || {};
+    res.json(await runNudges({ force, send: !dryRun }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

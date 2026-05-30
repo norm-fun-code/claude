@@ -103,6 +103,9 @@ Two ingestion modes:
 | `POST /api/checkin` | Daily subjective check-in (mood/energy/focus + note) |
 | `GET /api/actions` | Ranked highest-leverage actions |
 | `GET /api/forecasts` | Goal achievement-probability forecasts (most at-risk first) |
+| `POST /api/devices/register` | Register a phone's Expo push token for nudges |
+| `GET /api/nudges` | Recent proactive nudges (the push log) |
+| `POST /api/nudges/run` | Generate + send today's nudges (cron hits this) |
 | `POST /api/chat` | Life chat — RAG answer over your data + library |
 | `POST /api/embed` | Backfill document embeddings |
 | `GET/POST /api/annotations` | Life context (travel, illness, deadlines) |
@@ -188,6 +191,33 @@ issues a verdict — confirmed / refuted / inconclusive. This closes the
 deadlines) are recorded and fed into chat context so anomalies are explainable
 rather than misread.
 
+## Proactive nudges
+
+NormOS doesn't wait to be opened. The nudge layer turns the current findings
+into a short, ranked, push-based message — the "7am text" that makes it a chief
+of staff rather than a dashboard.
+
+- `intelligence/nudges.js` — **pure** `buildNudges`: maps open findings to
+  candidate nudges (off-track/at-risk **forecasts**, the #1 **leverage action**,
+  clearly **worsening trends**), scores their urgency, de-duplicates against
+  what was recently sent (so a still-true insight doesn't nag every morning),
+  and caps the count. `withinQuietHours` guards against off-hours pings.
+- `notify/expo.js` — delivery via Expo's push service (APNs/FCM relay); the
+  device's Expo push token is the credential, no secret key needed. Dead tokens
+  (`DeviceNotRegistered`) are detected and deactivated.
+- `notify/run.js` — `runNudges()` orchestrator: read open findings, build
+  candidates, suppress repeats, persist to the `nudges` log, and push to every
+  registered device. Run on a morning schedule via `npm run nudge`
+  (cron/launchd) or `POST /api/nudges/run`. `--dry-run` previews without sending;
+  `--force` overrides quiet hours.
+- Storage: `devices` (registered Expo push tokens) and `nudges` (the send log,
+  which doubles as the de-dup ledger) — `migrations/003_nudges.sql`.
+- Mobile: `usePushRegistration` asks for permission, gets the Expo push token,
+  and POSTs it to `/api/devices/register` on launch.
+
+The judgement (which insight, how urgent, dedup, quiet hours) is unit-tested in
+`backend/test/nudges.test.js`; only the network delivery needs a live device.
+
 ## Roadmap
 
 - **Phase 0 — Foundation (this milestone).** DB + canonical schema + connector
@@ -209,9 +239,11 @@ rather than misread.
 - **Phase 5 — Experiments + trust.** Hypothesis/experiment loop, correlation
   confirmation gate (holdout), and a context/annotations layer. ✅
 - **Phase 6 — Forecasting + proactive nudges.** Goal achievement-probability
-  forecasting engine done (`intelligence/forecast.js`, `GET /api/forecasts`,
-  surfaced in the analyze run). ✅ (forecasting)
-  Next: push notifications that deliver the right insight at the right moment.
+  forecasting (`intelligence/forecast.js`, `GET /api/forecasts`) **and** the
+  proactive nudge engine + Expo push delivery (`intelligence/nudges.js`,
+  `notify/`, `npm run nudge`, mobile push registration). ✅
+  Remaining ops (needs hardware/creds): EAS/dev build for the push entitlement,
+  registering a device, and a morning cron schedule.
 - **Future — Specialist agents.** Investment Analyst, Career Coach, etc. on the
   shared spine.
 

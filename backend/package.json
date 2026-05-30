@@ -10,6 +10,7 @@
     "ingest": "node src/ingest/run.js",
     "analyze": "node src/intelligence/analyze.js",
     "embed": "node src/intelligence/embeddings.js",
+    "nudge": "node src/notify/run.js",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {

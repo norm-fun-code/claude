@@ -28,6 +28,7 @@ import { NotionCard } from './src/components/NotionCard';
 import { NewsletterList } from './src/components/NewsletterList';
 import { FinanceCard } from './src/components/FinanceCard';
 import { UrgentEmailsCard } from './src/components/UrgentEmailsCard';
+import { usePushRegistration } from './src/hooks/usePushRegistration';
 
 export default function App() {
   const isDark = useColorScheme() === 'dark';
@@ -35,6 +36,7 @@ export default function App() {
 
   const briefing = useBriefing();
   const health = useHealthData();
+  usePushRegistration(); // register this phone for proactive nudges
 
   const isRefreshing = briefing.loading || health.loading;
 
