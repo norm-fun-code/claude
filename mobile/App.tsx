@@ -77,7 +77,7 @@ export default function App() {
           <>
             <WealthCard wealth={d?.wealth ?? null} />
             <AdvisorCard />
-            <IndicesCard markets={d?.markets} />
+            <IndicesCard />
             <MarketsCard markets={d?.markets} />
             <InsightsCard insights={d?.wealthInsights ?? []} />
             {!d?.wealth && (
