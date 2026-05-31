@@ -1,10 +1,12 @@
-// Backend connection. For real-device testing, set this to your Mac's local IP
-// (System Settings → Wi-Fi → Details). For the simulator, localhost works.
-export const API_BASE = 'http://192.168.1.4:3001';
+// Backend connection. Defaults to the hosted Railway backend so the app works
+// anywhere (off your home WiFi, unplugged from the Mac). Override for local dev
+// by setting EXPO_PUBLIC_API_BASE to your Mac's LAN IP (e.g. http://192.168.1.4:3001).
+export const API_BASE =
+  process.env.EXPO_PUBLIC_API_BASE || 'https://backend-production-0902.up.railway.app';
 
-// Optional API token — only needed if you set NORMOS_API_TOKEN on the backend
-// (e.g. when hosting it on a VPS). Leave '' for local use.
-export const API_TOKEN = '';
+// Backend bearer token (NORMOS_API_TOKEN on Railway). Injected at build time from
+// EXPO_PUBLIC_API_TOKEN so the secret never lives in source control.
+export const API_TOKEN = process.env.EXPO_PUBLIC_API_TOKEN || '';
 
 export const BRIEFING_URL = `${API_BASE}/api/briefing`;
 export const HEALTH_INGEST_URL = `${API_BASE}/api/ingest/health`;
