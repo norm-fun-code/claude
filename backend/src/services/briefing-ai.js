@@ -62,7 +62,7 @@ Rules:
 - newsletters: include digests/publications; exclude personal email, receipts, notifications. Go deep — extract every named company, person, statistic, and dollar amount.
 - urgentEmails: only emails needing a response/action today.
 - financeSummary: 1-3 items; never empty.
-- quoteInsight / notionInsight: reflect on the idea itself — what it means, why it's true, how to think about it. Keep it insightful but GENERIC. Do NOT reference the user's personal life, their day, their data, their schedule, their finances, or "today". No "you should" or "your" — speak about the idea, not the person.`;
+- quoteInsight / notionInsight: draw out the idea and how it applies to life and living well in general — practical wisdom, not abstract philosophy. Keep it GENERIC: do NOT reference the user's specific day, schedule, tasks, metrics, or finances, and never mention "today" or cite their data. Speak to the universal lesson, not their particular circumstances.`;
 }
 
 /** Robustly pull a JSON object out of an LLM response (handles fences/prose). */
