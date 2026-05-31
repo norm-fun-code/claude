@@ -9,13 +9,14 @@ const calendar = require('./calendar');
 const weather = require('./weather');
 const readwise = require('./readwise');
 const monarch = require('./monarch');
+const monarchApi = require('./monarch-api');
 const notion = require('./notion');
 
-// Wealth source: Monarch (monthly CSV import) is primary — it aggregates every
-// institution plus manual accounts Plaid can't see. The Plaid connector
-// (./plaid) is kept in the codebase but dormant (not registered) so the two
-// never double-count; re-add it here if you ever want intra-month freshness.
-const connectors = [calendar, weather, readwise, monarch, notion];
+// Wealth source: Monarch. The auto-sync connector (./monarch-api) pulls daily
+// from Monarch's API when MONARCH_EMAIL/PASSWORD are set; the CSV importer
+// (./monarch) stays as a manual fallback. Both write source 'monarch', so they
+// upsert idempotently and never double-count. Plaid (./plaid) is kept dormant.
+const connectors = [calendar, weather, readwise, monarch, monarchApi, notion];
 
 function getConnector(id) {
   return connectors.find((c) => c.id === id) || null;
