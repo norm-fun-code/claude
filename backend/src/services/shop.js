@@ -98,19 +98,12 @@ async function searchCatalog(query, { country = 'US', limit = 12 } = {}) {
  * (link-out). Preferred when SERPAPI_KEY is set; we fall back to Claude web
  * search otherwise.
  */
-async function serpApiProducts(query, { maxPrice = null, limit = 8 } = {}) {
-  const key = process.env.SERPAPI_KEY;
-  if (!key) throw new Error('SERPAPI_KEY not set');
-  const params = {
-    engine: 'google_shopping',
-    q: query,
-    api_key: key,
-    num: 20,
-    gl: 'us',
-    hl: 'en',
-  };
-  const { data } = await axios.get('https://serpapi.com/search', { params, timeout: 20000 });
-  let items = (data.shopping_results || []).map((r) => ({
+async function serpGoogleShopping(query, key) {
+  const { data } = await axios.get('https://serpapi.com/search', {
+    params: { engine: 'google_shopping', q: query, api_key: key, num: 20, gl: 'us', hl: 'en' },
+    timeout: 20000,
+  });
+  return (data.shopping_results || []).map((r) => ({
     id: r.product_link || r.link,
     title: r.title,
     price: r.price || (r.extracted_price != null ? `$${r.extracted_price}` : null),
@@ -119,7 +112,45 @@ async function serpApiProducts(query, { maxPrice = null, limit = 8 } = {}) {
     url: r.product_link || r.link,
     image: r.thumbnail || null,
     web: true,
-  })).filter((x) => x.title && x.url);
+  }));
+}
+
+// SerpApi Amazon engine — Google Shopping omits Amazon, so query it directly.
+async function serpAmazon(query, key) {
+  const { data } = await axios.get('https://serpapi.com/search', {
+    params: { engine: 'amazon', k: query, api_key: key, amazon_domain: 'amazon.com' },
+    timeout: 20000,
+  });
+  return (data.organic_results || []).map((r) => {
+    const p = r.price || r.extracted_price;
+    const link = r.link_clean || r.link || (r.asin ? `https://www.amazon.com/dp/${r.asin}` : null);
+    return {
+      id: link,
+      title: r.title,
+      price: typeof p === 'number' ? `$${p}` : (r.price?.raw || r.price || null),
+      extractedPrice: typeof p === 'number' ? p
+        : (r.extracted_price != null ? Number(r.extracted_price)
+        : (r.price?.value != null ? Number(r.price.value) : null)),
+      seller: 'Amazon',
+      url: link,
+      image: r.thumbnail || null,
+      web: true,
+    };
+  }).filter((x) => x.title && x.url);
+}
+
+async function serpApiProducts(query, { maxPrice = null, limit = 8 } = {}) {
+  const key = process.env.SERPAPI_KEY;
+  if (!key) throw new Error('SERPAPI_KEY not set');
+
+  // Google Shopping (broad, no Amazon) + Amazon engine (Amazon only), merged.
+  const [gRes, aRes] = await Promise.allSettled([
+    serpGoogleShopping(query, key),
+    serpAmazon(query, key),
+  ]);
+  const google = gRes.status === 'fulfilled' ? gRes.value : [];
+  const amazon = aRes.status === 'fulfilled' ? aRes.value : [];
+  let items = [...amazon, ...google].filter((x) => x.title && x.url);
 
   if (maxPrice != null) items = items.filter((x) => x.extractedPrice == null || x.extractedPrice <= maxPrice);
   // Prefer recognizable, reorder-able retailers; cheapest-first within each tier.
@@ -136,7 +167,15 @@ async function serpApiProducts(query, { maxPrice = null, limit = 8 } = {}) {
     if (r !== 0) return r;
     return (a.extractedPrice ?? 1e9) - (b.extractedPrice ?? 1e9);
   });
-  return items.slice(0, limit);
+  // Dedupe by seller+normalized-title so the same listing doesn't repeat.
+  const seen = new Set();
+  const deduped = items.filter((x) => {
+    const k = `${(x.seller || '').toLowerCase()}|${(x.title || '').toLowerCase().slice(0, 40)}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  return deduped.slice(0, limit);
 }
 
 /**
