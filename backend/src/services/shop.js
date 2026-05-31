@@ -78,7 +78,7 @@ async function searchCatalog(query, { country = 'US', limit = 12 } = {}) {
     'catalog', 'search',
     '--set', `/query=${query}`,
     '--set', `/context/address_country=${country}`,
-    '--view', 'json',
+    '--format', 'json',
   ]);
   const data = parseJson(out);
   const items = data?.results || data?.items || [];
@@ -90,6 +90,41 @@ async function searchCatalog(query, { country = 'US', limit = 12 } = {}) {
     buyUrl: r.buy_url || r.url || null,
     image: r.image || r.item?.image || null,
   })).filter((x) => x.id);
+}
+
+/**
+ * Web product discovery via SerpApi (Google Shopping). Returns real products
+ * with images, accurate prices, and seller — including Amazon. Discovery-only
+ * (link-out). Preferred when SERPAPI_KEY is set; we fall back to Claude web
+ * search otherwise.
+ */
+async function serpApiProducts(query, { maxPrice = null, limit = 8 } = {}) {
+  const key = process.env.SERPAPI_KEY;
+  if (!key) throw new Error('SERPAPI_KEY not set');
+  const params = {
+    engine: 'google_shopping',
+    q: query,
+    api_key: key,
+    num: 20,
+    gl: 'us',
+    hl: 'en',
+  };
+  const { data } = await axios.get('https://serpapi.com/search', { params, timeout: 20000 });
+  let items = (data.shopping_results || []).map((r) => ({
+    id: r.product_link || r.link,
+    title: r.title,
+    price: r.price || (r.extracted_price != null ? `$${r.extracted_price}` : null),
+    extractedPrice: r.extracted_price != null ? Number(r.extracted_price) : null,
+    seller: r.source || null,
+    url: r.product_link || r.link,
+    image: r.thumbnail || null,
+    web: true,
+  })).filter((x) => x.title && x.url);
+
+  if (maxPrice != null) items = items.filter((x) => x.extractedPrice == null || x.extractedPrice <= maxPrice);
+  // Cheapest first when we have prices.
+  items.sort((a, b) => (a.extractedPrice ?? 1e9) - (b.extractedPrice ?? 1e9));
+  return items.slice(0, limit);
 }
 
 /**
@@ -106,8 +141,10 @@ async function webSearchProducts(query, { maxPrice = null, limit = 6 } = {}) {
   const instruction =
     `Find specific products to buy online for: "${query}"${budget}. ` +
     `Search shopping sites including Amazon. Return ONLY a JSON array (no prose) of up to ${limit} ` +
-    `items, each {"title","price","seller","url"} — url is the direct product page, ` +
-    `price like "$12.99", seller like "Amazon" or the store name. Prefer the cheapest in-stock options.`;
+    `items, each {"title","price","seller","url","image"} — url is the direct product page, ` +
+    `price like "$12.99", seller like "Amazon" or the store name, and image is a direct URL to ` +
+    `the product's photo (.jpg/.png/.webp). Prefer the cheapest in-stock options. ` +
+    `Include the image URL whenever you can find one.`;
 
   const { data } = await axios.post(
     'https://api.anthropic.com/v1/messages',
@@ -142,6 +179,7 @@ async function webSearchProducts(query, { maxPrice = null, limit = 6 } = {}) {
       price: x.price || null,
       seller: x.seller || null,
       url: x.url,
+      image: x.image || null,
       web: true, // flag: discovery-only, opens externally
     }))
     .slice(0, limit);
@@ -154,7 +192,7 @@ async function buildCart({ business, variantId, quantity = 1 }) {
     '--business', business,
     '--set', `/line_items/0/item/id=${variantId}`,
     '--set', `/line_items/0/quantity=${quantity}`,
-    '--view', 'json',
+    '--format', 'json',
   ]);
   const data = parseJson(out);
   return {
@@ -177,10 +215,15 @@ async function discover(message, { country = 'US', limit = 8 } = {}) {
 
   // Run both discovery modes in parallel:
   //  - UCP catalog: cart-able in-app (Shopify/Etsy/Target/…), no Amazon.
-  //  - Web search: anything incl. Amazon, link-out only.
+  //  - Web search: anything incl. Amazon, link-out only. Prefer SerpApi (images
+  //    + accurate prices) when SERPAPI_KEY is set; else Claude web search.
+  const webFinder = process.env.SERPAPI_KEY
+    ? serpApiProducts(query, { maxPrice, limit: 8 }).catch(() => webSearchProducts(query, { maxPrice, limit: 6 }))
+    : webSearchProducts(query, { maxPrice, limit: 6 });
+
   const [ucpRes, webRes] = await Promise.allSettled([
     searchCatalog(query, { country, limit: 12 }),
-    webSearchProducts(query, { maxPrice, limit: 6 }),
+    webFinder,
   ]);
 
   const ucp = ucpRes.status === 'fulfilled' ? ucpRes.value : [];
@@ -269,4 +312,19 @@ async function shop(message, { quantity = 1, country = 'US' } = {}) {
   return { ...d, pick: best, cart: added.cart || null, status: added.cart?.continueUrl ? 'cart_ready' : 'results' };
 }
 
-module.exports = { discover, addToCart, shop, history, recordOrder, searchCatalog, buildCart, extractQuery, extractSearch };
+/** Raw UCP catalog probe — returns stdout/error so we can diagnose on Railway. */
+async function ucpProbe(query = 'protein bars') {
+  try {
+    const out = await run([
+      'catalog', 'search',
+      '--set', `/query=${query}`,
+      '--set', '/context/address_country=US',
+      '--format', 'json',
+    ], { timeout: 40000 });
+    return { ok: true, rawLength: out.length, sample: out.slice(0, 1200) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+module.exports = { discover, addToCart, shop, history, recordOrder, searchCatalog, buildCart, serpApiProducts, webSearchProducts, ucpProbe, extractQuery, extractSearch };
