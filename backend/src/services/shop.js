@@ -122,8 +122,20 @@ async function serpApiProducts(query, { maxPrice = null, limit = 8 } = {}) {
   })).filter((x) => x.title && x.url);
 
   if (maxPrice != null) items = items.filter((x) => x.extractedPrice == null || x.extractedPrice <= maxPrice);
-  // Cheapest first when we have prices.
-  items.sort((a, b) => (a.extractedPrice ?? 1e9) - (b.extractedPrice ?? 1e9));
+  // Prefer recognizable, reorder-able retailers; cheapest-first within each tier.
+  // This floats Amazon/Target/Walmart/etc. and the brand's own site above
+  // obscure single-item listings, while still respecting price.
+  const rank = (seller = '') => {
+    const s = seller.toLowerCase();
+    const major = ['amazon', 'target', 'walmart', 'costco', 'thrive', 'kroger', 'cvs', 'walgreens', 'whole foods', 'instacart', 'gopuff', 'iherb', 'vitacost'];
+    if (major.some((m) => s.includes(m))) return 0;
+    return 1; // everyone else
+  };
+  items.sort((a, b) => {
+    const r = rank(a.seller) - rank(b.seller);
+    if (r !== 0) return r;
+    return (a.extractedPrice ?? 1e9) - (b.extractedPrice ?? 1e9);
+  });
   return items.slice(0, limit);
 }
 
