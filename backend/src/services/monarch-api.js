@@ -94,4 +94,39 @@ async function getTransactions(token, { startDate, endDate }) {
   return out;
 }
 
-module.exports = { login, getAccounts, getTransactions };
+// Monthly budget targets per category. Monarch's budgetData keys amounts by
+// category id, so we join with getCategories() to get human names. Returns
+// [{ category, budget }] for the requested month (YYYY-MM-01 .. end of month).
+async function getBudgets(token, { startDate, endDate }) {
+  const query = `query NormOS_Budgets($startDate: Date!, $endDate: Date!) {
+    budgetData(startMonth: $startDate, endMonth: $endDate) {
+      monthlyAmountsByCategory {
+        category { id }
+        monthlyAmounts { month plannedCashFlowAmount actualAmount }
+      }
+    }
+  }`;
+  const d = await gql(token, query, { startDate, endDate });
+  const byCat = d.budgetData?.monthlyAmountsByCategory || [];
+  const cats = await getCategories(token);
+  const nameById = new Map(cats.map((c) => [c.id, c.name]));
+  const out = [];
+  for (const row of byCat) {
+    const id = row.category?.id;
+    const m = (row.monthlyAmounts || [])[0] || {};
+    const budget = Math.abs(Number(m.plannedCashFlowAmount) || 0);
+    if (!id || !budget) continue;
+    out.push({ category: nameById.get(id) || id, budget, actual: Math.abs(Number(m.actualAmount) || 0) });
+  }
+  return out;
+}
+
+async function getCategories(token) {
+  const query = `query NormOS_Categories {
+    categories { id name }
+  }`;
+  const d = await gql(token, query);
+  return d.categories || [];
+}
+
+module.exports = { login, getAccounts, getTransactions, getBudgets, getCategories };

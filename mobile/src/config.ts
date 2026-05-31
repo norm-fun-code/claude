@@ -13,6 +13,7 @@ export const HEALTH_INGEST_URL = `${API_BASE}/api/ingest/health`;
 export const CHECKIN_URL = `${API_BASE}/api/checkin`;
 export const CHAT_URL = `${API_BASE}/api/chat`;
 export const DEVICE_REGISTER_URL = `${API_BASE}/api/devices/register`;
+export const HIGHLIGHTS_URL = `${API_BASE}/api/highlights`;
 
 /** JSON headers, plus the bearer token when one is configured. */
 export function authHeaders(): Record<string, string> {
