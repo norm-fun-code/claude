@@ -16,14 +16,29 @@ module.exports = {
   displayName: 'Monarch (auto-sync)',
 
   async sync(ctx = {}) {
-    if (!process.env.MONARCH_EMAIL || !process.env.MONARCH_PASSWORD) {
+    const hasToken = process.env.MONARCH_TOKEN || ctx.config?.monarchToken;
+    const hasLogin = process.env.MONARCH_EMAIL && process.env.MONARCH_PASSWORD;
+    if (!hasToken && !hasLogin) {
       return { metrics: [], documents: [] }; // not configured — stay dormant
     }
     // Metrics/docs are written under source 'monarch' (shared with CSV imports),
     // so make sure that source row exists for the FK.
     await registerSource({ id: 'monarch', domain: 'wealth', displayName: 'Monarch (CSV import)' });
 
-    const token = await login();
+    // Prefer a pre-minted token (env, then cached) to avoid logging in on the
+    // server — Monarch rate-limits login from datacenter IPs (429).
+    let token = process.env.MONARCH_TOKEN || ctx.config?.monarchToken || null;
+    let mintedToken = null;
+    if (!token) {
+      token = await login();
+      mintedToken = token;
+    }
+
+    const fetchAll = async (tok) => {
+      const txns = await getTransactions(tok, { startDate, endDate });
+      const accounts = await getAccounts(tok);
+      return { txns, accounts };
+    };
 
     // Incremental window: 14-day lookback from last sync (late-posting txns),
     // 45 days on the very first API run.
@@ -33,9 +48,32 @@ module.exports = {
     const startDate = ymd(since);
     const endDate = ymd(new Date());
 
+    let data;
+    try {
+      data = await fetchAll(token);
+    } catch (err) {
+      // Token expired/invalid — re-login once (only if we have credentials and
+      // weren't handed a fixed env token).
+      if (err.response?.status === 401 && hasLogin && !process.env.MONARCH_TOKEN) {
+        token = await login();
+        mintedToken = token;
+        data = await fetchAll(token);
+      } else {
+        // Make 429s diagnosable: a login-stage 429 means we fell back to logging
+        // in from Railway's datacenter IP (MONARCH_TOKEN missing/blank). A
+        // fetch-stage 429 means the token works but Monarch is throttling reads.
+        if (err.response?.status === 429) {
+          const stage = err.monarchStage === 'login'
+            ? 'login (no MONARCH_TOKEN set — fell back to datacenter login, which Monarch blocks)'
+            : 'data fetch (token accepted but Monarch is rate-limiting reads — retry later)';
+          err.message = `Monarch 429 at ${stage}`;
+        }
+        throw err;
+      }
+    }
+
     // Transactions -> daily spending/income/cashflow + per-transaction documents.
-    const txns = await getTransactions(token, { startDate, endDate });
-    const txnRecords = txns.map((t) => ({
+    const txnRecords = data.txns.map((t) => ({
       Date: t.date,
       Amount: t.amount,
       Merchant: t.merchant?.name || t.notes || 'Transaction',
@@ -46,9 +84,8 @@ module.exports = {
 
     // Accounts -> today's net worth (sum of current balances; exclusions applied
     // inside mapBalances). One snapshot point per day, appended to history.
-    const accounts = await getAccounts(token);
     const today = ymd(new Date());
-    const balRecords = accounts.map((a) => ({
+    const balRecords = data.accounts.map((a) => ({
       Date: today,
       Account: a.displayName,
       Balance: a.currentBalance,
@@ -56,6 +93,7 @@ module.exports = {
     const balMapped = mapBalances(balRecords);
 
     const metrics = dedupeMetrics([...txnMapped.metrics, ...balMapped.metrics]);
-    return { metrics, documents: txnMapped.documents };
+    const config = mintedToken ? { ...(ctx.config || {}), monarchToken: mintedToken } : undefined;
+    return { metrics, documents: txnMapped.documents, config };
   },
 };

@@ -1,0 +1,33 @@
+{
+  "cli": {
+    "version": ">= 12.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": { "image": "latest" },
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://backend-production-0902.up.railway.app"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "ios": { "simulator": false, "image": "latest" },
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://backend-production-0902.up.railway.app"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "ios": { "image": "latest" },
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://backend-production-0902.up.railway.app"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
