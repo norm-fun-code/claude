@@ -538,6 +538,7 @@ app.get('/api/briefing', async (req, res) => {
   // habits) so the quote/Notion commentary can tailor to how you're actually
   // doing — without referencing calendar specifics or your profession.
   let wellbeingContext = '';
+  let wellbeingTheme = ''; // search phrase for the "From Your Library" highlight
   try {
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const avg = async (domain, metric) => {
@@ -557,12 +558,18 @@ app.get('/api/briefing', async (req, res) => {
       if (a != null && a < 0.6) lagging.push(habitLabels[m] || m); // <60% adherence
     }
     const parts = [];
+    const themes = [];
     const lowHL = (v) => (v <= 2.5 ? 'low' : v >= 4 ? 'strong' : 'moderate');
-    if (mood != null) parts.push(`mood ${lowHL(mood)}`);
-    if (energy != null) parts.push(`energy ${lowHL(energy)}`);
-    if (focus != null) parts.push(`focus ${lowHL(focus)}`);
+    if (mood != null) { parts.push(`mood ${lowHL(mood)}`); if (mood <= 2.5) themes.push('contentment, perspective, equanimity'); }
+    if (energy != null) { parts.push(`energy ${lowHL(energy)}`); if (energy <= 2.5) themes.push('rest, restoration, sustainable effort'); }
+    if (focus != null) { parts.push(`focus ${lowHL(focus)}`); if (focus <= 2.5) themes.push('presence, deep work, single-tasking, attention'); }
+    // Lagging habits steer the theme toward their virtue.
+    const habitThemes = { gratitude: 'gratitude, appreciation', 'morning meditation': 'stillness, mindfulness', 'afternoon meditation': 'stillness, mindfulness', exercise: 'discipline, vitality, the body', 'eating well': 'discipline, nourishment, moderation' };
+    for (const l of lagging) if (habitThemes[l]) themes.push(habitThemes[l]);
     if (lagging.length) parts.push(`slipping on ${lagging.slice(0, 3).join(', ')}`);
     wellbeingContext = parts.join('; ');
+    // If nothing is low/slipping, theme stays empty -> falls back to quote/evergreen.
+    wellbeingTheme = themes.slice(0, 3).join('; ');
   } catch (err) {
     console.error('[wellbeingContext] failed:', err.message);
   }
@@ -634,11 +641,13 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[insights] failed:', err.message);
   }
 
-  // Relevant-not-random: surface the library highlight that speaks to today's
-  // top action (semantic search) — and never repeat one within 30 days.
+  // Relevant-not-random: surface the library highlight that speaks to where
+  // you are *internally* (mood/energy/focus + slipping habits), not your task
+  // list — and never repeat one within 30 days. Falls back to the quote, then
+  // to evergreen growth themes when there's no recent check-in data.
   let relevantHighlight = null;
   try {
-    const theme = leverageActions[0]?.title || quoteData.quote || 'focus, growth, leverage';
+    const theme = wellbeingTheme || quoteData.quote || 'presence, growth, resilience, gratitude';
     const [vec] = await llm.embed([theme]);
     if (vec) {
       const hits = await documentsStore.searchSimilar(vec, { k: 25, domain: 'learning' });
