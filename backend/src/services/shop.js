@@ -106,8 +106,10 @@ async function webSearchProducts(query, { maxPrice = null, limit = 6 } = {}) {
   const instruction =
     `Find specific products to buy online for: "${query}"${budget}. ` +
     `Search shopping sites including Amazon. Return ONLY a JSON array (no prose) of up to ${limit} ` +
-    `items, each {"title","price","seller","url"} — url is the direct product page, ` +
-    `price like "$12.99", seller like "Amazon" or the store name. Prefer the cheapest in-stock options.`;
+    `items, each {"title","price","seller","url","image"} — url is the direct product page, ` +
+    `price like "$12.99", seller like "Amazon" or the store name, and image is a direct URL to ` +
+    `the product's photo (.jpg/.png/.webp). Prefer the cheapest in-stock options. ` +
+    `Include the image URL whenever you can find one.`;
 
   const { data } = await axios.post(
     'https://api.anthropic.com/v1/messages',
@@ -142,6 +144,7 @@ async function webSearchProducts(query, { maxPrice = null, limit = 6 } = {}) {
       price: x.price || null,
       seller: x.seller || null,
       url: x.url,
+      image: x.image || null,
       web: true, // flag: discovery-only, opens externally
     }))
     .slice(0, limit);
