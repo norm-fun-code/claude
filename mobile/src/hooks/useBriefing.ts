@@ -76,8 +76,8 @@ export interface MarketHeadline {
 }
 
 export interface Markets {
-  indices: MarketIndex[];
-  headlines: MarketHeadline[];
+  brief?: string | null;
+  sources?: MarketHeadline[];
 }
 
 export interface LeverageAction {

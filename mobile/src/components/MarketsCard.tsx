@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, Linking, TouchableOpacity, useColorScheme } from 'react-native';
-import { getColors, spacing, radius, shadow } from '../theme';
+import Markdown from 'react-native-markdown-display';
+import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import type { Markets } from '../hooks/useBriefing';
 
@@ -8,31 +9,32 @@ interface Props {
   markets: Markets | null | undefined;
 }
 
-// Top finance/markets headlines for the day (WSJ via RSS).
+// Claude-written daily market brief (3-5 bullets) from live finance feeds.
 export function MarketsCard({ markets }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
-  const headlines = markets?.headlines ?? [];
-  if (headlines.length === 0) return null;
+  const brief = markets?.brief;
+  const sources = markets?.sources ?? [];
+  if (!brief) return null;
 
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }, shadow(isDark)]}>
-      <SectionHeader emoji="📰" title="Markets Today" />
+      <SectionHeader emoji="📰" title="Market Brief" />
+      <Markdown style={markdownStyles(c)}>{brief}</Markdown>
 
-      {headlines.length > 0 && (
-        <View style={styles.headlines}>
-          {headlines.map((h, i) => (
+      {sources.length > 0 && (
+        <View style={[styles.sources, { borderTopColor: c.border }]}>
+          <Text style={[styles.sourcesLabel, { color: c.subtext }]}>SOURCES</Text>
+          {sources.map((s, i) => (
             <TouchableOpacity
               key={i}
-              activeOpacity={h.url ? 0.6 : 1}
-              onPress={() => h.url && Linking.openURL(h.url)}
-              style={[styles.headlineRow, i > 0 && { borderTopColor: c.border, borderTopWidth: 1 }]}
+              activeOpacity={s.url ? 0.6 : 1}
+              onPress={() => s.url && Linking.openURL(s.url)}
             >
-              <Text style={[styles.headlineText, { color: c.text }]} numberOfLines={2}>
-                {h.title}
+              <Text style={[styles.sourceItem, { color: c.subtext }]} numberOfLines={1}>
+                · {s.title} <Text style={{ color: c.subtext }}>({s.source})</Text>
               </Text>
-              <Text style={[styles.headlineSource, { color: c.subtext }]}>{h.source}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -41,10 +43,19 @@ export function MarketsCard({ markets }: Props) {
   );
 }
 
+function markdownStyles(c: ReturnType<typeof getColors>) {
+  return {
+    body: { color: c.text, fontSize: 15, lineHeight: 22 },
+    bullet_list: { marginVertical: 2 },
+    list_item: { marginVertical: 3 },
+    strong: { fontWeight: '700', color: c.text },
+    paragraph: { marginTop: 0, marginBottom: 6 },
+  } as any;
+}
+
 const styles = StyleSheet.create({
   card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.md, marginBottom: spacing.md },
-  headlines: { marginTop: spacing.sm },
-  headlineRow: { paddingVertical: spacing.sm },
-  headlineText: { fontSize: 14, fontWeight: '500', lineHeight: 19 },
-  headlineSource: { fontSize: 11, marginTop: 2 },
+  sources: { marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1 },
+  sourcesLabel: { ...typography.label, fontSize: 9, marginBottom: 4 },
+  sourceItem: { fontSize: 12, lineHeight: 18, marginBottom: 1 },
 });
