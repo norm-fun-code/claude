@@ -159,7 +159,8 @@ app.post('/api/ingest/metrics', async (req, res) => {
 app.post('/api/ingest/run', async (req, res) => {
   try {
     const full = req.query.full === '1' || req.query.full === 'true';
-    res.json({ results: await runIngest({ full }) });
+    const only = req.query.only || null;
+    res.json({ results: await runIngest({ full, only }) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

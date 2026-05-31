@@ -35,9 +35,10 @@ async function runConnector(c, { full = false } = {}) {
   }
 }
 
-async function runIngest({ full = false } = {}) {
+async function runIngest({ full = false, only = null } = {}) {
+  const list = only ? connectors.filter((c) => c.id === only) : connectors;
   const results = [];
-  for (const c of connectors) {
+  for (const c of list) {
     results.push(await runConnector(c, { full }));
   }
   return results;
