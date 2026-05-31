@@ -11,7 +11,7 @@ const SYSTEM =
   'quote, and Notion wisdom. Return ONLY a single valid JSON object — no markdown, ' +
   'no code fences, no commentary.';
 
-function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents) {
+function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '') {
   const emailSection = emailData
     .map(
       (e, i) =>
@@ -32,6 +32,8 @@ Today's workout: ${workoutPlan.type}${workoutPlan.duration ? ` (${workoutPlan.du
 
 Today's calendar:
 ${calendarSection}
+
+Recent wellbeing (last 7 days): ${wellbeingContext || 'no recent check-in data'}
 
 Today's quote/principle:
 "${quote}"
@@ -54,15 +56,15 @@ Return ONLY valid JSON with EXACTLY these fields:
     { "from": "sender", "subject": "subject", "action": "1-2 sentences on what action is needed and why it's urgent" }
   ],
   "financeSummary": ["1-3 bullets of finance/market/economic news from the emails"],
-  "quoteInsight": "2 sentences connecting the quote to today's context",
-  "notionInsight": "2 sentences reflecting on the Notion content and how it applies today"
+  "quoteInsight": "2 sentences drawing out the deeper idea or principle in the quote",
+  "notionInsight": "2 sentences drawing out the key idea in the Notion content"
 }
 
 Rules:
 - newsletters: include digests/publications; exclude personal email, receipts, notifications. Go deep — extract every named company, person, statistic, and dollar amount.
 - urgentEmails: only emails needing a response/action today.
 - financeSummary: 1-3 items; never empty.
-- quoteInsight / notionInsight: specific to the actual content, not generic.`;
+- quoteInsight / notionInsight: draw out the idea as practical wisdom for living well. You MAY gently tailor it to the user's recent inner state shown in "Recent wellbeing" — e.g. if focus or mood is low, or they're slipping on a habit like gratitude, lean the reflection toward that theme. But do this WITHOUT naming the data ("your focus is low"); just let the chosen angle resonate. Do NOT reference their calendar, specific tasks, schedule, "today", their job/profession, or their finances. Never write "as a [profession]" or tie it to a meeting/event. Speak to the human, not the day.`;
 }
 
 /** Robustly pull a JSON object out of an LLM response (handles fences/prose). */
@@ -89,8 +91,8 @@ const EMPTY = {
   newsletters: [], urgentEmails: [], financeSummary: [], quoteInsight: '', notionInsight: '',
 };
 
-async function generateBriefing(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents) {
-  const prompt = buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents);
+async function generateBriefing(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '') {
+  const prompt = buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext);
 
   let text = '';
   try {

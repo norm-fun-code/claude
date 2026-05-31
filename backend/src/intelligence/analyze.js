@@ -21,6 +21,11 @@ const DEFAULTS = {
   corrGateAbsR: 0.3, // each half must reach this for a correlation to be "confirmed"
   corrLags: [0, 1], // test same-day and next-day
   maxCorrelations: 12,
+  // Flow metrics that post sparsely (only on transaction days). A daily-mean
+  // "trend" on these is misleading — e.g. "spending down 75%" really compares
+  // recent vs prior *daily averages*, not the weekly totals shown on the Wealth
+  // tab. These are covered properly by the dedicated wealth insights instead.
+  trendSkip: ['wealth:spending', 'wealth:income', 'wealth:net_cashflow'],
 };
 
 function pct(n) {
@@ -43,6 +48,7 @@ function computeTrends(seriesByKey, opts = {}) {
   const findings = [];
 
   for (const [key, series] of Object.entries(seriesByKey)) {
+    if (o.trendSkip && o.trendSkip.includes(key)) continue;
     const t = stats.trendStats(series, o.trendWindow);
     if (!t || t.pctChange == null || Math.abs(t.pctChange) < o.trendMinPct) continue;
 

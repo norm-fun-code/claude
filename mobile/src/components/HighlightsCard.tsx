@@ -57,6 +57,10 @@ export function HighlightsCard() {
     else load(); // reached the end — pull a fresh set
   };
 
+  const back = () => {
+    if (idx > 0) setIdx(idx - 1);
+  };
+
   const current = highlights[idx];
 
   return (
@@ -96,15 +100,30 @@ export function HighlightsCard() {
             ) : null}
           </View>
 
-          <TouchableOpacity
-            style={[styles.nextBtn, { borderColor: c.border }]}
-            onPress={next}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.nextText, { color: c.accent }]}>
-              {idx < highlights.length - 1 ? `Next  ›  (${idx + 1}/${highlights.length})` : 'New set  ↻'}
+          <View style={styles.navRow}>
+            <TouchableOpacity
+              style={[styles.navBtn, { borderColor: c.border, opacity: idx > 0 ? 1 : 0.35 }]}
+              onPress={back}
+              disabled={idx === 0}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.navText, { color: c.accent }]}>‹  Back</Text>
+            </TouchableOpacity>
+
+            <Text style={[styles.counter, { color: c.subtext }]}>
+              {idx + 1}/{highlights.length}
             </Text>
-          </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.navBtn, { borderColor: c.border }]}
+              onPress={next}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.navText, { color: c.accent }]}>
+                {idx < highlights.length - 1 ? 'Next  ›' : 'New set  ↻'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </>
       )}
     </View>
@@ -149,15 +168,27 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
-  nextBtn: {
+  navRow: {
     marginTop: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  navBtn: {
     borderWidth: 1,
     borderRadius: radius.md,
     paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
     alignItems: 'center',
+    minWidth: 92,
   },
-  nextText: {
+  navText: {
     ...typography.body,
     fontWeight: '600',
+  },
+  counter: {
+    ...typography.caption,
+    fontSize: 13,
   },
 });

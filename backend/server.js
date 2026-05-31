@@ -534,6 +534,39 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[notionQuotes] failed:', err.message);
   }
 
+  // Wellbeing context: recent inner-state signals (mood/energy/focus + lagging
+  // habits) so the quote/Notion commentary can tailor to how you're actually
+  // doing — without referencing calendar specifics or your profession.
+  let wellbeingContext = '';
+  try {
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const avg = async (domain, metric) => {
+      const r = await metricsStore.dailyAggregate({ domain, metric, from: since, agg: 'avg' });
+      const vals = r.map((x) => Number(x.value)).filter(Number.isFinite);
+      return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+    };
+    const [mood, energy, focus] = await Promise.all([
+      avg('wellbeing', 'mood'), avg('wellbeing', 'energy'), avg('wellbeing', 'focus'),
+    ]);
+    // Habits trailing completion (which ones are slipping).
+    const habitMetrics = ['gratitude', 'morning_tm', 'afternoon_tm', 'cold_shower', 'exercise', 'eat_healthy'];
+    const habitLabels = { gratitude: 'gratitude', morning_tm: 'morning meditation', afternoon_tm: 'afternoon meditation', cold_shower: 'cold shower', exercise: 'exercise', eat_healthy: 'eating well' };
+    const lagging = [];
+    for (const m of habitMetrics) {
+      const a = await avg('habits', m);
+      if (a != null && a < 0.6) lagging.push(habitLabels[m] || m); // <60% adherence
+    }
+    const parts = [];
+    const lowHL = (v) => (v <= 2.5 ? 'low' : v >= 4 ? 'strong' : 'moderate');
+    if (mood != null) parts.push(`mood ${lowHL(mood)}`);
+    if (energy != null) parts.push(`energy ${lowHL(energy)}`);
+    if (focus != null) parts.push(`focus ${lowHL(focus)}`);
+    if (lagging.length) parts.push(`slipping on ${lagging.slice(0, 3).join(', ')}`);
+    wellbeingContext = parts.join('; ');
+  } catch (err) {
+    console.error('[wellbeingContext] failed:', err.message);
+  }
+
   // Call Gemini with whatever data we have
   let geminiResult = null;
   try {
@@ -543,7 +576,8 @@ app.get('/api/briefing', async (req, res) => {
       quoteData.quote,
       dayName,
       workout,
-      calendar
+      calendar,
+      wellbeingContext
     );
   } catch (err) {
     console.error('[gemini] failed:', err.message);
