@@ -31,6 +31,14 @@
         }
       ]
     ],
-    "assetBundlePatterns": ["**/*"]
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "712927ce-0cda-4cb0-bce0-26136265b0bc"
+      }
+    },
+    "owner": "noco401"
   }
 }
