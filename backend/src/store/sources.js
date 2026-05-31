@@ -14,16 +14,21 @@ async function registerSource({ id, domain, displayName, config = {} }) {
   );
 }
 
-/** Record the outcome of a sync run. */
+/** Record the outcome of a sync run. Only a *successful* run advances
+ *  last_sync_at — a failed run must not, or it would make the next run skip
+ *  everything "older" than a sync that never actually fetched anything. */
 async function markSync(id, { error = null } = {}) {
-  await query(
-    `UPDATE sources
-        SET last_sync_at = now(),
-            status = $2,
-            last_error = $3
-      WHERE id = $1`,
-    [id, error ? 'error' : 'active', error]
-  );
+  if (error) {
+    await query(
+      `UPDATE sources SET status = 'error', last_error = $2 WHERE id = $1`,
+      [id, error]
+    );
+  } else {
+    await query(
+      `UPDATE sources SET last_sync_at = now(), status = 'active', last_error = NULL WHERE id = $1`,
+      [id]
+    );
+  }
 }
 
 async function getSource(id) {

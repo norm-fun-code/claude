@@ -7,13 +7,14 @@ const { insertMetrics } = require('../store/metrics');
 const { upsertDocument } = require('../store/documents');
 const { registerSource, markSync, getSource, updateConfig } = require('../store/sources');
 
-async function runConnector(c) {
+async function runConnector(c, { full = false } = {}) {
   await registerSource({ id: c.id, domain: c.domain, displayName: c.displayName });
   try {
-    // Give the connector its prior state for incremental syncs.
+    // Give the connector its prior state for incremental syncs. `full` forces a
+    // complete re-sync by hiding the last-sync timestamp.
     const source = await getSource(c.id);
     const ctx = {
-      lastSyncAt: source?.last_sync_at ?? null,
+      lastSyncAt: full ? null : (source?.last_sync_at ?? null),
       config: source?.config ?? {},
     };
 
@@ -34,10 +35,10 @@ async function runConnector(c) {
   }
 }
 
-async function runIngest() {
+async function runIngest({ full = false } = {}) {
   const results = [];
   for (const c of connectors) {
-    results.push(await runConnector(c));
+    results.push(await runConnector(c, { full }));
   }
   return results;
 }

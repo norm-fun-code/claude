@@ -154,10 +154,12 @@ app.post('/api/ingest/metrics', async (req, res) => {
   }
 });
 
-// Trigger all server-side connectors on demand.
+// Trigger all server-side connectors on demand. ?full=1 forces a complete
+// re-sync (ignores each source's last-sync timestamp).
 app.post('/api/ingest/run', async (req, res) => {
   try {
-    res.json({ results: await runIngest() });
+    const full = req.query.full === '1' || req.query.full === 'true';
+    res.json({ results: await runIngest({ full }) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
