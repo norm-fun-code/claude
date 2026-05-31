@@ -10,6 +10,7 @@ const { fetchWeather } = require('./src/services/weather');
 const { fetchMarkets } = require('./src/services/markets');
 const { generateBriefing } = require('./src/services/briefing-ai');
 const { getTodayWorkout } = require('./src/services/workout');
+const { buildWealthInsights } = require('./src/services/wealth-insights');
 
 const db = require('./src/db');
 const metricsStore = require('./src/store/metrics');
@@ -227,6 +228,28 @@ app.get('/api/metrics', async (req, res) => {
 app.get('/api/findings', async (req, res) => {
   try {
     res.json({ findings: await findingsStore.listFindings({ status: req.query.status }) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Daily Readwise highlights for the Wisdom tab card. Prefers hearted
+// (favorite) highlights, filling with random ones if you've hearted few.
+app.get('/api/highlights', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 5, 20);
+    const favoritesOnly = req.query.favoritesOnly === '1' || req.query.favoritesOnly === 'true';
+    const rows = await documentsStore.randomHighlights({ limit, favoritesOnly });
+    res.json({
+      highlights: rows.map((r) => ({
+        id: r.id,
+        text: r.content,
+        title: r.title,
+        author: r.author,
+        url: r.url,
+        favorite: !!(r.metadata && r.metadata.favorite),
+      })),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -531,12 +554,14 @@ app.get('/api/briefing', async (req, res) => {
     insights = chosen.map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains }));
     if (insights.length) await surfacedStore.record('insight', insights.map((i) => i.title));
 
-    // Wealth/spending insights for the Wealth tab — all open wealth-domain
-    // findings (not rotated), so money patterns always show where you'd look.
-    wealthInsights = insightPool
-      .filter((f) => Array.isArray(f.domains) && f.domains.includes('wealth'))
-      .slice(0, 5)
-      .map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains }));
+    // Wealth/spending insights for the Wealth tab — spending patterns (this
+    // month vs your usual) and over-budget categories (vs Monarch budgets).
+    // Computed live from transaction data; falls back to nothing on failure.
+    try {
+      wealthInsights = await buildWealthInsights();
+    } catch (err) {
+      console.error('[wealthInsights] failed:', err.message);
+    }
 
     // Health/wellbeing/habits findings for the Health tab.
     healthInsights = insightPool

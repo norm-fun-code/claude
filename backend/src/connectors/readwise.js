@@ -34,6 +34,7 @@ function mapExport(results) {
           bookId: book.user_book_id,
           location: h.location,
           tags: (h.tags || []).map((t) => t.name || t),
+          favorite: !!h.is_favorite, // hearted in Readwise — powers the daily highlights card
         },
       });
     }

@@ -138,11 +138,69 @@ async function recent({ domain = null, limit = 20 } = {}) {
   return rows;
 }
 
+/**
+ * Random highlights for the daily Readwise card. Prefers hearted (favorite)
+ * highlights; if fewer than `limit` exist, fills the rest with other random
+ * highlights so the card always has variety. `favoritesOnly` forces strict.
+ */
+async function randomHighlights({ limit = 5, favoritesOnly = false } = {}) {
+  const fav = await query(
+    `SELECT id, title, author, url, content, occurred_at, metadata
+       FROM documents
+      WHERE source = 'readwise'
+        AND (metadata->>'favorite') = 'true'
+      ORDER BY random()
+      LIMIT $1`,
+    [limit]
+  );
+  let picks = fav.rows;
+  if (!favoritesOnly && picks.length < limit) {
+    const seen = picks.map((r) => r.id);
+    const rest = await query(
+      `SELECT id, title, author, url, content, occurred_at, metadata
+         FROM documents
+        WHERE source = 'readwise'
+          AND NOT (id = ANY($2::uuid[]))
+        ORDER BY random()
+        LIMIT $1`,
+      [limit - picks.length, seen]
+    );
+    picks = picks.concat(rest.rows);
+  }
+  return picks;
+}
+
+/**
+ * Monthly spend per category from Monarch transaction documents. Spend is the
+ * sum of negative amounts (money out), returned positive. Grouped by calendar
+ * month (YYYY-MM) for the trailing `months` window. Powers wealth insights.
+ */
+async function monthlyCategorySpend({ months = 4 } = {}) {
+  const { rows } = await query(
+    `SELECT to_char(date_trunc('month', occurred_at), 'YYYY-MM') AS month,
+            COALESCE(NULLIF(metadata->>'category', ''), 'Uncategorized')  AS category,
+            SUM(CASE WHEN (metadata->>'amount')::numeric < 0
+                     THEN -(metadata->>'amount')::numeric ELSE 0 END)     AS spend
+       FROM documents
+      WHERE source = 'monarch'
+        AND occurred_at >= date_trunc('month', now()) - ($1::int - 1) * interval '1 month'
+        AND metadata ? 'amount'
+      GROUP BY 1, 2
+      HAVING SUM(CASE WHEN (metadata->>'amount')::numeric < 0
+                      THEN -(metadata->>'amount')::numeric ELSE 0 END) > 0
+      ORDER BY 1 DESC, 3 DESC`,
+    [months]
+  );
+  return rows.map((r) => ({ month: r.month, category: r.category, spend: Number(r.spend) }));
+}
+
 module.exports = {
   upsertDocument,
   searchSimilar,
   searchText,
   recent,
+  randomHighlights,
+  monthlyCategorySpend,
   listWithoutEmbedding,
   setEmbedding,
   countMissingEmbeddings,

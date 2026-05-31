@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BRIEFING_URL, authHeaders } from '../config';
 
 const API_URL = BRIEFING_URL;
+const CACHE_KEY = 'normos.briefing.v1';
 
 export interface WeatherHour {
   time: string;
@@ -180,6 +182,8 @@ export function useBriefing(): BriefingState {
 
       const json: BriefingData = await response.json();
       setData(json);
+      // Persist so the next app open shows this instantly (no spinner / cold start).
+      AsyncStorage.setItem(CACHE_KEY, JSON.stringify(json)).catch(() => {});
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       setError(message);
@@ -188,9 +192,23 @@ export function useBriefing(): BriefingState {
     }
   }, []);
 
-  // Fetch the (cached, instant) briefing on mount; pull-to-refresh forces fresh.
+  // On open: hydrate instantly from the last saved briefing (survives app close),
+  // then quietly refresh in the background. Pull-to-refresh forces a fresh fetch.
   useEffect(() => {
-    fetchBriefing(false);
+    let cancelled = false;
+    (async () => {
+      try {
+        const cached = await AsyncStorage.getItem(CACHE_KEY);
+        if (cached && !cancelled) setData(JSON.parse(cached));
+      } catch {
+        // ignore corrupt cache
+      }
+      // Refresh in the background; if we already showed cached data, don't flash a spinner.
+      if (!cancelled) fetchBriefing(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [fetchBriefing]);
 
   return { data, loading, error, refetch: () => fetchBriefing(true) };
