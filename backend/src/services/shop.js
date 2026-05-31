@@ -233,10 +233,14 @@ async function discover(message, { country = 'US', limit = 8 } = {}) {
     ? serpApiProducts(query, { maxPrice, limit: 8 }).catch(() => webSearchProducts(query, { maxPrice, limit: 6 }))
     : webSearchProducts(query, { maxPrice, limit: 6 });
 
-  const [ucpRes, webRes] = await Promise.allSettled([
-    searchCatalog(query, { country, limit: 12 }),
-    webFinder,
-  ]);
+  // UCP in-app carts are gated behind UCP_ENABLED — the ucp-cli can't run in the
+  // Railway container (npx fetch fails), and trying it would add latency on every
+  // search. Discovery via SerpApi covers those merchants as link-outs anyway.
+  const ucpFinder = process.env.UCP_ENABLED === 'true'
+    ? searchCatalog(query, { country, limit: 12 })
+    : Promise.resolve([]);
+
+  const [ucpRes, webRes] = await Promise.allSettled([ucpFinder, webFinder]);
 
   const ucp = ucpRes.status === 'fulfilled' ? ucpRes.value : [];
   const web = webRes.status === 'fulfilled' ? webRes.value : [];
