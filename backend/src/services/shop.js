@@ -122,8 +122,20 @@ async function serpApiProducts(query, { maxPrice = null, limit = 8 } = {}) {
   })).filter((x) => x.title && x.url);
 
   if (maxPrice != null) items = items.filter((x) => x.extractedPrice == null || x.extractedPrice <= maxPrice);
-  // Cheapest first when we have prices.
-  items.sort((a, b) => (a.extractedPrice ?? 1e9) - (b.extractedPrice ?? 1e9));
+  // Prefer recognizable, reorder-able retailers; cheapest-first within each tier.
+  // This floats Amazon/Target/Walmart/etc. and the brand's own site above
+  // obscure single-item listings, while still respecting price.
+  const rank = (seller = '') => {
+    const s = seller.toLowerCase();
+    const major = ['amazon', 'target', 'walmart', 'costco', 'thrive', 'kroger', 'cvs', 'walgreens', 'whole foods', 'instacart', 'gopuff', 'iherb', 'vitacost'];
+    if (major.some((m) => s.includes(m))) return 0;
+    return 1; // everyone else
+  };
+  items.sort((a, b) => {
+    const r = rank(a.seller) - rank(b.seller);
+    if (r !== 0) return r;
+    return (a.extractedPrice ?? 1e9) - (b.extractedPrice ?? 1e9);
+  });
   return items.slice(0, limit);
 }
 
@@ -221,10 +233,14 @@ async function discover(message, { country = 'US', limit = 8 } = {}) {
     ? serpApiProducts(query, { maxPrice, limit: 8 }).catch(() => webSearchProducts(query, { maxPrice, limit: 6 }))
     : webSearchProducts(query, { maxPrice, limit: 6 });
 
-  const [ucpRes, webRes] = await Promise.allSettled([
-    searchCatalog(query, { country, limit: 12 }),
-    webFinder,
-  ]);
+  // UCP in-app carts are gated behind UCP_ENABLED — the ucp-cli can't run in the
+  // Railway container (npx fetch fails), and trying it would add latency on every
+  // search. Discovery via SerpApi covers those merchants as link-outs anyway.
+  const ucpFinder = process.env.UCP_ENABLED === 'true'
+    ? searchCatalog(query, { country, limit: 12 })
+    : Promise.resolve([]);
+
+  const [ucpRes, webRes] = await Promise.allSettled([ucpFinder, webFinder]);
 
   const ucp = ucpRes.status === 'fulfilled' ? ucpRes.value : [];
   const web = webRes.status === 'fulfilled' ? webRes.value : [];
