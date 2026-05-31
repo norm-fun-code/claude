@@ -6,13 +6,15 @@ const crypto = require('crypto');
 
 const BASE = 'https://api.monarch.com';
 
-function headers(token) {
+function headers(token, deviceUuid) {
   const h = {
     'Content-Type': 'application/json',
     Accept: 'application/json',
     Origin: 'https://app.monarchmoney.com',
     'Client-Platform': 'web',
-    'device-uuid': process.env.MONARCH_DEVICE_UUID || crypto.randomUUID(),
+    'x-cio-client-platform': 'web',
+    'x-cio-site-id': '2598be4aa410159198b2',
+    'device-uuid': deviceUuid || process.env.MONARCH_DEVICE_UUID || crypto.randomUUID(),
     'User-Agent':
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36',
   };
@@ -24,10 +26,11 @@ async function login() {
   const username = process.env.MONARCH_EMAIL;
   const password = process.env.MONARCH_PASSWORD;
   if (!username || !password) throw new Error('MONARCH_EMAIL/MONARCH_PASSWORD not set');
+  const deviceUuid = process.env.MONARCH_DEVICE_UUID || crypto.randomUUID();
   const { data } = await axios.post(
     `${BASE}/auth/login/`,
-    { username, password, trusted_device: true, supports_mfa: true },
-    { headers: headers(), timeout: 15000 }
+    { username, password, trusted_device: true, supports_mfa: true, supports_email_otp: true },
+    { headers: headers(null, deviceUuid), timeout: 15000 }
   );
   if (!data || !data.token) throw new Error('Monarch login returned no token');
   return data.token;
