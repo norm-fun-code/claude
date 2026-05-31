@@ -4,7 +4,7 @@
 const axios = require('axios');
 const crypto = require('crypto');
 
-const BASE = 'https://api.monarchmoney.com';
+const BASE = 'https://api.monarch.com';
 
 function headers(token) {
   const h = {
