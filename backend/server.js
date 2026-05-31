@@ -26,7 +26,7 @@ const monarch = require('./src/connectors/monarch');
 const { analyze } = require('./src/intelligence/analyze');
 const { embedPending } = require('./src/intelligence/embeddings');
 const { ask } = require('./src/chat/ask');
-const { discover, addToCart, history: shopHistory } = require('./src/services/shop');
+const { discover, addToCart, history: shopHistory, ucpProbe } = require('./src/services/shop');
 const annotationsStore = require('./src/store/annotations');
 const experimentsStore = require('./src/store/experiments');
 const experiments = require('./src/intelligence/experiments');
@@ -307,6 +307,15 @@ app.post('/api/shop/cart', async (req, res) => {
 app.get('/api/shop/history', async (req, res) => {
   try {
     res.json({ orders: await shopHistory({ limit: 12 }) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Diagnostic: see what the UCP CLI actually returns on this host.
+app.get('/api/shop/ucp-probe', async (req, res) => {
+  try {
+    res.json(await ucpProbe(req.query.q || 'protein bars'));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

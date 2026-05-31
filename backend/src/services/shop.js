@@ -78,7 +78,7 @@ async function searchCatalog(query, { country = 'US', limit = 12 } = {}) {
     'catalog', 'search',
     '--set', `/query=${query}`,
     '--set', `/context/address_country=${country}`,
-    '--view', 'json',
+    '--format', 'json',
   ]);
   const data = parseJson(out);
   const items = data?.results || data?.items || [];
@@ -192,7 +192,7 @@ async function buildCart({ business, variantId, quantity = 1 }) {
     '--business', business,
     '--set', `/line_items/0/item/id=${variantId}`,
     '--set', `/line_items/0/quantity=${quantity}`,
-    '--view', 'json',
+    '--format', 'json',
   ]);
   const data = parseJson(out);
   return {
@@ -312,4 +312,19 @@ async function shop(message, { quantity = 1, country = 'US' } = {}) {
   return { ...d, pick: best, cart: added.cart || null, status: added.cart?.continueUrl ? 'cart_ready' : 'results' };
 }
 
-module.exports = { discover, addToCart, shop, history, recordOrder, searchCatalog, buildCart, serpApiProducts, webSearchProducts, extractQuery, extractSearch };
+/** Raw UCP catalog probe — returns stdout/error so we can diagnose on Railway. */
+async function ucpProbe(query = 'protein bars') {
+  try {
+    const out = await run([
+      'catalog', 'search',
+      '--set', `/query=${query}`,
+      '--set', '/context/address_country=US',
+      '--format', 'json',
+    ], { timeout: 40000 });
+    return { ok: true, rawLength: out.length, sample: out.slice(0, 1200) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+module.exports = { discover, addToCart, shop, history, recordOrder, searchCatalog, buildCart, serpApiProducts, webSearchProducts, ucpProbe, extractQuery, extractSearch };
