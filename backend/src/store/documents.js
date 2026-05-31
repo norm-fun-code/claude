@@ -139,33 +139,55 @@ async function recent({ domain = null, limit = 20 } = {}) {
 }
 
 /**
- * Random highlights for the daily Readwise card. Prefers hearted (favorite)
- * highlights; if fewer than `limit` exist, fills the rest with other random
- * highlights so the card always has variety. `favoritesOnly` forces strict.
+ * Random highlights for the daily Readwise card. Favorites-first, filling with
+ * other random highlights if fewer favorites exist than `limit`. `exclude` is a
+ * list of ids shown recently (last 30 days) — we skip those so the card cycles
+ * through everything before repeating. Only falls back to excluded ids if we'd
+ * otherwise come up short, so the card never renders empty.
  */
-async function randomHighlights({ limit = 5, favoritesOnly = false } = {}) {
-  const fav = await query(
+async function randomHighlights({ limit = 5, favoritesOnly = false, exclude = [] } = {}) {
+  const ex = exclude.length ? exclude : ['00000000-0000-0000-0000-000000000000'];
+
+  // 1) Fresh favorites (not shown recently).
+  const favFresh = await query(
     `SELECT id, title, author, url, content, occurred_at, metadata
        FROM documents
-      WHERE source = 'readwise'
-        AND (metadata->>'favorite') = 'true'
-      ORDER BY random()
-      LIMIT $1`,
-    [limit]
+      WHERE source = 'readwise' AND (metadata->>'favorite') = 'true'
+        AND NOT (id = ANY($2::uuid[]))
+      ORDER BY random() LIMIT $1`,
+    [limit, ex]
   );
-  let picks = fav.rows;
+  let picks = favFresh.rows;
+
+  // 2) Fill with fresh non-favorites (unless strict).
   if (!favoritesOnly && picks.length < limit) {
-    const seen = picks.map((r) => r.id);
+    const taken = picks.map((r) => r.id).concat(ex);
     const rest = await query(
       `SELECT id, title, author, url, content, occurred_at, metadata
          FROM documents
         WHERE source = 'readwise'
           AND NOT (id = ANY($2::uuid[]))
-        ORDER BY random()
-        LIMIT $1`,
-      [limit - picks.length, seen]
+        ORDER BY random() LIMIT $1`,
+      [limit - picks.length, taken]
     );
     picks = picks.concat(rest.rows);
+  }
+
+  // 3) Last resort — if everything's been seen, reuse favorites/any so we never
+  //    show an empty card (the 30-day window has fully cycled).
+  if (picks.length < limit) {
+    const taken = picks.map((r) => r.id);
+    const fallback = await query(
+      `SELECT id, title, author, url, content, occurred_at, metadata
+         FROM documents
+        WHERE source = 'readwise'
+          AND NOT (id = ANY($3::uuid[]))
+          AND ($2::boolean IS FALSE OR (metadata->>'favorite') = 'true')
+        ORDER BY (metadata->>'favorite' = 'true') DESC, random()
+        LIMIT $1`,
+      [limit - picks.length, favoritesOnly, taken.length ? taken : ex]
+    );
+    picks = picks.concat(fallback.rows);
   }
   return picks;
 }

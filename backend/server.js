@@ -233,13 +233,21 @@ app.get('/api/findings', async (req, res) => {
   }
 });
 
-// Daily Readwise highlights for the Wisdom tab card. Prefers hearted
-// (favorite) highlights, filling with random ones if you've hearted few.
+// Daily Readwise highlights for the Wisdom tab card. Favorites-first, filling
+// with random ones if you've hearted few. Won't repeat a highlight shown in the
+// last 30 days (tracked in `surfaced`), so it cycles through your library.
 app.get('/api/highlights', async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 5, 20);
     const favoritesOnly = req.query.favoritesOnly === '1' || req.query.favoritesOnly === 'true';
-    const rows = await documentsStore.randomHighlights({ limit, favoritesOnly });
+    const seen = await surfacedStore.recentRefs('highlight', 30);
+    const rows = await documentsStore.randomHighlights({
+      limit,
+      favoritesOnly,
+      exclude: [...seen],
+    });
+    // Record what we're showing so the next 30 days won't repeat them.
+    if (rows.length) await surfacedStore.record('highlight', rows.map((r) => r.id));
     res.json({
       highlights: rows.map((r) => ({
         id: r.id,
@@ -472,12 +480,15 @@ app.get('/api/briefing', async (req, res) => {
   // Workout is synchronous — no failure path
   const workout = getTodayWorkout();
 
+  // Notion wisdom page: avoid repeating one shown in the last 30 days.
+  const seenNotion = await surfacedStore.recentRefs('notion_page', 30).catch(() => new Set());
+
   // Fetch all independent data sources in parallel
   const [weatherResult, calendarResult, notionResult, quoteResult, emailResult, marketsResult] =
     await Promise.allSettled([
       fetchWeather(),
       fetchCalendarEvents(),
-      fetchRandomNotionPage(),
+      fetchRandomNotionPage({ exclude: [...seenNotion] }),
       fetchRandomQuote(),
       fetchGmailThreads(),
       fetchMarkets(),
@@ -493,15 +504,32 @@ app.get('/api/briefing', async (req, res) => {
   const weather = unwrap(weatherResult, 'weather');
   const calendar = unwrap(calendarResult, 'calendar') ?? [];
   const notionData = unwrap(notionResult, 'notion') ?? { text: '', pageTitle: 'Notion' };
+  // Mark this Notion page as shown so it won't repeat for 30 days.
+  if (notionData.pageTitle && notionData.pageTitle !== 'Notion') {
+    surfacedStore.record('notion_page', notionData.pageTitle).catch(() => {});
+  }
   const quoteData = unwrap(quoteResult, 'googleDoc') ?? { quote: '' };
   const emails = unwrap(emailResult, 'gmail') ?? [];
   const markets = unwrap(marketsResult, 'markets');
 
   // Quote of the day from the Notion "Quotes" page (each bullet = one quote).
+  // No-repeat for 30 days so it cycles through all your quotes.
   let dailyQuote = null;
   try {
     const quotes = await fetchNotionQuotes();
-    if (quotes.length) dailyQuote = quotes[Math.floor(Math.random() * quotes.length)];
+    if (quotes.length) {
+      const seen = await surfacedStore.recentRefs('daily_quote', 30);
+      const [pick] = surfacedStore.pickFresh(
+        // shuffle so the fresh pick isn't always the first unseen one
+        quotes.map((q) => q).sort(() => Math.random() - 0.5),
+        seen,
+        { max: 1, keyFn: (q) => q }
+      );
+      if (pick) {
+        dailyQuote = pick;
+        await surfacedStore.record('daily_quote', pick);
+      }
+    }
   } catch (err) {
     console.error('[notionQuotes] failed:', err.message);
   }
