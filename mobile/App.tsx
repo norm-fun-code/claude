@@ -86,10 +86,10 @@ export default function App() {
         return (
           <>
             <WealthCard wealth={d?.wealth ?? null} />
+            <InsightsCard insights={d?.wealthInsights ?? []} />
             <AdvisorCard />
             <IndicesCard />
             <MarketsCard markets={d?.markets} />
-            <InsightsCard insights={d?.wealthInsights ?? []} />
             {!d?.wealth && (
               <EmptyNote c={c} text="Connect Monarch (your monthly export) to see net worth, spending, and cashflow here." />
             )}
@@ -121,12 +121,12 @@ export default function App() {
           <>
             {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
             <WeatherCard weather={d?.weather ?? null} />
+            {d && d.calendar.length > 0 && <CalendarCard events={d.calendar} />}
             {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
             <CheckinCard />
             <HabitsCard />
             {d && <LeverageCard actions={d.leverageActions ?? []} insights={[]} />}
             {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
-            {d && d.calendar.length > 0 && <CalendarCard events={d.calendar} />}
             {d && <UrgentEmailsCard emails={d.urgentEmails} />}
             {d && <NewsletterList newsletters={d.newsletters} />}
             <ReviewCard review={d?.weeklyReview ?? null} compact />

@@ -54,15 +54,15 @@ Return ONLY valid JSON with EXACTLY these fields:
     { "from": "sender", "subject": "subject", "action": "1-2 sentences on what action is needed and why it's urgent" }
   ],
   "financeSummary": ["1-3 bullets of finance/market/economic news from the emails"],
-  "quoteInsight": "2 sentences connecting the quote to today's context",
-  "notionInsight": "2 sentences reflecting on the Notion content and how it applies today"
+  "quoteInsight": "2 sentences drawing out the deeper idea or principle in the quote",
+  "notionInsight": "2 sentences drawing out the key idea in the Notion content"
 }
 
 Rules:
 - newsletters: include digests/publications; exclude personal email, receipts, notifications. Go deep — extract every named company, person, statistic, and dollar amount.
 - urgentEmails: only emails needing a response/action today.
 - financeSummary: 1-3 items; never empty.
-- quoteInsight / notionInsight: specific to the actual content, not generic.`;
+- quoteInsight / notionInsight: reflect on the idea itself — what it means, why it's true, how to think about it. Keep it insightful but GENERIC. Do NOT reference the user's personal life, their day, their data, their schedule, their finances, or "today". No "you should" or "your" — speak about the idea, not the person.`;
 }
 
 /** Robustly pull a JSON object out of an LLM response (handles fences/prose). */
