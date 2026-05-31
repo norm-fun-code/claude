@@ -153,29 +153,44 @@ async function serpApiProducts(query, { maxPrice = null, limit = 8 } = {}) {
   let items = [...amazon, ...google].filter((x) => x.title && x.url);
 
   if (maxPrice != null) items = items.filter((x) => x.extractedPrice == null || x.extractedPrice <= maxPrice);
-  // Prefer recognizable, reorder-able retailers; cheapest-first within each tier.
-  // This floats Amazon/Target/Walmart/etc. and the brand's own site above
-  // obscure single-item listings, while still respecting price.
-  const rank = (seller = '') => {
-    const s = seller.toLowerCase();
-    const major = ['amazon', 'target', 'walmart', 'costco', 'thrive', 'kroger', 'cvs', 'walgreens', 'whole foods', 'instacart', 'gopuff', 'iherb', 'vitacost'];
-    if (major.some((m) => s.includes(m))) return 0;
-    return 1; // everyone else
-  };
-  items.sort((a, b) => {
-    const r = rank(a.seller) - rank(b.seller);
-    if (r !== 0) return r;
-    return (a.extractedPrice ?? 1e9) - (b.extractedPrice ?? 1e9);
-  });
+
   // Dedupe by seller+normalized-title so the same listing doesn't repeat.
   const seen = new Set();
-  const deduped = items.filter((x) => {
+  items = items.filter((x) => {
     const k = `${(x.seller || '').toLowerCase()}|${(x.title || '').toLowerCase().slice(0, 40)}`;
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
   });
-  return deduped.slice(0, limit);
+
+  // Cheapest-first within each seller…
+  const bySeller = new Map();
+  for (const it of items) {
+    const s = (it.seller || 'other').toLowerCase();
+    if (!bySeller.has(s)) bySeller.set(s, []);
+    bySeller.get(s).push(it);
+  }
+  for (const arr of bySeller.values()) arr.sort((a, b) => (a.extractedPrice ?? 1e9) - (b.extractedPrice ?? 1e9));
+
+  // …then round-robin across sellers so the list shows variety (Amazon, Walmart,
+  // Target, the brand site…) instead of one store dominating. Major retailers
+  // get first pick in each round.
+  const major = ['amazon', 'target', 'walmart', 'costco', 'thrive', 'kroger', 'cvs', 'walgreens', 'whole foods', 'iherb', 'vitacost'];
+  const sellers = [...bySeller.keys()].sort((a, b) => {
+    const am = major.some((m) => a.includes(m)) ? 0 : 1;
+    const bm = major.some((m) => b.includes(m)) ? 0 : 1;
+    return am - bm;
+  });
+  const out = [];
+  for (let round = 0; out.length < limit; round++) {
+    let added = false;
+    for (const s of sellers) {
+      const arr = bySeller.get(s);
+      if (arr[round]) { out.push(arr[round]); added = true; if (out.length >= limit) break; }
+    }
+    if (!added) break;
+  }
+  return out;
 }
 
 /**
