@@ -59,6 +59,15 @@ module.exports = {
         mintedToken = token;
         data = await fetchAll(token);
       } else {
+        // Make 429s diagnosable: a login-stage 429 means we fell back to logging
+        // in from Railway's datacenter IP (MONARCH_TOKEN missing/blank). A
+        // fetch-stage 429 means the token works but Monarch is throttling reads.
+        if (err.response?.status === 429) {
+          const stage = err.monarchStage === 'login'
+            ? 'login (no MONARCH_TOKEN set — fell back to datacenter login, which Monarch blocks)'
+            : 'data fetch (token accepted but Monarch is rate-limiting reads — retry later)';
+          err.message = `Monarch 429 at ${stage}`;
+        }
         throw err;
       }
     }

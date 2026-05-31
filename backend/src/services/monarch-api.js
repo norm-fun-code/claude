@@ -27,11 +27,19 @@ async function login() {
   const password = process.env.MONARCH_PASSWORD;
   if (!username || !password) throw new Error('MONARCH_EMAIL/MONARCH_PASSWORD not set');
   const deviceUuid = process.env.MONARCH_DEVICE_UUID || crypto.randomUUID();
-  const { data } = await axios.post(
-    `${BASE}/auth/login/`,
-    { username, password, trusted_device: true, supports_mfa: true, supports_email_otp: true },
-    { headers: headers(null, deviceUuid), timeout: 15000 }
-  );
+  let data;
+  try {
+    ({ data } = await axios.post(
+      `${BASE}/auth/login/`,
+      { username, password, trusted_device: true, supports_mfa: true, supports_email_otp: true },
+      { headers: headers(null, deviceUuid), timeout: 15000 }
+    ));
+  } catch (err) {
+    // Tag so the connector can tell login-time 429s (datacenter IP blocked)
+    // apart from GraphQL-time ones (valid token but throttled).
+    err.monarchStage = 'login';
+    throw err;
+  }
   if (!data || !data.token) throw new Error('Monarch login returned no token');
   return data.token;
 }
