@@ -44,6 +44,7 @@ import { AdvisorCard } from './src/components/AdvisorCard';
 import { UrgentEmailsCard } from './src/components/UrgentEmailsCard';
 import { AlertCard } from './src/components/AlertCard';
 import { HighlightsCard } from './src/components/HighlightsCard';
+import { ShopCard } from './src/components/ShopCard';
 
 export default function App() {
   const isDark = useColorScheme() === 'dark';
@@ -106,6 +107,8 @@ export default function App() {
             )}
           </>
         );
+      case 'shop':
+        return <ShopCard />;
       case 'insights':
         return (
           <>

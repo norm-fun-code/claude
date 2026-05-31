@@ -26,6 +26,7 @@ const monarch = require('./src/connectors/monarch');
 const { analyze } = require('./src/intelligence/analyze');
 const { embedPending } = require('./src/intelligence/embeddings');
 const { ask } = require('./src/chat/ask');
+const { discover, addToCart, history: shopHistory } = require('./src/services/shop');
 const annotationsStore = require('./src/store/annotations');
 const experimentsStore = require('./src/store/experiments');
 const experiments = require('./src/intelligence/experiments');
@@ -276,6 +277,36 @@ app.post('/api/analyze', async (req, res) => {
 app.post('/api/embed', async (req, res) => {
   try {
     res.json(await embedPending());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Shopping agent (UCP). Two-step, fully in-app: discover surfaces product
+// options ("white running sneakers under $100"); cart builds a checkout link for
+// the one you pick. Only the final checkout leaves the app. Never pays for you.
+app.post('/api/shop/discover', async (req, res) => {
+  try {
+    const { message, country } = req.body || {};
+    res.json(await discover(message, { country }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/shop/cart', async (req, res) => {
+  try {
+    const { business, variantId, quantity, item } = req.body || {};
+    res.json(await addToCart({ business, variantId, quantity, item }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Shop history for one-tap reorder.
+app.get('/api/shop/history', async (req, res) => {
+  try {
+    res.json({ orders: await shopHistory({ limit: 12 }) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
