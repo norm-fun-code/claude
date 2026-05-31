@@ -42,6 +42,7 @@ import { MarketsCard } from './src/components/MarketsCard';
 import { IndicesCard } from './src/components/IndicesCard';
 import { AdvisorCard } from './src/components/AdvisorCard';
 import { UrgentEmailsCard } from './src/components/UrgentEmailsCard';
+import { AlertCard } from './src/components/AlertCard';
 
 export default function App() {
   const isDark = useColorScheme() === 'dark';
@@ -117,6 +118,7 @@ export default function App() {
       default:
         return (
           <>
+            {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
             <WeatherCard weather={d?.weather ?? null} />
             {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
             <CheckinCard />

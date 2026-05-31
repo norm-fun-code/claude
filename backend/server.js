@@ -600,6 +600,30 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[wealth] failed:', err.message);
   }
 
+  // Source-staleness alerts. The Monarch token expires periodically; when it
+  // does the Mac sync fails silently, so surface "needs reconnecting" in the
+  // briefing rather than letting net-worth quietly go stale. Threshold is
+  // generous (40h) so a missed morning (Mac asleep) doesn't false-alarm.
+  const alerts = [];
+  try {
+    const monarchSrc = await sourcesStore.getSource('monarch');
+    if (monarchSrc) {
+      const last = monarchSrc.last_sync_at ? new Date(monarchSrc.last_sync_at) : null;
+      const ageH = last ? (Date.now() - last.getTime()) / 36e5 : Infinity;
+      if (monarchSrc.status === 'error' || ageH > 40) {
+        alerts.push({
+          source: 'monarch',
+          severity: ageH > 96 ? 'high' : 'warn',
+          message: last
+            ? `Monarch hasn't synced in ${Math.round(ageH)}h — the token may have expired. Reconnect: cd ~/claude/backend && node scripts/monarch-reconnect.js`
+            : `Monarch has never synced. Reconnect: cd ~/claude/backend && node scripts/monarch-reconnect.js`,
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[alerts] failed:', err.message);
+  }
+
   const response = {
     date: dateLabel,
     weather,
@@ -623,6 +647,7 @@ app.get('/api/briefing', async (req, res) => {
     wealth,
     markets,
     dailyQuote,
+    alerts,
   };
 
   if (errors.length > 0) {

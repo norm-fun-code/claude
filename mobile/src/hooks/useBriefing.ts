@@ -117,6 +117,12 @@ export interface Wealth {
   cashflowThisWeek: number;
 }
 
+export interface Alert {
+  source: string;
+  severity: 'warn' | 'high';
+  message: string;
+}
+
 export interface BriefingData {
   date: string;
   weather: Weather | null;
@@ -140,6 +146,7 @@ export interface BriefingData {
   wealth: Wealth | null;
   markets?: Markets | null;
   dailyQuote?: string | null;
+  alerts?: Alert[];
   errors?: { service: string; error: string }[];
 }
 
