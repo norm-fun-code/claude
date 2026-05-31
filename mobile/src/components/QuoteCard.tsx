@@ -6,9 +6,11 @@ import { SectionHeader } from './SectionHeader';
 interface Props {
   quote: string;
   insight: string;
+  title?: string;
+  emoji?: string;
 }
 
-export function QuoteCard({ quote, insight }: Props) {
+export function QuoteCard({ quote, insight, title = 'Quote + Insight', emoji = '💡' }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -16,7 +18,7 @@ export function QuoteCard({ quote, insight }: Props) {
 
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
-      <SectionHeader emoji="💡" title="Quote + Insight" />
+      <SectionHeader emoji={emoji} title={title} />
 
       {quote ? (
         <View style={[styles.quoteBlock, { borderLeftColor: c.border, backgroundColor: isDark ? '#1A1A18' : '#FAFAF8' }]}>

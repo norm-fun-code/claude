@@ -137,9 +137,32 @@ async function fetchPageText(blockId, depth = 0) {
   return lines.join('\n');
 }
 
+// Pull every quote (each bullet/line) from a dedicated Notion "Quotes" page.
+// Used for the Today-tab quote of the day.
+async function fetchNotionQuotes(pageId = process.env.NOTION_QUOTES_PAGE_ID) {
+  if (!pageId) return [];
+  const notion = getNotionClient();
+  const quotes = [];
+  let cursor;
+  do {
+    const res = await notion.blocks.children.list({ block_id: pageId, page_size: 100, start_cursor: cursor });
+    for (const block of res.results) {
+      const type = block.type;
+      const content = block[type];
+      if (content?.rich_text) {
+        const text = content.rich_text.map((rt) => rt.plain_text).join('').trim();
+        if (text) quotes.push(text);
+      }
+    }
+    cursor = res.has_more ? res.next_cursor : undefined;
+  } while (cursor);
+  return quotes;
+}
+
 module.exports = {
   fetchRandomNotionPage,
   listWisdomPages,
   fetchPageText,
+  fetchNotionQuotes,
   extractTextFromBlocks,
 };

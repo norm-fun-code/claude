@@ -4,7 +4,7 @@ const cors = require('cors');
 
 const { fetchGmailThreads } = require('./src/services/gmail');
 const { fetchCalendarEvents } = require('./src/services/calendar');
-const { fetchRandomNotionPage } = require('./src/services/notion');
+const { fetchRandomNotionPage, fetchNotionQuotes } = require('./src/services/notion');
 const { fetchRandomQuote } = require('./src/services/googleDoc');
 const { fetchWeather } = require('./src/services/weather');
 const { fetchMarkets } = require('./src/services/markets');
@@ -474,6 +474,15 @@ app.get('/api/briefing', async (req, res) => {
   const emails = unwrap(emailResult, 'gmail') ?? [];
   const markets = unwrap(marketsResult, 'markets');
 
+  // Quote of the day from the Notion "Quotes" page (each bullet = one quote).
+  let dailyQuote = null;
+  try {
+    const quotes = await fetchNotionQuotes();
+    if (quotes.length) dailyQuote = quotes[Math.floor(Math.random() * quotes.length)];
+  } catch (err) {
+    console.error('[notionQuotes] failed:', err.message);
+  }
+
   // Call Gemini with whatever data we have
   let geminiResult = null;
   try {
@@ -613,6 +622,7 @@ app.get('/api/briefing', async (req, res) => {
     weeklyReview,
     wealth,
     markets,
+    dailyQuote,
   };
 
   if (errors.length > 0) {

@@ -139,6 +139,7 @@ export interface BriefingData {
   weeklyReview: WeeklyReview | null;
   wealth: Wealth | null;
   markets?: Markets | null;
+  dailyQuote?: string | null;
   errors?: { service: string; error: string }[];
 }
 

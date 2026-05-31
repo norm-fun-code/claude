@@ -114,6 +114,7 @@ export default function App() {
         return (
           <>
             <WeatherCard weather={d?.weather ?? null} />
+            {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
             <CheckinCard />
             <HabitsCard />
             {d && <LeverageCard actions={d.leverageActions ?? []} insights={[]} />}
