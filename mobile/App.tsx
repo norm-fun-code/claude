@@ -68,7 +68,11 @@ export default function App() {
         return (
           <>
             <HealthCard health={health} />
-            <InsightsCard insights={d?.healthInsights ?? []} />
+            {d?.healthInsights && d.healthInsights.length > 0 ? (
+              <InsightsCard insights={d.healthInsights} />
+            ) : (
+              <EmptyNote c={c} text="Health insights (sleep ↔ HRV ↔ focus patterns) appear once a few days of Apple Health + habit data accumulate. Open the app daily so HealthKit syncs, and log your habits on the Today tab." />
+            )}
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} />
           </>
         );

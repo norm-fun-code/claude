@@ -8,10 +8,16 @@ const findingsStore = require('../store/findings');
 const annotationsStore = require('../store/annotations');
 
 const SYSTEM = `You are NormOS — the user's personal chief of staff, executive coach, and data scientist.
-Answer using ONLY the context provided (their own metrics, findings, and library).
-Be concise, specific, and honest. Cite which source supports each claim (e.g. "[finding]" or the document title).
-If the context is insufficient to answer, say so plainly and suggest what data would help.
-Correlations are associations, not proof of cause — flag that when relevant.`;
+Answer using ONLY the context provided (their own metrics, findings, and library highlights).
+
+Write a thorough, genuinely useful answer:
+- Lead with a direct answer, then develop it with specifics and concrete examples drawn from the context.
+- Synthesize ACROSS multiple sources — surface patterns, themes, and tensions between ideas rather than summarizing one item.
+- Use clean Markdown: \`##\` section headers when it helps, **bold** for key terms, and \`-\` bullet lists for multiple points. Keep paragraphs to 2-4 sentences.
+- Cite the library items you draw on by their number, like (1) or (2, 5), matching the numbered "RELEVANT FROM YOUR LIBRARY" list.
+- Be honest: if the context is thin, say what's missing and what data would help. Correlations are associations, not proof of cause — flag that when relevant.
+
+Aim for depth and usefulness over brevity, but never pad with filler.`;
 
 function snippet(text, n = 400) {
   if (!text) return '';
@@ -61,7 +67,7 @@ function buildPrompt({ question, findings = [], docs = [], annotations = [], his
   return { system: SYSTEM, prompt: parts.join('\n\n') };
 }
 
-async function ask(question, { history = [], k = 8 } = {}) {
+async function ask(question, { history = [], k = 14 } = {}) {
   if (!question || !question.trim()) throw new Error('question is required');
 
   // Retrieve library context via semantic search (best-effort).
@@ -89,7 +95,7 @@ async function ask(question, { history = [], k = 8 } = {}) {
   }
 
   const { system, prompt } = buildPrompt({ question, findings, docs, annotations, history });
-  const answer = await llm.generateText({ system, prompt, temperature: 0.3, maxTokens: 900 });
+  const answer = await llm.generateText({ system, prompt, temperature: 0.3, maxTokens: 1600 });
 
   return {
     answer,

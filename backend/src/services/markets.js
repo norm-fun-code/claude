@@ -111,8 +111,13 @@ async function fetchHeadlines(limit = 5) {
     }
   }
   if (!collected.length) return [];
-  // Prefer stories published today; if markets are quiet/early, fall back to the
-  // freshest available so the card is never empty.
+  // Always newest-first by publish date, so the card shows the freshest stories
+  // (preferring ones published today, then falling back to the most recent).
+  const ts = (it) => {
+    const d = new Date(it.pubDate);
+    return isNaN(d) ? 0 : d.getTime();
+  };
+  collected.sort((a, b) => ts(b) - ts(a));
   const todays = collected.filter((it) => isToday(it.pubDate, tz));
   const pick = (todays.length ? todays : collected).slice(0, limit);
   return pick.map(({ title, url, source }) => ({ title, url, source }));
