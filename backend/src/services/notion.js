@@ -29,7 +29,7 @@ function extractTextFromBlocks(blocks) {
   return lines.join('\n');
 }
 
-async function fetchRandomNotionPage() {
+async function fetchRandomNotionPage({ exclude = [] } = {}) {
   const notion = getNotionClient();
   const pageId = process.env.NOTION_PAGE_ID;
 
@@ -46,8 +46,14 @@ async function fetchRandomNotionPage() {
     return { text: 'No pages found.', pageTitle: 'Notion' };
   }
 
-  // Pick a random child page
-  const randomPage = childPages[Math.floor(Math.random() * childPages.length)];
+  // Prefer pages not shown in the last 30 days (by title); fall back to all if
+  // every page has been seen, so the card never comes up empty.
+  const ex = new Set(exclude);
+  const unseen = childPages.filter((p) => !ex.has(p.child_page?.title || 'Untitled'));
+  const pool = unseen.length ? unseen : childPages;
+
+  // Pick a random page from the freshest pool
+  const randomPage = pool[Math.floor(Math.random() * pool.length)];
   const pageTitle = randomPage.child_page?.title || 'Untitled';
 
   // Fetch the blocks of the chosen child page
