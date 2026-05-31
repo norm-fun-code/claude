@@ -166,6 +166,20 @@ app.post('/api/ingest/run', async (req, res) => {
   }
 });
 
+// Retire the demo data once real sources are flowing — deletes exactly what the
+// seeder created (source='seed' metrics + seed-tagged goals) and re-analyzes.
+app.post('/api/admin/reset-demo', async (req, res) => {
+  try {
+    const m = await db.query(`DELETE FROM metrics WHERE source = 'seed'`);
+    const g = await db.query(`DELETE FROM goals WHERE metadata->>'seed' = 'true'`);
+    await db.query(`DELETE FROM sources WHERE id = 'seed'`);
+    const summary = await analyze();
+    res.json({ deletedMetrics: m.rowCount, deletedGoals: g.rowCount, analyzed: summary || null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Monarch CSV upload: POST the raw CSV body (transactions OR balances export).
 // The cloud can't see files on your Mac, so this is how the monthly export
 // reaches it — `curl --data-binary @export.csv`. Idempotent: re-uploading the
