@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd job: run the Monarch sync daily at 7:30am on your Mac.
+  Install:
+    1) Edit the paths/tokens below (NODE path, script path, and the three env vars).
+    2) cp this file to ~/Library/LaunchAgents/com.normos.monarch-sync.plist
+    3) launchctl load ~/Library/LaunchAgents/com.normos.monarch-sync.plist
+  Logs land in /tmp/normos-monarch-sync.{out,err}.log.
+  To stop: launchctl unload ~/Library/LaunchAgents/com.normos.monarch-sync.plist
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.normos.monarch-sync</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/node</string>
+    <string>/Users/normancohen/claude/backend/scripts/monarch-sync.js</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>MONARCH_TOKEN</key>
+    <string>PASTE_MONARCH_TOKEN</string>
+    <key>NORMOS_API_TOKEN</key>
+    <string>PASTE_NORMOS_API_TOKEN</string>
+    <key>NORMOS_URL</key>
+    <string>https://backend-production-0902.up.railway.app</string>
+  </dict>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/normos-monarch-sync.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/normos-monarch-sync.err.log</string>
+</dict>
+</plist>
