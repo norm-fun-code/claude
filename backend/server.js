@@ -467,6 +467,26 @@ app.get('/api/sources', async (req, res) => {
 app.get('/api/briefing', async (req, res) => {
   const errors = [];
 
+  // Serve a recent cached briefing instantly unless ?refresh=1. Building fresh
+  // calls the LLM + weather/calendar/Notion/markets/embeddings (15-40s), so we
+  // reuse the last build for CACHE_TTL_MIN minutes. The app's pull-to-refresh
+  // sends refresh=1 to force a rebuild.
+  const CACHE_TTL_MIN = Number(process.env.BRIEFING_CACHE_MIN || 180); // 3h default
+  const force = req.query.refresh === '1' || req.query.refresh === 'true';
+  if (!force) {
+    try {
+      const cached = await briefingsStore.latestBriefing('daily');
+      if (cached?.content && cached.generated_at) {
+        const ageMin = (Date.now() - new Date(cached.generated_at).getTime()) / 60000;
+        if (ageMin < CACHE_TTL_MIN) {
+          return res.json({ ...cached.content, cached: true, cachedAgeMin: Math.round(ageMin) });
+        }
+      }
+    } catch (err) {
+      console.error('[briefing cache] read failed:', err.message);
+    }
+  }
+
   // Format today's date label
   const now = new Date();
   const dateLabel = now.toLocaleDateString('en-US', {
