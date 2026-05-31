@@ -14,6 +14,7 @@ export const CHECKIN_URL = `${API_BASE}/api/checkin`;
 export const CHAT_URL = `${API_BASE}/api/chat`;
 export const DEVICE_REGISTER_URL = `${API_BASE}/api/devices/register`;
 export const HIGHLIGHTS_URL = `${API_BASE}/api/highlights`;
+export const SHOP_URL = `${API_BASE}/api/shop`;
 
 /** JSON headers, plus the bearer token when one is configured. */
 export function authHeaders(): Record<string, string> {

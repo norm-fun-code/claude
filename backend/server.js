@@ -26,6 +26,7 @@ const monarch = require('./src/connectors/monarch');
 const { analyze } = require('./src/intelligence/analyze');
 const { embedPending } = require('./src/intelligence/embeddings');
 const { ask } = require('./src/chat/ask');
+const { shop } = require('./src/services/shop');
 const annotationsStore = require('./src/store/annotations');
 const experimentsStore = require('./src/store/experiments');
 const experiments = require('./src/intelligence/experiments');
@@ -276,6 +277,17 @@ app.post('/api/analyze', async (req, res) => {
 app.post('/api/embed', async (req, res) => {
   try {
     res.json(await embedPending());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Shopping agent (UCP): "reorder Aloha bars" -> built cart + checkout link you
+// tap yourself. Never pays autonomously — returns a continue_url for you.
+app.post('/api/shop', async (req, res) => {
+  try {
+    const { message, quantity, country } = req.body || {};
+    res.json(await shop(message, { quantity, country }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
