@@ -13,7 +13,7 @@ async function embedPending({ batch = 32, maxBatches = 20 } = {}) {
     if (pending.length === 0) break;
 
     const inputs = pending.map((d) =>
-      [d.title, d.content].filter(Boolean).join('\n').slice(0, MAX_CHARS)
+      [d.title, d.author, d.content].filter(Boolean).join('\n').slice(0, MAX_CHARS)
     );
     const vectors = await llm.embed(inputs);
 

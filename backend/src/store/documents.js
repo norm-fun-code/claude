@@ -72,10 +72,38 @@ async function searchSimilar(embedding, { k = 8, domain = null } = {}) {
   return rows;
 }
 
+// Keyword search over author/title — catches named entities (authors, book
+// titles) that pure semantic search misses, since author isn't in the vector.
+// Ranks by how many query terms hit. Used alongside searchSimilar in chat.
+async function searchText(terms, { k = 8 } = {}) {
+  const clean = (terms || []).filter((t) => t && t.length >= 3).slice(0, 8);
+  if (!clean.length) return [];
+  const conds = [];
+  const score = [];
+  const params = [];
+  for (const t of clean) {
+    params.push(`%${t}%`);
+    const p = `$${params.length}`;
+    conds.push(`(author ILIKE ${p} OR title ILIKE ${p})`);
+    score.push(`(author ILIKE ${p} OR title ILIKE ${p})::int`);
+  }
+  params.push(k);
+  const { rows } = await query(
+    `SELECT id, source, domain, title, author, url, content, occurred_at,
+            (${score.join(' + ')}) AS score
+       FROM documents
+      WHERE ${conds.join(' OR ')}
+      ORDER BY score DESC, occurred_at DESC NULLS LAST
+      LIMIT $${params.length}`,
+    params
+  );
+  return rows;
+}
+
 /** Documents still missing an embedding (for the embedding backfill job). */
 async function listWithoutEmbedding(limit = 100) {
   const { rows } = await query(
-    `SELECT id, title, content FROM documents
+    `SELECT id, title, author, content FROM documents
       WHERE embedding IS NULL
       ORDER BY ingested_at ASC
       LIMIT $1`,
@@ -113,6 +141,7 @@ async function recent({ domain = null, limit = 20 } = {}) {
 module.exports = {
   upsertDocument,
   searchSimilar,
+  searchText,
   recent,
   listWithoutEmbedding,
   setEmbedding,

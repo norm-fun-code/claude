@@ -46,6 +46,21 @@ function field(rec, candidates) {
   return null;
 }
 
+// Account names (substrings) to exclude from imports, e.g. MONARCH_EXCLUDE_ACCOUNTS="401k,Pension".
+// Lets you keep, say, retirement balances out of the net-worth/cashflow totals.
+function excludedAccounts() {
+  return (process.env.MONARCH_EXCLUDE_ACCOUNTS || '')
+    .split(',')
+    .map((s) => norm(s))
+    .filter(Boolean);
+}
+
+function isExcludedAccount(name) {
+  const n = norm(name);
+  if (!n) return false;
+  return excludedAccounts().some((e) => n.includes(e));
+}
+
 /** Parse a currency/number cell: strips $ and commas, treats (x) as negative. */
 function parseAmount(raw) {
   if (raw == null) return NaN;
@@ -125,6 +140,7 @@ function mapTransactions(records = []) {
     const merchant = field(rec, ['merchant', 'description', 'name']) || 'Transaction';
     const category = field(rec, ['category']);
     const account = field(rec, ['account']);
+    if (isExcludedAccount(account)) continue;
     const tags = field(rec, ['tags']);
     const original = field(rec, ['original statement', 'originalstatement', 'notes']);
 
@@ -170,6 +186,7 @@ function mapBalances(records = []) {
   for (const rec of records) {
     const day = parseDay(field(rec, ['date']));
     if (!day) continue;
+    if (isExcludedAccount(field(rec, ['account']))) continue;
     const slot = byDay.get(day) || { networth: null, assets: 0, liabilities: 0, sawType: false, summed: 0 };
 
     const nw = parseAmount(field(rec, ['net worth', 'networth']));
