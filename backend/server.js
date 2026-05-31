@@ -27,6 +27,7 @@ const { analyze } = require('./src/intelligence/analyze');
 const { embedPending } = require('./src/intelligence/embeddings');
 const { ask } = require('./src/chat/ask');
 const { discover, addToCart, history: shopHistory, ucpProbe } = require('./src/services/shop');
+const ucp = require('./src/services/ucp');
 const annotationsStore = require('./src/store/annotations');
 const experimentsStore = require('./src/store/experiments');
 const experiments = require('./src/intelligence/experiments');
@@ -52,6 +53,12 @@ app.use('/api', (req, res, next) => {
   const auth = req.get('authorization') || '';
   if (auth === `Bearer ${token}`) return next();
   return res.status(401).json({ error: 'unauthorized' });
+});
+
+// Public UCP agent profile — Shopify's Global Catalog fetches this (no auth) to
+// negotiate capabilities. Lives outside /api so the bearer gate doesn't block it.
+app.get('/.well-known/ucp-agent', (req, res) => {
+  res.json(ucp.agentProfile());
 });
 
 app.get('/api/health', async (req, res) => {

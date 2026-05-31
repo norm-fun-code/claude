@@ -15,6 +15,7 @@
 const { execFile } = require('child_process');
 const axios = require('axios');
 const llm = require('../llm');
+const ucp = require('./ucp');
 const { query: dbQuery } = require('../db');
 
 const UCP = ['@shopify/ucp-cli'];
@@ -287,16 +288,16 @@ async function discover(message, { country = 'US', limit = 8 } = {}) {
     ? serpApiProducts(query, { maxPrice, limit: 8 }).catch(() => webSearchProducts(query, { maxPrice, limit: 6 }))
     : webSearchProducts(query, { maxPrice, limit: 6 });
 
-  // UCP in-app carts are gated behind UCP_ENABLED — the ucp-cli can't run in the
-  // Railway container (npx fetch fails), and trying it would add latency on every
-  // search. Discovery via SerpApi covers those merchants as link-outs anyway.
-  const ucpFinder = process.env.UCP_ENABLED === 'true'
-    ? searchCatalog(query, { country, limit: 12 })
+  // UCP in-app carts via Shopify's Global Catalog MCP (HTTP, no CLI). Active when
+  // UCP_CLIENT_ID/SECRET are set. These items are cart-able in-app (continue_url
+  // checkout), unlike the SerpApi web link-outs.
+  const ucpFinder = ucp.isConfigured()
+    ? ucp.searchCatalog(query, { country, limit: 12 }).catch(() => [])
     : Promise.resolve([]);
 
   const [ucpRes, webRes] = await Promise.allSettled([ucpFinder, webFinder]);
 
-  const ucp = ucpRes.status === 'fulfilled' ? ucpRes.value : [];
+  const ucpItems = ucpRes.status === 'fulfilled' ? ucpRes.value : [];
   const web = webRes.status === 'fulfilled' ? webRes.value : [];
 
   const underBudget = (r) => {
@@ -306,7 +307,7 @@ async function discover(message, { country = 'US', limit = 8 } = {}) {
   };
 
   // Cart-able UCP items first (you can buy in-app), then web/Amazon link-outs.
-  const cartable = ucp.filter(underBudget).map((r) => ({ ...r, web: false }));
+  const cartable = ucpItems.filter(underBudget).map((r) => ({ ...r, web: false }));
   const links = web.filter(underBudget);
   const results = [...cartable, ...links].slice(0, limit + 4);
 
@@ -331,7 +332,11 @@ async function discover(message, { country = 'US', limit = 8 } = {}) {
 async function addToCart({ business, variantId, quantity = 1, item = null }) {
   if (!business || !variantId) throw new Error('Pick an item first.');
   try {
-    const cart = await buildCart({ business, variantId, quantity });
+    // Prefer the UCP HTTP client (Global Catalog MCP) for cart creation; fall
+    // back to the legacy CLI buildCart only if UCP isn't configured.
+    const cart = ucp.isConfigured()
+      ? await ucp.createCart({ business, variantId, quantity })
+      : await buildCart({ business, variantId, quantity });
     // Record to history (best-effort) so it shows up under "Reorder".
     if (item?.title) {
       recordOrder({ ...item, business, variantId }).catch(() => {});
