@@ -37,7 +37,7 @@ export function HighlightsCard() {
     setLoading(true);
     setError(false);
     try {
-      const res = await fetch(`${HIGHLIGHTS_URL}?limit=5`, { headers: authHeaders() });
+      const res = await fetch(`${HIGHLIGHTS_URL}?limit=5&favoritesOnly=1`, { headers: authHeaders() });
       const json = await res.json();
       setHighlights(json.highlights ?? []);
       setIdx(0);

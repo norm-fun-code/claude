@@ -7,8 +7,9 @@ const documents = require('../store/documents');
 let monarchApi = null;
 try { monarchApi = require('./monarch-api'); } catch { /* optional */ }
 
-const MIN_SPEND = 50;      // ignore trivially small categories
-const SPIKE_RATIO = 1.25;  // 25%+ over your usual is noteworthy
+const MIN_SPEND = 50;       // ignore trivially small categories
+const SPIKE_RATIO = 1.15;   // 15%+ over your usual is noteworthy
+const SPIKE_DOLLARS = 100;  // ...and at least $100 more, so it's material
 const OVER_BUDGET = 1.05;  // 5%+ over budget is noteworthy
 const fmt = (n) => '$' + Math.round(n).toLocaleString('en-US');
 const pct = (n) => Math.round(n) + '%';
@@ -49,7 +50,7 @@ async function buildWealthInsights() {
       const avg = s.priors.reduce((a, b) => a + b, 0) / s.priors.length;
       if (avg < MIN_SPEND) continue;
       const ratio = s.current / avg;
-      if (ratio >= SPIKE_RATIO) {
+      if (ratio >= SPIKE_RATIO && s.current - avg >= SPIKE_DOLLARS) {
         spikes.push({ category, current: s.current, avg, over: pct((ratio - 1) * 100) });
       }
     }
