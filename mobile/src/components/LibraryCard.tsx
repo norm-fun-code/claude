@@ -39,7 +39,7 @@ export function LibraryCard({ highlight }: Props) {
         ) : null}
       </View>
 
-      <Text style={[styles.why, { color: c.subtext }]}>Surfaced because it speaks to today's focus.</Text>
+      <Text style={[styles.why, { color: c.subtext }]}>Surfaced for where you are right now.</Text>
     </View>
   );
 }
