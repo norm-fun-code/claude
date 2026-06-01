@@ -18,9 +18,10 @@ const axios = require('axios');
 //   token:  POST https://api.shopify.com/auth/access_token  (client_credentials)
 //   search: GET  https://discover.shopifyapps.com/global/v2/... (Bearer token)
 const TOKEN_URL = process.env.UCP_TOKEN_URL || 'https://api.shopify.com/auth/access_token';
-// Search path includes the catalog id (from the Dev Dashboard catalog you created):
-//   GET https://discover.shopifyapps.com/global/v2/search/{CATALOG_ID}?q=...&limit=...
-const SEARCH_BASE = process.env.UCP_SEARCH_URL || 'https://discover.shopifyapps.com/global/v2/search';
+// Global Catalog MCP (JSON-RPC) — from the Dev Dashboard sample:
+//   POST https://discover.shopifyapps.com/global/mcp
+//   tools/call -> search_global_products { query, context, limit, saved_catalog }
+const MCP_URL = process.env.UCP_MCP_URL || 'https://discover.shopifyapps.com/global/mcp';
 const CATALOG_ID = process.env.UCP_CATALOG_ID || '';
 
 function publicBase() {
@@ -58,18 +59,38 @@ async function getToken() {
   return _token;
 }
 
-/** Cross-merchant product search (global catalog) via the REST discover API. */
+let _rpcId = 0;
+
+/** Cross-merchant product search (global catalog) via the Global Catalog MCP. */
 async function searchCatalog(query, { country = 'US', limit = 12 } = {}) {
   if (!isConfigured()) return [];
   const token = await getToken();
   const catalogId = process.env.UCP_CATALOG_ID || CATALOG_ID;
-  const { data } = await axios.get(`${SEARCH_BASE}/${catalogId}`, {
-    params: { q: query, query, limit },
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-    timeout: 25000,
-  });
-  // Response shape TBD from a live call — handle the common envelopes.
-  const results = data?.results || data?.products || data?.data || (Array.isArray(data) ? data : []);
+  const { data } = await axios.post(
+    MCP_URL,
+    {
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      id: ++_rpcId,
+      params: {
+        name: 'search_global_products',
+        arguments: { query, context: '', limit, saved_catalog: catalogId },
+      },
+    },
+    {
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: `Bearer ${token}` },
+      timeout: 25000,
+    }
+  );
+  if (data.error) throw new Error('UCP MCP error: ' + JSON.stringify(data.error).slice(0, 300));
+  // MCP tool result: result.content[] blocks (text or json). Extract the payload.
+  let payload = data.result?.structuredContent || data.result;
+  const blocks = data.result?.content || [];
+  for (const b of blocks) {
+    if (b.type === 'json' && b.json) { payload = b.json; break; }
+    if (b.type === 'text' && b.text) { try { payload = JSON.parse(b.text); break; } catch { /* keep */ } }
+  }
+  const results = payload?.results || payload?.products || payload?.data || (Array.isArray(payload) ? payload : []);
   const out = [];
   for (const r of results) {
     // Results may cluster by UPID with offers from multiple merchants.
