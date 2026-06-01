@@ -183,10 +183,33 @@ async function diagnose(query = 'aloha protein bars') {
       body: typeof err.response?.data === 'object' ? JSON.stringify(err.response.data).slice(0, 400) : String(err.response?.data || '').slice(0, 400),
     };
   }
-  // Stage 2: MCP search
+  // Stage 2: MCP search — issue the raw JSON-RPC call so we can see the exact
+  // response shape when the parser extracts nothing.
   try {
+    const catalogId = process.env.UCP_CATALOG_ID || CATALOG_ID;
+    const { data: raw } = await axios.post(
+      MCP_URL,
+      {
+        jsonrpc: '2.0', method: 'tools/call', id: ++_rpcId,
+        params: { name: 'search_global_products', arguments: { query, context: '', limit: 5, saved_catalog: catalogId } },
+      },
+      { headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: `Bearer ${token}` }, timeout: 25000 }
+    );
     const results = await searchCatalog(query, { limit: 5 });
-    return { ok: true, stage: 'search', env, tokenPreview: `${String(token).slice(0, 8)}…`, count: results.length, sample: results.slice(0, 2) };
+    // Describe the raw shape so we can fix the parser without leaking everything.
+    const blocks = raw?.result?.content || [];
+    const rawStr = JSON.stringify(raw);
+    return {
+      ok: true, stage: 'search', env,
+      tokenPreview: `${String(token).slice(0, 8)}…`,
+      parsedCount: results.length,
+      sample: results.slice(0, 2),
+      rawError: raw?.error || null,
+      rawResultKeys: raw?.result ? Object.keys(raw.result) : null,
+      rawBlockTypes: blocks.map((b) => b.type),
+      rawLen: rawStr.length,
+      raw: rawStr.slice(0, 2500), // first chunk of the actual MCP response
+    };
   } catch (err) {
     return {
       ok: false, stage: 'search', env,
