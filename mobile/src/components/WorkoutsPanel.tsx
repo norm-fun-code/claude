@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { getColors, spacing, radius } from '../theme';
-import { API_BASE, authHeaders } from '../config';
+import { API_BASE, authHeaders, fetchWithTimeout } from '../config';
 import {
   getTodaysWorkout,
   HRV_ZONES,
@@ -1044,6 +1044,7 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
     noLateTraining: false,
   });
   const [weeklyCompleted, setWeeklyCompleted] = useState<Record<string, boolean>>({});
+  const [saveFailed, setSaveFailed] = useState(false);
 
   const todayKey = getDateKey(todayDayIndex);
   const selectedKey = getDateKey(selectedDayIndex);
@@ -1054,7 +1055,7 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/habits/today`, { headers: authHeaders() });
+        const res = await fetchWithTimeout(`${API_BASE}/api/habits/today`, { headers: authHeaders() });
         if (!res.ok) return;
         const t = await res.json();
         if (cancelled || !t?.logged) return;
@@ -1072,8 +1073,8 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/workout/checks?date=${selectedKey}`, { headers: authHeaders() });
-        if (!res.ok) return;
+        const res = await fetchWithTimeout(`${API_BASE}/api/workout/checks?date=${selectedKey}`, { headers: authHeaders() });
+        if (cancelled || !res.ok) return;
         const { checks } = await res.json();
         if (cancelled || !checks) return;
         const ex = new Set<string>();
@@ -1085,19 +1086,28 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
         setCompletedExercises(ex);
         setNonNegotiables(nn);
       } catch {
-        /* offline — leave blank */
+        /* offline — keep whatever's shown */
       }
     })();
     return () => { cancelled = true; };
   }, [selectedKey]);
 
-  // Persist a single check for the selected day (fire-and-forget).
-  function saveCheck(itemKey: string, itemType: 'exercise' | 'non_negotiable', done: boolean) {
-    fetch(`${API_BASE}/api/workout/checks`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ date: selectedKey, itemKey, itemType, done }),
-    }).catch(() => {/* offline — re-saves on next toggle */});
+  // Persist a single check for the selected day. On failure we surface it and
+  // roll the checkbox back, so the UI never claims something was saved when it
+  // wasn't (which would then "vanish" on the next rehydrate).
+  async function saveCheck(itemKey: string, itemType: 'exercise' | 'non_negotiable', done: boolean, rollback: () => void) {
+    setSaveFailed(false);
+    try {
+      const res = await fetchWithTimeout(`${API_BASE}/api/workout/checks`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ date: selectedKey, itemKey, itemType, done }),
+      });
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+    } catch {
+      rollback();
+      setSaveFailed(true);
+    }
   }
 
   const isViewingToday = selectedDayIndex === todayDayIndex;
@@ -1118,7 +1128,8 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
       const done = !next.has(name);
       if (done) next.add(name);
       else next.delete(name);
-      saveCheck(name, 'exercise', done); // save every tap
+      // Roll back to the prior set if the save fails.
+      saveCheck(name, 'exercise', done, () => setCompletedExercises(prev));
       return next;
     });
   }
@@ -1135,23 +1146,31 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
   function toggleNonNeg(key: keyof typeof nonNegotiables) {
     setNonNegotiables((prev) => {
       const done = !prev[key];
-      saveCheck(key, 'non_negotiable', done); // save every tap
+      saveCheck(key, 'non_negotiable', done, () => setNonNegotiables(prev));
       return { ...prev, [key]: done };
     });
   }
 
-  function handleMarkDone(dateKey: string) {
+  async function handleMarkDone(dateKey: string) {
     const nextDone = !weeklyCompleted[dateKey];
     setWeeklyCompleted((prev) => ({ ...prev, [dateKey]: nextDone }));
     // Marking *today's* workout complete also logs the Exercise habit (and
     // unchecking clears it), so the Today tab and Insights stay in sync. Other
     // days are local-only — we can't backfill a habit for a past/future date here.
     if (dateKey === todayKey) {
-      fetch(`${API_BASE}/api/habits`, {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ exercise: nextDone }),
-      }).catch(() => {/* offline — habit save will retry on next toggle */});
+      setSaveFailed(false);
+      try {
+        const res = await fetchWithTimeout(`${API_BASE}/api/habits`, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ exercise: nextDone }),
+        });
+        if (!res.ok) throw new Error(`Server ${res.status}`);
+      } catch {
+        // Roll back so the button doesn't claim a completion that wasn't saved.
+        setWeeklyCompleted((prev) => ({ ...prev, [dateKey]: !nextDone }));
+        setSaveFailed(true);
+      }
     }
   }
 
@@ -1189,6 +1208,10 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
         </Text>
       </TouchableOpacity>
 
+      {saveFailed && (
+        <Text style={markDoneStyles.failed}>Couldn’t save — check your connection and try again.</Text>
+      )}
+
       {renderWorkoutContent(
         workout,
         zone,
@@ -1222,5 +1245,11 @@ const markDoneStyles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '500',
+  },
+  failed: {
+    fontSize: 12,
+    color: '#C0392B',
+    textAlign: 'center',
+    marginBottom: spacing.md,
   },
 });

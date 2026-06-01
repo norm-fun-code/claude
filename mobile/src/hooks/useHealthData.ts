@@ -89,6 +89,30 @@ function getSleepScore(
   return Math.round((durationPart * 0.5 + deepPart * 0.25 + remPart * 0.25) * 100);
 }
 
+// Total hours covered by a set of time intervals, merging overlaps so two
+// sources recording the same night (e.g. Eight Sleep + Apple Watch) don't
+// double-count and inflate the total. Each sample needs startDate/endDate.
+function mergedHours(samples: { startDate: string; endDate: string }[]): number {
+  const spans = samples
+    .map((s) => [new Date(s.startDate).getTime(), new Date(s.endDate).getTime()])
+    .filter(([a, b]) => b > a)
+    .sort((x, y) => x[0] - y[0]);
+  let total = 0;
+  let curStart = -1;
+  let curEnd = -1;
+  for (const [a, b] of spans) {
+    if (a > curEnd) {
+      if (curEnd > curStart) total += curEnd - curStart;
+      curStart = a;
+      curEnd = b;
+    } else if (b > curEnd) {
+      curEnd = b;
+    }
+  }
+  if (curEnd > curStart) total += curEnd - curStart;
+  return total / (1000 * 60 * 60);
+}
+
 function getStartOfDay(): Date {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
@@ -221,10 +245,6 @@ export function useHealthData(): HealthData & { refetch: () => void } {
         },
         (err, results: HealthValue[]) => {
           if (!err && results && results.length > 0) {
-            const hoursOf = (s: any) => {
-              const ms = new Date(s.endDate).getTime() - new Date(s.startDate).getTime();
-              return Math.max(0, ms) / (1000 * 60 * 60);
-            };
             const isStage = (v: string, ...names: string[]) =>
               names.some((n) => v === n || v === `ASLEEP${n}` || v === `SLEEP_${n}`);
             // Any genuine asleep stage (exclude INBED / AWAKE) for the total.
@@ -233,12 +253,13 @@ export function useHealthData(): HealthData & { refetch: () => void } {
             );
             if (asleep.length > 0) {
               const round1 = (h: number) => Math.round(h * 10) / 10;
-              sleepHours = round1(asleep.reduce((sum, s) => sum + hoursOf(s), 0));
+              // Merge overlapping intervals so multiple sources don't double-count.
+              sleepHours = round1(mergedHours(asleep as any));
               const deep = asleep.filter((s: any) => isStage(s.value, 'DEEP'));
               const rem = asleep.filter((s: any) => isStage(s.value, 'REM'));
               // Only set stage totals if the source actually reports them.
-              if (deep.length) deepSleepHours = round1(deep.reduce((sum, s) => sum + hoursOf(s), 0));
-              if (rem.length) remSleepHours = round1(rem.reduce((sum, s) => sum + hoursOf(s), 0));
+              if (deep.length) deepSleepHours = round1(mergedHours(deep as any));
+              if (rem.length) remSleepHours = round1(mergedHours(rem as any));
             }
           }
           checkDone();

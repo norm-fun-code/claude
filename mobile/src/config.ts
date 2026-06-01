@@ -23,3 +23,23 @@ export function authHeaders(): Record<string, string> {
   if (API_TOKEN) h.Authorization = `Bearer ${API_TOKEN}`;
   return h;
 }
+
+/**
+ * fetch() with a hard timeout (default 20s) so a stalled request can't hang a
+ * spinner forever — important since the app is meant to work off-WiFi/unplugged.
+ * Throws on timeout (AbortError) just like a network failure, so callers' catch
+ * blocks handle it uniformly.
+ */
+export async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs = 20000
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
