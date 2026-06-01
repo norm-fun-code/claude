@@ -10,6 +10,7 @@ const stats = require('./stats');
 const cat = require('./catalog');
 const { rankActions } = require('./leverage');
 const { computeForecasts } = require('./forecast');
+const { computeHealthComposites } = require('./recovery');
 
 const DEFAULTS = {
   loadDays: 60, // history window pulled from the spine
@@ -252,6 +253,7 @@ async function analyze(opts = {}) {
   const trends = computeTrends(seriesByKey, o);
   const correlations = computeCorrelations(seriesByKey, o);
   const anomalies = computeAnomalies(seriesByKey, o);
+  const composites = computeHealthComposites(seriesByKey, o);
 
   // Rank the highest-leverage actions from the findings + any off-track goals.
   const latestByKey = {};
@@ -270,17 +272,18 @@ async function analyze(opts = {}) {
   // Goal achievement-probability forecasts from the same loaded series.
   const forecasts = computeForecasts(goals, seriesByKey);
 
-  const all = [...trends, ...correlations, ...anomalies, ...actions, ...forecasts];
+  const all = [...trends, ...correlations, ...anomalies, ...composites, ...actions, ...forecasts];
   const windowStart = from;
   const windowEnd = new Date();
 
   // Supersede old findings and write the new set atomically, so a mid-run
   // failure can't leave the user with everything superseded and only a partial
   // set re-created (which the dashboard reads as 'open').
+  const COMPOSITE_TYPES = ['recovery', 'sleep_debt', 'sleep_consistency', 'training_load'];
   const { withTransaction } = require('../db');
   await withTransaction(async (client) => {
     const tx = (text, params) => client.query(text, params);
-    await findingsStore.supersedeAuto(['trend', 'correlation', 'anomaly', 'leverage', 'forecast'], tx);
+    await findingsStore.supersedeAuto(['trend', 'correlation', 'anomaly', 'leverage', 'forecast', ...COMPOSITE_TYPES], tx);
     for (const f of all) {
       await findingsStore.createFinding({ ...f, windowStart, windowEnd }, tx);
     }
@@ -291,6 +294,7 @@ async function analyze(opts = {}) {
     trends: trends.length,
     correlations: correlations.length,
     anomalies: anomalies.length,
+    composites: composites.length,
     actions: actions.length,
     forecasts: forecasts.length,
   };

@@ -125,6 +125,20 @@ export interface Alert {
   message: string;
 }
 
+export interface Recovery {
+  score: number | null;
+  band: 'green' | 'yellow' | 'red' | null;
+  parts: Record<string, number>;
+  detail: string | null;
+}
+
+export interface HealthComposite {
+  type: string;
+  title: string;
+  detail: string | null;
+  evidence?: Record<string, unknown>;
+}
+
 export interface BriefingData {
   date: string;
   weather: Weather | null;
@@ -142,6 +156,8 @@ export interface BriefingData {
   insights: Insight[];
   wealthInsights?: Insight[];
   healthInsights?: Insight[];
+  recovery?: Recovery | null;
+  healthComposites?: HealthComposite[];
   forecasts: Forecast[];
   relevantHighlight: RelevantHighlight | null;
   weeklyReview: WeeklyReview | null;

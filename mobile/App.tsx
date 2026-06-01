@@ -32,6 +32,7 @@ import { ChatCard } from './src/components/ChatCard';
 import { CheckinCard } from './src/components/CheckinCard';
 import { HabitsCard } from './src/components/HabitsCard';
 import { HealthCard } from './src/components/HealthCard';
+import { RecoveryCard } from './src/components/RecoveryCard';
 import { WeatherCard } from './src/components/WeatherCard';
 import { WorkoutsPanel } from './src/components/WorkoutsPanel';
 import { CalendarCard } from './src/components/CalendarCard';
@@ -74,6 +75,7 @@ export default function App() {
       case 'health':
         return (
           <>
+            <RecoveryCard recovery={d?.recovery} composites={d?.healthComposites ?? []} />
             <HealthCard health={health} />
             {d?.healthInsights && d.healthInsights.length > 0 ? (
               <InsightsCard insights={d.healthInsights} />

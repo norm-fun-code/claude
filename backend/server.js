@@ -750,6 +750,8 @@ app.get('/api/briefing', async (req, res) => {
   let healthInsights = [];
   let leverageActions = [];
   let forecasts = [];
+  let recovery = null;
+  let healthComposites = [];
   try {
     const open = await findingsStore.listFindings({ status: 'open' });
     leverageActions = open
@@ -768,9 +770,29 @@ app.get('/api/briefing', async (req, res) => {
         status: f.evidence?.status ?? null,
       }));
 
+    // Live health composites (recovery/sleep-debt/etc.) are current status, not
+    // rotating insights — pull them out so they're shown fresh every day and
+    // surface the recovery score as its own headline field.
+    const COMPOSITE_TYPES = ['recovery', 'sleep_debt', 'sleep_consistency', 'training_load'];
+    const recoveryFinding = open.find((f) => f.type === 'recovery');
+    if (recoveryFinding) {
+      recovery = {
+        score: recoveryFinding.evidence?.score ?? null,
+        band: recoveryFinding.evidence?.band ?? null,
+        parts: recoveryFinding.evidence?.parts ?? {},
+        detail: recoveryFinding.detail,
+      };
+    }
+    healthComposites = open
+      .filter((f) => COMPOSITE_TYPES.includes(f.type) && f.type !== 'recovery')
+      .map((f) => ({ type: f.type, title: f.title, detail: f.detail, evidence: f.evidence }));
+
     // Insights rotate: prefer ones not shown in the last 30 days so the card
-    // stays fresh, falling back to the rest if you've seen them all.
-    const insightPool = open.filter((f) => f.type !== 'leverage' && f.type !== 'forecast');
+    // stays fresh, falling back to the rest if you've seen them all. Composites
+    // are excluded (shown live above).
+    const insightPool = open.filter(
+      (f) => f.type !== 'leverage' && f.type !== 'forecast' && !COMPOSITE_TYPES.includes(f.type)
+    );
     const seenInsights = await surfacedStore.recentRefs('insight', 30);
     const chosen = surfacedStore.pickFresh(insightPool, seenInsights, { max: 6, keyFn: (f) => f.title });
     insights = chosen.map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains }));
@@ -898,6 +920,8 @@ app.get('/api/briefing', async (req, res) => {
     insights,
     wealthInsights,
     healthInsights,
+    recovery,
+    healthComposites,
     forecasts,
     relevantHighlight: keep(p?.relevantHighlight, relevantHighlight),
     weeklyReview,
