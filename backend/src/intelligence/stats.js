@@ -57,28 +57,70 @@ function linregSlope(values) {
  * forecast's uncertainty.
  */
 function linearFit(values) {
-  const n = values.length;
+  if (!values || values.length < 2) return null;
+  // Fit against the index 0..n-1 (per-step). Delegates to linearFitXY so the
+  // result carries sxx/mx for prediction intervals, same as fitByDay.
+  return linearFitXY(values.map((_, i) => i), values);
+}
+
+/**
+ * Least-squares fit of ys against arbitrary xs (e.g. day offsets). Returns
+ * { slope, intercept, residualStd, n, sxx, mx } so callers can build a proper
+ * prediction interval. slope is in "y per unit x".
+ */
+function linearFitXY(xs, ys) {
+  const n = Math.min(xs.length, ys.length);
   if (n < 2) return null;
-  const xs = values.map((_, i) => i);
-  const mx = mean(xs);
-  const my = mean(values);
+  const mx = mean(xs.slice(0, n));
+  const my = mean(ys.slice(0, n));
   let num = 0;
-  let den = 0;
+  let sxx = 0;
   for (let i = 0; i < n; i++) {
-    num += (xs[i] - mx) * (values[i] - my);
-    den += (xs[i] - mx) ** 2;
+    num += (xs[i] - mx) * (ys[i] - my);
+    sxx += (xs[i] - mx) ** 2;
   }
-  if (den === 0) return null;
-  const slope = num / den;
+  if (sxx === 0) return null;
+  const slope = num / sxx;
   const intercept = my - slope * mx;
-  // Residual standard deviation (n-2 dof for a fitted line).
   let ss = 0;
   for (let i = 0; i < n; i++) {
     const pred = intercept + slope * xs[i];
-    ss += (values[i] - pred) ** 2;
+    ss += (ys[i] - pred) ** 2;
   }
   const residualStd = n > 2 ? Math.sqrt(ss / (n - 2)) : 0;
-  return { slope, intercept, residualStd, n };
+  return { slope, intercept, residualStd, n, sxx, mx };
+}
+
+/**
+ * Fit a daily series [{ day, value }] against REAL day offsets from the first
+ * point, so slope is per-CALENDAR-DAY (not per-present-sample). This is the
+ * correct basis for trends/forecasts on metrics that aren't logged every day.
+ * Returns the linearFitXY result plus { spanDays, lastX }.
+ */
+function fitByDay(series) {
+  const pts = (series || [])
+    .map((p) => ({ t: new Date(p.day).getTime(), v: Number(p.value) }))
+    .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.v))
+    .sort((a, b) => a.t - b.t);
+  if (pts.length < 2) return null;
+  const t0 = pts[0].t;
+  const xs = pts.map((p) => (p.t - t0) / 864e5); // day offsets
+  const ys = pts.map((p) => p.v);
+  const fit = linearFitXY(xs, ys);
+  if (!fit) return null;
+  return { ...fit, spanDays: xs[xs.length - 1], lastX: xs[xs.length - 1] };
+}
+
+/**
+ * 1-sigma prediction interval half-width for an OLS extrapolation to x0, the
+ * statistically correct horizon uncertainty:
+ *   se = residualStd · √(1 + 1/n + (x0 − mx)² / sxx)
+ * (Replaces the dimensionally-wrong residualStd·√horizon random-walk guess.)
+ */
+function predictionSE(fit, x0) {
+  if (!fit || fit.residualStd == null || fit.sxx === 0) return null;
+  const { residualStd, n, sxx, mx } = fit;
+  return residualStd * Math.sqrt(1 + 1 / n + ((x0 - mx) ** 2) / sxx);
 }
 
 /**
@@ -223,6 +265,9 @@ module.exports = {
   baselineAnomaly,
   linregSlope,
   linearFit,
+  linearFitXY,
+  fitByDay,
+  predictionSE,
   normalCdf,
   alignByDay,
   trendStats,

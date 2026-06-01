@@ -65,3 +65,32 @@ test('baselineAnomaly flags deviations from personal norm', () => {
   // Too little history → null.
   assert.equal(stats.baselineAnomaly(series.slice(0, 5)), null);
 });
+
+test('fitByDay gives a true per-day slope on irregularly-sampled data', () => {
+  // Rising exactly 2/day, logged with gaps (days 0, 2, 7, 14).
+  const series = [
+    { day: '2026-05-01', value: 100 },
+    { day: '2026-05-03', value: 104 },
+    { day: '2026-05-08', value: 114 },
+    { day: '2026-05-15', value: 128 },
+  ];
+  const f = stats.fitByDay(series);
+  assert.ok(Math.abs(f.slope - 2) < 1e-6, `per-day slope should be 2, got ${f.slope}`);
+  assert.equal(f.spanDays, 14);
+  // Index-fit would be wrong (per-sample, ignores the gaps).
+  assert.ok(Math.abs(stats.linearFit(series.map((p) => p.value)).slope - 2) > 1, 'index-fit should differ');
+});
+
+test('predictionSE grows with horizon distance from the data', () => {
+  const series = [
+    { day: '2026-05-01', value: 100 },
+    { day: '2026-05-05', value: 108 },
+    { day: '2026-05-09', value: 121 },
+    { day: '2026-05-13', value: 130 },
+    { day: '2026-05-17', value: 145 },
+  ];
+  const f = stats.fitByDay(series);
+  const near = stats.predictionSE(f, f.lastX + 5);
+  const far = stats.predictionSE(f, f.lastX + 90);
+  assert.ok(far > near, 'uncertainty should widen further out');
+});

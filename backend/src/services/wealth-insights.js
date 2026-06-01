@@ -134,13 +134,12 @@ async function buildWealthInsights() {
   try {
     const from = new Date(Date.now() - 120 * 864e5);
     const nw = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'net_worth', from, agg: 'avg' });
-    const vals = nw.map((r) => Number(r.value)).filter(Number.isFinite);
-    if (vals.length >= 8) {
-      const fit = stats.linearFit(vals);
-      const current = vals[vals.length - 1];
-      // Slope is per present-sample; approximate samples→days via the date span.
-      const spanDays = Math.max(1, (new Date(nw[nw.length - 1].day) - new Date(nw[0].day)) / 864e5);
-      const perDay = fit && fit.slope != null ? (fit.slope * (vals.length - 1)) / spanDays : 0;
+    const series = nw.map((r) => ({ day: r.day, value: Number(r.value) })).filter((p) => Number.isFinite(p.value));
+    if (series.length >= 8) {
+      // Fit against real calendar days → a true per-day slope.
+      const fit = stats.fitByDay(series);
+      const current = series[series.length - 1].value;
+      const perDay = fit && fit.slope != null ? fit.slope : 0;
       const daysToYearEnd = Math.max(0, (new Date(new Date().getFullYear(), 11, 31) - new Date()) / 864e5);
       const projected = current + perDay * daysToYearEnd;
       const monthlyChange = perDay * 30;
