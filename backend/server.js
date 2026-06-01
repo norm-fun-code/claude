@@ -36,6 +36,7 @@ const nudgesStore = require('./src/store/nudges');
 const { runNudges } = require('./src/notify/run');
 const surfacedStore = require('./src/store/surfaced');
 const briefingsStore = require('./src/store/briefings');
+const workoutChecks = require('./src/store/workoutChecks');
 const { runReview } = require('./src/intelligence/review');
 
 const app = express();
@@ -175,6 +176,30 @@ app.get('/api/habits/today', async (req, res) => {
       exercise: v.exercise === 1,
       eatHealthy: Number.isFinite(v.eat_healthy) ? v.eat_healthy : null,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Per-exercise / non-negotiable workout checkmarks. Like the check-in, each tap
+// saves immediately and the app rehydrates the day's checks on mount. The client
+// owns the local date (?date=YYYY-MM-DD, ET) so it matches the workout strip.
+app.get('/api/workout/checks', async (req, res) => {
+  try {
+    const date = req.query.date;
+    if (!date) return res.status(400).json({ error: 'date (YYYY-MM-DD) is required' });
+    res.json({ date, checks: await workoutChecks.getChecks(date) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/workout/checks', async (req, res) => {
+  try {
+    const { date, itemKey, itemType, done } = req.body || {};
+    if (!date || !itemKey) return res.status(400).json({ error: 'date and itemKey are required' });
+    await workoutChecks.setCheck({ date, itemKey, itemType, done: done !== false });
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
