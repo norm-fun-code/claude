@@ -8,6 +8,7 @@ const cat = require('./catalog');
 const metricsStore = require('../store/metrics');
 const findingsStore = require('../store/findings');
 const annotationsStore = require('../store/annotations');
+const intentionsStore = require('../store/intentions');
 const briefingsStore = require('../store/briefings');
 const { extractJson } = require('../services/briefing-ai');
 
@@ -70,6 +71,7 @@ async function gatherWeek(asOf = new Date()) {
       .sort((x, y) => (x.evidence?.rank ?? 9) - (y.evidence?.rank ?? 9))
       .slice(0, 5),
     annotations: await annotationsStore.listAnnotations({ from: periodStart, limit: 20 }),
+    intentions: await intentionsStore.recentIntentions({ days: 14 }).catch(() => []),
   };
 }
 
@@ -87,6 +89,14 @@ function composeReview(ctx) {
   const fc = ctx.forecasts.map((f) => `- ${f.title}`).join('\n') || '- none';
   const lev = ctx.leverage.map((f, i) => `${i + 1}. ${f.title}`).join('\n') || '- none';
   const ann = ctx.annotations.map((a) => `- ${a.category}: ${a.label}`).join('\n') || '- none logged';
+  const intentions = (ctx.intentions || [])
+    .map((it) => {
+      const g = Array.isArray(it.goals) && it.goals.length ? ` Focus goals: ${it.goals.join('; ')}.` : '';
+      const c = it.context ? ` Context: ${it.context}` : '';
+      return `-${g}${c}`.trim();
+    })
+    .filter((s) => s !== '-')
+    .join('\n') || '- none set';
 
   const prompt = `Week of ${ctx.periodStart.toISOString().slice(0, 10)} to ${ctx.periodEnd.toISOString().slice(0, 10)}.
 
@@ -102,7 +112,10 @@ ${fc}
 HIGHEST-LEVERAGE ACTIONS RIGHT NOW:
 ${lev}
 
-LIFE CONTEXT THIS WEEK:
+THEIR STATED FOCUS & LIFE CONTEXT (from the weekly Sunday check-in — use this to judge whether the week matched their intentions):
+${intentions}
+
+LIFE CONTEXT (annotations) THIS WEEK:
 ${ann}
 
 Write the weekly review as JSON with EXACTLY:

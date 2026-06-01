@@ -38,6 +38,7 @@ const { runNudges } = require('./src/notify/run');
 const surfacedStore = require('./src/store/surfaced');
 const briefingsStore = require('./src/store/briefings');
 const workoutChecks = require('./src/store/workoutChecks');
+const intentionsStore = require('./src/store/intentions');
 const { runReview } = require('./src/intelligence/review');
 
 const app = express();
@@ -210,6 +211,26 @@ app.post('/api/workout/checks', async (req, res) => {
     if (!date || !itemKey) return res.status(400).json({ error: 'date and itemKey are required' });
     await workoutChecks.setCheck({ date, itemKey, itemType, done: done !== false });
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Weekly intentions — the Sunday check-in (life context + focus goals). GET
+// returns the current week's entry (so the Today card can pre-fill / know if
+// it's been set); POST upserts it.
+app.get('/api/intentions/current', async (req, res) => {
+  try {
+    res.json({ weekStart: intentionsStore.weekStart(), intention: await intentionsStore.currentIntention() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/intentions', async (req, res) => {
+  try {
+    const { context, goals } = req.body || {};
+    res.json({ intention: await intentionsStore.saveIntention({ context, goals }) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

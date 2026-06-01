@@ -30,6 +30,7 @@ import { WealthCard } from './src/components/WealthCard';
 import { InsightsCard } from './src/components/InsightsCard';
 import { ChatCard } from './src/components/ChatCard';
 import { CheckinCard } from './src/components/CheckinCard';
+import { WeeklyIntentionsCard } from './src/components/WeeklyIntentionsCard';
 import { HabitsCard } from './src/components/HabitsCard';
 import { HealthCard } from './src/components/HealthCard';
 import { RecoveryCard } from './src/components/RecoveryCard';
@@ -125,6 +126,7 @@ export default function App() {
         return (
           <>
             {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
+            <WeeklyIntentionsCard />
             <WeatherCard weather={d?.weather ?? null} />
             {d && d.calendar.length > 0 && <CalendarCard events={d.calendar} />}
             {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}

@@ -32,8 +32,9 @@ test('composeReview tolerates an empty week', () => {
   const { prompt } = composeReview({
     periodStart: new Date('2026-05-23T00:00:00Z'),
     periodEnd: new Date('2026-05-30T00:00:00Z'),
-    metrics: [], correlations: [], forecasts: [], leverage: [], annotations: [],
+    metrics: [], correlations: [], forecasts: [], leverage: [], annotations: [], intentions: [],
   });
   assert.match(prompt, /not enough data/i);
   assert.match(prompt, /none confirmed/i);
+  assert.match(prompt, /none set/i); // intentions section present even when empty
 });
