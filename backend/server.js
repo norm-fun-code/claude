@@ -380,6 +380,16 @@ app.get('/api/shop/ucp-probe', async (req, res) => {
   }
 });
 
+// Diagnostic: walk the UCP HTTP flow (config → token → search) and surface the
+// REAL error at whichever stage fails, instead of discover's silent fallback.
+app.get('/api/shop/ucp-diagnose', async (req, res) => {
+  try {
+    res.json(await ucp.diagnose(req.query.q || 'aloha protein bars'));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Life chat — ask questions across your data + library.
 app.post('/api/chat', async (req, res) => {
   try {
