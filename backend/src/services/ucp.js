@@ -18,7 +18,10 @@ const axios = require('axios');
 //   token:  POST https://api.shopify.com/auth/access_token  (client_credentials)
 //   search: GET  https://discover.shopifyapps.com/global/v2/... (Bearer token)
 const TOKEN_URL = process.env.UCP_TOKEN_URL || 'https://api.shopify.com/auth/access_token';
-const SEARCH_URL = process.env.UCP_SEARCH_URL || 'https://discover.shopifyapps.com/global/v2/search';
+// Search path includes the catalog id (from the Dev Dashboard catalog you created):
+//   GET https://discover.shopifyapps.com/global/v2/search/{CATALOG_ID}?q=...&limit=...
+const SEARCH_BASE = process.env.UCP_SEARCH_URL || 'https://discover.shopifyapps.com/global/v2/search';
+const CATALOG_ID = process.env.UCP_CATALOG_ID || '';
 
 function publicBase() {
   // The HTTPS origin Railway serves us on — where our agent profile lives.
@@ -29,7 +32,7 @@ function agentProfileUrl() {
 }
 
 function isConfigured() {
-  return !!(process.env.UCP_CLIENT_ID && process.env.UCP_CLIENT_SECRET);
+  return !!(process.env.UCP_CLIENT_ID && process.env.UCP_CLIENT_SECRET && (process.env.UCP_CATALOG_ID || CATALOG_ID));
 }
 
 // --- token cache ------------------------------------------------------------
@@ -59,8 +62,9 @@ async function getToken() {
 async function searchCatalog(query, { country = 'US', limit = 12 } = {}) {
   if (!isConfigured()) return [];
   const token = await getToken();
-  const { data } = await axios.get(SEARCH_URL, {
-    params: { q: query, query, limit, country },
+  const catalogId = process.env.UCP_CATALOG_ID || CATALOG_ID;
+  const { data } = await axios.get(`${SEARCH_BASE}/${catalogId}`, {
+    params: { q: query, query, limit },
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
     timeout: 25000,
   });
