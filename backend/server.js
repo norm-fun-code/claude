@@ -74,6 +74,31 @@ app.use('/api', (req, res, next) => {
   return res.status(401).json({ error: 'unauthorized' });
 });
 
+// Recompute today's habit_score (0-100) from whatever binary habits are logged
+// for today, so a partial save can't leave the composite disagreeing with its
+// components. Best-effort; never throws into the request path.
+const BINARY_HABITS = ['morning_tm', 'afternoon_tm', 'gratitude', 'cold_shower', 'exercise'];
+async function recomputeHabitScore(tz) {
+  try {
+    const { rows } = await db.query(
+      `SELECT metric, value FROM metrics
+        WHERE domain = 'habits' AND source = 'habits'
+          AND metric = ANY($1)
+          AND (ts AT TIME ZONE $2)::date = (now() AT TIME ZONE $2)::date`,
+      [BINARY_HABITS, tz]
+    );
+    if (!rows.length) return;
+    const done = rows.reduce((s, r) => s + (Number(r.value) ? 1 : 0), 0);
+    const score = Math.round((done / rows.length) * 100);
+    const when = require('./src/util/date').dayAnchorTs(tz);
+    await metricsStore.insertMetrics([
+      { ts: when, domain: 'habits', metric: 'habit_score', value: score, unit: 'percent', source: 'habits' },
+    ]);
+  } catch (err) {
+    console.error('[habit_score] recompute failed:', err.message);
+  }
+}
+
 // Public UCP agent profile — Shopify's Global Catalog fetches this (no auth) to
 // negotiate capabilities. Lives outside /api so the bearer gate doesn't block it.
 app.get('/.well-known/ucp-agent', (req, res) => {
@@ -164,6 +189,10 @@ app.post('/api/habits', async (req, res) => {
     const tz = process.env.TZ || 'America/New_York';
     const { metrics } = mapHabits(req.body, { ts: req.query.ts, tz });
     const written = await metricsStore.insertMetrics(metrics);
+    // Recompute habit_score from ALL of today's persisted binary habits, so a
+    // partial save (e.g. the workout panel toggling just `exercise`) keeps the
+    // composite consistent with its components instead of leaving it stale.
+    await recomputeHabitScore(tz);
     await sourcesStore.markSync(HABITS_SOURCE);
     res.json({ written });
   } catch (err) {

@@ -38,18 +38,12 @@ function mapHabits(body = {}, { ts, tz = 'UTC' } = {}) {
     metrics.push({ ts: when, domain: DOMAIN, metric: 'eat_healthy', value: eat, unit: 'score', source: SOURCE });
   }
 
-  // Composite completion (0–100). Only recompute it on a FULL submission (all
-  // binary habits present, i.e. the Habit Stack card) — a partial save like the
-  // workout panel's single `exercise` toggle must not clobber the real composite
-  // with a 1-of-1 score. Partial saves still upsert their own habit metric.
-  if (count === Object.keys(BINARY).length) {
-    metrics.push({
-      ts: when, domain: DOMAIN, metric: 'habit_score',
-      value: Math.round((done / count) * 100), unit: 'percent', source: SOURCE,
-    });
-  }
+  // Note: habit_score (the 0–100 composite) is NOT computed here. The /api/habits
+  // route recomputes it from ALL of today's persisted binary habits after the
+  // insert, so partial saves (e.g. the workout panel toggling just `exercise`)
+  // and full submissions both yield a correct, consistent composite.
 
-  return { metrics };
+  return { metrics, count, done };
 }
 
 module.exports = { mapHabits, SOURCE, DOMAIN };
