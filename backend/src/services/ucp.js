@@ -14,8 +14,11 @@
 // Dormant until UCP_CLIENT_ID + UCP_CLIENT_SECRET are set.
 const axios = require('axios');
 
-const MCP_URL = process.env.UCP_MCP_URL || 'https://catalog.shopify.com/api/ucp/mcp';
-const TOKEN_URL = process.env.UCP_TOKEN_URL || 'https://catalog.shopify.com/api/ucp/oauth/token';
+// Real Shopify endpoints (from the Dev Dashboard request sample):
+//   token:  POST https://api.shopify.com/auth/access_token  (client_credentials)
+//   search: GET  https://discover.shopifyapps.com/global/v2/... (Bearer token)
+const TOKEN_URL = process.env.UCP_TOKEN_URL || 'https://api.shopify.com/auth/access_token';
+const SEARCH_URL = process.env.UCP_SEARCH_URL || 'https://discover.shopifyapps.com/global/v2/search';
 
 function publicBase() {
   // The HTTPS origin Railway serves us on — where our agent profile lives.
@@ -52,88 +55,46 @@ async function getToken() {
   return _token;
 }
 
-// --- JSON-RPC over MCP ------------------------------------------------------
-let _rpcId = 0;
-async function mcpCall(method, params = {}) {
-  const token = await getToken();
-  const body = {
-    jsonrpc: '2.0',
-    id: ++_rpcId,
-    method,
-    params: {
-      ...params,
-      _meta: { 'ucp-agent': { profile: agentProfileUrl() } },
-    },
-  };
-  const { data } = await axios.post(MCP_URL, body, {
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    timeout: 25000,
-  });
-  if (data.error) throw new Error('UCP MCP error: ' + JSON.stringify(data.error).slice(0, 300));
-  return data.result;
-}
-
-// MCP "tools/call" wrapper — tools are invoked by name with an arguments object.
-async function callTool(name, args = {}) {
-  const result = await mcpCall('tools/call', { name, arguments: args });
-  // MCP tool results come back as content blocks; pull the JSON/text payload.
-  const blocks = result?.content || [];
-  for (const b of blocks) {
-    if (b.type === 'json' && b.json) return b.json;
-    if (b.type === 'text' && b.text) {
-      try { return JSON.parse(b.text); } catch { /* not json */ }
-    }
-  }
-  return result?.structuredContent || result;
-}
-
-/** Cross-merchant product search (global catalog). Returns normalized items. */
+/** Cross-merchant product search (global catalog) via the REST discover API. */
 async function searchCatalog(query, { country = 'US', limit = 12 } = {}) {
   if (!isConfigured()) return [];
-  const data = await callTool('search_catalog', {
-    query,
-    context: { address_country: country },
+  const token = await getToken();
+  const { data } = await axios.get(SEARCH_URL, {
+    params: { q: query, query, limit, country },
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    timeout: 25000,
   });
-  const results = data?.results || data?.products || [];
+  // Response shape TBD from a live call — handle the common envelopes.
+  const results = data?.results || data?.products || data?.data || (Array.isArray(data) ? data : []);
   const out = [];
   for (const r of results) {
-    // Results cluster by UPID with offers from multiple merchants.
-    const offers = r.offers || (r.offer ? [r.offer] : [{}]);
+    // Results may cluster by UPID with offers from multiple merchants.
+    const offers = r.offers || (r.offer ? [r.offer] : [r]);
     for (const off of offers) {
+      const seller = off.seller?.domain || off.seller?.name || off.shop_domain || r.seller?.domain || r.shop_domain || null;
       out.push({
-        id: off.variant_id || off.offer_id || r.id || r.upid,
-        upid: r.upid || r.id || null,
-        title: r.title || r.name,
+        id: off.variant_id || off.variantId || off.offer_id || off.id || r.id || r.upid,
+        upid: r.upid || r.universal_product_id || r.id || null,
+        title: r.title || r.name || off.title,
         price: off.price || r.price || null,
         extractedPrice: priceNum(off.price || r.price),
-        seller: off.seller?.domain || off.seller?.name || r.seller?.domain || null,
-        business: off.seller?.domain || r.seller?.domain || null, // for cart create
-        url: off.buy_url || off.url || r.url || null,
-        image: r.image || r.images?.[0] || off.image || null,
+        seller,
+        business: seller, // merchant domain, for cart create
+        url: off.buy_url || off.online_store_url || off.url || r.url || null,
+        image: r.image || r.featured_image || r.images?.[0] || off.image || null,
         web: false, // UCP item — cart-able in-app
       });
     }
   }
-  return out.slice(0, limit);
+  return out.filter((x) => x.title && x.id).slice(0, limit);
 }
 
-/** Build a cart on a specific merchant; returns a continue_url for checkout. */
-async function createCart({ business, variantId, quantity = 1 }) {
-  if (!isConfigured()) throw new Error('UCP not configured');
-  const data = await callTool('create_cart', {
-    business,
-    line_items: [{ item: { id: variantId }, quantity }],
-  });
-  return {
-    cartId: data?.id || data?.cart_id || null,
-    continueUrl: data?.continue_url || data?.checkout_url || null,
-    total: data?.total || data?.estimated_total || null,
-    raw: data || null,
-  };
+/** Build a cart on a specific merchant; returns a continue_url for checkout.
+ *  The discover REST API is search-only — cart building is a per-merchant UCP
+ *  step we wire once search is proven. For now, no in-app cart endpoint, so the
+ *  shop layer falls back to opening the product URL. */
+async function createCart() {
+  return { cartId: null, continueUrl: null, total: null, raw: null };
 }
 
 function priceNum(p) {
