@@ -34,7 +34,7 @@ function mapHabits(body = {}, { ts, tz = 'UTC' } = {}) {
   }
 
   const eat = Number(body.eatHealthy);
-  if (Number.isFinite(eat)) {
+  if (Number.isFinite(eat) && eat >= 1 && eat <= 5) {
     metrics.push({ ts: when, domain: DOMAIN, metric: 'eat_healthy', value: eat, unit: 'score', source: SOURCE });
   }
 

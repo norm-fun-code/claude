@@ -791,14 +791,19 @@ app.get('/api/briefing', async (req, res) => {
     const [mood, energy, focus] = await Promise.all([
       avg('wellbeing', 'mood'), avg('wellbeing', 'energy'), avg('wellbeing', 'focus'),
     ]);
-    // Habits trailing completion (which ones are slipping).
-    const habitMetrics = ['gratitude', 'morning_tm', 'afternoon_tm', 'cold_shower', 'exercise', 'eat_healthy'];
+    // Habits trailing completion (which ones are slipping). The five binary
+    // habits are 0/1 (flag <60% adherence); eat_healthy is a 1–5 score, so it
+    // needs its own threshold (flag when averaging below ~3/5) — checking it
+    // against 0.6 like the binaries meant it could never flag.
+    const binaryHabits = ['gratitude', 'morning_tm', 'afternoon_tm', 'cold_shower', 'exercise'];
     const habitLabels = { gratitude: 'gratitude', morning_tm: 'morning meditation', afternoon_tm: 'afternoon meditation', cold_shower: 'cold shower', exercise: 'exercise', eat_healthy: 'eating well' };
     const lagging = [];
-    for (const m of habitMetrics) {
+    for (const m of binaryHabits) {
       const a = await avg('habits', m);
-      if (a != null && a < 0.6) lagging.push(habitLabels[m] || m); // <60% adherence
+      if (a != null && a < 0.6) lagging.push(habitLabels[m]); // <60% adherence
     }
+    const eatAvg = await avg('habits', 'eat_healthy');
+    if (eatAvg != null && eatAvg < 3) lagging.push(habitLabels.eat_healthy); // below ~3/5
     const parts = [];
     const themes = [];
     const lowHL = (v) => (v <= 2.5 ? 'low' : v >= 4 ? 'strong' : 'moderate');
@@ -1026,10 +1031,8 @@ app.get('/api/briefing', async (req, res) => {
 
   // Persist the briefing for history, and capture today's data into the spine.
   // Fire-and-forget: never let persistence failures affect the live response.
-  db.query(
-    `INSERT INTO briefings (kind, content) VALUES ('daily', $1)`,
-    [response]
-  ).catch((err) => console.error('[persist briefing] failed:', err.message));
+  briefingsStore.saveBriefing({ kind: 'daily', content: response })
+    .catch((err) => console.error('[persist briefing] failed:', err.message));
 
   runIngest()
     .then((results) => {
