@@ -26,16 +26,31 @@ function round(n, d = 2) {
 }
 const avg = (arr) => (arr.length ? arr.reduce((s, r) => s + Number(r.value), 0) / arr.length : null);
 const sum = (arr) => (arr.length ? arr.reduce((s, r) => s + Number(r.value), 0) : null);
+const last = (arr) => (arr.length ? Number(arr[arr.length - 1].value) : null);
+
+// Balance-style snapshots where the LATEST value is the meaningful weekly number
+// (a 7-day average of net worth is misleading — you want today's figure, like
+// the Wealth tab shows).
+const LATEST_METRICS = new Set(['net_worth', 'assets', 'liabilities', 'cash', 'investments', 'weight', 'body_fat']);
 
 /**
- * Roll a week's daily-aggregated rows into a single weekly number. Flow metrics
- * (spending, income — anything aggregated by 'sum') roll up as a weekly TOTAL,
- * matching the Wealth tab; stock metrics (mood, HRV, net worth) roll up as a
- * weekly AVERAGE. Averaging a flow was the bug behind the Wealth/Insights
- * spending mismatch ($6,698 total shown as a $224 daily average).
+ * Roll a week's daily-aggregated rows into a single weekly number:
+ *  - Flow metrics (spending/income — aggregated by 'sum'): weekly TOTAL.
+ *  - Snapshot balances (net worth, weight, …): the LATEST value, not an average.
+ *  - Everything else (mood, HRV, sleep, focus): weekly AVERAGE.
+ * Averaging a flow was the old Wealth/Insights spending mismatch; averaging net
+ * worth was similarly misleading.
  */
 function weekly(rows, metric) {
-  return cat.aggFor(metric) === 'sum' ? sum(rows) : avg(rows);
+  if (cat.aggFor(metric) === 'sum') return sum(rows);
+  if (LATEST_METRICS.has(metric)) return last(rows);
+  return avg(rows);
+}
+
+function rollupKind(metric) {
+  if (cat.aggFor(metric) === 'sum') return 'total';
+  if (LATEST_METRICS.has(metric)) return 'latest';
+  return 'avg';
 }
 
 /** Pull the week's numbers (this week vs prior week) + current findings. */
@@ -52,12 +67,14 @@ async function gatherWeek(asOf = new Date()) {
     const a = weekly(cur, metric);
     const b = weekly(prev, metric);
     if (a == null) continue;
+    const kind = rollupKind(metric);
     metrics.push({
       label: cat.label(domain, metric),
       thisWeek: round(a), lastWeek: round(b),
       change: b ? round((a - b) / Math.abs(b), 3) : null,
       goodWhen: cat.goodWhen(domain, metric),
-      isTotal: agg === 'sum', // so the narrative can say "total" vs "average"
+      rollup: kind, // 'total' | 'latest' | 'avg' — how this week's number was derived
+      isTotal: kind === 'total', // back-comp
     });
   }
 
@@ -82,8 +99,9 @@ Voice: a sharp, caring advisor who tells the truth. Return ONLY valid JSON.`;
 /** Pure: assemble the review prompt from gathered context. */
 function composeReview(ctx) {
   const fmtPct = (c) => (c == null ? '' : ` (${c >= 0 ? '+' : ''}${Math.round(c * 100)}% vs last week)`);
+  const KIND_LABEL = { total: ' (weekly total)', latest: ' (current/latest)', avg: ' (weekly avg)' };
   const metricsBlock = ctx.metrics
-    .map((m) => `- ${m.label}: ${m.thisWeek}${m.isTotal ? ' (weekly total)' : ' (weekly avg)'}${fmtPct(m.change)}${m.goodWhen ? ` [better when ${m.goodWhen}]` : ''}`)
+    .map((m) => `- ${m.label}: ${m.thisWeek}${KIND_LABEL[m.rollup] || (m.isTotal ? ' (weekly total)' : ' (weekly avg)')}${fmtPct(m.change)}${m.goodWhen ? ` [better when ${m.goodWhen}]` : ''}`)
     .join('\n') || '- (not enough data this week)';
   const corr = ctx.correlations.map((f) => `- ${f.title}`).join('\n') || '- none confirmed';
   const fc = ctx.forecasts.map((f) => `- ${f.title}`).join('\n') || '- none';
