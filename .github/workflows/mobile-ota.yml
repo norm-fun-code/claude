@@ -1,0 +1,49 @@
+name: Mobile OTA Update
+
+# Auto-publish an over-the-air EAS Update whenever mobile JS/TS lands on main, so
+# app changes reach installed devices without a rebuild or App Store review.
+# Native changes (new modules, permissions, version bumps) still need a full
+# `eas build` — those aren't shippable via OTA and aren't handled here.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/mobile-ota.yml'
+
+# Don't pile up overlapping update publishes; let the latest win.
+concurrency:
+  group: mobile-ota
+  cancel-in-progress: true
+
+jobs:
+  ota:
+    runs-on: ubuntu-latest
+    # Skip entirely if no Expo token is configured, so the repo doesn't fail
+    # for anyone who hasn't set up EAS. (Set EXPO_TOKEN in repo secrets.)
+    if: ${{ github.repository == 'norm-fun-code/claude' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install mobile deps
+        working-directory: mobile
+        run: npm install --no-audit --no-fund
+
+      # Typecheck before publishing — never push a broken bundle to phones.
+      - name: Typecheck
+        working-directory: mobile
+        run: npx tsc --noEmit
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Publish OTA update (production channel)
+        working-directory: mobile
+        run: eas update --branch production --message "${{ github.event.head_commit.message }}" --non-interactive
