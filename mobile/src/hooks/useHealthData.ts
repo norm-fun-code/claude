@@ -29,6 +29,9 @@ export interface HealthData {
   restingHR: number | null;
   sleepHours: number | null;
   sleepQuality: string | null;
+  deepSleepHours: number | null;
+  remSleepHours: number | null;
+  sleepScore: number | null;
   steps: number | null;
   activeCalories: number | null;
   loading: boolean;
@@ -63,6 +66,29 @@ function getSleepQuality(hours: number | null): string | null {
   return 'Poor';
 }
 
+// A source-agnostic sleep score (0–100) computed from the stage data HealthKit
+// exposes — works whether the samples come from Eight Sleep, Apple Watch, etc.
+// (HealthKit doesn't expose a device's own "score" like Eight Sleep's 86; only
+// the underlying stages/durations are queryable, so we compute our own.)
+// Weighting: 50% total duration (vs 8h target), 25% deep (vs 1.5h), 25% REM
+// (vs 1.75h). If stages aren't reported, falls back to scoring on duration only.
+function getSleepScore(
+  totalHours: number | null,
+  deepHours: number | null,
+  remHours: number | null
+): number | null {
+  if (totalHours === null || totalHours <= 0) return null;
+  const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+  const durationPart = clamp01(totalHours / 8);
+  const hasStages = deepHours !== null || remHours !== null;
+  if (!hasStages) {
+    return Math.round(durationPart * 100); // duration-only fallback
+  }
+  const deepPart = clamp01((deepHours ?? 0) / 1.5);
+  const remPart = clamp01((remHours ?? 0) / 1.75);
+  return Math.round((durationPart * 0.5 + deepPart * 0.25 + remPart * 0.25) * 100);
+}
+
 function getStartOfDay(): Date {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
@@ -83,6 +109,9 @@ export function useHealthData(): HealthData & { refetch: () => void } {
     restingHR: null,
     sleepHours: null,
     sleepQuality: null,
+    deepSleepHours: null,
+    remSleepHours: null,
+    sleepScore: null,
     steps: null,
     activeCalories: null,
     loading: false,
@@ -110,6 +139,8 @@ export function useHealthData(): HealthData & { refetch: () => void } {
       let hrv: number | null = null;
       let restingHR: number | null = null;
       let sleepHours: number | null = null;
+      let deepSleepHours: number | null = null;
+      let remSleepHours: number | null = null;
       let steps: number | null = null;
       let activeCalories: number | null = null;
       let pending = 5;
@@ -117,23 +148,32 @@ export function useHealthData(): HealthData & { refetch: () => void } {
       function checkDone() {
         pending -= 1;
         if (pending === 0) {
+          const sleepScore = getSleepScore(sleepHours, deepSleepHours, remSleepHours);
           setData({
             hrv,
             hrvStatus: getHRVStatus(hrv),
             restingHR,
             sleepHours,
             sleepQuality: getSleepQuality(sleepHours),
+            deepSleepHours,
+            remSleepHours,
+            sleepScore,
             steps,
             activeCalories,
             loading: false,
             error: null,
           });
 
-          // Persist these readings so they accumulate as history.
+          // Persist these readings so they accumulate as history. Sleep stages +
+          // score post only when present, so a watch without stage data doesn't
+          // write nulls (pushHealthData drops non-finite values anyway).
           pushHealthData([
             { metric: 'hrv', value: hrv as number, unit: 'ms' },
             { metric: 'resting_hr', value: restingHR as number, unit: 'bpm' },
             { metric: 'sleep_hours', value: sleepHours as number, unit: 'hours' },
+            { metric: 'deep_sleep_hours', value: deepSleepHours as number, unit: 'hours' },
+            { metric: 'rem_sleep_hours', value: remSleepHours as number, unit: 'hours' },
+            { metric: 'sleep_score', value: sleepScore as number, unit: 'score' },
             { metric: 'steps', value: steps as number, unit: 'count' },
             { metric: 'active_energy', value: activeCalories as number, unit: 'kcal' },
           ]);
@@ -171,7 +211,9 @@ export function useHealthData(): HealthData & { refetch: () => void } {
         }
       );
 
-      // Sleep analysis — sum asleep minutes from last night
+      // Sleep analysis — total asleep time plus Deep/REM breakdown from last
+      // night's stages (works with Eight Sleep, Apple Watch, etc. — whatever
+      // wrote the samples into HealthKit).
       AppleHealthKit.getSleepSamples(
         {
           startDate: getYesterdayNight().toISOString(),
@@ -179,17 +221,24 @@ export function useHealthData(): HealthData & { refetch: () => void } {
         },
         (err, results: HealthValue[]) => {
           if (!err && results && results.length > 0) {
-            // Filter to actual sleep stages (not INBED)
-            const asleepSamples = results.filter(
-              (s: any) => s.value === 'ASLEEP' || s.value === 'DEEP' || s.value === 'CORE' || s.value === 'REM'
+            const hoursOf = (s: any) => {
+              const ms = new Date(s.endDate).getTime() - new Date(s.startDate).getTime();
+              return Math.max(0, ms) / (1000 * 60 * 60);
+            };
+            const isStage = (v: string, ...names: string[]) =>
+              names.some((n) => v === n || v === `ASLEEP${n}` || v === `SLEEP_${n}`);
+            // Any genuine asleep stage (exclude INBED / AWAKE) for the total.
+            const asleep = results.filter(
+              (s: any) => ['ASLEEP', 'DEEP', 'CORE', 'REM', 'ASLEEPDEEP', 'ASLEEPCORE', 'ASLEEPREM'].includes(s.value)
             );
-            if (asleepSamples.length > 0) {
-              const totalMs = asleepSamples.reduce((sum, s) => {
-                const start = new Date(s.startDate).getTime();
-                const end = new Date(s.endDate).getTime();
-                return sum + Math.max(0, end - start);
-              }, 0);
-              sleepHours = Math.round((totalMs / (1000 * 60 * 60)) * 10) / 10;
+            if (asleep.length > 0) {
+              const round1 = (h: number) => Math.round(h * 10) / 10;
+              sleepHours = round1(asleep.reduce((sum, s) => sum + hoursOf(s), 0));
+              const deep = asleep.filter((s: any) => isStage(s.value, 'DEEP'));
+              const rem = asleep.filter((s: any) => isStage(s.value, 'REM'));
+              // Only set stage totals if the source actually reports them.
+              if (deep.length) deepSleepHours = round1(deep.reduce((sum, s) => sum + hoursOf(s), 0));
+              if (rem.length) remSleepHours = round1(rem.reduce((sum, s) => sum + hoursOf(s), 0));
             }
           }
           checkDone();

@@ -7,6 +7,7 @@ const CATALOG = {
   'health:hrv': { label: 'HRV', goodWhen: 'up' },
   'health:resting_hr': { label: 'Resting HR', goodWhen: 'down' },
   'health:sleep_hours': { label: 'Sleep', goodWhen: 'up' },
+  'health:sleep_score': { label: 'Sleep score', goodWhen: 'up' },
   'health:deep_sleep_hours': { label: 'Deep sleep', goodWhen: 'up' },
   'health:rem_sleep_hours': { label: 'REM sleep', goodWhen: 'up' },
   'health:steps': { label: 'Steps', goodWhen: 'up' },
