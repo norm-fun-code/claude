@@ -1,5 +1,6 @@
 require('dotenv').config();
 const crypto = require('crypto');
+const { withTimeout } = require('./src/util/async');
 const express = require('express');
 const cors = require('cors');
 
@@ -46,7 +47,11 @@ const { runReview } = require('./src/intelligence/review');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+// CORS. The mobile app (React Native) isn't subject to CORS, so we only need to
+// allow browser origins we actually use. Lock to an allowlist in production
+// (set CORS_ORIGINS as a comma-separated list); default-open only in dev.
+const corsOrigins = (process.env.CORS_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
+app.use(cors(corsOrigins.length ? { origin: corsOrigins } : {}));
 app.use(express.json({ limit: '2mb' }));
 
 // Bearer-token auth on every /api route except the health check. Set
@@ -334,7 +339,7 @@ app.get('/api/findings', async (req, res) => {
 // `?refresh=1` forces a fresh set (the "New set" button).
 app.get('/api/highlights', async (req, res) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit, 10) || 5, 20);
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 5, 20));
     const favoritesOnly = req.query.favoritesOnly === '1' || req.query.favoritesOnly === 'true';
     const force = req.query.refresh === '1' || req.query.refresh === 'true';
 
@@ -579,7 +584,7 @@ app.post('/api/devices/register', async (req, res) => {
 // Recent nudges (the proactive-message log).
 app.get('/api/nudges', async (req, res) => {
   try {
-    res.json({ nudges: await nudgesStore.listNudges({ limit: Number(req.query.limit) || 50 }) });
+    res.json({ nudges: await nudgesStore.listNudges({ limit: Math.max(1, Math.min(Number(req.query.limit) || 50, 200)) }) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -687,15 +692,19 @@ app.get('/api/briefing', async (req, res) => {
   // Notion wisdom page: avoid repeating one shown in the last 30 days.
   const seenNotion = await surfacedStore.recentRefs('notion_page', 30).catch(() => new Set());
 
-  // Fetch all independent data sources in parallel
+  // Fetch all independent data sources in parallel. Each is bounded by a hard
+  // timeout so one slow upstream (Gmail/Notion/etc.) can't hang the whole
+  // briefing — allSettled waits for every promise, so without this a single
+  // stall blocks the response. A timed-out source just shows as a soft error.
+  const EXT = Number(process.env.BRIEFING_SOURCE_TIMEOUT_MS || 12000);
   const [weatherResult, calendarResult, notionResult, quoteResult, emailResult, marketsResult] =
     await Promise.allSettled([
-      fetchWeather(),
-      fetchCalendarEvents(),
-      fetchRandomNotionPage({ exclude: [...seenNotion] }),
-      fetchRandomQuote(),
-      fetchGmailThreads(),
-      fetchMarkets(),
+      withTimeout(fetchWeather(), EXT, 'weather'),
+      withTimeout(fetchCalendarEvents(), EXT, 'calendar'),
+      withTimeout(fetchRandomNotionPage({ exclude: [...seenNotion] }), EXT, 'notion'),
+      withTimeout(fetchRandomQuote(), EXT, 'googleDoc'),
+      withTimeout(fetchGmailThreads(), EXT, 'gmail'),
+      withTimeout(fetchMarkets(), EXT, 'markets'),
     ]);
 
   function unwrap(result, name) {
@@ -720,7 +729,7 @@ app.get('/api/briefing', async (req, res) => {
   // No-repeat for 30 days so it cycles through all your quotes.
   let dailyQuote = null;
   try {
-    const quotes = await fetchNotionQuotes();
+    const quotes = await withTimeout(fetchNotionQuotes(), EXT, 'notionQuotes');
     if (quotes.length) {
       const seen = await surfacedStore.recentRefs('daily_quote', 30);
       const [pick] = surfacedStore.pickFresh(
@@ -781,14 +790,12 @@ app.get('/api/briefing', async (req, res) => {
   // Call Gemini with whatever data we have
   let geminiResult = null;
   try {
-    geminiResult = await generateBriefing(
-      emails,
-      notionData.text,
-      quoteData.quote,
-      dayName,
-      workout,
-      calendar,
-      wellbeingContext
+    // The LLM call can be slow; bound it so a stalled model doesn't hang the
+    // briefing (it degrades to the data-only sections).
+    geminiResult = await withTimeout(
+      generateBriefing(emails, notionData.text, quoteData.quote, dayName, workout, calendar, wellbeingContext),
+      Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 40000),
+      'gemini'
     );
   } catch (err) {
     console.error('[gemini] failed:', err.message);
@@ -874,7 +881,7 @@ app.get('/api/briefing', async (req, res) => {
   let relevantHighlight = null;
   try {
     const theme = wellbeingTheme || quoteData.quote || 'presence, growth, resilience, gratitude';
-    const [vec] = await llm.embed([theme]);
+    const [vec] = await withTimeout(llm.embed([theme]), EXT, 'embed');
     if (vec) {
       const hits = await documentsStore.searchSimilar(vec, { k: 25, domain: 'learning' });
       const seen = await surfacedStore.recentRefs('highlight', 30);

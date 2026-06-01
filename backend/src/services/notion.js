@@ -1,5 +1,9 @@
 const { Client } = require('@notionhq/client');
 
+// Cap pagination so a large/looping workspace can't spin forever (each page is
+// 100 items, so 30 = up to 3,000 pages/blocks — plenty for a personal space).
+const MAX_PAGE_ITERATIONS = 30;
+
 function getNotionClient() {
   return new Client({ auth: process.env.NOTION_API_KEY });
 }
@@ -91,6 +95,7 @@ async function listWisdomPages() {
   const notion = getNotionClient();
   const pages = [];
   let cursor;
+  let iters = 0;
   do {
     const res = await notion.search({
       filter: { property: 'object', value: 'page' },
@@ -105,7 +110,7 @@ async function listWisdomPages() {
       });
     }
     cursor = res.has_more ? res.next_cursor : undefined;
-  } while (cursor);
+  } while (cursor && ++iters < MAX_PAGE_ITERATIONS);
   return pages;
 }
 
@@ -117,6 +122,7 @@ async function fetchPageText(blockId, depth = 0) {
   const notion = getNotionClient();
   const lines = [];
   let cursor;
+  let iters = 0;
   do {
     const res = await notion.blocks.children.list({
       block_id: blockId,
@@ -138,7 +144,7 @@ async function fetchPageText(blockId, depth = 0) {
       }
     }
     cursor = res.has_more ? res.next_cursor : undefined;
-  } while (cursor);
+  } while (cursor && ++iters < MAX_PAGE_ITERATIONS);
 
   return lines.join('\n');
 }
@@ -150,6 +156,7 @@ async function fetchNotionQuotes(pageId = process.env.NOTION_QUOTES_PAGE_ID) {
   const notion = getNotionClient();
   const quotes = [];
   let cursor;
+  let iters = 0;
   do {
     const res = await notion.blocks.children.list({ block_id: pageId, page_size: 100, start_cursor: cursor });
     for (const block of res.results) {
@@ -161,7 +168,7 @@ async function fetchNotionQuotes(pageId = process.env.NOTION_QUOTES_PAGE_ID) {
       }
     }
     cursor = res.has_more ? res.next_cursor : undefined;
-  } while (cursor);
+  } while (cursor && ++iters < MAX_PAGE_ITERATIONS);
   return quotes;
 }
 

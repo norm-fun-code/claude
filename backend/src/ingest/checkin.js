@@ -3,7 +3,7 @@
 // makes questions like spending↔happiness and calendar↔energy answerable.
 //
 // Body: { mood, energy, focus, note?, ts? } on a 1–5 scale (configurable).
-const { dayAnchorTs } = require('../util/date');
+const { dayAnchorTs, safeDate } = require('../util/date');
 
 const SOURCE = 'checkin';
 const DOMAIN = 'wellbeing';
@@ -13,7 +13,8 @@ function mapCheckin(body = {}, { ts, tz = 'UTC' } = {}) {
   // Anchor to one stable per-day timestamp so tapping mood, then energy, then
   // re-tapping mood all upsert the same day's rows (clean signal for insights)
   // — unless an explicit ts is given (e.g. backfill).
-  const when = ts || body.ts ? new Date(ts || body.ts) : dayAnchorTs(tz);
+  // Use a client-supplied ts only if it's a valid date; else anchor to today.
+  const when = safeDate(ts ?? body.ts) || dayAnchorTs(tz);
   const metrics = [];
 
   for (const [field, metric] of Object.entries(FIELDS)) {
