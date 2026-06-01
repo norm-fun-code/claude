@@ -3,6 +3,47 @@
 Steps to deploy the backend (Railway) and ship the mobile app (TestFlight).
 Everything is committed to `main`. Run these from your Mac.
 
+> **TL;DR once the one-time automation below is set up:**
+> - **Backend change** → just push to `main`; Railway auto-deploys. Nothing to run.
+> - **Mobile JS/TS change** (cards, layout, logic) → `cd mobile && eas update --branch production -m "what changed"`. Live in seconds, **no rebuild**.
+> - **Mobile native change** (new native module, permissions, icon/splash, SDK
+>   bump, or an app `version` bump) → full `eas build` + `eas submit` (rare).
+
+---
+
+## ⚡ One-time automation setup (do this once)
+
+### A. Backend auto-deploy from GitHub (no more `railway up`)
+In the **Railway dashboard** → your backend service → **Settings → Source**:
+1. Connect the GitHub repo `norm-fun-code/claude`.
+2. Set the branch to `main` and the root directory to `backend`.
+3. Enable "auto-deploy on push".
+
+After this, every push to `main` redeploys the backend automatically and runs
+DB migrations on boot. (You can still `railway up` manually if ever needed.)
+
+### B. Mobile OTA updates (EAS Update — skip the rebuild for JS changes)
+The repo is already configured for OTA: `expo-updates` is in `package.json`,
+`runtimeVersion` is `appVersion` in `app.json`, and each build profile has a
+`channel` in `eas.json`. To finish linking (one-time, on your Mac):
+
+```bash
+cd ~/claude/mobile
+npm install                      # pulls in expo-updates
+npx eas-cli login                # if not already
+npx eas-cli update:configure     # writes updates.url + the EAS projectId into app.json
+```
+
+Commit the `app.json` changes that `update:configure` makes:
+
+```bash
+git add app.json && git commit -m "Link EAS Update" && git push
+```
+
+> **Important:** Installing `expo-updates` is a NATIVE change, so it needs **one**
+> full rebuild (step 5 below) to take effect. After that one build, all future
+> JS/TS changes ship instantly via `eas update` — no rebuild.
+
 ---
 
 ## 1. Pull the code
@@ -85,6 +126,9 @@ curl -s "$B/api/shop/ucp-diagnose" -H "Authorization: Bearer $NT" | python3 -m j
 
 ## 5. Build + ship the mobile app (TestFlight)
 
+This is the **full rebuild** — needed the first time, after the `expo-updates`
+install, and thereafter only for native changes / app `version` bumps.
+
 ```bash
 cd ~/claude/mobile
 npx eas-cli build --platform ios --profile production
@@ -93,6 +137,33 @@ npx eas-cli submit --platform ios --latest
 
 (If `eas` isn't a global command, the `npx eas-cli ...` form above works without
 installing. Run `npx eas-cli login` first if prompted.)
+
+---
+
+## 🔁 Ongoing workflow (after the one-time setup)
+
+Most changes do **not** need a rebuild:
+
+| Change type | What to run | Rebuild? |
+|---|---|---|
+| Backend (insights, API, briefing, push logic) | nothing — push to `main`, Railway auto-deploys | No |
+| Mobile JS/TS (cards, layout, logic, copy) | `cd mobile && npx eas-cli update --branch production -m "msg"` | **No** — live in seconds |
+| New native module / permission / icon / splash | full `eas build` + `eas submit` (step 5) | Yes |
+| Expo SDK bump or app `version` bump | full `eas build` + `eas submit` | Yes |
+
+**Push a mobile JS update (the common case):**
+
+```bash
+cd ~/claude/mobile
+npx eas-cli update --branch production --message "what changed"
+```
+
+The installed app downloads it on next launch — no TestFlight, no review.
+
+> Why `version` bumps need a rebuild: `runtimeVersion` is set to the `appVersion`
+> policy, so an OTA update only lands on builds with a matching native version.
+> Bumping `app.json` `version` (e.g. 1.0.0 → 1.1.0) intentionally requires a new
+> build so JS and native stay compatible.
 
 ---
 
