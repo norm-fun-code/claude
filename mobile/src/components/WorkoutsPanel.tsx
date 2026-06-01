@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { getColors, spacing, radius } from '../theme';
+import { API_BASE, authHeaders } from '../config';
 import {
   getTodaysWorkout,
   HRV_ZONES,
@@ -1044,6 +1045,26 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
   });
   const [weeklyCompleted, setWeeklyCompleted] = useState<Record<string, boolean>>({});
 
+  const todayKey = getDateKey(todayDayIndex);
+
+  // Rehydrate today's completion from the exercise habit so the workout shows as
+  // done if it was already logged today (and resets at midnight, backend-side).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/habits/today`, { headers: authHeaders() });
+        if (!res.ok) return;
+        const t = await res.json();
+        if (cancelled || !t?.logged) return;
+        if (t.exercise) setWeeklyCompleted((prev) => ({ ...prev, [todayKey]: true }));
+      } catch {
+        /* offline — leave blank */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [todayKey]);
+
   const isViewingToday = selectedDayIndex === todayDayIndex;
   // Convert strip day index (Mon=0) to JS day-of-week (Sun=0) for the selected day
   const selectedJsDay = (selectedDayIndex + 1) % 7;
@@ -1079,7 +1100,18 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
   }
 
   function handleMarkDone(dateKey: string) {
-    setWeeklyCompleted((prev) => ({ ...prev, [dateKey]: !prev[dateKey] }));
+    const nextDone = !weeklyCompleted[dateKey];
+    setWeeklyCompleted((prev) => ({ ...prev, [dateKey]: nextDone }));
+    // Marking *today's* workout complete also logs the Exercise habit (and
+    // unchecking clears it), so the Today tab and Insights stay in sync. Other
+    // days are local-only — we can't backfill a habit for a past/future date here.
+    if (dateKey === todayKey) {
+      fetch(`${API_BASE}/api/habits`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ exercise: nextDone }),
+      }).catch(() => {/* offline — habit save will retry on next toggle */});
+    }
   }
 
   const duration = 'duration' in workout ? (workout as any).duration : undefined;

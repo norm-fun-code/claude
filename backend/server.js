@@ -546,18 +546,32 @@ app.get('/api/briefing', async (req, res) => {
   // reuse the last build for CACHE_TTL_MIN minutes. The app's pull-to-refresh
   // sends refresh=1 to force a rebuild.
   const CACHE_TTL_MIN = Number(process.env.BRIEFING_CACHE_MIN || 180); // 3h default
+  const tz = process.env.TZ || 'America/New_York';
   const force = req.query.refresh === '1' || req.query.refresh === 'true';
-  if (!force) {
-    try {
-      const cached = await briefingsStore.latestBriefing('daily');
-      if (cached?.content && cached.generated_at) {
-        const ageMin = (Date.now() - new Date(cached.generated_at).getTime()) / 60000;
-        if (ageMin < CACHE_TTL_MIN) {
-          return res.json({ ...cached.content, cached: true, cachedAgeMin: Math.round(ageMin) });
-        }
-      }
-    } catch (err) {
-      console.error('[briefing cache] read failed:', err.message);
+
+  // The most recent prior build, and whether it was built earlier *today* (in the
+  // user's timezone). Used both for the short TTL cache and for the daily-lock:
+  // the "wisdom" content (library highlight, daily quote, Notion page + the
+  // Gemini insights on them) is chosen on the first build of the day and then
+  // carried over on every later build — including pull-to-refresh — so it stays
+  // static until midnight. Dynamic data (weather, markets, calendar, email,
+  // findings) still refreshes every build.
+  let prior = null;
+  let priorIsToday = false;
+  try {
+    prior = await briefingsStore.latestBriefing('daily');
+    if (prior?.generated_at) {
+      const localDate = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: tz });
+      priorIsToday = localDate(prior.generated_at) === localDate(new Date());
+    }
+  } catch (err) {
+    console.error('[briefing prior] read failed:', err.message);
+  }
+
+  if (!force && prior?.content && prior.generated_at) {
+    const ageMin = (Date.now() - new Date(prior.generated_at).getTime()) / 60000;
+    if (ageMin < CACHE_TTL_MIN) {
+      return res.json({ ...prior.content, cached: true, cachedAgeMin: Math.round(ageMin) });
     }
   }
 
@@ -814,6 +828,14 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[alerts] failed:', err.message);
   }
 
+  // Daily-lock: if we already built a briefing earlier today, keep the same
+  // "wisdom" picks (library highlight, daily quote, Notion page, and the Gemini
+  // insights written about the quote/Notion) so they stay static all day and only
+  // change at midnight. A non-empty fresh value still wins if the locked one was
+  // blank (e.g. the first build failed to fetch it), so we never lock in nothing.
+  const p = priorIsToday ? prior.content : null;
+  const keep = (locked, fresh) => (locked != null && locked !== '' ? locked : fresh);
+
   const response = {
     date: dateLabel,
     weather,
@@ -822,21 +844,21 @@ app.get('/api/briefing', async (req, res) => {
     newsletters: geminiResult?.newsletters ?? [],
     urgentEmails: geminiResult?.urgentEmails ?? [],
     financeSummary: geminiResult?.financeSummary ?? [],
-    quoteInsight: geminiResult?.quoteInsight ?? '',
-    notionInsight: geminiResult?.notionInsight ?? '',
-    quote: quoteData.quote,
-    notionText: notionData.text,
-    notionPageTitle: notionData.pageTitle,
+    quoteInsight: keep(p?.quoteInsight, geminiResult?.quoteInsight ?? ''),
+    notionInsight: keep(p?.notionInsight, geminiResult?.notionInsight ?? ''),
+    quote: keep(p?.quote, quoteData.quote),
+    notionText: keep(p?.notionText, notionData.text),
+    notionPageTitle: keep(p?.notionPageTitle, notionData.pageTitle),
     leverageActions,
     insights,
     wealthInsights,
     healthInsights,
     forecasts,
-    relevantHighlight,
+    relevantHighlight: keep(p?.relevantHighlight, relevantHighlight),
     weeklyReview,
     wealth,
     markets,
-    dailyQuote,
+    dailyQuote: keep(p?.dailyQuote, dailyQuote),
     alerts,
   };
 
