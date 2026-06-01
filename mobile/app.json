@@ -3,7 +3,9 @@
     "name": "NormOS",
     "slug": "normos",
     "version": "1.0.0",
-    "runtimeVersion": { "policy": "appVersion" },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -17,7 +19,8 @@
       "buildNumber": "1",
       "infoPlist": {
         "NSHealthShareUsageDescription": "NormOS reads your HRV, resting heart rate, sleep, steps, and active calories to personalize your daily workout recommendation and health insights.",
-        "NSHealthUpdateUsageDescription": "NormOS does not write health data."
+        "NSHealthUpdateUsageDescription": "NormOS does not write health data.",
+        "ITSAppUsesNonExemptEncryption": false
       },
       "entitlements": {
         "com.apple.developer.healthkit": true,
@@ -32,6 +35,18 @@
         }
       ]
     ],
-    "assetBundlePatterns": ["**/*"]
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "712927ce-0cda-4cb0-bce0-26136265b0bc"
+      }
+    },
+    "owner": "noco401",
+    "updates": {
+      "url": "https://u.expo.dev/712927ce-0cda-4cb0-bce0-26136265b0bc"
+    },
+    "android": {}
   }
 }

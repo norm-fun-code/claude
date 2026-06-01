@@ -17,3 +17,7 @@ backend/imports/**/*.csv
 backend/imports/**/*.xlsx
 backend/imports/**/*.json
 !backend/imports/**/README.md
+/app.json
+/tsconfig.json
+/ios/
+/.expo/
