@@ -3,7 +3,9 @@
     "name": "NormOS",
     "slug": "normos",
     "version": "1.0.0",
-    "runtimeVersion": { "policy": "appVersion" },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -41,6 +43,10 @@
         "projectId": "712927ce-0cda-4cb0-bce0-26136265b0bc"
       }
     },
-    "owner": "noco401"
+    "owner": "noco401",
+    "updates": {
+      "url": "https://u.expo.dev/712927ce-0cda-4cb0-bce0-26136265b0bc"
+    },
+    "android": {}
   }
 }
