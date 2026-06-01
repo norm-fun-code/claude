@@ -12,6 +12,9 @@ const TYPE_LABEL: Record<string, string> = {
   trend: 'TREND',
   correlation: 'PATTERN',
   anomaly: 'VS YOUR BASELINE',
+  savings_rate: 'SAVINGS RATE',
+  spending_pattern: 'SPENDING',
+  over_budget: 'BUDGET',
 };
 
 // The intelligence findings — trends and confirmed cross-domain patterns —

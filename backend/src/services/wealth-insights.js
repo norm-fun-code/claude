@@ -3,6 +3,7 @@
 // a Monarch token is available) this month's budget targets. Produces short,
 // plain-language insight strings for the Wealth tab.
 const documents = require('../store/documents');
+const metricsStore = require('../store/metrics');
 
 let monarchApi = null;
 try { monarchApi = require('./monarch-api'); } catch { /* optional */ }
@@ -21,6 +22,34 @@ const pct = (n) => Math.round(n) + '%';
  */
 async function buildWealthInsights() {
   const insights = [];
+
+  // 0) Savings rate — the single most important personal-finance number:
+  // (income − spending) / income over the trailing 30 days. Only surfaced when
+  // there's real income to divide by.
+  try {
+    const from = new Date(Date.now() - 30 * 864e5);
+    const sumOf = async (metric) => {
+      const rows = await metricsStore.dailyAggregate({ domain: 'wealth', metric, from, agg: 'sum' });
+      return rows.reduce((a, r) => a + Number(r.value || 0), 0);
+    };
+    const [income, spending] = await Promise.all([sumOf('income'), sumOf('spending')]);
+    if (income >= MIN_SPEND) {
+      const rate = (income - spending) / income; // can be negative (overspending)
+      const ratePct = Math.round(rate * 100);
+      const positive = rate >= 0;
+      insights.push({
+        type: 'savings_rate',
+        title: positive
+          ? `Saving ${ratePct}% of income (30d)`
+          : `Spending ${Math.abs(ratePct)}% more than you earned (30d)`,
+        detail: positive
+          ? `Over the last 30 days you brought in ${fmt(income)} and spent ${fmt(spending)} — a savings rate of ${ratePct}%. ${ratePct >= 20 ? 'Strong — at or above the 20% rule of thumb.' : 'Below the common 20% target; small cuts compound.'}`
+          : `Over the last 30 days you spent ${fmt(spending)} against ${fmt(income)} of income — drawing down savings. Worth a look at the biggest categories.`,
+      });
+    }
+  } catch (err) {
+    console.error('[wealth-insights] savings rate failed:', err.message);
+  }
 
   // 1) Spend vs your usual, from stored transactions.
   let rows = [];
