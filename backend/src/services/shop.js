@@ -46,18 +46,20 @@ function parseJson(out) {
 async function extractSearch(message) {
   const system =
     'Turn the shopping request into JSON: {"query": "<concise product search, brand+type, no filler>", ' +
-    '"maxPrice": <number or null>}. Capture any price ceiling ("under $100", "below 50"). ' +
-    'Reply with ONLY the JSON object.';
+    '"maxPrice": <number or null>, "count": <number or null>}. Capture any price ceiling ' +
+    '("under $100", "below 50") as maxPrice, and any requested number of options ' +
+    '("show me 20", "a few more", "top 5") as count. Reply with ONLY the JSON object.';
   try {
-    const out = await llm.generateText({ system, prompt: message, temperature: 0, maxTokens: 80 });
+    const out = await llm.generateText({ system, prompt: message, temperature: 0, maxTokens: 90 });
     const i = out.indexOf('{'); const j = out.lastIndexOf('}');
     const parsed = i !== -1 ? JSON.parse(out.slice(i, j + 1)) : null;
     return {
       query: (parsed?.query || message).trim().replace(/^["']|["']$/g, ''),
       maxPrice: Number.isFinite(parsed?.maxPrice) ? Number(parsed.maxPrice) : null,
+      count: Number.isFinite(parsed?.count) ? Number(parsed.count) : null,
     };
   } catch {
-    return { query: message, maxPrice: null };
+    return { query: message, maxPrice: null, count: null };
   }
 }
 
@@ -276,23 +278,31 @@ async function buildCart({ business, variantId, quantity = 1 }) {
  * (price-filtered if the user gave a ceiling). No cart yet — you pick one, then
  * call addToCart() for that item. This is the "surface ideas, then I choose" flow.
  */
-async function discover(message, { country = 'US', limit = 8 } = {}) {
+async function discover(message, { country = 'US', limit } = {}) {
   if (!message || !message.trim()) throw new Error('Tell me what you’re looking for.');
-  const { query, maxPrice } = await extractSearch(message);
+  const { query, maxPrice, count } = await extractSearch(message);
+
+  // How many results to show. Default 12; honor a requested count ("show me 20",
+  // "a few more") from either the API param or the natural-language ask, capped
+  // at 30 so we never hammer the upstreams. The API param wins if both are set.
+  const TOTAL = Math.max(1, Math.min(limit ?? count ?? 12, 30));
+  // Fetch a little extra from each source so the mix/dedupe has room to fill TOTAL.
+  const ucpWant = Math.min(TOTAL, 30);
+  const webWant = Math.min(TOTAL, 20);
 
   // Run both discovery modes in parallel:
   //  - UCP catalog: cart-able in-app (Shopify/Etsy/Target/…), no Amazon.
   //  - Web search: anything incl. Amazon, link-out only. Prefer SerpApi (images
   //    + accurate prices) when SERPAPI_KEY is set; else Claude web search.
   const webFinder = process.env.SERPAPI_KEY
-    ? serpApiProducts(query, { maxPrice, limit: 8 }).catch(() => webSearchProducts(query, { maxPrice, limit: 6 }))
-    : webSearchProducts(query, { maxPrice, limit: 6 });
+    ? serpApiProducts(query, { maxPrice, limit: webWant }).catch(() => webSearchProducts(query, { maxPrice, limit: Math.min(webWant, 10) }))
+    : webSearchProducts(query, { maxPrice, limit: Math.min(webWant, 10) });
 
   // UCP in-app carts via Shopify's Global Catalog MCP (HTTP, no CLI). Active when
   // UCP_CLIENT_ID/SECRET are set. These items are cart-able in-app (continue_url
   // checkout), unlike the SerpApi web link-outs.
   const ucpFinder = ucp.isConfigured()
-    ? ucp.searchCatalog(query, { country, limit: 12 }).catch(() => [])
+    ? ucp.searchCatalog(query, { country, limit: ucpWant }).catch(() => [])
     : Promise.resolve([]);
 
   const [ucpRes, webRes] = await Promise.allSettled([ucpFinder, webFinder]);
@@ -319,8 +329,9 @@ async function discover(message, { country = 'US', limit = 8 } = {}) {
   // Amazon first (guaranteed a slot), then the rest, then any extra Amazon dupes.
   const webOrdered = [...amazonWeb.slice(0, 1), ...restWeb, ...amazonWeb.slice(1)];
 
-  const TOTAL = limit + 4;                                    // 12 display slots
-  const minWeb = Math.min(webOrdered.length, 4);             // reserve ≥4 for web
+  // Reserve roughly a third of the slots (min 4) for web link-outs so UCP can't
+  // bury Amazon/Walmart/etc., then fill the rest UCP-first.
+  const minWeb = Math.min(webOrdered.length, Math.max(4, Math.round(TOTAL / 3)));
   const ucpShare = Math.min(ucpFiltered.length, TOTAL - minWeb);
   const webShare = Math.min(webOrdered.length, TOTAL - ucpShare);
   const results = [...ucpFiltered.slice(0, ucpShare), ...webOrdered.slice(0, webShare)];
@@ -338,7 +349,7 @@ async function discover(message, { country = 'US', limit = 8 } = {}) {
     results,
     message:
       `Found ${results.length}${maxPrice != null ? ` under $${maxPrice}` : ''} for "${query}". ` +
-      `${cartable.length ? 'Tap “Add to cart” to buy in-app, or' : 'Tap'} open a link to buy on the site.`,
+      `Tap a result to buy on the site.`,
   };
 }
 
