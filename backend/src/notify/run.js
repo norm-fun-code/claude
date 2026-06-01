@@ -13,11 +13,18 @@ const { sendPush } = require('./expo');
 
 /** Has the subjective check-in been logged today? Fail-safe: assume yes on error
  *  so we never nag the user because of a DB hiccup. */
-async function checkinLoggedToday(asOf = new Date()) {
+async function checkinLoggedToday() {
   try {
+    // Use the same timezone-aware "today" logic as /api/checkin/today so the
+    // nudge and the app agree on what counts as today (not a UTC ts::date that
+    // can disagree near midnight).
+    const tz = process.env.TZ || 'America/New_York';
     const { rows } = await query(
-      `SELECT 1 FROM metrics WHERE source = 'checkin' AND ts::date = $1::date LIMIT 1`,
-      [asOf.toISOString().slice(0, 10)]
+      `SELECT 1 FROM metrics
+        WHERE source = 'checkin'
+          AND (ts AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
+        LIMIT 1`,
+      [tz]
     );
     return rows.length > 0;
   } catch {

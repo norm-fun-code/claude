@@ -94,6 +94,42 @@ function normalCdf(z) {
   return z >= 0 ? 1 - p : p;
 }
 
+/**
+ * Two-sided p-value for a Pearson correlation r over n pairs, via the
+ * t-statistic t = r·√((n−2)/(1−r²)) under H0: ρ=0. For the modest n we deal with
+ * we approximate the t-distribution's tail with the normal CDF (slightly
+ * anticonservative for very small n, but it's only a gate, and we also require a
+ * minimum n upstream). Returns a p-value in [0,1], or null if undefined.
+ */
+function pearsonPValue(r, n) {
+  if (r == null || !Number.isFinite(r) || n == null || n < 3) return null;
+  if (Math.abs(r) >= 1) return 0;
+  const t = Math.abs(r) * Math.sqrt((n - 2) / (1 - r * r));
+  // Two-sided tail. normalCdf(t) is P(Z≤t); upper tail is 1−that, ×2 for two-sided.
+  return Math.min(1, 2 * (1 - normalCdf(t)));
+}
+
+/**
+ * Benjamini–Hochberg FDR: given an array of p-values, return a boolean array
+ * marking which are significant at false-discovery-rate q. Controls the
+ * expected proportion of false positives across many simultaneous tests — the
+ * right correction for an all-pairs correlation search.
+ */
+function benjaminiHochberg(pvalues, q = 0.1) {
+  const m = pvalues.length;
+  const idx = pvalues
+    .map((p, i) => ({ p, i }))
+    .filter((x) => x.p != null && Number.isFinite(x.p))
+    .sort((a, b) => a.p - b.p);
+  const keep = new Array(m).fill(false);
+  let maxK = -1;
+  for (let k = 0; k < idx.length; k++) {
+    if (idx[k].p <= ((k + 1) / idx.length) * q) maxK = k;
+  }
+  for (let k = 0; k <= maxK; k++) keep[idx[k].i] = true;
+  return keep;
+}
+
 function dayKey(d) {
   return new Date(d).toISOString().slice(0, 10);
 }
@@ -159,6 +195,8 @@ module.exports = {
   mean,
   std,
   pearson,
+  pearsonPValue,
+  benjaminiHochberg,
   linregSlope,
   linearFit,
   normalCdf,

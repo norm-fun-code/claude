@@ -33,3 +33,22 @@ test('normalCdf saturates at the tails', () => {
   assert.equal(stats.normalCdf(Infinity), 1);
   assert.equal(stats.normalCdf(-Infinity), 0);
 });
+
+test('pearsonPValue flags weak/small-n correlations as not significant', () => {
+  // r=0.5 at n=10 is the classic false positive — must NOT be significant.
+  assert.ok(stats.pearsonPValue(0.5, 10) > 0.05);
+  // Same r at larger n IS significant.
+  assert.ok(stats.pearsonPValue(0.5, 40) < 0.05);
+  // Strong r on decent n is highly significant.
+  assert.ok(stats.pearsonPValue(0.8, 30) < 0.001);
+  // Undefined cases return null.
+  assert.equal(stats.pearsonPValue(0.5, 2), null);
+  assert.equal(stats.pearsonPValue(null, 30), null);
+});
+
+test('benjaminiHochberg controls the false discovery rate', () => {
+  const keep = stats.benjaminiHochberg([0.001, 0.008, 0.02, 0.2, 0.5, 0.9], 0.1);
+  assert.deepEqual(keep, [true, true, true, false, false, false]);
+  // All-null input is safe (no significant results, no throw).
+  assert.deepEqual(stats.benjaminiHochberg([null, null], 0.1), [false, false]);
+});

@@ -16,9 +16,10 @@ const DEFAULTS = {
   trendWindow: 7, // days per side for recent-vs-prior
   trendMinPct: 0.1, // |change| >= 10% to report
   corrWindow: 30, // days considered for correlation
-  corrMinN: 10, // min aligned day-pairs
+  corrMinN: 20, // min aligned day-pairs (raised: r≥0.5 at n=10 isn't significant)
   corrMinAbsR: 0.5, // |r| >= 0.5 to report
   corrGateAbsR: 0.3, // each half must reach this for a correlation to be "confirmed"
+  corrFdrQ: 0.1, // Benjamini–Hochberg false-discovery rate for the all-pairs search
   corrLags: [0, 1], // test same-day and next-day
   maxCorrelations: 12,
   // Flow metrics that post sparsely (only on transaction days). A daily-mean
@@ -124,14 +125,21 @@ function computeCorrelations(seriesByKey, opts = {}) {
         r: best.r,
         n: best.n,
         lag: best.lag,
+        p: stats.pearsonPValue(best.r, best.n),
         confirmed,
       });
     }
   }
 
-  candidates.sort((x, y) => Math.abs(y.r) - Math.abs(x.r));
+  // Multiple-comparisons correction: an all-pairs × lag search runs hundreds of
+  // tests, so ~5% would clear |r|≥0.5 by chance. Keep only pairs whose p-value
+  // survives Benjamini–Hochberg FDR control across the whole candidate set.
+  const keep = stats.benjaminiHochberg(candidates.map((c) => c.p), o.corrFdrQ);
+  const significant = candidates.filter((_, i) => keep[i]);
 
-  return candidates.slice(0, o.maxCorrelations).map((c) => {
+  significant.sort((x, y) => Math.abs(y.r) - Math.abs(x.r));
+
+  return significant.slice(0, o.maxCorrelations).map((c) => {
     const a = splitKey(c.keyA);
     const b = splitKey(c.keyB);
     const labelA = cat.label(a.domain, a.metric);
@@ -146,8 +154,10 @@ function computeCorrelations(seriesByKey, opts = {}) {
       type: 'correlation',
       domains,
       title: `${labelA} ↔ ${labelB}: ${strength} ${sign} correlation${status}`,
-      detail: `${labelA} and ${labelB} move ${sign === 'positive' ? 'together' : 'inversely'} (r=${round(c.r)}, n=${c.n}, ${lagNote}). ${c.confirmed ? 'Held on both halves of the window.' : 'Not yet confirmed on a holdout.'} Association, not proof of cause.`,
-      confidence: Math.abs(c.r) * (c.confirmed ? 1 : 0.6),
+      detail: `${labelA} and ${labelB} move ${sign === 'positive' ? 'together' : 'inversely'} (r=${round(c.r)}, n=${c.n}, p=${c.p == null ? 'n/a' : round(c.p, 3)}, ${lagNote}). ${c.confirmed ? 'Held on both halves of the window.' : 'Not yet confirmed on a holdout.'} Association, not proof of cause.`,
+      // Confidence blends effect size with statistical significance, so a strong
+      // r on thin data isn't over-trusted.
+      confidence: round(Math.abs(c.r) * (c.confirmed ? 1 : 0.6) * (c.p != null && c.p < 0.05 ? 1 : 0.7), 3),
       evidence: {
         auto: true,
         kind: 'correlation',
@@ -155,6 +165,7 @@ function computeCorrelations(seriesByKey, opts = {}) {
         b: c.keyB,
         r: round(c.r, 3),
         n: c.n,
+        p: c.p == null ? null : round(c.p, 4),
         lag: c.lag,
         confirmed: c.confirmed,
         crossDomain: domains.length > 1,
@@ -207,10 +218,17 @@ async function analyze(opts = {}) {
   const windowStart = from;
   const windowEnd = new Date();
 
-  await findingsStore.supersedeAuto(['trend', 'correlation', 'leverage', 'forecast']);
-  for (const f of all) {
-    await findingsStore.createFinding({ ...f, windowStart, windowEnd });
-  }
+  // Supersede old findings and write the new set atomically, so a mid-run
+  // failure can't leave the user with everything superseded and only a partial
+  // set re-created (which the dashboard reads as 'open').
+  const { withTransaction } = require('../db');
+  await withTransaction(async (client) => {
+    const tx = (text, params) => client.query(text, params);
+    await findingsStore.supersedeAuto(['trend', 'correlation', 'leverage', 'forecast'], tx);
+    for (const f of all) {
+      await findingsStore.createFinding({ ...f, windowStart, windowEnd }, tx);
+    }
+  });
 
   return {
     metrics: Object.keys(seriesByKey).length,

@@ -35,6 +35,20 @@ async function buildWealthInsights() {
     const current = months[months.length - 1];
     const priorMonths = months.slice(0, -1);
 
+    // The current month is partial (e.g. day 1 of June). Comparing its
+    // run-rate against FULL prior months would flag everything as "down" early
+    // and exaggerate spikes late. So project the current month to a full-month
+    // equivalent by day-of-month, and only trust the projection once enough of
+    // the month has elapsed that the run-rate is meaningful.
+    const now = new Date();
+    const currentIsThisMonth =
+      current === `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const dayOfMonth = now.getDate();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const projFactor = currentIsThisMonth ? daysInMonth / dayOfMonth : 1;
+    // Need ~a week of data before a run-rate projection is worth surfacing.
+    const projectionReliable = !currentIsThisMonth || dayOfMonth >= 7;
+
     // category -> { current, priors: [] }
     const byCat = new Map();
     for (const r of rows) {
@@ -46,22 +60,31 @@ async function buildWealthInsights() {
 
     const spikes = [];
     for (const [category, s] of byCat) {
-      if (s.current < MIN_SPEND || !s.priors.length) continue;
+      if (!s.priors.length) continue;
       const avg = s.priors.reduce((a, b) => a + b, 0) / s.priors.length;
       if (avg < MIN_SPEND) continue;
-      const ratio = s.current / avg;
-      if (ratio >= SPIKE_RATIO && s.current - avg >= SPIKE_DOLLARS) {
-        spikes.push({ category, current: s.current, avg, over: pct((ratio - 1) * 100) });
+      // Project the partial month to a full-month run-rate for a fair compare.
+      const projected = s.current * projFactor;
+      if (projected < MIN_SPEND) continue;
+      const ratio = projected / avg;
+      if (ratio >= SPIKE_RATIO && projected - avg >= SPIKE_DOLLARS) {
+        spikes.push({ category, current: s.current, projected, avg, over: pct((ratio - 1) * 100) });
       }
     }
-    // Biggest dollar overages first, top 3.
-    spikes.sort((a, b) => (b.current - b.avg) - (a.current - a.avg));
-    for (const s of spikes.slice(0, 3)) {
-      insights.push({
-        type: 'spending_pattern',
-        title: `${s.category} up ${s.over} vs your usual`,
-        detail: `You've spent ${fmt(s.current)} on ${s.category} this month — about ${s.over} more than your recent average of ${fmt(s.avg)}.`,
-      });
+    // Only surface run-rate spikes once the month is far enough along to trust.
+    if (projectionReliable) {
+      // Biggest dollar overages first, top 3.
+      spikes.sort((a, b) => (b.projected - b.avg) - (a.projected - a.avg));
+      const projected = currentIsThisMonth && projFactor > 1.05;
+      for (const s of spikes.slice(0, 3)) {
+        insights.push({
+          type: 'spending_pattern',
+          title: `${s.category} trending ${s.over} above your usual`,
+          detail: projected
+            ? `You've spent ${fmt(s.current)} on ${s.category} so far this month — on pace for about ${fmt(s.projected)}, roughly ${s.over} above your recent average of ${fmt(s.avg)}.`
+            : `You've spent ${fmt(s.current)} on ${s.category} this month — about ${s.over} more than your recent average of ${fmt(s.avg)}.`,
+        });
+      }
     }
   }
 

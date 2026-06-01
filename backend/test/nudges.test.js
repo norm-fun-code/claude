@@ -37,7 +37,8 @@ test('recently-sent keys are suppressed (no nagging)', () => {
 });
 
 test('only the #1 leverage action is nudged', () => {
-  const findings = [leverage(0, 0.7, 'Top move'), leverage(1, 0.6, 'Second move')];
+  // rankActions() assigns 1-based ranks (rank: i+1), so the top action is rank 1.
+  const findings = [leverage(1, 0.7, 'Top move'), leverage(2, 0.6, 'Second move')];
   const n = buildNudges({ findings });
   assert.equal(n.length, 1);
   assert.match(n[0].body, /Top move/);
@@ -48,7 +49,7 @@ test('candidates are ranked by priority and capped by max', () => {
   const findings = [
     forecast('off_track', 0.1, 'g1', 'Goal A'), // priority ~0.95
     forecast('at_risk', 0.5, 'g2', 'Goal B'), // priority ~0.75
-    leverage(0, 0.6, 'Move'), // priority 0.6
+    leverage(1, 0.6, 'Move'), // priority 0.6
   ];
   const n = buildNudges({ findings, max: 2 });
   assert.equal(n.length, 2);

@@ -1,7 +1,9 @@
 // Read/write helpers for the intelligence layer's findings.
 const { query } = require('../db');
 
-async function createFinding(f) {
+// Each writer accepts an optional `db` (a transaction client) so analyze() can
+// run supersede + all inserts atomically; defaults to the pooled query.
+async function createFinding(f, db = query) {
   const {
     type,
     domains = [],
@@ -14,7 +16,7 @@ async function createFinding(f) {
     evidence = {},
   } = f;
 
-  const { rows } = await query(
+  const { rows } = await db(
     `INSERT INTO findings
        (type, domains, title, detail, confidence, status, window_start, window_end, evidence)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -45,8 +47,8 @@ async function updateStatus(id, status) {
  * while history is preserved (not deleted). User-curated findings (no auto flag)
  * are left untouched.
  */
-async function supersedeAuto(types = null) {
-  const { rowCount } = await query(
+async function supersedeAuto(types = null, db = query) {
+  const { rowCount } = await db(
     `UPDATE findings
         SET status = 'superseded'
       WHERE status = 'open'

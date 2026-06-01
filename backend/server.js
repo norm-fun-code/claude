@@ -1,4 +1,5 @@
 require('dotenv').config();
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 
@@ -45,14 +46,23 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 
-// Optional bearer-token auth. Off by default (fine for localhost); set
-// NORMOS_API_TOKEN to require `Authorization: Bearer <token>` on every /api
-// route except the health check — important if you ever host this on a VPS.
+// Bearer-token auth on every /api route except the health check. Set
+// NORMOS_API_TOKEN to require `Authorization: Bearer <token>`. In production we
+// warn loudly if it's missing, since the same code is deployed to a public host.
+if (!process.env.NORMOS_API_TOKEN) {
+  const msg = '[auth] NORMOS_API_TOKEN is not set — the /api surface (including admin/reset and ingest) is UNAUTHENTICATED.';
+  if (process.env.NODE_ENV === 'production') console.error(`\n⚠️  ${msg} Set it now.\n`);
+  else console.warn(msg);
+}
 app.use('/api', (req, res, next) => {
   const token = process.env.NORMOS_API_TOKEN;
   if (!token || req.path === '/health') return next();
   const auth = req.get('authorization') || '';
-  if (auth === `Bearer ${token}`) return next();
+  const expected = `Bearer ${token}`;
+  // Constant-time compare to avoid a timing side-channel on the token.
+  const a = Buffer.from(auth);
+  const b = Buffer.from(expected);
+  if (a.length === b.length && crypto.timingSafeEqual(a, b)) return next();
   return res.status(401).json({ error: 'unauthorized' });
 });
 
