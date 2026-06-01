@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BRIEFING_URL, authHeaders } from '../config';
+import { BRIEFING_URL, authHeaders, fetchWithTimeout } from '../config';
 
 const API_URL = BRIEFING_URL;
 const CACHE_KEY = 'normos.briefing.v1';
@@ -125,6 +125,20 @@ export interface Alert {
   message: string;
 }
 
+export interface Recovery {
+  score: number | null;
+  band: 'green' | 'yellow' | 'red' | null;
+  parts: Record<string, number>;
+  detail: string | null;
+}
+
+export interface HealthComposite {
+  type: string;
+  title: string;
+  detail: string | null;
+  evidence?: Record<string, unknown>;
+}
+
 export interface BriefingData {
   date: string;
   weather: Weather | null;
@@ -142,6 +156,8 @@ export interface BriefingData {
   insights: Insight[];
   wealthInsights?: Insight[];
   healthInsights?: Insight[];
+  recovery?: Recovery | null;
+  healthComposites?: HealthComposite[];
   forecasts: Forecast[];
   relevantHighlight: RelevantHighlight | null;
   weeklyReview: WeeklyReview | null;
@@ -171,10 +187,12 @@ export function useBriefing(): BriefingState {
     try {
       // Default load uses the server cache (instant); pull-to-refresh forces fresh.
       const url = force ? `${API_URL}?refresh=1` : API_URL;
-      const response = await fetch(url, {
+      // Building fresh can take 15-40s server-side, so allow a long timeout
+      // here, but still cap it so a stalled request can't spin forever.
+      const response = await fetchWithTimeout(url, {
         method: 'GET',
         headers: authHeaders(),
-      });
+      }, 45000);
 
       if (!response.ok) {
         throw new Error(`Server returned ${response.status}`);

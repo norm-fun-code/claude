@@ -8,6 +8,7 @@ const cat = require('./catalog');
 const metricsStore = require('../store/metrics');
 const findingsStore = require('../store/findings');
 const annotationsStore = require('../store/annotations');
+const intentionsStore = require('../store/intentions');
 const briefingsStore = require('../store/briefings');
 const { extractJson } = require('../services/briefing-ai');
 
@@ -24,6 +25,18 @@ function round(n, d = 2) {
   return Math.round(n * f) / f;
 }
 const avg = (arr) => (arr.length ? arr.reduce((s, r) => s + Number(r.value), 0) / arr.length : null);
+const sum = (arr) => (arr.length ? arr.reduce((s, r) => s + Number(r.value), 0) : null);
+
+/**
+ * Roll a week's daily-aggregated rows into a single weekly number. Flow metrics
+ * (spending, income — anything aggregated by 'sum') roll up as a weekly TOTAL,
+ * matching the Wealth tab; stock metrics (mood, HRV, net worth) roll up as a
+ * weekly AVERAGE. Averaging a flow was the bug behind the Wealth/Insights
+ * spending mismatch ($6,698 total shown as a $224 daily average).
+ */
+function weekly(rows, metric) {
+  return cat.aggFor(metric) === 'sum' ? sum(rows) : avg(rows);
+}
 
 /** Pull the week's numbers (this week vs prior week) + current findings. */
 async function gatherWeek(asOf = new Date()) {
@@ -36,14 +49,15 @@ async function gatherWeek(asOf = new Date()) {
     const agg = cat.aggFor(metric);
     const cur = await metricsStore.dailyAggregate({ domain, metric, from: periodStart, to: periodEnd, agg });
     const prev = await metricsStore.dailyAggregate({ domain, metric, from: priorStart, to: periodStart, agg });
-    const a = avg(cur);
-    const b = avg(prev);
+    const a = weekly(cur, metric);
+    const b = weekly(prev, metric);
     if (a == null) continue;
     metrics.push({
       label: cat.label(domain, metric),
       thisWeek: round(a), lastWeek: round(b),
       change: b ? round((a - b) / Math.abs(b), 3) : null,
       goodWhen: cat.goodWhen(domain, metric),
+      isTotal: agg === 'sum', // so the narrative can say "total" vs "average"
     });
   }
 
@@ -57,6 +71,7 @@ async function gatherWeek(asOf = new Date()) {
       .sort((x, y) => (x.evidence?.rank ?? 9) - (y.evidence?.rank ?? 9))
       .slice(0, 5),
     annotations: await annotationsStore.listAnnotations({ from: periodStart, limit: 20 }),
+    intentions: await intentionsStore.recentIntentions({ days: 14 }).catch(() => []),
   };
 }
 
@@ -68,12 +83,20 @@ Voice: a sharp, caring advisor who tells the truth. Return ONLY valid JSON.`;
 function composeReview(ctx) {
   const fmtPct = (c) => (c == null ? '' : ` (${c >= 0 ? '+' : ''}${Math.round(c * 100)}% vs last week)`);
   const metricsBlock = ctx.metrics
-    .map((m) => `- ${m.label}: ${m.thisWeek}${fmtPct(m.change)}${m.goodWhen ? ` [better when ${m.goodWhen}]` : ''}`)
+    .map((m) => `- ${m.label}: ${m.thisWeek}${m.isTotal ? ' (weekly total)' : ' (weekly avg)'}${fmtPct(m.change)}${m.goodWhen ? ` [better when ${m.goodWhen}]` : ''}`)
     .join('\n') || '- (not enough data this week)';
   const corr = ctx.correlations.map((f) => `- ${f.title}`).join('\n') || '- none confirmed';
   const fc = ctx.forecasts.map((f) => `- ${f.title}`).join('\n') || '- none';
   const lev = ctx.leverage.map((f, i) => `${i + 1}. ${f.title}`).join('\n') || '- none';
   const ann = ctx.annotations.map((a) => `- ${a.category}: ${a.label}`).join('\n') || '- none logged';
+  const intentions = (ctx.intentions || [])
+    .map((it) => {
+      const g = Array.isArray(it.goals) && it.goals.length ? ` Focus goals: ${it.goals.join('; ')}.` : '';
+      const c = it.context ? ` Context: ${it.context}` : '';
+      return `-${g}${c}`.trim();
+    })
+    .filter((s) => s !== '-')
+    .join('\n') || '- none set';
 
   const prompt = `Week of ${ctx.periodStart.toISOString().slice(0, 10)} to ${ctx.periodEnd.toISOString().slice(0, 10)}.
 
@@ -89,7 +112,10 @@ ${fc}
 HIGHEST-LEVERAGE ACTIONS RIGHT NOW:
 ${lev}
 
-LIFE CONTEXT THIS WEEK:
+THEIR STATED FOCUS & LIFE CONTEXT (from the weekly Sunday check-in — use this to judge whether the week matched their intentions):
+${intentions}
+
+LIFE CONTEXT (annotations) THIS WEEK:
 ${ann}
 
 Write the weekly review as JSON with EXACTLY:

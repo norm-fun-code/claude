@@ -33,3 +33,64 @@ test('normalCdf saturates at the tails', () => {
   assert.equal(stats.normalCdf(Infinity), 1);
   assert.equal(stats.normalCdf(-Infinity), 0);
 });
+
+test('pearsonPValue flags weak/small-n correlations as not significant', () => {
+  // r=0.5 at n=10 is the classic false positive — must NOT be significant.
+  assert.ok(stats.pearsonPValue(0.5, 10) > 0.05);
+  // Same r at larger n IS significant.
+  assert.ok(stats.pearsonPValue(0.5, 40) < 0.05);
+  // Strong r on decent n is highly significant.
+  assert.ok(stats.pearsonPValue(0.8, 30) < 0.001);
+  // Undefined cases return null.
+  assert.equal(stats.pearsonPValue(0.5, 2), null);
+  assert.equal(stats.pearsonPValue(null, 30), null);
+});
+
+test('benjaminiHochberg controls the false discovery rate', () => {
+  const keep = stats.benjaminiHochberg([0.001, 0.008, 0.02, 0.2, 0.5, 0.9], 0.1);
+  assert.deepEqual(keep, [true, true, true, false, false, false]);
+  // All-null input is safe (no significant results, no throw).
+  assert.deepEqual(stats.benjaminiHochberg([null, null], 0.1), [false, false]);
+});
+
+test('baselineAnomaly flags deviations from personal norm', () => {
+  const series = [];
+  for (let i = 0; i < 30; i++) series.push({ day: `2026-05-${String(i + 1).padStart(2, '0')}`, value: 50 + (i % 3 - 1) * 2 });
+  series.push({ day: '2026-06-01', value: 70 });
+  const a = stats.baselineAnomaly(series, { baselineDays: 30, minN: 8 });
+  assert.ok(a.z > 3, `spike should be a large z, got ${a.z}`);
+  // A normal day is quiet.
+  const normal = series.slice(0, -1).concat([{ day: '2026-06-01', value: 51 }]);
+  assert.ok(Math.abs(stats.baselineAnomaly(normal, { baselineDays: 30, minN: 8 }).z) < 1);
+  // Too little history → null.
+  assert.equal(stats.baselineAnomaly(series.slice(0, 5)), null);
+});
+
+test('fitByDay gives a true per-day slope on irregularly-sampled data', () => {
+  // Rising exactly 2/day, logged with gaps (days 0, 2, 7, 14).
+  const series = [
+    { day: '2026-05-01', value: 100 },
+    { day: '2026-05-03', value: 104 },
+    { day: '2026-05-08', value: 114 },
+    { day: '2026-05-15', value: 128 },
+  ];
+  const f = stats.fitByDay(series);
+  assert.ok(Math.abs(f.slope - 2) < 1e-6, `per-day slope should be 2, got ${f.slope}`);
+  assert.equal(f.spanDays, 14);
+  // Index-fit would be wrong (per-sample, ignores the gaps).
+  assert.ok(Math.abs(stats.linearFit(series.map((p) => p.value)).slope - 2) > 1, 'index-fit should differ');
+});
+
+test('predictionSE grows with horizon distance from the data', () => {
+  const series = [
+    { day: '2026-05-01', value: 100 },
+    { day: '2026-05-05', value: 108 },
+    { day: '2026-05-09', value: 121 },
+    { day: '2026-05-13', value: 130 },
+    { day: '2026-05-17', value: 145 },
+  ];
+  const f = stats.fitByDay(series);
+  const near = stats.predictionSE(f, f.lastX + 5);
+  const far = stats.predictionSE(f, f.lastX + 90);
+  assert.ok(far > near, 'uncertainty should widen further out');
+});

@@ -12,6 +12,8 @@ export const BRIEFING_URL = `${API_BASE}/api/briefing`;
 export const HEALTH_INGEST_URL = `${API_BASE}/api/ingest/health`;
 export const CHECKIN_URL = `${API_BASE}/api/checkin`;
 export const CHECKIN_TODAY_URL = `${API_BASE}/api/checkin/today`;
+export const INTENTIONS_URL = `${API_BASE}/api/intentions`;
+export const INTENTIONS_CURRENT_URL = `${API_BASE}/api/intentions/current`;
 export const CHAT_URL = `${API_BASE}/api/chat`;
 export const DEVICE_REGISTER_URL = `${API_BASE}/api/devices/register`;
 export const HIGHLIGHTS_URL = `${API_BASE}/api/highlights`;
@@ -22,4 +24,24 @@ export function authHeaders(): Record<string, string> {
   const h: Record<string, string> = { 'Content-Type': 'application/json' };
   if (API_TOKEN) h.Authorization = `Bearer ${API_TOKEN}`;
   return h;
+}
+
+/**
+ * fetch() with a hard timeout (default 20s) so a stalled request can't hang a
+ * spinner forever — important since the app is meant to work off-WiFi/unplugged.
+ * Throws on timeout (AbortError) just like a network failure, so callers' catch
+ * blocks handle it uniformly.
+ */
+export async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs = 20000
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }

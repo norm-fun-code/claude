@@ -39,7 +39,9 @@ async function insertMetrics(rows) {
      ON CONFLICT (ts, domain, metric, source) DO UPDATE
        SET value = EXCLUDED.value,
            unit = EXCLUDED.unit,
-           metadata = EXCLUDED.metadata`,
+           -- Don't let an empty incoming metadata ({}) wipe richer metadata an
+           -- earlier write stored; only overwrite when the new value has content.
+           metadata = COALESCE(NULLIF(EXCLUDED.metadata, '{}'::jsonb), metrics.metadata)`,
     values
   );
   return clean.length;

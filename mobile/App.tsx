@@ -30,8 +30,10 @@ import { WealthCard } from './src/components/WealthCard';
 import { InsightsCard } from './src/components/InsightsCard';
 import { ChatCard } from './src/components/ChatCard';
 import { CheckinCard } from './src/components/CheckinCard';
+import { WeeklyIntentionsCard } from './src/components/WeeklyIntentionsCard';
 import { HabitsCard } from './src/components/HabitsCard';
 import { HealthCard } from './src/components/HealthCard';
+import { RecoveryCard } from './src/components/RecoveryCard';
 import { WeatherCard } from './src/components/WeatherCard';
 import { WorkoutsPanel } from './src/components/WorkoutsPanel';
 import { CalendarCard } from './src/components/CalendarCard';
@@ -52,7 +54,6 @@ export default function App() {
 
   const briefing = useBriefing();
   const health = useHealthData();
-  usePushRegistration(); // register this phone for proactive nudges
 
   const [tab, setTab] = useState<TabKey>('today');
   const isRefreshing = briefing.loading || health.loading;
@@ -61,6 +62,10 @@ export default function App() {
     briefing.refetch();
     health.refetch();
   }, [briefing, health]);
+
+  // Register for push, and refresh when a notification (e.g. the 8am "briefing
+  // ready") is tapped so the app opens to today's content.
+  usePushRegistration(onRefresh);
 
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
@@ -74,6 +79,7 @@ export default function App() {
       case 'health':
         return (
           <>
+            <RecoveryCard recovery={d?.recovery} composites={d?.healthComposites ?? []} />
             <HealthCard health={health} />
             {d?.healthInsights && d.healthInsights.length > 0 ? (
               <InsightsCard insights={d.healthInsights} />
@@ -123,6 +129,7 @@ export default function App() {
         return (
           <>
             {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
+            <WeeklyIntentionsCard />
             <WeatherCard weather={d?.weather ?? null} />
             {d && d.calendar.length > 0 && <CalendarCard events={d.calendar} />}
             {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}

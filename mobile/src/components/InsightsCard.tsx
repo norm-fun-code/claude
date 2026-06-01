@@ -11,6 +11,17 @@ interface Props {
 const TYPE_LABEL: Record<string, string> = {
   trend: 'TREND',
   correlation: 'PATTERN',
+  anomaly: 'VS YOUR BASELINE',
+  savings_rate: 'SAVINGS RATE',
+  spending_pattern: 'SPENDING',
+  over_budget: 'BUDGET',
+  subscriptions: 'SUBSCRIPTIONS',
+  subscription_review: 'REVIEW',
+  net_worth_path: 'NET WORTH PATH',
+  recovery: 'RECOVERY',
+  sleep_debt: 'SLEEP',
+  sleep_consistency: 'SLEEP',
+  training_load: 'TRAINING LOAD',
 };
 
 // The intelligence findings — trends and confirmed cross-domain patterns —

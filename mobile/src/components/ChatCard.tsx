@@ -11,7 +11,7 @@ import {
 import Markdown from 'react-native-markdown-display';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import { CHAT_URL, authHeaders } from '../config';
+import { CHAT_URL, authHeaders, fetchWithTimeout } from '../config';
 
 interface Source { title: string | null; author: string | null; url: string | null }
 
@@ -36,16 +36,21 @@ export function ChatCard() {
     setAnswer(null);
     setSources([]);
     try {
-      const res = await fetch(CHAT_URL, {
+      // Chat answers run retrieval + an LLM call, so allow a generous timeout.
+      const res = await fetchWithTimeout(CHAT_URL, {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ question: q }),
-      });
-      const json = await res.json();
-      setAnswer(json.answer || json.error || 'No answer.');
+      }, 45000);
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setAnswer(`NormOS hit an error (${res.status}). Please try again in a moment.`);
+        return;
+      }
+      setAnswer(json.answer || 'No answer.');
       setSources(Array.isArray(json.sources) ? json.sources : []);
     } catch {
-      setAnswer('Could not reach NormOS. Is the backend running?');
+      setAnswer('Could not reach NormOS. Check your connection and try again.');
     } finally {
       setLoading(false);
     }

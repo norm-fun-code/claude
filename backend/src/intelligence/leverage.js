@@ -8,23 +8,41 @@
 const cat = require('./catalog');
 const { formatDate } = require('../util/date');
 
-// Outcomes we want to move, and the levers we can directly pull.
+// Outcomes we want to move, and the levers we can directly pull. Broadened to
+// cover everything NormOS now tracks, so more confirmed relationships can turn
+// into real actions (recovery, sleep quality, resting HR, savings, etc.).
 const OUTCOMES = new Set([
   'wellbeing:mood',
   'wellbeing:energy',
   'wellbeing:focus',
   'health:hrv',
+  'health:resting_hr',
+  'health:sleep_score',
+  'health:deep_sleep_hours',
+  'health:rem_sleep_hours',
   'health:vo2_max',
   'wealth:net_worth',
+  'wealth:net_cashflow',
 ]);
 
 // lever metric -> { ease 0..1, more: phrase to increase, less: phrase to decrease }
 const LEVERS = {
   'health:sleep_hours': { ease: 0.5, more: 'protect more sleep', less: 'cut excess time in bed' },
   'health:exercise_minutes': { ease: 0.5, more: 'train more', less: 'ease training load' },
+  'health:active_energy': { ease: 0.5, more: 'add more active movement', less: 'ease training load' },
   'health:steps': { ease: 0.7, more: 'walk more', less: 'walk less' },
   'health:mindful_minutes': { ease: 0.7, more: 'add mindfulness', less: 'cut mindfulness' },
   'productivity:meetings': { ease: 0.6, more: 'add meetings', less: 'cut meetings / protect focus blocks' },
+  // Habit levers — easy, high-agency things you directly control each day.
+  'habits:exercise': { ease: 0.6, more: 'keep the exercise habit', less: 'ease off exercise' },
+  'habits:morning_tm': { ease: 0.8, more: 'hold the morning meditation', less: 'drop the morning meditation' },
+  'habits:afternoon_tm': { ease: 0.8, more: 'hold the afternoon meditation', less: 'drop the afternoon meditation' },
+  'habits:cold_shower': { ease: 0.8, more: 'keep the cold showers', less: 'skip the cold showers' },
+  'habits:gratitude': { ease: 0.9, more: 'keep journaling gratitude', less: 'skip gratitude journaling' },
+  'habits:eat_healthy': { ease: 0.5, more: 'eat cleaner', less: 'loosen the diet' },
+  'habits:habit_score': { ease: 0.5, more: 'hit more of your daily habits', less: 'do fewer habits' },
+  // Wealth lever.
+  'wealth:spending': { ease: 0.5, more: 'spend more', less: 'trim discretionary spending' },
 };
 
 // Relative importance per domain when estimating impact.
@@ -101,7 +119,13 @@ function fromCorrelation(f) {
   const ov = splitKey(outcome);
   const leverLabel = cat.label(lv.domain, lv.metric);
   const outcomeLabel = cat.label(ov.domain, ov.metric);
-  const direction = ev.r >= 0 ? 'more' : 'less';
+  // We want to move the outcome in ITS good direction. If higher is better we
+  // push it up; if lower is better (e.g. resting HR) we push it down. Given the
+  // sign of the association, that dictates whether to pull the lever more/less —
+  // so the advice is never backwards for "lower is better" outcomes.
+  const wantOutcomeUp = cat.goodWhen(ov.domain, ov.metric) !== 'down';
+  const positive = ev.r >= 0;
+  const direction = (positive === wantOutcomeUp) ? 'more' : 'less';
   const phrase = LEVERS[lever][direction];
 
   const impact = clamp01(Math.abs(ev.r)) * (DOMAIN_WEIGHT[ov.domain] ?? 0.5);

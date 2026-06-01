@@ -77,12 +77,17 @@ function forecastGoal(goal, series = [], opts = {}) {
     };
   }
 
-  const recent = values.slice(-FIT_WINDOW);
-  const fit = stats.linearFit(recent);
-  const n = recent.length;
+  // Fit against REAL calendar days (not sample index), so the slope is genuinely
+  // per-day even when the metric is logged irregularly. Falls back to index-fit
+  // if the series lacks usable day stamps.
+  const recentSeries = series.slice(-FIT_WINDOW);
+  const recent = recentSeries.map((p) => Number(p.value)).filter(Number.isFinite);
+  const dayFit = stats.fitByDay(recentSeries);
+  const fit = dayFit || stats.linearFit(recent);
   const slopePerDay = fit?.slope ?? 0;
-  // Fitted current level (smoother than the raw last point).
-  const current = fit ? fit.intercept + fit.slope * (n - 1) : recent.at(-1);
+  // Fitted current level (smoother than the raw last point) at the latest x.
+  const lastX = dayFit ? dayFit.lastX : recent.length - 1;
+  const current = fit ? fit.intercept + fit.slope * lastX : recent.at(-1);
   const baseline = goal.baseline_value != null ? Number(goal.baseline_value) : recent[0];
 
   // Which way is "toward the target" from where we are now?
@@ -113,9 +118,11 @@ function forecastGoal(goal, series = [], opts = {}) {
     if (achieved && daysRemaining === 0) {
       probability = 1;
     } else {
-      // Forecast uncertainty grows with the horizon (random-walk-style).
+      // Statistically correct OLS prediction interval at the target date, rather
+      // than the dimensionally-wrong residualStd·√horizon random-walk guess.
+      const x0 = lastX + daysRemaining; // day offset of the target date in the fit's frame
       const eps = Math.max(1e-9, 0.01 * Math.abs(target - baseline));
-      const sd = Math.max((fit?.residualStd ?? 0) * Math.sqrt(Math.max(daysRemaining, 1)), eps);
+      const sd = Math.max(stats.predictionSE(fit, x0) ?? (fit?.residualStd ?? 0), eps);
       const z = (projectedValue - target) / sd;
       probability = needUp ? stats.normalCdf(z) : stats.normalCdf(-z);
     }
@@ -171,7 +178,7 @@ function forecastGoal(goal, series = [], opts = {}) {
       targetDate: goal.target_date ? new Date(goal.target_date).toISOString().slice(0, 10) : null,
       daysRemaining,
       probability: round(probability, 3),
-      n,
+      n: recent.length,
     },
   };
 }

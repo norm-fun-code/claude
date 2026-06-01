@@ -1,4 +1,6 @@
 require('dotenv').config();
+const crypto = require('crypto');
+const { withTimeout } = require('./src/util/async');
 const express = require('express');
 const cors = require('cors');
 
@@ -34,27 +36,68 @@ const experiments = require('./src/intelligence/experiments');
 const devicesStore = require('./src/store/devices');
 const nudgesStore = require('./src/store/nudges');
 const { runNudges } = require('./src/notify/run');
+const { runMorningBriefing } = require('./src/notify/morning');
 const surfacedStore = require('./src/store/surfaced');
 const briefingsStore = require('./src/store/briefings');
 const workoutChecks = require('./src/store/workoutChecks');
+const intentionsStore = require('./src/store/intentions');
+const dailyPicksStore = require('./src/store/dailyPicks');
 const { runReview } = require('./src/intelligence/review');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+// CORS. The mobile app (React Native) isn't subject to CORS, so we only need to
+// allow browser origins we actually use. Lock to an allowlist in production
+// (set CORS_ORIGINS as a comma-separated list); default-open only in dev.
+const corsOrigins = (process.env.CORS_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
+app.use(cors(corsOrigins.length ? { origin: corsOrigins } : {}));
 app.use(express.json({ limit: '2mb' }));
 
-// Optional bearer-token auth. Off by default (fine for localhost); set
-// NORMOS_API_TOKEN to require `Authorization: Bearer <token>` on every /api
-// route except the health check — important if you ever host this on a VPS.
+// Bearer-token auth on every /api route except the health check. Set
+// NORMOS_API_TOKEN to require `Authorization: Bearer <token>`. In production we
+// warn loudly if it's missing, since the same code is deployed to a public host.
+if (!process.env.NORMOS_API_TOKEN) {
+  const msg = '[auth] NORMOS_API_TOKEN is not set — the /api surface (including admin/reset and ingest) is UNAUTHENTICATED.';
+  if (process.env.NODE_ENV === 'production') console.error(`\n⚠️  ${msg} Set it now.\n`);
+  else console.warn(msg);
+}
 app.use('/api', (req, res, next) => {
   const token = process.env.NORMOS_API_TOKEN;
   if (!token || req.path === '/health') return next();
   const auth = req.get('authorization') || '';
-  if (auth === `Bearer ${token}`) return next();
+  const expected = `Bearer ${token}`;
+  // Constant-time compare to avoid a timing side-channel on the token.
+  const a = Buffer.from(auth);
+  const b = Buffer.from(expected);
+  if (a.length === b.length && crypto.timingSafeEqual(a, b)) return next();
   return res.status(401).json({ error: 'unauthorized' });
 });
+
+// Recompute today's habit_score (0-100) from whatever binary habits are logged
+// for today, so a partial save can't leave the composite disagreeing with its
+// components. Best-effort; never throws into the request path.
+const BINARY_HABITS = ['morning_tm', 'afternoon_tm', 'gratitude', 'cold_shower', 'exercise'];
+async function recomputeHabitScore(tz) {
+  try {
+    const { rows } = await db.query(
+      `SELECT metric, value FROM metrics
+        WHERE domain = 'habits' AND source = 'habits'
+          AND metric = ANY($1)
+          AND (ts AT TIME ZONE $2)::date = (now() AT TIME ZONE $2)::date`,
+      [BINARY_HABITS, tz]
+    );
+    if (!rows.length) return;
+    const done = rows.reduce((s, r) => s + (Number(r.value) ? 1 : 0), 0);
+    const score = Math.round((done / rows.length) * 100);
+    const when = require('./src/util/date').dayAnchorTs(tz);
+    await metricsStore.insertMetrics([
+      { ts: when, domain: 'habits', metric: 'habit_score', value: score, unit: 'percent', source: 'habits' },
+    ]);
+  } catch (err) {
+    console.error('[habit_score] recompute failed:', err.message);
+  }
+}
 
 // Public UCP agent profile — Shopify's Global Catalog fetches this (no auth) to
 // negotiate capabilities. Lives outside /api so the bearer gate doesn't block it.
@@ -146,6 +189,10 @@ app.post('/api/habits', async (req, res) => {
     const tz = process.env.TZ || 'America/New_York';
     const { metrics } = mapHabits(req.body, { ts: req.query.ts, tz });
     const written = await metricsStore.insertMetrics(metrics);
+    // Recompute habit_score from ALL of today's persisted binary habits, so a
+    // partial save (e.g. the workout panel toggling just `exercise`) keeps the
+    // composite consistent with its components instead of leaving it stale.
+    await recomputeHabitScore(tz);
     await sourcesStore.markSync(HABITS_SOURCE);
     res.json({ written });
   } catch (err) {
@@ -200,6 +247,26 @@ app.post('/api/workout/checks', async (req, res) => {
     if (!date || !itemKey) return res.status(400).json({ error: 'date and itemKey are required' });
     await workoutChecks.setCheck({ date, itemKey, itemType, done: done !== false });
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Weekly intentions — the Sunday check-in (life context + focus goals). GET
+// returns the current week's entry (so the Today card can pre-fill / know if
+// it's been set); POST upserts it.
+app.get('/api/intentions/current', async (req, res) => {
+  try {
+    res.json({ weekStart: intentionsStore.weekStart(), intention: await intentionsStore.currentIntention() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/intentions', async (req, res) => {
+  try {
+    const { context, goals } = req.body || {};
+    res.json({ intention: await intentionsStore.saveIntention({ context, goals }) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -295,29 +362,45 @@ app.get('/api/findings', async (req, res) => {
 
 // Daily Readwise highlights for the Wisdom tab card. Favorites-first, filling
 // with random ones if you've hearted few. Won't repeat a highlight shown in the
-// last 30 days (tracked in `surfaced`), so it cycles through your library.
+// last 30 days (tracked in `surfaced`). DAY-LOCKED: the first request of the day
+// picks the set and caches it (daily_picks), so it stays identical all day
+// across devices and pull-to-refresh — like the Notion page / daily quote.
+// `?refresh=1` forces a fresh set (the "New set" button).
 app.get('/api/highlights', async (req, res) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit, 10) || 5, 20);
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 5, 20));
     const favoritesOnly = req.query.favoritesOnly === '1' || req.query.favoritesOnly === 'true';
+    const force = req.query.refresh === '1' || req.query.refresh === 'true';
+
+    // Return today's locked set unless an explicit refresh was requested.
+    if (!force) {
+      const cached = await dailyPicksStore.get('highlights').catch(() => null);
+      if (cached && Array.isArray(cached) && cached.length) {
+        return res.json({ highlights: cached });
+      }
+    }
+
     const seen = await surfacedStore.recentRefs('highlight', 30);
-    const rows = await documentsStore.randomHighlights({
-      limit,
-      favoritesOnly,
-      exclude: [...seen],
-    });
-    // Record what we're showing so the next 30 days won't repeat them.
+    const rows = await documentsStore.randomHighlights({ limit, favoritesOnly, exclude: [...seen] });
     if (rows.length) await surfacedStore.record('highlight', rows.map((r) => r.id));
-    res.json({
-      highlights: rows.map((r) => ({
-        id: r.id,
-        text: r.content,
-        title: r.title,
-        author: r.author,
-        url: r.url,
-        favorite: !!(r.metadata && r.metadata.favorite),
-      })),
-    });
+    const highlights = rows.map((r) => ({
+      id: r.id,
+      text: r.content,
+      title: r.title,
+      author: r.author,
+      url: r.url,
+      favorite: !!(r.metadata && r.metadata.favorite),
+    }));
+
+    // Lock this set as today's pick (force → replace; otherwise set-if-absent so
+    // two same-day first-hits don't diverge).
+    if (highlights.length) {
+      const stored = force
+        ? await dailyPicksStore.replace('highlights', highlights).catch(() => highlights)
+        : await dailyPicksStore.set('highlights', highlights).catch(() => highlights);
+      return res.json({ highlights: stored });
+    }
+    res.json({ highlights });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -530,7 +613,7 @@ app.post('/api/devices/register', async (req, res) => {
 // Recent nudges (the proactive-message log).
 app.get('/api/nudges', async (req, res) => {
   try {
-    res.json({ nudges: await nudgesStore.listNudges({ limit: Number(req.query.limit) || 50 }) });
+    res.json({ nudges: await nudgesStore.listNudges({ limit: Math.max(1, Math.min(Number(req.query.limit) || 50, 200)) }) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -542,6 +625,18 @@ app.post('/api/nudges/run', async (req, res) => {
   try {
     const { force = false, dryRun = false } = req.body || {};
     res.json(await runNudges({ force, send: !dryRun }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manually trigger the morning routine (pre-build briefing + "ready" push).
+// Lets you test the 8am flow on demand; pass { dryRun: true } to build without
+// pushing.
+app.post('/api/morning/run', async (req, res) => {
+  try {
+    const { dryRun = false } = req.body || {};
+    res.json(await runMorningBriefing({ send: !dryRun }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -626,15 +721,19 @@ app.get('/api/briefing', async (req, res) => {
   // Notion wisdom page: avoid repeating one shown in the last 30 days.
   const seenNotion = await surfacedStore.recentRefs('notion_page', 30).catch(() => new Set());
 
-  // Fetch all independent data sources in parallel
+  // Fetch all independent data sources in parallel. Each is bounded by a hard
+  // timeout so one slow upstream (Gmail/Notion/etc.) can't hang the whole
+  // briefing — allSettled waits for every promise, so without this a single
+  // stall blocks the response. A timed-out source just shows as a soft error.
+  const EXT = Number(process.env.BRIEFING_SOURCE_TIMEOUT_MS || 12000);
   const [weatherResult, calendarResult, notionResult, quoteResult, emailResult, marketsResult] =
     await Promise.allSettled([
-      fetchWeather(),
-      fetchCalendarEvents(),
-      fetchRandomNotionPage({ exclude: [...seenNotion] }),
-      fetchRandomQuote(),
-      fetchGmailThreads(),
-      fetchMarkets(),
+      withTimeout(fetchWeather(), EXT, 'weather'),
+      withTimeout(fetchCalendarEvents(), EXT, 'calendar'),
+      withTimeout(fetchRandomNotionPage({ exclude: [...seenNotion] }), EXT, 'notion'),
+      withTimeout(fetchRandomQuote(), EXT, 'googleDoc'),
+      withTimeout(fetchGmailThreads(), EXT, 'gmail'),
+      withTimeout(fetchMarkets(), EXT, 'markets'),
     ]);
 
   function unwrap(result, name) {
@@ -659,7 +758,7 @@ app.get('/api/briefing', async (req, res) => {
   // No-repeat for 30 days so it cycles through all your quotes.
   let dailyQuote = null;
   try {
-    const quotes = await fetchNotionQuotes();
+    const quotes = await withTimeout(fetchNotionQuotes(), EXT, 'notionQuotes');
     if (quotes.length) {
       const seen = await surfacedStore.recentRefs('daily_quote', 30);
       const [pick] = surfacedStore.pickFresh(
@@ -692,14 +791,19 @@ app.get('/api/briefing', async (req, res) => {
     const [mood, energy, focus] = await Promise.all([
       avg('wellbeing', 'mood'), avg('wellbeing', 'energy'), avg('wellbeing', 'focus'),
     ]);
-    // Habits trailing completion (which ones are slipping).
-    const habitMetrics = ['gratitude', 'morning_tm', 'afternoon_tm', 'cold_shower', 'exercise', 'eat_healthy'];
+    // Habits trailing completion (which ones are slipping). The five binary
+    // habits are 0/1 (flag <60% adherence); eat_healthy is a 1–5 score, so it
+    // needs its own threshold (flag when averaging below ~3/5) — checking it
+    // against 0.6 like the binaries meant it could never flag.
+    const binaryHabits = ['gratitude', 'morning_tm', 'afternoon_tm', 'cold_shower', 'exercise'];
     const habitLabels = { gratitude: 'gratitude', morning_tm: 'morning meditation', afternoon_tm: 'afternoon meditation', cold_shower: 'cold shower', exercise: 'exercise', eat_healthy: 'eating well' };
     const lagging = [];
-    for (const m of habitMetrics) {
+    for (const m of binaryHabits) {
       const a = await avg('habits', m);
-      if (a != null && a < 0.6) lagging.push(habitLabels[m] || m); // <60% adherence
+      if (a != null && a < 0.6) lagging.push(habitLabels[m]); // <60% adherence
     }
+    const eatAvg = await avg('habits', 'eat_healthy');
+    if (eatAvg != null && eatAvg < 3) lagging.push(habitLabels.eat_healthy); // below ~3/5
     const parts = [];
     const themes = [];
     const lowHL = (v) => (v <= 2.5 ? 'low' : v >= 4 ? 'strong' : 'moderate');
@@ -720,14 +824,12 @@ app.get('/api/briefing', async (req, res) => {
   // Call Gemini with whatever data we have
   let geminiResult = null;
   try {
-    geminiResult = await generateBriefing(
-      emails,
-      notionData.text,
-      quoteData.quote,
-      dayName,
-      workout,
-      calendar,
-      wellbeingContext
+    // The LLM call can be slow; bound it so a stalled model doesn't hang the
+    // briefing (it degrades to the data-only sections).
+    geminiResult = await withTimeout(
+      generateBriefing(emails, notionData.text, quoteData.quote, dayName, workout, calendar, wellbeingContext),
+      Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 40000),
+      'gemini'
     );
   } catch (err) {
     console.error('[gemini] failed:', err.message);
@@ -740,6 +842,8 @@ app.get('/api/briefing', async (req, res) => {
   let healthInsights = [];
   let leverageActions = [];
   let forecasts = [];
+  let recovery = null;
+  let healthComposites = [];
   try {
     const open = await findingsStore.listFindings({ status: 'open' });
     leverageActions = open
@@ -758,9 +862,29 @@ app.get('/api/briefing', async (req, res) => {
         status: f.evidence?.status ?? null,
       }));
 
+    // Live health composites (recovery/sleep-debt/etc.) are current status, not
+    // rotating insights — pull them out so they're shown fresh every day and
+    // surface the recovery score as its own headline field.
+    const COMPOSITE_TYPES = ['recovery', 'sleep_debt', 'sleep_consistency', 'training_load'];
+    const recoveryFinding = open.find((f) => f.type === 'recovery');
+    if (recoveryFinding) {
+      recovery = {
+        score: recoveryFinding.evidence?.score ?? null,
+        band: recoveryFinding.evidence?.band ?? null,
+        parts: recoveryFinding.evidence?.parts ?? {},
+        detail: recoveryFinding.detail,
+      };
+    }
+    healthComposites = open
+      .filter((f) => COMPOSITE_TYPES.includes(f.type) && f.type !== 'recovery')
+      .map((f) => ({ type: f.type, title: f.title, detail: f.detail, evidence: f.evidence }));
+
     // Insights rotate: prefer ones not shown in the last 30 days so the card
-    // stays fresh, falling back to the rest if you've seen them all.
-    const insightPool = open.filter((f) => f.type !== 'leverage' && f.type !== 'forecast');
+    // stays fresh, falling back to the rest if you've seen them all. Composites
+    // are excluded (shown live above).
+    const insightPool = open.filter(
+      (f) => f.type !== 'leverage' && f.type !== 'forecast' && !COMPOSITE_TYPES.includes(f.type)
+    );
     const seenInsights = await surfacedStore.recentRefs('insight', 30);
     const chosen = surfacedStore.pickFresh(insightPool, seenInsights, { max: 6, keyFn: (f) => f.title });
     insights = chosen.map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains }));
@@ -791,7 +915,7 @@ app.get('/api/briefing', async (req, res) => {
   let relevantHighlight = null;
   try {
     const theme = wellbeingTheme || quoteData.quote || 'presence, growth, resilience, gratitude';
-    const [vec] = await llm.embed([theme]);
+    const [vec] = await withTimeout(llm.embed([theme]), EXT, 'embed');
     if (vec) {
       const hits = await documentsStore.searchSimilar(vec, { k: 25, domain: 'learning' });
       const seen = await surfacedStore.recentRefs('highlight', 30);
@@ -888,6 +1012,8 @@ app.get('/api/briefing', async (req, res) => {
     insights,
     wealthInsights,
     healthInsights,
+    recovery,
+    healthComposites,
     forecasts,
     relevantHighlight: keep(p?.relevantHighlight, relevantHighlight),
     weeklyReview,
@@ -905,10 +1031,8 @@ app.get('/api/briefing', async (req, res) => {
 
   // Persist the briefing for history, and capture today's data into the spine.
   // Fire-and-forget: never let persistence failures affect the live response.
-  db.query(
-    `INSERT INTO briefings (kind, content) VALUES ('daily', $1)`,
-    [response]
-  ).catch((err) => console.error('[persist briefing] failed:', err.message));
+  briefingsStore.saveBriefing({ kind: 'daily', content: response })
+    .catch((err) => console.error('[persist briefing] failed:', err.message));
 
   runIngest()
     .then((results) => {

@@ -46,8 +46,10 @@ function fromForecast(f) {
 
 function fromLeverage(f) {
   const ev = f.evidence || {};
-  // Only the single highest-ranked action earns a push.
-  if (ev.rank != null && ev.rank !== 0) return null;
+  // Only the single highest-ranked action earns a push. rankActions() assigns
+  // 1-based ranks (rank: i+1), so the top action is rank 1 — gating on !== 0
+  // suppressed every leverage nudge. Gate on rank > 1 instead.
+  if (ev.rank != null && ev.rank > 1) return null;
   const score = Number.isFinite(ev.score) ? ev.score : 0;
   return {
     key: `leverage:${slugify(f.title)}`,

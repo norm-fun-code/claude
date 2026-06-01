@@ -7,6 +7,7 @@ const documents = require('../store/documents');
 const findingsStore = require('../store/findings');
 const annotationsStore = require('../store/annotations');
 const metricsStore = require('../store/metrics');
+const intentionsStore = require('../store/intentions');
 const { query: dbQuery } = require('../db');
 
 const SYSTEM = `You are NormOS — the user's personal chief of staff, executive coach, and data scientist.
@@ -49,7 +50,7 @@ function isPersonalQuestion(q) {
  * direction per metric, plus active goals with target + latest value.
  */
 async function personalSnapshot() {
-  const lines = { goals: [], metrics: [] };
+  const lines = { goals: [], metrics: [], intentions: [] };
 
   // Active goals (what the user is steering toward).
   try {
@@ -60,6 +61,13 @@ async function personalSnapshot() {
     lines.goals = rows;
   } catch {
     /* goals optional */
+  }
+
+  // Recent weekly intentions (the Sunday check-in): life context + focus goals.
+  try {
+    lines.intentions = await intentionsStore.recentIntentions({ days: 30 });
+  } catch {
+    /* intentions optional */
   }
 
   // Recent trend per tracked metric: last 7d avg vs the prior 7d.
@@ -90,8 +98,23 @@ async function personalSnapshot() {
 }
 
 /** Render the snapshot into a prompt block (omitted entirely if empty). */
-function renderSnapshot({ goals = [], metrics = [] } = {}) {
+function renderSnapshot({ goals = [], metrics = [], intentions = [] } = {}) {
   const out = [];
+  // Weekly intentions first — they're the user's own stated focus + life context,
+  // the richest grounding for "what should I focus on" style questions.
+  if (intentions.length) {
+    out.push(
+      "THIS PERSON'S RECENT WEEKLY INTENTIONS (their own words, newest first):\n" +
+        intentions
+          .map((it) => {
+            const wk = it.weekStart ? new Date(it.weekStart).toISOString().slice(0, 10) : 'recent';
+            const goalsStr = Array.isArray(it.goals) && it.goals.length ? ` Focus goals: ${it.goals.join('; ')}.` : '';
+            const ctx = it.context ? ` Context: ${it.context}` : '';
+            return `- Week of ${wk}:${goalsStr}${ctx}`;
+          })
+          .join('\n')
+    );
+  }
   if (goals.length) {
     out.push(
       'ACTIVE GOALS:\n' +

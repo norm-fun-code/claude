@@ -216,6 +216,28 @@ async function monthlyCategorySpend({ months = 4 } = {}) {
   return rows.map((r) => ({ month: r.month, category: r.category, spend: Number(r.spend) }));
 }
 
+/**
+ * Raw spend transactions (amount < 0) over the last `days`, for recurring-charge
+ * / subscription detection. Returns [{ day, merchant, amount, category }] with
+ * amount as a positive spend figure, newest first.
+ */
+async function spendTransactions({ days = 120 } = {}) {
+  const { rows } = await query(
+    `SELECT occurred_at::date AS day,
+            COALESCE(NULLIF(metadata->>'merchant',''), title, 'Transaction') AS merchant,
+            -(metadata->>'amount')::numeric AS amount,
+            COALESCE(NULLIF(metadata->>'category',''), 'Uncategorized') AS category
+       FROM documents
+      WHERE source = 'monarch'
+        AND occurred_at >= now() - ($1::int || ' days')::interval
+        AND metadata ? 'amount'
+        AND (metadata->>'amount')::numeric < 0
+      ORDER BY occurred_at DESC`,
+    [days]
+  );
+  return rows.map((r) => ({ day: r.day, merchant: r.merchant, amount: Number(r.amount), category: r.category }));
+}
+
 module.exports = {
   upsertDocument,
   searchSimilar,
@@ -223,6 +245,7 @@ module.exports = {
   recent,
   randomHighlights,
   monthlyCategorySpend,
+  spendTransactions,
   listWithoutEmbedding,
   setEmbedding,
   countMissingEmbeddings,

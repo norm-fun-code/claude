@@ -277,12 +277,12 @@ export const HRV_ZONES: Record<
   { min: number; color: string; instruction: string }
 > = {
   green: {
-    min: 60,
+    min: 50,
     color: '#1D9E75',
     instruction: 'Full planned session at target intensity.',
   },
   yellow: {
-    min: 45,
+    min: 35,
     color: '#BA7517',
     instruction: 'Reduce load 20%. Drop to 2 sets. No PRs.',
   },

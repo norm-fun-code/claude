@@ -8,13 +8,9 @@ import {
   TouchableOpacity,
   ActivityIndicator,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import { HIGHLIGHTS_URL, authHeaders } from '../config';
-
-// Today's date (local) as a cache key, so the set resets at midnight.
-const todayKey = () => `normos.highlights.${new Date().toLocaleDateString('en-CA')}`;
+import { HIGHLIGHTS_URL, authHeaders, fetchWithTimeout } from '../config';
 
 interface Highlight {
   id: string;
@@ -25,9 +21,11 @@ interface Highlight {
   favorite: boolean;
 }
 
-// Daily Readwise highlights — 5 random (hearted-first) per fetch. Tap "Next" to
-// flip through them; refetches a fresh set once you reach the end. Replaces the
-// old single "From Your Library" card on the Wisdom tab.
+// "From Your Library" — Readwise highlights for the Wisdom tab. DAY-LOCKED: the
+// server picks the day's set on the first request and returns the same set all
+// day (across devices and pull-to-refresh), like the Notion page and daily
+// quote. Tap "Next" to flip through them; "New set ↻" (or paging past the end)
+// asks the server for a fresh set via ?refresh=1.
 export function HighlightsCard() {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
@@ -37,20 +35,18 @@ export function HighlightsCard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
-  // Fetch a fresh set from the server. `persist` caches it as today's set so it
-  // stays static across tab switches / reopens until midnight.
-  const load = useCallback(async (persist = true) => {
+  // Fetch the day's set. `refresh` forces a NEW set (explicit user action);
+  // otherwise the server returns today's locked set.
+  const load = useCallback(async (refresh = false) => {
     setLoading(true);
     setError(false);
     try {
-      const res = await fetch(`${HIGHLIGHTS_URL}?limit=5`, { headers: authHeaders() });
+      const url = `${HIGHLIGHTS_URL}?limit=5${refresh ? '&refresh=1' : ''}`;
+      const res = await fetchWithTimeout(url, { headers: authHeaders() });
+      if (!res.ok) throw new Error(`Server ${res.status}`);
       const json = await res.json();
-      const items = json.highlights ?? [];
-      setHighlights(items);
+      setHighlights(json.highlights ?? []);
       setIdx(0);
-      if (persist && items.length) {
-        AsyncStorage.setItem(todayKey(), JSON.stringify(items)).catch(() => {});
-      }
     } catch {
       setError(true);
     } finally {
@@ -58,33 +54,13 @@ export function HighlightsCard() {
     }
   }, []);
 
-  // On mount: reuse today's already-pulled set if we have one (so it's static
-  // all day); otherwise pull the first set of the day and cache it.
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const saved = await AsyncStorage.getItem(todayKey());
-        if (saved && !cancelled) {
-          const items = JSON.parse(saved);
-          if (Array.isArray(items) && items.length) {
-            setHighlights(items);
-            setIdx(0);
-            setLoading(false);
-            return;
-          }
-        }
-      } catch {
-        /* ignore corrupt cache */
-      }
-      if (!cancelled) load(true);
-    })();
-    return () => { cancelled = true; };
+    load(false); // today's locked set
   }, [load]);
 
   const next = () => {
     if (idx < highlights.length - 1) setIdx(idx + 1);
-    else load(true); // reached the end — pull a fresh set (and make it today's set)
+    else load(true); // reached the end — ask for a fresh set
   };
 
   const back = () => {

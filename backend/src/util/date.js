@@ -47,4 +47,12 @@ function dayAnchorTs(tz = 'UTC', now = new Date()) {
   return new Date(`${ymd}T12:00:00Z`);
 }
 
-module.exports = { formatDate, daysBetween, addDays, dayAnchorTs };
+/** Parse to a valid Date, or null if the input is missing/unparseable. Guards
+ *  against a bad client-supplied ?ts= reaching the DB as an Invalid Date. */
+function safeDate(value) {
+  if (value == null || value === '') return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+module.exports = { formatDate, daysBetween, addDays, dayAnchorTs, safeDate };
