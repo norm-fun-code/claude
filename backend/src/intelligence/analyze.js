@@ -22,6 +22,10 @@ const DEFAULTS = {
   corrFdrQ: 0.1, // Benjamini–Hochberg false-discovery rate for the all-pairs search
   corrLags: [0, 1], // test same-day and next-day
   maxCorrelations: 12,
+  anomalyBaselineDays: 30, // trailing window forming each metric's personal baseline
+  anomalyMinN: 8, // need at least this many baseline days
+  anomalyMinZ: 1.8, // |z| past this is "unusual for you" (~7% tail)
+  maxAnomalies: 6,
   // Flow metrics that post sparsely (only on transaction days). A daily-mean
   // "trend" on these is misleading — e.g. "spending down 75%" really compares
   // recent vs prior *daily averages*, not the weekly totals shown on the Wealth
@@ -83,6 +87,57 @@ function computeTrends(seriesByKey, opts = {}) {
   }
 
   return findings;
+}
+
+/**
+ * Pure: personalized-baseline anomaly findings. Flags when today's value is far
+ * from the user's OWN recent norm (|z| past a threshold) — the "unusual for you"
+ * signal, graded relative to personal history rather than population cutoffs.
+ */
+function computeAnomalies(seriesByKey, opts = {}) {
+  const o = { ...DEFAULTS, ...opts };
+  const findings = [];
+
+  for (const [key, series] of Object.entries(seriesByKey)) {
+    if (o.trendSkip && o.trendSkip.includes(key)) continue; // sparse flow metrics
+    const a = stats.baselineAnomaly(series, { baselineDays: o.anomalyBaselineDays, minN: o.anomalyMinN });
+    if (!a || Math.abs(a.z) < o.anomalyMinZ) continue;
+
+    const { domain, metric } = splitKey(key);
+    const label = cat.label(domain, metric);
+    const good = cat.goodWhen(domain, metric);
+    const dir = a.z > 0 ? 'above' : 'below';
+    // Is this anomaly good or bad given the metric's preferred direction?
+    let tone = 'unusual';
+    if (good === 'up') tone = a.z > 0 ? 'a strong day' : 'worth attention';
+    else if (good === 'down') tone = a.z < 0 ? 'a strong day' : 'worth attention';
+    const sigmas = round(Math.abs(a.z), 1);
+
+    findings.push({
+      type: 'anomaly',
+      domains: [domain],
+      title: `${label} ${dir} your usual (${sigmas}σ) — ${tone}`,
+      detail:
+        `${label} is ${round(a.latest)} today vs your ~${o.anomalyBaselineDays}d baseline of ` +
+        `${round(a.baselineMean)} (±${round(a.baselineStd)}). That's ${sigmas} standard deviations ${dir} ` +
+        `your personal norm.`,
+      confidence: Math.min(1, Math.abs(a.z) / 3),
+      evidence: {
+        auto: true,
+        kind: 'anomaly',
+        metric: key,
+        latest: round(a.latest),
+        baselineMean: round(a.baselineMean),
+        baselineStd: round(a.baselineStd),
+        z: round(a.z, 2),
+        n: a.n,
+      },
+    });
+  }
+
+  // Strongest deviations first.
+  findings.sort((x, y) => Math.abs(y.evidence.z) - Math.abs(x.evidence.z));
+  return findings.slice(0, o.maxAnomalies);
 }
 
 /** Pure: cross-metric correlation findings (best lag per pair). */
@@ -196,6 +251,7 @@ async function analyze(opts = {}) {
 
   const trends = computeTrends(seriesByKey, o);
   const correlations = computeCorrelations(seriesByKey, o);
+  const anomalies = computeAnomalies(seriesByKey, o);
 
   // Rank the highest-leverage actions from the findings + any off-track goals.
   const latestByKey = {};
@@ -214,7 +270,7 @@ async function analyze(opts = {}) {
   // Goal achievement-probability forecasts from the same loaded series.
   const forecasts = computeForecasts(goals, seriesByKey);
 
-  const all = [...trends, ...correlations, ...actions, ...forecasts];
+  const all = [...trends, ...correlations, ...anomalies, ...actions, ...forecasts];
   const windowStart = from;
   const windowEnd = new Date();
 
@@ -224,7 +280,7 @@ async function analyze(opts = {}) {
   const { withTransaction } = require('../db');
   await withTransaction(async (client) => {
     const tx = (text, params) => client.query(text, params);
-    await findingsStore.supersedeAuto(['trend', 'correlation', 'leverage', 'forecast'], tx);
+    await findingsStore.supersedeAuto(['trend', 'correlation', 'anomaly', 'leverage', 'forecast'], tx);
     for (const f of all) {
       await findingsStore.createFinding({ ...f, windowStart, windowEnd }, tx);
     }
@@ -234,12 +290,13 @@ async function analyze(opts = {}) {
     metrics: Object.keys(seriesByKey).length,
     trends: trends.length,
     correlations: correlations.length,
+    anomalies: anomalies.length,
     actions: actions.length,
     forecasts: forecasts.length,
   };
 }
 
-module.exports = { analyze, computeTrends, computeCorrelations, DEFAULTS };
+module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, DEFAULTS };
 
 // CLI entrypoint
 if (require.main === module) {

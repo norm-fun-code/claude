@@ -130,6 +130,29 @@ function benjaminiHochberg(pvalues, q = 0.1) {
   return keep;
 }
 
+/**
+ * Personalized baseline anomaly check. Compares the latest value against the
+ * user's own recent history (a rolling baseline) and returns how many standard
+ * deviations it sits from their personal mean — the "unusual for *you*" signal
+ * that powers Oura/Whoop-style readiness, rather than population thresholds.
+ *
+ * series: [{ day, value }] ascending. baselineDays: how many trailing days form
+ * the baseline (the latest point is excluded from its own baseline). Returns
+ * { latest, baselineMean, baselineStd, z, n } or null if too little history.
+ */
+function baselineAnomaly(series, { baselineDays = 30, minN = 8 } = {}) {
+  const values = series.map((p) => Number(p.value)).filter(Number.isFinite);
+  if (values.length < minN + 1) return null;
+  const latest = values[values.length - 1];
+  const baseline = values.slice(-(baselineDays + 1), -1); // exclude latest
+  if (baseline.length < minN) return null;
+  const baselineMean = mean(baseline);
+  const baselineStd = std(baseline);
+  if (baselineMean == null || baselineStd == null || baselineStd === 0) return null;
+  const z = (latest - baselineMean) / baselineStd;
+  return { latest, baselineMean, baselineStd, z, n: baseline.length };
+}
+
 function dayKey(d) {
   return new Date(d).toISOString().slice(0, 10);
 }
@@ -197,6 +220,7 @@ module.exports = {
   pearson,
   pearsonPValue,
   benjaminiHochberg,
+  baselineAnomaly,
   linregSlope,
   linearFit,
   normalCdf,

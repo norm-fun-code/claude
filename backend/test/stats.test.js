@@ -52,3 +52,16 @@ test('benjaminiHochberg controls the false discovery rate', () => {
   // All-null input is safe (no significant results, no throw).
   assert.deepEqual(stats.benjaminiHochberg([null, null], 0.1), [false, false]);
 });
+
+test('baselineAnomaly flags deviations from personal norm', () => {
+  const series = [];
+  for (let i = 0; i < 30; i++) series.push({ day: `2026-05-${String(i + 1).padStart(2, '0')}`, value: 50 + (i % 3 - 1) * 2 });
+  series.push({ day: '2026-06-01', value: 70 });
+  const a = stats.baselineAnomaly(series, { baselineDays: 30, minN: 8 });
+  assert.ok(a.z > 3, `spike should be a large z, got ${a.z}`);
+  // A normal day is quiet.
+  const normal = series.slice(0, -1).concat([{ day: '2026-06-01', value: 51 }]);
+  assert.ok(Math.abs(stats.baselineAnomaly(normal, { baselineDays: 30, minN: 8 }).z) < 1);
+  // Too little history → null.
+  assert.equal(stats.baselineAnomaly(series.slice(0, 5)), null);
+});

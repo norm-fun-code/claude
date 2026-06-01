@@ -11,6 +11,7 @@ interface Props {
 const TYPE_LABEL: Record<string, string> = {
   trend: 'TREND',
   correlation: 'PATTERN',
+  anomaly: 'VS YOUR BASELINE',
 };
 
 // The intelligence findings — trends and confirmed cross-domain patterns —
