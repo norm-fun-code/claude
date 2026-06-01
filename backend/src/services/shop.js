@@ -306,10 +306,12 @@ async function discover(message, { country = 'US', limit = 8 } = {}) {
     return p == null || p <= maxPrice;
   };
 
-  // Cart-able UCP items first (you can buy in-app), then web/Amazon link-outs.
-  const cartable = ucpItems.filter(underBudget).map((r) => ({ ...r, web: false }));
+  // UCP (real Shopify catalog) items first — they're higher quality for brand
+  // searches (clean titles, images, the brand's own store) — then web/Amazon
+  // link-outs. Both open their product page to buy (variantUrl / product url).
+  const ucpFiltered = ucpItems.filter(underBudget); // already web:true (link-out for now)
   const links = web.filter(underBudget);
-  const results = [...cartable, ...links].slice(0, limit + 4);
+  const results = [...ucpFiltered, ...links].slice(0, limit + 4);
 
   if (!results.length) {
     return {
