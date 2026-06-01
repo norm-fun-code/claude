@@ -39,6 +39,7 @@ const surfacedStore = require('./src/store/surfaced');
 const briefingsStore = require('./src/store/briefings');
 const workoutChecks = require('./src/store/workoutChecks');
 const intentionsStore = require('./src/store/intentions');
+const dailyPicksStore = require('./src/store/dailyPicks');
 const { runReview } = require('./src/intelligence/review');
 
 const app = express();
@@ -326,29 +327,45 @@ app.get('/api/findings', async (req, res) => {
 
 // Daily Readwise highlights for the Wisdom tab card. Favorites-first, filling
 // with random ones if you've hearted few. Won't repeat a highlight shown in the
-// last 30 days (tracked in `surfaced`), so it cycles through your library.
+// last 30 days (tracked in `surfaced`). DAY-LOCKED: the first request of the day
+// picks the set and caches it (daily_picks), so it stays identical all day
+// across devices and pull-to-refresh — like the Notion page / daily quote.
+// `?refresh=1` forces a fresh set (the "New set" button).
 app.get('/api/highlights', async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 5, 20);
     const favoritesOnly = req.query.favoritesOnly === '1' || req.query.favoritesOnly === 'true';
+    const force = req.query.refresh === '1' || req.query.refresh === 'true';
+
+    // Return today's locked set unless an explicit refresh was requested.
+    if (!force) {
+      const cached = await dailyPicksStore.get('highlights').catch(() => null);
+      if (cached && Array.isArray(cached) && cached.length) {
+        return res.json({ highlights: cached });
+      }
+    }
+
     const seen = await surfacedStore.recentRefs('highlight', 30);
-    const rows = await documentsStore.randomHighlights({
-      limit,
-      favoritesOnly,
-      exclude: [...seen],
-    });
-    // Record what we're showing so the next 30 days won't repeat them.
+    const rows = await documentsStore.randomHighlights({ limit, favoritesOnly, exclude: [...seen] });
     if (rows.length) await surfacedStore.record('highlight', rows.map((r) => r.id));
-    res.json({
-      highlights: rows.map((r) => ({
-        id: r.id,
-        text: r.content,
-        title: r.title,
-        author: r.author,
-        url: r.url,
-        favorite: !!(r.metadata && r.metadata.favorite),
-      })),
-    });
+    const highlights = rows.map((r) => ({
+      id: r.id,
+      text: r.content,
+      title: r.title,
+      author: r.author,
+      url: r.url,
+      favorite: !!(r.metadata && r.metadata.favorite),
+    }));
+
+    // Lock this set as today's pick (force → replace; otherwise set-if-absent so
+    // two same-day first-hits don't diverge).
+    if (highlights.length) {
+      const stored = force
+        ? await dailyPicksStore.replace('highlights', highlights).catch(() => highlights)
+        : await dailyPicksStore.set('highlights', highlights).catch(() => highlights);
+      return res.json({ highlights: stored });
+    }
+    res.json({ highlights });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
