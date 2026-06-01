@@ -91,27 +91,40 @@ async function searchCatalog(query, { country = 'US', limit = 12 } = {}) {
     if (b.type === 'text' && b.text) { try { payload = JSON.parse(b.text); break; } catch { /* keep */ } }
   }
   const results = payload?.results || payload?.products || payload?.data || (Array.isArray(payload) ? payload : []);
+
+  // Money helper: Shopify amounts are in cents (3899 -> $38.99).
+  const money = (m) => {
+    if (!m || m.amount == null) return { str: null, num: null };
+    const num = Number(m.amount) / 100;
+    return { str: `$${num.toFixed(2)}`, num };
+  };
+
   const out = [];
   for (const r of results) {
-    // Results may cluster by UPID with offers from multiple merchants.
-    const offers = r.offers || (r.offer ? [r.offer] : [r]);
-    for (const off of offers) {
-      const seller = off.seller?.domain || off.seller?.name || off.shop_domain || r.seller?.domain || r.shop_domain || null;
-      out.push({
-        id: off.variant_id || off.variantId || off.offer_id || off.id || r.id || r.upid,
-        upid: r.upid || r.universal_product_id || r.id || null,
-        title: r.title || r.name || off.title,
-        price: off.price || r.price || null,
-        extractedPrice: priceNum(off.price || r.price),
-        seller,
-        business: seller, // merchant domain, for cart create
-        url: off.buy_url || off.online_store_url || off.url || r.url || null,
-        image: r.image || r.featured_image || r.images?.[0] || off.image || null,
-        web: false, // UCP item — cart-able in-app
-      });
-    }
+    // Each product has variants; each variant carries its own shop + buy url.
+    // Use the first variant for the headline offer (cheapest pack the search hit).
+    const v = (r.variants && r.variants[0]) || {};
+    const p = money(v.price || r.priceRange?.min);
+    const shopName = v.shop?.name || r.shop?.name || null;
+    const shopUrl = v.shop?.onlineStoreUrl || r.shop?.onlineStoreUrl || null;
+    out.push({
+      id: v.id || r.id, // variant gid (for future cart) or product gid
+      upid: r.id || null,
+      title: r.title || v.displayName,
+      price: p.str,
+      extractedPrice: p.num,
+      seller: shopName,
+      business: shopUrl, // merchant storefront (for cart create later)
+      url: v.variantUrl || shopUrl || r.lookupUrl || null,
+      image: r.media?.[0]?.url || v.media?.[0]?.url || null,
+      rating: r.rating?.rating || null,
+      // Treated as link-out for now (open variantUrl). In-app cart-building is a
+      // separate per-merchant UCP step, wired next; flip to false then.
+      web: true,
+      ucp: true, // tag: high-quality Shopify catalog result
+    });
   }
-  return out.filter((x) => x.title && x.id).slice(0, limit);
+  return out.filter((x) => x.title && x.url).slice(0, limit);
 }
 
 /** Build a cart on a specific merchant; returns a continue_url for checkout.
