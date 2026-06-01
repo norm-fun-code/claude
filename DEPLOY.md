@@ -14,35 +14,38 @@ Everything is committed to `main`. Run these from your Mac.
 ## ⚡ One-time automation setup (do this once)
 
 ### A. Backend auto-deploy from GitHub (no more `railway up`)
-In the **Railway dashboard** → your backend service → **Settings → Source**:
-1. Connect the GitHub repo `norm-fun-code/claude`.
-2. Set the branch to `main` and the root directory to `backend`.
-3. Enable "auto-deploy on push".
+Goal: every push to `main` redeploys the backend with zero commands.
 
-After this, every push to `main` redeploys the backend automatically and runs
-DB migrations on boot. (You can still `railway up` manually if ever needed.)
+In the **Railway dashboard**:
+1. Open your project → the **backend** service → **Settings**.
+2. Under **Source** (a.k.a. "Service Source" / "Connect Repo"):
+   - Connect GitHub and pick the repo **`norm-fun-code/claude`**.
+   - **Branch:** `main`
+   - **Root Directory:** `backend`  ← important; the service lives in `/backend`
+3. Under **Settings → Deploys**, make sure **"Auto Deploy"** (deploy on push) is ON.
+4. (Optional) Set a **Watch Path** of `backend/**` so mobile-only commits don't
+   trigger a redundant backend redeploy.
 
-### B. Mobile OTA updates (EAS Update — skip the rebuild for JS changes)
-The repo is already configured for OTA: `expo-updates` is in `package.json`,
-`runtimeVersion` is `appVersion` in `app.json`, and each build profile has a
-`channel` in `eas.json`. To finish linking (one-time, on your Mac):
+After this, pushing to `main` redeploys the backend automatically and runs DB
+migrations on boot (the `start` script runs `migrate.js`). You can still
+`railway up` manually anytime.
 
-```bash
-cd ~/claude/mobile
-npm install                      # pulls in expo-updates
-npx eas-cli login                # if not already
-npx eas-cli update:configure     # writes updates.url + the EAS projectId into app.json
-```
+> Sanity check after connecting: push any backend change (or hit **Deploy** in
+> the dashboard) and watch the deploy log show the migrate step + "NormOS backend
+> running". Env vars set via `railway variables` carry over — connecting GitHub
+> doesn't reset them.
 
-Commit the `app.json` changes that `update:configure` makes:
+### B. Mobile OTA updates (EAS Update — skip the rebuild for JS changes) ✅ DONE
+This is already set up and **verified working**: `expo-updates` is installed,
+`runtimeVersion` is `appVersion` in `app.json`, the EAS project is linked
+(`eas.json` has the projectId / channels), the `EXPO_TOKEN` secret is in GitHub,
+and the **Mobile OTA Update** Action has published a successful update to the
+`production` channel.
 
-```bash
-git add app.json && git commit -m "Link EAS Update" && git push
-```
-
-> **Important:** Installing `expo-updates` is a NATIVE change, so it needs **one**
-> full rebuild (step 5 below) to take effect. After that one build, all future
-> JS/TS changes ship instantly via `eas update` — no rebuild.
+Nothing more to configure. From now on, a push to `main` touching `mobile/**`
+auto-publishes an OTA (see the Ongoing workflow section). The only remaining
+one-time step is installing the current TestFlight build so it can *receive*
+those updates (the build must include `expo-updates`, which this one does).
 
 ---
 
