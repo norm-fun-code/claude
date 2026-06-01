@@ -306,12 +306,24 @@ async function discover(message, { country = 'US', limit = 8 } = {}) {
     return p == null || p <= maxPrice;
   };
 
-  // UCP (real Shopify catalog) items first — they're higher quality for brand
-  // searches (clean titles, images, the brand's own store) — then web/Amazon
-  // link-outs. Both open their product page to buy (variantUrl / product url).
   const ucpFiltered = ucpItems.filter(underBudget); // already web:true (link-out for now)
   const links = web.filter(underBudget);
-  const results = [...ucpFiltered, ...links].slice(0, limit + 4);
+
+  // Guaranteed mix. We lead with UCP (real brand catalog: clean titles, images,
+  // the brand's own store) but cap it so web link-outs always get a fair share —
+  // and we pin a real Amazon listing to the front of the web slice so Amazon is
+  // always present when it has the item. Both kinds open their product page to buy.
+  const isAmazon = (r) => /amazon/i.test(r.seller || '') || /amazon\./i.test(r.url || '');
+  const amazonWeb = links.filter(isAmazon);
+  const restWeb = links.filter((r) => !isAmazon(r));
+  // Amazon first (guaranteed a slot), then the rest, then any extra Amazon dupes.
+  const webOrdered = [...amazonWeb.slice(0, 1), ...restWeb, ...amazonWeb.slice(1)];
+
+  const TOTAL = limit + 4;                                    // 12 display slots
+  const minWeb = Math.min(webOrdered.length, 4);             // reserve ≥4 for web
+  const ucpShare = Math.min(ucpFiltered.length, TOTAL - minWeb);
+  const webShare = Math.min(webOrdered.length, TOTAL - ucpShare);
+  const results = [...ucpFiltered.slice(0, ucpShare), ...webOrdered.slice(0, webShare)];
 
   if (!results.length) {
     return {
