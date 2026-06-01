@@ -17,7 +17,8 @@
       "buildNumber": "1",
       "infoPlist": {
         "NSHealthShareUsageDescription": "NormOS reads your HRV, resting heart rate, sleep, steps, and active calories to personalize your daily workout recommendation and health insights.",
-        "NSHealthUpdateUsageDescription": "NormOS does not write health data."
+        "NSHealthUpdateUsageDescription": "NormOS does not write health data.",
+        "ITSAppUsesNonExemptEncryption": false
       },
       "entitlements": {
         "com.apple.developer.healthkit": true,
