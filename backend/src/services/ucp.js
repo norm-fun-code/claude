@@ -90,7 +90,9 @@ async function searchCatalog(query, { country = 'US', limit = 12 } = {}) {
     if (b.type === 'json' && b.json) { payload = b.json; break; }
     if (b.type === 'text' && b.text) { try { payload = JSON.parse(b.text); break; } catch { /* keep */ } }
   }
-  const results = payload?.results || payload?.products || payload?.data || (Array.isArray(payload) ? payload : []);
+  // Shopify's Global Catalog returns products under `offers`; keep the other
+  // keys as fallbacks in case the shape varies.
+  const results = payload?.offers || payload?.results || payload?.products || payload?.data || (Array.isArray(payload) ? payload : []);
 
   // Money helper: Shopify amounts are in cents (3899 -> $38.99).
   const money = (m) => {
@@ -115,7 +117,7 @@ async function searchCatalog(query, { country = 'US', limit = 12 } = {}) {
       extractedPrice: p.num,
       seller: shopName,
       business: shopUrl, // merchant storefront (for cart create later)
-      url: v.variantUrl || shopUrl || r.lookupUrl || null,
+      url: v.variantUrl || r.lookupUrl || shopUrl || null,
       image: r.media?.[0]?.url || v.media?.[0]?.url || null,
       rating: r.rating?.rating || null,
       // Treated as link-out for now (open variantUrl). In-app cart-building is a
