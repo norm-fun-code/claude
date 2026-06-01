@@ -157,4 +157,45 @@ function agentProfile() {
   };
 }
 
-module.exports = { isConfigured, searchCatalog, createCart, agentProfile, agentProfileUrl, getToken };
+/** Diagnostic: walk the UCP flow step by step and surface the REAL error at
+ *  whichever stage fails (config → token exchange → MCP search), instead of the
+ *  silent .catch([]) the discover path uses. Safe to expose: redacts secrets. */
+async function diagnose(query = 'aloha protein bars') {
+  const env = {
+    UCP_CLIENT_ID: !!process.env.UCP_CLIENT_ID,
+    UCP_CLIENT_SECRET: !!process.env.UCP_CLIENT_SECRET,
+    UCP_CATALOG_ID: process.env.UCP_CATALOG_ID || CATALOG_ID || null,
+    TOKEN_URL,
+    MCP_URL,
+  };
+  if (!isConfigured()) {
+    return { ok: false, stage: 'config', env, error: 'isConfigured() is false — a required env var is missing/empty' };
+  }
+  // Stage 1: token exchange
+  let token;
+  try {
+    token = await getToken();
+  } catch (err) {
+    return {
+      ok: false, stage: 'token', env,
+      error: err.message,
+      status: err.response?.status,
+      body: typeof err.response?.data === 'object' ? JSON.stringify(err.response.data).slice(0, 400) : String(err.response?.data || '').slice(0, 400),
+    };
+  }
+  // Stage 2: MCP search
+  try {
+    const results = await searchCatalog(query, { limit: 5 });
+    return { ok: true, stage: 'search', env, tokenPreview: `${String(token).slice(0, 8)}…`, count: results.length, sample: results.slice(0, 2) };
+  } catch (err) {
+    return {
+      ok: false, stage: 'search', env,
+      tokenPreview: `${String(token).slice(0, 8)}…`,
+      error: err.message,
+      status: err.response?.status,
+      body: typeof err.response?.data === 'object' ? JSON.stringify(err.response.data).slice(0, 500) : String(err.response?.data || '').slice(0, 500),
+    };
+  }
+}
+
+module.exports = { isConfigured, searchCatalog, createCart, agentProfile, agentProfileUrl, getToken, diagnose };
