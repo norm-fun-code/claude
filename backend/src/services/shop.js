@@ -282,10 +282,12 @@ async function discover(message, { country = 'US', limit } = {}) {
   if (!message || !message.trim()) throw new Error('Tell me what you’re looking for.');
   const { query, maxPrice, count } = await extractSearch(message);
 
-  // How many results to show. Default 12; honor a requested count ("show me 20",
-  // "a few more") from either the API param or the natural-language ask, capped
-  // at 30 so we never hammer the upstreams. The API param wins if both are set.
-  const TOTAL = Math.max(1, Math.min(limit ?? count ?? 12, 30));
+  // Size of the result pool we return. We over-fetch a deep list (default 24) in
+  // one call so the app can show a first page and reveal the rest on "Show more"
+  // without another round-trip. An explicit count ("show me 5") or API limit
+  // overrides; capped at 30 so we never hammer the upstreams.
+  const PAGE_SIZE = 12;
+  const TOTAL = Math.max(1, Math.min(limit ?? count ?? 24, 30));
   // Fetch a little extra from each source so the mix/dedupe has room to fill TOTAL.
   const ucpWant = Math.min(TOTAL, 30);
   const webWant = Math.min(TOTAL, 20);
@@ -329,12 +331,20 @@ async function discover(message, { country = 'US', limit } = {}) {
   // Amazon first (guaranteed a slot), then the rest, then any extra Amazon dupes.
   const webOrdered = [...amazonWeb.slice(0, 1), ...restWeb, ...amazonWeb.slice(1)];
 
-  // Reserve roughly a third of the slots (min 4) for web link-outs so UCP can't
-  // bury Amazon/Walmart/etc., then fill the rest UCP-first.
-  const minWeb = Math.min(webOrdered.length, Math.max(4, Math.round(TOTAL / 3)));
-  const ucpShare = Math.min(ucpFiltered.length, TOTAL - minWeb);
-  const webShare = Math.min(webOrdered.length, TOTAL - ucpShare);
-  const results = [...ucpFiltered.slice(0, ucpShare), ...webOrdered.slice(0, webShare)];
+  // Interleave ~1 web item per 3 (UCP-led), rather than appending web after all
+  // UCP. This guarantees the mix holds on *every page* — so a web link-out
+  // (Amazon first, pinned above) lands on the first page the user sees, not
+  // buried on page 2 once we paginate. We still reserve ≥4 web slots overall.
+  const targetWeb = Math.min(webOrdered.length, Math.max(4, Math.round(TOTAL / 3)));
+  const targetUcp = Math.min(ucpFiltered.length, TOTAL - targetWeb);
+  const results = [];
+  let ui = 0, wi = 0;
+  while (results.length < TOTAL && (ui < targetUcp || wi < targetWeb)) {
+    // 2 UCP, then 1 web — repeating — so web shows up early and stays mixed in.
+    if (ui < targetUcp) results.push(ucpFiltered[ui++]);
+    if (results.length < TOTAL && ui < targetUcp) results.push(ucpFiltered[ui++]);
+    if (results.length < TOTAL && wi < targetWeb) results.push(webOrdered[wi++]);
+  }
 
   if (!results.length) {
     return {
@@ -347,6 +357,7 @@ async function discover(message, { country = 'US', limit } = {}) {
     query, maxPrice,
     status: 'results',
     results,
+    pageSize: Math.min(PAGE_SIZE, results.length), // app shows this many, "Show more" reveals the rest
     message:
       `Found ${results.length}${maxPrice != null ? ` under $${maxPrice}` : ''} for "${query}". ` +
       `Tap a result to buy on the site.`,

@@ -43,6 +43,7 @@ export function ShopCard() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<Product[]>([]);
+  const [visibleCount, setVisibleCount] = useState(12); // grows via "Show more"
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -83,6 +84,7 @@ export function ShopCard() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `Server ${res.status}`);
       setResults(json.results ?? []);
+      setVisibleCount(json.pageSize ?? 12); // server tells us the first-page size
       setNote(json.message ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
@@ -195,8 +197,8 @@ export function ShopCard() {
         </TouchableOpacity>
       )}
 
-      {/* Results grid (native) */}
-      {results.map((p) => (
+      {/* Results grid (native) — shows `visibleCount`, "Show more" reveals the rest */}
+      {results.slice(0, visibleCount).map((p) => (
         <View key={p.id} style={[styles.product, { borderColor: c.border }]}>
           {p.image ? (
             <Image source={{ uri: p.image }} style={styles.thumb} resizeMode="cover" />
@@ -234,6 +236,19 @@ export function ShopCard() {
           </View>
         </View>
       ))}
+
+      {/* Show more — reveals the next page from the already-fetched pool (no new request) */}
+      {!loading && visibleCount < results.length && (
+        <TouchableOpacity
+          style={[styles.showMore, { borderColor: c.border }]}
+          onPress={() => setVisibleCount((n) => Math.min(n + 12, results.length))}
+          activeOpacity={0.8}
+        >
+          <Text style={[styles.showMoreText, { color: c.accent }]}>
+            Show {Math.min(12, results.length - visibleCount)} more
+          </Text>
+        </TouchableOpacity>
+      )}
 
       {note && !loading && results.length === 0 && (
         <Text style={[styles.note, { color: c.subtext }]}>{note}</Text>
@@ -280,4 +295,6 @@ const styles = StyleSheet.create({
   addBtn: { borderRadius: radius.sm, paddingVertical: spacing.xs, alignItems: 'center', marginTop: spacing.xs },
   linkBtn: { borderWidth: 1, backgroundColor: 'transparent' },
   addBtnText: { ...typography.caption, fontSize: 13, fontWeight: '700', color: '#fff' },
+  showMore: { borderWidth: 1, borderRadius: radius.md, paddingVertical: spacing.sm, alignItems: 'center', marginTop: spacing.md },
+  showMoreText: { ...typography.caption, fontSize: 14, fontWeight: '700' },
 });
