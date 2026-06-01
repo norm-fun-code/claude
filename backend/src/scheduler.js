@@ -9,6 +9,7 @@ const { runIngest } = require('./ingest/run');
 const { analyze } = require('./intelligence/analyze');
 const { runNudges } = require('./notify/run');
 const { runReview } = require('./intelligence/review');
+const { runMorningBriefing } = require('./notify/morning');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -42,18 +43,25 @@ function scheduleWeekly(weekday, hour, minute, fn) {
 
 async function morningRoutine() {
   console.log('[scheduler] morning routine starting');
+  // Refresh the data + intelligence first, so the briefing reflects today.
   try { await runIngest(); } catch (e) { console.error('[scheduler] ingest:', e.message); }
   try { await analyze(); } catch (e) { console.error('[scheduler] analyze:', e.message); }
   try { await runNudges({}); } catch (e) { console.error('[scheduler] nudge:', e.message); }
+  // Pre-build the briefing (warm the cache) and push "briefing ready", so the
+  // app opens instantly with today's briefing instead of waiting to build it.
+  try {
+    const r = await runMorningBriefing({});
+    console.log(`[scheduler] morning briefing: built=${r.built} pushed=${r.sent}`);
+  } catch (e) { console.error('[scheduler] morning briefing:', e.message); }
   console.log('[scheduler] morning routine done');
 }
 
 function start() {
   if (process.env.ENABLE_SCHEDULER !== 'true') return false;
-  const hour = Number(process.env.SCHEDULE_HOUR) || 7;
+  const hour = Number(process.env.SCHEDULE_HOUR) || 8; // default 8am
   scheduleDaily(hour, 0, morningRoutine);
   scheduleWeekly(1, hour, 5, () => runReview()); // Monday
-  console.log(`[scheduler] enabled — daily routine ${String(hour).padStart(2, '0')}:00, weekly review Mon ${String(hour).padStart(2, '0')}:05 (TZ=${process.env.TZ || 'system'})`);
+  console.log(`[scheduler] enabled — morning routine + briefing push ${String(hour).padStart(2, '0')}:00, weekly review Mon ${String(hour).padStart(2, '0')}:05 (TZ=${process.env.TZ || 'system'})`);
   return true;
 }
 

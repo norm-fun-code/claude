@@ -5,7 +5,21 @@ import { useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
+import Constants from 'expo-constants';
 import { DEVICE_REGISTER_URL, authHeaders } from '../config';
+
+// The EAS projectId, required by getExpoPushTokenAsync on SDK 49+. EAS injects
+// it into the manifest at build time; fall back to an explicit env override for
+// local/dev builds. (The previous code read a non-existent field and silently
+// failed, so push tokens never registered.)
+function getProjectId(): string | undefined {
+  return (
+    Constants?.expoConfig?.extra?.eas?.projectId ||
+    (Constants as any)?.easConfig?.projectId ||
+    process.env.EXPO_PUBLIC_EAS_PROJECT_ID ||
+    undefined
+  );
+}
 
 // Show notifications even when the app is foregrounded.
 Notifications.setNotificationHandler({
@@ -33,18 +47,24 @@ async function registerForPush(): Promise<string | null> {
     });
   }
 
-  const projectId =
-    // expo-notifications needs the EAS projectId for a token on SDK 49+
-    (Notifications as any)?.easConfig?.projectId ||
-    undefined;
-  const token = await Notifications.getExpoPushTokenAsync(
-    projectId ? { projectId } : undefined
-  );
+  const projectId = getProjectId();
+  if (!projectId) {
+    console.warn('[push] no EAS projectId found — cannot register for push. Set expo.extra.eas.projectId in app.json.');
+    return null;
+  }
+  const token = await Notifications.getExpoPushTokenAsync({ projectId });
   return token.data ?? null;
 }
 
-export function usePushRegistration() {
+/**
+ * Registers this device for push, and (optionally) refreshes when a
+ * notification is tapped — so tapping "Your morning briefing is ready!" opens
+ * the app to fresh content instead of a stale view.
+ */
+export function usePushRegistration(onNotificationTap?: () => void) {
   const registered = useRef(false);
+  const tapCb = useRef(onNotificationTap);
+  tapCb.current = onNotificationTap;
 
   useEffect(() => {
     if (registered.current) return;
@@ -63,5 +83,13 @@ export function usePushRegistration() {
         // Non-fatal: nudges are an enhancement, not required for the app to work.
       }
     })();
+  }, []);
+
+  // Refresh when the user taps a notification (e.g. the morning briefing).
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener(() => {
+      tapCb.current?.();
+    });
+    return () => sub.remove();
   }, []);
 }

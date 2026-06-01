@@ -54,7 +54,6 @@ export default function App() {
 
   const briefing = useBriefing();
   const health = useHealthData();
-  usePushRegistration(); // register this phone for proactive nudges
 
   const [tab, setTab] = useState<TabKey>('today');
   const isRefreshing = briefing.loading || health.loading;
@@ -63,6 +62,10 @@ export default function App() {
     briefing.refetch();
     health.refetch();
   }, [briefing, health]);
+
+  // Register for push, and refresh when a notification (e.g. the 8am "briefing
+  // ready") is tapped so the app opens to today's content.
+  usePushRegistration(onRefresh);
 
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',

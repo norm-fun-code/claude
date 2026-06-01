@@ -35,6 +35,7 @@ const experiments = require('./src/intelligence/experiments');
 const devicesStore = require('./src/store/devices');
 const nudgesStore = require('./src/store/nudges');
 const { runNudges } = require('./src/notify/run');
+const { runMorningBriefing } = require('./src/notify/morning');
 const surfacedStore = require('./src/store/surfaced');
 const briefingsStore = require('./src/store/briefings');
 const workoutChecks = require('./src/store/workoutChecks');
@@ -590,6 +591,18 @@ app.post('/api/nudges/run', async (req, res) => {
   try {
     const { force = false, dryRun = false } = req.body || {};
     res.json(await runNudges({ force, send: !dryRun }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manually trigger the morning routine (pre-build briefing + "ready" push).
+// Lets you test the 8am flow on demand; pass { dryRun: true } to build without
+// pushing.
+app.post('/api/morning/run', async (req, res) => {
+  try {
+    const { dryRun = false } = req.body || {};
+    res.json(await runMorningBriefing({ send: !dryRun }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
