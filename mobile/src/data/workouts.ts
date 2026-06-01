@@ -294,8 +294,8 @@ export const HRV_ZONES: Record<
 };
 
 export function getHRVZone(hrv: number): 'green' | 'yellow' | 'red' {
-  if (hrv >= 60) return 'green';
-  if (hrv >= 45) return 'yellow';
+  if (hrv >= 50) return 'green';
+  if (hrv >= 35) return 'yellow';
   return 'red';
 }
 

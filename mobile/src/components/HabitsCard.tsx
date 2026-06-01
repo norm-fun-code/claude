@@ -31,6 +31,7 @@ export function HabitsCard() {
   });
   const [eatHealthy, setEatHealthy] = useState<number | null>(null);
   const [saved, setSaved] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   // Pre-fill with whatever was already logged today (survives reopening).
   useEffect(() => {
@@ -59,22 +60,29 @@ export function HabitsCard() {
     };
   }, []);
 
-  function toggle(key: Binary) {
-    setChecked((prev) => ({ ...prev, [key]: !prev[key] }));
-    setSaved(false);
-  }
-
-  async function save() {
+  // Persist the full current state. Each box tap saves immediately (the backend
+  // upserts one row per habit per day), so nothing is lost if you don't tap
+  // "Save" — and it rehydrates on return, resetting at midnight.
+  async function save(nextChecked = checked, nextEat = eatHealthy) {
+    setFailed(false);
     try {
-      await fetch(HABITS_URL, {
+      const res = await fetch(HABITS_URL, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ ...checked, eatHealthy }),
+        body: JSON.stringify({ ...nextChecked, eatHealthy: nextEat }),
       });
+      if (!res.ok) throw new Error(`Server ${res.status}`);
       setSaved(true);
     } catch {
-      // offline — try again on next refresh
+      setSaved(false);
+      setFailed(true);
     }
+  }
+
+  function toggle(key: Binary) {
+    const next = { ...checked, [key]: !checked[key] };
+    setChecked(next);
+    save(next, eatHealthy); // save on every tap
   }
 
   const doneCount = Object.values(checked).filter(Boolean).length;
@@ -112,7 +120,7 @@ export function HabitsCard() {
                 key={n}
                 onPress={() => {
                   setEatHealthy(n);
-                  setSaved(false);
+                  save(checked, n); // save on every tap
                 }}
                 style={[styles.dot, { borderColor: c.border }, active && { backgroundColor: c.accent, borderColor: c.accent }]}
               >
@@ -123,11 +131,14 @@ export function HabitsCard() {
         </View>
       </View>
 
-      <Pressable onPress={save} style={[styles.save, { backgroundColor: saved ? c.accentSoft : c.accent }]}>
+      <Pressable onPress={() => save()} style={[styles.save, { backgroundColor: saved ? c.accentSoft : c.accent }]}>
         <Text style={[styles.saveText, { color: saved ? c.accent : '#FFFFFF' }]}>
-          {saved ? `Saved · ${doneCount}/5 habits` : 'Save today'}
+          {failed ? 'Retry save' : saved ? `Saved · ${doneCount}/5 habits` : 'Save today'}
         </Text>
       </Pressable>
+      {failed && (
+        <Text style={styles.failed}>Couldn’t save — check your connection and tap Retry.</Text>
+      )}
     </View>
   );
 }
@@ -175,4 +186,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   saveText: { fontWeight: '700', fontSize: 15 },
+  failed: { ...typography.caption, color: '#C0392B', marginTop: spacing.sm, textAlign: 'center' },
 });

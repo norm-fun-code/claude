@@ -52,7 +52,7 @@ const PERMISSIONS: HealthKitPermissions = {
 function getHRVStatus(hrv: number | null): HRVStatus {
   if (hrv === null) return 'unknown';
   if (hrv >= 50) return 'green';
-  if (hrv >= 30) return 'yellow';
+  if (hrv >= 35) return 'yellow';
   return 'red';
 }
 

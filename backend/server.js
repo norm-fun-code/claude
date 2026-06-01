@@ -98,11 +98,37 @@ app.post('/api/checkin', async (req, res) => {
       domain: 'wellbeing',
       displayName: 'Daily Check-in',
     });
-    const { metrics, document } = mapCheckin(req.body, { ts: req.query.ts });
+    const tz = process.env.TZ || 'America/New_York';
+    const { metrics, document } = mapCheckin(req.body, { ts: req.query.ts, tz });
     const written = await metricsStore.insertMetrics(metrics);
     if (document) await documentsStore.upsertDocument(document);
     await sourcesStore.markSync(CHECKIN_SOURCE);
     res.json({ written, journaled: Boolean(document) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// What you've already checked in *today* (your timezone), so the card can
+// rehydrate after a tab switch / reopen and reset cleanly at midnight.
+app.get('/api/checkin/today', async (req, res) => {
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const { rows } = await db.query(
+      `SELECT metric, value FROM metrics
+        WHERE domain = 'wellbeing' AND source = 'checkin'
+          AND (ts AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
+        ORDER BY ts ASC`,
+      [tz]
+    );
+    const v = {};
+    for (const r of rows) v[r.metric] = Number(r.value); // latest wins
+    res.json({
+      logged: rows.length > 0,
+      mood: Number.isFinite(v.mood) ? v.mood : null,
+      energy: Number.isFinite(v.energy) ? v.energy : null,
+      focus: Number.isFinite(v.focus) ? v.focus : null,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -116,7 +142,8 @@ app.post('/api/habits', async (req, res) => {
       domain: 'habits',
       displayName: 'Habit Stack',
     });
-    const { metrics } = mapHabits(req.body, { ts: req.query.ts });
+    const tz = process.env.TZ || 'America/New_York';
+    const { metrics } = mapHabits(req.body, { ts: req.query.ts, tz });
     const written = await metricsStore.insertMetrics(metrics);
     await sourcesStore.markSync(HABITS_SOURCE);
     res.json({ written });
