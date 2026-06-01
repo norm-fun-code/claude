@@ -4,6 +4,8 @@
 // plain-language insight strings for the Wealth tab.
 const documents = require('../store/documents');
 const metricsStore = require('../store/metrics');
+const { computeSubscriptionInsights } = require('../intelligence/subscriptions');
+const stats = require('../intelligence/stats');
 
 let monarchApi = null;
 try { monarchApi = require('./monarch-api'); } catch { /* optional */ }
@@ -115,6 +117,47 @@ async function buildWealthInsights() {
         });
       }
     }
+  }
+
+  // 1b) Subscriptions / recurring charges (Rocket-Money-style).
+  try {
+    const txns = await documents.spendTransactions({ days: 150 });
+    if (txns.length) {
+      for (const s of computeSubscriptionInsights(txns)) insights.push(s);
+    }
+  } catch (err) {
+    console.error('[wealth-insights] subscriptions failed:', err.message);
+  }
+
+  // 1c) Net-worth trajectory — project the trend to year-end (Wealthfront "Path"
+  // style), so you see where you're heading at the current rate.
+  try {
+    const from = new Date(Date.now() - 120 * 864e5);
+    const nw = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'net_worth', from, agg: 'avg' });
+    const vals = nw.map((r) => Number(r.value)).filter(Number.isFinite);
+    if (vals.length >= 8) {
+      const fit = stats.linearFit(vals);
+      const current = vals[vals.length - 1];
+      // Slope is per present-sample; approximate samples→days via the date span.
+      const spanDays = Math.max(1, (new Date(nw[nw.length - 1].day) - new Date(nw[0].day)) / 864e5);
+      const perDay = fit && fit.slope != null ? (fit.slope * (vals.length - 1)) / spanDays : 0;
+      const daysToYearEnd = Math.max(0, (new Date(new Date().getFullYear(), 11, 31) - new Date()) / 864e5);
+      const projected = current + perDay * daysToYearEnd;
+      const monthlyChange = perDay * 30;
+      if (Math.abs(monthlyChange) >= 50) {
+        const dir = monthlyChange >= 0 ? 'growing' : 'declining';
+        insights.push({
+          type: 'net_worth_path',
+          title: `Net worth ${dir} ~${fmt(Math.abs(monthlyChange))}/mo`,
+          detail:
+            `At your recent pace, net worth is ${dir} about ${fmt(Math.abs(monthlyChange))}/month — ` +
+            `on track for roughly ${fmt(projected)} by year-end (now ${fmt(current)}). A projection from trend, not a guarantee.`,
+          evidence: { kind: 'net_worth_path', current: Math.round(current), projected: Math.round(projected), monthlyChange: Math.round(monthlyChange) },
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[wealth-insights] net-worth path failed:', err.message);
   }
 
   // 2) Spend vs Monarch budget (if we have a token to read budgets).
