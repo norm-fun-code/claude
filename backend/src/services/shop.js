@@ -68,6 +68,51 @@ async function extractQuery(message) {
   return (await extractSearch(message)).query;
 }
 
+// Common flavor / descriptor words that narrow a query past what Shopify's
+// Global Catalog will match. We strip these for a broader UCP fallback search
+// (e.g. "aloha peanut butter bars" -> "aloha bars"), since the catalog matches
+// on indexed product titles and is stricter than open web search.
+const NARROWING_WORDS = new Set([
+  'peanut', 'butter', 'chocolate', 'vanilla', 'strawberry', 'caramel', 'mint',
+  'coconut', 'almond', 'cinnamon', 'honey', 'maple', 'organic', 'plant', 'based',
+  'gluten', 'free', 'dairy', 'sugar', 'keto', 'vegan', 'natural', 'flavored',
+  'flavor', 'unflavored', 'original', 'classic', 'variety', 'assorted', 'cup',
+  'cups', 'dark', 'milk', 'white', 'roasted', 'salted', 'unsalted', 'crunchy',
+  'smooth', 'creamy', 'with', 'and',
+]);
+
+/**
+ * Progressively broaden a query for UCP's stricter catalog. Returns an ordered
+ * list of search variants to try (most specific first), e.g.
+ *   "aloha peanut butter bars" -> ["aloha peanut butter bars", "aloha bars", "aloha"]
+ * so we can fall back to a brand/category match when the exact phrase misses.
+ */
+function ucpQueryVariants(query) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const variants = [query];
+  // Drop narrowing descriptors, keep brand + product-type (e.g. "bars").
+  const broad = words.filter((w) => !NARROWING_WORDS.has(w));
+  if (broad.length && broad.length < words.length) variants.push(broad.join(' '));
+  // Brand/lead term only (first 1-2 of the broadened words) as the last resort.
+  const base = broad.length ? broad : words;
+  const brand = base.slice(0, Math.min(2, base.length)).join(' ');
+  if (brand && !variants.includes(brand)) variants.push(brand);
+  return [...new Set(variants)];
+}
+
+/** Search UCP with progressive broadening — return the first variant that hits. */
+async function ucpSearchBroadening(query, opts) {
+  for (const variant of ucpQueryVariants(query)) {
+    try {
+      const items = await ucp.searchCatalog(variant, opts);
+      if (items.length) return items;
+    } catch {
+      /* try the next, broader variant */
+    }
+  }
+  return [];
+}
+
 /** Parse a price string/number like "$89.00" -> 89. */
 function priceNum(p) {
   if (p == null) return null;
@@ -304,7 +349,7 @@ async function discover(message, { country = 'US', limit } = {}) {
   // UCP_CLIENT_ID/SECRET are set. These items are cart-able in-app (continue_url
   // checkout), unlike the SerpApi web link-outs.
   const ucpFinder = ucp.isConfigured()
-    ? ucp.searchCatalog(query, { country, limit: ucpWant }).catch(() => [])
+    ? ucpSearchBroadening(query, { country, limit: ucpWant }).catch(() => [])
     : Promise.resolve([]);
 
   const [ucpRes, webRes] = await Promise.allSettled([ucpFinder, webFinder]);
