@@ -15,6 +15,7 @@
 const { execFile } = require('child_process');
 const axios = require('axios');
 const llm = require('../llm');
+const ucp = require('./ucp');
 const { query: dbQuery } = require('../db');
 
 const UCP = ['@shopify/ucp-cli'];
@@ -45,18 +46,20 @@ function parseJson(out) {
 async function extractSearch(message) {
   const system =
     'Turn the shopping request into JSON: {"query": "<concise product search, brand+type, no filler>", ' +
-    '"maxPrice": <number or null>}. Capture any price ceiling ("under $100", "below 50"). ' +
-    'Reply with ONLY the JSON object.';
+    '"maxPrice": <number or null>, "count": <number or null>}. Capture any price ceiling ' +
+    '("under $100", "below 50") as maxPrice, and any requested number of options ' +
+    '("show me 20", "a few more", "top 5") as count. Reply with ONLY the JSON object.';
   try {
-    const out = await llm.generateText({ system, prompt: message, temperature: 0, maxTokens: 80 });
+    const out = await llm.generateText({ system, prompt: message, temperature: 0, maxTokens: 90 });
     const i = out.indexOf('{'); const j = out.lastIndexOf('}');
     const parsed = i !== -1 ? JSON.parse(out.slice(i, j + 1)) : null;
     return {
       query: (parsed?.query || message).trim().replace(/^["']|["']$/g, ''),
       maxPrice: Number.isFinite(parsed?.maxPrice) ? Number(parsed.maxPrice) : null,
+      count: Number.isFinite(parsed?.count) ? Number(parsed.count) : null,
     };
   } catch {
-    return { query: message, maxPrice: null };
+    return { query: message, maxPrice: null, count: null };
   }
 }
 
@@ -275,28 +278,38 @@ async function buildCart({ business, variantId, quantity = 1 }) {
  * (price-filtered if the user gave a ceiling). No cart yet — you pick one, then
  * call addToCart() for that item. This is the "surface ideas, then I choose" flow.
  */
-async function discover(message, { country = 'US', limit = 8 } = {}) {
+async function discover(message, { country = 'US', limit } = {}) {
   if (!message || !message.trim()) throw new Error('Tell me what you’re looking for.');
-  const { query, maxPrice } = await extractSearch(message);
+  const { query, maxPrice, count } = await extractSearch(message);
+
+  // Size of the result pool we return. We over-fetch a deep list (default 24) in
+  // one call so the app can show a first page and reveal the rest on "Show more"
+  // without another round-trip. An explicit count ("show me 5") or API limit
+  // overrides; capped at 30 so we never hammer the upstreams.
+  const PAGE_SIZE = 12;
+  const TOTAL = Math.max(1, Math.min(limit ?? count ?? 24, 30));
+  // Fetch a little extra from each source so the mix/dedupe has room to fill TOTAL.
+  const ucpWant = Math.min(TOTAL, 30);
+  const webWant = Math.min(TOTAL, 20);
 
   // Run both discovery modes in parallel:
   //  - UCP catalog: cart-able in-app (Shopify/Etsy/Target/…), no Amazon.
   //  - Web search: anything incl. Amazon, link-out only. Prefer SerpApi (images
   //    + accurate prices) when SERPAPI_KEY is set; else Claude web search.
   const webFinder = process.env.SERPAPI_KEY
-    ? serpApiProducts(query, { maxPrice, limit: 8 }).catch(() => webSearchProducts(query, { maxPrice, limit: 6 }))
-    : webSearchProducts(query, { maxPrice, limit: 6 });
+    ? serpApiProducts(query, { maxPrice, limit: webWant }).catch(() => webSearchProducts(query, { maxPrice, limit: Math.min(webWant, 10) }))
+    : webSearchProducts(query, { maxPrice, limit: Math.min(webWant, 10) });
 
-  // UCP in-app carts are gated behind UCP_ENABLED — the ucp-cli can't run in the
-  // Railway container (npx fetch fails), and trying it would add latency on every
-  // search. Discovery via SerpApi covers those merchants as link-outs anyway.
-  const ucpFinder = process.env.UCP_ENABLED === 'true'
-    ? searchCatalog(query, { country, limit: 12 })
+  // UCP in-app carts via Shopify's Global Catalog MCP (HTTP, no CLI). Active when
+  // UCP_CLIENT_ID/SECRET are set. These items are cart-able in-app (continue_url
+  // checkout), unlike the SerpApi web link-outs.
+  const ucpFinder = ucp.isConfigured()
+    ? ucp.searchCatalog(query, { country, limit: ucpWant }).catch(() => [])
     : Promise.resolve([]);
 
   const [ucpRes, webRes] = await Promise.allSettled([ucpFinder, webFinder]);
 
-  const ucp = ucpRes.status === 'fulfilled' ? ucpRes.value : [];
+  const ucpItems = ucpRes.status === 'fulfilled' ? ucpRes.value : [];
   const web = webRes.status === 'fulfilled' ? webRes.value : [];
 
   const underBudget = (r) => {
@@ -305,10 +318,33 @@ async function discover(message, { country = 'US', limit = 8 } = {}) {
     return p == null || p <= maxPrice;
   };
 
-  // Cart-able UCP items first (you can buy in-app), then web/Amazon link-outs.
-  const cartable = ucp.filter(underBudget).map((r) => ({ ...r, web: false }));
+  const ucpFiltered = ucpItems.filter(underBudget); // already web:true (link-out for now)
   const links = web.filter(underBudget);
-  const results = [...cartable, ...links].slice(0, limit + 4);
+
+  // Guaranteed mix. We lead with UCP (real brand catalog: clean titles, images,
+  // the brand's own store) but cap it so web link-outs always get a fair share —
+  // and we pin a real Amazon listing to the front of the web slice so Amazon is
+  // always present when it has the item. Both kinds open their product page to buy.
+  const isAmazon = (r) => /amazon/i.test(r.seller || '') || /amazon\./i.test(r.url || '');
+  const amazonWeb = links.filter(isAmazon);
+  const restWeb = links.filter((r) => !isAmazon(r));
+  // Amazon first (guaranteed a slot), then the rest, then any extra Amazon dupes.
+  const webOrdered = [...amazonWeb.slice(0, 1), ...restWeb, ...amazonWeb.slice(1)];
+
+  // Interleave ~1 web item per 3 (UCP-led), rather than appending web after all
+  // UCP. This guarantees the mix holds on *every page* — so a web link-out
+  // (Amazon first, pinned above) lands on the first page the user sees, not
+  // buried on page 2 once we paginate. We still reserve ≥4 web slots overall.
+  const targetWeb = Math.min(webOrdered.length, Math.max(4, Math.round(TOTAL / 3)));
+  const targetUcp = Math.min(ucpFiltered.length, TOTAL - targetWeb);
+  const results = [];
+  let ui = 0, wi = 0;
+  while (results.length < TOTAL && (ui < targetUcp || wi < targetWeb)) {
+    // 2 UCP, then 1 web — repeating — so web shows up early and stays mixed in.
+    if (ui < targetUcp) results.push(ucpFiltered[ui++]);
+    if (results.length < TOTAL && ui < targetUcp) results.push(ucpFiltered[ui++]);
+    if (results.length < TOTAL && wi < targetWeb) results.push(webOrdered[wi++]);
+  }
 
   if (!results.length) {
     return {
@@ -321,9 +357,10 @@ async function discover(message, { country = 'US', limit = 8 } = {}) {
     query, maxPrice,
     status: 'results',
     results,
+    pageSize: Math.min(PAGE_SIZE, results.length), // app shows this many, "Show more" reveals the rest
     message:
       `Found ${results.length}${maxPrice != null ? ` under $${maxPrice}` : ''} for "${query}". ` +
-      `${cartable.length ? 'Tap “Add to cart” to buy in-app, or' : 'Tap'} open a link to buy on the site.`,
+      `Tap a result to buy on the site.`,
   };
 }
 
@@ -331,7 +368,11 @@ async function discover(message, { country = 'US', limit = 8 } = {}) {
 async function addToCart({ business, variantId, quantity = 1, item = null }) {
   if (!business || !variantId) throw new Error('Pick an item first.');
   try {
-    const cart = await buildCart({ business, variantId, quantity });
+    // Prefer the UCP HTTP client (Global Catalog MCP) for cart creation; fall
+    // back to the legacy CLI buildCart only if UCP isn't configured.
+    const cart = ucp.isConfigured()
+      ? await ucp.createCart({ business, variantId, quantity })
+      : await buildCart({ business, variantId, quantity });
     // Record to history (best-effort) so it shows up under "Reorder".
     if (item?.title) {
       recordOrder({ ...item, business, variantId }).catch(() => {});

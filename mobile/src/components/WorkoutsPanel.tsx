@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { getColors, spacing, radius } from '../theme';
+import { API_BASE, authHeaders } from '../config';
 import {
   getTodaysWorkout,
   HRV_ZONES,
@@ -1044,6 +1045,61 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
   });
   const [weeklyCompleted, setWeeklyCompleted] = useState<Record<string, boolean>>({});
 
+  const todayKey = getDateKey(todayDayIndex);
+  const selectedKey = getDateKey(selectedDayIndex);
+
+  // Rehydrate today's completion from the exercise habit so the workout shows as
+  // done if it was already logged today (and resets at midnight, backend-side).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/habits/today`, { headers: authHeaders() });
+        if (!res.ok) return;
+        const t = await res.json();
+        if (cancelled || !t?.logged) return;
+        if (t.exercise) setWeeklyCompleted((prev) => ({ ...prev, [todayKey]: true }));
+      } catch {
+        /* offline — leave blank */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [todayKey]);
+
+  // Rehydrate the per-exercise + non-negotiable checks for the selected day, so
+  // ticking off exercises survives tab switches / reopens (resets at midnight).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/workout/checks?date=${selectedKey}`, { headers: authHeaders() });
+        if (!res.ok) return;
+        const { checks } = await res.json();
+        if (cancelled || !checks) return;
+        const ex = new Set<string>();
+        const nn = { chinTucks: false, walk: false, noLateTraining: false };
+        for (const key of Object.keys(checks)) {
+          if (key in nn) (nn as Record<string, boolean>)[key] = true;
+          else ex.add(key);
+        }
+        setCompletedExercises(ex);
+        setNonNegotiables(nn);
+      } catch {
+        /* offline — leave blank */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedKey]);
+
+  // Persist a single check for the selected day (fire-and-forget).
+  function saveCheck(itemKey: string, itemType: 'exercise' | 'non_negotiable', done: boolean) {
+    fetch(`${API_BASE}/api/workout/checks`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ date: selectedKey, itemKey, itemType, done }),
+    }).catch(() => {/* offline — re-saves on next toggle */});
+  }
+
   const isViewingToday = selectedDayIndex === todayDayIndex;
   // Convert strip day index (Mon=0) to JS day-of-week (Sun=0) for the selected day
   const selectedJsDay = (selectedDayIndex + 1) % 7;
@@ -1059,8 +1115,10 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
   function toggleExercise(name: string) {
     setCompletedExercises((prev) => {
       const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
+      const done = !next.has(name);
+      if (done) next.add(name);
+      else next.delete(name);
+      saveCheck(name, 'exercise', done); // save every tap
       return next;
     });
   }
@@ -1075,11 +1133,26 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
   }
 
   function toggleNonNeg(key: keyof typeof nonNegotiables) {
-    setNonNegotiables((prev) => ({ ...prev, [key]: !prev[key] }));
+    setNonNegotiables((prev) => {
+      const done = !prev[key];
+      saveCheck(key, 'non_negotiable', done); // save every tap
+      return { ...prev, [key]: done };
+    });
   }
 
   function handleMarkDone(dateKey: string) {
-    setWeeklyCompleted((prev) => ({ ...prev, [dateKey]: !prev[dateKey] }));
+    const nextDone = !weeklyCompleted[dateKey];
+    setWeeklyCompleted((prev) => ({ ...prev, [dateKey]: nextDone }));
+    // Marking *today's* workout complete also logs the Exercise habit (and
+    // unchecking clears it), so the Today tab and Insights stay in sync. Other
+    // days are local-only — we can't backfill a habit for a past/future date here.
+    if (dateKey === todayKey) {
+      fetch(`${API_BASE}/api/habits`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ exercise: nextDone }),
+      }).catch(() => {/* offline — habit save will retry on next toggle */});
+    }
   }
 
   const duration = 'duration' in workout ? (workout as any).duration : undefined;

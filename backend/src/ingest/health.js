@@ -19,6 +19,7 @@ const FIELD_MAP = {
   sleep: ['sleep_hours', 'hours'],
   deepSleepHours: ['deep_sleep_hours', 'hours'],
   remSleepHours: ['rem_sleep_hours', 'hours'],
+  sleepScore: ['sleep_score', 'score'],
   // Activity
   steps: ['steps', 'count'],
   activeEnergy: ['active_energy', 'kcal'],

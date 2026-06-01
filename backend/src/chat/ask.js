@@ -6,25 +6,123 @@ const llm = require('../llm');
 const documents = require('../store/documents');
 const findingsStore = require('../store/findings');
 const annotationsStore = require('../store/annotations');
+const metricsStore = require('../store/metrics');
+const { query: dbQuery } = require('../db');
 
 const SYSTEM = `You are NormOS — the user's personal chief of staff, executive coach, and data scientist.
-Answer using ONLY the context provided (their own metrics, findings, and library highlights).
+Answer using ONLY the context provided (their own goals, metrics, findings, and library highlights).
 
-Answer the question that was asked — and ONLY that. Do not volunteer connections
-to the user's personal metrics, finances, habits, or "findings" unless the
-question is explicitly about their own life or data. For a question about ideas,
-people, books, or concepts, answer purely from the library and ignore the
-metrics/findings context entirely. Never shoehorn in their income, spending,
-net worth, or health numbers as a "tie-in."
+Match the answer to the kind of question:
+- PERSONAL / LIFE / PLANNING questions ("what should I focus on this quarter?",
+  "how am I doing?", "should I change my training?"): be deeply personal. Ground
+  the answer in their GOALS, the PERSONAL SNAPSHOT (recent metric trends), and
+  FINDINGS — name the actual numbers and trajectories — AND tie it back to the
+  relevant ideas in their library/notes, so the advice reflects both their data
+  and the thinking they've collected. This is the whole point: connect the dots
+  between who they are (data) and what they value (notes).
+- IDEA / CONCEPT questions ("what did Seneca say about anger?", "summarize this
+  book"): answer purely from the library. Do NOT shoehorn in their metrics,
+  finances, or health numbers as a "tie-in."
 
 Write a thorough, genuinely useful answer:
 - Lead with a direct answer, then develop it with specifics and concrete examples drawn from the context.
-- Synthesize ACROSS multiple sources — surface patterns, themes, and tensions between ideas rather than summarizing one item.
+- Synthesize ACROSS sources — for personal questions, weave data + findings + library together; surface patterns and tensions rather than summarizing one item.
 - Use clean Markdown: \`##\` section headers when it helps, **bold** for key terms, and \`-\` bullet lists for multiple points. Keep paragraphs to 2-4 sentences.
 - Cite the library items you draw on by their number, like (1) or (2, 5), matching the numbered "RELEVANT FROM YOUR LIBRARY" list.
 - Be honest: if the context is thin, say what's missing. Correlations are associations, not proof of cause — flag that when relevant.
 
 Aim for depth and usefulness over brevity, but never pad with filler.`;
+
+// Cheap intent check: does the question seem to be about the user's own life /
+// data / planning (vs. a pure idea/concept lookup)? Personal questions get the
+// goals + metrics snapshot injected; idea questions stay library-only so we
+// don't shoehorn personal numbers into "what did Seneca say about anger?".
+const PERSONAL_RE = /\b(i|i'm|im|my|me|myself|mine|we|our|us)\b|\bshould i\b|\bam i\b|\bhow('?s| is| am| are)\b.*\b(my|me|i)\b|\b(focus|prioriti|goal|habit|sleep|hrv|energy|mood|spend|budget|save|saving|net worth|weight|train|workout|recover|quarter|this week|this month|this year|right now|today|lately|progress|on track)\b/i;
+
+function isPersonalQuestion(q) {
+  return PERSONAL_RE.test(q || '');
+}
+
+/**
+ * A compact snapshot of the user's current goals and recent metric trends, so
+ * personal/planning answers can reason over real numbers. ~7-day vs prior-7-day
+ * direction per metric, plus active goals with target + latest value.
+ */
+async function personalSnapshot() {
+  const lines = { goals: [], metrics: [] };
+
+  // Active goals (what the user is steering toward).
+  try {
+    const { rows } = await dbQuery(
+      `SELECT domain, title, metric, target_value, unit, target_date, status
+         FROM goals WHERE status = 'active' ORDER BY target_date NULLS LAST LIMIT 12`
+    );
+    lines.goals = rows;
+  } catch {
+    /* goals optional */
+  }
+
+  // Recent trend per tracked metric: last 7d avg vs the prior 7d.
+  try {
+    const keys = await metricsStore.listMetricKeys();
+    const now = Date.now();
+    const d7 = new Date(now - 7 * 864e5);
+    const d14 = new Date(now - 14 * 864e5);
+    const avg = (rows) => {
+      const v = rows.map((r) => Number(r.value)).filter(Number.isFinite);
+      return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+    };
+    for (const { domain, metric } of keys.slice(0, 25)) {
+      const [recent, prior] = await Promise.all([
+        metricsStore.dailyAggregate({ domain, metric, from: d7, agg: 'avg' }),
+        metricsStore.dailyAggregate({ domain, metric, from: d14, to: d7, agg: 'avg' }),
+      ]);
+      const r = avg(recent);
+      const p = avg(prior);
+      if (r == null) continue;
+      lines.metrics.push({ domain, metric, recent: r, prior: p });
+    }
+  } catch {
+    /* metrics optional */
+  }
+
+  return lines;
+}
+
+/** Render the snapshot into a prompt block (omitted entirely if empty). */
+function renderSnapshot({ goals = [], metrics = [] } = {}) {
+  const out = [];
+  if (goals.length) {
+    out.push(
+      'ACTIVE GOALS:\n' +
+        goals
+          .map((g) => {
+            const tgt = g.target_value != null ? ` → target ${g.target_value}${g.unit ? ' ' + g.unit : ''}` : '';
+            const by = g.target_date ? ` by ${new Date(g.target_date).toISOString().slice(0, 10)}` : '';
+            return `- [${g.domain}] ${g.title}${tgt}${by}`;
+          })
+          .join('\n')
+    );
+  }
+  if (metrics.length) {
+    const fmt = (n) => (Math.abs(n) >= 100 ? Math.round(n) : Math.round(n * 10) / 10);
+    out.push(
+      'PERSONAL SNAPSHOT (last 7 days avg, with direction vs prior 7 days):\n' +
+        metrics
+          .map((m) => {
+            let dir = '';
+            if (m.prior != null) {
+              const delta = m.recent - m.prior;
+              const arrow = delta > 0 ? '↑' : delta < 0 ? '↓' : '→';
+              dir = ` (${arrow} from ${fmt(m.prior)})`;
+            }
+            return `- ${m.domain}/${m.metric}: ${fmt(m.recent)}${dir}`;
+          })
+          .join('\n')
+    );
+  }
+  return out.join('\n\n');
+}
 
 function snippet(text, n = 400) {
   if (!text) return '';
@@ -32,8 +130,14 @@ function snippet(text, n = 400) {
 }
 
 /** Pure: assemble the prompt from retrieved context. Exported for testing. */
-function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [] }) {
+function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [], snapshot = null }) {
   const parts = [];
+
+  // Personal goals + metric trends first (only present for personal questions).
+  if (snapshot) {
+    const block = renderSnapshot(snapshot);
+    if (block) parts.push(block);
+  }
 
   if (findings.length) {
     parts.push(
@@ -138,7 +242,18 @@ async function ask(question, { history = [], k = 14 } = {}) {
     /* annotations optional */
   }
 
-  const { system, prompt } = buildPrompt({ question, findings, docs, annotations, history });
+  // For personal/planning questions, ground the answer in real goals + metric
+  // trends. Idea/concept questions skip this so we don't shoehorn in numbers.
+  let snapshot = null;
+  if (isPersonalQuestion(question)) {
+    try {
+      snapshot = await personalSnapshot();
+    } catch (err) {
+      console.error('[chat] snapshot failed:', err.message);
+    }
+  }
+
+  const { system, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot });
   const answer = await llm.generateText({ system, prompt, temperature: 0.3, maxTokens: 1600 });
 
   return {
@@ -152,4 +267,4 @@ async function ask(question, { history = [], k = 14 } = {}) {
   };
 }
 
-module.exports = { ask, buildPrompt };
+module.exports = { ask, buildPrompt, isPersonalQuestion, personalSnapshot, renderSnapshot };

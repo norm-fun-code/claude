@@ -2,6 +2,8 @@
 // 0/1 daily signal; eat_healthy is a 1–5 scale; habit_score is the % of the
 // binary habits completed — a single number that correlates strongly with
 // next-day outcomes (HRV, focus, mood). Domain 'habits' keeps them grouped.
+const { dayAnchorTs } = require('../util/date');
+
 const SOURCE = 'habits';
 const DOMAIN = 'habits';
 
@@ -14,8 +16,11 @@ const BINARY = {
   exercise: 'exercise',
 };
 
-function mapHabits(body = {}, { ts } = {}) {
-  const when = ts || body.ts ? new Date(ts || body.ts) : new Date();
+function mapHabits(body = {}, { ts, tz = 'UTC' } = {}) {
+  // Anchor to one stable per-day timestamp so incremental saves (checking boxes
+  // one at a time through the day) upsert the same day's rows rather than piling
+  // up duplicates — keeping the daily 0/1 signal clean for insights.
+  const when = ts || body.ts ? new Date(ts || body.ts) : dayAnchorTs(tz);
   const metrics = [];
   let done = 0;
   let count = 0;
@@ -33,8 +38,11 @@ function mapHabits(body = {}, { ts } = {}) {
     metrics.push({ ts: when, domain: DOMAIN, metric: 'eat_healthy', value: eat, unit: 'score', source: SOURCE });
   }
 
-  // Composite completion (0–100) over whatever binary habits were reported.
-  if (count > 0) {
+  // Composite completion (0–100). Only recompute it on a FULL submission (all
+  // binary habits present, i.e. the Habit Stack card) — a partial save like the
+  // workout panel's single `exercise` toggle must not clobber the real composite
+  // with a 1-of-1 score. Partial saves still upsert their own habit metric.
+  if (count === Object.keys(BINARY).length) {
     metrics.push({
       ts: when, domain: DOMAIN, metric: 'habit_score',
       value: Math.round((done / count) * 100), unit: 'percent', source: SOURCE,

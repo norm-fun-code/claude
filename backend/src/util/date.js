@@ -33,4 +33,18 @@ function addDays(from, n) {
   return d;
 }
 
-module.exports = { formatDate, daysBetween, addDays };
+/**
+ * A stable per-day timestamp anchor for a given timezone — noon UTC on today's
+ * local calendar date. Used so repeated same-day saves (e.g. tapping mood, then
+ * energy, then re-tapping mood) upsert the SAME metrics row instead of piling up
+ * a dozen noisy readings: one clean value per metric per day that updates as you
+ * go, and a fresh row the next day. `(ts AT TIME ZONE tz)::date` resolves to the
+ * local date, so the daily-rollover queries line up exactly.
+ */
+function dayAnchorTs(tz = 'UTC', now = new Date()) {
+  // en-CA renders as YYYY-MM-DD; take the local date in `tz`, anchor at noon UTC.
+  const ymd = now.toLocaleDateString('en-CA', { timeZone: tz });
+  return new Date(`${ymd}T12:00:00Z`);
+}
+
+module.exports = { formatDate, daysBetween, addDays, dayAnchorTs };

@@ -11,6 +11,7 @@ export const API_TOKEN = process.env.EXPO_PUBLIC_API_TOKEN || '';
 export const BRIEFING_URL = `${API_BASE}/api/briefing`;
 export const HEALTH_INGEST_URL = `${API_BASE}/api/ingest/health`;
 export const CHECKIN_URL = `${API_BASE}/api/checkin`;
+export const CHECKIN_TODAY_URL = `${API_BASE}/api/checkin/today`;
 export const CHAT_URL = `${API_BASE}/api/chat`;
 export const DEVICE_REGISTER_URL = `${API_BASE}/api/devices/register`;
 export const HIGHLIGHTS_URL = `${API_BASE}/api/highlights`;

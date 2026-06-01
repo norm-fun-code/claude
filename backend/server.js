@@ -27,6 +27,7 @@ const { analyze } = require('./src/intelligence/analyze');
 const { embedPending } = require('./src/intelligence/embeddings');
 const { ask } = require('./src/chat/ask');
 const { discover, addToCart, history: shopHistory, ucpProbe } = require('./src/services/shop');
+const ucp = require('./src/services/ucp');
 const annotationsStore = require('./src/store/annotations');
 const experimentsStore = require('./src/store/experiments');
 const experiments = require('./src/intelligence/experiments');
@@ -35,6 +36,7 @@ const nudgesStore = require('./src/store/nudges');
 const { runNudges } = require('./src/notify/run');
 const surfacedStore = require('./src/store/surfaced');
 const briefingsStore = require('./src/store/briefings');
+const workoutChecks = require('./src/store/workoutChecks');
 const { runReview } = require('./src/intelligence/review');
 
 const app = express();
@@ -52,6 +54,12 @@ app.use('/api', (req, res, next) => {
   const auth = req.get('authorization') || '';
   if (auth === `Bearer ${token}`) return next();
   return res.status(401).json({ error: 'unauthorized' });
+});
+
+// Public UCP agent profile — Shopify's Global Catalog fetches this (no auth) to
+// negotiate capabilities. Lives outside /api so the bearer gate doesn't block it.
+app.get('/.well-known/ucp-agent', (req, res) => {
+  res.json(ucp.agentProfile());
 });
 
 app.get('/api/health', async (req, res) => {
@@ -91,11 +99,37 @@ app.post('/api/checkin', async (req, res) => {
       domain: 'wellbeing',
       displayName: 'Daily Check-in',
     });
-    const { metrics, document } = mapCheckin(req.body, { ts: req.query.ts });
+    const tz = process.env.TZ || 'America/New_York';
+    const { metrics, document } = mapCheckin(req.body, { ts: req.query.ts, tz });
     const written = await metricsStore.insertMetrics(metrics);
     if (document) await documentsStore.upsertDocument(document);
     await sourcesStore.markSync(CHECKIN_SOURCE);
     res.json({ written, journaled: Boolean(document) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// What you've already checked in *today* (your timezone), so the card can
+// rehydrate after a tab switch / reopen and reset cleanly at midnight.
+app.get('/api/checkin/today', async (req, res) => {
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const { rows } = await db.query(
+      `SELECT metric, value FROM metrics
+        WHERE domain = 'wellbeing' AND source = 'checkin'
+          AND (ts AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
+        ORDER BY ts ASC`,
+      [tz]
+    );
+    const v = {};
+    for (const r of rows) v[r.metric] = Number(r.value); // latest wins
+    res.json({
+      logged: rows.length > 0,
+      mood: Number.isFinite(v.mood) ? v.mood : null,
+      energy: Number.isFinite(v.energy) ? v.energy : null,
+      focus: Number.isFinite(v.focus) ? v.focus : null,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -109,7 +143,8 @@ app.post('/api/habits', async (req, res) => {
       domain: 'habits',
       displayName: 'Habit Stack',
     });
-    const { metrics } = mapHabits(req.body, { ts: req.query.ts });
+    const tz = process.env.TZ || 'America/New_York';
+    const { metrics } = mapHabits(req.body, { ts: req.query.ts, tz });
     const written = await metricsStore.insertMetrics(metrics);
     await sourcesStore.markSync(HABITS_SOURCE);
     res.json({ written });
@@ -141,6 +176,30 @@ app.get('/api/habits/today', async (req, res) => {
       exercise: v.exercise === 1,
       eatHealthy: Number.isFinite(v.eat_healthy) ? v.eat_healthy : null,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Per-exercise / non-negotiable workout checkmarks. Like the check-in, each tap
+// saves immediately and the app rehydrates the day's checks on mount. The client
+// owns the local date (?date=YYYY-MM-DD, ET) so it matches the workout strip.
+app.get('/api/workout/checks', async (req, res) => {
+  try {
+    const date = req.query.date;
+    if (!date) return res.status(400).json({ error: 'date (YYYY-MM-DD) is required' });
+    res.json({ date, checks: await workoutChecks.getChecks(date) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/workout/checks', async (req, res) => {
+  try {
+    const { date, itemKey, itemType, done } = req.body || {};
+    if (!date || !itemKey) return res.status(400).json({ error: 'date and itemKey are required' });
+    await workoutChecks.setCheck({ date, itemKey, itemType, done: done !== false });
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -512,18 +571,32 @@ app.get('/api/briefing', async (req, res) => {
   // reuse the last build for CACHE_TTL_MIN minutes. The app's pull-to-refresh
   // sends refresh=1 to force a rebuild.
   const CACHE_TTL_MIN = Number(process.env.BRIEFING_CACHE_MIN || 180); // 3h default
+  const tz = process.env.TZ || 'America/New_York';
   const force = req.query.refresh === '1' || req.query.refresh === 'true';
-  if (!force) {
-    try {
-      const cached = await briefingsStore.latestBriefing('daily');
-      if (cached?.content && cached.generated_at) {
-        const ageMin = (Date.now() - new Date(cached.generated_at).getTime()) / 60000;
-        if (ageMin < CACHE_TTL_MIN) {
-          return res.json({ ...cached.content, cached: true, cachedAgeMin: Math.round(ageMin) });
-        }
-      }
-    } catch (err) {
-      console.error('[briefing cache] read failed:', err.message);
+
+  // The most recent prior build, and whether it was built earlier *today* (in the
+  // user's timezone). Used both for the short TTL cache and for the daily-lock:
+  // the "wisdom" content (library highlight, daily quote, Notion page + the
+  // Gemini insights on them) is chosen on the first build of the day and then
+  // carried over on every later build — including pull-to-refresh — so it stays
+  // static until midnight. Dynamic data (weather, markets, calendar, email,
+  // findings) still refreshes every build.
+  let prior = null;
+  let priorIsToday = false;
+  try {
+    prior = await briefingsStore.latestBriefing('daily');
+    if (prior?.generated_at) {
+      const localDate = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: tz });
+      priorIsToday = localDate(prior.generated_at) === localDate(new Date());
+    }
+  } catch (err) {
+    console.error('[briefing prior] read failed:', err.message);
+  }
+
+  if (!force && prior?.content && prior.generated_at) {
+    const ageMin = (Date.now() - new Date(prior.generated_at).getTime()) / 60000;
+    if (ageMin < CACHE_TTL_MIN) {
+      return res.json({ ...prior.content, cached: true, cachedAgeMin: Math.round(ageMin) });
     }
   }
 
@@ -780,6 +853,14 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[alerts] failed:', err.message);
   }
 
+  // Daily-lock: if we already built a briefing earlier today, keep the same
+  // "wisdom" picks (library highlight, daily quote, Notion page, and the Gemini
+  // insights written about the quote/Notion) so they stay static all day and only
+  // change at midnight. A non-empty fresh value still wins if the locked one was
+  // blank (e.g. the first build failed to fetch it), so we never lock in nothing.
+  const p = priorIsToday ? prior.content : null;
+  const keep = (locked, fresh) => (locked != null && locked !== '' ? locked : fresh);
+
   const response = {
     date: dateLabel,
     weather,
@@ -788,21 +869,21 @@ app.get('/api/briefing', async (req, res) => {
     newsletters: geminiResult?.newsletters ?? [],
     urgentEmails: geminiResult?.urgentEmails ?? [],
     financeSummary: geminiResult?.financeSummary ?? [],
-    quoteInsight: geminiResult?.quoteInsight ?? '',
-    notionInsight: geminiResult?.notionInsight ?? '',
-    quote: quoteData.quote,
-    notionText: notionData.text,
-    notionPageTitle: notionData.pageTitle,
+    quoteInsight: keep(p?.quoteInsight, geminiResult?.quoteInsight ?? ''),
+    notionInsight: keep(p?.notionInsight, geminiResult?.notionInsight ?? ''),
+    quote: keep(p?.quote, quoteData.quote),
+    notionText: keep(p?.notionText, notionData.text),
+    notionPageTitle: keep(p?.notionPageTitle, notionData.pageTitle),
     leverageActions,
     insights,
     wealthInsights,
     healthInsights,
     forecasts,
-    relevantHighlight,
+    relevantHighlight: keep(p?.relevantHighlight, relevantHighlight),
     weeklyReview,
     wealth,
     markets,
-    dailyQuote,
+    dailyQuote: keep(p?.dailyQuote, dailyQuote),
     alerts,
   };
 

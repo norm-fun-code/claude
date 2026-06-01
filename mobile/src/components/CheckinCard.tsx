@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import { CHECKIN_URL, authHeaders } from '../config';
+import { CHECKIN_URL, CHECKIN_TODAY_URL, authHeaders } from '../config';
 
 type Scores = { mood: number | null; energy: number | null; focus: number | null };
 const DIMENSIONS: { key: keyof Scores; label: string }[] = [
@@ -12,35 +12,69 @@ const DIMENSIONS: { key: keyof Scores; label: string }[] = [
 ];
 
 // 10-second daily check-in. This is the subjective signal the intelligence
-// layer correlates everything else against.
+// layer correlates everything else against. Each tap saves immediately (the
+// backend upserts one row per metric per day), and we rehydrate today's values
+// on mount so switching tabs / reopening shows what you already logged —
+// resetting cleanly at midnight in your timezone.
 export function CheckinCard() {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [scores, setScores] = useState<Scores>({ mood: null, energy: null, focus: null });
   const [saved, setSaved] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  // Pre-fill with whatever was already checked in today (survives tab switches).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(CHECKIN_TODAY_URL, { headers: authHeaders() });
+        if (!res.ok) return;
+        const t = await res.json();
+        if (cancelled || !t?.logged) return;
+        setScores({
+          mood: Number.isFinite(t.mood) ? t.mood : null,
+          energy: Number.isFinite(t.energy) ? t.energy : null,
+          focus: Number.isFinite(t.focus) ? t.focus : null,
+        });
+        setSaved(true);
+      } catch {
+        // offline — start blank
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   function set(key: keyof Scores, value: number) {
     const next = { ...scores, [key]: value };
     setScores(next);
-    if (next.mood && next.energy && next.focus) submit(next);
+    submit(next); // save every tap, so nothing is lost if you leave mid-way
   }
 
   async function submit(next: Scores) {
+    setFailed(false);
     try {
-      await fetch(CHECKIN_URL, {
+      const res = await fetch(CHECKIN_URL, {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify(next),
       });
+      if (!res.ok) throw new Error(`Server ${res.status}`);
       setSaved(true);
     } catch {
-      // offline — user can retry on next refresh
+      setSaved(false);
+      setFailed(true); // tell the user instead of silently dropping the entry
     }
   }
 
+  const complete = scores.mood && scores.energy && scores.focus;
+
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
-      <SectionHeader emoji="✅" title={saved ? 'Checked in — thanks' : 'How are you today?'} />
+      <SectionHeader
+        emoji="✅"
+        title={complete && saved ? 'Checked in — thanks' : 'How are you today?'}
+      />
       {DIMENSIONS.map(({ key, label }) => (
         <View key={key} style={styles.row}>
           <Text style={[styles.label, { color: c.subtext }]}>{label}</Text>
@@ -64,6 +98,9 @@ export function CheckinCard() {
           </View>
         </View>
       ))}
+      {failed && (
+        <Text style={styles.failed}>Couldn’t save — check your connection and tap again.</Text>
+      )}
     </View>
   );
 }
@@ -92,4 +129,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dotText: { ...typography.subtitle, fontSize: 13 },
+  failed: { ...typography.caption, color: '#C0392B', marginTop: spacing.sm },
 });
