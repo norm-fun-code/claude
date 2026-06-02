@@ -54,6 +54,12 @@ export function WealthCard({ wealth }: Props) {
           c={c}
         />
       </View>
+
+      {wealth.discretionaryThisWeek != null && (
+        <Text style={[styles.discretionary, { color: c.subtext }]}>
+          {show(money(wealth.discretionaryThisWeek))} discretionary (ex rent/mortgage)
+        </Text>
+      )}
     </View>
   );
 }
@@ -83,4 +89,5 @@ const styles = StyleSheet.create({
   stat: { alignItems: 'flex-start', flex: 1 },
   statValue: { ...typography.subtitle, fontWeight: '600', fontSize: 15 },
   statLabel: { ...typography.caption, fontSize: 11, marginTop: 2 },
+  discretionary: { ...typography.caption, fontSize: 12, marginTop: spacing.sm, textAlign: 'center' },
 });

@@ -31,8 +31,19 @@ export function RecoveryCard({ recovery, composites = [] }: Props) {
 
   if (!recovery || recovery.score == null) return null;
 
+  // Only the three known bands get a status color/label; an unknown/missing band
+  // is shown neutral grey rather than falling through to red "Low" (which would
+  // be a false alarm on a valid score with no band).
   const bandColor =
-    recovery.band === 'green' ? colors.green : recovery.band === 'yellow' ? colors.yellow : colors.red;
+    recovery.band === 'green' ? colors.green
+      : recovery.band === 'yellow' ? colors.yellow
+      : recovery.band === 'red' ? colors.red
+      : c.subtext;
+  const bandLabel =
+    recovery.band === 'green' ? 'Recovered'
+      : recovery.band === 'yellow' ? 'Moderate'
+      : recovery.band === 'red' ? 'Low'
+      : 'Recovery';
 
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
@@ -45,7 +56,7 @@ export function RecoveryCard({ recovery, composites = [] }: Props) {
         </View>
         <View style={styles.scoreMeta}>
           <Text style={[styles.band, { color: bandColor }]}>
-            {recovery.band === 'green' ? 'Recovered' : recovery.band === 'yellow' ? 'Moderate' : 'Low'}
+            {bandLabel}
           </Text>
           {recovery.detail ? (
             <Text style={[styles.detail, { color: c.subtext }]} numberOfLines={3}>
@@ -60,7 +71,7 @@ export function RecoveryCard({ recovery, composites = [] }: Props) {
         <View style={[styles.parts, { borderTopColor: c.border }]}>
           {Object.entries(recovery.parts).map(([k, v]) => (
             <View key={k} style={styles.part}>
-              <Text style={[styles.partVal, { color: c.text }]}>{v}</Text>
+              <Text style={[styles.partVal, { color: c.text }]}>{Math.round(Number(v))}</Text>
               <Text style={[styles.partLabel, { color: c.subtext }]}>{PART_LABEL[k] ?? k}</Text>
             </View>
           ))}

@@ -115,6 +115,7 @@ export interface Wealth {
   netWorth: number | null;
   netWorthChange: number | null;
   spendingThisWeek: number;
+  discretionaryThisWeek?: number | null;
   incomeThisWeek: number;
   cashflowThisWeek: number;
 }

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import { API_BASE, authHeaders } from '../config';
+import { API_BASE, authHeaders, fetchWithTimeout } from '../config';
 
 const HABITS_URL = `${API_BASE}/api/habits`;
 const HABITS_TODAY_URL = `${API_BASE}/api/habits/today`;
@@ -66,7 +66,7 @@ export function HabitsCard() {
   async function save(nextChecked = checked, nextEat = eatHealthy) {
     setFailed(false);
     try {
-      const res = await fetch(HABITS_URL, {
+      const res = await fetchWithTimeout(HABITS_URL, {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ ...nextChecked, eatHealthy: nextEat }),

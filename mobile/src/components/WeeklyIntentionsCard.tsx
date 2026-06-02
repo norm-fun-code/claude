@@ -18,9 +18,17 @@ import { INTENTIONS_URL, INTENTIONS_CURRENT_URL, authHeaders, fetchWithTimeout }
 // and lingers until set or dismissed for the week; collapses into a compact
 // "this week's focus" summary once saved.
 const MAX_GOALS = 3;
+const ET_TZ = 'America/New_York';
 
+// Day-of-week in Eastern Time, to match the backend's notion of "the week"
+// (intentions are keyed on the ET Sunday). Using device-local time would make
+// the card show/hide on the wrong day when traveling or near midnight.
+function easternDayOfWeek(): number {
+  const wd = new Intl.DateTimeFormat('en-US', { timeZone: ET_TZ, weekday: 'short' }).format(new Date());
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(wd);
+}
 function isSunday(): boolean {
-  return new Date().getDay() === 0;
+  return easternDayOfWeek() === 0;
 }
 
 export function WeeklyIntentionsCard() {
@@ -46,8 +54,12 @@ export function WeeklyIntentionsCard() {
         const { intention } = await res.json();
         if (cancelled) return;
         if (intention) {
-          setContext(intention.context ?? '');
-          const g = Array.isArray(intention.goals) ? intention.goals : [];
+          setContext(typeof intention.context === 'string' ? intention.context : '');
+          // Coerce to strings and clamp to MAX_GOALS — the server array is
+          // untrusted/unvalidated shape over the network.
+          const g = (Array.isArray(intention.goals) ? intention.goals : [])
+            .map((x: unknown) => String(x ?? ''))
+            .slice(0, MAX_GOALS);
           setGoals(g.length ? g : ['']);
           setSaved(true);
         }
@@ -67,7 +79,7 @@ export function WeeklyIntentionsCard() {
   if (saved && !isSunday() && !editing) return null;
   if (!saved && !isSunday()) {
     // Past Sunday with nothing set — still let it linger early in the week (Mon/Tue).
-    const dow = new Date().getDay();
+    const dow = easternDayOfWeek();
     if (dow > 2) return null;
   }
 

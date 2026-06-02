@@ -960,6 +960,7 @@ app.get('/api/briefing', async (req, res) => {
     const nw = await metricsStore.latest({ domain: 'wealth', metric: 'net_worth' });
     const nwPrev = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'net_worth', from: monthAgo, to: weekAgo, agg: 'avg' });
     const spend = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: weekAgo, agg: 'sum' });
+    const discretionary = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: weekAgo, agg: 'sum' });
     const income = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'income', from: weekAgo, agg: 'sum' });
     if (nw || spend.length) {
       const netWorth = nw ? Number(nw.value) : null;
@@ -968,6 +969,8 @@ app.get('/api/briefing', async (req, res) => {
         netWorth,
         netWorthChange: netWorth != null && priorNw ? Math.round((netWorth - priorNw)) : null,
         spendingThisWeek: Math.round(sum(spend)),
+        // Discretionary = ex rent/mortgage; null when there's no such data yet.
+        discretionaryThisWeek: discretionary.length ? Math.round(sum(discretionary)) : null,
         incomeThisWeek: Math.round(sum(income)),
         cashflowThisWeek: Math.round(sum(income) - sum(spend)),
       };

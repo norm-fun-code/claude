@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import { CHECKIN_URL, CHECKIN_TODAY_URL, authHeaders } from '../config';
+import { CHECKIN_URL, CHECKIN_TODAY_URL, authHeaders, fetchWithTimeout } from '../config';
 
 type Scores = { mood: number | null; energy: number | null; focus: number | null };
 const DIMENSIONS: { key: keyof Scores; label: string }[] = [
@@ -54,7 +54,7 @@ export function CheckinCard() {
   async function submit(next: Scores) {
     setFailed(false);
     try {
-      const res = await fetch(CHECKIN_URL, {
+      const res = await fetchWithTimeout(CHECKIN_URL, {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify(next),
