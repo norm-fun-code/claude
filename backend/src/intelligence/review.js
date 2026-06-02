@@ -118,7 +118,7 @@ function composeReview(ctx) {
 
   const prompt = `Week of ${ctx.periodStart.toISOString().slice(0, 10)} to ${ctx.periodEnd.toISOString().slice(0, 10)}.
 
-KEY METRICS (this week's average):
+KEY METRICS (each tagged how it's rolled up — total / current / average):
 ${metricsBlock}
 
 CONFIRMED RELATIONSHIPS:
