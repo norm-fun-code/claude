@@ -71,4 +71,45 @@ async function runMorningBriefing(opts = {}) {
   }
 }
 
-module.exports = { runMorningBriefing, warmBriefing };
+/**
+ * Generate the weekly review and push a "your weekly review is ready" notice.
+ * Run on the Sunday-morning schedule. Best-effort push.
+ * @param {{ send?: boolean }} [opts]
+ */
+async function runWeeklyReviewWithPush(opts = {}) {
+  const send = opts.send !== false;
+  const { runReview } = require('../intelligence/review');
+
+  let review = null;
+  try {
+    review = await runReview(); // generates + persists the weekly review
+  } catch (err) {
+    console.error('[weekly] review generation failed:', err.message);
+    return { generated: false, sent: 0, error: err.message };
+  }
+
+  if (!send) return { generated: true, sent: 0 };
+
+  const tokens = await devicesStore.listActiveTokens();
+  if (tokens.length === 0) return { generated: true, sent: 0, reason: 'no_devices' };
+
+  // Use the review headline as the notification body when we have one.
+  const body = review?.headline
+    ? `${review.headline} — tap to read your weekly review.`
+    : 'Your weekly review is ready — see how the week went and what to focus on.';
+
+  try {
+    const r = await sendPush(tokens, {
+      title: 'Your weekly review is ready 📊',
+      body,
+      data: { type: 'weekly_review' },
+    });
+    for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
+    return { generated: true, sent: r.sent };
+  } catch (err) {
+    console.error('[weekly] push failed:', err.message);
+    return { generated: true, sent: 0, error: err.message };
+  }
+}
+
+module.exports = { runMorningBriefing, warmBriefing, runWeeklyReviewWithPush };

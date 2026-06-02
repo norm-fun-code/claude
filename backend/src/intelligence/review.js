@@ -16,7 +16,7 @@ const DAY = 24 * 60 * 60 * 1000;
 const KEY_METRICS = [
   ['wellbeing', 'mood'], ['wellbeing', 'energy'], ['wellbeing', 'focus'],
   ['health', 'sleep_hours'], ['health', 'hrv'], ['health', 'steps'],
-  ['wealth', 'net_worth'], ['wealth', 'spending'],
+  ['wealth', 'net_worth'], ['wealth', 'spending'], ['wealth', 'spending_discretionary'],
 ];
 
 function round(n, d = 2) {

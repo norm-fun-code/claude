@@ -36,7 +36,7 @@ const experiments = require('./src/intelligence/experiments');
 const devicesStore = require('./src/store/devices');
 const nudgesStore = require('./src/store/nudges');
 const { runNudges } = require('./src/notify/run');
-const { runMorningBriefing } = require('./src/notify/morning');
+const { runMorningBriefing, runWeeklyReviewWithPush } = require('./src/notify/morning');
 const surfacedStore = require('./src/store/surfaced');
 const briefingsStore = require('./src/store/briefings');
 const workoutChecks = require('./src/store/workoutChecks');
@@ -637,6 +637,18 @@ app.post('/api/morning/run', async (req, res) => {
   try {
     const { dryRun = false } = req.body || {};
     res.json(await runMorningBriefing({ send: !dryRun }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manually trigger the weekly review generation + "review ready" push (the
+// Sunday-morning flow), so you can test it on demand. { dryRun: true } generates
+// without pushing.
+app.post('/api/weekly/run', async (req, res) => {
+  try {
+    const { dryRun = false } = req.body || {};
+    res.json(await runWeeklyReviewWithPush({ send: !dryRun }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

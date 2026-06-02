@@ -31,7 +31,7 @@ const DEFAULTS = {
   // "trend" on these is misleading — e.g. "spending down 75%" really compares
   // recent vs prior *daily averages*, not the weekly totals shown on the Wealth
   // tab. These are covered properly by the dedicated wealth insights instead.
-  trendSkip: ['wealth:spending', 'wealth:income', 'wealth:net_cashflow'],
+  trendSkip: ['wealth:spending', 'wealth:spending_discretionary', 'wealth:income', 'wealth:net_cashflow'],
 };
 
 function pct(n) {

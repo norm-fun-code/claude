@@ -61,6 +61,19 @@ function isExcludedAccount(name) {
   return excludedAccounts().some((e) => n.includes(e));
 }
 
+// Fixed housing categories to exclude from DISCRETIONARY spending, so a big but
+// expected rent/mortgage payment doesn't read as a behavioral "spike". Override
+// the list with MONARCH_FIXED_CATEGORIES="rent,mortgage,hoa".
+function fixedCategories() {
+  const custom = (process.env.MONARCH_FIXED_CATEGORIES || '').split(',').map((s) => norm(s)).filter(Boolean);
+  return custom.length ? custom : ['rent', 'mortgage', 'housing', 'hoa', 'home loan'];
+}
+function isFixedCategory(category) {
+  const c = norm(category);
+  if (!c) return false;
+  return fixedCategories().some((f) => c.includes(f));
+}
+
 /** Parse a currency/number cell: strips $ and commas, treats (x) as negative. */
 function parseAmount(raw) {
   if (raw == null) return NaN;
@@ -129,6 +142,7 @@ function detectKind(headers = []) {
  */
 function mapTransactions(records = []) {
   const spendByDay = new Map();
+  const discretionaryByDay = new Map(); // spend excluding fixed housing (rent/mortgage)
   const incomeByDay = new Map();
   const documents = [];
 
@@ -145,8 +159,14 @@ function mapTransactions(records = []) {
     const original = field(rec, ['original statement', 'originalstatement', 'notes']);
 
     // Monarch convention: negative = money out, positive = money in.
-    if (amount < 0) spendByDay.set(day, (spendByDay.get(day) || 0) + -amount);
-    else if (amount > 0) incomeByDay.set(day, (incomeByDay.get(day) || 0) + amount);
+    if (amount < 0) {
+      spendByDay.set(day, (spendByDay.get(day) || 0) + -amount);
+      // Discretionary = everything except fixed housing, so rent/mortgage doesn't
+      // masquerade as a spending spike in the weekly review.
+      if (!isFixedCategory(category)) {
+        discretionaryByDay.set(day, (discretionaryByDay.get(day) || 0) + -amount);
+      }
+    } else if (amount > 0) incomeByDay.set(day, (incomeByDay.get(day) || 0) + amount);
 
     documents.push({
       source: SOURCE,
@@ -169,6 +189,7 @@ function mapTransactions(records = []) {
     const spend = spendByDay.get(day) || 0;
     const income = incomeByDay.get(day) || 0;
     if (spendByDay.has(day)) metrics.push(m('spending', spend, day));
+    if (discretionaryByDay.has(day)) metrics.push(m('spending_discretionary', discretionaryByDay.get(day), day));
     if (incomeByDay.has(day)) metrics.push(m('income', income, day));
     metrics.push(m('net_cashflow', income - spend, day));
   }
@@ -257,7 +278,7 @@ function dedupeMetrics(metrics) {
     const key = `${row.ts.toISOString()}|${row.metric}`;
     const prev = byKey.get(key);
     // Flows (spending/income/cashflow) sum; snapshots (net_worth/...) take last.
-    if (prev && /spending|income|cashflow/.test(row.metric)) {
+    if (prev && /spending|spending_discretionary|income|cashflow/.test(row.metric)) {
       prev.value = round2(prev.value + row.value);
     } else {
       byKey.set(key, { ...row });

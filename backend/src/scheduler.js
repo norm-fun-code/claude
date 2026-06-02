@@ -8,8 +8,7 @@
 const { runIngest } = require('./ingest/run');
 const { analyze } = require('./intelligence/analyze');
 const { runNudges } = require('./notify/run');
-const { runReview } = require('./intelligence/review');
-const { runMorningBriefing } = require('./notify/morning');
+const { runMorningBriefing, runWeeklyReviewWithPush } = require('./notify/morning');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -60,8 +59,10 @@ function start() {
   if (process.env.ENABLE_SCHEDULER !== 'true') return false;
   const hour = Number(process.env.SCHEDULE_HOUR) || 8; // default 8am
   scheduleDaily(hour, 0, morningRoutine);
-  scheduleWeekly(1, hour, 5, () => runReview()); // Monday
-  console.log(`[scheduler] enabled — morning routine + briefing push ${String(hour).padStart(2, '0')}:00, weekly review Mon ${String(hour).padStart(2, '0')}:05 (TZ=${process.env.TZ || 'system'})`);
+  // Weekly review generates Sunday morning (weekday 0), just after the daily
+  // routine's ingest/analyze, and pushes "your weekly review is ready".
+  scheduleWeekly(0, hour, 10, () => runWeeklyReviewWithPush({}));
+  console.log(`[scheduler] enabled — morning routine + briefing push ${String(hour).padStart(2, '0')}:00, weekly review Sun ${String(hour).padStart(2, '0')}:10 (TZ=${process.env.TZ || 'system'})`);
   return true;
 }
 

@@ -34,6 +34,7 @@ const CATALOG = {
   'wealth:cash': { label: 'Cash', goodWhen: null },
   'wealth:investments': { label: 'Investments', goodWhen: 'up' },
   'wealth:spending': { label: 'Spending', goodWhen: null },
+  'wealth:spending_discretionary': { label: 'Discretionary spending', goodWhen: null },
   'wealth:income': { label: 'Income', goodWhen: 'up' },
   'wealth:net_cashflow': { label: 'Net cashflow', goodWhen: 'up' },
   'productivity:meetings': { label: 'Meetings', goodWhen: null },
@@ -59,6 +60,7 @@ const SUM_METRICS = new Set([
   'notion_pages',
   'notion_pages_synced',
   'spending',
+  'spending_discretionary',
   'income',
   'net_cashflow',
 ]);
