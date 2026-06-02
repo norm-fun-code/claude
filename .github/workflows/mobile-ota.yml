@@ -52,9 +52,16 @@ jobs:
         env:
           EXPO_PUBLIC_API_BASE: ${{ vars.EXPO_PUBLIC_API_BASE || 'https://backend-production-0902.up.railway.app' }}
           EXPO_PUBLIC_API_TOKEN: ${{ secrets.EXPO_PUBLIC_API_TOKEN }}
+          # Pass the commit message via env (not inline ${{ }}) so dashes,
+          # newlines, or quotes in it can't be parsed as eas CLI flags — a
+          # message starting a line with "- " previously made `eas update` think
+          # it was given options and fail.
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
           if [ -z "$EXPO_PUBLIC_API_TOKEN" ]; then
             echo "::error::EXPO_PUBLIC_API_TOKEN secret is not set — refusing to publish a token-less OTA bundle (would 401 on every request)."
             exit 1
           fi
-          eas update --branch production --message "${{ github.event.head_commit.message }}" --non-interactive
+          # First line only, and pass with = + quotes so it's never treated as flags.
+          MSG="$(printf '%s' "$COMMIT_MSG" | head -n1)"
+          eas update --branch production --message="$MSG" --non-interactive
