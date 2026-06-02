@@ -51,7 +51,7 @@ export function RecoveryCard({ recovery, composites = [] }: Props) {
 
       <View style={styles.scoreRow}>
         <View style={[styles.ring, { borderColor: bandColor }]}>
-          <Text style={[styles.score, { color: c.text }]}>{recovery.score}</Text>
+          <Text style={[styles.score, { color: c.text }]}>{Math.round(recovery.score)}</Text>
           <Text style={[styles.scoreUnit, { color: c.subtext }]}>/ 100</Text>
         </View>
         <View style={styles.scoreMeta}>

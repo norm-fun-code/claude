@@ -28,7 +28,7 @@ export function CheckinCard() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(CHECKIN_TODAY_URL, { headers: authHeaders() });
+        const res = await fetchWithTimeout(CHECKIN_TODAY_URL, { headers: authHeaders() });
         if (!res.ok) return;
         const t = await res.json();
         if (cancelled || !t?.logged) return;

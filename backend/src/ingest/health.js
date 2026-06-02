@@ -2,6 +2,8 @@
 // canonical metric rows. Accepts either:
 //   1. An array of canonical rows: [{ metric, value, unit?, ts?, metadata? }]
 //   2. A flat object of known HealthKit fields: { hrv, restingHeartRate, ... }
+const { dayAnchorTs, safeDate } = require('../util/date');
+
 const SOURCE = 'apple_health';
 const DOMAIN = 'health';
 
@@ -33,14 +35,22 @@ const FIELD_MAP = {
   bodyFatPercentage: ['body_fat', 'percent'],
 };
 
-function mapHealthPayload(body, { ts } = {}) {
-  const when = ts ? new Date(ts) : new Date();
+function mapHealthPayload(body, { ts, tz = 'UTC' } = {}) {
+  // Anchor to one stable per-day timestamp (noon UTC of the local date), exactly
+  // like habits/check-in. Two reasons this matters:
+  //  - WITHOUT it, every app refresh wrote a NEW row (the request's millisecond
+  //    time never hit the (ts,domain,metric,source) upsert), so steps/active
+  //    energy — which sum per day — inflated several-fold across refreshes.
+  //  - Noon-UTC-of-the-LOCAL-date also buckets to the correct local day, so an
+  //    evening reading isn't filed on tomorrow (UTC) and misaligned from that
+  //    day's mood/habits in correlations.
+  const when = safeDate(ts) || dayAnchorTs(tz);
 
   if (Array.isArray(body)) {
     return body
       .filter((r) => r && r.metric != null && Number.isFinite(Number(r.value)))
       .map((r) => ({
-        ts: r.ts ? new Date(r.ts) : when,
+        ts: safeDate(r.ts) || when,
         domain: DOMAIN,
         metric: r.metric,
         value: Number(r.value),

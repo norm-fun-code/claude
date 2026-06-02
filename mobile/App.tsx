@@ -131,14 +131,14 @@ export default function App() {
             {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
             <WeeklyIntentionsCard />
             <WeatherCard weather={d?.weather ?? null} />
-            {d && d.calendar.length > 0 && <CalendarCard events={d.calendar} />}
+            {d && (d.calendar?.length ?? 0) > 0 && <CalendarCard events={d.calendar} />}
             {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
             <CheckinCard />
             <HabitsCard />
             {d && <LeverageCard actions={d.leverageActions ?? []} insights={[]} />}
             {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
-            {d && <UrgentEmailsCard emails={d.urgentEmails} />}
-            {d && <NewsletterList newsletters={d.newsletters} />}
+            {d && <UrgentEmailsCard emails={d.urgentEmails ?? []} />}
+            {d && <NewsletterList newsletters={d.newsletters ?? []} />}
             <ReviewCard review={d?.weeklyReview ?? null} compact />
             {d?.relevantHighlight && <LibraryCard highlight={d.relevantHighlight} />}
 

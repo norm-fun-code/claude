@@ -1128,8 +1128,14 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
       const done = !next.has(name);
       if (done) next.add(name);
       else next.delete(name);
-      // Roll back to the prior set if the save fails.
-      saveCheck(name, 'exercise', done, () => setCompletedExercises(prev));
+      // On save failure, revert ONLY this item against the latest state (a stale
+      // snapshot would clobber an unrelated exercise ticked off in the meantime).
+      const rollback = () => setCompletedExercises((cur) => {
+        const s = new Set(cur);
+        if (done) s.delete(name); else s.add(name);
+        return s;
+      });
+      saveCheck(name, 'exercise', done, rollback);
       return next;
     });
   }
@@ -1146,7 +1152,9 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
   function toggleNonNeg(key: keyof typeof nonNegotiables) {
     setNonNegotiables((prev) => {
       const done = !prev[key];
-      saveCheck(key, 'non_negotiable', done, () => setNonNegotiables(prev));
+      // Revert only this key against the latest state on failure.
+      const rollback = () => setNonNegotiables((cur) => ({ ...cur, [key]: !done }));
+      saveCheck(key, 'non_negotiable', done, rollback);
       return { ...prev, [key]: done };
     });
   }

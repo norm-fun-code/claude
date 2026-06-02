@@ -232,14 +232,17 @@ function alignByDay(seriesA, seriesB, lag = 0) {
  * Recent-vs-prior trend over a daily series [{ day, value }].
  * Compares the mean of the last `window` days to the `window` days before it.
  */
-function trendStats(series, window = 7) {
+function trendStats(series, window = 7, { minPriorN = 3 } = {}) {
   const values = series.map((p) => Number(p.value)).filter(Number.isFinite);
   if (values.length < 4) return null;
 
   const recent = values.slice(-window);
   const prior = values.slice(-2 * window, -window);
   const recentMean = mean(recent);
-  const priorMean = prior.length ? mean(prior) : null;
+  // Require a real prior window before reporting a % change. Otherwise an 8-day
+  // series gives a 1-day "prior", so a single low first day reads as a fake,
+  // maximally-confident "+100% improving" trend in the user's second week.
+  const priorMean = prior.length >= minPriorN ? mean(prior) : null;
 
   let pctChange = null;
   if (priorMean != null && priorMean !== 0) {

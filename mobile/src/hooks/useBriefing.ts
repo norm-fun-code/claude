@@ -182,16 +182,25 @@ export function useBriefing(): BriefingState {
   const [data, setData] = useState<BriefingData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Tracks whether a refresh was in flight, so we can recover one that iOS
-  // suspended when the app was backgrounded mid-request.
-  const inFlight = useRef(false);
-  const wasForcing = useRef(false);
+  // Aborts any prior in-flight request when a new one starts, so foregrounding
+  // can't leave two briefing fetches racing to setData (stale-data flash).
+  const controllerRef = useRef<AbortController | null>(null);
+  // Monotonic request id: only the latest request is allowed to write state.
+  const reqIdRef = useRef(0);
+  // Timestamp of the last completed/started fetch, to throttle the chatty
+  // AppState 'active' events (Control Center, Face ID, permission sheets, etc.).
+  const lastFetchRef = useRef(0);
 
   const fetchBriefing = useCallback(async (force = false) => {
+    // Cancel any request already in flight; we only want the newest one.
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    const myReqId = ++reqIdRef.current;
+    lastFetchRef.current = Date.now();
+
     setLoading(true);
     setError(null);
-    inFlight.current = true;
-    wasForcing.current = force;
 
     try {
       // Default load uses the server cache (instant); pull-to-refresh forces fresh.
@@ -201,6 +210,7 @@ export function useBriefing(): BriefingState {
       const response = await fetchWithTimeout(url, {
         method: 'GET',
         headers: authHeaders(),
+        signal: controller.signal,
       }, 45000);
 
       if (!response.ok) {
@@ -208,15 +218,20 @@ export function useBriefing(): BriefingState {
       }
 
       const json: BriefingData = await response.json();
+      // Ignore a stale response that a newer request has superseded.
+      if (myReqId !== reqIdRef.current) return;
       setData(json);
       // Persist so the next app open shows this instantly (no spinner / cold start).
       AsyncStorage.setItem(CACHE_KEY, JSON.stringify(json)).catch(() => {});
     } catch (err: unknown) {
+      // An aborted request isn't a real error — a newer one took over.
+      if (err instanceof Error && err.name === 'AbortError') return;
+      if (myReqId !== reqIdRef.current) return;
       const message = err instanceof Error ? err.message : 'Unknown error';
       setError(message);
     } finally {
-      setLoading(false);
-      inFlight.current = false;
+      // Only the latest request controls the spinner.
+      if (myReqId === reqIdRef.current) setLoading(false);
     }
   }, []);
 
@@ -239,19 +254,16 @@ export function useBriefing(): BriefingState {
     };
   }, [fetchBriefing]);
 
-  // iOS suspends in-flight requests when the app is backgrounded, so a refresh
-  // started just before leaving never completes (spinner dies silently). When we
-  // return to the foreground, recover: if a refresh was interrupted, restart it
-  // (preserving force=refresh); otherwise do a quiet background refresh so the
-  // user always returns to fresh data.
+  // When the app returns to the foreground, quietly freshen the briefing so a
+  // refresh that iOS suspended on backgrounding doesn't leave stale data. The
+  // 'active' event is chatty (Control Center, Face ID, share sheets…), so
+  // throttle to avoid firing a 45s-capable request on every trivial transition.
   useEffect(() => {
+    const FOREGROUND_THROTTLE_MS = 60000;
     const sub = AppState.addEventListener('change', (state) => {
       if (state !== 'active') return;
-      if (inFlight.current) {
-        fetchBriefing(wasForcing.current); // the suspended one never finished — redo it
-      } else {
-        fetchBriefing(false); // quietly freshen on return
-      }
+      if (Date.now() - lastFetchRef.current < FOREGROUND_THROTTLE_MS) return;
+      fetchBriefing(false); // abort-and-replace handles any interrupted request
     });
     return () => sub.remove();
   }, [fetchBriefing]);

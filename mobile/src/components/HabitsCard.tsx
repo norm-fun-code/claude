@@ -38,7 +38,7 @@ export function HabitsCard() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(HABITS_TODAY_URL, { headers: authHeaders() });
+        const res = await fetchWithTimeout(HABITS_TODAY_URL, { headers: authHeaders() });
         if (!res.ok) return;
         const t = await res.json();
         if (cancelled || !t?.logged) return;

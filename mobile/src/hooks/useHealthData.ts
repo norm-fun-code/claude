@@ -80,13 +80,15 @@ function getSleepScore(
   if (totalHours === null || totalHours <= 0) return null;
   const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
   const durationPart = clamp01(totalHours / 8);
-  const hasStages = deepHours !== null || remHours !== null;
-  if (!hasStages) {
-    return Math.round(durationPart * 100); // duration-only fallback
-  }
-  const deepPart = clamp01((deepHours ?? 0) / 1.5);
-  const remPart = clamp01((remHours ?? 0) / 1.75);
-  return Math.round((durationPart * 0.5 + deepPart * 0.25 + remPart * 0.25) * 100);
+  // Weight only the stages the source actually reports, then renormalize — so a
+  // device that reports deep but not REM (or neither) isn't penalized 25% for
+  // data it never recorded.
+  const components: { value: number; weight: number }[] = [{ value: durationPart, weight: 0.5 }];
+  if (deepHours !== null) components.push({ value: clamp01(deepHours / 1.5), weight: 0.25 });
+  if (remHours !== null) components.push({ value: clamp01(remHours / 1.75), weight: 0.25 });
+  const wsum = components.reduce((a, c) => a + c.weight, 0);
+  const score = components.reduce((a, c) => a + c.value * (c.weight / wsum), 0);
+  return Math.round(score * 100);
 }
 
 // Total hours covered by a set of time intervals, merging overlaps so two

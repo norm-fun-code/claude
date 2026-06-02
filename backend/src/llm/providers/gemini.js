@@ -42,7 +42,8 @@ async function embed(texts) {
         try {
           const { data } = await axios.post(
             `${BASE}/models/${model}:embedContent?key=${key()}`,
-            { content: { parts: [{ text: t }] }, outputDimensionality: dim }
+            { content: { parts: [{ text: t }] }, outputDimensionality: dim },
+            { timeout: Number(process.env.GEMINI_TIMEOUT_MS || 55000) } // don't hang the ingest chain
           );
           return data.embedding?.values || null;
         } catch {

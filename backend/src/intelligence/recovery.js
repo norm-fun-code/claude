@@ -76,6 +76,14 @@ function recoveryScore(seriesByKey, opts = {}) {
   const keys = Object.keys(parts);
   if (!keys.length) return null;
 
+  // Recovery is a baseline-relative construct. HRV/RHR only contribute once
+  // there's a personal baseline (>=8 days, enforced in baselineScore). Don't
+  // surface a "recovery score" built ONLY from a single night's sleep number —
+  // that would be a confident headline with no baseline behind it. Require at
+  // least one baseline-derived input (hrv or restingHr).
+  const hasBaselineInput = parts.hrv != null || parts.restingHr != null;
+  if (!hasBaselineInput) return null;
+
   // Re-normalize weights over whatever inputs we actually have.
   const wsum = keys.reduce((a, k) => a + weights[k], 0);
   const score = Math.round(keys.reduce((a, k) => a + parts[k] * (weights[k] / wsum), 0));
@@ -144,12 +152,15 @@ function sleepConsistency(sleepSeries, { days = 14, minN = 5 } = {}) {
  * risk); <0.8 is detraining. Load = active_energy (kcal) or exercise_minutes.
  * Returns { acwr, acute, chronic, load, band, note } or null.
  */
-function trainingLoad(seriesByKey, { acuteDays = 7, chronicDays = 28 } = {}) {
+function trainingLoad(seriesByKey, { acuteDays = 7, chronicDays = 28, minChronicDays = 21 } = {}) {
   const energy = seriesByKey['health:active_energy'];
   const minutes = seriesByKey['health:exercise_minutes'];
   const series = (energy && energy.length ? energy : minutes);
   const load = energy && energy.length ? 'active_energy' : 'exercise_minutes';
-  if (!series || series.length < acuteDays) return null;
+  // ACWR is acute load vs a CHRONIC baseline. With < ~3 weeks of data the
+  // "chronic" mean is really just a short window, so a couple of harder days
+  // would flag a bogus "load spiking / injury risk". Wait for a real baseline.
+  if (!series || series.length < minChronicDays) return null;
 
   const acute = sumLast(series, acuteDays) / acuteDays;
   const chronic = sumLast(series, chronicDays) / Math.min(chronicDays, series.length);

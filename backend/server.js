@@ -45,6 +45,17 @@ const intentionsStore = require('./src/store/intentions');
 const dailyPicksStore = require('./src/store/dailyPicks');
 const { runReview } = require('./src/intelligence/review');
 
+// Last-resort safety net: log instead of crashing on an unhandled rejection /
+// uncaught exception, so one stray missed .catch() can't silently kill an
+// always-on server during an unattended week. (Per-route handlers still catch
+// their own errors; this only catches things that slip past them.)
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason instanceof Error ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err?.stack || err);
+});
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -126,7 +137,8 @@ app.post('/api/ingest/health', async (req, res) => {
       domain: 'health',
       displayName: 'Apple Health',
     });
-    const rows = mapHealthPayload(req.body, { ts: req.query.ts });
+    const tz = process.env.TZ || 'America/New_York';
+    const rows = mapHealthPayload(req.body, { ts: req.query.ts, tz });
     const written = await metricsStore.insertMetrics(rows);
     await sourcesStore.markSync(HEALTH_SOURCE);
     res.json({ written });
@@ -759,8 +771,11 @@ app.get('/api/briefing', async (req, res) => {
   const weather = unwrap(weatherResult, 'weather');
   const calendar = unwrap(calendarResult, 'calendar') ?? [];
   const notionData = unwrap(notionResult, 'notion') ?? { text: '', pageTitle: 'Notion' };
-  // Mark this Notion page as shown so it won't repeat for 30 days.
-  if (notionData.pageTitle && notionData.pageTitle !== 'Notion') {
+  // Mark this Notion page as shown so it won't repeat for 30 days — but ONLY when
+  // we're actually serving a fresh pick today. If an earlier build already locked
+  // today's wisdom, this fresh fetch gets discarded by the day-lock below, so
+  // recording it would silently burn the no-repeat pool on every refresh.
+  if (!priorIsToday && notionData.pageTitle && notionData.pageTitle !== 'Notion') {
     surfacedStore.record('notion_page', notionData.pageTitle).catch(() => {});
   }
   const quoteData = unwrap(quoteResult, 'googleDoc') ?? { quote: '' };
@@ -782,7 +797,8 @@ app.get('/api/briefing', async (req, res) => {
       );
       if (pick) {
         dailyQuote = pick;
-        await surfacedStore.record('daily_quote', pick);
+        // Only record when serving fresh (see note above the notion_page record).
+        if (!priorIsToday) await surfacedStore.record('daily_quote', pick);
       }
     }
   } catch (err) {
@@ -935,7 +951,7 @@ app.get('/api/briefing', async (req, res) => {
       const [pick] = surfacedStore.pickFresh(hits, seen, { max: 1, keyFn: (h) => h.id });
       if (pick) {
         relevantHighlight = { title: pick.title, author: pick.author, content: pick.content, url: pick.url };
-        await surfacedStore.record('highlight', pick.id);
+        if (!priorIsToday) await surfacedStore.record('highlight', pick.id);
       }
     }
   } catch (err) {
