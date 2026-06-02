@@ -1,3 +1,4 @@
+// NormOS backend.
 require('dotenv').config();
 const crypto = require('crypto');
 const { withTimeout } = require('./src/util/async');
