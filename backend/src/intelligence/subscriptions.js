@@ -49,7 +49,10 @@ function cadenceOf(gapDays) {
 function detectSubscriptions(transactions, opts = {}) {
   const o = {
     minOccurrences: 3,
-    amountTolerance: 0.15, // ±15% counts as "the same" charge
+    // Real subscriptions bill a near-identical amount every cycle; tight tolerance
+    // (±5%) avoids flagging 3 evenly-spaced but variable purchases (groceries,
+    // gas) at the same merchant as a "subscription".
+    amountTolerance: 0.05,
     minAmount: 1,
     asOf: new Date(),
     ...opts,
