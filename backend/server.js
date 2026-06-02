@@ -841,7 +841,7 @@ app.get('/api/briefing', async (req, res) => {
     // briefing (it degrades to the data-only sections).
     geminiResult = await withTimeout(
       generateBriefing(emails, notionData.text, quoteData.quote, dayName, workout, calendar, wellbeingContext),
-      Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 40000),
+      Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 60000),
       'gemini'
     );
   } catch (err) {

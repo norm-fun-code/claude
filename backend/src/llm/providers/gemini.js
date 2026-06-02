@@ -10,14 +10,17 @@ function key() {
 }
 
 async function generateText({ system, prompt, temperature = 0.4, maxTokens = 1024 }) {
-  const model = process.env.GEMINI_CHAT_MODEL || 'gemini-3.1';
+  const model = process.env.GEMINI_CHAT_MODEL || 'gemini-3.5-flash';
   const { data } = await axios.post(
     `${BASE}/models/${model}:generateContent?key=${key()}`,
     {
       systemInstruction: system ? { parts: [{ text: system }] } : undefined,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: { temperature, maxOutputTokens: maxTokens },
-    }
+    },
+    // Fail cleanly rather than hang forever if Gemini stalls; the caller wraps
+    // this in its own budget too, but a transport timeout gives a real error.
+    { timeout: Number(process.env.GEMINI_TIMEOUT_MS || 55000) }
   );
   return data.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') ?? '';
 }
