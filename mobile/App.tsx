@@ -109,7 +109,7 @@ export default function App() {
             <ChatCard />
             {(d?.quote || d?.quoteInsight) && <QuoteCard quote={d!.quote} insight={d!.quoteInsight} />}
             {(d?.notionText || d?.notionInsight) && (
-              <NotionCard pageTitle={d?.notionPageTitle ?? ''} notionText={d!.notionText} insight={d!.notionInsight} />
+              <NotionCard pageTitle={d?.notionPageTitle ?? ''} notionText={d!.notionText} quote={d?.notionQuote} insight={d!.notionInsight} />
             )}
           </>
         );

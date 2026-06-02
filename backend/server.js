@@ -1021,6 +1021,9 @@ app.get('/api/briefing', async (req, res) => {
     financeSummary: geminiResult?.financeSummary ?? [],
     quoteInsight: keep(p?.quoteInsight, geminiResult?.quoteInsight ?? ''),
     notionInsight: keep(p?.notionInsight, geminiResult?.notionInsight ?? ''),
+    // The LLM-selected verbatim passage the notionInsight is about, so the card
+    // shows a matching, complete quote instead of a first-line heuristic guess.
+    notionQuote: keep(p?.notionQuote, geminiResult?.notionQuote ?? ''),
     quote: keep(p?.quote, quoteData.quote),
     notionText: keep(p?.notionText, notionData.text),
     notionPageTitle: keep(p?.notionPageTitle, notionData.pageTitle),

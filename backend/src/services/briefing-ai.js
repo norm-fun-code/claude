@@ -50,21 +50,23 @@ Return ONLY valid JSON with EXACTLY these fields:
 
 {
   "newsletters": [
-    { "name": "Sender", "title": "Edition title", "summary": "150-200 word dense summary — every data point, dollar figure, percentage, company, and key argument; crisp prose, no bullets, no filler." }
+    { "name": "Sender", "title": "Edition title", "summary": "250-400 word dense summary that captures the WHOLE edition end to end — every distinct story/section, data point, dollar figure, percentage, company, person, and key argument. Don't stop at the first few items; cover the full email. Crisp prose, no bullets, no filler." }
   ],
   "urgentEmails": [
     { "from": "sender", "subject": "subject", "action": "1-2 sentences on what action is needed and why it's urgent" }
   ],
   "financeSummary": ["1-3 bullets of finance/market/economic news from the emails"],
   "quoteInsight": "2 sentences drawing out the deeper idea or principle in the quote",
-  "notionInsight": "2 sentences drawing out the key idea in the Notion content"
+  "notionQuote": "the single most resonant COMPLETE sentence or passage from the Notion wisdom above — verbatim, not cut off mid-thought, not a heading or intro fragment ending in a colon",
+  "notionInsight": "2 sentences drawing out the key idea in the SPECIFIC notionQuote you selected (the commentary must match that exact passage)"
 }
 
 Rules:
 - newsletters: include digests/publications; exclude personal email, receipts, notifications. Go deep — extract every named company, person, statistic, and dollar amount.
 - urgentEmails: only emails needing a response/action today.
 - financeSummary: 1-3 items; never empty.
-- quoteInsight / notionInsight: draw out the idea as practical wisdom for living well. You MAY gently tailor it to the user's recent inner state shown in "Recent wellbeing" — e.g. if focus or mood is low, or they're slipping on a habit like gratitude, lean the reflection toward that theme. But do this WITHOUT naming the data ("your focus is low"); just let the chosen angle resonate. Do NOT reference their calendar, specific tasks, schedule, "today", their job/profession, or their finances. Never write "as a [profession]" or tie it to a meeting/event. Speak to the human, not the day.`;
+- notionQuote: pick a self-contained, meaningful line — never a title, never an intro that trails off (e.g. "Rather than trying to find someone who will:"). If the best idea spans a sentence, quote the whole sentence.
+- quoteInsight / notionInsight: draw out the idea as practical wisdom for living well. notionInsight MUST be about the notionQuote you chose, not the page in general. You MAY gently tailor it to the user's recent inner state shown in "Recent wellbeing" — e.g. if focus or mood is low, or they're slipping on a habit like gratitude, lean the reflection toward that theme. But do this WITHOUT naming the data ("your focus is low"); just let the chosen angle resonate. Do NOT reference their calendar, specific tasks, schedule, "today", their job/profession, or their finances. Never write "as a [profession]" or tie it to a meeting/event. Speak to the human, not the day.`;
 }
 
 /** Robustly pull a JSON object out of an LLM response (handles fences/prose). */
@@ -88,7 +90,7 @@ function extractJson(text) {
 }
 
 const EMPTY = {
-  newsletters: [], urgentEmails: [], financeSummary: [], quoteInsight: '', notionInsight: '',
+  newsletters: [], urgentEmails: [], financeSummary: [], quoteInsight: '', notionQuote: '', notionInsight: '',
 };
 
 async function generateBriefing(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '') {
@@ -113,6 +115,7 @@ async function generateBriefing(emailData, notionText, quote, currentDay, workou
     urgentEmails: Array.isArray(parsed.urgentEmails) ? parsed.urgentEmails : [],
     financeSummary: Array.isArray(parsed.financeSummary) ? parsed.financeSummary : [],
     quoteInsight: typeof parsed.quoteInsight === 'string' ? parsed.quoteInsight : '',
+    notionQuote: typeof parsed.notionQuote === 'string' ? parsed.notionQuote : '',
     notionInsight: typeof parsed.notionInsight === 'string' ? parsed.notionInsight : '',
   };
 }

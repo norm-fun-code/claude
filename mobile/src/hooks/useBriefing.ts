@@ -151,6 +151,7 @@ export interface BriefingData {
   financeSummary: string[];
   quoteInsight: string;
   notionInsight: string;
+  notionQuote?: string;
   quote: string;
   notionText: string;
   notionPageTitle: string;

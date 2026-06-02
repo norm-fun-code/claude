@@ -82,7 +82,9 @@ async function fetchGmailThreads() {
         const subject = getHeader('Subject');
         const snippet = firstMessage.snippet || '';
         const rawBody = extractBody(firstMessage.payload);
-        const body = rawBody.slice(0, 8000);
+        // Keep enough of the body that long newsletters aren't cut in half before
+        // the model sees them (3.5-flash has plenty of context headroom).
+        const body = rawBody.slice(0, Number(process.env.EMAIL_BODY_CHARS || 20000));
 
         return { from, subject, snippet, body };
       } catch (err) {

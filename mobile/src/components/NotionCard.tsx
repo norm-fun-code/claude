@@ -6,17 +6,21 @@ import { SectionHeader } from './SectionHeader';
 interface Props {
   pageTitle: string;
   notionText: string;
+  quote?: string;
   insight: string;
 }
 
-export function NotionCard({ pageTitle, notionText, insight }: Props) {
+export function NotionCard({ pageTitle, notionText, quote, insight }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
   if (!notionText && !insight) return null;
 
-  // Show a short excerpt of the raw notion text as the "quote"
-  const excerpt = notionText
+  // Prefer the LLM-selected passage (a complete thought that matches the insight);
+  // fall back to a first-line excerpt only if one wasn't provided.
+  const excerpt = (quote && quote.trim())
+    ? quote.trim()
+    : notionText
     ? notionText.trim().split('\n').find((l) => l.trim().length > 20) ?? notionText.slice(0, 280)
     : '';
 
