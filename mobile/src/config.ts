@@ -1,6 +1,7 @@
 // Backend connection. Defaults to the hosted Railway backend so the app works
 // anywhere (off your home WiFi, unplugged from the Mac). Override for local dev
 // by setting EXPO_PUBLIC_API_BASE to your Mac's LAN IP (e.g. http://192.168.1.4:3001).
+// OTA republish: ship a bundle that includes the API token.
 export const API_BASE =
   process.env.EXPO_PUBLIC_API_BASE || 'https://backend-production-0902.up.railway.app';
 
