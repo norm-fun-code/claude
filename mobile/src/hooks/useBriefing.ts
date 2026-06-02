@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BRIEFING_URL, authHeaders, fetchWithTimeout } from '../config';
 
@@ -180,10 +181,16 @@ export function useBriefing(): BriefingState {
   const [data, setData] = useState<BriefingData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Tracks whether a refresh was in flight, so we can recover one that iOS
+  // suspended when the app was backgrounded mid-request.
+  const inFlight = useRef(false);
+  const wasForcing = useRef(false);
 
   const fetchBriefing = useCallback(async (force = false) => {
     setLoading(true);
     setError(null);
+    inFlight.current = true;
+    wasForcing.current = force;
 
     try {
       // Default load uses the server cache (instant); pull-to-refresh forces fresh.
@@ -208,6 +215,7 @@ export function useBriefing(): BriefingState {
       setError(message);
     } finally {
       setLoading(false);
+      inFlight.current = false;
     }
   }, []);
 
@@ -228,6 +236,23 @@ export function useBriefing(): BriefingState {
     return () => {
       cancelled = true;
     };
+  }, [fetchBriefing]);
+
+  // iOS suspends in-flight requests when the app is backgrounded, so a refresh
+  // started just before leaving never completes (spinner dies silently). When we
+  // return to the foreground, recover: if a refresh was interrupted, restart it
+  // (preserving force=refresh); otherwise do a quiet background refresh so the
+  // user always returns to fresh data.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      if (inFlight.current) {
+        fetchBriefing(wasForcing.current); // the suspended one never finished — redo it
+      } else {
+        fetchBriefing(false); // quietly freshen on return
+      }
+    });
+    return () => sub.remove();
   }, [fetchBriefing]);
 
   return { data, loading, error, refetch: () => fetchBriefing(true) };
