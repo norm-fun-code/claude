@@ -8,7 +8,7 @@ const { query } = require('../db');
 const findingsStore = require('../store/findings');
 const nudgesStore = require('../store/nudges');
 const devicesStore = require('../store/devices');
-const { buildNudges, withinQuietHours } = require('../intelligence/nudges');
+const { buildNudges, withinQuietHours, checkinReminder } = require('../intelligence/nudges');
 const { sendPush } = require('./expo');
 
 /** Has the subjective check-in been logged today? Fail-safe: assume yes on error
@@ -46,7 +46,9 @@ async function runNudges(opts = {}) {
 
   const findings = await findingsStore.listFindings({ status: 'open', limit: 200 });
   const recentKeys = await nudgesStore.recentlySentKeys(dedupDays);
-  const hasCheckinToday = await checkinLoggedToday(asOf);
+  // The check-in reminder has its own afternoon schedule (you can't rate your day
+  // at 8am), so the morning routine suppresses it by reporting "already has one".
+  const hasCheckinToday = opts.suppressCheckin ? true : await checkinLoggedToday(asOf);
   const candidates = buildNudges({ findings, recentKeys, hasCheckinToday, asOf });
 
   if (candidates.length === 0) {
@@ -79,7 +81,48 @@ async function runNudges(opts = {}) {
   return { generated: candidates.length, sent: sentCount, devices: tokens.length, nudges: out };
 }
 
-module.exports = { runNudges };
+module.exports = { runNudges, runCheckinReminder };
+
+/**
+ * Afternoon check-in reminder: push "log your mood/energy/focus" ONLY if it
+ * hasn't been logged today. Run on its own ~3pm schedule (you can't rate your
+ * day at 8am). Keyed per-day so it fires at most once; honors quiet hours.
+ * @param {{ send?: boolean, force?: boolean }} [opts]
+ */
+async function runCheckinReminder(opts = {}) {
+  const send = opts.send !== false;
+  const asOf = new Date();
+
+  if (!opts.force && withinQuietHours(asOf)) {
+    return { skipped: 'quiet_hours', sent: 0 };
+  }
+  if (await checkinLoggedToday()) {
+    return { skipped: 'already_logged', sent: 0 };
+  }
+
+  const n = checkinReminder(asOf);
+  // Don't re-send if we already pushed this exact check-in reminder today.
+  const recent = await nudgesStore.recentlySentKeys(1);
+  if (recent.has(n.key) && !opts.force) {
+    return { skipped: 'already_sent', sent: 0 };
+  }
+
+  const tokens = send ? await devicesStore.listActiveTokens() : [];
+  const status = send && tokens.length === 0 ? 'skipped' : 'pending';
+  const id = await nudgesStore.recordNudge({ ...n, dedupKey: n.key, status });
+  if (send && tokens.length > 0) {
+    try {
+      const r = await sendPush(tokens, { title: n.title, body: n.body, data: { key: n.key } });
+      for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
+      await nudgesStore.markStatus(id, 'sent');
+      return { sent: 1, devices: tokens.length };
+    } catch (err) {
+      await nudgesStore.markStatus(id, 'failed');
+      return { sent: 0, error: err.message };
+    }
+  }
+  return { sent: 0, devices: tokens.length };
+}
 
 // CLI entrypoint
 if (require.main === module) {

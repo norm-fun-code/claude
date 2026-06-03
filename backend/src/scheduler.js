@@ -7,7 +7,7 @@
 // failing never stops the others or crashes the server.
 const { runIngest } = require('./ingest/run');
 const { analyze } = require('./intelligence/analyze');
-const { runNudges } = require('./notify/run');
+const { runNudges, runCheckinReminder } = require('./notify/run');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./notify/morning');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -45,7 +45,8 @@ async function morningRoutine() {
   // Refresh the data + intelligence first, so the briefing reflects today.
   try { await runIngest(); } catch (e) { console.error('[scheduler] ingest:', e.message); }
   try { await analyze(); } catch (e) { console.error('[scheduler] analyze:', e.message); }
-  try { await runNudges({}); } catch (e) { console.error('[scheduler] nudge:', e.message); }
+  // Check-in reminder is suppressed here — it has its own 3pm schedule.
+  try { await runNudges({ suppressCheckin: true }); } catch (e) { console.error('[scheduler] nudge:', e.message); }
   // Pre-build the briefing (warm the cache) and push "briefing ready", so the
   // app opens instantly with today's briefing instead of waiting to build it.
   try {
@@ -57,12 +58,19 @@ async function morningRoutine() {
 
 function start() {
   if (process.env.ENABLE_SCHEDULER !== 'true') return false;
-  const hour = Number(process.env.SCHEDULE_HOUR) || 8; // default 8am
-  scheduleDaily(hour, 0, morningRoutine);
-  // Weekly review generates Sunday morning (weekday 0), just after the daily
+  const hour = Number(process.env.SCHEDULE_HOUR) || 8;       // default 8am
+  const minute = Number(process.env.SCHEDULE_MINUTE) || 30;  // default :30
+  scheduleDaily(hour, minute, morningRoutine);
+  // Weekly review generates Sunday morning (weekday 0), 10 min after the daily
   // routine's ingest/analyze, and pushes "your weekly review is ready".
-  scheduleWeekly(0, hour, 10, () => runWeeklyReviewWithPush({}));
-  console.log(`[scheduler] enabled — morning routine + briefing push ${String(hour).padStart(2, '0')}:00, weekly review Sun ${String(hour).padStart(2, '0')}:10 (TZ=${process.env.TZ || 'system'})`);
+  scheduleWeekly(0, hour, minute + 10, () => runWeeklyReviewWithPush({}));
+  // Afternoon check-in reminder — only pushes if you haven't logged your
+  // mood/energy/focus yet (you can't meaningfully rate the day at 8am).
+  const checkinHour = Number(process.env.CHECKIN_REMINDER_HOUR) || 15; // 3pm
+  const checkinMinute = Number(process.env.CHECKIN_REMINDER_MINUTE) || 0;
+  scheduleDaily(checkinHour, checkinMinute, () => runCheckinReminder({}));
+  const hm = (h, m) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  console.log(`[scheduler] enabled — morning ${hm(hour, minute)}, weekly review Sun ${hm(hour, minute + 10)}, check-in reminder ${hm(checkinHour, checkinMinute)} (TZ=${process.env.TZ || 'system'})`);
   return true;
 }
 

@@ -36,7 +36,7 @@ const experimentsStore = require('./src/store/experiments');
 const experiments = require('./src/intelligence/experiments');
 const devicesStore = require('./src/store/devices');
 const nudgesStore = require('./src/store/nudges');
-const { runNudges } = require('./src/notify/run');
+const { runNudges, runCheckinReminder } = require('./src/notify/run');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./src/notify/morning');
 const surfacedStore = require('./src/store/surfaced');
 const briefingsStore = require('./src/store/briefings');
@@ -650,6 +650,17 @@ app.post('/api/morning/run', async (req, res) => {
   try {
     const { dryRun = false } = req.body || {};
     res.json(await runMorningBriefing({ send: !dryRun }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manually trigger the afternoon check-in reminder (the 3pm flow). Only pushes
+// if you haven't logged today; { force: true } sends regardless for testing.
+app.post('/api/checkin/remind', async (req, res) => {
+  try {
+    const { force = false, dryRun = false } = req.body || {};
+    res.json(await runCheckinReminder({ force, send: !dryRun }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
