@@ -29,14 +29,25 @@ const FOCUS_ADVISOR = `
   try{
     // Real advisor classes (from renderAdvisorTab): .adv-wrap is a 2-col grid at
     // height calc(100vh-220px) with a 240px conversation rail. On mobile we want
-    // a single full-height column: drop the rail, kill the desktop -220px, and
-    // pin the input above the home-bar.
+    // a single full-height column with the conversation list reflowed into a
+    // compact horizontal strip on top, then the chat filling the rest.
     var css='html,body{height:100%!important;margin:0!important;overflow:hidden!important}'
       +'#chartArea{height:100%!important;display:flex!important;flex-direction:column!important;margin:0!important;padding:0!important}'
       +'.adv-toolbar{flex-wrap:wrap;flex:0 0 auto}'
-      +'.adv-wrap{flex:1 1 auto!important;height:auto!important;min-height:0!important;border:none!important;border-radius:0!important;display:grid!important;grid-template-columns:1fr!important}'
-      +'.adv-rail{display:none!important}'
-      +'.adv,.adv-main{height:auto!important;min-height:0!important;flex:1 1 auto!important;display:flex!important;flex-direction:column!important;overflow:hidden!important}'
+      +'.adv-wrap{flex:1 1 auto!important;height:auto!important;min-height:0!important;border:none!important;border-radius:0!important;display:flex!important;flex-direction:column!important}'
+      // Conversation rail → horizontal scrolling strip at the top.
+      +'.adv-rail{flex:0 0 auto!important;display:flex!important;flex-direction:row!important;align-items:stretch!important;border-right:none!important;border-bottom:1px solid var(--bd)!important;overflow-x:auto!important;overflow-y:hidden!important;max-height:54px!important}'
+      +'.adv-rail-hdr{flex:0 0 auto!important;border-bottom:none!important;border-right:1px solid var(--bd)!important;padding:6px 10px!important;flex-direction:column!important;justify-content:center!important;gap:3px!important}'
+      +'.adv-rail-hdr h4{display:none!important}'
+      +'.adv-rail-new{padding:6px 12px!important;white-space:nowrap!important}'
+      +'.adv-rail-list{flex:1 1 auto!important;display:flex!important;flex-direction:row!important;gap:6px!important;overflow-x:auto!important;overflow-y:hidden!important;padding:6px!important}'
+      +'.adv-rail-item{flex:0 0 auto!important;margin-bottom:0!important;white-space:nowrap!important;max-width:170px!important;display:flex!important;flex-direction:column!important;justify-content:center!important}'
+      +'.adv-rail-title{white-space:nowrap!important;padding-right:0!important}'
+      +'.adv-rail-meta{display:none!important}'
+      +'.adv-rail-actions{display:none!important}'
+      +'.adv-rail-footer{display:none!important}'
+      // Chat column fills the rest.
+      +'.adv-main{flex:1 1 auto!important;min-height:0!important;display:flex!important;flex-direction:column!important;overflow:hidden!important}'
       +'.adv-msgs{flex:1 1 auto!important;min-height:0!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch}'
       +'.adv-input-area{flex:0 0 auto!important;padding-bottom:calc(env(safe-area-inset-bottom,8px) + 10px)!important}';
     var s=document.getElementById('normos-adv-css');
