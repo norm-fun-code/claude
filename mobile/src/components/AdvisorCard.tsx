@@ -47,30 +47,41 @@ const FOCUS_ADVISOR = `
     if(!s){ s=document.createElement('style'); s.id='normos-adv-css'; document.head.appendChild(s); }
     s.innerHTML=css;
 
-    // Try every known way to switch to the advisor/chat view. Returns true once
-    // the advisor UI is actually present on the page.
-    function advisorVisible(){ return !!(document.querySelector('.adv-wrap')||document.querySelector('.adv-msgs')||document.querySelector('.adv-main')); }
+    // Switch to the AI Advisor tab. renderAdvisorTab() injects the chat into
+    // #chartArea when the tab labeled "AI Advisor" is clicked, so we (a) detect
+    // success by the advisor content actually being present, and (b) click the
+    // tab by its EXACT label — never a loose "ai" match (that hits Email/Retail).
+    function norm(t){ return (t||'').replace(/\\s+/g,' ').trim().toLowerCase(); }
+    function advisorVisible(){
+      var area=document.getElementById('chartArea');
+      var txt=area?area.textContent||'':'';
+      // Markers unique to the advisor view.
+      return /ask me anything about your plan|ask anything about your plan|ask your own/i.test(txt)
+        || !!document.querySelector('.adv-wrap,.adv-msgs,.adv-main,.adv-input-area');
+    }
     function tryReachAdvisor(){
       if(advisorVisible()) return true;
-      // 1) Global tab function, common arg names.
-      if(typeof setTab==='function'){
-        ['advisor','chat','ai','assistant'].forEach(function(t){ try{setTab(t);}catch(e){} });
-        if(advisorVisible()) return true;
-      }
-      // 2) Click a tab/button whose text or data-attr names the advisor.
-      var nodes=document.querySelectorAll('[data-tab],button,[role="tab"],a,.tab');
+      // 1) Global tab function if the page exposes one.
+      if(typeof setTab==='function'){ try{setTab('advisor');}catch(e){} if(advisorVisible()) return true; }
+      // 2) Click the tab whose label is exactly "AI Advisor" (or its data-tab).
+      var nodes=document.querySelectorAll('[data-tab],button,[role="tab"],a,.tab,div');
       for(var i=0;i<nodes.length;i++){
         var el=nodes[i];
-        var t=((el.getAttribute&&el.getAttribute('data-tab'))||el.textContent||'').toLowerCase();
-        if(/advisor|chat|ask|assistant|ai/.test(t)){ try{el.click();}catch(e){} if(advisorVisible()) return true; }
+        var dt=norm(el.getAttribute&&el.getAttribute('data-tab'));
+        var label=norm(el.textContent);
+        if(dt==='advisor' || label==='ai advisor' || label==='🤖 ai advisor'){
+          try{el.click();}catch(e){}
+          if(advisorVisible()) return true;
+        }
       }
-      // 3) Hash route fallback.
-      try{ if(location.hash.indexOf('advisor')<0){ location.hash='#advisor'; } }catch(e){}
       return advisorVisible();
     }
 
     var n=0, iv=setInterval(function(){
       n++;
+      // Re-apply the chrome-hiding CSS each tick too — the advisor view renders
+      // late, so styles injected before it exists must be reasserted.
+      var s2=document.getElementById('normos-adv-css'); if(s2) s2.innerHTML=css;
       if(tryReachAdvisor() || n>60) clearInterval(iv);
     },150);
   }catch(e){}
