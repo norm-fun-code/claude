@@ -77,12 +77,49 @@ const FOCUS_ADVISOR = `
       return advisorVisible();
     }
 
+    // Hide all the planner chrome WITHOUT needing its class names: walk up from
+    // #chartArea to <body> and hide every sibling at each level, then pin
+    // #chartArea to fill the screen. This robustly leaves only the chat visible
+    // no matter how the surrounding layout is structured.
+    function isolateChat(){
+      var area=document.getElementById('chartArea');
+      if(!area) return;
+      var el=area;
+      while(el && el.parentElement && el.tagName!=='BODY'){
+        var sibs=el.parentElement.children;
+        for(var i=0;i<sibs.length;i++){
+          if(sibs[i]!==el && sibs[i].id!=='normos-adv-css'){
+            sibs[i].style.setProperty('display','none','important');
+          }
+        }
+        // Let the ancestor chain take full height so the chat can fill it.
+        el.parentElement.style.setProperty('height','100%','important');
+        el.parentElement.style.setProperty('margin','0','important');
+        el.parentElement.style.setProperty('padding','0','important');
+        el=el.parentElement;
+      }
+      area.style.setProperty('position','fixed','important');
+      area.style.setProperty('top','0','important');
+      area.style.setProperty('left','0','important');
+      area.style.setProperty('right','0','important');
+      area.style.setProperty('bottom','0','important');
+      area.style.setProperty('height','100%','important');
+      area.style.setProperty('margin','0','important');
+      area.style.setProperty('z-index','9999','important');
+      area.style.setProperty('background','#fff','important');
+      area.style.setProperty('overflow','hidden','important');
+      area.style.setProperty('display','flex','important');
+      area.style.setProperty('flex-direction','column','important');
+    }
+
     var n=0, iv=setInterval(function(){
       n++;
-      // Re-apply the chrome-hiding CSS each tick too — the advisor view renders
-      // late, so styles injected before it exists must be reasserted.
+      // Re-apply the chrome-hiding CSS each tick — the advisor view renders late,
+      // so styles injected before it exists must be reasserted.
       var s2=document.getElementById('normos-adv-css'); if(s2) s2.innerHTML=css;
-      if(tryReachAdvisor() || n>60) clearInterval(iv);
+      var reached=tryReachAdvisor();
+      if(reached) isolateChat(); // only collapse the chrome once we're on the chat
+      if(reached || n>60) clearInterval(iv);
     },150);
   }catch(e){}
   true;
