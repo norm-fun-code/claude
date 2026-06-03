@@ -923,7 +923,7 @@ function NonNegotiablesStrip({
   const items: { key: keyof typeof values; label: string; sub: string }[] = [
     { key: 'chinTucks', label: 'Chin tucks', sub: '2×10 at desk (2–3× today)' },
     { key: 'walk', label: 'Walk', sub: 'At least 10 min' },
-    { key: 'noLateTraining', label: 'No training after 6pm', sub: '' },
+    { key: 'noLateTraining', label: 'No training after 7pm', sub: '' },
   ];
 
   return (
