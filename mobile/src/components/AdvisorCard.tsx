@@ -21,8 +21,9 @@ const ADVISOR_URL = 'https://claude-production-7130.up.railway.app/';
 
 // Open straight into the AI Advisor tab, hide the desktop chrome, and reflow the
 // advisor into a full-height mobile chat: messages scroll, input pinned at the
-// bottom. The planner switches views via setTab('advisor'); params still live in
-// memory (the model reads them), we just hide their UI.
+// bottom. We try several ways to reach the advisor view because the planner page
+// may expose it as a setTab() call, a clickable tab, or a hash route — whichever
+// works, we land on the chat instead of the chart.
 const FOCUS_ADVISOR = `
 (function(){
   try{
@@ -45,11 +46,33 @@ const FOCUS_ADVISOR = `
     var s=document.getElementById('normos-adv-css');
     if(!s){ s=document.createElement('style'); s.id='normos-adv-css'; document.head.appendChild(s); }
     s.innerHTML=css;
+
+    // Try every known way to switch to the advisor/chat view. Returns true once
+    // the advisor UI is actually present on the page.
+    function advisorVisible(){ return !!(document.querySelector('.adv-wrap')||document.querySelector('.adv-msgs')||document.querySelector('.adv-main')); }
+    function tryReachAdvisor(){
+      if(advisorVisible()) return true;
+      // 1) Global tab function, common arg names.
+      if(typeof setTab==='function'){
+        ['advisor','chat','ai','assistant'].forEach(function(t){ try{setTab(t);}catch(e){} });
+        if(advisorVisible()) return true;
+      }
+      // 2) Click a tab/button whose text or data-attr names the advisor.
+      var nodes=document.querySelectorAll('[data-tab],button,[role="tab"],a,.tab');
+      for(var i=0;i<nodes.length;i++){
+        var el=nodes[i];
+        var t=((el.getAttribute&&el.getAttribute('data-tab'))||el.textContent||'').toLowerCase();
+        if(/advisor|chat|ask|assistant|ai/.test(t)){ try{el.click();}catch(e){} if(advisorVisible()) return true; }
+      }
+      // 3) Hash route fallback.
+      try{ if(location.hash.indexOf('advisor')<0){ location.hash='#advisor'; } }catch(e){}
+      return advisorVisible();
+    }
+
     var n=0, iv=setInterval(function(){
       n++;
-      if(typeof setTab==='function'){ try{setTab('advisor');}catch(e){} clearInterval(iv); }
-      if(n>50) clearInterval(iv);
-    },120);
+      if(tryReachAdvisor() || n>60) clearInterval(iv);
+    },150);
   }catch(e){}
   true;
 })();
