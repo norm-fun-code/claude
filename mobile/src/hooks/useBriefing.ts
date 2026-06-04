@@ -188,9 +188,11 @@ export function useBriefing(): BriefingState {
   const controllerRef = useRef<AbortController | null>(null);
   // Monotonic request id: only the latest request is allowed to write state.
   const reqIdRef = useRef(0);
-  // Timestamp of the last completed/started fetch, to throttle the chatty
-  // AppState 'active' events (Control Center, Face ID, permission sheets, etc.).
-  const lastFetchRef = useRef(0);
+  // Timestamp of the last SUCCESSFUL fetch, to throttle the chatty AppState
+  // 'active' events (Control Center, Face ID, permission sheets, etc.). We key
+  // off success, not start, so an interrupted fetch (e.g. you refreshed then
+  // locked the phone before it finished) is always recoverable on foreground.
+  const lastOkRef = useRef(0);
 
   const fetchBriefing = useCallback(async (force = false) => {
     // Cancel any request already in flight; we only want the newest one.
@@ -198,7 +200,6 @@ export function useBriefing(): BriefingState {
     const controller = new AbortController();
     controllerRef.current = controller;
     const myReqId = ++reqIdRef.current;
-    lastFetchRef.current = Date.now();
 
     setLoading(true);
     setError(null);
@@ -221,6 +222,7 @@ export function useBriefing(): BriefingState {
       const json: BriefingData = await response.json();
       // Ignore a stale response that a newer request has superseded.
       if (myReqId !== reqIdRef.current) return;
+      lastOkRef.current = Date.now(); // mark a real success for the foreground throttle
       setData(json);
       // Persist so the next app open shows this instantly (no spinner / cold start).
       AsyncStorage.setItem(CACHE_KEY, JSON.stringify(json)).catch(() => {});
@@ -263,7 +265,9 @@ export function useBriefing(): BriefingState {
     const FOREGROUND_THROTTLE_MS = 60000;
     const sub = AppState.addEventListener('change', (state) => {
       if (state !== 'active') return;
-      if (Date.now() - lastFetchRef.current < FOREGROUND_THROTTLE_MS) return;
+      // Skip only if we recently SUCCEEDED. If the last fetch was interrupted
+      // (e.g. refreshed then locked the phone), lastOkRef is stale so we recover.
+      if (Date.now() - lastOkRef.current < FOREGROUND_THROTTLE_MS) return;
       fetchBriefing(false); // abort-and-replace handles any interrupted request
     });
     return () => sub.remove();
