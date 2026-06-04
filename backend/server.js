@@ -503,6 +503,30 @@ app.get('/api/diag/gemini', async (req, res) => {
   }
 });
 
+// Diagnostic: reproduce the EXACT briefing LLM call (real fetched emails, real
+// prompt) and time it, so we can see where the 60s goes vs the trivial probe.
+app.get('/api/diag/briefing-llm', async (req, res) => {
+  const t0 = Date.now();
+  try {
+    const emails = await withTimeout(fetchGmailThreads(), 15000, 'gmail').catch(() => []);
+    const promptChars = JSON.stringify(emails).length;
+    const tg = Date.now();
+    const result = await generateBriefing(emails, 'Sample notion wisdom text.', 'A sample quote.', 'Tuesday', { type: 'Rest' }, [], '');
+    res.json({
+      ok: true,
+      totalMs: Date.now() - t0,
+      gmailMs: tg - t0,
+      llmMs: Date.now() - tg,
+      emailCount: emails.length,
+      emailPayloadChars: promptChars,
+      newsletters: result.newsletters.length,
+      urgentEmails: result.urgentEmails.length,
+    });
+  } catch (err) {
+    res.json({ ok: false, ms: Date.now() - t0, error: (err.message || '').slice(0, 300) });
+  }
+});
+
 // Life chat — ask questions across your data + library.
 app.post('/api/chat', async (req, res) => {
   try {
