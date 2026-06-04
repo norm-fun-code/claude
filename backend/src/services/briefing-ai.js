@@ -107,10 +107,10 @@ async function generateBriefing(emailData, notionText, quote, currentDay, workou
 
   let text = '';
   try {
-    // Lower temperature (focused, faster) and a tighter output cap — the slow
-    // part of the call is OUTPUT generation, so 5-10 sentence summaries + a 4K
-    // cap keep it well under the timeout (matches the proven Apps Script setup).
-    text = await llm.generateText({ system: SYSTEM, prompt, temperature: 0.2, maxTokens: 4096 });
+    // The full briefing is output-heavy (several dense newsletter summaries +
+    // urgent emails + finance bullets + insights) and legitimately takes ~60s.
+    // Give it room: low temp for focus, 8K output cap, and the caller allows 90s.
+    text = await llm.generateText({ system: SYSTEM, prompt, temperature: 0.2, maxTokens: 8192 });
   } catch (err) {
     console.error('[briefing-ai] generation failed:', err.message);
     return { ...EMPTY };

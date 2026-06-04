@@ -18,9 +18,11 @@ async function generateText({ system, prompt, temperature = 0.4, maxTokens = 102
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: { temperature, maxOutputTokens: maxTokens },
     },
-    // Fail cleanly rather than hang forever if Gemini stalls; the caller wraps
-    // this in its own budget too, but a transport timeout gives a real error.
-    { timeout: Number(process.env.GEMINI_TIMEOUT_MS || 55000) }
+    // Generous transport timeout: the full briefing generation legitimately
+    // takes ~60s (4 newsletter summaries + urgent emails + insights = lots of
+    // output). Keep this above the briefing's own 90s budget so the budget is
+    // what fires on a real stall, not the transport cutting a near-done reply.
+    { timeout: Number(process.env.GEMINI_TIMEOUT_MS || 95000) }
   );
   // Surface why a generation produced no text (e.g. finishReason MAX_TOKENS or
   // a safety block) instead of silently returning '' — those look like "empty"
