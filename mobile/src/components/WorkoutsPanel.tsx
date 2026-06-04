@@ -1159,9 +1159,36 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
     });
   }
 
+  // All checkable exercise names for a workout (warmup + working for strength;
+  // exercises for mobility). Used so "Mark complete" ticks the whole list.
+  function exerciseNames(w: AnySession): string[] {
+    if (w.id === 'push' || w.id === 'hinge_pull') {
+      const s = w as StrengthSession;
+      return [...s.warmup.map((e) => e.name), ...s.working.map((e) => e.name)];
+    }
+    if (w.id === 'mobility') {
+      return (w as MobilitySession).exercises.map((e) => e.name);
+    }
+    return [];
+  }
+
   async function handleMarkDone(dateKey: string) {
     const nextDone = !weeklyCompleted[dateKey];
     setWeeklyCompleted((prev) => ({ ...prev, [dateKey]: nextDone }));
+
+    // Marking complete also checks (or unchecks) every exercise in the workout,
+    // and persists each so it survives a reopen / matches the per-exercise state.
+    const names = exerciseNames(workout);
+    setCompletedExercises((prev) => {
+      const next = new Set(prev);
+      for (const n of names) { if (nextDone) next.add(n); else next.delete(n); }
+      return next;
+    });
+    for (const n of names) {
+      // Fire-and-forget per-exercise persistence; a failure just flags the banner.
+      saveCheck(n, 'exercise', nextDone, () => setSaveFailed(true));
+    }
+
     // Marking *today's* workout complete also logs the Exercise habit (and
     // unchecking clears it), so the Today tab and Insights stay in sync. Other
     // days are local-only — we can't backfill a habit for a past/future date here.
