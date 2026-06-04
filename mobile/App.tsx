@@ -58,11 +58,17 @@ export default function App() {
   const [tab, setTab] = useState<TabKey>('today');
   const isRefreshing = briefing.loading || health.loading;
 
-  // Manual pull-to-refresh forces a fresh server rebuild.
+  // Pull-to-refresh is tab-aware. Health metrics come from HealthKit on-device
+  // and refresh instantly, so don't make the user eat the 60-90s briefing
+  // rebuild when they're just checking updated health numbers. Only the tabs
+  // that actually show briefing content force a fresh server build; elsewhere we
+  // load the (already-warm) cached briefing instantly.
   const onRefresh = useCallback(() => {
-    briefing.refetch();
     health.refetch();
-  }, [briefing, health]);
+    const briefingTabs: TabKey[] = ['today', 'wisdom', 'insights'];
+    if (briefingTabs.includes(tab)) briefing.refetch();
+    else briefing.reload();
+  }, [briefing, health, tab]);
 
   // Tapping the morning "briefing ready" push should load the cache the server
   // already warmed at 8:30 — instant, not a 15-40s forced rebuild. Health still
