@@ -12,13 +12,11 @@ const SYSTEM =
   'no code fences, no commentary.';
 
 function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '') {
-  // Keep the prompt fast: cap each email body and the total email payload so a
-  // big unread pile can't make the LLM call slow enough to time out. A
-  // newsletter's substance is near the top; ~6K chars/email captures it, and a
-  // ~60K total budget keeps the whole call well under the timeout while still
-  // letting the model write a full 250-400 word summary per newsletter.
-  const PER_EMAIL = Number(process.env.EMAIL_PROMPT_CHARS || 6000);
-  const TOTAL_BUDGET = Number(process.env.EMAIL_PROMPT_TOTAL || 60000);
+  // Input size wasn't the timeout cause (the proven Apps Script sends 15K/email
+  // and is fine) — OUTPUT length was. So allow a generous 15K/email like that
+  // setup, with a total budget as a safety net against a huge unread pile.
+  const PER_EMAIL = Number(process.env.EMAIL_PROMPT_CHARS || 15000);
+  const TOTAL_BUDGET = Number(process.env.EMAIL_PROMPT_TOTAL || 200000);
   let used = 0;
   const emailSection = emailData
     .map((e, i) => {
@@ -61,7 +59,7 @@ Return ONLY valid JSON with EXACTLY these fields:
 
 {
   "newsletters": [
-    { "name": "Sender", "title": "Edition title", "summary": "250-400 word dense summary that captures the WHOLE edition end to end — every distinct story/section, data point, dollar figure, percentage, company, person, and key argument. Don't stop at the first few items; cover the full email. Crisp prose, no bullets, no filler." }
+    { "name": "Sender", "title": "Edition title", "summary": "A dense 5-10 sentence paragraph summarizing the substance of THIS specific email. Extract hard numbers, percentages, dollar amounts, named companies, and specific arguments. Emulate the deep, factual style of premium financial newsletters like The Daily Upside. Crisp prose, no bullets, no filler." }
   ],
   "urgentEmails": [
     { "from": "sender", "subject": "subject", "action": "1-2 sentences on what action is needed and why it's urgent" }
@@ -109,7 +107,10 @@ async function generateBriefing(emailData, notionText, quote, currentDay, workou
 
   let text = '';
   try {
-    text = await llm.generateText({ system: SYSTEM, prompt, temperature: 0.4, maxTokens: 8192 });
+    // Lower temperature (focused, faster) and a tighter output cap — the slow
+    // part of the call is OUTPUT generation, so 5-10 sentence summaries + a 4K
+    // cap keep it well under the timeout (matches the proven Apps Script setup).
+    text = await llm.generateText({ system: SYSTEM, prompt, temperature: 0.2, maxTokens: 4096 });
   } catch (err) {
     console.error('[briefing-ai] generation failed:', err.message);
     return { ...EMPTY };

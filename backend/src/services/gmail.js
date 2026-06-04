@@ -82,10 +82,9 @@ async function fetchGmailThreads() {
         const subject = getHeader('Subject');
         const snippet = firstMessage.snippet || '';
         const rawBody = extractBody(firstMessage.payload);
-        // Capture the substance of the email without hauling huge bodies around
-        // (the prompt builder caps per-email anyway). 8K is plenty for a
-        // newsletter's key content and keeps the LLM call fast.
-        const body = rawBody.slice(0, Number(process.env.EMAIL_BODY_CHARS || 8000));
+        // 15K matches the proven Apps Script setup — plenty for deep newsletter
+        // summaries. (Call speed is bounded by OUTPUT length, not input.)
+        const body = rawBody.slice(0, Number(process.env.EMAIL_BODY_CHARS || 15000));
 
         return { from, subject, snippet, body };
       } catch (err) {
