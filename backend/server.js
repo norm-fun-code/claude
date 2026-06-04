@@ -1079,6 +1079,19 @@ app.get('/api/briefing', async (req, res) => {
   const p = priorIsToday ? prior.content : null;
   const keep = (locked, fresh) => (locked != null && locked !== '' ? locked : fresh);
 
+  // Quote + its insight (and the Notion quote+insight+text) must be locked as a
+  // UNIT — locking them independently let the displayed quote and its commentary
+  // come from different builds, so the insight could describe a different quote
+  // than the one shown. Carry the whole pair from the prior build when it has a
+  // real quote; otherwise take the whole pair fresh from this build.
+  const lockedQuotePair = p && p.quote ? { quote: p.quote, quoteInsight: p.quoteInsight } : null;
+  const freshQuotePair = { quote: quoteData.quote, quoteInsight: geminiResult?.quoteInsight ?? '' };
+  const quotePair = lockedQuotePair || freshQuotePair;
+
+  const lockedNotion = p && p.notionQuote ? { notionQuote: p.notionQuote, notionInsight: p.notionInsight, notionText: p.notionText, notionPageTitle: p.notionPageTitle } : null;
+  const freshNotion = { notionQuote: geminiResult?.notionQuote ?? '', notionInsight: geminiResult?.notionInsight ?? '', notionText: notionData.text, notionPageTitle: notionData.pageTitle };
+  const notionGroup = lockedNotion || freshNotion;
+
   const response = {
     date: dateLabel,
     weather,
@@ -1087,14 +1100,14 @@ app.get('/api/briefing', async (req, res) => {
     newsletters: geminiResult?.newsletters ?? [],
     urgentEmails: geminiResult?.urgentEmails ?? [],
     financeSummary: geminiResult?.financeSummary ?? [],
-    quoteInsight: keep(p?.quoteInsight, geminiResult?.quoteInsight ?? ''),
-    notionInsight: keep(p?.notionInsight, geminiResult?.notionInsight ?? ''),
-    // The LLM-selected verbatim passage the notionInsight is about, so the card
-    // shows a matching, complete quote instead of a first-line heuristic guess.
-    notionQuote: keep(p?.notionQuote, geminiResult?.notionQuote ?? ''),
-    quote: keep(p?.quote, quoteData.quote),
-    notionText: keep(p?.notionText, notionData.text),
-    notionPageTitle: keep(p?.notionPageTitle, notionData.pageTitle),
+    // Quote + insight locked together (see quotePair above) so they always match.
+    quote: quotePair.quote,
+    quoteInsight: quotePair.quoteInsight,
+    // Notion quote + insight + source text locked together as a unit too.
+    notionQuote: notionGroup.notionQuote,
+    notionInsight: notionGroup.notionInsight,
+    notionText: notionGroup.notionText,
+    notionPageTitle: notionGroup.notionPageTitle,
     leverageActions,
     insights,
     wealthInsights,
