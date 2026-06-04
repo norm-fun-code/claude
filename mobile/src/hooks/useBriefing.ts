@@ -175,7 +175,8 @@ export interface BriefingState {
   data: BriefingData | null;
   loading: boolean;
   error: string | null;
-  refetch: () => void;
+  refetch: () => void; // force a fresh server rebuild (manual pull-to-refresh)
+  reload: () => void;  // pull the (already-warm) server cache instantly
 }
 
 export function useBriefing(): BriefingState {
@@ -268,5 +269,11 @@ export function useBriefing(): BriefingState {
     return () => sub.remove();
   }, [fetchBriefing]);
 
-  return { data, loading, error, refetch: () => fetchBriefing(true) };
+  return {
+    data,
+    loading,
+    error,
+    refetch: () => fetchBriefing(true),  // force rebuild
+    reload: () => fetchBriefing(false),  // serve the warm morning cache instantly
+  };
 }

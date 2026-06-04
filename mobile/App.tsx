@@ -58,14 +58,21 @@ export default function App() {
   const [tab, setTab] = useState<TabKey>('today');
   const isRefreshing = briefing.loading || health.loading;
 
+  // Manual pull-to-refresh forces a fresh server rebuild.
   const onRefresh = useCallback(() => {
     briefing.refetch();
     health.refetch();
   }, [briefing, health]);
 
-  // Register for push, and refresh when a notification (e.g. the 8am "briefing
-  // ready") is tapped so the app opens to today's content.
-  usePushRegistration(onRefresh);
+  // Tapping the morning "briefing ready" push should load the cache the server
+  // already warmed at 8:30 — instant, not a 15-40s forced rebuild. Health still
+  // refreshes from the device.
+  const onNotificationTap = useCallback(() => {
+    briefing.reload();
+    health.refetch();
+  }, [briefing, health]);
+
+  usePushRegistration(onNotificationTap);
 
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
