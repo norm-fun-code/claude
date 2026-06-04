@@ -22,7 +22,15 @@ async function generateText({ system, prompt, temperature = 0.4, maxTokens = 102
     // this in its own budget too, but a transport timeout gives a real error.
     { timeout: Number(process.env.GEMINI_TIMEOUT_MS || 55000) }
   );
-  return data.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') ?? '';
+  // Surface why a generation produced no text (e.g. finishReason MAX_TOKENS or
+  // a safety block) instead of silently returning '' — those look like "empty"
+  // upstream and are easy to misdiagnose as a timeout.
+  const cand = data.candidates?.[0];
+  const text = cand?.content?.parts?.map((p) => p.text).join('') ?? '';
+  if (!text && cand?.finishReason) {
+    throw new Error(`gemini returned no text (finishReason=${cand.finishReason})`);
+  }
+  return text;
 }
 
 // Current Gemini embedding models (gemini-embedding-001/2) only expose

@@ -486,6 +486,23 @@ app.get('/api/shop/ucp-diagnose', async (req, res) => {
   }
 });
 
+// Diagnostic: time a raw Gemini call to see if the model/endpoint itself is slow
+// or erroring (separate from the full briefing pipeline). ?big=1 sends a large
+// prompt to mimic the briefing's load.
+app.get('/api/diag/gemini', async (req, res) => {
+  const t0 = Date.now();
+  try {
+    const big = req.query.big === '1';
+    const prompt = big
+      ? 'Here is a long document:\n' + 'The market rose 2%. '.repeat(2000) + '\nReturn JSON {"summary":"<2 sentences>"}'
+      : 'Reply with JSON {"ok":true,"msg":"hello"}';
+    const out = await llm.generateText({ system: 'Return only JSON.', prompt, temperature: 0.2, maxTokens: 1024 });
+    res.json({ ok: true, ms: Date.now() - t0, model: process.env.GEMINI_CHAT_MODEL || 'gemini-3.5-flash', replyLen: out.length, sample: out.slice(0, 200) });
+  } catch (err) {
+    res.json({ ok: false, ms: Date.now() - t0, model: process.env.GEMINI_CHAT_MODEL || 'gemini-3.5-flash', status: err.response?.status, error: (err.response?.data?.error?.message || err.message || '').slice(0, 300) });
+  }
+});
+
 // Life chat — ask questions across your data + library.
 app.post('/api/chat', async (req, res) => {
   try {
