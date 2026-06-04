@@ -12,11 +12,22 @@ const SYSTEM =
   'no code fences, no commentary.';
 
 function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '') {
+  // Keep the prompt fast: cap each email body and the total email payload so a
+  // big unread pile can't make the LLM call slow enough to time out. A
+  // newsletter's substance is near the top; ~6K chars/email captures it, and a
+  // ~60K total budget keeps the whole call well under the timeout while still
+  // letting the model write a full 250-400 word summary per newsletter.
+  const PER_EMAIL = Number(process.env.EMAIL_PROMPT_CHARS || 6000);
+  const TOTAL_BUDGET = Number(process.env.EMAIL_PROMPT_TOTAL || 60000);
+  let used = 0;
   const emailSection = emailData
-    .map(
-      (e, i) =>
-        `--- Email ${i + 1} ---\nFrom: ${e.from}\nSubject: ${e.subject}\nSnippet: ${e.snippet}\nBody:\n${e.body}`
-    )
+    .map((e, i) => {
+      if (used >= TOTAL_BUDGET) return null;
+      const body = String(e.body || '').slice(0, PER_EMAIL);
+      used += body.length;
+      return `--- Email ${i + 1} ---\nFrom: ${e.from}\nSubject: ${e.subject}\nSnippet: ${e.snippet}\nBody:\n${body}`;
+    })
+    .filter(Boolean)
     .join('\n\n');
 
   const calendarSection =
