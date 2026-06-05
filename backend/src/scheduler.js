@@ -7,7 +7,7 @@
 // failing never stops the others or crashes the server.
 const { runIngest } = require('./ingest/run');
 const { analyze } = require('./intelligence/analyze');
-const { runNudges, runCheckinReminder } = require('./notify/run');
+const { runNudges, runCheckinReminder, runHabitsReminder } = require('./notify/run');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./notify/morning');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -64,13 +64,17 @@ function start() {
   // Weekly review generates Sunday morning (weekday 0), 10 min after the daily
   // routine's ingest/analyze, and pushes "your weekly review is ready".
   scheduleWeekly(0, hour, minute + 10, () => runWeeklyReviewWithPush({}));
-  // Afternoon check-in reminder — only pushes if you haven't logged your
+  // Afternoon check-in reminder (3pm) — only pushes if you haven't logged your
   // mood/energy/focus yet (you can't meaningfully rate the day at 8am).
   const checkinHour = Number(process.env.CHECKIN_REMINDER_HOUR) || 15; // 3pm
   const checkinMinute = Number(process.env.CHECKIN_REMINDER_MINUTE) || 0;
   scheduleDaily(checkinHour, checkinMinute, () => runCheckinReminder({}));
+  // Evening habits reminder (10pm) — only pushes if you haven't logged habits yet.
+  const habitsHour = Number(process.env.HABITS_REMINDER_HOUR) || 22; // 10pm
+  const habitsMinute = Number(process.env.HABITS_REMINDER_MINUTE) || 0;
+  scheduleDaily(habitsHour, habitsMinute, () => runHabitsReminder({}));
   const hm = (h, m) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-  console.log(`[scheduler] enabled — morning ${hm(hour, minute)}, weekly review Sun ${hm(hour, minute + 10)}, check-in reminder ${hm(checkinHour, checkinMinute)} (TZ=${process.env.TZ || 'system'})`);
+  console.log(`[scheduler] enabled — morning ${hm(hour, minute)}, weekly review Sun ${hm(hour, minute + 10)}, check-in ${hm(checkinHour, checkinMinute)}, habits ${hm(habitsHour, habitsMinute)} (TZ=${process.env.TZ || 'system'})`);
   return true;
 }
 

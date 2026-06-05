@@ -36,7 +36,7 @@ const experimentsStore = require('./src/store/experiments');
 const experiments = require('./src/intelligence/experiments');
 const devicesStore = require('./src/store/devices');
 const nudgesStore = require('./src/store/nudges');
-const { runNudges, runCheckinReminder } = require('./src/notify/run');
+const { runNudges, runCheckinReminder, runHabitsReminder } = require('./src/notify/run');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./src/notify/morning');
 const surfacedStore = require('./src/store/surfaced');
 const briefingsStore = require('./src/store/briefings');
@@ -702,6 +702,17 @@ app.post('/api/checkin/remind', async (req, res) => {
   try {
     const { force = false, dryRun = false } = req.body || {};
     res.json(await runCheckinReminder({ force, send: !dryRun }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manually trigger the evening habits reminder (the 10pm flow). Only pushes if
+// habits aren't logged today; { force: true } sends regardless for testing.
+app.post('/api/habits/remind', async (req, res) => {
+  try {
+    const { force = false, dryRun = false } = req.body || {};
+    res.json(await runHabitsReminder({ force, send: !dryRun }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

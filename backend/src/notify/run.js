@@ -8,7 +8,7 @@ const { query } = require('../db');
 const findingsStore = require('../store/findings');
 const nudgesStore = require('../store/nudges');
 const devicesStore = require('../store/devices');
-const { buildNudges, withinQuietHours, checkinReminder } = require('../intelligence/nudges');
+const { buildNudges, withinQuietHours, checkinReminder, habitReminder } = require('../intelligence/nudges');
 const { sendPush } = require('./expo');
 
 /** Has the subjective check-in been logged today? Fail-safe: assume yes on error
@@ -81,31 +81,29 @@ async function runNudges(opts = {}) {
   return { generated: candidates.length, sent: sentCount, devices: tokens.length, nudges: out };
 }
 
-module.exports = { runNudges, runCheckinReminder };
+module.exports = { runNudges, runCheckinReminder, runHabitsReminder };
 
-/**
- * Afternoon check-in reminder: push "log your mood/energy/focus" ONLY if it
- * hasn't been logged today. Run on its own ~3pm schedule (you can't rate your
- * day at 8am). Keyed per-day so it fires at most once; honors quiet hours.
- * @param {{ send?: boolean, force?: boolean }} [opts]
- */
-async function runCheckinReminder(opts = {}) {
-  const send = opts.send !== false;
-  const asOf = new Date();
-
-  if (!opts.force && withinQuietHours(asOf)) {
-    return { skipped: 'quiet_hours', sent: 0 };
+/** Has the habit stack been logged today? Fail-safe: assume yes on error. */
+async function habitsLoggedToday() {
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const { rows } = await query(
+      `SELECT 1 FROM metrics
+        WHERE domain = 'habits' AND source = 'habits'
+          AND (ts AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
+        LIMIT 1`,
+      [tz]
+    );
+    return rows.length > 0;
+  } catch {
+    return true;
   }
-  if (await checkinLoggedToday()) {
-    return { skipped: 'already_logged', sent: 0 };
-  }
+}
 
-  const n = checkinReminder(asOf);
-  // Don't re-send if we already pushed this exact check-in reminder today.
+/** Shared: send a single reminder nudge if it hasn't been sent today. */
+async function sendReminder(n, { send }) {
   const recent = await nudgesStore.recentlySentKeys(1);
-  if (recent.has(n.key) && !opts.force) {
-    return { skipped: 'already_sent', sent: 0 };
-  }
+  if (recent.has(n.key)) return { skipped: 'already_sent', sent: 0 };
 
   const tokens = send ? await devicesStore.listActiveTokens() : [];
   const status = send && tokens.length === 0 ? 'skipped' : 'pending';
@@ -122,6 +120,34 @@ async function runCheckinReminder(opts = {}) {
     }
   }
   return { sent: 0, devices: tokens.length };
+}
+
+/**
+ * Afternoon check-in reminder: push "log your mood/energy/focus" ONLY if it
+ * hasn't been logged today. Run on its own ~3pm schedule (you can't rate your
+ * day at 8am). Keyed per-day so it fires at most once.
+ * @param {{ send?: boolean, force?: boolean }} [opts]
+ */
+async function runCheckinReminder(opts = {}) {
+  const send = opts.send !== false;
+  if (!opts.force && (await checkinLoggedToday())) {
+    return { skipped: 'already_logged', sent: 0 };
+  }
+  return sendReminder(checkinReminder(new Date()), { send });
+}
+
+/**
+ * Evening habits reminder: push "log your habit stack" ONLY if it hasn't been
+ * logged today. Runs ~10pm (intentionally late — the day is done), so it does
+ * NOT honor the default quiet-hours window.
+ * @param {{ send?: boolean, force?: boolean }} [opts]
+ */
+async function runHabitsReminder(opts = {}) {
+  const send = opts.send !== false;
+  if (!opts.force && (await habitsLoggedToday())) {
+    return { skipped: 'already_logged', sent: 0 };
+  }
+  return sendReminder(habitReminder(new Date()), { send });
 }
 
 // CLI entrypoint

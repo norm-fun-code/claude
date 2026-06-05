@@ -91,6 +91,18 @@ function checkinReminder(asOf = new Date()) {
   };
 }
 
+/** An evening reminder to log the habit stack (the day's done — rate it). */
+function habitReminder(asOf = new Date()) {
+  const day = asOf.toISOString().slice(0, 10);
+  return {
+    key: `habits:${day}`,
+    title: 'Log your habits',
+    body: 'How did the day go? Tick off your habits before bed.',
+    priority: 0.5,
+    basis: { type: 'habits', day },
+  };
+}
+
 /**
  * Build ranked, de-duplicated nudge candidates from open findings.
  *
@@ -136,4 +148,4 @@ function withinQuietHours(date = new Date(), { startHour = 21, endHour = 7 } = {
   return startHour > endHour ? h >= startHour || h < endHour : h >= startHour && h < endHour;
 }
 
-module.exports = { buildNudges, withinQuietHours, checkinReminder, slugify, DEFAULTS };
+module.exports = { buildNudges, withinQuietHours, checkinReminder, habitReminder, slugify, DEFAULTS };
