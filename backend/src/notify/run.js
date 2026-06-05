@@ -11,22 +11,29 @@ const devicesStore = require('../store/devices');
 const { buildNudges, withinQuietHours, checkinReminder, habitReminder } = require('../intelligence/nudges');
 const { sendPush } = require('./expo');
 
-/** Has the subjective check-in been logged today? Fail-safe: assume yes on error
- *  so we never nag the user because of a DB hiccup. */
+/** Which of the given metrics are logged today (TZ-aware), as a Set. */
+async function loggedMetricsToday(domain, source) {
+  const tz = process.env.TZ || 'America/New_York';
+  const { rows } = await query(
+    `SELECT DISTINCT metric FROM metrics
+      WHERE domain = $1 AND source = $2
+        AND (ts AT TIME ZONE $3)::date = (now() AT TIME ZONE $3)::date`,
+    [domain, source, tz]
+  );
+  return new Set(rows.map((r) => r.metric));
+}
+
+// The fields each card needs for "fully logged" — reminder is silent only when
+// ALL are present, so a partially-filled card still nudges.
+const CHECKIN_FIELDS = ['mood', 'energy', 'focus'];
+const HABIT_FIELDS = ['morning_tm', 'afternoon_tm', 'gratitude', 'cold_shower', 'exercise', 'eat_healthy'];
+
+/** Is the check-in FULLY logged today (mood + energy + focus)? Fail-safe: assume
+ *  yes on error so a DB hiccup never nags. */
 async function checkinLoggedToday() {
   try {
-    // Use the same timezone-aware "today" logic as /api/checkin/today so the
-    // nudge and the app agree on what counts as today (not a UTC ts::date that
-    // can disagree near midnight).
-    const tz = process.env.TZ || 'America/New_York';
-    const { rows } = await query(
-      `SELECT 1 FROM metrics
-        WHERE source = 'checkin'
-          AND (ts AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
-        LIMIT 1`,
-      [tz]
-    );
-    return rows.length > 0;
+    const have = await loggedMetricsToday('wellbeing', 'checkin');
+    return CHECKIN_FIELDS.every((m) => have.has(m));
   } catch {
     return true;
   }
@@ -83,18 +90,12 @@ async function runNudges(opts = {}) {
 
 module.exports = { runNudges, runCheckinReminder, runHabitsReminder };
 
-/** Has the habit stack been logged today? Fail-safe: assume yes on error. */
+/** Is the habit stack FULLY logged today (all 5 binary habits + eat_healthy)?
+ *  Fail-safe: assume yes on error. */
 async function habitsLoggedToday() {
   try {
-    const tz = process.env.TZ || 'America/New_York';
-    const { rows } = await query(
-      `SELECT 1 FROM metrics
-        WHERE domain = 'habits' AND source = 'habits'
-          AND (ts AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
-        LIMIT 1`,
-      [tz]
-    );
-    return rows.length > 0;
+    const have = await loggedMetricsToday('habits', 'habits');
+    return HABIT_FIELDS.every((m) => have.has(m));
   } catch {
     return true;
   }
