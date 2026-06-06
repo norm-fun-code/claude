@@ -179,6 +179,23 @@ async function fetchOpenWeatherMap(lat, lon) {
   };
 }
 
+/** Current UV index from Open-Meteo (free, no API key). Used as a fallback when
+ *  the primary provider doesn't return UV (e.g. OpenWeatherMap's basic plan).
+ *  Returns a rounded integer, or null if the lookup fails. */
+async function fetchUvIndex(lat, lon) {
+  try {
+    const res = await axios.get('https://api.open-meteo.com/v1/forecast', {
+      params: { latitude: lat, longitude: lon, current: 'uv_index' },
+      timeout: 5000,
+    });
+    const uv = res.data?.current?.uv_index;
+    return Number.isFinite(uv) ? Math.round(uv) : null;
+  } catch (err) {
+    console.warn('Open-Meteo UV lookup failed:', err.message);
+    return null;
+  }
+}
+
 function hasWeatherKitCredentials() {
   const { WEATHERKIT_TEAM_ID, WEATHERKIT_SERVICE_ID, WEATHERKIT_KEY_ID, WEATHERKIT_PRIVATE_KEY_PATH } =
     process.env;
@@ -193,19 +210,29 @@ async function fetchWeather() {
     throw new Error('WEATHER_LAT and WEATHER_LON must be set in .env');
   }
 
+  let weather = null;
   if (hasWeatherKitCredentials()) {
     try {
-      return await fetchWeatherKit(lat, lon);
+      weather = await fetchWeatherKit(lat, lon);
     } catch (err) {
       console.warn('WeatherKit failed, falling back to OpenWeatherMap:', err.message);
     }
   }
 
-  if (process.env.OPENWEATHER_API_KEY) {
-    return await fetchOpenWeatherMap(lat, lon);
+  if (!weather) {
+    if (process.env.OPENWEATHER_API_KEY) {
+      weather = await fetchOpenWeatherMap(lat, lon);
+    } else {
+      throw new Error('No weather credentials configured. Set WeatherKit or OpenWeatherMap credentials in .env');
+    }
   }
 
-  throw new Error('No weather credentials configured. Set WeatherKit or OpenWeatherMap credentials in .env');
+  // Backfill UV from Open-Meteo (free, keyless) when the provider didn't supply it.
+  if (weather.uvIndex == null) {
+    weather.uvIndex = await fetchUvIndex(lat, lon);
+  }
+
+  return weather;
 }
 
 module.exports = { fetchWeather };

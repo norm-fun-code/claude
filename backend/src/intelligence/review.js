@@ -109,7 +109,7 @@ function composeReview(ctx) {
   const ann = ctx.annotations.map((a) => `- ${a.category}: ${a.label}`).join('\n') || '- none logged';
   const intentions = (ctx.intentions || [])
     .map((it) => {
-      const g = Array.isArray(it.goals) && it.goals.length ? ` Focus goals: ${it.goals.join('; ')}.` : '';
+      const g = Array.isArray(it.goals) && it.goals.length ? ` Focus goals: ${intentionsStore.formatGoals(it.goals)}.` : '';
       const c = it.context ? ` Context: ${it.context}` : '';
       return `-${g}${c}`.trim();
     })

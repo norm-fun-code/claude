@@ -1,6 +1,10 @@
 // Weekly intentions: the Sunday check-in (life context + focus goals). Upserted
 // one row per week (keyed on the Sunday date). The intelligence layer reads
 // recent entries as rolling context for the advisor, review, and insights.
+//
+// Goals are stored as `{ text, achieved }` objects so each Sunday you can look
+// back at last week's goals and tick which ones you actually hit. Old rows that
+// stored plain strings are normalized on read, so nothing breaks.
 const { query } = require('../db');
 
 /** The Sunday (local) that starts the week containing `date`. YYYY-MM-DD. */
@@ -13,12 +17,33 @@ function weekStart(date = new Date(), tz = process.env.TZ || 'America/New_York')
   return d.toISOString().slice(0, 10);
 }
 
-/** Upsert the current week's intention (context + goals). */
+/** The Sunday before the one containing `date` (the prior week's key). */
+function priorWeekStart(date = new Date(), tz = process.env.TZ || 'America/New_York') {
+  const d = new Date(`${weekStart(date, tz)}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 7);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Coerce a stored/incoming goals array into clean `{ text, achieved }` objects.
+ *  Accepts plain strings (legacy + the card's new-goal inputs) or objects. */
+function normalizeGoals(goals) {
+  if (!Array.isArray(goals)) return [];
+  return goals
+    .map((g) => {
+      if (g && typeof g === 'object') {
+        return { text: String(g.text ?? '').trim(), achieved: g.achieved === true };
+      }
+      return { text: String(g ?? '').trim(), achieved: false };
+    })
+    .filter((g) => g.text)
+    .slice(0, 5);
+}
+
+/** Upsert the current week's intention (context + goals). New goals default to
+ *  not-yet-achieved; achievement is recorded later via `saveGoalResults`. */
 async function saveIntention({ weekStart: ws, context = null, goals = [] } = {}) {
   const week = ws || weekStart();
-  const clean = Array.isArray(goals)
-    ? goals.map((g) => String(g).trim()).filter(Boolean).slice(0, 5)
-    : [];
+  const clean = normalizeGoals(goals);
   const { rows } = await query(
     `INSERT INTO weekly_intentions (week_start, context, goals, updated_at)
      VALUES ($1, $2, $3::jsonb, now())
@@ -27,18 +52,57 @@ async function saveIntention({ weekStart: ws, context = null, goals = [] } = {})
      RETURNING id, week_start, context, goals`,
     [week, context ? String(context).trim() : null, JSON.stringify(clean)]
   );
-  return rows[0] ?? null;
+  const r = rows[0];
+  return r ? { ...r, goals: normalizeGoals(r.goals) } : null;
 }
 
-/** The current week's intention, or null if not set yet. */
-async function currentIntention() {
-  const week = weekStart();
+/**
+ * Record which of a week's goals were achieved. `achieved` is an array of
+ * booleans aligned by index to that week's stored goals (defaults to the prior
+ * week — the one you reflect on each Sunday). Returns the updated row, or null
+ * if there's no intention for that week.
+ */
+async function saveGoalResults({ weekStart: ws, achieved = [] } = {}) {
+  const week = ws || priorWeekStart();
+  const { rows } = await query(
+    `SELECT goals FROM weekly_intentions WHERE week_start = $1`,
+    [week]
+  );
+  if (!rows[0]) return null;
+  const goals = normalizeGoals(rows[0].goals).map((g, i) => ({
+    text: g.text,
+    achieved: achieved[i] === true,
+  }));
+  const { rows: out } = await query(
+    `UPDATE weekly_intentions
+        SET goals = $2::jsonb, updated_at = now()
+      WHERE week_start = $1
+      RETURNING week_start, context, goals`,
+    [week, JSON.stringify(goals)]
+  );
+  const r = out[0];
+  return r ? { weekStart: r.week_start, context: r.context, goals: normalizeGoals(r.goals) } : null;
+}
+
+/** Fetch a single week's intention by its Sunday key, or null. */
+async function intentionForWeek(week) {
   const { rows } = await query(
     `SELECT week_start, context, goals FROM weekly_intentions WHERE week_start = $1`,
     [week]
   );
   const r = rows[0];
-  return r ? { weekStart: r.week_start, context: r.context, goals: r.goals || [] } : null;
+  return r ? { weekStart: r.week_start, context: r.context, goals: normalizeGoals(r.goals) } : null;
+}
+
+/** The current week's intention, or null if not set yet. */
+async function currentIntention() {
+  return intentionForWeek(weekStart());
+}
+
+/** The prior week's intention (so the Sunday card can show last week's goals to
+ *  mark as achieved), or null if none was set. */
+async function priorIntention() {
+  return intentionForWeek(priorWeekStart());
 }
 
 /** Recent intentions within `days` (rolling context for the intelligence layer). */
@@ -50,7 +114,25 @@ async function recentIntentions({ days = 30 } = {}) {
       ORDER BY week_start DESC`,
     [days]
   );
-  return rows.map((r) => ({ weekStart: r.week_start, context: r.context, goals: r.goals || [] }));
+  return rows.map((r) => ({ weekStart: r.week_start, context: r.context, goals: normalizeGoals(r.goals) }));
 }
 
-module.exports = { saveIntention, currentIntention, recentIntentions, weekStart };
+/** Render a goals array as a prompt-friendly string, annotating achievement
+ *  ("✓ hit" / "✗ missed") when it's been recorded. */
+function formatGoals(goals) {
+  return normalizeGoals(goals)
+    .map((g) => (g.achieved === true ? `${g.text} (✓ hit)` : g.text))
+    .join('; ');
+}
+
+module.exports = {
+  saveIntention,
+  saveGoalResults,
+  currentIntention,
+  priorIntention,
+  recentIntentions,
+  weekStart,
+  priorWeekStart,
+  normalizeGoals,
+  formatGoals,
+};

@@ -270,7 +270,13 @@ app.post('/api/workout/checks', async (req, res) => {
 // it's been set); POST upserts it.
 app.get('/api/intentions/current', async (req, res) => {
   try {
-    res.json({ weekStart: intentionsStore.weekStart(), intention: await intentionsStore.currentIntention() });
+    res.json({
+      weekStart: intentionsStore.weekStart(),
+      intention: await intentionsStore.currentIntention(),
+      // Last week's goals, so the Sunday card can show them with a checkbox to
+      // mark which were achieved.
+      prior: await intentionsStore.priorIntention(),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -280,6 +286,17 @@ app.post('/api/intentions', async (req, res) => {
   try {
     const { context, goals } = req.body || {};
     res.json({ intention: await intentionsStore.saveIntention({ context, goals }) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Record which of a (default: prior) week's goals were achieved. Body:
+// { weekStart?: 'YYYY-MM-DD', achieved: boolean[] } aligned to that week's goals.
+app.post('/api/intentions/results', async (req, res) => {
+  try {
+    const { weekStart, achieved } = req.body || {};
+    res.json({ intention: await intentionsStore.saveGoalResults({ weekStart, achieved }) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

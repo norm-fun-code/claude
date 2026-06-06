@@ -108,7 +108,7 @@ function renderSnapshot({ goals = [], metrics = [], intentions = [] } = {}) {
         intentions
           .map((it) => {
             const wk = it.weekStart ? new Date(it.weekStart).toISOString().slice(0, 10) : 'recent';
-            const goalsStr = Array.isArray(it.goals) && it.goals.length ? ` Focus goals: ${it.goals.join('; ')}.` : '';
+            const goalsStr = Array.isArray(it.goals) && it.goals.length ? ` Focus goals: ${intentionsStore.formatGoals(it.goals)}.` : '';
             const ctx = it.context ? ` Context: ${it.context}` : '';
             return `- Week of ${wk}:${goalsStr}${ctx}`;
           })

@@ -23,6 +23,15 @@ function getOutfitAdvice(temp: number, condition: string): { outfit: string; not
   return { outfit: '🩳🕶💧', note: 'Shorts, shades, stay hydrated' };
 }
 
+// UV exposure category (EPA scale) — turns a bare number into something actionable.
+function uvLevel(uv: number): string {
+  if (uv <= 2) return 'Low';
+  if (uv <= 5) return 'Moderate';
+  if (uv <= 7) return 'High';
+  if (uv <= 10) return 'Very High';
+  return 'Extreme';
+}
+
 function conditionToEmoji(condition: string): string {
   const lower = condition.toLowerCase();
   if (lower.includes('thunder')) return '⛈';
@@ -78,7 +87,7 @@ export function WeatherCard({ weather }: Props) {
           {weather.uvIndex !== null && (
             <View style={styles.statItem}>
               <Text style={[styles.statValue, { color: c.text }]}>{weather.uvIndex}</Text>
-              <Text style={[styles.statLabel, { color: c.subtext }]}>UV Index</Text>
+              <Text style={[styles.statLabel, { color: c.subtext }]}>UV · {uvLevel(weather.uvIndex)}</Text>
             </View>
           )}
         </View>

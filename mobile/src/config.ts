@@ -15,6 +15,7 @@ export const CHECKIN_URL = `${API_BASE}/api/checkin`;
 export const CHECKIN_TODAY_URL = `${API_BASE}/api/checkin/today`;
 export const INTENTIONS_URL = `${API_BASE}/api/intentions`;
 export const INTENTIONS_CURRENT_URL = `${API_BASE}/api/intentions/current`;
+export const INTENTIONS_RESULTS_URL = `${API_BASE}/api/intentions/results`;
 export const CHAT_URL = `${API_BASE}/api/chat`;
 export const DEVICE_REGISTER_URL = `${API_BASE}/api/devices/register`;
 export const HIGHLIGHTS_URL = `${API_BASE}/api/highlights`;
