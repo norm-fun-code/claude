@@ -101,6 +101,7 @@ async function fetchWeatherKit(lat, lon) {
     temp: celsiusToFahrenheit(h.temperature),
     condition: WEATHERKIT_CONDITIONS[h.conditionCode] || h.conditionCode,
     uvIndex: Number.isFinite(h.uvIndex) ? Math.round(h.uvIndex) : null,
+    precipChance: Number.isFinite(h.precipitationChance) ? Math.round(h.precipitationChance * 100) : null,
   }));
 
   return {
@@ -162,6 +163,7 @@ async function fetchOpenWeatherMap(lat, lon) {
     temp: Math.round(f.main.temp),
     condition: OPENWEATHER_CONDITION_MAP[f.weather?.[0]?.id] || f.weather?.[0]?.main || 'Unknown',
     uvIndex: null, // basic OWM plan has no UV — backfilled from Open-Meteo below
+    precipChance: Number.isFinite(f.pop) ? Math.round(f.pop * 100) : null,
   }));
 
   // Sunrise/sunset from current

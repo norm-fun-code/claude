@@ -11,6 +11,7 @@ export interface WeatherHour {
   temp: number;
   condition: string;
   uvIndex?: number | null;
+  precipChance?: number | null;
 }
 
 export interface Weather {

@@ -157,6 +157,9 @@ export function WeatherCard({ weather: seed }: Props) {
                 <Text style={[styles.hourTime, { color: c.subtext }]}>{hour.time}</Text>
                 <Text style={styles.hourEmoji}>{conditionToEmoji(hour.condition)}</Text>
                 <Text style={[styles.hourTemp, { color: c.text }]}>{hour.temp}°</Text>
+                {hour.precipChance != null && hour.precipChance >= 10 && (
+                  <Text style={styles.hourPrecip}>💧{hour.precipChance}%</Text>
+                )}
                 {hour.uvIndex != null && (
                   <Text style={[styles.hourUv, { color: c.subtext }]}>UV {hour.uvIndex}</Text>
                 )}
@@ -275,6 +278,11 @@ const styles = StyleSheet.create({
   hourTemp: {
     ...typography.subtitle,
     fontSize: 15,
+  },
+  hourPrecip: {
+    ...typography.caption,
+    fontSize: 10,
+    color: '#4A90D9',
   },
   hourUv: {
     ...typography.caption,
