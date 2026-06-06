@@ -10,6 +10,7 @@ export const API_BASE =
 export const API_TOKEN = process.env.EXPO_PUBLIC_API_TOKEN || '';
 
 export const BRIEFING_URL = `${API_BASE}/api/briefing`;
+export const WEATHER_URL = `${API_BASE}/api/weather`;
 export const HEALTH_INGEST_URL = `${API_BASE}/api/ingest/health`;
 export const CHECKIN_URL = `${API_BASE}/api/checkin`;
 export const CHECKIN_TODAY_URL = `${API_BASE}/api/checkin/today`;

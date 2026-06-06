@@ -97,8 +97,10 @@ async function fetchWeatherKit(lat, lon) {
 
   const hourly = hourlyList.map((h) => ({
     time: formatTime(h.forecastStart),
+    ts: h.forecastStart, // ISO UTC, kept internally for UV backfill; stripped before return
     temp: celsiusToFahrenheit(h.temperature),
     condition: WEATHERKIT_CONDITIONS[h.conditionCode] || h.conditionCode,
+    uvIndex: Number.isFinite(h.uvIndex) ? Math.round(h.uvIndex) : null,
   }));
 
   return {
@@ -156,8 +158,10 @@ async function fetchOpenWeatherMap(lat, lon) {
 
   const hourly = forecastItems.slice(0, 6).map((f) => ({
     time: formatTime(new Date(f.dt * 1000).toISOString()),
+    ts: new Date(f.dt * 1000).toISOString(), // internal, for UV backfill
     temp: Math.round(f.main.temp),
     condition: OPENWEATHER_CONDITION_MAP[f.weather?.[0]?.id] || f.weather?.[0]?.main || 'Unknown',
+    uvIndex: null, // basic OWM plan has no UV — backfilled from Open-Meteo below
   }));
 
   // Sunrise/sunset from current
@@ -179,20 +183,28 @@ async function fetchOpenWeatherMap(lat, lon) {
   };
 }
 
-/** Current UV index from Open-Meteo (free, no API key). Used as a fallback when
- *  the primary provider doesn't return UV (e.g. OpenWeatherMap's basic plan).
- *  Returns a rounded integer, or null if the lookup fails. */
-async function fetchUvIndex(lat, lon) {
+/** Current + hourly UV index from Open-Meteo (free, no API key). Used as a
+ *  fallback when the primary provider doesn't return UV (e.g. OpenWeatherMap's
+ *  basic plan). Returns { current: int|null, hourly: Map<'YYYY-MM-DDTHH', int> }
+ *  keyed by UTC hour so callers can backfill per-hour by matching timestamps. */
+async function fetchOpenMeteoUv(lat, lon) {
   try {
     const res = await axios.get('https://api.open-meteo.com/v1/forecast', {
-      params: { latitude: lat, longitude: lon, current: 'uv_index' },
+      // GMT (UTC) so hourly.time aligns with the providers' UTC timestamps.
+      params: { latitude: lat, longitude: lon, current: 'uv_index', hourly: 'uv_index', forecast_days: 2, timezone: 'GMT' },
       timeout: 5000,
     });
-    const uv = res.data?.current?.uv_index;
-    return Number.isFinite(uv) ? Math.round(uv) : null;
+    const cur = res.data?.current?.uv_index;
+    const times = res.data?.hourly?.time || [];
+    const vals = res.data?.hourly?.uv_index || [];
+    const hourly = new Map();
+    for (let i = 0; i < times.length; i++) {
+      if (Number.isFinite(vals[i])) hourly.set(String(times[i]).slice(0, 13), Math.round(vals[i]));
+    }
+    return { current: Number.isFinite(cur) ? Math.round(cur) : null, hourly };
   } catch (err) {
     console.warn('Open-Meteo UV lookup failed:', err.message);
-    return null;
+    return { current: null, hourly: new Map() };
   }
 }
 
@@ -227,10 +239,25 @@ async function fetchWeather() {
     }
   }
 
-  // Backfill UV from Open-Meteo (free, keyless) when the provider didn't supply it.
-  if (weather.uvIndex == null) {
-    weather.uvIndex = await fetchUvIndex(lat, lon);
+  // Backfill UV from Open-Meteo (free, keyless) when the provider didn't supply
+  // it — both the current reading and any missing per-hour values.
+  const hourly = Array.isArray(weather.hourly) ? weather.hourly : [];
+  const needHourlyUv = hourly.some((h) => h.uvIndex == null && h.ts);
+  if (weather.uvIndex == null || needHourlyUv) {
+    const uv = await fetchOpenMeteoUv(lat, lon);
+    if (weather.uvIndex == null) weather.uvIndex = uv.current;
+    if (needHourlyUv) {
+      for (const h of hourly) {
+        if (h.uvIndex == null && h.ts) {
+          const key = h.ts.slice(0, 13); // YYYY-MM-DDTHH (UTC)
+          if (uv.hourly.has(key)) h.uvIndex = uv.hourly.get(key);
+        }
+      }
+    }
   }
+
+  // Drop the internal timestamp; the client only needs the display fields.
+  weather.hourly = hourly.map(({ ts, ...rest }) => rest);
 
   return weather;
 }

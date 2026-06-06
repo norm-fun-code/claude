@@ -302,6 +302,29 @@ app.post('/api/intentions/results', async (req, res) => {
   }
 });
 
+// Standalone weather — so the Today card can show/refresh weather on its own,
+// fast, without waiting on the full LLM briefing. Cached briefly in-memory so
+// repeated loads (and the briefing) don't hammer the provider; ?refresh=1
+// forces a fresh pull.
+let weatherCache = { at: 0, data: null };
+const WEATHER_TTL_MS = Number(process.env.WEATHER_CACHE_MS || 10 * 60 * 1000);
+app.get('/api/weather', async (req, res) => {
+  try {
+    const force = req.query.refresh === '1';
+    const fresh = Date.now() - weatherCache.at < WEATHER_TTL_MS;
+    if (!force && fresh && weatherCache.data) {
+      return res.json({ weather: weatherCache.data, cached: true });
+    }
+    const weather = await fetchWeather();
+    weatherCache = { at: Date.now(), data: weather };
+    res.json({ weather, cached: false });
+  } catch (err) {
+    // Fall back to a stale cached value rather than failing the card outright.
+    if (weatherCache.data) return res.json({ weather: weatherCache.data, cached: true, stale: true });
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Generic canonical metric ingestion for any future source.
 app.post('/api/ingest/metrics', async (req, res) => {
   try {

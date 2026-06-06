@@ -1,10 +1,13 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, useColorScheme } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import type { Weather } from '../hooks/useBriefing';
+import { useWeather } from '../hooks/useWeather';
 
 interface Props {
+  // The briefing's weather, used only as a seed; the card fetches/refreshes its
+  // own weather independently so it loads fast and updates without the briefing.
   weather: Weather | null;
 }
 
@@ -47,15 +50,33 @@ function conditionToEmoji(condition: string): string {
   return '🌡';
 }
 
-export function WeatherCard({ weather }: Props) {
+export function WeatherCard({ weather: seed }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
+  const { weather, loading, refresh } = useWeather(seed);
+
+  // A small refresh control in the card's top-right — taps re-pull just the
+  // weather (fast) instead of rebuilding the whole Today briefing.
+  const header = (
+    <View style={styles.headerRow}>
+      <SectionHeader emoji="🌤" title="Weather" />
+      <TouchableOpacity onPress={refresh} disabled={loading} hitSlop={10} style={styles.refreshBtn}>
+        {loading ? (
+          <ActivityIndicator size="small" color={c.subtext} />
+        ) : (
+          <Text style={[styles.refreshIcon, { color: c.accent }]}>↻</Text>
+        )}
+      </TouchableOpacity>
+    </View>
+  );
 
   if (!weather) {
     return (
       <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
-        <SectionHeader emoji="🌤" title="Weather" />
-        <Text style={[styles.unavailable, { color: c.subtext }]}>Weather unavailable</Text>
+        {header}
+        <Text style={[styles.unavailable, { color: c.subtext }]}>
+          {loading ? 'Loading weather…' : 'Weather unavailable'}
+        </Text>
       </View>
     );
   }
@@ -64,7 +85,7 @@ export function WeatherCard({ weather }: Props) {
 
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
-      <SectionHeader emoji="🌤" title="Weather" />
+      {header}
 
       {/* Main temperature */}
       <View style={styles.mainRow}>
@@ -136,6 +157,9 @@ export function WeatherCard({ weather }: Props) {
                 <Text style={[styles.hourTime, { color: c.subtext }]}>{hour.time}</Text>
                 <Text style={styles.hourEmoji}>{conditionToEmoji(hour.condition)}</Text>
                 <Text style={[styles.hourTemp, { color: c.text }]}>{hour.temp}°</Text>
+                {hour.uvIndex != null && (
+                  <Text style={[styles.hourUv, { color: c.subtext }]}>UV {hour.uvIndex}</Text>
+                )}
               </View>
             ))}
           </ScrollView>
@@ -151,6 +175,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: spacing.md,
     marginBottom: spacing.md,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  refreshBtn: {
+    padding: spacing.xs,
+    marginTop: spacing.xs,
+    minWidth: 28,
+    alignItems: 'center',
+  },
+  refreshIcon: {
+    fontSize: 20,
+    fontWeight: '600',
+    lineHeight: 22,
   },
   mainRow: {
     flexDirection: 'row',
@@ -235,6 +275,10 @@ const styles = StyleSheet.create({
   hourTemp: {
     ...typography.subtitle,
     fontSize: 15,
+  },
+  hourUv: {
+    ...typography.caption,
+    fontSize: 10,
   },
   unavailable: {
     ...typography.body,

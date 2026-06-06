@@ -10,6 +10,7 @@ export interface WeatherHour {
   time: string;
   temp: number;
   condition: string;
+  uvIndex?: number | null;
 }
 
 export interface Weather {
