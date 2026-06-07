@@ -230,6 +230,62 @@ function computeCorrelations(seriesByKey, opts = {}) {
   });
 }
 
+/**
+ * Pure: positive habit consistency findings. Surfaces when a binary habit has
+ * been maintained at ≥80% adherence over the last 14 logged days — the "this is
+ * sticking" signal that the trend engine misses because there's no *change* to
+ * report when you're consistently good.
+ */
+function computeHabitConsistency(seriesByKey, opts = {}) {
+  const BINARY_HABITS = {
+    exercise: 'Exercise',
+    morning_tm: 'Morning meditation',
+    afternoon_tm: 'Afternoon meditation',
+    cold_shower: 'Cold shower',
+    gratitude: 'Gratitude practice',
+  };
+  const WINDOW_DAYS = 14;
+  const MIN_LOGGED = 7;   // need at least a week of data
+  const MIN_ADHERENCE = 0.8; // 80%+ = "consistent"
+  const findings = [];
+
+  for (const [metric, label] of Object.entries(BINARY_HABITS)) {
+    const key = `habits:${metric}`;
+    const series = seriesByKey[key];
+    if (!series || series.length < MIN_LOGGED) continue;
+
+    // Only the last WINDOW_DAYS calendar days.
+    const cutoff = new Date(Date.now() - WINDOW_DAYS * 864e5);
+    const recent = series.filter((r) => new Date(r.day) >= cutoff);
+    if (recent.length < MIN_LOGGED) continue;
+
+    const daysHit = recent.filter((r) => Number(r.value) >= 0.5).length;
+    const adherence = daysHit / recent.length;
+    if (adherence < MIN_ADHERENCE) continue;
+
+    const pctStr = Math.round(adherence * 100) + '%';
+    findings.push({
+      type: 'habit_consistency',
+      domains: ['habits'],
+      title: `${label} consistent: ${daysHit}/${recent.length} days (${pctStr})`,
+      detail:
+        `Your daily logs confirm ${label.toLowerCase()} on ${daysHit} of the last ${recent.length} days — ` +
+        `${pctStr} adherence. This habit is sticking.`,
+      confidence: round(adherence, 2),
+      evidence: {
+        auto: true,
+        kind: 'habit_consistency',
+        metric: key,
+        daysHit,
+        daysTotal: recent.length,
+        adherence: round(adherence, 2),
+      },
+    });
+  }
+
+  return findings;
+}
+
 /** Orchestrator: load series, compute findings, persist them. */
 async function analyze(opts = {}) {
   const o = { ...DEFAULTS, ...opts };
@@ -246,6 +302,7 @@ async function analyze(opts = {}) {
       metric,
       from,
       agg: cat.aggFor(metric),
+      excludeSource: 'seed', // keep demo data from inflating real-data sums
     });
     if (rows.length) seriesByKey[`${domain}:${metric}`] = rows;
   }
@@ -254,6 +311,7 @@ async function analyze(opts = {}) {
   const correlations = computeCorrelations(seriesByKey, o);
   const anomalies = computeAnomalies(seriesByKey, o);
   const composites = computeHealthComposites(seriesByKey, o);
+  const habitConsistency = computeHabitConsistency(seriesByKey, o);
 
   // Rank the highest-leverage actions from the findings + any off-track goals.
   const latestByKey = {};
@@ -272,7 +330,7 @@ async function analyze(opts = {}) {
   // Goal achievement-probability forecasts from the same loaded series.
   const forecasts = computeForecasts(goals, seriesByKey);
 
-  const all = [...trends, ...correlations, ...anomalies, ...composites, ...actions, ...forecasts];
+  const all = [...trends, ...correlations, ...anomalies, ...composites, ...actions, ...forecasts, ...habitConsistency];
   const windowStart = from;
   const windowEnd = new Date();
 
@@ -283,7 +341,7 @@ async function analyze(opts = {}) {
   const { withTransaction } = require('../db');
   await withTransaction(async (client) => {
     const tx = (text, params) => client.query(text, params);
-    await findingsStore.supersedeAuto(['trend', 'correlation', 'anomaly', 'leverage', 'forecast', ...COMPOSITE_TYPES], tx);
+    await findingsStore.supersedeAuto(['trend', 'correlation', 'anomaly', 'leverage', 'forecast', 'habit_consistency', ...COMPOSITE_TYPES], tx);
     for (const f of all) {
       await findingsStore.createFinding({ ...f, windowStart, windowEnd }, tx);
     }
@@ -297,10 +355,11 @@ async function analyze(opts = {}) {
     composites: composites.length,
     actions: actions.length,
     forecasts: forecasts.length,
+    habitConsistency: habitConsistency.length,
   };
 }
 
-module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, DEFAULTS };
+module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, DEFAULTS };
 
 // CLI entrypoint
 if (require.main === module) {

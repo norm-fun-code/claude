@@ -75,8 +75,10 @@ async function latest({ domain, metric }) {
   return rows[0] ?? null;
 }
 
-/** Daily-bucketed aggregate for a metric (avg/min/max/sum), for trend math. */
-async function dailyAggregate({ domain, metric, from, to, agg = 'avg' }) {
+/** Daily-bucketed aggregate for a metric (avg/min/max/sum), for trend math.
+ *  excludeSource: skip rows from this source (e.g. 'seed') so demo data
+ *  doesn't inflate real-data aggregates when both coexist. */
+async function dailyAggregate({ domain, metric, from, to, agg = 'avg', excludeSource = null }) {
   const fn = ['avg', 'min', 'max', 'sum'].includes(agg) ? agg : 'avg';
   // date_trunc keeps this portable (works with or without TimescaleDB).
   const { rows } = await query(
@@ -85,9 +87,10 @@ async function dailyAggregate({ domain, metric, from, to, agg = 'avg' }) {
       WHERE domain = $1 AND metric = $2
         AND ($3::timestamptz IS NULL OR ts >= $3)
         AND ($4::timestamptz IS NULL OR ts <= $4)
+        AND ($5::text IS NULL OR source != $5)
       GROUP BY day
       ORDER BY day ASC`,
-    [domain, metric, from ?? null, to ?? null]
+    [domain, metric, from ?? null, to ?? null, excludeSource ?? null]
   );
   return rows;
 }
