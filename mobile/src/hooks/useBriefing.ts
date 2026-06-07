@@ -104,6 +104,22 @@ export interface Forecast {
   status: string | null; // on_track | at_risk | off_track | on_pace | stalled | insufficient_data
 }
 
+export interface WeeklyGoalItem {
+  text: string;
+  achieved: boolean;
+}
+
+export interface WeeklyGoalWeek {
+  weekStart: string;
+  context: string | null;
+  goals: WeeklyGoalItem[];
+}
+
+export interface WeeklyGoals {
+  current: WeeklyGoalWeek | null;
+  prior: WeeklyGoalWeek | null;
+}
+
 export interface WeeklyReview {
   headline: string;
   narrative: string;
@@ -164,6 +180,7 @@ export interface BriefingData {
   recovery?: Recovery | null;
   healthComposites?: HealthComposite[];
   forecasts: Forecast[];
+  weeklyGoals?: WeeklyGoals | null;
   relevantHighlight: RelevantHighlight | null;
   weeklyReview: WeeklyReview | null;
   wealth: Wealth | null;

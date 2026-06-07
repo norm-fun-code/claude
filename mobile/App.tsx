@@ -47,6 +47,7 @@ import { UrgentEmailsCard } from './src/components/UrgentEmailsCard';
 import { AlertCard } from './src/components/AlertCard';
 import { HighlightsCard } from './src/components/HighlightsCard';
 import { ShopCard } from './src/components/ShopCard';
+import { GoalsCard } from './src/components/GoalsCard';
 
 export default function App() {
   const isDark = useColorScheme() === 'dark';
@@ -131,6 +132,7 @@ export default function App() {
       case 'insights':
         return (
           <>
+            <GoalsCard weeklyGoals={d?.weeklyGoals} />
             <ReviewCard review={d?.weeklyReview ?? null} />
             <ForecastCard forecasts={d?.forecasts ?? []} />
             <InsightsCard insights={d?.insights ?? []} />

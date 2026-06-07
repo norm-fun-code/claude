@@ -31,7 +31,7 @@ async function buildWealthInsights() {
   try {
     const from = new Date(Date.now() - 30 * 864e5);
     const sumOf = async (metric) => {
-      const rows = await metricsStore.dailyAggregate({ domain: 'wealth', metric, from, agg: 'sum' });
+      const rows = await metricsStore.dailyAggregate({ domain: 'wealth', metric, from, agg: 'sum', excludeSource: 'seed' });
       return rows.reduce((a, r) => a + Number(r.value || 0), 0);
     };
     const [income, spending] = await Promise.all([sumOf('income'), sumOf('spending')]);
@@ -133,7 +133,7 @@ async function buildWealthInsights() {
   // style), so you see where you're heading at the current rate.
   try {
     const from = new Date(Date.now() - 120 * 864e5);
-    const nw = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'net_worth', from, agg: 'avg' });
+    const nw = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'net_worth', from, agg: 'avg', excludeSource: 'seed' });
     const series = nw.map((r) => ({ day: r.day, value: Number(r.value) })).filter((p) => Number.isFinite(p.value));
     if (series.length >= 8) {
       // Fit against real calendar days → a true per-day slope.

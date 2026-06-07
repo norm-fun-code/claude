@@ -1061,6 +1061,21 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[relevantHighlight] failed:', err.message);
   }
 
+  // Weekly goal achievement — current week's goals + prior week's with hit/miss.
+  // Surfaced on the Insights tab so the check-in shows up immediately after saving.
+  let weeklyGoals = null;
+  try {
+    const [currentInt, priorInt] = await Promise.all([
+      intentionsStore.currentIntention(),
+      intentionsStore.priorIntention(),
+    ]);
+    if (currentInt || priorInt) {
+      weeklyGoals = { current: currentInt ?? null, prior: priorInt ?? null };
+    }
+  } catch (err) {
+    console.error('[weeklyGoals] failed:', err.message);
+  }
+
   // Latest weekly review (generated separately on a weekly cadence).
   let weeklyReview = null;
   try {
@@ -1077,10 +1092,10 @@ app.get('/api/briefing', async (req, res) => {
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const nw = await metricsStore.latest({ domain: 'wealth', metric: 'net_worth' });
-    const nwPrev = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'net_worth', from: monthAgo, to: weekAgo, agg: 'avg' });
-    const spend = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: weekAgo, agg: 'sum' });
-    const discretionary = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: weekAgo, agg: 'sum' });
-    const income = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'income', from: weekAgo, agg: 'sum' });
+    const nwPrev = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'net_worth', from: monthAgo, to: weekAgo, agg: 'avg', excludeSource: 'seed' });
+    const spend = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: weekAgo, agg: 'sum', excludeSource: 'seed' });
+    const discretionary = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: weekAgo, agg: 'sum', excludeSource: 'seed' });
+    const income = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'income', from: weekAgo, agg: 'sum', excludeSource: 'seed' });
     if (nw || spend.length) {
       const netWorth = nw ? Number(nw.value) : null;
       const priorNw = nwPrev.length ? sum(nwPrev) / nwPrev.length : null;
@@ -1166,6 +1181,7 @@ app.get('/api/briefing', async (req, res) => {
     recovery,
     healthComposites,
     forecasts,
+    weeklyGoals,
     relevantHighlight: keep(p?.relevantHighlight, relevantHighlight),
     weeklyReview,
     wealth,
