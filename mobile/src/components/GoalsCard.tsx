@@ -9,7 +9,10 @@ interface Props {
 }
 
 function formatWeekLabel(weekStart: string): string {
-  const d = new Date(`${weekStart}T12:00:00Z`);
+  // weekStart may arrive as a full ISO datetime (2026-06-01T00:00:00.000Z) from
+  // Postgres DATE serialization, or as a plain date string (2026-06-01). Slice to
+  // YYYY-MM-DD before parsing so we don't append T12:00:00Z to an existing time part.
+  const d = new Date(`${weekStart.slice(0, 10)}T12:00:00Z`);
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
