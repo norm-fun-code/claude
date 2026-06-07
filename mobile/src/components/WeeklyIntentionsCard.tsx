@@ -72,10 +72,13 @@ export function WeeklyIntentionsCard() {
         }
         if (intention) {
           setContext(typeof intention.context === 'string' ? intention.context : '');
-          // Coerce to strings and clamp to MAX_GOALS — the server array is
-          // untrusted/unvalidated shape over the network.
+          // Goals may come back as { text, achieved } objects or legacy strings.
           const g = (Array.isArray(intention.goals) ? intention.goals : [])
-            .map((x: unknown) => String(x ?? ''))
+            .map((x: unknown) => {
+              if (x && typeof x === 'object') return String((x as { text?: unknown }).text ?? '');
+              return String(x ?? '');
+            })
+            .filter(Boolean)
             .slice(0, MAX_GOALS);
           setGoals(g.length ? g : ['']);
           setSaved(true);
