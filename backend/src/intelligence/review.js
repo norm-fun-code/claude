@@ -62,8 +62,8 @@ async function gatherWeek(asOf = new Date()) {
   const metrics = [];
   for (const [domain, metric] of KEY_METRICS) {
     const agg = cat.aggFor(metric);
-    const cur = await metricsStore.dailyAggregate({ domain, metric, from: periodStart, to: periodEnd, agg });
-    const prev = await metricsStore.dailyAggregate({ domain, metric, from: priorStart, to: periodStart, agg });
+    const cur = await metricsStore.dailyAggregate({ domain, metric, from: periodStart, to: periodEnd, agg, excludeSource: 'seed' });
+    const prev = await metricsStore.dailyAggregate({ domain, metric, from: priorStart, to: periodStart, agg, excludeSource: 'seed' });
     const a = weekly(cur, metric);
     const b = weekly(prev, metric);
     if (a == null) continue;
