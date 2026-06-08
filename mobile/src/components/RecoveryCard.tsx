@@ -71,11 +71,19 @@ export function RecoveryCard({ recovery, composites = [] }: Props) {
         <View style={[styles.parts, { borderTopColor: c.border }]}>
           {Object.entries(recovery.parts).map(([k, v]) => (
             <View key={k} style={styles.part}>
-              <Text style={[styles.partVal, { color: c.text }]}>{Math.round(Number(v))}</Text>
+              <View style={styles.partValRow}>
+                <Text style={[styles.partVal, { color: c.text }]}>{Math.round(Number(v))}</Text>
+                <Text style={[styles.partValUnit, { color: c.subtext }]}>/100</Text>
+              </View>
               <Text style={[styles.partLabel, { color: c.subtext }]}>{PART_LABEL[k] ?? k}</Text>
             </View>
           ))}
         </View>
+      )}
+      {Object.keys(recovery.parts || {}).length > 0 && (
+        <Text style={[styles.partsCaption, { color: c.subtext }]}>
+          vs your 30-day baseline
+        </Text>
       )}
 
       {/* Sleep debt / consistency / training-load flags */}
@@ -122,8 +130,11 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
   },
   part: { alignItems: 'center' },
+  partValRow: { flexDirection: 'row', alignItems: 'baseline', gap: 2 },
   partVal: { ...typography.subtitle, fontSize: 20, fontWeight: '600' },
+  partValUnit: { ...typography.caption, fontSize: 11 },
   partLabel: { ...typography.caption, fontSize: 11, marginTop: 2 },
+  partsCaption: { ...typography.caption, fontSize: 11, textAlign: 'center', marginTop: spacing.xs, fontStyle: 'italic' },
   flags: { borderTopWidth: 1, marginTop: spacing.md, paddingTop: spacing.sm, gap: spacing.sm },
   flagRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' },
   flagEmoji: { fontSize: 16, marginTop: 1 },
