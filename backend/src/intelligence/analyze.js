@@ -31,16 +31,7 @@ const DEFAULTS = {
   // "trend" on these is misleading — e.g. "spending down 75%" really compares
   // recent vs prior *daily averages*, not the weekly totals shown on the Wealth
   // tab. These are covered properly by the dedicated wealth insights instead.
-  //
-  // Readwise/Notion sync metrics: the initial full-library sync writes a huge
-  // cumulative count (e.g. 17k highlights, 165 books) as a single data point,
-  // making every subsequent incremental sync look like a -99% drop. Trend and
-  // anomaly analysis on these is meaningless until several months of incremental
-  // data dilute the initial spike.
-  trendSkip: [
-    'wealth:spending', 'wealth:spending_discretionary', 'wealth:income', 'wealth:net_cashflow',
-    'learning:highlights_synced', 'learning:books_synced', 'learning:notion_pages', 'learning:notion_pages_synced',
-  ],
+  trendSkip: ['wealth:spending', 'wealth:spending_discretionary', 'wealth:income', 'wealth:net_cashflow'],
 };
 
 function pct(n) {

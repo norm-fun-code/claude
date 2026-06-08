@@ -68,13 +68,7 @@ module.exports = {
     } while (pageCursor);
 
     const { documents, bookCount, highlightCount } = mapExport(results);
-    const now = new Date();
-    const metrics = [
-      { ts: now, domain: 'learning', metric: 'highlights_synced', value: highlightCount, unit: 'count', source: 'readwise' },
-      { ts: now, domain: 'learning', metric: 'books_synced', value: bookCount, unit: 'count', source: 'readwise' },
-    ];
-
-    return { metrics, documents };
+    return { metrics: [], documents };
   },
 
   // exported for unit testing
