@@ -558,6 +558,39 @@ app.get('/api/diag/gemini', async (req, res) => {
   }
 });
 
+// Diagnostic: dump the RAW metric rows for a metric over the last N days,
+// grouped by day + source. Reveals duplication that a daily SUM would inflate —
+// e.g. many step rows for the same day (pre-fix per-refresh writes) all summed.
+//   GET /api/diag/metric-rows?domain=health&metric=steps&days=7
+app.get('/api/diag/metric-rows', async (req, res) => {
+  try {
+    const domain = String(req.query.domain || 'health');
+    const metric = String(req.query.metric || 'steps');
+    const days = Math.min(Number(req.query.days) || 7, 120);
+    const { rows } = await db.query(
+      `SELECT date_trunc('day', ts)::date AS day, source,
+              count(*)::int AS rows,
+              round(sum(value)::numeric, 1) AS sum,
+              round(min(value)::numeric, 1) AS min,
+              round(max(value)::numeric, 1) AS max
+         FROM metrics
+        WHERE domain = $1 AND metric = $2
+          AND ts >= now() - ($3 || ' days')::interval
+        GROUP BY day, source
+        ORDER BY day DESC, source`,
+      [domain, metric, String(days)]
+    );
+    // What the daily SUM (used by analyze/review) would produce per day, and the
+    // weekly total — so the inflation is visible at a glance.
+    const perDay = {};
+    for (const r of rows) perDay[r.day] = (perDay[r.day] || 0) + Number(r.sum);
+    const weeklyTotalSummed = Object.values(perDay).reduce((a, b) => a + b, 0);
+    res.json({ domain, metric, days, groups: rows, perDaySummed: perDay, weeklyTotalSummed });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Diagnostic: reproduce the EXACT briefing LLM call (real fetched emails, real
 // prompt) and time it, so we can see where the 60s goes vs the trivial probe.
 app.get('/api/diag/briefing-llm', async (req, res) => {
