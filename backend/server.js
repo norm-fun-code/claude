@@ -591,6 +591,25 @@ app.get('/api/diag/metric-rows', async (req, res) => {
   }
 });
 
+// Diagnostic: the largest "spending" transactions and their categories over the
+// last N days. Reveals whether big spend days are real purchases or internal
+// movements (transfers, credit-card payments) wrongly counted as spending.
+//   GET /api/diag/top-spend?days=10&limit=25
+app.get('/api/diag/top-spend', async (req, res) => {
+  try {
+    const days = Math.min(Number(req.query.days) || 10, 120);
+    const limit = Math.min(Number(req.query.limit) || 25, 200);
+    const txns = await documentsStore.spendTransactions({ days });
+    const sorted = [...txns].sort((a, b) => b.amount - a.amount).slice(0, limit);
+    // Tally by category so transfer/payment pollution is obvious in aggregate.
+    const byCategory = {};
+    for (const t of txns) byCategory[t.category] = Math.round(((byCategory[t.category] || 0) + t.amount) * 100) / 100;
+    res.json({ days, count: txns.length, topTransactions: sorted, byCategory });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Diagnostic: reproduce the EXACT briefing LLM call (real fetched emails, real
 // prompt) and time it, so we can see where the 60s goes vs the trivial probe.
 app.get('/api/diag/briefing-llm', async (req, res) => {
