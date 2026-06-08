@@ -58,6 +58,7 @@ process.on('uncaughtException', (err) => {
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const BOOT_TIME = new Date().toISOString(); // process start — confirms a fresh deploy restarted the server
 
 // CORS. The mobile app (React Native) isn't subject to CORS, so we only need to
 // allow browser origins we actually use. Lock to an allowlist in production
@@ -124,7 +125,21 @@ app.get('/api/health', async (req, res) => {
   } catch (err) {
     database = `error: ${err.message}`;
   }
-  res.json({ status: 'ok', database, timestamp: new Date().toISOString() });
+  // Surface the deployed commit so we can confirm what code is actually live
+  // (Railway/Render inject these at build time). Without this there's no way to
+  // tell whether a merge to main has reached production.
+  const commit =
+    process.env.RAILWAY_GIT_COMMIT_SHA ||
+    process.env.RENDER_GIT_COMMIT ||
+    process.env.GIT_COMMIT_SHA ||
+    'unknown';
+  res.json({
+    status: 'ok',
+    database,
+    commit: commit === 'unknown' ? 'unknown' : commit.slice(0, 7),
+    bootedAt: BOOT_TIME,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // --- Ingestion -----------------------------------------------------------

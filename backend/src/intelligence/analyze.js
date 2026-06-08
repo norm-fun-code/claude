@@ -306,6 +306,12 @@ async function analyze(opts = {}) {
 
   const seriesByKey = {};
   for (const { domain, metric } of keys) {
+    // Only analyze metrics we deliberately track. listMetricKeys() returns every
+    // distinct key in the table — including stale/retired ones (e.g. the old
+    // Readwise/Notion sync counts) whose historical rows still linger. Keying
+    // findings off whatever happens to be in the DB lets retired metrics keep
+    // generating bogus trends/anomalies, so gate on the catalog registry.
+    if (!cat.isTracked(domain, metric)) continue;
     const rows = await metricsStore.dailyAggregate({
       domain,
       metric,

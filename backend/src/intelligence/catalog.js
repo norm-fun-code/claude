@@ -76,8 +76,15 @@ function goodWhen(domain, metric) {
   return CATALOG[key(domain, metric)]?.goodWhen ?? null;
 }
 
+// Is this a metric we deliberately track and want findings on? The intelligence
+// layer gates on this so retired/unknown metrics lingering in the spine (old
+// sync counts, experiments) can't generate spurious trends or anomalies.
+function isTracked(domain, metric) {
+  return Object.prototype.hasOwnProperty.call(CATALOG, key(domain, metric));
+}
+
 function aggFor(metric) {
   return SUM_METRICS.has(metric) ? 'sum' : 'avg';
 }
 
-module.exports = { CATALOG, key, label, goodWhen, aggFor, titleCase };
+module.exports = { CATALOG, key, label, goodWhen, isTracked, aggFor, titleCase };
