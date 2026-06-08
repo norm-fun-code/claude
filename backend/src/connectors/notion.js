@@ -35,12 +35,6 @@ module.exports = {
       });
     }
 
-    const now = new Date();
-    const metrics = [
-      { ts: now, domain: 'learning', metric: 'notion_pages', value: pages.length, unit: 'count', source: 'notion' },
-      { ts: now, domain: 'learning', metric: 'notion_pages_synced', value: documents.length, unit: 'count', source: 'notion' },
-    ];
-
-    return { metrics, documents };
+    return { metrics: [], documents };
   },
 };
