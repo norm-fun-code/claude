@@ -71,7 +71,26 @@ function fixedCategories() {
 function isFixedCategory(category) {
   const c = norm(category);
   if (!c) return false;
-  return fixedCategories().some((f) => c.includes(f));
+  // norm() strips spaces, so multi-word entries ("home loan") must be normed
+  // on both sides or they'd never match.
+  return fixedCategories().some((f) => c.includes(norm(f)));
+}
+
+// Internal money movements that are NOT economic spending/income: transfers
+// between your own accounts, credit-card payments (the purchases they pay for
+// are already counted), and balance adjustments. Counting these as "spending"
+// is the classic Monarch double-count — a $16k transfer to Fidelity or a credit
+// card payment would swamp the real number and not match the Wealth tab.
+// Override with MONARCH_TRANSFER_CATEGORIES="transfer,credit card payment".
+function transferCategories() {
+  const custom = (process.env.MONARCH_TRANSFER_CATEGORIES || '').split(',').map((s) => norm(s)).filter(Boolean);
+  return custom.length ? custom : ['transfer', 'credit card payment', 'balance adjustment'];
+}
+function isInternalTransfer(category) {
+  const c = norm(category);
+  if (!c) return false;
+  // Norm both sides: "credit card payment" -> "creditcardpayment".
+  return transferCategories().some((t) => c.includes(norm(t)));
 }
 
 /** Parse a currency/number cell: strips $ and commas, treats (x) as negative. */
@@ -158,8 +177,14 @@ function mapTransactions(records = []) {
     const tags = field(rec, ['tags']);
     const original = field(rec, ['original statement', 'originalstatement', 'notes']);
 
+    // Internal transfers / card payments are not spending or income — skip them
+    // from every flow metric (they still post as documents below for searchability).
+    const internal = isInternalTransfer(category);
+
     // Monarch convention: negative = money out, positive = money in.
-    if (amount < 0) {
+    if (internal) {
+      // no-op: excluded from spend/discretionary/income/cashflow
+    } else if (amount < 0) {
       spendByDay.set(day, (spendByDay.get(day) || 0) + -amount);
       // Discretionary = everything except fixed housing, so rent/mortgage doesn't
       // masquerade as a spending spike in the weekly review.
@@ -349,4 +374,6 @@ module.exports = {
   dedupeMetrics,
   parseAmount,
   parseDay,
+  isInternalTransfer,
+  isFixedCategory,
 };

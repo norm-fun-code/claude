@@ -55,6 +55,33 @@ test('mapTransactions aggregates spending/income per day and emits documents', (
   }
 });
 
+test('mapTransactions excludes internal transfers and card payments from flows', () => {
+  const records = [
+    { Date: '2026-06-05', Merchant: 'Fidelity', Category: 'Transfer', Account: 'Checking', Amount: '-16000.00' },
+    { Date: '2026-06-05', Merchant: 'Amex', Category: 'Credit Card Payment', Account: 'Checking', Amount: '-2164.22' },
+    { Date: '2026-06-05', Merchant: 'Incoming', Category: 'Transfer', Account: 'Checking', Amount: '5000.00' },
+    { Date: '2026-06-05', Merchant: "Sartiano's", Category: 'Restaurants & Bars', Account: 'Amex', Amount: '-438.16' },
+    { Date: '2026-06-05', Merchant: 'Landlord', Category: 'Rent', Account: 'Checking', Amount: '-4409.03' },
+    { Date: '2026-06-05', Merchant: 'Employer', Category: 'Paycheck', Account: 'Checking', Amount: '3000.00' },
+  ];
+  const { metrics } = m.mapTransactions(records);
+  const get = (metric) => metrics.find((x) => x.metric === metric)?.value;
+
+  // Transfers ($16k out, $5k in) and the $2,164 card payment are all excluded.
+  assert.equal(get('spending'), 4847.19); // 438.16 (dining) + 4409.03 (rent)
+  assert.equal(get('spending_discretionary'), 438.16); // rent is fixed, excluded
+  assert.equal(get('income'), 3000); // incoming transfer not counted as income
+  assert.equal(get('net_cashflow'), -1847.19); // 3000 - 4847.19
+});
+
+test('isInternalTransfer matches multi-word categories despite space-stripping norm', () => {
+  assert.equal(m.isInternalTransfer('Transfer'), true);
+  assert.equal(m.isInternalTransfer('Credit Card Payment'), true);
+  assert.equal(m.isInternalTransfer('Balance Adjustment'), true);
+  assert.equal(m.isInternalTransfer('Groceries'), false);
+  assert.equal(m.isInternalTransfer(''), false);
+});
+
 test('transaction document ids are stable across re-import', () => {
   const rec = [{ Date: '2026-05-01', Merchant: 'X', Category: 'Y', Account: 'Z', Amount: '-1.00' }];
   const a = m.mapTransactions(rec).documents[0].externalId;

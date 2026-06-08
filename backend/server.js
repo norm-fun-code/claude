@@ -376,6 +376,21 @@ app.post('/api/admin/reset-demo', async (req, res) => {
   }
 });
 
+// Rebuild the daily wealth flow metrics from stored Monarch transactions with
+// the current rules (excludes internal transfers / card payments). The sync
+// skips unchanged CSVs, so this is how historical spending gets corrected
+// without re-uploading. Re-runs analyze() so Insights reflect the new numbers.
+app.post('/api/admin/recompute-wealth', async (req, res) => {
+  try {
+    const { recomputeWealthFlows } = require('./src/services/recompute-wealth');
+    const result = await recomputeWealthFlows();
+    const analyzed = await analyze().catch((e) => ({ error: e.message }));
+    res.json({ ...result, analyzed: analyzed || null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Monarch CSV upload: POST the raw CSV body (transactions OR balances export).
 // The cloud can't see files on your Mac, so this is how the monthly export
 // reaches it — `curl --data-binary @export.csv`. Idempotent: re-uploading the
