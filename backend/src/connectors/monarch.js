@@ -193,10 +193,20 @@ function mapTransactions(records = []) {
       }
     } else if (amount > 0) incomeByDay.set(day, (incomeByDay.get(day) || 0) + amount);
 
+    // Prefer Monarch's stable transaction id (from the API) as the document
+    // identity: it survives edits to date/category/amount, so recategorizing or
+    // MOVING a transaction to another month updates the same document (its
+    // occurred_at changes) instead of orphaning a stale copy at the old date.
+    // CSV exports carry no id, so those fall back to a content hash.
+    const monarchId = field(rec, ['id', 'transactionid']);
+    const externalId = monarchId
+      ? `monarch:${monarchId}`
+      : stableId([day, String(amount), merchant, account || '', original || '']);
+
     documents.push({
       source: SOURCE,
       domain: 'wealth',
-      externalId: stableId([day, String(amount), merchant, account || '', original || '']),
+      externalId,
       title: merchant,
       url: null,
       content: [merchant, category, `$${amount}`, account].filter(Boolean).join(' — '),

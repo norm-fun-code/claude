@@ -82,6 +82,28 @@ test('isInternalTransfer matches multi-word categories despite space-stripping n
   assert.equal(m.isInternalTransfer(''), false);
 });
 
+test('document identity uses Monarch id and survives a date move', () => {
+  const june = m.mapTransactions([
+    { Id: 'abc123', Date: '2026-06-01', Merchant: 'Landlord', Category: 'Rent', Account: 'Checking', Amount: '-4409.03' },
+  ]).documents[0];
+  // Same transaction, moved to July (date changed) — identity must not change.
+  const july = m.mapTransactions([
+    { Id: 'abc123', Date: '2026-07-01', Merchant: 'Landlord', Category: 'Rent', Account: 'Checking', Amount: '-4409.03' },
+  ]).documents[0];
+
+  assert.equal(june.externalId, 'monarch:abc123');
+  assert.equal(july.externalId, 'monarch:abc123'); // stable across the move
+  assert.equal(june.occurredAt, '2026-06-01');
+  assert.equal(july.occurredAt, '2026-07-01'); // occurred_at follows the new date
+});
+
+test('CSV transactions (no id) fall back to a content hash id', () => {
+  const doc = m.mapTransactions([
+    { Date: '2026-06-01', Merchant: 'X', Category: 'Y', Account: 'Z', Amount: '-1.00' },
+  ]).documents[0];
+  assert.ok(doc.externalId && !doc.externalId.startsWith('monarch:'));
+});
+
 test('transaction document ids are stable across re-import', () => {
   const rec = [{ Date: '2026-05-01', Merchant: 'X', Category: 'Y', Account: 'Z', Amount: '-1.00' }];
   const a = m.mapTransactions(rec).documents[0].externalId;

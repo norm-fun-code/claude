@@ -4,7 +4,7 @@
 require('dotenv').config();
 const { connectors } = require('../connectors');
 const { insertMetrics } = require('../store/metrics');
-const { upsertDocument } = require('../store/documents');
+const { upsertDocument, pruneDocuments } = require('../store/documents');
 const { registerSource, markSync, getSource, updateConfig } = require('../store/sources');
 
 async function runConnector(c, { full = false } = {}) {
@@ -18,17 +18,22 @@ async function runConnector(c, { full = false } = {}) {
       config: source?.config ?? {},
     };
 
-    const { metrics = [], documents = [], config } = (await c.sync(ctx)) || {};
+    const { metrics = [], documents = [], config, reconcile } = (await c.sync(ctx)) || {};
     const written = await insertMetrics(metrics);
     let docs = 0;
     for (const doc of documents) {
       const id = await upsertDocument(doc);
       if (id) docs++;
     }
+    // Reconcile the synced window: prune stored docs the source no longer reports
+    // there (deleted, or moved to another month). Runs AFTER the upserts so the
+    // fresh set is already persisted and only stale rows are removed.
+    let pruned = 0;
+    if (reconcile) pruned = await pruneDocuments(reconcile);
     // Persist any cursor/state the connector wants to remember for next run.
     if (config) await updateConfig(c.id, config);
     await markSync(c.id);
-    return { id: c.id, metrics: written, documents: docs };
+    return { id: c.id, metrics: written, documents: docs, pruned };
   } catch (err) {
     await markSync(c.id, { error: err.message });
     return { id: c.id, error: err.message };

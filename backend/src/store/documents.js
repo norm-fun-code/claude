@@ -238,8 +238,33 @@ async function spendTransactions({ days = 120 } = {}) {
   return rows.map((r) => ({ day: r.day, merchant: r.merchant, amount: Number(r.amount), category: r.category }));
 }
 
+// Reconcile a re-synced window against the source's current truth: delete
+// documents in [from, to] for this source/domain whose external_id is NOT in the
+// freshly-fetched set. This is how a transaction moved to a different month (or
+// deleted) gets removed from a period it no longer belongs to — the connector
+// can only ADD/UPDATE via upsert, never know what disappeared, so the caller
+// passes the ids it just saw and we prune the rest.
+async function pruneDocuments({ source, domain = null, from, to, keepExternalIds = [] }) {
+  if (!source || !from || !to) return 0;
+  // Safety: an empty keep-set means the fetch returned nothing — don't delete a
+  // whole window off a transient empty/failed read. Genuine "all deleted in
+  // Monarch" is vanishingly rare and not worth that risk.
+  if (!keepExternalIds.length) return 0;
+  const { rowCount } = await query(
+    `DELETE FROM documents
+      WHERE source = $1
+        AND ($2::text IS NULL OR domain = $2)
+        AND occurred_at::date >= $3::date
+        AND occurred_at::date <= $4::date
+        AND NOT (external_id = ANY($5::text[]))`,
+    [source, domain, from, to, keepExternalIds]
+  );
+  return rowCount;
+}
+
 module.exports = {
   upsertDocument,
+  pruneDocuments,
   searchSimilar,
   searchText,
   recent,

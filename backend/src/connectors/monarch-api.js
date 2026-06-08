@@ -77,7 +77,9 @@ module.exports = {
     }
 
     // Transactions -> daily spending/income/cashflow + per-transaction documents.
+    // Carry Monarch's stable id so edits/moves update the same document.
     const txnRecords = data.txns.map((t) => ({
+      Id: t.id,
       Date: t.date,
       Amount: t.amount,
       Merchant: t.merchant?.name || t.notes || 'Transaction',
@@ -98,6 +100,16 @@ module.exports = {
 
     const metrics = dedupeMetrics([...txnMapped.metrics, ...balMapped.metrics]);
     const config = mintedToken ? { ...(ctx.config || {}), monarchToken: mintedToken } : undefined;
-    return { metrics, documents: txnMapped.documents, config };
+
+    // Reconcile the fetched window against Monarch's current truth: after the
+    // fresh docs are upserted, the runner prunes any stored transaction in
+    // [startDate, endDate] that Monarch no longer reports there — i.e. one that
+    // was deleted or MOVED to a different month. Without this, moving an expense
+    // to a later month would leave its old-dated copy still counted in the
+    // original month.
+    const keepExternalIds = data.txns.map((t) => `monarch:${t.id}`);
+    const reconcile = { source: 'monarch', domain: 'wealth', from: startDate, to: endDate, keepExternalIds };
+
+    return { metrics, documents: txnMapped.documents, config, reconcile };
   },
 };
