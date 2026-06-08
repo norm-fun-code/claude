@@ -9,7 +9,7 @@ const { query } = require('../db');
  *   value: number, unit?: string, source: string, metadata?: object}>} rows
  * @returns {Promise<number>} number of rows written
  */
-async function insertMetrics(rows) {
+async function insertMetrics(rows, run = query) {
   const clean = (rows || []).filter(
     (r) => r && r.domain && r.metric && r.source && Number.isFinite(Number(r.value))
   );
@@ -33,7 +33,7 @@ async function insertMetrics(rows) {
   // metadata params come last so each tuple can reference its own jsonb
   clean.forEach((r) => values.push(r.metadata ?? {}));
 
-  await query(
+  await run(
     `INSERT INTO metrics (ts, domain, metric, value, unit, source, metadata)
      VALUES ${tuples.join(', ')}
      ON CONFLICT (ts, domain, metric, source) DO UPDATE

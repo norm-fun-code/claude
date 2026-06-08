@@ -7,7 +7,7 @@
 // files, so simply re-syncing won't rewrite historical metric rows that were
 // computed under the old (transfer-inflated) logic. The transaction documents,
 // however, persist every transaction, so we can faithfully recompute from them.
-const { query } = require('../db');
+const { query, withTransaction } = require('../db');
 const metricsStore = require('../store/metrics');
 const { mapTransactions } = require('../connectors/monarch');
 
@@ -38,11 +38,16 @@ async function recomputeWealthFlows() {
 
   // 3) Clear the old flow rows first — a day that was pure transfers now has no
   //    spending row, so an upsert alone would leave its stale inflated value.
-  await query(
-    `DELETE FROM metrics WHERE source = 'monarch' AND domain = 'wealth' AND metric = ANY($1)`,
-    [FLOW_METRICS]
-  );
-  const metricsWritten = await metricsStore.insertMetrics(metrics);
+  //    Delete + re-insert run in ONE transaction so a concurrent read can never
+  //    observe a window with the flow metrics momentarily missing.
+  const metricsWritten = await withTransaction(async (client) => {
+    const run = (text, params) => client.query(text, params);
+    await run(
+      `DELETE FROM metrics WHERE source = 'monarch' AND domain = 'wealth' AND metric = ANY($1)`,
+      [FLOW_METRICS]
+    );
+    return metricsStore.insertMetrics(metrics, run);
+  });
 
   return { transactions: records.length, metricsWritten };
 }

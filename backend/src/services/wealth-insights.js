@@ -5,6 +5,7 @@
 const documents = require('../store/documents');
 const metricsStore = require('../store/metrics');
 const { computeSubscriptionInsights } = require('../intelligence/subscriptions');
+const { isInternalTransfer } = require('../connectors/monarch');
 const stats = require('../intelligence/stats');
 
 let monarchApi = null;
@@ -56,7 +57,11 @@ async function buildWealthInsights() {
   // 1) Spend vs your usual, from stored transactions.
   let rows = [];
   try {
-    rows = await documents.monthlyCategorySpend({ months: 4 });
+    // Exclude internal transfers / card payments so the category breakdown
+    // matches the spending metric (which already excludes them). Filtered here
+    // rather than in the store helper so diagnostics can still see raw rows.
+    rows = (await documents.monthlyCategorySpend({ months: 4 }))
+      .filter((r) => !isInternalTransfer(r.category));
   } catch (err) {
     console.error('[wealth-insights] category spend failed:', err.message);
   }
@@ -121,7 +126,8 @@ async function buildWealthInsights() {
 
   // 1b) Subscriptions / recurring charges (Rocket-Money-style).
   try {
-    const txns = await documents.spendTransactions({ days: 150 });
+    const txns = (await documents.spendTransactions({ days: 150 }))
+      .filter((t) => !isInternalTransfer(t.category));
     if (txns.length) {
       for (const s of computeSubscriptionInsights(txns)) insights.push(s);
     }
