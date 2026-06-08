@@ -1294,6 +1294,13 @@ app.get('/api/briefing', async (req, res) => {
         console.error('[embed] failed:', e.message);
       });
     })
+    // Rebuild wealth flow metrics from the just-synced transactions, so Monarch
+    // recategorizations (e.g. income -> transfer) are reflected automatically —
+    // including days whose only contributor was recategorized away, which a
+    // plain upsert can't zero out.
+    .then(() => require('./src/services/recompute-wealth').recomputeWealthFlows()
+      .then((r) => { if (r?.metricsWritten) console.log(`[recompute-wealth] ${r.transactions} txns -> ${r.metricsWritten} flow rows`); })
+      .catch((e) => console.error('[recompute-wealth] failed:', e.message)))
     .then(() => analyze())
     .then((s) => {
       if (s) console.log(`[analyze] ${s.trends} trends, ${s.correlations} correlations, ${s.actions} actions`);

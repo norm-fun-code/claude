@@ -23,6 +23,10 @@ async function recomputeWealthFlows() {
 
   // 2) Reconstruct records mapTransactions understands (field() matches on
   //    normalized header names, so these canonical keys resolve cleanly).
+  // Safety: never wipe flow metrics off the back of an empty/failed read — if
+  // there are no transaction documents, leave existing metrics untouched.
+  if (rows.length === 0) return { transactions: 0, metricsWritten: 0, skipped: 'no transactions' };
+
   const records = rows.map((r) => ({
     date: (r.occurred_at instanceof Date ? r.occurred_at.toISOString() : String(r.occurred_at)).slice(0, 10),
     amount: r.metadata.amount,

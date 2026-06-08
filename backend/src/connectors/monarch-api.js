@@ -40,10 +40,14 @@ module.exports = {
       return { txns, accounts };
     };
 
-    // Incremental window: 14-day lookback from last sync (late-posting txns),
-    // 45 days on the very first API run.
+    // Incremental window: 35-day lookback from last sync, 45 on the first run.
+    // The window is wide enough to RE-PULL recently recategorized transactions
+    // (people often fix a category a couple weeks late in Monarch), so the
+    // correction reaches our stored docs and the post-sync flow recompute picks
+    // it up. Override with MONARCH_LOOKBACK_DAYS.
+    const lookbackDays = Number(process.env.MONARCH_LOOKBACK_DAYS) || 35;
     const since = ctx.lastSyncAt
-      ? new Date(new Date(ctx.lastSyncAt).getTime() - 14 * DAY)
+      ? new Date(new Date(ctx.lastSyncAt).getTime() - lookbackDays * DAY)
       : new Date(Date.now() - 45 * DAY);
     const startDate = ymd(since);
     const endDate = ymd(new Date());
