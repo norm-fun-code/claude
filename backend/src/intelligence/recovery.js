@@ -195,12 +195,11 @@ function computeHealthComposites(seriesByKey, opts = {}) {
   const rec = recoveryScore(seriesByKey, opts);
   if (rec) {
     const { band, guidance } = recoveryBand(rec.score);
-    const partStr = Object.entries(rec.parts).map(([k, v]) => `${k} ${v}`).join(', ');
     findings.push({
       type: 'recovery',
       domains: ['health'],
       title: `Recovery ${rec.score}/100 — ${band}`,
-      detail: `${guidance} Composite of your own baselines (${partStr}).`,
+      detail: guidance,
       confidence: rec.inputs >= 3 ? 0.9 : 0.7,
       evidence: { auto: true, kind: 'recovery', score: rec.score, band, parts: rec.parts },
     });
