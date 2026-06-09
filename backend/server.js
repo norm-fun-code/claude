@@ -1118,8 +1118,13 @@ app.get('/api/briefing', async (req, res) => {
     }
 
     // Health/wellbeing/habits findings for the Health tab.
-    healthInsights = insightPool
-      .filter((f) => Array.isArray(f.domains) && f.domains.some((dn) => ['health', 'wellbeing', 'habits'].includes(dn)))
+    // Prioritize habit_split (habit-vs-health correlations) at the top since
+    // they're the most actionable; fill remaining slots with other types.
+    const healthPool = insightPool
+      .filter((f) => Array.isArray(f.domains) && f.domains.some((dn) => ['health', 'wellbeing', 'habits'].includes(dn)));
+    const habitSplits = healthPool.filter((f) => f.type === 'habit_split');
+    const others = healthPool.filter((f) => f.type !== 'habit_split');
+    healthInsights = [...habitSplits, ...others]
       .slice(0, 6)
       .map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains }));
   } catch (err) {

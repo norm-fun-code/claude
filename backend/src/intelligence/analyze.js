@@ -286,6 +286,141 @@ function computeHabitConsistency(seriesByKey, opts = {}) {
   return findings;
 }
 
+/**
+ * Pure: habit-vs-health split analysis. Splits each day as "habit on" or
+ * "habit off" and computes the mean health-metric value on each side.
+ * Far more actionable than a raw Pearson r — "on cold-shower days, HRV
+ * averages 62ms vs 49ms" is a concrete, personal finding.
+ */
+function computeHabitHealthSplits(seriesByKey, opts = {}) {
+  const MIN_N = 5;       // per group (habit-on AND habit-off)
+  const MIN_PCT = 0.05;  // 5% minimum difference to report
+  const MAX_RESULTS = 5;
+
+  const HABITS = {
+    'habits:morning_tm':   'Morning meditation',
+    'habits:afternoon_tm': 'Afternoon meditation',
+    'habits:cold_shower':  'Cold shower',
+    'habits:gratitude':    'Gratitude practice',
+    'habits:exercise':     'Exercise',
+  };
+
+  const OUTCOMES = {
+    'health:hrv':         { label: 'HRV',         unit: 'ms',  good: 'up'   },
+    'health:resting_hr':  { label: 'Resting HR',  unit: 'bpm', good: 'down' },
+    'health:sleep_score': { label: 'Sleep score', unit: '',    good: 'up'   },
+    'health:sleep_hours': { label: 'Sleep',       unit: 'h',   good: 'up'   },
+  };
+
+  function dayKey(d) {
+    if (d instanceof Date) return d.toISOString().slice(0, 10);
+    return String(d).slice(0, 10);
+  }
+
+  function toMap(key) {
+    const series = seriesByKey[key];
+    if (!series || series.length === 0) return null;
+    const m = new Map();
+    for (const r of series) m.set(dayKey(r.day), Number(r.value));
+    return m;
+  }
+
+  function splitStats(habitMap, outcomeMap) {
+    const onVals = [], offVals = [];
+    for (const [day, val] of outcomeMap) {
+      const h = habitMap.get(day);
+      if (h === undefined || !Number.isFinite(val)) continue;
+      (h >= 0.5 ? onVals : offVals).push(val);
+    }
+    if (onVals.length < MIN_N || offVals.length < MIN_N) return null;
+    const mean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
+    const onMean = mean(onVals), offMean = mean(offVals);
+    const pct = offMean !== 0 ? (onMean - offMean) / Math.abs(offMean) : null;
+    if (pct == null || Math.abs(pct) < MIN_PCT) return null;
+    return { onMean, offMean, pct, onN: onVals.length, offN: offVals.length };
+  }
+
+  const candidates = [];
+
+  // Single habit × outcome pairs.
+  for (const [habitKey, habitLabel] of Object.entries(HABITS)) {
+    const hMap = toMap(habitKey);
+    if (!hMap) continue;
+    for (const [outcomeKey, info] of Object.entries(OUTCOMES)) {
+      const oMap = toMap(outcomeKey);
+      if (!oMap) continue;
+      const s = splitStats(hMap, oMap);
+      if (s) candidates.push({ habitLabel, info, outcomeKey, s });
+    }
+  }
+
+  // "Both meditations" — special combo the user specifically cares about.
+  const mornMap = toMap('habits:morning_tm');
+  const aftMap  = toMap('habits:afternoon_tm');
+  if (mornMap && aftMap) {
+    const bothMap = new Map();
+    for (const [day, v] of mornMap) {
+      const v2 = aftMap.get(day);
+      if (v2 !== undefined) bothMap.set(day, v >= 0.5 && v2 >= 0.5 ? 1 : 0);
+    }
+    for (const [outcomeKey, info] of Object.entries(OUTCOMES)) {
+      const oMap = toMap(outcomeKey);
+      if (!oMap) continue;
+      const s = splitStats(bothMap, oMap);
+      if (s) candidates.push({ habitLabel: 'Both meditations', info, outcomeKey, s });
+    }
+  }
+
+  // Best effect per outcome so we don't flood with 5 rows about HRV.
+  const bestByOutcome = new Map();
+  for (const c of candidates) {
+    const prev = bestByOutcome.get(c.info.label);
+    if (!prev || Math.abs(c.s.pct) > Math.abs(prev.s.pct)) bestByOutcome.set(c.info.label, c);
+  }
+  const top = [...bestByOutcome.values()]
+    .sort((a, b) => Math.abs(b.s.pct) - Math.abs(a.s.pct))
+    .slice(0, MAX_RESULTS);
+
+  const fmt = (n, unit) => {
+    if (unit === 'h')              return `${Math.round(n * 10) / 10}h`;
+    if (unit === 'ms' || unit === 'bpm') return `${Math.round(n)}${unit}`;
+    return String(Math.round(n));
+  };
+
+  return top.map(({ habitLabel, info, outcomeKey, s }) => {
+    const { onMean, offMean, pct, onN, offN } = s;
+    const improved = (info.good === 'up' && pct > 0) || (info.good === 'down' && pct < 0);
+    const direction = pct > 0 ? 'higher' : 'lower';
+    const pctStr = `${pct >= 0 ? '+' : ''}${Math.round(pct * 100)}%`;
+    const onFmt = fmt(onMean, info.unit);
+    const offFmt = fmt(offMean, info.unit);
+
+    return {
+      type: 'habit_split',
+      domains: ['habits', 'health'],
+      title: `${habitLabel}: ${info.label} ${onFmt} vs ${offFmt} on other days (${pctStr})`,
+      detail:
+        `On the ${onN} days you logged ${habitLabel.toLowerCase()}, ${info.label.toLowerCase()} averaged ` +
+        `${onFmt} — ${Math.abs(Math.round(pct * 100))}% ${direction} than on the ${offN} days without (${offFmt}). ` +
+        (improved
+          ? `This pattern is consistent with ${habitLabel.toLowerCase()} supporting your ${info.label.toLowerCase()}.`
+          : `Association, not proof of cause — other factors may drive this pattern.`),
+      confidence: Math.min(0.9, Math.abs(pct) / 0.3),
+      evidence: {
+        auto: true,
+        kind: 'habit_split',
+        habit: habitLabel,
+        outcome: outcomeKey,
+        onMean:  round(onMean),
+        offMean: round(offMean),
+        pct:     round(pct, 3),
+        onN,
+        offN,
+      },
+    };
+  });
+}
+
 /** Orchestrator: load series, compute findings, persist them. */
 async function analyze(opts = {}) {
   const o = { ...DEFAULTS, ...opts };
@@ -312,6 +447,7 @@ async function analyze(opts = {}) {
   const anomalies = computeAnomalies(seriesByKey, o);
   const composites = computeHealthComposites(seriesByKey, o);
   const habitConsistency = computeHabitConsistency(seriesByKey, o);
+  const habitHealthSplits = computeHabitHealthSplits(seriesByKey, o);
 
   // Rank the highest-leverage actions from the findings + any off-track goals.
   const latestByKey = {};
@@ -330,7 +466,7 @@ async function analyze(opts = {}) {
   // Goal achievement-probability forecasts from the same loaded series.
   const forecasts = computeForecasts(goals, seriesByKey);
 
-  const all = [...trends, ...correlations, ...anomalies, ...composites, ...actions, ...forecasts, ...habitConsistency];
+  const all = [...trends, ...correlations, ...anomalies, ...composites, ...actions, ...forecasts, ...habitConsistency, ...habitHealthSplits];
   const windowStart = from;
   const windowEnd = new Date();
 
@@ -341,7 +477,7 @@ async function analyze(opts = {}) {
   const { withTransaction } = require('../db');
   await withTransaction(async (client) => {
     const tx = (text, params) => client.query(text, params);
-    await findingsStore.supersedeAuto(['trend', 'correlation', 'anomaly', 'leverage', 'forecast', 'habit_consistency', ...COMPOSITE_TYPES], tx);
+    await findingsStore.supersedeAuto(['trend', 'correlation', 'anomaly', 'leverage', 'forecast', 'habit_consistency', 'habit_split', ...COMPOSITE_TYPES], tx);
     for (const f of all) {
       await findingsStore.createFinding({ ...f, windowStart, windowEnd }, tx);
     }
@@ -356,10 +492,11 @@ async function analyze(opts = {}) {
     actions: actions.length,
     forecasts: forecasts.length,
     habitConsistency: habitConsistency.length,
+    habitHealthSplits: habitHealthSplits.length,
   };
 }
 
-module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, DEFAULTS };
+module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeHabitHealthSplits, DEFAULTS };
 
 // CLI entrypoint
 if (require.main === module) {
