@@ -579,7 +579,7 @@ app.get('/api/diag/gemini', async (req, res) => {
 // GET /api/diag/recovery-baseline — shows the raw series and baseline stats
 // (mean, std, z, n) that drive the recovery percentile scores, so we can
 // verify the data matches what Apple Health reports.
-app.get('/api/diag/recovery-baseline', requireAuth, async (req, res) => {
+app.get('/api/diag/recovery-baseline', async (req, res) => {
   try {
     const metricsStore = require('./src/store/metrics');
     const stats = require('./src/intelligence/stats');
@@ -1114,14 +1114,41 @@ app.get('/api/briefing', async (req, res) => {
     // rotating insights — pull them out so they're shown fresh every day and
     // surface the recovery score as its own headline field.
     const COMPOSITE_TYPES = ['recovery', 'sleep_debt', 'sleep_consistency', 'training_load'];
-    const recoveryFinding = open.find((f) => f.type === 'recovery');
-    if (recoveryFinding) {
-      recovery = {
-        score: recoveryFinding.evidence?.score ?? null,
-        band: recoveryFinding.evidence?.band ?? null,
-        parts: recoveryFinding.evidence?.parts ?? {},
-        detail: recoveryFinding.detail,
-      };
+
+    // Recovery is computed LIVE from the spine at every briefing build, not
+    // re-served from the finding analyze() stored at its morning run. The
+    // stored finding scores whatever the DB held at ~8:30am — for a daytime
+    // watch wearer there's no HRV/RHR row for today yet at that hour, so its
+    // "latest" is yesterday's value, and the card would contradict the live
+    // HealthKit numbers below it all day. Falls back to the stored finding.
+    try {
+      const { recoveryScore, recoveryBand } = require('./src/intelligence/recovery');
+      const liveMetrics = require('./src/store/metrics');
+      const seriesByKey = {};
+      const from60 = new Date(Date.now() - 60 * 864e5);
+      for (const key of ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score']) {
+        const [dm, mt] = key.split(':');
+        const rows = await liveMetrics.dailyAggregate({ domain: dm, metric: mt, from: from60, agg: 'avg', excludeSource: 'seed' });
+        if (rows.length) seriesByKey[key] = rows;
+      }
+      const rec = recoveryScore(seriesByKey);
+      if (rec) {
+        const { band, guidance } = recoveryBand(rec.score);
+        recovery = { score: rec.score, band, parts: rec.parts, detail: guidance };
+      }
+    } catch (err) {
+      console.error('[recovery live] failed:', err.message);
+    }
+    if (!recovery) {
+      const recoveryFinding = open.find((f) => f.type === 'recovery');
+      if (recoveryFinding) {
+        recovery = {
+          score: recoveryFinding.evidence?.score ?? null,
+          band: recoveryFinding.evidence?.band ?? null,
+          parts: recoveryFinding.evidence?.parts ?? {},
+          detail: recoveryFinding.detail,
+        };
+      }
     }
     healthComposites = open
       .filter((f) => COMPOSITE_TYPES.includes(f.type) && f.type !== 'recovery')
@@ -1148,8 +1175,13 @@ app.get('/api/briefing', async (req, res) => {
     }
 
     // Health/wellbeing/habits findings for the Health tab.
-    healthInsights = insightPool
-      .filter((f) => Array.isArray(f.domains) && f.domains.some((dn) => ['health', 'wellbeing', 'habits'].includes(dn)))
+    // Prioritize habit_split (habit-vs-health correlations) at the top since
+    // they're the most actionable; fill remaining slots with other types.
+    const healthPool = insightPool
+      .filter((f) => Array.isArray(f.domains) && f.domains.some((dn) => ['health', 'wellbeing', 'habits'].includes(dn)));
+    const habitSplits = healthPool.filter((f) => f.type === 'habit_split');
+    const others = healthPool.filter((f) => f.type !== 'habit_split');
+    healthInsights = [...habitSplits, ...others]
       .slice(0, 6)
       .map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains }));
   } catch (err) {

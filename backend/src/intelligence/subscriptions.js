@@ -132,7 +132,7 @@ function computeSubscriptionInsights(transactions, opts = {}) {
     title: `${active.length} subscriptions ≈ ${fmt(totalMonthly)}/mo`,
     detail:
       `You have ${active.length} recurring charges totaling about ${fmt(totalMonthly)}/month (${fmt(totalAnnual)}/yr). ` +
-      `Biggest: ${active.slice(0, 3).map((s) => `${s.merchant} (${fmt(s.amount)}/${s.cadence === 'yearly' ? 'yr' : s.cadence === 'weekly' ? 'wk' : 'mo'})`).join(', ')}.`,
+      `Biggest: ${active.slice(0, 3).map((s) => `${s.merchant} (${fmt(s.amount)}/${s.cadence === 'yearly' ? 'yr' : s.cadence === 'weekly' ? 'wk' : s.cadence === 'quarterly' ? 'qtr' : 'mo'})`).join(', ')}.`,
     evidence: { kind: 'subscriptions', count: active.length, totalAnnual, totalMonthly, items: active.slice(0, 10) },
   });
 

@@ -13,7 +13,6 @@ export interface StrengthSession {
   id: string;
   label: string;
   duration: string;
-  constraints: string[];
   warmup: Exercise[];
   working: Exercise[];
 }
@@ -76,14 +75,8 @@ export interface WorkoutResult {
 
 export const SESSION_A: StrengthSession = {
   id: 'push',
-  label: 'Session A — Push',
-  duration: '~35 min',
-  constraints: [
-    'No Valsalva — exhale on every rep',
-    'No cervical extension under load — head on bench throughout',
-    'No overhead pressing (permanent — C4-C5 nerve impingement)',
-    'Cervical neutral mandatory in all exercises',
-  ],
+  label: 'Push',
+  duration: '~45 min',
   warmup: [
     {
       name: 'Band pull-aparts',
@@ -99,143 +92,106 @@ export const SESSION_A: StrengthSession = {
       load: 'Bodyweight',
       cue: 'Draw chin straight back — not down. Restores cervical lordosis.',
     },
-    {
-      name: 'Shoulder CARs',
-      sets: '1 × 5 slow each side',
-      rest: '30 sec',
-      load: 'Bodyweight',
-      cue: 'Full controlled articular rotation. Joint prep before loading.',
-    },
   ],
   working: [
     {
-      name: 'Incline dumbbell press',
-      sets: '3 × 10',
+      name: 'Machine Incline Chest Press',
+      sets: '3 × 8–12',
       rest: '75 sec',
-      load: 'RPE 7–8, moderate only',
-      cue: 'Head stays on bench — never crane or lift neck. Exhale on press. 3-sec eccentric. Cervical neutral is non-negotiable.',
+      cue: 'Head back against pad throughout. Exhale on press.',
     },
     {
-      name: 'Cable chest press (chest height)',
-      sets: '3 × 12',
+      name: 'DB Lateral Raises',
+      sets: '3 × 12–15',
       rest: '60 sec',
-      load: 'Light-moderate',
-      cue: 'Permanently replaces overhead press. Arms at chest height, step back slightly from cable, press forward. Exhale. Zero cervical risk.',
+      cue: 'Controlled arc — no shrugging. Lead with elbows, not wrists.',
     },
     {
-      name: 'Cable face pull',
-      sets: '3 × 15',
-      rest: '45 sec',
-      load: 'Light',
-      cue: 'Priority exercise for rotator cuff AND cervical health. External rotation at peak. Also do 1 set as a desk break 2× per day.',
+      name: 'Cable Triceps Pushdown',
+      sets: '3 × 10–15',
+      rest: '60 sec',
+      cue: 'Eyes forward, head neutral. Elbows locked at sides. Full extension at bottom.',
     },
     {
-      name: 'Leg press',
-      sets: '3 × 12',
+      name: 'Leg Press',
+      sets: '3 × 8–12',
       rest: '75 sec',
-      load: 'Moderate — start light, build over weeks',
-      cue: 'Feet shoulder-width, toes slightly out. Full range without lower back rounding at the bottom. Exhale on press — no Valsalva. No heavy load given PF constraints.',
+      cue: 'Exhale on push — no breath-hold. Feet shoulder-width, toes slightly out. Full range without lower back rounding.',
     },
     {
-      name: 'Leg extension',
-      sets: '3 × 12',
-      rest: '60 sec',
-      load: 'Light-moderate',
-      cue: 'Quad isolation. Controlled full extension, slow 3-sec return. No axial load. PF safe.',
-    },
-    {
-      name: 'Copenhagen plank',
-      sets: '3 × 25 sec each side',
+      name: 'Calf Raises',
+      sets: '3 × 12–15',
       rest: '45 sec',
-      load: 'Bodyweight',
-      cue: 'Hip adductor + lateral core. Top leg on bench, bottom leg elevated. No cervical involvement.',
+      cue: 'Full range: all the way up, all the way down. Pause at the stretch.',
     },
   ],
 };
 
 export const SESSION_B: StrengthSession = {
-  id: 'hinge_pull',
-  label: 'Session B — Hinge + Pull',
-  duration: '~30 min',
-  constraints: [
-    'No Valsalva — exhale on every rep',
-    'No passive dead hang',
-    'No heavy axial loading',
-    'Cervical neutral: chin tucked, eyes 45° down during RDL',
-  ],
+  id: 'pull',
+  label: 'Pull',
+  duration: '~45 min',
   warmup: [
     {
-      name: 'Cat-cow + thoracic rotation',
-      sets: '2 × 8 each',
-      rest: '30 sec',
-      load: 'Bodyweight',
-      cue: 'Prioritize thoracic extension. Rotation counteracts cervical dextroscoliosis pattern.',
-    },
-    {
       name: 'Chin tucks',
-      sets: '2 × 10 (hold 3 sec)',
+      sets: '2 × 10 (hold 3 sec each)',
       rest: '30 sec',
       load: 'Bodyweight',
-      cue: 'Restores cervical lordosis before loading the posterior chain.',
+      cue: 'Draw chin straight back. Restores cervical lordosis before loading the posterior chain.',
     },
     {
-      name: '90/90 hip stretch',
-      sets: '1 × 45 sec each side',
+      name: 'Band pull-aparts',
+      sets: '2 × 15',
       rest: '30 sec',
-      load: 'Bodyweight',
-      cue: 'Posterior hip capsule prep. Feeds directly into single-leg RDL mechanics.',
+      load: 'Light band',
+      cue: 'Highest-priority accessory — do these every day as a desk break too.',
     },
   ],
   working: [
     {
-      name: 'Single-leg Romanian deadlift',
-      sets: '3 × 8 each side',
-      rest: '60 sec',
-      load: '10–20 lb DB',
-      cue: 'Most important longevity exercise in the protocol. Chin tucked, eyes at 45° down — never look up during the balance movement. Hinge from hip, flat back, slow descent.',
+      name: 'Lat Pulldown (front)',
+      sets: '3 × 8–12',
+      rest: '75 sec',
+      cue: 'Pull to upper chest only — never behind the neck. Chest tall, no forward lean.',
     },
     {
-      name: 'Neutral grip lat pulldown',
+      name: 'Seated Cable Row',
       sets: '3 × 10–12',
       rest: '75 sec',
-      load: 'Light-moderate',
-      cue: 'V-bar or neutral handle (palms facing each other). Reduces C5 nerve tension vs supinated grip. Chest tall, no forward lean, no cervical flexion under load.',
+      cue: 'Chest tall throughout. Squeeze shoulder blades at the finish. Control the return.',
     },
     {
-      name: 'Machine rows',
+      name: 'Face Pulls',
+      sets: '3 × 15',
+      rest: '45 sec',
+      cue: 'Highest-priority accessory. External rotation at peak, elbows high. Also do 1 set as a desk break 2× per day.',
+    },
+    {
+      name: 'DB Bicep Curls',
+      sets: '3 × 10–12',
+      rest: '45 sec',
+      cue: 'Controlled tempo — slow 3-sec eccentric. No swinging.',
+    },
+    {
+      name: 'Leg Extensions',
       sets: '3 × 10–12',
       rest: '60 sec',
-      load: 'Moderate',
-      cue: 'Horizontal pull — scapular retraction first, then elbow drive. Chest tall throughout. Adds the horizontal pulling pattern the session was missing.',
-    },
-    {
-      name: 'Scapular bar hang',
-      sets: '3 × 25 sec',
-      rest: '60 sec',
-      load: 'Bodyweight',
-      cue: 'Grip bar, actively depress and elevate scapulae. Do NOT relax into passive hang — pending Dr. Lachmann clearance for full dead hang due to C3-C4 cord deformity.',
-      flag: 'Pending Dr. Lachmann clearance for full dead hang',
-    },
-    {
-      name: 'Hammer curls',
-      sets: '3 × 12',
-      rest: '45 sec',
-      load: 'Moderate DB',
-      cue: 'Brachialis and brachioradialis. Neutral grip throughout. Slow 3-sec eccentric. No swinging.',
+      load: 'Light-moderate',
+      cue: 'Or DB Romanian Deadlift (light, neutral spine). Full extension, slow 3-sec return.',
     },
   ],
 };
 
 export const ZONE2: Zone2Session = {
   id: 'zone2',
-  label: 'Zone 2 — Incline Walk',
-  duration: '45–60 min',
+  label: 'Zone 2 — Incline Walk or Jog',
+  duration: '30–45 min',
   details: [
-    'Incline treadmill 6–10% grade OR outdoor hills — flat walking undershoots target HR',
+    'Incline walk (treadmill 6–10% grade or hills) or easy jog — your pick',
     'Target HR: 135–145 BPM throughout',
-    'Should be able to hold a full conversation at target HR',
-    'If HR drops below 135: increase grade. If above 145: decrease grade.',
-    'Adjust grade as fitness recovers — you will need more grade to hit same HR over time.',
+    'Should be able to hold a conversation at target HR',
+    'Walking flat usually undershoots target HR — add grade or switch to a jog',
+    'If HR above 145: ease off. If below 135: add grade or pace.',
   ],
 };
 
@@ -285,7 +241,7 @@ export const REST: RestSession = {
 };
 
 export const WEEKLY_SCHEDULE: Record<number, string> = {
-  0: 'hinge_pull', // Sunday → Session B (HRV logic downgrades if yellow/red)
+  0: 'pull', // Sunday → Pull (HRV logic downgrades if yellow/red)
   1: 'zone2',
   2: 'mobility',
   3: 'intervals',
@@ -328,7 +284,7 @@ export function getTodaysWorkout(dayOfWeek: number, hrv: number | null): Workout
       zone2: ZONE2,
       mobility: MOBILITY,
       push: SESSION_A,
-      hinge_pull: SESSION_B,
+      pull: SESSION_B,
       rest: REST,
       intervals: INTERVALS,
     };
@@ -336,18 +292,19 @@ export function getTodaysWorkout(dayOfWeek: number, hrv: number | null): Workout
   }
   const zone = getHRVZone(hrv);
   if (zone === 'red') {
-    return { workout: ZONE2, zone, override: 'Red HRV — all training replaced with Zone 2 walk.' };
+    return { workout: ZONE2, zone, override: 'Red HRV — all training replaced with Zone 2.' };
   }
   const scheduled = WEEKLY_SCHEDULE[dayOfWeek];
-  if (scheduled === 'hinge_pull') {
+  if (scheduled === 'pull') {
     if (zone === 'green') return { workout: SESSION_B, zone };
-    return { workout: ZONE2, zone, override: 'Yellow HRV — Session B replaced with Zone 2 walk.' };
+    return { workout: ZONE2, zone, override: 'Yellow HRV — Pull session replaced with Zone 2.' };
   }
   if (scheduled === 'intervals') return { workout: INTERVALS, zone };
   const workoutMap: Record<string, AnySession> = {
     zone2: ZONE2,
     mobility: MOBILITY,
     push: SESSION_A,
+    pull: SESSION_B,
     rest: REST,
   };
   return { workout: workoutMap[scheduled] ?? REST, zone };

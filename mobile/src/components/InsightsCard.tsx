@@ -23,6 +23,7 @@ const TYPE_LABEL: Record<string, string> = {
   sleep_consistency: 'SLEEP',
   training_load: 'TRAINING LOAD',
   habit_consistency: 'HABIT STREAK',
+  habit_split: 'HABIT IMPACT',
 };
 
 // The intelligence findings — trends and confirmed cross-domain patterns —

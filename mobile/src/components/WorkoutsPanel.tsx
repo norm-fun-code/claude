@@ -28,7 +28,7 @@ const WORKOUT_TYPE_COLORS: Record<string, string> = {
   mobility: '#534AB7',
   intervals: '#993C1D',
   push: '#0C447C',
-  hinge_pull: '#0C447C',
+  pull: '#0C447C',
   rest: '#666666',
 };
 
@@ -43,7 +43,7 @@ function getWorkoutShortLabel(id: string): string {
     case 'mobility': return 'Mobility';
     case 'intervals': return 'Intervals';
     case 'push': return 'Push';
-    case 'hinge_pull': return 'Hinge+Pull';
+    case 'pull': return 'Pull';
     case 'rest': return 'Rest';
     default: return 'Rest';
   }
@@ -993,7 +993,7 @@ function renderWorkoutContent(
   c: ReturnType<typeof getColors>,
   isDark: boolean,
 ) {
-  if (workout.id === 'push' || workout.id === 'hinge_pull') {
+  if (workout.id === 'push' || workout.id === 'pull') {
     return (
       <StrengthContent
         session={workout as StrengthSession}
@@ -1162,7 +1162,7 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
   // All checkable exercise names for a workout (warmup + working for strength;
   // exercises for mobility). Used so "Mark complete" ticks the whole list.
   function exerciseNames(w: AnySession): string[] {
-    if (w.id === 'push' || w.id === 'hinge_pull') {
+    if (w.id === 'push' || w.id === 'pull') {
       const s = w as StrengthSession;
       return [...s.warmup.map((e) => e.name), ...s.working.map((e) => e.name)];
     }

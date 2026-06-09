@@ -303,6 +303,9 @@ export function useHealthData(): HealthData & { refetch: () => void } {
     }
   }, []);
 
-  // No auto-fetch on mount — only refreshes on pull-to-refresh
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
   return { ...data, refetch: fetchData };
 }

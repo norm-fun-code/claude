@@ -38,7 +38,7 @@ function GoalSection({
       {week.context ? (
         <Text style={[styles.context, { color: c.subtext }]}>{week.context}</Text>
       ) : null}
-      {week.goals.map((g, i) => {
+      {(week.goals ?? []).map((g, i) => {
         const marked = showAchievement && g.achieved !== undefined;
         const hit = g.achieved === true;
         const dot = marked ? (hit ? '#2E7D32' : '#C0392B') : '#9E9E9E';
