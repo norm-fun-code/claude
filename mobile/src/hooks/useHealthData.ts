@@ -206,11 +206,11 @@ export function useHealthData(): HealthData & { refetch: () => void } {
         }
       }
 
-      // HRV — average over the full overnight window (6pm yesterday → now), matching
-      // how Apple Health computes the daily HRV figure. Using today-midnight as start
-      // misses the pre-midnight portion of sleep where deep-sleep HRV peaks.
+      // HRV — average of today's background samples from Apple Watch.
+      // For users who don't sleep with their watch, HRV is captured as
+      // opportunistic daytime spot readings; today-midnight is the right window.
       AppleHealthKit.getHeartRateVariabilitySamples(
-        { unit: 'millisecond', startDate: getYesterdayNight().toISOString(), endDate: now } as any,
+        { unit: 'millisecond', startDate, endDate: now } as any,
         (err, results: HealthValue[]) => {
           if (!err && results && results.length > 0) {
             const avg = results.reduce((sum, r) => sum + r.value, 0) / results.length;
