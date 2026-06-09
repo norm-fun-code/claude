@@ -1242,6 +1242,7 @@ app.get('/api/briefing', async (req, res) => {
 
   const response = {
     date: dateLabel,
+    builtAt: new Date().toISOString(),
     weather,
     workout,
     calendar,

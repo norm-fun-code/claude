@@ -93,7 +93,7 @@ export default function App() {
       case 'health':
         return (
           <>
-            <RecoveryCard recovery={d?.recovery} composites={d?.healthComposites ?? []} />
+            <RecoveryCard recovery={d?.recovery} composites={d?.healthComposites ?? []} builtAt={d?.builtAt} />
             <HealthCard health={health} />
             {d?.healthInsights && d.healthInsights.length > 0 ? (
               <InsightsCard insights={d.healthInsights} />

@@ -7,6 +7,7 @@ import type { Recovery, HealthComposite } from '../hooks/useBriefing';
 interface Props {
   recovery: Recovery | null | undefined;
   composites?: HealthComposite[];
+  builtAt?: string;
 }
 
 const PART_LABEL: Record<string, string> = {
@@ -25,7 +26,14 @@ const COMPOSITE_EMOJI: Record<string, string> = {
 // sleep, each graded against the user's OWN baseline (Whoop/Oura-style). Shown as
 // a colored ring with the contributing parts and any sleep-debt / training-load
 // flags beneath.
-export function RecoveryCard({ recovery, composites = [] }: Props) {
+function formatBuiltAt(iso: string | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -82,7 +90,7 @@ export function RecoveryCard({ recovery, composites = [] }: Props) {
       )}
       {Object.keys(recovery.parts || {}).length > 0 && (
         <Text style={[styles.partsCaption, { color: c.subtext }]}>
-          vs your 30-day baseline
+          vs your 30-day baseline{formatBuiltAt(builtAt) ? ` · as of ${formatBuiltAt(builtAt)}` : ''}
         </Text>
       )}
 
