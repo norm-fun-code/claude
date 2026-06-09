@@ -1084,14 +1084,41 @@ app.get('/api/briefing', async (req, res) => {
     // rotating insights — pull them out so they're shown fresh every day and
     // surface the recovery score as its own headline field.
     const COMPOSITE_TYPES = ['recovery', 'sleep_debt', 'sleep_consistency', 'training_load'];
-    const recoveryFinding = open.find((f) => f.type === 'recovery');
-    if (recoveryFinding) {
-      recovery = {
-        score: recoveryFinding.evidence?.score ?? null,
-        band: recoveryFinding.evidence?.band ?? null,
-        parts: recoveryFinding.evidence?.parts ?? {},
-        detail: recoveryFinding.detail,
-      };
+
+    // Recovery is computed LIVE from the spine at every briefing build, not
+    // re-served from the finding analyze() stored at its morning run. The
+    // stored finding scores whatever the DB held at ~8:30am — for a daytime
+    // watch wearer there's no HRV/RHR row for today yet at that hour, so its
+    // "latest" is yesterday's value, and the card would contradict the live
+    // HealthKit numbers below it all day. Falls back to the stored finding.
+    try {
+      const { recoveryScore, recoveryBand } = require('./src/intelligence/recovery');
+      const liveMetrics = require('./src/store/metrics');
+      const seriesByKey = {};
+      const from60 = new Date(Date.now() - 60 * 864e5);
+      for (const key of ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score']) {
+        const [dm, mt] = key.split(':');
+        const rows = await liveMetrics.dailyAggregate({ domain: dm, metric: mt, from: from60, agg: 'avg', excludeSource: 'seed' });
+        if (rows.length) seriesByKey[key] = rows;
+      }
+      const rec = recoveryScore(seriesByKey);
+      if (rec) {
+        const { band, guidance } = recoveryBand(rec.score);
+        recovery = { score: rec.score, band, parts: rec.parts, detail: guidance };
+      }
+    } catch (err) {
+      console.error('[recovery live] failed:', err.message);
+    }
+    if (!recovery) {
+      const recoveryFinding = open.find((f) => f.type === 'recovery');
+      if (recoveryFinding) {
+        recovery = {
+          score: recoveryFinding.evidence?.score ?? null,
+          band: recoveryFinding.evidence?.band ?? null,
+          parts: recoveryFinding.evidence?.parts ?? {},
+          detail: recoveryFinding.detail,
+        };
+      }
     }
     healthComposites = open
       .filter((f) => COMPOSITE_TYPES.includes(f.type) && f.type !== 'recovery')
