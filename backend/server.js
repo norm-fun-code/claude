@@ -543,6 +543,92 @@ app.get('/api/diag/gemini', async (req, res) => {
   }
 });
 
+// Diagnostic: dump the RAW metric rows for a metric over the last N days,
+// grouped by day + source. Reveals duplication that a daily SUM would inflate —
+// e.g. many step rows for the same day (pre-fix per-refresh writes) all summed.
+// GET /api/diag/recovery-baseline — shows the raw series and baseline stats
+// (mean, std, z, n) that drive the recovery percentile scores, so we can
+// verify the data matches what Apple Health reports.
+app.get('/api/diag/recovery-baseline', async (req, res) => {
+  try {
+    const metricsStore = require('./src/store/metrics');
+    const stats = require('./src/intelligence/stats');
+    const METRICS = ['health:hrv', 'health:resting_hr', 'health:sleep_score', 'health:sleep_hours'];
+    const from = new Date(Date.now() - 60 * 864e5);
+    const out = {};
+    for (const key of METRICS) {
+      const [domain, metric] = key.split(':');
+      const rows = await metricsStore.dailyAggregate({ domain, metric, from, agg: 'avg', excludeSource: 'seed' });
+      const a = stats.baselineAnomaly(rows.map((r) => ({ value: r.value })), { baselineDays: 30, minN: 8 });
+      out[key] = {
+        n: rows.length,
+        latest: rows.length ? Number(rows[rows.length - 1].value).toFixed(2) : null,
+        latestDay: rows.length ? rows[rows.length - 1].day : null,
+        baseline: a ? {
+          mean: Number(a.baselineMean).toFixed(2),
+          std: Number(a.baselineStd).toFixed(2),
+          z: Number(a.z).toFixed(3),
+          n: a.n,
+          percentile: Math.round(stats.normalCdf(a.z) * 100),
+        } : null,
+        series: rows.slice(-35).map((r) => ({ day: r.day, value: Number(r.value).toFixed(1) })),
+      };
+    }
+    res.json(out);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+//   GET /api/diag/metric-rows?domain=health&metric=steps&days=7
+app.get('/api/diag/metric-rows', async (req, res) => {
+  try {
+    const domain = String(req.query.domain || 'health');
+    const metric = String(req.query.metric || 'steps');
+    const days = Math.min(Number(req.query.days) || 7, 120);
+    const { rows } = await db.query(
+      `SELECT date_trunc('day', ts)::date AS day, source,
+              count(*)::int AS rows,
+              round(sum(value)::numeric, 1) AS sum,
+              round(min(value)::numeric, 1) AS min,
+              round(max(value)::numeric, 1) AS max
+         FROM metrics
+        WHERE domain = $1 AND metric = $2
+          AND ts >= now() - ($3 || ' days')::interval
+        GROUP BY day, source
+        ORDER BY day DESC, source`,
+      [domain, metric, String(days)]
+    );
+    // What the daily SUM (used by analyze/review) would produce per day, and the
+    // weekly total — so the inflation is visible at a glance.
+    const perDay = {};
+    for (const r of rows) perDay[r.day] = (perDay[r.day] || 0) + Number(r.sum);
+    const weeklyTotalSummed = Object.values(perDay).reduce((a, b) => a + b, 0);
+    res.json({ domain, metric, days, groups: rows, perDaySummed: perDay, weeklyTotalSummed });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Diagnostic: the largest "spending" transactions and their categories over the
+// last N days. Reveals whether big spend days are real purchases or internal
+// movements (transfers, credit-card payments) wrongly counted as spending.
+//   GET /api/diag/top-spend?days=10&limit=25
+app.get('/api/diag/top-spend', async (req, res) => {
+  try {
+    const days = Math.min(Number(req.query.days) || 10, 120);
+    const limit = Math.min(Number(req.query.limit) || 25, 200);
+    const txns = await documentsStore.spendTransactions({ days });
+    const sorted = [...txns].sort((a, b) => b.amount - a.amount).slice(0, limit);
+    // Tally by category so transfer/payment pollution is obvious in aggregate.
+    const byCategory = {};
+    for (const t of txns) byCategory[t.category] = Math.round(((byCategory[t.category] || 0) + t.amount) * 100) / 100;
+    res.json({ days, count: txns.length, topTransactions: sorted, byCategory });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Diagnostic: reproduce the EXACT briefing LLM call (real fetched emails, real
 // prompt) and time it, so we can see where the 60s goes vs the trivial probe.
 app.get('/api/diag/briefing-llm', async (req, res) => {

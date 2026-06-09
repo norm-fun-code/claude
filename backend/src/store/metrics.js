@@ -15,36 +15,52 @@ async function insertMetrics(rows) {
   );
   if (clean.length === 0) return 0;
 
-  // Build a single multi-row INSERT with positional params.
-  const values = [];
-  const tuples = clean.map((r, i) => {
-    const b = i * 6;
-    values.push(
-      r.ts ? new Date(r.ts) : new Date(),
-      r.domain,
-      r.metric,
-      Number(r.value),
-      r.unit ?? null,
-      r.source
-    );
-    // metadata is appended after all positional value params (see below)
-    return `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${clean.length * 6 + i + 1})`;
-  });
-  // metadata params come last so each tuple can reference its own jsonb
-  clean.forEach((r) => values.push(r.metadata ?? {}));
+  // Dedup within-batch: last write wins per (ts, domain, metric, source).
+  // Postgres throws "ON CONFLICT DO UPDATE command cannot affect row a second
+  // time" when two rows in the same INSERT share the same conflict key.
+  const deduped = [
+    ...new Map(
+      clean.map((r) => [`${r.ts ?? 'now'}\x00${r.domain}\x00${r.metric}\x00${r.source}`, r])
+    ).values(),
+  ];
 
-  await query(
-    `INSERT INTO metrics (ts, domain, metric, value, unit, source, metadata)
-     VALUES ${tuples.join(', ')}
-     ON CONFLICT (ts, domain, metric, source) DO UPDATE
-       SET value = EXCLUDED.value,
-           unit = EXCLUDED.unit,
-           -- Don't let an empty incoming metadata ({}) wipe richer metadata an
-           -- earlier write stored; only overwrite when the new value has content.
-           metadata = COALESCE(NULLIF(EXCLUDED.metadata, '{}'::jsonb), metrics.metadata)`,
-    values
-  );
-  return clean.length;
+  // Postgres bind-param limit is 65535; this INSERT uses 7 params/row.
+  // Chunk at 5000 rows to stay safely under the cap for large payloads.
+  const CHUNK = 5000;
+  let written = 0;
+  for (let offset = 0; offset < deduped.length; offset += CHUNK) {
+    const chunk = deduped.slice(offset, offset + CHUNK);
+    const values = [];
+    const tuples = chunk.map((r, i) => {
+      const b = i * 6;
+      values.push(
+        r.ts ? new Date(r.ts) : new Date(),
+        r.domain,
+        r.metric,
+        Number(r.value),
+        r.unit ?? null,
+        r.source
+      );
+      // metadata is appended after all positional value params (see below)
+      return `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${chunk.length * 6 + i + 1})`;
+    });
+    // metadata params come last so each tuple can reference its own jsonb
+    chunk.forEach((r) => values.push(r.metadata ?? {}));
+
+    await query(
+      `INSERT INTO metrics (ts, domain, metric, value, unit, source, metadata)
+       VALUES ${tuples.join(', ')}
+       ON CONFLICT (ts, domain, metric, source) DO UPDATE
+         SET value = EXCLUDED.value,
+             unit = EXCLUDED.unit,
+             -- Don't let an empty incoming metadata ({}) wipe richer metadata an
+             -- earlier write stored; only overwrite when the new value has content.
+             metadata = COALESCE(NULLIF(EXCLUDED.metadata, '{}'::jsonb), metrics.metadata)`,
+      values
+    );
+    written += chunk.length;
+  }
+  return written;
 }
 
 /** Time-ordered series for a single metric over a window. */

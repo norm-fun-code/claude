@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, useColorScheme } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, useColorScheme, AppState } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { CHECKIN_URL, CHECKIN_TODAY_URL, authHeaders, fetchWithTimeout } from '../config';
@@ -22,27 +22,49 @@ export function CheckinCard() {
   const [scores, setScores] = useState<Scores>({ mood: null, energy: null, focus: null });
   const [saved, setSaved] = useState(false);
   const [failed, setFailed] = useState(false);
+  const fetchDateRef = useRef('');
+
+  function todayET(): string {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+  }
 
   // Pre-fill with whatever was already checked in today (survives tab switches).
+  async function fetchToday() {
+    fetchDateRef.current = todayET();
+    try {
+      const res = await fetchWithTimeout(CHECKIN_TODAY_URL, { headers: authHeaders() });
+      if (!res.ok) return;
+      const t = await res.json();
+      if (!t?.logged) return;
+      setScores({
+        mood: Number.isFinite(t.mood) ? t.mood : null,
+        energy: Number.isFinite(t.energy) ? t.energy : null,
+        focus: Number.isFinite(t.focus) ? t.focus : null,
+      });
+      setSaved(true);
+    } catch {
+      // offline — start blank
+    }
+  }
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetchWithTimeout(CHECKIN_TODAY_URL, { headers: authHeaders() });
-        if (!res.ok) return;
-        const t = await res.json();
-        if (cancelled || !t?.logged) return;
-        setScores({
-          mood: Number.isFinite(t.mood) ? t.mood : null,
-          energy: Number.isFinite(t.energy) ? t.energy : null,
-          focus: Number.isFinite(t.focus) ? t.focus : null,
-        });
-        setSaved(true);
-      } catch {
-        // offline — start blank
+    fetchToday();
+  }, []);
+
+  // When app returns to foreground on a new calendar day, reset and re-fetch so
+  // yesterday's scores don't show as today's (iOS keeps app alive for days).
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && fetchDateRef.current !== todayET()) {
+        setScores({ mood: null, energy: null, focus: null });
+        setSaved(false);
+        setFailed(false);
+        fetchToday();
       }
-    })();
-    return () => { cancelled = true; };
+    });
+    return () => sub.remove();
   }, []);
 
   function set(key: keyof Scores, value: number) {

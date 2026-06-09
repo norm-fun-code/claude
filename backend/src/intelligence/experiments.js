@@ -78,14 +78,16 @@ function proposeFromFindings(findings = [], opts = {}) {
     const ov = splitKey(outcome);
     const leverLabel = cat.label(lv.domain, lv.metric);
     const outcomeLabel = cat.label(ov.domain, ov.metric);
-    const moreIsBetter = ev.r >= 0;
+    // Respect the metric's direction: RHR is "good when down", so expected='down'.
+    const wantOutcomeUp = cat.goodWhen(ov.domain, ov.metric) !== 'down';
+    const moreIsBetter = (ev.r >= 0) === wantOutcomeUp;
     const phrase = LEVERS[lever][moreIsBetter ? 'more' : 'less'];
 
     proposals.push({
       hypothesis: `${moreIsBetter ? 'Increasing' : 'Reducing'} ${leverLabel} improves ${outcomeLabel}`,
       metric: outcome,
       lever,
-      expected: 'up', // outcome should improve (rise on its "good" scale)
+      expected: wantOutcomeUp ? 'up' : 'down',
       protocol: `For ${o.testDays} days, ${phrase}. Then NormOS compares ${outcomeLabel} to your prior ${o.baselineDays}-day baseline.`,
       baselineDays: o.baselineDays,
       status: 'proposed',
@@ -123,10 +125,10 @@ async function evaluateExperiment(exp) {
   baselineStart.setDate(baselineStart.getDate() - (exp.baseline_days || 14));
 
   const baseline = await metricsStore.dailyAggregate({
-    domain, metric, from: baselineStart, to: start, agg: cat.aggFor(metric),
+    domain, metric, from: baselineStart, to: start, agg: cat.aggFor(metric), excludeSource: 'seed',
   });
   const test = await metricsStore.dailyAggregate({
-    domain, metric, from: start, to: end, agg: cat.aggFor(metric),
+    domain, metric, from: start, to: end, agg: cat.aggFor(metric), excludeSource: 'seed',
   });
 
   const result = verdict(

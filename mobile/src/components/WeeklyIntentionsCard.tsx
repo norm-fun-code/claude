@@ -116,17 +116,19 @@ export function WeeklyIntentionsCard() {
   // Toggle whether last week's goal #i was achieved, and persist immediately
   // (optimistic — revert on failure). Keyed to the prior week on the server.
   async function togglePrior(i: number) {
-    const next = priorGoals.map((g, idx) => (idx === i ? { ...g, achieved: !g.achieved } : g));
-    setPriorGoals(next);
+    const toggled = priorGoals.map((g, idx) => (idx === i ? { ...g, achieved: !g.achieved } : g));
+    setPriorGoals(toggled);
     try {
       const res = await fetchWithTimeout(INTENTIONS_RESULTS_URL, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ weekStart: priorWeek, achieved: next.map((g) => g.achieved) }),
+        body: JSON.stringify({ weekStart: priorWeek, achieved: toggled.map((g) => g.achieved) }),
       });
       if (!res.ok) throw new Error(`Server ${res.status}`);
     } catch {
-      setPriorGoals(priorGoals); // revert
+      // Revert only this index via functional update — avoids wiping concurrent
+      // toggles that may have succeeded while this request was in flight.
+      setPriorGoals((prev) => prev.map((g, idx) => (idx === i ? { ...g, achieved: !g.achieved } : g)));
     }
   }
 

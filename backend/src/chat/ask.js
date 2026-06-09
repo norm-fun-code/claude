@@ -8,6 +8,7 @@ const findingsStore = require('../store/findings');
 const annotationsStore = require('../store/annotations');
 const metricsStore = require('../store/metrics');
 const intentionsStore = require('../store/intentions');
+const cat = require('../intelligence/catalog');
 const { query: dbQuery } = require('../db');
 
 const SYSTEM = `You are NormOS — the user's personal chief of staff, executive coach, and data scientist.
@@ -80,10 +81,11 @@ async function personalSnapshot() {
       const v = rows.map((r) => Number(r.value)).filter(Number.isFinite);
       return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
     };
-    for (const { domain, metric } of keys.slice(0, 25)) {
+    for (const { domain, metric } of keys.filter(({ domain, metric }) => cat.isTracked(domain, metric)).slice(0, 25)) {
+      const agg = cat.aggFor(metric);
       const [recent, prior] = await Promise.all([
-        metricsStore.dailyAggregate({ domain, metric, from: d7, agg: 'avg' }),
-        metricsStore.dailyAggregate({ domain, metric, from: d14, to: d7, agg: 'avg' }),
+        metricsStore.dailyAggregate({ domain, metric, from: d7, agg, excludeSource: 'seed' }),
+        metricsStore.dailyAggregate({ domain, metric, from: d14, to: d7, agg, excludeSource: 'seed' }),
       ]);
       const r = avg(recent);
       const p = avg(prior);

@@ -59,7 +59,10 @@ function getWorkout(dayName) {
 }
 
 function getTodayWorkout() {
-  const dayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+  const dayName = new Intl.DateTimeFormat('en-US', {
+    timeZone: process.env.TZ || 'America/New_York',
+    weekday: 'long',
+  }).format(new Date());
   return getWorkout(dayName);
 }
 

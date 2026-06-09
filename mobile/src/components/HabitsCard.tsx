@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, useColorScheme } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, useColorScheme, AppState } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { API_BASE, authHeaders, fetchWithTimeout } from '../config';
@@ -32,32 +32,53 @@ export function HabitsCard() {
   const [eatHealthy, setEatHealthy] = useState<number | null>(null);
   const [saved, setSaved] = useState(false);
   const [failed, setFailed] = useState(false);
+  const fetchDateRef = useRef('');
+
+  function todayET(): string {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+  }
 
   // Pre-fill with whatever was already logged today (survives reopening).
+  async function fetchToday() {
+    fetchDateRef.current = todayET();
+    try {
+      const res = await fetchWithTimeout(HABITS_TODAY_URL, { headers: authHeaders() });
+      if (!res.ok) return;
+      const t = await res.json();
+      if (!t?.logged) return;
+      setChecked({
+        morningTM: !!t.morningTM,
+        afternoonTM: !!t.afternoonTM,
+        gratitude: !!t.gratitude,
+        coldShower: !!t.coldShower,
+        exercise: !!t.exercise,
+      });
+      if (Number.isFinite(t.eatHealthy)) setEatHealthy(t.eatHealthy);
+      setSaved(true);
+    } catch {
+      // offline — start blank
+    }
+  }
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetchWithTimeout(HABITS_TODAY_URL, { headers: authHeaders() });
-        if (!res.ok) return;
-        const t = await res.json();
-        if (cancelled || !t?.logged) return;
-        setChecked({
-          morningTM: !!t.morningTM,
-          afternoonTM: !!t.afternoonTM,
-          gratitude: !!t.gratitude,
-          coldShower: !!t.coldShower,
-          exercise: !!t.exercise,
-        });
-        if (Number.isFinite(t.eatHealthy)) setEatHealthy(t.eatHealthy);
-        setSaved(true);
-      } catch {
-        // offline — start blank
+    fetchToday();
+  }, []);
+
+  // When app returns to foreground on a new calendar day, reset and re-fetch so
+  // yesterday's habits don't show as today's (iOS keeps app alive for days).
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && fetchDateRef.current !== todayET()) {
+        setChecked({ morningTM: false, afternoonTM: false, gratitude: false, coldShower: false, exercise: false });
+        setEatHealthy(null);
+        setSaved(false);
+        setFailed(false);
+        fetchToday();
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    });
+    return () => sub.remove();
   }, []);
 
   // Persist the full current state. Each box tap saves immediately (the backend
