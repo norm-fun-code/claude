@@ -1,7 +1,7 @@
 const plan = {
   Monday: {
-    type: 'Zone 2 Jog',
-    duration: '~30 min',
+    type: 'Zone 2 — Incline Walk or Jog',
+    duration: '30–45 min',
     hrTarget: '135–145 bpm',
     protein: '70–85g',
   },
@@ -30,8 +30,8 @@ const plan = {
     protein: '70–85g',
   },
   Saturday: {
-    type: 'Zone 2 Jog',
-    duration: '~30 min',
+    type: 'Zone 2 — Incline Walk or Jog',
+    duration: '30–45 min',
     hrTarget: '135–145 bpm',
     protein: '70–85g',
   },

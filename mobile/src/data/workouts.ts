@@ -13,7 +13,6 @@ export interface StrengthSession {
   id: string;
   label: string;
   duration: string;
-  constraints: string[];
   warmup: Exercise[];
   working: Exercise[];
 }
@@ -78,12 +77,6 @@ export const SESSION_A: StrengthSession = {
   id: 'push',
   label: 'Push',
   duration: '~45 min',
-  constraints: [
-    'Head neutral, chin softly tucked, eyes forward',
-    'Exhale on every effort — no Valsalva/breath-holding',
-    'No overhead pressing (pending Lachmann confirmation)',
-    'No behind-the-neck anything',
-  ],
   warmup: [
     {
       name: 'Band pull-aparts',
@@ -138,12 +131,6 @@ export const SESSION_B: StrengthSession = {
   id: 'pull',
   label: 'Pull',
   duration: '~45 min',
-  constraints: [
-    'Head neutral, chin softly tucked, eyes forward',
-    'Exhale on every effort — no Valsalva/breath-holding',
-    'No dead hangs (pending Lachmann confirmation)',
-    'No behind-the-neck anything',
-  ],
   warmup: [
     {
       name: 'Chin tucks',
@@ -197,13 +184,14 @@ export const SESSION_B: StrengthSession = {
 
 export const ZONE2: Zone2Session = {
   id: 'zone2',
-  label: 'Zone 2 Jog',
-  duration: '~30 min',
+  label: 'Zone 2 — Incline Walk or Jog',
+  duration: '30–45 min',
   details: [
-    'Easy jog — conversational pace throughout',
-    'Target HR: 135–145 BPM',
-    'Should be able to hold a full sentence at target HR',
-    'If HR above 145: slow down or walk. If below 135: pick up the pace.',
+    'Incline walk (treadmill 6–10% grade or hills) or easy jog — your pick',
+    'Target HR: 135–145 BPM throughout',
+    'Should be able to hold a conversation at target HR',
+    'Walking flat usually undershoots target HR — add grade or switch to a jog',
+    'If HR above 145: ease off. If below 135: add grade or pace.',
   ],
 };
 
@@ -304,12 +292,12 @@ export function getTodaysWorkout(dayOfWeek: number, hrv: number | null): Workout
   }
   const zone = getHRVZone(hrv);
   if (zone === 'red') {
-    return { workout: ZONE2, zone, override: 'Red HRV — all training replaced with Zone 2 walk.' };
+    return { workout: ZONE2, zone, override: 'Red HRV — all training replaced with Zone 2.' };
   }
   const scheduled = WEEKLY_SCHEDULE[dayOfWeek];
   if (scheduled === 'pull') {
     if (zone === 'green') return { workout: SESSION_B, zone };
-    return { workout: ZONE2, zone, override: 'Yellow HRV — Pull session replaced with Zone 2 jog.' };
+    return { workout: ZONE2, zone, override: 'Yellow HRV — Pull session replaced with Zone 2.' };
   }
   if (scheduled === 'intervals') return { workout: INTERVALS, zone };
   const workoutMap: Record<string, AnySession> = {
