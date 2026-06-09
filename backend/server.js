@@ -576,6 +576,40 @@ app.get('/api/diag/gemini', async (req, res) => {
 // Diagnostic: dump the RAW metric rows for a metric over the last N days,
 // grouped by day + source. Reveals duplication that a daily SUM would inflate —
 // e.g. many step rows for the same day (pre-fix per-refresh writes) all summed.
+// GET /api/diag/recovery-baseline — shows the raw series and baseline stats
+// (mean, std, z, n) that drive the recovery percentile scores, so we can
+// verify the data matches what Apple Health reports.
+app.get('/api/diag/recovery-baseline', requireAuth, async (req, res) => {
+  try {
+    const metricsStore = require('./src/store/metrics');
+    const stats = require('./src/intelligence/stats');
+    const METRICS = ['health:hrv', 'health:resting_hr', 'health:sleep_score', 'health:sleep_hours'];
+    const from = new Date(Date.now() - 60 * 864e5);
+    const out = {};
+    for (const key of METRICS) {
+      const [domain, metric] = key.split(':');
+      const rows = await metricsStore.dailyAggregate({ domain, metric, from, agg: 'avg', excludeSource: 'seed' });
+      const a = stats.baselineAnomaly(rows.map((r) => ({ value: r.value })), { baselineDays: 30, minN: 8 });
+      out[key] = {
+        n: rows.length,
+        latest: rows.length ? Number(rows[rows.length - 1].value).toFixed(2) : null,
+        latestDay: rows.length ? rows[rows.length - 1].day : null,
+        baseline: a ? {
+          mean: Number(a.baselineMean).toFixed(2),
+          std: Number(a.baselineStd).toFixed(2),
+          z: Number(a.z).toFixed(3),
+          n: a.n,
+          percentile: Math.round(stats.normalCdf(a.z) * 100),
+        } : null,
+        series: rows.slice(-35).map((r) => ({ day: r.day, value: Number(r.value).toFixed(1) })),
+      };
+    }
+    res.json(out);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 //   GET /api/diag/metric-rows?domain=health&metric=steps&days=7
 app.get('/api/diag/metric-rows', async (req, res) => {
   try {
