@@ -18,6 +18,7 @@ Appearance.setColorScheme('light');
 
 import { useBriefing } from './src/hooks/useBriefing';
 import { useHealthData } from './src/hooks/useHealthData';
+import { useRecovery } from './src/hooks/useRecovery';
 import { usePushRegistration } from './src/hooks/usePushRegistration';
 import { getColors, spacing } from './src/theme';
 
@@ -59,10 +60,14 @@ export default function App() {
 
   const briefing = useBriefing();
   const health = useHealthData();
+  const liveRecovery = useRecovery();
 
   const [tab, setTab] = useState<TabKey>('today');
   const [analyzingInsights, setAnalyzingInsights] = useState(false);
-  const isRefreshing = briefing.loading || health.loading;
+  // Health tab refresh only spins on health-local fetches; other tabs spin on
+  // the briefing too.
+  const isRefreshing =
+    tab === 'health' ? health.loading || liveRecovery.loading : briefing.loading || health.loading;
 
   const refreshInsights = useCallback(async () => {
     if (analyzingInsights) return;
@@ -77,15 +82,21 @@ export default function App() {
 
   // Pull-to-refresh is tab-aware. Health metrics come from HealthKit on-device
   // and refresh instantly, so don't make the user eat the 60-90s briefing
-  // rebuild when they're just checking updated health numbers. Only the tabs
-  // that actually show briefing content force a fresh server build; elsewhere we
-  // load the (already-warm) cached briefing instantly.
+  // rebuild when they're just checking updated health numbers. The Health tab
+  // refreshes ONLY its own data (device HealthKit + the fast /api/recovery
+  // endpoint) and leaves the briefing alone. Only the tabs that actually show
+  // briefing content force a fresh server build; elsewhere we load the
+  // (already-warm) cached briefing instantly.
   const onRefresh = useCallback(() => {
     health.refetch();
+    if (tab === 'health') {
+      liveRecovery.refetch();
+      return;
+    }
     const briefingTabs: TabKey[] = ['today', 'wisdom', 'insights'];
     if (briefingTabs.includes(tab)) briefing.refetch();
     else briefing.reload();
-  }, [briefing, health, tab]);
+  }, [briefing, health, liveRecovery, tab]);
 
   // Tapping the morning "briefing ready" push should load the cache the server
   // already warmed at 8:30 — instant, not a 15-40s forced rebuild. Health still
@@ -109,7 +120,11 @@ export default function App() {
       case 'health':
         return (
           <>
-            <RecoveryCard recovery={d?.recovery} composites={d?.healthComposites ?? []} builtAt={d?.builtAt} />
+            <RecoveryCard
+              recovery={liveRecovery.recovery ?? d?.recovery}
+              composites={d?.healthComposites ?? []}
+              builtAt={liveRecovery.recovery ? undefined : d?.builtAt}
+            />
             <HealthCard health={health} />
             {d?.healthInsights && d.healthInsights.length > 0 ? (
               <InsightsCard insights={d.healthInsights} />

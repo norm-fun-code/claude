@@ -702,6 +702,19 @@ app.get('/api/diag/gemini', async (req, res) => {
   }
 });
 
+// Live recovery score — the same computation the briefing embeds, but
+// standalone and fast (a few aggregate queries, no LLM, no briefing build).
+// Lets the Health tab refresh the recovery card in under a second instead of
+// waiting out a full briefing rebuild.
+app.get('/api/recovery', async (req, res) => {
+  try {
+    const recovery = await require('./src/intelligence/recovery').liveRecovery();
+    res.json({ recovery });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Diagnostic: dump the RAW metric rows for a metric over the last N days,
 // grouped by day + source. Reveals duplication that a daily SUM would inflate —
 // e.g. many step rows for the same day (pre-fix per-refresh writes) all summed.
@@ -1251,20 +1264,7 @@ app.get('/api/briefing', async (req, res) => {
     // "latest" is yesterday's value, and the card would contradict the live
     // HealthKit numbers below it all day. Falls back to the stored finding.
     try {
-      const { recoveryScore, recoveryBand } = require('./src/intelligence/recovery');
-      const liveMetrics = require('./src/store/metrics');
-      const seriesByKey = {};
-      const from60 = new Date(Date.now() - 60 * 864e5);
-      for (const key of ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score']) {
-        const [dm, mt] = key.split(':');
-        const rows = await liveMetrics.dailyAggregate({ domain: dm, metric: mt, from: from60, agg: 'avg', excludeSource: 'seed' });
-        if (rows.length) seriesByKey[key] = rows;
-      }
-      const rec = recoveryScore(seriesByKey);
-      if (rec) {
-        const { band, guidance } = recoveryBand(rec.score);
-        recovery = { score: rec.score, band, parts: rec.parts, detail: guidance };
-      }
+      recovery = await require('./src/intelligence/recovery').liveRecovery();
     } catch (err) {
       console.error('[recovery live] failed:', err.message);
     }

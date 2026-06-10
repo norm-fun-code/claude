@@ -248,6 +248,27 @@ function computeHealthComposites(seriesByKey, opts = {}) {
   return findings;
 }
 
+/**
+ * Compute the live recovery score directly from the metrics spine — a handful
+ * of fast aggregate queries, no LLM and no briefing build. Used by the
+ * briefing AND by GET /api/recovery so the Health tab can refresh the card
+ * in under a second. Returns { score, band, parts, detail } or null.
+ */
+async function liveRecovery() {
+  const metricsStore = require('../store/metrics');
+  const seriesByKey = {};
+  const from60 = new Date(Date.now() - 60 * 864e5);
+  for (const key of ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score']) {
+    const [dm, mt] = key.split(':');
+    const rows = await metricsStore.dailyAggregate({ domain: dm, metric: mt, from: from60, agg: 'avg', excludeSource: 'seed' });
+    if (rows.length) seriesByKey[key] = rows;
+  }
+  const rec = recoveryScore(seriesByKey);
+  if (!rec) return null;
+  const { band, guidance } = recoveryBand(rec.score);
+  return { score: rec.score, band, parts: rec.parts, detail: guidance };
+}
+
 module.exports = {
   recoveryScore,
   recoveryBand,
@@ -256,4 +277,5 @@ module.exports = {
   trainingLoad,
   computeHealthComposites,
   baselineScore,
+  liveRecovery,
 };
