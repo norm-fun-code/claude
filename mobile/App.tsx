@@ -49,6 +49,8 @@ import { AlertCard } from './src/components/AlertCard';
 import { HighlightsCard } from './src/components/HighlightsCard';
 import { ShopCard } from './src/components/ShopCard';
 import { GoalsCard } from './src/components/GoalsCard';
+import { AnnotationsCard } from './src/components/AnnotationsCard';
+import { WeeklyStateCard } from './src/components/WeeklyStateCard';
 import { ANALYZE_URL, authHeaders, fetchWithTimeout } from './src/config';
 
 export default function App() {
@@ -152,6 +154,7 @@ export default function App() {
       case 'insights':
         return (
           <>
+            <WeeklyStateCard briefing={d ?? null} health={health} />
             <GoalsCard weeklyGoals={d?.weeklyGoals} />
             <ReviewCard review={d?.weeklyReview ?? null} />
             <ForecastCard forecasts={d?.forecasts ?? []} />
@@ -170,6 +173,7 @@ export default function App() {
             {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
             <CheckinCard />
             <HabitsCard />
+            <AnnotationsCard />
             {d && <LeverageCard actions={d.leverageActions ?? []} insights={[]} />}
             {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
             {d && <UrgentEmailsCard emails={d.urgentEmails ?? []} />}
