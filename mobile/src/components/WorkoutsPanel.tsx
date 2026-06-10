@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Modal, TextInput, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { getColors, spacing, radius } from '../theme';
-import { API_BASE, authHeaders, fetchWithTimeout } from '../config';
+import { API_BASE, WORKOUT_LOG_URL, authHeaders, fetchWithTimeout } from '../config';
 import {
   getTodaysWorkout,
   HRV_ZONES,
@@ -340,6 +340,123 @@ const cardStyles = StyleSheet.create({
   },
 });
 
+function LogModal({
+  visible,
+  exercise,
+  setNumber,
+  lastSets,
+  day,
+  c,
+  isDark,
+  onClose,
+  onSaved,
+}: {
+  visible: boolean;
+  exercise: string;
+  setNumber: number;
+  lastSets: Array<{set_number: number; reps: number | null; weight_lbs: number | null}>;
+  day: string;
+  c: ReturnType<typeof getColors>;
+  isDark: boolean;
+  onClose: () => void;
+  onSaved: (setNum: number, reps: number | null, weight: number | null) => void;
+}) {
+  const lastSet = lastSets.find(s => s.set_number === setNumber);
+  const [reps, setReps] = useState(lastSet?.reps != null ? String(lastSet.reps) : '');
+  const [weight, setWeight] = useState(lastSet?.weight_lbs != null ? String(lastSet.weight_lbs) : '');
+  const [saving, setSaving] = useState(false);
+
+  React.useEffect(() => {
+    const ls = lastSets.find(s => s.set_number === setNumber);
+    setReps(ls?.reps != null ? String(ls.reps) : '');
+    setWeight(ls?.weight_lbs != null ? String(ls.weight_lbs) : '');
+  }, [exercise, setNumber]);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await fetchWithTimeout(WORKOUT_LOG_URL, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          day,
+          exercise,
+          set_number: setNumber,
+          reps: reps ? parseInt(reps) : null,
+          weight_lbs: weight ? parseFloat(weight) : null,
+        }),
+      });
+      onSaved(setNumber, reps ? parseInt(reps) : null, weight ? parseFloat(weight) : null);
+      onClose();
+    } catch { /* silent */ } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+        <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+          <View style={[logStyles.sheet, { backgroundColor: c.card, borderColor: c.border }]}>
+            <Text style={[logStyles.title, { color: c.text }]}>Log Set {setNumber} — {exercise}</Text>
+            {lastSets.length > 0 && (
+              <Text style={[logStyles.hint, { color: c.subtext }]}>
+                Last: {lastSets.map(s => `${s.reps ?? '?'} × ${s.weight_lbs != null ? `${s.weight_lbs} lbs` : 'BW'}`).join(', ')}
+              </Text>
+            )}
+            <View style={logStyles.row}>
+              <View style={logStyles.inputWrap}>
+                <Text style={[logStyles.inputLabel, { color: c.subtext }]}>Reps</Text>
+                <TextInput
+                  style={[logStyles.input, { color: c.text, borderColor: c.border, backgroundColor: isDark ? '#1C1C1A' : '#F9F8F6' }]}
+                  value={reps}
+                  onChangeText={setReps}
+                  keyboardType="number-pad"
+                  placeholder="—"
+                  placeholderTextColor={c.subtext}
+                />
+              </View>
+              <View style={logStyles.inputWrap}>
+                <Text style={[logStyles.inputLabel, { color: c.subtext }]}>Weight (lbs)</Text>
+                <TextInput
+                  style={[logStyles.input, { color: c.text, borderColor: c.border, backgroundColor: isDark ? '#1C1C1A' : '#F9F8F6' }]}
+                  value={weight}
+                  onChangeText={setWeight}
+                  keyboardType="decimal-pad"
+                  placeholder="BW"
+                  placeholderTextColor={c.subtext}
+                />
+              </View>
+            </View>
+            <View style={logStyles.buttons}>
+              <TouchableOpacity onPress={onClose} style={[logStyles.btn, { borderColor: c.border }]}>
+                <Text style={[logStyles.btnTxt, { color: c.subtext }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={save} disabled={saving} style={[logStyles.btn, logStyles.btnPrimary, { backgroundColor: c.accent }]}>
+                <Text style={[logStyles.btnTxt, { color: '#FFF' }]}>{saving ? 'Saving…' : 'Save set'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+const logStyles = StyleSheet.create({
+  sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 1, borderLeftWidth: 1, borderRightWidth: 1, padding: spacing.lg, paddingBottom: spacing.xl + 10 },
+  title: { fontSize: 16, fontWeight: '700', marginBottom: spacing.xs },
+  hint: { fontSize: 13, marginBottom: spacing.md },
+  row: { flexDirection: 'row', gap: spacing.md, marginBottom: spacing.md },
+  inputWrap: { flex: 1 },
+  inputLabel: { fontSize: 12, fontWeight: '600', marginBottom: 4 },
+  input: { borderWidth: 1, borderRadius: 8, padding: spacing.sm, fontSize: 18, fontWeight: '600', textAlign: 'center' },
+  buttons: { flexDirection: 'row', gap: spacing.sm },
+  btn: { flex: 1, borderRadius: 10, borderWidth: 1, paddingVertical: spacing.sm + 2, alignItems: 'center' },
+  btnPrimary: { borderWidth: 0 },
+  btnTxt: { fontSize: 15, fontWeight: '600' },
+});
+
 function ExerciseRow({
   exercise,
   completed,
@@ -350,6 +467,9 @@ function ExerciseRow({
   showSetsDimmed,
   c,
   isDark,
+  day,
+  loggedSets,
+  lastHistory,
 }: {
   exercise: Exercise;
   completed: boolean;
@@ -360,12 +480,17 @@ function ExerciseRow({
   showSetsDimmed: boolean;
   c: ReturnType<typeof getColors>;
   isDark: boolean;
+  day: string;
+  loggedSets: Array<{set_number: number; reps: number | null; weight_lbs: number | null}>;
+  lastHistory: Array<{set_number: number; reps: number | null; weight_lbs: number | null}>;
 }) {
   const bgTag = isDark ? '#2A2A28' : '#F3F3F0';
   const setsText = isYellow && showSetsDimmed
     ? exercise.sets.replace(/^3/, '2')
     : exercise.sets;
   const dimmed = isYellow && showSetsDimmed;
+  const numSets = parseInt(exercise.sets) || 0;
+  const [logModalSet, setLogModalSet] = useState<number | null>(null);
 
   return (
     <View style={[exStyles.row, { borderColor: c.border }]}>
@@ -396,10 +521,45 @@ function ExerciseRow({
         )}
       </View>
 
+      {numSets > 0 && (
+        <View style={exStyles.setRow}>
+          {Array.from({length: numSets}, (_, i) => i + 1).map(setNum => {
+            const logged = loggedSets.find(s => s.set_number === setNum);
+            return (
+              <TouchableOpacity
+                key={setNum}
+                onPress={() => setLogModalSet(setNum)}
+                style={[exStyles.setBtn, { borderColor: logged ? '#1D9E75' : c.border, backgroundColor: logged ? '#1D9E7511' : 'transparent' }]}
+              >
+                <Text style={[exStyles.setBtnTxt, { color: logged ? '#1D9E75' : c.subtext }]}>
+                  {logged ? `${logged.reps ?? '?'}${logged.weight_lbs ? `@${logged.weight_lbs}` : ''}` : `S${setNum}`}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
+
       {cueOpen && exercise.cue && (
         <View style={[exStyles.cueBox, { backgroundColor: isDark ? '#1C1C1A' : '#F9F8F6', borderColor: c.border }]}>
           <Text style={[exStyles.cueText, { color: c.subtext }]}>{exercise.cue}</Text>
         </View>
+      )}
+
+      {logModalSet !== null && (
+        <LogModal
+          visible
+          exercise={exercise.name}
+          setNumber={logModalSet}
+          lastSets={lastHistory}
+          day={day}
+          c={c}
+          isDark={isDark}
+          onClose={() => setLogModalSet(null)}
+          onSaved={(setNum, reps, weight) => {
+            setLogModalSet(null);
+          }}
+        />
       )}
     </View>
   );
@@ -449,6 +609,9 @@ const exStyles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
   },
+  setRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginTop: 4, paddingLeft: 30 },
+  setBtn: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1 },
+  setBtnTxt: { fontSize: 11, fontWeight: '600' },
 });
 
 function CollapsibleSection({
@@ -510,6 +673,9 @@ function StrengthContent({
   onToggleCue,
   c,
   isDark,
+  day,
+  workoutLogs,
+  workoutHistory,
 }: {
   session: StrengthSession;
   zone: HRVZone;
@@ -519,6 +685,9 @@ function StrengthContent({
   onToggleCue: (name: string) => void;
   c: ReturnType<typeof getColors>;
   isDark: boolean;
+  day: string;
+  workoutLogs: Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>;
+  workoutHistory: Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>;
 }) {
   const isYellow = zone === 'yellow';
 
@@ -537,6 +706,9 @@ function StrengthContent({
             showSetsDimmed={false}
             c={c}
             isDark={isDark}
+            day={day}
+            loggedSets={workoutLogs[ex.name] ?? []}
+            lastHistory={workoutHistory[ex.name] ?? []}
           />
         ))}
       </CollapsibleSection>
@@ -561,6 +733,9 @@ function StrengthContent({
               showSetsDimmed={dimThirdSet}
               c={c}
               isDark={isDark}
+              day={day}
+              loggedSets={workoutLogs[ex.name] ?? []}
+              lastHistory={workoutHistory[ex.name] ?? []}
             />
           );
         })}
@@ -992,6 +1167,9 @@ function renderWorkoutContent(
   onToggleCue: (name: string) => void,
   c: ReturnType<typeof getColors>,
   isDark: boolean,
+  day: string,
+  workoutLogs: Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>,
+  workoutHistory: Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>,
 ) {
   if (workout.id === 'push' || workout.id === 'pull') {
     return (
@@ -1004,6 +1182,9 @@ function renderWorkoutContent(
         onToggleCue={onToggleCue}
         c={c}
         isDark={isDark}
+        day={day}
+        workoutLogs={workoutLogs}
+        workoutHistory={workoutHistory}
       />
     );
   }
@@ -1045,6 +1226,8 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
   });
   const [weeklyCompleted, setWeeklyCompleted] = useState<Record<string, boolean>>({});
   const [saveFailed, setSaveFailed] = useState(false);
+  const [workoutLogs, setWorkoutLogs] = useState<Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>>({});
+  const [workoutHistory, setWorkoutHistory] = useState<Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>>({});
 
   const todayKey = getDateKey(todayDayIndex);
   const selectedKey = getDateKey(selectedDayIndex);
@@ -1091,6 +1274,40 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
     })();
     return () => { cancelled = true; };
   }, [selectedKey]);
+
+  async function fetchLogsForDay(day: string, exercises: string[]) {
+    try {
+      const res = await fetchWithTimeout(`${WORKOUT_LOG_URL}?day=${day}`, { headers: authHeaders() });
+      if (!res.ok) return;
+      const data = await res.json();
+      const grouped: Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>> = {};
+      for (const row of data.logs ?? []) {
+        if (!grouped[row.exercise]) grouped[row.exercise] = [];
+        grouped[row.exercise].push(row);
+      }
+      setWorkoutLogs(grouped);
+    } catch {}
+    for (const ex of exercises) {
+      try {
+        const res = await fetchWithTimeout(`${WORKOUT_LOG_URL}/history?exercise=${encodeURIComponent(ex)}&limit=1`, { headers: authHeaders() });
+        if (!res.ok) continue;
+        const data = await res.json();
+        if (data.history?.[0]?.sets) {
+          setWorkoutHistory(prev => ({ ...prev, [ex]: data.history[0].sets }));
+        }
+      } catch {}
+    }
+  }
+
+  useEffect(() => {
+    const day = getDateKey(selectedDayIndex);
+    const currentWorkoutId = getWeekDayWorkoutId(selectedDayIndex);
+    if (currentWorkoutId === 'push' || currentWorkoutId === 'pull') {
+      // We'll fetch logs; gather exercise names after workout is resolved
+      setWorkoutLogs({});
+      fetchLogsForDay(day, []);
+    }
+  }, [selectedDayIndex]);
 
   // Persist a single check for the selected day. On failure we surface it and
   // roll the checkbox back, so the UI never claims something was saved when it
@@ -1256,6 +1473,9 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
         toggleCue,
         c,
         isDark,
+        getDateKey(selectedDayIndex),
+        workoutLogs,
+        workoutHistory,
       )}
 
       <NonNegotiablesStrip

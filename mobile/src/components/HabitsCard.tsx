@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, useColorScheme, AppState } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import { API_BASE, authHeaders, fetchWithTimeout } from '../config';
+import { API_BASE, HABITS_STREAKS_URL, authHeaders, fetchWithTimeout } from '../config';
 
 const HABITS_URL = `${API_BASE}/api/habits`;
 const HABITS_TODAY_URL = `${API_BASE}/api/habits/today`;
@@ -29,6 +29,7 @@ export function HabitsCard() {
     coldShower: false,
     exercise: false,
   });
+  const [streaks, setStreaks] = useState<Record<string, number>>({});
   const [eatHealthy, setEatHealthy] = useState<number | null>(null);
   const [saved, setSaved] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -62,8 +63,19 @@ export function HabitsCard() {
     }
   }
 
+  async function fetchStreaks() {
+    fetchWithTimeout(HABITS_STREAKS_URL, { headers: authHeaders() })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.streaks) setStreaks(d.streaks); })
+      .catch(() => {});
+  }
+
   useEffect(() => {
     fetchToday();
+  }, []);
+
+  useEffect(() => {
+    fetchStreaks();
   }, []);
 
   // When app returns to foreground on a new calendar day, reset and re-fetch so
@@ -116,7 +128,14 @@ export function HabitsCard() {
         const on = checked[key];
         return (
           <Pressable key={key} onPress={() => toggle(key)} style={styles.row}>
-            <Text style={[styles.label, { color: c.text }]}>{label}</Text>
+            <View style={styles.labelRow}>
+              <Text style={[styles.label, { color: c.text }]}>{label}</Text>
+              {(streaks[key] ?? 0) > 0 && (
+                <Text style={[styles.streak, { color: c.subtext }]}>
+                  {streaks[key]}d
+                </Text>
+              )}
+            </View>
             <View
               style={[
                 styles.box,
@@ -172,7 +191,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: spacing.sm,
   },
+  labelRow: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   label: { ...typography.subtitle, fontSize: 15 },
+  streak: { fontSize: 12, fontWeight: '500', marginLeft: 4 },
   box: {
     width: 26,
     height: 26,

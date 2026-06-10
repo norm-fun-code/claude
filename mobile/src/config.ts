@@ -22,6 +22,9 @@ export const DEVICE_REGISTER_URL = `${API_BASE}/api/devices/register`;
 export const HIGHLIGHTS_URL = `${API_BASE}/api/highlights`;
 export const SHOP_URL = `${API_BASE}/api/shop`;
 export const ANALYZE_URL = `${API_BASE}/api/analyze`;
+export const HABITS_STREAKS_URL = `${API_BASE}/api/habits/streaks`;
+export const WORKOUT_LOG_URL = `${API_BASE}/api/workout/log`;
+export const ANNOTATIONS_URL = `${API_BASE}/api/annotations`;
 
 /** JSON headers, plus the bearer token when one is configured. */
 export function authHeaders(): Record<string, string> {
