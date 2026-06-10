@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, TextInput, useColorScheme, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, TextInput, useColorScheme, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { ANNOTATIONS_URL, authHeaders, fetchWithTimeout } from '../config';
@@ -80,6 +80,7 @@ export function AnnotationsCard() {
       </TouchableOpacity>
 
       <Modal visible={modalVisible} transparent animationType="slide" onRequestClose={() => setModalVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <View style={styles.overlay}>
           <View style={[styles.sheet, { backgroundColor: c.card, borderColor: c.border }]}>
             <Text style={[styles.sheetTitle, { color: c.text }]}>What's going on?</Text>
@@ -102,7 +103,6 @@ export function AnnotationsCard() {
               onChangeText={setLabel}
               placeholder="e.g. Work trip to NYC"
               placeholderTextColor={c.subtext}
-              autoFocus
             />
             <View style={styles.sheetBtns}>
               <TouchableOpacity onPress={() => setModalVisible(false)} style={[styles.sheetBtn, { borderColor: c.border }]}>
@@ -114,6 +114,7 @@ export function AnnotationsCard() {
             </View>
           </View>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
