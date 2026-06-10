@@ -132,4 +132,71 @@ async function generateBriefing(emailData, notionText, quote, currentDay, workou
   };
 }
 
-module.exports = { generateBriefing, buildPrompt, extractJson };
+const EMAIL_SYSTEM =
+  'You summarize unread email for a personal briefing. Analyze the provided emails. ' +
+  'Return ONLY a single valid JSON object — no markdown, no code fences, no commentary.';
+
+/**
+ * Focused mid-day refresh: ONLY the email-derived sections (newsletters,
+ * urgent emails, finance bullets) — no quote/Notion reflections, which are
+ * day-locked anyway. Much smaller output than the full briefing, so it returns
+ * in a fraction of the time. Powers GET /api/briefing/live.
+ */
+async function generateEmailBriefs(emailData) {
+  const PER_EMAIL = Number(process.env.EMAIL_PROMPT_CHARS || 15000);
+  const TOTAL_BUDGET = Number(process.env.EMAIL_PROMPT_TOTAL || 200000);
+  let used = 0;
+  const emailSection = emailData
+    .map((e, i) => {
+      if (used >= TOTAL_BUDGET) return null;
+      const body = String(e.body || '').slice(0, PER_EMAIL);
+      used += body.length;
+      return `--- Email ${i + 1} ---\nFrom: ${e.from}\nSubject: ${e.subject}\nSnippet: ${e.snippet}\nBody:\n${body}`;
+    })
+    .filter(Boolean)
+    .join('\n\n');
+
+  const prompt = `Unread emails (${emailData.length} threads):
+${emailSection}
+
+---
+
+Return ONLY valid JSON with EXACTLY these fields:
+
+{
+  "newsletters": [
+    { "name": "Sender", "title": "Edition title", "summary": "A dense 5-10 sentence paragraph summarizing the substance of THIS specific email. Extract hard numbers, percentages, dollar amounts, named companies, and specific arguments. Emulate the deep, factual style of premium financial newsletters like The Daily Upside. Crisp prose, no bullets, no filler." }
+  ],
+  "urgentEmails": [
+    { "from": "sender", "subject": "subject", "action": "1-2 sentences on what action is needed and why it's urgent" }
+  ],
+  "financeSummary": ["1-3 bullets of finance/market/economic news from the emails"]
+}
+
+Rules:
+- newsletters: include digests/publications; exclude personal email, receipts, notifications. Go deep — extract every named company, person, statistic, and dollar amount.
+- urgentEmails: only emails needing a response/action today.
+- financeSummary: 1-3 items; never empty.`;
+
+  let text = '';
+  try {
+    text = await llm.generateText({ system: EMAIL_SYSTEM, prompt, temperature: 0.2, maxTokens: 8192 });
+  } catch (err) {
+    console.error('[briefing-ai] email-brief generation failed:', err.message);
+    return null;
+  }
+
+  const parsed = extractJson(text);
+  if (!parsed) {
+    console.error('[briefing-ai] email-brief response was not valid JSON.');
+    return null;
+  }
+
+  return {
+    newsletters: Array.isArray(parsed.newsletters) ? parsed.newsletters : [],
+    urgentEmails: Array.isArray(parsed.urgentEmails) ? parsed.urgentEmails : [],
+    financeSummary: Array.isArray(parsed.financeSummary) ? parsed.financeSummary : [],
+  };
+}
+
+module.exports = { generateBriefing, generateEmailBriefs, buildPrompt, extractJson };

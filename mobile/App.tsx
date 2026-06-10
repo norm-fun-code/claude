@@ -80,23 +80,32 @@ export default function App() {
     }
   }, [analyzingInsights, briefing]);
 
-  // Pull-to-refresh is tab-aware. Health metrics come from HealthKit on-device
-  // and refresh instantly, so don't make the user eat the 60-90s briefing
-  // rebuild when they're just checking updated health numbers. The Health tab
-  // refreshes ONLY its own data (device HealthKit + the fast /api/recovery
-  // endpoint) and leaves the briefing alone. Only the tabs that actually show
-  // briefing content force a fresh server build; elsewhere we load the
-  // (already-warm) cached briefing instantly.
+  // Pull-to-refresh is always CHEAP: device HealthKit (instant) + the warm
+  // server cache (instant) + the fast recovery endpoint on Health. Nothing
+  // here triggers an LLM or a briefing rebuild — that's what each tab's
+  // explicit refresh button is for, so you choose what to spend time updating.
   const onRefresh = useCallback(() => {
     health.refetch();
-    if (tab === 'health') {
-      liveRecovery.refetch();
-      return;
-    }
-    const briefingTabs: TabKey[] = ['today', 'wisdom', 'insights'];
-    if (briefingTabs.includes(tab)) briefing.refetch();
+    if (tab === 'health') liveRecovery.refetch();
     else briefing.reload();
   }, [briefing, health, liveRecovery, tab]);
+
+  // Per-tab explicit refresh — each tab updates only its own content:
+  //   Today/Wealth → markets brief + email summaries (server partial, ~10-20s)
+  //   Health       → HealthKit + live recovery score (sub-second)
+  //   Insights     → re-run the analysis engine, then reload findings
+  //   Wisdom       → day-locked by design; reloads the morning cache
+  const tabRefresh: Partial<Record<TabKey, { label: string; busy: boolean; run: () => void }>> = {
+    today: { label: 'Update markets & email', busy: briefing.loading, run: briefing.refetchLive },
+    wealth: { label: 'Update markets & email', busy: briefing.loading, run: briefing.refetchLive },
+    health: {
+      label: 'Refresh health data',
+      busy: health.loading || liveRecovery.loading,
+      run: () => { health.refetch(); liveRecovery.refetch(); },
+    },
+    insights: { label: 'Re-run analysis', busy: analyzingInsights, run: refreshInsights },
+    wisdom: { label: 'Reload', busy: briefing.loading, run: briefing.reload },
+  };
 
   // Tapping the morning "briefing ready" push should load the cache the server
   // already warmed at 8:30 — instant, not a 15-40s forced rebuild. Health still
@@ -226,7 +235,24 @@ export default function App() {
         showsVerticalScrollIndicator={false}
       >
         <Header date={d?.date ?? today} isRefreshing={isRefreshing} />
-        <Text style={[styles.tabTitle, { color: c.text }]}>{tabTitle}</Text>
+        <View style={styles.titleRow}>
+          <Text style={[styles.tabTitle, { color: c.text }]}>{tabTitle}</Text>
+          {tabRefresh[tab] && (
+            <TouchableOpacity
+              onPress={tabRefresh[tab]!.run}
+              disabled={tabRefresh[tab]!.busy}
+              style={[styles.tabRefreshBtn, { borderColor: c.border, backgroundColor: c.card }]}
+            >
+              {tabRefresh[tab]!.busy ? (
+                <ActivityIndicator size="small" color={c.subtext} />
+              ) : (
+                <Text style={[styles.tabRefreshTxt, { color: c.accent }]}>
+                  ↻ {tabRefresh[tab]!.label}
+                </Text>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
         {renderTab()}
         <View style={styles.footer} />
       </ScrollView>
@@ -248,13 +274,27 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
   scroll: { flex: 1 },
   content: { paddingHorizontal: spacing.md, paddingBottom: spacing.xl },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+    marginTop: spacing.xs,
+  },
   tabTitle: {
     fontSize: 28,
     fontWeight: '700',
     letterSpacing: -0.5,
-    marginBottom: spacing.md,
-    marginTop: spacing.xs,
   },
+  tabRefreshBtn: {
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: 6,
+    minWidth: 60,
+    alignItems: 'center',
+  },
+  tabRefreshTxt: { fontSize: 12, fontWeight: '600' },
   errorBox: { borderWidth: 1, borderRadius: 12, padding: spacing.md, marginBottom: spacing.md },
   errorTitle: { fontSize: 16, fontWeight: '600', marginBottom: spacing.xs },
   errorMsg: { fontSize: 14, lineHeight: 21, marginBottom: spacing.sm },

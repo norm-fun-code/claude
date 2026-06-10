@@ -11,7 +11,7 @@ const { fetchRandomNotionPage, fetchNotionQuotes } = require('./src/services/not
 const { fetchRandomQuote } = require('./src/services/googleDoc');
 const { fetchWeather } = require('./src/services/weather');
 const { fetchMarkets } = require('./src/services/markets');
-const { generateBriefing } = require('./src/services/briefing-ai');
+const { generateBriefing, generateEmailBriefs } = require('./src/services/briefing-ai');
 const { getTodayWorkout } = require('./src/services/workout');
 const { buildWealthInsights } = require('./src/services/wealth-insights');
 
@@ -1049,6 +1049,68 @@ app.post('/api/review/run', async (req, res) => {
 app.get('/api/sources', async (req, res) => {
   try {
     res.json({ sources: await sourcesStore.listSources() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Mid-day partial refresh: ONLY the parts that meaningfully change during the
+// day — markets commentary and email briefs (newsletters + urgent emails),
+// plus cheap non-LLM weather/calendar. Everything else (wisdom, insights,
+// recovery framing, weekly review) is morning-built and day-locked, so a full
+// 60-90s rebuild to see a fresh markets brief was waste. Merges into the
+// cached briefing and re-saves it, so subsequent cached loads stay current.
+app.get('/api/briefing/live', async (req, res) => {
+  try {
+    const prior = await briefingsStore.latestBriefing('daily');
+    if (!prior?.content) {
+      return res.status(409).json({ error: 'no briefing built yet — load the briefing first' });
+    }
+
+    const EXT = Number(process.env.BRIEFING_SOURCE_TIMEOUT_MS || 12000);
+    const [emailResult, marketsResult, weatherResult, calendarResult] = await Promise.allSettled([
+      withTimeout(fetchGmailThreads(), EXT, 'gmail'),
+      withTimeout(fetchMarkets(), EXT * 3, 'markets'), // includes its own small LLM brief
+      withTimeout(fetchWeather(), EXT, 'weather'),
+      withTimeout(fetchCalendarEvents(), EXT, 'calendar'),
+    ]);
+    const emails = emailResult.status === 'fulfilled' ? (emailResult.value ?? []) : [];
+    const markets = marketsResult.status === 'fulfilled' ? marketsResult.value : null;
+    const weather = weatherResult.status === 'fulfilled' ? weatherResult.value : null;
+    const calendar = calendarResult.status === 'fulfilled' ? calendarResult.value : null;
+
+    let emailBriefs = null;
+    if (emails.length) {
+      emailBriefs = await withTimeout(
+        generateEmailBriefs(emails),
+        Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000),
+        'email-briefs'
+      ).catch((err) => {
+        console.error('[briefing live] email briefs failed:', err.message);
+        return null;
+      });
+    }
+
+    const content = {
+      ...prior.content,
+      ...(markets ? { markets } : {}),
+      ...(weather ? { weather } : {}),
+      ...(calendar ? { calendar } : {}),
+      ...(emailBriefs
+        ? {
+            newsletters: emailBriefs.newsletters,
+            urgentEmails: emailBriefs.urgentEmails,
+            financeSummary: emailBriefs.financeSummary,
+          }
+        : {}),
+      liveRefreshedAt: new Date().toISOString(),
+    };
+
+    briefingsStore
+      .saveBriefing({ kind: 'daily', content })
+      .catch((err) => console.error('[briefing live] save failed:', err.message));
+
+    res.json({ ...content, cached: false });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

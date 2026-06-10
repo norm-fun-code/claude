@@ -195,9 +195,12 @@ export interface BriefingState {
   data: BriefingData | null;
   loading: boolean;
   error: string | null;
-  refetch: () => void; // force a fresh server rebuild (manual pull-to-refresh)
-  reload: () => void;  // pull the (already-warm) server cache instantly
+  refetch: () => void;     // force a full fresh server rebuild (60-90s)
+  reload: () => void;      // pull the (already-warm) server cache instantly
+  refetchLive: () => void; // mid-day partial: markets + email briefs only (fast)
 }
+
+type FetchMode = 'cache' | 'rebuild' | 'live';
 
 export function useBriefing(): BriefingState {
   const [data, setData] = useState<BriefingData | null>(null);
@@ -214,7 +217,10 @@ export function useBriefing(): BriefingState {
   // locked the phone before it finished) is always recoverable on foreground.
   const lastOkRef = useRef(0);
 
-  const fetchBriefing = useCallback(async (force = false) => {
+  const fetchBriefing = useCallback(async (mode: FetchMode | boolean = 'cache') => {
+    // Back-compat: earlier callers passed force booleans.
+    if (mode === true) mode = 'rebuild';
+    if (mode === false) mode = 'cache';
     // Cancel any request already in flight; we only want the newest one.
     controllerRef.current?.abort();
     const controller = new AbortController();
@@ -225,8 +231,14 @@ export function useBriefing(): BriefingState {
     setError(null);
 
     try {
-      // Default load uses the server cache (instant); pull-to-refresh forces fresh.
-      const url = force ? `${API_URL}?refresh=1` : API_URL;
+      // 'cache' loads the warm server cache (instant). 'rebuild' forces the
+      // full 60-90s build. 'live' refreshes just markets + email briefs on the
+      // server and merges them into the cached briefing — the only sections
+      // that meaningfully change during the day.
+      const url =
+        mode === 'rebuild' ? `${API_URL}?refresh=1`
+        : mode === 'live' ? `${API_URL}/live`
+        : API_URL;
       // Building fresh can take 15-40s server-side, so allow a long timeout
       // here, but still cap it so a stalled request can't spin forever.
       const response = await fetchWithTimeout(url, {
@@ -235,6 +247,12 @@ export function useBriefing(): BriefingState {
         signal: controller.signal,
       }, 45000);
 
+      // 409 from /live means no briefing has been built yet today — fall back
+      // to a normal cached load (which builds one if none exists).
+      if (response.status === 409 && mode === 'live') {
+        if (myReqId === reqIdRef.current) fetchBriefing('cache');
+        return;
+      }
       if (!response.ok) {
         throw new Error(`Server returned ${response.status}`);
       }
@@ -297,7 +315,8 @@ export function useBriefing(): BriefingState {
     data,
     loading,
     error,
-    refetch: () => fetchBriefing(true),  // force rebuild
-    reload: () => fetchBriefing(false),  // serve the warm morning cache instantly
+    refetch: () => fetchBriefing('rebuild'),  // force full rebuild
+    reload: () => fetchBriefing('cache'),     // serve the warm morning cache instantly
+    refetchLive: () => fetchBriefing('live'), // markets + email briefs only
   };
 }
