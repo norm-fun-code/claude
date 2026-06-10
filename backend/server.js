@@ -256,6 +256,74 @@ app.get('/api/habits/today', async (req, res) => {
   }
 });
 
+// Habit streaks — consecutive days (ending today or yesterday) where each habit
+// was logged with value >= 0.5. Covers the last 90 days.
+app.get('/api/habits/streaks', async (req, res) => {
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const HABIT_METRICS = ['morning_tm', 'afternoon_tm', 'cold_shower', 'gratitude', 'exercise'];
+    const { rows } = await db.query(
+      `SELECT
+         metric,
+         date_trunc('day', ts AT TIME ZONE COALESCE($1, 'America/New_York'))::date AS day,
+         AVG(value) AS val
+       FROM metrics
+       WHERE domain = 'habits'
+         AND metric = ANY($2)
+         AND source != 'seed'
+         AND ts >= NOW() - INTERVAL '90 days'
+       GROUP BY metric, day
+       ORDER BY metric, day DESC`,
+      [tz, HABIT_METRICS]
+    );
+
+    // Group rows by metric.
+    const byMetric = {};
+    for (const r of rows) {
+      if (!byMetric[r.metric]) byMetric[r.metric] = [];
+      byMetric[r.metric].push({ day: String(r.day).slice(0, 10), val: Number(r.val) });
+    }
+
+    // Today and yesterday in YYYY-MM-DD (server date; close enough for streaks).
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const toDateStr = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const today = toDateStr(now);
+    const yesterday = toDateStr(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+
+    function countStreak(dayRows) {
+      if (!dayRows || dayRows.length === 0) return 0;
+      // dayRows is sorted DESC. Streak is active if most recent day is today or yesterday.
+      const mostRecent = dayRows[0].day;
+      if (mostRecent !== today && mostRecent !== yesterday) return 0;
+      // Walk back expecting consecutive days.
+      let streak = 0;
+      let expected = mostRecent;
+      for (const { day, val } of dayRows) {
+        if (day !== expected || val < 0.5) break;
+        streak++;
+        // Next expected day is one day earlier.
+        const d = new Date(expected + 'T12:00:00Z');
+        d.setUTCDate(d.getUTCDate() - 1);
+        expected = toDateStr(new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+      }
+      return streak;
+    }
+
+    res.json({
+      streaks: {
+        morningTM:    countStreak(byMetric['morning_tm']),
+        afternoonTM:  countStreak(byMetric['afternoon_tm']),
+        coldShower:   countStreak(byMetric['cold_shower']),
+        gratitude:    countStreak(byMetric['gratitude']),
+        exercise:     countStreak(byMetric['exercise']),
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Per-exercise / non-negotiable workout checkmarks. Like the check-in, each tap
 // saves immediately and the app rehydrates the day's checks on mount. The client
 // owns the local date (?date=YYYY-MM-DD, ET) so it matches the workout strip.
@@ -275,6 +343,67 @@ app.post('/api/workout/checks', async (req, res) => {
     if (!date || !itemKey) return res.status(400).json({ error: 'date and itemKey are required' });
     await workoutChecks.setCheck({ date, itemKey, itemType, done: done !== false });
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Per-set workout logs — actual reps and weight performed, for progressive
+// overload tracking and auto-population of "last session" data.
+
+// GET /api/workout/log?day=YYYY-MM-DD — fetch all logged sets for a given day.
+app.get('/api/workout/log', async (req, res) => {
+  try {
+    const day = req.query.day || new Date().toISOString().slice(0, 10);
+    const { rows } = await db.query(
+      `SELECT exercise, set_number, reps, weight_lbs, note
+       FROM workout_logs WHERE log_date = $1
+       ORDER BY exercise, set_number`, [day]
+    );
+    res.json({ logs: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/workout/log — upsert a single set.
+app.post('/api/workout/log', async (req, res) => {
+  try {
+    const { day, exercise, set_number, reps, weight_lbs, note = null } = req.body;
+    if (!day || !exercise || set_number == null) return res.status(400).json({ error: 'day, exercise, set_number required' });
+    await db.query(
+      `INSERT INTO workout_logs (log_date, exercise, set_number, reps, weight_lbs, note, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, now())
+       ON CONFLICT (log_date, exercise, set_number) DO UPDATE
+         SET reps = EXCLUDED.reps, weight_lbs = EXCLUDED.weight_lbs,
+             note = EXCLUDED.note, updated_at = now()`,
+      [day, exercise, set_number, reps ?? null, weight_lbs ?? null, note]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/workout/log/history?exercise=NAME&limit=5 — last N sessions for an
+// exercise, each with all its sets. Powers the "Last time: 3×12 @ 45 lbs" display.
+app.get('/api/workout/log/history', async (req, res) => {
+  try {
+    const { exercise, limit = 5 } = req.query;
+    if (!exercise) return res.status(400).json({ error: 'exercise required' });
+    const { rows } = await db.query(
+      `SELECT log_date, json_agg(
+         json_build_object('set_number', set_number, 'reps', reps, 'weight_lbs', weight_lbs)
+         ORDER BY set_number
+       ) AS sets
+       FROM workout_logs
+       WHERE exercise = $1
+       GROUP BY log_date
+       ORDER BY log_date DESC
+       LIMIT $2`,
+      [exercise, parseInt(limit)]
+    );
+    res.json({ history: rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

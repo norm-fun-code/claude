@@ -295,6 +295,12 @@ function computeHabitConsistency(seriesByKey, opts = {}) {
   return findings;
 }
 
+const CHECKIN_LEVERS = {
+  'wellbeing:mood':   'High-mood days',
+  'wellbeing:energy': 'High-energy days',
+  'wellbeing:focus':  'High-focus days',
+};
+
 /**
  * Pure: habit-vs-health split analysis. Splits each day as "habit on" or
  * "habit off" and computes the mean health-metric value on each side.
@@ -334,12 +340,12 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
     return m;
   }
 
-  function splitStats(habitMap, outcomeMap) {
+  function splitStats(habitMap, outcomeMap, threshold = 0.5) {
     const onVals = [], offVals = [];
     for (const [day, val] of outcomeMap) {
       const h = habitMap.get(day);
       if (h === undefined || !Number.isFinite(val)) continue;
-      (h >= 0.5 ? onVals : offVals).push(val);
+      (h >= threshold ? onVals : offVals).push(val);
     }
     if (onVals.length < MIN_N || offVals.length < MIN_N) return null;
     const mean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
@@ -377,6 +383,18 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
       if (!oMap) continue;
       const s = splitStats(bothMap, oMap);
       if (s) candidates.push({ habitLabel: 'Both meditations', info, outcomeKey, s });
+    }
+  }
+
+  // Checkin levers: high-mood / high-energy / high-focus days vs health outcomes.
+  for (const [checkinKey, habitLabel] of Object.entries(CHECKIN_LEVERS)) {
+    const cMap = toMap(checkinKey);
+    if (!cMap) continue;
+    for (const [outcomeKey, info] of Object.entries(OUTCOMES)) {
+      const oMap = toMap(outcomeKey);
+      if (!oMap) continue;
+      const s = splitStats(cMap, oMap, 4);
+      if (s) candidates.push({ habitLabel, info, outcomeKey, s });
     }
   }
 
@@ -511,7 +529,7 @@ async function analyze(opts = {}) {
   };
 }
 
-module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeHabitHealthSplits, DEFAULTS };
+module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeHabitHealthSplits, DEFAULTS, CHECKIN_LEVERS };
 
 // CLI entrypoint
 if (require.main === module) {
