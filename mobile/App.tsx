@@ -5,6 +5,7 @@ import {
   View,
   RefreshControl,
   Text,
+  TouchableOpacity,
   useColorScheme,
   ActivityIndicator,
   SafeAreaView,
@@ -48,6 +49,7 @@ import { AlertCard } from './src/components/AlertCard';
 import { HighlightsCard } from './src/components/HighlightsCard';
 import { ShopCard } from './src/components/ShopCard';
 import { GoalsCard } from './src/components/GoalsCard';
+import { ANALYZE_URL, authHeaders, fetchWithTimeout } from './src/config';
 
 export default function App() {
   const isDark = useColorScheme() === 'dark';
@@ -57,7 +59,19 @@ export default function App() {
   const health = useHealthData();
 
   const [tab, setTab] = useState<TabKey>('today');
+  const [analyzingInsights, setAnalyzingInsights] = useState(false);
   const isRefreshing = briefing.loading || health.loading;
+
+  const refreshInsights = useCallback(async () => {
+    if (analyzingInsights) return;
+    setAnalyzingInsights(true);
+    try {
+      await fetchWithTimeout(ANALYZE_URL, { method: 'POST', headers: authHeaders() }, 60000);
+      briefing.reload();
+    } catch { /* silent */ } finally {
+      setAnalyzingInsights(false);
+    }
+  }, [analyzingInsights, briefing]);
 
   // Pull-to-refresh is tab-aware. Health metrics come from HealthKit on-device
   // and refresh instantly, so don't make the user eat the 60-90s briefing
@@ -100,6 +114,12 @@ export default function App() {
             ) : (
               <EmptyNote c={c} text="Health insights (sleep ↔ HRV ↔ focus patterns) appear once a few days of Apple Health + habit data accumulate. Open the app daily so HealthKit syncs, and log your habits on the Today tab." />
             )}
+            <TouchableOpacity onPress={refreshInsights} disabled={analyzingInsights} style={styles.refreshInsightsBtn}>
+              {analyzingInsights
+                ? <ActivityIndicator size="small" color={c.subtext} />
+                : <Text style={[styles.refreshInsightsTxt, { color: c.subtext }]}>Refresh insights</Text>
+              }
+            </TouchableOpacity>
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} />
           </>
         );
@@ -225,4 +245,6 @@ const styles = StyleSheet.create({
   empty: { borderWidth: 1, borderRadius: 14, padding: spacing.lg, marginBottom: spacing.md },
   emptyText: { fontSize: 14, lineHeight: 21, fontStyle: 'italic' },
   footer: { height: spacing.lg },
+  refreshInsightsBtn: { alignItems: 'center', paddingVertical: spacing.sm, marginBottom: spacing.md },
+  refreshInsightsTxt: { fontSize: 13, fontWeight: '500' },
 });
