@@ -1174,11 +1174,14 @@ app.get('/api/briefing', async (req, res) => {
       console.error('[wealthInsights] failed:', err.message);
     }
 
-    // Health/wellbeing/habits findings for the Health tab.
-    // Prioritize habit_split (habit-vs-health correlations) at the top since
-    // they're the most actionable; fill remaining slots with other types.
+    // Health/wellbeing findings for the Health tab. Habit findings only qualify
+    // when they connect to health data (habit_split carries ['habits','health'],
+    // habit↔health correlations carry both domains) — a pure habits trend like
+    // "Gratitude journal down 43%" belongs on Today's nudges, not here.
+    // Prioritize habit_split (habit-vs-health splits) at the top since they're
+    // the most actionable; fill remaining slots with other types.
     const healthPool = insightPool
-      .filter((f) => Array.isArray(f.domains) && f.domains.some((dn) => ['health', 'wellbeing', 'habits'].includes(dn)));
+      .filter((f) => Array.isArray(f.domains) && f.domains.some((dn) => ['health', 'wellbeing'].includes(dn)));
     const habitSplits = healthPool.filter((f) => f.type === 'habit_split');
     const others = healthPool.filter((f) => f.type !== 'habit_split');
     healthInsights = [...habitSplits, ...others]
