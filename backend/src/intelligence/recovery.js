@@ -266,7 +266,29 @@ async function liveRecovery() {
   const rec = recoveryScore(seriesByKey);
   if (!rec) return null;
   const { band, guidance } = recoveryBand(rec.score);
-  return { score: rec.score, band, parts: rec.parts, detail: guidance };
+
+  // If the user logged a meaningful workout in the last 2 days, note that
+  // suppressed recovery is expected — avoids alarming a healthy athlete.
+  let workoutNote = '';
+  try {
+    const db = require('../db');
+    const { rows } = await db.query(
+      `SELECT log_date, COUNT(*) AS sets
+       FROM workout_logs
+       WHERE log_date >= CURRENT_DATE - 1
+       GROUP BY log_date ORDER BY log_date DESC`
+    );
+    if (rows.length) {
+      const totalSets = rows.reduce((s, r) => s + Number(r.sets), 0);
+      const dayLabel = new Date(rows[0].log_date).toDateString() === new Date().toDateString()
+        ? 'today' : 'yesterday';
+      if (totalSets >= 6) {
+        workoutNote = ` Training load: ${totalSets} sets logged ${dayLabel} — some suppression is expected.`;
+      }
+    }
+  } catch { /* workout_logs table may not exist yet — non-critical */ }
+
+  return { score: rec.score, band, parts: rec.parts, detail: guidance + workoutNote };
 }
 
 module.exports = {

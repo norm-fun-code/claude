@@ -189,6 +189,11 @@ export interface BriefingData {
   dailyQuote?: string | null;
   alerts?: Alert[];
   errors?: { service: string; error: string }[];
+  // Set by the server when the cache is older than BRIEFING_CACHE_MIN (default 3h).
+  // The app shows a "Rebuild briefing" CTA instead of silently serving stale data.
+  stale?: boolean;
+  cached?: boolean;
+  cachedAgeMin?: number;
 }
 
 export interface BriefingState {
@@ -239,13 +244,14 @@ export function useBriefing(): BriefingState {
         mode === 'rebuild' ? `${API_URL}?refresh=1`
         : mode === 'live' ? `${API_URL}/live`
         : API_URL;
-      // Building fresh can take 15-40s server-side, so allow a long timeout
-      // here, but still cap it so a stalled request can't spin forever.
+      // Mode-specific timeouts: LLM rebuilds take 60-90s; cache hits are instant
+      // so a short timeout lets stalled requests fail fast.
+      const timeoutMs = mode === 'rebuild' ? 120000 : mode === 'cache' ? 15000 : 45000;
       const response = await fetchWithTimeout(url, {
         method: 'GET',
         headers: authHeaders(),
         signal: controller.signal,
-      }, 45000);
+      }, timeoutMs);
 
       // 409 from /live means no briefing has been built yet today — fall back
       // to a normal cached load (which builds one if none exists).

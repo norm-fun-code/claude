@@ -11,7 +11,7 @@ const SYSTEM =
   'quote, and Notion wisdom. Return ONLY a single valid JSON object — no markdown, ' +
   'no code fences, no commentary.';
 
-function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '') {
+function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '') {
   // Input size wasn't the timeout cause (the proven Apps Script sends 15K/email
   // and is fine) — OUTPUT length was. So allow a generous 15K/email like that
   // setup, with a total budget as a safety net against a huge unread pile.
@@ -43,6 +43,8 @@ Today's calendar:
 ${calendarSection}
 
 Recent wellbeing (last 7 days): ${wellbeingContext || 'no recent check-in data'}
+
+Active life context: ${annotationsContext || 'none'}
 
 Today's quote/principle:
 "${quote}"
@@ -102,8 +104,8 @@ const EMPTY = {
   newsletters: [], urgentEmails: [], financeSummary: [], quoteInsight: '', notionQuote: '', notionInsight: '',
 };
 
-async function generateBriefing(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '') {
-  const prompt = buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext);
+async function generateBriefing(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '') {
+  const prompt = buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext);
 
   let text = '';
   try {

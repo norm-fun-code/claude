@@ -479,6 +479,21 @@ async function analyze(opts = {}) {
   const correlations = computeCorrelations(seriesByKey, o);
   const anomalies = computeAnomalies(seriesByKey, o);
   const composites = computeHealthComposites(seriesByKey, o);
+
+  // Annotate anomaly findings with any active life-context annotations (travel,
+  // illness, deadline stress, etc.) so a dip in HRV during a sick week isn't
+  // surfaced as a mystery. Query overlapping window = last 7 days.
+  try {
+    const annotationsStore = require('../store/annotations');
+    const since = new Date(Date.now() - 7 * 864e5);
+    const active = await annotationsStore.overlapping(since, new Date());
+    if (active.length) {
+      const ctx = active.map((a) => a.label || a.category).slice(0, 3).join(', ');
+      for (const a of anomalies) {
+        a.detail += ` (Active context: ${ctx} — may explain this deviation.)`;
+      }
+    }
+  } catch { /* non-critical — don't break the analysis */ }
   const habitConsistency = computeHabitConsistency(seriesByKey, o);
   const habitHealthSplits = computeHabitHealthSplits(seriesByKey, o);
 
