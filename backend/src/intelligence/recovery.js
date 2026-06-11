@@ -299,26 +299,45 @@ async function liveRecovery() {
   if (!rec) return null;
   const { band, guidance } = recoveryBand(rec.score);
 
-  // If the user logged a meaningful workout in the last 2 days, note that
-  // suppressed recovery is expected — avoids alarming a healthy athlete.
+  // If the user trained meaningfully in the last 2 days, note that suppressed
+  // recovery is expected — avoids alarming a healthy athlete. Counts both logged
+  // strength sets and logged alternate activities (Zone 2 walks, runs, etc.).
   let workoutNote = '';
   try {
     const db = require('../db');
-    const { rows } = await db.query(
+    const today = new Date().toDateString();
+    const dayLabelOf = (d) => new Date(d).toDateString() === today ? 'today' : 'yesterday';
+
+    const { rows: setRows } = await db.query(
       `SELECT log_date, COUNT(*) AS sets
        FROM workout_logs
        WHERE log_date >= CURRENT_DATE - 1
        GROUP BY log_date ORDER BY log_date DESC`
     );
-    if (rows.length) {
-      const totalSets = rows.reduce((s, r) => s + Number(r.sets), 0);
-      const dayLabel = new Date(rows[0].log_date).toDateString() === new Date().toDateString()
-        ? 'today' : 'yesterday';
-      if (totalSets >= 6) {
-        workoutNote = ` Training load: ${totalSets} sets logged ${dayLabel} — some suppression is expected.`;
+    const totalSets = setRows.reduce((s, r) => s + Number(r.sets), 0);
+
+    let activityNote = '';
+    try {
+      const { rows: actRows } = await db.query(
+        `SELECT activity_type, duration_min, log_date FROM activity_logs
+         WHERE log_date >= CURRENT_DATE - 1
+         ORDER BY log_date DESC, id`
+      );
+      if (actRows.length) {
+        const parts = actRows.slice(0, 3).map((a) => {
+          const dur = a.duration_min ? `${a.duration_min}min ` : '';
+          return `${dur}${a.activity_type} ${dayLabelOf(a.log_date)}`;
+        });
+        activityNote = ` Logged ${parts.join(', ')}.`;
       }
+    } catch { /* activity_logs may not exist yet — non-critical */ }
+
+    if (totalSets >= 6) {
+      workoutNote = ` Training load: ${totalSets} sets ${dayLabelOf(setRows[0].log_date)} — some suppression is expected.${activityNote}`;
+    } else if (activityNote) {
+      workoutNote = `${activityNote} Some suppression after training is expected.`;
     }
-  } catch { /* workout_logs table may not exist yet — non-critical */ }
+  } catch { /* non-critical */ }
 
   return { score: rec.score, band, parts: rec.parts, detail: guidance + workoutNote };
 }

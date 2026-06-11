@@ -57,6 +57,14 @@ function splitKey(key) {
   return { domain: key.slice(0, i), metric: key.slice(i + 1) };
 }
 
+function toDayKey(d) {
+  return (d instanceof Date ? d.toISOString() : String(d)).slice(0, 10);
+}
+
+function mean(arr) {
+  return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+}
+
 /** Pure: per-metric recent-vs-prior trend findings. */
 function computeTrends(seriesByKey, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
@@ -448,6 +456,203 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
   });
 }
 
+/**
+ * Pure: SLEEP-impact split — the lever the user most wants to understand. The
+ * general correlation engine tests sleep too, but a best-vs-worst-nights split
+ * is far more actionable. Splits nights into the user's best third vs worst third
+ * (by sleep_score, falling back to sleep_hours) and compares SAME-day outcomes —
+ * in the spine sleep[D] is last night and hrv[D]/mood[D] are that same morning/
+ * day. Returns up to MAX_RESULTS findings, strongest effect first.
+ */
+function computeSleepImpact(seriesByKey) {
+  const MIN_N = 5, MIN_PCT = 0.05, MAX_RESULTS = 4;
+  const driverKey = (seriesByKey['health:sleep_score']?.length ?? 0) >= 2 * MIN_N + 2
+    ? 'health:sleep_score' : 'health:sleep_hours';
+  const driver = seriesByKey[driverKey];
+  if (!driver || driver.length < 2 * MIN_N + 2) return [];
+
+  const driverByDay = new Map();
+  for (const r of driver) {
+    const v = Number(r.value);
+    if (Number.isFinite(v)) driverByDay.set(toDayKey(r.day), v);
+  }
+  const vals = [...driverByDay.values()].sort((a, b) => a - b);
+  const loCut = vals[Math.floor((vals.length - 1) / 3)];
+  const hiCut = vals[Math.ceil((vals.length - 1) * 2 / 3)];
+  if (!(hiCut > loCut)) return []; // not enough spread in sleep to split
+
+  const OUTCOMES = {
+    'health:hrv':        { label: 'HRV',        unit: 'ms',  good: 'up'   },
+    'health:resting_hr': { label: 'resting HR', unit: 'bpm', good: 'down' },
+    'wellbeing:energy':  { label: 'energy',     unit: '/5',  good: 'up'   },
+    'wellbeing:focus':   { label: 'focus',      unit: '/5',  good: 'up'   },
+    'wellbeing:mood':    { label: 'mood',       unit: '/5',  good: 'up'   },
+  };
+  const fmt = (n, unit) =>
+    unit === 'ms' || unit === 'bpm' ? `${Math.round(n)}${unit}` : `${round(n, 1)}${unit === '/5' ? '/5' : ''}`;
+
+  const scored = [];
+  for (const [okey, info] of Object.entries(OUTCOMES)) {
+    const series = seriesByKey[okey];
+    if (!series) continue;
+    const goodVals = [], poorVals = [];
+    for (const r of series) {
+      const v = Number(r.value);
+      if (!Number.isFinite(v)) continue;
+      const d = driverByDay.get(toDayKey(r.day));
+      if (d == null) continue;
+      if (d >= hiCut) goodVals.push(v);
+      else if (d <= loCut) poorVals.push(v);
+    }
+    if (goodVals.length < MIN_N || poorVals.length < MIN_N) continue;
+    const gm = mean(goodVals), pm = mean(poorVals);
+    const pct = pm !== 0 ? (gm - pm) / Math.abs(pm) : null;
+    if (pct == null || Math.abs(pct) < MIN_PCT) continue;
+
+    const better = (info.good === 'up' && pct > 0) || (info.good === 'down' && pct < 0);
+    const dir = pct > 0 ? 'higher' : 'lower';
+    const domains = okey.startsWith('wellbeing') ? ['health', 'wellbeing'] : ['health'];
+    scored.push({
+      absPct: Math.abs(pct),
+      finding: {
+        type: 'sleep_impact',
+        domains,
+        title: `Sleep → ${info.label}: ${fmt(gm, info.unit)} best nights vs ${fmt(pm, info.unit)} worst (${pct >= 0 ? '+' : ''}${Math.round(pct * 100)}%)`,
+        detail:
+          `After your best-slept nights, ${info.label} averages ${fmt(gm, info.unit)} — ` +
+          `${Math.abs(Math.round(pct * 100))}% ${dir} than after your worst-slept nights (${fmt(pm, info.unit)}), ` +
+          `across ${goodVals.length}+${poorVals.length} days. ` +
+          (better
+            ? `Sleep is one of your strongest levers for ${info.label}.`
+            : `Association, not proof of cause — other factors may contribute.`),
+        confidence: Math.min(0.9, Math.abs(pct) / 0.3),
+        evidence: {
+          auto: true, kind: 'sleep_impact', driver: driverKey, outcome: okey,
+          goodMean: round(gm), poorMean: round(pm), pct: round(pct, 3),
+          goodN: goodVals.length, poorN: poorVals.length,
+        },
+      },
+    });
+  }
+  scored.sort((a, b) => b.absPct - a.absPct);
+  return scored.slice(0, MAX_RESULTS).map((s) => s.finding);
+}
+
+/**
+ * Pure: EXERCISE-TYPE → next-day recovery. Answers "how do different workouts
+ * affect the following day?" For each prior-day activity type, compares the
+ * NEXT day's HRV / resting HR against the user's overall next-day average. The
+ * activityTypeByDay map ({ 'YYYY-MM-DD': 'zone2'|'pull'|... }) is built from
+ * logged activities + the scheduled plan (see loadActivityTypeByDay).
+ */
+function computeActivityImpact(seriesByKey, activityTypeByDay) {
+  const MIN_N = 4, MIN_PCT = 0.05;
+  if (!activityTypeByDay || Object.keys(activityTypeByDay).length < 2 * MIN_N) return [];
+
+  const OUTCOMES = {
+    'health:hrv':        { label: 'HRV',        unit: 'ms',  good: 'up'   },
+    'health:resting_hr': { label: 'resting HR', unit: 'bpm', good: 'down' },
+  };
+  const TYPE_LABELS = {
+    zone2: 'Zone 2', walk: 'a walk', run: 'a run', strength: 'strength',
+    push: 'Push', pull: 'Pull', intervals: 'intervals', mobility: 'mobility',
+    yoga: 'yoga', other: 'other training',
+  };
+  const fmt = (n, unit) => `${Math.round(n)}${unit}`;
+  const nextDay = (day) => {
+    const dt = new Date(`${day}T12:00:00`);
+    dt.setDate(dt.getDate() + 1);
+    return toDayKey(dt);
+  };
+
+  const findings = [];
+  for (const [okey, info] of Object.entries(OUTCOMES)) {
+    const series = seriesByKey[okey];
+    if (!series) continue;
+    const outByDay = new Map();
+    for (const r of series) {
+      const v = Number(r.value);
+      if (Number.isFinite(v)) outByDay.set(toDayKey(r.day), v);
+    }
+    const byType = {}; const allVals = [];
+    for (const [day, type] of Object.entries(activityTypeByDay)) {
+      const ov = outByDay.get(nextDay(day));
+      if (ov == null) continue;
+      (byType[type] ||= []).push(ov);
+      allVals.push(ov);
+    }
+    if (allVals.length < 2 * MIN_N) continue;
+    const overall = mean(allVals);
+
+    let best = null;
+    for (const [type, arr] of Object.entries(byType)) {
+      if (arr.length < MIN_N) continue;
+      const m = mean(arr);
+      const pct = overall !== 0 ? (m - overall) / Math.abs(overall) : null;
+      if (pct == null || Math.abs(pct) < MIN_PCT) continue;
+      if (!best || Math.abs(pct) > Math.abs(best.pct)) best = { type, m, pct, n: arr.length };
+    }
+    if (!best) continue;
+
+    const typeLabel = TYPE_LABELS[best.type] || best.type;
+    const dir = best.pct > 0 ? 'higher' : 'lower';
+    const better = (info.good === 'up' && best.pct > 0) || (info.good === 'down' && best.pct < 0);
+    findings.push({
+      type: 'activity_impact',
+      domains: ['health'],
+      title: `Day after ${typeLabel}: ${info.label} ${fmt(best.m, info.unit)} vs ${fmt(overall, info.unit)} typical (${best.pct >= 0 ? '+' : ''}${Math.round(best.pct * 100)}%)`,
+      detail:
+        `On the ${best.n} days following ${typeLabel}, next-morning ${info.label} averaged ${fmt(best.m, info.unit)} — ` +
+        `${Math.abs(Math.round(best.pct * 100))}% ${dir} than your overall next-day average (${fmt(overall, info.unit)}). ` +
+        (better
+          ? `${typeLabel[0].toUpperCase() + typeLabel.slice(1)} appears easy on your next-day recovery.`
+          : `${typeLabel[0].toUpperCase() + typeLabel.slice(1)} tends to cost you next-day recovery — plan an easier day after.`),
+      confidence: Math.min(0.85, Math.abs(best.pct) / 0.25),
+      evidence: {
+        auto: true, kind: 'activity_impact', activity: best.type, outcome: okey,
+        typeMean: round(best.m), overallMean: round(overall), pct: round(best.pct, 3), n: best.n,
+      },
+    });
+  }
+  return findings;
+}
+
+/**
+ * Build { 'YYYY-MM-DD': activityType } over the load window. Sources, in
+ * increasing authority: the deterministic weekly plan on days the Exercise habit
+ * was logged, then actual logged activities (which override the plan). Lets the
+ * exercise-type analysis work from day one off the plan, then sharpen as real
+ * activity logs accumulate.
+ */
+async function loadActivityTypeByDay(seriesByKey, from) {
+  // JS getDay (0=Sun..6=Sat) → scheduled type id, mirroring services/workout.js.
+  const PLAN_BY_JS_DAY = { 0: 'pull', 1: 'zone2', 2: 'mobility', 3: 'intervals', 4: 'push', 5: 'rest', 6: 'zone2' };
+  const map = {};
+
+  const ex = seriesByKey['habits:exercise'];
+  if (ex) {
+    for (const r of ex) {
+      if (Number(r.value) >= 0.5) {
+        const day = toDayKey(r.day);
+        const t = PLAN_BY_JS_DAY[new Date(`${day}T12:00:00`).getDay()];
+        if (t && t !== 'rest') map[day] = t;
+      }
+    }
+  }
+
+  try {
+    const { rows } = await require('../db').query(
+      `SELECT log_date, activity_type FROM activity_logs WHERE log_date >= $1 ORDER BY log_date, id`,
+      [from]
+    );
+    for (const r of rows) {
+      if (r.activity_type && r.activity_type !== 'rest') map[toDayKey(r.log_date)] = r.activity_type;
+    }
+  } catch { /* activity_logs table optional */ }
+
+  return map;
+}
+
 /** Orchestrator: load series, compute findings, persist them. */
 async function analyze(opts = {}) {
   const o = { ...DEFAULTS, ...opts };
@@ -496,6 +701,9 @@ async function analyze(opts = {}) {
   } catch { /* non-critical — don't break the analysis */ }
   const habitConsistency = computeHabitConsistency(seriesByKey, o);
   const habitHealthSplits = computeHabitHealthSplits(seriesByKey, o);
+  const sleepImpact = computeSleepImpact(seriesByKey);
+  const activityTypeByDay = await loadActivityTypeByDay(seriesByKey, from);
+  const activityImpact = computeActivityImpact(seriesByKey, activityTypeByDay);
 
   // Rank the highest-leverage actions from the findings + any off-track goals.
   const latestByKey = {};
@@ -514,7 +722,7 @@ async function analyze(opts = {}) {
   // Goal achievement-probability forecasts from the same loaded series.
   const forecasts = computeForecasts(goals, seriesByKey);
 
-  const all = [...trends, ...correlations, ...anomalies, ...composites, ...actions, ...forecasts, ...habitConsistency, ...habitHealthSplits];
+  const all = [...trends, ...correlations, ...anomalies, ...composites, ...actions, ...forecasts, ...habitConsistency, ...habitHealthSplits, ...sleepImpact, ...activityImpact];
   const windowStart = from;
   const windowEnd = new Date();
 
@@ -525,7 +733,7 @@ async function analyze(opts = {}) {
   const { withTransaction } = require('../db');
   await withTransaction(async (client) => {
     const tx = (text, params) => client.query(text, params);
-    await findingsStore.supersedeAuto(['trend', 'correlation', 'anomaly', 'leverage', 'forecast', 'habit_consistency', 'habit_split', ...COMPOSITE_TYPES], tx);
+    await findingsStore.supersedeAuto(['trend', 'correlation', 'anomaly', 'leverage', 'forecast', 'habit_consistency', 'habit_split', 'sleep_impact', 'activity_impact', ...COMPOSITE_TYPES], tx);
     for (const f of all) {
       await findingsStore.createFinding({ ...f, windowStart, windowEnd }, tx);
     }
@@ -541,10 +749,12 @@ async function analyze(opts = {}) {
     forecasts: forecasts.length,
     habitConsistency: habitConsistency.length,
     habitHealthSplits: habitHealthSplits.length,
+    sleepImpact: sleepImpact.length,
+    activityImpact: activityImpact.length,
   };
 }
 
-module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeHabitHealthSplits, DEFAULTS, CHECKIN_LEVERS };
+module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeHabitHealthSplits, computeSleepImpact, computeActivityImpact, DEFAULTS, CHECKIN_LEVERS };
 
 // CLI entrypoint
 if (require.main === module) {

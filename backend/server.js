@@ -458,6 +458,25 @@ app.get('/api/workout/log/history', async (req, res) => {
 // Activity logs — what you ACTUALLY did when it differs from the plan (e.g.
 // scheduled Pull but you walked instead). Free-form, multiple per day allowed.
 
+// Roll a day's logged activity minutes into the metrics spine as
+// health:exercise_minutes (source 'activity'), so logged Zone 2 walks etc. feed
+// training-load (ACWR), trends, and correlations like any other health metric.
+async function syncActivityMinutes(date) {
+  try {
+    const { rows } = await db.query(
+      `SELECT COALESCE(SUM(duration_min), 0) AS mins FROM activity_logs
+       WHERE log_date = $1 AND duration_min IS NOT NULL`, [date]
+    );
+    const mins = Number(rows[0]?.mins || 0);
+    await require('./src/store/metrics').insertMetrics([{
+      ts: new Date(`${date}T12:00:00`),
+      domain: 'health', metric: 'exercise_minutes', value: mins, unit: 'min', source: 'activity',
+    }]);
+  } catch (err) {
+    console.error('[syncActivityMinutes] failed:', err.message);
+  }
+}
+
 // GET /api/activity?date=YYYY-MM-DD — list activities logged for a day.
 app.get('/api/activity', async (req, res) => {
   try {
@@ -485,6 +504,7 @@ app.post('/api/activity', async (req, res) => {
        RETURNING id, activity_type, label, duration_min, note, planned_type, created_at`,
       [date, activity_type, label, duration_min == null ? null : Number(duration_min), note, planned_type]
     );
+    await syncActivityMinutes(date);
     res.json({ activity: rows[0] });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -494,7 +514,12 @@ app.post('/api/activity', async (req, res) => {
 // DELETE /api/activity/:id — remove a logged activity (mis-entry / undo).
 app.delete('/api/activity/:id', async (req, res) => {
   try {
-    await db.query('DELETE FROM activity_logs WHERE id = $1', [req.params.id]);
+    const { rows } = await db.query('DELETE FROM activity_logs WHERE id = $1 RETURNING log_date', [req.params.id]);
+    if (rows[0]) {
+      const d = rows[0].log_date;
+      const ds = d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
+      await syncActivityMinutes(ds);
+    }
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1554,9 +1579,15 @@ app.get('/api/briefing', async (req, res) => {
     // the most actionable; fill remaining slots with other types.
     const healthPool = insightPool
       .filter((f) => Array.isArray(f.domains) && f.domains.some((dn) => ['health', 'wellbeing'].includes(dn)));
-    const habitSplits = healthPool.filter((f) => f.type === 'habit_split');
-    const others = healthPool.filter((f) => f.type !== 'habit_split');
-    healthInsights = [...habitSplits, ...others]
+    // Lead with the most actionable, personally-relevant splits: sleep impact
+    // (the lever the user cares most about), then exercise-type → next-day
+    // recovery, then habit↔health splits; fill the rest with other findings.
+    const PRIORITY = ['sleep_impact', 'activity_impact', 'habit_split'];
+    const prioritized = healthPool
+      .filter((f) => PRIORITY.includes(f.type))
+      .sort((a, b) => (PRIORITY.indexOf(a.type) - PRIORITY.indexOf(b.type)) || ((b.confidence ?? 0) - (a.confidence ?? 0)));
+    const others = healthPool.filter((f) => !PRIORITY.includes(f.type));
+    healthInsights = [...prioritized, ...others]
       .slice(0, 6)
       .map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains }));
   } catch (err) {
