@@ -128,7 +128,7 @@ function getYesterdayNight(): Date {
   return d;
 }
 
-export function useHealthData(): HealthData & { refetch: () => void } {
+export function useHealthData(): HealthData & { refetch: () => void; lastFetched: Date | null } {
   const [data, setData] = useState<HealthData>({
     hrv: null,
     hrvStatus: 'unknown',
@@ -143,18 +143,21 @@ export function useHealthData(): HealthData & { refetch: () => void } {
     loading: false,
     error: null,
   });
+  // Separate state so the loading=true render is never batched away with the
+  // loading=false update — HealthKit callbacks can fire fast enough that React 18
+  // would otherwise batch both into a single render, making the spinner invisible.
+  const [loading, setLoading] = useState(false);
+  const [lastFetched, setLastFetched] = useState<Date | null>(null);
 
   const fetchData = useCallback(() => {
-    setData((prev) => ({ ...prev, loading: true, error: null }));
+    setLoading(true);
+    setData((prev) => ({ ...prev, error: null }));
 
     try {
       AppleHealthKit.initHealthKit(PERMISSIONS, (initErr) => {
         if (initErr) {
-          setData((prev) => ({
-            ...prev,
-            loading: false,
-            error: 'HealthKit unavailable — connect your Apple Watch on device',
-          }));
+          setData((prev) => ({ ...prev, error: 'HealthKit unavailable — connect your Apple Watch on device' }));
+          setLoading(false);
           return;
         }
 
@@ -189,6 +192,8 @@ export function useHealthData(): HealthData & { refetch: () => void } {
             loading: false,
             error: null,
           });
+          setLoading(false);
+          setLastFetched(new Date());
 
           // Persist these readings so they accumulate as history. Sleep stages +
           // score post only when present, so a watch without stage data doesn't
@@ -295,11 +300,8 @@ export function useHealthData(): HealthData & { refetch: () => void } {
       );
       });
     } catch (e) {
-      setData((prev) => ({
-        ...prev,
-        loading: false,
-        error: 'HealthKit unavailable on this device',
-      }));
+      setData((prev) => ({ ...prev, error: 'HealthKit unavailable on this device' }));
+      setLoading(false);
     }
   }, []);
 
@@ -307,5 +309,5 @@ export function useHealthData(): HealthData & { refetch: () => void } {
     fetchData();
   }, [fetchData]);
 
-  return { ...data, refetch: fetchData };
+  return { ...data, loading, refetch: fetchData, lastFetched };
 }

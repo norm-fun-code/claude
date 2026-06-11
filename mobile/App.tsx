@@ -131,9 +131,13 @@ export default function App() {
 
   const tabTitle = TABS.find((t) => t.key === tab)?.label ?? '';
 
-  // Relative age label for the last briefing build: "Built 3h ago", "Built just now", etc.
-  // Appends " · stale" when the server signals the cache is older than the TTL.
-  const builtAtLabel = useMemo(() => {
+  // Subtitle under the tab title — shows briefing age on non-Health tabs, and
+  // last-refreshed time on Health so the user knows the refresh actually worked.
+  const tabSubtitle = useMemo(() => {
+    if (tab === 'health') {
+      if (!health.lastFetched) return null;
+      return `Refreshed at ${health.lastFetched.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+    }
     if (!d?.builtAt) return d?.stale ? 'Briefing is stale' : null;
     const ageMs = Date.now() - new Date(d.builtAt).getTime();
     const ageMin = Math.floor(ageMs / 60000);
@@ -145,7 +149,7 @@ export default function App() {
       label = ageH < 24 ? `Built ${ageH}h ago` : `Built ${Math.floor(ageH / 24)}d ago`;
     }
     return d.stale ? `${label} · stale` : label;
-  }, [d?.builtAt, d?.stale]);
+  }, [tab, health.lastFetched, d?.builtAt, d?.stale]);
 
   const renderTab = () => {
     switch (tab) {
@@ -262,8 +266,8 @@ export default function App() {
         <View style={styles.titleRow}>
           <View>
             <Text style={[styles.tabTitle, { color: c.text }]}>{tabTitle}</Text>
-            {builtAtLabel && (
-              <Text style={[styles.builtAt, { color: c.subtext }]}>{builtAtLabel}</Text>
+            {tabSubtitle && (
+              <Text style={[styles.builtAt, { color: c.subtext }]}>{tabSubtitle}</Text>
             )}
           </View>
           {tabRefresh[tab] && (
