@@ -18,22 +18,43 @@ function latest(series) {
 
 /** Rank-based percentile: what fraction of the last `baselineDays` days does
  *  today's value beat? No distribution assumption — self-calibrates to actual
- *  variance automatically. Better than CDF(z) for skewed biometrics like HRV.
- *  `invert` for lower-is-better metrics (resting HR). Returns null without
- *  enough history (minN baseline days required). */
-function baselineScore(series, { baselineDays = 30, minN = 8, invert = false } = {}) {
+ *  variance automatically. `invert` for lower-is-better metrics (resting HR).
+ *  Returns null without enough history (minN baseline days required). */
+function rankPercentile(series, { baselineDays = 30, minN = 8, invert = false } = {}) {
   const values = series.map((p) => Number(p.value)).filter(Number.isFinite);
   if (values.length < minN + 1) return null;
   const today = values[values.length - 1];
   const baseline = values.slice(-(baselineDays + 1), -1);
   if (baseline.length < minN) return null;
   const n = baseline.length;
-  // Count baseline days that today beats, with half-credit for ties.
   const beats = invert
-    ? baseline.filter((v) => v > today).length   // lower is better: beats days that were higher
-    : baseline.filter((v) => v < today).length;  // higher is better: beats days that were lower
+    ? baseline.filter((v) => v > today).length
+    : baseline.filter((v) => v < today).length;
   const ties  = baseline.filter((v) => v === today).length;
   return Math.round(((beats + ties * 0.5) / n) * 100);
+}
+
+/**
+ * Compress extreme rank percentiles so your single worst day ≠ 0% recovered
+ * and your single best day ≠ 100%. The middle range (20–80) is nearly linear;
+ * only the tails are softened. Whoop's score likewise never truly bottoms out.
+ *
+ *   rank   0 →  10  (floor: worst day still means something)
+ *   rank  20 →  28
+ *   rank  50 →  50  (median day = 50)
+ *   rank  80 →  72
+ *   rank 100 →  92  (ceiling: best day still has room to grow)
+ */
+function softScore(rank) {
+  if (rank <= 20) return Math.round(10 + rank * 0.9);          // 0→10, 20→28
+  if (rank >= 80) return Math.round(72 + (rank - 80) * 1.0);   // 80→72, 100→92
+  return Math.round(28 + (rank - 20) * (44 / 60));             // 20→28, 80→72 linear
+}
+
+/** Rank percentile then soft-scored. Used for HRV and RHR components. */
+function baselineScore(series, opts = {}) {
+  const rank = rankPercentile(series, opts);
+  return rank == null ? null : softScore(rank);
 }
 
 /** Sum the last `n` present values of a series. */
@@ -46,14 +67,15 @@ function sumLast(series, n) {
 // ---------------------------------------------------------------------------
 
 /**
- * A composite recovery score (0–100), normalized to the user's OWN baselines —
- * the headline "how recovered am I" number. Blends:
- *   HRV (higher better), resting HR (lower better), and last night's sleep.
- * Each input is scored as a percentile of the user's recent history, then
- * weighted. Returns { score, parts, missing } or null if nothing's available.
+ * A composite recovery score (0–100), normalized to the user's OWN baselines.
+ * Weights match the physiological hierarchy Whoop/Oura use:
+ *   HRV        60% — primary autonomic nervous system signal
+ *   Resting HR 20% — secondary cardiovascular signal (lower weight because
+ *                     Apple Watch daytime RHR is noisier than overnight)
+ *   Sleep      20% — modifier; good sleep alone can't override poor HRV/RHR
  *
- * Weights reflect the consensus that HRV is the strongest single recovery
- * signal, RHR second, sleep a meaningful modifier.
+ * Each rank-based percentile is soft-scored so single-day extremes don't
+ * dominate (worst RHR day → ~10-15, not 0). Returns { score, parts } or null.
  */
 function recoveryScore(seriesByKey, opts = {}) {
   const o = { baselineDays: 30, minN: 8, ...opts };
@@ -67,11 +89,11 @@ function recoveryScore(seriesByKey, opts = {}) {
 
   if (hrv) {
     const s = baselineScore(hrv, o);
-    if (s != null) { parts.hrv = s; weights.hrv = 0.5; }
+    if (s != null) { parts.hrv = s; weights.hrv = 0.6; }
   }
   if (rhr) {
     const s = baselineScore(rhr, { ...o, invert: true });
-    if (s != null) { parts.restingHr = s; weights.restingHr = 0.3; }
+    if (s != null) { parts.restingHr = s; weights.restingHr = 0.2; }
   }
   // Prefer an explicit sleep score if present, else sleep hours.
   if (sleepScore && latest(sleepScore) != null) {
@@ -102,9 +124,10 @@ function recoveryScore(seriesByKey, opts = {}) {
 
 /** Band + guidance for a recovery score, à la Whoop's red/yellow/green. */
 function recoveryBand(score) {
-  if (score >= 67) return { band: 'green', guidance: 'Recovered — green light for a hard session.' };
-  if (score >= 34) return { band: 'yellow', guidance: 'Moderate — train, but hold something back.' };
-  return { band: 'red', guidance: 'Low recovery — prioritize rest, easy movement only.' };
+  if (score >= 67) return { band: 'green',  guidance: "Green — your body's ready. Full intensity is appropriate today." };
+  if (score >= 50) return { band: 'yellow', guidance: 'Moderate — solid foundation. Push if you feel good, but watch your exertion.' };
+  if (score >= 34) return { band: 'yellow', guidance: 'Below baseline — train at moderate intensity and prioritize recovery tonight.' };
+  return { band: 'red', guidance: 'Low — your nervous system is strained. Keep it easy today; let the adaptation happen.' };
 }
 
 // ---------------------------------------------------------------------------
