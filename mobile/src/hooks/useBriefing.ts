@@ -188,14 +188,20 @@ export interface BriefingData {
   dailyQuote?: string | null;
   alerts?: Alert[];
   errors?: { service: string; error: string }[];
+  // Set by the server when the cache is older than BRIEFING_CACHE_MIN (default 3h).
+  // The app shows a "Rebuild briefing" CTA instead of silently serving stale data.
+  stale?: boolean;
+  cached?: boolean;
+  cachedAgeMin?: number;
 }
 
 export interface BriefingState {
   data: BriefingData | null;
   loading: boolean;
   error: string | null;
-  refetch: () => void; // force a fresh server rebuild (manual pull-to-refresh)
-  reload: () => void;  // pull the (already-warm) server cache instantly
+  refetch: () => void;      // force a full LLM rebuild (?refresh=1)
+  reload: () => void;       // serve the warm server cache instantly
+  refetchLive: () => void;  // reload alias — reserved for a future partial-refresh endpoint
 }
 
 export function useBriefing(): BriefingState {
@@ -226,13 +232,15 @@ export function useBriefing(): BriefingState {
     try {
       // Default load uses the server cache (instant); pull-to-refresh forces fresh.
       const url = force ? `${API_URL}?refresh=1` : API_URL;
-      // Building fresh can take 15-40s server-side, so allow a long timeout
-      // here, but still cap it so a stalled request can't spin forever.
+      // Use a longer timeout for forced rebuilds (LLM can take 60-90s server-side).
+      // Cache fetches are instant; give them a short timeout so a stalled request
+      // fails fast and the app can show a retry option.
+      const timeoutMs = force ? 120000 : 15000;
       const response = await fetchWithTimeout(url, {
         method: 'GET',
         headers: authHeaders(),
         signal: controller.signal,
-      }, 45000);
+      }, timeoutMs);
 
       if (!response.ok) {
         throw new Error(`Server returned ${response.status}`);
@@ -296,7 +304,8 @@ export function useBriefing(): BriefingState {
     data,
     loading,
     error,
-    refetch: () => fetchBriefing(true),  // force rebuild
-    reload: () => fetchBriefing(false),  // serve the warm morning cache instantly
+    refetch: () => fetchBriefing(true),      // force LLM rebuild (?refresh=1)
+    reload: () => fetchBriefing(false),       // serve the warm morning cache instantly
+    refetchLive: () => fetchBriefing(false),  // alias — future: hit /api/briefing/live
   };
 }

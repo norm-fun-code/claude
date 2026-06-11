@@ -92,13 +92,18 @@ export default function App() {
   }, [briefing, health, liveRecovery, tab]);
 
   // Per-tab explicit refresh — each tab updates only its own content:
-  //   Today/Wealth → markets brief + email summaries (server partial, ~10-20s)
+  //   Today/Wealth → stale: full rebuild; fresh: markets + email partial refresh
   //   Health       → HealthKit + live recovery score (sub-second)
   //   Insights     → re-run the analysis engine, then reload findings
   //   Wisdom       → day-locked by design; reloads the morning cache
+  const isStale = d?.stale === true;
   const tabRefresh: Partial<Record<TabKey, { label: string; busy: boolean; run: () => void }>> = {
-    today: { label: 'Update markets & email', busy: briefing.loading, run: briefing.refetchLive },
-    wealth: { label: 'Update markets & email', busy: briefing.loading, run: briefing.refetchLive },
+    today: isStale
+      ? { label: 'Rebuild briefing', busy: briefing.loading, run: briefing.refetch }
+      : { label: 'Update markets & email', busy: briefing.loading, run: briefing.refetchLive },
+    wealth: isStale
+      ? { label: 'Rebuild briefing', busy: briefing.loading, run: briefing.refetch }
+      : { label: 'Update markets & email', busy: briefing.loading, run: briefing.refetchLive },
     health: {
       label: 'Refresh health data',
       busy: health.loading || liveRecovery.loading,
@@ -126,16 +131,20 @@ export default function App() {
   const tabTitle = TABS.find((t) => t.key === tab)?.label ?? '';
 
   // Relative age label for the last briefing build: "Built 3h ago", "Built just now", etc.
+  // Appends " · stale" when the server signals the cache is older than the TTL.
   const builtAtLabel = useMemo(() => {
-    if (!d?.builtAt) return null;
+    if (!d?.builtAt) return d?.stale ? 'Briefing is stale' : null;
     const ageMs = Date.now() - new Date(d.builtAt).getTime();
     const ageMin = Math.floor(ageMs / 60000);
-    if (ageMin < 2) return 'Built just now';
-    if (ageMin < 60) return `Built ${ageMin}m ago`;
-    const ageH = Math.floor(ageMin / 60);
-    if (ageH < 24) return `Built ${ageH}h ago`;
-    return `Built ${Math.floor(ageH / 24)}d ago`;
-  }, [d?.builtAt]);
+    let label: string;
+    if (ageMin < 2) label = 'Built just now';
+    else if (ageMin < 60) label = `Built ${ageMin}m ago`;
+    else {
+      const ageH = Math.floor(ageMin / 60);
+      label = ageH < 24 ? `Built ${ageH}h ago` : `Built ${Math.floor(ageH / 24)}d ago`;
+    }
+    return d.stale ? `${label} · stale` : label;
+  }, [d?.builtAt, d?.stale]);
 
   const renderTab = () => {
     switch (tab) {

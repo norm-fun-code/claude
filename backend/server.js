@@ -967,21 +967,25 @@ app.get('/api/sources', async (req, res) => {
 app.get('/api/briefing', async (req, res) => {
   const errors = [];
 
-  // Serve a recent cached briefing instantly unless ?refresh=1. Building fresh
-  // calls the LLM + weather/calendar/Notion/markets/embeddings (15-40s), so we
-  // reuse the last build for CACHE_TTL_MIN minutes. The app's pull-to-refresh
-  // sends refresh=1 to force a rebuild.
-  const CACHE_TTL_MIN = Number(process.env.BRIEFING_CACHE_MIN || 180); // 3h default
+  // Serve a cached briefing instantly unless ?refresh=1. Building fresh calls
+  // the LLM + weather/calendar/Notion/markets/embeddings (~60-90s), so we always
+  // serve the last build immediately. The scheduler pre-builds at 8:30am so the
+  // cache is warm. Pull-to-refresh serves cache instantly; the explicit per-tab
+  // "Rebuild" button sends ?refresh=1 to force a new build.
+  //
+  // We never auto-rebuild on non-forced requests — doing so caused a silent
+  // failure loop: the 60-90s build exceeded the client's 45s timeout, the request
+  // was aborted, and the app got stuck on yesterday's data with no visible error.
+  const CACHE_TTL_MIN = Number(process.env.BRIEFING_CACHE_MIN || 180); // stale threshold
   const tz = process.env.TZ || 'America/New_York';
   const force = req.query.refresh === '1' || req.query.refresh === 'true';
 
   // The most recent prior build, and whether it was built earlier *today* (in the
-  // user's timezone). Used both for the short TTL cache and for the daily-lock:
-  // the "wisdom" content (library highlight, daily quote, Notion page + the
-  // Gemini insights on them) is chosen on the first build of the day and then
-  // carried over on every later build — including pull-to-refresh — so it stays
-  // static until midnight. Dynamic data (weather, markets, calendar, email,
-  // findings) still refreshes every build.
+  // user's timezone). Used for the daily-lock: the "wisdom" content (library
+  // highlight, daily quote, Notion page + the Gemini insights on them) is chosen
+  // on the first build of the day and then carried over on every later build so
+  // it stays static until midnight. Dynamic data (weather, markets, calendar,
+  // email, findings) still refreshes every build.
   let prior = null;
   let priorIsToday = false;
   try {
@@ -994,11 +998,14 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[briefing prior] read failed:', err.message);
   }
 
-  if (!force && prior?.content && prior.generated_at) {
-    const ageMin = (Date.now() - new Date(prior.generated_at).getTime()) / 60000;
-    if (ageMin < CACHE_TTL_MIN) {
-      return res.json({ ...prior.content, cached: true, cachedAgeMin: Math.round(ageMin) });
-    }
+  if (!force && prior?.content) {
+    const ageMin = prior.generated_at
+      ? (Date.now() - new Date(prior.generated_at).getTime()) / 60000
+      : 0;
+    const isStale = ageMin >= CACHE_TTL_MIN;
+    // Always serve the cache — never block the client on a 60-90s rebuild.
+    // `stale: true` signals the app to show a "Rebuild briefing" button.
+    return res.json({ ...prior.content, cached: true, stale: isStale, cachedAgeMin: Math.round(ageMin) });
   }
 
   // Format today's date label
