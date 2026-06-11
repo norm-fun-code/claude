@@ -1,25 +1,11 @@
 import React from 'react';
 import { View, Text, StyleSheet, useColorScheme } from 'react-native';
-import { getColors, spacing, radius, typography, colors } from '../theme';
+import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import type { HealthData, HRVStatus } from '../hooks/useHealthData';
+import type { HealthData } from '../hooks/useHealthData';
 
 interface Props {
   health: HealthData;
-}
-
-function HRVDot({ status }: { status: HRVStatus }) {
-  const dotColor =
-    status === 'green' ? colors.green : status === 'yellow' ? colors.yellow : status === 'red' ? colors.red : '#AAAAAA';
-
-  return (
-    <View
-      style={[
-        styles.dot,
-        { backgroundColor: dotColor, shadowColor: dotColor },
-      ]}
-    />
-  );
 }
 
 function StatRow({
@@ -52,30 +38,18 @@ export function HealthCard({ health }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
-  const hrvLabel =
-    health.hrvStatus === 'green'
-      ? 'High — train as planned'
-      : health.hrvStatus === 'yellow'
-      ? 'Moderate — consider downgrade'
-      : health.hrvStatus === 'red'
-      ? 'Low — mobility/walk only'
-      : 'No data';
-
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
       <SectionHeader emoji="❤️" title="Health" />
 
-      {/* HRV — primary metric */}
+      {/* HRV — primary metric. Baseline-relative grading lives on the Recovery
+          card; here we just show the raw reading to avoid a contradictory verdict. */}
       <View style={styles.hrvRow}>
         <View style={styles.hrvLeft}>
           <Text style={[styles.hrvNumber, { color: c.text }]}>
             {health.hrv ?? '—'}
           </Text>
           <Text style={[styles.hrvUnit, { color: c.subtext }]}>ms HRV</Text>
-        </View>
-        <View style={styles.hrvRight}>
-          <HRVDot status={health.hrvStatus} />
-          <Text style={[styles.hrvLabel, { color: c.subtext }]}>{hrvLabel}</Text>
         </View>
       </View>
 
@@ -143,24 +117,6 @@ const styles = StyleSheet.create({
   hrvUnit: {
     ...typography.caption,
     fontSize: 14,
-  },
-  hrvRight: {
-    alignItems: 'flex-end',
-    gap: spacing.xs,
-  },
-  dot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    shadowOpacity: 0.6,
-    shadowOffset: { width: 0, height: 0 },
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  hrvLabel: {
-    ...typography.caption,
-    textAlign: 'right',
-    maxWidth: 180,
   },
   divider: {
     height: 1,
