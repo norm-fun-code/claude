@@ -91,6 +91,8 @@ export default function App() {
     else briefing.reload();
   }, [briefing, health, liveRecovery, tab]);
 
+  const d = briefing.data;
+
   // Per-tab explicit refresh — each tab updates only its own content:
   //   Today/Wealth → stale: full rebuild; fresh: markets + email partial refresh
   //   Health       → HealthKit + live recovery score (sub-second)
@@ -127,7 +129,6 @@ export default function App() {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   });
 
-  const d = briefing.data;
   const tabTitle = TABS.find((t) => t.key === tab)?.label ?? '';
 
   // Relative age label for the last briefing build: "Built 3h ago", "Built just now", etc.

@@ -7,6 +7,7 @@ import type { Recovery, HealthComposite } from '../hooks/useBriefing';
 interface Props {
   recovery: Recovery | null | undefined;
   composites?: HealthComposite[];
+  builtAt?: string;
 }
 
 const PART_LABEL: Record<string, string> = {
@@ -25,7 +26,14 @@ const COMPOSITE_EMOJI: Record<string, string> = {
 // sleep, each graded against the user's OWN baseline (Whoop/Oura-style). Shown as
 // a colored ring with the contributing parts and any sleep-debt / training-load
 // flags beneath.
-export function RecoveryCard({ recovery, composites = [] }: Props) {
+function formatBuiltAt(iso: string | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -71,11 +79,19 @@ export function RecoveryCard({ recovery, composites = [] }: Props) {
         <View style={[styles.parts, { borderTopColor: c.border }]}>
           {Object.entries(recovery.parts).map(([k, v]) => (
             <View key={k} style={styles.part}>
-              <Text style={[styles.partVal, { color: c.text }]}>{Math.round(Number(v))}</Text>
+              <View style={styles.partValRow}>
+                <Text style={[styles.partVal, { color: c.text }]}>{Math.round(Number(v))}</Text>
+                <Text style={[styles.partValUnit, { color: c.subtext }]}>/100</Text>
+              </View>
               <Text style={[styles.partLabel, { color: c.subtext }]}>{PART_LABEL[k] ?? k}</Text>
             </View>
           ))}
         </View>
+      )}
+      {Object.keys(recovery.parts || {}).length > 0 && (
+        <Text style={[styles.partsCaption, { color: c.subtext }]}>
+          vs your 30-day baseline{formatBuiltAt(builtAt) ? ` · as of ${formatBuiltAt(builtAt)}` : ''}
+        </Text>
       )}
 
       {/* Sleep debt / consistency / training-load flags */}
@@ -122,8 +138,11 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
   },
   part: { alignItems: 'center' },
+  partValRow: { flexDirection: 'row', alignItems: 'baseline', gap: 2 },
   partVal: { ...typography.subtitle, fontSize: 20, fontWeight: '600' },
+  partValUnit: { ...typography.caption, fontSize: 11 },
   partLabel: { ...typography.caption, fontSize: 11, marginTop: 2 },
+  partsCaption: { ...typography.caption, fontSize: 11, textAlign: 'center', marginTop: spacing.xs, fontStyle: 'italic' },
   flags: { borderTopWidth: 1, marginTop: spacing.md, paddingTop: spacing.sm, gap: spacing.sm },
   flagRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' },
   flagEmoji: { fontSize: 16, marginTop: 1 },

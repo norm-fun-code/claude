@@ -188,6 +188,7 @@ export interface BriefingData {
   dailyQuote?: string | null;
   alerts?: Alert[];
   errors?: { service: string; error: string }[];
+  builtAt?: string;
   // Set by the server when the cache is older than BRIEFING_CACHE_MIN (default 3h).
   // The app shows a "Rebuild briefing" CTA instead of silently serving stale data.
   stale?: boolean;
