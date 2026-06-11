@@ -455,6 +455,52 @@ app.get('/api/workout/log/history', async (req, res) => {
   }
 });
 
+// Activity logs — what you ACTUALLY did when it differs from the plan (e.g.
+// scheduled Pull but you walked instead). Free-form, multiple per day allowed.
+
+// GET /api/activity?date=YYYY-MM-DD — list activities logged for a day.
+app.get('/api/activity', async (req, res) => {
+  try {
+    const date = req.query.date || new Date().toISOString().slice(0, 10);
+    const { rows } = await db.query(
+      `SELECT id, activity_type, label, duration_min, note, planned_type, created_at
+       FROM activity_logs WHERE log_date = $1
+       ORDER BY created_at ASC`, [date]
+    );
+    res.json({ activities: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/activity — log an activity. Body: { date, activity_type, label?,
+// duration_min?, note?, planned_type? }. Returns the inserted row.
+app.post('/api/activity', async (req, res) => {
+  try {
+    const { date, activity_type, label = null, duration_min = null, note = null, planned_type = null } = req.body || {};
+    if (!date || !activity_type) return res.status(400).json({ error: 'date and activity_type required' });
+    const { rows } = await db.query(
+      `INSERT INTO activity_logs (log_date, activity_type, label, duration_min, note, planned_type)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, activity_type, label, duration_min, note, planned_type, created_at`,
+      [date, activity_type, label, duration_min == null ? null : Number(duration_min), note, planned_type]
+    );
+    res.json({ activity: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/activity/:id — remove a logged activity (mis-entry / undo).
+app.delete('/api/activity/:id', async (req, res) => {
+  try {
+    await db.query('DELETE FROM activity_logs WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Weekly intentions — the Sunday check-in (life context + focus goals). GET
 // returns the current week's entry (so the Today card can pre-fill / know if
 // it's been set); POST upserts it.

@@ -24,6 +24,7 @@ export const SHOP_URL = `${API_BASE}/api/shop`;
 export const ANALYZE_URL = `${API_BASE}/api/analyze`;
 export const HABITS_STREAKS_URL = `${API_BASE}/api/habits/streaks`;
 export const WORKOUT_LOG_URL = `${API_BASE}/api/workout/log`;
+export const ACTIVITY_URL = `${API_BASE}/api/activity`;
 export const ANNOTATIONS_URL = `${API_BASE}/api/annotations`;
 export const CHECKIN_HISTORY_URL = `${API_BASE}/api/checkin/history`;
 export const BRIEFINGS_HISTORY_URL = `${API_BASE}/api/briefings/history`;

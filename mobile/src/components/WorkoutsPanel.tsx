@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, TextInput, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { getColors, spacing, radius } from '../theme';
-import { API_BASE, WORKOUT_LOG_URL, authHeaders, fetchWithTimeout } from '../config';
+import { API_BASE, WORKOUT_LOG_URL, ACTIVITY_URL, authHeaders, fetchWithTimeout } from '../config';
 import {
   getTodaysWorkout,
   HRV_ZONES,
@@ -1215,6 +1215,203 @@ function renderWorkoutContent(
   return null;
 }
 
+// --- Alternate activity logging ----------------------------------------------
+// Log what you ACTUALLY did when it differs from the plan (e.g. scheduled Pull
+// but you walked / did Zone 2 instead).
+
+interface Activity {
+  id: number;
+  activity_type: string;
+  label: string | null;
+  duration_min: number | null;
+  note: string | null;
+}
+
+const ACTIVITY_TYPES: { id: string; label: string; emoji: string }[] = [
+  { id: 'walk', label: 'Walk', emoji: '🚶' },
+  { id: 'zone2', label: 'Zone 2', emoji: '🟢' },
+  { id: 'run', label: 'Run', emoji: '🏃' },
+  { id: 'strength', label: 'Strength', emoji: '🏋️' },
+  { id: 'intervals', label: 'Intervals', emoji: '⚡️' },
+  { id: 'mobility', label: 'Mobility', emoji: '🧘' },
+  { id: 'rest', label: 'Rest', emoji: '😴' },
+  { id: 'other', label: 'Other', emoji: '➕' },
+];
+
+function activityEmoji(type: string): string {
+  return ACTIVITY_TYPES.find((a) => a.id === type)?.emoji ?? '🏃';
+}
+
+function ActivityLogModal({
+  visible,
+  plannedType,
+  c,
+  isDark,
+  onClose,
+  onSave,
+}: {
+  visible: boolean;
+  plannedType: string;
+  c: ReturnType<typeof getColors>;
+  isDark: boolean;
+  onClose: () => void;
+  onSave: (a: { activity_type: string; label: string; duration_min: number | null; note: string | null }) => Promise<void>;
+}) {
+  const [type, setType] = useState('walk');
+  const [duration, setDuration] = useState('');
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  React.useEffect(() => {
+    if (visible) { setType('walk'); setDuration(''); setNote(''); }
+  }, [visible]);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const labelBase = ACTIVITY_TYPES.find((a) => a.id === type)?.label ?? type;
+      await onSave({
+        activity_type: type,
+        label: labelBase,
+        duration_min: duration ? parseInt(duration) : null,
+        note: note.trim() || null,
+      });
+      onClose();
+    } catch { /* surfaced by caller */ } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+        <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+          <View style={[logStyles.sheet, { backgroundColor: c.card, borderColor: c.border }]}>
+            <Text style={[logStyles.title, { color: c.text }]}>Log a different activity</Text>
+            <Text style={[logStyles.hint, { color: c.subtext }]}>
+              Scheduled: {plannedType}. Record what you actually did instead.
+            </Text>
+
+            <View style={actStyles.typeGrid}>
+              {ACTIVITY_TYPES.map((a) => {
+                const sel = a.id === type;
+                return (
+                  <TouchableOpacity
+                    key={a.id}
+                    onPress={() => setType(a.id)}
+                    style={[
+                      actStyles.typeChip,
+                      { borderColor: sel ? c.accent : c.border, backgroundColor: sel ? c.accent + '15' : 'transparent' },
+                    ]}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={actStyles.typeChipEmoji}>{a.emoji}</Text>
+                    <Text style={[actStyles.typeChipLabel, { color: sel ? c.accent : c.subtext }]}>{a.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <View style={logStyles.row}>
+              <View style={logStyles.inputWrap}>
+                <Text style={[logStyles.inputLabel, { color: c.subtext }]}>Duration (min)</Text>
+                <TextInput
+                  style={[logStyles.input, { color: c.text, borderColor: c.border, backgroundColor: isDark ? '#1C1C1A' : '#F9F8F6' }]}
+                  value={duration}
+                  onChangeText={setDuration}
+                  keyboardType="number-pad"
+                  placeholder="—"
+                  placeholderTextColor={c.subtext}
+                />
+              </View>
+              <View style={[logStyles.inputWrap, { flex: 2 }]}>
+                <Text style={[logStyles.inputLabel, { color: c.subtext }]}>Note (optional)</Text>
+                <TextInput
+                  style={[logStyles.input, { color: c.text, borderColor: c.border, backgroundColor: isDark ? '#1C1C1A' : '#F9F8F6', textAlign: 'left' }]}
+                  value={note}
+                  onChangeText={setNote}
+                  placeholder="e.g. incline walk"
+                  placeholderTextColor={c.subtext}
+                />
+              </View>
+            </View>
+
+            <View style={logStyles.buttons}>
+              <TouchableOpacity onPress={onClose} style={[logStyles.btn, { borderColor: c.border }]}>
+                <Text style={[logStyles.btnTxt, { color: c.subtext }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleSave} disabled={saving} style={[logStyles.btn, logStyles.btnPrimary, { backgroundColor: c.accent }]}>
+                <Text style={[logStyles.btnTxt, { color: '#FFF' }]}>{saving ? 'Saving…' : 'Log activity'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+function ActivityLogSection({
+  activities,
+  c,
+  isDark,
+  onAdd,
+  onDelete,
+}: {
+  activities: Activity[];
+  c: ReturnType<typeof getColors>;
+  isDark: boolean;
+  onAdd: () => void;
+  onDelete: (id: number) => void;
+}) {
+  return (
+    <View style={[actStyles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+      <Text style={[actStyles.cardTitle, { color: c.text }]}>What I actually did</Text>
+      {activities.length === 0 ? (
+        <Text style={[actStyles.empty, { color: c.subtext }]}>
+          Did something other than the plan? Log it so your training history stays accurate.
+        </Text>
+      ) : (
+        activities.map((a) => (
+          <View key={a.id} style={[actStyles.row, { borderColor: c.border }]}>
+            <Text style={actStyles.rowEmoji}>{activityEmoji(a.activity_type)}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[actStyles.rowLabel, { color: c.text }]}>
+                {a.label ?? a.activity_type}
+                {a.duration_min ? ` · ${a.duration_min} min` : ''}
+              </Text>
+              {a.note ? <Text style={[actStyles.rowNote, { color: c.subtext }]}>{a.note}</Text> : null}
+            </View>
+            <TouchableOpacity onPress={() => onDelete(a.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={[actStyles.rowDelete, { color: c.subtext }]}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        ))
+      )}
+      <TouchableOpacity onPress={onAdd} style={[actStyles.addBtn, { borderColor: c.accent }]} activeOpacity={0.7}>
+        <Text style={[actStyles.addBtnTxt, { color: c.accent }]}>+ Log a different activity</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const actStyles = StyleSheet.create({
+  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.md, marginBottom: spacing.md, gap: spacing.sm },
+  cardTitle: { fontSize: 14, fontWeight: '700', letterSpacing: -0.2 },
+  empty: { fontSize: 13, lineHeight: 19 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderBottomWidth: 1, paddingVertical: spacing.sm },
+  rowEmoji: { fontSize: 20 },
+  rowLabel: { fontSize: 14, fontWeight: '600' },
+  rowNote: { fontSize: 12, marginTop: 1 },
+  rowDelete: { fontSize: 14, fontWeight: '600' },
+  addBtn: { borderWidth: 1, borderRadius: radius.md, paddingVertical: spacing.sm, alignItems: 'center', marginTop: spacing.xs },
+  addBtnTxt: { fontSize: 13, fontWeight: '600' },
+  typeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
+  typeChip: { flexDirection: 'row', alignItems: 'center', gap: 5, borderWidth: 1, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7 },
+  typeChipEmoji: { fontSize: 15 },
+  typeChipLabel: { fontSize: 13, fontWeight: '600' },
+});
+
 // Full day-by-day workout view (HRV-aware) — embedded in the Health tab.
 export function WorkoutsPanel({ hrv, isDark, recoveryBand }: Props) {
   const c = getColors(isDark);
@@ -1232,6 +1429,8 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand }: Props) {
   const [saveFailed, setSaveFailed] = useState(false);
   const [workoutLogs, setWorkoutLogs] = useState<Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>>({});
   const [workoutHistory, setWorkoutHistory] = useState<Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>>({});
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [showActivityModal, setShowActivityModal] = useState(false);
 
   const todayKey = getDateKey(todayDayIndex);
   const selectedKey = getDateKey(selectedDayIndex);
@@ -1274,6 +1473,22 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand }: Props) {
         setNonNegotiables(nn);
       } catch {
         /* offline — keep whatever's shown */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedKey]);
+
+  // Load logged alternate activities for the selected day.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetchWithTimeout(`${ACTIVITY_URL}?date=${selectedKey}`, { headers: authHeaders() });
+        if (cancelled || !res.ok) return;
+        const { activities: rows } = await res.json();
+        if (!cancelled) setActivities(rows ?? []);
+      } catch {
+        if (!cancelled) setActivities([]);
       }
     })();
     return () => { cancelled = true; };
@@ -1435,6 +1650,45 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand }: Props) {
     }
   }
 
+  // Log an alternate activity for the selected day. Optimistic insert with a
+  // temp id; on success we swap in the server row. Logging a non-rest activity
+  // for TODAY also marks the Exercise habit so streaks/insights stay in sync.
+  async function addActivity(a: { activity_type: string; label: string; duration_min: number | null; note: string | null }) {
+    try {
+      const res = await fetchWithTimeout(ACTIVITY_URL, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ date: selectedKey, planned_type: workout.label, ...a }),
+      });
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+      const { activity } = await res.json();
+      setActivities((prev) => [...prev, activity]);
+
+      if (selectedKey === todayKey && a.activity_type !== 'rest') {
+        setWeeklyCompleted((prev) => ({ ...prev, [todayKey]: true }));
+        fetchWithTimeout(`${API_BASE}/api/habits`, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ exercise: true }),
+        }).catch(() => {});
+      }
+    } catch {
+      setSaveFailed(true);
+    }
+  }
+
+  async function deleteActivity(id: number) {
+    const prev = activities;
+    setActivities((cur) => cur.filter((x) => x.id !== id));
+    try {
+      const res = await fetchWithTimeout(`${ACTIVITY_URL}/${id}`, { method: 'DELETE', headers: authHeaders() });
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+    } catch {
+      setActivities(prev); // restore on failure
+      setSaveFailed(true);
+    }
+  }
+
   const duration = 'duration' in workout ? (workout as any).duration : undefined;
   const dateKey = getDateKey(selectedDayIndex);
   const done = !!weeklyCompleted[dateKey];
@@ -1472,6 +1726,23 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand }: Props) {
       {saveFailed && (
         <Text style={markDoneStyles.failed}>Couldn’t save — check your connection and try again.</Text>
       )}
+
+      <ActivityLogSection
+        activities={activities}
+        c={c}
+        isDark={isDark}
+        onAdd={() => setShowActivityModal(true)}
+        onDelete={deleteActivity}
+      />
+
+      <ActivityLogModal
+        visible={showActivityModal}
+        plannedType={workout.label}
+        c={c}
+        isDark={isDark}
+        onClose={() => setShowActivityModal(false)}
+        onSave={addActivity}
+      />
 
       {renderWorkoutContent(
         workout,
