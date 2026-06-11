@@ -173,7 +173,7 @@ export default function App() {
                 : <Text style={[styles.refreshInsightsTxt, { color: c.subtext }]}>Refresh insights</Text>
               }
             </TouchableOpacity>
-            <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} />
+            <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} recoveryScore={liveRecovery.recovery?.score ?? null} />
           </>
         );
       case 'wealth':

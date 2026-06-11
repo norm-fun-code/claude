@@ -23,6 +23,9 @@ interface Props {
   // viewing today, it drives workout downgrades instead of absolute HRV cutoffs,
   // so training guidance matches the Recovery score.
   recoveryBand?: 'green' | 'yellow' | 'red' | null;
+  // Composite recovery score (0–100) shown in the zone pill instead of raw HRV
+  // when the zone is recovery-driven, so the source of truth is unambiguous.
+  recoveryScore?: number | null;
 }
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -233,6 +236,7 @@ function HRVHeaderCard({
   workoutLabel,
   workoutDuration,
   override,
+  recoveryScore,
 }: {
   c: ReturnType<typeof getColors>;
   isDark: boolean;
@@ -241,6 +245,7 @@ function HRVHeaderCard({
   workoutLabel: string;
   workoutDuration?: string;
   override?: string;
+  recoveryScore?: number | null;
 }) {
   const bgTag = isDark ? '#2A2A28' : '#F3F3F0';
 
@@ -248,6 +253,14 @@ function HRVHeaderCard({
     zone !== 'unknown'
       ? HRV_ZONES[zone as 'green' | 'yellow' | 'red']
       : null;
+
+  // Show recovery score when it's available (zone is recovery-driven); fall back
+  // to raw HRV so the source of the zone label is always unambiguous.
+  const pillLabel = recoveryScore != null
+    ? `${zone.toUpperCase()} · ${recoveryScore}% recovery`
+    : hrv != null
+      ? `${zone.toUpperCase()} · ${hrv} ms HRV`
+      : zone.toUpperCase();
 
   return (
     <View style={[cardStyles.card, { backgroundColor: c.card, borderColor: c.border }]}>
@@ -262,12 +275,12 @@ function HRVHeaderCard({
         {zoneConfig ? (
           <View style={[cardStyles.zonePill, { backgroundColor: zoneConfig.color + '22', borderColor: zoneConfig.color }]}>
             <Text style={[cardStyles.zoneText, { color: zoneConfig.color }]}>
-              {zone.toUpperCase()} · {hrv} ms
+              {pillLabel}
             </Text>
           </View>
         ) : (
           <View style={[cardStyles.zonePill, { backgroundColor: bgTag, borderColor: c.border }]}>
-            <Text style={[cardStyles.zoneText, { color: c.subtext }]}>HRV unknown</Text>
+            <Text style={[cardStyles.zoneText, { color: c.subtext }]}>Recovery unknown</Text>
           </View>
         )}
       </View>
@@ -720,7 +733,7 @@ function StrengthContent({
       <CollapsibleSection title="Working Sets" c={c} isDark={isDark}>
         {isYellow && (
           <View style={[strengthStyles.yellowBanner, { backgroundColor: isDark ? '#2A1A0A' : '#FFF4E5' }]}>
-            <Text style={strengthStyles.yellowBannerText}>Yellow HRV — 2 sets per exercise, load –20%</Text>
+            <Text style={strengthStyles.yellowBannerText}>Yellow recovery — 2 sets per exercise, load –20%</Text>
           </View>
         )}
         {session.working.map((ex) => {
@@ -1413,7 +1426,7 @@ const actStyles = StyleSheet.create({
 });
 
 // Full day-by-day workout view (HRV-aware) — embedded in the Health tab.
-export function WorkoutsPanel({ hrv, isDark, recoveryBand }: Props) {
+export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
   const c = getColors(isDark);
   const todayDayIndex = getTodayDayIndex();
 
@@ -1711,6 +1724,7 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand }: Props) {
         workoutLabel={workout.label}
         workoutDuration={duration}
         override={override}
+        recoveryScore={isViewingToday ? (recoveryScore ?? null) : null}
       />
 
       <TouchableOpacity
