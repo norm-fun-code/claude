@@ -16,23 +16,24 @@ function latest(series) {
   return Number.isFinite(v) ? v : null;
 }
 
-/** Map a value to 0..100 by where it sits in the user's own recent baseline,
- *  using a z-score squashed through the normal CDF. `invert` for metrics where
- *  lower is better (e.g. resting HR). Returns null without enough history.
- *
- *  `minStd` floors the baseline std so a metric with naturally tiny day-to-day
- *  variance (RHR often varies by only ~2bpm) can't turn a small absolute
- *  deviation into an extreme percentile — without it, +4bpm could score 5/100.
- *  `zDamp` softens the CDF mapping so ±1 baseline-std lands near 25/75 instead
- *  of 16/84: this is a wellness gauge, not a hypothesis test. */
-function baselineScore(series, { baselineDays = 30, minN = 8, invert = false, minStd = 0, zDamp = 1.5 } = {}) {
-  const a = stats.baselineAnomaly(series, { baselineDays, minN });
-  if (!a) return null;
-  const std = Math.max(a.baselineStd, minStd);
-  let z = (a.latest - a.baselineMean) / std;
-  if (invert) z = -z;
-  // Φ(z) maps the deviation to a percentile of the user's own distribution.
-  return Math.round(stats.normalCdf(z / zDamp) * 100);
+/** Rank-based percentile: what fraction of the last `baselineDays` days does
+ *  today's value beat? No distribution assumption — self-calibrates to actual
+ *  variance automatically. Better than CDF(z) for skewed biometrics like HRV.
+ *  `invert` for lower-is-better metrics (resting HR). Returns null without
+ *  enough history (minN baseline days required). */
+function baselineScore(series, { baselineDays = 30, minN = 8, invert = false } = {}) {
+  const values = series.map((p) => Number(p.value)).filter(Number.isFinite);
+  if (values.length < minN + 1) return null;
+  const today = values[values.length - 1];
+  const baseline = values.slice(-(baselineDays + 1), -1);
+  if (baseline.length < minN) return null;
+  const n = baseline.length;
+  // Count baseline days that today beats, with half-credit for ties.
+  const beats = invert
+    ? baseline.filter((v) => v > today).length   // lower is better: beats days that were higher
+    : baseline.filter((v) => v < today).length;  // higher is better: beats days that were lower
+  const ties  = baseline.filter((v) => v === today).length;
+  return Math.round(((beats + ties * 0.5) / n) * 100);
 }
 
 /** Sum the last `n` present values of a series. */
@@ -64,17 +65,12 @@ function recoveryScore(seriesByKey, opts = {}) {
   const sleep = seriesByKey['health:sleep_hours'];
   const sleepScore = seriesByKey['health:sleep_score'];
 
-  // Std floors per metric (in the metric's own units) keep naturally
-  // low-variance baselines from blowing small deviations into extreme scores:
-  // HRV day-to-day std is rarely meaningfully below ~10% of its mean, RHR
-  // below ~3bpm, sleep below ~30min.
   if (hrv) {
-    const mean = stats.mean(hrv.map((p) => Number(p.value)).filter(Number.isFinite)) || 0;
-    const s = baselineScore(hrv, { ...o, minStd: Math.max(4, mean * 0.1) });
+    const s = baselineScore(hrv, o);
     if (s != null) { parts.hrv = s; weights.hrv = 0.5; }
   }
   if (rhr) {
-    const s = baselineScore(rhr, { ...o, invert: true, minStd: 3 });
+    const s = baselineScore(rhr, { ...o, invert: true });
     if (s != null) { parts.restingHr = s; weights.restingHr = 0.3; }
   }
   // Prefer an explicit sleep score if present, else sleep hours.
@@ -82,7 +78,7 @@ function recoveryScore(seriesByKey, opts = {}) {
     parts.sleep = Math.round(Math.max(0, Math.min(100, latest(sleepScore))));
     weights.sleep = 0.2;
   } else if (sleep) {
-    const s = baselineScore(sleep, { ...o, minStd: 0.5 });
+    const s = baselineScore(sleep, o);
     if (s != null) { parts.sleep = s; weights.sleep = 0.2; }
   }
 

@@ -806,26 +806,35 @@ app.get('/api/diag/scheduler', (req, res) => {
 app.get('/api/diag/recovery-baseline', async (req, res) => {
   try {
     const metricsStore = require('./src/store/metrics');
-    const stats = require('./src/intelligence/stats');
+    const recovery = require('./src/intelligence/recovery');
     const METRICS = ['health:hrv', 'health:resting_hr', 'health:sleep_score', 'health:sleep_hours'];
     const from = new Date(Date.now() - 60 * 864e5);
     const out = {};
     for (const key of METRICS) {
       const [domain, metric] = key.split(':');
       const rows = await metricsStore.dailyAggregate({ domain, metric, from, agg: 'avg', excludeSource: 'seed' });
-      const a = stats.baselineAnomaly(rows.map((r) => ({ value: r.value })), { baselineDays: 30, minN: 8 });
+      const vals = rows.map((r) => Number(r.value)).filter(Number.isFinite);
+      const today = vals.length ? vals[vals.length - 1] : null;
+      const baseline = vals.length >= 2 ? vals.slice(-(31), -1) : [];
+      const sorted = [...baseline].sort((a, b) => a - b);
+      const rankPct = today != null && baseline.length >= 8
+        ? Math.round((baseline.filter((v) => v < today).length + baseline.filter((v) => v === today).length * 0.5) / baseline.length * 100)
+        : null;
       out[key] = {
         n: rows.length,
-        latest: rows.length ? Number(rows[rows.length - 1].value).toFixed(2) : null,
+        today: today != null ? +today.toFixed(2) : null,
         latestDay: rows.length ? rows[rows.length - 1].day : null,
-        baseline: a ? {
-          mean: Number(a.baselineMean).toFixed(2),
-          std: Number(a.baselineStd).toFixed(2),
-          z: Number(a.z).toFixed(3),
-          n: a.n,
-          percentile: Math.round(stats.normalCdf(a.z) * 100),
+        baseline: baseline.length >= 8 ? {
+          n: baseline.length,
+          mean: +(baseline.reduce((a, b) => a + b, 0) / baseline.length).toFixed(2),
+          min: +sorted[0].toFixed(2),
+          p25: +sorted[Math.floor(sorted.length * 0.25)].toFixed(2),
+          median: +sorted[Math.floor(sorted.length * 0.5)].toFixed(2),
+          p75: +sorted[Math.floor(sorted.length * 0.75)].toFixed(2),
+          max: +sorted[sorted.length - 1].toFixed(2),
+          rankPct,
         } : null,
-        series: rows.slice(-35).map((r) => ({ day: r.day, value: Number(r.value).toFixed(1) })),
+        series: rows.slice(-35).map((r) => ({ day: r.day, value: +Number(r.value).toFixed(1) })),
       };
     }
     res.json(out);
