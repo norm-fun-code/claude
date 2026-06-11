@@ -1,10 +1,11 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   ScrollView,
   StyleSheet,
   View,
   RefreshControl,
   Text,
+  TouchableOpacity,
   useColorScheme,
   ActivityIndicator,
   SafeAreaView,
@@ -17,6 +18,7 @@ Appearance.setColorScheme('light');
 
 import { useBriefing } from './src/hooks/useBriefing';
 import { useHealthData } from './src/hooks/useHealthData';
+import { useRecovery } from './src/hooks/useRecovery';
 import { usePushRegistration } from './src/hooks/usePushRegistration';
 import { getColors, spacing } from './src/theme';
 
@@ -48,6 +50,10 @@ import { AlertCard } from './src/components/AlertCard';
 import { HighlightsCard } from './src/components/HighlightsCard';
 import { ShopCard } from './src/components/ShopCard';
 import { GoalsCard } from './src/components/GoalsCard';
+import { AnnotationsCard } from './src/components/AnnotationsCard';
+import { WeeklyStateCard } from './src/components/WeeklyStateCard';
+import { CheckinHistoryCard } from './src/components/CheckinHistoryCard';
+import { ANALYZE_URL, authHeaders, fetchWithTimeout } from './src/config';
 
 export default function App() {
   const isDark = useColorScheme() === 'dark';
@@ -55,21 +61,52 @@ export default function App() {
 
   const briefing = useBriefing();
   const health = useHealthData();
+  const liveRecovery = useRecovery();
 
   const [tab, setTab] = useState<TabKey>('today');
-  const isRefreshing = briefing.loading || health.loading;
+  const [analyzingInsights, setAnalyzingInsights] = useState(false);
+  // Health tab refresh only spins on health-local fetches; other tabs spin on
+  // the briefing too.
+  const isRefreshing =
+    tab === 'health' ? health.loading || liveRecovery.loading : briefing.loading || health.loading;
 
-  // Pull-to-refresh is tab-aware. Health metrics come from HealthKit on-device
-  // and refresh instantly, so don't make the user eat the 60-90s briefing
-  // rebuild when they're just checking updated health numbers. Only the tabs
-  // that actually show briefing content force a fresh server build; elsewhere we
-  // load the (already-warm) cached briefing instantly.
+  const refreshInsights = useCallback(async () => {
+    if (analyzingInsights) return;
+    setAnalyzingInsights(true);
+    try {
+      await fetchWithTimeout(ANALYZE_URL, { method: 'POST', headers: authHeaders() }, 60000);
+      briefing.reload();
+    } catch { /* silent */ } finally {
+      setAnalyzingInsights(false);
+    }
+  }, [analyzingInsights, briefing]);
+
+  // Pull-to-refresh is always CHEAP: device HealthKit (instant) + the warm
+  // server cache (instant) + the fast recovery endpoint on Health. Nothing
+  // here triggers an LLM or a briefing rebuild — that's what each tab's
+  // explicit refresh button is for, so you choose what to spend time updating.
   const onRefresh = useCallback(() => {
     health.refetch();
-    const briefingTabs: TabKey[] = ['today', 'wisdom', 'insights'];
-    if (briefingTabs.includes(tab)) briefing.refetch();
+    if (tab === 'health') liveRecovery.refetch();
     else briefing.reload();
-  }, [briefing, health, tab]);
+  }, [briefing, health, liveRecovery, tab]);
+
+  // Per-tab explicit refresh — each tab updates only its own content:
+  //   Today/Wealth → markets brief + email summaries (server partial, ~10-20s)
+  //   Health       → HealthKit + live recovery score (sub-second)
+  //   Insights     → re-run the analysis engine, then reload findings
+  //   Wisdom       → day-locked by design; reloads the morning cache
+  const tabRefresh: Partial<Record<TabKey, { label: string; busy: boolean; run: () => void }>> = {
+    today: { label: 'Update markets & email', busy: briefing.loading, run: briefing.refetchLive },
+    wealth: { label: 'Update markets & email', busy: briefing.loading, run: briefing.refetchLive },
+    health: {
+      label: 'Refresh health data',
+      busy: health.loading || liveRecovery.loading,
+      run: () => { health.refetch(); liveRecovery.refetch(); },
+    },
+    insights: { label: 'Re-run analysis', busy: analyzingInsights, run: refreshInsights },
+    wisdom: { label: 'Reload', busy: briefing.loading, run: briefing.reload },
+  };
 
   // Tapping the morning "briefing ready" push should load the cache the server
   // already warmed at 8:30 — instant, not a 15-40s forced rebuild. Health still
@@ -88,18 +125,40 @@ export default function App() {
   const d = briefing.data;
   const tabTitle = TABS.find((t) => t.key === tab)?.label ?? '';
 
+  // Relative age label for the last briefing build: "Built 3h ago", "Built just now", etc.
+  const builtAtLabel = useMemo(() => {
+    if (!d?.builtAt) return null;
+    const ageMs = Date.now() - new Date(d.builtAt).getTime();
+    const ageMin = Math.floor(ageMs / 60000);
+    if (ageMin < 2) return 'Built just now';
+    if (ageMin < 60) return `Built ${ageMin}m ago`;
+    const ageH = Math.floor(ageMin / 60);
+    if (ageH < 24) return `Built ${ageH}h ago`;
+    return `Built ${Math.floor(ageH / 24)}d ago`;
+  }, [d?.builtAt]);
+
   const renderTab = () => {
     switch (tab) {
       case 'health':
         return (
           <>
-            <RecoveryCard recovery={d?.recovery} composites={d?.healthComposites ?? []} />
+            <RecoveryCard
+              recovery={liveRecovery.recovery ?? d?.recovery}
+              composites={d?.healthComposites ?? []}
+              builtAt={liveRecovery.recovery ? undefined : d?.builtAt}
+            />
             <HealthCard health={health} />
             {d?.healthInsights && d.healthInsights.length > 0 ? (
               <InsightsCard insights={d.healthInsights} />
             ) : (
               <EmptyNote c={c} text="Health insights (sleep ↔ HRV ↔ focus patterns) appear once a few days of Apple Health + habit data accumulate. Open the app daily so HealthKit syncs, and log your habits on the Today tab." />
             )}
+            <TouchableOpacity onPress={refreshInsights} disabled={analyzingInsights} style={styles.refreshInsightsBtn}>
+              {analyzingInsights
+                ? <ActivityIndicator size="small" color={c.subtext} />
+                : <Text style={[styles.refreshInsightsTxt, { color: c.subtext }]}>Refresh insights</Text>
+              }
+            </TouchableOpacity>
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} />
           </>
         );
@@ -132,8 +191,10 @@ export default function App() {
       case 'insights':
         return (
           <>
+            <WeeklyStateCard briefing={d ?? null} health={health} />
             <GoalsCard weeklyGoals={d?.weeklyGoals} />
             <ReviewCard review={d?.weeklyReview ?? null} />
+            <CheckinHistoryCard />
             <ForecastCard forecasts={d?.forecasts ?? []} />
             <InsightsCard insights={d?.insights ?? []} />
             {!d && !briefing.loading && <EmptyNote c={c} text="Insights appear after your first analyze run." />}
@@ -150,6 +211,7 @@ export default function App() {
             {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
             <CheckinCard />
             <HabitsCard />
+            <AnnotationsCard />
             {d && <LeverageCard actions={d.leverageActions ?? []} insights={[]} />}
             {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
             {d && <UrgentEmailsCard emails={d.urgentEmails ?? []} />}
@@ -187,7 +249,29 @@ export default function App() {
         showsVerticalScrollIndicator={false}
       >
         <Header date={d?.date ?? today} isRefreshing={isRefreshing} />
-        <Text style={[styles.tabTitle, { color: c.text }]}>{tabTitle}</Text>
+        <View style={styles.titleRow}>
+          <View>
+            <Text style={[styles.tabTitle, { color: c.text }]}>{tabTitle}</Text>
+            {builtAtLabel && (
+              <Text style={[styles.builtAt, { color: c.subtext }]}>{builtAtLabel}</Text>
+            )}
+          </View>
+          {tabRefresh[tab] && (
+            <TouchableOpacity
+              onPress={tabRefresh[tab]!.run}
+              disabled={tabRefresh[tab]!.busy}
+              style={[styles.tabRefreshBtn, { borderColor: c.border, backgroundColor: c.card }]}
+            >
+              {tabRefresh[tab]!.busy ? (
+                <ActivityIndicator size="small" color={c.subtext} />
+              ) : (
+                <Text style={[styles.tabRefreshTxt, { color: c.accent }]}>
+                  ↻ {tabRefresh[tab]!.label}
+                </Text>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
         {renderTab()}
         <View style={styles.footer} />
       </ScrollView>
@@ -209,13 +293,28 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
   scroll: { flex: 1 },
   content: { paddingHorizontal: spacing.md, paddingBottom: spacing.xl },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+    marginTop: spacing.xs,
+  },
   tabTitle: {
     fontSize: 28,
     fontWeight: '700',
     letterSpacing: -0.5,
-    marginBottom: spacing.md,
-    marginTop: spacing.xs,
   },
+  builtAt: { fontSize: 11, marginTop: 1 },
+  tabRefreshBtn: {
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: 6,
+    minWidth: 60,
+    alignItems: 'center',
+  },
+  tabRefreshTxt: { fontSize: 12, fontWeight: '600' },
   errorBox: { borderWidth: 1, borderRadius: 12, padding: spacing.md, marginBottom: spacing.md },
   errorTitle: { fontSize: 16, fontWeight: '600', marginBottom: spacing.xs },
   errorMsg: { fontSize: 14, lineHeight: 21, marginBottom: spacing.sm },
@@ -225,4 +324,6 @@ const styles = StyleSheet.create({
   empty: { borderWidth: 1, borderRadius: 14, padding: spacing.lg, marginBottom: spacing.md },
   emptyText: { fontSize: 14, lineHeight: 21, fontStyle: 'italic' },
   footer: { height: spacing.lg },
+  refreshInsightsBtn: { alignItems: 'center', paddingVertical: spacing.sm, marginBottom: spacing.md },
+  refreshInsightsTxt: { fontSize: 13, fontWeight: '500' },
 });

@@ -7,7 +7,7 @@
 // failing never stops the others or crashes the server.
 const { runIngest } = require('./ingest/run');
 const { analyze } = require('./intelligence/analyze');
-const { runNudges, runCheckinReminder, runHabitsReminder } = require('./notify/run');
+const { runNudges, runCheckinReminder, runCheckinEveningReminder, runHabitsReminder } = require('./notify/run');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./notify/morning');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -69,12 +69,26 @@ function start() {
   const checkinHour = Number(process.env.CHECKIN_REMINDER_HOUR) || 15; // 3pm
   const checkinMinute = Number(process.env.CHECKIN_REMINDER_MINUTE) || 0;
   scheduleDaily(checkinHour, checkinMinute, () => runCheckinReminder({}));
+  // Evening check-in reminder (9pm) — second nudge with a different dedup key
+  // so it can fire even if the 3pm one sent (user may have ignored it).
+  const checkinEveningHour = Number(process.env.CHECKIN_EVENING_REMINDER_HOUR) || 21; // 9pm
+  const checkinEveningMinute = Number(process.env.CHECKIN_EVENING_REMINDER_MINUTE) || 0;
+  scheduleDaily(checkinEveningHour, checkinEveningMinute, () => runCheckinEveningReminder({}));
+
+  // Evening analyze re-run (9:30pm) — captures the day's check-in and habits
+  // data so insights are current when you review them before bed.
+  const analyzeEveningHour = Number(process.env.ANALYZE_EVENING_HOUR) || 21;
+  const analyzeEveningMinute = Number(process.env.ANALYZE_EVENING_MINUTE) || 30;
+  scheduleDaily(analyzeEveningHour, analyzeEveningMinute, async () => {
+    try { await analyze(); } catch (e) { console.error('[scheduler] evening analyze:', e.message); }
+  });
+
   // Evening habits reminder (10pm) — only pushes if you haven't logged habits yet.
   const habitsHour = Number(process.env.HABITS_REMINDER_HOUR) || 22; // 10pm
   const habitsMinute = Number(process.env.HABITS_REMINDER_MINUTE) || 0;
   scheduleDaily(habitsHour, habitsMinute, () => runHabitsReminder({}));
   const hm = (h, m) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-  console.log(`[scheduler] enabled — morning ${hm(hour, minute)}, weekly review Sun ${hm(hour, minute + 10)}, check-in ${hm(checkinHour, checkinMinute)}, habits ${hm(habitsHour, habitsMinute)} (TZ=${process.env.TZ || 'system'})`);
+  console.log(`[scheduler] enabled — morning ${hm(hour, minute)}, weekly review Sun ${hm(hour, minute + 10)}, check-in ${hm(checkinHour, checkinMinute)}, check-in evening ${hm(checkinEveningHour, checkinEveningMinute)}, analyze evening ${hm(analyzeEveningHour, analyzeEveningMinute)}, habits ${hm(habitsHour, habitsMinute)} (TZ=${process.env.TZ || 'system'})`);
   return true;
 }
 

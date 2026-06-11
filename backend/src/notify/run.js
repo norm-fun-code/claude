@@ -88,7 +88,7 @@ async function runNudges(opts = {}) {
   return { generated: candidates.length, sent: sentCount, devices: tokens.length, nudges: out };
 }
 
-module.exports = { runNudges, runCheckinReminder, runHabitsReminder };
+module.exports = { runNudges, runCheckinReminder, runCheckinEveningReminder, runHabitsReminder };
 
 /** Is the habit stack FULLY logged today (all 5 binary habits + eat_healthy)?
  *  Fail-safe: assume yes on error. */
@@ -135,6 +135,27 @@ async function runCheckinReminder(opts = {}) {
     return { skipped: 'already_logged', sent: 0 };
   }
   return sendReminder(checkinReminder(new Date()), { send });
+}
+
+/**
+ * Second check-in reminder at 9pm — uses a different dedup key than the 3pm
+ * one so it can fire even if the afternoon reminder already sent (the user may
+ * have ignored it). Only fires if the check-in still hasn't been logged.
+ * @param {{ send?: boolean, force?: boolean }} [opts]
+ */
+async function runCheckinEveningReminder(opts = {}) {
+  const send = opts.send !== false;
+  if (!opts.force && (await checkinLoggedToday())) {
+    return { skipped: 'already_logged', sent: 0 };
+  }
+  const day = new Date().toISOString().slice(0, 10);
+  return sendReminder({
+    key: `checkin_evening:${day}`,
+    title: 'Quick evening check-in',
+    body: "Before you wind down — how was your mood, energy, and focus today?",
+    priority: 0.6,
+    basis: { type: 'checkin', day },
+  }, { send });
 }
 
 /**

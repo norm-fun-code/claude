@@ -18,4 +18,13 @@ async function latestBriefing(kind = 'weekly') {
   return rows[0] ?? null;
 }
 
-module.exports = { saveBriefing, latestBriefing };
+async function listBriefings({ kind = 'weekly', limit = 4 } = {}) {
+  const { rows } = await query(
+    `SELECT id, kind, generated_at, period_start, period_end, content FROM briefings
+     WHERE kind = $1 ORDER BY generated_at DESC LIMIT $2`,
+    [kind, limit]
+  );
+  return rows;
+}
+
+module.exports = { saveBriefing, latestBriefing, listBriefings };

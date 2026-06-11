@@ -166,6 +166,52 @@ app.post('/api/checkin', async (req, res) => {
   }
 });
 
+// Last N days of check-in data (mood / energy / focus per day) for the
+// history card on the Insights tab. Returns days sorted oldest-first so
+// the mobile chart can render them left-to-right without reversing.
+app.get('/api/checkin/history', async (req, res) => {
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const days = Math.min(Number(req.query.days) || 30, 90);
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const { rows } = await db.query(
+      `SELECT
+         (ts AT TIME ZONE $1)::date AS day,
+         metric,
+         AVG(value) AS value
+       FROM metrics
+       WHERE domain = 'wellbeing' AND source = 'checkin'
+         AND metric = ANY($2)
+         AND ts >= $3
+       GROUP BY (ts AT TIME ZONE $1)::date, metric
+       ORDER BY day ASC`,
+      [tz, ['mood', 'energy', 'focus'], from]
+    );
+    // Pivot: [{day, mood, energy, focus}]
+    const byDay = new Map();
+    for (const r of rows) {
+      const d = r.day.toISOString().slice(0, 10);
+      if (!byDay.has(d)) byDay.set(d, { date: d });
+      byDay.get(d)[r.metric] = Math.round(Number(r.value) * 10) / 10;
+    }
+    res.json({ days: [...byDay.values()] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Last N weekly review briefings — for the history panel on the Insights tab.
+app.get('/api/briefings/history', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 8, 20);
+    const kind = req.query.kind || 'weekly';
+    const rows = await briefingsStore.listBriefings({ kind, limit });
+    res.json({ reviews: rows.map((r) => ({ content: r.content, generatedAt: r.generated_at })) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // What you've already checked in *today* (your timezone), so the card can
 // rehydrate after a tab switch / reopen and reset cleanly at midnight.
 app.get('/api/checkin/today', async (req, res) => {
@@ -1037,21 +1083,57 @@ app.get('/api/briefing', async (req, res) => {
     wellbeingTheme = themes.slice(0, 3).join('; ');
   } catch (err) {
     console.error('[wellbeingContext] failed:', err.message);
+    errors.push({ service: 'wellbeing_context', error: err.message });
   }
 
-  // Call Gemini with whatever data we have
+  // Active life-context annotations (travel, illness, deadline, etc.) so the
+  // AI can acknowledge them in the briefing ("you're traveling this week…").
+  let annotationsContext = '';
+  try {
+    const weekAgo = new Date(Date.now() - 7 * 864e5);
+    const active = await annotationsStore.overlapping(weekAgo, new Date());
+    if (active.length) {
+      annotationsContext = active
+        .map((a) => `${a.category}: ${a.label}${a.note ? ` (${a.note})` : ''}`)
+        .slice(0, 5)
+        .join('; ');
+    }
+  } catch (err) {
+    console.error('[annotations] failed:', err.message);
+  }
+
+  // Call the LLM with whatever data we have
   let geminiResult = null;
   try {
     // The LLM call can be slow; bound it so a stalled model doesn't hang the
     // briefing (it degrades to the data-only sections).
     geminiResult = await withTimeout(
-      generateBriefing(emails, notionData.text, quoteData.quote, dayName, workout, calendar, wellbeingContext),
+      generateBriefing(emails, notionData.text, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext),
       Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000),
       'gemini'
     );
   } catch (err) {
     console.error('[gemini] failed:', err.message);
     errors.push({ service: 'gemini', error: err.message });
+  }
+
+  // LLM fallback: if the AI call failed and there's a prior build today (or
+  // yesterday), carry over its newsletter/email/finance sections so the briefing
+  // doesn't silently go blank. The user gets fresh weather/calendar/health data
+  // with stale-but-populated summaries rather than empty cards.
+  if (!geminiResult && prior?.content) {
+    const p = prior.content;
+    if (p.newsletters?.length || p.urgentEmails?.length || p.financeSummary?.length) {
+      geminiResult = {
+        newsletters: p.newsletters ?? [],
+        urgentEmails: p.urgentEmails ?? [],
+        financeSummary: p.financeSummary ?? [],
+        quoteInsight: p.quoteInsight ?? '',
+        notionQuote: p.notionQuote ?? '',
+        notionInsight: p.notionInsight ?? '',
+      };
+      errors.push({ service: 'gemini_fallback', error: 'LLM unavailable — showing prior build summaries' });
+    }
   }
 
   // Surface the intelligence layer's current findings (from the last analysis).
@@ -1142,6 +1224,7 @@ app.get('/api/briefing', async (req, res) => {
       wealthInsights = await buildWealthInsights();
     } catch (err) {
       console.error('[wealthInsights] failed:', err.message);
+      errors.push({ service: 'wealth_insights', error: err.message });
     }
 
     // Health/wellbeing/habits findings for the Health tab.
@@ -1156,6 +1239,7 @@ app.get('/api/briefing', async (req, res) => {
       .map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains }));
   } catch (err) {
     console.error('[insights] failed:', err.message);
+    errors.push({ service: 'insights', error: err.message });
   }
 
   // Relevant-not-random: surface the library highlight that speaks to where
@@ -1177,6 +1261,7 @@ app.get('/api/briefing', async (req, res) => {
     }
   } catch (err) {
     console.error('[relevantHighlight] failed:', err.message);
+    errors.push({ service: 'highlight', error: err.message });
   }
 
   // Weekly goal achievement — current week's goals + prior week's with hit/miss.
@@ -1192,6 +1277,7 @@ app.get('/api/briefing', async (req, res) => {
     }
   } catch (err) {
     console.error('[weeklyGoals] failed:', err.message);
+    errors.push({ service: 'weekly_goals', error: err.message });
   }
 
   // Latest weekly review (generated separately on a weekly cadence).
@@ -1201,6 +1287,7 @@ app.get('/api/briefing', async (req, res) => {
     if (wr) weeklyReview = { ...wr.content, generatedAt: wr.generated_at };
   } catch (err) {
     console.error('[weeklyReview] failed:', err.message);
+    errors.push({ service: 'weekly_review', error: err.message });
   }
 
   // Wealth snapshot for the Wealth tab (from the canonical spine — Monarch etc.).
@@ -1229,6 +1316,7 @@ app.get('/api/briefing', async (req, res) => {
     }
   } catch (err) {
     console.error('[wealth] failed:', err.message);
+    errors.push({ service: 'wealth', error: err.message });
   }
 
   // Source-staleness alerts. The Monarch token expires periodically; when it

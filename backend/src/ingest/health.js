@@ -7,6 +7,32 @@ const { dayAnchorTs, safeDate } = require('../util/date');
 const SOURCE = 'apple_health';
 const DOMAIN = 'health';
 
+// Physiological bounds — values outside these are almost certainly sensor
+// glitches or Apple Health import artifacts. Filter before writing to the spine
+// so a bad sync can't corrupt rolling averages and recovery scores.
+const BOUNDS = {
+  hrv:               [2,   300],  // ms
+  resting_hr:        [25,  130],  // bpm
+  sleep_hours:       [0.5, 16],
+  sleep_score:       [0,   100],
+  steps:             [0,   100000],
+  active_energy:     [0,   7000], // kcal
+  exercise_minutes:  [0,   720],
+  deep_sleep_hours:  [0,   14],
+  rem_sleep_hours:   [0,   14],
+  weight:            [60,  500],  // lbs
+  body_fat:          [2,   65],   // percent
+  respiratory_rate:  [4,   50],
+  vo2_max:           [10,  90],
+  mindful_minutes:   [0,   480],
+};
+
+function inBounds(metric, value) {
+  const b = BOUNDS[metric];
+  if (!b) return true;
+  return value >= b[0] && value <= b[1];
+}
+
 // Known HealthKit-ish fields -> canonical metric name + unit.
 const FIELD_MAP = {
   // Heart / recovery
@@ -49,15 +75,23 @@ function mapHealthPayload(body, { ts, tz = 'UTC' } = {}) {
   if (Array.isArray(body)) {
     return body
       .filter((r) => r && r.metric != null && Number.isFinite(Number(r.value)))
-      .map((r) => ({
-        ts: safeDate(r.ts) || when,
-        domain: DOMAIN,
-        metric: r.metric,
-        value: Number(r.value),
-        unit: r.unit ?? null,
-        source: SOURCE,
-        metadata: r.metadata ?? {},
-      }));
+      .map((r) => {
+        const value = Number(r.value);
+        if (!inBounds(r.metric, value)) {
+          console.warn(`[health ingest] out-of-bounds value rejected: ${r.metric}=${value}`);
+          return null;
+        }
+        return {
+          ts: safeDate(r.ts) || when,
+          domain: DOMAIN,
+          metric: r.metric,
+          value,
+          unit: r.unit ?? null,
+          source: SOURCE,
+          metadata: r.metadata ?? {},
+        };
+      })
+      .filter(Boolean);
   }
 
   if (body && typeof body === 'object') {
@@ -66,7 +100,12 @@ function mapHealthPayload(body, { ts, tz = 'UTC' } = {}) {
         const mapped = FIELD_MAP[key];
         if (!mapped || !Number.isFinite(Number(value))) return null;
         const [metric, unit] = mapped;
-        return { ts: when, domain: DOMAIN, metric, value: Number(value), unit, source: SOURCE };
+        const num = Number(value);
+        if (!inBounds(metric, num)) {
+          console.warn(`[health ingest] out-of-bounds value rejected: ${metric}=${num}`);
+          return null;
+        }
+        return { ts: when, domain: DOMAIN, metric, value: num, unit, source: SOURCE };
       })
       .filter(Boolean);
   }
