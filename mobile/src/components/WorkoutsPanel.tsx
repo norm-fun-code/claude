@@ -19,6 +19,10 @@ import {
 interface Props {
   hrv: number | null;
   isDark: boolean;
+  // Baseline-relative recovery band (from the Recovery card). When present and
+  // viewing today, it drives workout downgrades instead of absolute HRV cutoffs,
+  // so training guidance matches the Recovery score.
+  recoveryBand?: 'green' | 'yellow' | 'red' | null;
 }
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -1212,7 +1216,7 @@ function renderWorkoutContent(
 }
 
 // Full day-by-day workout view (HRV-aware) — embedded in the Health tab.
-export function WorkoutsPanel({ hrv, isDark }: Props) {
+export function WorkoutsPanel({ hrv, isDark, recoveryBand }: Props) {
   const c = getColors(isDark);
   const todayDayIndex = getTodayDayIndex();
 
@@ -1330,8 +1334,13 @@ export function WorkoutsPanel({ hrv, isDark }: Props) {
   const isViewingToday = selectedDayIndex === todayDayIndex;
   // Convert strip day index (Mon=0) to JS day-of-week (Sun=0) for the selected day
   const selectedJsDay = (selectedDayIndex + 1) % 7;
-  // Only apply HRV logic for today — for other days show the scheduled workout
-  const { workout, zone, override } = getTodaysWorkout(selectedJsDay, isViewingToday ? hrv : null);
+  // Only apply recovery logic for today — other days show the scheduled workout.
+  // Prefer the baseline-relative recovery band; fall back to raw HRV if no band.
+  const { workout, zone, override } = getTodaysWorkout(
+    selectedJsDay,
+    isViewingToday ? hrv : null,
+    isViewingToday ? recoveryBand ?? null : null,
+  );
 
   function handleDayPress(dayIndex: number) {
     setSelectedDayIndex(dayIndex);

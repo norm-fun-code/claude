@@ -4,6 +4,18 @@ import type { Recovery } from './useBriefing';
 
 const RECOVERY_URL = `${API_BASE}/api/recovery`;
 
+export type RecoveryBand = 'green' | 'yellow' | 'red';
+
+/** Map a 0–100 recovery score (composite or a single part like HRV) to a band,
+ *  using the same cutoffs as the backend's recoveryBand(). Returns null when the
+ *  score is missing (no baseline yet) so callers can fall back to neutral. */
+export function scoreToBand(score: number | null | undefined): RecoveryBand | null {
+  if (score == null) return null;
+  if (score >= 67) return 'green';
+  if (score >= 34) return 'yellow';
+  return 'red';
+}
+
 /**
  * Live recovery score from the dedicated fast endpoint — a sub-second fetch,
  * unlike the full briefing build the score used to ride along with. The Health

@@ -3,14 +3,16 @@ import { View, Text, StyleSheet, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import type { HealthData } from '../hooks/useHealthData';
-import type { BriefingData } from '../hooks/useBriefing';
+import type { BriefingData, Recovery } from '../hooks/useBriefing';
+import { scoreToBand } from '../hooks/useRecovery';
 
 interface Props {
   briefing: BriefingData | null;
   health: HealthData;
+  recovery?: Recovery | null;
 }
 
-export function WeeklyStateCard({ briefing, health }: Props) {
+export function WeeklyStateCard({ briefing, health, recovery }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -19,12 +21,15 @@ export function WeeklyStateCard({ briefing, health }: Props) {
   const goalsTotal = goals.length;
 
   const hrv = health.hrv;
-  const hrvStatus = health.hrvStatus;
+  // Color the HRV tile by how today's HRV ranks against the user's OWN baseline
+  // (the Recovery card's HRV sub-score), not an absolute 50ms cutoff — so a
+  // 50ms reading that's low FOR YOU shows yellow here too, not green.
+  const hrvBand = scoreToBand(recovery?.parts?.hrv);
 
   const hrvColor =
-    hrvStatus === 'green' ? '#1D9E75' :
-    hrvStatus === 'yellow' ? '#BA7517' :
-    hrvStatus === 'red' ? '#993C1D' : c.subtext;
+    hrvBand === 'green' ? '#1D9E75' :
+    hrvBand === 'yellow' ? '#BA7517' :
+    hrvBand === 'red' ? '#993C1D' : c.subtext;
 
   const topInsight = briefing?.healthInsights?.[0];
 

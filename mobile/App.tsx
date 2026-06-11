@@ -173,7 +173,7 @@ export default function App() {
                 : <Text style={[styles.refreshInsightsTxt, { color: c.subtext }]}>Refresh insights</Text>
               }
             </TouchableOpacity>
-            <WorkoutsPanel hrv={health.hrv} isDark={isDark} />
+            <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} />
           </>
         );
       case 'wealth':
@@ -205,7 +205,7 @@ export default function App() {
       case 'insights':
         return (
           <>
-            <WeeklyStateCard briefing={d ?? null} health={health} />
+            <WeeklyStateCard briefing={d ?? null} health={health} recovery={liveRecovery.recovery} />
             <GoalsCard weeklyGoals={d?.weeklyGoals} />
             <ReviewCard review={d?.weeklyReview ?? null} />
             <CheckinHistoryCard />

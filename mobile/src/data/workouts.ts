@@ -277,35 +277,42 @@ export function getHRVZone(hrv: number): 'green' | 'yellow' | 'red' {
   return 'red';
 }
 
-export function getTodaysWorkout(dayOfWeek: number, hrv: number | null): WorkoutResult {
-  if (hrv === null) {
-    const scheduled = WEEKLY_SCHEDULE[dayOfWeek];
-    const workoutMap: Record<string, AnySession> = {
-      zone2: ZONE2,
-      mobility: MOBILITY,
-      push: SESSION_A,
-      pull: SESSION_B,
-      rest: REST,
-      intervals: INTERVALS,
-    };
-    return { workout: workoutMap[scheduled] ?? REST, zone: 'unknown' };
-  }
-  const zone = getHRVZone(hrv);
-  if (zone === 'red') {
-    return { workout: ZONE2, zone, override: 'Red HRV — all training replaced with Zone 2.' };
-  }
+/**
+ * Resolve the day's session and training zone. The zone drives auto-downgrades
+ * (e.g. Pull → Zone 2 on a low day). `zoneOverride` lets the caller supply the
+ * baseline-relative RECOVERY band (green/yellow/red) so training guidance matches
+ * the Recovery card — instead of the old absolute HRV thresholds where 50ms read
+ * "green" even when it was below your personal baseline. Falls back to the raw
+ * HRV zone when no recovery band is available (e.g. viewing a non-today column).
+ */
+export function getTodaysWorkout(
+  dayOfWeek: number,
+  hrv: number | null,
+  zoneOverride?: HRVZone | null,
+): WorkoutResult {
   const scheduled = WEEKLY_SCHEDULE[dayOfWeek];
-  if (scheduled === 'pull') {
-    if (zone === 'green') return { workout: SESSION_B, zone };
-    return { workout: ZONE2, zone, override: 'Yellow HRV — Pull session replaced with Zone 2.' };
-  }
-  if (scheduled === 'intervals') return { workout: INTERVALS, zone };
   const workoutMap: Record<string, AnySession> = {
     zone2: ZONE2,
     mobility: MOBILITY,
     push: SESSION_A,
     pull: SESSION_B,
     rest: REST,
+    intervals: INTERVALS,
   };
+
+  // Zone priority: explicit recovery band > raw HRV > unknown (scheduled as-is).
+  const zone: HRVZone = zoneOverride ?? (hrv === null ? 'unknown' : getHRVZone(hrv));
+
+  if (zone === 'unknown') {
+    return { workout: workoutMap[scheduled] ?? REST, zone: 'unknown' };
+  }
+  if (zone === 'red') {
+    return { workout: ZONE2, zone, override: 'Low recovery — all training replaced with Zone 2.' };
+  }
+  if (scheduled === 'pull') {
+    if (zone === 'green') return { workout: SESSION_B, zone };
+    return { workout: ZONE2, zone, override: 'Moderate recovery — Pull session replaced with Zone 2.' };
+  }
+  if (scheduled === 'intervals') return { workout: INTERVALS, zone };
   return { workout: workoutMap[scheduled] ?? REST, zone };
 }
