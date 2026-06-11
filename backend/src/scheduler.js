@@ -57,7 +57,10 @@ async function morningRoutine() {
 }
 
 function start() {
-  if (process.env.ENABLE_SCHEDULER !== 'true') return false;
+  if (process.env.ENABLE_SCHEDULER !== 'true') {
+    console.log('[scheduler] disabled — set ENABLE_SCHEDULER=true to enable the morning routine');
+    return false;
+  }
   const hour = Number(process.env.SCHEDULE_HOUR) || 8;       // default 8am
   const minute = Number(process.env.SCHEDULE_MINUTE) || 30;  // default :30
   scheduleDaily(hour, minute, morningRoutine);
@@ -88,7 +91,15 @@ function start() {
   const habitsMinute = Number(process.env.HABITS_REMINDER_MINUTE) || 0;
   scheduleDaily(habitsHour, habitsMinute, () => runHabitsReminder({}));
   const hm = (h, m) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-  console.log(`[scheduler] enabled — morning ${hm(hour, minute)}, weekly review Sun ${hm(hour, minute + 10)}, check-in ${hm(checkinHour, checkinMinute)}, check-in evening ${hm(checkinEveningHour, checkinEveningMinute)}, analyze evening ${hm(analyzeEveningHour, analyzeEveningMinute)}, habits ${hm(habitsHour, habitsMinute)} (TZ=${process.env.TZ || 'system'})`);
+  const nextIso = (h, m) => new Date(Date.now() + msUntil(h, m)).toISOString();
+  console.log(
+    `[scheduler] enabled (TZ=${process.env.TZ || 'system/UTC'}) — ` +
+    `morning ${hm(hour, minute)} (next: ${nextIso(hour, minute)}), ` +
+    `check-in ${hm(checkinHour, checkinMinute)}, ` +
+    `check-in evening ${hm(checkinEveningHour, checkinEveningMinute)}, ` +
+    `analyze evening ${hm(analyzeEveningHour, analyzeEveningMinute)}, ` +
+    `habits ${hm(habitsHour, habitsMinute)}`
+  );
   return true;
 }
 

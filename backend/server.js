@@ -589,6 +589,42 @@ app.get('/api/diag/gemini', async (req, res) => {
   }
 });
 
+// Scheduler health check — shows whether the scheduler is enabled and when
+// the morning routine will next fire (helps diagnose missing 8:30am briefings).
+app.get('/api/diag/scheduler', (req, res) => {
+  const { msUntil } = require('./src/scheduler');
+  const enabled = process.env.ENABLE_SCHEDULER === 'true';
+  const tz = process.env.TZ || '(not set — server uses system/UTC)';
+  const hour = Number(process.env.SCHEDULE_HOUR) || 8;
+  const minute = Number(process.env.SCHEDULE_MINUTE) || 30;
+  const checkinH = Number(process.env.CHECKIN_REMINDER_HOUR) || 15;
+  const eveningH = Number(process.env.CHECKIN_EVENING_REMINDER_HOUR) || 21;
+  const habitsH = Number(process.env.HABITS_REMINDER_HOUR) || 22;
+
+  const nextMs = (h, m) => {
+    try { return msUntil(h, m); } catch { return null; }
+  };
+  const toWallClock = (ms) => ms == null ? null : new Date(Date.now() + ms).toISOString();
+
+  res.json({
+    enabled,
+    tz,
+    now: new Date().toISOString(),
+    serverTime: new Date().toLocaleString('en-US', { timeZone: process.env.TZ || 'UTC' }),
+    jobs: {
+      morning:         { configured: `${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`, nextFireAt: toWallClock(nextMs(hour, minute)) },
+      checkinAfternoon:{ configured: `${String(checkinH).padStart(2,'0')}:00`, nextFireAt: toWallClock(nextMs(checkinH, 0)) },
+      checkinEvening:  { configured: `${String(eveningH).padStart(2,'0')}:00`, nextFireAt: toWallClock(nextMs(eveningH, 0)) },
+      habits:          { configured: `${String(habitsH).padStart(2,'0')}:00`, nextFireAt: toWallClock(nextMs(habitsH, 0)) },
+    },
+    hint: !enabled
+      ? 'Set ENABLE_SCHEDULER=true in Railway env vars to enable the morning routine.'
+      : tz.includes('not set')
+      ? 'TZ is not set — scheduler fires at UTC times. Set TZ=America/New_York if you want Eastern times.'
+      : 'Scheduler is active.',
+  });
+});
+
 // Diagnostic: dump the RAW metric rows for a metric over the last N days,
 // grouped by day + source. Reveals duplication that a daily SUM would inflate —
 // e.g. many step rows for the same day (pre-fix per-refresh writes) all summed.
