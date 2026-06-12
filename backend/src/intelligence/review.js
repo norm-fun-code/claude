@@ -106,7 +106,12 @@ function composeReview(ctx) {
   const corr = ctx.correlations.map((f) => `- ${f.title}`).join('\n') || '- none confirmed';
   const fc = ctx.forecasts.map((f) => `- ${f.title}`).join('\n') || '- none';
   const lev = ctx.leverage.map((f, i) => `${i + 1}. ${f.title}`).join('\n') || '- none';
-  const ann = ctx.annotations.map((a) => `- ${a.category}: ${a.label}`).join('\n') || '- none logged';
+  const ann = ctx.annotations.length
+    ? ctx.annotations.map((a) => {
+        const day = new Date(a.start_ts).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+        return `- ${day}: ${a.category}: ${a.label}`;
+      }).join('\n')
+    : '- none logged';
   const intentions = (ctx.intentions || [])
     .map((it) => {
       const g = Array.isArray(it.goals) && it.goals.length ? ` Focus goals: ${intentionsStore.formatGoals(it.goals)}.` : '';

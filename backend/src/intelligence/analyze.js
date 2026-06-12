@@ -685,18 +685,21 @@ async function analyze(opts = {}) {
   const anomalies = computeAnomalies(seriesByKey, o);
   const composites = computeHealthComposites(seriesByKey, o);
 
-  // Annotate anomaly findings with any active life-context annotations (travel,
-  // illness, deadline stress, etc.) so a dip in HRV during a sick week isn't
-  // surfaced as a mystery. Only today's active annotations — stale context from
-  // prior days should not bleed into today's analysis.
+  // Annotate anomaly findings with life-context annotations. Look back to
+  // yesterday too — a "Knicks game last night" entered Wednesday explains
+  // Thursday morning's low sleep/HRV just as much as a same-day annotation.
   try {
     const annotationsStore = require('../store/annotations');
+    const startOfYesterday = new Date(); startOfYesterday.setDate(startOfYesterday.getDate() - 1); startOfYesterday.setHours(0, 0, 0, 0);
     const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
-    const active = await annotationsStore.overlapping(startOfToday, new Date());
+    const active = await annotationsStore.overlapping(startOfYesterday, new Date());
     if (active.length) {
-      const ctx = active.map((a) => a.label || a.category).slice(0, 3).join(', ');
+      const ctx = active.map((a) => {
+        const when = new Date(a.start_ts) >= startOfToday ? 'today' : 'yesterday';
+        return `${a.label || a.category} (${when})`;
+      }).slice(0, 3).join('; ');
       for (const a of anomalies) {
-        a.detail += ` (Active context: ${ctx} — may explain this deviation.)`;
+        a.detail += ` (Context: ${ctx} — may explain this deviation.)`;
       }
     }
   } catch { /* non-critical — don't break the analysis */ }
