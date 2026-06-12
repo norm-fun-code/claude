@@ -9,8 +9,53 @@ const { runIngest } = require('./ingest/run');
 const { analyze } = require('./intelligence/analyze');
 const { runNudges, runCheckinReminder, runCheckinEveningReminder, runHabitsReminder } = require('./notify/run');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./notify/morning');
+const nudgesStore = require('./store/nudges');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Local (TZ-aware) YYYY-MM-DD — toISOString() would give UTC and roll the date
+ *  over at the wrong hour for the morning marker. */
+function localDateKey(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** Per-day dedup key so the morning routine runs at most once per calendar day,
+ *  whether it fired on the timer or as a startup catch-up. */
+function morningKey(d = new Date()) {
+  return `morning_routine:${localDateKey(d)}`;
+}
+
+/** Record that today's morning routine ran, so a later restart's catch-up check
+ *  knows to skip it (prevents duplicate briefing pushes on repeated deploys). */
+async function markMorningRan() {
+  try {
+    const id = await nudgesStore.recordNudge({
+      dedupKey: morningKey(),
+      title: 'morning routine ran',
+      body: '',
+      basis: { type: 'morning_marker' },
+      status: 'sent',
+    });
+    if (id != null) await nudgesStore.markStatus(id, 'sent'); // populate sent_at
+  } catch (e) {
+    console.error('[scheduler] morning marker failed:', e.message);
+  }
+}
+
+/** Did the morning routine already run today? Checks the dedup ledger. */
+async function morningRanToday() {
+  try {
+    const keys = await nudgesStore.recentlySentKeys(1);
+    return keys.has(morningKey());
+  } catch (e) {
+    // On error, assume it ran so we don't risk a duplicate push.
+    console.error('[scheduler] morning marker check failed:', e.message);
+    return true;
+  }
+}
 
 /** ms from now until the next HH:MM (local), optionally restricted to a weekday (0=Sun). */
 function msUntil(hour, minute, weekday = null) {
@@ -53,6 +98,8 @@ async function morningRoutine() {
     const r = await runMorningBriefing({});
     console.log(`[scheduler] morning briefing: built=${r.built} pushed=${r.sent}`);
   } catch (e) { console.error('[scheduler] morning briefing:', e.message); }
+  // Mark the day done so a post-8:30am restart's catch-up check skips it.
+  await markMorningRan();
   console.log('[scheduler] morning routine done');
 }
 
@@ -64,6 +111,20 @@ function start() {
   const hour = Number(process.env.SCHEDULE_HOUR) || 8;       // default 8am
   const minute = Number(process.env.SCHEDULE_MINUTE) || 30;  // default :30
   scheduleDaily(hour, minute, morningRoutine);
+  // Catch-up: the in-process timer only fires while the process is alive, so a
+  // deploy/restart AFTER 8:30am pushes the next run to tomorrow — the morning
+  // briefing silently never lands (while same-day jobs like the 3pm check-in
+  // still re-arm). If we boot past 8:30am and today's routine hasn't run, run it
+  // now. The per-day marker keeps repeated restarts from re-pushing.
+  const now = new Date();
+  const pastMorning = now.getHours() * 60 + now.getMinutes() >= hour * 60 + minute;
+  if (pastMorning) {
+    morningRanToday().then((ran) => {
+      if (ran) return;
+      console.log('[scheduler] booted after morning time with no run today — catching up');
+      Promise.resolve().then(morningRoutine).catch((e) => console.error('[scheduler] catch-up error:', e.message));
+    });
+  }
   // Weekly review generates Sunday morning (weekday 0), 10 min after the daily
   // routine's ingest/analyze, and pushes "your weekly review is ready".
   scheduleWeekly(0, hour, minute + 10, () => runWeeklyReviewWithPush({}));
@@ -103,4 +164,4 @@ function start() {
   return true;
 }
 
-module.exports = { start, msUntil, morningRoutine };
+module.exports = { start, msUntil, morningRoutine, morningRanToday, markMorningRan, localDateKey };

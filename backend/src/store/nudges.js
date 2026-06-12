@@ -32,8 +32,12 @@ async function recentlySentKeys(days = 2) {
 }
 
 async function listNudges({ limit = 50 } = {}) {
+  // Exclude internal bookkeeping rows (e.g. the scheduler's morning-ran marker)
+  // so the proactive-message log only shows real, user-facing nudges.
   const { rows } = await query(
-    `SELECT * FROM nudges ORDER BY created_at DESC LIMIT $1`,
+    `SELECT * FROM nudges
+      WHERE COALESCE(basis->>'type', '') <> 'morning_marker'
+      ORDER BY created_at DESC LIMIT $1`,
     [limit]
   );
   return rows;
