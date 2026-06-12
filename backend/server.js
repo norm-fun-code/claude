@@ -1156,6 +1156,26 @@ app.post('/api/morning/run', async (req, res) => {
   }
 });
 
+// External-cron trigger for the morning routine. Accepts a lightweight
+// CRON_SECRET (separate from NORMOS_API_TOKEN) so this URL can be called by
+// cron-job.org or similar without exposing the main API token.
+// Set CRON_SECRET in Railway env vars, then call:
+//   POST /api/cron/morning?secret=<CRON_SECRET>
+app.post('/api/cron/morning', async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return res.status(503).json({ error: 'CRON_SECRET not configured' });
+  const provided = req.query.secret || req.body?.secret;
+  if (provided !== secret) return res.status(401).json({ error: 'invalid secret' });
+  try {
+    const r = await runMorningBriefing({ send: true });
+    console.log(`[cron] morning triggered externally: built=${r.built} sent=${r.sent}`);
+    res.json(r);
+  } catch (err) {
+    console.error('[cron] morning failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Manually trigger the afternoon check-in reminder (the 3pm flow). Only pushes
 // if you haven't logged today; { force: true } sends regardless for testing.
 app.post('/api/checkin/remind', async (req, res) => {
