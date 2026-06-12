@@ -32,8 +32,11 @@ export function AnnotationsCard() {
 
   const load = useCallback(async () => {
     try {
-      const from = new Date(Date.now() - 30 * 86400e3).toISOString();
-      const res = await fetchWithTimeout(`${ANNOTATIONS_URL}?from=${from}`, { headers: authHeaders() });
+      // Only load today's annotations — context clears at midnight so the card
+      // never shows stale events from prior days.
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const res = await fetchWithTimeout(`${ANNOTATIONS_URL}?from=${startOfToday.toISOString()}`, { headers: authHeaders() });
       if (!res.ok) return;
       const d = await res.json();
       setAnnotations(d.annotations ?? []);
@@ -46,9 +49,17 @@ export function AnnotationsCard() {
     if (!label.trim()) return;
     setSaving(true);
     try {
+      const now = new Date();
+      const endOfToday = new Date(now);
+      endOfToday.setHours(23, 59, 59, 0);
       const res = await fetchWithTimeout(ANNOTATIONS_URL, {
         method: 'POST', headers: authHeaders(),
-        body: JSON.stringify({ category, label: label.trim(), startTs: new Date().toISOString() }),
+        body: JSON.stringify({
+          category,
+          label: label.trim(),
+          startTs: now.toISOString(),
+          endTs: endOfToday.toISOString(),
+        }),
       });
       if (res.ok) { setModalVisible(false); setLabel(''); load(); }
     } catch {} finally { setSaving(false); }

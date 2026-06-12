@@ -1464,11 +1464,12 @@ app.get('/api/briefing', async (req, res) => {
   }
 
   // Active life-context annotations (travel, illness, deadline, etc.) so the
-  // AI can acknowledge them in the briefing ("you're traveling this week…").
+  // AI can acknowledge them in the briefing. Only today's annotations — stale
+  // context from prior days clears at midnight so it can't bleed into a new day.
   let annotationsContext = '';
   try {
-    const weekAgo = new Date(Date.now() - 7 * 864e5);
-    const active = await annotationsStore.overlapping(weekAgo, new Date());
+    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+    const active = await annotationsStore.overlapping(startOfToday, new Date());
     if (active.length) {
       annotationsContext = active
         .map((a) => `${a.category}: ${a.label}${a.note ? ` (${a.note})` : ''}`)

@@ -2,12 +2,26 @@
 // intelligence layer (and you) can explain anomalies instead of being misled.
 const { query } = require('../db');
 
+const ET_TZ = 'America/New_York';
+
+/** End-of-calendar-day (23:59:59) in server local time (TZ=America/New_York on
+ *  Railway). Annotations without an explicit end_ts default to this so they
+ *  expire at midnight ET rather than persisting indefinitely. */
+function endOfDayET(d = new Date()) {
+  const eod = new Date(d);
+  eod.setHours(23, 59, 59, 0);
+  return eod;
+}
+
 async function createAnnotation(a) {
   const { startTs, endTs = null, category, label, note = null } = a;
+  // Default end_ts to end-of-day ET so annotations expire automatically.
+  // Callers can pass an explicit endTs for multi-day events (e.g. travel).
+  const resolvedEndTs = endTs ?? endOfDayET(new Date(startTs));
   const { rows } = await query(
     `INSERT INTO annotations (start_ts, end_ts, category, label, note)
      VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    [startTs, endTs, category, label, note]
+    [startTs, resolvedEndTs, category, label, note]
   );
   return rows[0]?.id ?? null;
 }
