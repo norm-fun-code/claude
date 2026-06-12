@@ -4,11 +4,14 @@ const { query } = require('../db');
 
 const ET_TZ = 'America/New_York';
 
-/** End-of-calendar-day (23:59:59) in server local time (TZ=America/New_York on
- *  Railway). Annotations without an explicit end_ts default to this so they
- *  expire at midnight ET rather than persisting indefinitely. */
-function endOfDayET(d = new Date()) {
+/** End-of-calendar-day (23:59:59) for TOMORROW in server local time
+ *  (TZ=America/New_York on Railway). Annotations default to this so they're
+ *  active all of today AND tomorrow morning — covering the next-day briefing
+ *  that explains metrics affected by last night (e.g. low sleep after a late
+ *  Knicks game). They're gone the day after that. */
+function endOfTomorrowET(d = new Date()) {
   const eod = new Date(d);
+  eod.setDate(eod.getDate() + 1);
   eod.setHours(23, 59, 59, 0);
   return eod;
 }
@@ -17,7 +20,7 @@ async function createAnnotation(a) {
   const { startTs, endTs = null, category, label, note = null } = a;
   // Default end_ts to end-of-day ET so annotations expire automatically.
   // Callers can pass an explicit endTs for multi-day events (e.g. travel).
-  const resolvedEndTs = endTs ?? endOfDayET(new Date(startTs));
+  const resolvedEndTs = endTs ?? endOfTomorrowET(new Date(startTs));
   const { rows } = await query(
     `INSERT INTO annotations (start_ts, end_ts, category, label, note)
      VALUES ($1, $2, $3, $4, $5) RETURNING id`,

@@ -50,15 +50,16 @@ export function AnnotationsCard() {
     setSaving(true);
     try {
       const now = new Date();
-      const endOfToday = new Date(now);
-      endOfToday.setHours(23, 59, 59, 0);
+      const endOfTomorrow = new Date(now);
+      endOfTomorrow.setDate(endOfTomorrow.getDate() + 1);
+      endOfTomorrow.setHours(23, 59, 59, 0);
       const res = await fetchWithTimeout(ANNOTATIONS_URL, {
         method: 'POST', headers: authHeaders(),
         body: JSON.stringify({
           category,
           label: label.trim(),
           startTs: now.toISOString(),
-          endTs: endOfToday.toISOString(),
+          endTs: endOfTomorrow.toISOString(),
         }),
       });
       if (res.ok) { setModalVisible(false); setLabel(''); load(); }
