@@ -165,7 +165,7 @@ app.post('/api/ingest/health', async (req, res) => {
 // Eight Sleep full history import — accepts the sleep_nights.json export directly.
 // curl -X POST .../api/ingest/eight-sleep -H "Content-Type: application/json"
 //      -H "Authorization: Bearer TOKEN" -d @sleep_nights.json
-app.post('/api/ingest/eight-sleep', async (req, res) => {
+app.post('/api/ingest/eight-sleep', express.json({ limit: '50mb' }), async (req, res) => {
   try {
     const { sessions } = req.body;
     if (!Array.isArray(sessions)) return res.status(400).json({ error: 'Expected { sessions: [...] }' });
