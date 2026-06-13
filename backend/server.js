@@ -1480,13 +1480,30 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[annotations] failed:', err.message);
   }
 
+  // Recovery context for the briefing prompt — computed early so the chief-of-staff
+  // morning focus can reference the actual score and HRV. Stored in `recovery` so
+  // the later section can skip a redundant liveRecovery() call.
+  let recovery = null;
+  let recoveryContext = '';
+  try {
+    recovery = await require('./src/intelligence/recovery').liveRecovery();
+    if (recovery?.score != null) {
+      recoveryContext = `score ${recovery.score} (${recovery.band ?? 'unknown'} band)`;
+      const hrv = recovery.parts?.hrv;
+      if (hrv != null) recoveryContext += `, HRV ${Math.round(hrv)}ms`;
+    }
+  } catch (err) {
+    console.error('[recovery context] failed:', err.message);
+    errors.push({ service: 'recovery_context', error: err.message });
+  }
+
   // Call the LLM with whatever data we have
   let geminiResult = null;
   try {
     // The LLM call can be slow; bound it so a stalled model doesn't hang the
     // briefing (it degrades to the data-only sections).
     geminiResult = await withTimeout(
-      generateBriefing(emails, notionData.text, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext),
+      generateBriefing(emails, notionData.text, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext),
       Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000),
       'gemini'
     );
@@ -1551,10 +1568,13 @@ app.get('/api/briefing', async (req, res) => {
     // watch wearer there's no HRV/RHR row for today yet at that hour, so its
     // "latest" is yesterday's value, and the card would contradict the live
     // HealthKit numbers below it all day. Falls back to the stored finding.
-    try {
-      recovery = await require('./src/intelligence/recovery').liveRecovery();
-    } catch (err) {
-      console.error('[recovery live] failed:', err.message);
+    // (liveRecovery was already called above for the briefing prompt — skip redundant call)
+    if (!recovery) {
+      try {
+        recovery = await require('./src/intelligence/recovery').liveRecovery();
+      } catch (err) {
+        console.error('[recovery live] failed:', err.message);
+      }
     }
     if (!recovery) {
       const recoveryFinding = open.find((f) => f.type === 'recovery');
@@ -1741,6 +1761,7 @@ app.get('/api/briefing', async (req, res) => {
   const response = {
     date: dateLabel,
     builtAt: new Date().toISOString(),
+    morningFocus: geminiResult?.morningFocus ?? '',
     weather,
     workout,
     calendar,

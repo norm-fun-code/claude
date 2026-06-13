@@ -49,7 +49,7 @@ import { AdvisorCard } from './src/components/AdvisorCard';
 import { UrgentEmailsCard } from './src/components/UrgentEmailsCard';
 import { AlertCard } from './src/components/AlertCard';
 import { HighlightsCard } from './src/components/HighlightsCard';
-import { ShopCard } from './src/components/ShopCard';
+import { MorningFocusCard } from './src/components/MorningFocusCard';
 import { GoalsCard } from './src/components/GoalsCard';
 import { AnnotationsCard } from './src/components/AnnotationsCard';
 import { WeeklyStateCard } from './src/components/WeeklyStateCard';
@@ -201,8 +201,17 @@ export default function App() {
             )}
           </>
         );
-      case 'shop':
-        return <ShopCard />;
+      case 'beta':
+        return (
+          <>
+            <View style={{ paddingHorizontal: 2, marginBottom: spacing.sm }}>
+              <Text style={{ fontSize: 11, fontWeight: '600', letterSpacing: 0.8, color: c.subtext }}>
+                BETA — features in development. These are previews, not final.
+              </Text>
+            </View>
+            <MorningFocusCard focus={d?.morningFocus} />
+          </>
+        );
       case 'insights':
         return (
           <>

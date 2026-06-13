@@ -7,11 +7,17 @@
 const llm = require('../llm');
 
 const SYSTEM =
-  'You prepare a concise personal morning briefing. Analyze the provided emails, ' +
-  'quote, and Notion wisdom. Return ONLY a single valid JSON object — no markdown, ' +
-  'no code fences, no commentary.';
+  'You are NormOS — the user\'s personal chief of staff and data scientist. ' +
+  'You see their full picture: health metrics, recovery, habits, goals, finances, and the ideas ' +
+  'they\'ve collected in their library. Each morning you synthesize all of it into a briefing ' +
+  'that tells them what the data says, what matters today, and how the right idea from their ' +
+  'library connects to where they actually are right now. ' +
+  'Your voice is direct, warm, and without flattery — like a trusted advisor who has done the ' +
+  'homework and respects their time. You name numbers. You make the connection between data and ' +
+  'wisdom feel earned, not generic. ' +
+  'Return ONLY a single valid JSON object — no markdown, no code fences, no commentary.';
 
-function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '') {
+function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '') {
   // Input size wasn't the timeout cause (the proven Apps Script sends 15K/email
   // and is fine) — OUTPUT length was. So allow a generous 15K/email like that
   // setup, with a total budget as a safety net against a huge unread pile.
@@ -38,6 +44,7 @@ function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, cale
   return `Today is ${currentDay}.
 
 Today's workout: ${workoutPlan.type}${workoutPlan.duration ? ` (${workoutPlan.duration})` : ''}
+${recoveryContext ? `Recovery status: ${recoveryContext}` : ''}
 
 Today's calendar:
 ${calendarSection}
@@ -60,6 +67,7 @@ ${emailSection}
 Return ONLY valid JSON with EXACTLY these fields:
 
 {
+  "morningFocus": "1-2 sentences (35-60 words). This is your chief-of-staff situation report: synthesize recovery status, today's workout, recent wellbeing trends, and any active life context into a single direct take. Name the actual numbers (score, HRV ms, etc). Tell them what it means and the one thing that matters most today. Omit entirely (empty string) when you have no recovery or wellbeing data.",
   "newsletters": [
     { "name": "Sender", "title": "Edition title", "summary": "A dense 5-10 sentence paragraph summarizing the substance of THIS specific email. Extract hard numbers, percentages, dollar amounts, named companies, and specific arguments. Emulate the deep, factual style of premium financial newsletters like The Daily Upside. Crisp prose, no bullets, no filler." }
   ],
@@ -73,11 +81,12 @@ Return ONLY valid JSON with EXACTLY these fields:
 }
 
 Rules:
+- morningFocus: weave recovery + workout + wellbeing into a direct chief-of-staff take. Name real numbers. If recovery is yellow or red, say why and what to do. If a habit is slipping, name it. If energy or mood has been low, acknowledge it. This should feel like the one sentence a trusted advisor would say before you start your day. Never mention finances, calendar events, or emails here.
 - newsletters: include digests/publications; exclude personal email, receipts, notifications. Go deep — extract every named company, person, statistic, and dollar amount.
 - urgentEmails: only emails needing a response/action today.
 - financeSummary: 1-3 items; never empty.
 - notionQuote: pick a self-contained, meaningful line — never a title, never an intro that trails off (e.g. "Rather than trying to find someone who will:"). If the best idea spans a sentence, quote the whole sentence.
-- quoteInsight / notionInsight: draw out the idea as practical wisdom for living well. notionInsight MUST be about the notionQuote you chose, not the page in general. You MAY gently tailor it to the user's recent inner state shown in "Recent wellbeing" — e.g. if focus or mood is low, or they're slipping on a habit like gratitude, lean the reflection toward that theme. But do this WITHOUT naming the data ("your focus is low"); just let the chosen angle resonate. Do NOT reference their calendar, specific tasks, schedule, "today", their job/profession, or their finances. Never write "as a [profession]" or tie it to a meeting/event. Speak to the human, not the day.`;
+- quoteInsight / notionInsight: first sentence draws out the core idea as lived wisdom. Second sentence makes it land for where this person is RIGHT NOW — if their energy has been low, connect to restoration and sustainable effort; if a habit is slipping, speak to consistency and small wins; if recovery is yellow/red, speak to patience and trusting the process. Do this WITHOUT naming their data ("your HRV is 38") — just let the angle feel personally chosen. Do NOT reference their calendar, specific tasks, schedule, "today", their job/profession, or their finances. Speak to the human, not the day.`;
 }
 
 /** Robustly pull a JSON object out of an LLM response (handles fences/prose). */
@@ -101,11 +110,11 @@ function extractJson(text) {
 }
 
 const EMPTY = {
-  newsletters: [], urgentEmails: [], financeSummary: [], quoteInsight: '', notionQuote: '', notionInsight: '',
+  morningFocus: '', newsletters: [], urgentEmails: [], financeSummary: [], quoteInsight: '', notionQuote: '', notionInsight: '',
 };
 
-async function generateBriefing(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '') {
-  const prompt = buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext);
+async function generateBriefing(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '') {
+  const prompt = buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext);
 
   let text = '';
   try {
@@ -125,6 +134,7 @@ async function generateBriefing(emailData, notionText, quote, currentDay, workou
   }
 
   return {
+    morningFocus: typeof parsed.morningFocus === 'string' ? parsed.morningFocus : '',
     newsletters: Array.isArray(parsed.newsletters) ? parsed.newsletters : [],
     urgentEmails: Array.isArray(parsed.urgentEmails) ? parsed.urgentEmails : [],
     financeSummary: Array.isArray(parsed.financeSummary) ? parsed.financeSummary : [],

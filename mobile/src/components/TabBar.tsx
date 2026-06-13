@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, shadow } from '../theme';
 
-export type TabKey = 'today' | 'health' | 'wealth' | 'wisdom' | 'insights' | 'shop';
+export type TabKey = 'today' | 'health' | 'wealth' | 'wisdom' | 'insights' | 'beta';
 
 export const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: 'today', label: 'Today', icon: '☀' },
@@ -10,7 +10,7 @@ export const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: 'wealth', label: 'Wealth', icon: '$' },
   { key: 'wisdom', label: 'Wisdom', icon: '🧠' },
   { key: 'insights', label: 'Insights', icon: '✦' },
-  { key: 'shop', label: 'Shop', icon: '🛒' },
+  { key: 'beta', label: 'Beta', icon: '⚗' },
 ];
 
 interface Props {

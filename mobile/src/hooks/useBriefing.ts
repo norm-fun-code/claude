@@ -162,6 +162,7 @@ export interface HealthComposite {
 export interface BriefingData {
   date: string;
   builtAt?: string;
+  morningFocus?: string;
   weather: Weather | null;
   workout: Workout;
   calendar: CalendarEvent[];
