@@ -1158,7 +1158,6 @@ app.get('/api/diag/briefing-llm', async (req, res) => {
       llmMs: Date.now() - tg,
       emailCount: emails.length,
       emailPayloadChars: promptChars,
-      newsletters: result.newsletters.length,
       urgentEmails: result.urgentEmails.length,
     });
   } catch (err) {
@@ -1457,12 +1456,9 @@ app.get('/api/sources', async (req, res) => {
   }
 });
 
-// Mid-day partial refresh: ONLY the parts that meaningfully change during the
-// day — markets commentary and email briefs (newsletters + urgent emails),
-// plus cheap non-LLM weather/calendar. Everything else (wisdom, insights,
-// recovery framing, weekly review) is morning-built and day-locked, so a full
-// 60-90s rebuild to see a fresh markets brief was waste. Merges into the
-// cached briefing and re-saves it, so subsequent cached loads stay current.
+// Mid-day partial refresh: markets + urgent-email scan + weather/calendar.
+// Everything else (wisdom, insights, recovery framing, weekly review) is
+// morning-built and day-locked. Merges into the cached briefing and re-saves.
 app.get('/api/briefing/live', async (req, res) => {
   try {
     const prior = await briefingsStore.latestBriefing('daily');
@@ -1499,13 +1495,7 @@ app.get('/api/briefing/live', async (req, res) => {
       ...(markets ? { markets } : {}),
       ...(weather ? { weather } : {}),
       ...(calendar ? { calendar } : {}),
-      ...(emailBriefs
-        ? {
-            newsletters: emailBriefs.newsletters,
-            urgentEmails: emailBriefs.urgentEmails,
-            financeSummary: emailBriefs.financeSummary,
-          }
-        : {}),
+      ...(emailBriefs ? { urgentEmails: emailBriefs.urgentEmails } : {}),
       liveRefreshedAt: new Date().toISOString(),
     };
 
@@ -1625,12 +1615,9 @@ app.get('/api/briefing', async (req, res) => {
   // briefing — allSettled waits for every promise, so without this a single
   // stall blocks the response. A timed-out source just shows as a soft error.
   //
-  // Gmail / email-briefs are skipped on same-day rebuilds (priorIsToday).
-  // Newsletters only change once when morning email arrives; re-fetching and
-  // re-summarizing them on every intraday rebuild is wasted time (~10-15s).
-  // The prior build's newsletters are carried over below. Users who want a
-  // fresh newsletter pass can tap "Update markets & email" on Today tab, which
-  // calls /api/briefing/live — the dedicated email-only refresh path.
+  // Gmail is skipped on same-day rebuilds (priorIsToday) — urgent emails don't
+  // change frequently enough to re-scan on every intraday rebuild. The prior
+  // build's urgentEmails are carried over. /api/briefing/live handles mid-day email refresh.
   const EXT = Number(process.env.BRIEFING_SOURCE_TIMEOUT_MS || 12000);
   const [weatherResult, calendarResult, notionResult, quoteResult, emailResult, marketsResult] =
     await Promise.allSettled([
@@ -1856,16 +1843,12 @@ app.get('/api/briefing', async (req, res) => {
   }
 
   // LLM fallback: if the AI call failed and there's a prior build today (or
-  // yesterday), carry over its newsletter/email/finance sections so the briefing
-  // doesn't silently go blank. The user gets fresh weather/calendar/health data
-  // with stale-but-populated summaries rather than empty cards.
+  // yesterday), carry over its email/wisdom sections so the briefing doesn't go blank.
   if (!geminiResult && prior?.content) {
     const p = prior.content;
-    if (p.newsletters?.length || p.urgentEmails?.length || p.financeSummary?.length) {
+    if (p.urgentEmails?.length || p.quoteInsight || p.notionInsight) {
       geminiResult = {
-        newsletters: p.newsletters ?? [],
         urgentEmails: p.urgentEmails ?? [],
-        financeSummary: p.financeSummary ?? [],
         quoteInsight: p.quoteInsight ?? '',
         notionQuote: p.notionQuote ?? '',
         notionInsight: p.notionInsight ?? '',
@@ -2120,11 +2103,7 @@ app.get('/api/briefing', async (req, res) => {
     weather,
     workout,
     calendar,
-    // On same-day rebuilds we skip Gmail (see above), so carry prior newsletters.
-    // On a new-day build (or first-ever build), use what the LLM just generated.
-    newsletters: priorIsToday && p?.newsletters?.length ? p.newsletters : (geminiResult?.newsletters ?? []),
     urgentEmails: priorIsToday && p?.urgentEmails?.length ? p.urgentEmails : (geminiResult?.urgentEmails ?? []),
-    financeSummary: priorIsToday && p?.financeSummary?.length ? p.financeSummary : (geminiResult?.financeSummary ?? []),
     // Quote + insight locked together (see quotePair above) so they always match.
     quote: quotePair.quote,
     quoteInsight: quotePair.quoteInsight,

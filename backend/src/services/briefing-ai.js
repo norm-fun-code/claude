@@ -76,13 +76,9 @@ Return ONLY valid JSON with EXACTLY these fields:
   },
   "morningFocus": "1-2 sentences (35-60 words). Chief-of-staff situation report. Use the SELF-MODEL (7-day averages, habit trends, active experiments, confirmed patterns) as your primary source — it always has context even before today's check-in or watch sync. Supplement with any real-time recovery/wellbeing data if present. Name the actual numbers from the self-model (HRV ms, sleep hours, habit rates). Tell them what it means and the one thing that matters most today. Always generate this — never return empty string.",
   "experimentCallout": "If there is a confirmed OR refuted experiment result, write 1-2 sentences calling it out directly: 'NormOS confirmed...' or 'NormOS refuted...'. Name the percent change and what it means for their behavior. If multiple, pick the most impactful one. Empty string if no completed experiments.",
-  "newsletters": [
-    { "name": "Sender", "title": "Edition title", "summary": "A dense 5-10 sentence paragraph summarizing the substance of THIS specific email. Extract hard numbers, percentages, dollar amounts, named companies, and specific arguments. Emulate the deep, factual style of premium financial newsletters like The Daily Upside. Crisp prose, no bullets, no filler." }
-  ],
   "urgentEmails": [
     { "from": "sender", "subject": "subject", "action": "1-2 sentences on what action is needed and why it's urgent" }
   ],
-  "financeSummary": ["1-3 bullets of finance/market/economic news from the emails"],
   "quoteInsight": "2 sentences drawing out the deeper idea or principle in the quote",
   "notionQuote": "the single most resonant COMPLETE sentence or passage from the Notion wisdom above — verbatim, not cut off mid-thought, not a heading or intro fragment ending in a colon",
   "notionInsight": "2 sentences drawing out the key idea in the SPECIFIC notionQuote you selected (the commentary must match that exact passage)"
@@ -92,9 +88,7 @@ Rules:
 - chiefBrief: this is the centerpiece — write it as a person who KNOWS them, not a report. Sharp, caring, blunt, numerate. Draw the ACTION from the leverage engine, the RISK from at-risk forecasts/slipping habits, the MOVE from a real number that changed. Cross-domain synthesis (body↔money↔focus) is the point of the opening synthesis line — but only when the data genuinely supports it. Name actual numbers and trajectories everywhere. Never invent a tie-in or a number. Always generate all four fields.
 - experimentCallout: scan the EXPERIMENT RESULTS block. If there's a confirmed or refuted result, call it out directly and specifically — "NormOS confirmed that [hypothesis] — [metric] improved/declined by X%." If refuted, say so clearly. This is a big deal: it's real data science on their own life. Make it feel like a discovery. Empty string if no completed results.
 - morningFocus: draw primarily from the SELF-MODEL (7-day HRV avg, sleep avg, habit adherence rates, active experiments, confirmed correlations). Real-time recovery/wellbeing data from today's check-in supplements when available but is not required. Name real numbers from the self-model. If a habit rate is slipping, name it. If HRV trend is down, say so. This should feel like the one sentence a trusted advisor who knows your week would say before you start your day. Never mention finances, calendar events, or emails here. Always generate something — the self-model always has enough context.
-- newsletters: include digests/publications; exclude personal email, receipts, notifications. Go deep — extract every named company, person, statistic, and dollar amount.
-- urgentEmails: only emails needing a response/action today.
-- financeSummary: 1-3 items; never empty.
+- urgentEmails: only emails needing a response/action today. Exclude newsletters, digests, marketing — only real emails requiring a response or action.
 - notionQuote: pick a self-contained, meaningful line — never a title, never an intro that trails off (e.g. "Rather than trying to find someone who will:"). If the best idea spans a sentence, quote the whole sentence.
 - quoteInsight / notionInsight: first sentence draws out the core idea as lived wisdom. Second sentence makes it land for where this person is RIGHT NOW — if their energy has been low, connect to restoration and sustainable effort; if a habit is slipping, speak to consistency and small wins; if recovery is yellow/red, speak to patience and trusting the process. Do this WITHOUT naming their data ("your HRV is 38") — just let the angle feel personally chosen. Do NOT reference their calendar, specific tasks, schedule, "today", their job/profession, or their finances. Speak to the human, not the day.`;
 }
@@ -120,7 +114,7 @@ function extractJson(text) {
 }
 
 const EMPTY = {
-  morningFocus: '', chiefBrief: null, experimentCallout: '', newsletters: [], urgentEmails: [], financeSummary: [], quoteInsight: '', notionQuote: '', notionInsight: '',
+  morningFocus: '', chiefBrief: null, experimentCallout: '', urgentEmails: [], quoteInsight: '', notionQuote: '', notionInsight: '',
 };
 
 async function generateBriefing(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '') {
@@ -156,9 +150,7 @@ async function generateBriefing(emailData, notionText, quote, currentDay, workou
     morningFocus: typeof parsed.morningFocus === 'string' ? parsed.morningFocus : '',
     chiefBrief,
     experimentCallout: typeof parsed.experimentCallout === 'string' ? parsed.experimentCallout : '',
-    newsletters: Array.isArray(parsed.newsletters) ? parsed.newsletters : [],
     urgentEmails: Array.isArray(parsed.urgentEmails) ? parsed.urgentEmails : [],
-    financeSummary: Array.isArray(parsed.financeSummary) ? parsed.financeSummary : [],
     quoteInsight: typeof parsed.quoteInsight === 'string' ? parsed.quoteInsight : '',
     notionQuote: typeof parsed.notionQuote === 'string' ? parsed.notionQuote : '',
     notionInsight: typeof parsed.notionInsight === 'string' ? parsed.notionInsight : '',
@@ -170,10 +162,8 @@ const EMAIL_SYSTEM =
   'Return ONLY a single valid JSON object — no markdown, no code fences, no commentary.';
 
 /**
- * Focused mid-day refresh: ONLY the email-derived sections (newsletters,
- * urgent emails, finance bullets) — no quote/Notion reflections, which are
- * day-locked anyway. Much smaller output than the full briefing, so it returns
- * in a fraction of the time. Powers GET /api/briefing/live.
+ * Mid-day urgent-email scan: quickly identifies emails needing action today.
+ * Much smaller output than the full briefing. Powers GET /api/briefing/live.
  */
 async function generateEmailBriefs(emailData) {
   const PER_EMAIL = Number(process.env.EMAIL_PROMPT_CHARS || 15000);
@@ -197,23 +187,17 @@ ${emailSection}
 Return ONLY valid JSON with EXACTLY these fields:
 
 {
-  "newsletters": [
-    { "name": "Sender", "title": "Edition title", "summary": "A dense 5-10 sentence paragraph summarizing the substance of THIS specific email. Extract hard numbers, percentages, dollar amounts, named companies, and specific arguments. Emulate the deep, factual style of premium financial newsletters like The Daily Upside. Crisp prose, no bullets, no filler." }
-  ],
   "urgentEmails": [
     { "from": "sender", "subject": "subject", "action": "1-2 sentences on what action is needed and why it's urgent" }
-  ],
-  "financeSummary": ["1-3 bullets of finance/market/economic news from the emails"]
+  ]
 }
 
 Rules:
-- newsletters: include digests/publications; exclude personal email, receipts, notifications. Go deep — extract every named company, person, statistic, and dollar amount.
-- urgentEmails: only emails needing a response/action today.
-- financeSummary: 1-3 items; never empty.`;
+- urgentEmails: only real emails needing a response or action today. Exclude newsletters, digests, marketing, notifications, and receipts.`;
 
   let text = '';
   try {
-    text = await llm.generateText({ system: EMAIL_SYSTEM, prompt, temperature: 0.2, maxTokens: 8192 });
+    text = await llm.generateText({ system: EMAIL_SYSTEM, prompt, temperature: 0.2, maxTokens: 2048 });
   } catch (err) {
     console.error('[briefing-ai] email-brief generation failed:', err.message);
     return null;
@@ -226,9 +210,7 @@ Rules:
   }
 
   return {
-    newsletters: Array.isArray(parsed.newsletters) ? parsed.newsletters : [],
     urgentEmails: Array.isArray(parsed.urgentEmails) ? parsed.urgentEmails : [],
-    financeSummary: Array.isArray(parsed.financeSummary) ? parsed.financeSummary : [],
   };
 }
 

@@ -42,7 +42,6 @@ import { WorkoutsPanel } from './src/components/WorkoutsPanel';
 import { CalendarCard } from './src/components/CalendarCard';
 import { QuoteCard } from './src/components/QuoteCard';
 import { NotionCard } from './src/components/NotionCard';
-import { NewsletterList } from './src/components/NewsletterList';
 import { MarketsCard } from './src/components/MarketsCard';
 import { IndicesCard } from './src/components/IndicesCard';
 import { AdvisorCard } from './src/components/AdvisorCard';
@@ -250,7 +249,6 @@ export default function App() {
               <AnnotationsCard />
               {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
               {d && <UrgentEmailsCard emails={d.urgentEmails ?? []} />}
-              {d && <NewsletterList newsletters={d.newsletters ?? []} onRefresh={briefing.refetchLive} refreshing={briefing.loading} />}
               <ReviewCard review={d?.weeklyReview ?? null} compact actions={d?.leverageActions ?? []} />
               <AffirmationsCard />
               {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
@@ -305,7 +303,6 @@ export default function App() {
             <AnnotationsCard />
             {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
             {d && <UrgentEmailsCard emails={d.urgentEmails ?? []} />}
-            {d && <NewsletterList newsletters={d.newsletters ?? []} onRefresh={briefing.refetchLive} refreshing={briefing.loading} />}
             <ReviewCard review={d?.weeklyReview ?? null} compact actions={d?.leverageActions ?? []} />
             <AffirmationsCard />
 
