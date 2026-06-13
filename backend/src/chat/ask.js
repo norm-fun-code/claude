@@ -156,13 +156,28 @@ function snippet(text, n = 400) {
 }
 
 /** Pure: assemble the prompt from retrieved context. Exported for testing. */
-function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [], snapshot = null, experiments = [] }) {
+function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [], snapshot = null, experiments = [], pastConversations = [] }) {
   const parts = [];
 
   // Personal goals + metric trends first (only present for personal questions).
   if (snapshot) {
     const block = renderSnapshot(snapshot);
     if (block) parts.push(block);
+  }
+
+  // Long-term memory: relevant things discussed in PAST conversations (beyond the
+  // recent tail). Lets NormOS say "when you asked about this before, we landed on…"
+  // — the compounding-memory capability. Newest-first, dated for recency framing.
+  if (pastConversations.length) {
+    parts.push(
+      'RELEVANT PAST CONVERSATIONS (things you and NormOS discussed before — reference them when they add continuity, e.g. "last time you asked about this…"):\n' +
+        pastConversations
+          .map((c) => {
+            const when = c.createdAt ? new Date(c.createdAt).toISOString().slice(0, 10) : 'previously';
+            return `- [${when}] You asked: "${snippet(c.question, 160)}"\n  NormOS answered: ${snippet(c.answer, 320)}`;
+          })
+          .join('\n')
+    );
   }
 
   if (findings.length) {
@@ -256,16 +271,25 @@ async function ask(question, { history = [], k = 14 } = {}) {
   if (!question || !question.trim()) throw new Error('question is required');
 
   // Hybrid retrieval: semantic search for themes + keyword search on author/title
-  // for named entities (e.g. "Sahil Bloom") that embeddings alone miss.
+  // for named entities (e.g. "Sahil Bloom") that embeddings alone miss. The query
+  // embedding is reused for long-term conversation recall AND returned so the
+  // caller can persist it on the user turn (no second embed call).
   let docs = [];
+  let questionEmbedding = null;
+  let pastConversations = [];
   try {
     const [qVec] = await llm.embed([question]);
-    const [semantic, keyword] = await Promise.all([
+    questionEmbedding = qVec ?? null;
+    const [semantic, keyword, recalled] = await Promise.all([
       qVec ? documents.searchSimilar(qVec, { k: 12 }) : Promise.resolve([]),
       documents.searchText(queryTerms(question), { k: 8 }),
+      // Long-term memory: the most relevant PAST conversations (outside the
+      // recent tail we already pass as `history`).
+      qVec ? require('../store/chat').searchSimilarTurns(qVec, { k: 3 }).catch(() => []) : Promise.resolve([]),
     ]);
     // Keyword (named-entity) hits first so they're never crowded out.
     docs = mergeUnique(keyword, semantic).slice(0, k);
+    pastConversations = recalled;
   } catch (err) {
     console.error('[chat] retrieval failed:', err.message);
   }
@@ -313,12 +337,13 @@ async function ask(question, { history = [], k = 14 } = {}) {
     selfModelText = (await require('../store/selfModel').latestModelText()) ?? '';
   } catch { /* optional */ }
 
-  const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments });
+  const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments, pastConversations });
   const system = selfModelText ? `${baseSystem}\n\n${selfModelText}` : baseSystem;
   const answer = await llm.generateText({ system, prompt, temperature: 0.3, maxTokens: 1600 });
 
   return {
     answer,
+    questionEmbedding, // for the caller to persist on the user turn (long-term recall)
     sources: docs.map((d) => ({
       title: d.title,
       author: d.author,

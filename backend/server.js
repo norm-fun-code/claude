@@ -1192,11 +1192,17 @@ app.post('/api/chat', async (req, res) => {
 
     const result = await ask(question, { history: priorHistory });
 
-    // Append this turn so the next question remembers it.
-    chatStore.saveMessage({ role: 'user', content: question }).catch((e) => console.error('[chat memory] save user failed:', e.message));
-    chatStore.saveMessage({ role: 'assistant', content: result.answer, sources: result.sources ?? [] }).catch((e) => console.error('[chat memory] save assistant failed:', e.message));
+    // Append this turn so the next question remembers it. Store the question's
+    // embedding (computed once inside ask) so future questions can semantically
+    // recall this exchange long after it leaves the recent tail.
+    chatStore.saveMessage({ role: 'user', content: question, embedding: result.questionEmbedding ?? null })
+      .catch((e) => console.error('[chat memory] save user failed:', e.message));
+    chatStore.saveMessage({ role: 'assistant', content: result.answer, sources: result.sources ?? [] })
+      .catch((e) => console.error('[chat memory] save assistant failed:', e.message));
 
-    res.json(result);
+    // Don't leak the raw embedding vector to the client.
+    const { questionEmbedding, ...clientResult } = result;
+    res.json(clientResult);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1218,6 +1224,27 @@ app.post('/api/chat/clear', async (req, res) => {
   try {
     const removed = await require('./src/store/chat').clearMessages();
     res.json({ ok: true, removed });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// One-time backfill: embed any past user questions saved before long-term recall
+// existed, so they become semantically retrievable. Safe to re-run (idempotent).
+app.post('/api/chat/reindex', async (req, res) => {
+  try {
+    const chatStore = require('./src/store/chat');
+    const pending = await chatStore.unembeddedQuestions({ limit: 500 });
+    let embedded = 0;
+    // Embed in small batches to respect provider limits.
+    for (let i = 0; i < pending.length; i += 32) {
+      const batch = pending.slice(i, i + 32);
+      const vecs = await llm.embed(batch.map((m) => m.content)).catch(() => []);
+      for (let j = 0; j < batch.length; j++) {
+        if (vecs[j]) { await chatStore.setEmbedding(batch[j].id, vecs[j]); embedded++; }
+      }
+    }
+    res.json({ ok: true, pending: pending.length, embedded });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
