@@ -162,6 +162,76 @@ app.post('/api/ingest/health', async (req, res) => {
   }
 });
 
+// Eight Sleep (or manual) overnight metrics: HRV, RHR, sleep score, sleep hours.
+// Stored separately from Apple Health (source: 'eight_sleep') so they can coexist
+// and the analyze engine can prefer watch data when both are present.
+app.post('/api/ingest/sleep', async (req, res) => {
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const { dayAnchorTs } = require('./src/util/date');
+    const when = dayAnchorTs(tz); // noon local time — same anchor as Apple Health
+    const SOURCE = 'eight_sleep';
+    const DOMAIN = 'health';
+    const ALLOWED = {
+      hrv:          [2,   300],
+      resting_hr:   [25,  130],
+      sleep_score:  [0,   100],
+      sleep_hours:  [0.5, 16],
+      deep_sleep_hours: [0, 14],
+      rem_sleep_hours:  [0, 14],
+      respiratory_rate: [4, 50],
+    };
+    const { hrv, resting_hr, restingHr, sleep_score, sleepScore, sleep_hours, sleepHours,
+            deep_sleep_hours, rem_sleep_hours, respiratory_rate } = req.body;
+    const input = {
+      hrv,
+      resting_hr: resting_hr ?? restingHr,
+      sleep_score: sleep_score ?? sleepScore,
+      sleep_hours: sleep_hours ?? sleepHours,
+      deep_sleep_hours,
+      rem_sleep_hours,
+      respiratory_rate,
+    };
+    const rows = [];
+    for (const [metric, value] of Object.entries(input)) {
+      if (value == null) continue;
+      const num = Number(value);
+      if (!Number.isFinite(num)) continue;
+      const bounds = ALLOWED[metric];
+      if (bounds && (num < bounds[0] || num > bounds[1])) continue;
+      rows.push({ ts: when, domain: DOMAIN, metric, value: num, source: SOURCE });
+    }
+    if (!rows.length) return res.status(400).json({ error: 'No valid metrics provided' });
+    const written = await metricsStore.insertMetrics(rows);
+    res.json({ written, metrics: rows.map((r) => r.metric) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Today's Eight Sleep metrics — lets the app show what's already been logged.
+app.get('/api/sleep/today', async (req, res) => {
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD
+    const METRICS = ['hrv', 'resting_hr', 'sleep_score', 'sleep_hours', 'respiratory_rate'];
+    const result = {};
+    await Promise.all(METRICS.map(async (m) => {
+      const { rows } = await require('./src/db').query(
+        `SELECT value FROM metrics
+          WHERE domain = 'health' AND metric = $1 AND source = 'eight_sleep'
+            AND date_trunc('day', ts AT TIME ZONE $2) = $3::date
+          ORDER BY ts DESC LIMIT 1`,
+        [m, tz, today]
+      );
+      if (rows[0]) result[m] = Number(rows[0].value);
+    }));
+    res.json({ date: today, logged: Object.keys(result).length > 0, metrics: result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Daily subjective check-in (mood / energy / focus + optional journal note).
 app.post('/api/checkin', async (req, res) => {
   try {

@@ -54,6 +54,7 @@ import { HealthBackfillCard } from './src/components/HealthBackfillCard';
 import { ExperimentsCard } from './src/components/ExperimentsCard';
 import { CrossContextCard } from './src/components/CrossContextCard';
 import { SelfModelCard } from './src/components/SelfModelCard';
+import { SleepLogCard } from './src/components/SleepLogCard';
 import { GoalsCard } from './src/components/GoalsCard';
 import { AnnotationsCard } from './src/components/AnnotationsCard';
 import { WeeklyStateCard } from './src/components/WeeklyStateCard';
@@ -213,6 +214,7 @@ export default function App() {
                 BETA — features in development. These are previews, not final.
               </Text>
             </View>
+            <SleepLogCard />
             <MorningFocusCard focus={d?.morningFocus} />
             <SelfModelCard />
             <ExperimentsCard
