@@ -220,7 +220,6 @@ export default function App() {
               running={d?.experiments?.running ?? []}
               callout={d?.experimentCallout}
             />
-            <HealthBackfillCard />
           </>
         );
       case 'insights':
