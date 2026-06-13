@@ -227,11 +227,10 @@ export default function App() {
             <CheckinCard />
             <HabitsCard />
             <AnnotationsCard />
-            {d && <LeverageCard actions={d.leverageActions ?? []} insights={[]} />}
             {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
             {d && <UrgentEmailsCard emails={d.urgentEmails ?? []} />}
             {d && <NewsletterList newsletters={d.newsletters ?? []} />}
-            <ReviewCard review={d?.weeklyReview ?? null} compact />
+            <ReviewCard review={d?.weeklyReview ?? null} compact actions={d?.leverageActions ?? []} />
             <AffirmationsCard />
 
             {briefing.error && !d && (
