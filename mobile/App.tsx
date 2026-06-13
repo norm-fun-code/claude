@@ -71,6 +71,7 @@ export default function App() {
 
   const [tab, setTab] = useState<TabKey>('today');
   const [analyzingInsights, setAnalyzingInsights] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   // Health tab refresh only spins on health-local fetches; other tabs spin on
   // the briefing too.
   const isRefreshing =
@@ -79,10 +80,18 @@ export default function App() {
   const refreshInsights = useCallback(async () => {
     if (analyzingInsights) return;
     setAnalyzingInsights(true);
+    setAnalyzeError(null);
     try {
-      await fetchWithTimeout(ANALYZE_URL, { method: 'POST', headers: authHeaders() }, 60000);
-      briefing.reload();
-    } catch { /* silent */ } finally {
+      const res = await fetchWithTimeout(ANALYZE_URL, { method: 'POST', headers: authHeaders() }, 60000);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setAnalyzeError(body.error ?? `Server error ${res.status}`);
+      } else {
+        briefing.reload();
+      }
+    } catch (err: unknown) {
+      setAnalyzeError(err instanceof Error ? err.message : 'Network error');
+    } finally {
       setAnalyzingInsights(false);
     }
   }, [analyzingInsights, briefing]);
@@ -227,6 +236,12 @@ export default function App() {
       case 'insights':
         return (
           <>
+            {analyzeError && (
+              <View style={[styles.errorBox, { borderColor: c.border, backgroundColor: c.card }]}>
+                <Text style={[styles.errorTitle, { color: c.text }]}>Analysis failed</Text>
+                <Text style={[styles.errorDetail, { color: c.subtext }]}>{analyzeError}</Text>
+              </View>
+            )}
             <CrossContextCard insights={d?.crossContextInsights ?? []} />
             <WeeklyStateCard briefing={d ?? null} health={health} recovery={liveRecovery.recovery} />
             <GoalsCard weeklyGoals={d?.weeklyGoals} />
