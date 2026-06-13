@@ -93,23 +93,20 @@ function sumLast(series, n) {
  * Weights follow the autonomic-dominant hierarchy Whoop/Oura use, with two
  * refinements beyond a plain HRV/RHR/sleep average:
  *
- *   HRV level       35% — primary autonomic signal (rank vs personal baseline)
- *   HRV trend       10% — Oura "HRV balance": last night vs the 7-day mean.
- *                          Catches a declining trajectory the absolute rank
- *                          misses (early overreach), and rewards a recovering one.
- *   Resting HR      20% — secondary cardiovascular (rank, inverted)
- *   Respiratory rate 10% — Whoop's earliest illness/strain flag (rank, inverted).
- *                          Dormant until ~8 nights of overnight data accrue.
- *   Sleep           25% — sleep_score (which already encodes deep/REM/total, so
- *                          we DON'T add those as separate terms — that would
- *                          double-count sleep and dilute the autonomic signal);
- *                          falls back to sleep_hours rank if no score is present.
+ *   HRV level   45% — primary autonomic signal (rank vs personal baseline)
+ *   HRV trend   10% — Oura "HRV balance": last night vs the 7-day mean. Catches
+ *                      a declining trajectory the absolute rank misses (early
+ *                      overreach), and rewards a recovering one.
+ *   Resting HR  20% — secondary cardiovascular (rank, inverted)
+ *   Sleep       25% — sleep_score (which already encodes deep/REM/total, so we
+ *                      DON'T add those as separate terms — that would double-count
+ *                      sleep and dilute the autonomic signal); falls back to
+ *                      sleep_hours rank if no score is present.
  *
- * Autonomic inputs (HRV level + trend + RHR + respiratory) total 75%. Weights
- * re-normalize over whatever inputs are actually present, so missing signals
- * (e.g. no respiratory baseline yet) don't skew the result. Each rank-based
- * percentile is soft-scored so single-day extremes don't dominate.
- * Returns { score, parts } or null.
+ * Autonomic inputs (HRV level + trend + RHR) total 75%. Weights re-normalize over
+ * whatever inputs are actually present, so a missing signal doesn't skew the
+ * result. Each rank-based percentile is soft-scored so single-day extremes don't
+ * dominate. Returns { score, parts } or null.
  */
 function recoveryScore(seriesByKey, opts = {}) {
   const o = { baselineDays: 30, minN: 8, ...opts };
@@ -118,13 +115,12 @@ function recoveryScore(seriesByKey, opts = {}) {
 
   const hrv = seriesByKey['health:hrv'];
   const rhr = seriesByKey['health:resting_hr'];
-  const rr = seriesByKey['health:respiratory_rate'];
   const sleep = seriesByKey['health:sleep_hours'];
   const sleepScore = seriesByKey['health:sleep_score'];
 
   if (hrv) {
     const s = baselineScore(hrv, o);
-    if (s != null) { parts.hrv = s; weights.hrv = 0.35; }
+    if (s != null) { parts.hrv = s; weights.hrv = 0.45; }
     // HRV trend (direction vs last week) — distinct from the absolute-level rank.
     const t = trendScore(hrv, { baselineDays: 7, minN: 4 });
     if (t != null) { parts.hrvTrend = t; weights.hrvTrend = 0.10; }
@@ -132,11 +128,6 @@ function recoveryScore(seriesByKey, opts = {}) {
   if (rhr) {
     const s = baselineScore(rhr, { ...o, invert: true });
     if (s != null) { parts.restingHr = s; weights.restingHr = 0.2; }
-  }
-  if (rr) {
-    // Lower overnight respiratory rate is better; elevated = strain/illness.
-    const s = baselineScore(rr, { ...o, invert: true });
-    if (s != null) { parts.respiratoryRate = s; weights.respiratoryRate = 0.1; }
   }
   // Prefer an explicit sleep score (already includes deep/REM/total), else hours.
   if (sleepScore && latest(sleepScore) != null) {
@@ -333,7 +324,7 @@ async function liveRecovery() {
   const metricsStore = require('../store/metrics');
   const seriesByKey = {};
   const from60 = new Date(Date.now() - 60 * 864e5);
-  for (const key of ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score', 'health:respiratory_rate']) {
+  for (const key of ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score']) {
     const [dm, mt] = key.split(':');
     // Use source-priority aggregation: eight_sleep manual > apple_health > eight_sleep_baseline.
     // Prevents double-counting when Apple Health mirrors Eight Sleep data via HealthKit.

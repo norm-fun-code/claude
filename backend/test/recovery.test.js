@@ -57,19 +57,6 @@ test('trendScore: rising vs last week > 50, falling < 50, flat ~50', () => {
   assert.equal(r.trendScore(series([50, 51, 52])), null);
 });
 
-test('respiratory rate: elevated breathing lowers recovery (inverted)', () => {
-  const base = {
-    'health:hrv': baselineThen(50, 30, 50),        // neutral
-    'health:resting_hr': baselineThen(55, 30, 55), // neutral
-  };
-  const calm = r.recoveryScore({ ...base, 'health:respiratory_rate': baselineThen(15, 30, 13) });
-  const elevated = r.recoveryScore({ ...base, 'health:respiratory_rate': baselineThen(15, 30, 18) });
-  assert.ok(
-    calm.score > elevated.score,
-    `lower respiratory rate should score higher: calm ${calm.score} vs elevated ${elevated.score}`
-  );
-});
-
 test('recoveryScore: null when no inputs', () => {
   assert.equal(r.recoveryScore({}), null);
   assert.equal(r.recoveryScore({ 'health:hrv': series([50, 51]) }), null); // too short
