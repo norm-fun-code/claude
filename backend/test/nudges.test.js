@@ -45,6 +45,28 @@ test('only the #1 leverage action is nudged', () => {
   assert.equal(n[0].title, "Today's highest-leverage move");
 });
 
+test('a cross-context insight becomes a proactive push, keyed by its headline', () => {
+  const finding = {
+    type: 'cross_context',
+    title: 'Short sleep quietly drives your spending',
+    detail: 'On nights under 6h, next-day discretionary spend runs ~30% higher.',
+    confidence: 0.7,
+    domains: ['health', 'wealth'],
+  };
+  const n = buildNudges({ findings: [finding] });
+  assert.equal(n.length, 1);
+  assert.equal(n[0].key, 'cross_context:short-sleep-quietly-drives-your-spending');
+  assert.equal(n[0].title, 'NormOS connected the dots');
+  assert.match(n[0].body, /Short sleep/);
+  assert.ok(n[0].priority > 0.7, `cross-context should be loud, got ${n[0].priority}`);
+});
+
+test('a cross-context insight is suppressed once already sent', () => {
+  const finding = { type: 'cross_context', title: 'Exercise lifts next-day focus', detail: 'x', domains: ['health', 'wellbeing'] };
+  const n = buildNudges({ findings: [finding], recentKeys: new Set(['cross_context:exercise-lifts-next-day-focus']) });
+  assert.equal(n.length, 0);
+});
+
 test('candidates are ranked by priority and capped by max', () => {
   const findings = [
     forecast('off_track', 0.1, 'g1', 'Goal A'), // priority ~0.95

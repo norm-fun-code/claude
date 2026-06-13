@@ -76,7 +76,21 @@ function fromTrend(f) {
   };
 }
 
-const BUILDERS = { forecast: fromForecast, leverage: fromLeverage, trend: fromTrend };
+function fromCrossContext(f) {
+  // Cross-context insights are the differentiator and rare, so they earn a push.
+  // Keyed by the insight's headline so each distinct connection fires exactly once.
+  if (!f.title) return null;
+  const body = f.detail ? `${f.title} — ${f.detail}` : f.title;
+  return {
+    key: `cross_context:${slugify(f.title)}`,
+    title: 'NormOS connected the dots',
+    body: body.length > 220 ? `${body.slice(0, 217)}…` : body,
+    priority: round(0.72), // above leverage's floor; these are worth surfacing
+    basis: { type: 'cross_context', domains: f.domains ?? [] },
+  };
+}
+
+const BUILDERS = { forecast: fromForecast, leverage: fromLeverage, trend: fromTrend, cross_context: fromCrossContext };
 
 /** A gentle daily reminder to log the check-in — the subjective signal every
  *  cross-domain question depends on. Keyed per-day so it fires at most once. */

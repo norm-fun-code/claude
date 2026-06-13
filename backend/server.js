@@ -1602,6 +1602,7 @@ app.get('/api/briefing', async (req, res) => {
 
   // Surface the intelligence layer's current findings (from the last analysis).
   let insights = [];
+  let crossContextInsights = [];
   let wealthInsights = [];
   let healthInsights = [];
   let leverageActions = [];
@@ -1661,11 +1662,18 @@ app.get('/api/briefing', async (req, res) => {
       .filter((f) => COMPOSITE_TYPES.includes(f.type) && f.type !== 'recovery')
       .map((f) => ({ type: f.type, title: f.title, detail: f.detail, evidence: f.evidence }));
 
+    // Cross-context insights get their own prominent surface (the differentiator),
+    // so pull them out of the generic rotation and expose them directly.
+    crossContextInsights = open
+      .filter((f) => f.type === 'cross_context')
+      .slice(0, 3)
+      .map((f) => ({ title: f.title, detail: f.detail, domains: f.domains, confidence: f.confidence }));
+
     // Insights rotate: prefer ones not shown in the last 30 days so the card
     // stays fresh, falling back to the rest if you've seen them all. Composites
-    // are excluded (shown live above).
+    // and cross-context (shown separately) are excluded.
     const insightPool = open.filter(
-      (f) => f.type !== 'leverage' && f.type !== 'forecast' && !COMPOSITE_TYPES.includes(f.type)
+      (f) => f.type !== 'leverage' && f.type !== 'forecast' && f.type !== 'cross_context' && !COMPOSITE_TYPES.includes(f.type)
     );
     const seenInsights = await surfacedStore.recentRefs('insight', 30);
     const chosen = surfacedStore.pickFresh(insightPool, seenInsights, { max: 6, keyFn: (f) => f.title });
@@ -1872,6 +1880,7 @@ app.get('/api/briefing', async (req, res) => {
       })),
     },
     insights,
+    crossContextInsights,
     wealthInsights,
     healthInsights,
     recovery,
@@ -1924,6 +1933,13 @@ app.get('/api/briefing', async (req, res) => {
         experiments.evaluateDue().catch((e) => console.error('[evaluate]', e.message)),
       ]);
     })
+    // Synthesize cross-domain relationships into plain-language insights, then run
+    // a proactive push so a strong NEW connection reaches the phone unprompted
+    // (deduped + quiet-hours aware inside runNudges).
+    .then(() => require('./src/intelligence/crossContext').generateCrossContext()
+      .catch((e) => console.error('[crossContext]', e.message)))
+    .then(() => require('./src/notify/run').runNudges({ suppressCheckin: true })
+      .catch((e) => console.error('[proactive nudge]', e.message)))
     .catch((err) => console.error('[ingest/analyze] failed:', err.message));
 });
 

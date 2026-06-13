@@ -8,6 +8,7 @@
 const { runIngest } = require('./ingest/run');
 const { analyze } = require('./intelligence/analyze');
 const { consolidate } = require('./intelligence/consolidate');
+const { generateCrossContext } = require('./intelligence/crossContext');
 const { autoStartExperiment, proposeExperiments } = require('./intelligence/experiments');
 const { runNudges, runCheckinReminder, runCheckinEveningReminder, runHabitsReminder } = require('./notify/run');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./notify/morning');
@@ -92,6 +93,8 @@ async function morningRoutine() {
   // Refresh the data + intelligence first, so the briefing reflects today.
   try { await runIngest(); } catch (e) { console.error('[scheduler] ingest:', e.message); }
   try { await analyze(); } catch (e) { console.error('[scheduler] analyze:', e.message); }
+  // Synthesize the day's cross-domain relationships into plain-language insights.
+  try { await generateCrossContext(); } catch (e) { console.error('[scheduler] crossContext:', e.message); }
   // Propose new experiments from fresh correlations, then auto-start one if the
   // queue is empty — keeps the hypothesis loop self-sustaining.
   try {
@@ -156,6 +159,7 @@ function start() {
   const analyzeEveningMinute = Number(process.env.ANALYZE_EVENING_MINUTE) || 30;
   scheduleDaily(analyzeEveningHour, analyzeEveningMinute, async () => {
     try { await analyze(); } catch (e) { console.error('[scheduler] evening analyze:', e.message); }
+    try { await generateCrossContext(); } catch (e) { console.error('[scheduler] evening crossContext:', e.message); }
     try { await consolidate(); console.log('[scheduler] self-model consolidated'); } catch (e) { console.error('[scheduler] consolidate:', e.message); }
   });
 
