@@ -1015,7 +1015,49 @@ app.get('/api/diag/briefing-llm', async (req, res) => {
 app.post('/api/chat', async (req, res) => {
   try {
     const { question, history } = req.body || {};
-    res.json(await ask(question, { history }));
+    const chatStore = require('./src/store/chat');
+
+    // Persistent memory: if the client doesn't supply history, load the recent
+    // conversation tail from the DB so threads survive app restarts. A client
+    // that sends its own history (back-compat) overrides this.
+    let priorHistory = Array.isArray(history) ? history : [];
+    if (!priorHistory.length) {
+      try {
+        const rows = await chatStore.recentMessages({ limit: 20 });
+        priorHistory = rows.map((m) => ({ role: m.role, content: m.content }));
+      } catch (e) {
+        console.error('[chat memory] load failed:', e.message);
+      }
+    }
+
+    const result = await ask(question, { history: priorHistory });
+
+    // Append this turn so the next question remembers it.
+    chatStore.saveMessage({ role: 'user', content: question }).catch((e) => console.error('[chat memory] save user failed:', e.message));
+    chatStore.saveMessage({ role: 'assistant', content: result.answer, sources: result.sources ?? [] }).catch((e) => console.error('[chat memory] save assistant failed:', e.message));
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Read the persisted conversation (for the app to render prior turns on open).
+app.get('/api/chat/history', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const rows = await require('./src/store/chat').recentMessages({ limit });
+    res.json({ messages: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Clear the conversation ("start fresh").
+app.post('/api/chat/clear', async (req, res) => {
+  try {
+    const removed = await require('./src/store/chat').clearMessages();
+    res.json({ ok: true, removed });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
