@@ -12,6 +12,7 @@ interface Props {
 
 const PART_LABEL: Record<string, string> = {
   hrv: 'HRV',
+  hrvTrend: 'HRV trend',
   restingHr: 'Resting HR',
   sleep: 'Sleep',
 };

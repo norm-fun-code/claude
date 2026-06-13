@@ -331,6 +331,9 @@ async function liveRecovery() {
     const rows = await metricsStore.dailyAggregatePreferSource({ domain: dm, metric: mt, from: from60, agg: 'avg' });
     if (rows.length) seriesByKey[key] = rows;
   }
+  const rawHrv = seriesByKey['health:hrv'] ? latest(seriesByKey['health:hrv']) : null;
+  const rawRhr = seriesByKey['health:resting_hr'] ? latest(seriesByKey['health:resting_hr']) : null;
+
   const rec = recoveryScore(seriesByKey);
   if (!rec) return null;
   const { band, guidance } = recoveryBand(rec.score);
@@ -375,7 +378,7 @@ async function liveRecovery() {
     }
   } catch { /* non-critical */ }
 
-  return { score: rec.score, band, parts: rec.parts, detail: guidance + workoutNote };
+  return { score: rec.score, band, parts: rec.parts, detail: guidance + workoutNote, rawHrv, rawRhr };
 }
 
 module.exports = {

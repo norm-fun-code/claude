@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, useColorScheme } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, useColorScheme, ActivityIndicator } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import type { Newsletter } from '../hooks/useBriefing';
@@ -39,15 +39,31 @@ function NewsletterItem({ item, c, isDark }: NewsletterItemProps) {
 
 interface Props {
   newsletters: Newsletter[];
+  onRefresh?: () => void;
+  refreshing?: boolean;
 }
 
-export function NewsletterList({ newsletters }: Props) {
+export function NewsletterList({ newsletters, onRefresh, refreshing }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
-      <SectionHeader emoji="📰" title="Newsletters" />
+      <View style={styles.headerRow}>
+        <SectionHeader emoji="📰" title="Newsletters" />
+        {onRefresh && (
+          <TouchableOpacity
+            onPress={onRefresh}
+            disabled={refreshing}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            {refreshing
+              ? <ActivityIndicator size="small" color={c.subtext} />
+              : <Text style={[styles.refreshBtn, { color: c.subtext }]}>↻ Refresh</Text>
+            }
+          </TouchableOpacity>
+        )}
+      </View>
 
       {newsletters.length === 0 ? (
         <Text style={[styles.empty, { color: c.subtext }]}>No newsletters in inbox.</Text>
@@ -68,6 +84,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: spacing.md,
     marginBottom: spacing.md,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  refreshBtn: {
+    fontSize: 12,
+    fontWeight: '500',
   },
   item: {
     paddingVertical: spacing.sm,

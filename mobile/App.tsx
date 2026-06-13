@@ -113,18 +113,14 @@ export default function App() {
   const d = briefing.data;
 
   // Per-tab explicit refresh — each tab updates only its own content:
-  //   Today/Wealth → stale: async rebuild (non-blocking); fresh: markets + email only
+  //   Today/Wealth → always shows "Rebuild briefing" (non-blocking async rebuild).
+  //                  Newsletters refresh inline via their own card button.
   //   Health       → HealthKit + live recovery score (sub-second)
   //   Insights     → re-run analysis, then trigger rebuild to pull new findings in
   //   Wisdom       → day-locked by design; reloads the morning cache
-  const isStale = d?.stale === true;
   const tabRefresh: Partial<Record<TabKey, { label: string; busy: boolean; run: () => void }>> = {
-    today: isStale
-      ? { label: 'Rebuild briefing', busy: briefing.rebuilding, run: briefing.triggerRebuild }
-      : { label: 'Update markets & email', busy: briefing.loading, run: briefing.refetchLive },
-    wealth: isStale
-      ? { label: 'Rebuild briefing', busy: briefing.rebuilding, run: briefing.triggerRebuild }
-      : { label: 'Update markets & email', busy: briefing.loading, run: briefing.refetchLive },
+    today: { label: 'Rebuild briefing', busy: briefing.rebuilding, run: briefing.triggerRebuild },
+    wealth: { label: 'Rebuild briefing', busy: briefing.rebuilding, run: briefing.triggerRebuild },
     health: {
       label: 'Refresh health data',
       busy: health.loading || liveRecovery.loading,
@@ -281,7 +277,7 @@ export default function App() {
             <AnnotationsCard />
             {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
             {d && <UrgentEmailsCard emails={d.urgentEmails ?? []} />}
-            {d && <NewsletterList newsletters={d.newsletters ?? []} />}
+            {d && <NewsletterList newsletters={d.newsletters ?? []} onRefresh={briefing.refetchLive} refreshing={briefing.loading} />}
             <ReviewCard review={d?.weeklyReview ?? null} compact actions={d?.leverageActions ?? []} />
             <AffirmationsCard />
 

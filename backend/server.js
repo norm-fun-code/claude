@@ -1759,9 +1759,10 @@ app.get('/api/briefing', async (req, res) => {
   try {
     recovery = await require('./src/intelligence/recovery').liveRecovery();
     if (recovery?.score != null) {
-      recoveryContext = `score ${recovery.score} (${recovery.band ?? 'unknown'} band)`;
-      const hrv = recovery.parts?.hrv;
-      if (hrv != null) recoveryContext += `, HRV ${Math.round(hrv)}ms`;
+      recoveryContext = `score ${recovery.score}/100 (${recovery.band ?? 'unknown'} band)`;
+      // rawHrv/rawRhr are actual measurements (ms / bpm), not the 0-100 score components.
+      if (recovery.rawHrv != null) recoveryContext += `, HRV ${Math.round(recovery.rawHrv)}ms`;
+      if (recovery.rawRhr != null) recoveryContext += `, RHR ${Math.round(recovery.rawRhr)}bpm`;
     }
   } catch (err) {
     console.error('[recovery context] failed:', err.message);
