@@ -21,6 +21,66 @@ async function pushHealthData(rows: { metric: string; value: number; unit: strin
   }
 }
 
+function localDateStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+// Noon-UTC of a local date — matches the backend's dayAnchorTs so per-day rows
+// upsert onto the same key the daily live sync uses.
+function noonUTC(dateStr: string): string {
+  return `${dateStr}T12:00:00.000Z`;
+}
+
+// Re-fetch and persist COMPLETE daily totals for the last `daysBack` days of the
+// CUMULATIVE metrics (steps, active energy). Why this exists: the per-open live
+// sync below only ever writes "today", which is a partial running total until
+// midnight. Without this, every past day stays frozen at whatever partial count
+// it had when you last opened the app that day — systematically far below your
+// true daily total (e.g. 3,951 stored vs 10,948 real). Pushing the last week of
+// finalized daily totals (with explicit per-day timestamps) lets the backend's
+// GREATEST upsert lock in each day's real total once the day is over. Today is
+// still partial, but analyze drops the current day from cumulative trends.
+async function finalizeRecentCumulativeDays(daysBack = 7): Promise<void> {
+  const endDate = new Date().toISOString();
+  const startDate = new Date(Date.now() - daysBack * 86400000).toISOString();
+  const hk = <T,>(fn: (cb: (err: any, r: T) => void) => void): Promise<T | null> =>
+    new Promise((resolve) => fn((err, r) => resolve(err ? null : r)));
+
+  // Steps: getDailyStepCountSamples returns HealthKit's deduplicated total per
+  // day (one value per day across iPhone + Watch). Max per local day guards
+  // against multiple entries.
+  const stepRaw = (await hk<HealthValue[]>((cb) =>
+    (AppleHealthKit as any).getDailyStepCountSamples({ startDate, endDate }, cb)
+  )) ?? [];
+  const stepsByDay = new Map<string, number>();
+  for (const s of stepRaw) {
+    const d = localDateStr(new Date(s.startDate));
+    stepsByDay.set(d, Math.max(stepsByDay.get(d) ?? 0, Math.round(s.value)));
+  }
+
+  // Active energy: sum raw samples per local day.
+  const energyRaw = (await hk<HealthValue[]>((cb) =>
+    AppleHealthKit.getActiveEnergyBurned({ startDate, endDate } as any, cb)
+  )) ?? [];
+  const energyByDay = new Map<string, number>();
+  for (const s of energyRaw) {
+    const d = localDateStr(new Date(s.startDate));
+    energyByDay.set(d, (energyByDay.get(d) ?? 0) + s.value);
+  }
+
+  const rows: { metric: string; value: number; unit: string; ts: string }[] = [];
+  for (const [day, v] of stepsByDay) rows.push({ metric: 'steps', value: v, unit: 'count', ts: noonUTC(day) });
+  for (const [day, v] of energyByDay) rows.push({ metric: 'active_energy', value: Math.round(v), unit: 'kcal', ts: noonUTC(day) });
+  if (!rows.length) return;
+  try {
+    await fetch(HEALTH_INGEST_URL, { method: 'POST', headers: authHeaders(), body: JSON.stringify(rows) });
+  } catch {
+    // offline — next app open retries
+  }
+}
+
 export type HRVStatus = 'green' | 'yellow' | 'red' | 'unknown';
 
 export interface HealthData {
@@ -299,6 +359,11 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
           checkDone();
         }
       );
+
+      // Finalize the last week of COMPLETE daily step/energy totals so past days
+      // aren't stuck at the partial count from whenever the app was last opened.
+      // Fire-and-forget — independent of the live display above.
+      finalizeRecentCumulativeDays().catch(() => {});
       });
     } catch (e) {
       setData((prev) => ({ ...prev, error: 'HealthKit unavailable on this device' }));
