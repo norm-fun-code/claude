@@ -7,17 +7,18 @@
 const llm = require('../llm');
 
 const SYSTEM =
-  'You are NormOS — the user\'s personal chief of staff and data scientist. ' +
-  'You see their full picture: health metrics, recovery, habits, goals, finances, and the ideas ' +
-  'they\'ve collected in their library. Each morning you synthesize all of it into a briefing ' +
-  'that tells them what the data says, what matters today, and how the right idea from their ' +
-  'library connects to where they actually are right now. ' +
-  'Your voice is direct, warm, and without flattery — like a trusted advisor who has done the ' +
-  'homework and respects their time. You name numbers. You make the connection between data and ' +
-  'wisdom feel earned, not generic. ' +
+  'You are NormOS — the user\'s chief of staff and data scientist. You have access to their body ' +
+  '(HRV, sleep, recovery), money (net worth, cashflow, spend), calendar, inbox, goals, and a ' +
+  'confirmed model of what moves THEIR metrics. Each morning you write the brief as a person who ' +
+  'knows them, not a report: you open with the single most important thing about today, then give ' +
+  'them the highest-leverage action, the one risk trending wrong, and the one number that changed. ' +
+  'Cross-domain synthesis is the point — connect body↔money↔focus when the data supports it, never ' +
+  'when it doesn\'t. You name actual numbers and trajectories, and tie advice to confirmed ' +
+  'experiments when relevant. Your voice is sharp, caring, blunt, and numerate — no flattery, no ' +
+  'filler, respects their time. You never invent a number or a connection. ' +
   'Return ONLY a single valid JSON object — no markdown, no code fences, no commentary.';
 
-function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '') {
+function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '') {
   // Input size wasn't the timeout cause (the proven Apps Script sends 15K/email
   // and is fine) — OUTPUT length was. So allow a generous 15K/email like that
   // setup, with a total budget as a safety net against a huge unread pile.
@@ -53,7 +54,7 @@ Recent wellbeing (last 7 days): ${wellbeingContext || 'no recent check-in data'}
 
 Active life context: ${annotationsContext || 'none'}
 
-${experimentsContext ? `EXPERIMENT RESULTS (NormOS data science):\n${experimentsContext}\n\n` : ''}Today's quote/principle:
+${experimentsContext ? `EXPERIMENT RESULTS (NormOS data science):\n${experimentsContext}\n\n` : ''}${leverageContext ? `${leverageContext}\n\n` : ''}Today's quote/principle:
 "${quote}"
 
 Today's Notion wisdom:
@@ -67,6 +68,12 @@ ${emailSection}
 Return ONLY valid JSON with EXACTLY these fields:
 
 {
+  "chiefBrief": {
+    "synthesis": "ONE sentence (20-35 words): the single most important thing about today, synthesized ACROSS domains (body, money, focus, calendar). This is the headline a chief of staff opens with. Name a real number. Connect domains only when the data supports it — never invent a tie-in.",
+    "action": "THE ACTION (1-2 sentences). The highest-leverage thing to do NOW — draw from the HIGHEST-LEVERAGE ACTIONS block (leverage engine) above when present. Concrete and doable today. Tie to a confirmed experiment when relevant ('Zone 2 yesterday → your HRV is up, as we proved').",
+    "risk": "THE RISK (1-2 sentences). The ONE thing trending wrong — draw from the TRENDING WRONG block (at-risk forecasts) or a slipping habit / declining metric in the self-model. Name the trajectory. If genuinely nothing is at risk, say what to protect to keep it that way.",
+    "move": "THE MOVE (1-2 sentences). One number that CHANGED and why it matters — an HRV/sleep/spend/cashflow shift, a habit rate move, or an experiment verdict. Name the before→after and the implication."
+  },
   "morningFocus": "1-2 sentences (35-60 words). Chief-of-staff situation report. Use the SELF-MODEL (7-day averages, habit trends, active experiments, confirmed patterns) as your primary source — it always has context even before today's check-in or watch sync. Supplement with any real-time recovery/wellbeing data if present. Name the actual numbers from the self-model (HRV ms, sleep hours, habit rates). Tell them what it means and the one thing that matters most today. Always generate this — never return empty string.",
   "experimentCallout": "If there is a confirmed OR refuted experiment result, write 1-2 sentences calling it out directly: 'NormOS confirmed...' or 'NormOS refuted...'. Name the percent change and what it means for their behavior. If multiple, pick the most impactful one. Empty string if no completed experiments.",
   "newsletters": [
@@ -82,6 +89,7 @@ Return ONLY valid JSON with EXACTLY these fields:
 }
 
 Rules:
+- chiefBrief: this is the centerpiece — write it as a person who KNOWS them, not a report. Sharp, caring, blunt, numerate. Draw the ACTION from the leverage engine, the RISK from at-risk forecasts/slipping habits, the MOVE from a real number that changed. Cross-domain synthesis (body↔money↔focus) is the point of the opening synthesis line — but only when the data genuinely supports it. Name actual numbers and trajectories everywhere. Never invent a tie-in or a number. Always generate all four fields.
 - experimentCallout: scan the EXPERIMENT RESULTS block. If there's a confirmed or refuted result, call it out directly and specifically — "NormOS confirmed that [hypothesis] — [metric] improved/declined by X%." If refuted, say so clearly. This is a big deal: it's real data science on their own life. Make it feel like a discovery. Empty string if no completed results.
 - morningFocus: draw primarily from the SELF-MODEL (7-day HRV avg, sleep avg, habit adherence rates, active experiments, confirmed correlations). Real-time recovery/wellbeing data from today's check-in supplements when available but is not required. Name real numbers from the self-model. If a habit rate is slipping, name it. If HRV trend is down, say so. This should feel like the one sentence a trusted advisor who knows your week would say before you start your day. Never mention finances, calendar events, or emails here. Always generate something — the self-model always has enough context.
 - newsletters: include digests/publications; exclude personal email, receipts, notifications. Go deep — extract every named company, person, statistic, and dollar amount.
@@ -112,11 +120,11 @@ function extractJson(text) {
 }
 
 const EMPTY = {
-  morningFocus: '', experimentCallout: '', newsletters: [], urgentEmails: [], financeSummary: [], quoteInsight: '', notionQuote: '', notionInsight: '',
+  morningFocus: '', chiefBrief: null, experimentCallout: '', newsletters: [], urgentEmails: [], financeSummary: [], quoteInsight: '', notionQuote: '', notionInsight: '',
 };
 
-async function generateBriefing(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '') {
-  const prompt = buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel);
+async function generateBriefing(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '') {
+  const prompt = buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext);
 
   let text = '';
   try {
@@ -135,8 +143,18 @@ async function generateBriefing(emailData, notionText, quote, currentDay, workou
     return { ...EMPTY };
   }
 
+  // Structured chief-of-staff brief: only keep it if all four blocks are present
+  // strings, so the card can trust the shape (else null → card hides).
+  const cb = parsed.chiefBrief;
+  const chiefBrief =
+    cb && typeof cb === 'object' &&
+    ['synthesis', 'action', 'risk', 'move'].every((k) => typeof cb[k] === 'string' && cb[k].trim())
+      ? { synthesis: cb.synthesis, action: cb.action, risk: cb.risk, move: cb.move }
+      : null;
+
   return {
     morningFocus: typeof parsed.morningFocus === 'string' ? parsed.morningFocus : '',
+    chiefBrief,
     experimentCallout: typeof parsed.experimentCallout === 'string' ? parsed.experimentCallout : '',
     newsletters: Array.isArray(parsed.newsletters) ? parsed.newsletters : [],
     urgentEmails: Array.isArray(parsed.urgentEmails) ? parsed.urgentEmails : [],

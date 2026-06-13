@@ -180,10 +180,18 @@ export interface RunningExperiment {
   daysLeft: number | null;
 }
 
+export interface ChiefBrief {
+  synthesis: string;
+  action: string;
+  risk: string;
+  move: string;
+}
+
 export interface BriefingData {
   date: string;
   builtAt?: string;
   morningFocus?: string;
+  chiefBrief?: ChiefBrief | null;
   experimentCallout?: string;
   experiments?: {
     completed: CompletedExperiment[];

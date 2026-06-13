@@ -1814,13 +1814,39 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[selfModel] failed:', err.message);
   }
 
+  // Leverage + risk context for the Chief-of-Staff brief. THE ACTION comes from
+  // the leverage engine; THE RISK from the most at-risk forecast. Fetched before
+  // the LLM call so the brief can name them. (The same findings are re-read later
+  // for the card sections — a cheap duplicate read that avoids reordering the
+  // larger findings/recovery block below.)
+  let leverageContext = '';
+  try {
+    const open = await findingsStore.listFindings({ status: 'open' });
+    const lev = open
+      .filter((f) => f.type === 'leverage')
+      .sort((a, b) => (a.evidence?.rank ?? 99) - (b.evidence?.rank ?? 99))
+      .slice(0, 3)
+      .map((f, i) => `${i + 1}. ${f.title}${f.detail ? ` — ${f.detail}` : ''}`);
+    const risks = open
+      .filter((f) => f.type === 'forecast' && (f.evidence?.status === 'off_track' || f.evidence?.status === 'at_risk'))
+      .sort((a, b) => (a.confidence ?? 1) - (b.confidence ?? 1))
+      .slice(0, 2)
+      .map((f) => `- ${f.title}${f.detail ? ` — ${f.detail}` : ''}`);
+    const parts = [];
+    if (lev.length) parts.push(`HIGHEST-LEVERAGE ACTIONS (leverage engine):\n${lev.join('\n')}`);
+    if (risks.length) parts.push(`TRENDING WRONG (at-risk forecasts):\n${risks.join('\n')}`);
+    leverageContext = parts.join('\n\n');
+  } catch (err) {
+    console.error('[leverage context] failed:', err.message);
+  }
+
   // Call the LLM with whatever data we have
   let geminiResult = null;
   try {
     // The LLM call can be slow; bound it so a stalled model doesn't hang the
     // briefing (it degrades to the data-only sections).
     geminiResult = await withTimeout(
-      generateBriefing(emails, notionData.text, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel),
+      generateBriefing(emails, notionData.text, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext),
       Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000),
       'gemini'
     );
@@ -2088,6 +2114,8 @@ app.get('/api/briefing', async (req, res) => {
     date: dateLabel,
     builtAt: new Date().toISOString(),
     morningFocus: geminiResult?.morningFocus ?? '',
+    // Structured Chief-of-Staff brief (Beta): synthesis + ACTION/RISK/MOVE.
+    chiefBrief: geminiResult?.chiefBrief ?? null,
     experimentCallout: geminiResult?.experimentCallout ?? '',
     weather,
     workout,

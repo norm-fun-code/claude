@@ -50,6 +50,8 @@ import { UrgentEmailsCard } from './src/components/UrgentEmailsCard';
 import { AlertCard } from './src/components/AlertCard';
 import { HighlightsCard } from './src/components/HighlightsCard';
 import { MorningFocusCard } from './src/components/MorningFocusCard';
+import { BriefCard } from './src/components/BriefCard';
+import { CollapsibleSection } from './src/components/CollapsibleSection';
 import { HealthBackfillCard } from './src/components/HealthBackfillCard';
 import { ExperimentsCard } from './src/components/ExperimentsCard';
 import { CrossContextCard } from './src/components/CrossContextCard';
@@ -221,21 +223,47 @@ export default function App() {
           </>
         );
       case 'beta':
+        // Preview of the Chief-of-Staff Today vision: a single synthesized brief
+        // on top, the morning input ritual, then the ENTIRE Today stack tucked
+        // into a collapsible Details — visible on demand, not a wall by default.
+        // Your real Today tab is unchanged; this is the candidate replacement.
         return (
           <>
             <View style={{ paddingHorizontal: 2, marginBottom: spacing.md }}>
               <Text style={{ fontSize: 11, fontWeight: '600', letterSpacing: 0.8, color: c.subtext }}>
-                BETA — features in development. These are previews, not final.
+                BETA — preview of the new Today. Not yet live on your Today tab.
               </Text>
             </View>
+
+            <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
+            {d?.experimentCallout ? <ExperimentsCard completed={[]} running={[]} callout={d.experimentCallout} /> : null}
             <SleepLogCard />
-            <MorningFocusCard focus={d?.morningFocus} />
-            <SelfModelCard />
-            <ExperimentsCard
-              completed={d?.experiments?.completed ?? []}
-              running={d?.experiments?.running ?? []}
-              callout={d?.experimentCallout}
-            />
+
+            <CollapsibleSection title="Everything else (today's full detail)">
+              {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
+              <WeeklyIntentionsCard />
+              <WeatherCard weather={d?.weather ?? null} />
+              {d && (d.calendar?.length ?? 0) > 0 && <CalendarCard events={d.calendar} />}
+              <CheckinCard />
+              <HabitsCard />
+              <CrossContextCard insights={d?.crossContextInsights ?? []} />
+              <AnnotationsCard />
+              {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
+              {d && <UrgentEmailsCard emails={d.urgentEmails ?? []} />}
+              {d && <NewsletterList newsletters={d.newsletters ?? []} onRefresh={briefing.refetchLive} refreshing={briefing.loading} />}
+              <ReviewCard review={d?.weeklyReview ?? null} compact actions={d?.leverageActions ?? []} />
+              <AffirmationsCard />
+              {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
+            </CollapsibleSection>
+
+            <CollapsibleSection title="NormOS profile & experiments">
+              <SelfModelCard />
+              <ExperimentsCard
+                completed={d?.experiments?.completed ?? []}
+                running={d?.experiments?.running ?? []}
+                callout={d?.experimentCallout}
+              />
+            </CollapsibleSection>
           </>
         );
       case 'insights':
