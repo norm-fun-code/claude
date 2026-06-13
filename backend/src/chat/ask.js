@@ -306,7 +306,15 @@ async function ask(question, { history = [], k = 14 } = {}) {
     experiments = experiments.filter((e) => e.status === 'completed' || e.status === 'running');
   } catch { /* optional */ }
 
-  const { system, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments });
+  // Self-model: prepend the nightly portrait so every chat already knows who
+  // this person is, rather than cold-starting from the retrieved context alone.
+  let selfModelText = '';
+  try {
+    selfModelText = (await require('../store/selfModel').latestModelText()) ?? '';
+  } catch { /* optional */ }
+
+  const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments });
+  const system = selfModelText ? `${baseSystem}\n\n${selfModelText}` : baseSystem;
   const answer = await llm.generateText({ system, prompt, temperature: 0.3, maxTokens: 1600 });
 
   return {

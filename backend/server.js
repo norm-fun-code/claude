@@ -744,6 +744,18 @@ app.post('/api/analyze', async (req, res) => {
   }
 });
 
+// Rebuild the self-model from today's data — normally runs nightly at 9:30pm,
+// but POST here to regenerate on demand (after a check-in, post-backfill, etc.).
+app.post('/api/consolidate', async (req, res) => {
+  try {
+    const { consolidate } = require('./src/intelligence/consolidate');
+    const content = await consolidate({ kind: 'manual' });
+    res.json({ ok: true, length: content.length, preview: content.slice(0, 200) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Backfill embeddings for the knowledge graph / chat retrieval.
 app.post('/api/embed', async (req, res) => {
   try {
@@ -1533,13 +1545,22 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[experiments context] failed:', err.message);
   }
 
+  // Self-model: nightly-consolidated portrait of the user — injected into the
+  // briefing prompt so the chief-of-staff voice knows who it's talking to.
+  let selfModel = '';
+  try {
+    selfModel = (await require('./src/store/selfModel').latestModelText()) ?? '';
+  } catch (err) {
+    console.error('[selfModel] failed:', err.message);
+  }
+
   // Call the LLM with whatever data we have
   let geminiResult = null;
   try {
     // The LLM call can be slow; bound it so a stalled model doesn't hang the
     // briefing (it degrades to the data-only sections).
     geminiResult = await withTimeout(
-      generateBriefing(emails, notionData.text, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext),
+      generateBriefing(emails, notionData.text, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel),
       Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000),
       'gemini'
     );
@@ -1573,7 +1594,8 @@ app.get('/api/briefing', async (req, res) => {
   let healthInsights = [];
   let leverageActions = [];
   let forecasts = [];
-  let recovery = null;
+  // `recovery` is already declared + computed earlier (for the briefing prompt);
+  // the block below reuses it and only recomputes if that early call came back null.
   let healthComposites = [];
   try {
     const open = await findingsStore.listFindings({ status: 'open' });

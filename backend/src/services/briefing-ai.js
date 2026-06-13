@@ -17,7 +17,7 @@ const SYSTEM =
   'wisdom feel earned, not generic. ' +
   'Return ONLY a single valid JSON object — no markdown, no code fences, no commentary.';
 
-function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '') {
+function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '') {
   // Input size wasn't the timeout cause (the proven Apps Script sends 15K/email
   // and is fine) — OUTPUT length was. So allow a generous 15K/email like that
   // setup, with a total budget as a safety net against a huge unread pile.
@@ -41,7 +41,7 @@ function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, cale
           .join('\n')
       : 'No events today.';
 
-  return `Today is ${currentDay}.
+  return `${selfModel ? selfModel + '\n\n---\n\n' : ''}Today is ${currentDay}.
 
 Today's workout: ${workoutPlan.type}${workoutPlan.duration ? ` (${workoutPlan.duration})` : ''}
 ${recoveryContext ? `Recovery status: ${recoveryContext}` : ''}
@@ -115,8 +115,8 @@ const EMPTY = {
   morningFocus: '', experimentCallout: '', newsletters: [], urgentEmails: [], financeSummary: [], quoteInsight: '', notionQuote: '', notionInsight: '',
 };
 
-async function generateBriefing(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '') {
-  const prompt = buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext);
+async function generateBriefing(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '') {
+  const prompt = buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel);
 
   let text = '';
   try {

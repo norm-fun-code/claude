@@ -154,7 +154,15 @@ Write the weekly review as JSON with EXACTLY:
 
 async function runReview({ asOf = new Date(), persist = true } = {}) {
   const ctx = await gatherWeek(asOf);
-  const { system, prompt } = composeReview(ctx);
+  const { system: baseSystem, prompt } = composeReview(ctx);
+
+  // Prepend the self-model so the review writer knows the full person, not just
+  // this week's numbers. Falls back to the base system if no model exists yet.
+  let system = baseSystem;
+  try {
+    const selfModelText = await require('../store/selfModel').latestModelText();
+    if (selfModelText) system = `${baseSystem}\n\n${selfModelText}`;
+  } catch { /* non-critical */ }
 
   let content;
   try {

@@ -7,6 +7,8 @@
 // failing never stops the others or crashes the server.
 const { runIngest } = require('./ingest/run');
 const { analyze } = require('./intelligence/analyze');
+const { consolidate } = require('./intelligence/consolidate');
+const { autoStartExperiment, proposeExperiments } = require('./intelligence/experiments');
 const { runNudges, runCheckinReminder, runCheckinEveningReminder, runHabitsReminder } = require('./notify/run');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./notify/morning');
 const nudgesStore = require('./store/nudges');
@@ -90,6 +92,14 @@ async function morningRoutine() {
   // Refresh the data + intelligence first, so the briefing reflects today.
   try { await runIngest(); } catch (e) { console.error('[scheduler] ingest:', e.message); }
   try { await analyze(); } catch (e) { console.error('[scheduler] analyze:', e.message); }
+  // Propose new experiments from fresh correlations, then auto-start one if the
+  // queue is empty — keeps the hypothesis loop self-sustaining.
+  try {
+    const p = await proposeExperiments();
+    if (p.created) console.log(`[scheduler] proposed ${p.created} new experiment(s)`);
+    const started = await autoStartExperiment();
+    if (started) console.log(`[scheduler] auto-started experiment: "${started.hypothesis}"`);
+  } catch (e) { console.error('[scheduler] experiments:', e.message); }
   // Check-in reminder is suppressed here — it has its own 3pm schedule.
   try { await runNudges({ suppressCheckin: true }); } catch (e) { console.error('[scheduler] nudge:', e.message); }
   // Pre-build the briefing (warm the cache) and push "briefing ready", so the
@@ -139,12 +149,14 @@ function start() {
   const checkinEveningMinute = Number(process.env.CHECKIN_EVENING_REMINDER_MINUTE) || 0;
   scheduleDaily(checkinEveningHour, checkinEveningMinute, () => runCheckinEveningReminder({}));
 
-  // Evening analyze re-run (9:30pm) — captures the day's check-in and habits
-  // data so insights are current when you review them before bed.
+  // Evening analyze + consolidate (9:30pm) — captures the day's check-in and habits
+  // data, then rebuilds the self-model so every voice surface starts tomorrow
+  // fully informed about who this person is.
   const analyzeEveningHour = Number(process.env.ANALYZE_EVENING_HOUR) || 21;
   const analyzeEveningMinute = Number(process.env.ANALYZE_EVENING_MINUTE) || 30;
   scheduleDaily(analyzeEveningHour, analyzeEveningMinute, async () => {
     try { await analyze(); } catch (e) { console.error('[scheduler] evening analyze:', e.message); }
+    try { await consolidate(); console.log('[scheduler] self-model consolidated'); } catch (e) { console.error('[scheduler] consolidate:', e.message); }
   });
 
   // Evening habits reminder (10pm) — only pushes if you haven't logged habits yet.
