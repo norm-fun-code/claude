@@ -51,7 +51,16 @@ async function insertMetrics(rows) {
       `INSERT INTO metrics (ts, domain, metric, value, unit, source, metadata)
        VALUES ${tuples.join(', ')}
        ON CONFLICT (ts, domain, metric, source) DO UPDATE
-         SET value = EXCLUDED.value,
+         SET value = CASE
+               -- Cumulative daily metrics (steps, active energy, exercise/mindful
+               -- minutes) only ever grow over a day. A morning sync reports a
+               -- partial running total; without GREATEST it would clobber a
+               -- complete count already stored (e.g. from the historical backfill
+               -- or a later sync), collapsing daily totals to a partial figure.
+               WHEN metrics.metric IN ('steps','active_energy','exercise_minutes','mindful_minutes')
+                 THEN GREATEST(metrics.value, EXCLUDED.value)
+               ELSE EXCLUDED.value
+             END,
              unit = EXCLUDED.unit,
              -- Don't let an empty incoming metadata ({}) wipe richer metadata an
              -- earlier write stored; only overwrite when the new value has content.
@@ -124,8 +133,12 @@ async function dailyAggregate({ domain, metric, from, to, agg = 'avg', excludeSo
  *
  * For each day, only the highest-priority source's rows are aggregated.
  */
-async function dailyAggregatePreferSource({ domain, metric, from, to, agg = 'avg' }) {
+async function dailyAggregatePreferSource({ domain, metric, from, to, agg = 'avg', sources = null }) {
   const fn = ['avg', 'min', 'max', 'sum'].includes(agg) ? agg : 'avg';
+  // Optional source allowlist: when provided, only these sources are considered.
+  // Used by the recovery score to source-lock HRV/RHR to the manually-entered
+  // Eight Sleep overnight numbers (+ seeded baseline), so daytime Apple Watch
+  // readings never pollute the night-vs-night baseline comparison.
   const { rows } = await query(
     `WITH per_day_source AS (
        SELECT
@@ -142,6 +155,7 @@ async function dailyAggregatePreferSource({ domain, metric, from, to, agg = 'avg
       WHERE domain = $1 AND metric = $2
         AND ($3::timestamptz IS NULL OR ts >= $3)
         AND ($4::timestamptz IS NULL OR ts <= $4)
+        AND ($5::text[] IS NULL OR source = ANY($5))
       GROUP BY day, source
      ),
      best_per_day AS (
@@ -153,7 +167,7 @@ async function dailyAggregatePreferSource({ domain, metric, from, to, agg = 'avg
      FROM per_day_source p
      JOIN best_per_day b ON p.day = b.day AND p.priority = b.best_priority
      ORDER BY p.day ASC`,
-    [domain, metric, from ?? null, to ?? null]
+    [domain, metric, from ?? null, to ?? null, sources ?? null]
   );
   return rows;
 }

@@ -662,6 +662,14 @@ async function analyze(opts = {}) {
   const from = new Date(Date.now() - o.loadDays * 24 * 60 * 60 * 1000);
   const keys = await metricsStore.listMetricKeys();
 
+  // HRV and RHR are source-locked to the manually-entered Eight Sleep overnight
+  // numbers (+ seeded baseline), exactly as the live recovery card does — so the
+  // whole analysis engine (trends, anomalies, correlations, recovery composite)
+  // uses ONE consistent night-vs-night HRV/RHR series instead of averaging in
+  // noisy daytime Apple Watch readings. Everything else aggregates all sources.
+  const NIGHT_SOURCES = ['eight_sleep', 'eight_sleep_baseline'];
+  const SOURCE_LOCK = { 'health:hrv': NIGHT_SOURCES, 'health:resting_hr': NIGHT_SOURCES };
+
   const seriesByKey = {};
   for (const { domain, metric } of keys) {
     // Only analyze metrics we deliberately track. listMetricKeys() returns every
@@ -670,14 +678,18 @@ async function analyze(opts = {}) {
     // findings off whatever happens to be in the DB lets retired metrics keep
     // generating bogus trends/anomalies, so gate on the catalog registry.
     if (!cat.isTracked(domain, metric)) continue;
-    const rows = await metricsStore.dailyAggregate({
-      domain,
-      metric,
-      from,
-      agg: cat.aggFor(metric),
-      excludeSource: 'seed', // keep demo data from inflating real-data sums
-    });
-    if (rows.length) seriesByKey[`${domain}:${metric}`] = rows;
+    const key = `${domain}:${metric}`;
+    const lockSources = SOURCE_LOCK[key];
+    const rows = lockSources
+      ? await metricsStore.dailyAggregatePreferSource({ domain, metric, from, agg: 'avg', sources: lockSources })
+      : await metricsStore.dailyAggregate({
+          domain,
+          metric,
+          from,
+          agg: cat.aggFor(metric),
+          excludeSource: 'seed', // keep demo data from inflating real-data sums
+        });
+    if (rows.length) seriesByKey[key] = rows;
   }
 
   const trends = computeTrends(seriesByKey, o);

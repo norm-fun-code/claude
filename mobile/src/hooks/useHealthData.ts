@@ -211,18 +211,12 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
         }
       }
 
-      // HRV — OVERNIGHT samples only (9pm yesterday → 9am today).
-      // Eight Sleep syncs nightly HRV to HealthKit; daytime Apple Watch spot
-      // readings run 10-15ms higher and inflate the baseline, making normal
-      // overnight readings look like dips. Overnight-only keeps the source
-      // consistent so today's value is comparable to the 30-day history.
-      const hrvWindowStart = new Date();
-      hrvWindowStart.setDate(hrvWindowStart.getDate() - 1);
-      hrvWindowStart.setHours(21, 0, 0, 0);
-      const hrvWindowEnd = new Date();
-      if (hrvWindowEnd.getHours() >= 9) hrvWindowEnd.setHours(9, 0, 0, 0);
+      // HRV — live Apple Watch reading, shown on the Health card as informational
+      // device data. NOTE: the recovery SCORE does not use this; recovery is
+      // source-locked to your manually-entered Eight Sleep overnight numbers
+      // (see recovery.js) so the baseline comparison stays night-vs-night.
       AppleHealthKit.getHeartRateVariabilitySamples(
-        { unit: 'millisecond', startDate: hrvWindowStart.toISOString(), endDate: hrvWindowEnd.toISOString() } as any,
+        { unit: 'millisecond', startDate, endDate: now } as any,
         (err, results: HealthValue[]) => {
           if (!err && results && results.length > 0) {
             const avg = results.reduce((sum, r) => sum + r.value, 0) / results.length;

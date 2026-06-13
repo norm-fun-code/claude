@@ -324,11 +324,21 @@ async function liveRecovery() {
   const metricsStore = require('../store/metrics');
   const seriesByKey = {};
   const from60 = new Date(Date.now() - 60 * 864e5);
+  // HRV and RHR are the autonomic recovery signals the user enters manually each
+  // morning from Eight Sleep (overnight). Source-lock them to eight_sleep (+ the
+  // seeded eight_sleep_baseline) so the night-vs-night baseline is consistent —
+  // daytime Apple Watch readings run higher and would make a normal overnight
+  // value look like a dip. Sleep can use any source (eight_sleep preferred).
+  const NIGHT_SOURCES = ['eight_sleep', 'eight_sleep_baseline'];
+  const SOURCE_LOCK = {
+    'health:hrv': NIGHT_SOURCES,
+    'health:resting_hr': NIGHT_SOURCES,
+  };
   for (const key of ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score']) {
     const [dm, mt] = key.split(':');
-    // Use source-priority aggregation: eight_sleep manual > apple_health > eight_sleep_baseline.
-    // Prevents double-counting when Apple Health mirrors Eight Sleep data via HealthKit.
-    const rows = await metricsStore.dailyAggregatePreferSource({ domain: dm, metric: mt, from: from60, agg: 'avg' });
+    const rows = await metricsStore.dailyAggregatePreferSource({
+      domain: dm, metric: mt, from: from60, agg: 'avg', sources: SOURCE_LOCK[key] ?? null,
+    });
     if (rows.length) seriesByKey[key] = rows;
   }
   const rawHrv = seriesByKey['health:hrv'] ? latest(seriesByKey['health:hrv']) : null;

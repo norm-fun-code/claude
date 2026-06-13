@@ -134,20 +134,13 @@ export function useHealthBackfill(): BackfillState {
 
     setProgress('Aggregating by day…');
 
-    // HRV: overnight samples only (9pm–9am) to stay consistent with Eight
-    // Sleep readings. Daytime Apple Watch spot readings run higher and inflate
-    // the baseline, making normal overnight readings look like dips.
-    // Assign each overnight sample to the morning it woke up on (the endDate's
-    // local date), so a reading at 3am on Jun 13 is filed under Jun 13.
+    // HRV: average per day (values arrive in seconds, convert to ms). This is
+    // Apple Watch history, stored as informational apple_health data — the
+    // recovery score is source-locked to your manual Eight Sleep numbers, so
+    // these daytime watch readings don't pollute the recovery baseline.
     const hrvByDay = new Map<string, number[]>();
     for (const s of hrvRaw) {
-      const sampleDate = new Date(s.startDate);
-      const hour = sampleDate.getHours();
-      const isOvernight = hour >= 21 || hour < 9;
-      if (!isOvernight) continue;
-      // Assign to the local date of the END of the overnight window (morning).
-      const endDate = new Date((s as any).endDate ?? s.startDate);
-      const d = localDateStr(endDate.getHours() < 12 ? endDate : sampleDate);
+      const d = localDateStr(new Date(s.startDate));
       if (!hrvByDay.has(d)) hrvByDay.set(d, []);
       hrvByDay.get(d)!.push(s.value * 1000);
     }
