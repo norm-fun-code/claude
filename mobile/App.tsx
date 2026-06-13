@@ -213,6 +213,7 @@ export default function App() {
                 BETA — features in development. These are previews, not final.
               </Text>
             </View>
+            <MorningFocusCard focus={d?.morningFocus} />
             <SelfModelCard />
             <ExperimentsCard
               completed={d?.experiments?.completed ?? []}
@@ -245,7 +246,6 @@ export default function App() {
         return (
           <>
             {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
-            <MorningFocusCard focus={d?.morningFocus} />
             <WeeklyIntentionsCard />
             <WeatherCard weather={d?.weather ?? null} />
             {d && (d.calendar?.length ?? 0) > 0 && <CalendarCard events={d.calendar} />}
