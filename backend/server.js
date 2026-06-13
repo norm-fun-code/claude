@@ -1519,6 +1519,47 @@ app.get('/api/briefing/live', async (req, res) => {
   }
 });
 
+// Non-blocking briefing rebuild trigger. Railway's proxy terminates HTTP connections
+// around 60s, but a full briefing build (LLM + external sources) takes 60–90s, so
+// every "Rebuild" button tap that waits inline gets killed mid-flight and the client
+// silently stays on stale data.
+//
+// This endpoint returns immediately (<1s), then fires the rebuild as a loopback
+// HTTP request to localhost — bypassing the Railway proxy entirely. The rebuild
+// saves its result to the DB when it finishes. The client polls GET /api/briefing
+// (cache mode) every 8s until builtAt advances past the trigger time.
+let _rebuildInFlight = false;
+app.post('/api/briefing/rebuild', (req, res) => {
+  const triggeredAt = new Date().toISOString();
+  if (_rebuildInFlight) {
+    return res.json({ started: false, alreadyRunning: true, triggeredAt });
+  }
+  _rebuildInFlight = true;
+  res.json({ started: true, triggeredAt });
+
+  const http = require('http');
+  const token = process.env.NORMOS_API_TOKEN || '';
+  const r = http.request(
+    {
+      hostname: 'localhost',
+      port: PORT,
+      path: '/api/briefing?refresh=1',
+      method: 'GET',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    },
+    (resp) => {
+      resp.resume(); // drain response body to free the socket
+      resp.on('end', () => { _rebuildInFlight = false; });
+    }
+  );
+  r.on('error', (err) => {
+    console.error('[bg rebuild] loopback failed:', err.message);
+    _rebuildInFlight = false;
+  });
+  r.setTimeout(130000, () => { r.destroy(); _rebuildInFlight = false; });
+  r.end();
+});
+
 app.get('/api/briefing', async (req, res) => {
   const errors = [];
 

@@ -72,13 +72,15 @@ export default function App() {
   const [tab, setTab] = useState<TabKey>('today');
   const [analyzingInsights, setAnalyzingInsights] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
-  // Health tab refresh only spins on health-local fetches; other tabs spin on
-  // the briefing too.
+  // Health tab refresh only spins on health-local fetches; other tabs include
+  // briefing loading AND any async rebuild in progress.
   const isRefreshing =
-    tab === 'health' ? health.loading || liveRecovery.loading : briefing.loading || health.loading;
+    tab === 'health'
+      ? health.loading || liveRecovery.loading
+      : briefing.loading || briefing.rebuilding || health.loading;
 
   const refreshInsights = useCallback(async () => {
-    if (analyzingInsights) return;
+    if (analyzingInsights || briefing.rebuilding) return;
     setAnalyzingInsights(true);
     setAnalyzeError(null);
     try {
@@ -87,7 +89,9 @@ export default function App() {
         const body = await res.json().catch(() => ({}));
         setAnalyzeError(body.error ?? `Server error ${res.status}`);
       } else {
-        briefing.reload();
+        // Rebuild the briefing so the new findings appear — this is non-blocking,
+        // the `rebuilding` flag shows progress while the 60-90s rebuild runs.
+        briefing.triggerRebuild();
       }
     } catch (err: unknown) {
       setAnalyzeError(err instanceof Error ? err.message : 'Network error');
@@ -109,24 +113,28 @@ export default function App() {
   const d = briefing.data;
 
   // Per-tab explicit refresh — each tab updates only its own content:
-  //   Today/Wealth → stale: full rebuild; fresh: markets + email partial refresh
+  //   Today/Wealth → stale: async rebuild (non-blocking); fresh: markets + email only
   //   Health       → HealthKit + live recovery score (sub-second)
-  //   Insights     → re-run the analysis engine, then reload findings
+  //   Insights     → re-run analysis, then trigger rebuild to pull new findings in
   //   Wisdom       → day-locked by design; reloads the morning cache
   const isStale = d?.stale === true;
   const tabRefresh: Partial<Record<TabKey, { label: string; busy: boolean; run: () => void }>> = {
     today: isStale
-      ? { label: 'Rebuild briefing', busy: briefing.loading, run: briefing.refetch }
+      ? { label: 'Rebuild briefing', busy: briefing.rebuilding, run: briefing.triggerRebuild }
       : { label: 'Update markets & email', busy: briefing.loading, run: briefing.refetchLive },
     wealth: isStale
-      ? { label: 'Rebuild briefing', busy: briefing.loading, run: briefing.refetch }
+      ? { label: 'Rebuild briefing', busy: briefing.rebuilding, run: briefing.triggerRebuild }
       : { label: 'Update markets & email', busy: briefing.loading, run: briefing.refetchLive },
     health: {
       label: 'Refresh health data',
       busy: health.loading || liveRecovery.loading,
       run: () => { health.refetch(); liveRecovery.refetch(); },
     },
-    insights: { label: 'Re-run analysis', busy: analyzingInsights, run: refreshInsights },
+    insights: {
+      label: 'Re-run analysis',
+      busy: analyzingInsights || briefing.rebuilding,
+      run: refreshInsights,
+    },
     wisdom: { label: 'Reload', busy: briefing.loading, run: briefing.reload },
   };
 
@@ -153,6 +161,7 @@ export default function App() {
       if (!health.lastFetched) return null;
       return `Refreshed at ${health.lastFetched.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
     }
+    if (briefing.rebuilding) return 'Rebuilding... usually 60–90s';
     if (!d?.builtAt) return d?.stale ? 'Briefing is stale' : null;
     const ageMs = Date.now() - new Date(d.builtAt).getTime();
     const ageMin = Math.floor(ageMs / 60000);
@@ -164,7 +173,7 @@ export default function App() {
       label = ageH < 24 ? `Built ${ageH}h ago` : `Built ${Math.floor(ageH / 24)}d ago`;
     }
     return d.stale ? `${label} · stale` : label;
-  }, [tab, health.lastFetched, d?.builtAt, d?.stale]);
+  }, [tab, health.lastFetched, d?.builtAt, d?.stale, briefing.rebuilding]);
 
   const renderTab = () => {
     switch (tab) {

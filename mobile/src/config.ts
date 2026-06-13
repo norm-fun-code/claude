@@ -10,6 +10,7 @@ export const API_BASE =
 export const API_TOKEN = process.env.EXPO_PUBLIC_API_TOKEN || '';
 
 export const BRIEFING_URL = `${API_BASE}/api/briefing`;
+export const BRIEFING_REBUILD_URL = `${API_BASE}/api/briefing/rebuild`;
 export const WEATHER_URL = `${API_BASE}/api/weather`;
 export const HEALTH_INGEST_URL = `${API_BASE}/api/ingest/health`;
 export const CHECKIN_URL = `${API_BASE}/api/checkin`;
@@ -46,6 +47,10 @@ export function authHeaders(): Record<string, string> {
  * spinner forever — important since the app is meant to work off-WiFi/unplugged.
  * Throws on timeout (AbortError) just like a network failure, so callers' catch
  * blocks handle it uniformly.
+ *
+ * Both the timeout and any caller-supplied signal are respected: whichever fires
+ * first aborts the request. Previously the caller's signal was silently overwritten
+ * by the spread, breaking useBriefing's component-level abort controller.
  */
 export async function fetchWithTimeout(
   url: string,
@@ -54,8 +59,13 @@ export async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // Chain caller's signal so EITHER their abort OR our timeout cancels the request.
+  const { signal: callerSignal, ...restOptions } = options as RequestInit & { signal?: AbortSignal };
+  if (callerSignal) {
+    callerSignal.addEventListener('abort', () => controller.abort(), { once: true });
+  }
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    return await fetch(url, { ...restOptions, signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }

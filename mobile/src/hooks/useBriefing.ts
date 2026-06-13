@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BRIEFING_URL, authHeaders, fetchWithTimeout } from '../config';
+import { BRIEFING_URL, BRIEFING_REBUILD_URL, authHeaders, fetchWithTimeout } from '../config';
 
 const API_URL = BRIEFING_URL;
 const CACHE_KEY = 'normos.briefing.v1';
@@ -228,9 +228,11 @@ export interface BriefingState {
   data: BriefingData | null;
   loading: boolean;
   error: string | null;
-  refetch: () => void;     // force a full fresh server rebuild (60-90s)
-  reload: () => void;      // pull the (already-warm) server cache instantly
-  refetchLive: () => void; // mid-day partial: markets + email briefs only (fast)
+  rebuilding: boolean;        // async rebuild in progress (fire-and-forget + polling)
+  refetch: () => void;        // force a full fresh server rebuild (60-90s, blocks)
+  reload: () => void;         // pull the (already-warm) server cache instantly
+  refetchLive: () => void;    // mid-day partial: markets + email briefs only (fast)
+  triggerRebuild: () => void; // non-blocking rebuild — responds in <1s, then polls
 }
 
 type FetchMode = 'cache' | 'rebuild' | 'live';
@@ -239,6 +241,7 @@ export function useBriefing(): BriefingState {
   const [data, setData] = useState<BriefingData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [rebuilding, setRebuilding] = useState(false);
   // Aborts any prior in-flight request when a new one starts, so foregrounding
   // can't leave two briefing fetches racing to setData (stale-data flash).
   const controllerRef = useRef<AbortController | null>(null);
@@ -249,6 +252,8 @@ export function useBriefing(): BriefingState {
   // off success, not start, so an interrupted fetch (e.g. you refreshed then
   // locked the phone before it finished) is always recoverable on foreground.
   const lastOkRef = useRef(0);
+  // Poll timer for async rebuild — cleared on unmount and on new rebuild start.
+  const rebuildPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchBriefing = useCallback(async (mode: FetchMode | boolean = 'cache') => {
     // Back-compat: earlier callers passed force booleans.
@@ -345,12 +350,77 @@ export function useBriefing(): BriefingState {
     return () => sub.remove();
   }, [fetchBriefing]);
 
+  // Clean up poll timer on unmount so it can't fire after the component is gone.
+  useEffect(() => {
+    return () => {
+      if (rebuildPollRef.current) clearTimeout(rebuildPollRef.current);
+    };
+  }, []);
+
+  // Non-blocking rebuild: POST /api/briefing/rebuild returns in <1s (the actual
+  // rebuild runs as a localhost loopback on the server, bypassing Railway's proxy
+  // timeout). We then poll GET /api/briefing every 8s until builtAt is newer than
+  // the trigger timestamp, then set the data and stop polling.
+  const triggerRebuild = useCallback(async () => {
+    if (rebuilding) return;
+    setRebuilding(true);
+    setError(null);
+    if (rebuildPollRef.current) clearTimeout(rebuildPollRef.current);
+
+    const triggeredAt = Date.now();
+    try {
+      const res = await fetchWithTimeout(
+        BRIEFING_REBUILD_URL,
+        { method: 'POST', headers: authHeaders() },
+        10000
+      );
+      if (!res.ok) {
+        throw new Error(`Server returned ${res.status}`);
+      }
+    } catch (err: unknown) {
+      setRebuilding(false);
+      setError(err instanceof Error ? err.message : 'Rebuild trigger failed');
+      return;
+    }
+
+    let attempts = 0;
+    const MAX_ATTEMPTS = 22; // ~180s max polling window
+
+    const poll = async () => {
+      if (attempts++ >= MAX_ATTEMPTS) {
+        setRebuilding(false);
+        setError('Rebuild timed out — try again or check the server');
+        return;
+      }
+      try {
+        const res = await fetchWithTimeout(BRIEFING_URL, { headers: authHeaders() }, 12000);
+        if (res.ok) {
+          const json: BriefingData = await res.json();
+          if (json.builtAt && new Date(json.builtAt).getTime() > triggeredAt) {
+            setData(json);
+            setRebuilding(false);
+            AsyncStorage.setItem(CACHE_KEY, JSON.stringify(json)).catch(() => {});
+            return;
+          }
+        }
+      } catch {
+        // Ignore individual poll errors; next attempt will retry.
+      }
+      rebuildPollRef.current = setTimeout(poll, 8000);
+    };
+
+    // First poll after 12s — rebuild needs at least ~10s to process external sources.
+    rebuildPollRef.current = setTimeout(poll, 12000);
+  }, [rebuilding]);
+
   return {
     data,
     loading,
     error,
-    refetch: () => fetchBriefing('rebuild'),  // force full rebuild
+    rebuilding,
+    refetch: () => fetchBriefing('rebuild'),  // force full rebuild (blocks ~60-90s, use triggerRebuild instead)
     reload: () => fetchBriefing('cache'),     // serve the warm morning cache instantly
     refetchLive: () => fetchBriefing('live'), // markets + email briefs only
+    triggerRebuild,                           // preferred: non-blocking rebuild with polling
   };
 }
