@@ -21,6 +21,22 @@ module.exports = {
     if (!hasToken && !hasLogin) {
       return { metrics: [], documents: [] }; // not configured — stay dormant
     }
+
+    // Once-per-day guard. Monarch is a LIVE GraphQL scrape, and runIngest() fires
+    // on every full briefing rebuild — so without this, each intraday rebuild
+    // re-scrapes your finances (wasteful, and Monarch 429-throttles datacenter
+    // IPs). Skip if we already synced earlier TODAY in the user's timezone.
+    // runConnector bumps last_sync_at even on this skip path, but a CALENDAR-DAY
+    // comparison is stable under that: it stays "today" until midnight, then the
+    // first run of the new day (e.g. the morning routine) scrapes fresh. A `full`
+    // run (ctx.lastSyncAt === null, e.g. monarch-sync.js) always proceeds.
+    if (ctx.lastSyncAt) {
+      const tz = process.env.TZ || 'America/New_York';
+      const localDay = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: tz });
+      if (localDay(ctx.lastSyncAt) === localDay(new Date())) {
+        return { metrics: [], documents: [] }; // already pulled today — don't scrape again
+      }
+    }
     // Metrics/docs are written under source 'monarch' (shared with CSV imports),
     // so make sure that source row exists for the FK.
     await registerSource({ id: 'monarch', domain: 'wealth', displayName: 'Monarch (CSV import)' });

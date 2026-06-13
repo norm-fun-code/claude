@@ -22,7 +22,9 @@ test('recoveryScore: high HRV + low RHR + good sleep → high score', () => {
   };
   const rec = r.recoveryScore(seriesByKey);
   assert.ok(rec.score > 70, `expected high recovery, got ${rec.score}`);
-  assert.equal(rec.inputs, 3);
+  // HRV level + HRV trend + RHR + sleep = 4 inputs (HRV contributes both a
+  // level-rank and a direction/trend component).
+  assert.equal(rec.inputs, 4);
   assert.equal(r.recoveryBand(rec.score).band, 'green');
 });
 
@@ -38,9 +40,34 @@ test('recoveryScore: low HRV + high RHR → low score', () => {
 });
 
 test('recoveryScore: re-normalizes weights when inputs are missing', () => {
+  // HRV alone still yields two components (level + trend), and the weights
+  // re-normalize over just those, so a strong night reads high.
   const rec = r.recoveryScore({ 'health:hrv': baselineThen(50, 30, 70) });
-  assert.equal(rec.inputs, 1);
+  assert.equal(rec.inputs, 2);
   assert.ok(rec.score > 50); // HRV alone, above baseline
+});
+
+test('trendScore: rising vs last week > 50, falling < 50, flat ~50', () => {
+  // 7-day baseline near 50, then today's value moves the trend.
+  assert.ok(r.trendScore(baselineThen(50, 10, 65)) > 50, 'rising HRV should score above 50');
+  assert.ok(r.trendScore(baselineThen(50, 10, 35)) < 50, 'falling HRV should score below 50');
+  const flat = r.trendScore(baselineThen(50, 10, 50));
+  assert.ok(flat >= 45 && flat <= 55, `flat should be ~50, got ${flat}`);
+  // Not enough history → null (graceful; weight just drops out).
+  assert.equal(r.trendScore(series([50, 51, 52])), null);
+});
+
+test('respiratory rate: elevated breathing lowers recovery (inverted)', () => {
+  const base = {
+    'health:hrv': baselineThen(50, 30, 50),        // neutral
+    'health:resting_hr': baselineThen(55, 30, 55), // neutral
+  };
+  const calm = r.recoveryScore({ ...base, 'health:respiratory_rate': baselineThen(15, 30, 13) });
+  const elevated = r.recoveryScore({ ...base, 'health:respiratory_rate': baselineThen(15, 30, 18) });
+  assert.ok(
+    calm.score > elevated.score,
+    `lower respiratory rate should score higher: calm ${calm.score} vs elevated ${elevated.score}`
+  );
 });
 
 test('recoveryScore: null when no inputs', () => {
