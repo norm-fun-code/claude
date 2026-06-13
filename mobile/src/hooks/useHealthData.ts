@@ -43,36 +43,58 @@ function noonUTC(dateStr: string): string {
 // GREATEST upsert lock in each day's real total once the day is over. Today is
 // still partial, but analyze drops the current day from cumulative trends.
 async function finalizeRecentCumulativeDays(daysBack = 30): Promise<void> {
-  const endDate = new Date().toISOString();
-  const startDate = new Date(Date.now() - daysBack * 86400000).toISOString();
   const hk = <T,>(fn: (cb: (err: any, r: T) => void) => void): Promise<T | null> =>
     new Promise((resolve) => fn((err, r) => resolve(err ? null : r)));
 
-  // Steps: getDailyStepCountSamples returns HealthKit's deduplicated total per
-  // day (one value per day across iPhone + Watch). Max per local day guards
-  // against multiple entries.
-  const stepRaw = (await hk<HealthValue[]>((cb) =>
-    (AppleHealthKit as any).getDailyStepCountSamples({ startDate, endDate }, cb)
-  )) ?? [];
-  const stepsByDay = new Map<string, number>();
-  for (const s of stepRaw) {
-    const d = localDateStr(new Date(s.startDate));
-    stepsByDay.set(d, Math.max(stepsByDay.get(d) ?? 0, Math.round(s.value)));
-  }
-
-  // Active energy: sum raw samples per local day.
-  const energyRaw = (await hk<HealthValue[]>((cb) =>
-    AppleHealthKit.getActiveEnergyBurned({ startDate, endDate } as any, cb)
-  )) ?? [];
-  const energyByDay = new Map<string, number>();
-  for (const s of energyRaw) {
-    const d = localDateStr(new Date(s.startDate));
-    energyByDay.set(d, (energyByDay.get(d) ?? 0) + s.value);
-  }
-
   const rows: { metric: string; value: number; unit: string; ts: string }[] = [];
-  for (const [day, v] of stepsByDay) rows.push({ metric: 'steps', value: v, unit: 'count', ts: noonUTC(day) });
-  for (const [day, v] of energyByDay) rows.push({ metric: 'active_energy', value: Math.round(v), unit: 'kcal', ts: noonUTC(day) });
+
+  // STEPS — query each day individually with getStepCount. Critical: do NOT use
+  // getDailyStepCountSamples — its native impl buckets by 60-min periods AND
+  // splits by source (HKStatisticsOptionSeparateBySource), so you get hourly,
+  // per-device fragments, not a daily total. getStepCount uses
+  // predicateForSamplesOnDay + CumulativeSum with NO source split — the
+  // deduplicated daily total that matches the Apple Health app. The day
+  // predicate uses the DEVICE's local (e.g. EST) calendar day, so attribution
+  // is correct. One call per day (cheap HealthKit queries), run in parallel.
+  const dayStarts: Date[] = [];
+  for (let i = 0; i < daysBack; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    d.setHours(12, 0, 0, 0); // noon local — unambiguously inside the target day
+    dayStarts.push(d);
+  }
+  const stepResults = await Promise.all(
+    dayStarts.map((d) =>
+      hk<HealthValue>((cb) =>
+        AppleHealthKit.getStepCount({ date: d.toISOString(), includeManuallyAdded: true } as any, cb)
+      )
+    )
+  );
+  stepResults.forEach((res, i) => {
+    if (res && Number.isFinite(res.value) && res.value > 0) {
+      rows.push({ metric: 'steps', value: Math.round(res.value), unit: 'count', ts: noonUTC(localDateStr(dayStarts[i])) });
+    }
+  });
+
+  // ACTIVE ENERGY — same per-day approach via getActiveEnergyBurned bounded to
+  // each local day, summed. (Active energy is Watch-authored and not
+  // source-duplicated like steps, so summing the day's samples is correct.)
+  const energyResults = await Promise.all(
+    dayStarts.map((d) => {
+      const start = new Date(d); start.setHours(0, 0, 0, 0);
+      const end = new Date(d); end.setHours(23, 59, 59, 999);
+      return hk<HealthValue[]>((cb) =>
+        AppleHealthKit.getActiveEnergyBurned({ startDate: start.toISOString(), endDate: end.toISOString() } as any, cb)
+      );
+    })
+  );
+  energyResults.forEach((samples, i) => {
+    if (Array.isArray(samples) && samples.length) {
+      const total = samples.reduce((s, r) => s + (Number(r.value) || 0), 0);
+      if (total > 0) rows.push({ metric: 'active_energy', value: Math.round(total), unit: 'kcal', ts: noonUTC(localDateStr(dayStarts[i])) });
+    }
+  });
+
   if (!rows.length) return;
   try {
     await fetch(HEALTH_INGEST_URL, { method: 'POST', headers: authHeaders(), body: JSON.stringify(rows) });

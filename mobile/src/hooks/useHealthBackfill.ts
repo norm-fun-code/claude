@@ -122,10 +122,33 @@ export function useHealthBackfill(): BackfillState {
       AppleHealthKit.getSleepSamples({ startDate: sleepStart, endDate }, cb)
     ) ?? [];
 
-    setProgress('Fetching step count samples…');
-    const stepRaw = await hk<HealthValue[]>((cb) =>
-      (AppleHealthKit as any).getDailyStepCountSamples({ startDate, endDate }, cb)
-    ) ?? [];
+    // STEPS — query each day with getStepCount (deduplicated daily total, matches
+    // the Apple Health app). NOT getDailyStepCountSamples: that buckets hourly and
+    // splits by source, yielding fragments far below the daily total. Batched to
+    // avoid firing hundreds of HealthKit queries at once.
+    setProgress('Fetching daily step totals…');
+    const stepsByDayDirect = new Map<string, number>();
+    {
+      const days: Date[] = [];
+      for (let i = 0; i < daysBack; i++) {
+        const d = new Date(); d.setDate(d.getDate() - i); d.setHours(12, 0, 0, 0);
+        days.push(d);
+      }
+      const BATCH = 20;
+      for (let i = 0; i < days.length; i += BATCH) {
+        const slice = days.slice(i, i + BATCH);
+        const results = await Promise.all(
+          slice.map((d) => hk<HealthValue>((cb) =>
+            AppleHealthKit.getStepCount({ date: d.toISOString(), includeManuallyAdded: true } as any, cb)
+          ))
+        );
+        results.forEach((res, j) => {
+          if (res && Number.isFinite(res.value) && res.value > 0) {
+            stepsByDayDirect.set(localDateStr(slice[j]), Math.round(res.value));
+          }
+        });
+      }
+    }
 
     setProgress('Fetching active energy samples…');
     const energyRaw = await hk<HealthValue[]>((cb) =>
@@ -152,15 +175,8 @@ export function useHealthBackfill(): BackfillState {
       rhrByDay.set(d, Math.round(s.value));
     }
 
-    // Steps: getDailyStepCountSamples can return multiple entries per day when
-    // multiple sources (iPhone + Watch, or multiple apps) each report their count.
-    // Take the MAX per day — the highest value is the consolidated total;
-    // individual source values are always ≤ the consolidated aggregate.
-    const stepsByDay = new Map<string, number>();
-    for (const s of stepRaw) {
-      const d = localDateStr(new Date(s.startDate));
-      stepsByDay.set(d, Math.max(stepsByDay.get(d) ?? 0, Math.round(s.value)));
-    }
+    // Steps: already fetched per-day above (deduplicated daily totals).
+    const stepsByDay = stepsByDayDirect;
 
     // Active energy: sum individual workout samples per day
     const energyByDay = new Map<string, number>();
