@@ -67,6 +67,10 @@ async function gatherWellbeing(d7, d14) {
 }
 
 async function gatherHealth(d7, d14) {
+  // Sleep/HRV metrics: use source-priority aggregation so Eight Sleep manual
+  // entries beat Apple Health (which mirrors Eight Sleep via HealthKit), and
+  // both beat the historical baseline. Prevents double-counting.
+  const SLEEP_METRICS = new Set(['hrv', 'resting_hr', 'sleep_hours', 'sleep_score', 'deep_sleep_hours', 'rem_sleep_hours']);
   const metrics = [
     ['hrv', 'avg', 'up'],
     ['resting_hr', 'avg', 'down'],
@@ -77,9 +81,12 @@ async function gatherHealth(d7, d14) {
   ];
   const out = {};
   for (const [m, agg, gw] of metrics) {
+    const aggFn = SLEEP_METRICS.has(m)
+      ? (opts) => metricsStore.dailyAggregatePreferSource({ ...opts, agg })
+      : (opts) => metricsStore.dailyAggregate({ ...opts, agg, excludeSource: 'seed' });
     const [cur, prior] = await Promise.all([
-      metricsStore.dailyAggregate({ domain: 'health', metric: m, from: d7, agg, excludeSource: 'seed' }),
-      metricsStore.dailyAggregate({ domain: 'health', metric: m, from: d14, to: d7, agg, excludeSource: 'seed' }),
+      aggFn({ domain: 'health', metric: m, from: d7 }),
+      aggFn({ domain: 'health', metric: m, from: d14, to: d7 }),
     ]);
     out[m] = { cur: round1(avg(cur)), prior: round1(avg(prior)), goodWhen: gw };
   }

@@ -292,7 +292,9 @@ async function liveRecovery() {
   const from60 = new Date(Date.now() - 60 * 864e5);
   for (const key of ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score']) {
     const [dm, mt] = key.split(':');
-    const rows = await metricsStore.dailyAggregate({ domain: dm, metric: mt, from: from60, agg: 'avg', excludeSource: 'seed' });
+    // Use source-priority aggregation: eight_sleep manual > apple_health > eight_sleep_baseline.
+    // Prevents double-counting when Apple Health mirrors Eight Sleep data via HealthKit.
+    const rows = await metricsStore.dailyAggregatePreferSource({ domain: dm, metric: mt, from: from60, agg: 'avg' });
     if (rows.length) seriesByKey[key] = rows;
   }
   const rec = recoveryScore(seriesByKey);

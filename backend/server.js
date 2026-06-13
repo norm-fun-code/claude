@@ -162,6 +162,33 @@ app.post('/api/ingest/health', async (req, res) => {
   }
 });
 
+// Seed Eight Sleep baseline averages — runs the pre-computed 180-day seed in-process.
+// curl -X POST .../api/ingest/sleep-baseline -H "Authorization: Bearer TOKEN"
+// Safe to re-run (upserts). Useful after first setup or when baselines change.
+app.post('/api/ingest/sleep-baseline', async (req, res) => {
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const SOURCE = 'eight_sleep_baseline';
+    const DOMAIN = 'health';
+    const B7   = { hrv: 38, resting_hr: 56, sleep_hours: 7+25/60, deep_sleep_hours: 1+14/60, rem_sleep_hours: 1+56/60, sleep_score: 84 };
+    const B30  = { hrv: 39, resting_hr: 55, sleep_hours: 7+45/60, deep_sleep_hours: 1+14/60, rem_sleep_hours: 1+55/60, sleep_score: 87 };
+    const B180 = { hrv: 41, resting_hr: 55, sleep_hours: 7+56/60, deep_sleep_hours: 1+25/60, rem_sleep_hours: 1+55/60, sleep_score: 87 };
+    const METRICS = ['hrv','resting_hr','sleep_hours','deep_sleep_hours','rem_sleep_hours','sleep_score'];
+    const rows = [];
+    for (let daysAgo = 1; daysAgo <= 180; daysAgo++) {
+      const bl = daysAgo <= 7 ? B7 : daysAgo <= 30 ? B30 : B180;
+      const d  = new Date(); d.setDate(d.getDate() - daysAgo);
+      const ymd = d.toLocaleDateString('en-CA', { timeZone: tz });
+      const ts  = new Date(`${ymd}T12:00:00Z`);
+      for (const m of METRICS) rows.push({ ts, domain: DOMAIN, metric: m, value: +bl[m].toFixed(3), source: SOURCE });
+    }
+    const written = await metricsStore.insertMetrics(rows);
+    res.json({ written, nights: 180, message: 'Eight Sleep baselines seeded' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Eight Sleep full history import — accepts the sleep_nights.json export directly.
 // curl -X POST .../api/ingest/eight-sleep -H "Content-Type: application/json"
 //      -H "Authorization: Bearer TOKEN" -d @sleep_nights.json

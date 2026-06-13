@@ -111,6 +111,53 @@ async function dailyAggregate({ domain, metric, from, to, agg = 'avg', excludeSo
   return rows;
 }
 
+/**
+ * Like dailyAggregate but applies source priority per day, preventing double-
+ * counting when multiple sources record the same metric (e.g. Apple Health
+ * pulling Eight Sleep data via HealthKit).
+ *
+ * Priority order (lower = preferred):
+ *   eight_sleep: 1  — manual daily entry, most accurate
+ *   apple_health: 2  — device sync (may duplicate Eight Sleep via HealthKit)
+ *   eight_sleep_baseline: 3 — historical averages, only used when no real data
+ *   everything else: 4
+ *
+ * For each day, only the highest-priority source's rows are aggregated.
+ */
+async function dailyAggregatePreferSource({ domain, metric, from, to, agg = 'avg' }) {
+  const fn = ['avg', 'min', 'max', 'sum'].includes(agg) ? agg : 'avg';
+  const { rows } = await query(
+    `WITH per_day_source AS (
+       SELECT
+         date_trunc('day', ts) AS day,
+         source,
+         ${fn}(value) AS value,
+         CASE source
+           WHEN 'eight_sleep'          THEN 1
+           WHEN 'apple_health'         THEN 2
+           WHEN 'eight_sleep_baseline' THEN 3
+           ELSE 4
+         END AS priority
+       FROM metrics
+      WHERE domain = $1 AND metric = $2
+        AND ($3::timestamptz IS NULL OR ts >= $3)
+        AND ($4::timestamptz IS NULL OR ts <= $4)
+      GROUP BY day, source
+     ),
+     best_per_day AS (
+       SELECT day, MIN(priority) AS best_priority
+       FROM per_day_source
+       GROUP BY day
+     )
+     SELECT p.day, p.value
+     FROM per_day_source p
+     JOIN best_per_day b ON p.day = b.day AND p.priority = b.best_priority
+     ORDER BY p.day ASC`,
+    [domain, metric, from ?? null, to ?? null]
+  );
+  return rows;
+}
+
 /** Distinct (domain, metric) pairs present in the spine. */
 async function listMetricKeys() {
   const { rows } = await query(
@@ -119,4 +166,4 @@ async function listMetricKeys() {
   return rows;
 }
 
-module.exports = { insertMetrics, getSeries, latest, dailyAggregate, listMetricKeys };
+module.exports = { insertMetrics, getSeries, latest, dailyAggregate, dailyAggregatePreferSource, listMetricKeys };
