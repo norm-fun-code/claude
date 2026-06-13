@@ -84,7 +84,7 @@ async function getTransactions(token, { startDate, endDate }) {
   }`;
   const out = [];
   let offset = 0;
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 100; i++) { // up to 10k transactions — covers 3+ years for most users
     const d = await gql(token, query, { offset, limit: 100, filters: { startDate, endDate } });
     const results = d.allTransactions?.results || [];
     out.push(...results);

@@ -14,6 +14,7 @@ const { getAccounts, getTransactions } = require('../src/services/monarch-api');
 const URL = process.env.NORMOS_URL || 'https://backend-production-0902.up.railway.app';
 const API_TOKEN = process.env.NORMOS_API_TOKEN || '';
 const DAYS = (() => {
+  if (process.argv.includes('--full')) return 730; // 2 years — historical backfill
   const i = process.argv.indexOf('--days');
   return i >= 0 ? parseInt(process.argv[i + 1], 10) || 30 : 30;
 })();
