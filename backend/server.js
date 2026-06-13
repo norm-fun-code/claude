@@ -756,6 +756,18 @@ app.post('/api/consolidate', async (req, res) => {
   }
 });
 
+// Read the current self-model back — the full portrait NormOS injects into every
+// voice surface. Returns the latest consolidated model (content + when + snapshot).
+app.get('/api/consolidate', async (req, res) => {
+  try {
+    const row = await require('./src/store/selfModel').latestModel();
+    if (!row) return res.json({ ok: true, model: null, message: 'No self-model yet — POST /api/consolidate to build one.' });
+    res.json({ ok: true, generatedAt: row.generated_at, kind: row.kind, content: row.content, snapshot: row.snapshot });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Backfill embeddings for the knowledge graph / chat retrieval.
 app.post('/api/embed', async (req, res) => {
   try {
