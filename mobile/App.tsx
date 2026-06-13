@@ -314,7 +314,7 @@ export default function App() {
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={c.subtext} />}
         showsVerticalScrollIndicator={false}
       >
-        <Header date={d?.date ?? today} isRefreshing={isRefreshing} />
+        <Header date={d?.date ?? today} isRefreshing={isRefreshing} onRefresh={onRefresh} />
         <View style={styles.titleRow}>
           <View>
             <Text style={[styles.tabTitle, { color: c.text }]}>{tabTitle}</Text>

@@ -1624,6 +1624,13 @@ app.get('/api/briefing', async (req, res) => {
   // timeout so one slow upstream (Gmail/Notion/etc.) can't hang the whole
   // briefing — allSettled waits for every promise, so without this a single
   // stall blocks the response. A timed-out source just shows as a soft error.
+  //
+  // Gmail / email-briefs are skipped on same-day rebuilds (priorIsToday).
+  // Newsletters only change once when morning email arrives; re-fetching and
+  // re-summarizing them on every intraday rebuild is wasted time (~10-15s).
+  // The prior build's newsletters are carried over below. Users who want a
+  // fresh newsletter pass can tap "Update markets & email" on Today tab, which
+  // calls /api/briefing/live — the dedicated email-only refresh path.
   const EXT = Number(process.env.BRIEFING_SOURCE_TIMEOUT_MS || 12000);
   const [weatherResult, calendarResult, notionResult, quoteResult, emailResult, marketsResult] =
     await Promise.allSettled([
@@ -1631,7 +1638,9 @@ app.get('/api/briefing', async (req, res) => {
       withTimeout(fetchCalendarEvents(), EXT, 'calendar'),
       withTimeout(fetchRandomNotionPage({ exclude: [...seenNotion] }), EXT, 'notion'),
       withTimeout(fetchRandomQuote(), EXT, 'googleDoc'),
-      withTimeout(fetchGmailThreads(), EXT, 'gmail'),
+      priorIsToday
+        ? Promise.resolve([]) // skip Gmail — carry prior newsletters
+        : withTimeout(fetchGmailThreads(), EXT, 'gmail'),
       withTimeout(fetchMarkets(), EXT, 'markets'),
     ]);
 
@@ -2082,9 +2091,11 @@ app.get('/api/briefing', async (req, res) => {
     weather,
     workout,
     calendar,
-    newsletters: geminiResult?.newsletters ?? [],
-    urgentEmails: geminiResult?.urgentEmails ?? [],
-    financeSummary: geminiResult?.financeSummary ?? [],
+    // On same-day rebuilds we skip Gmail (see above), so carry prior newsletters.
+    // On a new-day build (or first-ever build), use what the LLM just generated.
+    newsletters: priorIsToday && p?.newsletters?.length ? p.newsletters : (geminiResult?.newsletters ?? []),
+    urgentEmails: priorIsToday && p?.urgentEmails?.length ? p.urgentEmails : (geminiResult?.urgentEmails ?? []),
+    financeSummary: priorIsToday && p?.financeSummary?.length ? p.financeSummary : (geminiResult?.financeSummary ?? []),
     // Quote + insight locked together (see quotePair above) so they always match.
     quote: quotePair.quote,
     quoteInsight: quotePair.quoteInsight,

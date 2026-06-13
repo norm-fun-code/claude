@@ -1,10 +1,11 @@
 import React from 'react';
-import { View, Text, StyleSheet, useColorScheme, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, useColorScheme, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { getColors, spacing, typography } from '../theme';
 
 interface Props {
   date: string;
   isRefreshing?: boolean;
+  onRefresh?: () => void;
 }
 
 function getGreeting(): string {
@@ -14,7 +15,7 @@ function getGreeting(): string {
   return 'Good evening, Norm';
 }
 
-export function Header({ date, isRefreshing }: Props) {
+export function Header({ date, isRefreshing, onRefresh }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -24,9 +25,19 @@ export function Header({ date, isRefreshing }: Props) {
         <Text style={[styles.greeting, { color: c.text }]}>{getGreeting()}</Text>
         <Text style={[styles.date, { color: c.subtext }]}>{date}</Text>
       </View>
-      {isRefreshing && (
-        <ActivityIndicator size="small" color={c.subtext} style={styles.spinner} />
-      )}
+      {/* Global quick-refresh: loads cached briefing + fresh HealthKit data.
+          For heavy rebuilds (LLM), use the per-tab button instead. */}
+      <TouchableOpacity
+        onPress={onRefresh}
+        disabled={isRefreshing || !onRefresh}
+        style={styles.refreshBtn}
+        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+      >
+        {isRefreshing
+          ? <ActivityIndicator size="small" color={c.subtext} />
+          : <Text style={[styles.refreshIcon, { color: c.subtext }]}>↺</Text>
+        }
+      </TouchableOpacity>
     </View>
   );
 }
@@ -51,8 +62,16 @@ const styles = StyleSheet.create({
     ...typography.body,
     fontSize: 15,
   },
-  spinner: {
+  refreshBtn: {
     marginTop: spacing.xs,
     marginLeft: spacing.md,
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  refreshIcon: {
+    fontSize: 22,
+    fontWeight: '300',
   },
 });
