@@ -52,6 +52,7 @@ import { HighlightsCard } from './src/components/HighlightsCard';
 import { MorningFocusCard } from './src/components/MorningFocusCard';
 import { HealthBackfillCard } from './src/components/HealthBackfillCard';
 import { ExperimentsCard } from './src/components/ExperimentsCard';
+import { CrossContextCard } from './src/components/CrossContextCard';
 import { GoalsCard } from './src/components/GoalsCard';
 import { AnnotationsCard } from './src/components/AnnotationsCard';
 import { WeeklyStateCard } from './src/components/WeeklyStateCard';
@@ -223,6 +224,7 @@ export default function App() {
       case 'insights':
         return (
           <>
+            <CrossContextCard insights={d?.crossContextInsights ?? []} />
             <WeeklyStateCard briefing={d ?? null} health={health} recovery={liveRecovery.recovery} />
             <GoalsCard weeklyGoals={d?.weeklyGoals} />
             <ReviewCard review={d?.weeklyReview ?? null} />
@@ -248,6 +250,7 @@ export default function App() {
             {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
             <CheckinCard />
             <HabitsCard />
+            <CrossContextCard insights={d?.crossContextInsights ?? []} />
             <AnnotationsCard />
             {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
             {d && <UrgentEmailsCard emails={d.urgentEmails ?? []} />}

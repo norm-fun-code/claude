@@ -203,6 +203,7 @@ export interface BriefingData {
   notionPageTitle: string;
   leverageActions: LeverageAction[];
   insights: Insight[];
+  crossContextInsights?: Insight[];
   wealthInsights?: Insight[];
   healthInsights?: Insight[];
   recovery?: Recovery | null;
