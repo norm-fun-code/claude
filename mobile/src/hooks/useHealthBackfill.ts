@@ -134,10 +134,20 @@ export function useHealthBackfill(): BackfillState {
 
     setProgress('Aggregating by day…');
 
-    // HRV: average per day (values arrive in seconds, convert to ms)
+    // HRV: overnight samples only (9pm–9am) to stay consistent with Eight
+    // Sleep readings. Daytime Apple Watch spot readings run higher and inflate
+    // the baseline, making normal overnight readings look like dips.
+    // Assign each overnight sample to the morning it woke up on (the endDate's
+    // local date), so a reading at 3am on Jun 13 is filed under Jun 13.
     const hrvByDay = new Map<string, number[]>();
     for (const s of hrvRaw) {
-      const d = localDateStr(new Date(s.startDate));
+      const sampleDate = new Date(s.startDate);
+      const hour = sampleDate.getHours();
+      const isOvernight = hour >= 21 || hour < 9;
+      if (!isOvernight) continue;
+      // Assign to the local date of the END of the overnight window (morning).
+      const endDate = new Date((s as any).endDate ?? s.startDate);
+      const d = localDateStr(endDate.getHours() < 12 ? endDate : sampleDate);
       if (!hrvByDay.has(d)) hrvByDay.set(d, []);
       hrvByDay.get(d)!.push(s.value * 1000);
     }
@@ -149,10 +159,14 @@ export function useHealthBackfill(): BackfillState {
       rhrByDay.set(d, Math.round(s.value));
     }
 
-    // Steps: getDailyStepCountSamples returns one entry per day
+    // Steps: getDailyStepCountSamples can return multiple entries per day when
+    // multiple sources (iPhone + Watch, or multiple apps) each report their count.
+    // Take the MAX per day — the highest value is the consolidated total;
+    // individual source values are always ≤ the consolidated aggregate.
     const stepsByDay = new Map<string, number>();
     for (const s of stepRaw) {
-      stepsByDay.set(localDateStr(new Date(s.startDate)), Math.round(s.value));
+      const d = localDateStr(new Date(s.startDate));
+      stepsByDay.set(d, Math.max(stepsByDay.get(d) ?? 0, Math.round(s.value)));
     }
 
     // Active energy: sum individual workout samples per day
