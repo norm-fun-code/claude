@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,9 +11,16 @@ import {
 import Markdown from 'react-native-markdown-display';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import { CHAT_URL, authHeaders, fetchWithTimeout } from '../config';
+import {
+  CHAT_URL,
+  CHAT_HISTORY_URL,
+  CHAT_CLEAR_URL,
+  authHeaders,
+  fetchWithTimeout,
+} from '../config';
 
 interface Source { title: string | null; author: string | null; url: string | null }
+interface Message { role: 'user' | 'assistant'; content: string; sources?: Source[] }
 
 const SUGGESTIONS = [
   'Why was my focus lower last week?',
@@ -22,21 +29,37 @@ const SUGGESTIONS = [
 ];
 
 // Ask NormOS anything about your life — answered from your own data + library.
+// Conversational + persistent: prior turns load on open and continuity survives
+// app restarts (the backend remembers the thread).
 export function ChatCard() {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [question, setQuestion] = useState('');
-  const [answer, setAnswer] = useState<string | null>(null);
-  const [sources, setSources] = useState<Source[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
 
-  async function send(q: string) {
-    if (!q.trim()) return;
+  // Load prior conversation on mount so the thread is there when you open the app.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetchWithTimeout(`${CHAT_HISTORY_URL}?limit=50`, { headers: authHeaders() }, 15000);
+        const json = await res.json().catch(() => ({}));
+        if (res.ok && Array.isArray(json.messages)) {
+          setMessages(
+            json.messages.map((m: any) => ({ role: m.role, content: m.content, sources: m.sources ?? [] }))
+          );
+        }
+      } catch { /* history is best-effort */ }
+    })();
+  }, []);
+
+  const send = useCallback(async (q: string) => {
+    if (!q.trim() || loading) return;
+    setQuestion('');
+    setMessages((prev) => [...prev, { role: 'user', content: q }]);
     setLoading(true);
-    setAnswer(null);
-    setSources([]);
     try {
-      // Chat answers run retrieval + an LLM call, so allow a generous timeout.
+      // The server loads its own memory, so we only send the new question.
       const res = await fetchWithTimeout(CHAT_URL, {
         method: 'POST',
         headers: authHeaders(),
@@ -44,23 +67,68 @@ export function ChatCard() {
       }, 45000);
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setAnswer(`NormOS hit an error (${res.status}). Please try again in a moment.`);
+        setMessages((prev) => [...prev, { role: 'assistant', content: `NormOS hit an error (${res.status}). Please try again in a moment.` }]);
         return;
       }
-      setAnswer(json.answer || 'No answer.');
-      setSources(Array.isArray(json.sources) ? json.sources : []);
+      setMessages((prev) => [...prev, { role: 'assistant', content: json.answer || 'No answer.', sources: Array.isArray(json.sources) ? json.sources : [] }]);
     } catch {
-      setAnswer('Could not reach NormOS. Check your connection and try again.');
+      setMessages((prev) => [...prev, { role: 'assistant', content: 'Could not reach NormOS. Check your connection and try again.' }]);
     } finally {
       setLoading(false);
     }
-  }
+  }, [loading]);
+
+  const clear = useCallback(async () => {
+    setMessages([]);
+    try {
+      await fetchWithTimeout(CHAT_CLEAR_URL, { method: 'POST', headers: authHeaders() }, 15000);
+    } catch { /* best-effort */ }
+  }, []);
 
   const md = markdownStyles(c);
+  const empty = messages.length === 0;
 
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
-      <SectionHeader emoji="💬" title="Ask NormOS" preserveCase />
+      <View style={styles.headerRow}>
+        <SectionHeader emoji="💬" title="Ask NormOS" preserveCase />
+        {!empty && (
+          <Pressable onPress={clear} hitSlop={8}>
+            <Text style={[styles.clear, { color: c.subtext }]}>Clear</Text>
+          </Pressable>
+        )}
+      </View>
+
+      {/* Conversation thread */}
+      {messages.map((m, i) => (
+        <View
+          key={i}
+          style={[
+            styles.bubble,
+            m.role === 'user'
+              ? { backgroundColor: c.accentSoft, alignSelf: 'flex-end' }
+              : { backgroundColor: 'transparent', alignSelf: 'stretch' },
+          ]}
+        >
+          {m.role === 'user' ? (
+            <Text style={[styles.userText, { color: c.text }]}>{m.content}</Text>
+          ) : (
+            <>
+              <Markdown style={md}>{m.content}</Markdown>
+              {!!m.sources?.length && (
+                <View style={[styles.sources, { borderTopColor: c.border }]}>
+                  <Text style={[styles.sourcesLabel, { color: c.subtext }]}>SOURCES</Text>
+                  {m.sources.map((s, j) => (
+                    <Text key={j} style={[styles.sourceItem, { color: c.subtext }]} numberOfLines={2}>
+                      ({j + 1}) {s.title || 'Untitled'}{s.author ? ` — ${s.author}` : ''}
+                    </Text>
+                  ))}
+                </View>
+              )}
+            </>
+          )}
+        </View>
+      ))}
 
       <View style={[styles.inputRow, { borderColor: c.border }]}>
         <TextInput
@@ -72,23 +140,17 @@ export function ChatCard() {
           onSubmitEditing={() => send(question)}
           returnKeyType="send"
         />
-        <Pressable
-          onPress={() => send(question)}
-          style={[styles.send, { backgroundColor: c.accent }]}
-        >
+        <Pressable onPress={() => send(question)} style={[styles.send, { backgroundColor: c.accent }]}>
           <Text style={styles.sendText}>Ask</Text>
         </Pressable>
       </View>
 
-      {!answer && !loading && (
+      {empty && !loading && (
         <View style={styles.suggestions}>
           {SUGGESTIONS.map((s) => (
             <Pressable
               key={s}
-              onPress={() => {
-                setQuestion(s);
-                send(s);
-              }}
+              onPress={() => send(s)}
               style={[styles.chip, { backgroundColor: c.accentSoft }]}
             >
               <Text style={[styles.chipText, { color: c.accent }]}>{s}</Text>
@@ -98,21 +160,6 @@ export function ChatCard() {
       )}
 
       {loading && <ActivityIndicator color={c.accent} style={{ marginTop: spacing.sm }} />}
-      {answer && (
-        <View style={styles.answer}>
-          <Markdown style={md}>{answer}</Markdown>
-          {sources.length > 0 && (
-            <View style={[styles.sources, { borderTopColor: c.border }]}>
-              <Text style={[styles.sourcesLabel, { color: c.subtext }]}>SOURCES</Text>
-              {sources.map((s, i) => (
-                <Text key={i} style={[styles.sourceItem, { color: c.subtext }]} numberOfLines={2}>
-                  ({i + 1}) {s.title || 'Untitled'}{s.author ? ` — ${s.author}` : ''}
-                </Text>
-              ))}
-            </View>
-          )}
-        </View>
-      )}
     </View>
   );
 }
@@ -142,6 +189,20 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     marginBottom: spacing.md,
   },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  clear: { fontSize: 13, fontWeight: '600' },
+  bubble: {
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    marginTop: spacing.sm,
+    maxWidth: '92%',
+  },
+  userText: { ...typography.body, fontSize: 15 },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -149,6 +210,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     paddingLeft: spacing.sm,
     gap: spacing.sm,
+    marginTop: spacing.md,
   },
   input: { flex: 1, ...typography.body, paddingVertical: spacing.sm },
   send: {
@@ -161,7 +223,6 @@ const styles = StyleSheet.create({
   suggestions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
   chip: { paddingHorizontal: spacing.sm, paddingVertical: 6, borderRadius: 16 },
   chipText: { fontSize: 12, fontWeight: '500' },
-  answer: { marginTop: spacing.md },
   sources: { marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1 },
   sourcesLabel: { ...typography.label, fontSize: 9, marginBottom: 4 },
   sourceItem: { fontSize: 12, lineHeight: 17, marginBottom: 2 },
