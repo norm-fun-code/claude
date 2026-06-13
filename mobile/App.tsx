@@ -50,6 +50,7 @@ import { UrgentEmailsCard } from './src/components/UrgentEmailsCard';
 import { AlertCard } from './src/components/AlertCard';
 import { HighlightsCard } from './src/components/HighlightsCard';
 import { MorningFocusCard } from './src/components/MorningFocusCard';
+import { HealthBackfillCard } from './src/components/HealthBackfillCard';
 import { GoalsCard } from './src/components/GoalsCard';
 import { AnnotationsCard } from './src/components/AnnotationsCard';
 import { WeeklyStateCard } from './src/components/WeeklyStateCard';
@@ -204,12 +205,13 @@ export default function App() {
       case 'beta':
         return (
           <>
-            <View style={{ paddingHorizontal: 2, marginBottom: spacing.sm }}>
+            <View style={{ paddingHorizontal: 2, marginBottom: spacing.md }}>
               <Text style={{ fontSize: 11, fontWeight: '600', letterSpacing: 0.8, color: c.subtext }}>
                 BETA — features in development. These are previews, not final.
               </Text>
             </View>
             <MorningFocusCard focus={d?.morningFocus} />
+            <HealthBackfillCard />
           </>
         );
       case 'insights':
