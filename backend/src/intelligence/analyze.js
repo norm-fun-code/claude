@@ -669,6 +669,7 @@ async function analyze(opts = {}) {
   // noisy daytime Apple Watch readings. Everything else aggregates all sources.
   const NIGHT_SOURCES = ['eight_sleep', 'eight_sleep_baseline'];
   const SOURCE_LOCK = { 'health:hrv': NIGHT_SOURCES, 'health:resting_hr': NIGHT_SOURCES };
+  const CUMULATIVE = new Set(['steps', 'active_energy', 'exercise_minutes', 'mindful_minutes']);
 
   const seriesByKey = {};
   for (const { domain, metric } of keys) {
@@ -680,7 +681,7 @@ async function analyze(opts = {}) {
     if (!cat.isTracked(domain, metric)) continue;
     const key = `${domain}:${metric}`;
     const lockSources = SOURCE_LOCK[key];
-    const rows = lockSources
+    let rows = lockSources
       ? await metricsStore.dailyAggregatePreferSource({ domain, metric, from, agg: 'avg', sources: lockSources })
       : await metricsStore.dailyAggregate({
           domain,
@@ -689,6 +690,16 @@ async function analyze(opts = {}) {
           agg: cat.aggFor(metric),
           excludeSource: 'seed', // keep demo data from inflating real-data sums
         });
+    // Cumulative metrics accumulate over the day, so today's value is a partial
+    // running total until midnight. Including it makes trends/anomalies read a
+    // sharp false "drop" (e.g. "steps down 94%") when compared to complete prior
+    // days. Drop today's trailing point for these metrics.
+    if (rows.length && CUMULATIVE.has(metric)) {
+      const tz = process.env.TZ || 'America/New_York';
+      const todayLocal = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+      const lastDayLocal = new Date(rows[rows.length - 1].day).toLocaleDateString('en-CA', { timeZone: tz });
+      if (lastDayLocal === todayLocal) rows = rows.slice(0, -1);
+    }
     if (rows.length) seriesByKey[key] = rows;
   }
 

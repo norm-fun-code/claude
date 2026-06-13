@@ -191,6 +191,14 @@ function baselineAnomaly(series, { baselineDays = 30, minN = 8 } = {}) {
   const baselineMean = mean(baseline);
   const baselineStd = std(baseline);
   if (baselineMean == null || baselineStd == null || baselineStd === 0) return null;
+  // Guard against a near-flat baseline (e.g. a seeded synthetic baseline that
+  // hasn't been diluted by real daily entries yet). With tiny spread, a single
+  // genuine reading produces an enormous z and a confident FALSE anomaly every
+  // day. Require a minimum coefficient of variation (~3%) — real health metrics
+  // (HRV, RHR, sleep) always have far more day-to-day spread than this, so this
+  // only suppresses the synthetic-flat case.
+  const MIN_CV = 0.03;
+  if (baselineMean !== 0 && baselineStd / Math.abs(baselineMean) < MIN_CV) return null;
   const z = (latest - baselineMean) / baselineStd;
   return { latest, baselineMean, baselineStd, z, n: baseline.length };
 }

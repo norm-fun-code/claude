@@ -1060,9 +1060,15 @@ app.get('/api/diag/recovery-baseline', async (req, res) => {
     const METRICS = ['health:hrv', 'health:resting_hr', 'health:sleep_score', 'health:sleep_hours'];
     const from = new Date(Date.now() - 60 * 864e5);
     const out = {};
+    // Mirror the live recovery path: HRV/RHR are source-locked to the manual
+    // Eight Sleep overnight numbers (+ baseline), so this diagnostic shows the
+    // SAME series the recovery score actually uses, not a daytime-polluted one.
+    const NIGHT_LOCK = { 'health:hrv': ['eight_sleep', 'eight_sleep_baseline'], 'health:resting_hr': ['eight_sleep', 'eight_sleep_baseline'] };
     for (const key of METRICS) {
       const [domain, metric] = key.split(':');
-      const rows = await metricsStore.dailyAggregate({ domain, metric, from, agg: 'avg', excludeSource: 'seed' });
+      const rows = NIGHT_LOCK[key]
+        ? await metricsStore.dailyAggregatePreferSource({ domain, metric, from, agg: 'avg', sources: NIGHT_LOCK[key] })
+        : await metricsStore.dailyAggregate({ domain, metric, from, agg: 'avg', excludeSource: 'seed' });
       const vals = rows.map((r) => Number(r.value)).filter(Number.isFinite);
       const today = vals.length ? vals[vals.length - 1] : null;
       const baseline = vals.length >= 2 ? vals.slice(-(31), -1) : [];

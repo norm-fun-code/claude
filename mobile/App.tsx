@@ -195,6 +195,9 @@ export default function App() {
               }
             </TouchableOpacity>
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} recoveryScore={liveRecovery.recovery?.score ?? null} />
+            <CollapsibleSection title="Sync Apple Health history">
+              <HealthBackfillCard />
+            </CollapsibleSection>
           </>
         );
       case 'wealth':
