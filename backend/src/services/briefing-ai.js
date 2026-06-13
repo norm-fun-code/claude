@@ -67,7 +67,7 @@ ${emailSection}
 Return ONLY valid JSON with EXACTLY these fields:
 
 {
-  "morningFocus": "1-2 sentences (35-60 words). This is your chief-of-staff situation report: synthesize recovery status, today's workout, recent wellbeing trends, and any active life context into a single direct take. Name the actual numbers (score, HRV ms, etc). Tell them what it means and the one thing that matters most today. Omit entirely (empty string) when you have no recovery or wellbeing data.",
+  "morningFocus": "1-2 sentences (35-60 words). Chief-of-staff situation report. Use the SELF-MODEL (7-day averages, habit trends, active experiments, confirmed patterns) as your primary source — it always has context even before today's check-in or watch sync. Supplement with any real-time recovery/wellbeing data if present. Name the actual numbers from the self-model (HRV ms, sleep hours, habit rates). Tell them what it means and the one thing that matters most today. Always generate this — never return empty string.",
   "experimentCallout": "If there is a confirmed OR refuted experiment result, write 1-2 sentences calling it out directly: 'NormOS confirmed...' or 'NormOS refuted...'. Name the percent change and what it means for their behavior. If multiple, pick the most impactful one. Empty string if no completed experiments.",
   "newsletters": [
     { "name": "Sender", "title": "Edition title", "summary": "A dense 5-10 sentence paragraph summarizing the substance of THIS specific email. Extract hard numbers, percentages, dollar amounts, named companies, and specific arguments. Emulate the deep, factual style of premium financial newsletters like The Daily Upside. Crisp prose, no bullets, no filler." }
@@ -83,7 +83,7 @@ Return ONLY valid JSON with EXACTLY these fields:
 
 Rules:
 - experimentCallout: scan the EXPERIMENT RESULTS block. If there's a confirmed or refuted result, call it out directly and specifically — "NormOS confirmed that [hypothesis] — [metric] improved/declined by X%." If refuted, say so clearly. This is a big deal: it's real data science on their own life. Make it feel like a discovery. Empty string if no completed results.
-- morningFocus: weave recovery + workout + wellbeing into a direct chief-of-staff take. Name real numbers. If recovery is yellow or red, say why and what to do. If a habit is slipping, name it. If energy or mood has been low, acknowledge it. This should feel like the one sentence a trusted advisor would say before you start your day. Never mention finances, calendar events, or emails here.
+- morningFocus: draw primarily from the SELF-MODEL (7-day HRV avg, sleep avg, habit adherence rates, active experiments, confirmed correlations). Real-time recovery/wellbeing data from today's check-in supplements when available but is not required. Name real numbers from the self-model. If a habit rate is slipping, name it. If HRV trend is down, say so. This should feel like the one sentence a trusted advisor who knows your week would say before you start your day. Never mention finances, calendar events, or emails here. Always generate something — the self-model always has enough context.
 - newsletters: include digests/publications; exclude personal email, receipts, notifications. Go deep — extract every named company, person, statistic, and dollar amount.
 - urgentEmails: only emails needing a response/action today.
 - financeSummary: 1-3 items; never empty.
