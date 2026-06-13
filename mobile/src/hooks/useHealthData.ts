@@ -42,7 +42,7 @@ function noonUTC(dateStr: string): string {
 // finalized daily totals (with explicit per-day timestamps) lets the backend's
 // GREATEST upsert lock in each day's real total once the day is over. Today is
 // still partial, but analyze drops the current day from cumulative trends.
-async function finalizeRecentCumulativeDays(daysBack = 7): Promise<void> {
+async function finalizeRecentCumulativeDays(daysBack = 30): Promise<void> {
   const endDate = new Date().toISOString();
   const startDate = new Date(Date.now() - daysBack * 86400000).toISOString();
   const hk = <T,>(fn: (cb: (err: any, r: T) => void) => void): Promise<T | null> =>
@@ -360,10 +360,11 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
         }
       );
 
-      // Finalize the last week of COMPLETE daily step/energy totals so past days
-      // aren't stuck at the partial count from whenever the app was last opened.
-      // Fire-and-forget — independent of the live display above.
-      finalizeRecentCumulativeDays().catch(() => {});
+      // Finalize the last 30 days of COMPLETE daily step/energy totals so past
+      // days aren't stuck at the partial count from whenever the app was last
+      // opened — 30 days covers both the recent AND prior trend windows so the
+      // "down X%" comparison is apples-to-apples. Fire-and-forget.
+      finalizeRecentCumulativeDays(30).catch(() => {});
       });
     } catch (e) {
       setData((prev) => ({ ...prev, error: 'HealthKit unavailable on this device' }));
