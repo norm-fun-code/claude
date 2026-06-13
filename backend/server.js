@@ -167,6 +167,8 @@ app.post('/api/ingest/health', async (req, res) => {
 // Safe to re-run (upserts). Useful after first setup or when baselines change.
 app.post('/api/ingest/sleep-baseline', async (req, res) => {
   try {
+    await sourcesStore.registerSource({ id: 'eight_sleep_baseline', domain: 'health', displayName: 'Eight Sleep (baseline averages)' });
+    await sourcesStore.registerSource({ id: 'eight_sleep', domain: 'health', displayName: 'Eight Sleep' });
     const tz = process.env.TZ || 'America/New_York';
     const SOURCE = 'eight_sleep_baseline';
     const DOMAIN = 'health';
@@ -197,6 +199,7 @@ app.post('/api/ingest/eight-sleep', express.json({ limit: '50mb' }), async (req,
     const { sessions } = req.body;
     if (!Array.isArray(sessions)) return res.status(400).json({ error: 'Expected { sessions: [...] }' });
 
+    await sourcesStore.registerSource({ id: 'eight_sleep', domain: 'health', displayName: 'Eight Sleep' });
     const tz = process.env.TZ || 'America/New_York';
     const { dayAnchorTs } = require('./src/util/date');
     const SOURCE = 'eight_sleep';
@@ -248,6 +251,7 @@ app.post('/api/ingest/eight-sleep', express.json({ limit: '50mb' }), async (req,
 // and the analyze engine can prefer watch data when both are present.
 app.post('/api/ingest/sleep', async (req, res) => {
   try {
+    await sourcesStore.registerSource({ id: 'eight_sleep', domain: 'health', displayName: 'Eight Sleep' });
     const tz = process.env.TZ || 'America/New_York';
     const { dayAnchorTs } = require('./src/util/date');
     const when = dayAnchorTs(tz); // noon local time — same anchor as Apple Health
