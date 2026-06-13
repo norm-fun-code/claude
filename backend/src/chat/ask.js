@@ -6,6 +6,7 @@ const llm = require('../llm');
 const documents = require('../store/documents');
 const findingsStore = require('../store/findings');
 const annotationsStore = require('../store/annotations');
+const experimentsStore = require('../store/experiments');
 const metricsStore = require('../store/metrics');
 const intentionsStore = require('../store/intentions');
 const cat = require('../intelligence/catalog');
@@ -155,7 +156,7 @@ function snippet(text, n = 400) {
 }
 
 /** Pure: assemble the prompt from retrieved context. Exported for testing. */
-function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [], snapshot = null }) {
+function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [], snapshot = null, experiments = [] }) {
   const parts = [];
 
   // Personal goals + metric trends first (only present for personal questions).
@@ -168,6 +169,23 @@ function buildPrompt({ question, findings = [], docs = [], annotations = [], his
     parts.push(
       'WHAT YOUR DATA CURRENTLY SHOWS (findings):\n' +
         findings.map((f) => `- [${f.type}] ${f.title}${f.detail ? ` — ${f.detail}` : ''}`).join('\n')
+    );
+  }
+
+  if (experiments.length) {
+    const fmt = (e) => {
+      const icon = e.verdict === 'confirmed' ? '✓' : e.verdict === 'refuted' ? '✗' : '⟳';
+      const pct = e.result?.pctChange != null
+        ? ` (${e.result.pctChange > 0 ? '+' : ''}${Math.round(e.result.pctChange * 100)}%)`
+        : '';
+      const status = e.status === 'running'
+        ? `running${e.end_date ? `, due ${new Date(e.end_date).toISOString().slice(0, 10)}` : ''}`
+        : e.verdict ?? e.status;
+      return `${icon} [${status}] ${e.hypothesis}${pct}`;
+    };
+    parts.push(
+      'SELF-EXPERIMENTS (hypotheses you have personally tested):\n' +
+        experiments.map(fmt).join('\n')
     );
   }
 
@@ -278,7 +296,17 @@ async function ask(question, { history = [], k = 14 } = {}) {
     }
   }
 
-  const { system, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot });
+  // All experiments (completed verdicts + running) — always included so the chat
+  // can answer "did my experiment work?" regardless of question type.
+  let experiments = [];
+  try {
+    experiments = await experimentsStore.listExperiments();
+    // Keep completed (confirmed/refuted/inconclusive) and running; drop bare proposals
+    // that have no data yet since they'd just add noise to the context.
+    experiments = experiments.filter((e) => e.status === 'completed' || e.status === 'running');
+  } catch { /* optional */ }
+
+  const { system, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments });
   const answer = await llm.generateText({ system, prompt, temperature: 0.3, maxTokens: 1600 });
 
   return {

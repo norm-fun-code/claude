@@ -159,10 +159,36 @@ export interface HealthComposite {
   evidence?: Record<string, unknown>;
 }
 
+export interface CompletedExperiment {
+  id: number;
+  hypothesis: string;
+  verdict: 'confirmed' | 'refuted' | 'inconclusive';
+  pctChange: number | null;
+  effectSize: number | null;
+  baselineMean: number | null;
+  testMean: number | null;
+  n: { baseline: number; test: number } | null;
+  endDate: string | null;
+}
+
+export interface RunningExperiment {
+  id: number;
+  hypothesis: string;
+  protocol: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  daysLeft: number | null;
+}
+
 export interface BriefingData {
   date: string;
   builtAt?: string;
   morningFocus?: string;
+  experimentCallout?: string;
+  experiments?: {
+    completed: CompletedExperiment[];
+    running: RunningExperiment[];
+  };
   weather: Weather | null;
   workout: Workout;
   calendar: CalendarEvent[];
