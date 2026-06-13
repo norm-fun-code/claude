@@ -27,6 +27,7 @@ import { TabBar, TabKey, TABS } from './src/components/TabBar';
 import { LeverageCard } from './src/components/LeverageCard';
 import { ForecastCard } from './src/components/ForecastCard';
 import { LibraryCard } from './src/components/LibraryCard';
+import { AffirmationsCard } from './src/components/AffirmationsCard';
 import { ReviewCard } from './src/components/ReviewCard';
 import { WealthCard } from './src/components/WealthCard';
 import { InsightsCard } from './src/components/InsightsCard';
@@ -222,16 +223,16 @@ export default function App() {
             <WeeklyIntentionsCard />
             <WeatherCard weather={d?.weather ?? null} />
             {d && (d.calendar?.length ?? 0) > 0 && <CalendarCard events={d.calendar} />}
-            {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
             <CheckinCard />
             <HabitsCard />
             <AnnotationsCard />
+            <AffirmationsCard />
+            {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
             {d && <LeverageCard actions={d.leverageActions ?? []} insights={[]} />}
             {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
             {d && <UrgentEmailsCard emails={d.urgentEmails ?? []} />}
             {d && <NewsletterList newsletters={d.newsletters ?? []} />}
             <ReviewCard review={d?.weeklyReview ?? null} compact />
-            {d?.relevantHighlight && <LibraryCard highlight={d.relevantHighlight} />}
 
             {briefing.error && !d && (
               <View style={[styles.errorBox, { borderColor: c.border, backgroundColor: c.card }]}>
