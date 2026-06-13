@@ -53,6 +53,7 @@ import { MorningFocusCard } from './src/components/MorningFocusCard';
 import { HealthBackfillCard } from './src/components/HealthBackfillCard';
 import { ExperimentsCard } from './src/components/ExperimentsCard';
 import { CrossContextCard } from './src/components/CrossContextCard';
+import { SelfModelCard } from './src/components/SelfModelCard';
 import { GoalsCard } from './src/components/GoalsCard';
 import { AnnotationsCard } from './src/components/AnnotationsCard';
 import { WeeklyStateCard } from './src/components/WeeklyStateCard';
@@ -212,7 +213,7 @@ export default function App() {
                 BETA — features in development. These are previews, not final.
               </Text>
             </View>
-            <MorningFocusCard focus={d?.morningFocus} />
+            <SelfModelCard />
             <ExperimentsCard
               completed={d?.experiments?.completed ?? []}
               running={d?.experiments?.running ?? []}
@@ -244,6 +245,7 @@ export default function App() {
         return (
           <>
             {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
+            <MorningFocusCard focus={d?.morningFocus} />
             <WeeklyIntentionsCard />
             <WeatherCard weather={d?.weather ?? null} />
             {d && (d.calendar?.length ?? 0) > 0 && <CalendarCard events={d.calendar} />}
