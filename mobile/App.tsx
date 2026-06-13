@@ -236,22 +236,21 @@ export default function App() {
 
             <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
             {d?.experimentCallout ? <ExperimentsCard completed={[]} running={[]} callout={d.experimentCallout} /> : null}
-            <SleepLogCard />
 
-            <CollapsibleSection title="Everything else (today's full detail)">
+            <CollapsibleSection title="Today's Full Briefing">
               {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
               <WeeklyIntentionsCard />
               <WeatherCard weather={d?.weather ?? null} />
               {d && (d.calendar?.length ?? 0) > 0 && <CalendarCard events={d.calendar} />}
               <CheckinCard />
               <HabitsCard />
-              <CrossContextCard insights={d?.crossContextInsights ?? []} />
               <AnnotationsCard />
               {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
               {d && <UrgentEmailsCard emails={d.urgentEmails ?? []} />}
               <ReviewCard review={d?.weeklyReview ?? null} compact actions={d?.leverageActions ?? []} />
               <AffirmationsCard />
               {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
+              <SleepLogCard />
             </CollapsibleSection>
 
             <CollapsibleSection title="NormOS profile & experiments">

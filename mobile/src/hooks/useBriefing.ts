@@ -150,6 +150,8 @@ export interface Recovery {
   band: 'green' | 'yellow' | 'red' | null;
   parts: Record<string, number>;
   detail: string | null;
+  rawHrv?: number | null;
+  rawRhr?: number | null;
 }
 
 export interface HealthComposite {

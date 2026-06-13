@@ -91,8 +91,24 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
       )}
       {Object.keys(recovery.parts || {}).length > 0 && (
         <Text style={[styles.partsCaption, { color: c.subtext }]}>
-          vs your 30-day baseline{formatBuiltAt(builtAt) ? ` · as of ${formatBuiltAt(builtAt)}` : ''}
+          percentile vs your 30-day baseline{formatBuiltAt(builtAt) ? ` · as of ${formatBuiltAt(builtAt)}` : ''}
         </Text>
+      )}
+
+      {/* Raw sensor readings — the actual ms/bpm values, separate from the baseline percentiles */}
+      {(recovery.rawHrv != null || recovery.rawRhr != null) && (
+        <View style={[styles.rawRow, { borderTopColor: c.border }]}>
+          {recovery.rawHrv != null && (
+            <Text style={[styles.rawItem, { color: c.subtext }]}>
+              HRV <Text style={{ color: c.text, fontWeight: '600' }}>{Math.round(recovery.rawHrv)}ms</Text>
+            </Text>
+          )}
+          {recovery.rawRhr != null && (
+            <Text style={[styles.rawItem, { color: c.subtext }]}>
+              RHR <Text style={{ color: c.text, fontWeight: '600' }}>{Math.round(recovery.rawRhr)}bpm</Text>
+            </Text>
+          )}
+        </View>
       )}
 
       {/* Sleep debt / consistency / training-load flags */}
@@ -144,6 +160,8 @@ const styles = StyleSheet.create({
   partValUnit: { ...typography.caption, fontSize: 11 },
   partLabel: { ...typography.caption, fontSize: 11, marginTop: 2 },
   partsCaption: { ...typography.caption, fontSize: 11, textAlign: 'center', marginTop: spacing.xs, fontStyle: 'italic' },
+  rawRow: { flexDirection: 'row', gap: spacing.lg, justifyContent: 'center', borderTopWidth: 1, marginTop: spacing.sm, paddingTop: spacing.sm },
+  rawItem: { fontSize: 12 },
   flags: { borderTopWidth: 1, marginTop: spacing.md, paddingTop: spacing.sm, gap: spacing.sm },
   flagRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' },
   flagEmoji: { fontSize: 16, marginTop: 1 },
