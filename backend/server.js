@@ -162,6 +162,60 @@ app.post('/api/ingest/health', async (req, res) => {
   }
 });
 
+// Eight Sleep full history import — accepts the sleep_nights.json export directly.
+// curl -X POST .../api/ingest/eight-sleep -H "Content-Type: application/json"
+//      -H "Authorization: Bearer TOKEN" -d @sleep_nights.json
+app.post('/api/ingest/eight-sleep', async (req, res) => {
+  try {
+    const { sessions } = req.body;
+    if (!Array.isArray(sessions)) return res.status(400).json({ error: 'Expected { sessions: [...] }' });
+
+    const tz = process.env.TZ || 'America/New_York';
+    const { dayAnchorTs } = require('./src/util/date');
+    const SOURCE = 'eight_sleep';
+    const DOMAIN = 'health';
+    const SLEEP_STAGES = new Set(['light', 'deep', 'rem']);
+    const mean = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+
+    let written = 0, skipped = 0;
+    for (const session of sessions) {
+      const { ts, stages = [], timeseries = {} } = session;
+      if (!ts) { skipped++; continue; }
+      let sleepSec = 0, deepSec = 0, remSec = 0, totalSec = 0;
+      for (const { stage, duration } of (stages || [])) {
+        const d = Number(duration) || 0;
+        totalSec += d;
+        if (SLEEP_STAGES.has(stage)) sleepSec += d;
+        if (stage === 'deep') deepSec += d;
+        if (stage === 'rem')  remSec  += d;
+      }
+      const wakeTs = new Date((ts + totalSec) * 1000);
+      const anchor = dayAnchorTs(tz, wakeTs);
+      const tsVals = (key) => (timeseries[key] || []).map(([, v]) => Number(v)).filter(Number.isFinite);
+      const hrv = mean(tsVals('hrv'));
+      const rhr = mean(tsVals('heartRate'));
+      const rr  = mean(tsVals('respiratoryRate'));
+      const sleepH = sleepSec / 3600;
+      const deepH  = deepSec  / 3600;
+      const remH   = remSec   / 3600;
+      let score = 50;
+      if (sleepH >= 7)  score += 15; if (sleepH >= 8) score += 10; if (sleepH < 6) score -= 15;
+      if (deepH  >= 1.5) score += 10; if (deepH >= 2) score += 5;
+      if (remH   >= 1.5) score += 10;
+      if (hrv != null && hrv >= 50) score += 5; if (hrv != null && hrv < 30) score -= 10;
+      score = Math.max(0, Math.min(100, Math.round(score)));
+      const rows = [];
+      const push = (m, v, lo, hi) => { if (v != null && Number.isFinite(v) && v >= lo && v <= hi) rows.push({ ts: anchor, domain: DOMAIN, metric: m, value: v, source: SOURCE }); };
+      push('sleep_hours', sleepH, 0.5, 16); push('deep_sleep_hours', deepH, 0, 14); push('rem_sleep_hours', remH, 0, 14);
+      push('sleep_score', score, 0, 100); push('hrv', hrv, 2, 300); push('resting_hr', rhr, 25, 130); push('respiratory_rate', rr, 4, 50);
+      if (rows.length) { written += await metricsStore.insertMetrics(rows); } else { skipped++; }
+    }
+    res.json({ sessions: sessions.length, written, skipped });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Eight Sleep (or manual) overnight metrics: HRV, RHR, sleep score, sleep hours.
 // Stored separately from Apple Health (source: 'eight_sleep') so they can coexist
 // and the analyze engine can prefer watch data when both are present.
