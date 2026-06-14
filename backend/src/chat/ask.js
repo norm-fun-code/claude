@@ -31,7 +31,6 @@ Write a thorough, genuinely useful answer:
 - Lead with a direct answer, then develop it with specifics and concrete examples drawn from the context.
 - Synthesize ACROSS sources — for personal questions, weave data + findings + library together; surface patterns and tensions rather than summarizing one item.
 - Use clean Markdown: \`##\` section headers when it helps, **bold** for key terms, and \`-\` bullet lists for multiple points. Keep paragraphs to 2-4 sentences.
-- Cite the library items you draw on by their number, like (1) or (2, 5), matching the numbered "RELEVANT FROM YOUR LIBRARY" list.
 - Be honest: if the context is thin, say what's missing. Correlations are associations, not proof of cause — flag that when relevant.
 
 Aim for depth and usefulness over brevity, but never pad with filler.`;
