@@ -178,18 +178,22 @@ export function WeeklyIntentionsCard() {
 
   // Compact saved summary (shown on later Sundays, tap to edit).
   if (saved && !editing) {
+    const hasPrior = priorGoals.length > 0 && isSunday();
     return (
       <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
-        <SectionHeader emoji="🎯" title="This week’s focus" />
+        <SectionHeader emoji="🎯" title={hasPrior ? "Weekly review + reset" : "This week’s focus"} />
         {priorReview}
         {cleanGoals.length > 0 ? (
-          cleanGoals.map((g, i) => (
-            <Text key={i} style={[styles.summaryGoal, { color: c.text }]}>• {g}</Text>
-          ))
+          <View style={hasPrior ? styles.thisWeekBox : undefined}>
+            {hasPrior && <Text style={[styles.label, { color: c.subtext, marginBottom: 6 }]}>This week</Text>}
+            {cleanGoals.map((g, i) => (
+              <Text key={i} style={[styles.summaryGoal, { color: c.text }]}>• {g}</Text>
+            ))}
+          </View>
         ) : (
           <Text style={[styles.summaryGoal, { color: c.subtext }]}>No goals set this week.</Text>
         )}
-        {context ? <Text style={[styles.summaryContext, { color: c.subtext }]} numberOfLines={3}>{context}</Text> : null}
+        {context ? <Text style={[styles.summaryContext, { color: c.subtext }]} numberOfLines={4}>{context}</Text> : null}
         <TouchableOpacity onPress={() => setEditing(true)} style={styles.editLink}>
           <Text style={[styles.editLinkText, { color: c.accent }]}>Edit</Text>
         </TouchableOpacity>
@@ -288,6 +292,7 @@ const styles = StyleSheet.create({
   priorGoalText: { ...typography.body, flex: 1 },
   summaryGoal: { ...typography.body, fontWeight: '500', marginBottom: 2 },
   summaryContext: { ...typography.caption, fontSize: 13, marginTop: spacing.sm, lineHeight: 19 },
+  thisWeekBox: { marginTop: spacing.sm },
   editLink: { marginTop: spacing.sm },
   editLinkText: { ...typography.body, fontWeight: '600' },
 });
