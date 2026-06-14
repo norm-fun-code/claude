@@ -19,11 +19,22 @@ const { extractJson } = require('../services/briefing-ai');
 // flagged crossDomain by analyze(). These are the raw material.
 const CROSS_TYPES = new Set(['habit_split', 'sleep_impact', 'activity_impact']);
 
+// Wealth balance-sheet metrics are structural (driven by income, compound growth,
+// market moves) not by short-term behavior levers, so correlations with them are
+// lifestyle confounds, not actionable cross-context insights. Filter them out so
+// "walk more → higher net worth" never surfaces as a cross-context insight.
+const WEALTH_STRUCTURAL = new Set(['wealth:net_worth', 'wealth:net_cashflow']);
+
 /** Pull the cross-domain relationships worth synthesizing from open findings. */
 function selectCrossDomain(findings) {
   return findings.filter((f) => {
     if (CROSS_TYPES.has(f.type)) return true;
-    if (f.type === 'correlation' && f.evidence?.crossDomain === true) return true;
+    if (f.type === 'correlation' && f.evidence?.crossDomain === true) {
+      // Drop correlations where either side is a structural wealth metric.
+      const { a, b } = f.evidence || {};
+      if (WEALTH_STRUCTURAL.has(a) || WEALTH_STRUCTURAL.has(b)) return false;
+      return true;
+    }
     return false;
   });
 }

@@ -8,9 +8,11 @@
 const cat = require('./catalog');
 const { formatDate } = require('../util/date');
 
-// Outcomes we want to move, and the levers we can directly pull. Broadened to
-// cover everything NormOS now tracks, so more confirmed relationships can turn
-// into real actions (recovery, sleep quality, resting HR, savings, etc.).
+// Outcomes we want to move, and the levers we can directly pull. Wealth totals
+// (net_worth, net_cashflow) are excluded: they move on structural timescales
+// (income, compound growth) not within a 14-day experiment window, so any
+// health-lever→wealth-outcome correlation is a lifestyle confound, not an
+// actionable lever. They remain tracked/trended but never become experiments.
 const OUTCOMES = new Set([
   'wellbeing:mood',
   'wellbeing:energy',
@@ -21,8 +23,18 @@ const OUTCOMES = new Set([
   'health:deep_sleep_hours',
   'health:rem_sleep_hours',
   'health:vo2_max',
-  'wealth:net_worth',
-  'wealth:net_cashflow',
+]);
+
+// Lever→outcome pairs that are compositionally obvious (the lever is literally
+// a component of how the outcome is computed) and therefore not useful insights.
+// E.g. sleep_hours is one of three inputs to sleep_score — telling the user
+// "sleep more to improve sleep score" is not insight, it's a definition.
+const TAUTOLOGICAL_PAIRS = new Set([
+  'health:sleep_hours|health:sleep_score',
+  'health:deep_sleep_hours|health:sleep_hours',
+  'health:rem_sleep_hours|health:sleep_hours',
+  'health:deep_sleep_hours|health:sleep_score',
+  'health:rem_sleep_hours|health:sleep_score',
 ]);
 
 // lever metric -> { ease 0..1, more: phrase to increase, less: phrase to decrease }
@@ -114,6 +126,11 @@ function fromCorrelation(f) {
   } else {
     return null;
   }
+
+  // Skip tautological pairs — e.g. sleep_hours → sleep_score is a definition,
+  // not an insight. Key is canonical: smaller string first lexically.
+  const pairKey = [lever, outcome].sort().join('|');
+  if (TAUTOLOGICAL_PAIRS.has(pairKey)) return null;
 
   const lv = splitKey(lever);
   const ov = splitKey(outcome);

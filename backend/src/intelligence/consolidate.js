@@ -67,10 +67,15 @@ async function gatherWellbeing(d7, d14) {
 }
 
 async function gatherHealth(d7, d14) {
-  // Sleep/HRV metrics: use source-priority aggregation so Eight Sleep manual
-  // entries beat Apple Health (which mirrors Eight Sleep via HealthKit), and
-  // both beat the historical baseline. Prevents double-counting.
-  const SLEEP_METRICS = new Set(['hrv', 'resting_hr', 'sleep_hours', 'sleep_score', 'deep_sleep_hours', 'rem_sleep_hours']);
+  // HRV/RHR: source-lock to Eight Sleep manual entries + the seeded baseline so
+  // the self-model uses the same night-vs-night comparison as analyze() and
+  // liveRecovery(). Without this, Apple Watch daytime HRV bleeds in on days
+  // without an Eight Sleep entry, producing a different (higher) number than the
+  // Insights / Recovery card, causing user confusion.
+  const NIGHT_SOURCES = ['eight_sleep', 'eight_sleep_baseline'];
+  const SOURCE_LOCK = { hrv: NIGHT_SOURCES, resting_hr: NIGHT_SOURCES };
+  // Sleep totals and scores: source-priority is enough (no hard lock needed).
+  const PREFER_SOURCE = new Set(['hrv', 'resting_hr', 'sleep_hours', 'sleep_score', 'deep_sleep_hours', 'rem_sleep_hours']);
   const metrics = [
     ['hrv', 'avg', 'up'],
     ['resting_hr', 'avg', 'down'],
@@ -81,8 +86,8 @@ async function gatherHealth(d7, d14) {
   ];
   const out = {};
   for (const [m, agg, gw] of metrics) {
-    const aggFn = SLEEP_METRICS.has(m)
-      ? (opts) => metricsStore.dailyAggregatePreferSource({ ...opts, agg })
+    const aggFn = PREFER_SOURCE.has(m)
+      ? (opts) => metricsStore.dailyAggregatePreferSource({ ...opts, agg, sources: SOURCE_LOCK[m] ?? null })
       : (opts) => metricsStore.dailyAggregate({ ...opts, agg, excludeSource: 'seed' });
     const [cur, prior] = await Promise.all([
       aggFn({ domain: 'health', metric: m, from: d7 }),
