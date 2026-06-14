@@ -15,16 +15,19 @@ export const TABS: { key: TabKey; label: string; icon: string }[] = [
 interface Props {
   active: TabKey;
   onChange: (key: TabKey) => void;
+  /** Home-indicator height — the bar fills down to the screen edge, with icons
+   *  padded up by this much so they clear the indicator/curve. */
+  bottomInset?: number;
 }
 
-// Floating bottom tab bar — Stripe blurple accent, Apple-soft elevation, with a
-// pill that slides under the active tab.
-export function TabBar({ active, onChange }: Props) {
+// Bottom tab bar anchored to the screen edge — its background fills the
+// home-indicator curve while the icons sit above it (paddingBottom = inset).
+export function TabBar({ active, onChange, bottomInset = 0 }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
   return (
-    <View style={[styles.wrap, { backgroundColor: c.card, borderColor: c.border }, shadow(isDark, 'bar')]}>
+    <View style={[styles.wrap, { backgroundColor: c.card, borderColor: c.border, paddingBottom: bottomInset || spacing.sm }, shadow(isDark, 'bar')]}>
       {TABS.map((t) => {
         const on = t.key === active;
         return (
@@ -54,7 +57,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     borderTopWidth: 1,
     paddingTop: spacing.sm,
-    paddingBottom: spacing.lg,
     paddingHorizontal: spacing.xs,
   },
   tab: {

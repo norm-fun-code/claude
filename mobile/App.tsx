@@ -10,6 +10,8 @@ import {
   ActivityIndicator,
   SafeAreaView,
   Appearance,
+  Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 
@@ -64,6 +66,12 @@ import { ANALYZE_URL, authHeaders, fetchWithTimeout } from './src/config';
 export default function App() {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
+
+  // Home-indicator height, RN-only (no safe-area-context dependency). iPhone X+
+  // (>= 812pt tall) have a ~34pt home indicator; older devices have none. Used to
+  // anchor the tab bar flush to the screen bottom, filling the curved corner area.
+  const { height: winH } = useWindowDimensions();
+  const bottomInset = Platform.OS === 'ios' && winH >= 812 ? 34 : 0;
 
   const briefing = useBriefing();
   const health = useHealthData();
@@ -288,8 +296,9 @@ export default function App() {
   };
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: c.background }]}>
+    <View style={[styles.root, { backgroundColor: c.background }]}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
+      <SafeAreaView style={styles.safe}>
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[styles.content, { backgroundColor: c.background }]}
@@ -323,10 +332,11 @@ export default function App() {
         {renderTab()}
         <View style={styles.footer} />
       </ScrollView>
+      </SafeAreaView>
 
-      <AskOverlay />
-      <TabBar active={tab} onChange={setTab} />
-    </SafeAreaView>
+      <AskOverlay bottomInset={bottomInset} />
+      <TabBar active={tab} onChange={setTab} bottomInset={bottomInset} />
+    </View>
   );
 }
 
@@ -339,6 +349,7 @@ function EmptyNote({ c, text }: { c: ReturnType<typeof getColors>; text: string 
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1 },
   safe: { flex: 1 },
   scroll: { flex: 1 },
   content: { paddingHorizontal: spacing.md, paddingBottom: spacing.xl },

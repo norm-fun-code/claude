@@ -22,11 +22,16 @@ const SUGGESTIONS = [
   'What should I focus on this quarter?',
 ];
 
+interface Props {
+  /** Home-indicator height, so the launcher floats above the flush tab bar. */
+  bottomInset?: number;
+}
+
 // Global "Ask NormOS" command bar: a floating button on every tab that opens a
 // full conversation sheet — the chief-of-staff is always one gesture away,
 // instead of buried in a tab. Backed by the persistent server thread, so the
 // conversation is the same one everywhere.
-export function AskOverlay() {
+export function AskOverlay({ bottomInset = 0 }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [open, setOpen] = useState(false);
@@ -53,7 +58,7 @@ export function AskOverlay() {
       {/* Floating launcher — sits above the tab bar on every screen. */}
       <Pressable
         onPress={() => setOpen(true)}
-        style={[styles.fab, { backgroundColor: c.accent }, shadow(isDark, 'bar')]}
+        style={[styles.fab, { backgroundColor: c.accent, bottom: bottomInset + 70 }, shadow(isDark, 'bar')]}
         accessibilityLabel="Ask NormOS"
         accessibilityRole="button"
       >
@@ -175,7 +180,7 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: spacing.md,
-    bottom: 96, // clears the floating tab bar
+    // bottom set inline (bottomInset + 70) so it clears the flush tab bar
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
