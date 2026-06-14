@@ -45,7 +45,6 @@ import { NotionCard } from './src/components/NotionCard';
 import { MarketsCard } from './src/components/MarketsCard';
 import { IndicesCard } from './src/components/IndicesCard';
 import { AdvisorCard } from './src/components/AdvisorCard';
-import { UrgentEmailsCard } from './src/components/UrgentEmailsCard';
 import { AlertCard } from './src/components/AlertCard';
 import { HighlightsCard } from './src/components/HighlightsCard';
 import { MorningFocusCard } from './src/components/MorningFocusCard';
@@ -223,42 +222,6 @@ export default function App() {
             )}
           </>
         );
-      case 'beta':
-        // Preview of the Chief-of-Staff Today vision: a single synthesized brief
-        // on top, the morning input ritual, then the ENTIRE Today stack tucked
-        // into a collapsible Details — visible on demand, not a wall by default.
-        // Your real Today tab is unchanged; this is the candidate replacement.
-        return (
-          <>
-            <View style={{ paddingHorizontal: 2, marginBottom: spacing.md }}>
-              <Text style={{ fontSize: 11, fontWeight: '600', letterSpacing: 0.8, color: c.subtext }}>
-                BETA — preview of the new Today. Not yet live on your Today tab.
-              </Text>
-            </View>
-
-            <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
-
-            <CollapsibleSection title="Today's Full Briefing">
-              {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
-              <WeeklyIntentionsCard />
-              <WeatherCard weather={d?.weather ?? null} />
-              {d && (d.calendar?.length ?? 0) > 0 && <CalendarCard events={d.calendar} />}
-              <CheckinCard />
-              <HabitsCard />
-              <AnnotationsCard />
-              {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
-              {d && <UrgentEmailsCard emails={d.urgentEmails ?? []} />}
-              <ReviewCard review={d?.weeklyReview ?? null} compact actions={d?.leverageActions ?? []} />
-              <AffirmationsCard />
-              {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
-              <SleepLogCard />
-            </CollapsibleSection>
-
-            <CollapsibleSection title="NormOS profile">
-              <SelfModelCard />
-            </CollapsibleSection>
-          </>
-        );
       case 'insights':
         return (
           <>
@@ -282,19 +245,26 @@ export default function App() {
       default:
         return (
           <>
-            {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
-            <WeeklyIntentionsCard />
-            <WeatherCard weather={d?.weather ?? null} />
-            {d && (d.calendar?.length ?? 0) > 0 && <CalendarCard events={d.calendar} />}
-            {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
-            <CheckinCard />
-            <HabitsCard />
-            <CrossContextCard insights={d?.crossContextInsights ?? []} />
-            <AnnotationsCard />
-            {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
-            {d && <UrgentEmailsCard emails={d.urgentEmails ?? []} />}
-            <ReviewCard review={d?.weeklyReview ?? null} compact actions={d?.leverageActions ?? []} />
-            <AffirmationsCard />
+            <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
+
+            <CollapsibleSection title="Today's Full Briefing">
+              {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
+              <WeeklyIntentionsCard />
+              <WeatherCard weather={d?.weather ?? null} />
+              {d && (d.calendar?.length ?? 0) > 0 && <CalendarCard events={d.calendar} />}
+              <CheckinCard />
+              <HabitsCard />
+              <AnnotationsCard />
+              {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
+              <ReviewCard review={d?.weeklyReview ?? null} compact actions={d?.leverageActions ?? []} />
+              <AffirmationsCard />
+              {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
+              <SleepLogCard />
+            </CollapsibleSection>
+
+            <CollapsibleSection title="NormOS profile">
+              <SelfModelCard />
+            </CollapsibleSection>
 
             {briefing.error && !d && (
               <View style={[styles.errorBox, { borderColor: c.border, backgroundColor: c.card }]}>
