@@ -1637,6 +1637,22 @@ app.get('/api/briefing', async (req, res) => {
   });
   const dayName = now.toLocaleDateString('en-US', { weekday: 'long' });
 
+  // Refresh the DERIVED intelligence from the CURRENT metrics before building the
+  // brief, so every surface reads the same live data. The brief pulls the stored
+  // self-model (7-day averages) and stored findings; without this refresh a
+  // "Rebuild briefing" just re-ran the LLM over last night's nightly self-model
+  // and the last analyze pass — so corrected metrics (e.g. fixed step totals)
+  // never reached the brief or Insights until the 9:30pm scheduler ran. analyze()
+  // is pure stats and consolidate() is DB queries + string building (no LLM), so
+  // this adds ~a few seconds to the already-60-90s build. Best-effort: a failure
+  // here must not block the briefing.
+  try {
+    await analyze();
+    await require('./src/intelligence/consolidate').consolidate({ kind: 'briefing' });
+  } catch (err) {
+    console.error('[briefing build] intelligence refresh failed:', err.message);
+  }
+
   // Workout is synchronous — no failure path
   const workout = getTodayWorkout();
 
