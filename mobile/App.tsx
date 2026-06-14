@@ -31,7 +31,7 @@ import { AffirmationsCard } from './src/components/AffirmationsCard';
 import { ReviewCard } from './src/components/ReviewCard';
 import { WealthCard } from './src/components/WealthCard';
 import { InsightsCard } from './src/components/InsightsCard';
-import { ChatCard } from './src/components/ChatCard';
+import { AskOverlay } from './src/components/AskOverlay';
 import { CheckinCard } from './src/components/CheckinCard';
 import { WeeklyIntentionsCard } from './src/components/WeeklyIntentionsCard';
 import { HabitsCard } from './src/components/HabitsCard';
@@ -216,7 +216,6 @@ export default function App() {
         return (
           <>
             <HighlightsCard />
-            <ChatCard />
             {(d?.quote || d?.quoteInsight) && <QuoteCard quote={d!.quote} insight={d!.quoteInsight} />}
             {(d?.notionText || d?.notionInsight) && (
               <NotionCard pageTitle={d?.notionPageTitle ?? ''} notionText={d!.notionText} quote={d?.notionQuote} insight={d!.notionInsight} />
@@ -325,6 +324,7 @@ export default function App() {
         <View style={styles.footer} />
       </ScrollView>
 
+      <AskOverlay />
       <TabBar active={tab} onChange={setTab} />
     </SafeAreaView>
   );
