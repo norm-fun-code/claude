@@ -293,7 +293,7 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
             { metric: 'sleep_hours', value: sleepHours as number, unit: 'hours' },
             { metric: 'deep_sleep_hours', value: deepSleepHours as number, unit: 'hours' },
             { metric: 'rem_sleep_hours', value: remSleepHours as number, unit: 'hours' },
-            { metric: 'sleep_score', value: sleepScore as number, unit: 'score' },
+            { metric: 'sleep_score', value: finalSleepScore as number, unit: 'score' },
             { metric: 'steps', value: steps as number, unit: 'count' },
             { metric: 'active_energy', value: activeCalories as number, unit: 'kcal' },
           ]);
