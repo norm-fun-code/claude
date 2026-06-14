@@ -115,16 +115,32 @@ export function ChatCard() {
           ) : (
             <>
               <Markdown style={md}>{m.content}</Markdown>
-              {!!m.sources?.length && (
-                <View style={[styles.sources, { borderTopColor: c.border }]}>
-                  <Text style={[styles.sourcesLabel, { color: c.subtext }]}>SOURCES</Text>
-                  {m.sources.map((s, j) => (
-                    <Text key={j} style={[styles.sourceItem, { color: c.subtext }]} numberOfLines={2}>
-                      ({j + 1}) {s.title || 'Untitled'}{s.author ? ` — ${s.author}` : ''}
-                    </Text>
-                  ))}
-                </View>
-              )}
+              {!!m.sources?.length && (() => {
+                // Group by (title, author) so the same book/article cited multiple
+                // times doesn't repeat — show the citation numbers it maps to.
+                const groups: { label: string; nums: number[] }[] = [];
+                const seen = new Map<string, number>();
+                m.sources.forEach((s, j) => {
+                  const label = (s.title || 'Untitled') + (s.author ? ` — ${s.author}` : '');
+                  const n = j + 1;
+                  if (seen.has(label)) {
+                    groups[seen.get(label)!].nums.push(n);
+                  } else {
+                    seen.set(label, groups.length);
+                    groups.push({ label, nums: [n] });
+                  }
+                });
+                return (
+                  <View style={[styles.sources, { borderTopColor: c.border }]}>
+                    <Text style={[styles.sourcesLabel, { color: c.subtext }]}>SOURCES</Text>
+                    {groups.map((g, j) => (
+                      <Text key={j} style={[styles.sourceItem, { color: c.subtext }]} numberOfLines={2}>
+                        ({g.nums.join(', ')}) {g.label}
+                      </Text>
+                    ))}
+                  </View>
+                );
+              })()}
             </>
           )}
         </View>

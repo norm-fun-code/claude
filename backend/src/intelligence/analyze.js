@@ -152,16 +152,20 @@ function computeAnomalies(seriesByKey, opts = {}) {
     let tone = 'unusual';
     if (good === 'up') tone = a.z > 0 ? 'a strong day' : 'worth attention';
     else if (good === 'down') tone = a.z < 0 ? 'a strong day' : 'worth attention';
-    const sigmas = round(Math.abs(a.z), 1);
+    const absZ = Math.abs(a.z);
+    const magnitude = absZ >= 4 ? 'far' : absZ >= 2.5 ? 'well' : 'noticeably';
+    const pctDiff = a.baselineMean !== 0
+      ? Math.round(Math.abs((a.latest - a.baselineMean) / a.baselineMean) * 100)
+      : null;
+    const pctNote = pctDiff != null ? ` (${pctDiff}% ${dir} your usual)` : '';
 
     findings.push({
       type: 'anomaly',
       domains: [domain],
-      title: `${label} ${dir} your usual (${sigmas}σ) — ${tone}`,
+      title: `${label} ${magnitude} ${dir} your usual${pctNote} — ${tone}`,
       detail:
-        `${label} is ${round(a.latest)} today vs your ~${o.anomalyBaselineDays}d baseline of ` +
-        `${round(a.baselineMean)} (±${round(a.baselineStd)}). That's ${sigmas} standard deviations ${dir} ` +
-        `your personal norm.`,
+        `${label} is ${round(a.latest)} today vs your ~${o.anomalyBaselineDays}d personal baseline of ` +
+        `${round(a.baselineMean)}. That's ${magnitude} outside your normal range.`,
       confidence: Math.min(1, Math.abs(a.z) / 3),
       evidence: {
         auto: true,
