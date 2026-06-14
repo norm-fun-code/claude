@@ -893,7 +893,12 @@ app.get('/api/highlights', async (req, res) => {
 // Run the intelligence layer (trends + correlations) on demand.
 app.post('/api/analyze', async (req, res) => {
   try {
-    res.json(await analyze());
+    const result = await analyze();
+    // Regenerate cross-context insights from the fresh findings so "Re-run analysis"
+    // immediately reflects updated correlations (not just the nightly scheduler run).
+    require('./src/intelligence/crossContext').generateCrossContext()
+      .catch((e) => console.error('[analyze] crossContext regen failed:', e.message));
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1648,6 +1653,9 @@ app.get('/api/briefing', async (req, res) => {
   // here must not block the briefing.
   try {
     await analyze();
+    // Cross-context insights depend on fresh correlation findings — regenerate
+    // immediately so the brief reflects current data, not last night's pass.
+    await require('./src/intelligence/crossContext').generateCrossContext();
     await require('./src/intelligence/consolidate').consolidate({ kind: 'briefing' });
   } catch (err) {
     console.error('[briefing build] intelligence refresh failed:', err.message);

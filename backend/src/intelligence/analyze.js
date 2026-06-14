@@ -41,6 +41,12 @@ const DEFAULTS = {
     'wealth:spending', 'wealth:spending_discretionary', 'wealth:income', 'wealth:net_cashflow',
     'learning:highlights_synced', 'learning:books_synced', 'learning:notion_pages', 'learning:notion_pages_synced',
   ],
+  // Structural wealth metrics are excluded from correlation search entirely.
+  // net_worth and net_cashflow trend upward over time due to compounding and
+  // income — so they correlate spuriously with almost any upward-trending
+  // health metric (steps, sleep quality, habits). These lifestyle confounds
+  // show up as "Steps ↔ Net worth" which is not actionable insight.
+  corrSkip: ['wealth:net_worth', 'wealth:net_cashflow'],
 };
 
 function pct(n) {
@@ -164,8 +170,12 @@ function computeCorrelations(seriesByKey, opts = {}) {
   const keys = Object.keys(seriesByKey);
   const candidates = [];
 
+  const corrSkip = new Set(o.corrSkip || []);
+
   for (let i = 0; i < keys.length; i++) {
+    if (corrSkip.has(keys[i])) continue;
     for (let j = i + 1; j < keys.length; j++) {
+      if (corrSkip.has(keys[j])) continue;
       const a = seriesByKey[keys[i]];
       const b = seriesByKey[keys[j]];
 
