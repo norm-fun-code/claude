@@ -19,20 +19,17 @@ const { extractJson } = require('../services/briefing-ai');
 // flagged crossDomain by analyze(). These are the raw material.
 const CROSS_TYPES = new Set(['habit_split', 'sleep_impact', 'activity_impact']);
 
-// Wealth balance-sheet metrics are structural (driven by income, compound growth,
-// market moves) not by short-term behavior levers, so correlations with them are
-// lifestyle confounds, not actionable cross-context insights. Filter them out so
-// "walk more → higher net worth" never surfaces as a cross-context insight.
-const WEALTH_STRUCTURAL = new Set(['wealth:net_worth', 'wealth:net_cashflow']);
-
-/** Pull the cross-domain relationships worth synthesizing from open findings. */
+/** Pull the cross-domain relationships worth synthesizing from open findings.
+ *  Excludes all wealth-domain correlations — they are lifestyle confounds
+ *  (people who sleep well / exercise tend to earn more, but the causal arrow
+ *  doesn't run from your habits to your bank account in any actionable way). */
 function selectCrossDomain(findings) {
   return findings.filter((f) => {
     if (CROSS_TYPES.has(f.type)) return true;
     if (f.type === 'correlation' && f.evidence?.crossDomain === true) {
-      // Drop correlations where either side is a structural wealth metric.
       const { a, b } = f.evidence || {};
-      if (WEALTH_STRUCTURAL.has(a) || WEALTH_STRUCTURAL.has(b)) return false;
+      // Drop any correlation that touches the wealth domain.
+      if (a?.startsWith('wealth:') || b?.startsWith('wealth:')) return false;
       return true;
     }
     return false;
@@ -53,9 +50,9 @@ INCLUDE (all worth surfacing when the numbers are personal and specific):
 
 EXCLUDE — filter these out:
 - More sleep → better sleep score (definitional, within-health tautology)
-- Steps / exercise → net worth or financial metrics (lifestyle confound, not actionable)
+- ANY connection involving money, spending, net worth, income, or financial metrics — all wealth correlations are lifestyle confounds with no actionable causal arrow
 - Generic statements without personal numbers ("you feel better when you sleep more" without data)
-- Anything that doesn't cross at least two domains (health, wellbeing, habits, productivity, wealth)
+- Anything that doesn't cross at least two of these domains: health, wellbeing, habits, productivity
 
 FORMAT rules:
 - Phrase as "tends to / is associated with", never as causal fact

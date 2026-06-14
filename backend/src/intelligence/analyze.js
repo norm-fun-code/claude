@@ -41,12 +41,14 @@ const DEFAULTS = {
     'wealth:spending', 'wealth:spending_discretionary', 'wealth:income', 'wealth:net_cashflow',
     'learning:highlights_synced', 'learning:books_synced', 'learning:notion_pages', 'learning:notion_pages_synced',
   ],
-  // Structural wealth metrics are excluded from correlation search entirely.
-  // net_worth and net_cashflow trend upward over time due to compounding and
-  // income — so they correlate spuriously with almost any upward-trending
-  // health metric (steps, sleep quality, habits). These lifestyle confounds
-  // show up as "Steps ↔ Net worth" which is not actionable insight.
-  corrSkip: ['wealth:net_worth', 'wealth:net_cashflow'],
+  // All wealth metrics are excluded from correlation search. Wealth variables
+  // (spending, net worth, cashflow, income) correlate with health and habit
+  // metrics purely as lifestyle confounds — high-activity people tend to earn
+  // more, poor sleep may co-occur with late nights that drive spending, etc.
+  // None of these are actionable causal levers within a 14-day window.
+  // Wealth is tracked and trended separately; it has no place in the
+  // health/habit/wellbeing correlation engine.
+  corrSkipDomains: ['wealth'],
 };
 
 function pct(n) {
@@ -171,11 +173,13 @@ function computeCorrelations(seriesByKey, opts = {}) {
   const candidates = [];
 
   const corrSkip = new Set(o.corrSkip || []);
+  const corrSkipDomains = new Set(o.corrSkipDomains || []);
+  const skipKey = (k) => corrSkip.has(k) || corrSkipDomains.has(k.split(':')[0]);
 
   for (let i = 0; i < keys.length; i++) {
-    if (corrSkip.has(keys[i])) continue;
+    if (skipKey(keys[i])) continue;
     for (let j = i + 1; j < keys.length; j++) {
-      if (corrSkip.has(keys[j])) continue;
+      if (skipKey(keys[j])) continue;
       const a = seriesByKey[keys[i]];
       const b = seriesByKey[keys[j]];
 
