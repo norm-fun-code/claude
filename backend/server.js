@@ -1827,41 +1827,11 @@ app.get('/api/briefing', async (req, res) => {
     errors.push({ service: 'recovery_context', error: err.message });
   }
 
-  // Experiment verdicts — computed before the LLM call so the chief-of-staff
-  // brief can reference confirmed/refuted hypotheses by name.
-  let experimentsContext = '';
-  let completedExps = [];
-  let runningExps = [];
-  try {
-    const allExps = await experimentsStore.listExperiments();
-    completedExps = allExps
-      .filter((e) => e.status === 'completed' && e.verdict && e.verdict !== 'inconclusive')
-      .slice(0, 6);
-    runningExps = allExps.filter((e) => e.status === 'running').slice(0, 4);
-    const proposedExps = allExps.filter((e) => e.status === 'proposed').slice(0, 3);
-
-    const lines = [];
-    for (const e of completedExps) {
-      const icon = e.verdict === 'confirmed' ? '✓' : '✗';
-      const label = e.verdict === 'confirmed' ? 'Confirmed' : 'Refuted';
-      const pct = e.result?.pctChange != null
-        ? ` (${e.result.pctChange > 0 ? '+' : ''}${Math.round(e.result.pctChange * 100)}%)`
-        : '';
-      lines.push(`${icon} ${label}: ${e.hypothesis}${pct}`);
-    }
-    for (const e of runningExps) {
-      const daysLeft = e.end_date
-        ? Math.max(0, Math.ceil((new Date(e.end_date) - Date.now()) / 86400000))
-        : null;
-      lines.push(`⟳ Running: ${e.hypothesis}${daysLeft != null ? ` (${daysLeft}d left)` : ''}`);
-    }
-    for (const e of proposedExps) {
-      lines.push(`? Proposed: ${e.hypothesis}`);
-    }
-    if (lines.length) experimentsContext = lines.join('\n');
-  } catch (err) {
-    console.error('[experiments context] failed:', err.message);
-  }
+  // Experiments feature is paused — hidden from UI until the data quality is
+  // high enough to surface meaningful hypotheses. Backend logic is intact.
+  const experimentsContext = '';
+  const completedExps = [];
+  const runningExps = [];
 
   // Self-model: nightly-consolidated portrait of the user — injected into the
   // briefing prompt so the chief-of-staff voice knows who it's talking to.
@@ -2173,7 +2143,6 @@ app.get('/api/briefing', async (req, res) => {
     morningFocus: geminiResult?.morningFocus ?? '',
     // Structured Chief-of-Staff brief (Beta): synthesis + ACTION/RISK/MOVE.
     chiefBrief: geminiResult?.chiefBrief ?? null,
-    experimentCallout: geminiResult?.experimentCallout ?? '',
     weather,
     workout,
     calendar,
@@ -2187,29 +2156,6 @@ app.get('/api/briefing', async (req, res) => {
     notionText: notionGroup.notionText,
     notionPageTitle: notionGroup.notionPageTitle,
     leverageActions,
-    experiments: {
-      completed: completedExps.map((e) => ({
-        id: e.id,
-        hypothesis: e.hypothesis,
-        verdict: e.verdict,
-        pctChange: e.result?.pctChange ?? null,
-        effectSize: e.result?.effectSize ?? null,
-        baselineMean: e.result?.baselineMean ?? null,
-        testMean: e.result?.testMean ?? null,
-        n: e.result?.n ?? null,
-        endDate: e.end_date,
-      })),
-      running: runningExps.map((e) => ({
-        id: e.id,
-        hypothesis: e.hypothesis,
-        protocol: e.protocol,
-        startDate: e.start_date,
-        endDate: e.end_date,
-        daysLeft: e.end_date
-          ? Math.max(0, Math.ceil((new Date(e.end_date) - Date.now()) / 86400000))
-          : null,
-      })),
-    },
     insights,
     crossContextInsights,
     wealthInsights,

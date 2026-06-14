@@ -52,7 +52,6 @@ import { MorningFocusCard } from './src/components/MorningFocusCard';
 import { BriefCard } from './src/components/BriefCard';
 import { CollapsibleSection } from './src/components/CollapsibleSection';
 import { HealthBackfillCard } from './src/components/HealthBackfillCard';
-import { ExperimentsCard } from './src/components/ExperimentsCard';
 import { CrossContextCard } from './src/components/CrossContextCard';
 import { SelfModelCard } from './src/components/SelfModelCard';
 import { SleepLogCard } from './src/components/SleepLogCard';
@@ -238,7 +237,6 @@ export default function App() {
             </View>
 
             <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
-            {d?.experimentCallout ? <ExperimentsCard completed={[]} running={[]} callout={d.experimentCallout} /> : null}
 
             <CollapsibleSection title="Today's Full Briefing">
               {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
@@ -256,13 +254,8 @@ export default function App() {
               <SleepLogCard />
             </CollapsibleSection>
 
-            <CollapsibleSection title="NormOS profile & experiments">
+            <CollapsibleSection title="NormOS profile">
               <SelfModelCard />
-              <ExperimentsCard
-                completed={d?.experiments?.completed ?? []}
-                running={d?.experiments?.running ?? []}
-                callout={d?.experimentCallout}
-              />
             </CollapsibleSection>
           </>
         );
@@ -279,11 +272,6 @@ export default function App() {
             <WeeklyStateCard briefing={d ?? null} health={health} recovery={liveRecovery.recovery} />
             <GoalsCard weeklyGoals={d?.weeklyGoals} />
             <ReviewCard review={d?.weeklyReview ?? null} />
-            <ExperimentsCard
-              completed={d?.experiments?.completed ?? []}
-              running={d?.experiments?.running ?? []}
-              callout={d?.experimentCallout}
-            />
             <CheckinHistoryCard />
             <ForecastCard forecasts={d?.forecasts ?? []} />
             <InsightsCard insights={d?.insights ?? []} />
