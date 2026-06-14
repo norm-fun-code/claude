@@ -11,6 +11,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
+import { formatHM } from '../utils/format';
 import { SLEEP_LOG_URL, SLEEP_TODAY_URL, CONSOLIDATE_URL, authHeaders, fetchWithTimeout } from '../config';
 
 const CACHE_KEY = 'normos.sleep.today.v1';
@@ -138,7 +139,7 @@ export function SleepLogCard() {
             <Metric label="HRV" value={fmt(today.hrv, 'ms')} c={c} good={(today.hrv ?? 0) >= 40} dim={today.hrv == null} />
             <Metric label="RHR" value={fmt(today.resting_hr, 'bpm')} c={c} good={(today.resting_hr ?? 999) <= 60} dim={today.resting_hr == null} />
             <Metric label="SCORE" value={fmt(today.sleep_score, '')} c={c} good={(today.sleep_score ?? 0) >= 75} dim={today.sleep_score == null} />
-            <Metric label="HOURS" value={fmt(today.sleep_hours, 'h')} c={c} good={(today.sleep_hours ?? 0) >= 7} dim={today.sleep_hours == null} />
+            <Metric label="HOURS" value={today.sleep_hours != null ? formatHM(today.sleep_hours) : '—'} c={c} good={(today.sleep_hours ?? 0) >= 7} dim={today.sleep_hours == null} />
           </View>
           {saveStatus === 'ok' && (
             <Text style={[styles.savedNote, { color: c.subtext }]}>

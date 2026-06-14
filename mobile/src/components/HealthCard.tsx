@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
+import { formatHM } from '../utils/format';
 import type { HealthData } from '../hooks/useHealthData';
 
 interface Props {
@@ -65,17 +66,14 @@ export function HealthCard({ health }: Props) {
       />
       <StatRow
         label="Sleep"
-        value={health.sleepHours !== null ? `${health.sleepHours} hrs` : null}
+        value={health.sleepHours !== null ? formatHM(health.sleepHours) : null}
         unit={health.sleepQuality ?? undefined}
         c={c}
       />
       {(health.deepSleepHours !== null || health.remSleepHours !== null) && (
         <StatRow
           label="Deep · REM"
-          value={
-            `${health.deepSleepHours ?? '—'} · ${health.remSleepHours ?? '—'}`
-          }
-          unit="hrs"
+          value={`${formatHM(health.deepSleepHours)} · ${formatHM(health.remSleepHours)}`}
           c={c}
         />
       )}

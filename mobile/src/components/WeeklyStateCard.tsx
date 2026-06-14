@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
+import { formatHM } from '../utils/format';
 import type { HealthData } from '../hooks/useHealthData';
 import type { BriefingData, Recovery } from '../hooks/useBriefing';
 import { scoreToBand } from '../hooks/useRecovery';
@@ -51,7 +52,7 @@ export function WeeklyStateCard({ briefing, health, recovery }: Props) {
         </View>
         <View style={[styles.tile, { backgroundColor: c.accentSoft, borderColor: c.border }]}>
           <Text style={[styles.tileValue, { color: c.text }]}>
-            {health.sleepHours != null ? `${health.sleepHours.toFixed(1)}h` : '—'}
+            {formatHM(health.sleepHours)}
           </Text>
           <Text style={[styles.tileLabel, { color: c.subtext }]}>Sleep</Text>
         </View>
