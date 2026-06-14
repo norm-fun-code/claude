@@ -3,7 +3,7 @@ import AppleHealthKit, {
   HealthKitPermissions,
   HealthValue,
 } from 'react-native-health';
-import { HEALTH_INGEST_URL, authHeaders } from '../config';
+import { HEALTH_INGEST_URL, SLEEP_TODAY_URL, authHeaders } from '../config';
 
 // Persist on-device HealthKit readings to the NormOS spine. Canonical metric
 // names match backend/src/ingest/health.js. Fire-and-forget: never block the UI.
@@ -254,21 +254,28 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
       let remSleepHours: number | null = null;
       let steps: number | null = null;
       let activeCalories: number | null = null;
-      let pending = 5;
+      // Eight Sleep overnight values — override Apple Watch when available so
+      // the Health card shows the same source as the Recovery card.
+      let eightSleepHrv: number | null = null;
+      let eightSleepRhr: number | null = null;
+      let eightSleepScore: number | null = null;
+      let pending = 6;
 
       function checkDone() {
         pending -= 1;
         if (pending === 0) {
-          const sleepScore = getSleepScore(sleepHours, deepSleepHours, remSleepHours);
+          const finalHrv = eightSleepHrv ?? hrv;
+          const finalRhr = eightSleepRhr ?? restingHR;
+          const finalSleepScore = eightSleepScore ?? getSleepScore(sleepHours, deepSleepHours, remSleepHours);
           setData({
-            hrv,
-            hrvStatus: getHRVStatus(hrv),
-            restingHR,
+            hrv: finalHrv,
+            hrvStatus: getHRVStatus(finalHrv),
+            restingHR: finalRhr,
             sleepHours,
             sleepQuality: getSleepQuality(sleepHours),
             deepSleepHours,
             remSleepHours,
-            sleepScore,
+            sleepScore: finalSleepScore,
             steps,
             activeCalories,
             loading: false,
@@ -381,6 +388,18 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
           checkDone();
         }
       );
+
+      // Prefer Eight Sleep overnight HRV/RHR/sleep_score — keeps the Health card
+      // consistent with the Recovery card which is source-locked to Eight Sleep.
+      fetch(SLEEP_TODAY_URL, { headers: authHeaders() })
+        .then((r) => r.json())
+        .then((d: any) => {
+          if (d?.metrics?.hrv) eightSleepHrv = Math.round(d.metrics.hrv);
+          if (d?.metrics?.resting_hr) eightSleepRhr = Math.round(d.metrics.resting_hr);
+          if (d?.metrics?.sleep_score) eightSleepScore = Math.round(d.metrics.sleep_score);
+        })
+        .catch(() => {})
+        .finally(() => checkDone());
 
       // Finalize the last 30 days of COMPLETE daily step/energy totals so past
       // days aren't stuck at the partial count from whenever the app was last
