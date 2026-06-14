@@ -49,6 +49,9 @@ export function WeeklyIntentionsCard() {
   // Last week's goals (to mark hit/missed each Sunday) + the week they belong to.
   const [priorGoals, setPriorGoals] = useState<PriorGoal[]>([]);
   const [priorWeek, setPriorWeek] = useState<string | null>(null);
+  // Current week's goals with live achieved state — tappable any day of the week.
+  const [currentGoals, setCurrentGoals] = useState<PriorGoal[]>([]);
+  const [currentWeek, setCurrentWeek] = useState<string | null>(null);
 
   // Load this week's entry (if any) so we show saved state / pre-fill the editor.
   useEffect(() => {
@@ -72,8 +75,10 @@ export function WeeklyIntentionsCard() {
         }
         if (intention) {
           setContext(typeof intention.context === 'string' ? intention.context : '');
+          if (typeof intention.weekStart === 'string') setCurrentWeek(intention.weekStart);
           // Goals may come back as { text, achieved } objects or legacy strings.
-          const g = (Array.isArray(intention.goals) ? intention.goals : [])
+          const rawGoals = Array.isArray(intention.goals) ? intention.goals : [];
+          const g = rawGoals
             .map((x: unknown) => {
               if (x && typeof x === 'object') return String((x as { text?: unknown }).text ?? '');
               return String(x ?? '');
@@ -81,6 +86,16 @@ export function WeeklyIntentionsCard() {
             .filter(Boolean)
             .slice(0, MAX_GOALS);
           setGoals(g.length ? g : ['']);
+          // Also track achieved state for mid-week checkboxes.
+          setCurrentGoals(
+            rawGoals
+              .map((x: unknown) => {
+                const o = (x ?? {}) as { text?: unknown; achieved?: unknown };
+                return { text: String(o.text ?? x ?? ''), achieved: o.achieved === true };
+              })
+              .filter((g: PriorGoal) => g.text)
+              .slice(0, MAX_GOALS)
+          );
           setSaved(true);
         }
       } catch {
@@ -129,6 +144,22 @@ export function WeeklyIntentionsCard() {
       // Revert only this index via functional update — avoids wiping concurrent
       // toggles that may have succeeded while this request was in flight.
       setPriorGoals((prev) => prev.map((g, idx) => (idx === i ? { ...g, achieved: !g.achieved } : g)));
+    }
+  }
+
+  // Toggle achievement for a CURRENT week goal — available any day, not just Sunday.
+  async function toggleCurrent(i: number) {
+    const toggled = currentGoals.map((g, idx) => (idx === i ? { ...g, achieved: !g.achieved } : g));
+    setCurrentGoals(toggled);
+    try {
+      const res = await fetchWithTimeout(INTENTIONS_RESULTS_URL, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ weekStart: currentWeek, achieved: toggled.map((g) => g.achieved) }),
+      });
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+    } catch {
+      setCurrentGoals((prev) => prev.map((g, idx) => (idx === i ? { ...g, achieved: !g.achieved } : g)));
     }
   }
 
@@ -183,11 +214,16 @@ export function WeeklyIntentionsCard() {
       <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
         <SectionHeader emoji="🎯" title={hasPrior ? "Weekly review + reset" : "This week’s focus"} />
         {priorReview}
-        {cleanGoals.length > 0 ? (
+        {currentGoals.length > 0 ? (
           <View style={hasPrior ? styles.thisWeekBox : undefined}>
             {hasPrior && <Text style={[styles.label, { color: c.subtext, marginBottom: 6 }]}>This week</Text>}
-            {cleanGoals.map((g, i) => (
-              <Text key={i} style={[styles.summaryGoal, { color: c.text }]}>• {g}</Text>
+            {currentGoals.map((g, i) => (
+              <TouchableOpacity key={i} onPress={() => toggleCurrent(i)} style={styles.priorRow} activeOpacity={0.6}>
+                <View style={[styles.checkbox, { borderColor: g.achieved ? c.accent : c.border, backgroundColor: g.achieved ? c.accent : 'transparent' }]}>
+                  {g.achieved && <Text style={styles.checkmark}>✓</Text>}
+                </View>
+                <Text style={[styles.summaryGoal, { color: g.achieved ? c.subtext : c.text }, g.achieved && { textDecorationLine: 'line-through' }]}>{g.text}</Text>
+              </TouchableOpacity>
             ))}
           </View>
         ) : (
