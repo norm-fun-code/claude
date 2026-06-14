@@ -1,18 +1,19 @@
 // Highest Leverage Action engine.
 //
-// Answers the core NormOS question: "what's the highest-leverage thing I can do
-// right now?" It converts findings (trends + correlations) and off-track goals
-// into concrete candidate actions, each scored by impact × confidence × ease,
-// then ranked. Pure and deterministic so it's unit-testable; narrative polish
-// can be layered on by the LLM later.
+// Answers "what's the single most important thing I can do right now?" by
+// converting PERSONAL findings (habit_splits, sleep_impact, activity_impact,
+// confirmed correlations, off-track goals, worsening trends) into concrete,
+// specific, numbered actions — then ranking by impact × confidence × ease.
+//
+// Philosophy: show 3 sharp insights the user couldn't have guessed, grounded
+// in their own N-of-1 data. Generic advice ("sleep more") is filtered out.
 const cat = require('./catalog');
 const { formatDate } = require('../util/date');
 
-// Outcomes we want to move, and the levers we can directly pull. Wealth totals
-// (net_worth, net_cashflow) are excluded: they move on structural timescales
-// (income, compound growth) not within a 14-day experiment window, so any
-// health-lever→wealth-outcome correlation is a lifestyle confound, not an
-// actionable lever. They remain tracked/trended but never become experiments.
+// Outcomes worth acting on. Excludes structural wealth metrics (net_worth,
+// net_cashflow) — they move over years, not 14-day experiment windows.
+// Excludes deep_sleep_hours / rem_sleep_hours — they're components of
+// sleep_score, already represented. Excludes vo2_max — rarely measured.
 const OUTCOMES = new Set([
   'wellbeing:mood',
   'wellbeing:energy',
@@ -20,15 +21,11 @@ const OUTCOMES = new Set([
   'health:hrv',
   'health:resting_hr',
   'health:sleep_score',
-  'health:deep_sleep_hours',
-  'health:rem_sleep_hours',
-  'health:vo2_max',
 ]);
 
-// Lever→outcome pairs that are compositionally obvious (the lever is literally
-// a component of how the outcome is computed) and therefore not useful insights.
-// E.g. sleep_hours is one of three inputs to sleep_score — telling the user
-// "sleep more to improve sleep score" is not insight, it's a definition.
+// Lever→outcome pairs that are compositionally obvious (the lever is a direct
+// input to the outcome's formula). Telling the user "sleep more to improve
+// sleep score" is a definition, not insight.
 const TAUTOLOGICAL_PAIRS = new Set([
   'health:sleep_hours|health:sleep_score',
   'health:deep_sleep_hours|health:sleep_hours',
@@ -39,25 +36,48 @@ const TAUTOLOGICAL_PAIRS = new Set([
 
 // lever metric -> { ease 0..1, more: phrase to increase, less: phrase to decrease }
 const LEVERS = {
-  'health:sleep_hours': { ease: 0.5, more: 'protect more sleep', less: 'cut excess time in bed' },
-  'health:exercise_minutes': { ease: 0.5, more: 'train more', less: 'ease training load' },
-  'health:active_energy': { ease: 0.5, more: 'add more active movement', less: 'ease training load' },
-  'health:steps': { ease: 0.7, more: 'walk more', less: 'walk less' },
+  'health:sleep_hours':     { ease: 0.5, more: 'protect more sleep', less: 'cut excess time in bed' },
+  'health:exercise_minutes':{ ease: 0.5, more: 'train more', less: 'ease training load' },
+  'health:active_energy':   { ease: 0.5, more: 'add more active movement', less: 'ease training load' },
+  'health:steps':           { ease: 0.7, more: 'walk more', less: 'walk less' },
   'health:mindful_minutes': { ease: 0.7, more: 'add mindfulness', less: 'cut mindfulness' },
-  'productivity:meetings': { ease: 0.6, more: 'add meetings', less: 'cut meetings / protect focus blocks' },
-  // Habit levers — easy, high-agency things you directly control each day.
-  'habits:exercise': { ease: 0.6, more: 'keep the exercise habit', less: 'ease off exercise' },
-  'habits:morning_tm': { ease: 0.8, more: 'hold the morning meditation', less: 'drop the morning meditation' },
+  'productivity:meetings':  { ease: 0.6, more: 'add meetings', less: 'cut meetings / protect focus blocks' },
+  // Habits: high-agency binary choices you make each day.
+  'habits:exercise':     { ease: 0.6, more: 'keep the exercise habit', less: 'ease off exercise' },
+  'habits:morning_tm':   { ease: 0.8, more: 'hold the morning meditation', less: 'drop the morning meditation' },
   'habits:afternoon_tm': { ease: 0.8, more: 'hold the afternoon meditation', less: 'drop the afternoon meditation' },
-  'habits:cold_shower': { ease: 0.8, more: 'keep the cold showers', less: 'skip the cold showers' },
-  'habits:gratitude': { ease: 0.9, more: 'keep journaling gratitude', less: 'skip gratitude journaling' },
-  'habits:eat_healthy': { ease: 0.5, more: 'eat cleaner', less: 'loosen the diet' },
-  'habits:habit_score': { ease: 0.5, more: 'hit more of your daily habits', less: 'do fewer habits' },
-  // Wealth lever.
-  'wealth:spending': { ease: 0.5, more: 'spend more', less: 'trim discretionary spending' },
+  'habits:cold_shower':  { ease: 0.8, more: 'keep the cold showers', less: 'skip the cold showers' },
+  'habits:gratitude':    { ease: 0.9, more: 'keep journaling gratitude', less: 'skip gratitude journaling' },
+  'habits:eat_healthy':  { ease: 0.5, more: 'eat cleaner', less: 'loosen the diet' },
+  'habits:habit_score':  { ease: 0.5, more: 'hit more of your daily habits', less: 'do fewer habits' },
 };
 
-// Relative importance per domain when estimating impact.
+// Habit label → canonical key (for habit_split findings that store display names).
+const HABIT_KEY = {
+  'Cold shower':        'habits:cold_shower',
+  'Morning meditation': 'habits:morning_tm',
+  'Morning TM':         'habits:morning_tm',
+  'Afternoon meditation':'habits:afternoon_tm',
+  'Afternoon TM':       'habits:afternoon_tm',
+  'Gratitude practice': 'habits:gratitude',
+  'Gratitude journal':  'habits:gratitude',
+  'Exercise':           'habits:exercise',
+  'Both meditations':   'habits:morning_tm',
+};
+
+// Worsening trend on these specific metrics gets a coaching nudge even without
+// a confirmed correlation, because a health coach would immediately flag them.
+// For all other metrics the trend finding already appears in the Insights tab —
+// the leverage engine should add the LEVER, not just re-state the trend.
+const TREND_COACHING = {
+  'wellbeing:mood':     'Check your recent sleep quality, meeting load, and any life stressors. Mood is the first signal that something is off.',
+  'wellbeing:energy':   'Energy decline tracks closely with sleep debt and detraining. Prioritize sleep this week and get one Zone 2 session in.',
+  'wellbeing:focus':    'Protect two or more uninterrupted morning hours and cut reactive tasks until this reverses.',
+  'health:hrv':         'HRV decline is an early warning of accumulated stress or under-recovery. Add a rest day, audit sleep quality, and reduce training intensity.',
+  'health:resting_hr':  'Elevated resting HR is an early stress signal. Add a rest day and check whether sleep quality or training load is the culprit.',
+  'health:steps':       'Get back to your daily step target — even two 15-minute walks add up fast.',
+};
+
 const DOMAIN_WEIGHT = {
   wellbeing: 1.0,
   health: 0.9,
@@ -72,33 +92,37 @@ function splitKey(key) {
   return { domain: key.slice(0, i), metric: key.slice(i + 1) };
 }
 
-function clamp01(n) {
-  return Math.max(0, Math.min(1, n));
-}
+function clamp01(n) { return Math.max(0, Math.min(1, n)); }
 
 function round(n, d = 2) {
   const f = 10 ** d;
   return Math.round(n * f) / f;
 }
 
-// Action from a worsening trend: reverse the decline.
+// ── Source generators ──────────────────────────────────────────────────────
+
+// Worsening trend → coaching nudge. Only fires for metrics where we have a
+// specific, concrete action — not a vague "reverse the decline."
 function fromTrend(f) {
   const ev = f.evidence || {};
   if (ev.kind !== 'trend' || ev.pctChange == null) return null;
   const { domain, metric } = splitKey(ev.metric);
   const good = cat.goodWhen(domain, metric);
-  const worsening =
-    (good === 'up' && ev.pctChange < 0) || (good === 'down' && ev.pctChange > 0);
+  const worsening = (good === 'up' && ev.pctChange < 0) || (good === 'down' && ev.pctChange > 0);
   if (!worsening) return null;
 
+  const coaching = TREND_COACHING[ev.metric];
+  if (!coaching) return null; // no specific lever → don't generate a vague action
+
   const label = cat.label(domain, metric);
-  const impact = clamp01(Math.abs(ev.pctChange) / 0.4) * (DOMAIN_WEIGHT[domain] ?? 0.5);
+  const absPct = Math.abs(Math.round(ev.pctChange * 100));
+  const impact = clamp01(Math.abs(ev.pctChange) / 0.35) * (DOMAIN_WEIGHT[domain] ?? 0.5);
   const confidence = clamp01(f.confidence ?? 0.5);
-  const ease = LEVERS[ev.metric]?.ease ?? 0.5;
+  const ease = 0.5;
 
   return {
-    title: `Reverse the decline in ${label}`,
-    detail: `${label} is trending the wrong way (${Math.round(ev.pctChange * 100)}% over the window). Make it this week's focus.`,
+    title: `${label} down ${absPct}% — act this week`,
+    detail: `${label} dropped ${absPct}% recently (${round(ev.recentMean, 1)} vs ${round(ev.priorMean, 1)} prior). ${coaching}`,
     domains: [domain],
     impact,
     confidence,
@@ -107,28 +131,18 @@ function fromTrend(f) {
   };
 }
 
-// Action from a lever↔outcome correlation: pull the lever in the helpful direction.
+// Confirmed lever↔outcome correlation. Only fires on confirmed correlations —
+// unconfirmed ones become experiment proposals instead.
 function fromCorrelation(f) {
   const ev = f.evidence || {};
   if (ev.kind !== 'correlation' || ev.r == null) return null;
-  // Only act on correlations that survived the confirmation gate. Unconfirmed
-  // candidates become experiment proposals instead of actions.
   if (ev.confirmed === false) return null;
 
-  // Identify which side is the lever and which is the outcome.
   let lever, outcome;
-  if (LEVERS[ev.a] && OUTCOMES.has(ev.b)) {
-    lever = ev.a;
-    outcome = ev.b;
-  } else if (LEVERS[ev.b] && OUTCOMES.has(ev.a)) {
-    lever = ev.b;
-    outcome = ev.a;
-  } else {
-    return null;
-  }
+  if (LEVERS[ev.a] && OUTCOMES.has(ev.b)) { lever = ev.a; outcome = ev.b; }
+  else if (LEVERS[ev.b] && OUTCOMES.has(ev.a)) { lever = ev.b; outcome = ev.a; }
+  else return null;
 
-  // Skip tautological pairs — e.g. sleep_hours → sleep_score is a definition,
-  // not an insight. Key is canonical: smaller string first lexically.
   const pairKey = [lever, outcome].sort().join('|');
   if (TAUTOLOGICAL_PAIRS.has(pairKey)) return null;
 
@@ -136,23 +150,20 @@ function fromCorrelation(f) {
   const ov = splitKey(outcome);
   const leverLabel = cat.label(lv.domain, lv.metric);
   const outcomeLabel = cat.label(ov.domain, ov.metric);
-  // We want to move the outcome in ITS good direction. If higher is better we
-  // push it up; if lower is better (e.g. resting HR) we push it down. Given the
-  // sign of the association, that dictates whether to pull the lever more/less —
-  // so the advice is never backwards for "lower is better" outcomes.
   const wantOutcomeUp = cat.goodWhen(ov.domain, ov.metric) !== 'down';
   const positive = ev.r >= 0;
   const direction = (positive === wantOutcomeUp) ? 'more' : 'less';
   const phrase = LEVERS[lever][direction];
+  const lag = ev.lag ? ` — effect appears ~${ev.lag}d later` : '';
+  const rStr = `r=${round(Math.abs(ev.r), 2)}`;
 
   const impact = clamp01(Math.abs(ev.r)) * (DOMAIN_WEIGHT[ov.domain] ?? 0.5);
   const confidence = clamp01(Math.abs(ev.r));
   const ease = LEVERS[lever].ease;
-  const lag = ev.lag ? ` (effect seen ~${ev.lag}d later)` : '';
 
   return {
-    title: `To improve ${outcomeLabel}, ${phrase}`,
-    detail: `${leverLabel} and ${outcomeLabel} are ${ev.r >= 0 ? 'positively' : 'inversely'} associated (r=${ev.r})${lag}. Pull this lever and watch ${outcomeLabel}. Association, not proof — worth an experiment.`,
+    title: `${leverLabel} → ${outcomeLabel}: ${phrase}`,
+    detail: `Confirmed in your data (${rStr}${lag}): ${leverLabel} and ${outcomeLabel} move together. ${phrase.charAt(0).toUpperCase() + phrase.slice(1)} to move the needle. This survived the holdout test — not just a coincidence.`,
     domains: [...new Set([lv.domain, ov.domain])],
     impact,
     confidence,
@@ -161,7 +172,127 @@ function fromCorrelation(f) {
   };
 }
 
-// Action from an off-track goal.
+// Habit_split finding — THE most personal and concrete insight type.
+// "On your 23 cold shower days, HRV averaged 58ms vs 44ms on other days (+32%)"
+// is N-of-1 data the user can act on immediately.
+function fromHabitSplit(f) {
+  const ev = f.evidence || {};
+  if (ev.kind !== 'habit_split') return null;
+  const pct = ev.pct;
+  if (pct == null || Math.abs(pct) < 0.07) return null; // require 7%+ difference
+
+  const outcome = ev.outcome;
+  if (!outcome) return null;
+  const { domain, metric } = splitKey(outcome);
+  const good = cat.goodWhen(domain, metric);
+  const improved = (good === 'up' && pct > 0) || (good === 'down' && pct < 0);
+  if (!improved) return null; // only surface when the habit clearly helps
+
+  const habit = ev.habit;
+  const outcomeLabel = cat.label(domain, metric);
+  const onFmt = ev.onMean != null ? round(ev.onMean, 1) : '?';
+  const offFmt = ev.offMean != null ? round(ev.offMean, 1) : '?';
+  const pctStr = `${Math.round(Math.abs(pct) * 100)}%`;
+  const unit = metric === 'hrv' ? 'ms' : metric === 'resting_hr' ? 'bpm' : metric === 'sleep_hours' ? 'h' : '';
+  const fmtVal = (v) => unit ? `${v}${unit}` : String(v);
+
+  const habitKey = HABIT_KEY[habit] || null;
+  const ease = habitKey ? (LEVERS[habitKey]?.ease ?? 0.7) : 0.7;
+  const impact = clamp01(Math.abs(pct) * 2.5) * (DOMAIN_WEIGHT[domain] ?? 0.7);
+  const confidence = Math.min(0.88, 0.4 + Math.abs(pct) * 2);
+
+  return {
+    title: `${habit}: your ${outcomeLabel} is ${pctStr} better on those days`,
+    detail: `Your own data (${ev.onN} days on vs ${ev.offN} off): ${habit} days → ${outcomeLabel} ${fmtVal(onFmt)} vs ${fmtVal(offFmt)} otherwise. That's a ${pctStr} personal effect. Streak it this week.`,
+    domains: [domain, 'habits'],
+    impact,
+    confidence,
+    ease,
+    basis: { kind: 'habit_split', habit, outcome },
+  };
+}
+
+// Sleep_impact finding — best vs worst sleep nights × next-day outcomes.
+// Shows the concrete stakes of a bad night ("your focus drops 40% after poor sleep").
+function fromSleepImpact(f) {
+  const ev = f.evidence || {};
+  if (ev.kind !== 'sleep_impact') return null;
+  const pct = ev.pct;
+  if (pct == null || Math.abs(pct) < 0.10) return null; // require 10%+ effect
+
+  const outcome = ev.outcome;
+  if (!outcome) return null;
+  const { domain, metric } = splitKey(outcome);
+  const good = cat.goodWhen(domain, metric);
+  const improved = (good === 'up' && pct > 0) || (good === 'down' && pct < 0);
+  if (!improved) return null;
+
+  const outcomeLabel = cat.label(domain, metric);
+  const pctStr = `${Math.round(Math.abs(pct) * 100)}%`;
+  const goodFmt = ev.goodMean != null ? round(ev.goodMean, 1) : '?';
+  const poorFmt = ev.poorMean != null ? round(ev.poorMean, 1) : '?';
+  const unit = metric === 'hrv' ? 'ms' : metric === 'resting_hr' ? 'bpm' : '';
+  const fmtVal = (v) => unit ? `${v}${unit}` : String(v);
+
+  const impact = clamp01(Math.abs(pct) * 1.8) * (DOMAIN_WEIGHT[domain] ?? 0.7);
+  const confidence = Math.min(0.85, 0.35 + Math.abs(pct) * 2);
+  const ease = 0.5;
+
+  return {
+    title: `Best sleep nights → ${pctStr} better ${outcomeLabel}`,
+    detail: `After your best-slept nights: ${outcomeLabel} ${fmtVal(goodFmt)} vs ${fmtVal(poorFmt)} after poor nights — ${pctStr} swing across ${ev.goodN}+${ev.poorN} days. Sleep quality is one of your strongest personal levers. Protect tomorrow's bedtime window.`,
+    domains: [domain, 'health'],
+    impact,
+    confidence,
+    ease,
+    basis: { kind: 'sleep_impact', outcome },
+  };
+}
+
+// Activity_impact finding — workout type → next-day recovery effect.
+// "Day after Zone 2 your HRV is 18% above your average" is scheduling intelligence.
+function fromActivityImpact(f) {
+  const ev = f.evidence || {};
+  if (ev.kind !== 'activity_impact') return null;
+  const pct = ev.pct;
+  if (pct == null || Math.abs(pct) < 0.08) return null; // require 8%+ effect
+
+  const outcome = ev.outcome;
+  if (!outcome) return null;
+  const { domain, metric } = splitKey(outcome);
+  const good = cat.goodWhen(domain, metric);
+  const improved = (good === 'up' && pct > 0) || (good === 'down' && pct < 0);
+
+  const outcomeLabel = cat.label(domain, metric);
+  const activity = ev.activity || 'that workout';
+  const pctStr = `${Math.round(Math.abs(pct) * 100)}%`;
+  const typeFmt = ev.typeMean != null ? round(ev.typeMean, 1) : '?';
+  const overallFmt = ev.overallMean != null ? round(ev.overallMean, 1) : '?';
+  const unit = metric === 'hrv' ? 'ms' : metric === 'resting_hr' ? 'bpm' : '';
+  const fmtVal = (v) => unit ? `${v}${unit}` : String(v);
+
+  const impact = clamp01(Math.abs(pct) * 1.5) * (DOMAIN_WEIGHT[domain] ?? 0.7);
+  const confidence = Math.min(0.80, 0.3 + Math.abs(pct) * 2);
+  const ease = 0.6;
+
+  const actionStr = improved
+    ? `Schedule ${activity} before high-stakes days — your recovery holds up.`
+    : `Plan a lighter day after ${activity} — your recovery data says you'll need it.`;
+
+  return {
+    title: improved
+      ? `${activity} day → next-day ${outcomeLabel} is ${pctStr} above average`
+      : `${activity} → next-day ${outcomeLabel} drops ${pctStr} — plan recovery`,
+    detail: `Across ${ev.n} post-${activity} days, ${outcomeLabel} averaged ${fmtVal(typeFmt)} vs ${fmtVal(overallFmt)} overall (${pctStr} ${improved ? 'above' : 'below'} your norm). ${actionStr}`,
+    domains: ['health'],
+    impact,
+    confidence,
+    ease,
+    basis: { kind: 'activity_impact', activity, outcome },
+  };
+}
+
+// Off-track goal.
 function fromGoal(goal, latestByKey = {}) {
   if (!goal.metric || goal.target_value == null) return null;
   const key = `${goal.domain}:${goal.metric}`;
@@ -171,16 +302,16 @@ function fromGoal(goal, latestByKey = {}) {
   const baseline = goal.baseline_value ?? current;
   const denom = goal.target_value - baseline;
   const progress = denom === 0 ? 1 : (current - baseline) / denom;
-  if (progress >= 1) return null; // already there
+  if (progress >= 1) return null;
 
   const gap = clamp01(1 - progress);
   const impact = gap * (DOMAIN_WEIGHT[goal.domain] ?? 0.6);
 
   return {
-    title: `Close the gap on: ${goal.title}`,
+    title: `Close the gap: ${goal.title}`,
     detail: (() => {
       const by = formatDate(goal.target_date);
-      return `${Math.round(progress * 100)}% to target (${cat.label(goal.domain, goal.metric)} ${round(current)} → ${round(goal.target_value)}${by ? `, by ${by}` : ''}).`;
+      return `${Math.round(progress * 100)}% to target (${cat.label(goal.domain, goal.metric)} ${round(current)} → ${round(goal.target_value)}${by ? `, by ${by}` : ''}). This is off-track.`;
     })(),
     domains: [goal.domain],
     impact,
@@ -190,15 +321,29 @@ function fromGoal(goal, latestByKey = {}) {
   };
 }
 
+// ── Router & ranker ────────────────────────────────────────────────────────
+
+const GENERATORS = {
+  trend:           fromTrend,
+  correlation:     fromCorrelation,
+  habit_split:     fromHabitSplit,
+  sleep_impact:    fromSleepImpact,
+  activity_impact: fromActivityImpact,
+};
+
 /**
- * Pure: rank actions from findings + goals.
- * @returns leverage finding objects (type 'leverage'), highest score first.
+ * Pure: rank actions from findings (all types) + goals.
+ * Returns up to `max` leverage finding objects, highest score first.
+ * Drops any action whose score is below MIN_SCORE — low-signal advice is worse
+ * than no advice.
  */
-function rankActions(findings = [], { goals = [], latestByKey = {}, max = 5 } = {}) {
+function rankActions(findings = [], { goals = [], latestByKey = {}, max = 3, minScore = 0.05 } = {}) {
   const candidates = [];
 
   for (const f of findings) {
-    const action = f.type === 'trend' ? fromTrend(f) : f.type === 'correlation' ? fromCorrelation(f) : null;
+    const gen = GENERATORS[f.type];
+    if (!gen) continue;
+    const action = gen(f);
     if (action) candidates.push(action);
   }
   for (const g of goals) {
@@ -206,7 +351,7 @@ function rankActions(findings = [], { goals = [], latestByKey = {}, max = 5 } = 
     if (action) candidates.push(action);
   }
 
-  // De-dupe by title, keep the strongest.
+  // Score and de-dupe by title (keep strongest per unique action).
   const byTitle = new Map();
   for (const c of candidates) {
     c.score = round(c.impact * c.confidence * c.ease, 4);
@@ -215,6 +360,7 @@ function rankActions(findings = [], { goals = [], latestByKey = {}, max = 5 } = 
   }
 
   return [...byTitle.values()]
+    .filter((c) => c.score >= minScore)
     .sort((a, b) => b.score - a.score)
     .slice(0, max)
     .map((c, i) => ({
@@ -222,7 +368,7 @@ function rankActions(findings = [], { goals = [], latestByKey = {}, max = 5 } = 
       domains: c.domains,
       title: c.title,
       detail: c.detail,
-      confidence: c.score, // ranking score doubles as the finding's confidence
+      confidence: c.score,
       evidence: {
         auto: true,
         kind: 'leverage',

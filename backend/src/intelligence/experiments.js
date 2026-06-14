@@ -60,35 +60,58 @@ function round(n, d = 2) {
   return Math.round(n * f) / f;
 }
 
-/** Pure: turn unconfirmed lever↔outcome correlations into experiment specs. */
+// Levers that make sense as experiment interventions: things the user has direct
+// daily agency over. Excludes abstract quantitative metrics (active_energy,
+// exercise_minutes, steps as raw numbers) — those are outcomes of habits, not
+// the thing you set out to change. Habit levers are what you commit to for 14 days.
+const EXPERIMENT_LEVERS = new Set([
+  'habits:cold_shower',
+  'habits:morning_tm',
+  'habits:afternoon_tm',
+  'habits:gratitude',
+  'habits:exercise',
+  'habits:eat_healthy',
+  'health:sleep_hours',
+  'health:mindful_minutes',
+  'productivity:meetings',
+]);
+
+/** Pure: turn unconfirmed lever↔outcome correlations into experiment specs.
+ *  Quality gates: minimum |r|, minimum n, and lever must be directly actionable. */
 function proposeFromFindings(findings = [], opts = {}) {
   const o = { ...DEFAULTS, ...opts };
+  const MIN_R = 0.45;  // require meaningful effect size before proposing an experiment
+  const MIN_N = 14;    // need at least 2 weeks of data points to be worth testing
+
   const proposals = [];
 
   for (const f of findings) {
     const ev = f.evidence || {};
     if (ev.kind !== 'correlation' || ev.confirmed !== false) continue;
+    // Only propose experiments for meaningful correlations with enough data.
+    if (ev.r == null || Math.abs(ev.r) < MIN_R) continue;
+    if (ev.n == null || ev.n < MIN_N) continue;
 
     let lever, outcome;
-    if (LEVERS[ev.a] && OUTCOMES.has(ev.b)) [lever, outcome] = [ev.a, ev.b];
-    else if (LEVERS[ev.b] && OUTCOMES.has(ev.a)) [lever, outcome] = [ev.b, ev.a];
+    if (EXPERIMENT_LEVERS.has(ev.a) && OUTCOMES.has(ev.b)) [lever, outcome] = [ev.a, ev.b];
+    else if (EXPERIMENT_LEVERS.has(ev.b) && OUTCOMES.has(ev.a)) [lever, outcome] = [ev.b, ev.a];
     else continue;
 
     const lv = splitKey(lever);
     const ov = splitKey(outcome);
     const leverLabel = cat.label(lv.domain, lv.metric);
     const outcomeLabel = cat.label(ov.domain, ov.metric);
-    // Respect the metric's direction: RHR is "good when down", so expected='down'.
     const wantOutcomeUp = cat.goodWhen(ov.domain, ov.metric) !== 'down';
     const moreIsBetter = (ev.r >= 0) === wantOutcomeUp;
-    const phrase = LEVERS[lever][moreIsBetter ? 'more' : 'less'];
+    const phrase = LEVERS[lever]?.[moreIsBetter ? 'more' : 'less'] ?? (moreIsBetter ? `more ${leverLabel.toLowerCase()}` : `less ${leverLabel.toLowerCase()}`);
+    const lagNote = ev.lag ? ` (effect expected ~${ev.lag} day${ev.lag !== 1 ? 's' : ''} after)` : '';
 
     proposals.push({
       hypothesis: `${moreIsBetter ? 'Increasing' : 'Reducing'} ${leverLabel} improves ${outcomeLabel}`,
       metric: outcome,
       lever,
       expected: wantOutcomeUp ? 'up' : 'down',
-      protocol: `For ${o.testDays} days, ${phrase}. Then NormOS compares ${outcomeLabel} to your prior ${o.baselineDays}-day baseline.`,
+      protocol: `For ${o.testDays} days, ${phrase}. NormOS will compare ${outcomeLabel} to your prior ${o.baselineDays}-day baseline${lagNote}.`,
       baselineDays: o.baselineDays,
       status: 'proposed',
       sourceFinding: f.id ?? null,

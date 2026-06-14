@@ -744,7 +744,15 @@ async function analyze(opts = {}) {
   } catch {
     // goals table optional / empty
   }
-  const actions = rankActions([...trends, ...correlations], { goals, latestByKey });
+  // Feed ALL finding types into the leverage engine, not just trends + correlations.
+  // habit_splits ("cold shower days: HRV 26% higher"), sleep_impact ("best nights →
+  // focus 35% higher"), and activity_impact ("Zone 2 → next-day HRV 18% above avg")
+  // are the richest, most personal insights — they were computed above but never
+  // reached the leverage engine. Now they're the PRIMARY source of leverage actions.
+  const actions = rankActions(
+    [...trends, ...correlations, ...habitHealthSplits, ...sleepImpact, ...activityImpact],
+    { goals, latestByKey },
+  );
 
   // Goal achievement-probability forecasts from the same loaded series.
   const forecasts = computeForecasts(goals, seriesByKey);
