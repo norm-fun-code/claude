@@ -53,6 +53,9 @@ function rollupKind(metric) {
   return 'avg';
 }
 
+const NIGHT_SOURCES = ['eight_sleep', 'eight_sleep_baseline'];
+const SOURCE_LOCK = { hrv: NIGHT_SOURCES, resting_hr: NIGHT_SOURCES };
+
 /** Pull the week's numbers (this week vs prior week) + current findings. */
 async function gatherWeek(asOf = new Date()) {
   const periodEnd = new Date(asOf);
@@ -62,8 +65,12 @@ async function gatherWeek(asOf = new Date()) {
   const metrics = [];
   for (const [domain, metric] of KEY_METRICS) {
     const agg = cat.aggFor(metric);
-    const cur = await metricsStore.dailyAggregate({ domain, metric, from: periodStart, to: periodEnd, agg, excludeSource: 'seed' });
-    const prev = await metricsStore.dailyAggregate({ domain, metric, from: priorStart, to: periodStart, agg, excludeSource: 'seed' });
+    const sources = SOURCE_LOCK[metric] ?? null;
+    const aggFn = (opts) => sources
+      ? metricsStore.dailyAggregatePreferSource({ ...opts, agg, sources })
+      : metricsStore.dailyAggregate({ ...opts, agg, excludeSource: 'seed' });
+    const cur = await aggFn({ domain, metric, from: periodStart, to: periodEnd });
+    const prev = await aggFn({ domain, metric, from: priorStart, to: periodStart });
     const a = weekly(cur, metric);
     const b = weekly(prev, metric);
     if (a == null) continue;
