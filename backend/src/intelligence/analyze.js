@@ -49,6 +49,21 @@ const DEFAULTS = {
   // Wealth is tracked and trended separately; it has no place in the
   // health/habit/wellbeing correlation engine.
   corrSkipDomains: ['wealth'],
+  // Pairs to never surface as correlation findings — either definitionally linked
+  // (component→total), computed from each other, or structurally always correlated
+  // by physiology (not a discovery). Normalized as sorted(a,b).join('|').
+  corrSkipPairs: new Set([
+    // Sleep stages are components of total sleep — trivially correlated
+    'health:deep_sleep_hours|health:sleep_hours',
+    'health:rem_sleep_hours|health:sleep_hours',
+    // Sleep score is derived partly from sleep duration — not an independent finding
+    'health:deep_sleep_hours|health:sleep_score',
+    'health:rem_sleep_hours|health:sleep_score',
+    'health:sleep_hours|health:sleep_score',
+    // HRV and RHR are both autonomic markers and always anti-correlated by design —
+    // surfacing this as a "pattern" implies it's a personal discovery, but it isn't.
+    'health:hrv|health:resting_hr',
+  ]),
 };
 
 function pct(n) {
@@ -174,12 +189,15 @@ function computeCorrelations(seriesByKey, opts = {}) {
 
   const corrSkip = new Set(o.corrSkip || []);
   const corrSkipDomains = new Set(o.corrSkipDomains || []);
+  const corrSkipPairs = o.corrSkipPairs || new Set();
   const skipKey = (k) => corrSkip.has(k) || corrSkipDomains.has(k.split(':')[0]);
+  const skipPair = (ka, kb) => corrSkipPairs.has([ka, kb].sort().join('|'));
 
   for (let i = 0; i < keys.length; i++) {
     if (skipKey(keys[i])) continue;
     for (let j = i + 1; j < keys.length; j++) {
       if (skipKey(keys[j])) continue;
+      if (skipPair(keys[i], keys[j])) continue;
       const a = seriesByKey[keys[i]];
       const b = seriesByKey[keys[j]];
 
