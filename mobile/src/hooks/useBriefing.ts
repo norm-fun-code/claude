@@ -189,6 +189,21 @@ export interface ChiefBrief {
   move: string;
 }
 
+export interface TodayForecast {
+  capacity: {
+    grade: 'A' | 'B' | 'C';
+    band: 'green' | 'yellow' | 'red';
+    headline: string;
+    detail: string;
+    prescription: string;
+  } | null;
+  sleepDebt: {
+    debtHours: number;
+    nights: number;
+    detail: string;
+  } | null;
+}
+
 export interface BriefingData {
   date: string;
   builtAt?: string;
@@ -217,6 +232,7 @@ export interface BriefingData {
   healthInsights?: Insight[];
   recovery?: Recovery | null;
   healthComposites?: HealthComposite[];
+  todayForecast?: TodayForecast | null;
   forecasts: Forecast[];
   weeklyGoals?: WeeklyGoals | null;
   relevantHighlight: RelevantHighlight | null;

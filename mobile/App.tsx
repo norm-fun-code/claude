@@ -49,6 +49,7 @@ import { AlertCard } from './src/components/AlertCard';
 import { HighlightsCard } from './src/components/HighlightsCard';
 import { MorningFocusCard } from './src/components/MorningFocusCard';
 import { BriefCard } from './src/components/BriefCard';
+import { TodayForecastCard } from './src/components/TodayForecastCard';
 import { CollapsibleSection } from './src/components/CollapsibleSection';
 import { HealthBackfillCard } from './src/components/HealthBackfillCard';
 import { CrossContextCard } from './src/components/CrossContextCard';
@@ -246,6 +247,7 @@ export default function App() {
         return (
           <>
             <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
+            <TodayForecastCard forecast={d?.todayForecast} />
 
             <CollapsibleSection title="Today's Full Briefing">
               {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}

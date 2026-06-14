@@ -2154,6 +2154,15 @@ app.get('/api/briefing', async (req, res) => {
   const freshNotion = { notionQuote: geminiResult?.notionQuote ?? '', notionInsight: geminiResult?.notionInsight ?? '', notionText: notionData.text, notionPageTitle: notionData.pageTitle };
   const notionGroup = lockedNotion || freshNotion;
 
+  // Daily forecast: today's grade (A/B/C day) + sleep-debt trajectory. Forward-
+  // looking companion to the recovery card; reuses the already-computed recovery.
+  let todayForecast = null;
+  try {
+    todayForecast = await require('./src/intelligence/predict').computeTodayForecast({ recovery });
+  } catch (err) {
+    console.error('[todayForecast] failed:', err.message);
+  }
+
   const response = {
     date: dateLabel,
     builtAt: new Date().toISOString(),
@@ -2179,6 +2188,7 @@ app.get('/api/briefing', async (req, res) => {
     healthInsights,
     recovery,
     healthComposites,
+    todayForecast,
     forecasts,
     weeklyGoals,
     relevantHighlight: keep(p?.relevantHighlight, relevantHighlight),
