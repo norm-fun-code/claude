@@ -5,6 +5,17 @@
 // (analyze.js) feeds it the same per-metric series it already loads.
 const stats = require('./stats');
 
+/** Format decimal hours as "Xh Ym" — mirrors mobile's formatHM utility. */
+function fmtHM(hours) {
+  if (hours == null || !Number.isFinite(hours)) return '—';
+  const totalMin = Math.round(hours * 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -271,18 +282,38 @@ function computeHealthComposites(seriesByKey, opts = {}) {
     });
   }
 
-  // Sleep debt
+  // Sleep debt — prefer Eight Sleep's personalized debt/need (stored during nightly ingest)
+  // over the generic 8h-need computation. Eight Sleep's need is calibrated to the user's
+  // actual sleep patterns (~7h 52m for this user vs a generic 8h).
   const sleep = seriesByKey['health:sleep_hours'];
-  const debt = sleepDebt(sleep, opts);
-  if (debt && debt.debtHours >= 1) {
+  const eightSleepDebt = latest(seriesByKey['health:sleep_debt']);
+  const eightSleepNeed = latest(seriesByKey['health:sleep_need']);
+
+  if (eightSleepDebt != null && eightSleepDebt >= 0.5) {
+    const needFmt = fmtHM(eightSleepNeed ?? 8);
+    const avgHours = sleep ? latest(sleep) : null;
+    const debtRounded = Math.round(eightSleepDebt * 10) / 10;
+    const avgNote = avgHours != null ? `Averaging ${fmtHM(avgHours)} vs your ${needFmt} need` : `Your personalized sleep need is ${needFmt}`;
     findings.push({
       type: 'sleep_debt',
       domains: ['health'],
-      title: `Sleep debt: ${debt.debtHours}h over ${debt.nights} nights`,
-      detail: `You're averaging ${debt.avgHours}h vs an ${debt.need}h need — about ${debt.debtHours}h of accumulated debt this week. A couple of earlier nights would clear it.`,
-      confidence: 0.8,
-      evidence: { auto: true, kind: 'sleep_debt', debtHours: debt.debtHours, avgHours: debt.avgHours, nights: debt.nights },
+      title: `Sleep debt: ${debtRounded}h`,
+      detail: `${avgNote} — ${debtRounded}h of debt. An earlier night would start clearing it.`,
+      confidence: 0.85,
+      evidence: { auto: true, kind: 'sleep_debt', debtHours: debtRounded, need: eightSleepNeed ?? 8, source: 'eight_sleep' },
     });
+  } else {
+    const debt = sleepDebt(sleep, opts);
+    if (debt && debt.debtHours >= 1) {
+      findings.push({
+        type: 'sleep_debt',
+        domains: ['health'],
+        title: `Sleep debt: ${debt.debtHours}h over ${debt.nights} nights`,
+        detail: `Averaging ${fmtHM(debt.avgHours)} vs an ${debt.need}h need — about ${debt.debtHours}h accumulated this week. A couple of earlier nights would clear it.`,
+        confidence: 0.8,
+        evidence: { auto: true, kind: 'sleep_debt', debtHours: debt.debtHours, avgHours: debt.avgHours, nights: debt.nights },
+      });
+    }
   }
 
   // Sleep consistency
@@ -333,8 +364,10 @@ async function liveRecovery() {
   const SOURCE_LOCK = {
     'health:hrv': NIGHT_SOURCES,
     'health:resting_hr': NIGHT_SOURCES,
+    'health:sleep_debt': ['eight_sleep'],
+    'health:sleep_need': ['eight_sleep'],
   };
-  for (const key of ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score']) {
+  for (const key of ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score', 'health:sleep_debt', 'health:sleep_need']) {
     const [dm, mt] = key.split(':');
     const rows = await metricsStore.dailyAggregatePreferSource({
       domain: dm, metric: mt, from: from60, agg: 'avg', sources: SOURCE_LOCK[key] ?? null,

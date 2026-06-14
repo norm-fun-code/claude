@@ -126,9 +126,11 @@ function proposeFromFindings(findings = [], opts = {}) {
 async function proposeExperiments() {
   const findingsStore = require('../store/findings');
   const experimentsStore = require('../store/experiments');
-  // Cancel any previously-created experiments whose outcome is in the wealth
-  // domain — wealth correlations are lifestyle confounds, not actionable levers.
-  await experimentsStore.cancelExperimentsByMetricDomain('wealth').catch(() => {});
+  // Cancel ALL stale experiments before re-proposing. Quality gates in
+  // proposeFromFindings (EXPERIMENT_LEVERS, MIN_R, MIN_N) ensure only meaningful
+  // hypotheses come back. This prevents stale entries like "Steps improves Net worth"
+  // from lingering indefinitely.
+  await experimentsStore.cancelAllActiveExperiments().catch(() => {});
   const open = await findingsStore.listFindings({ status: 'open' });
   const proposals = proposeFromFindings(open);
   let created = 0;

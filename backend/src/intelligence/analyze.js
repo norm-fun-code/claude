@@ -151,6 +151,12 @@ function computeAnomalies(seriesByKey, opts = {}) {
     if (!a || Math.abs(a.z) < o.anomalyMinZ) continue;
 
     const { domain, metric } = splitKey(key);
+
+    // Wellbeing metrics (mood/energy/focus) are manually logged on a 1–5 scale.
+    // A value of 0 means the user didn't check in today — not a genuine reading.
+    // Firing "Focus well below usual" for an unlogged day is misleading.
+    if (domain === 'wellbeing' && a.latest <= 0) continue;
+
     const label = cat.label(domain, metric);
     const good = cat.goodWhen(domain, metric);
     const dir = a.z > 0 ? 'above' : 'below';
@@ -743,6 +749,20 @@ async function analyze(opts = {}) {
       if (lastDayLocal === todayLocal) rows = rows.slice(0, -1);
     }
     if (rows.length) seriesByKey[key] = rows;
+  }
+
+  // Load Eight Sleep's personalized sleep debt/need — used by computeHealthComposites
+  // but NOT included in trends/anomalies/correlations (derived, not raw inputs).
+  for (const esKey of ['health:sleep_debt', 'health:sleep_need']) {
+    if (!seriesByKey[esKey]) {
+      const [dm, mt] = esKey.split(':');
+      try {
+        const rows = await metricsStore.dailyAggregatePreferSource({
+          domain: dm, metric: mt, from, agg: 'avg', sources: ['eight_sleep'],
+        });
+        if (rows.length) seriesByKey[esKey] = rows;
+      } catch { /* non-critical — composites fall back to generic computation */ }
+    }
   }
 
   const trends = computeTrends(seriesByKey, o);

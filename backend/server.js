@@ -2003,10 +2003,13 @@ app.get('/api/briefing', async (req, res) => {
     const insightPool = open.filter(
       (f) => f.type !== 'leverage' && f.type !== 'forecast' && f.type !== 'cross_context' && !COMPOSITE_TYPES.includes(f.type)
     );
-    const seenInsights = await surfacedStore.recentRefs('insight', 30);
-    const chosen = surfacedStore.pickFresh(insightPool, seenInsights, { max: 6, keyFn: (f) => f.title });
-    insights = chosen.map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains }));
-    if (insights.length) await surfacedStore.record('insight', insights.map((i) => i.title));
+    // Show the 5 most confident findings — no 30-day rotation. The Insights tab is
+    // a data dashboard opened on demand; the pickFresh rotation was hiding the card
+    // entirely after the first briefing because all insights appeared "recently seen".
+    insights = insightPool
+      .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
+      .slice(0, 5)
+      .map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains }));
 
     // Wealth/spending insights for the Wealth tab — spending patterns (this
     // month vs your usual) and over-budget categories (vs Monarch budgets).
@@ -2035,7 +2038,7 @@ app.get('/api/briefing', async (req, res) => {
       .sort((a, b) => (PRIORITY.indexOf(a.type) - PRIORITY.indexOf(b.type)) || ((b.confidence ?? 0) - (a.confidence ?? 0)));
     const others = healthPool.filter((f) => !PRIORITY.includes(f.type));
     healthInsights = [...prioritized, ...others]
-      .slice(0, 6)
+      .slice(0, 5)
       .map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains }));
   } catch (err) {
     console.error('[insights] failed:', err.message);
