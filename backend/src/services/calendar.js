@@ -42,7 +42,12 @@ async function fetchCalendarEvents() {
   const events = res.data.items || [];
   const timeZone = res.data.summary ? undefined : (res.data.timeZone || 'America/New_York');
 
-  return events.map((event) => {
+  // Birthdays are low-signal for daily planning — the AI doesn't know the person
+  // or the relationship, so it can only guess generic context. Filter them out.
+  const BIRTHDAY_RE = /\bbirthday\b|\b's bday\b/i;
+  const filtered = events.filter((e) => !BIRTHDAY_RE.test(e.summary || ''));
+
+  return filtered.map((event) => {
     const allDay = Boolean(event.start?.date && !event.start?.dateTime);
     const startTime = allDay ? null : formatTime(event.start?.dateTime, timeZone);
     const endTime = allDay ? null : formatTime(event.end?.dateTime, timeZone);
