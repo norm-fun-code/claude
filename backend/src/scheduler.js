@@ -13,6 +13,29 @@ const { autoStartExperiment, proposeExperiments } = require('./intelligence/expe
 const { runNudges, runCheckinReminder, runCheckinEveningReminder, runHabitsReminder } = require('./notify/run');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./notify/morning');
 const nudgesStore = require('./store/nudges');
+const { runIngest: _runIngest } = require('./ingest/run');
+const { query } = require('./db');
+
+/** Is the Eight Sleep auto-sync configured (creds present)? */
+function eightSleepConfigured() {
+  return Boolean(process.env.EIGHT_SLEEP_EMAIL && process.env.EIGHT_SLEEP_PASSWORD);
+}
+
+/** Has last night's Eight Sleep session posted to the spine for today? Drives the
+ *  data-arrival trigger so the brief fires when your night syncs, not at a fixed
+ *  clock time (you might wake at 7am one day and sleep in to 9:40 the next). */
+async function eightSleepReadyToday() {
+  const tz = process.env.TZ || 'America/New_York';
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  const { rows } = await query(
+    `SELECT 1 FROM metrics
+      WHERE domain = 'health' AND metric = 'sleep_score' AND source = 'eight_sleep'
+        AND date_trunc('day', ts AT TIME ZONE $1) = $2::date
+      LIMIT 1`,
+    [tz, today]
+  );
+  return rows.length > 0;
+}
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -88,8 +111,8 @@ function scheduleWeekly(weekday, hour, minute, fn) {
   setTimeout(tick, msUntil(hour, minute, weekday));
 }
 
-async function morningRoutine() {
-  console.log('[scheduler] morning routine starting');
+async function morningRoutine({ reason = 'scheduled' } = {}) {
+  console.log(`[scheduler] morning routine starting (trigger: ${reason})`);
   // Refresh the data + intelligence first, so the briefing reflects today.
   try { await runIngest(); } catch (e) { console.error('[scheduler] ingest:', e.message); }
   try { await analyze(); } catch (e) { console.error('[scheduler] analyze:', e.message); }
@@ -116,6 +139,55 @@ async function morningRoutine() {
   console.log('[scheduler] morning routine done');
 }
 
+/**
+ * Eight Sleep morning watcher — the data-arrival trigger. Instead of firing the
+ * morning brief at a fixed clock time, poll Eight Sleep through the morning and
+ * run the routine the moment last night's session posts. Self-adjusts to when
+ * you actually wake. A backstop time guarantees a brief still lands on days the
+ * data never shows (didn't sleep on the Pod, API down).
+ */
+function startMorningWatcher() {
+  const pollMin = Number(process.env.EIGHT_SLEEP_POLL_MIN) || 15;        // poll cadence
+  const pollStartHour = Number(process.env.EIGHT_SLEEP_POLL_START_HOUR) || 5; // start at 5am
+  const backstopHour = Number(process.env.EIGHT_SLEEP_BACKSTOP_HOUR) || 10;   // fire by 10am regardless
+  const backstopMinute = Number(process.env.EIGHT_SLEEP_BACKSTOP_MINUTE) || 0;
+
+  const tick = async () => {
+    try {
+      if (await morningRanToday()) return; // already fired today
+      const now = new Date();
+      const mins = now.getHours() * 60 + now.getMinutes();
+      if (mins < pollStartHour * 60) return; // too early to poll
+      const pastBackstop = mins >= backstopHour * 60 + backstopMinute;
+
+      // Pull just Eight Sleep and check whether last night's session has posted.
+      let ready = false;
+      try {
+        await _runIngest({ only: 'eight_sleep_api' });
+        ready = await eightSleepReadyToday();
+      } catch (e) {
+        console.error('[scheduler] eight-sleep poll failed:', e.message);
+      }
+
+      if (ready) {
+        await morningRoutine({ reason: 'eight-sleep data arrived' });
+      } else if (pastBackstop) {
+        await morningRoutine({ reason: 'backstop (no eight-sleep data yet)' });
+      }
+    } catch (e) {
+      console.error('[scheduler] watcher tick error:', e.message);
+    }
+  };
+
+  setInterval(tick, pollMin * 60 * 1000);
+  setTimeout(tick, 30 * 1000); // first check shortly after boot (catch-up)
+  console.log(
+    `[scheduler] Eight Sleep watcher enabled — poll every ${pollMin}m from ` +
+    `${String(pollStartHour).padStart(2, '0')}:00, backstop ` +
+    `${String(backstopHour).padStart(2, '0')}:${String(backstopMinute).padStart(2, '0')}`
+  );
+}
+
 function start() {
   if (process.env.ENABLE_SCHEDULER !== 'true') {
     console.log('[scheduler] disabled — set ENABLE_SCHEDULER=true to enable the morning routine');
@@ -123,20 +195,29 @@ function start() {
   }
   const hour = Number(process.env.SCHEDULE_HOUR) || 8;       // default 8am
   const minute = Number(process.env.SCHEDULE_MINUTE) || 30;  // default :30
-  scheduleDaily(hour, minute, morningRoutine);
-  // Catch-up: the in-process timer only fires while the process is alive, so a
-  // deploy/restart AFTER 8:30am pushes the next run to tomorrow — the morning
-  // briefing silently never lands (while same-day jobs like the 3pm check-in
-  // still re-arm). If we boot past 8:30am and today's routine hasn't run, run it
-  // now. The per-day marker keeps repeated restarts from re-pushing.
-  const now = new Date();
-  const pastMorning = now.getHours() * 60 + now.getMinutes() >= hour * 60 + minute;
-  if (pastMorning) {
-    morningRanToday().then((ran) => {
-      if (ran) return;
-      console.log('[scheduler] booted after morning time with no run today — catching up');
-      Promise.resolve().then(morningRoutine).catch((e) => console.error('[scheduler] catch-up error:', e.message));
-    });
+
+  if (eightSleepConfigured()) {
+    // Data-driven: fire when last night's Eight Sleep session syncs (with a
+    // backstop), so the brief reflects real overnight HRV/recovery — not a
+    // fixed time that may land before you've even woken up.
+    startMorningWatcher();
+  } else {
+    // No Eight Sleep auto-sync — fall back to the fixed morning time.
+    scheduleDaily(hour, minute, morningRoutine);
+    // Catch-up: the in-process timer only fires while the process is alive, so a
+    // deploy/restart AFTER 8:30am pushes the next run to tomorrow — the morning
+    // briefing silently never lands (while same-day jobs like the 3pm check-in
+    // still re-arm). If we boot past 8:30am and today's routine hasn't run, run it
+    // now. The per-day marker keeps repeated restarts from re-pushing.
+    const now = new Date();
+    const pastMorning = now.getHours() * 60 + now.getMinutes() >= hour * 60 + minute;
+    if (pastMorning) {
+      morningRanToday().then((ran) => {
+        if (ran) return;
+        console.log('[scheduler] booted after morning time with no run today — catching up');
+        Promise.resolve().then(morningRoutine).catch((e) => console.error('[scheduler] catch-up error:', e.message));
+      });
+    }
   }
   // Weekly review generates Sunday morning (weekday 0), 10 min after the daily
   // routine's ingest/analyze, and pushes "your weekly review is ready".

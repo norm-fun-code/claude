@@ -11,12 +11,17 @@ const readwise = require('./readwise');
 const monarch = require('./monarch');
 const monarchApi = require('./monarch-api');
 const notion = require('./notion');
+const eightSleep = require('./eight-sleep');
 
 // Wealth source: Monarch. The auto-sync connector (./monarch-api) pulls daily
 // from Monarch's API when MONARCH_EMAIL/PASSWORD are set; the CSV importer
 // (./monarch) stays as a manual fallback. Both write source 'monarch', so they
 // upsert idempotently and never double-count. Plaid (./plaid) is kept dormant.
-const connectors = [calendar, weather, readwise, monarch, monarchApi, notion];
+//
+// Health source: Eight Sleep auto-sync (./eight-sleep) pulls last night's
+// session each morning when EIGHT_SLEEP_EMAIL/PASSWORD are set; writes source
+// 'eight_sleep', idempotent with manual /api/ingest/sleep entries.
+const connectors = [calendar, weather, readwise, monarch, monarchApi, notion, eightSleep];
 
 function getConnector(id) {
   return connectors.find((c) => c.id === id) || null;
