@@ -155,7 +155,7 @@ async function buildWealthInsights() {
           type: 'net_worth_path',
           title: `Net worth ${dir} ~${fmt(Math.abs(monthlyChange))}/mo`,
           detail:
-            `At your recent pace, net worth is ${dir} about ${fmt(Math.abs(monthlyChange))}/month — ` +
+            `Based on your 4-month trend, net worth is ${dir} about ${fmt(Math.abs(monthlyChange))}/month — ` +
             `on track for roughly ${fmt(projected)} by year-end (now ${fmt(current)}). A projection from trend, not a guarantee.`,
           evidence: { kind: 'net_worth_path', current: Math.round(current), projected: Math.round(projected), monthlyChange: Math.round(monthlyChange) },
         });

@@ -55,7 +55,9 @@ export function WealthCard({ wealth }: Props) {
         />
       </View>
 
-      {wealth.discretionaryThisWeek != null && (
+      {wealth.discretionaryThisWeek != null &&
+        wealth.spendingThisWeek > 0 &&
+        wealth.discretionaryThisWeek / wealth.spendingThisWeek < 0.95 && (
         <Text style={[styles.discretionary, { color: c.subtext }]}>
           {show(money(wealth.discretionaryThisWeek))} discretionary (ex rent/mortgage)
         </Text>
