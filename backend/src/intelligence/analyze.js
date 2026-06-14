@@ -40,6 +40,12 @@ const DEFAULTS = {
   trendSkip: [
     'wealth:spending', 'wealth:spending_discretionary', 'wealth:income', 'wealth:net_cashflow',
     'learning:highlights_synced', 'learning:books_synced', 'learning:notion_pages', 'learning:notion_pages_synced',
+    // Environment metrics are outside the user's control — trending humidity or
+    // temperature produces noise, not insight.
+    'environment:temperature', 'environment:humidity', 'environment:uv_index', 'environment:aqi',
+    // Calendar event counts are an input signal (meeting load) used in correlations,
+    // but a raw "calendar events down 71%" trend finding has no actionable meaning.
+    'productivity:calendar_events',
   ],
   // All wealth metrics are excluded from correlation search. Wealth variables
   // (spending, net worth, cashflow, income) correlate with health and habit

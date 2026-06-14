@@ -126,6 +126,9 @@ function proposeFromFindings(findings = [], opts = {}) {
 async function proposeExperiments() {
   const findingsStore = require('../store/findings');
   const experimentsStore = require('../store/experiments');
+  // Cancel any previously-created experiments whose outcome is in the wealth
+  // domain — wealth correlations are lifestyle confounds, not actionable levers.
+  await experimentsStore.cancelExperimentsByMetricDomain('wealth').catch(() => {});
   const open = await findingsStore.listFindings({ status: 'open' });
   const proposals = proposeFromFindings(open);
   let created = 0;

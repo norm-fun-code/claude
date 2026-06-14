@@ -62,4 +62,12 @@ async function updateExperiment(id, fields) {
   await query(`UPDATE experiments SET ${sets.join(', ')} WHERE id = $1`, vals);
 }
 
-module.exports = { createExperiment, listExperiments, getExperiment, updateExperiment };
+async function cancelExperimentsByMetricDomain(domain) {
+  await query(
+    `UPDATE experiments SET status = 'cancelled'
+      WHERE status IN ('proposed','running') AND metric LIKE $1`,
+    [`${domain}:%`]
+  );
+}
+
+module.exports = { createExperiment, listExperiments, getExperiment, updateExperiment, cancelExperimentsByMetricDomain };
