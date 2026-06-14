@@ -157,6 +157,8 @@ app.post('/api/ingest/health', async (req, res) => {
     const written = await metricsStore.insertMetrics(rows);
     await sourcesStore.markSync(HEALTH_SOURCE);
     res.json({ written });
+    // Fire-and-forget: ping if a just-synced metric deviates sharply from baseline.
+    require('./src/intelligence/watch').runWatch({ metrics: rows }).catch((e) => console.error('[watch] health ingest:', e.message));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -241,6 +243,8 @@ app.post('/api/ingest/eight-sleep', express.json({ limit: '50mb' }), async (req,
       if (rows.length) { written += await metricsStore.insertMetrics(rows); } else { skipped++; }
     }
     res.json({ sessions: sessions.length, written, skipped });
+    // Fire-and-forget: ping if these overnight metrics deviate sharply from baseline.
+    if (written > 0) require('./src/intelligence/watch').runWatch().catch((e) => console.error('[watch] eight-sleep ingest:', e.message));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -289,6 +293,8 @@ app.post('/api/ingest/sleep', async (req, res) => {
     if (!rows.length) return res.status(400).json({ error: 'No valid metrics provided' });
     const written = await metricsStore.insertMetrics(rows);
     res.json({ written, metrics: rows.map((r) => r.metric) });
+    // Fire-and-forget: ping if last night's overnight metrics deviate from baseline.
+    require('./src/intelligence/watch').runWatch({ metrics: rows }).catch((e) => console.error('[watch] sleep ingest:', e.message));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1397,6 +1403,17 @@ app.post('/api/nudges/run', async (req, res) => {
   try {
     const { force = false, dryRun = false } = req.body || {};
     res.json(await runNudges({ force, send: !dryRun }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manually trigger the anomaly watcher (event-driven "your HRV dropped" ping).
+// Pass { force: true } to bypass quiet hours, { dryRun: true } to scan without pushing.
+app.post('/api/watch/run', async (req, res) => {
+  try {
+    const { force = false, dryRun = false } = req.body || {};
+    res.json(await require('./src/intelligence/watch').runWatch({ force, send: !dryRun }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

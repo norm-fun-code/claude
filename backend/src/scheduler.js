@@ -11,6 +11,7 @@ const { consolidate } = require('./intelligence/consolidate');
 const { generateCrossContext } = require('./intelligence/crossContext');
 const { autoStartExperiment, proposeExperiments } = require('./intelligence/experiments');
 const { runNudges, runCheckinReminder, runCheckinEveningReminder, runHabitsReminder } = require('./notify/run');
+const { runWatch } = require('./intelligence/watch');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./notify/morning');
 const nudgesStore = require('./store/nudges');
 const { runIngest: _runIngest } = require('./ingest/run');
@@ -116,6 +117,10 @@ async function morningRoutine({ reason = 'scheduled' } = {}) {
   // Refresh the data + intelligence first, so the briefing reflects today.
   try { await runIngest(); } catch (e) { console.error('[scheduler] ingest:', e.message); }
   try { await analyze(); } catch (e) { console.error('[scheduler] analyze:', e.message); }
+  // Anomaly watch on fresh overnight data — pushes "your HRV dropped" within the
+  // morning routine (runNudges has no anomaly builder). Deduped to one ping per
+  // metric per day, so a same-night HTTP ingest that already fired won't repeat.
+  try { await runWatch(); } catch (e) { console.error('[scheduler] watch:', e.message); }
   // Synthesize the day's cross-domain relationships into plain-language insights.
   try { await generateCrossContext(); } catch (e) { console.error('[scheduler] crossContext:', e.message); }
   // Propose new experiments from fresh correlations, then auto-start one if the
