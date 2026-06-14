@@ -16,33 +16,39 @@ import Markdown from 'react-native-markdown-display';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { useChat } from '../hooks/useChat';
 
+interface Props {
+  /** Home-indicator height, so the launcher floats above the flush tab bar. */
+  bottomInset?: number;
+}
+
 const SUGGESTIONS = [
   'Why was my focus lower last week?',
   'What habits predict my best weeks?',
   'What should I focus on this quarter?',
 ];
 
-interface Props {
-  /** Home-indicator height, so the launcher floats above the flush tab bar. */
-  bottomInset?: number;
+function fmtDate(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 // Global "Ask NormOS" command bar: a floating button on every tab that opens a
-// full conversation sheet — the chief-of-staff is always one gesture away,
-// instead of buried in a tab. Backed by the persistent server thread, so the
-// conversation is the same one everywhere.
+// full conversation sheet. Save the current thread to the sidebar, browse saved
+// ones, resume, or delete — all backed by the persistent server history.
 export function AskOverlay({ bottomInset = 0 }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [open, setOpen] = useState(false);
+  const [view, setView] = useState<'chat' | 'history'>('chat');
   const [question, setQuestion] = useState('');
-  const { messages, loading, send, clear } = useChat();
+  const { messages, loading, conversations, send, clear, save, open: openConvo, remove, loadConversations } = useChat();
   const scrollRef = useRef<ScrollView>(null);
 
-  // Keep the newest message in view as the thread grows.
   useEffect(() => {
-    if (open) requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
-  }, [messages.length, loading, open]);
+    if (open && view === 'chat') requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+  }, [messages.length, loading, open, view]);
 
   const submit = (q: string) => {
     if (!q.trim()) return;
@@ -50,14 +56,16 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
     send(q);
   };
 
+  const showHistory = () => { loadConversations(); setView('history'); };
+  const pickConversation = async (id: number) => { await openConvo(id); setView('chat'); };
+
   const md = markdownStyles(c);
   const empty = messages.length === 0;
 
   return (
     <>
-      {/* Floating launcher — sits above the tab bar on every screen. */}
       <Pressable
-        onPress={() => setOpen(true)}
+        onPress={() => { setView('chat'); setOpen(true); }}
         style={[styles.fab, { backgroundColor: c.accent, bottom: bottomInset + 70 }, shadow(isDark, 'bar')]}
         accessibilityLabel="Ask NormOS"
         accessibilityRole="button"
@@ -66,91 +74,122 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
         <Text style={styles.fabText}>Ask</Text>
       </Pressable>
 
-      <Modal
-        visible={open}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setOpen(false)}
-      >
+      <Modal visible={open} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setOpen(false)}>
         <View style={[styles.sheet, { backgroundColor: c.background }]}>
+          {/* Header */}
           <View style={[styles.header, { borderBottomColor: c.border }]}>
-            <Text style={[styles.title, { color: c.text }]}>Ask NormOS</Text>
-            <View style={styles.headerActions}>
-              {!empty && (
-                <Pressable onPress={clear} hitSlop={8}>
-                  <Text style={[styles.headerBtn, { color: c.subtext }]}>Clear</Text>
-                </Pressable>
-              )}
-              <Pressable onPress={() => setOpen(false)} hitSlop={8}>
-                <Text style={[styles.headerBtn, { color: c.accent }]}>Done</Text>
+            {view === 'history' ? (
+              <Pressable onPress={() => setView('chat')} hitSlop={8}>
+                <Text style={[styles.headerBtn, { color: c.accent }]}>‹ Back</Text>
               </Pressable>
-            </View>
+            ) : (
+              <Pressable onPress={showHistory} hitSlop={8}>
+                <Text style={[styles.headerBtn, { color: c.accent }]}>History</Text>
+              </Pressable>
+            )}
+            <Text style={[styles.title, { color: c.text }]}>{view === 'history' ? 'Saved' : 'Ask NormOS'}</Text>
+            <Pressable onPress={() => setOpen(false)} hitSlop={8}>
+              <Text style={[styles.headerBtn, { color: c.accent }]}>Done</Text>
+            </Pressable>
           </View>
 
-          <KeyboardAvoidingView
-            style={styles.flex}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
-          >
-            <ScrollView
-              ref={scrollRef}
-              style={styles.flex}
-              contentContainerStyle={styles.threadContent}
-              keyboardShouldPersistTaps="handled"
-            >
-              {empty && !loading && (
-                <View style={styles.emptyState}>
-                  <Text style={[styles.emptyTitle, { color: c.text }]}>Ask about your life</Text>
-                  <Text style={[styles.emptyHint, { color: c.subtext }]}>
-                    Answered from your own data, habits, and library — and it remembers what you've discussed.
-                  </Text>
-                  <View style={styles.suggestions}>
-                    {SUGGESTIONS.map((s) => (
-                      <Pressable key={s} onPress={() => submit(s)} style={[styles.chip, { backgroundColor: c.accentSoft }]}>
-                        <Text style={[styles.chipText, { color: c.accent }]}>{s}</Text>
-                      </Pressable>
-                    ))}
+          {view === 'history' ? (
+            <ScrollView style={styles.flex} contentContainerStyle={styles.threadContent}>
+              {conversations.length === 0 ? (
+                <Text style={[styles.emptyHint, { color: c.subtext, marginTop: spacing.lg }]}>
+                  No saved conversations yet. Tap “Save” in a chat to keep it here.
+                </Text>
+              ) : (
+                conversations.map((conv) => (
+                  <View key={conv.id} style={[styles.convRow, { borderBottomColor: c.border }]}>
+                    <Pressable style={styles.convBody} onPress={() => pickConversation(conv.id)}>
+                      <Text style={[styles.convTitle, { color: c.text }]} numberOfLines={1}>
+                        {conv.title || conv.first_message || 'Conversation'}
+                      </Text>
+                      <Text style={[styles.convMeta, { color: c.subtext }]}>
+                        {fmtDate(conv.saved_at)} · {conv.message_count} message{conv.message_count === 1 ? '' : 's'}
+                      </Text>
+                    </Pressable>
+                    <Pressable onPress={() => remove(conv.id)} hitSlop={10} style={styles.trashBtn} accessibilityLabel="Delete conversation">
+                      <Text style={[styles.trash, { color: c.subtext }]}>🗑</Text>
+                    </Pressable>
                   </View>
+                ))
+              )}
+            </ScrollView>
+          ) : (
+            <KeyboardAvoidingView
+              style={styles.flex}
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
+            >
+              <ScrollView ref={scrollRef} style={styles.flex} contentContainerStyle={styles.threadContent} keyboardShouldPersistTaps="handled">
+                {empty && !loading && (
+                  <View style={styles.emptyState}>
+                    <Text style={[styles.emptyTitle, { color: c.text }]}>Ask about your life</Text>
+                    <Text style={[styles.emptyHint, { color: c.subtext }]}>
+                      Answered from your own data, habits, and library — and it remembers what you've discussed.
+                    </Text>
+                    <View style={styles.suggestions}>
+                      {SUGGESTIONS.map((s) => (
+                        <Pressable key={s} onPress={() => submit(s)} style={[styles.chip, { backgroundColor: c.accentSoft }]}>
+                          <Text style={[styles.chipText, { color: c.accent }]}>{s}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </View>
+                )}
+
+                {messages.map((m, i) => (
+                  <View
+                    key={i}
+                    style={[
+                      styles.bubble,
+                      m.role === 'user'
+                        ? { backgroundColor: c.accentSoft, alignSelf: 'flex-end' }
+                        : { backgroundColor: 'transparent', alignSelf: 'stretch' },
+                    ]}
+                  >
+                    {m.role === 'user' ? (
+                      <Text style={[styles.userText, { color: c.text }]}>{m.content}</Text>
+                    ) : (
+                      <Markdown style={md}>{m.content}</Markdown>
+                    )}
+                  </View>
+                ))}
+
+                {loading && <ActivityIndicator color={c.accent} style={{ marginTop: spacing.md }} />}
+              </ScrollView>
+
+              {/* Save / Clear toolbar — only when there's something to act on. */}
+              {!empty && (
+                <View style={[styles.toolbar, { borderTopColor: c.border }]}>
+                  <Pressable onPress={save} hitSlop={6} style={[styles.toolBtn, { backgroundColor: c.accentSoft }]}>
+                    <Text style={[styles.toolBtnText, { color: c.accent }]}>＋ Save & start new</Text>
+                  </Pressable>
+                  <Pressable onPress={clear} hitSlop={6} style={styles.toolBtnGhost}>
+                    <Text style={[styles.toolGhostText, { color: c.subtext }]}>Clear</Text>
+                  </Pressable>
                 </View>
               )}
 
-              {messages.map((m, i) => (
-                <View
-                  key={i}
-                  style={[
-                    styles.bubble,
-                    m.role === 'user'
-                      ? { backgroundColor: c.accentSoft, alignSelf: 'flex-end' }
-                      : { backgroundColor: 'transparent', alignSelf: 'stretch' },
-                  ]}
-                >
-                  {m.role === 'user' ? (
-                    <Text style={[styles.userText, { color: c.text }]}>{m.content}</Text>
-                  ) : (
-                    <Markdown style={md}>{m.content}</Markdown>
-                  )}
-                </View>
-              ))}
-
-              {loading && <ActivityIndicator color={c.accent} style={{ marginTop: spacing.md }} />}
-            </ScrollView>
-
-            <View style={[styles.inputRow, { borderColor: c.border, backgroundColor: c.card }]}>
-              <TextInput
-                style={[styles.input, { color: c.text }]}
-                placeholder="Ask about your life…"
-                placeholderTextColor={c.subtext}
-                value={question}
-                onChangeText={setQuestion}
-                onSubmitEditing={() => submit(question)}
-                returnKeyType="send"
-                autoFocus
-              />
-              <Pressable onPress={() => submit(question)} style={[styles.send, { backgroundColor: c.accent }]}>
-                <Text style={styles.sendText}>Ask</Text>
-              </Pressable>
-            </View>
-          </KeyboardAvoidingView>
+              <View style={[styles.inputRow, { borderColor: c.border, backgroundColor: c.card }]}>
+                <TextInput
+                  style={[styles.input, { color: c.text }]}
+                  placeholder="Ask about your life…"
+                  placeholderTextColor={c.subtext}
+                  value={question}
+                  onChangeText={setQuestion}
+                  onSubmitEditing={() => submit(question)}
+                  returnKeyType="send"
+                  autoFocus
+                />
+                <Pressable onPress={() => submit(question)} style={[styles.send, { backgroundColor: c.accent }]}>
+                  <Text style={styles.sendText}>Ask</Text>
+                </Pressable>
+              </View>
+            </KeyboardAvoidingView>
+          )}
         </View>
       </Modal>
     </>
@@ -180,7 +219,6 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: spacing.md,
-    // bottom set inline (bottomInset + 70) so it clears the flush tab bar
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -199,8 +237,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     borderBottomWidth: 1,
   },
-  title: { fontSize: 20, fontWeight: '700', letterSpacing: -0.3 },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  title: { fontSize: 18, fontWeight: '700', letterSpacing: -0.3 },
   headerBtn: { fontSize: 15, fontWeight: '600' },
   threadContent: { padding: spacing.md, paddingBottom: spacing.lg },
   emptyState: { paddingTop: spacing.lg, gap: spacing.sm },
@@ -211,6 +248,19 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 13, fontWeight: '500' },
   bubble: { borderRadius: radius.md, paddingHorizontal: spacing.sm, paddingVertical: 6, marginTop: spacing.sm, maxWidth: '92%' },
   userText: { ...typography.body, fontSize: 15 },
+  toolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    gap: spacing.sm,
+  },
+  toolBtn: { paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.md },
+  toolBtnText: { fontSize: 14, fontWeight: '700' },
+  toolBtnGhost: { paddingHorizontal: spacing.sm, paddingVertical: 8 },
+  toolGhostText: { fontSize: 14, fontWeight: '600' },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -223,4 +273,10 @@ const styles = StyleSheet.create({
   input: { flex: 1, ...typography.body, fontSize: 16, paddingVertical: spacing.sm },
   send: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.md },
   sendText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  convRow: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, paddingVertical: spacing.md },
+  convBody: { flex: 1, paddingRight: spacing.sm },
+  convTitle: { fontSize: 15, fontWeight: '600' },
+  convMeta: { fontSize: 12, marginTop: 2 },
+  trashBtn: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
+  trash: { fontSize: 18 },
 });

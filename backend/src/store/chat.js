@@ -11,28 +11,128 @@ function toVectorLiteral(embedding) {
   return `[${embedding.join(',')}]`;
 }
 
-async function saveMessage({ role, content, sources = [], embedding = null }) {
+/** A short title from the first user message ("Why was my focus low?" → as-is). */
+function deriveTitle(s) {
+  const t = String(s || '').replace(/\s+/g, ' ').trim();
+  if (!t) return 'New conversation';
+  return t.length > 42 ? `${t.slice(0, 42).trimEnd()}…` : t;
+}
+
+/** The one live thread's id, creating it if none exists. Survives the unique
+ *  one-active index by re-reading on a conflict. */
+async function ensureActiveConversation() {
+  const { rows } = await query(`SELECT id FROM conversations WHERE is_active LIMIT 1`);
+  if (rows[0]) return rows[0].id;
+  try {
+    const { rows: ins } = await query(`INSERT INTO conversations (is_active) VALUES (true) RETURNING id`);
+    return ins[0].id;
+  } catch {
+    const { rows: again } = await query(`SELECT id FROM conversations WHERE is_active LIMIT 1`);
+    return again[0]?.id ?? null;
+  }
+}
+
+async function saveMessage({ role, content, sources = [], embedding = null, conversationId = null }) {
   if (role !== 'user' && role !== 'assistant') throw new Error('role must be user|assistant');
+  const convId = conversationId ?? (await ensureActiveConversation());
   const { rows } = await query(
-    `INSERT INTO chat_messages (role, content, sources, embedding)
-     VALUES ($1, $2, $3, $4::vector) RETURNING id, created_at`,
-    [role, String(content ?? ''), JSON.stringify(sources), toVectorLiteral(embedding)]
+    `INSERT INTO chat_messages (role, content, sources, embedding, conversation_id)
+     VALUES ($1, $2, $3, $4::vector, $5) RETURNING id, created_at`,
+    [role, String(content ?? ''), JSON.stringify(sources), toVectorLiteral(embedding), convId]
   );
+  // Touch the thread, and auto-title it from the first user message.
+  await query(`UPDATE conversations SET updated_at = now() WHERE id = $1`, [convId]);
+  if (role === 'user') {
+    await query(
+      `UPDATE conversations SET title = $2 WHERE id = $1 AND (title IS NULL OR title = '')`,
+      [convId, deriveTitle(content)]
+    );
+  }
   return rows[0] ?? null;
 }
 
-/** Most recent `limit` turns, returned in chronological (oldest-first) order so
- *  they can be fed straight into the prompt as history. */
+/** Most recent `limit` turns OF THE ACTIVE THREAD, oldest-first, for prompt
+ *  context. Empty when there's no active thread (a fresh start). */
 async function recentMessages({ limit = 20 } = {}) {
   const { rows } = await query(
     `SELECT role, content, sources, created_at
        FROM (
-         SELECT * FROM chat_messages ORDER BY created_at DESC, id DESC LIMIT $1
+         SELECT m.role, m.content, m.sources, m.created_at, m.id
+           FROM chat_messages m
+           JOIN conversations c ON c.id = m.conversation_id AND c.is_active
+          ORDER BY m.created_at DESC, m.id DESC LIMIT $1
        ) t
       ORDER BY created_at ASC, id ASC`,
     [limit]
   );
   return rows;
+}
+
+/** Archive the active thread: title it, stamp saved_at, deactivate. The next
+ *  message lazily starts a fresh active thread. No-op if it has no messages. */
+async function saveActiveConversation({ title = null } = {}) {
+  const { rows } = await query(`SELECT id FROM conversations WHERE is_active LIMIT 1`);
+  if (!rows[0]) return null;
+  const id = rows[0].id;
+  const { rows: cnt } = await query(`SELECT count(*)::int AS n FROM chat_messages WHERE conversation_id = $1`, [id]);
+  if (!cnt[0].n) return null; // nothing worth saving
+  await query(
+    `UPDATE conversations
+        SET saved_at = now(), is_active = false,
+            title = COALESCE(NULLIF(title, ''), $2)
+      WHERE id = $1`,
+    [id, title || 'Saved conversation']
+  );
+  const { rows: out } = await query(`SELECT * FROM conversations WHERE id = $1`, [id]);
+  return out[0];
+}
+
+/** Saved threads for the sidebar, newest-saved first, with a preview + count. */
+async function listConversations() {
+  const { rows } = await query(
+    `SELECT c.id, c.title, c.created_at, c.updated_at, c.saved_at, c.is_active,
+            count(m.id)::int AS message_count,
+            (SELECT content FROM chat_messages
+              WHERE conversation_id = c.id AND role = 'user'
+              ORDER BY id ASC LIMIT 1) AS first_message
+       FROM conversations c
+       LEFT JOIN chat_messages m ON m.conversation_id = c.id
+      WHERE c.saved_at IS NOT NULL
+      GROUP BY c.id
+      ORDER BY c.saved_at DESC`
+  );
+  return rows;
+}
+
+/** All messages of a thread, oldest-first. */
+async function conversationMessages(id) {
+  const { rows } = await query(
+    `SELECT role, content, sources, created_at FROM chat_messages
+      WHERE conversation_id = $1 ORDER BY created_at ASC, id ASC`,
+    [id]
+  );
+  return rows;
+}
+
+/** Resume a saved thread: make it the live one. Returns its messages. */
+async function openConversation(id) {
+  await query(`UPDATE conversations SET is_active = false WHERE is_active`);
+  await query(`UPDATE conversations SET is_active = true, updated_at = now() WHERE id = $1`, [id]);
+  return conversationMessages(id);
+}
+
+/** Delete a thread and its messages (sidebar trash). */
+async function deleteConversation(id) {
+  const { rowCount } = await query(`DELETE FROM conversations WHERE id = $1`, [id]);
+  return rowCount;
+}
+
+/** Discard the active thread without saving (the "Clear" action). */
+async function clearActiveConversation() {
+  const { rows } = await query(`SELECT id FROM conversations WHERE is_active LIMIT 1`);
+  if (!rows[0]) return 0;
+  const { rowCount } = await query(`DELETE FROM conversations WHERE id = $1`, [rows[0].id]);
+  return rowCount;
 }
 
 /**
@@ -110,4 +210,11 @@ module.exports = {
   unembeddedQuestions,
   setEmbedding,
   clearMessages,
+  ensureActiveConversation,
+  saveActiveConversation,
+  listConversations,
+  conversationMessages,
+  openConversation,
+  deleteConversation,
+  clearActiveConversation,
 };

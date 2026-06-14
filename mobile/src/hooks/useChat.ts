@@ -1,32 +1,55 @@
 import { useState, useEffect, useCallback } from 'react';
-import { CHAT_URL, CHAT_HISTORY_URL, CHAT_CLEAR_URL, authHeaders, fetchWithTimeout } from '../config';
+import {
+  CHAT_URL,
+  CHAT_HISTORY_URL,
+  CHAT_CLEAR_URL,
+  CHAT_SAVE_URL,
+  CHAT_CONVERSATIONS_URL,
+  authHeaders,
+  fetchWithTimeout,
+} from '../config';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
 }
 
+export interface Conversation {
+  id: number;
+  title: string | null;
+  saved_at: string | null;
+  updated_at: string;
+  message_count: number;
+  first_message: string | null;
+}
+
 // Single source of truth for the "Ask NormOS" conversation. The backend persists
-// the thread (and its long-term memory), so we only send the new question and the
-// server reconstructs context. History loads on mount so the thread survives app
-// restarts and is shared across every surface that uses this hook.
+// the active thread (and its long-term memory), and lets you save threads, browse
+// saved ones, resume, and delete them — all spanning one shared server history.
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetchWithTimeout(`${CHAT_HISTORY_URL}?limit=50`, { headers: authHeaders() }, 15000);
-        const json = await res.json().catch(() => ({}));
-        if (!cancelled && res.ok && Array.isArray(json.messages)) {
-          setMessages(json.messages.map((m: any) => ({ role: m.role, content: m.content })));
-        }
-      } catch { /* history is best-effort */ }
-    })();
-    return () => { cancelled = true; };
+  const loadHistory = useCallback(async () => {
+    try {
+      const res = await fetchWithTimeout(`${CHAT_HISTORY_URL}?limit=50`, { headers: authHeaders() }, 15000);
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && Array.isArray(json.messages)) {
+        setMessages(json.messages.map((m: any) => ({ role: m.role, content: m.content })));
+      }
+    } catch { /* history is best-effort */ }
   }, []);
+
+  const loadConversations = useCallback(async () => {
+    try {
+      const res = await fetchWithTimeout(CHAT_CONVERSATIONS_URL, { headers: authHeaders() }, 15000);
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && Array.isArray(json.conversations)) setConversations(json.conversations);
+    } catch { /* best-effort */ }
+  }, []);
+
+  useEffect(() => { loadHistory(); }, [loadHistory]);
 
   const send = useCallback(async (q: string) => {
     if (!q.trim() || loading) return;
@@ -51,6 +74,7 @@ export function useChat() {
     }
   }, [loading]);
 
+  // Discard the active thread without saving.
   const clear = useCallback(async () => {
     setMessages([]);
     try {
@@ -58,5 +82,34 @@ export function useChat() {
     } catch { /* best-effort */ }
   }, []);
 
-  return { messages, loading, send, clear };
+  // Archive the active thread to the sidebar, then start fresh.
+  const save = useCallback(async () => {
+    try {
+      await fetchWithTimeout(CHAT_SAVE_URL, { method: 'POST', headers: authHeaders() }, 15000);
+    } catch { /* best-effort */ }
+    setMessages([]);
+    loadConversations();
+  }, [loadConversations]);
+
+  // Resume a saved thread — it becomes the live one.
+  const open = useCallback(async (id: number) => {
+    try {
+      const res = await fetchWithTimeout(`${CHAT_CONVERSATIONS_URL}/${id}/open`, { method: 'POST', headers: authHeaders() }, 15000);
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && Array.isArray(json.messages)) {
+        setMessages(json.messages.map((m: any) => ({ role: m.role, content: m.content })));
+      }
+    } catch { /* best-effort */ }
+  }, []);
+
+  const remove = useCallback(async (id: number) => {
+    setConversations((prev) => prev.filter((c) => c.id !== id)); // optimistic
+    try {
+      await fetchWithTimeout(`${CHAT_CONVERSATIONS_URL}/${id}`, { method: 'DELETE', headers: authHeaders() }, 15000);
+    } catch {
+      loadConversations(); // revert by reloading on failure
+    }
+  }, [loadConversations]);
+
+  return { messages, loading, conversations, send, clear, save, open, remove, loadConversations };
 }

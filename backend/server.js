@@ -1203,12 +1203,13 @@ app.post('/api/chat', async (req, res) => {
 
     const result = await ask(question, { history: priorHistory });
 
-    // Append this turn so the next question remembers it. Store the question's
-    // embedding (computed once inside ask) so future questions can semantically
-    // recall this exchange long after it leaves the recent tail.
-    chatStore.saveMessage({ role: 'user', content: question, embedding: result.questionEmbedding ?? null })
+    // Append this turn so the next question remembers it. Pre-resolve the active
+    // thread once (the two saves run concurrently, so this avoids both racing to
+    // create it). Store the question embedding for long-term semantic recall.
+    const convId = await chatStore.ensureActiveConversation();
+    chatStore.saveMessage({ role: 'user', content: question, embedding: result.questionEmbedding ?? null, conversationId: convId })
       .catch((e) => console.error('[chat memory] save user failed:', e.message));
-    chatStore.saveMessage({ role: 'assistant', content: result.answer, sources: result.sources ?? [] })
+    chatStore.saveMessage({ role: 'assistant', content: result.answer, sources: result.sources ?? [], conversationId: convId })
       .catch((e) => console.error('[chat memory] save assistant failed:', e.message));
 
     // Don't leak the raw embedding vector to the client.
@@ -1230,10 +1231,54 @@ app.get('/api/chat/history', async (req, res) => {
   }
 });
 
-// Clear the conversation ("start fresh").
+// Discard the active thread without saving ("Clear").
 app.post('/api/chat/clear', async (req, res) => {
   try {
-    const removed = await require('./src/store/chat').clearMessages();
+    const removed = await require('./src/store/chat').clearActiveConversation();
+    res.json({ ok: true, removed });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Save (archive) the active thread, then start fresh. Optional { title }.
+app.post('/api/chat/save', async (req, res) => {
+  try {
+    const { title = null } = req.body || {};
+    const saved = await require('./src/store/chat').saveActiveConversation({ title });
+    res.json({ ok: true, conversation: saved });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List saved conversations for the sidebar.
+app.get('/api/chat/conversations', async (req, res) => {
+  try {
+    res.json({ conversations: await require('./src/store/chat').listConversations() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Resume a saved conversation (make it the live thread); returns its messages.
+app.post('/api/chat/conversations/:id/open', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'bad id' });
+    const messages = await require('./src/store/chat').openConversation(id);
+    res.json({ ok: true, messages });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete a saved conversation and its messages.
+app.delete('/api/chat/conversations/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'bad id' });
+    const removed = await require('./src/store/chat').deleteConversation(id);
     res.json({ ok: true, removed });
   } catch (err) {
     res.status(500).json({ error: err.message });
