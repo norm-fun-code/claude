@@ -64,6 +64,8 @@ export interface Insight {
   detail: string | null;
   confidence: number | null;
   domains?: string[];
+  // Stable key the server stamps on each insight; echoed back to dismiss it.
+  dismissKey?: string;
 }
 
 export interface MarketIndex {

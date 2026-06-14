@@ -25,6 +25,7 @@ export const DEVICE_REGISTER_URL = `${API_BASE}/api/devices/register`;
 export const HIGHLIGHTS_URL = `${API_BASE}/api/highlights`;
 export const SHOP_URL = `${API_BASE}/api/shop`;
 export const ANALYZE_URL = `${API_BASE}/api/analyze`;
+export const INSIGHT_DISMISS_URL = `${API_BASE}/api/insights/dismiss`;
 export const CONSOLIDATE_URL = `${API_BASE}/api/consolidate`;
 export const SLEEP_LOG_URL = `${API_BASE}/api/ingest/sleep`;
 export const SLEEP_TODAY_URL = `${API_BASE}/api/sleep/today`;

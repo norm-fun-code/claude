@@ -1408,6 +1408,40 @@ app.post('/api/nudges/run', async (req, res) => {
   }
 });
 
+// Dismiss a "What The Data Shows" insight by its stable key — stays gone across
+// rebuilds (e.g. a recurring car payment flagged for "review"). POST { key, title }.
+app.post('/api/insights/dismiss', async (req, res) => {
+  try {
+    const { key, title = null } = req.body || {};
+    if (!key) return res.status(400).json({ error: 'key required' });
+    await require('./src/store/dismissedInsights').dismiss(key, title);
+    res.json({ ok: true, dismissed: key });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Restore a dismissed insight. POST { key }.
+app.post('/api/insights/undismiss', async (req, res) => {
+  try {
+    const { key } = req.body || {};
+    if (!key) return res.status(400).json({ error: 'key required' });
+    await require('./src/store/dismissedInsights').undismiss(key);
+    res.json({ ok: true, restored: key });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List dismissed insights (for a future "manage dismissed" view).
+app.get('/api/insights/dismissed', async (req, res) => {
+  try {
+    res.json({ dismissed: await require('./src/store/dismissedInsights').listDismissed() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Manually trigger the anomaly watcher (event-driven "your HRV dropped" ping).
 // Pass { force: true } to bypass quiet hours, { dryRun: true } to scan without pushing.
 app.post('/api/watch/run', async (req, res) => {
@@ -1658,9 +1692,21 @@ app.get('/api/briefing', async (req, res) => {
     } catch (err) {
       console.error('[briefing cache] weeklyGoals refresh failed:', err.message);
     }
+    // Apply insight dismissals live too, so dismissing a card sticks on the next
+    // instant cache reload rather than waiting for a full rebuild.
+    const cachedContent = { ...prior.content };
+    try {
+      const dismissedInsights = require('./src/store/dismissedInsights');
+      const dismissed = await dismissedInsights.dismissedKeys();
+      for (const k of ['insights', 'wealthInsights', 'healthInsights', 'crossContextInsights']) {
+        if (Array.isArray(cachedContent[k])) cachedContent[k] = dismissedInsights.applyDismissals(cachedContent[k], dismissed);
+      }
+    } catch (err) {
+      console.error('[briefing cache] dismissals failed:', err.message);
+    }
     // Always serve the cache — never block the client on a 60-90s rebuild.
     // `stale: true` signals the app to show a "Rebuild briefing" button.
-    return res.json({ ...prior.content, weeklyGoals, cached: true, stale: isStale, cachedAgeMin: Math.round(ageMin) });
+    return res.json({ ...cachedContent, weeklyGoals, cached: true, stale: isStale, cachedAgeMin: Math.round(ageMin) });
   }
 
   // Format today's date label
@@ -2027,6 +2073,21 @@ app.get('/api/briefing', async (req, res) => {
     healthInsights = [...prioritized, ...others]
       .slice(0, 5)
       .map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains }));
+
+    // Card-level dismissals: drop any insight the user has explicitly dismissed
+    // (e.g. a recurring car payment flagged for "review"), and stamp each survivor
+    // with its stable dismissKey so the client can dismiss it. Applies uniformly
+    // to stored findings AND live-computed wealth insights.
+    try {
+      const dismissedInsights = require('./src/store/dismissedInsights');
+      const dismissed = await dismissedInsights.dismissedKeys();
+      insights = dismissedInsights.applyDismissals(insights, dismissed);
+      wealthInsights = dismissedInsights.applyDismissals(wealthInsights, dismissed);
+      healthInsights = dismissedInsights.applyDismissals(healthInsights, dismissed);
+      crossContextInsights = dismissedInsights.applyDismissals(crossContextInsights, dismissed);
+    } catch (err) {
+      console.error('[insights dismissals] failed:', err.message);
+    }
   } catch (err) {
     console.error('[insights] failed:', err.message);
     errors.push({ service: 'insights', error: err.message });
