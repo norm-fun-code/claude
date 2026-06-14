@@ -3,7 +3,7 @@ import AppleHealthKit, {
   HealthKitPermissions,
   HealthValue,
 } from 'react-native-health';
-import { HEALTH_INGEST_URL, SLEEP_TODAY_URL, authHeaders } from '../config';
+import { HEALTH_INGEST_URL, SLEEP_TODAY_URL, authHeaders, fetchWithTimeout } from '../config';
 
 // Persist on-device HealthKit readings to the NormOS spine. Canonical metric
 // names match backend/src/ingest/health.js. Fire-and-forget: never block the UI.
@@ -391,7 +391,9 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
 
       // Prefer Eight Sleep overnight HRV/RHR/sleep_score — keeps the Health card
       // consistent with the Recovery card which is source-locked to Eight Sleep.
-      fetch(SLEEP_TODAY_URL, { headers: authHeaders() })
+      // Bounded by a timeout so a slow/down backend can't freeze the card: on
+      // timeout we fall through to the local HealthKit values.
+      fetchWithTimeout(SLEEP_TODAY_URL, { headers: authHeaders() }, 6000)
         .then((r) => r.json())
         .then((d: any) => {
           if (d?.metrics?.hrv) eightSleepHrv = Math.round(d.metrics.hrv);

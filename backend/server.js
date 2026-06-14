@@ -1627,9 +1627,23 @@ app.get('/api/briefing', async (req, res) => {
       ? (Date.now() - new Date(prior.generated_at).getTime()) / 60000
       : 0;
     const isStale = ageMin >= CACHE_TTL_MIN;
+    // Refresh the cheap, fast-changing weekly-goal state even on a cached serve.
+    // The "Goals hit" tile and the goal checkboxes read this; without the live
+    // refresh, checking off a goal wouldn't move the count until the next full
+    // (60-90s LLM) rebuild — making the checkboxes feel broken.
+    let weeklyGoals = prior.content.weeklyGoals ?? null;
+    try {
+      const [currentInt, priorInt] = await Promise.all([
+        intentionsStore.currentIntention(),
+        intentionsStore.priorIntention(),
+      ]);
+      if (currentInt || priorInt) weeklyGoals = { current: currentInt ?? null, prior: priorInt ?? null };
+    } catch (err) {
+      console.error('[briefing cache] weeklyGoals refresh failed:', err.message);
+    }
     // Always serve the cache — never block the client on a 60-90s rebuild.
     // `stale: true` signals the app to show a "Rebuild briefing" button.
-    return res.json({ ...prior.content, cached: true, stale: isStale, cachedAgeMin: Math.round(ageMin) });
+    return res.json({ ...prior.content, weeklyGoals, cached: true, stale: isStale, cachedAgeMin: Math.round(ageMin) });
   }
 
   // Format today's date label

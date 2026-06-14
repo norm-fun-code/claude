@@ -163,7 +163,7 @@ function computeAnomalies(seriesByKey, opts = {}) {
     const pctDiff = a.baselineMean !== 0
       ? Math.round(Math.abs((a.latest - a.baselineMean) / a.baselineMean) * 100)
       : null;
-    const pctNote = pctDiff != null ? ` (${pctDiff}% ${dir} your usual)` : '';
+    const pctNote = pctDiff != null ? ` (${pctDiff}% ${dir})` : '';
 
     findings.push({
       type: 'anomaly',
