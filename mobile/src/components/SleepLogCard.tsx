@@ -36,7 +36,6 @@ export function SleepLogCard() {
   const c = getColors(isDark);
 
   const [today, setToday] = useState<TodayMetrics | null>(null);
-  const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'ok' | 'error'>('idle');
@@ -73,7 +72,6 @@ export function SleepLogCard() {
             await AsyncStorage.setItem(CACHE_KEY, JSON.stringify({ date: todayKey(), metrics: json.metrics })).catch(() => {});
           } else {
             setToday(null);
-            setEditing(true);
           }
         }
       } catch { /* best-effort — show form */ } finally {
@@ -105,7 +103,6 @@ export function SleepLogCard() {
         // Persist immediately to AsyncStorage so tab switches don't lose it
         await AsyncStorage.setItem(CACHE_KEY, JSON.stringify({ date: todayKey(), metrics })).catch(() => {});
         setToday(metrics);
-        setEditing(false);
         setHrv(''); setRhr(''); setScore(''); setHours('');
         setSaveStatus('ok');
         // Background: re-consolidate self-model so morning brief reflects today's data
@@ -122,18 +119,21 @@ export function SleepLogCard() {
 
   if (loading) return null;
 
+  // Eight Sleep auto-syncs overnight metrics now. Once today's data is present
+  // (from the API sync, or a prior manual entry), this manual-entry card is
+  // redundant — HRV/RHR/score/hours live on the Health and Recovery cards. Hide
+  // it entirely, surfacing only as a fallback when nothing has synced yet today.
+  // The exception: the moment right after a manual save, so the user sees the
+  // "Saved ✓" confirmation before it disappears on the next mount.
+  if (today && saveStatus !== 'ok') return null;
+
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }, shadow(isDark)]}>
       <View style={styles.headerRow}>
         <SectionHeader emoji="🛏" title="Eight Sleep" preserveCase />
-        {today && !editing && (
-          <TouchableOpacity onPress={() => { setEditing(true); setSaveStatus('idle'); }} hitSlop={8}>
-            <Text style={[styles.editBtn, { color: c.subtext }]}>Edit</Text>
-          </TouchableOpacity>
-        )}
       </View>
 
-      {today && !editing ? (
+      {today && saveStatus === 'ok' ? (
         <View>
           <View style={styles.metricsRow}>
             <Metric label="HRV" value={fmt(today.hrv, 'ms')} c={c} good={(today.hrv ?? 0) >= 40} dim={today.hrv == null} />
@@ -141,36 +141,29 @@ export function SleepLogCard() {
             <Metric label="SCORE" value={fmt(today.sleep_score, '')} c={c} good={(today.sleep_score ?? 0) >= 75} dim={today.sleep_score == null} />
             <Metric label="HOURS" value={today.sleep_hours != null ? formatHM(today.sleep_hours) : '—'} c={c} good={(today.sleep_hours ?? 0) >= 7} dim={today.sleep_hours == null} />
           </View>
-          {saveStatus === 'ok' && (
-            <Text style={[styles.savedNote, { color: c.subtext }]}>
-              Saved ✓ — self-model updated. Rebuild your briefing to refresh morning focus.
-            </Text>
-          )}
+          <Text style={[styles.savedNote, { color: c.subtext }]}>
+            Saved ✓ — self-model updated. Rebuild your briefing to refresh morning focus.
+          </Text>
         </View>
       ) : (
         <>
           <Text style={[styles.hint, { color: c.subtext }]}>
-            Open Eight Sleep app → Today → enter overnight metrics
+            Eight Sleep hasn't synced yet today — enter last night's metrics manually if you want them now.
           </Text>
           <View style={styles.inputs}>
-            <Field label="HRV (ms)" value={hrv} onChange={setHrv} placeholder={today?.hrv ? String(today.hrv) : 'e.g. 42'} c={c} />
-            <Field label="RHR (bpm)" value={rhr} onChange={setRhr} placeholder={today?.resting_hr ? String(today.resting_hr) : 'e.g. 52'} c={c} />
-            <Field label="Sleep score" value={score} onChange={setScore} placeholder={today?.sleep_score ? String(today.sleep_score) : 'e.g. 82'} c={c} />
-            <Field label="Sleep hours" value={hours} onChange={setHours} placeholder={today?.sleep_hours ? String(today.sleep_hours) : 'e.g. 7.5'} c={c} />
+            <Field label="HRV (ms)" value={hrv} onChange={setHrv} placeholder="e.g. 42" c={c} />
+            <Field label="RHR (bpm)" value={rhr} onChange={setRhr} placeholder="e.g. 52" c={c} />
+            <Field label="Sleep score" value={score} onChange={setScore} placeholder="e.g. 82" c={c} />
+            <Field label="Sleep hours" value={hours} onChange={setHours} placeholder="e.g. 7.5" c={c} />
           </View>
           {saveStatus === 'error' && (
             <Text style={[styles.errorNote, { color: c.red }]}>Couldn't save — check your connection and try again.</Text>
           )}
           <View style={styles.buttons}>
-            {today && (
-              <TouchableOpacity onPress={() => { setEditing(false); setSaveStatus('idle'); }} style={[styles.cancelBtn, { borderColor: c.border }]}>
-                <Text style={[styles.cancelTxt, { color: c.subtext }]}>Cancel</Text>
-              </TouchableOpacity>
-            )}
             <TouchableOpacity
               onPress={save}
               disabled={saving}
-              style={[styles.saveBtn, { backgroundColor: c.accent }, !today && styles.saveBtnFull]}
+              style={[styles.saveBtn, styles.saveBtnFull, { backgroundColor: c.accent }]}
             >
               {saving
                 ? <ActivityIndicator size="small" color="#fff" />
