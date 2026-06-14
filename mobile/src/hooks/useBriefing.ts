@@ -194,7 +194,6 @@ export interface BriefingData {
   builtAt?: string;
   morningFocus?: string;
   chiefBrief?: ChiefBrief | null;
-  experimentCallout?: string;
   experiments?: {
     completed: CompletedExperiment[];
     running: RunningExperiment[];

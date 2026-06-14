@@ -14,7 +14,7 @@ const SYSTEM =
   'them the highest-leverage action, the one risk trending wrong, and the one number that changed. ' +
   'Cross-domain synthesis is the point — connect body↔money↔focus when the data supports it, never ' +
   'when it doesn\'t. You name actual numbers and trajectories, and tie advice to confirmed ' +
-  'experiments when relevant. Your voice is sharp, caring, blunt, and numerate — no flattery, no ' +
+  'patterns in their own data when relevant. Your voice is sharp, caring, blunt, and numerate — no flattery, no ' +
   'filler, respects their time. You never invent a number or a connection. ' +
   'Return ONLY a single valid JSON object — no markdown, no code fences, no commentary.';
 
@@ -54,7 +54,7 @@ Recent wellbeing (last 7 days): ${wellbeingContext || 'no recent check-in data'}
 
 Active life context: ${annotationsContext || 'none'}
 
-${experimentsContext ? `EXPERIMENT RESULTS (NormOS data science):\n${experimentsContext}\n\n` : ''}${leverageContext ? `${leverageContext}\n\n` : ''}Today's quote/principle:
+${leverageContext ? `${leverageContext}\n\n` : ''}Today's quote/principle:
 "${quote}"
 
 Today's Notion wisdom:
@@ -70,12 +70,11 @@ Return ONLY valid JSON with EXACTLY these fields:
 {
   "chiefBrief": {
     "synthesis": "ONE sentence (20-35 words): the single most important thing about today, synthesized ACROSS domains (body, money, focus, calendar, inbox). Lead with the domain with the highest urgency or consequence TODAY — if there's a key calendar event, meeting, or deadline, that should often be the anchor, with health/recovery as context. Name a real number. Never ignore the calendar when events are present.",
-    "action": "THE ACTION (1-2 sentences). The highest-leverage thing to do NOW — draw from the HIGHEST-LEVERAGE ACTIONS block (leverage engine) above when present. Concrete and doable today. Tie to a confirmed experiment when relevant ('Zone 2 yesterday → your HRV is up, as we proved').",
+    "action": "THE ACTION (1-2 sentences). The highest-leverage thing to do NOW — draw from the HIGHEST-LEVERAGE ACTIONS block (leverage engine) above when present. Concrete and doable today. Tie to a confirmed pattern in their own data when relevant ('Zone 2 days → your HRV runs higher the next morning, your own data shows').",
     "risk": "THE RISK (1-2 sentences). The ONE thing trending wrong — draw from the TRENDING WRONG block (at-risk forecasts) or a slipping habit / declining metric in the self-model. Name the trajectory. If genuinely nothing is at risk, say what to protect to keep it that way.",
-    "move": "THE MOVE (1-2 sentences). One number that CHANGED and why it matters — an HRV/sleep/spend/cashflow shift, a habit rate move, or an experiment verdict. Name the before→after and the implication."
+    "move": "THE MOVE (1-2 sentences). One number that CHANGED and why it matters — an HRV/sleep/spend/cashflow shift, or a habit rate move. Name the before→after and the implication."
   },
-  "morningFocus": "1-2 sentences (35-60 words). Chief-of-staff situation report. Use the SELF-MODEL (7-day averages, habit trends, active experiments, confirmed patterns) as your primary source — it always has context even before today's check-in or watch sync. Supplement with any real-time recovery/wellbeing data if present. Name the actual numbers from the self-model (HRV ms, sleep hours, habit rates). Tell them what it means and the one thing that matters most today. Always generate this — never return empty string.",
-  "experimentCallout": "If there is a confirmed OR refuted experiment result, write 1-2 sentences calling it out directly: 'NormOS confirmed...' or 'NormOS refuted...'. Name the percent change and what it means for their behavior. If multiple, pick the most impactful one. Empty string if no completed experiments.",
+  "morningFocus": "1-2 sentences (35-60 words). Chief-of-staff situation report. Use the SELF-MODEL (7-day averages, habit trends, confirmed patterns) as your primary source — it always has context even before today's check-in or watch sync. Supplement with any real-time recovery/wellbeing data if present. Name the actual numbers from the self-model (HRV ms, sleep hours, habit rates). Tell them what it means and the one thing that matters most today. Always generate this — never return empty string.",
   "urgentEmails": [
     { "from": "sender", "subject": "subject", "action": "1-2 sentences on what action is needed and why it's urgent" }
   ],
@@ -86,8 +85,7 @@ Return ONLY valid JSON with EXACTLY these fields:
 
 Rules:
 - chiefBrief: this is the centerpiece — write it as a person who KNOWS them, not a report. Sharp, caring, blunt, numerate. The synthesis MUST not be health-only: if today's calendar has meaningful events or there's urgent email action needed, those belong in the synthesis. Draw the ACTION from the leverage engine when present, otherwise from the most consequential thing in their calendar/finances/habits. RISK from at-risk forecasts/slipping habits. MOVE from a real number that changed — could be HRV, a spend number, a habit rate, a forecast trajectory. Name actual numbers everywhere. Never invent a tie-in or number. Always generate all four fields.
-- experimentCallout: scan the EXPERIMENT RESULTS block. If there's a confirmed or refuted result, call it out directly and specifically — "NormOS confirmed that [hypothesis] — [metric] improved/declined by X%." If refuted, say so clearly. This is a big deal: it's real data science on their own life. Make it feel like a discovery. Empty string if no completed results.
-- morningFocus: draw primarily from the SELF-MODEL (7-day HRV avg, sleep avg, habit adherence rates, active experiments, confirmed correlations). Real-time recovery/wellbeing data from today's check-in supplements when available but is not required. Name real numbers from the self-model. If a habit rate is slipping, name it. If HRV trend is down, say so. This should feel like the one sentence a trusted advisor who knows your week would say before you start your day. Never mention finances, calendar events, or emails here. Always generate something — the self-model always has enough context.
+- morningFocus: draw primarily from the SELF-MODEL (7-day HRV avg, sleep avg, habit adherence rates, confirmed correlations). Real-time recovery/wellbeing data from today's check-in supplements when available but is not required. Name real numbers from the self-model. If a habit rate is slipping, name it. If HRV trend is down, say so. This should feel like the one sentence a trusted advisor who knows your week would say before you start your day. Never mention finances, calendar events, or emails here. Always generate something — the self-model always has enough context.
 - urgentEmails: only emails needing a response/action today. Exclude newsletters, digests, marketing — only real emails requiring a response or action.
 - notionQuote: pick a self-contained, meaningful line — never a title, never an intro that trails off (e.g. "Rather than trying to find someone who will:"). If the best idea spans a sentence, quote the whole sentence.
 - quoteInsight / notionInsight: first sentence draws out the core idea as lived wisdom. Second sentence makes it land for where this person is RIGHT NOW — if their energy has been low, connect to restoration and sustainable effort; if a habit is slipping, speak to consistency and small wins; if recovery is yellow/red, speak to patience and trusting the process. Do this WITHOUT naming their data ("your HRV is 38") — just let the angle feel personally chosen. Do NOT reference their calendar, specific tasks, schedule, "today", their job/profession, or their finances. Speak to the human, not the day.`;
@@ -114,7 +112,7 @@ function extractJson(text) {
 }
 
 const EMPTY = {
-  morningFocus: '', chiefBrief: null, experimentCallout: '', urgentEmails: [], quoteInsight: '', notionQuote: '', notionInsight: '',
+  morningFocus: '', chiefBrief: null, urgentEmails: [], quoteInsight: '', notionQuote: '', notionInsight: '',
 };
 
 async function generateBriefing(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '') {
@@ -152,7 +150,6 @@ async function generateBriefing(emailData, notionText, quote, currentDay, workou
   return {
     morningFocus: typeof parsed.morningFocus === 'string' ? parsed.morningFocus : '',
     chiefBrief,
-    experimentCallout: typeof parsed.experimentCallout === 'string' ? parsed.experimentCallout : '',
     urgentEmails: Array.isArray(parsed.urgentEmails) ? parsed.urgentEmails : [],
     quoteInsight: typeof parsed.quoteInsight === 'string' ? parsed.quoteInsight : '',
     notionQuote: typeof parsed.notionQuote === 'string' ? parsed.notionQuote : '',
