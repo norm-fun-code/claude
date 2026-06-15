@@ -624,7 +624,7 @@ app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
       assets:      { value: Math.round(assetsTotal), updatedAt },
       liabilities: { value: Math.round(liabTotal),   updatedAt },
       retirement:  retirement > 0 ? { value: Math.round(retirement), updatedAt } : null,
-      _debug: { accountCount: accounts.length, retirement, plocAddback, accounts: debugAccts },
+      _debug: { accountCount: accounts.length, retirement, liquid, netWorth, accounts: debugAccts },
     });
   } catch (err) {
     console.error('Monarch snapshot error:', err);
