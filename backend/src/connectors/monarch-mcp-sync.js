@@ -1,0 +1,212 @@
+// Monarch MCP sync connector (Wealth domain) — PRIMARY Monarch source.
+//
+// Pulls authoritative numbers straight from Monarch's official MCP server via
+// direct JSON-RPC (no LLM), so the daily metrics match Monarch's own UI exactly
+// (e.g. cash-flow that already excludes transfers + credit-card payments — the
+// double-counting we kept fighting with the GraphQL scrape). Writes under source
+// 'monarch', shared with the CSV importer and the GraphQL connector, so it
+// upserts idempotently and never double-counts.
+//
+// Fallback: if Monarch MCP isn't configured, or any pull fails, this delegates to
+// the existing GraphQL connector (./monarch-api) so finances keep flowing.
+const rpc = require('../services/monarch-mcp-rpc');
+const monarchMcp = require('../services/monarch-mcp');
+const monarchApi = require('./monarch-api');
+const { isFixedCategory } = require('./monarch');
+const { registerSource } = require('../store/sources');
+
+const SOURCE = 'monarch';
+const DAY = 24 * 60 * 60 * 1000;
+const ymd = (d) => new Date(d).toISOString().slice(0, 10);
+const dayTs = (d) => new Date(`${d}T00:00:00Z`);
+const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+// --- pure helpers -------------------------------------------------------------
+
+// Midpoint day (YYYY-MM-DD) between two inclusive dates, for adaptive chunking.
+function midDate(start, end) {
+  const s = dayTs(start).getTime();
+  const e = dayTs(end).getTime();
+  return ymd(new Date(s + Math.floor((e - s) / 2)));
+}
+function nextDay(d) {
+  return ymd(new Date(dayTs(d).getTime() + DAY));
+}
+
+// GetTransactions has no offset/cursor, so page by recursively splitting the
+// date range whenever a window comes back `truncated` (>limit transactions).
+async function fetchTxnsInRange(start, end) {
+  const res = await rpc.callToolJson('GetTransactions', { start_date: start, end_date: end, limit: 100 });
+  const txns = Array.isArray(res?.transactions) ? res.transactions : [];
+  if (res?.truncated && start !== end) {
+    const mid = midDate(start, end);
+    if (mid === end) return txns; // can't split further — accept what we got
+    const [left, right] = await Promise.all([
+      fetchTxnsInRange(start, mid),
+      fetchTxnsInRange(nextDay(mid), end),
+    ]);
+    const byId = new Map();
+    for (const t of [...txns, ...left, ...right]) if (t?.id != null) byId.set(t.id, t);
+    return [...byId.values()];
+  }
+  return txns;
+}
+
+// Daily cash-flow buckets for a category_type, optionally excluding categories.
+// Returns Map<day, amount> where amount is Monarch-signed (expense negative).
+async function dailyCashflow(start, end, categoryType, excludeCategories) {
+  const filters = { category_type: categoryType };
+  if (excludeCategories && excludeCategories.length) filters.exclude_categories = excludeCategories;
+  const res = await rpc.callToolJson('GetCashFlow', {
+    start_date: start,
+    end_date: end,
+    base_query: JSON.stringify({ group_by_time: 'day' }),
+    filters: JSON.stringify(filters),
+  });
+  const map = new Map();
+  for (const row of res?.data || []) {
+    if (row && row.month != null && Number.isFinite(row.amount)) map.set(row.month, row.amount);
+  }
+  return map;
+}
+
+// Discover the user's fixed-housing category NAMES (rent/mortgage/etc.) so they
+// can be excluded from discretionary spend. Defensive about GetCategories shape.
+async function fixedCategoryNames() {
+  try {
+    const cats = await rpc.callToolJson('GetCategories', {});
+    const names = [];
+    const collect = (arr) => {
+      for (const x of arr || []) {
+        if (x && typeof x.name === 'string') names.push(x.name);
+        if (Array.isArray(x?.categories)) collect(x.categories);
+      }
+    };
+    if (Array.isArray(cats)) collect(cats);
+    else {
+      collect(cats?.categories);
+      collect(cats?.groups);
+    }
+    return names.filter((n) => isFixedCategory(n));
+  } catch {
+    return []; // discretionary just won't be emitted — non-critical
+  }
+}
+
+function txnToDocument(t) {
+  return {
+    source: SOURCE,
+    domain: 'wealth',
+    externalId: `monarch:${t.id}`,
+    title: t.merchant || 'Transaction',
+    url: null,
+    content: [t.merchant, t.category, `$${t.amount}`, t.account].filter(Boolean).join(' — '),
+    occurredAt: t.date,
+    metadata: {
+      amount: t.amount,
+      category: t.category,
+      account: t.account,
+      merchant: t.merchant,
+      original: t.original_statement,
+    },
+  };
+}
+
+// --- the actual MCP pull ------------------------------------------------------
+
+async function syncViaMcp(ctx) {
+  // Make sure the shared 'monarch' source row exists (FK for metrics/docs).
+  await registerSource({ id: SOURCE, domain: 'wealth', displayName: 'Monarch (CSV import)' });
+
+  // Incremental window: 35-day lookback from last sync (45 on first run) so
+  // late recategorizations in Monarch reach our stored docs/metrics.
+  const lookbackDays = Number(process.env.MONARCH_LOOKBACK_DAYS) || 35;
+  const since = ctx.lastSyncAt
+    ? new Date(new Date(ctx.lastSyncAt).getTime() - lookbackDays * DAY)
+    : new Date(Date.now() - 45 * DAY);
+  const startDate = ymd(since);
+  const endDate = ymd(new Date());
+  const today = ymd(new Date());
+
+  const metrics = [];
+  const m = (metric, value, day) => ({
+    ts: dayTs(day), domain: 'wealth', metric, value: round2(value), unit: 'usd', source: SOURCE,
+  });
+
+  // 1) Net worth snapshot (today) from GetAccounts — Monarch's own totals.
+  const acc = await rpc.callToolJson('GetAccounts', {});
+  if (acc) {
+    const networth = Number(acc.total_balance);
+    const assets = Number(acc.total_asset_balance);
+    const liabilities = Math.abs(Number(acc.total_liabilities_balance));
+    if (Number.isFinite(networth)) metrics.push(m('net_worth', networth, today));
+    if (Number.isFinite(assets)) metrics.push(m('assets', assets, today));
+    if (Number.isFinite(liabilities)) metrics.push(m('liabilities', liabilities, today));
+  }
+
+  // 2) Daily spending / income / cashflow from GetCashFlow (authoritative —
+  //    transfers + CC payments already excluded by Monarch).
+  const excludeNames = await fixedCategoryNames();
+  const [expenseByDay, incomeByDay, discretionaryByDay] = await Promise.all([
+    dailyCashflow(startDate, endDate, 'expense'),
+    dailyCashflow(startDate, endDate, 'income'),
+    excludeNames.length ? dailyCashflow(startDate, endDate, 'expense', excludeNames) : Promise.resolve(new Map()),
+  ]);
+
+  const days = new Set([...expenseByDay.keys(), ...incomeByDay.keys()]);
+  for (const day of days) {
+    const spend = expenseByDay.has(day) ? -expenseByDay.get(day) : 0; // expense is negative → positive spend
+    const income = incomeByDay.has(day) ? incomeByDay.get(day) : 0;
+    if (expenseByDay.has(day)) metrics.push(m('spending', spend, day));
+    if (discretionaryByDay.has(day)) metrics.push(m('spending_discretionary', -discretionaryByDay.get(day), day));
+    if (incomeByDay.has(day)) metrics.push(m('income', income, day));
+    metrics.push(m('net_cashflow', income - spend, day));
+  }
+
+  // 3) Per-transaction documents (for the life-chat library + reconciliation).
+  const txns = await fetchTxnsInRange(startDate, endDate);
+  const documents = txns.filter((t) => t && t.id != null).map(txnToDocument);
+
+  // Reconcile the window against Monarch's current truth: prune stored docs it no
+  // longer reports there (deleted, or moved to another month).
+  const keepExternalIds = documents.map((d) => d.externalId);
+  const reconcile = { source: SOURCE, domain: 'wealth', from: startDate, to: endDate, keepExternalIds };
+
+  return { metrics, documents, reconcile };
+}
+
+module.exports = {
+  id: 'monarch_mcp_sync',
+  domain: 'wealth',
+  displayName: 'Monarch (MCP auto-sync)',
+
+  async sync(ctx = {}) {
+    // Not configured → preserve existing behavior via the GraphQL connector.
+    if (!monarchMcp.isConfigured()) {
+      return monarchApi.sync(ctx);
+    }
+
+    // Once-per-day guard: runIngest() fires on every briefing rebuild; don't
+    // re-pull Monarch all day. A `full` run (ctx.lastSyncAt === null) proceeds.
+    if (ctx.lastSyncAt) {
+      const tz = process.env.TZ || 'America/New_York';
+      const localDay = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: tz });
+      if (localDay(ctx.lastSyncAt) === localDay(new Date())) {
+        return { metrics: [], documents: [] };
+      }
+    }
+
+    try {
+      return await syncViaMcp(ctx);
+    } catch (err) {
+      console.error('[monarch_mcp_sync] MCP pull failed, falling back to GraphQL:', err.message);
+      return monarchApi.sync(ctx);
+    }
+  },
+
+  // exported for testing
+  fetchTxnsInRange,
+  dailyCashflow,
+  txnToDocument,
+  syncViaMcp,
+};
