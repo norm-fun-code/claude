@@ -235,10 +235,12 @@ function getMarketBrief(tz) {
   const list = stories.map(function (s, i) {
     return (i + 1) + '. ' + s.title + (s.description ? ' — ' + s.description : '') + ' [' + s.source + ']';
   }).join('\n');
+  // Generous cap: gemini-3.5-flash spends output budget on reasoning, so a small
+  // cap (e.g. 700) truncates the visible bullets mid-sentence.
   const text = callGemini(
     MARKET_BRIEF_SYSTEM,
     'Today\'s market & finance stories:\n\n' + list + '\n\nWrite the brief.',
-    { temperature: 0.3, maxTokens: 700 }
+    { temperature: 0.3, maxTokens: 4096 }
   );
   return (text && text.trim()) ? text.trim() : '';
 }
@@ -383,12 +385,24 @@ function urgentHtml(list) {
 
 function marketsHtml(briefMarkdown) {
   if (!briefMarkdown) return emptyNote('Market brief unavailable today.');
-  const items = briefMarkdown.split('\n').map(function (l) { return l.trim(); })
-    .filter(function (l) { return l.indexOf('- ') === 0 || l.indexOf('* ') === 0; })
-    .map(function (l) {
-      const t = esc(l.replace(/^[-*]\s+/, '')).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-      return '<li style="margin-bottom:11px; line-height:1.65;">' + t + '</li>';
-    }).join('');
+  // Accumulate bullets, folding wrapped continuation lines back into their bullet.
+  const bullets = [];
+  briefMarkdown.split('\n').forEach(function (raw) {
+    const line = raw.trim();
+    if (!line) return;
+    if (line.indexOf('- ') === 0 || line.indexOf('* ') === 0) {
+      bullets.push(line.replace(/^[-*]\s+/, ''));
+    } else if (bullets.length) {
+      bullets[bullets.length - 1] += ' ' + line; // continuation of previous bullet
+    } else {
+      bullets.push(line); // brief returned without bullet markers
+    }
+  });
+  if (!bullets.length) return emptyNote('Market brief unavailable today.');
+  const items = bullets.map(function (b) {
+    const t = esc(b).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    return '<li style="margin-bottom:11px; line-height:1.65;">' + t + '</li>';
+  }).join('');
   return '<ul style="font-family:' + STYLE.sans + '; font-size:15px; color:' + STYLE.body + '; padding-left:18px; margin:0;">' + items + '</ul>';
 }
 
@@ -430,16 +444,17 @@ function renderEmail(parts) {
     '<div style="font-family:' + STYLE.sans + '; font-size:16px; line-height:1.6; color:' + STYLE.ink + '; margin:24px 0 0;">' +
     'Good morning, Norm — show up with joy, presence, and courage today.</div>';
 
+  // Emojis as HTML entity codes (raw 4-byte emojis mojibake through GmailApp).
   let body = masthead + greeting;
-  body += sectionLabel('Reflection', '💡') + insightBlock('Reflection', parts.principle, parts.content.quoteInsight);
+  body += sectionLabel('Reflection', '&#128161;') + insightBlock('Reflection', parts.principle, parts.content.quoteInsight);
   if (parts.content.notionQuote) {
-    body += sectionLabel('Notion Wisdom', '📖') + insightBlock('Notion Wisdom', parts.content.notionQuote, parts.content.notionInsight);
+    body += sectionLabel('Notion Wisdom', '&#128214;') + insightBlock('Notion Wisdom', parts.content.notionQuote, parts.content.notionInsight);
   }
-  body += sectionLabel('Newsletters', '📰') + newslettersHtml(parts.content.newsletters);
-  body += sectionLabel('Urgent Inbox', '🚨') + urgentHtml(parts.content.urgentEmails);
-  body += sectionLabel('Markets', '📈') + marketsHtml(parts.marketBrief);
-  body += sectionLabel('Calendar — Today', '📅') + calendarHtml(parts.events);
-  body += sectionLabel('Workout', '💪') + workoutHtml(parts.day);
+  body += sectionLabel('Newsletters', '&#128240;') + newslettersHtml(parts.content.newsletters);
+  body += sectionLabel('Urgent Inbox', '&#128680;') + urgentHtml(parts.content.urgentEmails);
+  body += sectionLabel('Markets', '&#128200;') + marketsHtml(parts.marketBrief);
+  body += sectionLabel('Calendar — Today', '&#128197;') + calendarHtml(parts.events);
+  body += sectionLabel('Workout', '&#128170;') + workoutHtml(parts.day);
 
   const footer =
     '<div style="margin-top:40px; padding-top:16px; border-top:1px solid ' + STYLE.hair + '; ' +
