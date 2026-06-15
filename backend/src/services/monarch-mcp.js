@@ -19,6 +19,28 @@ const MCP_URL = process.env.MONARCH_MCP_URL || 'https://api.monarch.com/mcp';
 const SOURCE_ID = 'monarch_mcp';
 const MCP_BETA = 'mcp-client-2025-11-20';
 
+// READ-ONLY allowlist. Monarch's MCP also exposes write/destructive tools
+// (CreateTransaction, DeleteTransaction, BulkUpdate*, UpdateAccountBalanceHistory,
+// rule/category/tag/merchant mutators, etc.). Ask Norm must never mutate the
+// user's finances, so we default-deny and enable only query tools. A
+// hallucinated or prompt-injected call to a write tool is then simply unavailable.
+const READ_TOOLS = [
+  'GetTransactions', 'GetCategories', 'GetTags', 'GetBusinesses',
+  'GetCreditScoreHistory', 'GetRealEstate', 'GetAccounts', 'GetNetWorthHistory',
+  'GetSpendingByCategory', 'GetBudget', 'GetCashFlow', 'GetRecurring',
+  'GetGoals', 'GetInvestments', 'GetMerchants', 'GetHouseholdMembers', 'ListRules',
+];
+
+// mcp_toolset entry that enables ONLY the read tools (default-deny allowlist).
+function readOnlyToolset() {
+  return {
+    type: 'mcp_toolset',
+    mcp_server_name: 'monarch',
+    default_config: { enabled: false },
+    configs: Object.fromEntries(READ_TOOLS.map((name) => [name, { enabled: true }])),
+  };
+}
+
 let cachedAccess = null; // { token, expiresAt }
 
 /** Cheap synchronous gate: configured if the bootstrap env seed is present. */
@@ -112,7 +134,7 @@ async function answerWithMonarch({ system, prompt, maxTokens = 1600 }) {
       mcp_servers: [
         { type: 'url', url: MCP_URL, name: 'monarch', authorization_token: token },
       ],
-      tools: [{ type: 'mcp_toolset', mcp_server_name: 'monarch' }],
+      tools: [readOnlyToolset()],
     },
     {
       headers: {
@@ -158,7 +180,7 @@ async function probe() {
       max_tokens: 1024,
       messages: [{ role: 'user', content: 'List the Monarch tools you have available, then call the one that returns my net worth or account balances and report the result.' }],
       mcp_servers: [{ type: 'url', url: MCP_URL, name: 'monarch', authorization_token: token }],
-      tools: [{ type: 'mcp_toolset', mcp_server_name: 'monarch' }],
+      tools: [readOnlyToolset()],
     },
     {
       headers: {
