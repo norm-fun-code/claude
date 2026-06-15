@@ -1651,8 +1651,7 @@ app.get('/api/debug/work-calendar', async (req, res) => {
 
 // Lightweight Monarch MCP health check — confirms the integration is configured
 // and the refresh-token → access-token exchange works, WITHOUT dumping any
-// financial data. (The raw tool-shape probes used while building the sync were
-// removed; use scripts or the sync connector to inspect data.)
+// financial data.
 app.get('/api/debug/monarch-mcp', async (req, res) => {
   try {
     const monarchMcp = require('./src/services/monarch-mcp');
@@ -1663,6 +1662,27 @@ app.get('/api/debug/monarch-mcp', async (req, res) => {
     res.json({ configured: true, tokenOk: true });
   } catch (err) {
     res.status(500).json({ configured: true, tokenOk: false, error: err.response?.data || err.message });
+  }
+});
+
+// TEMPORARY raw Monarch MCP JSON-RPC probe (NO LLM) — used to inspect tool output
+// shapes while building the wealth features. Remove once the mappers are built.
+app.get('/api/debug/monarch-mcp-raw', async (req, res) => {
+  try {
+    const rpc = require('./src/services/monarch-mcp-rpc');
+    const tool = req.query.tool;
+    if (!tool) {
+      const tools = await rpc.listTools();
+      return res.json({ tools: tools.map((t) => t.name) });
+    }
+    let args = {};
+    if (req.query.args) {
+      try { args = JSON.parse(req.query.args); } catch { return res.status(400).json({ error: 'args must be valid JSON' }); }
+    }
+    const result = await rpc.callToolJson(String(tool), args);
+    res.json({ tool, args, result });
+  } catch (err) {
+    res.status(500).json({ error: err.response?.data || err.message });
   }
 });
 
