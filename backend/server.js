@@ -1638,6 +1638,17 @@ app.get('/api/sources', async (req, res) => {
   }
 });
 
+// Quick smoke-test for the work calendar free/busy integration.
+// Returns the raw busy blocks for today — useful for verifying GOOGLE_WORK_CALENDAR_ID is correct.
+app.get('/api/debug/work-calendar', async (req, res) => {
+  try {
+    const blocks = await fetchWorkBusyBlocks();
+    res.json({ calendarId: process.env.GOOGLE_WORK_CALENDAR_ID || '(not set)', blocks, count: blocks.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Mid-day partial refresh: markets + urgent-email scan + weather/calendar.
 // Everything else (wisdom, insights, recovery framing, weekly review) is
 // morning-built and day-locked. Merges into the cached briefing and re-saves.
