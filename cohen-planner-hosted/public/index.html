@@ -327,6 +327,41 @@ async function doLogout(){
 const fmt=n=>Math.abs(n)>=1e6?`$${(n/1e6).toFixed(2)}M`:Math.abs(n)>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${Math.round(n)}`;
 const fmtF=n=>`$${Math.round(n).toLocaleString()}`;
 
+function showToast(msg,type){
+  const d=document.createElement('div');
+  const c=type==='green'?'#1a8754':type==='red'?'#cd3d64':'#0a2540';
+  d.style.cssText=`position:fixed;top:16px;right:16px;background:${c};color:#fff;padding:10px 16px;border-radius:8px;font-size:12px;font-weight:500;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.15);max-width:300px`;
+  d.textContent=msg;document.body.appendChild(d);
+  setTimeout(()=>{d.style.opacity='0';d.style.transition='opacity .3s';setTimeout(()=>d.remove(),300)},3000);
+}
+function showConfirm(msg){return window.confirm?window.confirm(msg):true;}
+
+function showSnapshotInput(){
+  const dflt=`${P.planStartYear||2026} plan · ${new Date().toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`;
+  const d=document.createElement('div');
+  d.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(10,37,64,.4);z-index:9998;display:flex;align-items:center;justify-content:center';
+  d.innerHTML=`<div style="background:#fff;border-radius:12px;padding:24px 28px;width:100%;max-width:380px;box-shadow:0 8px 30px rgba(0,0,0,.15)">
+    <div style="font-size:14px;font-weight:700;color:#0a2540;margin-bottom:4px">📸 Save Snapshot</div>
+    <div style="font-size:11px;color:#8898aa;margin-bottom:14px">A dated copy of this plan for comparing projected vs. actual over time.</div>
+    <input id="snapshotLabelInput" type="text" value="${dflt.replace(/"/g,'&quot;')}"
+      style="width:100%;padding:9px 11px;border:1px solid #635bff;border-radius:7px;font-size:12px;font-family:inherit;color:#0a2540;outline:none;margin-bottom:12px"
+      onkeydown="if(event.key==='Enter')confirmSnapshot(this.closest('div[style*=fixed]'));if(event.key==='Escape')this.closest('div[style*=fixed]').remove()">
+    <div style="display:flex;gap:8px">
+      <button onclick="confirmSnapshot(this.closest('div[style*=fixed]'))" style="flex:1;background:#635bff;color:#fff;border:none;padding:9px;border-radius:7px;cursor:pointer;font-weight:600;font-size:12px;font-family:inherit">Save</button>
+      <button onclick="this.closest('div[style*=fixed]').remove()" style="flex:1;background:#f0f4f8;color:#425466;border:1px solid #e6ebf1;padding:9px;border-radius:7px;cursor:pointer;font-size:12px;font-family:inherit">Cancel</button>
+    </div>
+  </div>`;
+  d.addEventListener('click',e=>{if(e.target===d)d.remove()});
+  document.body.appendChild(d);
+  setTimeout(()=>{const inp=document.getElementById('snapshotLabelInput');if(inp){inp.focus();inp.select();}},50);
+}
+async function confirmSnapshot(overlay){
+  const inp=document.getElementById('snapshotLabelInput');
+  const label=inp?inp.value.trim():'';
+  if(overlay)overlay.remove();
+  await saveSnapshot(false,label||undefined);
+}
+
 // ═══ UI ═══
 let activeTab='nw';let charts={};let inflationView=false;let mcView=false;let snapshots=[];let overlaySnapId=null;
 let _lastChartKey='';
@@ -522,22 +557,21 @@ ${scenHtml}
 async function loadSnapshots(){
   try{const res=await fetch('/api/snapshots');if(res.ok)snapshots=await res.json()}catch(e){snapshots=[]}
 }
-async function saveSnapshot(silent){
+async function saveSnapshot(silent,labelOverride){
   const{R,tT}=run(P);const last=R[R.length-1];
   const def=R.filter(r=>r.surp<0).length;
   const dflt=`${P.planStartYear||2026} plan · ${new Date().toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`;
-  let label=dflt;
-  if(!silent){const r=prompt('Snapshot label (a dated copy you can compare against later):',dflt);if(r===null)return;label=r.trim()||dflt}
+  const label=labelOverride||dflt;
   const summary={finalNW:last.nw,final401k:last.k401,totalTuition:tT,deficitYears:def,startingLiquid:P.startingLiquid,liqFloor:Math.min(...R.map(r=>r.liq))};
   const snap={id:advUuid(),label,planYear:P.planStartYear||2026,params:{...P},summary};
   try{await fetch('/api/snapshots',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(snap)});}catch(e){}
   snapshots.push({...snap,plan_year:snap.planYear,created_at:new Date().toISOString()});
   renderSnapshotBar();
-  if(!silent)alert(`📸 Snapshot saved: "${label}"\n\nUse the chip below the KPIs to overlay it on the Net Worth chart and compare your projection over time.`);
+  if(!silent)showToast(`📸 Snapshot saved: "${label}"`,'green');
 }
 async function deleteSnapshot(id){
   const s=snapshots.find(x=>x.id===id);if(!s)return;
-  if(!confirm(`Delete snapshot "${s.label}"?`))return;
+  if(!showConfirm(`Delete snapshot "${s.label}"?`))return;
   try{await fetch('/api/snapshots/'+id,{method:'DELETE'});}catch(e){}
   snapshots=snapshots.filter(x=>x.id!==id);
   if(overlaySnapId===id)overlaySnapId=null;
@@ -560,11 +594,23 @@ function buildControls(){
   const sy=P.planStartYear||2026;
   const baseYr=sy+4;
   let h=`<div style="font-size:10px;font-weight:700;margin-bottom:8px">⚙️ Parameters</div>`;
-  h+=`<div style="margin-bottom:8px"><button class="btn btn-g" onclick="saveScenario()" style="margin-bottom:3px">💾 Save as New</button>`;
-  if(activeScenarioIdx>=0)h+=`<button class="btn" onclick="updateScenario(${activeScenarioIdx})" style="margin-bottom:3px;border-color:rgba(245,183,49,.3);color:var(--a)">🔄 Update "${scenarios[activeScenarioIdx]?.name||''}"</button>`;
-  if(scenarios.length>0)h+=`<button class="btn" onclick="toggleCompare()" style="margin-bottom:3px">${compareMode?'Exit Compare':'📊 Compare'}</button>`;
-  h+=`<button class="btn" onclick="rollForward()" style="margin-bottom:3px;border-color:rgba(8,145,178,.3);color:var(--c);background:#e0f7fa">📅 Roll Forward → ${sy+1}</button>`;
-  h+=`</div>`;
+  h+=`<div style="margin-bottom:8px">
+    <div id="scenarioSaveArea">
+      <button class="btn btn-g" onclick="showSaveInput()" style="margin-bottom:3px">💾 Save as New</button>
+    </div>
+    <div id="scenarioSaveForm" style="display:none;margin-bottom:3px">
+      <input id="scenarioNameInput" type="text" placeholder="Scenario name…" value="Scenario ${scenarios.length+1}"
+        style="width:100%;padding:6px 8px;border:1px solid var(--accent);border-radius:6px;font-size:11px;font-family:inherit;color:var(--tx);background:var(--s1);outline:none;margin-bottom:4px"
+        onkeydown="if(event.key==='Enter')confirmSaveScenario();if(event.key==='Escape')hideSaveInput()">
+      <div style="display:flex;gap:4px">
+        <button class="btn btn-g" onclick="confirmSaveScenario()" style="flex:1;font-size:10px">Save</button>
+        <button class="btn" onclick="hideSaveInput()" style="flex:1;font-size:10px">Cancel</button>
+      </div>
+    </div>
+    ${activeScenarioIdx>=0?`<button class="btn" onclick="updateScenario(${activeScenarioIdx})" style="margin-bottom:3px;border-color:rgba(245,183,49,.3);color:var(--a)">🔄 Update "${scenarios[activeScenarioIdx]?.name||''}"</button>`:''}
+    ${scenarios.length>0?`<button class="btn" onclick="toggleCompare()" style="margin-bottom:3px">${compareMode?'Exit Compare':'📊 Compare'}</button>`:''}
+    <button class="btn" onclick="rollForward()" style="margin-bottom:3px;border-color:rgba(8,145,178,.3);color:var(--c);background:#e0f7fa">📅 Roll Forward → ${sy+1}</button>
+  </div>`;
   h+=`<div class="st">👶 Kids</div>`;
   h+=s('# of kids','numKids',1,4,1);h+=s('Kid 1 born','kid1Birth',2026,2030,1);
   if(P.numKids>=2)h+=s('Kid 2 born','kid2Birth',2028,2035,1);
@@ -635,9 +681,28 @@ function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'
 
 function loadScenario(i){P={...D,...scenarios[i].params};activeScenarioIdx=i;buildControls();render();savePlannerState()}
 
-async function saveScenario(){
-  const n=prompt('Name:','Scenario '+(scenarios.length+1));
-  if(!n)return;
+function showSaveInput(){
+  const area=document.getElementById('scenarioSaveArea');
+  const form=document.getElementById('scenarioSaveForm');
+  const inp=document.getElementById('scenarioNameInput');
+  if(!area||!form||!inp)return;
+  inp.value='Scenario '+(scenarios.length+1);
+  area.style.display='none';form.style.display='block';
+  inp.focus();inp.select();
+}
+function hideSaveInput(){
+  const area=document.getElementById('scenarioSaveArea');
+  const form=document.getElementById('scenarioSaveForm');
+  if(area)area.style.display='block';if(form)form.style.display='none';
+}
+async function confirmSaveScenario(){
+  const inp=document.getElementById('scenarioNameInput');
+  const n=(inp?inp.value.trim():'')||('Scenario '+(scenarios.length+1));
+  hideSaveInput();
+  await saveScenario(n);
+}
+async function saveScenario(n){
+  if(!n){n='Scenario '+(scenarios.length+1);}
   const id=advUuid();
   const s={id,name:n,params:{...P},results:run(P),color:COLORS[scenarios.length%COLORS.length]};
   scenarios.push(s);
@@ -650,7 +715,10 @@ async function saveScenario(){
   }catch(e){
     console.error('saveScenario failed:',e);
     setSyncStatus('error');
-    alert('⚠️ Scenario saved locally but failed to persist to server.\n\nUse 📤 Export to back up your scenarios — they may be lost on reload.\n\nError: '+e.message);
+    const errDiv=document.createElement('div');
+    errDiv.style.cssText='position:fixed;top:16px;right:16px;background:#fceaee;border:1px solid rgba(205,61,100,.3);color:#cd3d64;padding:12px 16px;border-radius:8px;font-size:12px;z-index:9999;max-width:300px;box-shadow:0 4px 12px rgba(0,0,0,.1)';
+    errDiv.innerHTML=`<strong>⚠️ Save failed</strong><br>Scenario is visible this session but won't survive a reload.<br><small style="opacity:.7">${e.message}</small><br><br><button onclick="this.parentElement.remove()" style="background:#cd3d64;color:#fff;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px">Dismiss</button>`;
+    document.body.appendChild(errDiv);setTimeout(()=>errDiv.remove(),8000);
   }
 }
 
@@ -1178,7 +1246,7 @@ document.getElementById('main').innerHTML=`
     <button id="inflBtn" onclick="toggleInflation()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit">Real $</button>
     <button onclick="exportCSV()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Download projection table as CSV">⬇ CSV</button>
     <button onclick="printPDF()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Print / Save as PDF">🖨 PDF</button>
-    <button onclick="saveSnapshot()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid rgba(8,145,178,.3);background:#e0f7fa;color:var(--c);cursor:pointer;font-family:inherit" title="Save a dated copy of this plan">📸 Snapshot</button>
+    <button onclick="showSnapshotInput()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid rgba(8,145,178,.3);background:#e0f7fa;color:var(--c);cursor:pointer;font-family:inherit" title="Save a dated copy of this plan">📸 Snapshot</button>
   </div>
   <div class="cc" id="chartArea"><canvas id="cv" style="height:300px"></canvas></div>
   <div class="sg" id="summaries"></div>`;
