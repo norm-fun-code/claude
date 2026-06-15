@@ -176,11 +176,17 @@ describe('run()', () => {
     investReturn: 0.06, capGainsTaxRate: 0.345, costBasisPct: 0.55, mcVol: 0.14,
   };
 
-  it('returns rows from planStartYear to 2058', () => {
+  it('returns rows from planStartYear to planEndYear', () => {
     const { R } = run(P_FULL);
     expect(R[0].yr).toBe(2026);
     expect(R[R.length - 1].yr).toBe(2058);
-    expect(R.length).toBe(33);
+    expect(R.length).toBe(33); // 2026-2058 inclusive
+  });
+
+  it('respects custom planEndYear', () => {
+    const { R } = run({ ...P_FULL, planEndYear: 2050 });
+    expect(R[R.length - 1].yr).toBe(2050);
+    expect(R.length).toBe(25); // 2026-2050 inclusive
   });
 
   it('net worth = liquid + equity (within $1 rounding tolerance)', () => {
@@ -253,7 +259,7 @@ describe('runMonteCarlo()', () => {
 
   it('band has one entry per projection year', () => {
     const mc = runMonteCarlo(P_MC, 50);
-    expect(mc.band.p10.length).toBe(2058 - 2026 + 1);
+    expect(mc.band.p10.length).toBe((P_MC.planEndYear || 2058) - 2026 + 1);
   });
 
   it('p10 < p50 < p90 at final year', () => {

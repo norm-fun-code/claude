@@ -131,6 +131,7 @@ function mBal(pr,r,yp,ty=30){if(yp>=ty||pr<=0)return 0;const m=r/12,n=ty*12,pp=y
 
 function run(p,rets){
   const sy=p.planStartYear||2026;
+  const ey=p.planEndYear||2058;
   const baseYr=sy+4;
   const kids=[p.kid1Birth];
   if(p.numKids>=2)kids.push(p.kid2Birth);
@@ -139,7 +140,7 @@ function run(p,rets){
   const dp=p.homePrice*(p.downPctg/100),ma=p.homePrice-dp,am=mPmt(ma,p.mortgageRate/100);
   let liq=p.startingLiquid,k401=p.k401Start||210000,tT=0,tC=0,tTx=0,tS=0;
   const R=[];
-  for(let yr=sy;yr<=2058;yr++){
+  for(let yr=sy;yr<=ey;yr++){
     const nk=kids.filter(k=>yr>=k).length;
     const yIdx=yr-sy;
     let normCash,normStock;
@@ -208,7 +209,7 @@ function randNorm(mean,sd){
 }
 
 function runMonteCarlo(p,trials=600){
-  const sy=p.planStartYear||2026;const nYears=2058-sy+1;
+  const sy=p.planStartYear||2026;const ey=p.planEndYear||2058;const nYears=ey-sy+1;
   const vol=p.mcVol??.14;const mean=p.investReturn;
   const nwPaths=[],liqPaths=[],finalNW=[],floorLiq=[];let ruin=0;
   for(let t=0;t<trials;t++){

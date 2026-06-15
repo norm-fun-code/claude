@@ -237,6 +237,7 @@ const D={
   k401Start:210000,
   mcVol:.14,
   taxInflation:.025,
+  planEndYear:2058,
 };
 let P={...D};let scenarios=[];let compareMode=false;let activeScenarioIdx=-1;
 
@@ -464,8 +465,8 @@ function rollForward(){
   // Shift Norm income forward
   P.normCashY0=P.normCashY1;P.normCashY1=P.normCashY2;P.normCashY2=P.normCashY3;P.normCashY3=P.normCashBase;
   P.normStockY0=P.normStockY1;P.normStockY1=P.normStockY2;P.normStockY2=P.normStockY3;P.normStockY3=P.normStockBase;
-  // Shift Nancy W2 forward
-  P.nancyW2Y0=P.nancyW2Y1;P.nancyW2Y1=P.nancyW2Y2;P.nancyW2Y2=P.nancyW2Y3;
+  // Shift Nancy W2 forward; Y3 carries Y2 forward as a placeholder
+  P.nancyW2Y0=P.nancyW2Y1;P.nancyW2Y1=P.nancyW2Y2;P.nancyW2Y2=P.nancyW2Y3;P.nancyW2Y3=P.nancyW2Y2;
   // Advance plan year
   P.planStartYear=nextYear;
   if(liqStr!==null){const v=parseFloat(String(liqStr).replace(/[,$\s]/g,''));if(!isNaN(v)&&v>0)P.startingLiquid=v}
@@ -539,6 +540,7 @@ function render(){
   renderSnapshotBar();
   const labels=R.map(r=>String(r.yr));const newKey=_chartKey();const reuseChart=(newKey===_lastChartKey&&!!charts.main);if(!reuseChart)destroyCharts();_lastChartKey=newKey;const ca=document.getElementById('chartArea');
   if(activeTab==='advisor'){renderAdvisorTab(R,P);return}
+  if(activeTab==='compare'){renderCompareTab(R,P);return}
   if(activeTab==='table'){
     ca.innerHTML=`<div class="tw"><table><thead><tr>${['Yr','Norm','Nancy','Gross','Tax','Eff%','Net','Housing','Living','CC','Tuition','TotExp','Surplus','Liquid','Eq','NW'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{const bg=r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';return `<tr style="background:${bg}"><td style="font-weight:700;color:var(--tx)">${r.yr}</td><td style="color:var(--b)">${fmt(r.normG)}</td><td style="color:var(--p)">${fmt(r.nancyG)}</td><td>${fmt(r.gross)}</td><td style="color:var(--r)">${fmt(r.tax)}</td><td style="color:var(--a)">${(r.effRate*100).toFixed(1)}%</td><td style="color:var(--g)">${fmt(r.inc)}</td><td>${fmt(r.h)}</td><td>${fmt(r.liv)}</td><td style="color:${r.cc>0?'var(--a)':'var(--t3)'}">${r.cc>0?fmt(r.cc):'—'}</td><td style="color:${r.tu>100000?'var(--r)':r.tu>0?'var(--a)':'var(--t3)'}">${r.tu>0?fmt(r.tu):'—'}</td><td>${fmt(r.totE)}</td><td style="color:${r.surp>=0?'var(--g)':'var(--r)'};font-weight:600">${r.surp>=0?'+':''}${fmt(r.surp)}</td><td style="color:var(--b)">${fmt(r.liq)}</td><td style="color:var(--p)">${r.eq>0?fmt(r.eq):'—'}</td><td style="color:var(--g);font-weight:600">${fmt(r.nw)}</td></tr>`}).join('')}</tbody></table></div>`;return}
   if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';
@@ -607,8 +609,109 @@ function render(){
   }
   document.getElementById('summaries').innerHTML=`
     <div class="sc"><h3>🏠 Home</h3><p><span class="mono" style="font-weight:600;color:var(--tx)">${fmt(P.homePrice)}</span> in ${P.homePurchaseYear}<br>${P.downPctg}% down · <span class="mono">${fmt(mm)}/mo</span> at ${P.mortgageRate}%</p></div>
-    <div class="sc"><h3>📊 Tax Engine</h3><p>Fed MFJ 2026 + NYS + NYC + FICA<br>SALT $40.4K w/ phaseout above $505K<br>CTC $2K/kid w/ AGI phaseout<br>${P.nancySoloPractice?'Nancy: QBI + home office + SE':'Nancy: W2'}</p></div>
+    <div class="sc"><h3>📊 Tax Engine</h3><p>Fed MFJ 2026 + NYS + NYC + FICA<br>SALT $40.4K w/ phaseout above $505K<br>CTC $2.2K/kid w/ AGI phaseout<br>${P.nancySoloPractice?'Nancy: QBI + home office + SE':'Nancy: W2'}</p></div>
     <div class="sc"><h3>💡 Per-Kid Costs</h3><p>Infant +$9K · School +$10K · Teen +$14K/yr<br><em style="font-size:7.5px;color:var(--t3)">${(P.expenseInflation*100).toFixed(1)}%/yr inflation · ${P.numKids} kids</em></p></div>`;
+}
+
+function renderCompareTab(R,P){
+  const ca=document.getElementById('chartArea');
+  destroyCharts();
+  if(scenarios.length===0){
+    ca.innerHTML=`<div style="text-align:center;padding:50px 30px;color:var(--t2)">
+      <div style="font-size:40px;margin-bottom:14px">⚖️</div>
+      <div style="font-size:15px;font-weight:700;color:var(--tx);margin-bottom:8px">No scenarios to compare yet</div>
+      <p style="font-size:12.5px;line-height:1.7;max-width:420px;margin:0 auto;color:var(--t2)">
+        Save a scenario using <strong>💾 Save as New</strong> in the left panel, or use the
+        <strong>🤖 AI Advisor</strong> in agentic mode — it can propose plan changes and save them here automatically.
+      </p>
+    </div>`;
+    return;
+  }
+  const planRes=run(P);
+  const cols=[
+    {name:'Current Plan',params:P,res:planRes,color:'#0a2540',isCurrent:true},
+    ...scenarios.map(s=>({name:s.name,params:s.params,res:run({...D,...migrateP(s.params)}),color:s.color,isCurrent:false}))
+  ];
+  const METRICS=[
+    {label:'NW @ 2058',get:(r,p)=>r.R[r.R.length-1].nw,fmt:fmt,b:1},
+    {label:'401k @ 2058',get:(r,p)=>r.R[r.R.length-1].k401,fmt:fmt,b:1},
+    {label:'Grand Total (NW + 401k)',get:(r,p)=>{const l=r.R[r.R.length-1];return l.nw+l.k401},fmt:fmt,b:1},
+    {sep:true,label:'Risk'},
+    {label:'Liquid Floor',get:(r,p)=>Math.min(...r.R.map(x=>x.liq)),fmt:fmt,b:1},
+    {label:'Deficit Years',get:(r,p)=>r.R.filter(x=>x.surp<0).length,fmt:n=>n+' yrs',b:-1},
+    {label:'Worst Year Surplus',get:(r,p)=>Math.min(...r.R.map(x=>x.surp)),fmt:fmt,b:1},
+    {sep:true,label:'Milestones'},
+    {label:'Liquid After Home Purchase',get:(r,p)=>{const row=r.R.find(x=>x.yr===p.homePurchaseYear);return row?row.liq:0},fmt:fmt,b:1},
+    {label:'Total Tuition',get:(r,p)=>r.tT,fmt:fmt,b:-1},
+    {label:'Tax on Stock Sales',get:(r,p)=>r.tTx,fmt:fmt,b:-1},
+    {sep:true,label:'Year 1'},
+    {label:'Gross Income',get:(r,p)=>r.R[0].gross,fmt:fmt,b:0},
+    {label:'Effective Tax Rate',get:(r,p)=>r.R[0].effRate,fmt:v=>(v*100).toFixed(1)+'%',b:-1},
+    {label:'Net Take-Home',get:(r,p)=>r.R[0].inc,fmt:fmt,b:1},
+  ];
+  const vals=METRICS.map(m=>m.sep?null:cols.map(c=>m.get(c.res,c.params)));
+  const best=METRICS.map((m,mi)=>{
+    if(m.sep||!m.b)return[];
+    const v=vals[mi];
+    const target=m.b===1?Math.max(...v):Math.min(...v);
+    return v.map(x=>x===target?'best':'');
+  });
+  const worst=METRICS.map((m,mi)=>{
+    if(m.sep||!m.b||cols.length<2)return[];
+    const v=vals[mi];
+    const target=m.b===1?Math.min(...v):Math.max(...v);
+    return v.map(x=>x===target?'worst':'');
+  });
+  let h=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:10.5px">
+  <thead><tr>
+    <th style="text-align:left;padding:8px 10px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);border-bottom:2px solid var(--bd);position:sticky;left:0;background:var(--s2);min-width:160px;z-index:2">Metric</th>`;
+  cols.forEach(c=>{
+    h+=`<th style="padding:9px 14px;text-align:right;border-bottom:2px solid var(--bd);min-width:130px;background:var(--s2)">
+      <div style="font-size:11px;font-weight:700;color:${c.color}">${advEscape(c.name)}</div>
+      ${c.isCurrent?'<div style="font-size:8px;color:var(--t3);font-weight:400;margin-top:1px">live plan</div>':''}
+    </th>`;
+  });
+  h+=`</tr></thead><tbody>`;
+  METRICS.forEach((m,mi)=>{
+    if(m.sep){
+      h+=`<tr><td colspan="${cols.length+1}" style="padding:9px 10px 4px;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:var(--t3);background:var(--s3);border-bottom:1px solid var(--bd)">${m.label}</td></tr>`;
+      return;
+    }
+    h+=`<tr>`;
+    h+=`<td style="padding:7px 10px;color:var(--t2);font-weight:500;border-bottom:1px solid var(--bd);position:sticky;left:0;background:var(--s1);z-index:1">${m.label}</td>`;
+    cols.forEach((c,ci)=>{
+      const v=vals[mi][ci];
+      const isBest=best[mi][ci]==='best';
+      const isWorst=worst[mi][ci]==='worst';
+      const bg=isBest?'rgba(26,135,84,.07)':isWorst?'rgba(205,61,100,.05)':'';
+      const clr=isBest?'var(--g)':isWorst?'var(--r)':c.isCurrent?'var(--tx)':c.color;
+      const badge=isBest?'<span style="font-size:7px;margin-left:3px;opacity:.7">▲best</span>':isWorst?'<span style="font-size:7px;margin-left:3px;opacity:.7">▼</span>':'';
+      h+=`<td style="padding:7px 14px;text-align:right;border-bottom:1px solid var(--bd);font-family:'SF Mono',monospace;font-weight:${c.isCurrent?'700':'500'};background:${bg};color:${clr}">${m.fmt(v)}${badge}</td>`;
+    });
+    h+=`</tr>`;
+  });
+  h+=`</tbody></table></div>`;
+  // Parameter diffs
+  const PKEYS=['homePrice','downPctg','mortgageRate','homePurchaseYear','investReturn','startingLiquid','expenseInflation','nancyHourlyRate','nancyMaxClients','normCashBase','normStockBase','pretax401k','mcVol','taxInflation','numKids'];
+  const PLABELS={homePrice:'Home Price',downPctg:'Down %',mortgageRate:'Mortgage Rate',homePurchaseYear:'Purchase Year',investReturn:'Return %',startingLiquid:'Starting Liquid',expenseInflation:'Exp Inflation',nancyHourlyRate:'Nancy $/hr',nancyMaxClients:'Nancy Max Clients',normCashBase:'Norm Cash Base',normStockBase:'Norm Stock Base',pretax401k:'401k Contrib',mcVol:'MC Vol',taxInflation:'Tax Inflation',numKids:'# Kids'};
+  const fmtPv=(k,v)=>{if(['investReturn','expenseInflation','taxInflation','mcVol'].includes(k))return(v*100).toFixed(1)+'%';if(['homePrice','startingLiquid','normCashBase','normStockBase','pretax401k'].includes(k))return fmt(v);if(k==='downPctg')return v+'%';if(k==='mortgageRate')return v+'%';return String(v)};
+  const diffCols=cols.slice(1).filter(c=>PKEYS.some(k=>c.params[k]!==undefined&&c.params[k]!==P[k]));
+  if(diffCols.length){
+    h+=`<div style="margin-top:16px"><div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:8px">Parameter differences vs. current plan</div>`;
+    h+=`<div style="display:flex;flex-direction:column;gap:5px">`;
+    diffCols.forEach(c=>{
+      const diffs=PKEYS.filter(k=>c.params[k]!==undefined&&c.params[k]!==P[k]);
+      if(!diffs.length)return;
+      h+=`<div style="background:var(--s2);border:1px solid var(--bd);border-radius:7px;padding:8px 11px">
+        <div style="font-size:10.5px;font-weight:700;color:${c.color};margin-bottom:5px">${advEscape(c.name)}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:5px">`;
+      diffs.forEach(k=>{h+=`<span style="font-size:9.5px;background:var(--s1);border:1px solid var(--bd);border-radius:4px;padding:2px 8px;white-space:nowrap"><span style="color:var(--t3)">${PLABELS[k]||k}: </span><span style="color:var(--t2);text-decoration:line-through">${fmtPv(k,P[k])}</span> <span style="color:${c.color};font-weight:600">→ ${fmtPv(k,c.params[k])}</span></span>`});
+      h+=`</div></div>`;
+    });
+    h+=`</div></div>`;
+  }
+  ca.innerHTML=h;
+  document.getElementById('summaries').innerHTML='';
 }
 function setTab(t){activeTab=t;document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));render();savePlannerState()}
 document.getElementById('main').innerHTML=`
@@ -619,6 +722,7 @@ document.getElementById('main').innerHTML=`
     <button data-tab="income" onclick="setTab('income')">💰 Income & Tax</button>
     <button data-tab="cashflow" onclick="setTab('cashflow')">💸 Cash Flow</button>
     <button data-tab="table" onclick="setTab('table')">📋 Table</button>
+    <button data-tab="compare" onclick="setTab('compare')">⚖ Compare</button>
     <button data-tab="advisor" onclick="setTab('advisor')">🤖 AI Advisor</button>
     <button id="mcBtn" onclick="toggleMC()" style="margin-left:auto;font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Monte Carlo stress band (Net Worth tab)">🎲 Monte Carlo</button>
     <button id="inflBtn" onclick="toggleInflation()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit">Real $</button>
