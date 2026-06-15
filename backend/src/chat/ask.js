@@ -10,6 +10,7 @@ const experimentsStore = require('../store/experiments');
 const metricsStore = require('../store/metrics');
 const intentionsStore = require('../store/intentions');
 const cat = require('../intelligence/catalog');
+const monarchMcp = require('../services/monarch-mcp');
 const { query: dbQuery } = require('../db');
 
 const SYSTEM = `You are NormOS — the user's personal chief of staff, executive coach, and data scientist.
@@ -43,6 +44,16 @@ const PERSONAL_RE = /\b(i|i'm|im|my|me|myself|mine|we|our|us)\b|\bshould i\b|\ba
 
 function isPersonalQuestion(q) {
   return PERSONAL_RE.test(q || '');
+}
+
+// Transaction-level money questions where LIVE Monarch data beats the daily
+// PostgreSQL snapshot — specific spend, merchants, categories, balances, etc.
+// When Monarch MCP is configured these route through Claude's MCP connector so
+// the answer reflects real-time account data instead of yesterday's aggregate.
+const FINANCE_RE = /\b(spend|spent|spending|budget|transaction|transactions|merchant|purchase|purchases|bought|expense|expenses|income|salary|paycheck|cash\s?flow|net\s?worth|balance|balances|checking|savings|credit\s?card|dining|groceries|grocery|restaurant|restaurants|subscription|subscriptions|invest|portfolio|afford)\b|how much (did|do|have) i/i;
+
+function isFinancialQuestion(q) {
+  return FINANCE_RE.test(q || '');
 }
 
 /**
@@ -337,8 +348,29 @@ async function ask(question, { history = [], k = 14 } = {}) {
   } catch { /* optional */ }
 
   const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments, pastConversations });
-  const system = selfModelText ? `${baseSystem}\n\n${selfModelText}` : baseSystem;
-  const answer = await llm.generateText({ system, prompt, temperature: 0.3, maxTokens: 1600 });
+  let system = selfModelText ? `${baseSystem}\n\n${selfModelText}` : baseSystem;
+
+  // Financial questions: when Monarch MCP is configured, give Claude LIVE access
+  // to the user's Monarch account so it can pull exact current transactions,
+  // balances, and cashflow instead of relying on the daily PostgreSQL snapshot.
+  // Falls back to the local-context path on any auth/transport failure.
+  let answer;
+  if (monarchMcp.isConfigured() && isFinancialQuestion(question)) {
+    const monarchSystem =
+      `${system}\n\nYou ALSO have live access to this person's Monarch Money account via tools ` +
+      `(real-time transactions, balances, accounts, cashflow, categories). For questions about ` +
+      `specific spending, transactions, balances, or net worth, CALL the Monarch tools to get exact ` +
+      `current numbers — do not rely only on the snapshot above, which may be a day stale. Combine the ` +
+      `live Monarch data with their goals and context to give a precise, grounded answer.`;
+    try {
+      answer = await monarchMcp.answerWithMonarch({ system: monarchSystem, prompt, maxTokens: 1600 });
+    } catch (err) {
+      console.error('[chat] Monarch MCP path failed, falling back to local context:', err.message);
+    }
+  }
+  if (answer == null) {
+    answer = await llm.generateText({ system, prompt, temperature: 0.3, maxTokens: 1600 });
+  }
 
   return {
     answer,
@@ -352,4 +384,4 @@ async function ask(question, { history = [], k = 14 } = {}) {
   };
 }
 
-module.exports = { ask, buildPrompt, isPersonalQuestion, personalSnapshot, renderSnapshot };
+module.exports = { ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot };
