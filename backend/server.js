@@ -6,7 +6,7 @@ const express = require('express');
 const cors = require('cors');
 
 const { fetchGmailThreads } = require('./src/services/gmail');
-const { fetchCalendarEvents } = require('./src/services/calendar');
+const { fetchCalendarEvents, fetchWorkBusyBlocks } = require('./src/services/calendar');
 const { fetchRandomNotionPage, fetchNotionQuotes } = require('./src/services/notion');
 const { fetchRandomQuote } = require('./src/services/googleDoc');
 const { fetchWeather } = require('./src/services/weather');
@@ -1649,16 +1649,18 @@ app.get('/api/briefing/live', async (req, res) => {
     }
 
     const EXT = Number(process.env.BRIEFING_SOURCE_TIMEOUT_MS || 12000);
-    const [emailResult, marketsResult, weatherResult, calendarResult] = await Promise.allSettled([
+    const [emailResult, marketsResult, weatherResult, calendarResult, workBusyResult] = await Promise.allSettled([
       withTimeout(fetchGmailThreads(), EXT, 'gmail'),
       withTimeout(fetchMarkets(), EXT * 3, 'markets'), // includes its own small LLM brief
       withTimeout(fetchWeather(), EXT, 'weather'),
       withTimeout(fetchCalendarEvents(), EXT, 'calendar'),
+      withTimeout(fetchWorkBusyBlocks(), EXT, 'workCalendar'),
     ]);
     const emails = emailResult.status === 'fulfilled' ? (emailResult.value ?? []) : [];
     const markets = marketsResult.status === 'fulfilled' ? marketsResult.value : null;
     const weather = weatherResult.status === 'fulfilled' ? weatherResult.value : null;
     const calendar = calendarResult.status === 'fulfilled' ? calendarResult.value : null;
+    const workBusy = workBusyResult.status === 'fulfilled' ? workBusyResult.value : null;
 
     let emailBriefs = null;
     if (emails.length) {
@@ -1677,6 +1679,7 @@ app.get('/api/briefing/live', async (req, res) => {
       ...(markets ? { markets } : {}),
       ...(weather ? { weather } : {}),
       ...(calendar ? { calendar } : {}),
+      ...(workBusy ? { workBusy } : {}),
       ...(emailBriefs ? { urgentEmails: emailBriefs.urgentEmails } : {}),
       liveRefreshedAt: new Date().toISOString(),
     };
@@ -1877,10 +1880,11 @@ app.get('/api/briefing', async (req, res) => {
   // change frequently enough to re-scan on every intraday rebuild. The prior
   // build's urgentEmails are carried over. /api/briefing/live handles mid-day email refresh.
   const EXT = Number(process.env.BRIEFING_SOURCE_TIMEOUT_MS || 12000);
-  const [weatherResult, calendarResult, notionResult, quoteResult, emailResult, marketsResult] =
+  const [weatherResult, calendarResult, workBusyResult, notionResult, quoteResult, emailResult, marketsResult] =
     await Promise.allSettled([
       withTimeout(fetchWeather(), EXT, 'weather'),
       withTimeout(fetchCalendarEvents(), EXT, 'calendar'),
+      withTimeout(fetchWorkBusyBlocks(), EXT, 'workCalendar'),
       // Wisdom page is day-locked: skip the Notion API on same-day rebuilds so
       // we don't burn credits for a page that will be discarded by lockedNotion.
       priorIsToday && prior?.content?.notionText
@@ -1900,6 +1904,7 @@ app.get('/api/briefing', async (req, res) => {
 
   const weather = unwrap(weatherResult, 'weather');
   const calendar = unwrap(calendarResult, 'calendar') ?? [];
+  const workBusy = unwrap(workBusyResult, 'workCalendar') ?? [];
   const notionData = unwrap(notionResult, 'notion') ?? { text: '', pageTitle: 'Notion' };
   // Mark this Notion page as shown so it won't repeat for 30 days — but ONLY when
   // we're actually serving a fresh pick today. If an earlier build already locked
@@ -2065,7 +2070,7 @@ app.get('/api/briefing', async (req, res) => {
     // The LLM call can be slow; bound it so a stalled model doesn't hang the
     // briefing (it degrades to the data-only sections).
     geminiResult = await withTimeout(
-      generateBriefing(emails, notionData.text, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext),
+      generateBriefing(emails, notionData.text, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy),
       Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000),
       'gemini'
     );

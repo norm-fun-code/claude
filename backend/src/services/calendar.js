@@ -63,4 +63,39 @@ async function fetchCalendarEvents() {
   });
 }
 
-module.exports = { fetchCalendarEvents };
+/**
+ * Fetch busy blocks from the work calendar (shared as free/busy only).
+ * Requires GOOGLE_WORK_CALENDAR_ID env var (typically the work email address).
+ * Returns an array of { start, end } human-readable time strings, e.g.
+ * [{ start: '9:00 AM', end: '10:00 AM' }, ...]
+ * Returns [] if the env var is not set or the call fails.
+ */
+async function fetchWorkBusyBlocks() {
+  const calId = process.env.GOOGLE_WORK_CALENDAR_ID;
+  if (!calId) return [];
+
+  const auth = getAuthClient();
+  const calendar = google.calendar({ version: 'v3', auth });
+
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+  const timeZone = process.env.TZ || 'America/New_York';
+
+  const res = await calendar.freebusy.query({
+    requestBody: {
+      timeMin: startOfDay.toISOString(),
+      timeMax: endOfDay.toISOString(),
+      timeZone,
+      items: [{ id: calId }],
+    },
+  });
+
+  const busy = res.data.calendars?.[calId]?.busy ?? [];
+  return busy.map((block) => ({
+    start: formatTime(block.start, timeZone),
+    end: formatTime(block.end, timeZone),
+  }));
+}
+
+module.exports = { fetchCalendarEvents, fetchWorkBusyBlocks };
