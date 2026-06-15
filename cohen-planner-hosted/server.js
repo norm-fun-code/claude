@@ -282,6 +282,23 @@ app.get('/api/debug/db', requireAuth, async (req, res) => {
   }
 });
 
+// ── Monarch live sync (proxies to NormOS backend) ─────────────────────────
+app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
+  const normosUrl = process.env.NORMOS_URL;
+  if (!normosUrl) return res.status(503).json({ error: 'NORMOS_URL not configured' });
+  try {
+    const r = await fetch(`${normosUrl}/api/wealth/snapshot`, {
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) return res.status(r.status).json({ error: `NormOS returned ${r.status}` });
+    const data = await r.json();
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({ error: 'Could not reach NormOS: ' + err.message });
+  }
+});
+
 // ── Snapshots (annual history) ──────────────────────────────────────────────
 app.get('/api/snapshots', requireAuth, async (req, res) => {
   try {

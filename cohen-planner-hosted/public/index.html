@@ -196,6 +196,7 @@ tr:hover td{background:var(--s2)}
 <div class="hdr">
   <h1>💰 Cohen Family — Financial Planner v5</h1>
   <div class="hdr-right">
+      <button id="monarchSyncBtn" onclick="syncMonarch()" style="font-size:9px;padding:3px 9px;background:var(--a-soft);border:1px solid rgba(191,105,0,.3);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--a);transition:all .12s">📍 Sync Monarch</button>
     <span class="sync-pill" id="syncStatus"></span>
     <button class="logout-btn" onclick="doLogout()">Log out</button>
   </div>
@@ -344,6 +345,29 @@ function showToast(msg,type){
 }
 function showConfirm(msg){return window.confirm?window.confirm(msg):true;}
 
+async function syncMonarch(){
+  const btn=document.getElementById('monarchSyncBtn');
+  if(btn){btn.textContent='⟳ Syncing…';btn.disabled=true;}
+  try{
+    const r=await fetch('/api/monarch-snapshot');
+    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||'HTTP '+r.status);}
+    const d=await r.json();
+    monarchSnapshot={
+      netWorth:d.netWorth?.value||0,
+      retirement:d.retirement?.value||0,
+      assets:d.assets?.value||0,
+      liabilities:d.liabilities?.value||0,
+      syncedAt:d.netWorth?.updatedAt||new Date().toISOString(),
+    };
+    if(btn){btn.textContent='📍 Synced';btn.disabled=false;}
+    showToast(`📍 Monarch synced · NW ${fmt(monarchSnapshot.netWorth)}`,'green');
+    render();
+  }catch(e){
+    if(btn){btn.textContent='📍 Sync Monarch';btn.disabled=false;}
+    showToast('Monarch sync failed: '+e.message,'red');
+  }
+}
+
 function showSnapshotInput(){
   const dflt=`${P.planStartYear||2026} plan · ${new Date().toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`;
   const d=document.createElement('div');
@@ -372,6 +396,7 @@ async function confirmSnapshot(overlay){
 
 // ═══ UI ═══
 let activeTab='nw';let charts={};let inflationView=false;let mcView=false;let snapshots=[];let overlaySnapId=null;
+let monarchSnapshot=null; // {netWorth, retirement, assets, liabilities, syncedAt}
 let _lastChartKey='';
 function destroyCharts(){Object.values(charts).forEach(c=>c&&c.destroy());charts={};_lastChartKey=''}
 function _chartKey(){return activeTab+'|'+(mcView&&_mcReady?'mc':'nmc')+'|'+inflationView+'|'+compareMode+'|'+(overlaySnapId||'')}
@@ -800,7 +825,8 @@ function render(){
     <div class="kpi"><div class="kpi-l">💸 Tax on Sales</div><div class="kpi-v" style="color:var(--r)">${fmt(tTx)}</div><div class="kpi-s">${fmt(tS)} sold</div></div>
     <div class="kpi"><div class="kpi-l">📉 Liquid Floor</div><div class="kpi-v" style="color:${minL.liq>500000?'var(--g)':'var(--a)'}">${fmt(minL.liq)}</div><div class="kpi-s">${minL.yr}</div></div>
     <div class="kpi"><div class="kpi-l">🏁 NW (${last.yr})</div><div class="kpi-v" style="color:var(--g)">${fmt(last.nw)}</div><div class="kpi-s">+${fmt(last.k401)} 401k</div></div>
-    <div class="kpi"><div class="kpi-l">🏦 Total w/ 401k</div><div class="kpi-v" style="color:var(--c)">${fmt(last.nw+last.k401)}</div></div>`;
+    <div class="kpi"><div class="kpi-l">🏦 Total w/ 401k</div><div class="kpi-v" style="color:var(--c)">${fmt(last.nw+last.k401)}</div></div>
+    ${monarchSnapshot?`<div class="kpi" style="border-color:rgba(191,105,0,.3);background:var(--a-soft)"><div class="kpi-l" style="color:var(--a)">📍 Live NW</div><div class="kpi-v" style="color:var(--a);font-size:13px">${fmt(monarchSnapshot.netWorth)}</div><div class="kpi-s">${new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div></div>`:''}`;
   const np=document.getElementById('norm_preview');
   const _sy=P.planStartYear||2026;const _by=_sy+4;
   if(np)np.textContent=`${_by}: ${fmtF(Math.round((P.normCashBase??275000)+(P.normStockBase??150000)))} · ${_by+10}: ${fmtF(Math.round((P.normCashBase??275000)*(1+P.normGrowth)**10+(P.normStockBase??150000)))}`;
@@ -824,6 +850,20 @@ function render(){
   const sy0=P.planStartYear||2026;
   const nwLabels=[String(sy0-1),...labels];
   const startLiqK=Math.round(P.startingLiquid/1000);
+  // Monarch actual dot — added to each chart dataset array below
+  const _mSnap=monarchSnapshot;
+  const _mDotIdx=_mSnap?nwLabels.indexOf(String(new Date().getFullYear())):-1;
+  const _mImpliedLiqK=_mSnap?Math.round((_mSnap.netWorth-_mSnap.retirement)/1000):0;
+  const _mTotalK=_mSnap?Math.round(_mSnap.netWorth/1000):0;
+  const _mRetK=_mSnap?Math.round(_mSnap.retirement/1000):0;
+  function _mDotDs(yK,label){
+    if(!_mSnap||_mDotIdx<0)return null;
+    return{label,data:nwLabels.map((_,i)=>i===_mDotIdx?yK:null),
+      borderColor:'#f59e0b',backgroundColor:'#f59e0b',
+      pointRadius:nwLabels.map((_,i)=>i===_mDotIdx?8:0),
+      pointHoverRadius:12,borderWidth:0,fill:false,tension:0,spanGaps:false,
+      pointStyle:'circle'};
+  }
   if(activeTab==='nw'){
     const po=posOpts();
     if(mcView&&!_mcReady){
@@ -867,6 +907,7 @@ function render(){
     if(compareMode)scenarios.forEach(s=>{const sLiq=Math.round((s.params.startingLiquid||P.startingLiquid)/1000);ds.push({label:s.name+' Liquid',data:[sLiq,...s.results.R.map(r=>deflK(r.liq,r.yr))],borderColor:s.color,fill:false,tension:.3,pointRadius:3,pointBackgroundColor:s.color,borderWidth:3.5})});
     // Snapshot overlay — compare a saved projection against the current plan
     if(overlaySnapId){const sn=snapshots.find(x=>x.id===overlaySnapId);if(sn&&sn.params){const sr=run({...D,...migrateP(sn.params)});const so=String((sn.params.planStartYear||sy0)-1);ds.push({label:'📸 '+sn.label+' (NW)',data:[Math.round((sn.params.startingLiquid||P.startingLiquid)/1000),...sr.R.map(r=>deflK(r.nw,r.yr))],borderColor:'#bf6900',fill:false,tension:.3,pointRadius:0,borderWidth:2,borderDash:[6,3]})}}
+    const _mNwDot=_mDotDs(_mImpliedLiqK,'📍 Actual NW (Monarch)');if(_mNwDot)ds.push(_mNwDot);
     if(!reuseChart||!_updateChart(ds,nwLabels)){if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';const ctx2=document.getElementById('cv').getContext('2d');charts.main=new Chart(ctx2,{type:'line',data:{labels:nwLabels,datasets:ds},options:po})}
   } else if(activeTab==='tuition'){
     const po=posOpts();
@@ -1041,6 +1082,53 @@ function renderGoalsTab(R,P,tT){
 
   // ── build HTML ──
   let h=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px">`;
+
+  // GOAL 0: Monarch live snapshot
+  if(monarchSnapshot){
+    const curYr=new Date().getFullYear();
+    const projRow=R.find(r=>r.yr===curYr)||R[0];
+    const impliedLiq=monarchSnapshot.netWorth-monarchSnapshot.retirement;
+    const projTotal=projRow.nw+projRow.k401;
+    const totalDiff=monarchSnapshot.netWorth-projTotal;
+    const liqDiff=impliedLiq-projRow.liq;
+    const syncDate=new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+    const ahead=totalDiff>=0;
+    h+=`<div style="background:var(--a-soft);border:1px solid rgba(191,105,0,.25);border-radius:10px;padding:16px 18px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--tx)">📍 Live Snapshot · Monarch</div>
+          <div style="font-size:10px;color:var(--t2);margin-top:2px">As of ${syncDate} · ${curYr} plan year</div>
+        </div>
+        <div style="background:${ahead?'var(--g-soft)':'var(--r-soft)'};border:1px solid ${ahead?'rgba(26,135,84,.2)':'rgba(205,61,100,.2)'};border-radius:6px;padding:6px 12px;text-align:center">
+          <div style="font-size:11px;font-weight:700;color:${ahead?'var(--g)':'var(--r)'}">${ahead?'▲ Ahead':'▼ Behind'}</div>
+          <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:${ahead?'var(--g)':'var(--r)'}">${ahead?'+':''}${fmt(totalDiff)}</div>
+          <div style="font-size:8px;color:var(--t3)">vs plan</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+        <div style="background:#fff8;border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Total NW</div>
+          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${fmt(monarchSnapshot.netWorth)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Plan: ${fmt(projTotal)}</div>
+        </div>
+        <div style="background:#fff8;border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Liquid (est.)</div>
+          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--b)">${fmt(impliedLiq)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Plan: ${fmt(projRow.liq)} · ${liqDiff>=0?'+':''}${fmt(liqDiff)}</div>
+        </div>
+        <div style="background:#fff8;border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">401k</div>
+          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--p)">${fmt(monarchSnapshot.retirement)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Plan: ${fmt(projRow.k401)}</div>
+        </div>
+        <div style="background:#fff8;border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Assets / Liab</div>
+          <div style="font-size:13px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">${fmt(monarchSnapshot.assets)}</div>
+          <div style="font-size:8.5px;color:var(--r);margin-top:1px">−${fmt(monarchSnapshot.liabilities)}</div>
+        </div>
+      </div>
+    </div>`;
+  }
 
   // GOAL 1: Home purchase
   h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
