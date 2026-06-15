@@ -1665,6 +1665,28 @@ app.get('/api/debug/monarch-mcp', async (req, res) => {
   }
 });
 
+// Raw Monarch MCP JSON-RPC probe (NO LLM) — for inspecting tool shapes while
+// building the direct-sync mappers. No `tool` query param lists all tools;
+// ?tool=GetCashFlow[&args={...}] calls one and returns its parsed JSON payload.
+app.get('/api/debug/monarch-mcp-raw', async (req, res) => {
+  try {
+    const rpc = require('./src/services/monarch-mcp-rpc');
+    const tool = req.query.tool;
+    if (!tool) {
+      const tools = await rpc.listTools();
+      return res.json({ tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) });
+    }
+    let args = {};
+    if (req.query.args) {
+      try { args = JSON.parse(req.query.args); } catch { return res.status(400).json({ error: 'args must be valid JSON' }); }
+    }
+    const result = await rpc.callToolJson(String(tool), args);
+    res.json({ tool, args, result });
+  } catch (err) {
+    res.status(500).json({ error: err.response?.data || err.message });
+  }
+});
+
 // Mid-day partial refresh: markets + urgent-email scan + weather/calendar.
 // Everything else (wisdom, insights, recovery framing, weekly review) is
 // morning-built and day-locked. Merges into the cached briefing and re-saves.
