@@ -121,10 +121,8 @@ export default function App() {
   const d = briefing.data;
 
   // Per-tab explicit refresh — each tab updates only its own content:
-  //   Today/Wealth → always shows "Rebuild briefing" (non-blocking async rebuild).
-  //                  Newsletters refresh inline via their own card button.
+  //   Today/Wealth → "Rebuild briefing" (non-blocking async rebuild, ~60-90s)
   //   Health       → HealthKit + live recovery score (sub-second)
-  //   Insights     → re-run analysis, then trigger rebuild to pull new findings in
   //   Wisdom       → day-locked by design; reloads the morning cache
   const tabRefresh: Partial<Record<TabKey, { label: string; busy: boolean; run: () => void }>> = {
     today: { label: 'Rebuild briefing', busy: briefing.rebuilding, run: briefing.triggerRebuild },
@@ -133,11 +131,6 @@ export default function App() {
       label: 'Refresh health data',
       busy: health.loading || liveRecovery.loading,
       run: () => { health.refetch(); liveRecovery.refetch(); },
-    },
-    insights: {
-      label: 'Re-run analysis',
-      busy: analyzingInsights || briefing.rebuilding,
-      run: refreshInsights,
     },
     wisdom: { label: 'Reload', busy: briefing.loading, run: briefing.reload },
   };
@@ -196,6 +189,27 @@ export default function App() {
               <EmptyNote c={c} text="Health insights (sleep ↔ HRV ↔ focus patterns) appear once a few days of Apple Health + habit data accumulate. Open the app daily so HealthKit syncs, and log your habits on the Today tab." />
             )}
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} recoveryScore={liveRecovery.recovery?.score ?? null} />
+            <WeeklyStateCard briefing={d ?? null} health={health} recovery={liveRecovery.recovery} />
+            <ForecastCard forecasts={d?.forecasts ?? []} />
+            {d?.insights && d.insights.length > 0 && <InsightsCard insights={d.insights} />}
+            <CheckinHistoryCard />
+            {analyzeError && (
+              <View style={[styles.errorBox, { borderColor: c.border, backgroundColor: c.card }]}>
+                <Text style={[styles.errorTitle, { color: c.text }]}>Analysis failed</Text>
+                <Text style={[styles.errorDetail, { color: c.subtext }]}>{analyzeError}</Text>
+              </View>
+            )}
+            <TouchableOpacity
+              onPress={refreshInsights}
+              disabled={analyzingInsights || briefing.rebuilding}
+              style={[styles.analyzeBtn, { borderColor: c.border, backgroundColor: c.card }]}
+            >
+              {analyzingInsights || briefing.rebuilding ? (
+                <ActivityIndicator size="small" color={c.subtext} />
+              ) : (
+                <Text style={[styles.analyzeBtnText, { color: c.accent }]}>↻ Re-run analysis</Text>
+              )}
+            </TouchableOpacity>
             <CollapsibleSection title="Sync Apple Health history">
               <HealthBackfillCard />
             </CollapsibleSection>
@@ -224,25 +238,6 @@ export default function App() {
             )}
           </>
         );
-      case 'insights':
-        return (
-          <>
-            {analyzeError && (
-              <View style={[styles.errorBox, { borderColor: c.border, backgroundColor: c.card }]}>
-                <Text style={[styles.errorTitle, { color: c.text }]}>Analysis failed</Text>
-                <Text style={[styles.errorDetail, { color: c.subtext }]}>{analyzeError}</Text>
-              </View>
-            )}
-            <CrossContextCard insights={d?.crossContextInsights ?? []} />
-            <WeeklyStateCard briefing={d ?? null} health={health} recovery={liveRecovery.recovery} />
-            <GoalsCard weeklyGoals={d?.weeklyGoals} />
-            <ReviewCard review={d?.weeklyReview ?? null} />
-            <CheckinHistoryCard />
-            <ForecastCard forecasts={d?.forecasts ?? []} />
-            <InsightsCard insights={d?.insights ?? []} />
-            {!d && !briefing.loading && <EmptyNote c={c} text="Insights appear after your first analyze run." />}
-          </>
-        );
       case 'today':
       default:
         return (
@@ -250,6 +245,9 @@ export default function App() {
             <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
             <TodayForecastCard forecast={d?.todayForecast} />
             {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
+            {d?.crossContextInsights && d.crossContextInsights.length > 0 && (
+              <CrossContextCard insights={d.crossContextInsights} />
+            )}
 
             <CollapsibleSection title="Today's Full Briefing">
               {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
@@ -258,6 +256,7 @@ export default function App() {
               {d && (d.calendar?.length ?? 0) > 0 && <CalendarCard events={d.calendar} />}
               <CheckinCard />
               <HabitsCard />
+              <GoalsCard weeklyGoals={d?.weeklyGoals} />
               <AnnotationsCard />
               {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
               <ReviewCard review={d?.weeklyReview ?? null} compact actions={d?.leverageActions ?? []} />
@@ -377,5 +376,13 @@ const styles = StyleSheet.create({
   loadingText: { fontSize: 14, fontStyle: 'italic' },
   empty: { borderWidth: 1, borderRadius: 14, padding: spacing.lg, marginBottom: spacing.md },
   emptyText: { fontSize: 14, lineHeight: 21, fontStyle: 'italic' },
+  analyzeBtn: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    alignItems: 'center',
+  },
+  analyzeBtnText: { fontSize: 13, fontWeight: '600' },
   footer: { height: spacing.lg },
 });
