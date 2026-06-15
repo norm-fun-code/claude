@@ -336,21 +336,52 @@ async function getMonarchAccessToken() {
   return updated.access_token;
 }
 
+function parseSSEorJSON(text) {
+  // Streamable-HTTP MCP may return either a JSON body or an SSE stream.
+  const trimmed = text.trimStart();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    return JSON.parse(trimmed);
+  }
+  // SSE: collect the last `data:` line that parses as JSON
+  let result = null;
+  for (const line of text.split('\n')) {
+    const l = line.trim();
+    if (l.startsWith('data:')) {
+      const payload = l.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      try { result = JSON.parse(payload); } catch { /* skip */ }
+    }
+  }
+  if (result === null) throw new Error('No JSON found in MCP response');
+  return result;
+}
+
+let _mcpSessionId = null;
+
 async function callMonarchMCP(accessToken, method, params = {}) {
+  const headers = {
+    'Authorization': `Bearer ${accessToken}`,
+    'Content-Type': 'application/json',
+    'Accept': 'application/json, text/event-stream',
+  };
+  if (_mcpSessionId) headers['Mcp-Session-Id'] = _mcpSessionId;
+
   const r = await fetch(MONARCH_MCP, {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-    signal: AbortSignal.timeout(12000),
+    signal: AbortSignal.timeout(15000),
   });
+  // Capture session id if the server assigns one
+  const sid = r.headers.get('mcp-session-id');
+  if (sid) _mcpSessionId = sid;
+
   if (!r.ok) {
     const body = await r.text().catch(() => '');
     throw new Error(`MCP ${r.status}: ${body.slice(0, 200)}`);
   }
-  return r.json();
+  const text = await r.text();
+  return parseSSEorJSON(text);
 }
 
 // Start OAuth flow — registers client dynamically, redirects to Monarch auth page
@@ -465,6 +496,23 @@ app.post('/api/monarch-disconnect', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Debug: list available MCP tools + schemas
+app.get('/api/monarch-tools', requireAuth, async (req, res) => {
+  try {
+    const accessToken = await getMonarchAccessToken();
+    if (!accessToken) return res.status(401).json({ error: 'Not connected' });
+    _mcpSessionId = null;
+    await callMonarchMCP(accessToken, 'initialize', {
+      protocolVersion: '2024-11-05', capabilities: {},
+      clientInfo: { name: 'cohen-financial-planner', version: '1.0.0' },
+    });
+    const list = await callMonarchMCP(accessToken, 'tools/list');
+    res.json(list?.result ?? list);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 function parseMonarchAccounts(toolResult) {
   // MCP tool result content is an array of {type, text} blocks
   const text = (toolResult?.result?.content ?? []).find(b => b.type === 'text')?.text ?? '[]';
@@ -480,6 +528,28 @@ app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
         connectUrl: '/api/monarch-connect',
       });
     }
+
+    // MCP handshake: initialize → initialized notification → tools/list
+    _mcpSessionId = null;
+    await callMonarchMCP(accessToken, 'initialize', {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'cohen-financial-planner', version: '1.0.0' },
+    });
+    // Fire-and-forget initialized notification (no id → notification)
+    try {
+      const nh = {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+      };
+      if (_mcpSessionId) nh['Mcp-Session-Id'] = _mcpSessionId;
+      await fetch(MONARCH_MCP, {
+        method: 'POST', headers: nh,
+        body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+        signal: AbortSignal.timeout(8000),
+      });
+    } catch { /* notifications may 202/204 with empty body — ignore */ }
 
     // Discover and call the accounts tool
     const toolsList = await callMonarchMCP(accessToken, 'tools/list');
