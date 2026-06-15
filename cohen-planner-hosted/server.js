@@ -300,12 +300,16 @@ const RETIREMENT_SUBTYPES = new Set([
   'sep_ira','simple_ira','pension','retirement','defined_benefit','defined_contribution',
 ]);
 
-let _monarchTokenCache = null; // { token, expiresAt }
+let _monarchTokenCache = null;  // { token, expiresAt }
+let _monarchLoginBackoff = 0;   // epoch ms — don't retry login until after this
 
 async function getMonarchToken() {
-  // Return cached token if still valid (buffer 5 min)
   if (_monarchTokenCache && Date.now() < _monarchTokenCache.expiresAt - 5 * 60 * 1000) {
     return _monarchTokenCache.token;
+  }
+  if (Date.now() < _monarchLoginBackoff) {
+    const waitMin = Math.ceil((_monarchLoginBackoff - Date.now()) / 60000);
+    throw new Error(`Monarch login rate-limited — try again in ~${waitMin} min`);
   }
   const email = process.env.MONARCH_EMAIL;
   const password = process.env.MONARCH_PASSWORD;
@@ -317,11 +321,15 @@ async function getMonarchToken() {
     body: JSON.stringify({ username: email, password, trusted_device: false, totp: '' }),
     signal: AbortSignal.timeout(10000),
   });
+  if (r.status === 429) {
+    _monarchLoginBackoff = Date.now() + 60 * 60 * 1000; // back off 1 hour
+    throw new Error('Monarch login rate-limited (429) — try again in ~60 min');
+  }
   if (!r.ok) throw new Error(`Monarch login failed: ${r.status}`);
   const d = await r.json();
   const token = d.token;
   if (!token) throw new Error('Monarch login returned no token');
-  // Monarch tokens typically last ~30 days; cache for 29 days
+  _monarchLoginBackoff = 0;
   _monarchTokenCache = { token, expiresAt: Date.now() + 29 * 24 * 60 * 60 * 1000 };
   return token;
 }
@@ -372,20 +380,30 @@ app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
     }
 
     const excludes = new Set((process.env.MONARCH_EXCLUDE_ACCOUNTS || '').split(',').map(s => s.trim()).filter(Boolean));
+    // MONARCH_LIQUID_EXCLUDE: accounts excluded from liquid NW (e.g. "PLOC") — 401k auto-excluded via retirement tracking
+    const liquidExcludes = new Set((process.env.MONARCH_LIQUID_EXCLUDE || '').split(',').map(s => s.trim()).filter(Boolean));
     const accounts = (data?.data?.accounts ?? []).filter(a => !a.isHidden && !excludes.has(a.id) && !excludes.has(a.displayName));
-    let assets = 0, liabilities = 0, retirement = 0, newestAt = null;
+    let assets = 0, liabilities = 0, retirement = 0, liquidAssets = 0, liquidLiabilities = 0, newestAt = null;
 
     for (const acct of accounts) {
       const bal = acct.currentBalance ?? 0;
       const sub = (acct.subtype?.name ?? '').toLowerCase().replace(/[\s-]/g, '_');
+      const isLiquidExcluded = liquidExcludes.has(acct.displayName) || liquidExcludes.has(acct.id);
       if (acct.isAsset) {
         const pos = Math.max(0, bal);
         assets += pos;
-        if (RETIREMENT_SUBTYPES.has(sub) || sub.includes('401') || sub.includes('ira') || sub.includes('retirement')) {
+        const isRetirement = RETIREMENT_SUBTYPES.has(sub) || sub.includes('401') || sub.includes('ira') || sub.includes('retirement');
+        if (isRetirement) {
           retirement += pos;
         }
+        // liquid = non-retirement, non-explicitly-excluded assets
+        if (!isRetirement && !isLiquidExcluded) {
+          liquidAssets += pos;
+        }
       } else {
-        liabilities += Math.abs(Math.min(0, bal));
+        const abs = Math.abs(Math.min(0, bal));
+        liabilities += abs;
+        if (!isLiquidExcluded) liquidLiabilities += abs;
       }
       if (acct.updatedAt) {
         const d = new Date(acct.updatedAt);
@@ -395,10 +413,11 @@ app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
 
     const updatedAt = newestAt ?? new Date().toISOString();
     res.json({
-      netWorth:    { value: Math.round(assets - liabilities), updatedAt },
-      assets:      { value: Math.round(assets),               updatedAt },
-      liabilities: { value: Math.round(liabilities),          updatedAt },
-      retirement:  retirement > 0 ? { value: Math.round(retirement), updatedAt } : null,
+      netWorth:    { value: Math.round(assets - liabilities),          updatedAt },
+      liquid:      { value: Math.round(liquidAssets - liquidLiabilities), updatedAt },
+      assets:      { value: Math.round(assets),                         updatedAt },
+      liabilities: { value: Math.round(liabilities),                    updatedAt },
+      retirement:  retirement > 0 ? { value: Math.round(retirement),   updatedAt } : null,
     });
   } catch (err) {
     console.error('Monarch sync error:', err);

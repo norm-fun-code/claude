@@ -380,15 +380,18 @@ async function syncMonarch(){
     const r=await fetch('/api/monarch-snapshot');
     if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||'HTTP '+r.status);}
     const d=await r.json();
+    const nw=d.netWorth?.value||0;
+    const ret=d.retirement?.value||0;
     monarchSnapshot={
-      netWorth:d.netWorth?.value||0,
-      retirement:d.retirement?.value||0,
+      netWorth:nw,
+      liquid:d.liquid?.value??(nw-ret), // server computes; fallback to nw-retirement
+      retirement:ret,
       assets:d.assets?.value||0,
       liabilities:d.liabilities?.value||0,
       syncedAt:d.netWorth?.updatedAt||new Date().toISOString(),
     };
     if(btn){btn.textContent='📍 Synced';btn.disabled=false;}
-    showToast(`📍 Monarch synced · NW ${fmt(monarchSnapshot.netWorth)}`,'green');
+    showToast(`📍 Monarch synced · Liquid ${fmt(monarchSnapshot.liquid)} · 401k ${fmt(monarchSnapshot.retirement)}`,'green');
     render();
   }catch(e){
     if(btn){btn.textContent='📍 Sync Monarch';btn.disabled=false;}
@@ -881,7 +884,7 @@ function render(){
   // Monarch actual dot — added to each chart dataset array below
   const _mSnap=monarchSnapshot;
   const _mDotIdx=_mSnap?nwLabels.indexOf(String(new Date().getFullYear())):-1;
-  const _mImpliedLiqK=_mSnap?Math.round((_mSnap.netWorth-_mSnap.retirement)/1000):0;
+  const _mImpliedLiqK=_mSnap?Math.round(_mSnap.liquid/1000):0;
   const _mTotalK=_mSnap?Math.round(_mSnap.netWorth/1000):0;
   const _mRetK=_mSnap?Math.round(_mSnap.retirement/1000):0;
   function _mDotDs(yK,label){
@@ -1115,7 +1118,7 @@ function renderGoalsTab(R,P,tT){
   if(monarchSnapshot){
     const curYr=new Date().getFullYear();
     const projRow=R.find(r=>r.yr===curYr)||R[0];
-    const impliedLiq=monarchSnapshot.netWorth-monarchSnapshot.retirement;
+    const impliedLiq=monarchSnapshot.liquid;
     const projTotal=projRow.nw+projRow.k401;
     const totalDiff=monarchSnapshot.netWorth-projTotal;
     const liqDiff=impliedLiq-projRow.liq;
