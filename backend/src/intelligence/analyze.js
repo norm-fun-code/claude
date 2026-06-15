@@ -742,11 +742,16 @@ async function analyze(opts = {}) {
     // running total until midnight. Including it makes trends/anomalies read a
     // sharp false "drop" (e.g. "steps down 94%") when compared to complete prior
     // days. Drop today's trailing point for these metrics.
+    //
+    // Compare in UTC: date_trunc('day', ts) returns midnight UTC for each bucket,
+    // so comparing with toLocaleDateString() would convert midnight UTC to the
+    // prior evening in Eastern time — causing today's row to look like yesterday
+    // and the exclusion to silently fail. UTC slice is the right anchor.
     if (rows.length && CUMULATIVE.has(metric)) {
-      const tz = process.env.TZ || 'America/New_York';
-      const todayLocal = new Date().toLocaleDateString('en-CA', { timeZone: tz });
-      const lastDayLocal = new Date(rows[rows.length - 1].day).toLocaleDateString('en-CA', { timeZone: tz });
-      if (lastDayLocal === todayLocal) rows = rows.slice(0, -1);
+      const todayUtc = new Date().toISOString().slice(0, 10);
+      const lastDay = rows[rows.length - 1].day;
+      const lastDayUtc = (lastDay instanceof Date ? lastDay : new Date(lastDay)).toISOString().slice(0, 10);
+      if (lastDayUtc === todayUtc) rows = rows.slice(0, -1);
     }
     if (rows.length) seriesByKey[key] = rows;
   }

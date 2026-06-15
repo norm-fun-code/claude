@@ -122,7 +122,13 @@ async function gatherWealth(d30) {
     from: new Date(Date.now() - 60 * DAY), to: new Date(Date.now() - 30 * DAY),
     agg: 'avg', excludeSource: 'seed',
   });
-  const spending = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: d30, agg: 'sum', excludeSource: 'seed' });
+  // MTD = calendar month, not rolling 30d. Use UTC month boundary — dailyAggregate
+  // groups by date_trunc('day', ts) which is UTC-based, so we match the same anchor.
+  // CC payments are already excluded by mapTransactions() in monarch.js before they
+  // reach the spending metric, so no further filtering is needed here.
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const spending = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: monthStart, agg: 'sum', excludeSource: 'seed' });
   return {
     netWorth: nw ? Number(nw.value) : null,
     netWorthPrev: avg(nwPrev),
