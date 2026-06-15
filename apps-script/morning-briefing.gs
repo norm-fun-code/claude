@@ -338,10 +338,11 @@ function esc(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function sectionLabel(text) {
+function sectionLabel(text, emoji) {
+  const prefix = emoji ? '<span style="font-size:13px; letter-spacing:0;">' + emoji + '</span>&nbsp;&nbsp;' : '';
   return '<div style="font-family:' + STYLE.serif + '; font-size:12px; font-weight:700; letter-spacing:1.5px; ' +
     'text-transform:uppercase; color:' + STYLE.accent + '; border-top:2px solid ' + STYLE.accent + '; ' +
-    'padding-top:8px; margin:36px 0 16px;">' + esc(text) + '</div>';
+    'padding-top:8px; margin:36px 0 16px;">' + prefix + esc(text) + '</div>';
 }
 
 function insightBlock(label, quote, insight) {
@@ -430,15 +431,15 @@ function renderEmail(parts) {
     'Good morning, Norm — show up with joy, presence, and courage today.</div>';
 
   let body = masthead + greeting;
-  body += sectionLabel('Reflection') + insightBlock('Reflection', parts.principle, parts.content.quoteInsight);
+  body += sectionLabel('Reflection', '💡') + insightBlock('Reflection', parts.principle, parts.content.quoteInsight);
   if (parts.content.notionQuote) {
-    body += sectionLabel('Notion Wisdom') + insightBlock('Notion Wisdom', parts.content.notionQuote, parts.content.notionInsight);
+    body += sectionLabel('Notion Wisdom', '📖') + insightBlock('Notion Wisdom', parts.content.notionQuote, parts.content.notionInsight);
   }
-  body += sectionLabel('Newsletters') + newslettersHtml(parts.content.newsletters);
-  body += sectionLabel('Urgent Inbox') + urgentHtml(parts.content.urgentEmails);
-  body += sectionLabel('Markets') + marketsHtml(parts.marketBrief);
-  body += sectionLabel('Calendar — Today') + calendarHtml(parts.events);
-  body += sectionLabel('Workout') + workoutHtml(parts.day);
+  body += sectionLabel('Newsletters', '📰') + newslettersHtml(parts.content.newsletters);
+  body += sectionLabel('Urgent Inbox', '🚨') + urgentHtml(parts.content.urgentEmails);
+  body += sectionLabel('Markets', '📈') + marketsHtml(parts.marketBrief);
+  body += sectionLabel('Calendar — Today', '📅') + calendarHtml(parts.events);
+  body += sectionLabel('Workout', '💪') + workoutHtml(parts.day);
 
   const footer =
     '<div style="margin-top:40px; padding-top:16px; border-top:1px solid ' + STYLE.hair + '; ' +
