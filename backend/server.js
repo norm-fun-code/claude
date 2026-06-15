@@ -1818,9 +1818,7 @@ app.get('/api/briefing', async (req, res) => {
       withTimeout(fetchCalendarEvents(), EXT, 'calendar'),
       withTimeout(fetchRandomNotionPage({ exclude: [...seenNotion] }), EXT, 'notion'),
       withTimeout(fetchRandomQuote(), EXT, 'googleDoc'),
-      priorIsToday
-        ? Promise.resolve([]) // skip Gmail — carry prior newsletters
-        : withTimeout(fetchGmailThreads(), EXT, 'gmail'),
+      Promise.resolve([]), // email context removed — not cost-effective for daily briefing
       withTimeout(fetchMarkets(), EXT, 'markets'),
     ]);
 

@@ -2,7 +2,7 @@
 // Claude has no embeddings API, so embeddings come from the embed provider.
 const axios = require('axios');
 
-async function generateText({ system, prompt, temperature = 0.4, maxTokens = 1024 }) {
+async function generateText({ system, prompt, maxTokens = 4096 }) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
   const model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
@@ -12,7 +12,7 @@ async function generateText({ system, prompt, temperature = 0.4, maxTokens = 102
     {
       model,
       max_tokens: maxTokens,
-      temperature,
+      thinking: { type: 'adaptive' },
       system,
       messages: [{ role: 'user', content: prompt }],
     },
@@ -25,7 +25,8 @@ async function generateText({ system, prompt, temperature = 0.4, maxTokens = 102
     }
   );
 
-  return (data.content || []).map((b) => b.text || '').join('');
+  // Thinking blocks have type 'thinking' — only join text blocks.
+  return (data.content || []).filter((b) => b.type === 'text').map((b) => b.text || '').join('');
 }
 
 module.exports = { generateText };

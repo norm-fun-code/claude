@@ -6,6 +6,12 @@ import {
   getTodaysWorkout,
   HRV_ZONES,
   WEEKLY_SCHEDULE,
+  SESSION_A,
+  SESSION_B,
+  ZONE2,
+  INTERVALS,
+  MOBILITY,
+  REST,
   type AnySession,
   type StrengthSession,
   type Zone2Session,
@@ -1444,6 +1450,7 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
   const [workoutHistory, setWorkoutHistory] = useState<Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>>({});
   const [activities, setActivities] = useState<Activity[]>([]);
   const [showActivityModal, setShowActivityModal] = useState(false);
+  const [useScheduledWorkout, setUseScheduledWorkout] = useState(false);
 
   const todayKey = getDateKey(todayDayIndex);
   const selectedKey = getDateKey(selectedDayIndex);
@@ -1564,11 +1571,26 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
   const selectedJsDay = (selectedDayIndex + 1) % 7;
   // Only apply recovery logic for today — other days show the scheduled workout.
   // Prefer the baseline-relative recovery band; fall back to raw HRV if no band.
-  const { workout, zone, override } = getTodaysWorkout(
+  const { workout: _autoWorkout, zone, override } = getTodaysWorkout(
     selectedJsDay,
     isViewingToday ? hrv : null,
     isViewingToday ? recoveryBand ?? null : null,
   );
+
+  // Reset the scheduled-workout override whenever the user navigates to a different day.
+  useEffect(() => { setUseScheduledWorkout(false); }, [selectedDayIndex]);
+
+  // When recovery has auto-downgraded today's session, the user can tap a button to
+  // restore the scheduled workout. We look up the original session directly so we
+  // don't have to re-invoke getTodaysWorkout with artificial inputs.
+  const SESSION_MAP: Record<string, AnySession> = {
+    zone2: ZONE2, mobility: MOBILITY, push: SESSION_A, pull: SESSION_B, rest: REST, intervals: INTERVALS,
+  };
+  const scheduledId = WEEKLY_SCHEDULE[selectedJsDay] ?? 'rest';
+  const workout = useScheduledWorkout && !!override && isViewingToday
+    ? SESSION_MAP[scheduledId] ?? REST
+    : _autoWorkout;
+  const displayOverride = useScheduledWorkout && !!override && isViewingToday ? undefined : override;
 
   function handleDayPress(dayIndex: number) {
     setSelectedDayIndex(dayIndex);
@@ -1723,9 +1745,27 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
         zone={zone}
         workoutLabel={workout.label}
         workoutDuration={duration}
-        override={override}
+        override={displayOverride}
         recoveryScore={isViewingToday ? (recoveryScore ?? null) : null}
       />
+
+      {isViewingToday && !!override && (
+        <TouchableOpacity
+          onPress={() => setUseScheduledWorkout((v) => !v)}
+          style={[
+            schedOverrideStyles.btn,
+            {
+              borderColor: useScheduledWorkout ? '#1D9E75' : '#BA7517',
+              backgroundColor: useScheduledWorkout ? '#1D9E7515' : 'transparent',
+            },
+          ]}
+          activeOpacity={0.7}
+        >
+          <Text style={[schedOverrideStyles.txt, { color: useScheduledWorkout ? '#1D9E75' : '#BA7517' }]}>
+            {useScheduledWorkout ? '✓ Showing scheduled workout' : 'Use scheduled workout anyway'}
+          </Text>
+        </TouchableOpacity>
+      )}
 
       <TouchableOpacity
         onPress={() => handleMarkDone(dateKey)}
@@ -1800,5 +1840,20 @@ const markDoneStyles = StyleSheet.create({
     color: '#C0392B',
     textAlign: 'center',
     marginBottom: spacing.md,
+  },
+});
+
+const schedOverrideStyles = StyleSheet.create({
+  btn: {
+    alignSelf: 'center',
+    borderWidth: 1,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  txt: {
+    fontSize: 13,
+    fontWeight: '600',
   },
 });
