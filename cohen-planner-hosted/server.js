@@ -258,18 +258,24 @@ app.delete('/api/scenarios/:id', requireAuth, async (req, res) => {
 // ── Debug ──────────────────────────────────────────────────────────────────
 app.get('/api/debug/db', requireAuth, async (req, res) => {
   try {
-    const [sc, pl, sn] = await Promise.all([
+    const [sc, pl, sn, cols] = await Promise.all([
       db.query('SELECT id, name, color, created_at FROM scenarios ORDER BY created_at'),
       db.query('SELECT id, updated_at FROM planner_state'),
       db.query('SELECT id, label, created_at FROM snapshots ORDER BY created_at'),
+      db.query(`SELECT table_name, column_name, data_type
+                FROM information_schema.columns
+                WHERE table_schema='public' AND table_name IN ('scenarios','planner_state','snapshots','advisor_chats')
+                ORDER BY table_name, ordinal_position`),
     ]);
     res.json({
       scenarios: sc.rows,
       planner_state_rows: pl.rowCount,
       snapshots: sn.rows,
+      schema: cols.rows,
+      db_url_host: (process.env.DATABASE_URL||'').replace(/:[^:@]*@/,':*****@'),
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message, stack: err.stack });
   }
 });
 

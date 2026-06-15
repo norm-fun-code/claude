@@ -301,6 +301,8 @@ async function loadFromServer(){
       if(s.compareMode!==undefined)compareMode=s.compareMode;
       if(s.activeTab)activeTab=s.activeTab;
       if(s.activeScenarioIdx!==undefined)activeScenarioIdx=s.activeScenarioIdx;
+    }else{
+      showToast('⚠️ Could not load plan state (HTTP '+stRes.status+')','red');
     }
     if(scRes.ok){
       const sc=await scRes.json();
@@ -311,8 +313,14 @@ async function loadFromServer(){
         catch(e){console.warn('scenario rehydrate failed:',s.name,e);results=run({...D});}
         return{id:s.id,name:s.name,color:s.color||COLORS[i%COLORS.length],params,results};
       });
+      console.log('Loaded',scenarios.length,'scenarios from server');
+    }else{
+      showToast('⚠️ Could not load scenarios (HTTP '+scRes.status+')','red');
     }
-  }catch(e){console.error('loadFromServer error:',e)}
+  }catch(e){
+    console.error('loadFromServer error:',e);
+    showToast('⚠️ Network error loading data: '+e.message,'red');
+  }
   buildControls();render();
 }
 
@@ -1824,6 +1832,11 @@ function advPreviewProposals(){
 // ═══ INIT ═══
 loadAdvisorState();
 loadSnapshots().then(()=>{loadFromServer()});
+
+window.onerror=function(msg,src,line,col,err){
+  showToast('JS Error: '+msg+' (line '+line+')','red');
+  console.error('Global error:',err||msg);
+};
 </script>
 </body>
 </html>
