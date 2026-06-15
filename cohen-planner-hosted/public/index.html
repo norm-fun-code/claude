@@ -99,6 +99,25 @@ tr:hover td{background:var(--s2)}
 .scenario-chip .x{font-size:8px;opacity:.5;margin-left:3px;cursor:pointer}.scenario-chip .x:hover{opacity:1;color:var(--r)}
 .solo-box{background:var(--g-soft);border:1px solid rgba(26,135,84,.2);border-radius:6px;padding:8px 10px;margin:5px 0 7px;font-size:10px;color:var(--t2)}
 @media(max-width:900px){.layout{grid-template-columns:1fr}.kpi-grid{grid-template-columns:repeat(3,1fr)}.sg{grid-template-columns:1fr}}
+@media(max-width:640px){
+  body{padding:8px 10px}
+  .hdr{flex-direction:column;align-items:flex-start;gap:6px;padding-bottom:8px;margin-bottom:8px}
+  .hdr h1{font-size:13px}
+  .hdr-right{flex-wrap:wrap;gap:5px}
+  .kpi-grid{grid-template-columns:repeat(2,1fr);gap:5px;margin-bottom:8px}
+  .tabs{overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .tabs::-webkit-scrollbar{display:none}
+  .tabs button{white-space:nowrap;padding:5px 8px;font-size:10px}
+  .layout{display:block}
+  .panel{display:none;margin-bottom:10px;max-height:70vh;overflow-y:auto}
+  .panel.mob-open{display:block}
+  #mobileControlsToggle{display:flex}
+  .tw{overflow-x:auto}
+  .cc{padding:10px}
+  .snap-bar{gap:4px}
+  .scenario-bar{gap:4px}
+}
+@media(min-width:641px){#mobileControlsToggle{display:none}}
 .adv{display:flex;flex-direction:column;height:calc(100vh - 220px);min-height:500px;background:var(--s1);border:1px solid var(--bd);border-radius:9px;overflow:hidden}
 .adv-msgs{flex:1;overflow-y:auto;padding:18px 22px;display:flex;flex-direction:column;gap:14px}
 .adv-msgs::-webkit-scrollbar{width:6px}.adv-msgs::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:3px}
@@ -190,6 +209,7 @@ tr:hover td{background:var(--s2)}
 .adv-rail-footer button:hover{border-color:var(--bd2);color:var(--tx)}
 .adv-main{display:flex;flex-direction:column;overflow:hidden;background:var(--s1)}
 @media(max-width:900px){.adv-wrap{grid-template-columns:1fr}.adv-rail{display:none}}
+@media(max-width:640px){.adv-wrap{height:auto;min-height:350px}.adv{height:auto;min-height:350px}.adv-starters{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -201,6 +221,7 @@ tr:hover td{background:var(--s2)}
     <button class="logout-btn" onclick="doLogout()">Log out</button>
   </div>
 </div>
+<button id="mobileControlsToggle" onclick="toggleMobileControls()" style="margin-bottom:8px;padding:7px 13px;background:var(--s1);border:1px solid var(--bd);border-radius:7px;font-size:11px;font-weight:500;cursor:pointer;font-family:inherit;color:var(--t2);align-items:center;gap:5px">⚙️ <span id="mobileControlsLabel">Settings</span></button>
 <div class="layout">
   <div class="panel" id="controls"></div>
   <div id="main"></div>
@@ -344,6 +365,13 @@ function showToast(msg,type){
   setTimeout(()=>{d.style.opacity='0';d.style.transition='opacity .3s';setTimeout(()=>d.remove(),300)},3000);
 }
 function showConfirm(msg){return window.confirm?window.confirm(msg):true;}
+function toggleMobileControls(){
+  const panel=document.getElementById('controls');
+  const label=document.getElementById('mobileControlsLabel');
+  if(!panel)return;
+  const open=panel.classList.toggle('mob-open');
+  if(label)label.textContent=open?'Hide Settings':'Settings';
+}
 
 async function syncMonarch(){
   const btn=document.getElementById('monarchSyncBtn');
@@ -2015,7 +2043,7 @@ async function advAcceptProposals(name){
   savePlannerState();
   document.getElementById('advProposalsPanel')?.remove();
   advPendingProposals=null;
-  alert(`✓ Saved as scenario: "${name}"\n\nSwitch to the Charts tab and click "Compare" to compare it against your current plan.`);
+  showToast('✓ Saved advisor scenario: "'+name+'" — switch to Charts → Compare to see it','green');
   buildControls();render();
 }
 
@@ -2027,7 +2055,7 @@ function advPreviewProposals(){
   document.querySelectorAll('.tabs button[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab==='nw'));
   render();
   P=tmp;
-  alert('Showing AI-proposed plan on chart. Your actual plan is unchanged.');
+  showToast('Showing AI-proposed plan on chart. Your actual plan is unchanged.','green');
 }
 
 // ═══ INIT ═══
