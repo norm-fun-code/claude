@@ -285,7 +285,7 @@ function savePlannerState(){
       await fetch('/api/planner-state',{
         method:'PUT',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({state:{P,compareMode,activeTab,activeScenarioIdx}})
+        body:JSON.stringify({state:{P,compareMode,activeTab,activeScenarioIdx,monarchSnapshot}})
       });
       setSyncStatus('synced');
     }catch(e){setSyncStatus('error')}
@@ -324,6 +324,7 @@ async function loadFromServer(){
       if(s.compareMode!==undefined)compareMode=s.compareMode;
       if(s.activeTab)activeTab=s.activeTab;
       if(s.activeScenarioIdx!==undefined)activeScenarioIdx=s.activeScenarioIdx;
+      if(s.monarchSnapshot&&!monarchSnapshot)monarchSnapshot=s.monarchSnapshot; // don't clobber a fresh auto-sync
     }else{
       showToast('⚠️ Could not load plan state (HTTP '+stRes.status+')','red');
     }
@@ -385,6 +386,8 @@ async function checkMonarchStatus(){
     if(d.connected){
       if(syncBtn)syncBtn.style.display='';
       if(connBtn)connBtn.style.display='none';
+      // Auto-sync on open — token is stored server-side and auto-refreshes
+      if(!monarchSnapshot)syncMonarch();
     }else{
       if(syncBtn)syncBtn.style.display='none';
       if(connBtn)connBtn.style.display='';
@@ -420,6 +423,7 @@ async function syncMonarch(){
     };
     if(btn){btn.textContent='📍 Synced';btn.disabled=false;}
     showToast(`📍 Monarch synced · Liquid ${fmt(monarchSnapshot.liquid)} · 401k ${fmt(monarchSnapshot.retirement)}`,'green');
+    savePlannerState(); // persist last sync so it shows instantly next open
     render();
   }catch(e){
     if(btn){btn.textContent='📍 Sync Monarch';btn.disabled=false;}
