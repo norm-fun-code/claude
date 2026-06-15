@@ -1285,6 +1285,20 @@ app.delete('/api/chat/conversations/:id', async (req, res) => {
   }
 });
 
+// Rename a saved conversation.
+app.patch('/api/chat/conversations/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'bad id' });
+    const { title } = req.body || {};
+    if (typeof title !== 'string') return res.status(400).json({ error: 'title required' });
+    const updated = await require('./src/store/chat').updateConversationTitle(id, title);
+    res.json({ ok: true, updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // One-time backfill: embed any past user questions saved before long-term recall
 // existed, so they become semantically retrievable. Safe to re-run (idempotent).
 app.post('/api/chat/reindex', async (req, res) => {

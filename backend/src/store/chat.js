@@ -127,6 +127,13 @@ async function deleteConversation(id) {
   return rowCount;
 }
 
+/** Rename a saved conversation. */
+async function updateConversationTitle(id, title) {
+  const t = String(title || '').trim().slice(0, 120) || 'Conversation';
+  const { rowCount } = await query(`UPDATE conversations SET title = $2 WHERE id = $1`, [id, t]);
+  return rowCount;
+}
+
 /** Discard the active thread without saving (the "Clear" action). */
 async function clearActiveConversation() {
   const { rows } = await query(`SELECT id FROM conversations WHERE is_active LIMIT 1`);
@@ -217,4 +224,5 @@ module.exports = {
   openConversation,
   deleteConversation,
   clearActiveConversation,
+  updateConversationTitle,
 };

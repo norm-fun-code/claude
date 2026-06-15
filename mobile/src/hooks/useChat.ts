@@ -111,5 +111,18 @@ export function useChat() {
     }
   }, [loadConversations]);
 
-  return { messages, loading, conversations, send, clear, save, open, remove, loadConversations };
+  const rename = useCallback(async (id: number, title: string) => {
+    setConversations((prev) => prev.map((c) => c.id === id ? { ...c, title } : c)); // optimistic
+    try {
+      await fetchWithTimeout(`${CHAT_CONVERSATIONS_URL}/${id}`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify({ title }),
+      }, 15000);
+    } catch {
+      loadConversations(); // revert on failure
+    }
+  }, [loadConversations]);
+
+  return { messages, loading, conversations, send, clear, save, open, remove, rename, loadConversations };
 }

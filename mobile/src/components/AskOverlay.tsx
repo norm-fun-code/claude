@@ -43,8 +43,11 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<'chat' | 'history'>('chat');
   const [question, setQuestion] = useState('');
-  const { messages, loading, conversations, send, clear, save, open: openConvo, remove, loadConversations } = useChat();
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const { messages, loading, conversations, send, clear, save, open: openConvo, remove, rename, loadConversations } = useChat();
   const scrollRef = useRef<ScrollView>(null);
+  const inputRef = useRef<TextInput>(null);
 
   useEffect(() => {
     if (open && view === 'chat') requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
@@ -58,6 +61,16 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
 
   const showHistory = () => { loadConversations(); setView('history'); };
   const pickConversation = async (id: number) => { await openConvo(id); setView('chat'); };
+
+  const startRename = (id: number, current: string) => {
+    setEditingId(id);
+    setEditTitle(current);
+  };
+
+  const commitRename = (id: number) => {
+    if (editTitle.trim()) rename(id, editTitle.trim());
+    setEditingId(null);
+  };
 
   const md = markdownStyles(c);
   const empty = messages.length === 0;
@@ -75,7 +88,11 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
       </Pressable>
 
       <Modal visible={open} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setOpen(false)}>
-        <View style={[styles.sheet, { backgroundColor: c.background }]}>
+        <KeyboardAvoidingView
+          style={[styles.sheet, { backgroundColor: c.background }]}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+        >
           {/* Header */}
           <View style={[styles.header, { borderBottomColor: c.border }]}>
             {view === 'history' ? (
@@ -94,35 +111,56 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
           </View>
 
           {view === 'history' ? (
-            <ScrollView style={styles.flex} contentContainerStyle={styles.threadContent}>
+            <ScrollView style={styles.flex} contentContainerStyle={styles.threadContent} keyboardShouldPersistTaps="handled">
               {conversations.length === 0 ? (
                 <Text style={[styles.emptyHint, { color: c.subtext, marginTop: spacing.lg }]}>
-                  No saved conversations yet. Tap “Save” in a chat to keep it here.
+                  No saved conversations yet. Tap "Save" in a chat to keep it here.
                 </Text>
               ) : (
-                conversations.map((conv) => (
-                  <View key={conv.id} style={[styles.convRow, { borderBottomColor: c.border }]}>
-                    <Pressable style={styles.convBody} onPress={() => pickConversation(conv.id)}>
-                      <Text style={[styles.convTitle, { color: c.text }]} numberOfLines={1}>
-                        {conv.title || conv.first_message || 'Conversation'}
-                      </Text>
-                      <Text style={[styles.convMeta, { color: c.subtext }]}>
-                        {fmtDate(conv.saved_at)} · {conv.message_count} message{conv.message_count === 1 ? '' : 's'}
-                      </Text>
-                    </Pressable>
-                    <Pressable onPress={() => remove(conv.id)} hitSlop={10} style={styles.trashBtn} accessibilityLabel="Delete conversation">
-                      <Text style={[styles.trash, { color: c.subtext }]}>🗑</Text>
-                    </Pressable>
-                  </View>
-                ))
+                conversations.map((conv) => {
+                  const displayTitle = conv.title || conv.first_message || 'Conversation';
+                  const isEditing = editingId === conv.id;
+                  return (
+                    <View key={conv.id} style={[styles.convRow, { borderBottomColor: c.border }]}>
+                      <Pressable style={styles.convBody} onPress={() => !isEditing && pickConversation(conv.id)}>
+                        {isEditing ? (
+                          <TextInput
+                            style={[styles.convTitleInput, { color: c.text, borderBottomColor: c.accent }]}
+                            value={editTitle}
+                            onChangeText={setEditTitle}
+                            onSubmitEditing={() => commitRename(conv.id)}
+                            onBlur={() => commitRename(conv.id)}
+                            returnKeyType="done"
+                            autoFocus
+                            selectTextOnFocus
+                          />
+                        ) : (
+                          <Text style={[styles.convTitle, { color: c.text }]} numberOfLines={1}>
+                            {displayTitle}
+                          </Text>
+                        )}
+                        <Text style={[styles.convMeta, { color: c.subtext }]}>
+                          {fmtDate(conv.saved_at)} · {conv.message_count} message{conv.message_count === 1 ? '' : 's'}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => startRename(conv.id, displayTitle)}
+                        hitSlop={10}
+                        style={styles.rowAction}
+                        accessibilityLabel="Rename conversation"
+                      >
+                        <Text style={[styles.rowActionIcon, { color: c.subtext }]}>✏️</Text>
+                      </Pressable>
+                      <Pressable onPress={() => remove(conv.id)} hitSlop={10} style={styles.rowAction} accessibilityLabel="Delete conversation">
+                        <Text style={[styles.rowActionIcon, { color: c.subtext }]}>🗑</Text>
+                      </Pressable>
+                    </View>
+                  );
+                })
               )}
             </ScrollView>
           ) : (
-            <KeyboardAvoidingView
-              style={styles.flex}
-              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-              keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
-            >
+            <>
               <ScrollView ref={scrollRef} style={styles.flex} contentContainerStyle={styles.threadContent} keyboardShouldPersistTaps="handled">
                 {empty && !loading && (
                   <View style={styles.emptyState}>
@@ -175,6 +213,7 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
 
               <View style={[styles.inputRow, { borderColor: c.border, backgroundColor: c.card }]}>
                 <TextInput
+                  ref={inputRef}
                   style={[styles.input, { color: c.text }]}
                   placeholder="Ask about your life…"
                   placeholderTextColor={c.subtext}
@@ -182,15 +221,14 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
                   onChangeText={setQuestion}
                   onSubmitEditing={() => submit(question)}
                   returnKeyType="send"
-                  autoFocus
                 />
                 <Pressable onPress={() => submit(question)} style={[styles.send, { backgroundColor: c.accent }]}>
                   <Text style={styles.sendText}>Ask</Text>
                 </Pressable>
               </View>
-            </KeyboardAvoidingView>
+            </>
           )}
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </>
   );
@@ -276,7 +314,8 @@ const styles = StyleSheet.create({
   convRow: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, paddingVertical: spacing.md },
   convBody: { flex: 1, paddingRight: spacing.sm },
   convTitle: { fontSize: 15, fontWeight: '600' },
+  convTitleInput: { fontSize: 15, fontWeight: '600', borderBottomWidth: 1, paddingVertical: 2, marginBottom: 2 },
   convMeta: { fontSize: 12, marginTop: 2 },
-  trashBtn: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
-  trash: { fontSize: 18 },
+  rowAction: { paddingHorizontal: spacing.xs, paddingVertical: spacing.xs },
+  rowActionIcon: { fontSize: 17 },
 });
