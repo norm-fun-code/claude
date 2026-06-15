@@ -47,52 +47,87 @@ function callGemini(systemText, promptText, opts) {
   }
 }
 
-// ---- NOTION HELPER ----
-// Mirrors the app's extractTextFromBlocks: one line per block, list items
-// prefixed with "• ", joined by newlines. Cleaner line breaks give the LLM
-// well-formed passages to quote verbatim (vs. mid-thought fragments).
-function getRandomNotionChildPageText(mainPageId, apiKey) {
-  try {
-    const options = {
-      method: 'get',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Notion-Version': '2022-06-28' },
-      muteHttpExceptions: true
-    };
+// ---- NOTION HELPERS ----
+// Ports the app's deep crawl (listWisdomPages + fetchPageText): collect EVERY
+// wisdom page at any depth under the parent, pick one at random, then read its
+// FULL text — recursing into nested blocks (toggles, columns, nested lists) but
+// treating sub-pages as their own entries in the pool (like the app does).
+const NOTION_MAX_ITER = 30;     // pagination safety cap (100 items/page = 3,000)
+const NOTION_MAX_PAGE_DEPTH = 4; // how deep to walk the sub-page tree
+const NOTION_MAX_BLOCK_DEPTH = 6; // how deep to recurse into nested blocks
 
-    // 1. Get the blocks of the main page to find child pages
-    const mainUrl = `https://api.notion.com/v1/blocks/${mainPageId}/children`;
-    const mainResponse = JSON.parse(UrlFetchApp.fetch(mainUrl, options).getContentText());
+function notionGet(url, apiKey) {
+  const options = {
+    method: 'get',
+    headers: { 'Authorization': `Bearer ${apiKey}`, 'Notion-Version': '2022-06-28' },
+    muteHttpExceptions: true
+  };
+  return JSON.parse(UrlFetchApp.fetch(url, options).getContentText());
+}
 
-    let childPageIds = [];
-    if (mainResponse.results) {
-      mainResponse.results.forEach(block => {
-        if (block.type === 'child_page') childPageIds.push(block.id);
-      });
-    }
-
-    // 2. If child pages exist, pick one at random and get its text
-    if (childPageIds.length > 0) {
-      const randomChildId = childPageIds[Math.floor(Math.random() * childPageIds.length)];
-      const childUrl = `https://api.notion.com/v1/blocks/${randomChildId}/children`;
-      const childResponse = JSON.parse(UrlFetchApp.fetch(childUrl, options).getContentText());
-
-      const lines = [];
-      if (childResponse.results) {
-        childResponse.results.forEach(block => {
-          const type = block.type;
-          const content = block[type];
-          if (content && content.rich_text) {
-            const text = content.rich_text.map(rt => rt.plain_text).join('').trim();
-            if (text) {
-              const isList = (type === 'bulleted_list_item' || type === 'numbered_list_item');
-              lines.push(isList ? `• ${text}` : text);
-            }
-          }
-        });
+// Walk the sub-page tree from rootId, collecting child_page IDs at every depth.
+// Scoped to the parent's subtree (no workspace-wide search), so only your wisdom
+// pages are ever in the pool.
+function collectWisdomPageIds(rootId, apiKey, depth) {
+  depth = depth || 0;
+  const ids = [];
+  if (depth > NOTION_MAX_PAGE_DEPTH) return ids;
+  let cursor = null, iters = 0;
+  do {
+    let url = `https://api.notion.com/v1/blocks/${rootId}/children?page_size=100`;
+    if (cursor) url += `&start_cursor=${cursor}`;
+    const res = notionGet(url, apiKey);
+    (res.results || []).forEach(block => {
+      if (block.type === 'child_page') {
+        ids.push(block.id);
+        // Recurse to find sub-pages nested under this page.
+        Array.prototype.push.apply(ids, collectWisdomPageIds(block.id, apiKey, depth + 1));
       }
-      return lines.join('\n');
-    }
-    return "No child pages found in Notion.";
+    });
+    cursor = res.has_more ? res.next_cursor : null;
+  } while (cursor && ++iters < NOTION_MAX_ITER);
+  return ids;
+}
+
+// Flatten the full text of one page, recursing into nested blocks (but NOT into
+// child pages/databases — those are separate entries in the pool). One line per
+// block; list items prefixed with "• " so the LLM gets well-formed passages.
+function fetchNotionPageTextDeep(blockId, apiKey, depth) {
+  depth = depth || 0;
+  if (depth > NOTION_MAX_BLOCK_DEPTH) return '';
+  const lines = [];
+  let cursor = null, iters = 0;
+  do {
+    let url = `https://api.notion.com/v1/blocks/${blockId}/children?page_size=100`;
+    if (cursor) url += `&start_cursor=${cursor}`;
+    const res = notionGet(url, apiKey);
+    (res.results || []).forEach(block => {
+      const type = block.type;
+      const content = block[type];
+      if (content && content.rich_text) {
+        const text = content.rich_text.map(rt => rt.plain_text).join('').trim();
+        if (text) {
+          const isList = (type === 'bulleted_list_item' || type === 'numbered_list_item');
+          lines.push(isList ? `• ${text}` : text);
+        }
+      }
+      if (block.has_children && type !== 'child_page' && type !== 'child_database') {
+        const sub = fetchNotionPageTextDeep(block.id, apiKey, depth + 1);
+        if (sub) lines.push(sub);
+      }
+    });
+    cursor = res.has_more ? res.next_cursor : null;
+  } while (cursor && ++iters < NOTION_MAX_ITER);
+  return lines.join('\n');
+}
+
+function getRandomNotionWisdom(rootId, apiKey) {
+  try {
+    const ids = collectWisdomPageIds(rootId, apiKey, 0);
+    if (!ids.length) return "No child pages found in Notion.";
+    const chosen = ids[Math.floor(Math.random() * ids.length)];
+    const text = fetchNotionPageTextDeep(chosen, apiKey, 0);
+    return text || "No readable text found in the selected Notion page.";
   } catch (e) {
     return "Could not fetch Notion data: " + e.toString();
   }
@@ -264,8 +299,8 @@ function sendMorningBriefing() {
     selectedPrinciple = "Error: Could not fetch document. Please ensure the DOC_ID points to a native Google Doc.";
   }
 
-  // Fetch Notion Wisdom
-  const notionData = getRandomNotionChildPageText(NOTION_PAGE_ID, NOTION_API_KEY);
+  // Fetch Notion Wisdom (deep crawl: every sub-page, full nested text)
+  const notionData = getRandomNotionWisdom(NOTION_PAGE_ID, NOTION_API_KEY);
 
   // Build the Market Brief (live RSS feeds — exactly what the app's card shows).
   const marketBriefHtml = renderMarketBriefHtml(getMarketBrief(tz));
