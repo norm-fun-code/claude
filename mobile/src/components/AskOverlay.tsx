@@ -8,7 +8,7 @@ import {
   ActivityIndicator,
   Modal,
   ScrollView,
-  KeyboardAvoidingView,
+  Keyboard,
   Platform,
   useColorScheme,
 } from 'react-native';
@@ -48,6 +48,15 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
   const { messages, loading, conversations, send, clear, save, open: openConvo, remove, rename, loadConversations } = useChat();
   const scrollRef = useRef<ScrollView>(null);
   const inputRef = useRef<TextInput>(null);
+  const [kbHeight, setKbHeight] = useState(0);
+
+  useEffect(() => {
+    const showEv = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEv = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const show = Keyboard.addListener(showEv, (e) => setKbHeight(e.endCoordinates.height));
+    const hide = Keyboard.addListener(hideEv, () => setKbHeight(0));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
 
   useEffect(() => {
     if (open && view === 'chat') requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
@@ -88,11 +97,7 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
       </Pressable>
 
       <Modal visible={open} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setOpen(false)}>
-        <KeyboardAvoidingView
-          style={[styles.sheet, { backgroundColor: c.background }]}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
-        >
+        <View style={[styles.sheet, { backgroundColor: c.background, paddingBottom: kbHeight }]}>
           {/* Header */}
           <View style={[styles.header, { borderBottomColor: c.border }]}>
             {view === 'history' ? (
@@ -228,7 +233,7 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
               </View>
             </>
           )}
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
     </>
   );
