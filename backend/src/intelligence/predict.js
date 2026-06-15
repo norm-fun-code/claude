@@ -49,6 +49,9 @@ function predictCapacity(s = {}) {
   const { recoveryScore, hrvSubScore, sleepHours, sleepDebtHours, acwrBand } = s;
   if (recoveryScore == null || !Number.isFinite(recoveryScore)) return null;
 
+  // These grade cutoffs are the single source of truth for the day's recovery
+  // band. recovery.js recoveryBand() mirrors them so the Health-tab workout zone
+  // matches this grade exactly — keep them in sync.
   let grade, band, headline;
   if (recoveryScore >= 67)      { grade = 'A'; band = 'green';  headline = 'Full send'; }
   else if (recoveryScore >= 50) { grade = 'B'; band = 'yellow'; headline = 'Hit your essentials'; }

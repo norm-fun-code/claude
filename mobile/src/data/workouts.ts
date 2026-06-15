@@ -307,7 +307,9 @@ export function getTodaysWorkout(
     return { workout: workoutMap[scheduled] ?? REST, zone: 'unknown' };
   }
   if (zone === 'red') {
-    return { workout: ZONE2, zone, override: 'Low recovery — all training replaced with Zone 2.' };
+    // Red recovery (C day): mobility + an easy walk, per the training protocol —
+    // the goal is gentle movement that compounds above zero, not a Zone 2 session.
+    return { workout: MOBILITY, zone, override: 'Low recovery — training replaced with mobility + an easy walk.' };
   }
   if (scheduled === 'pull') {
     if (zone === 'green') return { workout: SESSION_B, zone };

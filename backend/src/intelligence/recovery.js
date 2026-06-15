@@ -167,12 +167,14 @@ function recoveryScore(seriesByKey, opts = {}) {
   return { score, parts, inputs: keys.length };
 }
 
-/** Band + guidance for a recovery score, à la Whoop's red/yellow/green. */
+/** Band + guidance for a recovery score, à la Whoop's red/yellow/green.
+ *  Thresholds are kept IDENTICAL to predict.js predictCapacity's A/B/C grade
+ *  (A ≥67 = green, B ≥50 = yellow, C <50 = red) so the Today-tab day grade and
+ *  the Health-tab workout zone never disagree. Keep these in sync. */
 function recoveryBand(score) {
   if (score >= 67) return { band: 'green',  guidance: "Green — your body's ready. Full intensity is appropriate today." };
   if (score >= 50) return { band: 'yellow', guidance: 'Moderate — solid foundation. Push if you feel good, but watch your exertion.' };
-  if (score >= 34) return { band: 'yellow', guidance: 'Below baseline — train at moderate intensity and prioritize recovery tonight.' };
-  return { band: 'red', guidance: 'Low — your nervous system is strained. Keep it easy today; let the adaptation happen.' };
+  return { band: 'red', guidance: 'Low — under-recovered. Keep it easy today: mobility or a walk, and protect tonight\'s sleep.' };
 }
 
 // ---------------------------------------------------------------------------
