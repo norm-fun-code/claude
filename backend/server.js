@@ -1816,7 +1816,11 @@ app.get('/api/briefing', async (req, res) => {
     await Promise.allSettled([
       withTimeout(fetchWeather(), EXT, 'weather'),
       withTimeout(fetchCalendarEvents(), EXT, 'calendar'),
-      withTimeout(fetchRandomNotionPage({ exclude: [...seenNotion] }), EXT, 'notion'),
+      // Wisdom page is day-locked: skip the Notion API on same-day rebuilds so
+      // we don't burn credits for a page that will be discarded by lockedNotion.
+      priorIsToday && prior?.content?.notionText
+        ? Promise.resolve({ text: prior.content.notionText, pageTitle: prior.content.notionPageTitle ?? 'Notion' })
+        : withTimeout(fetchRandomNotionPage({ exclude: [...seenNotion] }), EXT, 'notion'),
       withTimeout(fetchRandomQuote(), EXT, 'googleDoc'),
       Promise.resolve([]), // email context removed — not cost-effective for daily briefing
       withTimeout(fetchMarkets(), EXT, 'markets'),
@@ -1845,25 +1849,27 @@ app.get('/api/briefing', async (req, res) => {
 
   // Quote of the day from the Notion "Quotes" page (each bullet = one quote).
   // No-repeat for 30 days so it cycles through all your quotes.
-  let dailyQuote = null;
-  try {
-    const quotes = await withTimeout(fetchNotionQuotes(), EXT, 'notionQuotes');
-    if (quotes.length) {
-      const seen = await surfacedStore.recentRefs('daily_quote', 30);
-      const [pick] = surfacedStore.pickFresh(
-        // shuffle so the fresh pick isn't always the first unseen one
-        quotes.map((q) => q).sort(() => Math.random() - 0.5),
-        seen,
-        { max: 1, keyFn: (q) => q }
-      );
-      if (pick) {
-        dailyQuote = pick;
-        // Only record when serving fresh (see note above the notion_page record).
-        if (!priorIsToday) await surfacedStore.record('daily_quote', pick);
+  // Day-locked: skip the Notion API on same-day rebuilds — the quote is already
+  // chosen and will be carried forward by keep(p?.dailyQuote, ...) below.
+  let dailyQuote = priorIsToday ? (prior?.content?.dailyQuote ?? null) : null;
+  if (!priorIsToday) {
+    try {
+      const quotes = await withTimeout(fetchNotionQuotes(), EXT, 'notionQuotes');
+      if (quotes.length) {
+        const seen = await surfacedStore.recentRefs('daily_quote', 30);
+        const [pick] = surfacedStore.pickFresh(
+          quotes.map((q) => q).sort(() => Math.random() - 0.5),
+          seen,
+          { max: 1, keyFn: (q) => q }
+        );
+        if (pick) {
+          dailyQuote = pick;
+          await surfacedStore.record('daily_quote', pick);
+        }
       }
+    } catch (err) {
+      console.error('[notionQuotes] failed:', err.message);
     }
-  } catch (err) {
-    console.error('[notionQuotes] failed:', err.message);
   }
 
   // Wellbeing context: recent inner-state signals (mood/energy/focus + lagging

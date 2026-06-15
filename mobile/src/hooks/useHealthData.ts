@@ -254,18 +254,17 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
       let remSleepHours: number | null = null;
       let steps: number | null = null;
       let activeCalories: number | null = null;
-      // Eight Sleep overnight values — override Apple Watch when available so
-      // the Health card shows the same source as the Recovery card.
-      let eightSleepHrv: number | null = null;
-      let eightSleepRhr: number | null = null;
+      // Eight Sleep sleep score only — HRV and RHR on the Health card use Apple
+      // Watch so you can see live intraday readings during the day. Recovery card
+      // and all coaching logic still use Eight Sleep for overnight accuracy.
       let eightSleepScore: number | null = null;
       let pending = 6;
 
       function checkDone() {
         pending -= 1;
         if (pending === 0) {
-          const finalHrv = eightSleepHrv ?? hrv;
-          const finalRhr = eightSleepRhr ?? restingHR;
+          const finalHrv = hrv;           // Apple Watch — live intraday reading
+          const finalRhr = restingHR;     // Apple Watch — live intraday reading
           const finalSleepScore = eightSleepScore ?? getSleepScore(sleepHours, deepSleepHours, remSleepHours);
           setData({
             hrv: finalHrv,
@@ -389,15 +388,11 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
         }
       );
 
-      // Prefer Eight Sleep overnight HRV/RHR/sleep_score — keeps the Health card
-      // consistent with the Recovery card which is source-locked to Eight Sleep.
-      // Bounded by a timeout so a slow/down backend can't freeze the card: on
-      // timeout we fall through to the local HealthKit values.
+      // Fetch Eight Sleep sleep score for the nightly summary row. HRV and RHR
+      // intentionally NOT overridden here — they come from Apple Watch above.
       fetchWithTimeout(SLEEP_TODAY_URL, { headers: authHeaders() }, 6000)
         .then((r) => r.json())
         .then((d: any) => {
-          if (d?.metrics?.hrv) eightSleepHrv = Math.round(d.metrics.hrv);
-          if (d?.metrics?.resting_hr) eightSleepRhr = Math.round(d.metrics.resting_hr);
           if (d?.metrics?.sleep_score) eightSleepScore = Math.round(d.metrics.sleep_score);
         })
         .catch(() => {})
