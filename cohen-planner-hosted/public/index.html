@@ -694,6 +694,7 @@ function render(){
   renderSnapshotBar();
   const labels=R.map(r=>String(r.yr));const newKey=_chartKey();const reuseChart=(newKey===_lastChartKey&&!!charts.main);if(!reuseChart)destroyCharts();_lastChartKey=newKey;const ca=document.getElementById('chartArea');
   if(activeTab==='advisor'){renderAdvisorTab(R,P);return}
+  if(activeTab==='goals'){renderGoalsTab(R,P,tT);return}
   if(activeTab==='compare'){renderCompareTab(R,P);return}
   if(activeTab==='table'){
     ca.innerHTML=`<div class="tw"><table><thead><tr>${['Yr','Norm','Nancy','Gross','Tax','Eff%','Net','Housing','Living','CC','Tuition','TotExp','Surplus','Liquid','Eq','NW'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{const bg=r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';return `<tr style="background:${bg}"><td style="font-weight:700;color:var(--tx)">${r.yr}</td><td style="color:var(--b)">${fmt(r.normG)}</td><td style="color:var(--p)">${fmt(r.nancyG)}</td><td>${fmt(r.gross)}</td><td style="color:var(--r)">${fmt(r.tax)}</td><td style="color:var(--a)">${(r.effRate*100).toFixed(1)}%</td><td style="color:var(--g)">${fmt(r.inc)}</td><td>${fmt(r.h)}</td><td>${fmt(r.liv)}</td><td style="color:${r.cc>0?'var(--a)':'var(--t3)'}">${r.cc>0?fmt(r.cc):'—'}</td><td style="color:${r.tu>100000?'var(--r)':r.tu>0?'var(--a)':'var(--t3)'}">${r.tu>0?fmt(r.tu):'—'}</td><td>${fmt(r.totE)}</td><td style="color:${r.surp>=0?'var(--g)':'var(--r)'};font-weight:600">${r.surp>=0?'+':''}${fmt(r.surp)}</td><td style="color:var(--b)">${fmt(r.liq)}</td><td style="color:var(--p)">${r.eq>0?fmt(r.eq):'—'}</td><td style="color:var(--g);font-weight:600">${fmt(r.nw)}</td></tr>`}).join('')}</tbody></table></div>`;return}
@@ -765,6 +766,176 @@ function render(){
     <div class="sc"><h3>🏠 Home</h3><p><span class="mono" style="font-weight:600;color:var(--tx)">${fmt(P.homePrice)}</span> in ${P.homePurchaseYear}<br>${P.downPctg}% down · <span class="mono">${fmt(mm)}/mo</span> at ${P.mortgageRate}%</p></div>
     <div class="sc"><h3>📊 Tax Engine</h3><p>Fed MFJ 2026 + NYS + NYC + FICA<br>SALT $40.4K w/ phaseout above $505K<br>CTC $2.2K/kid w/ AGI phaseout<br>${P.nancySoloPractice?'Nancy: QBI + home office + SE':'Nancy: W2'}</p></div>
     <div class="sc"><h3>💡 Per-Kid Costs</h3><p>Infant +$9K · School +$10K · Teen +$14K/yr<br><em style="font-size:7.5px;color:var(--t3)">${(P.expenseInflation*100).toFixed(1)}%/yr inflation · ${P.numKids} kids</em></p></div>`;
+}
+
+function renderGoalsTab(R,P,tT){
+  const ca=document.getElementById('chartArea');
+  destroyCharts();
+  const sy=P.planStartYear||2026;
+  const now=sy; // plan start = "today" for goal countdowns
+
+  // ── Home Purchase ──
+  const dp=P.homePrice*(P.downPctg/100);
+  const yearsLeft=P.homePurchaseYear-now;
+  const priorRow=R.find(r=>r.yr===P.homePurchaseYear-1);
+  const projLiq=priorRow?priorRow.liq:P.startingLiquid;
+  const dpPct=Math.min(100,Math.round(P.startingLiquid/dp*100));
+  const dpProjPct=Math.min(100,Math.round(projLiq/dp*100));
+  const dpShortfall=Math.max(0,dp-projLiq);
+  const dpOnTrack=projLiq>=dp;
+  const dpMoNeeded=dpShortfall>0&&yearsLeft>0?Math.round(dpShortfall/yearsLeft/12):0;
+
+  // ── Tuition ──
+  const firstTuRow=R.find(r=>r.tu>0);
+  const lastTuRow=[...R].reverse().find(r=>r.tu>0);
+  const peakTuRow=R.reduce((a,b)=>b.tu>a.tu?b:a,R[0]);
+  const yearsToTu=firstTuRow?firstTuRow.yr-now:null;
+  const tuLiq=R.find(r=>r.yr===peakTuRow.yr);
+  const kids=[P.kid1Birth];
+  if(P.numKids>=2)kids.push(P.kid2Birth);
+  if(P.numKids>=3)kids.push(P.kid3Birth);
+  if(P.numKids>=4)kids.push(P.kid4Birth);
+
+  // per-kid school windows (years only, not dollar split)
+  const kidWindows=kids.map((kb,ki)=>{
+    const startAge=ki===0?P.kid1YeshivaStartAge:P.yeshivaStartAge;
+    const endAge=P.yeshivaEndAge;
+    return{kb,startYr:kb+startAge,endYr:kb+endAge,years:endAge-startAge+1};
+  });
+
+  // ── progress bar helper ──
+  function pbar(pct,color,bg){
+    return `<div style="height:10px;border-radius:5px;background:${bg||'var(--s3)'};overflow:hidden;position:relative">
+      <div style="height:100%;width:${pct}%;background:${color};border-radius:5px;transition:width .4s"></div>
+    </div>`;
+  }
+
+  // ── surplus years liquid ladder (condensed view) ──
+  const surpYrs=R.filter(r=>r.surp>=0).length;
+  const defYrs=R.filter(r=>r.surp<0).length;
+
+  // ── build HTML ──
+  let h=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px">`;
+
+  // GOAL 1: Home purchase
+  h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+      <div>
+        <div style="font-size:13px;font-weight:700;color:var(--tx)">🏠 Home Down Payment</div>
+        <div style="font-size:10px;color:var(--t2);margin-top:2px">${P.homePrice>=1e6?'$'+(P.homePrice/1e6).toFixed(2)+'M':'$'+Math.round(P.homePrice/1000)+'K'} home · ${P.downPctg}% down · ${P.homePurchaseYear}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:${dpOnTrack?'var(--g)':'var(--a)'}">${fmt(dp)}</div>
+        <div style="font-size:9px;color:var(--t3);margin-top:1px">target</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">
+      <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
+        <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Today's Liquid</div>
+        <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--b)">${fmt(P.startingLiquid)}</div>
+        <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${dpPct}% of target</div>
+      </div>
+      <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
+        <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Projected (${P.homePurchaseYear-1})</div>
+        <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:${dpOnTrack?'var(--g)':'var(--a)'}">${fmt(projLiq)}</div>
+        <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${dpProjPct}% of target</div>
+      </div>
+      <div style="background:${dpOnTrack?'var(--g-soft)':'var(--a-soft)'};border:1px solid ${dpOnTrack?'rgba(26,135,84,.2)':'rgba(191,105,0,.2)'};border-radius:7px;padding:9px 11px">
+        <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:${dpOnTrack?'var(--g)':'var(--a)'};margin-bottom:3px">${yearsLeft} years away</div>
+        <div style="font-size:13px;font-weight:700;color:${dpOnTrack?'var(--g)':'var(--a)'}">${dpOnTrack?'✓ On Track':'⚠ Shortfall'}</div>
+        <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${dpOnTrack?`+${fmt(projLiq-dp)} buffer`:`Need +${fmt(dpShortfall)}`}</div>
+      </div>
+    </div>
+    <div style="margin-bottom:5px;font-size:8.5px;color:var(--t3);display:flex;justify-content:space-between"><span>Today</span><span>${P.homePurchaseYear}</span></div>
+    <div style="position:relative;height:20px">
+      ${pbar(dpPct,'var(--b)40','var(--s3)')}
+      <div style="position:absolute;top:0;left:0;right:0;height:100%">
+        <div style="height:10px;border-radius:5px;background:transparent;position:relative">
+          <div style="position:absolute;top:0;left:0;height:100%;width:${dpProjPct}%;background:transparent;border-right:2px dashed ${dpOnTrack?'var(--g)':'var(--a)'};border-radius:0"></div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:5px;font-size:8.5px;color:var(--t3);display:flex;gap:12px">
+      <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:4px;background:var(--b);opacity:.4;border-radius:2px"></span>Current liquid</span>
+      <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:0;border-top:2px dashed ${dpOnTrack?'var(--g)':'var(--a)'}"></span>Projected at ${P.homePurchaseYear-1}</span>
+      ${dpMoNeeded>0?`<span style="color:var(--a);font-weight:600">Need ~${fmtF(dpMoNeeded)}/mo additional savings</span>`:''}
+    </div>
+  </div>`;
+
+  // GOAL 2: Tuition
+  if(firstTuRow){
+    const tuActive=R.filter(r=>r.tu>0);
+    const tuSpan=lastTuRow.yr-firstTuRow.yr+1;
+    h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--tx)">🎓 Tuition Summit</div>
+          <div style="font-size:10px;color:var(--t2);margin-top:2px">${firstTuRow.yr}–${lastTuRow.yr} · ${tuSpan} year window · ${P.numKids} kid${P.numKids!==1?'s':''}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:var(--r)">${fmt(tT)}</div>
+          <div style="font-size:9px;color:var(--t3);margin-top:1px">total (inflated)</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">
+        <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">First Tuition</div>
+          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${firstTuRow.yr}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${yearsToTu} yrs away · ${fmt(firstTuRow.tu)}/yr</div>
+        </div>
+        <div style="background:var(--r-soft);border:1px solid rgba(205,61,100,.15);border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--r);margin-bottom:3px">Peak Year · ${peakTuRow.yr}</div>
+          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--r)">${fmt(peakTuRow.tu)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">liquid then: ${fmt(tuLiq?.liq||0)}</div>
+        </div>
+        <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Avg Annual</div>
+          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--a)">${fmt(Math.round(tT/tuActive.length))}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">over ${tuActive.length} active yrs</div>
+        </div>
+      </div>
+      <div style="font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:7px">Annual tuition load</div>
+      <div style="display:flex;gap:2px;align-items:flex-end;height:50px">
+        ${R.map(r=>{
+          const pct=peakTuRow.tu>0?r.tu/peakTuRow.tu*100:0;
+          if(pct<=0)return`<div style="flex:1;background:transparent"></div>`;
+          const numKidsInSchool=kidWindows.filter(kw=>r.yr>=kw.startYr&&r.yr<=kw.endYr).length;
+          const color=numKidsInSchool>=2?'var(--r)':'var(--a)';
+          return`<div title="${r.yr}: ${fmt(r.tu)}" style="flex:1;background:${color};height:${pct}%;border-radius:2px 2px 0 0;opacity:.8"></div>`;
+        }).join('')}
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--t3);margin-top:3px"><span>${sy}</span><span>${P.planEndYear||2058}</span></div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        ${kidWindows.map((kw,ki)=>`
+        <div style="background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:6px 10px;font-size:9.5px">
+          <span style="font-weight:600;color:var(--tx)">Kid ${ki+1}</span>
+          <span style="color:var(--t2)"> born ${kw.kb} · school ${kw.startYr}–${kw.endYr}</span>
+          <span style="color:var(--t3)"> (${kw.years} yrs)</span>
+        </div>`).join('')}
+        ${kidWindows.length>=2?`<div style="background:var(--r-soft);border:1px solid rgba(205,61,100,.15);border-radius:6px;padding:6px 10px;font-size:9.5px;color:var(--r);font-weight:500">
+          Overlap: ${Math.max(0,Math.min(...kidWindows.map(kw=>kw.endYr))-Math.max(...kidWindows.map(kw=>kw.startYr))+1)} yrs both in school
+        </div>`:''}
+      </div>
+    </div>`;
+  }
+
+  // GOAL 3: Liquid health timeline (mini sparkline)
+  h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
+    <div style="font-size:13px;font-weight:700;color:var(--tx);margin-bottom:4px">💧 Liquid Health Over Time</div>
+    <div style="font-size:10px;color:var(--t2);margin-bottom:12px">${surpYrs} surplus yrs · ${defYrs} deficit yrs · floor ${fmt(R.reduce((a,b)=>b.liq<a.liq?b:a).liq)} in ${R.reduce((a,b)=>b.liq<a.liq?b:a).yr}</div>
+    <div style="display:flex;gap:2px;align-items:flex-end;height:60px">
+      ${(()=>{const maxL=Math.max(...R.map(r=>r.liq),1);return R.map(r=>{const pct=r.liq/maxL*100;const isSurp=r.surp>=0;const color=r.liq<500000?'var(--r)':isSurp?'var(--g)':'var(--a)';return`<div title="${r.yr}: ${fmt(r.liq)} liquid${r.surp<0?' ⚠ deficit':''}" style="flex:1;background:${color};height:${Math.max(2,pct)}%;border-radius:2px 2px 0 0;opacity:.75"></div>`}).join('')})()}
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--t3);margin-top:3px"><span>${sy}</span><span>${P.planEndYear||2058}</span></div>
+    <div style="margin-top:6px;display:flex;gap:10px;font-size:8.5px">
+      <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--g);border-radius:2px;opacity:.75"></span>Surplus year</span>
+      <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--a);border-radius:2px;opacity:.75"></span>Deficit (selling stock)</span>
+      <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--r);border-radius:2px;opacity:.75"></span>Below $500K</span>
+    </div>
+  </div>`;
+
+  h+='</div>';
+  ca.innerHTML=h;
 }
 
 function renderCompareTab(R,P){
@@ -876,6 +1047,7 @@ document.getElementById('main').innerHTML=`
     <button data-tab="income" onclick="setTab('income')">💰 Income & Tax</button>
     <button data-tab="cashflow" onclick="setTab('cashflow')">💸 Cash Flow</button>
     <button data-tab="table" onclick="setTab('table')">📋 Table</button>
+    <button data-tab="goals" onclick="setTab('goals')">🎯 Goals</button>
     <button data-tab="compare" onclick="setTab('compare')">⚖ Compare</button>
     <button data-tab="advisor" onclick="setTab('advisor')">🤖 AI Advisor</button>
     <button id="mcBtn" onclick="toggleMC()" style="margin-left:auto;font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Monte Carlo stress band (Net Worth tab)">🎲 Monte Carlo</button>
