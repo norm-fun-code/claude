@@ -313,6 +313,7 @@ async function getMonarchAccessToken() {
       grant_type: 'refresh_token',
       refresh_token: stored.refresh_token,
       client_id: stored.client_id,
+      resource: MONARCH_MCP,
     }),
     signal: AbortSignal.timeout(10000),
   });
@@ -357,9 +358,10 @@ app.get('/api/monarch-connect', requireAuth, async (req, res) => {
   try {
     const redirectUri = `${req.protocol}://${req.get('host')}/api/monarch-callback`;
 
-    // Get or register OAuth client
+    // Get or register OAuth client (re-register if redirect URI changed)
     const clientRow = await db.query("SELECT data FROM oauth_tokens WHERE key='monarch_client'");
-    let clientId = clientRow.rows[0]?.data?.client_id;
+    const storedClient = clientRow.rows[0]?.data;
+    let clientId = (storedClient && storedClient.redirect_uri === redirectUri) ? storedClient.client_id : null;
     if (!clientId) {
       const reg = await fetch(`${MONARCH_AUTH}/oauth/register`, {
         method: 'POST',
@@ -398,6 +400,7 @@ app.get('/api/monarch-connect', requireAuth, async (req, res) => {
     url.searchParams.set('code_challenge', codeChallenge);
     url.searchParams.set('code_challenge_method', 'S256');
     url.searchParams.set('state', state);
+    url.searchParams.set('resource', MONARCH_MCP); // RFC 8707 — required per MCP OAuth spec
 
     res.redirect(url.toString());
   } catch (err) {
@@ -425,6 +428,7 @@ app.get('/api/monarch-callback', requireAuth, async (req, res) => {
         redirect_uri: oauthState.redirectUri,
         client_id: oauthState.clientId,
         code_verifier: oauthState.codeVerifier,
+        resource: MONARCH_MCP,
       }),
       signal: AbortSignal.timeout(10000),
     });
