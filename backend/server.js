@@ -1596,6 +1596,40 @@ app.post('/api/review/run', async (req, res) => {
   }
 });
 
+// Lightweight wealth snapshot for external integrations (e.g. a financial planner).
+// Returns the latest stored values for net worth and per-bucket totals.
+// 401k is NOT a separate metric — Monarch balance exports aggregate all accounts into
+// assets/liabilities/net_worth. To get a standalone 401k value, set MONARCH_401K_ACCOUNT
+// to the exact account name from your Monarch export (e.g. "Fidelity 401k") and
+// this endpoint will return it under `retirement`.
+app.get('/api/wealth/snapshot', async (req, res) => {
+  try {
+    const [nw, assets, liabilities] = await Promise.all([
+      metricsStore.latest({ domain: 'wealth', metric: 'net_worth' }),
+      metricsStore.latest({ domain: 'wealth', metric: 'assets' }),
+      metricsStore.latest({ domain: 'wealth', metric: 'liabilities' }),
+    ]);
+
+    // Optional: per-account 401k lookup if MONARCH_401K_ACCOUNT is set.
+    // Requires the balance export to have been imported with per-account rows.
+    const retirementMetric = process.env.MONARCH_401K_ACCOUNT
+      ? `account_${process.env.MONARCH_401K_ACCOUNT.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`
+      : null;
+    const retirement = retirementMetric
+      ? await metricsStore.latest({ domain: 'wealth', metric: retirementMetric }).catch(() => null)
+      : null;
+
+    res.json({
+      netWorth: nw ? { value: Math.round(Number(nw.value)), updatedAt: nw.ts } : null,
+      assets: assets ? { value: Math.round(Number(assets.value)), updatedAt: assets.ts } : null,
+      liabilities: liabilities ? { value: Math.round(Number(liabilities.value)), updatedAt: liabilities.ts } : null,
+      retirement: retirement ? { value: Math.round(Number(retirement.value)), updatedAt: retirement.ts } : null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/sources', async (req, res) => {
   try {
     res.json({ sources: await sourcesStore.listSources() });
