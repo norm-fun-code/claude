@@ -126,6 +126,31 @@ tr:hover td{background:var(--s2)}
 .adv-input{flex:1;background:transparent;border:none;color:var(--tx);font-family:inherit;font-size:12.5px;resize:none;outline:none;padding:6px;min-height:20px;max-height:140px;line-height:1.5}
 .adv-send{background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:5px;cursor:pointer;font-weight:600;font-size:11.5px;font-family:inherit;height:32px}
 .adv-send:hover{background:var(--accent-d)}.adv-send:disabled{background:var(--bd2);cursor:not-allowed}
+.adv-agentic-btn{background:var(--s2);border:1px solid var(--bd);color:var(--t2);padding:5px 9px;border-radius:5px;cursor:pointer;font-size:11px;font-family:inherit;height:32px;transition:all .12s;white-space:nowrap}
+.adv-agentic-btn:hover{border-color:var(--p);color:var(--p)}
+.adv-agentic-btn.active{background:var(--p);color:#fff;border-color:var(--p)}
+.adv-tool-call{display:flex;align-items:flex-start;gap:8px;padding:7px 10px;background:#f3f0ff;border:1px solid rgba(124,58,237,.2);border-radius:6px;font-size:10.5px;color:var(--p);margin:4px 0}
+.adv-tool-call .tc-icon{font-size:13px;flex-shrink:0}
+.adv-tool-call .tc-body{flex:1;line-height:1.45}
+.adv-tool-call strong{color:var(--p)}
+.adv-proposals{background:var(--s1);border:1px solid rgba(124,58,237,.3);border-radius:8px;padding:14px 16px;margin:10px 0;box-shadow:0 2px 8px rgba(124,58,237,.08)}
+.adv-proposals-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.adv-proposals-hdr h4{font-size:11px;font-weight:700;color:var(--p);text-transform:uppercase;letter-spacing:.5px;margin:0}
+.adv-proposals-hdr button{background:transparent;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:0;line-height:1}
+.adv-proposals-hdr button:hover{color:var(--tx)}
+.adv-proposal-list{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.adv-proposal-row{display:flex;align-items:center;gap:6px;font-size:11px;padding:5px 8px;background:var(--s2);border-radius:5px}
+.adv-proposal-key{font-family:'SF Mono',monospace;color:var(--tx);font-weight:600;min-width:110px}
+.adv-proposal-arrow{color:var(--t3);font-size:9px}
+.adv-proposal-old{color:var(--t3);text-decoration:line-through}
+.adv-proposal-new{color:var(--p);font-weight:600}
+.adv-proposal-reason{color:var(--t2);font-size:9.5px;margin-left:auto;text-align:right;max-width:200px}
+.adv-proposals-actions{display:flex;gap:6px}
+.adv-proposals-actions button{padding:6px 11px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .12s}
+.adv-proposals-save{background:var(--p);color:#fff;border:none}
+.adv-proposals-save:hover{background:#6d28d9}
+.adv-proposals-view{background:var(--s2);color:var(--tx);border:1px solid var(--bd)}
+.adv-proposals-view:hover{border-color:var(--bd2)}
 .adv-thinking{display:flex;gap:3px;padding:3px 0}
 .adv-thinking span{width:5px;height:5px;border-radius:50%;background:var(--t3);animation:advblink 1.4s infinite}
 .adv-thinking span:nth-child(2){animation-delay:.2s}.adv-thinking span:nth-child(3){animation-delay:.4s}
@@ -595,6 +620,18 @@ document.getElementById('main').innerHTML=`
 let advisorChats={};
 let advisorActiveChatId=null;
 let advisorConversation=[];
+let advAgenticMode=false;
+let advPendingProposals=null; // {changes:[...], aiParams:{...}} from last agentic response
+
+function advToggleAgentic(){
+  advAgenticMode=!advAgenticMode;
+  const btn=document.getElementById('advAgenticBtn');
+  const lbl=document.getElementById('advAgenticLabel');
+  if(btn){btn.classList.toggle('active',advAgenticMode);btn.textContent=advAgenticMode?'🤖 Propose changes ✓':'🤖 Propose changes'}
+  if(lbl)lbl.style.display=advAgenticMode?'block':'none';
+  const input=document.getElementById('advInput');
+  if(input)input.placeholder=advAgenticMode?'Describe what you want me to explore (e.g. "What if we bought a $1.7M home?")...':'Ask anything about your plan, portfolio, scenarios, taxes...';
+}
 
 async function loadAdvisorState(){
   try{
@@ -769,6 +806,10 @@ function renderAdvisorTab(R,P){
     <div class="adv-main">
       <div class="adv-msgs" id="advMsgs"></div>
       <div class="adv-input-area">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;padding:0 2px">
+          <button class="adv-agentic-btn" id="advAgenticBtn" onclick="advToggleAgentic()" title="Agentic mode: AI proposes plan changes in its own sandbox scenario">🤖 Propose changes</button>
+          <span id="advAgenticLabel" style="display:none;font-size:9px;color:var(--p);font-weight:600">AI sandbox active — changes go to a separate scenario</span>
+        </div>
         <div class="adv-input-wrap">
           <textarea class="adv-input" id="advInput" placeholder="Ask anything about your plan, portfolio, scenarios, taxes..." rows="1"></textarea>
           <button class="adv-send" id="advSend" onclick="advSend()">Send</button>
@@ -972,6 +1013,14 @@ async function advSend(){
   const thinking=advAddMessage('ai','',true);
   const{R}=run(P);
   const liveContext=buildLiveContext(R,P);
+  if(advAgenticMode){
+    await advSendAgentic(text,chat,liveContext,thinking);
+  } else {
+    await advSendStream(text,chat,liveContext,thinking);
+  }
+}
+
+async function advSendStream(text,chat,liveContext,thinking){
   try{
     const res=await fetch('/api/advisor/stream',{
       method:'POST',
@@ -1009,8 +1058,132 @@ async function advSend(){
     advisorConversation.pop();chat.messages=advisorConversation;
   }finally{
     document.getElementById('advSend').disabled=false;
-    input.focus();
+    const inp=document.getElementById('advInput');if(inp)inp.focus();
   }
+}
+
+async function advSendAgentic(text,chat,liveContext,thinking){
+  const toolLog=[]; // collected tool_call events for the proposals panel
+  try{
+    const res=await fetch('/api/advisor/agentic',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({chatId:advisorActiveChatId,message:text,systemPrompt:liveContext,messages:advisorConversation,currentParams:{...P}})
+    });
+    if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||`HTTP ${res.status}`)}
+    thinking.innerHTML='';
+    let fullReply='';
+    const reader=res.body.getReader();const dec=new TextDecoder();let buf='';
+    outer:while(true){
+      const{done,value}=await reader.read();
+      if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      const lines=buf.split('\n');buf=lines.pop();
+      for(const line of lines){
+        if(!line.startsWith('data: '))continue;
+        let payload;try{payload=JSON.parse(line.slice(6))}catch{continue}
+        if(payload.error)throw new Error(payload.error);
+        if(payload.delta){
+          fullReply+=payload.delta;
+          thinking.innerHTML=advMarkdown(fullReply);
+          const msgs=document.getElementById('advMsgs');if(msgs)msgs.scrollTop=msgs.scrollHeight;
+        }
+        if(payload.tool_call){
+          toolLog.push(payload.tool_call);
+          advInsertToolCallBubble(payload.tool_call);
+        }
+        if(payload.done){
+          advPendingProposals=payload.proposedChanges&&payload.proposedChanges.length>0?{changes:payload.proposedChanges,aiParams:payload.aiParams}:null;
+          break outer;
+        }
+      }
+    }
+    const answer=fullReply||'';
+    if(answer)thinking.innerHTML=advMarkdown(answer);
+    else if(thinking.innerHTML==='')thinking.remove();
+    if(advPendingProposals)advShowProposals(advPendingProposals,chat.title);
+    advisorConversation.push({role:'assistant',content:answer||'[Agentic analysis complete]'});
+    chat.messages=advisorConversation;chat.updatedAt=Date.now();
+    advRenderRail();
+  }catch(err){
+    thinking.innerHTML=`<p style="color:var(--r)"><strong>Error:</strong> ${advEscape(err.message)}</p><p style="font-size:11px;color:var(--t3);margin-top:4px">Check your connection and try again.</p>`;
+    advisorConversation.pop();chat.messages=advisorConversation;
+  }finally{
+    document.getElementById('advSend').disabled=false;
+    const inp=document.getElementById('advInput');if(inp)inp.focus();
+  }
+}
+
+function advInsertToolCallBubble(tc){
+  const msgs=document.getElementById('advMsgs');if(!msgs)return;
+  const div=document.createElement('div');div.className='adv-tool-call';
+  let body='';
+  if(tc.name==='set_param'){
+    const old=tc.oldValue!==undefined?`<span class="tc-old">${advEscape(String(tc.oldValue))}</span> → `:'';
+    body=`<strong>set_param</strong>: <code>${advEscape(tc.key)}</code> ${old}<strong>${advEscape(String(tc.value))}</strong>${tc.reason?` — <em>${advEscape(tc.reason)}</em>`:''}`;
+  } else if(tc.name==='run_projection'){
+    const r=tc.result||{};
+    body=`<strong>run_projection</strong>: NW@2058 ${fmt(r.finalNW||0)} · Liquid${fmt(r.finalLiquid||0)} · Deficit yrs ${r.deficitYears||0}`;
+  } else if(tc.name==='save_scenario'){
+    body=`<strong>save_scenario</strong>: proposing "<em>${advEscape(tc.scenarioName||'')}</em>"`;
+  }
+  div.innerHTML=`<span class="tc-icon">🔧</span><span class="tc-body">${body}</span>`;
+  msgs.appendChild(div);msgs.scrollTop=msgs.scrollHeight;
+}
+
+function advShowProposals(proposals,chatTitle){
+  const msgs=document.getElementById('advMsgs');if(!msgs)return;
+  const el=document.createElement('div');el.className='adv-proposals';el.id='advProposalsPanel';
+  const fmtVal=(key,v)=>{
+    if(['investReturn','expenseInflation','tuitionInflation','homeAppreciation','normGrowth','capGainsTaxRate','mcVol'].includes(key))return(v*100).toFixed(1)+'%';
+    if(['homePrice','startingLiquid','normCashBase','normStockBase','pretax401k'].includes(key))return fmt(v);
+    return String(v);
+  };
+  const rows=proposals.changes.map(c=>`<div class="adv-proposal-row">
+    <span class="adv-proposal-key">${advEscape(c.key)}</span>
+    <span class="adv-proposal-old">${fmtVal(c.key,c.oldValue)}</span>
+    <span class="adv-proposal-arrow">→</span>
+    <span class="adv-proposal-new">${fmtVal(c.key,c.value)}</span>
+    <span class="adv-proposal-reason">${advEscape(c.reason||'')}</span>
+  </div>`).join('');
+  const scenarioName='AI Advisor — '+(chatTitle||'analysis').slice(0,40);
+  el.innerHTML=`
+  <div class="adv-proposals-hdr">
+    <h4>🤖 ${proposals.changes.length} proposed change${proposals.changes.length===1?'':'s'}</h4>
+    <button onclick="document.getElementById('advProposalsPanel').remove()">✕</button>
+  </div>
+  <div class="adv-proposal-list">${rows}</div>
+  <div class="adv-proposals-actions">
+    <button class="adv-proposals-save" onclick="advAcceptProposals('${advEscape(scenarioName).replace(/'/g,"\\'")}')">💾 Save as scenario</button>
+    <button class="adv-proposals-view" onclick="advPreviewProposals()">👁 Preview on chart</button>
+  </div>`;
+  msgs.appendChild(el);msgs.scrollTop=msgs.scrollHeight;
+}
+
+async function advAcceptProposals(name){
+  if(!advPendingProposals)return;
+  const aiP={...D,...migrateP({...advPendingProposals.aiParams})};
+  const id=advUuid();
+  const s={id,name,params:aiP,results:run(aiP),color:COLORS[scenarios.length%COLORS.length]};
+  scenarios.push(s);
+  activeScenarioIdx=scenarios.length-1;
+  fetch('/api/scenarios',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:s.id,name:s.name,color:s.color,params:s.params})}).catch(()=>{});
+  savePlannerState();
+  document.getElementById('advProposalsPanel')?.remove();
+  advPendingProposals=null;
+  alert(`✓ Saved as scenario: "${name}"\n\nSwitch to the Charts tab and click "Compare" to compare it against your current plan.`);
+  buildControls();render();
+}
+
+function advPreviewProposals(){
+  if(!advPendingProposals)return;
+  const aiP={...D,...migrateP({...advPendingProposals.aiParams})};
+  const tmp=P;P=aiP;
+  activeTab='nw';
+  document.querySelectorAll('.tabs button[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab==='nw'));
+  render();
+  P=tmp;
+  alert('Showing AI-proposed plan on chart. Your actual plan is unchanged.');
 }
 
 // ═══ INIT ═══

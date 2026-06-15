@@ -14,6 +14,37 @@ const rateLimit = require('express-rate-limit');
 const Anthropic = require('@anthropic-ai/sdk');
 const path = require('path');
 const db = require('./db');
+const { run: runModel } = require('./public/model.js');
+
+const ADVISOR_TOOLS = [
+  {
+    name: 'set_param',
+    description: 'Propose changing one parameter in the AI sandbox. Never modifies the user\'s actual plan.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'Exact parameter key (e.g. homePrice, investReturn, startingLiquid)' },
+        value: { type: 'number', description: 'New numeric value' },
+        reason: { type: 'string', description: 'One sentence: why this change improves the plan' },
+      },
+      required: ['key', 'value', 'reason'],
+    },
+  },
+  {
+    name: 'run_projection',
+    description: 'Run the financial projection with current sandbox parameters. Call this after set_param to measure impact.',
+    input_schema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'save_scenario',
+    description: 'Propose saving the sandbox as a named scenario for the user to compare against their plan.',
+    input_schema: {
+      type: 'object',
+      properties: { name: { type: 'string', description: 'Short scenario name (e.g. "Lower home price")' } },
+      required: ['name'],
+    },
+  },
+];
 
 const app = express();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -384,6 +415,135 @@ app.post('/api/advisor/stream', requireAuth, async (req, res) => {
     res.end();
   } catch (err) {
     console.error('Advisor stream error:', err);
+    send({ error: (err.message || 'Anthropic API error').slice(0, 200) });
+    res.end();
+  }
+});
+
+// ── Anthropic proxy — agentic mode (tool-use + streaming) ────────────────────
+app.post('/api/advisor/agentic', requireAuth, async (req, res) => {
+  const { chatId, message, systemPrompt, messages, currentParams } = req.body;
+  if (!chatId || !message) return res.status(400).json({ error: 'chatId and message required' });
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const send = (payload) => res.write(`data: ${JSON.stringify(payload)}\n\n`);
+
+  let aiParams = { ...(currentParams || {}) };
+  const proposedChanges = [];
+  let conversationMsgs = [...messages];
+  let fullReply = '';
+
+  const agenticSystemPrompt = systemPrompt + `
+
+═══ AGENTIC MODE ═══
+You have tools to explore changes to Norm's plan in a sandbox. Changes never affect his live plan until he explicitly saves the scenario.
+
+Tools available:
+• set_param(key, value, reason) — propose changing a parameter. Available keys: homePrice, downPctg, mortgageRate, homePurchaseYear, investReturn, startingLiquid, expenseInflation, normCashBase, nancyHourlyRate, nancyMaxClients, nancyRampYears, pretax401k, mcVol, tuitionInflation, homeAppreciation, normGrowth, capGainsTaxRate
+• run_projection() — compute key metrics with current sandbox params
+• save_scenario(name) — propose saving this sandbox as a named scenario
+
+Workflow: understand what he's asking → set_param for each change → run_projection → interpret results → save_scenario if it's a worthwhile alternative. Be specific and quantitative in your analysis.`;
+
+  try {
+    let loopCount = 0;
+    while (loopCount++ < 8) {
+      let streamText = '';
+      const stream = anthropic.messages.stream({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 4000,
+        system: agenticSystemPrompt,
+        messages: conversationMsgs,
+        tools: ADVISOR_TOOLS,
+      });
+
+      stream.on('text', (text) => {
+        streamText += text;
+        fullReply += text;
+        send({ delta: text });
+      });
+
+      const msg = await stream.finalMessage();
+
+      if (msg.stop_reason === 'end_turn') break;
+
+      if (msg.stop_reason === 'tool_use') {
+        const toolResults = [];
+        for (const block of msg.content) {
+          if (block.type !== 'tool_use') continue;
+          let result;
+
+          if (block.name === 'set_param') {
+            const { key, value, reason } = block.input;
+            const old = aiParams[key];
+            aiParams[key] = value;
+            proposedChanges.push({ key, oldValue: old, value, reason });
+            send({ tool_call: { name: 'set_param', key, oldValue: old, value, reason } });
+            result = { ok: true, key, value };
+
+          } else if (block.name === 'run_projection') {
+            try {
+              const proj = runModel(aiParams);
+              const R = proj.R;
+              const last = R[R.length - 1];
+              result = {
+                finalNW: last.nw,
+                finalK401: last.k401,
+                deficitYears: R.filter(r => r.surp < 0).length,
+                worstSurplus: Math.min(...R.map(r => r.surp)),
+                totalTuition: proj.tT,
+                finalLiquid: last.liq,
+              };
+            } catch (e) {
+              result = { error: e.message };
+            }
+            send({ tool_call: { name: 'run_projection', result } });
+
+          } else if (block.name === 'save_scenario') {
+            send({ tool_call: { name: 'save_scenario', scenarioName: block.input.name, aiParams: { ...aiParams } } });
+            result = { ok: true, name: block.input.name };
+          }
+
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
+        }
+
+        conversationMsgs = [
+          ...conversationMsgs,
+          { role: 'assistant', content: msg.content },
+          { role: 'user', content: toolResults },
+        ];
+      } else {
+        break;
+      }
+    }
+
+    // Persist final text atomically
+    if (fullReply) {
+      const pair = [
+        { role: 'user', content: message },
+        { role: 'assistant', content: fullReply },
+      ];
+      await db.query(
+        `UPDATE advisor_chats SET messages = messages || $1::jsonb, updated_at = NOW() WHERE id = $2`,
+        [JSON.stringify(pair), chatId]
+      );
+      const countRes = await db.query(
+        `SELECT jsonb_array_length(messages) AS cnt FROM advisor_chats WHERE id = $1`, [chatId]
+      );
+      if ((countRes.rows[0]?.cnt || 0) <= 2) {
+        const title = message.slice(0, 60) + (message.length > 60 ? '…' : '');
+        await db.query('UPDATE advisor_chats SET title=$1 WHERE id=$2', [title, chatId]);
+      }
+    }
+
+    send({ done: true, proposedChanges, aiParams });
+    res.end();
+  } catch (err) {
+    console.error('Advisor agentic error:', err);
     send({ error: (err.message || 'Anthropic API error').slice(0, 200) });
     res.end();
   }
