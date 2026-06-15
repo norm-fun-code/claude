@@ -151,9 +151,45 @@ function fetchNotionPageTextDeep(blockId, depth) {
   return lines.join('\n');
 }
 
+// Cache the collected wisdom-page IDs so the daily run doesn't re-walk the whole
+// tree every morning (the slow part). The tree changes rarely, so a 7-day TTL is
+// fine — each daily run then only fetches the ONE chosen page's text. Run
+// refreshWisdomCache() manually after adding new wisdom pages to pick them up now.
+const WISDOM_CACHE_KEY = 'wisdom_page_ids_v1';
+const WISDOM_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function getCachedWisdomPageIds() {
+  try {
+    const raw = PropertiesService.getScriptProperties().getProperty(WISDOM_CACHE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.ts && (Date.now() - parsed.ts) < WISDOM_CACHE_TTL_MS &&
+          Array.isArray(parsed.ids) && parsed.ids.length) {
+        return parsed.ids;
+      }
+    }
+  } catch (e) { /* fall through to a fresh walk */ }
+  const ids = collectWisdomPageIds(NOTION_PAGE_ID, 0);
+  if (ids.length) {
+    try {
+      PropertiesService.getScriptProperties().setProperty(
+        WISDOM_CACHE_KEY, JSON.stringify({ ts: Date.now(), ids: ids }));
+    } catch (e) { /* caching is best-effort */ }
+  }
+  return ids;
+}
+
+// Manual: force a re-walk of the wisdom tree (e.g. after adding new pages).
+function refreshWisdomCache() {
+  const ids = collectWisdomPageIds(NOTION_PAGE_ID, 0);
+  PropertiesService.getScriptProperties().setProperty(
+    WISDOM_CACHE_KEY, JSON.stringify({ ts: Date.now(), ids: ids }));
+  Logger.log('Cached ' + ids.length + ' wisdom page IDs.');
+}
+
 function getNotionWisdom() {
   try {
-    const ids = collectWisdomPageIds(NOTION_PAGE_ID, 0);
+    const ids = getCachedWisdomPageIds();
     if (!ids.length) return '';
     const chosen = ids[Math.floor(Math.random() * ids.length)];
     return fetchNotionPageTextDeep(chosen, 0) || '';
