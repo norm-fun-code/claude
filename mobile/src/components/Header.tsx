@@ -1,11 +1,9 @@
 import React from 'react';
-import { View, Text, StyleSheet, useColorScheme, ActivityIndicator, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, useColorScheme } from 'react-native';
 import { getColors, spacing, typography } from '../theme';
 
 interface Props {
   date: string;
-  isRefreshing?: boolean;
-  onRefresh?: () => void;
 }
 
 function getGreeting(): string {
@@ -15,7 +13,9 @@ function getGreeting(): string {
   return 'Good evening, Norm';
 }
 
-export function Header({ date, isRefreshing, onRefresh }: Props) {
+// Cheap refresh is handled by pull-to-refresh; heavy/explicit refresh by each
+// tab's labeled button. The header is just greeting + date (no refresh icon).
+export function Header({ date }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -25,19 +25,6 @@ export function Header({ date, isRefreshing, onRefresh }: Props) {
         <Text style={[styles.greeting, { color: c.text }]}>{getGreeting()}</Text>
         <Text style={[styles.date, { color: c.subtext }]}>{date}</Text>
       </View>
-      {/* Global quick-refresh: loads cached briefing + fresh HealthKit data.
-          For heavy rebuilds (LLM), use the per-tab button instead. */}
-      <TouchableOpacity
-        onPress={onRefresh}
-        disabled={isRefreshing || !onRefresh}
-        style={styles.refreshBtn}
-        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-      >
-        {isRefreshing
-          ? <ActivityIndicator size="small" color={c.subtext} />
-          : <Text style={[styles.refreshIcon, { color: c.subtext }]}>↺</Text>
-        }
-      </TouchableOpacity>
     </View>
   );
 }
@@ -61,17 +48,5 @@ const styles = StyleSheet.create({
   date: {
     ...typography.body,
     fontSize: 15,
-  },
-  refreshBtn: {
-    marginTop: spacing.xs,
-    marginLeft: spacing.md,
-    width: 32,
-    height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  refreshIcon: {
-    fontSize: 22,
-    fontWeight: '300',
   },
 });

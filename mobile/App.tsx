@@ -195,12 +195,6 @@ export default function App() {
             ) : (
               <EmptyNote c={c} text="Health insights (sleep ↔ HRV ↔ focus patterns) appear once a few days of Apple Health + habit data accumulate. Open the app daily so HealthKit syncs, and log your habits on the Today tab." />
             )}
-            <TouchableOpacity onPress={refreshInsights} disabled={analyzingInsights} style={styles.refreshInsightsBtn}>
-              {analyzingInsights
-                ? <ActivityIndicator size="small" color={c.subtext} />
-                : <Text style={[styles.refreshInsightsTxt, { color: c.subtext }]}>Refresh insights</Text>
-              }
-            </TouchableOpacity>
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} recoveryScore={liveRecovery.recovery?.score ?? null} />
             <CollapsibleSection title="Sync Apple Health history">
               <HealthBackfillCard />
@@ -305,7 +299,7 @@ export default function App() {
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={c.subtext} />}
         showsVerticalScrollIndicator={false}
       >
-        <Header date={d?.date ?? today} isRefreshing={isRefreshing} onRefresh={onRefresh} />
+        <Header date={d?.date ?? today} />
         <View style={styles.titleRow}>
           <View>
             <Text style={[styles.tabTitle, { color: c.text }]}>{tabTitle}</Text>
@@ -384,6 +378,4 @@ const styles = StyleSheet.create({
   empty: { borderWidth: 1, borderRadius: 14, padding: spacing.lg, marginBottom: spacing.md },
   emptyText: { fontSize: 14, lineHeight: 21, fontStyle: 'italic' },
   footer: { height: spacing.lg },
-  refreshInsightsBtn: { alignItems: 'center', paddingVertical: spacing.sm, marginBottom: spacing.md },
-  refreshInsightsTxt: { fontSize: 13, fontWeight: '500' },
 });
