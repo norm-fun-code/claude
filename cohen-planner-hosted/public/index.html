@@ -327,7 +327,19 @@ const fmtF=n=>`$${Math.round(n).toLocaleString()}`;
 
 // ═══ UI ═══
 let activeTab='nw';let charts={};let inflationView=false;let mcView=false;let snapshots=[];let overlaySnapId=null;
-function destroyCharts(){Object.values(charts).forEach(c=>c&&c.destroy());charts={}}
+let _lastChartKey='';
+function destroyCharts(){Object.values(charts).forEach(c=>c&&c.destroy());charts={};_lastChartKey=''}
+function _chartKey(){return activeTab+'|'+(mcView&&_mcReady?'mc':'nmc')+'|'+inflationView+'|'+compareMode+'|'+(overlaySnapId||'')}
+function _updateChart(datasets,labels){
+  if(!charts.main)return false;
+  charts.main.data.labels=labels;
+  for(let i=0;i<datasets.length;i++){
+    if(charts.main.data.datasets[i]){Object.assign(charts.main.data.datasets[i],{data:datasets[i].data,label:datasets[i].label})}
+    else{charts.main.data.datasets.push(datasets[i])}
+  }
+  while(charts.main.data.datasets.length>datasets.length)charts.main.data.datasets.pop();
+  charts.main.update('active');return true;
+}
 function deflK(v,yr){if(!inflationView)return Math.round(v/1000);const sy=P.planStartYear||2026;return Math.round(v/Math.pow(1+(P.expenseInflation||.03),yr-sy)/1000)}
 function toggleInflation(){inflationView=!inflationView;const b=document.getElementById('inflBtn');if(b)b.textContent=inflationView?'Nominal $':'Real $';render()}
 function toggleMC(){mcView=!mcView;const b=document.getElementById('mcBtn');if(b)b.classList.toggle('active',mcView);render()}
@@ -429,7 +441,7 @@ function buildControls(){
   h+=`<div class="st">🏠 Home</div>`;
   h+=s('Purchase year','homePurchaseYear',2028,2035,1)+s('Price','homePrice',1000000,3000000,50000,v=>'$'+(v/1e6).toFixed(2)+'M')+s('Down %','downPctg',20,60,5,v=>v+'%')+s('Mortgage rate','mortgageRate',3,8,.25,v=>v+'%')+s('Property tax/yr','propTaxBase',8000,50000,1000,fmtF);
   h+=`<div class="st">📈 Returns & Tax</div>`;
-  h+=s('Portfolio return','investReturn',.03,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Return volatility (MC)','mcVol',.05,.25,.01,v=>(v*100).toFixed(0)+'%')+s('Home appreciation','homeAppreciation',.01,.05,.005,v=>(v*100).toFixed(1)+'%')+s('Starting liquid','startingLiquid',500000,2000000,50000,fmtF)+s('Starting 401k','k401Start',0,500000,10000,fmtF)+s('NYC rent','nycRent',4000,8000,100,v=>'$'+v.toLocaleString()+'/mo');
+  h+=s('Portfolio return','investReturn',.03,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Return volatility (MC)','mcVol',.05,.25,.01,v=>(v*100).toFixed(0)+'%')+s('Home appreciation','homeAppreciation',.01,.05,.005,v=>(v*100).toFixed(1)+'%')+s('Tax bracket inflation','taxInflation',0,.04,.005,v=>(v*100).toFixed(1)+'%')+s('Starting liquid','startingLiquid',500000,2000000,50000,fmtF)+s('Starting 401k','k401Start',0,500000,10000,fmtF)+s('NYC rent','nycRent',4000,8000,100,v=>'$'+v.toLocaleString()+'/mo');
   h+=`<div style="height:1px;background:var(--bd);margin:4px 0"></div>`;
   h+=s('Cap gains rate (sales)','capGainsTaxRate',.15,.35,.005,v=>(v*100).toFixed(1)+'%')+s('Cost basis %','costBasisPct',.30,.80,.05,v=>(v*100).toFixed(0)+'%');
   h+=`<div style="height:1px;background:var(--bd);margin:6px 0"></div>`;
@@ -460,7 +472,7 @@ function rollForward(){
   buildControls();render();savePlannerState();
 }
 
-const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,nannyEndAge:v=>v+' yrs',nannyHourlyRate:v=>'$'+v,nannyDaysPerWeek:null,daycareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normCashY0:fmtF,normStockY0:fmtF,normCashY1:fmtF,normStockY1:fmtF,normCashY2:fmtF,normStockY2:fmtF,normCashY3:fmtF,normStockY3:fmtF,normCashBase:fmtF,normStockBase:fmtF,normGrowth:v=>(v*100).toFixed(1)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',mcVol:v=>(v*100).toFixed(0)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo',capGainsTaxRate:v=>(v*100).toFixed(1)+'%',costBasisPct:v=>(v*100).toFixed(0)+'%'};
+const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,nannyEndAge:v=>v+' yrs',nannyHourlyRate:v=>'$'+v,nannyDaysPerWeek:null,daycareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normCashY0:fmtF,normStockY0:fmtF,normCashY1:fmtF,normStockY1:fmtF,normCashY2:fmtF,normStockY2:fmtF,normCashY3:fmtF,normStockY3:fmtF,normCashBase:fmtF,normStockBase:fmtF,normGrowth:v=>(v*100).toFixed(1)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',mcVol:v=>(v*100).toFixed(0)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo',capGainsTaxRate:v=>(v*100).toFixed(1)+'%',costBasisPct:v=>(v*100).toFixed(0)+'%'};
 
 let _mcReady=true,_mcTimer=null;
 function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'+key);const fn=SF[key];if(el&&fn)el.textContent=fn(P[key]);else if(el)el.textContent=P[key];if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear')buildControls();activeScenarioIdx=-1;if(mcView){_mcReady=false;clearTimeout(_mcTimer);_mcTimer=setTimeout(()=>{_mcReady=true;render()},350);}render();savePlannerState()}
@@ -525,11 +537,11 @@ function render(){
     if(activeScenarioIdx===-1)sc+=`<span style="font-size:7px;color:var(--t3);font-style:italic;padding:3px">● Unsaved</span>`;sc+='</div>'}
   document.getElementById('scenarioBar').innerHTML=sc;
   renderSnapshotBar();
-  const labels=R.map(r=>String(r.yr));destroyCharts();const ca=document.getElementById('chartArea');
+  const labels=R.map(r=>String(r.yr));const newKey=_chartKey();const reuseChart=(newKey===_lastChartKey&&!!charts.main);if(!reuseChart)destroyCharts();_lastChartKey=newKey;const ca=document.getElementById('chartArea');
   if(activeTab==='advisor'){renderAdvisorTab(R,P);return}
   if(activeTab==='table'){
     ca.innerHTML=`<div class="tw"><table><thead><tr>${['Yr','Norm','Nancy','Gross','Tax','Eff%','Net','Housing','Living','CC','Tuition','TotExp','Surplus','Liquid','Eq','NW'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{const bg=r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';return `<tr style="background:${bg}"><td style="font-weight:700;color:var(--tx)">${r.yr}</td><td style="color:var(--b)">${fmt(r.normG)}</td><td style="color:var(--p)">${fmt(r.nancyG)}</td><td>${fmt(r.gross)}</td><td style="color:var(--r)">${fmt(r.tax)}</td><td style="color:var(--a)">${(r.effRate*100).toFixed(1)}%</td><td style="color:var(--g)">${fmt(r.inc)}</td><td>${fmt(r.h)}</td><td>${fmt(r.liv)}</td><td style="color:${r.cc>0?'var(--a)':'var(--t3)'}">${r.cc>0?fmt(r.cc):'—'}</td><td style="color:${r.tu>100000?'var(--r)':r.tu>0?'var(--a)':'var(--t3)'}">${r.tu>0?fmt(r.tu):'—'}</td><td>${fmt(r.totE)}</td><td style="color:${r.surp>=0?'var(--g)':'var(--r)'};font-weight:600">${r.surp>=0?'+':''}${fmt(r.surp)}</td><td style="color:var(--b)">${fmt(r.liq)}</td><td style="color:var(--p)">${r.eq>0?fmt(r.eq):'—'}</td><td style="color:var(--g);font-weight:600">${fmt(r.nw)}</td></tr>`}).join('')}</tbody></table></div>`;return}
-  ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';
+  if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';
   const ctx=document.getElementById('cv').getContext('2d');const opts=chartOpts();
   // Prepend planStartYear-1 as a synthetic starting point showing initial liquid
   const sy0=P.planStartYear||2026;
@@ -578,19 +590,20 @@ function render(){
     if(compareMode)scenarios.forEach(s=>{const sLiq=Math.round((s.params.startingLiquid||P.startingLiquid)/1000);ds.push({label:s.name+' Liquid',data:[sLiq,...s.results.R.map(r=>deflK(r.liq,r.yr))],borderColor:s.color,fill:false,tension:.3,pointRadius:3,pointBackgroundColor:s.color,borderWidth:3.5})});
     // Snapshot overlay — compare a saved projection against the current plan
     if(overlaySnapId){const sn=snapshots.find(x=>x.id===overlaySnapId);if(sn&&sn.params){const sr=run({...D,...migrateP(sn.params)});const so=String((sn.params.planStartYear||sy0)-1);ds.push({label:'📸 '+sn.label+' (NW)',data:[Math.round((sn.params.startingLiquid||P.startingLiquid)/1000),...sr.R.map(r=>deflK(r.nw,r.yr))],borderColor:'#bf6900',fill:false,tension:.3,pointRadius:0,borderWidth:2,borderDash:[6,3]})}}
-    charts.main=new Chart(ctx,{type:'line',data:{labels:nwLabels,datasets:ds},options:po});
+    if(!reuseChart||!_updateChart(ds,nwLabels)){if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';const ctx2=document.getElementById('cv').getContext('2d');charts.main=new Chart(ctx2,{type:'line',data:{labels:nwLabels,datasets:ds},options:po})}
   } else if(activeTab==='tuition'){
     const po=posOpts();
     const ds=[{label:'Tuition',data:R.map(r=>Math.round(r.tu/1000)),backgroundColor:'rgba(205,61,100,.6)',borderRadius:2},{label:'Childcare',data:R.map(r=>Math.round(r.cc/1000)),backgroundColor:'rgba(191,105,0,.5)',borderRadius:2}];
     if(compareMode)scenarios.forEach(s=>{ds.push({label:s.name,data:s.results.R.map(r=>Math.round(r.tu/1000)),type:'line',borderColor:s.color,fill:false,tension:.3,pointRadius:2,pointBackgroundColor:s.color,borderWidth:3})});
     po.scales.x={stacked:true,...po.scales.x};po.scales.y={stacked:true,...po.scales.y};
-    charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:ds},options:po});
+    if(!reuseChart||!_updateChart(ds,labels))charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:ds},options:po});
   } else if(activeTab==='income'){
-    charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:[{label:'Norm Gross',data:R.map(r=>Math.round(r.normG/1000)),backgroundColor:'rgba(0,115,230,.6)',borderRadius:2},{label:'Nancy Gross',data:R.map(r=>Math.round(r.nancyG/1000)),backgroundColor:'rgba(124,58,237,.6)',borderRadius:2},{label:'Tax',data:R.map(r=>-Math.round(r.tax/1000)),backgroundColor:'rgba(205,61,100,.5)',borderRadius:2}]},options:{...opts,scales:{x:{stacked:true,...opts.scales.x},y:{stacked:true,...opts.scales.y,ticks:{...opts.scales.y.ticks,callback:v=>fmtK(v)}}}}});
+    const dsInc=[{label:'Norm Gross',data:R.map(r=>Math.round(r.normG/1000)),backgroundColor:'rgba(0,115,230,.6)',borderRadius:2},{label:'Nancy Gross',data:R.map(r=>Math.round(r.nancyG/1000)),backgroundColor:'rgba(124,58,237,.6)',borderRadius:2},{label:'Tax',data:R.map(r=>-Math.round(r.tax/1000)),backgroundColor:'rgba(205,61,100,.5)',borderRadius:2}];
+    if(!reuseChart||!_updateChart(dsInc,labels))charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:dsInc},options:{...opts,scales:{x:{stacked:true,...opts.scales.x},y:{stacked:true,...opts.scales.y,ticks:{...opts.scales.y.ticks,callback:v=>fmtK(v)}}}}});
   } else if(activeTab==='cashflow'){
-    const ds=[{label:'Surplus',data:R.map(r=>Math.round(r.surp/1000)),backgroundColor:R.map(r=>r.surp>=0?'rgba(26,135,84,.6)':'rgba(205,61,100,.6)'),borderRadius:2}];
-    if(compareMode)scenarios.forEach(s=>{ds.push({label:s.name,data:s.results.R.map(r=>Math.round(r.surp/1000)),type:'line',borderColor:s.color,fill:false,tension:.3,pointRadius:2,pointBackgroundColor:s.color,borderWidth:3})});
-    charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:ds},options:opts});
+    const dsCF=[{label:'Surplus',data:R.map(r=>Math.round(r.surp/1000)),backgroundColor:R.map(r=>r.surp>=0?'rgba(26,135,84,.6)':'rgba(205,61,100,.6)'),borderRadius:2}];
+    if(compareMode)scenarios.forEach(s=>{dsCF.push({label:s.name,data:s.results.R.map(r=>Math.round(r.surp/1000)),type:'line',borderColor:s.color,fill:false,tension:.3,pointRadius:2,pointBackgroundColor:s.color,borderWidth:3})});
+    if(!reuseChart||!_updateChart(dsCF,labels))charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:dsCF},options:opts});
   }
   document.getElementById('summaries').innerHTML=`
     <div class="sc"><h3>🏠 Home</h3><p><span class="mono" style="font-weight:600;color:var(--tx)">${fmt(P.homePrice)}</span> in ${P.homePurchaseYear}<br>${P.downPctg}% down · <span class="mono">${fmt(mm)}/mo</span> at ${P.mortgageRate}%</p></div>
