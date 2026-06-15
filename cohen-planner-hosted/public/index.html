@@ -363,6 +363,160 @@ function exportCSV(){
   a.download=`cohen-planner-${(P.planStartYear||2026)}-projection.csv`;a.click();
 }
 
+// ═══ PDF REPORT ═══
+function printPDF(){
+  const{R,tT,tTx,tS}=run(P);
+  const last=R[R.length-1],r0=R[0];
+  const minL=R.reduce((a,b)=>b.liq<a.liq?b:a);
+  const defYrs=R.filter(r=>r.surp<0).length;
+  const pur=R.find(r=>r.yr===P.homePurchaseYear);
+  const pliq=pur?pur.liq:0;
+  const today=new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
+  const ey=P.planEndYear||2058;
+  const planYears=ey-(P.planStartYear||2026);
+
+  // Capture chart canvas
+  let chartImgTag='<div style="color:#8898aa;font-size:11px;padding:20px 0">Chart not available — no active chart in current tab</div>';
+  const cv=document.getElementById('cv');
+  if(cv&&cv.tagName==='CANVAS'){
+    try{chartImgTag=`<img src="${cv.toDataURL('image/png')}" style="width:100%;max-height:280px;object-fit:contain;border:1px solid #e6ebf1;border-radius:6px">`;}catch(e){}
+  }
+
+  // KPIs
+  const kpis=[
+    {l:'Eff Tax Rate',v:`${(r0.effRate*100).toFixed(1)}%`,s:`${fmtF(r0.tax)} on ${fmtF(r0.gross)}`,c:'#bf6900'},
+    {l:`Post-Down Liquid (${P.homePurchaseYear})`,v:fmtK(pliq),s:`${P.downPctg}% down on ${fmtK(P.homePrice||0)}`,c:pliq>800000?'#1a8754':'#bf6900'},
+    {l:'Total Tuition',v:fmtK(tT),s:`${P.numKids} kid${P.numKids!==1?'s':''}`,c:'#cd3d64'},
+    {l:'Tax on Stock Sales',v:fmtK(tTx),s:`${fmtK(tS)} sold`,c:'#cd3d64'},
+    {l:`Liquid Floor (${minL.yr})`,v:fmtK(minL.liq),s:`${defYrs} deficit yr${defYrs!==1?'s':''}`,c:minL.liq>500000?'#1a8754':'#cd3d64'},
+    {l:`Final NW (${last.yr})`,v:fmtK(last.nw),s:`+${fmtK(last.k401)} in 401k`,c:'#1a8754'},
+    {l:'Total w/ 401k',v:fmtK(last.nw+last.k401),s:`over ${planYears} yrs`,c:'#0891b2'},
+  ];
+  function fmtK(v){return v<0?`-$${Math.round(-v/1000)}K`:`$${Math.round(v/1000)}K`}
+
+  const kpiHtml=kpis.map(k=>`
+    <div style="background:#fff;border:1px solid #e6ebf1;border-radius:8px;padding:10px 12px">
+      <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:#8898aa;margin-bottom:3px">${k.l}</div>
+      <div style="font-size:18px;font-weight:700;font-family:'SF Mono',monospace;color:${k.c};letter-spacing:-.5px">${k.v}</div>
+      <div style="font-size:9px;color:#425466;margin-top:2px">${k.s}</div>
+    </div>`).join('');
+
+  // Full projection table
+  const tblRows=R.map(r=>{
+    const isHome=r.yr===P.homePurchaseYear;
+    const hasTu=r.tu>0;
+    const rowBg=isHome?'#fffbf0':hasTu&&r.tu>150000?'#fff5f7':'#fff';
+    const surpColor=r.surp>=0?'#1a8754':'#cd3d64';
+    return `<tr style="background:${rowBg}">
+      <td style="font-weight:700;color:#0a2540${isHome?';background:#fef3c7':''}">${r.yr}</td>
+      <td style="color:#0073e6">${fmt(r.normG)}</td>
+      <td style="color:#7c3aed">${fmt(r.nancyG)}</td>
+      <td>${fmt(r.gross)}</td>
+      <td style="color:#cd3d64">${fmt(r.tax)}</td>
+      <td style="color:#bf6900">${(r.effRate*100).toFixed(1)}%</td>
+      <td style="color:#1a8754">${fmt(r.inc)}</td>
+      <td>${fmt(r.totE)}</td>
+      <td style="color:${surpColor};font-weight:600">${r.surp>=0?'+':''}${fmt(r.surp)}</td>
+      <td>${r.tu>0?fmt(r.tu):'—'}</td>
+      <td style="color:#0073e6">${fmt(r.liq)}</td>
+      <td style="color:#1a8754;font-weight:600">${fmt(r.nw)}</td>
+    </tr>`;
+  }).join('');
+
+  // Scenario comparison (if any saved)
+  let scenHtml='';
+  if(scenarios.length>0){
+    const allRes=scenarios.map(s=>{const{R:sR}=run({...D,...migrateP(s.params)});const sl=sR[sR.length-1];const sm=sR.reduce((a,b)=>b.liq<a.liq?b:a);return{name:s.name,color:s.color,finalNW:sl.nw,finalTotal:sl.nw+sl.k401,liqFloor:sm.liq,defYrs:sR.filter(r=>r.surp<0).length};});
+    scenHtml=`
+    <div style="page-break-before:always">
+    <h2 style="font-size:13px;font-weight:600;color:#0a2540;margin:0 0 12px;border-bottom:1px solid #e6ebf1;padding-bottom:6px">Scenario Comparison</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:10px">
+      <thead><tr style="background:#f6f9fc">
+        <th style="text-align:left;padding:6px 8px;font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:#8898aa;border-bottom:1px solid #e6ebf1">Scenario</th>
+        <th style="text-align:right;padding:6px 8px;font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:#8898aa;border-bottom:1px solid #e6ebf1">Final NW</th>
+        <th style="text-align:right;padding:6px 8px;font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:#8898aa;border-bottom:1px solid #e6ebf1">Total w/ 401k</th>
+        <th style="text-align:right;padding:6px 8px;font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:#8898aa;border-bottom:1px solid #e6ebf1">Liquid Floor</th>
+        <th style="text-align:right;padding:6px 8px;font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:#8898aa;border-bottom:1px solid #e6ebf1">Deficit Yrs</th>
+      </tr></thead>
+      <tbody>
+        <tr style="background:#fffbf0">
+          <td style="padding:6px 8px;font-weight:600;border-bottom:1px solid #f0f4f8">★ Current Plan</td>
+          <td style="text-align:right;padding:6px 8px;color:#1a8754;font-weight:600;border-bottom:1px solid #f0f4f8">${fmtK(last.nw)}</td>
+          <td style="text-align:right;padding:6px 8px;color:#0891b2;font-weight:600;border-bottom:1px solid #f0f4f8">${fmtK(last.nw+last.k401)}</td>
+          <td style="text-align:right;padding:6px 8px;border-bottom:1px solid #f0f4f8">${fmtK(minL.liq)}</td>
+          <td style="text-align:right;padding:6px 8px;border-bottom:1px solid #f0f4f8;color:${defYrs>0?'#cd3d64':'#1a8754'}">${defYrs}</td>
+        </tr>
+        ${allRes.map(s=>`<tr>
+          <td style="padding:6px 8px;border-bottom:1px solid #f0f4f8;color:${s.color};font-weight:500">● ${s.name}</td>
+          <td style="text-align:right;padding:6px 8px;color:#1a8754;border-bottom:1px solid #f0f4f8">${fmtK(s.finalNW)}</td>
+          <td style="text-align:right;padding:6px 8px;color:#0891b2;border-bottom:1px solid #f0f4f8">${fmtK(s.finalTotal)}</td>
+          <td style="text-align:right;padding:6px 8px;border-bottom:1px solid #f0f4f8">${fmtK(s.liqFloor)}</td>
+          <td style="text-align:right;padding:6px 8px;border-bottom:1px solid #f0f4f8;color:${s.defYrs>0?'#cd3d64':'#1a8754'}">${s.defYrs}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table></div>`;
+  }
+
+  const html=`<!DOCTYPE html><html><head>
+<meta charset="UTF-8">
+<title>Cohen Family Financial Plan — ${today}</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',-apple-system,sans-serif;color:#0a2540;font-size:11px;background:#fff;padding:2cm}
+h1{font-size:22px;font-weight:700;letter-spacing:-.5px;color:#0a2540}
+h2{font-size:13px;font-weight:600;color:#0a2540;margin:20px 0 10px;border-bottom:1px solid #e6ebf1;padding-bottom:5px}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:20px}
+table{width:100%;border-collapse:collapse;font-size:9px}
+th{text-align:right;padding:5px 6px;font-size:7.5px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:#8898aa;border-bottom:2px solid #e6ebf1}
+th:first-child{text-align:left}
+td{text-align:right;padding:4px 6px;border-bottom:1px solid #f0f4f8;font-family:'SF Mono','Fira Code',monospace}
+td:first-child{text-align:left;font-family:'Inter',sans-serif}
+tr:hover td{background:#f6f9fc}
+.footer{margin-top:24px;padding-top:8px;border-top:1px solid #e6ebf1;font-size:9px;color:#8898aa;display:flex;justify-content:space-between}
+@media print{body{padding:0}@page{margin:1.5cm;size:A4 portrait}}
+</style>
+</head><body>
+<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid #635bff">
+  <div>
+    <h1>Cohen Family Financial Plan</h1>
+    <div style="font-size:11px;color:#8898aa;margin-top:3px">${P.planStartYear||2026}–${ey} · ${planYears}-year projection · Generated ${today}</div>
+  </div>
+  <div style="text-align:right;font-size:9px;color:#8898aa">
+    <div>Norm: ${fmtK((P.normCashBase||275000)+(P.normStockBase||150000))}/yr base</div>
+    <div>Nancy: ${P.nancyMaxClients} clients max · $${P.nancyHourlyRate}/hr</div>
+    <div>${P.numKids} kid${P.numKids!==1?'s':''} · ${P.downPctg}% down in ${P.homePurchaseYear}</div>
+  </div>
+</div>
+<h2>Key Metrics</h2>
+<div class="kpi-grid">${kpiHtml}</div>
+<h2>Net Worth Chart</h2>
+<div style="margin-bottom:20px">${chartImgTag}</div>
+<h2>Year-by-Year Projection</h2>
+<table>
+  <thead><tr>
+    <th style="text-align:left">Year</th>
+    <th>Norm</th><th>Nancy</th><th>Gross</th>
+    <th>Tax</th><th>Eff%</th><th>Net Inc</th>
+    <th>Tot Exp</th><th>Surplus</th><th>Tuition</th>
+    <th>Liquid</th><th>Net Worth</th>
+  </tr></thead>
+  <tbody>${tblRows}</tbody>
+</table>
+${scenHtml}
+<div class="footer">
+  <span>Cohen Family Financial Planner</span>
+  <span>Generated ${today} · Projection uses ${(P.investReturn*100).toFixed(1)}% portfolio return / ${(P.expenseInflation*100).toFixed(1)}% expense inflation / ${((P.taxInflation??0.025)*100).toFixed(1)}% tax bracket inflation</span>
+</div>
+</body></html>`;
+
+  const w=window.open('','_blank','width=900,height=700');
+  if(!w){alert('Pop-up blocked — please allow pop-ups for this site and try again.');return;}
+  w.document.write(html);w.document.close();
+  w.focus();
+  setTimeout(()=>w.print(),600);
+}
+
 // ═══ ANNUAL SNAPSHOT HISTORY ═══
 async function loadSnapshots(){
   try{const res=await fetch('/api/snapshots');if(res.ok)snapshots=await res.json()}catch(e){snapshots=[]}
@@ -727,7 +881,7 @@ document.getElementById('main').innerHTML=`
     <button id="mcBtn" onclick="toggleMC()" style="margin-left:auto;font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Monte Carlo stress band (Net Worth tab)">🎲 Monte Carlo</button>
     <button id="inflBtn" onclick="toggleInflation()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit">Real $</button>
     <button onclick="exportCSV()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Download projection table as CSV">⬇ CSV</button>
-    <button onclick="window.print()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Print / Save as PDF">🖨 PDF</button>
+    <button onclick="printPDF()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Print / Save as PDF">🖨 PDF</button>
     <button onclick="saveSnapshot()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid rgba(8,145,178,.3);background:#e0f7fa;color:var(--c);cursor:pointer;font-family:inherit" title="Save a dated copy of this plan">📸 Snapshot</button>
   </div>
   <div class="cc" id="chartArea"><canvas id="cv" style="height:300px"></canvas></div>
