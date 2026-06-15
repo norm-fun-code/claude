@@ -216,7 +216,8 @@ tr:hover td{background:var(--s2)}
 <div class="hdr">
   <h1>💰 Cohen Family — Financial Planner v5</h1>
   <div class="hdr-right">
-      <button id="monarchSyncBtn" onclick="syncMonarch()" style="font-size:9px;padding:3px 9px;background:var(--a-soft);border:1px solid rgba(191,105,0,.3);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--a);transition:all .12s">📍 Sync Monarch</button>
+      <button id="monarchSyncBtn" onclick="syncMonarch()" style="font-size:9px;padding:3px 9px;background:var(--a-soft);border:1px solid rgba(191,105,0,.3);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--a);transition:all .12s;display:none">📍 Sync Monarch</button>
+      <button id="monarchConnectBtn" onclick="connectMonarch()" style="font-size:9px;padding:3px 9px;background:var(--s2);border:1px solid var(--bd);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2);transition:all .12s">🔗 Connect Monarch</button>
     <span class="sync-pill" id="syncStatus"></span>
     <button class="logout-btn" onclick="doLogout()">Log out</button>
   </div>
@@ -373,18 +374,45 @@ function toggleMobileControls(){
   if(label)label.textContent=open?'Hide Settings':'Settings';
 }
 
+function connectMonarch(){window.location.href='/api/monarch-connect';}
+
+async function checkMonarchStatus(){
+  try{
+    const r=await fetch('/api/monarch-status');
+    const d=await r.json();
+    const syncBtn=document.getElementById('monarchSyncBtn');
+    const connBtn=document.getElementById('monarchConnectBtn');
+    if(d.connected){
+      if(syncBtn)syncBtn.style.display='';
+      if(connBtn)connBtn.style.display='none';
+    }else{
+      if(syncBtn)syncBtn.style.display='none';
+      if(connBtn)connBtn.style.display='';
+    }
+  }catch(e){/* ignore */}
+}
+
 async function syncMonarch(){
   const btn=document.getElementById('monarchSyncBtn');
   if(btn){btn.textContent='⟳ Syncing…';btn.disabled=true;}
   try{
     const r=await fetch('/api/monarch-snapshot');
+    if(r.status===401){
+      // Not connected — show connect button
+      const syncBtn=document.getElementById('monarchSyncBtn');
+      const connBtn=document.getElementById('monarchConnectBtn');
+      if(syncBtn)syncBtn.style.display='none';
+      if(connBtn)connBtn.style.display='';
+      showToast('Monarch disconnected — click Connect Monarch','red');
+      return;
+    }
     if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||'HTTP '+r.status);}
     const d=await r.json();
     const nw=d.netWorth?.value||0;
     const ret=d.retirement?.value||0;
     monarchSnapshot={
       netWorth:nw,
-      liquid:d.liquid?.value??(nw-ret), // server computes; fallback to nw-retirement
+      liquid:d.liquid?.value??(nw-ret),
       retirement:ret,
       assets:d.assets?.value||0,
       liabilities:d.liabilities?.value||0,
@@ -2063,6 +2091,13 @@ function advPreviewProposals(){
 
 // ═══ INIT ═══
 loadAdvisorState();
+checkMonarchStatus();
+// Handle OAuth redirect results
+(()=>{
+  const p=new URLSearchParams(window.location.search);
+  if(p.has('monarch_connected')){showToast('✓ Monarch connected!','green');history.replaceState({},'','/');setTimeout(syncMonarch,500);}
+  if(p.has('monarch_error')){showToast('Monarch error: '+p.get('monarch_error'),'red');history.replaceState({},'','/');}
+})();
 loadSnapshots().then(()=>{loadFromServer()});
 
 window.onerror=function(msg,src,line,col,err){

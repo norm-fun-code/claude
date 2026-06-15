@@ -42,6 +42,12 @@ async function initSchema() {
       summary JSONB,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS oauth_tokens (
+      key TEXT PRIMARY KEY,
+      data JSONB NOT NULL DEFAULT '{}',
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
   `);
 }
 

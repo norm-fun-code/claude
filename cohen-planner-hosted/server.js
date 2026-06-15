@@ -1,5 +1,6 @@
 'use strict';
 require('dotenv').config();
+const crypto = require('crypto');
 
 if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
   console.error('FATAL: SESSION_SECRET env var must be set in production');
@@ -282,146 +283,268 @@ app.get('/api/debug/db', requireAuth, async (req, res) => {
   }
 });
 
-// ── Monarch live sync (direct Monarch GraphQL) ──────────────────────────────
-const MONARCH_GQL = `query GetAccounts {
-  accounts {
-    id
-    displayName
-    type { name }
-    subtype { name }
-    currentBalance
-    isHidden
-    isAsset
-    updatedAt
-  }
-}`;
+// ── Monarch OAuth2 + MCP ─────────────────────────────────────────────────────
+const MONARCH_AUTH = 'https://api.monarch.com';
+const MONARCH_MCP  = 'https://api.monarch.com/mcp';
+
 const RETIREMENT_SUBTYPES = new Set([
   '401k','403b','457b','traditional_ira','roth_ira','roth401k',
   'sep_ira','simple_ira','pension','retirement','defined_benefit','defined_contribution',
 ]);
 
-let _monarchTokenCache = null;  // { token, expiresAt }
-let _monarchLoginBackoff = 0;   // epoch ms — don't retry login until after this
-
-async function getMonarchToken() {
-  if (_monarchTokenCache && Date.now() < _monarchTokenCache.expiresAt - 5 * 60 * 1000) {
-    return _monarchTokenCache.token;
-  }
-  if (Date.now() < _monarchLoginBackoff) {
-    const waitMin = Math.ceil((_monarchLoginBackoff - Date.now()) / 60000);
-    throw new Error(`Monarch login rate-limited — try again in ~${waitMin} min`);
-  }
-  const email = process.env.MONARCH_EMAIL;
-  const password = process.env.MONARCH_PASSWORD;
-  if (!email || !password) return null;
-
-  const r = await fetch('https://api.monarchmoney.com/auth/login/', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-    body: JSON.stringify({ username: email, password, trusted_device: false, totp: '' }),
-    signal: AbortSignal.timeout(10000),
-  });
-  if (r.status === 429) {
-    _monarchLoginBackoff = Date.now() + 60 * 60 * 1000; // back off 1 hour
-    throw new Error('Monarch login rate-limited (429) — try again in ~60 min');
-  }
-  if (!r.ok) throw new Error(`Monarch login failed: ${r.status}`);
-  const d = await r.json();
-  const token = d.token;
-  if (!token) throw new Error('Monarch login returned no token');
-  _monarchLoginBackoff = 0;
-  _monarchTokenCache = { token, expiresAt: Date.now() + 29 * 24 * 60 * 60 * 1000 };
-  return token;
+async function monarchOAuthRow() {
+  const r = await db.query("SELECT data FROM oauth_tokens WHERE key='monarch'");
+  return r.rows[0]?.data ?? null;
 }
 
-async function callMonarchGQL(token) {
-  const r = await fetch('https://api.monarchmoney.com/graphql', {
+async function getMonarchAccessToken() {
+  const stored = await monarchOAuthRow();
+  if (!stored) return null;
+  // Return cached access token if still valid (5-min buffer)
+  if (stored.expires_at && Date.now() < stored.expires_at - 5 * 60 * 1000) {
+    return stored.access_token;
+  }
+  // Try refresh_token
+  if (!stored.refresh_token) return null;
+  const r = await fetch(`${MONARCH_AUTH}/oauth/token/`, {
     method: 'POST',
-    headers: {
-      'Authorization': `Token ${token}`,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'User-Agent': 'Mozilla/5.0',
-    },
-    body: JSON.stringify({ operationName: 'GetAccounts', query: MONARCH_GQL, variables: {} }),
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: stored.refresh_token,
+      client_id: stored.client_id,
+    }),
     signal: AbortSignal.timeout(10000),
   });
-  return r;
+  if (!r.ok) {
+    // Refresh failed — clear tokens so user reconnects
+    await db.query("DELETE FROM oauth_tokens WHERE key='monarch'");
+    return null;
+  }
+  const tokens = await r.json();
+  const updated = {
+    ...stored,
+    access_token: tokens.access_token,
+    refresh_token: tokens.refresh_token || stored.refresh_token,
+    expires_at: Date.now() + (tokens.expires_in || 3600) * 1000,
+  };
+  await db.query(
+    "INSERT INTO oauth_tokens(key,data) VALUES('monarch',$1) ON CONFLICT(key) DO UPDATE SET data=$1,updated_at=NOW()",
+    [JSON.stringify(updated)]
+  );
+  return updated.access_token;
+}
+
+async function callMonarchMCP(accessToken, method, params = {}) {
+  const r = await fetch(MONARCH_MCP, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!r.ok) {
+    const body = await r.text().catch(() => '');
+    throw new Error(`MCP ${r.status}: ${body.slice(0, 200)}`);
+  }
+  return r.json();
+}
+
+// Start OAuth flow — registers client dynamically, redirects to Monarch auth page
+app.get('/api/monarch-connect', requireAuth, async (req, res) => {
+  try {
+    const redirectUri = `${req.protocol}://${req.get('host')}/api/monarch-callback`;
+
+    // Get or register OAuth client
+    const clientRow = await db.query("SELECT data FROM oauth_tokens WHERE key='monarch_client'");
+    let clientId = clientRow.rows[0]?.data?.client_id;
+    if (!clientId) {
+      const reg = await fetch(`${MONARCH_AUTH}/oauth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_name: 'Cohen Financial Planner',
+          redirect_uris: [redirectUri],
+          grant_types: ['authorization_code', 'refresh_token'],
+          response_types: ['code'],
+          token_endpoint_auth_method: 'none',
+          scope: 'mcp:read',
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!reg.ok) throw new Error('Client registration failed: ' + reg.status);
+      const regData = await reg.json();
+      clientId = regData.client_id;
+      await db.query(
+        "INSERT INTO oauth_tokens(key,data) VALUES('monarch_client',$1) ON CONFLICT(key) DO UPDATE SET data=$1",
+        [JSON.stringify({ client_id: clientId, redirect_uri: redirectUri })]
+      );
+    }
+
+    // PKCE
+    const codeVerifier  = crypto.randomBytes(32).toString('base64url');
+    const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+    const state = crypto.randomBytes(16).toString('hex');
+
+    req.session.monarchOAuth = { codeVerifier, state, clientId, redirectUri };
+
+    const url = new URL(`${MONARCH_AUTH}/oauth/authorize/`);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('client_id', clientId);
+    url.searchParams.set('redirect_uri', redirectUri);
+    url.searchParams.set('scope', 'mcp:read');
+    url.searchParams.set('code_challenge', codeChallenge);
+    url.searchParams.set('code_challenge_method', 'S256');
+    url.searchParams.set('state', state);
+
+    res.redirect(url.toString());
+  } catch (err) {
+    console.error('Monarch connect error:', err);
+    res.redirect('/?monarch_error=' + encodeURIComponent(err.message));
+  }
+});
+
+// OAuth callback — exchanges code for tokens
+app.get('/api/monarch-callback', requireAuth, async (req, res) => {
+  const { code, state, error } = req.query;
+  const oauthState = req.session.monarchOAuth;
+
+  if (error)   return res.redirect('/?monarch_error=' + encodeURIComponent(error));
+  if (!oauthState || state !== oauthState.state) return res.redirect('/?monarch_error=state_mismatch');
+  if (!code)   return res.redirect('/?monarch_error=no_code');
+
+  try {
+    const r = await fetch(`${MONARCH_AUTH}/oauth/token/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: oauthState.redirectUri,
+        client_id: oauthState.clientId,
+        code_verifier: oauthState.codeVerifier,
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!r.ok) {
+      const err = await r.text();
+      return res.redirect('/?monarch_error=' + encodeURIComponent('Token exchange failed: ' + err.slice(0, 100)));
+    }
+    const tokens = await r.json();
+    await db.query(
+      "INSERT INTO oauth_tokens(key,data) VALUES('monarch',$1) ON CONFLICT(key) DO UPDATE SET data=$1,updated_at=NOW()",
+      [JSON.stringify({
+        client_id: oauthState.clientId,
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        expires_at: Date.now() + (tokens.expires_in || 3600) * 1000,
+      })]
+    );
+    delete req.session.monarchOAuth;
+    res.redirect('/?monarch_connected=1');
+  } catch (err) {
+    res.redirect('/?monarch_error=' + encodeURIComponent(err.message));
+  }
+});
+
+// Check OAuth connection status
+app.get('/api/monarch-status', requireAuth, async (req, res) => {
+  const stored = await monarchOAuthRow();
+  res.json({ connected: !!stored?.access_token });
+});
+
+// Disconnect Monarch
+app.post('/api/monarch-disconnect', requireAuth, async (req, res) => {
+  await db.query("DELETE FROM oauth_tokens WHERE key='monarch'");
+  res.json({ ok: true });
+});
+
+function parseMonarchAccounts(toolResult) {
+  // MCP tool result content is an array of {type, text} blocks
+  const text = (toolResult?.result?.content ?? []).find(b => b.type === 'text')?.text ?? '[]';
+  try { return JSON.parse(text); } catch { return []; }
 }
 
 app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
-  // Resolve token: env var first, then email/password login
-  let token = process.env.MONARCH_TOKEN || null;
-  if (!token && !process.env.MONARCH_EMAIL) {
-    return res.status(503).json({ error: 'Set MONARCH_TOKEN (or MONARCH_EMAIL + MONARCH_PASSWORD) in Railway Variables.' });
-  }
-
   try {
-    // If using email/password, get/refresh token
-    if (!token) token = await getMonarchToken();
-
-    let r = await callMonarchGQL(token);
-
-    // If env token is stale (401), try refreshing via email/password
-    if (r.status === 401 && process.env.MONARCH_EMAIL) {
-      _monarchTokenCache = null; // force refresh
-      token = await getMonarchToken();
-      r = await callMonarchGQL(token);
+    const accessToken = await getMonarchAccessToken();
+    if (!accessToken) {
+      return res.status(401).json({
+        error: 'Monarch not connected',
+        connectUrl: '/api/monarch-connect',
+      });
     }
 
-    if (!r.ok) {
-      const body = await r.text().catch(() => '');
-      return res.status(r.status).json({ error: `Monarch returned ${r.status}`, detail: body.slice(0, 300) });
+    // Discover and call the accounts tool
+    const toolsList = await callMonarchMCP(accessToken, 'tools/list');
+    const tools = toolsList?.result?.tools ?? [];
+
+    // Find an accounts-related tool
+    const accountTool = tools.find(t =>
+      t.name.includes('account') || t.name.includes('net_worth') || t.name.includes('networth')
+    ) ?? tools[0];
+
+    if (!accountTool) {
+      return res.status(502).json({ error: 'No MCP tools found', availableTools: tools.map(t => t.name) });
     }
 
-    const data = await r.json();
-    if (data.errors) {
-      return res.status(400).json({ error: 'Monarch GraphQL error: ' + (data.errors[0]?.message ?? JSON.stringify(data.errors[0])) });
-    }
+    const toolResult = await callMonarchMCP(accessToken, 'tools/call', {
+      name: accountTool.name,
+      arguments: {},
+    });
 
-    const excludes = new Set((process.env.MONARCH_EXCLUDE_ACCOUNTS || '').split(',').map(s => s.trim()).filter(Boolean));
-    // MONARCH_LIQUID_EXCLUDE: accounts excluded from liquid NW (e.g. "PLOC") — 401k auto-excluded via retirement tracking
+    // Try to parse accounts from tool result
+    const raw = parseMonarchAccounts(toolResult);
+    const accounts = Array.isArray(raw) ? raw : (raw.accounts ?? raw.data ?? []);
+
+    const excludes     = new Set((process.env.MONARCH_EXCLUDE_ACCOUNTS || '').split(',').map(s => s.trim()).filter(Boolean));
     const liquidExcludes = new Set((process.env.MONARCH_LIQUID_EXCLUDE || '').split(',').map(s => s.trim()).filter(Boolean));
-    const accounts = (data?.data?.accounts ?? []).filter(a => !a.isHidden && !excludes.has(a.id) && !excludes.has(a.displayName));
+
+    const visible = accounts.filter(a =>
+      !a.isHidden && !excludes.has(a.id) && !excludes.has(a.displayName) && !excludes.has(a.name)
+    );
+
     let assets = 0, liabilities = 0, retirement = 0, liquidAssets = 0, liquidLiabilities = 0, newestAt = null;
 
-    for (const acct of accounts) {
-      const bal = acct.currentBalance ?? 0;
-      const sub = (acct.subtype?.name ?? '').toLowerCase().replace(/[\s-]/g, '_');
-      const isLiquidExcluded = liquidExcludes.has(acct.displayName) || liquidExcludes.has(acct.id);
-      if (acct.isAsset) {
+    for (const acct of visible) {
+      const bal = acct.currentBalance ?? acct.balance ?? 0;
+      const sub = (acct.subtype?.name ?? acct.subtype ?? '').toLowerCase().replace(/[\s-]/g, '_');
+      const name = acct.displayName ?? acct.name ?? '';
+      const isLiquidExcluded = liquidExcludes.has(name) || liquidExcludes.has(acct.id);
+      const isRetirement = RETIREMENT_SUBTYPES.has(sub) || sub.includes('401') || sub.includes('ira') || sub.includes('retirement');
+
+      if (acct.isAsset ?? bal >= 0) {
         const pos = Math.max(0, bal);
         assets += pos;
-        const isRetirement = RETIREMENT_SUBTYPES.has(sub) || sub.includes('401') || sub.includes('ira') || sub.includes('retirement');
-        if (isRetirement) {
-          retirement += pos;
-        }
-        // liquid = non-retirement, non-explicitly-excluded assets
-        if (!isRetirement && !isLiquidExcluded) {
-          liquidAssets += pos;
-        }
+        if (isRetirement) retirement += pos;
+        if (!isRetirement && !isLiquidExcluded) liquidAssets += pos;
       } else {
-        const abs = Math.abs(Math.min(0, bal));
+        const abs = Math.abs(bal);
         liabilities += abs;
         if (!isLiquidExcluded) liquidLiabilities += abs;
       }
-      if (acct.updatedAt) {
-        const d = new Date(acct.updatedAt);
-        if (!newestAt || d > new Date(newestAt)) newestAt = acct.updatedAt;
+
+      const updAt = acct.updatedAt ?? acct.displayLastUpdatedAt;
+      if (updAt) {
+        const d = new Date(updAt);
+        if (!newestAt || d > new Date(newestAt)) newestAt = updAt;
       }
     }
 
     const updatedAt = newestAt ?? new Date().toISOString();
     res.json({
-      netWorth:    { value: Math.round(assets - liabilities),          updatedAt },
+      netWorth:    { value: Math.round(assets - liabilities),             updatedAt },
       liquid:      { value: Math.round(liquidAssets - liquidLiabilities), updatedAt },
-      assets:      { value: Math.round(assets),                         updatedAt },
-      liabilities: { value: Math.round(liabilities),                    updatedAt },
-      retirement:  retirement > 0 ? { value: Math.round(retirement),   updatedAt } : null,
+      assets:      { value: Math.round(assets),                           updatedAt },
+      liabilities: { value: Math.round(liabilities),                      updatedAt },
+      retirement:  retirement > 0 ? { value: Math.round(retirement),     updatedAt } : null,
+      _debug: { toolUsed: accountTool.name, accountCount: visible.length },
     });
   } catch (err) {
-    console.error('Monarch sync error:', err);
-    res.status(502).json({ error: 'Monarch sync error: ' + err.message });
+    console.error('Monarch snapshot error:', err);
+    res.status(502).json({ error: 'Monarch snapshot error: ' + err.message });
   }
 });
 
