@@ -632,6 +632,60 @@ app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
   }
 });
 
+// Pull a numeric total out of a GetCashFlow result, regardless of exact shape
+function extractCashflowTotal(obj) {
+  if (obj == null) return null;
+  if (typeof obj === 'number') return obj;
+  if (typeof obj === 'string') { const n = num(obj); return n || null; }
+  if (Array.isArray(obj)) {
+    let sum = 0, found = false;
+    for (const item of obj) { const v = extractCashflowTotal(item); if (v != null) { sum += v; found = true; } }
+    return found ? sum : null;
+  }
+  // object — look for common total-ish keys
+  for (const k of ['total', 'sum', 'amount', 'total_amount', 'net', 'value', 'sum_amount', 'totalAmount']) {
+    if (obj[k] != null) return num(obj[k]);
+  }
+  // single bucket with one numeric field
+  return null;
+}
+
+// YTD cash flow (Jan 1 → today): income and expense totals
+app.get('/api/monarch-cashflow', requireAuth, async (req, res) => {
+  try {
+    const accessToken = await getMonarchAccessToken();
+    if (!accessToken) return res.status(401).json({ error: 'Monarch not connected', connectUrl: '/api/monarch-connect' });
+
+    const now = new Date();
+    const start = `${now.getFullYear()}-01-01`;
+    const end = now.toISOString().slice(0, 10);
+
+    await monarchMCPHandshake(accessToken);
+
+    async function flowFor(categoryType) {
+      const tr = await callMonarchMCP(accessToken, 'tools/call', {
+        name: 'GetCashFlow',
+        arguments: { start_date: start, end_date: end, filters: JSON.stringify({ category_type: categoryType }) },
+      });
+      if (tr?.error) throw new Error(`GetCashFlow(${categoryType}): ${tr.error.message || JSON.stringify(tr.error)}`);
+      const parsed = unwrapMCPResult(tr);
+      return { total: extractCashflowTotal(parsed), raw: parsed };
+    }
+
+    const [income, expense] = await Promise.all([flowFor('income'), flowFor('expense')]);
+
+    res.json({
+      start, end,
+      income:  Math.abs(Math.round(income.total ?? 0)),
+      expense: Math.abs(Math.round(expense.total ?? 0)),
+      _debug: { incomeRaw: income.raw, expenseRaw: expense.raw },
+    });
+  } catch (err) {
+    console.error('Monarch cashflow error:', err);
+    res.status(502).json({ error: 'Monarch cashflow error: ' + err.message });
+  }
+});
+
 // ── Snapshots (annual history) ──────────────────────────────────────────────
 app.get('/api/snapshots', requireAuth, async (req, res) => {
   try {
