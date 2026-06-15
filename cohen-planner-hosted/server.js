@@ -501,11 +501,7 @@ app.get('/api/monarch-tools', requireAuth, async (req, res) => {
   try {
     const accessToken = await getMonarchAccessToken();
     if (!accessToken) return res.status(401).json({ error: 'Not connected' });
-    _mcpSessionId = null;
-    await callMonarchMCP(accessToken, 'initialize', {
-      protocolVersion: '2024-11-05', capabilities: {},
-      clientInfo: { name: 'cohen-financial-planner', version: '1.0.0' },
-    });
+    await monarchMCPHandshake(accessToken);
     const list = await callMonarchMCP(accessToken, 'tools/list');
     res.json(list?.result ?? list);
   } catch (err) {
@@ -513,108 +509,131 @@ app.get('/api/monarch-tools', requireAuth, async (req, res) => {
   }
 });
 
-function parseMonarchAccounts(toolResult) {
-  // MCP tool result content is an array of {type, text} blocks
-  const text = (toolResult?.result?.content ?? []).find(b => b.type === 'text')?.text ?? '[]';
-  try { return JSON.parse(text); } catch { return []; }
+function num(v) {
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string') { const n = parseFloat(v.replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; }
+  return 0;
+}
+
+// Unwrap a FastMCP tool result into its parsed JSON payload
+function unwrapMCPResult(toolResult) {
+  let payload = toolResult?.result?.structuredContent?.result
+    ?? (toolResult?.result?.content ?? []).find(b => b.type === 'text')?.text
+    ?? toolResult?.result
+    ?? null;
+  // Parse JSON strings, possibly double-wrapped as {result: "..."}
+  for (let i = 0; i < 2; i++) {
+    if (typeof payload === 'string') {
+      try { payload = JSON.parse(payload); } catch { break; }
+    }
+    if (payload && typeof payload === 'object' && typeof payload.result === 'string') {
+      try { payload = JSON.parse(payload.result); continue; } catch { break; }
+    }
+    break;
+  }
+  return payload;
+}
+
+async function monarchMCPHandshake(accessToken) {
+  _mcpSessionId = null;
+  await callMonarchMCP(accessToken, 'initialize', {
+    protocolVersion: '2024-11-05',
+    capabilities: {},
+    clientInfo: { name: 'cohen-financial-planner', version: '1.0.0' },
+  });
+  // Fire-and-forget initialized notification
+  try {
+    const nh = {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream',
+    };
+    if (_mcpSessionId) nh['Mcp-Session-Id'] = _mcpSessionId;
+    await fetch(MONARCH_MCP, {
+      method: 'POST', headers: nh,
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch { /* notifications may 202/204 with empty body — ignore */ }
 }
 
 app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
   try {
     const accessToken = await getMonarchAccessToken();
     if (!accessToken) {
-      return res.status(401).json({
-        error: 'Monarch not connected',
-        connectUrl: '/api/monarch-connect',
-      });
+      return res.status(401).json({ error: 'Monarch not connected', connectUrl: '/api/monarch-connect' });
     }
 
-    // MCP handshake: initialize → initialized notification → tools/list
-    _mcpSessionId = null;
-    await callMonarchMCP(accessToken, 'initialize', {
-      protocolVersion: '2024-11-05',
-      capabilities: {},
-      clientInfo: { name: 'cohen-financial-planner', version: '1.0.0' },
-    });
-    // Fire-and-forget initialized notification (no id → notification)
-    try {
-      const nh = {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json, text/event-stream',
-      };
-      if (_mcpSessionId) nh['Mcp-Session-Id'] = _mcpSessionId;
-      await fetch(MONARCH_MCP, {
-        method: 'POST', headers: nh,
-        body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
-        signal: AbortSignal.timeout(8000),
-      });
-    } catch { /* notifications may 202/204 with empty body — ignore */ }
-
-    // Discover and call the accounts tool
-    const toolsList = await callMonarchMCP(accessToken, 'tools/list');
-    const tools = toolsList?.result?.tools ?? [];
-
-    // Find an accounts-related tool
-    const accountTool = tools.find(t =>
-      t.name.includes('account') || t.name.includes('net_worth') || t.name.includes('networth')
-    ) ?? tools[0];
-
-    if (!accountTool) {
-      return res.status(502).json({ error: 'No MCP tools found', availableTools: tools.map(t => t.name) });
-    }
+    await monarchMCPHandshake(accessToken);
 
     const toolResult = await callMonarchMCP(accessToken, 'tools/call', {
-      name: accountTool.name,
+      name: 'GetAccounts',
       arguments: {},
     });
+    if (toolResult?.error) {
+      return res.status(502).json({ error: 'GetAccounts error: ' + (toolResult.error.message || JSON.stringify(toolResult.error)) });
+    }
 
-    // Try to parse accounts from tool result
-    const raw = parseMonarchAccounts(toolResult);
-    const accounts = Array.isArray(raw) ? raw : (raw.accounts ?? raw.data ?? []);
+    const data = unwrapMCPResult(toolResult);
+    const accounts = Array.isArray(data) ? data : (data?.accounts ?? data?.data ?? []);
 
-    const excludes     = new Set((process.env.MONARCH_EXCLUDE_ACCOUNTS || '').split(',').map(s => s.trim()).filter(Boolean));
+    const excludes       = new Set((process.env.MONARCH_EXCLUDE_ACCOUNTS || '').split(',').map(s => s.trim()).filter(Boolean));
     const liquidExcludes = new Set((process.env.MONARCH_LIQUID_EXCLUDE || '').split(',').map(s => s.trim()).filter(Boolean));
 
-    const visible = accounts.filter(a =>
-      !a.isHidden && !excludes.has(a.id) && !excludes.has(a.displayName) && !excludes.has(a.name)
-    );
+    const matches = (acct, set) =>
+      set.has(acct.id) || set.has(acct.name) || set.has(acct.displayName);
 
-    let assets = 0, liabilities = 0, retirement = 0, liquidAssets = 0, liquidLiabilities = 0, newestAt = null;
+    let retirement = 0, plocAddback = 0, newestAt = null;
+    const debugAccts = [];
 
-    for (const acct of visible) {
-      const bal = acct.currentBalance ?? acct.balance ?? 0;
-      const sub = (acct.subtype?.name ?? acct.subtype ?? '').toLowerCase().replace(/[\s-]/g, '_');
+    for (const acct of accounts) {
+      if (matches(acct, excludes)) continue;
+      const bal  = num(acct.currentBalance ?? acct.balance ?? acct.current_balance ?? acct.displayBalance);
       const name = acct.displayName ?? acct.name ?? '';
-      const isLiquidExcluded = liquidExcludes.has(name) || liquidExcludes.has(acct.id);
-      const isRetirement = RETIREMENT_SUBTYPES.has(sub) || sub.includes('401') || sub.includes('ira') || sub.includes('retirement');
+      const type = String(acct.type?.name ?? acct.type ?? '').toLowerCase();
+      const sub  = String(acct.subtype?.name ?? acct.subtype ?? '').toLowerCase();
+      const hay  = `${type} ${sub} ${name.toLowerCase()}`.replace(/[\s-]/g, '_');
+      const isRetirement = /401|403b|457|ira|retirement|pension/.test(hay);
 
-      if (acct.isAsset ?? bal >= 0) {
-        const pos = Math.max(0, bal);
-        assets += pos;
-        if (isRetirement) retirement += pos;
-        if (!isRetirement && !isLiquidExcluded) liquidAssets += pos;
-      } else {
-        const abs = Math.abs(bal);
-        liabilities += abs;
-        if (!isLiquidExcluded) liquidLiabilities += abs;
-      }
+      if (isRetirement) retirement += Math.abs(bal);
+      if (matches(acct, liquidExcludes)) plocAddback += Math.abs(bal);
 
-      const updAt = acct.updatedAt ?? acct.displayLastUpdatedAt;
-      if (updAt) {
-        const d = new Date(updAt);
-        if (!newestAt || d > new Date(newestAt)) newestAt = updAt;
-      }
+      const updAt = acct.updatedAt ?? acct.displayLastUpdatedAt ?? acct.updated_at;
+      if (updAt) { const d = new Date(updAt); if (!newestAt || d > new Date(newestAt)) newestAt = updAt; }
+      debugAccts.push({ name, type, sub, bal, isRetirement });
     }
+
+    // Prefer authoritative top-level totals from GetAccounts; fall back to summing.
+    let netWorth    = num(data?.net_worth ?? data?.netWorth ?? data?.total_net_worth);
+    let assetsTotal = num(data?.total_assets ?? data?.assets ?? data?.totalAssets);
+    let liabTotal   = num(data?.total_liabilities ?? data?.liabilities ?? data?.totalLiabilities);
+
+    if (!netWorth && accounts.length) {
+      // Fallback: sum signed balances (assets positive, liabilities negative)
+      let a = 0, l = 0;
+      for (const acct of accounts) {
+        if (matches(acct, excludes)) continue;
+        const bal = num(acct.currentBalance ?? acct.balance ?? acct.current_balance ?? acct.displayBalance);
+        const type = String(acct.type?.name ?? acct.type ?? '').toLowerCase();
+        const isLiab = /credit|loan|mortgage|line_of_credit|liabilit/.test(type.replace(/[\s-]/g, '_')) || bal < 0;
+        if (isLiab) l += Math.abs(bal); else a += Math.abs(bal);
+      }
+      assetsTotal = assetsTotal || a;
+      liabTotal   = liabTotal || l;
+      netWorth    = a - l;
+    }
+
+    // liquid = netWorth, minus 401k (asset removed), plus PLOC (liability removed)
+    const liquid = netWorth - retirement + plocAddback;
 
     const updatedAt = newestAt ?? new Date().toISOString();
     res.json({
-      netWorth:    { value: Math.round(assets - liabilities),             updatedAt },
-      liquid:      { value: Math.round(liquidAssets - liquidLiabilities), updatedAt },
-      assets:      { value: Math.round(assets),                           updatedAt },
-      liabilities: { value: Math.round(liabilities),                      updatedAt },
-      retirement:  retirement > 0 ? { value: Math.round(retirement),     updatedAt } : null,
-      _debug: { toolUsed: accountTool.name, accountCount: visible.length },
+      netWorth:    { value: Math.round(netWorth),    updatedAt },
+      liquid:      { value: Math.round(liquid),      updatedAt },
+      assets:      { value: Math.round(assetsTotal), updatedAt },
+      liabilities: { value: Math.round(liabTotal),   updatedAt },
+      retirement:  retirement > 0 ? { value: Math.round(retirement), updatedAt } : null,
+      _debug: { accountCount: accounts.length, retirement, plocAddback, accounts: debugAccts },
     });
   } catch (err) {
     console.error('Monarch snapshot error:', err);
