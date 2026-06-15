@@ -668,18 +668,44 @@ async function resetAll(){
 
 function rollForward(){
   const curYear=P.planStartYear||2026;const nextYear=curYear+1;
-  if(!confirm(`Roll plan forward to ${nextYear}?\n\nThis will:\n• Save a dated snapshot of the ${curYear} plan (for projected-vs-actual)\n• Shift income inputs: Y1→Y0, Y2→Y1, Y3→Y2\n• Set new Y3 to base rates\n\nYou'll be prompted to update Starting Liquid.`))return;
-  saveSnapshot(true); // auto-archive the plan year being closed out
-  const liqStr=prompt(`Update Starting Liquid for Jan ${nextYear}\n(enter your actual current wealth):`,P.startingLiquid.toLocaleString());
-  // Shift Norm income forward
+  const d=document.createElement('div');
+  d.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(10,37,64,.4);z-index:9998;display:flex;align-items:center;justify-content:center';
+  d.innerHTML=`<div style="background:#fff;border-radius:12px;padding:24px 28px;width:100%;max-width:400px;box-shadow:0 8px 30px rgba(0,0,0,.15)">
+    <div style="font-size:15px;font-weight:700;color:#0a2540;margin-bottom:4px">📅 Roll Forward → ${nextYear}</div>
+    <div style="font-size:10.5px;color:#425466;margin-bottom:14px;line-height:1.6">
+      This will:<br>
+      • Auto-save a snapshot of your ${curYear} plan<br>
+      • Shift income inputs: Y1→Y0, Y2→Y1, Y3→Y2<br>
+      • Advance plan start year to ${nextYear}
+    </div>
+    <label style="display:block;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:#8898aa;margin-bottom:5px">Starting Liquid Jan ${nextYear} (actual current wealth)</label>
+    <input id="rfLiqInput" type="text" value="${P.startingLiquid.toLocaleString()}"
+      style="width:100%;padding:9px 11px;border:1px solid #635bff;border-radius:7px;font-size:13px;font-family:'SF Mono',monospace;color:#0a2540;outline:none;margin-bottom:14px"
+      onkeydown="if(event.key==='Enter')confirmRollForward(this.closest('div[style*=fixed]'),${curYear},${nextYear});if(event.key==='Escape')this.closest('div[style*=fixed]').remove()">
+    <div style="display:flex;gap:8px">
+      <button onclick="confirmRollForward(this.closest('div[style*=fixed]'),${curYear},${nextYear})"
+        style="flex:1;background:#0891b2;color:#fff;border:none;padding:10px;border-radius:7px;cursor:pointer;font-weight:600;font-size:13px;font-family:inherit">Roll Forward</button>
+      <button onclick="this.closest('div[style*=fixed]').remove()"
+        style="flex:1;background:#f0f4f8;color:#425466;border:1px solid #e6ebf1;padding:10px;border-radius:7px;cursor:pointer;font-size:13px;font-family:inherit">Cancel</button>
+    </div>
+  </div>`;
+  d.addEventListener('click',e=>{if(e.target===d)d.remove()});
+  document.body.appendChild(d);
+  setTimeout(()=>{const inp=document.getElementById('rfLiqInput');if(inp){inp.focus();inp.select();}},50);
+}
+async function confirmRollForward(overlay,curYear,nextYear){
+  const inp=document.getElementById('rfLiqInput');
+  const liqStr=inp?inp.value:'';
+  if(overlay)overlay.remove();
+  await saveSnapshot(true,`${curYear} plan · rolled forward ${new Date().toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`);
   P.normCashY0=P.normCashY1;P.normCashY1=P.normCashY2;P.normCashY2=P.normCashY3;P.normCashY3=P.normCashBase;
   P.normStockY0=P.normStockY1;P.normStockY1=P.normStockY2;P.normStockY2=P.normStockY3;P.normStockY3=P.normStockBase;
-  // Shift Nancy W2 forward; Y3 carries Y2 forward as a placeholder
   P.nancyW2Y0=P.nancyW2Y1;P.nancyW2Y1=P.nancyW2Y2;P.nancyW2Y2=P.nancyW2Y3;P.nancyW2Y3=P.nancyW2Y2;
-  // Advance plan year
   P.planStartYear=nextYear;
-  if(liqStr!==null){const v=parseFloat(String(liqStr).replace(/[,$\s]/g,''));if(!isNaN(v)&&v>0)P.startingLiquid=v}
+  const v=parseFloat(String(liqStr).replace(/[,$\s]/g,''));
+  if(!isNaN(v)&&v>0)P.startingLiquid=v;
   buildControls();render();savePlannerState();
+  showToast(`✓ Rolled forward to ${nextYear}`,'green');
 }
 
 const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,nannyEndAge:v=>v+' yrs',nannyHourlyRate:v=>'$'+v,nannyDaysPerWeek:null,daycareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normCashY0:fmtF,normStockY0:fmtF,normCashY1:fmtF,normStockY1:fmtF,normCashY2:fmtF,normStockY2:fmtF,normCashY3:fmtF,normStockY3:fmtF,normCashBase:fmtF,normStockBase:fmtF,normGrowth:v=>(v*100).toFixed(1)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',mcVol:v=>(v*100).toFixed(0)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo',capGainsTaxRate:v=>(v*100).toFixed(1)+'%',costBasisPct:v=>(v*100).toFixed(0)+'%'};
@@ -1061,7 +1087,94 @@ function renderGoalsTab(R,P,tT){
     </div>
   </div>`;
 
-  // GOAL 2: Tuition
+  // GOAL 2: Mortgage
+  {
+    const loanAmt=P.homePrice*(1-P.downPctg/100);
+    const rate=P.mortgageRate/100;
+    const moRate=rate/12;
+    const nPmt=30*12;
+    const moPmt=loanAmt>0&&moRate>0?loanAmt*(moRate*(1+moRate)**nPmt)/((1+moRate)**nPmt-1):0;
+    const annPmt=moPmt*12;
+    const totalPaid=moPmt*nPmt;
+    const totalInterest=totalPaid-loanAmt;
+    const payoffYr=P.homePurchaseYear+30;
+    // Year-by-year principal vs interest (annual)
+    const mortRows=[];
+    for(let y=1;y<=30;y++){
+      const balStart=mBal(loanAmt,rate,y-1);
+      const balEnd=mBal(loanAmt,rate,y);
+      const princPaid=balStart-balEnd;
+      const intPaid=annPmt-princPaid;
+      const hv=P.homePrice*(1+P.homeAppreciation)**y;
+      mortRows.push({y,yr:P.homePurchaseYear+y,princPaid,intPaid,equity:hv-balEnd,hv});
+    }
+    const maxEq=Math.max(...mortRows.map(r=>r.equity));
+    const eq10=mortRows[9];const eq20=mortRows[19];const eq30=mortRows[29];
+    h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--tx)">🏦 Mortgage</div>
+          <div style="font-size:10px;color:var(--t2);margin-top:2px">${P.homePrice>=1e6?'$'+(P.homePrice/1e6).toFixed(2)+'M':'$'+Math.round(P.homePrice/1000)+'K'} · ${P.mortgageRate}% · 30 yr · closes ${P.homePurchaseYear}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:var(--p)">${fmtF(Math.round(moPmt))}/mo</div>
+          <div style="font-size:9px;color:var(--t3);margin-top:1px">monthly payment</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:14px">
+        <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Loan Amount</div>
+          <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${fmt(loanAmt)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${P.downPctg}% down</div>
+        </div>
+        <div style="background:var(--r-soft);border:1px solid rgba(205,61,100,.12);border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--r);margin-bottom:3px">Total Interest</div>
+          <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:var(--r)">${fmt(totalInterest)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${Math.round(totalInterest/P.homePrice*100)}% of price</div>
+        </div>
+        <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Payoff Year</div>
+          <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${payoffYr}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${payoffYr-(P.planStartYear||2026)} yrs from now</div>
+        </div>
+        <div style="background:var(--g-soft);border:1px solid rgba(26,135,84,.15);border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--g);margin-bottom:3px">Equity @ ${eq30.yr}</div>
+          <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">${fmt(eq30.equity)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">home: ${fmt(eq30.hv)}</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">
+        ${[{label:'Equity @ yr 10',r:eq10},{label:'Equity @ yr 20',r:eq20},{label:'Equity @ yr 30',r:eq30}].map(({label,r})=>`
+        <div style="background:var(--s2);border-radius:6px;padding:8px 10px">
+          <div style="font-size:8px;color:var(--t3);font-weight:600;margin-bottom:2px">${label} (${r.yr})</div>
+          <div style="font-size:12px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">${fmt(r.equity)}</div>
+          <div style="margin-top:5px;height:6px;border-radius:3px;background:var(--s3);overflow:hidden">
+            <div style="height:100%;width:${Math.round(r.equity/maxEq*100)}%;background:var(--g);border-radius:3px"></div>
+          </div>
+        </div>`).join('')}
+      </div>
+      <div style="font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:6px">Principal vs. interest over 30 years</div>
+      <div style="display:flex;gap:1px;align-items:flex-end;height:45px">
+        ${mortRows.map(r=>{
+          const total=r.princPaid+r.intPaid;
+          const pPct=r.princPaid/total*100;
+          const iPct=r.intPaid/total*100;
+          return`<div title="${r.yr}: ${fmt(r.princPaid)} principal, ${fmt(r.intPaid)} interest" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%">
+            <div style="width:100%;background:var(--g);height:${pPct}%;opacity:.8;border-radius:1px 1px 0 0"></div>
+            <div style="width:100%;background:var(--r);height:${iPct}%;opacity:.6"></div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--t3);margin-top:3px"><span>${P.homePurchaseYear}</span><span>${payoffYr}</span></div>
+      <div style="margin-top:6px;display:flex;gap:10px;font-size:8.5px;color:var(--t3)">
+        <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--g);border-radius:2px;opacity:.8"></span>Principal</span>
+        <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--r);border-radius:2px;opacity:.6"></span>Interest</span>
+        <span>Hover bars for year detail</span>
+      </div>
+    </div>`;
+  }
+
+  // GOAL 3: Tuition
   if(firstTuRow){
     const tuActive=R.filter(r=>r.tu>0);
     const tuSpan=lastTuRow.yr-firstTuRow.yr+1;
@@ -1118,7 +1231,7 @@ function renderGoalsTab(R,P,tT){
     </div>`;
   }
 
-  // GOAL 3: Liquid health timeline (mini sparkline)
+  // GOAL 4: Liquid health timeline (mini sparkline)
   h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
     <div style="font-size:13px;font-weight:700;color:var(--tx);margin-bottom:4px">💧 Liquid Health Over Time</div>
     <div style="font-size:10px;color:var(--t2);margin-bottom:12px">${surpYrs} surplus yrs · ${defYrs} deficit yrs · floor ${fmt(R.reduce((a,b)=>b.liq<a.liq?b:a).liq)} in ${R.reduce((a,b)=>b.liq<a.liq?b:a).yr}</div>
