@@ -381,7 +381,7 @@ app.post('/api/advisor/stream', requireAuth, async (req, res) => {
     const stream = anthropic.messages.stream({
       model: 'claude-sonnet-4-6',
       max_tokens: 4000,
-      system: systemPrompt,
+      system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
       messages,
     });
 
@@ -456,7 +456,7 @@ Workflow: understand what he's asking → set_param for each change → run_proj
       const stream = anthropic.messages.stream({
         model: 'claude-sonnet-4-6',
         max_tokens: 4000,
-        system: agenticSystemPrompt,
+        system: [{ type: 'text', text: agenticSystemPrompt, cache_control: { type: 'ephemeral' } }],
         messages: conversationMsgs,
         tools: ADVISOR_TOOLS,
       });
@@ -558,7 +558,7 @@ app.post('/api/advisor/message', requireAuth, async (req, res) => {
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 4000,
-      system: systemPrompt,
+      system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
       messages,
     });
 
