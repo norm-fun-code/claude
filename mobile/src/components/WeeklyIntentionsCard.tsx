@@ -111,7 +111,6 @@ export function WeeklyIntentionsCard() {
   // lingers into the week until you set it), unless dismissed. Once saved, it
   // only shows on Sundays as a compact summary you can tap to edit.
   if (!loaded || dismissed) return null;
-  if (saved && !isSunday() && !editing) return null;
   if (!saved && !isSunday()) {
     // Past Sunday with nothing set — still let it linger early in the week (Mon/Tue).
     const dow = easternDayOfWeek();

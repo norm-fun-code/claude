@@ -35,12 +35,14 @@ function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, cale
     .filter(Boolean)
     .join('\n\n');
 
+  // NOTE: this is a personal Google Calendar only — work calendar is not connected
+  // and typically has a full schedule. Personal calendar is usually light.
   const calendarSection =
     calendarEvents.length > 0
       ? calendarEvents
           .map((e) => `- ${e.allDay ? '[All Day]' : `${e.startTime}–${e.endTime}`}: ${e.title}`)
           .join('\n')
-      : 'No events today.';
+      : 'No personal calendar events today. (Work calendar not connected — assume a normal workday.)';
 
   return `${selfModel ? selfModel + '\n\n---\n\n' : ''}Today is ${currentDay}.
 
@@ -69,7 +71,7 @@ Return ONLY valid JSON with EXACTLY these fields:
 
 {
   "chiefBrief": {
-    "synthesis": "ONE sentence (20-35 words): the single most important thing about today, synthesized ACROSS domains (body, money, focus, calendar, inbox). Lead with the domain with the highest urgency or consequence TODAY — if there's a key calendar event, meeting, or deadline, that should often be the anchor, with health/recovery as context. When referencing health, use the recovery BAND (green/yellow/red) or score, not raw HRV. Name a real number. Never ignore the calendar when events are present.",
+    "synthesis": "ONE sentence (20-35 words): the single most important thing about today, synthesized ACROSS domains (body, money, focus, inbox). Lead with the domain with the highest urgency or consequence TODAY. IMPORTANT: the connected calendar is personal-only and usually light — do NOT anchor on 'no events' or an empty calendar; assume there's a real workday happening and lead instead with health/recovery, a financial signal, or an email that needs action. When referencing health, use the recovery BAND (green/yellow/red) or score, not raw HRV. Name a real number.",
     "action": "THE ACTION (1-2 sentences). The highest-leverage thing to do NOW — draw from the HIGHEST-LEVERAGE ACTIONS block (leverage engine) above when present. Concrete and doable today. Tie to a confirmed pattern in their own data when relevant ('Zone 2 days → your recovery score runs higher the next morning, your own data shows').",
     "risk": "THE RISK (1-2 sentences). The ONE thing trending wrong — draw from the TRENDING WRONG block (at-risk forecasts) or a slipping habit / declining metric in the self-model. Name the trajectory. If genuinely nothing is at risk, say what to protect to keep it that way.",
     "move": "THE MOVE (1-2 sentences). One number that CHANGED and why it matters. Prefer spend/cashflow, a habit rate, or the recovery score over raw HRV — HRV is a component of the score, not a standalone signal. Name the before→after and the implication."
@@ -84,7 +86,7 @@ Return ONLY valid JSON with EXACTLY these fields:
 }
 
 Rules:
-- chiefBrief: this is the centerpiece — write it as a person who KNOWS them, not a report. Sharp, caring, blunt, numerate. The synthesis MUST not be health-only: if today's calendar has meaningful events or urgent action is needed, those belong in the synthesis. Draw the ACTION from the leverage engine when present, otherwise from the most consequential thing in their calendar/finances/habits. RISK from at-risk forecasts/slipping habits. MOVE from a real number that changed — prefer spend/cashflow, a habit rate, or the composite recovery score over raw HRV (HRV is just one input to the score). Name actual numbers everywhere. Never invent a tie-in or number. Always generate all four fields.
+- chiefBrief: this is the centerpiece — write it as a person who KNOWS them, not a report. Sharp, caring, blunt, numerate. The synthesis MUST span domains. IMPORTANT calendar rule: the connected calendar is personal-only and typically empty — never open with "no calendar events" or frame an empty calendar as newsworthy; assume a normal workday is happening. Lead with health/recovery band, a financial signal, a habit trend, or inbox action instead. Draw the ACTION from the leverage engine when present, otherwise from the most consequential thing in their finances/habits/inbox. RISK from at-risk forecasts/slipping habits. MOVE from a real number that changed — prefer spend/cashflow, a habit rate, or the composite recovery score over raw HRV (HRV is just one input to the score). Name actual numbers everywhere. Never invent a tie-in or number. Always generate all four fields.
 - morningFocus: draw primarily from the SELF-MODEL (7-day sleep avg, habit adherence rates, recovery trend, confirmed correlations). Use the recovery SCORE (0–100) and BAND (green/yellow/red) as the health anchor — it already synthesizes HRV, RHR, and sleep into one number, so lead with that instead of raw HRV ms. Name habit rates and sleep hours from the self-model. If the recovery trend is slipping, name the score trajectory. This should feel like the one sentence a trusted advisor who knows your week would say before you start your day. Never mention finances, calendar events, or emails here. Always generate something — the self-model always has enough context.
 - urgentEmails: only emails needing a response/action today. Exclude newsletters, digests, marketing — only real emails requiring a response or action.
 - notionQuote: pick a self-contained, meaningful line — never a title, never an intro that trails off (e.g. "Rather than trying to find someone who will:"). If the best idea spans a sentence, quote the whole sentence.
