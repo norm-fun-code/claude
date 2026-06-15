@@ -333,18 +333,73 @@ app.delete('/api/chats/:id', requireAuth, async (req, res) => {
   }
 });
 
-// ── Anthropic proxy ───────────────────────────────────────────────────────────
+// ── Anthropic proxy — SSE streaming ──────────────────────────────────────────
+app.post('/api/advisor/stream', requireAuth, async (req, res) => {
+  const { chatId, message, systemPrompt, messages } = req.body;
+  if (!chatId || !message) return res.status(400).json({ error: 'chatId and message required' });
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const send = (payload) => res.write(`data: ${JSON.stringify(payload)}\n\n`);
+
+  try {
+    let fullReply = '';
+    const stream = anthropic.messages.stream({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4000,
+      system: systemPrompt,
+      messages,
+    });
+
+    stream.on('text', (text) => {
+      fullReply += text;
+      send({ delta: text });
+    });
+
+    const msg = await stream.finalMessage();
+
+    // Persist atomically — only after a successful stream
+    const pair = [
+      { role: 'user', content: message },
+      { role: 'assistant', content: fullReply },
+    ];
+    await db.query(
+      `UPDATE advisor_chats SET messages = messages || $1::jsonb, updated_at = NOW() WHERE id = $2`,
+      [JSON.stringify(pair), chatId]
+    );
+
+    const countRes = await db.query(
+      `SELECT jsonb_array_length(messages) AS cnt FROM advisor_chats WHERE id = $1`,
+      [chatId]
+    );
+    if ((countRes.rows[0]?.cnt || 0) <= 2) {
+      const title = message.slice(0, 60) + (message.length > 60 ? '…' : '');
+      await db.query('UPDATE advisor_chats SET title=$1 WHERE id=$2', [title, chatId]);
+    }
+
+    send({ done: true, usage: msg.usage });
+    res.end();
+  } catch (err) {
+    console.error('Advisor stream error:', err);
+    send({ error: (err.message || 'Anthropic API error').slice(0, 200) });
+    res.end();
+  }
+});
+
+// ── Anthropic proxy — non-streaming fallback ──────────────────────────────────
 app.post('/api/advisor/message', requireAuth, async (req, res) => {
   const { chatId, message, systemPrompt, messages } = req.body;
   if (!chatId || !message) return res.status(400).json({ error: 'chatId and message required' });
 
   try {
-    // Call Anthropic first — only persist to DB if it succeeds (prevents orphaned messages)
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 4000,
       system: systemPrompt,
-      messages: messages,
+      messages,
     });
 
     const reply = response.content
@@ -352,19 +407,15 @@ app.post('/api/advisor/message', requireAuth, async (req, res) => {
       .map(b => b.text)
       .join('\n');
 
-    // Persist user message + assistant reply together as an atomic pair
     const pair = [
       { role: 'user', content: message },
       { role: 'assistant', content: reply },
     ];
     await db.query(
-      `UPDATE advisor_chats
-       SET messages = messages || $1::jsonb, updated_at = NOW()
-       WHERE id = $2`,
+      `UPDATE advisor_chats SET messages = messages || $1::jsonb, updated_at = NOW() WHERE id = $2`,
       [JSON.stringify(pair), chatId]
     );
 
-    // Update title when this is the first exchange
     const countRes = await db.query(
       `SELECT jsonb_array_length(messages) AS cnt FROM advisor_chats WHERE id = $1`,
       [chatId]
