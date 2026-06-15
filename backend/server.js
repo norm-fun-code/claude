@@ -1649,6 +1649,22 @@ app.get('/api/debug/work-calendar', async (req, res) => {
   }
 });
 
+// Smoke-test for the Monarch MCP integration: mints an access token from the
+// refresh token, then asks Claude to list + call a Monarch tool via the MCP
+// connector. Confirms auth, connectivity, and that tools are reachable.
+app.get('/api/debug/monarch-mcp', async (req, res) => {
+  try {
+    const monarchMcp = require('./src/services/monarch-mcp');
+    if (!monarchMcp.isConfigured()) {
+      return res.json({ configured: false, hint: 'Set MONARCH_MCP_REFRESH_TOKEN and MONARCH_MCP_CLIENT_ID' });
+    }
+    const result = await monarchMcp.probe();
+    res.json({ configured: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.response?.data || err.message });
+  }
+});
+
 // Mid-day partial refresh: markets + urgent-email scan + weather/calendar.
 // Everything else (wisdom, insights, recovery framing, weekly review) is
 // morning-built and day-locked. Merges into the cached briefing and re-saves.
