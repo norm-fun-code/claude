@@ -1150,10 +1150,11 @@ function renderGoalsTab(R,P,tT){
     // 401k: use Monarch's value if it has one, else fall back to the modeled "Starting 401k"
     const has401k=monarchSnapshot.retirement>0;
     const live401k=has401k?monarchSnapshot.retirement:(P.k401Start||0);
-    // Total NW: if Monarch lacks the 401k, add the modeled value so the comparison is apples-to-apples
-    const liveTotalNW=monarchSnapshot.netWorth+(has401k?0:live401k);
+    // NW excluding 401k (matches model's `nw`); and total including 401k
+    const nwExcl401k=monarchSnapshot.netWorth-(has401k?monarchSnapshot.retirement:0);
+    const nwIncl401k=nwExcl401k+live401k;
     const projTotal=projRow.nw+projRow.k401;
-    const totalDiff=liveTotalNW-projTotal;
+    const totalDiff=nwIncl401k-projTotal;
     const liqDiff=impliedLiq-projRow.liq;
     const syncDate=new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
     const ahead=totalDiff>=0;
@@ -1171,9 +1172,9 @@ function renderGoalsTab(R,P,tT){
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
         <div style="background:#fff8;border-radius:7px;padding:9px 11px">
-          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Total NW</div>
-          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${fmt(liveTotalNW)}</div>
-          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Plan: ${fmt(projTotal)}</div>
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">NW (excl 401k)</div>
+          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${fmt(nwExcl401k)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Plan: ${fmt(projRow.nw)}</div>
         </div>
         <div style="background:#fff8;border-radius:7px;padding:9px 11px">
           <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Liquid (est.)</div>
@@ -1186,9 +1187,9 @@ function renderGoalsTab(R,P,tT){
           <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Plan: ${fmt(projRow.k401)}</div>
         </div>
         <div style="background:#fff8;border-radius:7px;padding:9px 11px">
-          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Assets / Liab</div>
-          <div style="font-size:13px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">${fmt(monarchSnapshot.assets)}</div>
-          <div style="font-size:8.5px;color:var(--r);margin-top:1px">−${fmt(monarchSnapshot.liabilities)}</div>
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Total w/ 401k</div>
+          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">${fmt(nwIncl401k)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Plan: ${fmt(projTotal)}</div>
         </div>
       </div>
     </div>`;
