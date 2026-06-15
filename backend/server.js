@@ -305,7 +305,7 @@ app.get('/api/sleep/today', async (req, res) => {
   try {
     const tz = process.env.TZ || 'America/New_York';
     const today = new Date().toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD
-    const METRICS = ['hrv', 'resting_hr', 'sleep_score', 'sleep_hours', 'respiratory_rate'];
+    const METRICS = ['hrv', 'resting_hr', 'sleep_score', 'sleep_hours', 'respiratory_rate', 'sleep_debt', 'sleep_need'];
     const result = {};
     await Promise.all(METRICS.map(async (m) => {
       const { rows } = await require('./src/db').query(
