@@ -170,6 +170,9 @@ app.get('/health', (req, res) => res.json({ ok: true }));
 app.get('/', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+app.get('/model.js', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'model.js'));
+});
 
 // ── Planner state ─────────────────────────────────────────────────────────────
 app.get('/api/planner-state', requireAuth, async (req, res) => {
