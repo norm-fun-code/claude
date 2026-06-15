@@ -282,21 +282,87 @@ app.get('/api/debug/db', requireAuth, async (req, res) => {
   }
 });
 
-// ── Monarch live sync (proxies to NormOS backend) ─────────────────────────
-app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
-  const normosUrl = process.env.NORMOS_URL;
-  if (!normosUrl) return res.status(503).json({ error: 'NORMOS_URL not configured' });
-  try {
-    const r = await fetch(`${normosUrl}/api/wealth/snapshot`, {
-      headers: { 'Accept': 'application/json' },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!r.ok) return res.status(r.status).json({ error: `NormOS returned ${r.status}` });
-    const data = await r.json();
-    res.json(data);
-  } catch (err) {
-    res.status(502).json({ error: 'Could not reach NormOS: ' + err.message });
+// ── Monarch live sync (direct Monarch GraphQL) ──────────────────────────────
+const MONARCH_GQL = `query GetAccounts {
+  accounts {
+    id
+    displayName
+    type { name }
+    subtype { name }
+    currentBalance
+    isHidden
+    isAsset
+    updatedAt
   }
+}`;
+const RETIREMENT_SUBTYPES = new Set([
+  '401k','403b','457b','traditional_ira','roth_ira','roth401k',
+  'sep_ira','simple_ira','pension','retirement','defined_benefit','defined_contribution',
+]);
+
+app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
+  const token = process.env.MONARCH_TOKEN;
+  if (!token) {
+    return res.status(503).json({
+      error: 'MONARCH_TOKEN not configured. Add it in Railway → Variables. Get it from Monarch: browser DevTools → Network → any GraphQL request → Authorization header (after "Token ").',
+    });
+  }
+
+  let r;
+  try {
+    r = await fetch('https://api.monarchmoney.com/graphql', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Token ${token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0',
+      },
+      body: JSON.stringify({ operationName: 'GetAccounts', query: MONARCH_GQL, variables: {} }),
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (err) {
+    return res.status(502).json({ error: 'Monarch unreachable: ' + err.message });
+  }
+
+  if (!r.ok) {
+    const body = await r.text().catch(() => '');
+    return res.status(r.status).json({ error: `Monarch returned ${r.status}`, detail: body.slice(0, 300) });
+  }
+
+  const data = await r.json();
+  if (data.errors) {
+    return res.status(400).json({ error: 'Monarch GraphQL error: ' + (data.errors[0]?.message ?? JSON.stringify(data.errors[0])) });
+  }
+
+  const accounts = (data?.data?.accounts ?? []).filter(a => !a.isHidden);
+  let assets = 0, liabilities = 0, retirement = 0, newestAt = null;
+
+  for (const acct of accounts) {
+    const bal = acct.currentBalance ?? 0;
+    const sub = (acct.subtype?.name ?? '').toLowerCase().replace(/[\s-]/g, '_');
+    if (acct.isAsset) {
+      const pos = Math.max(0, bal);
+      assets += pos;
+      if (RETIREMENT_SUBTYPES.has(sub) || sub.includes('401') || sub.includes('ira') || sub.includes('retirement')) {
+        retirement += pos;
+      }
+    } else {
+      liabilities += Math.abs(Math.min(0, bal));
+    }
+    if (acct.updatedAt) {
+      const d = new Date(acct.updatedAt);
+      if (!newestAt || d > new Date(newestAt)) newestAt = acct.updatedAt;
+    }
+  }
+
+  const updatedAt = newestAt ?? new Date().toISOString();
+  res.json({
+    netWorth:    { value: Math.round(assets - liabilities), updatedAt },
+    assets:      { value: Math.round(assets),               updatedAt },
+    liabilities: { value: Math.round(liabilities),          updatedAt },
+    retirement:  retirement > 0 ? { value: Math.round(retirement), updatedAt } : null,
+  });
 });
 
 // ── Snapshots (annual history) ──────────────────────────────────────────────
