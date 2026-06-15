@@ -583,7 +583,10 @@ app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
     const matches = (acct, set) =>
       set.has(acct.id) || set.has(acct.name) || set.has(acct.displayName);
 
-    let retirement = 0, plocAddback = 0, newestAt = null;
+    // Compute everything from the account list (signed balances: assets +, liabilities -).
+    // This is robust to Monarch's "hide from balances" flag: as long as an account
+    // appears in GetAccounts, it counts here — so the 401k can stay hidden in Monarch.
+    let retirement = 0, liquid = 0, assetsTotal = 0, liabTotal = 0, newestAt = null;
     const debugAccts = [];
 
     for (const acct of accounts) {
@@ -593,38 +596,26 @@ app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
       const type = String(acct.type?.name ?? acct.type ?? '').toLowerCase();
       const sub  = String(acct.subtype?.name ?? acct.subtype ?? '').toLowerCase();
       const hay  = `${type} ${sub} ${name.toLowerCase()}`.replace(/[\s-]/g, '_');
-      const isRetirement = /401|403b|457|ira|retirement|pension/.test(hay);
+      // 401k/403b/457/pension only — IRAs are treated as liquid net worth
+      const isRetirement = /401|403b|457|pension/.test(hay);
+      const isPLOC = matches(acct, liquidExcludes);
 
-      if (isRetirement) retirement += Math.abs(bal);
-      if (matches(acct, liquidExcludes)) plocAddback += Math.abs(bal);
+      // Totals (net worth) include everything
+      if (bal >= 0) assetsTotal += bal; else liabTotal += Math.abs(bal);
+
+      if (isRetirement) {
+        retirement += Math.abs(bal);          // 401k → retirement, out of liquid
+      } else if (!isPLOC) {
+        liquid += bal;                         // everything else (incl. IRAs, credit cards) → liquid
+      }
+      // PLOC is excluded from liquid (but still in net-worth totals above)
 
       const updAt = acct.updatedAt ?? acct.displayLastUpdatedAt ?? acct.updated_at;
       if (updAt) { const d = new Date(updAt); if (!newestAt || d > new Date(newestAt)) newestAt = updAt; }
-      debugAccts.push({ name, type, sub, bal, isRetirement });
+      debugAccts.push({ name, type, bal, isRetirement, isPLOC });
     }
 
-    // Prefer authoritative top-level totals from GetAccounts; fall back to summing.
-    let netWorth    = num(data?.net_worth ?? data?.netWorth ?? data?.total_net_worth);
-    let assetsTotal = num(data?.total_assets ?? data?.assets ?? data?.totalAssets);
-    let liabTotal   = num(data?.total_liabilities ?? data?.liabilities ?? data?.totalLiabilities);
-
-    if (!netWorth && accounts.length) {
-      // Fallback: sum signed balances (assets positive, liabilities negative)
-      let a = 0, l = 0;
-      for (const acct of accounts) {
-        if (matches(acct, excludes)) continue;
-        const bal = num(acct.currentBalance ?? acct.balance ?? acct.current_balance ?? acct.displayBalance);
-        const type = String(acct.type?.name ?? acct.type ?? '').toLowerCase();
-        const isLiab = /credit|loan|mortgage|line_of_credit|liabilit/.test(type.replace(/[\s-]/g, '_')) || bal < 0;
-        if (isLiab) l += Math.abs(bal); else a += Math.abs(bal);
-      }
-      assetsTotal = assetsTotal || a;
-      liabTotal   = liabTotal || l;
-      netWorth    = a - l;
-    }
-
-    // liquid = netWorth, minus 401k (asset removed), plus PLOC (liability removed)
-    const liquid = netWorth - retirement + plocAddback;
+    const netWorth = assetsTotal - liabTotal;
 
     const updatedAt = newestAt ?? new Date().toISOString();
     res.json({
