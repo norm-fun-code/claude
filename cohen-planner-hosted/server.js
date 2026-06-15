@@ -300,69 +300,110 @@ const RETIREMENT_SUBTYPES = new Set([
   'sep_ira','simple_ira','pension','retirement','defined_benefit','defined_contribution',
 ]);
 
+let _monarchTokenCache = null; // { token, expiresAt }
+
+async function getMonarchToken() {
+  // Return cached token if still valid (buffer 5 min)
+  if (_monarchTokenCache && Date.now() < _monarchTokenCache.expiresAt - 5 * 60 * 1000) {
+    return _monarchTokenCache.token;
+  }
+  const email = process.env.MONARCH_EMAIL;
+  const password = process.env.MONARCH_PASSWORD;
+  if (!email || !password) return null;
+
+  const r = await fetch('https://api.monarchmoney.com/auth/login/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+    body: JSON.stringify({ username: email, password, trusted_device: false, totp: '' }),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!r.ok) throw new Error(`Monarch login failed: ${r.status}`);
+  const d = await r.json();
+  const token = d.token;
+  if (!token) throw new Error('Monarch login returned no token');
+  // Monarch tokens typically last ~30 days; cache for 29 days
+  _monarchTokenCache = { token, expiresAt: Date.now() + 29 * 24 * 60 * 60 * 1000 };
+  return token;
+}
+
+async function callMonarchGQL(token) {
+  const r = await fetch('https://api.monarchmoney.com/graphql', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Token ${token}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'User-Agent': 'Mozilla/5.0',
+    },
+    body: JSON.stringify({ operationName: 'GetAccounts', query: MONARCH_GQL, variables: {} }),
+    signal: AbortSignal.timeout(10000),
+  });
+  return r;
+}
+
 app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
-  const token = process.env.MONARCH_TOKEN;
-  if (!token) {
-    return res.status(503).json({
-      error: 'MONARCH_TOKEN not configured. Add it in Railway → Variables. Get it from Monarch: browser DevTools → Network → any GraphQL request → Authorization header (after "Token ").',
-    });
+  // Resolve token: env var first, then email/password login
+  let token = process.env.MONARCH_TOKEN || null;
+  if (!token && !process.env.MONARCH_EMAIL) {
+    return res.status(503).json({ error: 'Set MONARCH_TOKEN (or MONARCH_EMAIL + MONARCH_PASSWORD) in Railway Variables.' });
   }
 
-  let r;
   try {
-    r = await fetch('https://api.monarchmoney.com/graphql', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Token ${token}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0',
-      },
-      body: JSON.stringify({ operationName: 'GetAccounts', query: MONARCH_GQL, variables: {} }),
-      signal: AbortSignal.timeout(10000),
+    // If using email/password, get/refresh token
+    if (!token) token = await getMonarchToken();
+
+    let r = await callMonarchGQL(token);
+
+    // If env token is stale (401), try refreshing via email/password
+    if (r.status === 401 && process.env.MONARCH_EMAIL) {
+      _monarchTokenCache = null; // force refresh
+      token = await getMonarchToken();
+      r = await callMonarchGQL(token);
+    }
+
+    if (!r.ok) {
+      const body = await r.text().catch(() => '');
+      return res.status(r.status).json({ error: `Monarch returned ${r.status}`, detail: body.slice(0, 300) });
+    }
+
+    const data = await r.json();
+    if (data.errors) {
+      return res.status(400).json({ error: 'Monarch GraphQL error: ' + (data.errors[0]?.message ?? JSON.stringify(data.errors[0])) });
+    }
+
+    const excludes = new Set((process.env.MONARCH_EXCLUDE_ACCOUNTS || '').split(',').map(s => s.trim()).filter(Boolean));
+    const accounts = (data?.data?.accounts ?? []).filter(a => !a.isHidden && !excludes.has(a.id) && !excludes.has(a.displayName));
+    let assets = 0, liabilities = 0, retirement = 0, newestAt = null;
+
+    for (const acct of accounts) {
+      const bal = acct.currentBalance ?? 0;
+      const sub = (acct.subtype?.name ?? '').toLowerCase().replace(/[\s-]/g, '_');
+      if (acct.isAsset) {
+        const pos = Math.max(0, bal);
+        assets += pos;
+        if (RETIREMENT_SUBTYPES.has(sub) || sub.includes('401') || sub.includes('ira') || sub.includes('retirement')) {
+          retirement += pos;
+        }
+      } else {
+        liabilities += Math.abs(Math.min(0, bal));
+      }
+      if (acct.updatedAt) {
+        const d = new Date(acct.updatedAt);
+        if (!newestAt || d > new Date(newestAt)) newestAt = acct.updatedAt;
+      }
+    }
+
+    const updatedAt = newestAt ?? new Date().toISOString();
+    res.json({
+      netWorth:    { value: Math.round(assets - liabilities), updatedAt },
+      assets:      { value: Math.round(assets),               updatedAt },
+      liabilities: { value: Math.round(liabilities),          updatedAt },
+      retirement:  retirement > 0 ? { value: Math.round(retirement), updatedAt } : null,
     });
   } catch (err) {
-    return res.status(502).json({ error: 'Monarch unreachable: ' + err.message });
+    console.error('Monarch sync error:', err);
+    res.status(502).json({ error: 'Monarch sync error: ' + err.message });
   }
-
-  if (!r.ok) {
-    const body = await r.text().catch(() => '');
-    return res.status(r.status).json({ error: `Monarch returned ${r.status}`, detail: body.slice(0, 300) });
-  }
-
-  const data = await r.json();
-  if (data.errors) {
-    return res.status(400).json({ error: 'Monarch GraphQL error: ' + (data.errors[0]?.message ?? JSON.stringify(data.errors[0])) });
-  }
-
-  const accounts = (data?.data?.accounts ?? []).filter(a => !a.isHidden);
-  let assets = 0, liabilities = 0, retirement = 0, newestAt = null;
-
-  for (const acct of accounts) {
-    const bal = acct.currentBalance ?? 0;
-    const sub = (acct.subtype?.name ?? '').toLowerCase().replace(/[\s-]/g, '_');
-    if (acct.isAsset) {
-      const pos = Math.max(0, bal);
-      assets += pos;
-      if (RETIREMENT_SUBTYPES.has(sub) || sub.includes('401') || sub.includes('ira') || sub.includes('retirement')) {
-        retirement += pos;
-      }
-    } else {
-      liabilities += Math.abs(Math.min(0, bal));
-    }
-    if (acct.updatedAt) {
-      const d = new Date(acct.updatedAt);
-      if (!newestAt || d > new Date(newestAt)) newestAt = acct.updatedAt;
-    }
-  }
-
-  const updatedAt = newestAt ?? new Date().toISOString();
-  res.json({
-    netWorth:    { value: Math.round(assets - liabilities), updatedAt },
-    assets:      { value: Math.round(assets),               updatedAt },
-    liabilities: { value: Math.round(liabilities),          updatedAt },
-    retirement:  retirement > 0 ? { value: Math.round(retirement), updatedAt } : null,
-  });
 });
 
 // ── Snapshots (annual history) ──────────────────────────────────────────────
