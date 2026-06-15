@@ -1657,6 +1657,37 @@ app.get('/api/briefing/live', async (req, res) => {
   }
 });
 
+// Markets-only refresh — fetches fresh RSS stories + LLM brief, merges into the
+// cached briefing, and returns just the new markets object. ~15-30s. Use this
+// at end of day for an EOD market summary without triggering a full rebuild.
+app.post('/api/briefing/markets', async (req, res) => {
+  try {
+    const prior = await briefingsStore.latestBriefing('daily');
+    if (!prior?.content) {
+      return res.status(409).json({ error: 'no briefing built yet — load the briefing first' });
+    }
+
+    const EXT = Number(process.env.BRIEFING_SOURCE_TIMEOUT_MS || 12000);
+    const markets = await withTimeout(fetchMarkets(), EXT * 3, 'markets').catch((err) => {
+      console.error('[briefing markets] fetch failed:', err.message);
+      return null;
+    });
+
+    if (!markets) {
+      return res.status(503).json({ error: 'markets fetch failed — check feeds or try again' });
+    }
+
+    const content = { ...prior.content, markets };
+    briefingsStore
+      .saveBriefing({ kind: 'daily', content })
+      .catch((err) => console.error('[briefing markets] save failed:', err.message));
+
+    res.json({ markets });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Non-blocking briefing rebuild trigger. Railway's proxy terminates HTTP connections
 // around 60s, but a full briefing build (LLM + external sources) takes 60–90s, so
 // every "Rebuild" button tap that waits inline gets killed mid-flight and the client

@@ -249,6 +249,7 @@ export default function App() {
           <>
             <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
             <TodayForecastCard forecast={d?.todayForecast} />
+            {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
 
             <CollapsibleSection title="Today's Full Briefing">
               {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
@@ -261,7 +262,6 @@ export default function App() {
               {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
               <ReviewCard review={d?.weeklyReview ?? null} compact actions={d?.leverageActions ?? []} />
               <AffirmationsCard />
-              {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
               <SleepLogCard />
             </CollapsibleSection>
 
