@@ -1649,41 +1649,20 @@ app.get('/api/debug/work-calendar', async (req, res) => {
   }
 });
 
-// Smoke-test for the Monarch MCP integration: mints an access token from the
-// refresh token, then asks Claude to list + call a Monarch tool via the MCP
-// connector. Confirms auth, connectivity, and that tools are reachable.
+// Lightweight Monarch MCP health check — confirms the integration is configured
+// and the refresh-token → access-token exchange works, WITHOUT dumping any
+// financial data. (The raw tool-shape probes used while building the sync were
+// removed; use scripts or the sync connector to inspect data.)
 app.get('/api/debug/monarch-mcp', async (req, res) => {
   try {
     const monarchMcp = require('./src/services/monarch-mcp');
     if (!monarchMcp.isConfigured()) {
       return res.json({ configured: false, hint: 'Set MONARCH_MCP_REFRESH_TOKEN and MONARCH_MCP_CLIENT_ID' });
     }
-    const result = await monarchMcp.probe();
-    res.json({ configured: true, ...result });
+    await monarchMcp.getAccessToken(); // throws if the refresh token is bad
+    res.json({ configured: true, tokenOk: true });
   } catch (err) {
-    res.status(500).json({ error: err.response?.data || err.message });
-  }
-});
-
-// Raw Monarch MCP JSON-RPC probe (NO LLM) — for inspecting tool shapes while
-// building the direct-sync mappers. No `tool` query param lists all tools;
-// ?tool=GetCashFlow[&args={...}] calls one and returns its parsed JSON payload.
-app.get('/api/debug/monarch-mcp-raw', async (req, res) => {
-  try {
-    const rpc = require('./src/services/monarch-mcp-rpc');
-    const tool = req.query.tool;
-    if (!tool) {
-      const tools = await rpc.listTools();
-      return res.json({ tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) });
-    }
-    let args = {};
-    if (req.query.args) {
-      try { args = JSON.parse(req.query.args); } catch { return res.status(400).json({ error: 'args must be valid JSON' }); }
-    }
-    const result = await rpc.callToolJson(String(tool), args);
-    res.json({ tool, args, result });
-  } catch (err) {
-    res.status(500).json({ error: err.response?.data || err.message });
+    res.status(500).json({ configured: true, tokenOk: false, error: err.response?.data || err.message });
   }
 });
 
