@@ -304,12 +304,13 @@ async function loadFromServer(){
     }
     if(scRes.ok){
       const sc=await scRes.json();
-      scenarios=sc.map((s,i)=>({
-        id:s.id,name:s.name,
-        color:s.color||COLORS[i%COLORS.length],
-        params:migrateP(s.params||{}),
-        results:run({...D,...migrateP(s.params||{})})
-      }));
+      scenarios=sc.map((s,i)=>{
+        const params=migrateP(s.params||{});
+        let results;
+        try{results=run({...D,...params});}
+        catch(e){console.warn('scenario rehydrate failed:',s.name,e);results=run({...D});}
+        return{id:s.id,name:s.name,color:s.color||COLORS[i%COLORS.length],params,results};
+      });
     }
   }catch(e){console.error('loadFromServer error:',e)}
   buildControls();render();
@@ -641,16 +642,27 @@ async function saveScenario(){
   const s={id,name:n,params:{...P},results:run(P),color:COLORS[scenarios.length%COLORS.length]};
   scenarios.push(s);
   activeScenarioIdx=scenarios.length-1;
-  fetch('/api/scenarios',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:s.id,name:s.name,color:s.color,params:s.params,results:s.results})}).catch(()=>{});
   buildControls();render();savePlannerState();
+  try{
+    const r=await fetch('/api/scenarios',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:s.id,name:s.name,color:s.color,params:s.params,results:s.results})});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    setSyncStatus('synced');
+  }catch(e){
+    console.error('saveScenario failed:',e);
+    setSyncStatus('error');
+    alert('⚠️ Scenario saved locally but failed to persist to server.\n\nUse 📤 Export to back up your scenarios — they may be lost on reload.\n\nError: '+e.message);
+  }
 }
 
 async function updateScenario(i){
   scenarios[i].params={...P};scenarios[i].results=run(P);
   activeScenarioIdx=i;
   const s=scenarios[i];
-  fetch('/api/scenarios/'+s.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:s.params,results:s.results})}).catch(()=>{});
   buildControls();render();savePlannerState();
+  try{
+    const r=await fetch('/api/scenarios/'+s.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:s.params,results:s.results})});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+  }catch(e){console.error('updateScenario failed:',e);setSyncStatus('error')}
 }
 
 async function deleteScenario(i){
@@ -659,8 +671,13 @@ async function deleteScenario(i){
   if(!scenarios.length)compareMode=false;
   if(activeScenarioIdx===i)activeScenarioIdx=-1;
   else if(activeScenarioIdx>i)activeScenarioIdx--;
-  if(s.id)fetch('/api/scenarios/'+s.id,{method:'DELETE'}).catch(()=>{});
   buildControls();render();savePlannerState();
+  if(s.id){
+    try{
+      const r=await fetch('/api/scenarios/'+s.id,{method:'DELETE'});
+      if(!r.ok)throw new Error('HTTP '+r.status);
+    }catch(e){console.error('deleteScenario failed:',e);setSyncStatus('error')}
+  }
 }
 
 function toggleCompare(){compareMode=!compareMode;buildControls();render();savePlannerState()}

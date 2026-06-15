@@ -255,6 +255,24 @@ app.delete('/api/scenarios/:id', requireAuth, async (req, res) => {
   }
 });
 
+// ── Debug ──────────────────────────────────────────────────────────────────
+app.get('/api/debug/db', requireAuth, async (req, res) => {
+  try {
+    const [sc, pl, sn] = await Promise.all([
+      db.query('SELECT id, name, color, created_at FROM scenarios ORDER BY created_at'),
+      db.query('SELECT id, updated_at FROM planner_state'),
+      db.query('SELECT id, label, created_at FROM snapshots ORDER BY created_at'),
+    ]);
+    res.json({
+      scenarios: sc.rows,
+      planner_state_rows: pl.rowCount,
+      snapshots: sn.rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Snapshots (annual history) ──────────────────────────────────────────────
 app.get('/api/snapshots', requireAuth, async (req, res) => {
   try {
