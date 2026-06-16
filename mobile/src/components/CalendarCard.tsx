@@ -2,48 +2,106 @@ import React from 'react';
 import { View, Text, StyleSheet, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import type { CalendarEvent } from '../hooks/useBriefing';
+import type { CalendarEvent, WorkBusyBlock } from '../hooks/useBriefing';
 
 interface Props {
   events: CalendarEvent[];
+  workBusy?: WorkBusyBlock[];
 }
 
-export function CalendarCard({ events }: Props) {
+interface MergedItem {
+  kind: 'personal' | 'meeting' | 'allday';
+  title: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  location: string | null;
+  sortMin: number;
+}
+
+function parseTimeMin(t: string | null): number {
+  if (!t) return -1;
+  const m = t.match(/(\d+):(\d+)\s*(AM|PM)/i);
+  if (!m) return -1;
+  let h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  const ap = m[3].toUpperCase();
+  if (ap === 'PM' && h !== 12) h += 12;
+  if (ap === 'AM' && h === 12) h = 0;
+  return h * 60 + min;
+}
+
+function buildItems(events: CalendarEvent[], workBusy: WorkBusyBlock[]): MergedItem[] {
+  const allDay: MergedItem[] = events
+    .filter((e) => e.allDay)
+    .map((e) => ({ kind: 'allday', title: e.title, startTime: null, endTime: null, location: e.location, sortMin: -1 }));
+
+  const personal: MergedItem[] = events
+    .filter((e) => !e.allDay)
+    .map((e) => ({
+      kind: 'personal',
+      title: e.title,
+      startTime: e.startTime,
+      endTime: e.endTime,
+      location: e.location,
+      sortMin: parseTimeMin(e.startTime),
+    }));
+
+  const meetings: MergedItem[] = workBusy.map((b) => ({
+    kind: 'meeting',
+    title: null,
+    startTime: b.start,
+    endTime: b.end,
+    location: null,
+    sortMin: parseTimeMin(b.start),
+  }));
+
+  const timed = [...personal, ...meetings].sort((a, b) => a.sortMin - b.sortMin);
+  return [...allDay, ...timed];
+}
+
+export function CalendarCard({ events, workBusy = [] }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
+
+  const items = buildItems(events, workBusy);
+  const isEmpty = items.length === 0;
 
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
       <SectionHeader emoji="📅" title="Today's Calendar" />
 
-      {events.length === 0 ? (
+      {isEmpty ? (
         <Text style={[styles.empty, { color: c.subtext }]}>
           No events today — a clear day. Make it count.
         </Text>
       ) : (
-        events.map((event, index) => (
+        items.map((item, index) => (
           <View key={index}>
             {index > 0 && <View style={[styles.divider, { backgroundColor: c.border }]} />}
             <View style={styles.eventRow}>
               <View style={[styles.timeBlock, { backgroundColor: isDark ? '#2A2A28' : '#F3F3F0' }]}>
-                {event.allDay ? (
+                {item.kind === 'allday' ? (
                   <Text style={[styles.allDay, { color: c.subtext }]}>All Day</Text>
                 ) : (
                   <>
-                    <Text style={[styles.time, { color: c.text }]}>{event.startTime}</Text>
-                    {event.endTime && (
-                      <Text style={[styles.timeEnd, { color: c.subtext }]}>{event.endTime}</Text>
+                    <Text style={[styles.time, { color: c.text }]}>{item.startTime}</Text>
+                    {item.endTime && (
+                      <Text style={[styles.timeEnd, { color: c.subtext }]}>{item.endTime}</Text>
                     )}
                   </>
                 )}
               </View>
               <View style={styles.eventDetails}>
-                <Text style={[styles.eventTitle, { color: c.text }]} numberOfLines={2}>
-                  {event.title}
-                </Text>
-                {event.location && (
+                {item.kind === 'meeting' ? (
+                  <Text style={[styles.meetingTitle, { color: c.subtext }]}>Meeting</Text>
+                ) : (
+                  <Text style={[styles.eventTitle, { color: c.text }]} numberOfLines={2}>
+                    {item.title}
+                  </Text>
+                )}
+                {item.location && (
                   <Text style={[styles.location, { color: c.subtext }]} numberOfLines={1}>
-                    📍 {event.location}
+                    📍 {item.location}
                   </Text>
                 )}
               </View>
@@ -77,7 +135,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
-    minWidth: 72,
+    minWidth: 80,
     alignItems: 'center',
   },
   time: {
@@ -101,6 +159,10 @@ const styles = StyleSheet.create({
   eventTitle: {
     ...typography.body,
     fontWeight: '500',
+  },
+  meetingTitle: {
+    ...typography.body,
+    fontStyle: 'italic',
   },
   location: {
     ...typography.caption,

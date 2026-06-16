@@ -27,6 +27,7 @@ const TYPE_LABEL: Record<string, string> = {
   activity_impact: 'EXERCISE IMPACT',
   habit_consistency: 'HABIT STREAK',
   habit_split: 'HABIT IMPACT',
+  cross_context: 'CROSS-DOMAIN',
   investments: 'INVESTMENTS',
 };
 

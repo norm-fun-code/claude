@@ -46,6 +46,11 @@ export interface CalendarEvent {
   description: string | null;
 }
 
+export interface WorkBusyBlock {
+  start: string;
+  end: string;
+}
+
 export interface Newsletter {
   name: string;
   title: string;
@@ -218,6 +223,7 @@ export interface BriefingData {
   weather: Weather | null;
   workout: Workout;
   calendar: CalendarEvent[];
+  workBusy?: WorkBusyBlock[];
   newsletters: Newsletter[];
   urgentEmails: UrgentEmail[];
   financeSummary: string[];

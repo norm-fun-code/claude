@@ -188,14 +188,17 @@ export default function App() {
               // Health card gets: health composites + any insight that touches the health domain
               // (including cross-domain habit↔health correlations and habit_split findings).
               const nonHealthDomains = new Set(['habits', 'wellbeing']);
+              const PRIORITY: Record<string, number> = {
+                cross_context: 0, sleep_impact: 1, activity_impact: 2,
+                habit_split: 3, correlation: 4, anomaly: 5, trend: 6,
+              };
               const combined = [
                 ...(d?.healthInsights ?? []),
                 ...(d?.insights ?? []).filter((i) => {
                   if (i.type === 'habit_consistency') return false;
-                  // Keep if at least one domain is outside the habits/wellbeing bucket
                   return i.domains?.some((dom: string) => !nonHealthDomains.has(dom)) ?? true;
                 }),
-              ];
+              ].sort((a, b) => (PRIORITY[a.type] ?? 7) - (PRIORITY[b.type] ?? 7));
               return combined.length > 0 ? (
                 <InsightsCard insights={combined} />
               ) : (
@@ -264,7 +267,7 @@ export default function App() {
               {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
               <WeeklyIntentionsCard />
               <WeatherCard weather={d?.weather ?? null} />
-              {d && (d.calendar?.length ?? 0) > 0 && <CalendarCard events={d.calendar} />}
+              <CalendarCard events={d?.calendar ?? []} workBusy={d?.workBusy ?? []} />
               <CheckinCard />
               <HabitsCard />
               <CheckinHistoryCard />

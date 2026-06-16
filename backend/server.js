@@ -2395,6 +2395,7 @@ app.get('/api/briefing', async (req, res) => {
     weather,
     workout,
     calendar,
+    workBusy: workBusy ?? [],
     urgentEmails: priorIsToday && p?.urgentEmails?.length ? p.urgentEmails : (geminiResult?.urgentEmails ?? []),
     // Quote + insight locked together (see quotePair above) so they always match.
     quote: quotePair.quote,

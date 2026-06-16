@@ -15,7 +15,7 @@ const { computeHealthComposites } = require('./recovery');
 const DEFAULTS = {
   loadDays: 60, // history window pulled from the spine
   trendWindow: 7, // days per side for recent-vs-prior
-  trendMinPct: 0.1, // |change| >= 10% to report
+  trendMinPct: 0.2, // |change| >= 20% to report
   corrWindow: 30, // days considered for correlation
   corrMinN: 20, // min aligned day-pairs (raised: r≥0.5 at n=10 isn't significant)
   corrMinAbsR: 0.5, // |r| >= 0.5 to report
@@ -273,15 +273,15 @@ function computeCorrelations(seriesByKey, opts = {}) {
     const labelB = cat.label(b.domain, b.metric);
     const strength = Math.abs(c.r) >= 0.7 ? 'strong' : 'moderate';
     const sign = c.r >= 0 ? 'positive' : 'negative';
-    const lagNote = c.lag === 0 ? 'same-day' : `${labelB} ${c.lag}d later`;
+    const timing = c.lag === 0 ? 'same-day' : `next-day`;
     const domains = [...new Set([a.domain, b.domain])];
-    const status = c.confirmed ? ' [confirmed]' : ' [candidate — needs an experiment]';
+    const confirmNote = c.confirmed ? `confirmed across ${c.n} days` : `candidate — ${c.n} days, needs more data`;
 
     return {
       type: 'correlation',
       domains,
-      title: `${labelA} ↔ ${labelB}: ${strength} ${sign} correlation${status}`,
-      detail: `${labelA} and ${labelB} move ${sign === 'positive' ? 'together' : 'inversely'} (r=${round(c.r)}, n=${c.n}, p=${c.p == null ? 'n/a' : round(c.p, 3)}, ${lagNote}). ${c.confirmed ? 'Held on both halves of the window.' : 'Not yet confirmed on a holdout.'} Association, not proof of cause.`,
+      title: `${labelA} ↔ ${labelB}: ${strength} ${timing} link (${confirmNote})`,
+      detail: `${labelA} and ${labelB} move ${sign === 'positive' ? 'together' : 'inversely'} — a ${strength} ${timing} association${c.confirmed ? ' that held consistently across your data' : ' not yet confirmed on a holdout'}. r=${round(c.r)}, n=${c.n}. Association, not proof of cause.`,
       // Confidence blends effect size with statistical significance, so a strong
       // r on thin data isn't over-trusted.
       confidence: round(Math.abs(c.r) * (c.confirmed ? 1 : 0.6) * (c.p != null && c.p < 0.05 ? 1 : 0.7), 3),
