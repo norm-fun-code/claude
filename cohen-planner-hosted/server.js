@@ -635,24 +635,64 @@ app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
 // Extract income+expense pair from a GetCashFlow response (any shape)
 function extractCashflowPair(obj) {
   if (!obj || typeof obj !== 'object') return null;
-  const n = (v) => (v != null) ? Math.abs(num(v)) : null;
 
-  // Direct top-level fields
-  const inc = n(obj.income ?? obj.total_income ?? obj.totalIncome ?? obj.income_total);
-  const exp = n(obj.expenses ?? obj.expense ?? obj.spending ?? obj.total_expenses
-    ?? obj.totalExpenses ?? obj.totalSpending ?? obj.expense_total);
+  // Converts any value to a positive number: handles numbers, strings, and
+  // nested objects like {total: 80000} or {amount: -80000}
+  const toNum = (v) => {
+    if (v == null) return null;
+    if (typeof v === 'number') return Math.abs(v);
+    if (typeof v === 'string') {
+      const n2 = parseFloat(v.replace(/[^0-9.\-]/g, ''));
+      return isNaN(n2) ? null : Math.abs(n2);
+    }
+    if (typeof v === 'object' && !Array.isArray(v)) {
+      for (const k of ['total', 'sum', 'amount', 'value', 'totalAmount', 'total_amount']) {
+        if (typeof v[k] === 'number') return Math.abs(v[k]);
+      }
+    }
+    return null;
+  };
+
+  const INC = ['income', 'total_income', 'totalIncome', 'income_total', 'incomeTotal'];
+  const EXP = ['expenses', 'expense', 'spending', 'total_expenses', 'totalExpenses',
+               'totalSpending', 'expense_total', 'expenseTotal', 'spendingTotal'];
+
+  // ── Array: sum income and expense across all monthly/category items ──
+  if (Array.isArray(obj)) {
+    let totalInc = 0, totalExp = 0, foundInc = false, foundExp = false;
+    for (const item of obj) {
+      if (!item || typeof item !== 'object') continue;
+      for (const k of INC) { const v = toNum(item[k]); if (v != null) { totalInc += v; foundInc = true; break; } }
+      for (const k of EXP) { const v = toNum(item[k]); if (v != null) { totalExp += v; foundExp = true; break; } }
+    }
+    if (foundInc || foundExp) return { income: totalInc, expense: totalExp };
+    // Recurse into single-item arrays
+    if (obj.length === 1) return extractCashflowPair(obj[0]);
+    return null;
+  }
+
+  // ── Object: try direct fields (numbers OR nested {total:X} objects) ──
+  let inc = null, exp = null;
+  for (const k of INC) { const v = toNum(obj[k]); if (v != null) { inc = v; break; } }
+  for (const k of EXP) { const v = toNum(obj[k]); if (v != null) { exp = v; break; } }
   if (inc != null || exp != null) return { income: inc ?? 0, expense: exp ?? 0 };
 
-  // Recurse into common container keys (but not into per-category arrays)
-  for (const k of ['summary', 'totals', 'cashFlow', 'cash_flow', 'data', 'result', 'overview']) {
-    if (obj[k] && typeof obj[k] === 'object' && !Array.isArray(obj[k])) {
-      const nested = extractCashflowPair(obj[k]);
-      if (nested) return nested;
+  // ── Recurse into array container keys (monthly entries) ──
+  for (const k of ['months', 'byMonth', 'by_month', 'monthly', 'items', 'entries', 'rows', 'periods']) {
+    if (Array.isArray(obj[k]) && obj[k].length > 0) {
+      const r = extractCashflowPair(obj[k]);
+      if (r) return r;
     }
   }
 
-  // If it's an array with one object, check that
-  if (Array.isArray(obj) && obj.length === 1) return extractCashflowPair(obj[0]);
+  // ── Recurse into object container keys ──
+  for (const k of ['summary', 'totals', 'cashFlow', 'cash_flow', 'aggregate',
+                   'data', 'result', 'overview', 'total', 'breakdown']) {
+    if (obj[k] && typeof obj[k] === 'object') {
+      const r = extractCashflowPair(obj[k]);
+      if (r) return r;
+    }
+  }
 
   return null;
 }
@@ -701,7 +741,14 @@ app.get('/api/monarch-cashflow', requireAuth, async (req, res) => {
     if (trAll?.error) throw new Error(`GetCashFlow: ${trAll.error.message || JSON.stringify(trAll.error)}`);
     const rawAll = unwrapMCPResult(trAll);
 
+    // Log shape for debugging (visible in Railway logs)
+    console.log('[cashflow] raw type:', Array.isArray(rawAll) ? `array[${rawAll.length}]` : typeof rawAll);
+    if (rawAll && typeof rawAll === 'object') {
+      console.log('[cashflow] top-level keys:', Array.isArray(rawAll) ? `item0 keys: ${Object.keys(rawAll[0]||{}).join(',')}` : Object.keys(rawAll).join(','));
+    }
+
     const pair = extractCashflowPair(rawAll);
+    console.log('[cashflow] extracted pair:', pair);
     if (pair && (pair.income > 0 || pair.expense > 0)) {
       return res.json({ start, end, income: Math.round(pair.income), expense: Math.round(pair.expense), _debug: { raw: rawAll } });
     }
