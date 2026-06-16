@@ -2198,13 +2198,26 @@ app.get('/api/briefing', async (req, res) => {
     const insightPool = open.filter(
       (f) => f.type !== 'leverage' && f.type !== 'forecast' && f.type !== 'cross_context' && !COMPOSITE_TYPES.includes(f.type)
     );
-    // Show the 5 most confident findings — no 30-day rotation. The Insights tab is
-    // a data dashboard opened on demand; the pickFresh rotation was hiding the card
-    // entirely after the first briefing because all insights appeared "recently seen".
-    insights = insightPool
-      .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
-      .slice(0, 5)
-      .map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains }));
+
+    // Curation layer: score every finding on ONE comparable scale (importance ×
+    // magnitude × confidence × novelty), dedupe redundant single-metric findings,
+    // and rank. Replaces the old per-bucket confidence/type sorts so the strongest,
+    // newest, most actionable findings float to the top of every tab — and a
+    // 45-day-old confirmed correlation recedes instead of re-showing daily.
+    let rankedPool = insightPool;
+    try {
+      rankedPool = await require('./src/intelligence/curate').curate(insightPool);
+    } catch (err) {
+      console.error('[curate] failed, falling back to confidence sort:', err.message);
+      rankedPool = [...insightPool].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+    }
+
+    const slim = (f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains });
+
+    // Today's "What The Data Shows": the top of the curated pool, already ranked
+    // by signal strength. The client splits this into health vs. habit cards by
+    // domain, so send a generous slice (12) to feed both without starving either.
+    insights = rankedPool.slice(0, 12).map(slim);
 
     // Wealth/spending insights for the Wealth tab — spending patterns (this
     // month vs your usual) and over-budget categories (vs Monarch budgets).
@@ -2216,25 +2229,14 @@ app.get('/api/briefing', async (req, res) => {
       errors.push({ service: 'wealth_insights', error: err.message });
     }
 
-    // Health/wellbeing findings for the Health tab. Habit findings only qualify
-    // when they connect to health data (habit_split carries ['habits','health'],
-    // habit↔health correlations carry both domains) — a pure habits trend like
-    // "Gratitude journal down 43%" belongs on Today's nudges, not here.
-    // Prioritize habit_split (habit-vs-health splits) at the top since they're
-    // the most actionable; fill remaining slots with other types.
-    const healthPool = insightPool
-      .filter((f) => Array.isArray(f.domains) && f.domains.some((dn) => ['health', 'wellbeing'].includes(dn)));
-    // Lead with the most actionable, personally-relevant splits: sleep impact
-    // (the lever the user cares most about), then exercise-type → next-day
-    // recovery, then habit↔health splits; fill the rest with other findings.
-    const PRIORITY = ['sleep_impact', 'activity_impact', 'habit_split'];
-    const prioritized = healthPool
-      .filter((f) => PRIORITY.includes(f.type))
-      .sort((a, b) => (PRIORITY.indexOf(a.type) - PRIORITY.indexOf(b.type)) || ((b.confidence ?? 0) - (a.confidence ?? 0)));
-    const others = healthPool.filter((f) => !PRIORITY.includes(f.type));
-    healthInsights = [...prioritized, ...others]
+    // Health/wellbeing findings for the Health tab — any finding that touches the
+    // health or wellbeing domain (habit↔health splits, sleep/activity impact,
+    // health trends/anomalies/correlations). Already ranked by the curator, so
+    // just filter the curated pool and take the top 5 — no re-sorting needed.
+    healthInsights = rankedPool
+      .filter((f) => Array.isArray(f.domains) && f.domains.some((dn) => ['health', 'wellbeing'].includes(dn)))
       .slice(0, 5)
-      .map((f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains }));
+      .map(slim);
 
     // Card-level dismissals: drop any insight the user has explicitly dismissed
     // (e.g. a recurring car payment flagged for "review"), and stamp each survivor

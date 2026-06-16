@@ -183,28 +183,15 @@ export default function App() {
               builtAt={liveRecovery.recovery ? undefined : d?.builtAt}
             />
             <HealthCard health={health} />
-            {(() => {
-              // Insights whose ALL domains are within habits/wellbeing go to HabitTrendsCard.
-              // Health card gets: health composites + any insight that touches the health domain
-              // (including cross-domain habit↔health correlations and habit_split findings).
-              const nonHealthDomains = new Set(['habits', 'wellbeing']);
-              const PRIORITY: Record<string, number> = {
-                cross_context: 0, sleep_impact: 1, activity_impact: 2,
-                habit_split: 3, correlation: 4, anomaly: 5, trend: 6,
-              };
-              const combined = [
-                ...(d?.healthInsights ?? []),
-                ...(d?.insights ?? []).filter((i) => {
-                  if (i.type === 'habit_consistency') return false;
-                  return i.domains?.some((dom: string) => !nonHealthDomains.has(dom)) ?? true;
-                }),
-              ].sort((a, b) => (PRIORITY[a.type] ?? 7) - (PRIORITY[b.type] ?? 7));
-              return combined.length > 0 ? (
-                <InsightsCard insights={combined} />
-              ) : (
-                <EmptyNote c={c} text="Health insights (sleep ↔ HRV ↔ focus patterns) appear once a few days of Apple Health + habit data accumulate. Open the app daily so HealthKit syncs, and log your habits on the Today tab." />
-              );
-            })()}
+            {/* healthInsights is the server-curated top set of health/wellbeing
+                findings — already scored and ranked by signal strength (sleep ↔ HRV
+                ↔ focus impacts, anomalies, correlations). Habit-only findings are
+                routed to the Today tab's HabitTrendsCard instead. */}
+            {(d?.healthInsights?.length ?? 0) > 0 ? (
+              <InsightsCard insights={d!.healthInsights!} />
+            ) : (
+              <EmptyNote c={c} text="Health insights (sleep ↔ HRV ↔ focus patterns) appear once a few days of Apple Health + habit data accumulate. Open the app daily so HealthKit syncs, and log your habits on the Today tab." />
+            )}
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} recoveryScore={liveRecovery.recovery?.score ?? null} />
             <ForecastCard forecasts={d?.forecasts ?? []} />
             {analyzeError && (
