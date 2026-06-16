@@ -453,6 +453,9 @@ async function anchorToToday(){
   if(monarchSnapshot.retirement>0)newP.k401Start=monarchSnapshot.retirement;
   let projEOY=null;
   try{const rr=run(newP);const row=rr.R.find(x=>x.yr===curYr)||rr.R[0];projEOY=row?row.liq:null;}catch(e){}
+  let planLiqToday=null;
+  try{const rr=run(P);const row=rr.R.find(x=>x.yr===curYr)||rr.R[0];planLiqToday=row?row.liq:null;}catch(e){}
+  const actualVsPlan=planLiqToday!=null?todayLiq-planLiqToday:null;
 
   const debugJson=JSON.stringify(cf._debug||{},null,2);
   const ov=document.createElement('div');
@@ -460,6 +463,7 @@ async function anchorToToday(){
   const set401=monarchSnapshot.retirement>0;
   ov.innerHTML=`<div style="background:#fff;border-radius:12px;padding:22px 24px;max-width:460px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.2)">
     <div style="font-size:15px;font-weight:700;color:var(--tx);margin-bottom:4px">⚓ Anchor plan to today</div>
+    ${actualVsPlan!=null?`<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:8px 10px;border-radius:8px;background:${actualVsPlan>=0?'rgba(26,135,84,.07)':'rgba(205,61,100,.05)'};border:1px solid ${actualVsPlan>=0?'rgba(26,135,84,.15)':'rgba(205,61,100,.15)'}"><span style="font-size:18px">${actualVsPlan>=0?'▲':'▼'}</span><div><div style="font-size:12px;font-weight:700;color:${actualVsPlan>=0?'var(--g)':'var(--r)'}">${actualVsPlan>=0?'Ahead of plan':'Behind plan'} by ${fmtF(Math.abs(actualVsPlan))}</div><div style="font-size:10px;color:var(--t2)">Model expected ${fmtF(planLiqToday)} liquid today · Monarch shows ${fmtF(todayLiq)}</div></div></div>`:''}
     <div style="font-size:11px;color:var(--t2);margin-bottom:16px;line-height:1.5">Backs out your ${curYr} year-to-date flows to find your implied Jan-1 liquid, so the rest of the year isn't double-counted.</div>
     <div style="display:flex;flex-direction:column;gap:7px;font-size:12px;font-family:'SF Mono',monospace">
       <div style="display:flex;justify-content:space-between"><span style="color:var(--t2)">Today's liquid</span><span style="font-weight:600">${fmtF(todayLiq)}</span></div>
@@ -766,7 +770,7 @@ function renderSnapshotBar(){
   h+='</div>';el.innerHTML=h;
 }
 
-let _collapsedSections=new Set(JSON.parse(localStorage.getItem('plannerCollapsed')||'[]'));
+let _collapsedSections=new Set(JSON.parse(localStorage.getItem('plannerCollapsed')||JSON.stringify(['childcare','tuition','plan-start'])));
 function toggleSection(key){_collapsedSections.has(key)?_collapsedSections.delete(key):_collapsedSections.add(key);localStorage.setItem('plannerCollapsed',JSON.stringify([..._collapsedSections]));buildControls()}
 
 function buildControls(){
@@ -1033,18 +1037,34 @@ function render(){
   if(activeTab==='nw'){
     const po=posOpts();
     const ds=[{label:'Total NW'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.nw,r.yr))],borderColor:'#635bff',backgroundColor:'rgba(99,91,255,.06)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2.5},{label:'Liquid'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.liq,r.yr))],borderColor:'#0073e6',backgroundColor:'rgba(0,115,230,.04)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2},{label:'Equity'+(inflationView?' (real)':''),data:[0,...R.map(r=>deflK(r.eq,r.yr))],borderColor:'#7c3aed',fill:false,tension:.3,pointRadius:1,borderWidth:1.5,borderDash:[4,3]}];
+    if(_stressMode){
+      const bear=run({...P,investReturn:Math.max(.02,P.investReturn-.02),expenseInflation:Math.min(.06,P.expenseInflation+.01)});
+      const bull=run({...P,investReturn:Math.min(.12,P.investReturn+.02),expenseInflation:Math.max(.01,P.expenseInflation-.005)});
+      ds.push({label:'Bear (return −2%, spend +1%)',data:[startLiqK,...bear.R.map(r=>deflK(r.liq,r.yr))],borderColor:'rgba(205,61,100,.7)',fill:false,tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[4,3]});
+      ds.push({label:'Bull (return +2%, spend −0.5%)',data:[startLiqK,...bull.R.map(r=>deflK(r.liq,r.yr))],borderColor:'rgba(26,135,84,.7)',fill:false,tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[4,3]});
+    }
     if(compareMode)scenarios.forEach(s=>{const sLiq=Math.round((s.params.startingLiquid||P.startingLiquid)/1000);ds.push({label:s.name+' Liquid',data:[sLiq,...s.results.R.map(r=>deflK(r.liq,r.yr))],borderColor:s.color,fill:false,tension:.3,pointRadius:3,pointBackgroundColor:s.color,borderWidth:3.5})});
     // Snapshot overlay — compare a saved projection against the current plan
     if(overlaySnapId){const sn=snapshots.find(x=>x.id===overlaySnapId);if(sn&&sn.params){const sr=run({...D,...migrateP(sn.params)});const so=String((sn.params.planStartYear||sy0)-1);ds.push({label:'📸 '+sn.label+' (NW)',data:[Math.round((sn.params.startingLiquid||P.startingLiquid)/1000),...sr.R.map(r=>deflK(r.nw,r.yr))],borderColor:'#bf6900',fill:false,tension:.3,pointRadius:0,borderWidth:2,borderDash:[6,3]})}}
     const _mNwDot=_mDotDs(_mImpliedLiqK,'📍 Actual NW (Monarch)');if(_mNwDot)ds.push(_mNwDot);
     if(!reuseChart||!_updateChart(ds,nwLabels)){if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';const ctx2=document.getElementById('cv').getContext('2d');charts.main=new Chart(ctx2,{type:'line',data:{labels:nwLabels,datasets:ds},options:po})}
   } else if(activeTab==='income'){
-    const dsInc=[{label:'Norm Gross',data:R.map(r=>Math.round(r.normG/1000)),backgroundColor:'rgba(0,115,230,.6)',borderRadius:2},{label:'Nancy Gross',data:R.map(r=>Math.round(r.nancyG/1000)),backgroundColor:'rgba(124,58,237,.6)',borderRadius:2},{label:'Tax',data:R.map(r=>-Math.round(r.tax/1000)),backgroundColor:'rgba(205,61,100,.5)',borderRadius:2}];
-    if(!reuseChart||!_updateChart(dsInc,labels))charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:dsInc},options:{...opts,scales:{x:{stacked:true,...opts.scales.x},y:{stacked:true,...opts.scales.y,ticks:{...opts.scales.y.ticks,callback:v=>fmtK(v)}}}}});
-  } else if(activeTab==='cashflow'){
-    const dsCF=[{label:'Surplus',data:R.map(r=>Math.round(r.surp/1000)),backgroundColor:R.map(r=>r.surp>=0?'rgba(26,135,84,.6)':'rgba(205,61,100,.6)'),borderRadius:2}];
-    if(compareMode)scenarios.forEach(s=>{dsCF.push({label:s.name,data:s.results.R.map(r=>Math.round(r.surp/1000)),type:'line',borderColor:s.color,fill:false,tension:.3,pointRadius:2,pointBackgroundColor:s.color,borderWidth:3})});
-    if(!reuseChart||!_updateChart(dsCF,labels))charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:dsCF},options:opts});
+    // Sub-toggle bar — injected before chart
+    if(!reuseChart||!document.getElementById('flowToggle')){
+      const toggleEl=document.createElement('div');
+      toggleEl.id='flowToggle';
+      toggleEl.style.cssText='display:flex;gap:4px;margin-bottom:8px';
+      toggleEl.innerHTML=`<button onclick="_flowView='income';render()" style="font-size:10px;padding:4px 10px;border-radius:5px;border:1px solid var(--bd);cursor:pointer;font-family:inherit;background:${_flowView==='income'?'var(--accent)':'var(--s2)'};color:${_flowView==='income'?'#fff':'var(--t2)'}">📊 Income & Tax</button><button onclick="_flowView='cashflow';render()" style="font-size:10px;padding:4px 10px;border-radius:5px;border:1px solid var(--bd);cursor:pointer;font-family:inherit;background:${_flowView==='cashflow'?'var(--accent)':'var(--s2)'};color:${_flowView==='cashflow'?'#fff':'var(--t2)'}">💸 Cash Flow</button>`;
+      ca.insertAdjacentElement('beforebegin',toggleEl);
+    }
+    if(_flowView==='cashflow'){
+      const dsCF=[{label:'Surplus',data:R.map(r=>Math.round(r.surp/1000)),backgroundColor:R.map(r=>r.surp>=0?'rgba(26,135,84,.6)':'rgba(205,61,100,.6)'),borderRadius:2}];
+      if(compareMode)scenarios.forEach(s=>{dsCF.push({label:s.name,data:s.results.R.map(r=>Math.round(r.surp/1000)),type:'line',borderColor:s.color,fill:false,tension:.3,pointRadius:2,pointBackgroundColor:s.color,borderWidth:3})});
+      if(!reuseChart||!_updateChart(dsCF,labels))charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:dsCF},options:opts});
+    } else {
+      const dsInc=[{label:'Norm Gross',data:R.map(r=>Math.round(r.normG/1000)),backgroundColor:'rgba(0,115,230,.6)',borderRadius:2},{label:'Nancy Gross',data:R.map(r=>Math.round(r.nancyG/1000)),backgroundColor:'rgba(124,58,237,.6)',borderRadius:2},{label:'Tax',data:R.map(r=>-Math.round(r.tax/1000)),backgroundColor:'rgba(205,61,100,.5)',borderRadius:2}];
+      if(!reuseChart||!_updateChart(dsInc,labels))charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:dsInc},options:{...opts,scales:{x:{stacked:true,...opts.scales.x},y:{stacked:true,...opts.scales.y,ticks:{...opts.scales.y.ticks,callback:v=>fmtK(v)}}}}});
+    }
   }
   document.getElementById('summaries').innerHTML=`
     <div class="sc"><h3>🏠 Home</h3><p><span class="mono" style="font-weight:600;color:var(--tx)">${fmt(P.homePrice)}</span> in ${P.homePurchaseYear}<br>${P.downPctg}% down · <span class="mono">${fmt(mm)}/mo</span> at ${P.mortgageRate}%</p></div>
@@ -1535,6 +1555,33 @@ function renderGoalsTab(R,P,tT){
   // ── build HTML ──
   let h=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px">`;
 
+  // Priority action items
+  const _actions=[];
+  // 1. Down payment
+  if(!dpOnTrack){_actions.push({icon:'🏠',color:'var(--a)',text:`Need ${fmt(dpShortfall)} more for down payment — save ~${fmt(dpMoNeeded)}/mo for ${yearsLeft} yr${yearsLeft!==1?'s':''}`});}
+  else{_actions.push({icon:'🏠',color:'var(--g)',text:`Down payment on track — projected ${fmt(Math.round(projLiq/dp*100))}% funded in ${P.homePurchaseYear}`});}
+  // 2. Nancy trajectory
+  const nancyMatYr=P.nancyRampYear+P.nancyRampYears;
+  const nancyMatRow=R.find(r=>r.yr===nancyMatYr);
+  if(nancyMatRow){_actions.push({icon:'👩‍⚕️',color:'var(--p)',text:`Nancy hits full capacity (~${fmt(Math.round(P.nancyMaxClients*P.nancyHourlyRate*P.nancyWeeksPerYear))}/yr) in ${nancyMatYr}`});}
+  // 3. Liquid floor
+  const minLiqRow=R.reduce((a,b)=>b.liq<a.liq?b:a,R[0]);
+  if(minLiqRow.liq<500000){_actions.push({icon:'⚠️',color:'var(--r)',text:`Liquid hits floor of ${fmt(minLiqRow.liq)} in ${minLiqRow.yr} — consider increasing savings rate or deferring home purchase`});}
+  else{_actions.push({icon:'💧',color:'var(--g)',text:`Liquid floor ${fmt(minLiqRow.liq)} in ${minLiqRow.yr} — above $500K safety cushion`});}
+  // 4. Deficit years
+  const defCount=R.filter(r=>r.surp<0).length;
+  if(defCount>5){_actions.push({icon:'📉',color:'var(--r)',text:`${defCount} deficit years — plan draws down savings heavily; sensitivity to return assumptions is high`});}
+
+  h+=`<div style="background:linear-gradient(135deg,var(--s1),var(--s2));border:1px solid var(--bd);border-radius:10px;padding:14px 16px">
+    <div style="font-size:11px;font-weight:700;color:var(--tx);margin-bottom:10px;display:flex;align-items:center;gap:6px"><span>🎯</span><span>Priority Action Items</span></div>
+    <div style="display:flex;flex-direction:column;gap:7px">
+      ${_actions.map((a,i)=>`<div style="display:flex;align-items:flex-start;gap:8px">
+        <span style="font-size:13px;flex-shrink:0;margin-top:1px">${a.icon}</span>
+        <span style="font-size:11px;line-height:1.5;color:var(--t2)">${a.text}</span>
+      </div>`).join('')}
+    </div>
+  </div>`;
+
   // GOAL 0: Monarch live snapshot
   if(monarchSnapshot){
     const curYr=new Date().getFullYear();
@@ -1912,13 +1959,12 @@ function renderCompareTab(R,P){
   ca.innerHTML=h;
   document.getElementById('summaries').innerHTML='';
 }
-function setTab(t){activeTab=t;document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));render();savePlannerState()}
+function setTab(t){if(t==='cashflow'){t='income';_flowView='cashflow';}activeTab=t;document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));render();savePlannerState()}
 document.getElementById('main').innerHTML=`
   <div class="kpi-grid" id="kpis"></div><div id="scenarioBar"></div><div id="snapshotBar"></div>
   <div class="tabs">
     <button class="active" data-tab="nw" onclick="setTab('nw')">📈 Net Worth</button>
-    <button data-tab="income" onclick="setTab('income')">💰 Income & Tax</button>
-    <button data-tab="cashflow" onclick="setTab('cashflow')">💸 Cash Flow</button>
+    <button data-tab="income" onclick="setTab('income')">💰 Income & Cash Flow</button>
     <button data-tab="table" onclick="setTab('table')">📋 Table</button>
     <button data-tab="goals" onclick="setTab('goals')">🎯 Goals</button>
     <button data-tab="housing" onclick="setTab('housing')">🏠 Housing</button>
@@ -1926,6 +1972,7 @@ document.getElementById('main').innerHTML=`
     <button data-tab="compare" onclick="setTab('compare')">⚖ Compare</button>
     <button data-tab="advisor" onclick="setTab('advisor')">🤖 AI Advisor</button>
     <button id="inflBtn" onclick="toggleInflation()" style="margin-left:auto;font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit">Real $</button>
+    <button id="stressBtn" onclick="_stressMode=!_stressMode;this.style.background=_stressMode?'rgba(205,61,100,.15)':'var(--s2)';this.style.color=_stressMode?'var(--r)':'var(--t2)';this.style.borderColor=_stressMode?'rgba(205,61,100,.3)':'var(--bd)';render()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Show bear/bull range">⚡ Range</button>
     <button onclick="exportCSV()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Download projection table as CSV">⬇ CSV</button>
     <button onclick="printPDF()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Print / Save as PDF">🖨 PDF</button>
     <button onclick="showSnapshotInput()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid rgba(8,145,178,.3);background:#e0f7fa;color:var(--c);cursor:pointer;font-family:inherit" title="Save a dated copy of this plan">📸 Snapshot</button>
@@ -1939,6 +1986,8 @@ let advisorActiveChatId=null;
 let advisorConversation=[];
 let advAgenticMode=false;
 let advPendingProposals=null; // {changes:[...], aiParams:{...}} from last agentic response
+let _flowView='income';
+let _stressMode=false;
 
 function advToggleAgentic(){
   advAgenticMode=!advAgenticMode;
