@@ -11,8 +11,14 @@ import {
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { INTENTIONS_URL, INTENTIONS_CURRENT_URL, INTENTIONS_RESULTS_URL, authHeaders, fetchWithTimeout } from '../config';
+import { WeeklyReview, LeverageAction } from '../hooks/useBriefing';
 
 type PriorGoal = { text: string; achieved: boolean };
+
+interface Props {
+  review?: WeeklyReview | null;
+  actions?: LeverageAction[];
+}
 
 // Sunday weekly check-in: the week's life context (free text) + up to 3 focus
 // goals. This is the input the intelligence layer kept referencing — it feeds
@@ -33,7 +39,7 @@ function isSunday(): boolean {
   return easternDayOfWeek() === 0;
 }
 
-export function WeeklyIntentionsCard() {
+export function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -46,9 +52,6 @@ export function WeeklyIntentionsCard() {
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
-  // Last week's goals (to mark hit/missed each Sunday) + the week they belong to.
-  const [priorGoals, setPriorGoals] = useState<PriorGoal[]>([]);
-  const [priorWeek, setPriorWeek] = useState<string | null>(null);
   // Current week's goals with live achieved state — tappable any day of the week.
   const [currentGoals, setCurrentGoals] = useState<PriorGoal[]>([]);
   const [currentWeek, setCurrentWeek] = useState<string | null>(null);
@@ -60,19 +63,8 @@ export function WeeklyIntentionsCard() {
       try {
         const res = await fetchWithTimeout(INTENTIONS_CURRENT_URL, { headers: authHeaders() });
         if (cancelled || !res.ok) return;
-        const { intention, prior } = await res.json();
+        const { intention } = await res.json();
         if (cancelled) return;
-        if (prior && Array.isArray(prior.goals) && prior.goals.length) {
-          setPriorGoals(
-            prior.goals
-              .map((g: unknown) => {
-                const o = (g ?? {}) as { text?: unknown; achieved?: unknown };
-                return { text: String(o.text ?? ''), achieved: o.achieved === true };
-              })
-              .filter((g: PriorGoal) => g.text)
-          );
-          setPriorWeek(typeof prior.weekStart === 'string' ? prior.weekStart : null);
-        }
         if (intention) {
           setContext(typeof intention.context === 'string' ? intention.context : '');
           if (typeof intention.weekStart === 'string') setCurrentWeek(intention.weekStart);
@@ -107,12 +99,11 @@ export function WeeklyIntentionsCard() {
     return () => { cancelled = true; };
   }, []);
 
-  // Visibility: show when it's Sunday OR there's no entry for the week yet (so it
-  // lingers into the week until you set it), unless dismissed. Once saved, it
-  // only shows on Sundays as a compact summary you can tap to edit.
+  // Visibility: show when it's Sunday, when there's an entry for the week, or
+  // when there's an AI review to surface — unless dismissed. If nothing is set
+  // and there's no review, it lingers early in the week (Mon/Tue) then hides.
   if (!loaded || dismissed) return null;
-  if (!saved && !isSunday()) {
-    // Past Sunday with nothing set — still let it linger early in the week (Mon/Tue).
+  if (!saved && !(review && review.headline) && !isSunday()) {
     const dow = easternDayOfWeek();
     if (dow > 2) return null;
   }
@@ -125,25 +116,6 @@ export function WeeklyIntentionsCard() {
   }
   function removeGoal(i: number) {
     setGoals((prev) => (prev.length <= 1 ? [''] : prev.filter((_, idx) => idx !== i)));
-  }
-
-  // Toggle whether last week's goal #i was achieved, and persist immediately
-  // (optimistic — revert on failure). Keyed to the prior week on the server.
-  async function togglePrior(i: number) {
-    const toggled = priorGoals.map((g, idx) => (idx === i ? { ...g, achieved: !g.achieved } : g));
-    setPriorGoals(toggled);
-    try {
-      const res = await fetchWithTimeout(INTENTIONS_RESULTS_URL, {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ weekStart: priorWeek, achieved: toggled.map((g) => g.achieved) }),
-      });
-      if (!res.ok) throw new Error(`Server ${res.status}`);
-    } catch {
-      // Revert only this index via functional update — avoids wiping concurrent
-      // toggles that may have succeeded while this request was in flight.
-      setPriorGoals((prev) => prev.map((g, idx) => (idx === i ? { ...g, achieved: !g.achieved } : g)));
-    }
   }
 
   // Toggle achievement for a CURRENT week goal — available any day, not just Sunday.
@@ -162,24 +134,50 @@ export function WeeklyIntentionsCard() {
     }
   }
 
-  // Last week's goals with a tappable checkmark for hit/missed. Shown on Sundays
-  // above the week's setup so you close the loop before opening a new one.
-  const priorReview =
-    priorGoals.length > 0 && isSunday() ? (
-      <View style={styles.priorBox}>
-        <Text style={[styles.label, { color: c.subtext }]}>Last week — what did you hit?</Text>
-        {priorGoals.map((g, i) => (
-          <TouchableOpacity key={i} onPress={() => togglePrior(i)} style={styles.priorRow} activeOpacity={0.6}>
-            <View
-              style={[
-                styles.checkbox,
-                { borderColor: g.achieved ? c.accent : c.border, backgroundColor: g.achieved ? c.accent : 'transparent' },
-              ]}
-            >
-              {g.achieved && <Text style={styles.checkmark}>✓</Text>}
+  // AI weekly review — replaces the old manual "what did you hit?" checklist.
+  // The achieved state for last week's goals is already captured live (each goal
+  // is tappable through its own week), so the review is the richer retrospective.
+  const hasReview = !!(review && review.headline);
+  const Bullets = ({ label, items, color }: { label: string; items?: string[]; color: string }) =>
+    items && items.length ? (
+      <View style={styles.reviewBlock}>
+        <Text style={[styles.blockLabel, { color: c.subtext }]}>{label}</Text>
+        {items.map((it, i) => (
+          <View key={i} style={styles.bulletRow}>
+            <View style={[styles.dot, { backgroundColor: color }]} />
+            <Text style={[styles.bulletText, { color: c.text }]}>{it}</Text>
+          </View>
+        ))}
+      </View>
+    ) : null;
+
+  const reviewBlock = hasReview ? (
+    <View style={styles.priorBox}>
+      <Text style={[styles.label, { color: c.subtext }]}>Last week</Text>
+      <Text style={[styles.reviewHeadline, { color: c.text }]}>{review!.headline}</Text>
+      {review!.narrative ? (
+        <Text style={[styles.reviewNarrative, { color: c.subtext }]}>{review!.narrative}</Text>
+      ) : null}
+      <Bullets label="WINS" items={review!.wins} color={c.green} />
+      <Bullets label="WATCH-OUTS" items={review!.watchouts} color={c.red} />
+    </View>
+  ) : null;
+
+  // AI's highest-leverage actions for the week, shown under your own goals.
+  const leverageBlock =
+    actions.length > 0 ? (
+      <View style={styles.leverageBox}>
+        <Text style={[styles.label, { color: c.subtext }]}>Highest leverage this week</Text>
+        {actions.map((a, i) => (
+          <View key={i} style={styles.action}>
+            <View style={[styles.rank, { backgroundColor: c.accent }]}>
+              <Text style={styles.rankText}>{i + 1}</Text>
             </View>
-            <Text style={[styles.priorGoalText, { color: c.text }, !g.achieved && { color: c.subtext }]}>{g.text}</Text>
-          </TouchableOpacity>
+            <View style={styles.actionBody}>
+              <Text style={[styles.actionTitle, { color: c.text }]}>{a.title}</Text>
+              {a.detail ? <Text style={[styles.actionDetail, { color: c.subtext }]}>{a.detail}</Text> : null}
+            </View>
+          </View>
         ))}
       </View>
     ) : null;
@@ -206,16 +204,16 @@ export function WeeklyIntentionsCard() {
 
   const cleanGoals = goals.map((g) => g.trim()).filter(Boolean);
 
-  // Compact saved summary (shown on later Sundays, tap to edit).
+  // Saved summary — the day-to-day view: last week's AI review (if any), this
+  // week's goals, and the highest-leverage actions. Tap to edit.
   if (saved && !editing) {
-    const hasPrior = priorGoals.length > 0 && isSunday();
     return (
       <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
-        <SectionHeader emoji="🎯" title={hasPrior ? "Weekly review + reset" : "This week’s focus"} />
-        {priorReview}
+        <SectionHeader emoji="🎯" title={hasReview ? 'Weekly review + reset' : 'This week’s focus'} />
+        {reviewBlock}
         {currentGoals.length > 0 ? (
-          <View style={hasPrior ? styles.thisWeekBox : undefined}>
-            {hasPrior && <Text style={[styles.label, { color: c.subtext, marginBottom: 6 }]}>This week</Text>}
+          <View style={hasReview ? styles.thisWeekBox : undefined}>
+            {hasReview && <Text style={[styles.label, { color: c.subtext, marginBottom: 6 }]}>This week</Text>}
             {currentGoals.map((g, i) => (
               <TouchableOpacity key={i} onPress={() => toggleCurrent(i)} style={styles.priorRow} activeOpacity={0.6}>
                 <View style={[styles.checkbox, { borderColor: g.achieved ? c.accent : c.border, backgroundColor: g.achieved ? c.accent : 'transparent' }]}>
@@ -229,6 +227,7 @@ export function WeeklyIntentionsCard() {
           <Text style={[styles.summaryGoal, { color: c.subtext }]}>No goals set this week.</Text>
         )}
         {context ? <Text style={[styles.summaryContext, { color: c.subtext }]} numberOfLines={4}>{context}</Text> : null}
+        {leverageBlock}
         <TouchableOpacity onPress={() => setEditing(true)} style={styles.editLink}>
           <Text style={[styles.editLinkText, { color: c.accent }]}>Edit</Text>
         </TouchableOpacity>
@@ -240,7 +239,7 @@ export function WeeklyIntentionsCard() {
   return (
     <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
       <SectionHeader emoji="🎯" title="Set your week" />
-      {priorReview}
+      {reviewBlock}
       <Text style={[styles.hint, { color: c.subtext }]}>
         Sunday reset — your focus and what’s going on this week. NormOS uses this to ground its advice and weekly review.
       </Text>
@@ -324,7 +323,22 @@ const styles = StyleSheet.create({
   priorRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.xs },
   checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   checkmark: { color: '#fff', fontSize: 14, fontWeight: '800', lineHeight: 16 },
-  priorGoalText: { ...typography.body, flex: 1 },
+  // AI weekly-review block (last week)
+  reviewHeadline: { ...typography.subtitle, fontSize: 16, marginTop: 2, marginBottom: spacing.xs },
+  reviewNarrative: { ...typography.body, fontSize: 14, marginBottom: spacing.xs, lineHeight: 20 },
+  reviewBlock: { marginTop: spacing.sm },
+  blockLabel: { ...typography.label, fontSize: 10, marginBottom: spacing.xs },
+  bulletRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginBottom: spacing.xs },
+  dot: { width: 6, height: 6, borderRadius: 3, marginTop: 7 },
+  bulletText: { ...typography.body, fontSize: 14, flex: 1 },
+  // Highest-leverage actions block
+  leverageBox: { marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#8884' },
+  action: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm, alignItems: 'flex-start' },
+  rank: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
+  rankText: { fontSize: 13, fontWeight: '700', color: '#fff' },
+  actionBody: { flex: 1 },
+  actionTitle: { ...typography.subtitle, marginBottom: 2 },
+  actionDetail: { ...typography.body, fontSize: 13 },
   summaryGoal: { ...typography.body, fontWeight: '500', marginBottom: 2 },
   summaryContext: { ...typography.caption, fontSize: 13, marginTop: spacing.sm, lineHeight: 19 },
   thisWeekBox: { marginTop: spacing.sm },

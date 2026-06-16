@@ -29,7 +29,6 @@ import { TabBar, TabKey, TABS } from './src/components/TabBar';
 import { ForecastCard } from './src/components/ForecastCard';
 import { LibraryCard } from './src/components/LibraryCard';
 import { AffirmationsCard } from './src/components/AffirmationsCard';
-import { ReviewCard } from './src/components/ReviewCard';
 import { WealthCard } from './src/components/WealthCard';
 import { InsightsCard } from './src/components/InsightsCard';
 import { AskOverlay } from './src/components/AskOverlay';
@@ -250,7 +249,7 @@ export default function App() {
 
             <CollapsibleSection title="Today's Full Briefing">
               {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
-              <WeeklyIntentionsCard />
+              <WeeklyIntentionsCard review={d?.weeklyReview ?? null} actions={d?.leverageActions ?? []} />
               <WeatherCard weather={d?.weather ?? null} />
               <CalendarCard events={d?.calendar ?? []} workBusy={d?.workBusy ?? []} />
               <CheckinCard />
@@ -262,7 +261,6 @@ export default function App() {
               })} />
               <GoalsCard weeklyGoals={d?.weeklyGoals} />
               {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
-              <ReviewCard review={d?.weeklyReview ?? null} compact actions={d?.leverageActions ?? []} />
               <SleepLogCard />
             </CollapsibleSection>
 
