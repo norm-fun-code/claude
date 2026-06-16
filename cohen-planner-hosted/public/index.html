@@ -1,0 +1,2523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cohen Family — Interactive Financial Planner v5</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="/model.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#f6f9fc;
+  --s1:#ffffff;
+  --s2:#fafbfc;
+  --s3:#f0f4f8;
+  --bd:#e6ebf1;
+  --bd2:#d0d7de;
+  --tx:#0a2540;
+  --t2:#425466;
+  --t3:#8898aa;
+  --t4:#adbdcc;
+  --accent:#635bff;
+  --accent-d:#4f48cc;
+  --accent-soft:#eeecff;
+  --g:#1a8754;
+  --g-soft:#e7f4ed;
+  --r:#cd3d64;
+  --r-soft:#fceaee;
+  --a:#bf6900;
+  --a-soft:#fdf3e3;
+  --b:#0073e6;
+  --b-soft:#e6f1ff;
+  --c:#0891b2;
+  --p:#7c3aed;
+  --shadow-sm:0 1px 2px rgba(50,71,92,.04);
+  --shadow:0 2px 5px rgba(50,71,92,.06),0 1px 2px rgba(50,71,92,.04);
+  --shadow-lg:0 8px 20px rgba(50,71,92,.08),0 2px 6px rgba(50,71,92,.04);
+}
+body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--tx);padding:14px 18px;min-height:100vh;font-size:13px;-webkit-font-smoothing:antialiased;font-feature-settings:'ss01','cv11'}
+.mono{font-family:'SF Mono','Fira Code','Courier New',monospace}
+.hdr{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1px solid var(--bd);padding-bottom:10px;margin-bottom:14px}
+.hdr h1{font-size:16px;font-weight:600;color:var(--tx);letter-spacing:-.3px}
+.hdr-right{display:flex;align-items:center;gap:10px}
+.sync-pill{font-size:9px;font-family:'SF Mono',monospace;color:var(--t3);transition:color .2s}
+.sync-pill.saving{color:var(--a)}
+.sync-pill.synced{color:var(--g)}
+.sync-pill.error{color:var(--r)}
+.logout-btn{font-size:9px;padding:3px 9px;background:var(--s2);border:1px solid var(--bd);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3);transition:all .12s}
+.logout-btn:hover{border-color:var(--r);color:var(--r)}
+.layout{display:grid;grid-template-columns:268px 1fr;gap:12px}
+.panel{background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px;max-height:calc(100vh - 70px);overflow-y:auto;box-shadow:var(--shadow-sm)}
+.panel::-webkit-scrollbar{width:5px}.panel::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:3px}
+.st{font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin:12px 0 6px}
+.sr{margin-bottom:8px}.sr .sh{display:flex;justify-content:space-between;margin-bottom:2px}
+.sr .sl{font-size:10px;color:var(--t2);font-weight:500}.sr .sv{font-size:10px;color:var(--tx);font-family:'SF Mono',monospace;font-weight:600}
+.sr input[type=range]{width:100%;accent-color:var(--accent);height:3px;cursor:pointer}
+.kpi-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:12px}
+.kpi{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:9px 11px;box-shadow:var(--shadow-sm);transition:box-shadow .15s}
+.kpi:hover{box-shadow:var(--shadow)}
+.kpi-l{font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:var(--t3);margin-bottom:3px}
+.kpi-v{font-size:16px;font-weight:700;font-family:'SF Mono',monospace;letter-spacing:-.5px;color:var(--tx)}
+.kpi-s{font-size:8.5px;color:var(--t2);margin-top:2px}
+.tabs{display:flex;gap:3px;margin-bottom:10px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:3px;box-shadow:var(--shadow-sm)}
+.tabs button{padding:6px 12px;border-radius:5px;font-size:11px;font-weight:500;cursor:pointer;border:none;background:transparent;color:var(--t2);font-family:inherit;transition:all .12s}
+.tabs button:hover{color:var(--tx);background:var(--s3)}
+.tabs button.active{background:var(--accent);color:#fff;font-weight:600}
+.snap-bar{display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap;align-items:center}
+.snap-chip{padding:4px 9px;border-radius:6px;font-size:9.5px;font-weight:500;cursor:pointer;border:1px solid rgba(8,145,178,.3);background:#e0f7fa;color:var(--c);display:flex;align-items:center;gap:4px;font-family:inherit;transition:all .12s}
+.snap-chip.active{background:var(--c);color:#fff}
+.snap-chip .x{font-size:8px;opacity:.6;margin-left:3px}.snap-chip .x:hover{opacity:1;color:var(--r)}
+@media print{
+  body{padding:0;font-size:11px}
+  .panel,.tabs button#inflBtn,.logout-btn,.sync-pill,.adv-input-area,.scenario-bar,.snap-bar{display:none!important}
+  .tabs button:not(.active){display:none}
+  .layout{grid-template-columns:1fr;display:block}
+  .cc,.kpi,.sc{box-shadow:none;border-color:#ccc}
+  @page{margin:1.2cm}
+}
+.cc{background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:12px;box-shadow:var(--shadow-sm)}
+.sg{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.sc{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:11px;box-shadow:var(--shadow-sm)}
+.sc h3{font-size:8.5px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:var(--t3);margin-bottom:4px}
+.sc p{font-size:10px;color:var(--t2);line-height:1.55}
+.tw{max-height:340px;overflow-y:auto;border:1px solid var(--bd);border-radius:8px}
+table{width:100%;border-collapse:collapse;font-size:10px;font-family:'SF Mono',monospace}
+th{padding:6px 4px;text-align:right;font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:var(--t3);border-bottom:1px solid var(--bd);font-family:'Inter',sans-serif;position:sticky;top:0;background:var(--s2);z-index:1}
+td{padding:3px 4px;text-align:right;border-bottom:1px solid var(--bd);color:var(--t2)}
+tr:hover td{background:var(--s2)}
+.btn{padding:6px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--s1);color:var(--t2);font-size:10px;font-weight:500;cursor:pointer;width:100%;margin-top:3px;font-family:inherit;transition:all .12s}
+.btn:hover{border-color:var(--bd2);color:var(--tx);background:var(--s2)}
+.btn-g{border-color:rgba(99,91,255,.3);color:var(--accent);background:var(--accent-soft)}
+.btn-g:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
+.scenario-bar{display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap;align-items:center}
+.scenario-chip{padding:4px 10px;border-radius:6px;font-size:9.5px;font-weight:500;cursor:pointer;border:1px solid var(--bd);background:var(--s1);color:var(--t2);display:flex;align-items:center;gap:4px;font-family:inherit;transition:all .12s}
+.scenario-chip:hover{border-color:var(--bd2);color:var(--tx);background:var(--s2)}
+.scenario-chip.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:600}
+.scenario-chip .x{font-size:8px;opacity:.5;margin-left:3px;cursor:pointer}.scenario-chip .x:hover{opacity:1;color:var(--r)}
+.solo-box{background:var(--g-soft);border:1px solid rgba(26,135,84,.2);border-radius:6px;padding:8px 10px;margin:5px 0 7px;font-size:10px;color:var(--t2)}
+@media(max-width:900px){.layout{grid-template-columns:1fr}.kpi-grid{grid-template-columns:repeat(3,1fr)}.sg{grid-template-columns:1fr}}
+@media(max-width:640px){
+  body{padding:8px 10px}
+  .hdr{flex-direction:column;align-items:flex-start;gap:6px;padding-bottom:8px;margin-bottom:8px}
+  .hdr h1{font-size:13px}
+  .hdr-right{flex-wrap:wrap;gap:5px}
+  .kpi-grid{grid-template-columns:repeat(2,1fr);gap:5px;margin-bottom:8px}
+  .tabs{overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .tabs::-webkit-scrollbar{display:none}
+  .tabs button{white-space:nowrap;padding:5px 8px;font-size:10px}
+  .layout{display:block}
+  .panel{display:none;margin-bottom:10px;max-height:70vh;overflow-y:auto}
+  .panel.mob-open{display:block}
+  #mobileControlsToggle{display:flex}
+  .tw{overflow-x:auto}
+  .cc{padding:10px}
+  .snap-bar{gap:4px}
+  .scenario-bar{gap:4px}
+}
+@media(min-width:641px){#mobileControlsToggle{display:none}}
+.adv{display:flex;flex-direction:column;height:calc(100vh - 220px);min-height:500px;background:var(--s1);border:1px solid var(--bd);border-radius:9px;overflow:hidden}
+.adv-msgs{flex:1;overflow-y:auto;padding:18px 22px;display:flex;flex-direction:column;gap:14px}
+.adv-msgs::-webkit-scrollbar{width:6px}.adv-msgs::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:3px}
+.adv-msg{display:flex;gap:10px;max-width:760px}
+.adv-msg.user{flex-direction:row-reverse;align-self:flex-end;max-width:560px}
+.adv-avatar{width:26px;height:26px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;font-family:'SF Mono',monospace}
+.adv-avatar.ai{background:var(--accent);color:#fff}
+.adv-avatar.user{background:var(--s3);color:var(--tx);border:1px solid var(--bd2)}
+.adv-bubble{padding:10px 14px;border-radius:8px;font-size:12.5px;line-height:1.6;color:var(--tx)}
+.adv-msg.user .adv-bubble{background:var(--accent-soft);border:1px solid rgba(99,91,255,.15);color:var(--tx)}
+.adv-msg.ai .adv-bubble{background:var(--s1);border:1px solid var(--bd);box-shadow:var(--shadow-sm)}
+.adv-bubble p{margin-bottom:8px}.adv-bubble p:last-child{margin-bottom:0}
+.adv-bubble ul,.adv-bubble ol{margin:6px 0 6px 20px}.adv-bubble li{margin-bottom:3px}
+.adv-bubble strong{color:var(--tx);font-weight:600}
+.adv-bubble code{font-family:'SF Mono',monospace;background:var(--accent-soft);padding:1px 5px;border-radius:3px;font-size:11px;color:var(--accent)}
+.adv-bubble pre{background:var(--bg);padding:8px 10px;border-radius:5px;overflow-x:auto;margin:6px 0;font-size:11px;border:1px solid var(--bd)}
+.adv-bubble table{border-collapse:collapse;margin:8px 0;font-size:11px;width:100%}
+.adv-bubble th,.adv-bubble td{padding:5px 9px;border-bottom:1px solid var(--bd);text-align:left}
+.adv-bubble th{font-weight:700;font-size:9.5px;text-transform:uppercase;color:var(--t3);letter-spacing:.5px}
+.adv-bubble h3{font-size:13px;font-weight:700;margin:10px 0 4px;color:var(--tx)}
+.adv-bubble h4{font-size:12px;font-weight:600;margin:8px 0 3px;color:var(--t2)}
+.adv-input-area{padding:12px 18px 14px;border-top:1px solid var(--bd);background:var(--s1)}
+.adv-input-wrap{display:flex;gap:6px;align-items:flex-end;background:var(--s2);border:1px solid var(--bd2);border-radius:8px;padding:6px}
+.adv-input-wrap:focus-within{border-color:var(--accent)}
+.adv-input{flex:1;background:transparent;border:none;color:var(--tx);font-family:inherit;font-size:12.5px;resize:none;outline:none;padding:6px;min-height:20px;max-height:140px;line-height:1.5}
+.adv-send{background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:5px;cursor:pointer;font-weight:600;font-size:11.5px;font-family:inherit;height:32px}
+.adv-send:hover{background:var(--accent-d)}.adv-send:disabled{background:var(--bd2);cursor:not-allowed}
+.adv-agentic-btn{background:var(--s2);border:1px solid var(--bd);color:var(--t2);padding:5px 9px;border-radius:5px;cursor:pointer;font-size:11px;font-family:inherit;height:32px;transition:all .12s;white-space:nowrap}
+.adv-agentic-btn:hover{border-color:var(--p);color:var(--p)}
+.adv-agentic-btn.active{background:var(--p);color:#fff;border-color:var(--p)}
+.adv-tool-call{display:flex;align-items:flex-start;gap:8px;padding:7px 10px;background:#f3f0ff;border:1px solid rgba(124,58,237,.2);border-radius:6px;font-size:10.5px;color:var(--p);margin:4px 0}
+.adv-tool-call .tc-icon{font-size:13px;flex-shrink:0}
+.adv-tool-call .tc-body{flex:1;line-height:1.45}
+.adv-tool-call strong{color:var(--p)}
+.adv-proposals{background:var(--s1);border:1px solid rgba(124,58,237,.3);border-radius:8px;padding:14px 16px;margin:10px 0;box-shadow:0 2px 8px rgba(124,58,237,.08)}
+.adv-proposals-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.adv-proposals-hdr h4{font-size:11px;font-weight:700;color:var(--p);text-transform:uppercase;letter-spacing:.5px;margin:0}
+.adv-proposals-hdr button{background:transparent;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:0;line-height:1}
+.adv-proposals-hdr button:hover{color:var(--tx)}
+.adv-proposal-list{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.adv-proposal-row{display:flex;align-items:center;gap:6px;font-size:11px;padding:5px 8px;background:var(--s2);border-radius:5px}
+.adv-proposal-key{font-family:'SF Mono',monospace;color:var(--tx);font-weight:600;min-width:110px}
+.adv-proposal-arrow{color:var(--t3);font-size:9px}
+.adv-proposal-old{color:var(--t3);text-decoration:line-through}
+.adv-proposal-new{color:var(--p);font-weight:600}
+.adv-proposal-reason{color:var(--t2);font-size:9.5px;margin-left:auto;text-align:right;max-width:200px}
+.adv-proposals-actions{display:flex;gap:6px}
+.adv-proposals-actions button{padding:6px 11px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .12s}
+.adv-proposals-save{background:var(--p);color:#fff;border:none}
+.adv-proposals-save:hover{background:#6d28d9}
+.adv-proposals-view{background:var(--s2);color:var(--tx);border:1px solid var(--bd)}
+.adv-proposals-view:hover{border-color:var(--bd2)}
+.adv-thinking{display:flex;gap:3px;padding:3px 0}
+.adv-thinking span{width:5px;height:5px;border-radius:50%;background:var(--t3);animation:advblink 1.4s infinite}
+.adv-thinking span:nth-child(2){animation-delay:.2s}.adv-thinking span:nth-child(3){animation-delay:.4s}
+@keyframes advblink{0%,80%,100%{opacity:.3}40%{opacity:1}}
+.adv-welcome{padding:20px;text-align:center;color:var(--t2);font-size:13px;line-height:1.6}
+.adv-welcome h3{color:var(--tx);font-size:16px;margin-bottom:8px;font-weight:700}
+.adv-starters{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-top:14px;text-align:left;max-width:600px;margin-left:auto;margin-right:auto}
+.adv-starter{padding:10px 12px;background:var(--s2);border:1px solid var(--bd);border-radius:6px;cursor:pointer;font-size:11.5px;color:var(--t2);line-height:1.4;transition:all .15s}
+.adv-starter:hover{border-color:var(--accent);color:var(--tx)}
+.adv-starter strong{display:block;color:var(--tx);font-size:12px;margin-bottom:2px}
+.adv-toolbar{display:flex;gap:6px;padding:8px 18px;border-bottom:1px solid var(--bd);background:var(--s1);align-items:center}
+.adv-toolbar .ctx-pill{background:var(--s2);border:1px solid var(--bd);padding:3px 8px;border-radius:4px;font-size:9.5px;color:var(--t2);font-family:'SF Mono',monospace}
+.adv-toolbar .ctx-pill strong{color:var(--g)}
+.adv-toolbar button{background:var(--s2);border:1px solid var(--bd);color:var(--t2);padding:4px 9px;border-radius:4px;cursor:pointer;font-size:10px;font-family:inherit;font-weight:500;margin-left:auto}
+.adv-toolbar button:hover{border-color:var(--bd2);color:var(--tx)}
+.adv-wrap{display:grid;grid-template-columns:240px 1fr;gap:0;height:calc(100vh - 220px);min-height:500px;border:1px solid var(--bd);border-radius:9px;overflow:hidden;background:var(--s1)}
+.adv-rail{background:var(--s2);border-right:1px solid var(--bd);display:flex;flex-direction:column;overflow:hidden}
+.adv-rail-hdr{padding:12px 14px;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center;background:var(--s2)}
+.adv-rail-hdr h4{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:1.1px;color:var(--t3);margin:0}
+.adv-rail-new{background:var(--accent);color:#fff;border:none;padding:4px 10px;border-radius:5px;cursor:pointer;font-size:10.5px;font-weight:600;font-family:inherit;transition:background .12s}
+.adv-rail-new:hover{background:var(--accent-d)}
+.adv-rail-list{flex:1;overflow-y:auto;padding:8px}
+.adv-rail-list::-webkit-scrollbar{width:5px}.adv-rail-list::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:3px}
+.adv-rail-item{padding:9px 11px;border-radius:6px;cursor:pointer;margin-bottom:3px;border:1px solid transparent;font-size:11.5px;color:var(--t2);position:relative;transition:all .12s}
+.adv-rail-item:hover{background:var(--s1);border-color:var(--bd)}
+.adv-rail-item.active{background:var(--s1);border-color:var(--accent)}
+.adv-rail-title{font-weight:600;color:var(--tx);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:22px;font-size:11.5px;line-height:1.3}
+.adv-rail-meta{font-size:9.5px;color:var(--t3);font-family:'SF Mono',monospace;display:flex;justify-content:space-between}
+.adv-rail-actions{position:absolute;top:6px;right:6px;display:none;gap:2px}
+.adv-rail-item:hover .adv-rail-actions{display:flex}
+.adv-rail-actions button{background:var(--s2);border:1px solid var(--bd);width:20px;height:20px;border-radius:3px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:10px;padding:0;color:var(--t2);transition:all .1s}
+.adv-rail-actions button:hover{background:var(--s3);color:var(--tx)}
+.adv-rail-actions button.del:hover{color:var(--r);border-color:var(--r)}
+.adv-rail-empty{color:var(--t3);font-size:11px;text-align:center;padding:18px 8px;line-height:1.5}
+.adv-rail-footer{padding:8px;border-top:1px solid var(--bd);display:flex;flex-direction:column;gap:4px}
+.adv-rail-footer button{background:var(--s1);border:1px solid var(--bd);color:var(--t2);padding:6px 9px;border-radius:5px;cursor:pointer;font-size:10.5px;font-family:inherit;font-weight:500;text-align:left;transition:all .12s}
+.adv-rail-footer button:hover{border-color:var(--bd2);color:var(--tx)}
+.adv-main{display:flex;flex-direction:column;overflow:hidden;background:var(--s1)}
+@media(max-width:900px){.adv-wrap{grid-template-columns:1fr}.adv-rail{display:none}}
+@media(max-width:640px){.adv-wrap{height:auto;min-height:350px}.adv{height:auto;min-height:350px}.adv-starters{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <h1>💰 Cohen Family — Financial Planner v5</h1>
+  <div class="hdr-right">
+      <button id="monarchSyncBtn" onclick="syncMonarch()" style="font-size:9px;padding:3px 9px;background:var(--a-soft);border:1px solid rgba(191,105,0,.3);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--a);transition:all .12s;display:none">📍 Sync Monarch</button>
+      <button id="monarchConnectBtn" onclick="connectMonarch()" style="font-size:9px;padding:3px 9px;background:var(--s2);border:1px solid var(--bd);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2);transition:all .12s">🔗 Connect Monarch</button>
+    <span class="sync-pill" id="syncStatus"></span>
+    <button class="logout-btn" onclick="doLogout()">Log out</button>
+  </div>
+</div>
+<button id="mobileControlsToggle" onclick="toggleMobileControls()" style="margin-bottom:8px;padding:7px 13px;background:var(--s1);border:1px solid var(--bd);border-radius:7px;font-size:11px;font-weight:500;cursor:pointer;font-family:inherit;color:var(--t2);align-items:center;gap:5px">⚙️ <span id="mobileControlsLabel">Settings</span></button>
+<div class="layout">
+  <div class="panel" id="controls"></div>
+  <div id="main"></div>
+</div>
+<script>
+const COLORS=['#ff6b6b','#ffd43b','#ff922b','#e64980','#20c997','#845ef7','#339af0','#f783ac'];
+
+// ═══ TAX ENGINE + PROJECTION MODEL — see /model.js (loaded above) ═══
+
+// ═══ DEFAULTS ═══
+const D={
+  planStartYear:2026,
+  kid1Birth:2027,kid2Birth:2030,kid3Birth:2034,kid4Birth:2037,numKids:3,
+  nannyEndAge:1.5,nannyHourlyRate:30,nannyDaysPerWeek:4,daycareMonthly:2800,
+  tuitionInflation:.035,yeshivaStartAge:2,yeshivaEndAge:17,kid1YeshivaStartAge:3,
+  startingLiquid:1100000,nycRent:5500,
+  // Norm — 4 rolling specific years (Y0=planStartYear, Y1=+1, Y2=+2, Y3=+3)
+  normCashY0:280000,normCashY1:260000,normCashY2:275000,normCashY3:265000,
+  normStockY0:197000,normStockY1:162000,normStockY2:153000,normStockY3:158000,
+  normCashBase:275000,normGrowth:.01,normStockBase:150000,
+  pretax401k:23500,pretaxBenefits:11700,
+  company401kMatch:8750,
+  // Nancy — 4 rolling specific W2 years (ignored once yr >= nancyRampYear)
+  nancyW2Y0:130000,nancyW2Y1:80000,nancyW2Y2:100000,nancyW2Y3:75000,
+  nancyHourlyRate:300,nancyRampYear:2030,nancyRampClients:5,nancyMaxClients:18,nancyRampYears:6,nancyWeeksPerYear:46,
+  nancySoloPractice:1,nancyPracticeOverhead:15000,nancyQBIRate:.20,nancyHomeOfficeDeduct:8000,
+  baseGroceries:7000,baseDining:14000,baseShopping:22000,baseVacations:20000,
+  baseAuto:3500,baseInsurance:1500,baseMisc:10000,baseEntertainment:4500,
+  baseCharity:8500,baseMedical:4500,baseTransit:4000,baseUtilsPhoneNet:5500,
+  expenseInflation:.03,postKidVacations:10000,
+  homePrice:2000000,downPctg:50,mortgageRate:5.0,homePurchaseYear:2030,
+  propTaxRate:.012,propTaxBase:18000,maintBase:10000,homeAppreciation:.03,
+  suburbAutoBoost:3500,suburbInsBoost:1500,suburbUtilBoost:2500,
+  investReturn:.06,capGainsTaxRate:.345,costBasisPct:.55,
+  k401Start:210000,
+  taxInflation:.025,
+  planEndYear:2058,
+};
+let P={...D};let scenarios=[];let compareMode=false;let activeScenarioIdx=-1;
+
+// ═══ SYNC STATUS ═══
+function setSyncStatus(status){
+  const el=document.getElementById('syncStatus');
+  if(!el)return;
+  el.className='sync-pill '+status;
+  if(status==='saving')el.textContent='Saving…';
+  else if(status==='synced')el.textContent='✓ Synced';
+  else if(status==='error')el.textContent='⚠ Save failed';
+  else el.textContent='';
+}
+
+// ═══ PERSISTENCE — backed by server API ═══
+let _saveTimer=null;
+function savePlannerState(){
+  setSyncStatus('saving');
+  clearTimeout(_saveTimer);
+  _saveTimer=setTimeout(async()=>{
+    try{
+      await fetch('/api/planner-state',{
+        method:'PUT',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({state:{P,compareMode,activeTab,activeScenarioIdx,monarchSnapshot}})
+      });
+      setSyncStatus('synced');
+    }catch(e){setSyncStatus('error')}
+  },500);
+}
+
+// Migrate old year-keyed format (normCash2026…) to rolling Y0-Y3 format
+function migrateP(raw){
+  if(raw.normCashY0!==undefined)return raw; // already new format
+  const sy=raw.planStartYear||raw.startYear||2026;
+  const m={...raw,planStartYear:sy};
+  const oldNormCash={2026:280000,2027:260000,2028:275000,2029:265000};
+  const oldNormStock={2026:197000,2027:162000,2028:153000,2029:158000};
+  const oldNancyW2={2026:130000,2027:80000,2028:100000,2029:75000};
+  for(let i=0;i<4;i++){
+    const yr=sy+i;
+    m['normCashY'+i]=raw['normCash'+yr]??oldNormCash[yr]??275000;
+    m['normStockY'+i]=raw['normStock'+yr]??oldNormStock[yr]??150000;
+    m['nancyW2Y'+i]=raw['nancyW2_'+yr]??oldNancyW2[yr]??100000;
+  }
+  m.normCashBase=raw.normCash2030Base??raw.normCashBase??275000;
+  m.normStockBase=raw.normStock2030??raw.normStockBase??150000;
+  return m;
+}
+
+async function loadFromServer(){
+  try{
+    const [stRes,scRes]=await Promise.all([
+      fetch('/api/planner-state'),
+      fetch('/api/scenarios')
+    ]);
+    if(stRes.ok){
+      const d=await stRes.json();
+      const s=d.state||{};
+      if(s.P)P={...D,...migrateP(s.P)};
+      if(s.compareMode!==undefined)compareMode=s.compareMode;
+      if(s.activeTab)activeTab=s.activeTab;
+      if(s.activeScenarioIdx!==undefined)activeScenarioIdx=s.activeScenarioIdx;
+      if(s.monarchSnapshot&&!monarchSnapshot)monarchSnapshot=s.monarchSnapshot; // don't clobber a fresh auto-sync
+    }else{
+      showToast('⚠️ Could not load plan state (HTTP '+stRes.status+')','red');
+    }
+    if(scRes.ok){
+      const sc=await scRes.json();
+      scenarios=sc.map((s,i)=>{
+        const params=migrateP(s.params||{});
+        let results;
+        try{results=run({...D,...params});}
+        catch(e){console.warn('scenario rehydrate failed:',s.name,e);results=run({...D});}
+        return{id:s.id,name:s.name,color:s.color||COLORS[i%COLORS.length],params,results};
+      });
+      console.log('Loaded',scenarios.length,'scenarios from server');
+    }else{
+      showToast('⚠️ Could not load scenarios (HTTP '+scRes.status+')','red');
+    }
+  }catch(e){
+    console.error('loadFromServer error:',e);
+    showToast('⚠️ Network error loading data: '+e.message,'red');
+  }
+  buildControls();render();
+}
+
+function exportJSON(){const b=new Blob([JSON.stringify({P,scenarios:scenarios.map(s=>({name:s.name,params:s.params}))},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='cohen_planner.json';a.click()}
+function importJSON(){const i=document.createElement('input');i.type='file';i.accept='.json';i.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);if(d.P)P={...D,...d.P};if(d.scenarios)scenarios=d.scenarios.map((s,i)=>({...s,color:COLORS[i%COLORS.length],results:run({...D,...s.params})}));buildControls();render()}catch(err){alert('Invalid file')}};r.readAsText(f)};i.click()}
+
+async function doLogout(){
+  await fetch('/api/logout',{method:'POST'}).catch(()=>{});
+  window.location.href='/login';
+}
+
+const fmt=n=>Math.abs(n)>=1e6?`$${(n/1e6).toFixed(2)}M`:Math.abs(n)>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${Math.round(n)}`;
+const fmtF=n=>`$${Math.round(n).toLocaleString()}`;
+
+function showToast(msg,type){
+  const d=document.createElement('div');
+  const c=type==='green'?'#1a8754':type==='red'?'#cd3d64':'#0a2540';
+  d.style.cssText=`position:fixed;top:16px;right:16px;background:${c};color:#fff;padding:10px 16px;border-radius:8px;font-size:12px;font-weight:500;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.15);max-width:300px`;
+  d.textContent=msg;document.body.appendChild(d);
+  setTimeout(()=>{d.style.opacity='0';d.style.transition='opacity .3s';setTimeout(()=>d.remove(),300)},3000);
+}
+function showConfirm(msg){return window.confirm?window.confirm(msg):true;}
+function toggleMobileControls(){
+  const panel=document.getElementById('controls');
+  const label=document.getElementById('mobileControlsLabel');
+  if(!panel)return;
+  const open=panel.classList.toggle('mob-open');
+  if(label)label.textContent=open?'Hide Settings':'Settings';
+}
+
+function connectMonarch(){window.location.href='/api/monarch-connect';}
+
+async function checkMonarchStatus(){
+  try{
+    const r=await fetch('/api/monarch-status');
+    const d=await r.json();
+    const syncBtn=document.getElementById('monarchSyncBtn');
+    const connBtn=document.getElementById('monarchConnectBtn');
+    if(d.connected){
+      if(syncBtn)syncBtn.style.display='';
+      if(connBtn)connBtn.style.display='none';
+      // Auto-sync on open — token is stored server-side and auto-refreshes
+      if(!monarchSnapshot)syncMonarch();
+    }else{
+      if(syncBtn)syncBtn.style.display='none';
+      if(connBtn)connBtn.style.display='';
+    }
+  }catch(e){/* ignore */}
+}
+
+async function syncMonarch(){
+  const btn=document.getElementById('monarchSyncBtn');
+  if(btn){btn.textContent='⟳ Syncing…';btn.disabled=true;}
+  try{
+    const r=await fetch('/api/monarch-snapshot');
+    if(r.status===401){
+      // Not connected — show connect button
+      const syncBtn=document.getElementById('monarchSyncBtn');
+      const connBtn=document.getElementById('monarchConnectBtn');
+      if(syncBtn)syncBtn.style.display='none';
+      if(connBtn)connBtn.style.display='';
+      showToast('Monarch disconnected — click Connect Monarch','red');
+      return;
+    }
+    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||'HTTP '+r.status);}
+    const d=await r.json();
+    const nw=d.netWorth?.value||0;
+    const ret=d.retirement?.value||0;
+    monarchSnapshot={
+      netWorth:nw,
+      liquid:d.liquid?.value??(nw-ret),
+      retirement:ret,
+      assets:d.assets?.value||0,
+      liabilities:d.liabilities?.value||0,
+      syncedAt:d.netWorth?.updatedAt||new Date().toISOString(),
+    };
+    if(btn){btn.textContent='📍 Synced';btn.disabled=false;}
+    showToast(`📍 Monarch synced · Liquid ${fmt(monarchSnapshot.liquid)} · 401k ${fmt(monarchSnapshot.retirement)}`,'green');
+    savePlannerState(); // persist last sync so it shows instantly next open
+    render();
+  }catch(e){
+    if(btn){btn.textContent='📍 Sync Monarch';btn.disabled=false;}
+    showToast('Monarch sync failed: '+e.message,'red');
+  }
+}
+
+async function anchorToToday(){
+  if(!monarchSnapshot){showToast('Sync Monarch first','red');return;}
+  const curYr=new Date().getFullYear();
+  if((P.planStartYear||2026)!==curYr){
+    showToast(`Roll the plan forward to ${curYr} first, then anchor`,'red');
+    return;
+  }
+  showToast('Fetching year-to-date cash flow…','blue');
+  let cf;
+  try{
+    const r=await fetch('/api/monarch-cashflow');
+    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||'HTTP '+r.status);}
+    cf=await r.json();
+  }catch(e){showToast('Cash flow fetch failed: '+e.message,'red');return;}
+
+  const todayLiq=monarchSnapshot.liquid;
+  const ytdInc=cf.income||0, ytdExp=cf.expense||0;
+  const ytdNet=ytdInc-ytdExp;
+  const impliedJan1=Math.round(todayLiq-ytdNet);
+  // Projected EOY using the new starting point
+  const newP={...P,startingLiquid:impliedJan1};
+  if(monarchSnapshot.retirement>0)newP.k401Start=monarchSnapshot.retirement;
+  let projEOY=null;
+  try{const rr=run(newP);const row=rr.R.find(x=>x.yr===curYr)||rr.R[0];projEOY=row?row.liq:null;}catch(e){}
+
+  const debugJson=JSON.stringify(cf._debug||{},null,2);
+  const ov=document.createElement('div');
+  ov.style.cssText='position:fixed;inset:0;background:rgba(10,37,64,.4);z-index:9998;display:flex;align-items:center;justify-content:center;padding:20px';
+  const set401=monarchSnapshot.retirement>0;
+  ov.innerHTML=`<div style="background:#fff;border-radius:12px;padding:22px 24px;max-width:460px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.2)">
+    <div style="font-size:15px;font-weight:700;color:var(--tx);margin-bottom:4px">⚓ Anchor plan to today</div>
+    <div style="font-size:11px;color:var(--t2);margin-bottom:16px;line-height:1.5">Backs out your ${curYr} year-to-date flows to find your implied Jan-1 liquid, so the rest of the year isn't double-counted.</div>
+    <div style="display:flex;flex-direction:column;gap:7px;font-size:12px;font-family:'SF Mono',monospace">
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--t2)">Today's liquid</span><span style="font-weight:600">${fmtF(todayLiq)}</span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--t2)">− YTD income (Monarch)</span><span style="color:var(--g)">−${fmtF(ytdInc)}</span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--t2)">+ YTD spending (Monarch)</span><span style="color:var(--r)">+${fmtF(ytdExp)}</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="color:var(--t2)">+ Deferred expenses (not yet in Monarch)</span>
+        <span style="display:flex;align-items:center;gap:4px">
+          <span style="color:var(--t2)">$</span>
+          <input id="anchorAdj" type="number" value="0" min="0" step="100"
+            style="width:80px;text-align:right;font-size:12px;font-family:'SF Mono',monospace;padding:2px 5px;border:1px solid var(--bd);border-radius:5px;background:var(--s2);color:var(--tx);outline:none"
+            oninput="anchorRecalc()">
+        </span>
+      </div>
+      <div style="border-top:1px solid var(--bd);margin:3px 0"></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>= Implied Jan-1 liquid</span><span id="anchorResult" style="color:var(--accent)">${fmtF(impliedJan1)}</span></div>
+      <div id="anchorEOY" style="display:flex;justify-content:space-between;margin-top:4px">${projEOY!=null?`<span style="color:var(--t2)">→ Projected EOY liquid</span><span style="font-weight:600">${fmtF(projEOY)}</span>`:''}</div>
+    </div>
+    <div style="font-size:9.5px;color:var(--t3);margin-top:10px;line-height:1.4" id="anchorNote">Sets <b>Starting Liquid → ${fmtF(impliedJan1)}</b>${set401?` and <b>Starting 401k → ${fmtF(monarchSnapshot.retirement)}</b>`:''}. ${ytdNet<0?'⚠ YTD spending exceeded income so far — implied Jan-1 is above today.':''}</div>
+    <div style="margin-top:8px">
+      <button onclick="const d=this.nextElementSibling;d.style.display=d.style.display==='none'?'block':'none';this.textContent=d.style.display==='none'?'▶ Show raw Monarch data':'▼ Hide raw data'" style="font-size:9px;color:var(--t3);background:none;border:none;cursor:pointer;padding:0;font-family:inherit">▶ Show raw Monarch data</button>
+      <pre style="display:none;margin-top:6px;font-size:8.5px;background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:8px;overflow:auto;max-height:140px;color:var(--t2);white-space:pre-wrap;word-break:break-all">${debugJson.replace(/</g,'&lt;')}</pre>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">
+      <button onclick="this.closest('div[style*=fixed]').remove()" style="font-size:12px;padding:8px 14px;background:var(--s2);border:1px solid var(--bd);border-radius:7px;cursor:pointer;font-family:inherit;color:var(--t2)">Cancel</button>
+      <button id="anchorConfirmBtn" style="font-size:12px;font-weight:600;padding:8px 16px;background:var(--a);color:#fff;border:none;border-radius:7px;cursor:pointer;font-family:inherit">Anchor it</button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+
+  // Live recalc when deferred expense adjustment changes
+  const _baseLiq=todayLiq, _baseInc=ytdInc, _baseExp=ytdExp;
+  window.anchorRecalc=function(){
+    const adj=parseFloat(document.getElementById('anchorAdj')?.value||0)||0;
+    const adjNet=_baseInc-(_baseExp+adj);
+    const adjJan1=Math.round(_baseLiq-adjNet);
+    const res=document.getElementById('anchorResult');
+    const note=document.getElementById('anchorNote');
+    const eoy=document.getElementById('anchorEOY');
+    if(res)res.textContent=fmtF(adjJan1);
+    if(note){const s=set401?` and <b>Starting 401k → ${fmtF(monarchSnapshot.retirement)}</b>`:'';note.innerHTML=`Sets <b>Starting Liquid → ${fmtF(adjJan1)}</b>${s}.`;}
+    if(eoy){
+      try{const nr=run({...P,startingLiquid:adjJan1,k401Start:set401?monarchSnapshot.retirement:P.k401Start});const row=nr.R.find(x=>x.yr===curYr)||nr.R[0];eoy.innerHTML=row?`<span style="color:var(--t2)">→ Projected EOY liquid</span><span style="font-weight:600">${fmtF(row.liq)}</span>`:''}catch(e){}
+    }
+  };
+
+  ov.querySelector('#anchorConfirmBtn').onclick=()=>{
+    const adj=parseFloat(document.getElementById('anchorAdj')?.value||0)||0;
+    const adjNet=ytdInc-(ytdExp+adj);
+    const finalJan1=Math.round(todayLiq-adjNet);
+    P.startingLiquid=finalJan1;
+    if(set401)P.k401Start=monarchSnapshot.retirement;
+    ov.remove();
+    savePlannerState();buildControls();render();
+    showToast(`⚓ Anchored · Starting liquid set to ${fmt(finalJan1)}`+(adj>0?` (incl. ${fmt(adj)} deferred expenses)`:'')+' ','green');
+  };
+}
+
+function showSnapshotInput(){
+  const dflt=`${P.planStartYear||2026} plan · ${new Date().toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`;
+  const d=document.createElement('div');
+  d.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(10,37,64,.4);z-index:9998;display:flex;align-items:center;justify-content:center';
+  d.innerHTML=`<div style="background:#fff;border-radius:12px;padding:24px 28px;width:100%;max-width:380px;box-shadow:0 8px 30px rgba(0,0,0,.15)">
+    <div style="font-size:14px;font-weight:700;color:#0a2540;margin-bottom:4px">📸 Save Snapshot</div>
+    <div style="font-size:11px;color:#8898aa;margin-bottom:14px">A dated copy of this plan for comparing projected vs. actual over time.</div>
+    <input id="snapshotLabelInput" type="text" value="${dflt.replace(/"/g,'&quot;')}"
+      style="width:100%;padding:9px 11px;border:1px solid #635bff;border-radius:7px;font-size:12px;font-family:inherit;color:#0a2540;outline:none;margin-bottom:12px"
+      onkeydown="if(event.key==='Enter')confirmSnapshot(this.closest('div[style*=fixed]'));if(event.key==='Escape')this.closest('div[style*=fixed]').remove()">
+    <div style="display:flex;gap:8px">
+      <button onclick="confirmSnapshot(this.closest('div[style*=fixed]'))" style="flex:1;background:#635bff;color:#fff;border:none;padding:9px;border-radius:7px;cursor:pointer;font-weight:600;font-size:12px;font-family:inherit">Save</button>
+      <button onclick="this.closest('div[style*=fixed]').remove()" style="flex:1;background:#f0f4f8;color:#425466;border:1px solid #e6ebf1;padding:9px;border-radius:7px;cursor:pointer;font-size:12px;font-family:inherit">Cancel</button>
+    </div>
+  </div>`;
+  d.addEventListener('click',e=>{if(e.target===d)d.remove()});
+  document.body.appendChild(d);
+  setTimeout(()=>{const inp=document.getElementById('snapshotLabelInput');if(inp){inp.focus();inp.select();}},50);
+}
+async function confirmSnapshot(overlay){
+  const inp=document.getElementById('snapshotLabelInput');
+  const label=inp?inp.value.trim():'';
+  if(overlay)overlay.remove();
+  await saveSnapshot(false,label||undefined);
+}
+
+// ═══ UI ═══
+let activeTab='nw';let charts={};let inflationView=false;let snapshots=[];let overlaySnapId=null;
+let _sensiPreset='all';
+let _sensiDeltas={};
+let monarchSnapshot=null; // {netWorth, retirement, assets, liabilities, syncedAt}
+let _lastChartKey='';
+function destroyCharts(){Object.values(charts).forEach(c=>c&&c.destroy());charts={};_lastChartKey=''}
+function _chartKey(){return activeTab+'|'+inflationView+'|'+compareMode+'|'+(overlaySnapId||'')}
+function _updateChart(datasets,labels){
+  if(!charts.main)return false;
+  charts.main.data.labels=labels;
+  for(let i=0;i<datasets.length;i++){
+    if(charts.main.data.datasets[i]){Object.assign(charts.main.data.datasets[i],{data:datasets[i].data,label:datasets[i].label})}
+    else{charts.main.data.datasets.push(datasets[i])}
+  }
+  while(charts.main.data.datasets.length>datasets.length)charts.main.data.datasets.pop();
+  charts.main.update('active');return true;
+}
+function deflK(v,yr){if(!inflationView)return Math.round(v/1000);const sy=P.planStartYear||2026;return Math.round(v/Math.pow(1+(P.expenseInflation||.03),yr-sy)/1000)}
+function toggleInflation(){inflationView=!inflationView;const b=document.getElementById('inflBtn');if(b)b.textContent=inflationView?'Nominal $':'Real $';render()}
+
+// ═══ CSV EXPORT ═══
+function exportCSV(){
+  const{R}=run(P);
+  const cols=['Year','Norm Gross','Nancy Gross','Total Gross','All-in Tax','Eff Rate %','Net Income','Housing','Living','Childcare','Tuition','Total Expenses','Surplus','Stock Sold','Tax on Sales','Liquid','Home Equity','Net Worth','401k'];
+  const rows=R.map(r=>[r.yr,r.normG,r.nancyG,r.gross,r.tax,(r.effRate*100).toFixed(2),r.inc,r.h,r.liv,r.cc,r.tu,r.totE,r.surp,r.sold,r.txS,r.liq,r.eq,r.nw,r.k401]);
+  const csv=[cols.join(','),...rows.map(r=>r.join(','))].join('\n');
+  const blob=new Blob([csv],{type:'text/csv'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=`cohen-planner-${(P.planStartYear||2026)}-projection.csv`;a.click();
+}
+
+// ═══ PDF REPORT ═══
+function printPDF(){
+  const{R,tT,tTx,tS}=run(P);
+  const last=R[R.length-1],r0=R[0];
+  const minL=R.reduce((a,b)=>b.liq<a.liq?b:a);
+  const defYrs=R.filter(r=>r.surp<0).length;
+  const pur=R.find(r=>r.yr===P.homePurchaseYear);
+  const pliq=pur?pur.liq:0;
+  const today=new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
+  const ey=P.planEndYear||2058;
+  const planYears=ey-(P.planStartYear||2026);
+
+  // Capture chart canvas
+  let chartImgTag='<div style="color:#8898aa;font-size:11px;padding:20px 0">Chart not available — no active chart in current tab</div>';
+  const cv=document.getElementById('cv');
+  if(cv&&cv.tagName==='CANVAS'){
+    try{chartImgTag=`<img src="${cv.toDataURL('image/png')}" style="width:100%;max-height:280px;object-fit:contain;border:1px solid #e6ebf1;border-radius:6px">`;}catch(e){}
+  }
+
+  // KPIs
+  const kpis=[
+    {l:'Eff Tax Rate',v:`${(r0.effRate*100).toFixed(1)}%`,s:`${fmtF(r0.tax)} on ${fmtF(r0.gross)}`,c:'#bf6900'},
+    {l:`Post-Down Liquid (${P.homePurchaseYear})`,v:fmtK(pliq),s:`${P.downPctg}% down on ${fmtK(P.homePrice||0)}`,c:pliq>800000?'#1a8754':'#bf6900'},
+    {l:'Total Tuition',v:fmtK(tT),s:`${P.numKids} kid${P.numKids!==1?'s':''}`,c:'#cd3d64'},
+    {l:'Tax on Stock Sales',v:fmtK(tTx),s:`${fmtK(tS)} sold`,c:'#cd3d64'},
+    {l:`Liquid Floor (${minL.yr})`,v:fmtK(minL.liq),s:`${defYrs} deficit yr${defYrs!==1?'s':''}`,c:minL.liq>500000?'#1a8754':'#cd3d64'},
+    {l:`Final NW (${last.yr})`,v:fmtK(last.nw),s:`+${fmtK(last.k401)} in 401k`,c:'#1a8754'},
+    {l:'Total w/ 401k',v:fmtK(last.nw+last.k401),s:`over ${planYears} yrs`,c:'#0891b2'},
+  ];
+  function fmtK(v){return v<0?`-$${Math.round(-v/1000)}K`:`$${Math.round(v/1000)}K`}
+
+  const kpiHtml=kpis.map(k=>`
+    <div style="background:#fff;border:1px solid #e6ebf1;border-radius:8px;padding:10px 12px">
+      <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:#8898aa;margin-bottom:3px">${k.l}</div>
+      <div style="font-size:18px;font-weight:700;font-family:'SF Mono',monospace;color:${k.c};letter-spacing:-.5px">${k.v}</div>
+      <div style="font-size:9px;color:#425466;margin-top:2px">${k.s}</div>
+    </div>`).join('');
+
+  // Full projection table
+  const tblRows=R.map(r=>{
+    const isHome=r.yr===P.homePurchaseYear;
+    const hasTu=r.tu>0;
+    const rowBg=isHome?'#fffbf0':hasTu&&r.tu>150000?'#fff5f7':'#fff';
+    const surpColor=r.surp>=0?'#1a8754':'#cd3d64';
+    return `<tr style="background:${rowBg}">
+      <td style="font-weight:700;color:#0a2540${isHome?';background:#fef3c7':''}">${r.yr}</td>
+      <td style="color:#0073e6">${fmt(r.normG)}</td>
+      <td style="color:#7c3aed">${fmt(r.nancyG)}</td>
+      <td>${fmt(r.gross)}</td>
+      <td style="color:#cd3d64">${fmt(r.tax)}</td>
+      <td style="color:#bf6900">${(r.effRate*100).toFixed(1)}%</td>
+      <td style="color:#1a8754">${fmt(r.inc)}</td>
+      <td>${fmt(r.totE)}</td>
+      <td style="color:${surpColor};font-weight:600">${r.surp>=0?'+':''}${fmt(r.surp)}</td>
+      <td>${r.tu>0?fmt(r.tu):'—'}</td>
+      <td style="color:#0073e6">${fmt(r.liq)}</td>
+      <td style="color:#1a8754;font-weight:600">${fmt(r.nw)}</td>
+    </tr>`;
+  }).join('');
+
+  // Scenario comparison (if any saved)
+  let scenHtml='';
+  if(scenarios.length>0){
+    const allRes=scenarios.map(s=>{const{R:sR}=run({...D,...migrateP(s.params)});const sl=sR[sR.length-1];const sm=sR.reduce((a,b)=>b.liq<a.liq?b:a);return{name:s.name,color:s.color,finalNW:sl.nw,finalTotal:sl.nw+sl.k401,liqFloor:sm.liq,defYrs:sR.filter(r=>r.surp<0).length};});
+    scenHtml=`
+    <div style="page-break-before:always">
+    <h2 style="font-size:13px;font-weight:600;color:#0a2540;margin:0 0 12px;border-bottom:1px solid #e6ebf1;padding-bottom:6px">Scenario Comparison</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:10px">
+      <thead><tr style="background:#f6f9fc">
+        <th style="text-align:left;padding:6px 8px;font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:#8898aa;border-bottom:1px solid #e6ebf1">Scenario</th>
+        <th style="text-align:right;padding:6px 8px;font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:#8898aa;border-bottom:1px solid #e6ebf1">Final NW</th>
+        <th style="text-align:right;padding:6px 8px;font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:#8898aa;border-bottom:1px solid #e6ebf1">Total w/ 401k</th>
+        <th style="text-align:right;padding:6px 8px;font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:#8898aa;border-bottom:1px solid #e6ebf1">Liquid Floor</th>
+        <th style="text-align:right;padding:6px 8px;font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:#8898aa;border-bottom:1px solid #e6ebf1">Deficit Yrs</th>
+      </tr></thead>
+      <tbody>
+        <tr style="background:#fffbf0">
+          <td style="padding:6px 8px;font-weight:600;border-bottom:1px solid #f0f4f8">★ Current Plan</td>
+          <td style="text-align:right;padding:6px 8px;color:#1a8754;font-weight:600;border-bottom:1px solid #f0f4f8">${fmtK(last.nw)}</td>
+          <td style="text-align:right;padding:6px 8px;color:#0891b2;font-weight:600;border-bottom:1px solid #f0f4f8">${fmtK(last.nw+last.k401)}</td>
+          <td style="text-align:right;padding:6px 8px;border-bottom:1px solid #f0f4f8">${fmtK(minL.liq)}</td>
+          <td style="text-align:right;padding:6px 8px;border-bottom:1px solid #f0f4f8;color:${defYrs>0?'#cd3d64':'#1a8754'}">${defYrs}</td>
+        </tr>
+        ${allRes.map(s=>`<tr>
+          <td style="padding:6px 8px;border-bottom:1px solid #f0f4f8;color:${s.color};font-weight:500">● ${s.name}</td>
+          <td style="text-align:right;padding:6px 8px;color:#1a8754;border-bottom:1px solid #f0f4f8">${fmtK(s.finalNW)}</td>
+          <td style="text-align:right;padding:6px 8px;color:#0891b2;border-bottom:1px solid #f0f4f8">${fmtK(s.finalTotal)}</td>
+          <td style="text-align:right;padding:6px 8px;border-bottom:1px solid #f0f4f8">${fmtK(s.liqFloor)}</td>
+          <td style="text-align:right;padding:6px 8px;border-bottom:1px solid #f0f4f8;color:${s.defYrs>0?'#cd3d64':'#1a8754'}">${s.defYrs}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table></div>`;
+  }
+
+  const html=`<!DOCTYPE html><html><head>
+<meta charset="UTF-8">
+<title>Cohen Family Financial Plan — ${today}</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',-apple-system,sans-serif;color:#0a2540;font-size:11px;background:#fff;padding:2cm}
+h1{font-size:22px;font-weight:700;letter-spacing:-.5px;color:#0a2540}
+h2{font-size:13px;font-weight:600;color:#0a2540;margin:20px 0 10px;border-bottom:1px solid #e6ebf1;padding-bottom:5px}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:20px}
+table{width:100%;border-collapse:collapse;font-size:9px}
+th{text-align:right;padding:5px 6px;font-size:7.5px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:#8898aa;border-bottom:2px solid #e6ebf1}
+th:first-child{text-align:left}
+td{text-align:right;padding:4px 6px;border-bottom:1px solid #f0f4f8;font-family:'SF Mono','Fira Code',monospace}
+td:first-child{text-align:left;font-family:'Inter',sans-serif}
+tr:hover td{background:#f6f9fc}
+.footer{margin-top:24px;padding-top:8px;border-top:1px solid #e6ebf1;font-size:9px;color:#8898aa;display:flex;justify-content:space-between}
+@media print{body{padding:0}@page{margin:1.5cm;size:A4 portrait}}
+</style>
+</head><body>
+<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid #635bff">
+  <div>
+    <h1>Cohen Family Financial Plan</h1>
+    <div style="font-size:11px;color:#8898aa;margin-top:3px">${P.planStartYear||2026}–${ey} · ${planYears}-year projection · Generated ${today}</div>
+  </div>
+  <div style="text-align:right;font-size:9px;color:#8898aa">
+    <div>Norm: ${fmtK((P.normCashBase||275000)+(P.normStockBase||150000))}/yr base</div>
+    <div>Nancy: ${P.nancyMaxClients} clients max · $${P.nancyHourlyRate}/hr</div>
+    <div>${P.numKids} kid${P.numKids!==1?'s':''} · ${P.downPctg}% down in ${P.homePurchaseYear}</div>
+  </div>
+</div>
+<h2>Key Metrics</h2>
+<div class="kpi-grid">${kpiHtml}</div>
+<h2>Net Worth Chart</h2>
+<div style="margin-bottom:20px">${chartImgTag}</div>
+<h2>Year-by-Year Projection</h2>
+<table>
+  <thead><tr>
+    <th style="text-align:left">Year</th>
+    <th>Norm</th><th>Nancy</th><th>Gross</th>
+    <th>Tax</th><th>Eff%</th><th>Net Inc</th>
+    <th>Tot Exp</th><th>Surplus</th><th>Tuition</th>
+    <th>Liquid</th><th>Net Worth</th>
+  </tr></thead>
+  <tbody>${tblRows}</tbody>
+</table>
+${scenHtml}
+<div class="footer">
+  <span>Cohen Family Financial Planner</span>
+  <span>Generated ${today} · Projection uses ${(P.investReturn*100).toFixed(1)}% portfolio return / ${(P.expenseInflation*100).toFixed(1)}% expense inflation / ${((P.taxInflation??0.025)*100).toFixed(1)}% tax bracket inflation</span>
+</div>
+</body></html>`;
+
+  const w=window.open('','_blank','width=900,height=700');
+  if(!w){alert('Pop-up blocked — please allow pop-ups for this site and try again.');return;}
+  w.document.write(html);w.document.close();
+  w.focus();
+  setTimeout(()=>w.print(),600);
+}
+
+// ═══ ANNUAL SNAPSHOT HISTORY ═══
+async function loadSnapshots(){
+  try{const res=await fetch('/api/snapshots');if(res.ok)snapshots=await res.json()}catch(e){snapshots=[]}
+}
+async function saveSnapshot(silent,labelOverride){
+  const{R,tT}=run(P);const last=R[R.length-1];
+  const def=R.filter(r=>r.surp<0).length;
+  const dflt=`${P.planStartYear||2026} plan · ${new Date().toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`;
+  const label=labelOverride||dflt;
+  const summary={finalNW:last.nw,final401k:last.k401,totalTuition:tT,deficitYears:def,startingLiquid:P.startingLiquid,liqFloor:Math.min(...R.map(r=>r.liq))};
+  const snap={id:advUuid(),label,planYear:P.planStartYear||2026,params:{...P},summary};
+  try{await fetch('/api/snapshots',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(snap)});}catch(e){}
+  snapshots.push({...snap,plan_year:snap.planYear,created_at:new Date().toISOString()});
+  renderSnapshotBar();
+  if(!silent)showToast(`📸 Snapshot saved: "${label}"`,'green');
+}
+async function deleteSnapshot(id){
+  const s=snapshots.find(x=>x.id===id);if(!s)return;
+  if(!showConfirm(`Delete snapshot "${s.label}"?`))return;
+  try{await fetch('/api/snapshots/'+id,{method:'DELETE'});}catch(e){}
+  snapshots=snapshots.filter(x=>x.id!==id);
+  if(overlaySnapId===id)overlaySnapId=null;
+  renderSnapshotBar();render();
+}
+function toggleOverlaySnap(id){overlaySnapId=overlaySnapId===id?null:id;if(activeTab!=='nw'){activeTab='nw';document.querySelectorAll('.tabs button[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab==='nw'))}render()}
+function renderSnapshotBar(){
+  const el=document.getElementById('snapshotBar');if(!el)return;
+  if(!snapshots.length){el.innerHTML='';return}
+  let h='<div class="snap-bar"><span style="font-size:7px;color:var(--t3);font-weight:600">📸 SNAPSHOTS:</span>';
+  [...snapshots].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)).forEach(s=>{
+    const sum=s.summary||{};const isA=overlaySnapId===s.id;
+    h+=`<div class="snap-chip ${isA?'active':''}" onclick="toggleOverlaySnap('${s.id}')" title="NW @2058: ${sum.finalNW?fmt(sum.finalNW):'—'} · click to ${isA?'hide':'overlay on chart'}">${advEscape(s.label)}${isA?' ✓':''}<span class="x" onclick="event.stopPropagation();deleteSnapshot('${s.id}')">✕</span></div>`;
+  });
+  h+='</div>';el.innerHTML=h;
+}
+
+function buildControls(){
+  const s=(l,k,mn,mx,st,fn)=>`<div class="sr"><div class="sh"><span class="sl">${l}</span><span class="sv" id="v_${k}">${fn?fn(P[k]):P[k]}</span></div><input type="range" id="s_${k}" min="${mn}" max="${mx}" step="${st}" value="${P[k]}" oninput="U('${k}',this.value)"></div>`;
+  const sy=P.planStartYear||2026;
+  const baseYr=sy+4;
+  let h=`<div style="font-size:10px;font-weight:700;margin-bottom:8px">⚙️ Parameters</div>`;
+  h+=`<div style="margin-bottom:8px">
+    <div id="scenarioSaveArea">
+      <button class="btn btn-g" onclick="showSaveInput()" style="margin-bottom:3px">💾 Save as New</button>
+    </div>
+    <div id="scenarioSaveForm" style="display:none;margin-bottom:3px">
+      <input id="scenarioNameInput" type="text" placeholder="Scenario name…" value="Scenario ${scenarios.length+1}"
+        style="width:100%;padding:6px 8px;border:1px solid var(--accent);border-radius:6px;font-size:11px;font-family:inherit;color:var(--tx);background:var(--s1);outline:none;margin-bottom:4px"
+        onkeydown="if(event.key==='Enter')confirmSaveScenario();if(event.key==='Escape')hideSaveInput()">
+      <div style="display:flex;gap:4px">
+        <button class="btn btn-g" onclick="confirmSaveScenario()" style="flex:1;font-size:10px">Save</button>
+        <button class="btn" onclick="hideSaveInput()" style="flex:1;font-size:10px">Cancel</button>
+      </div>
+    </div>
+    ${activeScenarioIdx>=0?`<button class="btn" onclick="updateScenario(${activeScenarioIdx})" style="margin-bottom:3px;border-color:rgba(245,183,49,.3);color:var(--a)">🔄 Update "${scenarios[activeScenarioIdx]?.name||''}"</button>`:''}
+    ${scenarios.length>0?`<button class="btn" onclick="toggleCompare()" style="margin-bottom:3px">${compareMode?'Exit Compare':'📊 Compare'}</button>`:''}
+    <button class="btn" onclick="rollForward()" style="margin-bottom:3px;border-color:rgba(8,145,178,.3);color:var(--c);background:#e0f7fa">📅 Roll Forward → ${sy+1}</button>
+  </div>`;
+  h+=`<div class="st">👶 Kids</div>`;
+  h+=s('# of kids','numKids',1,4,1);h+=s('Kid 1 born','kid1Birth',2026,2030,1);
+  if(P.numKids>=2)h+=s('Kid 2 born','kid2Birth',2028,2035,1);
+  if(P.numKids>=3)h+=s('Kid 3 born','kid3Birth',2031,2040,1);
+  if(P.numKids>=4)h+=s('Kid 4 born','kid4Birth',2034,2044,1);
+  h+=`<div class="st">🍼 Childcare</div>`;
+  h+=s('Nanny until age','nannyEndAge',.5,3,.5,v=>v+' yrs')+s('Nanny $/hr','nannyHourlyRate',20,45,1,v=>'$'+v)+s('Nanny days/wk','nannyDaysPerWeek',2,5,1)+s('Daycare $/mo','daycareMonthly',1500,4500,100,v=>'$'+v.toLocaleString())+s('Kid 1 yeshiva start','kid1YeshivaStartAge',2,5,1,v=>v+' (uses daycare)')+s('Kids 2+ yeshiva start','yeshivaStartAge',2,5,1,v=>v+' (no daycare)');
+  h+=`<div class="st">🎓 Tuition</div>`+s('Tuition inflation','tuitionInflation',.02,.06,.005,v=>(v*100).toFixed(1)+'%');
+  h+=`<div class="st">📅 Plan Start Year</div>`;
+  h+=s('Start year','planStartYear',2026,2035,1);
+  h+=`<div style="font-size:7.5px;color:var(--t3);margin-bottom:6px">Advance each Jan to roll inputs forward. Update Starting Liquid to reflect actual wealth.</div>`;
+  h+=`<div class="st">💼 Norm — Gross Income</div>`;
+  for(let i=0;i<4;i++){const yr=sy+i;h+=s(yr+' cash','normCashY'+i,200000,500000,5000,fmtF)+s(yr+' stock','normStockY'+i,0,300000,5000,fmtF)}
+  h+=s(baseYr+'+ cash base','normCashBase',200000,500000,5000,fmtF)+s(baseYr+'+ stock/yr','normStockBase',0,250000,5000,fmtF)+s('Comp growth','normGrowth',0,.04,.005,v=>(v*100).toFixed(1)+'%');
+  h+=s('401k employee','pretax401k',0,30500,500,fmtF)+s('Benefits pre-tax','pretaxBenefits',0,15000,200,fmtF);
+  h+=`<div id="norm_preview" style="font-size:7.5px;color:var(--t3);margin:1px 0 4px;font-style:italic"></div>`;
+  h+=`<div class="st">👩‍⚕️ Nancy — Gross Income</div>`;
+  if(sy<P.nancyRampYear){
+    const nancyW2Yrs=Math.min(4,P.nancyRampYear-sy);
+    h+=`<div style="font-size:7.5px;color:var(--t3);margin-bottom:3px">${sy}–${sy+nancyW2Yrs-1}: W2 gross</div>`;
+    for(let i=0;i<nancyW2Yrs;i++){const yr=sy+i;h+=s(yr,'nancyW2Y'+i,0,200000,5000,fmtF)}
+  }
+  h+=`<div style="height:1px;background:var(--bd);margin:4px 0"></div><div style="font-size:7.5px;color:var(--t3);margin-bottom:3px">2030+: Practice builder</div>`;
+  h+=s('Rate','nancyHourlyRate',200,500,25,v=>'$'+v+'/hr')+s('Start year','nancyRampYear',2028,2036,1)+s('Starting clients/wk','nancyRampClients',0,10,1)+s('Max clients/wk','nancyMaxClients',5,25,1)+s('Years to max','nancyRampYears',2,10,1)+s('Weeks/yr','nancyWeeksPerYear',40,50,1);
+  h+=s('Solo practice','nancySoloPractice',0,1,1,v=>v?'YES ✓':'No (W2)');
+  if(P.nancySoloPractice){h+=`<div class="solo-box"><div style="font-size:7.5px;font-weight:600;color:var(--g);margin-bottom:3px">🏠 Solo Practice Deductions</div>`;h+=s('Overhead/yr','nancyPracticeOverhead',5000,40000,1000,fmtF)+s('Home office','nancyHomeOfficeDeduct',0,15000,1000,fmtF)+s('QBI rate','nancyQBIRate',0,.20,.01,v=>(v*100).toFixed(0)+'%');h+=`</div>`}
+  h+=`<div id="nancy_preview" style="font-size:7.5px;color:var(--t3);margin:1px 0 4px;font-style:italic"></div>`;
+  h+=`<div class="st">📦 Expenses (couple, 2026)</div>`;
+  h+=s('Groceries','baseGroceries',4000,15000,500,fmtF)+s('Dining','baseDining',5000,25000,500,fmtF)+s('Shopping','baseShopping',10000,40000,1000,fmtF)+s('Vacations (no kids)','baseVacations',5000,30000,1000,fmtF)+s('Vacations (w/ kids)','postKidVacations',5000,25000,1000,fmtF)+s('Misc','baseMisc',5000,20000,1000,fmtF)+s('Charity','baseCharity',0,20000,500,fmtF)+s('Medical','baseMedical',2000,10000,500,fmtF)+s('Expense inflation','expenseInflation',.02,.05,.005,v=>(v*100).toFixed(1)+'%');
+  h+=`<div class="st">🏠 Home</div>`;
+  h+=s('Purchase year','homePurchaseYear',2028,2035,1)+s('Price','homePrice',1000000,3000000,50000,v=>'$'+(v/1e6).toFixed(2)+'M')+s('Down %','downPctg',20,60,5,v=>v+'%')+s('Mortgage rate','mortgageRate',3,8,.25,v=>v+'%')+s('Property tax %','propTaxRate',0.005,0.03,0.0005,v=>(v*100).toFixed(2)+'%');
+  h+=`<div class="st">📈 Returns & Tax</div>`;
+  h+=s('Portfolio return','investReturn',.03,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Home appreciation','homeAppreciation',.01,.05,.005,v=>(v*100).toFixed(1)+'%')+s('Starting liquid','startingLiquid',500000,2000000,50000,fmtF)+s('Starting 401k','k401Start',0,500000,10000,fmtF)+s('NYC rent','nycRent',4000,8000,100,v=>'$'+v.toLocaleString()+'/mo');
+  h+=`<div style="height:1px;background:var(--bd);margin:4px 0"></div>`;
+  h+=s('Cap gains rate (sales)','capGainsTaxRate',.15,.35,.005,v=>(v*100).toFixed(1)+'%')+s('Cost basis %','costBasisPct',.30,.80,.05,v=>(v*100).toFixed(0)+'%');
+  h+=`<div style="height:1px;background:var(--bd);margin:6px 0"></div>`;
+  h+=`<button class="btn" onclick="resetAll()">↺ Reset All</button>`;
+  h+=`<div style="display:flex;gap:4px;margin-top:4px"><button class="btn" onclick="exportJSON()" style="flex:1;font-size:8px">📤 Export</button><button class="btn" onclick="importJSON()" style="flex:1;font-size:8px">📥 Import</button></div>`;
+  document.getElementById('controls').innerHTML=h;
+}
+
+async function resetAll(){
+  P={...D};scenarios=[];compareMode=false;activeScenarioIdx=-1;
+  savePlannerState();
+  buildControls();render();
+}
+
+function rollForward(){
+  const curYear=P.planStartYear||2026;const nextYear=curYear+1;
+  const d=document.createElement('div');
+  d.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(10,37,64,.4);z-index:9998;display:flex;align-items:center;justify-content:center';
+  d.innerHTML=`<div style="background:#fff;border-radius:12px;padding:24px 28px;width:100%;max-width:400px;box-shadow:0 8px 30px rgba(0,0,0,.15)">
+    <div style="font-size:15px;font-weight:700;color:#0a2540;margin-bottom:4px">📅 Roll Forward → ${nextYear}</div>
+    <div style="font-size:10.5px;color:#425466;margin-bottom:14px;line-height:1.6">
+      This will:<br>
+      • Auto-save a snapshot of your ${curYear} plan<br>
+      • Shift income inputs: Y1→Y0, Y2→Y1, Y3→Y2<br>
+      • Advance plan start year to ${nextYear}
+    </div>
+    <label style="display:block;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:#8898aa;margin-bottom:5px">Starting Liquid Jan ${nextYear} (actual current wealth)</label>
+    <input id="rfLiqInput" type="text" value="${P.startingLiquid.toLocaleString()}"
+      style="width:100%;padding:9px 11px;border:1px solid #635bff;border-radius:7px;font-size:13px;font-family:'SF Mono',monospace;color:#0a2540;outline:none;margin-bottom:14px"
+      onkeydown="if(event.key==='Enter')confirmRollForward(this.closest('div[style*=fixed]'),${curYear},${nextYear});if(event.key==='Escape')this.closest('div[style*=fixed]').remove()">
+    <div style="display:flex;gap:8px">
+      <button onclick="confirmRollForward(this.closest('div[style*=fixed]'),${curYear},${nextYear})"
+        style="flex:1;background:#0891b2;color:#fff;border:none;padding:10px;border-radius:7px;cursor:pointer;font-weight:600;font-size:13px;font-family:inherit">Roll Forward</button>
+      <button onclick="this.closest('div[style*=fixed]').remove()"
+        style="flex:1;background:#f0f4f8;color:#425466;border:1px solid #e6ebf1;padding:10px;border-radius:7px;cursor:pointer;font-size:13px;font-family:inherit">Cancel</button>
+    </div>
+  </div>`;
+  d.addEventListener('click',e=>{if(e.target===d)d.remove()});
+  document.body.appendChild(d);
+  setTimeout(()=>{const inp=document.getElementById('rfLiqInput');if(inp){inp.focus();inp.select();}},50);
+}
+async function confirmRollForward(overlay,curYear,nextYear){
+  const inp=document.getElementById('rfLiqInput');
+  const liqStr=inp?inp.value:'';
+  if(overlay)overlay.remove();
+  await saveSnapshot(true,`${curYear} plan · rolled forward ${new Date().toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`);
+  P.normCashY0=P.normCashY1;P.normCashY1=P.normCashY2;P.normCashY2=P.normCashY3;P.normCashY3=P.normCashBase;
+  P.normStockY0=P.normStockY1;P.normStockY1=P.normStockY2;P.normStockY2=P.normStockY3;P.normStockY3=P.normStockBase;
+  P.nancyW2Y0=P.nancyW2Y1;P.nancyW2Y1=P.nancyW2Y2;P.nancyW2Y2=P.nancyW2Y3;P.nancyW2Y3=P.nancyW2Y2;
+  P.planStartYear=nextYear;
+  const v=parseFloat(String(liqStr).replace(/[,$\s]/g,''));
+  if(!isNaN(v)&&v>0)P.startingLiquid=v;
+  buildControls();render();savePlannerState();
+  showToast(`✓ Rolled forward to ${nextYear}`,'green');
+}
+
+const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,nannyEndAge:v=>v+' yrs',nannyHourlyRate:v=>'$'+v,nannyDaysPerWeek:null,daycareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normCashY0:fmtF,normStockY0:fmtF,normCashY1:fmtF,normStockY1:fmtF,normCashY2:fmtF,normStockY2:fmtF,normCashY3:fmtF,normStockY3:fmtF,normCashBase:fmtF,normStockBase:fmtF,normGrowth:v=>(v*100).toFixed(1)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo',capGainsTaxRate:v=>(v*100).toFixed(1)+'%',costBasisPct:v=>(v*100).toFixed(0)+'%'};
+
+function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'+key);const fn=SF[key];if(el&&fn)el.textContent=fn(P[key]);else if(el)el.textContent=P[key];if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear')buildControls();activeScenarioIdx=-1;render();savePlannerState()}
+
+function loadScenario(i){P={...D,...scenarios[i].params};activeScenarioIdx=i;buildControls();render();savePlannerState()}
+
+function showSaveInput(){
+  const area=document.getElementById('scenarioSaveArea');
+  const form=document.getElementById('scenarioSaveForm');
+  const inp=document.getElementById('scenarioNameInput');
+  if(!area||!form||!inp)return;
+  inp.value='Scenario '+(scenarios.length+1);
+  area.style.display='none';form.style.display='block';
+  inp.focus();inp.select();
+}
+function hideSaveInput(){
+  const area=document.getElementById('scenarioSaveArea');
+  const form=document.getElementById('scenarioSaveForm');
+  if(area)area.style.display='block';if(form)form.style.display='none';
+}
+async function confirmSaveScenario(){
+  const inp=document.getElementById('scenarioNameInput');
+  const n=(inp?inp.value.trim():'')||('Scenario '+(scenarios.length+1));
+  hideSaveInput();
+  await saveScenario(n);
+}
+async function saveScenario(n){
+  if(!n){n='Scenario '+(scenarios.length+1);}
+  const id=advUuid();
+  const s={id,name:n,params:{...P},results:run(P),color:COLORS[scenarios.length%COLORS.length]};
+  scenarios.push(s);
+  activeScenarioIdx=scenarios.length-1;
+  buildControls();render();savePlannerState();
+  try{
+    const r=await fetch('/api/scenarios',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:s.id,name:s.name,color:s.color,params:s.params,results:s.results})});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    setSyncStatus('synced');
+  }catch(e){
+    console.error('saveScenario failed:',e);
+    setSyncStatus('error');
+    const errDiv=document.createElement('div');
+    errDiv.style.cssText='position:fixed;top:16px;right:16px;background:#fceaee;border:1px solid rgba(205,61,100,.3);color:#cd3d64;padding:12px 16px;border-radius:8px;font-size:12px;z-index:9999;max-width:300px;box-shadow:0 4px 12px rgba(0,0,0,.1)';
+    errDiv.innerHTML=`<strong>⚠️ Save failed</strong><br>Scenario is visible this session but won't survive a reload.<br><small style="opacity:.7">${e.message}</small><br><br><button onclick="this.parentElement.remove()" style="background:#cd3d64;color:#fff;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px">Dismiss</button>`;
+    document.body.appendChild(errDiv);setTimeout(()=>errDiv.remove(),8000);
+  }
+}
+
+async function updateScenario(i){
+  scenarios[i].params={...P};scenarios[i].results=run(P);
+  activeScenarioIdx=i;
+  const s=scenarios[i];
+  buildControls();render();savePlannerState();
+  try{
+    const r=await fetch('/api/scenarios/'+s.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:s.params,results:s.results})});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+  }catch(e){console.error('updateScenario failed:',e);setSyncStatus('error')}
+}
+
+async function deleteScenario(i){
+  const s=scenarios[i];
+  scenarios.splice(i,1);
+  if(!scenarios.length)compareMode=false;
+  if(activeScenarioIdx===i)activeScenarioIdx=-1;
+  else if(activeScenarioIdx>i)activeScenarioIdx--;
+  buildControls();render();savePlannerState();
+  if(s.id){
+    try{
+      const r=await fetch('/api/scenarios/'+s.id,{method:'DELETE'});
+      if(!r.ok)throw new Error('HTTP '+r.status);
+    }catch(e){console.error('deleteScenario failed:',e);setSyncStatus('error')}
+  }
+}
+
+function toggleCompare(){compareMode=!compareMode;buildControls();render();savePlannerState()}
+
+function fmtK(v){const a=Math.abs(v);const s=v<0?'-':'';if(a>=1000)return s+'$'+(a/1000).toFixed(1).replace(/\.0$/,'')+'M';return s+'$'+a+'K'}
+function chartOpts(){return{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#425466',font:{size:8.5,family:'Inter'},boxWidth:8}},tooltip:{backgroundColor:'#0a2540',borderColor:'#0a2540',borderWidth:0,titleFont:{size:10,family:'Inter'},bodyFont:{size:9,family:'Inter'},titleColor:'#fff',bodyColor:'#fff',padding:8,callbacks:{label:c=>c.dataset.label+': $'+(c.raw||0).toLocaleString()+'K'}}},scales:{x:{ticks:{color:'#8898aa',font:{size:8,family:'Inter'},maxRotation:45},grid:{display:false}},y:{ticks:{color:'#8898aa',font:{size:8,family:'Inter'},stepSize:500,callback:v=>fmtK(v)},grid:{color:'#e6ebf1'}}}}}
+function posOpts(){const o=chartOpts();o.scales.y.min=0;return o}
+
+function render(){
+  const{R,tT,tC,tTx,tS,dp,mm}=run(P);
+  const last=R[R.length-1],pur=R.find(r=>r.yr===P.homePurchaseYear),pliq=pur?pur.liq:0;
+  const peak=R.reduce((a,b)=>b.tu>a.tu?b:a),minL=R.reduce((a,b)=>b.liq<a.liq?b:a);
+  const r26=R[0];
+  document.getElementById('kpis').innerHTML=`
+    <div class="kpi"><div class="kpi-l">📊 ${r26.yr} Eff Tax</div><div class="kpi-v" style="color:var(--a)">${(r26.effRate*100).toFixed(1)}%</div><div class="kpi-s">${fmtF(r26.tax)} on ${fmtF(r26.gross)}</div></div>
+    <div class="kpi"><div class="kpi-l">🏠 Post-Down</div><div class="kpi-v" style="color:${pliq>800000?'var(--g)':'var(--a)'}">${fmt(pliq)}</div><div class="kpi-s">${P.homePurchaseYear}</div></div>
+    <div class="kpi"><div class="kpi-l">🎓 Tuition</div><div class="kpi-v" style="color:var(--r)">${fmt(tT)}</div><div class="kpi-s">${P.numKids} kids</div></div>
+    <div class="kpi"><div class="kpi-l">💸 Tax on Sales</div><div class="kpi-v" style="color:var(--r)">${fmt(tTx)}</div><div class="kpi-s">${fmt(tS)} sold</div></div>
+    <div class="kpi"><div class="kpi-l">📉 Liquid Floor</div><div class="kpi-v" style="color:${minL.liq>500000?'var(--g)':'var(--a)'}">${fmt(minL.liq)}</div><div class="kpi-s">${minL.yr}</div></div>
+    <div class="kpi"><div class="kpi-l">🏁 NW (${last.yr})</div><div class="kpi-v" style="color:var(--g)">${fmt(last.nw)}</div><div class="kpi-s">+${fmt(last.k401)} 401k</div></div>
+    <div class="kpi"><div class="kpi-l">🏦 Total w/ 401k</div><div class="kpi-v" style="color:var(--c)">${fmt(last.nw+last.k401)}</div></div>
+    ${monarchSnapshot?`<div class="kpi" style="border-color:rgba(191,105,0,.3);background:var(--a-soft)"><div class="kpi-l" style="color:var(--a)">📍 Live NW</div><div class="kpi-v" style="color:var(--a);font-size:13px">${fmt(monarchSnapshot.netWorth)}</div><div class="kpi-s">${new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div></div>`:''}`;
+  const np=document.getElementById('norm_preview');
+  const _sy=P.planStartYear||2026;const _by=_sy+4;
+  if(np)np.textContent=`${_by}: ${fmtF(Math.round((P.normCashBase??275000)+(P.normStockBase??150000)))} · ${_by+10}: ${fmtF(Math.round((P.normCashBase??275000)*(1+P.normGrowth)**10+(P.normStockBase??150000)))}`;
+  const nap=document.getElementById('nancy_preview');
+  if(nap){const matYr=P.nancyRampYear+P.nancyRampYears;const nc=Math.min(P.nancyMaxClients,P.nancyRampClients+(P.nancyMaxClients-P.nancyRampClients)*Math.max(0,Math.min(1,(matYr-P.nancyRampYear)/P.nancyRampYears)));nap.textContent=`${matYr}: ~${Math.round(nc)} clients → ${fmtF(Math.round(nc*P.nancyHourlyRate*P.nancyWeeksPerYear))} gross`}
+  let sc='';if(scenarios.length>0){sc='<div class="scenario-bar"><span style="font-size:7px;color:var(--t3);font-weight:600">SAVED:</span>';
+    scenarios.forEach((s,i)=>{const isA=activeScenarioIdx===i;sc+=`<div class="scenario-chip" onclick="loadScenario(${i})" style="border-color:${isA?s.color:s.color+'40'};color:${s.color};${isA?'background:'+s.color+'15':''}"><span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:${s.color}"></span>${s.name}${isA?' ✓':''}<span class="x" onclick="event.stopPropagation();deleteScenario(${i})">✕</span></div>`});
+    if(activeScenarioIdx===-1)sc+=`<span style="font-size:7px;color:var(--t3);font-style:italic;padding:3px">● Unsaved</span>`;sc+='</div>'}
+  document.getElementById('scenarioBar').innerHTML=sc;
+  renderSnapshotBar();
+  const labels=R.map(r=>String(r.yr));const newKey=_chartKey();const reuseChart=(newKey===_lastChartKey&&!!charts.main);if(!reuseChart)destroyCharts();_lastChartKey=newKey;const ca=document.getElementById('chartArea');
+  if(activeTab==='advisor'){renderAdvisorTab(R,P);return}
+  if(activeTab==='goals'){renderGoalsTab(R,P,tT);return}
+  if(activeTab==='housing'){renderHousingTab(R,P);return}
+  if(activeTab==='sensitivity'){window._lastR=R;window._lastP=P;renderSensitivityTab(R,P);return}
+  if(activeTab==='compare'){renderCompareTab(R,P);return}
+  if(activeTab==='table'){
+    ca.innerHTML=`<div class="tw"><table><thead><tr>${['Yr','Norm','Nancy','Gross','Tax','Eff%','Net','Housing','Living','CC','Tuition','TotExp','Surplus','Liquid','Eq','NW'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{const bg=r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';return `<tr style="background:${bg}"><td style="font-weight:700;color:var(--tx)">${r.yr}</td><td style="color:var(--b)">${fmt(r.normG)}</td><td style="color:var(--p)">${fmt(r.nancyG)}</td><td>${fmt(r.gross)}</td><td style="color:var(--r)">${fmt(r.tax)}</td><td style="color:var(--a)">${(r.effRate*100).toFixed(1)}%</td><td style="color:var(--g)">${fmt(r.inc)}</td><td>${fmt(r.h)}</td><td>${fmt(r.liv)}</td><td style="color:${r.cc>0?'var(--a)':'var(--t3)'}">${r.cc>0?fmt(r.cc):'—'}</td><td style="color:${r.tu>100000?'var(--r)':r.tu>0?'var(--a)':'var(--t3)'}">${r.tu>0?fmt(r.tu):'—'}</td><td>${fmt(r.totE)}</td><td style="color:${r.surp>=0?'var(--g)':'var(--r)'};font-weight:600">${r.surp>=0?'+':''}${fmt(r.surp)}</td><td style="color:var(--b)">${fmt(r.liq)}</td><td style="color:var(--p)">${r.eq>0?fmt(r.eq):'—'}</td><td style="color:var(--g);font-weight:600">${fmt(r.nw)}</td></tr>`}).join('')}</tbody></table></div>`;return}
+  if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';
+  const ctx=document.getElementById('cv').getContext('2d');const opts=chartOpts();
+  // Prepend planStartYear-1 as a synthetic starting point showing initial liquid
+  const sy0=P.planStartYear||2026;
+  const nwLabels=[String(sy0-1),...labels];
+  const startLiqK=Math.round(P.startingLiquid/1000);
+  // Monarch actual dot — added to each chart dataset array below
+  const _mSnap=monarchSnapshot;
+  const _mDotIdx=_mSnap?nwLabels.indexOf(String(new Date().getFullYear())):-1;
+  const _mImpliedLiqK=_mSnap?Math.round(_mSnap.liquid/1000):0;
+  const _mTotalK=_mSnap?Math.round(_mSnap.netWorth/1000):0;
+  const _mRetK=_mSnap?Math.round(_mSnap.retirement/1000):0;
+  function _mDotDs(yK,label){
+    if(!_mSnap||_mDotIdx<0)return null;
+    return{label,data:nwLabels.map((_,i)=>i===_mDotIdx?yK:null),
+      borderColor:'#f59e0b',backgroundColor:'#f59e0b',
+      pointRadius:nwLabels.map((_,i)=>i===_mDotIdx?8:0),
+      pointHoverRadius:12,borderWidth:0,fill:false,tension:0,spanGaps:false,
+      pointStyle:'circle'};
+  }
+  if(activeTab==='nw'){
+    const po=posOpts();
+    const ds=[{label:'Total NW'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.nw,r.yr))],borderColor:'#635bff',backgroundColor:'rgba(99,91,255,.06)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2.5},{label:'Liquid'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.liq,r.yr))],borderColor:'#0073e6',backgroundColor:'rgba(0,115,230,.04)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2},{label:'Equity'+(inflationView?' (real)':''),data:[0,...R.map(r=>deflK(r.eq,r.yr))],borderColor:'#7c3aed',fill:false,tension:.3,pointRadius:1,borderWidth:1.5,borderDash:[4,3]}];
+    if(compareMode)scenarios.forEach(s=>{const sLiq=Math.round((s.params.startingLiquid||P.startingLiquid)/1000);ds.push({label:s.name+' Liquid',data:[sLiq,...s.results.R.map(r=>deflK(r.liq,r.yr))],borderColor:s.color,fill:false,tension:.3,pointRadius:3,pointBackgroundColor:s.color,borderWidth:3.5})});
+    // Snapshot overlay — compare a saved projection against the current plan
+    if(overlaySnapId){const sn=snapshots.find(x=>x.id===overlaySnapId);if(sn&&sn.params){const sr=run({...D,...migrateP(sn.params)});const so=String((sn.params.planStartYear||sy0)-1);ds.push({label:'📸 '+sn.label+' (NW)',data:[Math.round((sn.params.startingLiquid||P.startingLiquid)/1000),...sr.R.map(r=>deflK(r.nw,r.yr))],borderColor:'#bf6900',fill:false,tension:.3,pointRadius:0,borderWidth:2,borderDash:[6,3]})}}
+    const _mNwDot=_mDotDs(_mImpliedLiqK,'📍 Actual NW (Monarch)');if(_mNwDot)ds.push(_mNwDot);
+    if(!reuseChart||!_updateChart(ds,nwLabels)){if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';const ctx2=document.getElementById('cv').getContext('2d');charts.main=new Chart(ctx2,{type:'line',data:{labels:nwLabels,datasets:ds},options:po})}
+  } else if(activeTab==='income'){
+    const dsInc=[{label:'Norm Gross',data:R.map(r=>Math.round(r.normG/1000)),backgroundColor:'rgba(0,115,230,.6)',borderRadius:2},{label:'Nancy Gross',data:R.map(r=>Math.round(r.nancyG/1000)),backgroundColor:'rgba(124,58,237,.6)',borderRadius:2},{label:'Tax',data:R.map(r=>-Math.round(r.tax/1000)),backgroundColor:'rgba(205,61,100,.5)',borderRadius:2}];
+    if(!reuseChart||!_updateChart(dsInc,labels))charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:dsInc},options:{...opts,scales:{x:{stacked:true,...opts.scales.x},y:{stacked:true,...opts.scales.y,ticks:{...opts.scales.y.ticks,callback:v=>fmtK(v)}}}}});
+  } else if(activeTab==='cashflow'){
+    const dsCF=[{label:'Surplus',data:R.map(r=>Math.round(r.surp/1000)),backgroundColor:R.map(r=>r.surp>=0?'rgba(26,135,84,.6)':'rgba(205,61,100,.6)'),borderRadius:2}];
+    if(compareMode)scenarios.forEach(s=>{dsCF.push({label:s.name,data:s.results.R.map(r=>Math.round(r.surp/1000)),type:'line',borderColor:s.color,fill:false,tension:.3,pointRadius:2,pointBackgroundColor:s.color,borderWidth:3})});
+    if(!reuseChart||!_updateChart(dsCF,labels))charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:dsCF},options:opts});
+  }
+  document.getElementById('summaries').innerHTML=`
+    <div class="sc"><h3>🏠 Home</h3><p><span class="mono" style="font-weight:600;color:var(--tx)">${fmt(P.homePrice)}</span> in ${P.homePurchaseYear}<br>${P.downPctg}% down · <span class="mono">${fmt(mm)}/mo</span> at ${P.mortgageRate}%</p></div>
+    <div class="sc"><h3>📊 Tax Engine</h3><p>Fed MFJ 2026 + NYS + NYC + FICA<br>SALT $40.4K w/ phaseout above $505K<br>CTC $2.2K/kid w/ AGI phaseout<br>${P.nancySoloPractice?'Nancy: QBI + home office + SE':'Nancy: W2'}</p></div>
+    <div class="sc"><h3>💡 Per-Kid Costs</h3><p>Infant +$9K · School +$10K · Teen +$14K/yr<br><em style="font-size:7.5px;color:var(--t3)">${(P.expenseInflation*100).toFixed(1)}%/yr inflation · ${P.numKids} kids</em></p></div>`;
+}
+
+function renderHousingTab(R,P){
+  const ca=document.getElementById('chartArea');
+  destroyCharts();
+
+  const py=P.homePurchaseYear||2030;
+  const ptRate=P.propTaxRate??0.012;
+  const maintAnn=P.maintBase||10000;
+  const endYr=P.planEndYear||2058;
+
+  const pyRow=R.find(r=>r.yr===py)||R[0];
+  const netInc=pyRow?.inc||0;
+
+  // All-in annual housing cost for any price/down/rate
+  function calcH(hp,dp,mr){
+    const loan=hp*(1-dp/100);
+    const moR=mr/100/12;
+    const moPI=loan>0&&moR>0?loan*(moR*(1+moR)**360)/((1+moR)**360-1):0;
+    const annTax=ptRate*hp;
+    const annM=Math.round(maintAnn*(hp/P.homePrice));
+    const total=moPI*12+annTax+annM;
+    return{loan,moPI,annPI:moPI*12,annTax,annM,total,moTotal:total/12};
+  }
+  // Run the live model with overrides → final NW+401k and deficit count
+  function proj(ov){
+    try{const r=run({...P,...ov});const l=r.R[r.R.length-1];return{nw:l.nw,k401:l.k401,total:l.nw+l.k401,defYrs:r.R.filter(x=>x.surp<0).length};}catch(e){return null;}
+  }
+
+  const cur=calcH(P.homePrice,P.downPctg,P.mortgageRate);
+  const curPct=netInc>0?cur.total/netInc:0;
+  const K=cur.total/P.homePrice;               // housing $/yr per $ of home (current dp & rate)
+  const priceFor=f=>K>0?netInc*f/K:0;          // home price that lands housing at f of net
+  const target25=netInc*0.25;
+
+  // Purchase-year snapshot — keep everything in the SAME year's dollars.
+  // (Averaging nominal expenses across the whole horizon would inflate them
+  // ~3%/yr and unfairly dwarf a single year's income.) Model fields: liv is
+  // living ex-housing/ex-tuition/ex-childcare; cc childcare; tu tuition; h housing.
+  const pyLiv=pyRow.liv||0;
+  const pyTuCc=(pyRow.tu||0)+(pyRow.cc||0);
+  const buffer=30000;
+  const availHousing=netInc-pyLiv-pyTuCc-buffer;
+  // Peak crunch year (max tuition+childcare) for the warning
+  const peakRow=R.reduce((a,b)=>((b.tu+b.cc)>(a.tu+a.cc)?b:a),R[0]);
+  const peakTuCc=peakRow.tu+peakRow.cc;
+  const peakAvail=peakRow.inc-peakRow.liv-peakTuCc-buffer;
+
+  const kY=v=>'$'+Math.round(v/1000)+'K';
+  const kMo=v=>'$'+(v/12/1000).toFixed(1)+'K';
+  const mM=v=>'$'+(v/1e6).toFixed(2)+'M';
+  const fmtM=v=>v>=1e6?'$'+(v/1e6).toFixed(2)+'M':fmt(v);
+
+  // ── Tradeoff data (live model at 7 price points) ──
+  const tPrices=[1000000,1200000,1400000,1600000,1700000,1800000,2000000];
+  const tNW=tPrices.map(hp=>{const p=proj({homePrice:hp});return p?+(p.total/1e6).toFixed(2):0;});
+  const tCost=tPrices.map(hp=>+(calcH(hp,P.downPctg,P.mortgageRate).total/1000).toFixed(1));
+  const tColors=tPrices.map(hp=>hp===P.homePrice?'rgba(99,91,255,.75)':(hp===1700000?'rgba(26,135,84,.65)':'rgba(0,115,230,.4)'));
+
+  // ── Five paths (exact combos from the analysis), live NW ──
+  const PATHS=[
+    {label:'A · Smaller home, low down', hp:1300000,dp:30,mr:5.5,col:'#1a8754',note:'Most NW upside, smallest home'},
+    {label:'B · Smaller home, low rate', hp:1400000,dp:25,mr:4.0,col:'#1a8754',note:'Best NW, requires low-rate environment'},
+    {label:'C · Mid-size, big down',     hp:1600000,dp:50,mr:6.0,col:'#0073e6',note:'Solid balance · likely scenario',hi:true},
+    {label:'D · Larger home, low rate',  hp:1800000,dp:50,mr:4.5,col:'#bf6900',note:'Bigger home, more $ tied up'},
+    {label:'E · Original $2M, huge down',hp:2000000,dp:60,mr:5.0,col:'#cd3d64',note:'Largest home, most capital locked up'},
+  ];
+  const pathData=PATHS.map(pd=>{const h=calcH(pd.hp,pd.dp,pd.mr);const p=proj({homePrice:pd.hp,downPctg:pd.dp,mortgageRate:pd.mr});return{...pd,...h,finalNW:p?p.total:0,defYrs:p?p.defYrs:0};});
+  const bestNW=Math.max(...pathData.map(d=>d.finalNW));
+
+  // Recommendation deltas (live)
+  const nw17=proj({homePrice:1700000})?.total||0;
+  const nw20=proj({homePrice:2000000})?.total||0;
+  const recGain=nw17-nw20;
+
+  let pathRows='';
+  pathData.forEach((pd,i)=>{
+    const rowBg=pd.hi?'background:var(--g-soft)':(i%2===0?'background:var(--s1)':'background:var(--s2)');
+    const nwCol=pd.finalNW>=bestNW?'var(--g)':pd.finalNW>=bestNW*.92?'var(--tx)':'var(--r)';
+    pathRows+=`<tr style="${rowBg}${pd.hi?';outline:1px solid var(--g)':''}">
+      <td style="padding:9px 10px;font-size:11px;color:var(--tx);font-weight:600">${pd.label}</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${mM(pd.hp)}</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${pd.dp}%</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtM(pd.hp*pd.dp/100)}</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace;color:${pd.mr<=4.5?'var(--g)':pd.mr>=6?'var(--r)':'var(--a)'}">${pd.mr.toFixed(1)}%</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtM(pd.loan)}</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtF(Math.round(pd.moPI))}</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtF(Math.round(pd.annTax))}</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtF(Math.round(pd.annM))}</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace;font-weight:700;color:var(--g)">${kY(pd.total)}</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace;font-weight:700;color:${nwCol}">${mM(pd.finalNW)}</td>
+      <td style="padding:9px 10px;font-size:10px;color:var(--t2)">${pd.note}</td>
+    </tr>`;
+  });
+
+  const ST='font-size:14px;font-weight:600;color:var(--tx);margin:8px 0 2px';
+  const IB=(border,html)=>`<div style="background:var(--s2);border-left:3px solid ${border};padding:12px 14px;border-radius:0 7px 7px 0;margin-top:10px;font-size:12px;line-height:1.5;color:var(--t2)">${html}</div>`;
+
+  ca.innerHTML=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px">
+
+  <!-- Header -->
+  <div style="display:flex;align-items:baseline;justify-content:space-between;border-bottom:1px solid var(--bd);padding-bottom:12px">
+    <div style="font-size:18px;font-weight:700;color:var(--tx)">🏠 Ideal Housing Budget Analysis</div>
+    <div style="font-size:11px;color:var(--t3);font-family:'SF Mono',monospace">Cohen Family · ${py} Purchase</div>
+  </div>
+
+  <!-- THE FRAMING -->
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">📊 ${py} Net Income</div>
+      <div style="font-size:28px;font-weight:700;font-family:'SF Mono',monospace;letter-spacing:-1px;color:var(--c)">${kY(netInc)}</div>
+      <div style="font-size:11px;color:var(--t2);margin-top:3px">Combined household after taxes</div>
+    </div>
+    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">🎯 Housing Target (25%)</div>
+      <div style="font-size:28px;font-weight:700;font-family:'SF Mono',monospace;letter-spacing:-1px;color:var(--g)">${kY(target25)}/yr</div>
+      <div style="font-size:11px;color:var(--t2);margin-top:3px">${kMo(target25)}/mo all-in (mortgage + tax + maint)</div>
+    </div>
+    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">${curPct>0.28?'⚠️':'✅'} Current Plan (${mM(P.homePrice)})</div>
+      <div style="font-size:28px;font-weight:700;font-family:'SF Mono',monospace;letter-spacing:-1px;color:${curPct>0.28?'var(--a)':curPct>0.25?'var(--a)':'var(--g)'}">${kY(cur.total)}/yr</div>
+      <div style="font-size:11px;color:var(--t2);margin-top:3px">${kMo(cur.total)}/mo · ~${(curPct*100).toFixed(0)}% of net income</div>
+    </div>
+  </div>
+
+  <!-- WHY 25% -->
+  <div style="${ST}">📐 What's an "ideal" housing cost?</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">The Math</div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <tr><td style="padding:8px 4px;color:var(--t2);border-bottom:1px solid var(--bd)">${py} Net income</td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)"><strong>${kY(netInc)}</strong></td></tr>
+        <tr><td style="padding:8px 4px;color:var(--t2);border-bottom:1px solid var(--bd)">${py} Living expenses (ex-housing, ex-tuition, ex-childcare)</td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)">${kY(pyLiv)}</td></tr>
+        <tr><td style="padding:8px 4px;color:var(--t2);border-bottom:1px solid var(--bd)">${py} Tuition + childcare</td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)">${kY(pyTuCc)}</td></tr>
+        <tr><td style="padding:8px 4px;color:var(--t2);border-bottom:1px solid var(--bd)">Discretionary buffer needed</td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)">~${kY(buffer)}</td></tr>
+        <tr style="background:var(--g-soft)"><td style="padding:8px 4px;color:var(--tx)"><strong>Available for housing (${py})</strong></td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;color:${availHousing>=0?'var(--g)':'var(--r)'}"><strong>${kY(availHousing)}</strong></td></tr>
+      </table>
+      ${IB('var(--b)',`<strong style="color:var(--tx)">The hard truth:</strong> ${py} has room, but by peak tuition (<strong style="color:var(--tx)">${peakRow.yr}</strong>) tuition + childcare alone hits <strong style="color:var(--tx)">${kY(peakTuCc)}</strong> — leaving only <strong style="color:${peakAvail>=0?'var(--a)':'var(--r)'}">${kY(Math.max(0,peakAvail))}</strong> for housing that year${peakAvail<0?' (a deficit before housing is even counted)':''}. Housing is fixed, so the crunch years are funded by drawing down savings. Keeping all-in housing modest is what protects those years.`)}
+    </div>
+    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">Three Reasonable Targets</div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <tr><td style="padding:8px 4px;border-bottom:1px solid var(--bd)"><strong style="color:var(--g)">Conservative (22% of net)</strong></td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)"><strong>${mM(priceFor(.22))} → ${kY(netInc*.22)}/yr</strong></td></tr>
+        <tr><td style="padding:8px 4px;border-bottom:1px solid var(--bd)"><strong style="color:var(--a)">Moderate (25% of net)</strong></td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)"><strong>${mM(priceFor(.25))} → ${kY(netInc*.25)}/yr</strong></td></tr>
+        <tr><td style="padding:8px 4px;border-bottom:1px solid var(--bd)"><strong style="color:var(--b)">Stretch (28% of net)</strong></td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)"><strong>${mM(priceFor(.28))} → ${kY(netInc*.28)}/yr</strong></td></tr>
+        <tr><td style="padding:8px 4px;color:var(--t2)">Current plan (${(curPct*100).toFixed(0)}%)</td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;color:var(--t2)">${mM(P.homePrice)} → ${kY(cur.total)}/yr</td></tr>
+      </table>
+      ${IB('var(--g)',`<strong style="color:var(--tx)">Recommendation: ~$1.7M target.</strong> Adds roughly <strong style="color:var(--g)">${mM(recGain)}</strong> to long-term NW vs a $2M home, while staying realistic for a 4-bed home (rather than $1.5M, which may force compromises on size or quality).`)}
+    </div>
+  </div>
+
+  <!-- TRADEOFF CHART -->
+  <div style="${ST}">📈 The Tradeoff: Home Price vs Lifecycle NW</div>
+  <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
+    <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">Lower home price → more compounding capital → bigger lifetime NW</div>
+    <div style="position:relative;width:100%;height:300px"><canvas id="housingTradeoff"></canvas></div>
+    ${IB('var(--bd2)',`<strong style="color:var(--tx)">Reading the chart:</strong> Each ~$100K reduction in home price adds roughly ${mM(Math.abs((tNW[6]-tNW[2])/6)*1e6)} to your final NW (NW + 401k at ${endYr}). Roughly linear because the saved capital compounds at ${(P.investReturn*100).toFixed(0)}%/yr for decades.`)}
+  </div>
+
+  <!-- FIVE PATHS -->
+  <div style="${ST}">🛤️ Five Paths to ~$80K/yr All-In Housing</div>
+  <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px;overflow-x:auto">
+    <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">Same housing cost, very different financial outcomes</div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr>
+        ${['Path','Home Price','Down %','Down $','Mort Rate','Loan','P&I/mo','Property Tax','Maint','Total/yr','NW @ '+endYr,'Trade-off'].map(h=>`<th style="text-align:left;padding:8px 10px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);border-bottom:1px solid var(--bd);white-space:nowrap">${h}</th>`).join('')}
+      </tr></thead>
+      <tbody>${pathRows}</tbody>
+    </table>
+  </div>
+
+  <!-- VISUALIZE PATHS -->
+  <div style="${ST}">🎨 Visualizing the Five Paths</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">Down Payment Required</div>
+      <div style="position:relative;width:100%;height:260px"><canvas id="housingDown"></canvas></div>
+    </div>
+    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">Final NW (NW + 401k @ ${endYr})</div>
+      <div style="position:relative;width:100%;height:260px"><canvas id="housingNW"></canvas></div>
+    </div>
+  </div>
+
+  <!-- HOW TO READ -->
+  <div style="${ST}">🧠 What These Paths Tell You</div>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+    <div style="background:var(--s1);border:1px solid var(--bd);border-left:3px solid var(--g);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--g);margin-bottom:8px">📌 Capital Locked vs Compounding</div>
+      <div style="font-size:13px;line-height:1.6;color:var(--t2)">Path A ($390K down) leaves <strong style="color:var(--g)">$810K more in your portfolio</strong> than Path E ($1.2M down). At ${(P.investReturn*100).toFixed(0)}%/yr for ${endYr-py} years, that's an extra <strong style="color:var(--g)">${mM(810000*Math.pow(1+P.investReturn,endYr-py))}</strong> by ${endYr}.<br><br>The biggest variable here isn't your monthly payment — it's <strong style="color:var(--tx)">how much capital you tie up at closing</strong>.</div>
+    </div>
+    <div style="background:var(--s1);border:1px solid var(--bd);border-left:3px solid var(--a);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--a);margin-bottom:8px">📌 Property Tax & Maintenance Scale</div>
+      <div style="font-size:13px;line-height:1.6;color:var(--t2)">A $2M home costs <strong style="color:var(--tx)">${kY(2000000*ptRate+maintAnn*(2000000/P.homePrice))}/yr in fixed costs</strong> before you even pay the mortgage. A $1.4M home costs ${kY(1400000*ptRate+maintAnn*(1400000/P.homePrice))}. That difference compounds too.<br><br>Property tax doesn't go down — and unlike a mortgage, it grows with your home value forever.</div>
+    </div>
+    <div style="background:var(--s1);border:1px solid var(--bd);border-left:3px solid var(--b);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--b);margin-bottom:8px">📌 Rate vs Price Tradeoff</div>
+      <div style="font-size:13px;line-height:1.6;color:var(--t2)">Going from ${P.mortgageRate}% to 4.0% saves <strong style="color:var(--tx)">~${fmtF(Math.round(calcH(P.homePrice,P.downPctg,P.mortgageRate).moPI-calcH(P.homePrice,P.downPctg,4.0).moPI))}/mo</strong> on P&I.<br><br>But locking in a low rate matters less than people think — your goal is to free up <strong style="color:var(--tx)">capital that can compound</strong>, not minimize the monthly payment.</div>
+    </div>
+  </div>
+
+  <!-- RECOMMENDATION -->
+  <div style="${ST}">🎯 Recommendation</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:6px">
+    <div style="background:var(--s1);border:2px solid var(--g);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--g);margin-bottom:8px">Primary Recommendation</div>
+      <div style="font-size:28px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">$1.7M</div>
+      <div style="font-size:13px;color:var(--t2);margin-top:8px;line-height:1.5">50% down at prevailing rate. Total housing ~${kY(calcH(1700000,50,P.mortgageRate).total)}/yr (${Math.round(calcH(1700000,50,P.mortgageRate).total/netInc*100)}% of net). Adds <strong style="color:var(--g)">${mM(recGain)} to NW</strong> vs the $2M plan. Realistic 4BR price.</div>
+      ${IB('var(--g)',`<strong style="color:var(--tx)">Why not lower:</strong> Below $1.5M likely means smaller (3BR), older, or a compromised location. Doesn't fit a growing family long-term.`)}
+    </div>
+    <div style="background:var(--s1);border:2px solid var(--b);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--b);margin-bottom:8px">Secondary Levers</div>
+      <div style="font-size:20px;font-weight:700;color:var(--b)">If $2M is the home…</div>
+      <div style="font-size:13px;color:var(--t2);margin-top:8px;line-height:1.6">Compensate by:<br>1. <strong style="color:var(--tx)">Down payment ≥ 50%</strong> — minimizes monthly cost<br>2. <strong style="color:var(--tx)">Refinance opportunistically</strong> if rates fall to 4–4.5%<br>3. <strong style="color:var(--tx)">Nancy 5 days/wk</strong> — cuts deficits materially<br>4. <strong style="color:var(--tx)">Stripe equity event</strong> covers everything</div>
+      ${IB('var(--b)',`$2M only really works if a Stripe liquidity event happens before ${py} and you have meaningful liquidity beyond the down-payment fund.`)}
+    </div>
+  </div>
+
+  </div>`;
+
+  // ── Charts (planner light theme) ──
+  const tick='#8898aa',grid='#e6ebf1',leg='#425466';
+  const baseOpts=(yFmt,y1Fmt)=>({responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{labels:{color:leg,font:{size:11,family:'Inter'},boxWidth:10}},
+      tooltip:{backgroundColor:'#0a2540',titleColor:'#fff',bodyColor:'#fff',padding:8,titleFont:{size:10},bodyFont:{size:10}}},
+    scales:{x:{ticks:{color:tick,font:{size:9,family:'Inter'}},grid:{display:false}},
+      y:{position:'left',ticks:{color:tick,font:{size:9},callback:yFmt},grid:{color:grid}}}});
+
+  const tCtx=document.getElementById('housingTradeoff');
+  if(tCtx)charts.housingTradeoff=new Chart(tCtx.getContext('2d'),{
+    data:{labels:tPrices.map(p=>'$'+(p/1e6).toFixed(1)+'M'),
+      datasets:[
+        {type:'bar',label:'NW @ '+endYr+' ($M)',data:tNW,backgroundColor:tColors,borderRadius:4,yAxisID:'y'},
+        {type:'line',label:'Annual Housing ($K)',data:tCost,borderColor:'#bf6900',backgroundColor:'rgba(191,105,0,.1)',tension:.3,pointRadius:4,borderWidth:2,yAxisID:'y1'}
+      ]},
+    options:{...baseOpts(v=>'$'+v+'M'),
+      scales:{x:{ticks:{color:tick,font:{size:10}},grid:{display:false}},
+        y:{position:'left',ticks:{color:tick,callback:v=>'$'+v+'M'},grid:{color:grid},title:{display:true,text:'NW @ '+endYr,color:tick,font:{size:9}}},
+        y1:{position:'right',ticks:{color:'#bf6900',callback:v=>'$'+v+'K'},grid:{display:false},title:{display:true,text:'Annual Housing',color:'#bf6900',font:{size:9}}}}}
+  });
+
+  const dCtx=document.getElementById('housingDown');
+  if(dCtx)charts.housingDown=new Chart(dCtx.getContext('2d'),{type:'bar',
+    data:{labels:pathData.map(p=>p.label.split(' · ')[0]),
+      datasets:[{label:'Down Payment ($K)',data:pathData.map(p=>Math.round(p.hp*p.dp/100/1000)),backgroundColor:pathData.map(p=>p.col),borderRadius:4}]},
+    options:{...baseOpts(v=>'$'+v+'K'),plugins:{legend:{display:false},tooltip:{backgroundColor:'#0a2540',titleColor:'#fff',bodyColor:'#fff',callbacks:{label:c=>'$'+c.raw+'K down'}}}}
+  });
+
+  const nCtx=document.getElementById('housingNW');
+  if(nCtx)charts.housingNW=new Chart(nCtx.getContext('2d'),{type:'bar',
+    data:{labels:pathData.map(p=>p.label.split(' · ')[0]),
+      datasets:[{label:'NW @ '+endYr+' ($M)',data:pathData.map(p=>+(p.finalNW/1e6).toFixed(2)),backgroundColor:pathData.map(p=>p.col),borderRadius:4}]},
+    options:{...baseOpts(v=>'$'+v+'M'),plugins:{legend:{display:false},tooltip:{backgroundColor:'#0a2540',titleColor:'#fff',bodyColor:'#fff',callbacks:{label:c=>'$'+c.raw.toFixed(2)+'M total'}}}}
+  });
+
+  document.getElementById('summaries').innerHTML='';
+}
+
+function renderSensitivityTab(R,P){
+  const ca=document.getElementById('chartArea');
+  destroyCharts();
+  const baseNW=R[R.length-1].nw;
+  const ey=P.planEndYear||2058;
+
+  const ALL_PARAMS=[
+    {key:'investReturn',label:'Portfolio Return',delta:0.01,hi:'+1%',lo:'−1%',fmtV:v=>(v*100).toFixed(1)+'%',better:1},
+    {key:'normCashBase',label:"Norm Base Cash",delta:25000,hi:'+$25K',lo:'−$25K',fmtV:v=>fmt(v),better:1},
+    {key:'normStockBase',label:"Norm Base Stock",delta:25000,hi:'+$25K',lo:'−$25K',fmtV:v=>fmt(v),better:1},
+    {key:'nancyHourlyRate',label:'Nancy Rate',delta:25,hi:'+$25/hr',lo:'−$25/hr',fmtV:v=>'$'+v+'/hr',better:1},
+    {key:'nancyMaxClients',label:'Nancy Max Clients',delta:5,hi:'+5',lo:'−5',fmtV:v=>v+' clients',better:1},
+    {key:'pretax401k',label:'401k Contribution',delta:5000,hi:'+$5K/yr',lo:'−$5K/yr',fmtV:v=>fmt(v),better:1},
+    {key:'expenseInflation',label:'Expense Inflation',delta:0.005,hi:'+0.5%',lo:'−0.5%',fmtV:v=>(v*100).toFixed(1)+'%',better:-1},
+    {key:'taxInflation',label:'Tax Bracket Inflation',delta:0.005,hi:'+0.5%',lo:'−0.5%',fmtV:v=>(v*100).toFixed(1)+'%',better:1},
+    {key:'homePrice',label:'Home Price',delta:200000,hi:'+$200K',lo:'−$200K',fmtV:v=>'$'+(v/1e6).toFixed(2)+'M',better:-1},
+    {key:'downPctg',label:'Down Payment %',delta:10,hi:'+10%',lo:'−10%',fmtV:v=>v+'%',better:-1},
+    {key:'startingLiquid',label:'Starting Liquid',delta:100000,hi:'+$100K',lo:'−$100K',fmtV:v=>fmt(v),better:1},
+    {key:'nancyRampYears',label:'Nancy Ramp Duration',delta:2,hi:'+2 yrs',lo:'−2 yrs',fmtV:v=>v+' yrs',better:-1},
+    {key:'homeAppreciation',label:'Home Appreciation',delta:0.01,hi:'+1%',lo:'−1%',fmtV:v=>(v*100).toFixed(1)+'%',better:1},
+  ];
+
+  const PRESETS={
+    all:{label:'All factors',keys:ALL_PARAMS.map(p=>p.key)},
+    income:{label:'Income levers',keys:['investReturn','normCashBase','normStockBase','nancyHourlyRate','nancyMaxClients','pretax401k']},
+    housing:{label:'Housing',keys:['homePrice','downPctg','startingLiquid','homeAppreciation']},
+    costs:{label:'Cost control',keys:['expenseInflation','taxInflation','nancyRampYears','pretax401k']},
+  };
+
+  const preset=PRESETS[_sensiPreset]||PRESETS.all;
+  const PARAMS=ALL_PARAMS.filter(p=>preset.keys.includes(p.key));
+
+  const results=PARAMS.map(p=>{
+    const delta=_sensiDeltas[p.key]??p.delta;
+    const vBase=P[p.key];
+    const hiV=vBase+delta;
+    const loV=Math.max(0,vBase-delta);
+    const hiP={...P,[p.key]:hiV};
+    const loP={...P,[p.key]:loV};
+    const hiR=run(hiP).R;const loR=run(loP).R;
+    const hiNW=hiR[hiR.length-1].nw;
+    const loNW=loR[loR.length-1].nw;
+    const hiDelta=hiNW-baseNW;
+    const loDelta=loNW-baseNW;
+    const impact=Math.max(Math.abs(hiDelta),Math.abs(loDelta));
+    return{...p,delta,vBase,hiDelta,loDelta,impact};
+  });
+
+  results.sort((a,b)=>Math.abs(b.hiDelta-b.loDelta)-Math.abs(a.hiDelta-a.loDelta));
+  const maxImpact=Math.max(...results.map(r=>r.impact),1);
+
+  const presetBtns=Object.entries(PRESETS).map(([k,v])=>
+    `<button onclick="_sensiPreset='${k}';renderSensitivityTab(window._lastR,window._lastP)" style="font-size:10px;padding:4px 10px;border-radius:5px;border:1px solid var(--bd);background:${_sensiPreset===k?'var(--accent)':'var(--s2)'};color:${_sensiPreset===k?'#fff':'var(--t2)'};cursor:pointer;font-family:inherit;font-weight:${_sensiPreset===k?'600':'400'}">${v.label}</button>`
+  ).join('');
+
+  let h=`<div style="padding:2px">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+    <div>
+      <div style="font-size:13px;font-weight:700;color:var(--tx)">📊 Sensitivity Analysis</div>
+      <div style="font-size:10px;color:var(--t2);margin-top:2px">Impact on final NW (${ey}) per one-step change. Base: <strong>${fmt(baseNW)}</strong></div>
+    </div>
+    <div style="display:flex;gap:5px;flex-wrap:wrap">${presetBtns}</div>
+  </div>
+  <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;overflow:hidden">
+    <div style="display:grid;grid-template-columns:160px 60px 1fr 1fr;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);padding:8px 12px;border-bottom:1px solid var(--bd);background:var(--s2)">
+      <div>Parameter</div><div style="text-align:center">Step</div><div style="text-align:center">▼ Worse case</div><div style="text-align:center">▲ Better case</div>
+    </div>`;
+
+  results.forEach((r,i)=>{
+    const hiIsGood=r.better===1?r.hiDelta>=0:r.hiDelta<=0;
+    const loIsGood=r.better===1?r.loDelta>=0:r.loDelta<=0;
+    const hiColor=hiIsGood?'var(--g)':'var(--r)';
+    const loColor=loIsGood?'var(--g)':'var(--r)';
+    const hiBarPct=Math.round(Math.abs(r.hiDelta)/maxImpact*100);
+    const loBarPct=Math.round(Math.abs(r.loDelta)/maxImpact*100);
+    const rowBg=i%2===0?'var(--s1)':'var(--s2)';
+    const hiSign=r.hiDelta>=0?'+':'';
+    const loSign=r.loDelta>=0?'+':'';
+    // Format delta for display in the step input
+    const deltaDisplay=r.key==='investReturn'||r.key==='expenseInflation'||r.key==='taxInflation'||r.key==='homeAppreciation'
+      ? (r.delta*100).toFixed(1)+'%'
+      : r.delta>=1000?'$'+(r.delta/1000).toFixed(0)+'K':String(r.delta);
+    h+=`<div style="display:grid;grid-template-columns:160px 60px 1fr 1fr;align-items:center;padding:7px 12px;border-bottom:1px solid var(--bd);background:${rowBg}">
+      <div>
+        <div style="font-size:10.5px;font-weight:600;color:var(--tx)">${r.label}</div>
+        <div style="font-size:8.5px;color:var(--t3);font-family:'SF Mono',monospace">${r.fmtV(r.vBase)} base</div>
+      </div>
+      <div style="padding:0 4px">
+        <div style="font-size:9px;color:var(--t3);margin-bottom:2px;text-align:center">±</div>
+        <input type="text" value="${deltaDisplay}" data-key="${r.key}" data-rawdelta="${r.delta}"
+          onchange="sensiUpdateDelta(this)"
+          style="width:100%;font-size:9px;font-family:'SF Mono',monospace;text-align:center;padding:3px 4px;border:1px solid var(--bd);border-radius:4px;background:var(--s1);color:var(--tx);outline:none"
+          title="Change step size for ${r.label}">
+      </div>
+      <div style="padding:0 12px">
+        <div style="display:flex;align-items:center;gap:6px;justify-content:flex-end">
+          <span style="font-size:9px;color:var(--t3);white-space:nowrap">${r.lo}</span>
+          <div style="flex:1;height:14px;border-radius:3px;background:var(--s3);overflow:hidden">
+            <div style="height:100%;width:${loBarPct}%;background:${loColor};border-radius:3px;float:right;opacity:.85"></div>
+          </div>
+          <span style="font-size:9.5px;font-family:'SF Mono',monospace;font-weight:600;color:${loColor};min-width:52px;text-align:right">${loSign}${fmt(r.loDelta)}</span>
+        </div>
+      </div>
+      <div style="padding:0 12px">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:9.5px;font-family:'SF Mono',monospace;font-weight:600;color:${hiColor};min-width:52px">${hiSign}${fmt(r.hiDelta)}</span>
+          <div style="flex:1;height:14px;border-radius:3px;background:var(--s3);overflow:hidden">
+            <div style="height:100%;width:${hiBarPct}%;background:${hiColor};border-radius:3px;opacity:.85"></div>
+          </div>
+          <span style="font-size:9px;color:var(--t3);white-space:nowrap">${r.hi}</span>
+        </div>
+      </div>
+    </div>`;
+  });
+
+  h+=`</div>
+  <div style="margin-top:10px;font-size:9px;color:var(--t3);display:flex;gap:14px;flex-wrap:wrap;padding:0 2px">
+    <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:10px;height:6px;background:var(--g);border-radius:2px;opacity:.85"></span>Increases final NW</span>
+    <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:10px;height:6px;background:var(--r);border-radius:2px;opacity:.85"></span>Decreases final NW</span>
+    <span>Edit ± column to change step size. Sorted by total swing.</span>
+  </div>
+  </div>`;
+
+  ca.innerHTML=h;
+  document.getElementById('summaries').innerHTML='';
+}
+
+function sensiUpdateDelta(input){
+  const key=input.dataset.key;
+  const raw=input.value.trim().replace(/[$%K,]/gi,'');
+  let val=parseFloat(raw);
+  if(isNaN(val)||val<=0){input.value=input.dataset.rawdelta;return;}
+  // Handle % suffix
+  if(input.value.includes('%'))val=val/100;
+  // Handle K suffix
+  else if(input.value.toUpperCase().includes('K'))val=val*1000;
+  _sensiDeltas[key]=val;
+  input.dataset.rawdelta=val;
+  renderSensitivityTab(window._lastR,window._lastP);
+}
+
+function goalInlineEl(key,display,parseAs){
+  return `<span data-goal-key="${key}" data-goal-parse="${parseAs}" onclick="goalInlineEdit(this)" style="cursor:pointer;border-bottom:1px dashed var(--t3);padding:0 1px;white-space:nowrap" title="Click to edit">${display}</span>`;
+}
+function goalInlineEdit(span){
+  const key=span.dataset.goalKey;
+  const parseAs=span.dataset.goalParse;
+  const cur=P[key];
+  let dflt;
+  if(parseAs==='dollar-m')dflt=(cur/1e6).toFixed(2)+'M';
+  else if(parseAs==='dollar-k')dflt=cur>=1000?Math.round(cur/1000)+'K':String(cur);
+  else if(parseAs==='pct-decimal')dflt=(cur*100).toFixed(1)+'%';
+  else if(parseAs==='pct')dflt=String(cur);
+  else dflt=String(cur);
+  const inp=document.createElement('input');
+  inp.type='text';inp.value=dflt;
+  inp.style.cssText='width:72px;font-size:inherit;font-family:inherit;color:var(--tx);background:var(--s1);border:1px solid var(--accent);border-radius:3px;padding:0 3px;outline:none';
+  let committed=false;
+  const commit=()=>{
+    if(committed)return;
+    committed=true;
+    const s=inp.value.trim().toUpperCase();
+    let v=parseFloat(s.replace(/[$,MK%]/g,''));
+    if(isNaN(v)){committed=false;if(inp.parentNode)inp.parentNode.replaceChild(span,inp);return;}
+    if(s.includes('M'))v=v*1e6;
+    else if(s.includes('K'))v=v*1000;
+    else if(parseAs==='dollar-m'&&v<10000)v=v*1e6;
+    else if(parseAs==='pct-decimal')v=v>1?v/100:v;
+    // Restore span before U() so render() doesn't tear down a live input
+    if(inp.parentNode)inp.parentNode.replaceChild(span,inp);
+    U(key,v);
+  };
+  inp.onblur=commit;
+  inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();commit();}if(e.key==='Escape'){committed=true;if(inp.parentNode)inp.parentNode.replaceChild(span,inp);}};
+  span.parentNode.replaceChild(inp,span);
+  inp.focus();inp.select();
+}
+
+function renderGoalsTab(R,P,tT){
+  const ca=document.getElementById('chartArea');
+  destroyCharts();
+  const sy=P.planStartYear||2026;
+  const now=sy; // plan start = "today" for goal countdowns
+
+  // ── Home Purchase ──
+  const dp=P.homePrice*(P.downPctg/100);
+  const yearsLeft=P.homePurchaseYear-now;
+  const priorRow=R.find(r=>r.yr===P.homePurchaseYear-1);
+  const projLiq=priorRow?priorRow.liq:P.startingLiquid;
+  const dpPct=Math.min(100,Math.round(P.startingLiquid/dp*100));
+  const dpProjPct=Math.min(100,Math.round(projLiq/dp*100));
+  const dpShortfall=Math.max(0,dp-projLiq);
+  const dpOnTrack=projLiq>=dp;
+  const dpMoNeeded=dpShortfall>0&&yearsLeft>0?Math.round(dpShortfall/yearsLeft/12):0;
+
+  // ── Tuition ──
+  const firstTuRow=R.find(r=>r.tu>0);
+  const lastTuRow=[...R].reverse().find(r=>r.tu>0);
+  const peakTuRow=R.reduce((a,b)=>b.tu>a.tu?b:a,R[0]);
+  const yearsToTu=firstTuRow?firstTuRow.yr-now:null;
+  const tuLiq=R.find(r=>r.yr===peakTuRow.yr);
+  const kids=[P.kid1Birth];
+  if(P.numKids>=2)kids.push(P.kid2Birth);
+  if(P.numKids>=3)kids.push(P.kid3Birth);
+  if(P.numKids>=4)kids.push(P.kid4Birth);
+
+  // per-kid school windows (years only, not dollar split)
+  const kidWindows=kids.map((kb,ki)=>{
+    const startAge=ki===0?P.kid1YeshivaStartAge:P.yeshivaStartAge;
+    const endAge=P.yeshivaEndAge;
+    return{kb,startYr:kb+startAge,endYr:kb+endAge,years:endAge-startAge+1};
+  });
+
+  // ── progress bar helper ──
+  function pbar(pct,color,bg){
+    return `<div style="height:10px;border-radius:5px;background:${bg||'var(--s3)'};overflow:hidden;position:relative">
+      <div style="height:100%;width:${pct}%;background:${color};border-radius:5px;transition:width .4s"></div>
+    </div>`;
+  }
+
+  // ── surplus years liquid ladder (condensed view) ──
+  const surpYrs=R.filter(r=>r.surp>=0).length;
+  const defYrs=R.filter(r=>r.surp<0).length;
+
+  // ── build HTML ──
+  let h=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px">`;
+
+  // GOAL 0: Monarch live snapshot
+  if(monarchSnapshot){
+    const curYr=new Date().getFullYear();
+    const projRow=R.find(r=>r.yr===curYr)||R[0];
+    const impliedLiq=monarchSnapshot.liquid;
+    // 401k: use Monarch's value if it has one, else fall back to the modeled "Starting 401k"
+    const has401k=monarchSnapshot.retirement>0;
+    const live401k=has401k?monarchSnapshot.retirement:(P.k401Start||0);
+    // NW excluding 401k (matches model's `nw`); and total including 401k
+    const nwExcl401k=monarchSnapshot.netWorth-(has401k?monarchSnapshot.retirement:0);
+    const nwIncl401k=nwExcl401k+live401k;
+    const projTotal=projRow.nw+projRow.k401;
+    const totalDiff=nwIncl401k-projTotal;
+    const liqDiff=impliedLiq-projRow.liq;
+    const syncDate=new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+    const ahead=totalDiff>=0;
+    h+=`<div style="background:var(--a-soft);border:1px solid rgba(191,105,0,.25);border-radius:10px;padding:16px 18px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--tx)">📍 Live Snapshot · Monarch</div>
+          <div style="font-size:10px;color:var(--t2);margin-top:2px">As of ${syncDate} · ${curYr} plan year</div>
+        </div>
+        <div style="background:${ahead?'var(--g-soft)':'var(--r-soft)'};border:1px solid ${ahead?'rgba(26,135,84,.2)':'rgba(205,61,100,.2)'};border-radius:6px;padding:6px 12px;text-align:center">
+          <div style="font-size:11px;font-weight:700;color:${ahead?'var(--g)':'var(--r)'}">${ahead?'▲ Ahead':'▼ Behind'}</div>
+          <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:${ahead?'var(--g)':'var(--r)'}">${ahead?'+':''}${fmt(totalDiff)}</div>
+          <div style="font-size:8px;color:var(--t3)">vs plan</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+        <div style="background:#fff8;border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">NW (excl 401k)</div>
+          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${fmt(nwExcl401k)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Plan: ${fmt(projRow.nw)}</div>
+        </div>
+        <div style="background:#fff8;border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Liquid (est.)</div>
+          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--b)">${fmt(impliedLiq)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Plan: ${fmt(projRow.liq)} · ${liqDiff>=0?'+':''}${fmt(liqDiff)}</div>
+        </div>
+        <div style="background:#fff8;border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">401k${has401k?'':' (modeled)'}</div>
+          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--p)">${fmt(live401k)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Plan: ${fmt(projRow.k401)}</div>
+        </div>
+        <div style="background:#fff8;border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Total w/ 401k</div>
+          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">${fmt(nwIncl401k)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Plan: ${fmt(projTotal)}</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:12px">
+        <button onclick="anchorToToday()" style="font-size:11px;font-weight:600;padding:7px 14px;background:var(--a);color:#fff;border:none;border-radius:7px;cursor:pointer;font-family:inherit">⚓ Anchor plan to today</button>
+        <span style="font-size:9.5px;color:var(--t2);line-height:1.4">Re-base the projection on your real liquid, reconciling year-to-date income & spending from Monarch.</span>
+      </div>
+    </div>`;
+  }
+
+  // GOAL 1: Home purchase
+  h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+      <div>
+        <div style="font-size:13px;font-weight:700;color:var(--tx)">🏠 Home Down Payment</div>
+        <div style="font-size:10px;color:var(--t2);margin-top:2px">${goalInlineEl('homePrice',P.homePrice>=1e6?'$'+(P.homePrice/1e6).toFixed(2)+'M':'$'+Math.round(P.homePrice/1000)+'K','dollar-m')} home · ${goalInlineEl('downPctg',P.downPctg+'%','pct')} down · ${goalInlineEl('homePurchaseYear',P.homePurchaseYear,'year')}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:${dpOnTrack?'var(--g)':'var(--a)'}">${fmt(dp)}</div>
+        <div style="font-size:9px;color:var(--t3);margin-top:1px">target</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">
+      <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
+        <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Today's Liquid</div>
+        <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--b)">${fmt(P.startingLiquid)}</div>
+        <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${dpPct}% of target</div>
+      </div>
+      <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
+        <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Projected (${P.homePurchaseYear-1})</div>
+        <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:${dpOnTrack?'var(--g)':'var(--a)'}">${fmt(projLiq)}</div>
+        <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${dpProjPct}% of target</div>
+      </div>
+      <div style="background:${dpOnTrack?'var(--g-soft)':'var(--a-soft)'};border:1px solid ${dpOnTrack?'rgba(26,135,84,.2)':'rgba(191,105,0,.2)'};border-radius:7px;padding:9px 11px">
+        <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:${dpOnTrack?'var(--g)':'var(--a)'};margin-bottom:3px">${yearsLeft} years away</div>
+        <div style="font-size:13px;font-weight:700;color:${dpOnTrack?'var(--g)':'var(--a)'}">${dpOnTrack?'✓ On Track':'⚠ Shortfall'}</div>
+        <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${dpOnTrack?`+${fmt(projLiq-dp)} buffer`:`Need +${fmt(dpShortfall)}`}</div>
+      </div>
+    </div>
+    <div style="margin-bottom:5px;font-size:8.5px;color:var(--t3);display:flex;justify-content:space-between"><span>Today</span><span>${P.homePurchaseYear}</span></div>
+    <div style="position:relative;height:20px">
+      ${pbar(dpPct,'var(--b)40','var(--s3)')}
+      <div style="position:absolute;top:0;left:0;right:0;height:100%">
+        <div style="height:10px;border-radius:5px;background:transparent;position:relative">
+          <div style="position:absolute;top:0;left:0;height:100%;width:${dpProjPct}%;background:transparent;border-right:2px dashed ${dpOnTrack?'var(--g)':'var(--a)'};border-radius:0"></div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:5px;font-size:8.5px;color:var(--t3);display:flex;gap:12px">
+      <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:4px;background:var(--b);opacity:.4;border-radius:2px"></span>Current liquid</span>
+      <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:0;border-top:2px dashed ${dpOnTrack?'var(--g)':'var(--a)'}"></span>Projected at ${P.homePurchaseYear-1}</span>
+      ${dpMoNeeded>0?`<span style="color:var(--a);font-weight:600">Need ~${fmtF(dpMoNeeded)}/mo additional savings</span>`:''}
+    </div>
+  </div>`;
+
+  // GOAL 2: Mortgage
+  {
+    const loanAmt=P.homePrice*(1-P.downPctg/100);
+    const rate=P.mortgageRate/100;
+    const moRate=rate/12;
+    const nPmt=30*12;
+    const moPmt=loanAmt>0&&moRate>0?loanAmt*(moRate*(1+moRate)**nPmt)/((1+moRate)**nPmt-1):0;
+    const annPmt=moPmt*12;
+    const totalPaid=moPmt*nPmt;
+    const totalInterest=totalPaid-loanAmt;
+    const payoffYr=P.homePurchaseYear+30;
+    // Property tax = rate × appreciating home value. Show purchase-year figure
+    // in the headline (it grows with the home over time).
+    const ptRate=P.propTaxRate??.012;
+    const moPropTax0=ptRate*P.homePrice/12;          // year 1
+    const moAllIn0=moPmt+moPropTax0;
+    const homeVal30=P.homePrice*(1+P.homeAppreciation)**30;
+    const moPropTax30=ptRate*homeVal30/12;           // year 30 (tax keeps rising)
+    // Year-by-year principal vs interest (annual)
+    const mortRows=[];
+    for(let y=1;y<=30;y++){
+      const balStart=mBal(loanAmt,rate,y-1);
+      const balEnd=mBal(loanAmt,rate,y);
+      const princPaid=balStart-balEnd;
+      const intPaid=annPmt-princPaid;
+      const hv=P.homePrice*(1+P.homeAppreciation)**y;
+      mortRows.push({y,yr:P.homePurchaseYear+y,princPaid,intPaid,equity:hv-balEnd,hv});
+    }
+    const maxEq=Math.max(...mortRows.map(r=>r.equity));
+    const eq10=mortRows[9];const eq20=mortRows[19];const eq30=mortRows[29];
+    h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--tx)">🏦 Mortgage</div>
+          <div style="font-size:10px;color:var(--t2);margin-top:2px">${goalInlineEl('homePrice',P.homePrice>=1e6?'$'+(P.homePrice/1e6).toFixed(2)+'M':'$'+Math.round(P.homePrice/1000)+'K','dollar-m')} · ${goalInlineEl('mortgageRate',P.mortgageRate+'%','pct')} · 30 yr · closes ${goalInlineEl('homePurchaseYear',P.homePurchaseYear,'year')} · tax ${goalInlineEl('propTaxRate',(ptRate*100).toFixed(2)+'%','pct-decimal')}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:var(--p)">${fmtF(Math.round(moAllIn0))}/mo</div>
+          <div style="font-size:9px;color:var(--t3);margin-top:1px">all-in: P&I ${fmtF(Math.round(moPmt))} + tax ${fmtF(Math.round(moPropTax0))}</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:14px">
+        <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Loan Amount</div>
+          <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${fmt(loanAmt)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${P.downPctg}% down</div>
+        </div>
+        <div style="background:var(--r-soft);border:1px solid rgba(205,61,100,.12);border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--r);margin-bottom:3px">Total Interest</div>
+          <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:var(--r)">${fmt(totalInterest)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${Math.round(totalInterest/P.homePrice*100)}% of price</div>
+        </div>
+        <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Payoff Year</div>
+          <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${payoffYr}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${payoffYr-(P.planStartYear||2026)} yrs from now</div>
+        </div>
+        <div style="background:var(--g-soft);border:1px solid rgba(26,135,84,.15);border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--g);margin-bottom:3px">Equity @ ${eq30.yr}</div>
+          <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">${fmt(eq30.equity)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">home: ${fmt(eq30.hv)}</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">
+        ${[{label:'Equity @ yr 10',r:eq10},{label:'Equity @ yr 20',r:eq20},{label:'Equity @ yr 30',r:eq30}].map(({label,r})=>`
+        <div style="background:var(--s2);border-radius:6px;padding:8px 10px">
+          <div style="font-size:8px;color:var(--t3);font-weight:600;margin-bottom:2px">${label} (${r.yr})</div>
+          <div style="font-size:12px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">${fmt(r.equity)}</div>
+          <div style="margin-top:5px;height:6px;border-radius:3px;background:var(--s3);overflow:hidden">
+            <div style="height:100%;width:${Math.round(r.equity/maxEq*100)}%;background:var(--g);border-radius:3px"></div>
+          </div>
+        </div>`).join('')}
+      </div>
+      <div style="font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:6px">Principal vs. interest over 30 years</div>
+      <div style="display:flex;gap:1px;align-items:flex-end;height:45px">
+        ${mortRows.map(r=>{
+          const total=r.princPaid+r.intPaid;
+          const pPct=r.princPaid/total*100;
+          const iPct=r.intPaid/total*100;
+          return`<div title="${r.yr}: ${fmt(r.princPaid)} principal, ${fmt(r.intPaid)} interest" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%">
+            <div style="width:100%;background:var(--g);height:${pPct}%;opacity:.8;border-radius:1px 1px 0 0"></div>
+            <div style="width:100%;background:var(--r);height:${iPct}%;opacity:.6"></div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--t3);margin-top:3px"><span>${P.homePurchaseYear}</span><span>${payoffYr}</span></div>
+      <div style="margin-top:6px;display:flex;gap:10px;flex-wrap:wrap;font-size:8.5px;color:var(--t3)">
+        <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--g);border-radius:2px;opacity:.8"></span>Principal</span>
+        <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--r);border-radius:2px;opacity:.6"></span>Interest</span>
+        <span>Hover bars for year detail</span>
+        <span style="margin-left:auto">Appreciation: ${goalInlineEl('homeAppreciation',(P.homeAppreciation*100).toFixed(1)+'%/yr','pct-decimal')}</span>
+      </div>
+      <div style="margin-top:8px;padding:8px 10px;background:var(--s2);border-radius:7px;font-size:9px;color:var(--t2);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+        <span>🏛 Property tax (${(ptRate*100).toFixed(2)}% of home value, grows as home appreciates)</span>
+        <span style="font-family:'SF Mono',monospace"><b style="color:var(--tx)">${fmtF(Math.round(moPropTax0))}/mo</b> @ ${P.homePurchaseYear} → <b style="color:var(--tx)">${fmtF(Math.round(moPropTax30))}/mo</b> @ ${payoffYr}</span>
+      </div>
+    </div>`;
+  }
+
+  // GOAL 3: Tuition
+  if(firstTuRow){
+    const tuActive=R.filter(r=>r.tu>0);
+    const tuSpan=lastTuRow.yr-firstTuRow.yr+1;
+    h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--tx)">🎓 Tuition Summit</div>
+          <div style="font-size:10px;color:var(--t2);margin-top:2px">${firstTuRow.yr}–${lastTuRow.yr} · ${tuSpan} year window · ${P.numKids} kid${P.numKids!==1?'s':''} · ${goalInlineEl('yeshivaStartAge',P.yeshivaStartAge+' start age','year')}–${goalInlineEl('yeshivaEndAge',P.yeshivaEndAge+' end age','year')}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:var(--r)">${fmt(tT)}</div>
+          <div style="font-size:9px;color:var(--t3);margin-top:1px">total (inflated)</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">
+        <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">First Tuition</div>
+          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${firstTuRow.yr}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${yearsToTu} yrs away · ${fmt(firstTuRow.tu)}/yr</div>
+        </div>
+        <div style="background:var(--r-soft);border:1px solid rgba(205,61,100,.15);border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--r);margin-bottom:3px">Peak Year · ${peakTuRow.yr}</div>
+          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--r)">${fmt(peakTuRow.tu)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">liquid then: ${fmt(tuLiq?.liq||0)}</div>
+        </div>
+        <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Avg Annual</div>
+          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--a)">${fmt(Math.round(tT/tuActive.length))}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">over ${tuActive.length} active yrs</div>
+        </div>
+      </div>
+      <div style="font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:7px">Annual tuition load</div>
+      <div style="display:flex;gap:2px;align-items:flex-end;height:50px">
+        ${R.map(r=>{
+          const pct=peakTuRow.tu>0?r.tu/peakTuRow.tu*100:0;
+          if(pct<=0)return`<div style="flex:1;background:transparent"></div>`;
+          const numKidsInSchool=kidWindows.filter(kw=>r.yr>=kw.startYr&&r.yr<=kw.endYr).length;
+          const color=numKidsInSchool>=2?'var(--r)':'var(--a)';
+          return`<div title="${r.yr}: ${fmt(r.tu)}" style="flex:1;background:${color};height:${pct}%;border-radius:2px 2px 0 0;opacity:.8"></div>`;
+        }).join('')}
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--t3);margin-top:3px"><span>${sy}</span><span>${P.planEndYear||2058}</span></div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        ${kidWindows.map((kw,ki)=>{const bKey=['kid1Birth','kid2Birth','kid3Birth','kid4Birth'][ki];return`
+        <div style="background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:6px 10px;font-size:9.5px">
+          <span style="font-weight:600;color:var(--tx)">Kid ${ki+1}</span>
+          <span style="color:var(--t2)"> born ${goalInlineEl(bKey,kw.kb,'year')} · school ${kw.startYr}–${kw.endYr}</span>
+          <span style="color:var(--t3)"> (${kw.years} yrs)</span>
+        </div>`;}).join('')}
+        ${kidWindows.length>=2?`<div style="background:var(--r-soft);border:1px solid rgba(205,61,100,.15);border-radius:6px;padding:6px 10px;font-size:9.5px;color:var(--r);font-weight:500">
+          Overlap: ${Math.max(0,Math.min(...kidWindows.map(kw=>kw.endYr))-Math.max(...kidWindows.map(kw=>kw.startYr))+1)} yrs both in school
+        </div>`:''}
+      </div>
+    </div>`;
+  }
+
+  // GOAL 4: Liquid health timeline (mini sparkline)
+  h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
+    <div style="font-size:13px;font-weight:700;color:var(--tx);margin-bottom:4px">💧 Liquid Health Over Time</div>
+    <div style="font-size:10px;color:var(--t2);margin-bottom:12px">${surpYrs} surplus yrs · ${defYrs} deficit yrs · floor ${fmt(R.reduce((a,b)=>b.liq<a.liq?b:a).liq)} in ${R.reduce((a,b)=>b.liq<a.liq?b:a).yr}</div>
+    <div style="display:flex;gap:2px;align-items:flex-end;height:60px">
+      ${(()=>{const maxL=Math.max(...R.map(r=>r.liq),1);return R.map(r=>{const pct=r.liq/maxL*100;const isSurp=r.surp>=0;const color=r.liq<500000?'var(--r)':isSurp?'var(--g)':'var(--a)';return`<div title="${r.yr}: ${fmt(r.liq)} liquid${r.surp<0?' ⚠ deficit':''}" style="flex:1;background:${color};height:${Math.max(2,pct)}%;border-radius:2px 2px 0 0;opacity:.75"></div>`}).join('')})()}
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--t3);margin-top:3px"><span>${sy}</span><span>${P.planEndYear||2058}</span></div>
+    <div style="margin-top:6px;display:flex;gap:10px;font-size:8.5px">
+      <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--g);border-radius:2px;opacity:.75"></span>Surplus year</span>
+      <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--a);border-radius:2px;opacity:.75"></span>Deficit (selling stock)</span>
+      <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--r);border-radius:2px;opacity:.75"></span>Below $500K</span>
+    </div>
+  </div>`;
+
+  h+='</div>';
+  ca.innerHTML=h;
+}
+
+function renderCompareTab(R,P){
+  const ca=document.getElementById('chartArea');
+  destroyCharts();
+  if(scenarios.length===0){
+    ca.innerHTML=`<div style="text-align:center;padding:50px 30px;color:var(--t2)">
+      <div style="font-size:40px;margin-bottom:14px">⚖️</div>
+      <div style="font-size:15px;font-weight:700;color:var(--tx);margin-bottom:8px">No scenarios to compare yet</div>
+      <p style="font-size:12.5px;line-height:1.7;max-width:420px;margin:0 auto;color:var(--t2)">
+        Save a scenario using <strong>💾 Save as New</strong> in the left panel, or use the
+        <strong>🤖 AI Advisor</strong> in agentic mode — it can propose plan changes and save them here automatically.
+      </p>
+    </div>`;
+    return;
+  }
+  const planRes=run(P);
+  const cols=[
+    {name:'Current Plan',params:P,res:planRes,color:'#0a2540',isCurrent:true},
+    ...scenarios.map(s=>({name:s.name,params:s.params,res:run({...D,...migrateP(s.params)}),color:s.color,isCurrent:false}))
+  ];
+  const METRICS=[
+    {label:'NW @ 2058',get:(r,p)=>r.R[r.R.length-1].nw,fmt:fmt,b:1},
+    {label:'401k @ 2058',get:(r,p)=>r.R[r.R.length-1].k401,fmt:fmt,b:1},
+    {label:'Grand Total (NW + 401k)',get:(r,p)=>{const l=r.R[r.R.length-1];return l.nw+l.k401},fmt:fmt,b:1},
+    {sep:true,label:'Risk'},
+    {label:'Liquid Floor',get:(r,p)=>Math.min(...r.R.map(x=>x.liq)),fmt:fmt,b:1},
+    {label:'Deficit Years',get:(r,p)=>r.R.filter(x=>x.surp<0).length,fmt:n=>n+' yrs',b:-1},
+    {label:'Worst Year Surplus',get:(r,p)=>Math.min(...r.R.map(x=>x.surp)),fmt:fmt,b:1},
+    {sep:true,label:'Milestones'},
+    {label:'Liquid After Home Purchase',get:(r,p)=>{const row=r.R.find(x=>x.yr===p.homePurchaseYear);return row?row.liq:0},fmt:fmt,b:1},
+    {label:'Total Tuition',get:(r,p)=>r.tT,fmt:fmt,b:-1},
+    {label:'Tax on Stock Sales',get:(r,p)=>r.tTx,fmt:fmt,b:-1},
+    {sep:true,label:'Year 1'},
+    {label:'Gross Income',get:(r,p)=>r.R[0].gross,fmt:fmt,b:0},
+    {label:'Effective Tax Rate',get:(r,p)=>r.R[0].effRate,fmt:v=>(v*100).toFixed(1)+'%',b:-1},
+    {label:'Net Take-Home',get:(r,p)=>r.R[0].inc,fmt:fmt,b:1},
+  ];
+  const vals=METRICS.map(m=>m.sep?null:cols.map(c=>m.get(c.res,c.params)));
+  const best=METRICS.map((m,mi)=>{
+    if(m.sep||!m.b)return[];
+    const v=vals[mi];
+    const target=m.b===1?Math.max(...v):Math.min(...v);
+    return v.map(x=>x===target?'best':'');
+  });
+  const worst=METRICS.map((m,mi)=>{
+    if(m.sep||!m.b||cols.length<2)return[];
+    const v=vals[mi];
+    const target=m.b===1?Math.min(...v):Math.max(...v);
+    return v.map(x=>x===target?'worst':'');
+  });
+  let h=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:10.5px">
+  <thead><tr>
+    <th style="text-align:left;padding:8px 10px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);border-bottom:2px solid var(--bd);position:sticky;left:0;background:var(--s2);min-width:160px;z-index:2">Metric</th>`;
+  cols.forEach(c=>{
+    h+=`<th style="padding:9px 14px;text-align:right;border-bottom:2px solid var(--bd);min-width:130px;background:var(--s2)">
+      <div style="font-size:11px;font-weight:700;color:${c.color}">${advEscape(c.name)}</div>
+      ${c.isCurrent?'<div style="font-size:8px;color:var(--t3);font-weight:400;margin-top:1px">live plan</div>':''}
+    </th>`;
+  });
+  h+=`</tr></thead><tbody>`;
+  METRICS.forEach((m,mi)=>{
+    if(m.sep){
+      h+=`<tr><td colspan="${cols.length+1}" style="padding:9px 10px 4px;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:var(--t3);background:var(--s3);border-bottom:1px solid var(--bd)">${m.label}</td></tr>`;
+      return;
+    }
+    h+=`<tr>`;
+    h+=`<td style="padding:7px 10px;color:var(--t2);font-weight:500;border-bottom:1px solid var(--bd);position:sticky;left:0;background:var(--s1);z-index:1">${m.label}</td>`;
+    cols.forEach((c,ci)=>{
+      const v=vals[mi][ci];
+      const isBest=best[mi][ci]==='best';
+      const isWorst=worst[mi][ci]==='worst';
+      const bg=isBest?'rgba(26,135,84,.07)':isWorst?'rgba(205,61,100,.05)':'';
+      const clr=isBest?'var(--g)':isWorst?'var(--r)':c.isCurrent?'var(--tx)':c.color;
+      const badge=isBest?'<span style="font-size:7px;margin-left:3px;opacity:.7">▲best</span>':isWorst?'<span style="font-size:7px;margin-left:3px;opacity:.7">▼</span>':'';
+      h+=`<td style="padding:7px 14px;text-align:right;border-bottom:1px solid var(--bd);font-family:'SF Mono',monospace;font-weight:${c.isCurrent?'700':'500'};background:${bg};color:${clr}">${m.fmt(v)}${badge}</td>`;
+    });
+    h+=`</tr>`;
+  });
+  h+=`</tbody></table></div>`;
+  // Parameter diffs
+  const PKEYS=['homePrice','downPctg','mortgageRate','homePurchaseYear','investReturn','startingLiquid','expenseInflation','nancyHourlyRate','nancyMaxClients','normCashBase','normStockBase','pretax401k','taxInflation','numKids'];
+  const PLABELS={homePrice:'Home Price',downPctg:'Down %',mortgageRate:'Mortgage Rate',homePurchaseYear:'Purchase Year',investReturn:'Return %',startingLiquid:'Starting Liquid',expenseInflation:'Exp Inflation',nancyHourlyRate:'Nancy $/hr',nancyMaxClients:'Nancy Max Clients',normCashBase:'Norm Cash Base',normStockBase:'Norm Stock Base',pretax401k:'401k Contrib',taxInflation:'Tax Inflation',numKids:'# Kids'};
+  const fmtPv=(k,v)=>{if(['investReturn','expenseInflation','taxInflation'].includes(k))return(v*100).toFixed(1)+'%';if(['homePrice','startingLiquid','normCashBase','normStockBase','pretax401k'].includes(k))return fmt(v);if(k==='downPctg')return v+'%';if(k==='mortgageRate')return v+'%';return String(v)};
+  const diffCols=cols.slice(1).filter(c=>PKEYS.some(k=>c.params[k]!==undefined&&c.params[k]!==P[k]));
+  if(diffCols.length){
+    h+=`<div style="margin-top:16px"><div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:8px">Parameter differences vs. current plan</div>`;
+    h+=`<div style="display:flex;flex-direction:column;gap:5px">`;
+    diffCols.forEach(c=>{
+      const diffs=PKEYS.filter(k=>c.params[k]!==undefined&&c.params[k]!==P[k]);
+      if(!diffs.length)return;
+      h+=`<div style="background:var(--s2);border:1px solid var(--bd);border-radius:7px;padding:8px 11px">
+        <div style="font-size:10.5px;font-weight:700;color:${c.color};margin-bottom:5px">${advEscape(c.name)}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:5px">`;
+      diffs.forEach(k=>{h+=`<span style="font-size:9.5px;background:var(--s1);border:1px solid var(--bd);border-radius:4px;padding:2px 8px;white-space:nowrap"><span style="color:var(--t3)">${PLABELS[k]||k}: </span><span style="color:var(--t2);text-decoration:line-through">${fmtPv(k,P[k])}</span> <span style="color:${c.color};font-weight:600">→ ${fmtPv(k,c.params[k])}</span></span>`});
+      h+=`</div></div>`;
+    });
+    h+=`</div></div>`;
+  }
+  ca.innerHTML=h;
+  document.getElementById('summaries').innerHTML='';
+}
+function setTab(t){activeTab=t;document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));render();savePlannerState()}
+document.getElementById('main').innerHTML=`
+  <div class="kpi-grid" id="kpis"></div><div id="scenarioBar"></div><div id="snapshotBar"></div>
+  <div class="tabs">
+    <button class="active" data-tab="nw" onclick="setTab('nw')">📈 Net Worth</button>
+    <button data-tab="income" onclick="setTab('income')">💰 Income & Tax</button>
+    <button data-tab="cashflow" onclick="setTab('cashflow')">💸 Cash Flow</button>
+    <button data-tab="table" onclick="setTab('table')">📋 Table</button>
+    <button data-tab="goals" onclick="setTab('goals')">🎯 Goals</button>
+    <button data-tab="housing" onclick="setTab('housing')">🏠 Housing</button>
+    <button data-tab="sensitivity" onclick="setTab('sensitivity')">📊 Sensitivity</button>
+    <button data-tab="compare" onclick="setTab('compare')">⚖ Compare</button>
+    <button data-tab="advisor" onclick="setTab('advisor')">🤖 AI Advisor</button>
+    <button id="inflBtn" onclick="toggleInflation()" style="margin-left:auto;font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit">Real $</button>
+    <button onclick="exportCSV()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Download projection table as CSV">⬇ CSV</button>
+    <button onclick="printPDF()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Print / Save as PDF">🖨 PDF</button>
+    <button onclick="showSnapshotInput()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid rgba(8,145,178,.3);background:#e0f7fa;color:var(--c);cursor:pointer;font-family:inherit" title="Save a dated copy of this plan">📸 Snapshot</button>
+  </div>
+  <div class="cc" id="chartArea"><canvas id="cv" style="height:300px"></canvas></div>
+  <div class="sg" id="summaries"></div>`;
+
+// ═══ AI ADVISOR ═══
+let advisorChats={};
+let advisorActiveChatId=null;
+let advisorConversation=[];
+let advAgenticMode=false;
+let advPendingProposals=null; // {changes:[...], aiParams:{...}} from last agentic response
+
+function advToggleAgentic(){
+  advAgenticMode=!advAgenticMode;
+  const btn=document.getElementById('advAgenticBtn');
+  const lbl=document.getElementById('advAgenticLabel');
+  if(btn){btn.classList.toggle('active',advAgenticMode);btn.textContent=advAgenticMode?'🤖 Propose changes ✓':'🤖 Propose changes'}
+  if(lbl)lbl.style.display=advAgenticMode?'block':'none';
+  const input=document.getElementById('advInput');
+  if(input)input.placeholder=advAgenticMode?'Describe what you want me to explore (e.g. "What if we bought a $1.7M home?")...':'Ask anything about your plan, portfolio, scenarios, taxes...';
+}
+
+async function loadAdvisorState(){
+  try{
+    const res=await fetch('/api/chats');
+    if(!res.ok)return;
+    const chats=await res.json();
+    advisorChats={};
+    chats.forEach(c=>{
+      advisorChats[c.id]={
+        id:c.id,title:c.title,messages:[],
+        messageCount:parseInt(c.message_count)||0,
+        createdAt:new Date(c.created_at).getTime(),
+        updatedAt:new Date(c.updated_at).getTime()
+      };
+    });
+    if(chats.length>0&&!advisorActiveChatId){
+      advisorActiveChatId=chats[0].id;
+      await advLoadMessages(advisorActiveChatId);
+    }
+  }catch(e){console.error('loadAdvisorState error:',e)}
+}
+
+async function advLoadMessages(id){
+  if(!id||!advisorChats[id])return;
+  try{
+    const res=await fetch('/api/chats/'+id);
+    if(res.ok){
+      const data=await res.json();
+      advisorChats[id].messages=data.messages||[];
+      if(id===advisorActiveChatId)advisorConversation=advisorChats[id].messages;
+    }
+  }catch(e){}
+}
+
+function advUuid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,8)}
+
+function advEscape(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+function advMarkdown(text){
+  let h=text;
+  h=h.replace(/```([\s\S]*?)```/g,(m,c)=>`<pre>${advEscape(c.trim())}</pre>`);
+  h=h.replace(/`([^`]+)`/g,'<code>$1</code>');
+  h=h.replace(/\n((?:\|.+\|\n)+)/g,(m,tbl)=>{
+    const rows=tbl.trim().split('\n');if(rows.length<2)return m;
+    const hdr=rows[0].split('|').slice(1,-1).map(c=>advEscape(c.trim()));
+    const isSep=rows[1].match(/^[\s|:\-]+$/);
+    const body=isSep?rows.slice(2):rows.slice(1);
+    let t='<table><thead><tr>'+hdr.map(x=>`<th>${x}</th>`).join('')+'</tr></thead><tbody>';
+    body.forEach(r=>{const cells=r.split('|').slice(1,-1).map(c=>advEscape(c.trim()));t+='<tr>'+cells.map(c=>`<td>${c}</td>`).join('')+'</tr>'});
+    return '\n'+t+'</tbody></table>';
+  });
+  h=h.replace(/^### (.+)$/gm,(m,t)=>`<h3>${advEscape(t)}</h3>`);
+  h=h.replace(/^#### (.+)$/gm,(m,t)=>`<h4>${advEscape(t)}</h4>`);
+  h=h.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+  h=h.replace(/(?:^|\n)((?:[\-\*] .+\n?)+)/g,(m,l)=>{const items=l.trim().split('\n').map(x=>x.replace(/^[\-\*] /,''));return '\n<ul>'+items.map(i=>`<li>${i}</li>`).join('')+'</ul>'});
+  h=h.split('\n\n').map(p=>{p=p.trim();if(!p)return '';if(p.startsWith('<'))return p;return '<p>'+p.replace(/\n/g,'<br>')+'</p>'}).join('\n');
+  return h;
+}
+
+function buildLiveContext(R,P){
+  const y26=R[0];
+  const y30=R.find(r=>r.yr===P.homePurchaseYear)||R[4];
+  const peakTuition=R.reduce((a,b)=>b.tu>a.tu?b:a);
+  const y58=R[R.length-1];
+  const deficitYrs=R.filter(r=>r.surp<0).length;
+  const totalDef=R.filter(r=>r.surp<0).reduce((a,b)=>a+Math.abs(b.surp),0);
+  const worst=Math.min(...R.map(r=>r.surp));
+  const totTuit=R.reduce((a,b)=>a+b.tu,0);
+  const totSold=R.reduce((a,b)=>a+(b.sold||0),0);
+  const totTaxSale=R.reduce((a,b)=>a+(b.txS||0),0);
+  const planSY=P.planStartYear||2026;
+  return `You are Norm Cohen's personal financial advisor, embedded inside his Cohen Financial Planner. You can see his live planner state. Be direct, specific, and unhedged. He values honest analysis over generic advice — push back when his thinking is off. Use specific numbers from his current plan when relevant.
+
+═══ LIVE PLANNER STATE (auto-updated from his current inputs) ═══
+
+INCOME (${planSY} base year)
+• Norm gross: ${fmt(y26.normG)} (cash + RSU stock)
+• Nancy gross: ${fmt(y26.nancyG)} (W2 currently, solo practice ${P.nancyRampYear}+)
+• Combined gross: ${fmt(y26.gross)}
+• Effective tax rate: ${(y26.effRate*100).toFixed(1)}% all-in (Fed + NYS + NYC + FICA)
+• Net take-home: ${fmt(y26.inc)}
+• Pre-tax deductions: 401k ${fmt(P.pretax401k)} + benefits ${fmt(P.pretaxBenefits)} = ${fmt(P.pretax401k+P.pretaxBenefits)}
+
+LIFECYCLE PROJECTIONS (current plan)
+• Starting liquid NW: ${fmt(P.startingLiquid)}
+• Net worth at ${y58.yr}: ${fmt(y58.nw)} ($${(y58.nw/1e6).toFixed(2)}M)
+• 401k at ${y58.yr}: ${fmt(y58.k401)}
+• Grand total at 65: ${fmt(y58.nw+y58.k401)}
+• Deficit years over lifecycle: ${deficitYrs}
+• Worst single year: ${fmt(worst)} (peak crunch)
+• Total cumulative deficit: ${fmt(totalDef)}
+• Total stock sold to fund deficits: ${fmt(totSold)}
+• Total tax on those sales: ${fmt(totTaxSale)} (at ${(P.capGainsTaxRate*100).toFixed(1)}% all-in NYC cap gains)
+
+HOME PURCHASE PLAN
+• Target: ${fmt(P.homePrice)} (${(P.downPctg)}% down) in ${P.homePurchaseYear}
+• Down payment: ${fmt(P.homePrice*P.downPctg/100)}
+• Mortgage: ${fmt(P.homePrice-P.homePrice*P.downPctg/100)} @ ${P.mortgageRate}% (30yr)
+• Property tax: ${((P.propTaxRate??.012)*100).toFixed(2)}% of home value (~${fmt(Math.round((P.propTaxRate??.012)*P.homePrice))}/yr at purchase, grows with appreciation)
+• ${y30.yr} liquid after purchase: ${fmt(y30.liq)}
+• ${y30.yr} effective tax rate: ${(y30.effRate*100).toFixed(1)}% (mortgage interest deduction helps)
+
+KIDS & TUITION
+• ${P.numKids} kids planned, births: ${P.kid1Birth}, ${P.kid2Birth}${P.numKids>=3?', '+P.kid3Birth:''}${P.numKids>=4?', '+P.kid4Birth:''}
+• Total lifecycle tuition: ${fmt(totTuit)}
+${peakTuition.tu>0?`• Peak tuition year (${peakTuition.yr}): ${fmt(peakTuition.tu)} (${peakTuition.kiy} kids in school)`:''}
+• Yeshiva: Barkai. Kid 1 enters Ganon at age ${P.kid1YeshivaStartAge}, Kids 2+ enter Orot at age ${P.yeshivaStartAge}
+• Tuition rates (2026): Orot/Ganon ~$12-14K, K $25K, 1st-5th $32K, 6-8th $36K, HS $40K
+• Tuition inflation: ${(P.tuitionInflation*100).toFixed(1)}%/yr
+
+NANCY SOLO PRACTICE (post-2030)
+• Rate: $${P.nancyHourlyRate}/hr × ${P.nancyWeeksPerYear} wks
+• Ramp ${P.nancyRampClients}→${P.nancyMaxClients} clients over ${P.nancyRampYears} years
+• Max gross at ramp: ${fmt(P.nancyMaxClients*P.nancyHourlyRate*P.nancyWeeksPerYear)}
+• Solo practice status: ${P.nancySoloPractice?'YES - QBI + home office + overhead deductions':'No (W2)'}
+
+PORTFOLIO ASSUMPTIONS
+• Portfolio return: ${(P.investReturn*100).toFixed(1)}%/yr
+• Home appreciation: ${(P.homeAppreciation*100).toFixed(1)}%/yr
+• Cost basis for stock sales: ${(P.costBasisPct*100).toFixed(0)}%
+• Cap gains rate (all-in NYC): ${(P.capGainsTaxRate*100).toFixed(1)}%
+
+═══ HOUSEHOLD CONTEXT (static) ═══
+
+• Norm: Stripe IR, NYC. W-2 with cash + RSUs.
+• Nancy: Family therapist. Plans solo practice ~2030.
+• Currently UES (Pavilion, 500 E 77th, 2-year lease through 2029)
+• Planning Brooklyn move (Midwood, near Barkai)
+
+CURRENT HOLDINGS (recent snapshot from his portfolio)
+• Fidelity ~$509K: FXAIX $347K, MU $44K, MSFT $35K, GOOG $31K, TSM $30K, CRWV $13K, SPAXX $9K
+• Coinbase ~$36K: SOL $15.5K, ETH $10.5K, LINK $10.3K (no BTC by choice)
+• Stripe RSUs ~$555K (earmarked for Brooklyn down payment)
+• Private investments ~$42K
+• 401k ~${fmt(P.k401Start||210000)} (starting balance)
+
+INVESTING PRINCIPLES NORM OPERATES BY
+• Core/satellite: ~65% FXAIX index, ~35% high-conviction names
+• Stripe RSUs = down payment capital, NOT investable
+• Wash sale rules don't apply to crypto (TLH freely)
+• Pre-establish post-IPO diversification plan before liquidity arrives
+• Skeptical of 10% historical equity return; uses 6% nominal in plan
+• Active tax-loss harvesting on FXAIX lots
+
+═══ HOW TO RESPOND ═══
+
+• Be direct and unhedged. He hates sycophancy.
+• Use specific live numbers from his current plan (e.g. "your current $${fmt(y58.nw+y58.k401)} projection")
+• Push back on flawed thinking. Don't validate just to be nice.
+• If he's adjusting sliders/scenarios, reference what's currently set
+• Tax/legal: give your professional take without excessive caveats
+• Market/macro: take a position, acknowledge uncertainty briefly
+• 2-4 paragraphs typically. Tables/bullets when helpful.
+• Don't restate his situation - he knows it. Get to the answer.`;
+}
+
+function renderAdvisorTab(R,P){
+  const ca=document.getElementById('chartArea');
+  ca.innerHTML=`<div class="adv-toolbar">
+    <span class="ctx-pill">Context: <strong>LIVE</strong> · ${R.length}yr plan · $${(R[R.length-1].nw/1e6).toFixed(1)}M @ ${R[R.length-1].yr}</span>
+    <button onclick="advExportChats()">📥 Export</button>
+    <button onclick="advImportChats()">📤 Import</button>
+  </div>
+  <div class="adv-wrap">
+    <div class="adv-rail">
+      <div class="adv-rail-hdr">
+        <h4>Conversations</h4>
+        <button class="adv-rail-new" onclick="advNewChat()">+ New</button>
+      </div>
+      <div class="adv-rail-list" id="advRailList"></div>
+    </div>
+    <div class="adv-main">
+      <div class="adv-msgs" id="advMsgs"></div>
+      <div class="adv-input-area">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;padding:0 2px;gap:6px">
+          <button class="adv-agentic-btn" id="advAgenticBtn" onclick="advToggleAgentic()" title="Agentic mode: AI proposes plan changes in its own sandbox scenario">🤖 Propose changes</button>
+          <button class="adv-agentic-btn" onclick="advOptimize()" style="background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600" title="Run full optimization — AI analyzes all levers and saves best scenario">⚡ Optimize</button>
+          <span id="advAgenticLabel" style="display:none;font-size:9px;color:var(--p);font-weight:600;margin-left:auto">AI sandbox active — changes go to a separate scenario</span>
+        </div>
+        <div class="adv-input-wrap">
+          <textarea class="adv-input" id="advInput" placeholder="Ask anything about your plan, portfolio, scenarios, taxes..." rows="1"></textarea>
+          <button class="adv-send" id="advSend" onclick="advSend()">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+  const input=document.getElementById('advInput');
+  input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,140)+'px'});
+  input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();advSend()}});
+  advRenderRail();
+  advRenderMessages();
+}
+
+function advRenderMessages(){
+  const msgs=document.getElementById('advMsgs');
+  if(!msgs)return;
+  if(advisorConversation.length===0){
+    msgs.innerHTML=`<div class="adv-welcome">
+      <h3>Ask me anything about your plan</h3>
+      <p>I have your live planner state — every slider, scenario, and projection. Try one of these or ask your own:</p>
+      <button onclick="advOptimize()" style="width:100%;margin-bottom:14px;padding:13px 18px;background:linear-gradient(135deg,var(--accent),var(--p));color:#fff;border:none;border-radius:9px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px;letter-spacing:-.01em;box-shadow:0 3px 12px rgba(99,91,255,.25);transition:opacity .15s" onmouseover="this.style.opacity='.9'" onmouseout="this.style.opacity='1'">⚡ What should I optimize? <span style="font-size:10px;font-weight:400;opacity:.85">— run full analysis, auto-propose best scenario</span></button>
+      <div class="adv-starters">
+        <div class="adv-starter" onclick="advAsk('Given my current plan, what should I prioritize in the next 12 months?')"><strong>🎯 Top priority?</strong>Next 12 months</div>
+        <div class="adv-starter" onclick="advAsk('Run a stress test - what if equity returns are only 4% instead of 6%?')"><strong>📉 Stress test returns</strong>4% vs 6% returns</div>
+        <div class="adv-starter" onclick="advAsk('Should I sell some Stripe RSU now to reduce concentration risk, or wait for IPO?')"><strong>⚠️ Stripe concentration</strong>Sell now or wait?</div>
+        <div class="adv-starter" onclick="advAsk('How would moving from a \$2M to \$1.7M home affect my plan? Be specific.')"><strong>🏠 Home tradeoff</strong>\$2M vs \$1.7M</div>
+        <div class="adv-starter" onclick="advAsk('What\\'s the single biggest risk I\\'m underweighting in this plan?')"><strong>🔍 Blind spots</strong>What am I missing?</div>
+        <div class="adv-starter" onclick="advAsk('Where should I deploy my next \$25K of monthly savings - FXAIX, individual stocks, or cash?')"><strong>💰 Deploy \$25K</strong>Where to invest</div>
+      </div>
+    </div>`;
+    return;
+  }
+  msgs.innerHTML='';
+  advisorConversation.forEach(m=>advAddMessage(m.role==='assistant'?'ai':'user',m.content,false,msgs));
+}
+
+function advAddMessage(role,content,isThinking,container){
+  const msgs=container||document.getElementById('advMsgs');
+  if(!msgs)return null;
+  const w=msgs.querySelector('.adv-welcome');if(w)w.remove();
+  const msg=document.createElement('div');
+  msg.className='adv-msg '+role;
+  const avatar=document.createElement('div');
+  avatar.className='adv-avatar '+role;
+  avatar.textContent=role==='ai'?'AI':'N';
+  const bubble=document.createElement('div');
+  bubble.className='adv-bubble';
+  if(isThinking){bubble.innerHTML='<div class="adv-thinking"><span></span><span></span><span></span></div>'}
+  else{bubble.innerHTML=role==='ai'?advMarkdown(content):`<p>${advEscape(content).replace(/\n/g,'<br>')}</p>`}
+  msg.appendChild(avatar);msg.appendChild(bubble);
+  msgs.appendChild(msg);
+  msgs.scrollTop=msgs.scrollHeight;
+  return bubble;
+}
+
+function advAsk(q){const input=document.getElementById('advInput');if(input){input.value=q;advSend()}}
+
+async function advOptimize(){
+  // Ensure agentic mode is on
+  if(!advAgenticMode)advToggleAgentic();
+  // Create a fresh chat for this run
+  await advNewChat();
+  if(!advisorActiveChatId)return;
+  const prompt=`Optimize my financial plan. Follow these exact steps using your tools:
+
+1. Call run_projection() to lock in the baseline (final NW, deficit years, worst surplus).
+2. Systematically test the levers I can actually control: investReturn, normCashBase, normStockBase, nancyHourlyRate, nancyMaxClients, pretax401k, homePrice, downPctg, homePurchaseYear, expenseInflation. For each, use set_param() then run_projection() to measure the impact on final NW vs baseline.
+3. Pick the top 2-3 changes with the biggest positive impact AND that are realistically achievable given my situation.
+4. Apply all those changes together with set_param() calls, then run_projection() one final time to show the combined effect.
+5. Call save_scenario() with a descriptive name like "Optimized: lower home + higher 401k".
+6. In your final message: lead with the total NW improvement, list the 2-3 changes with individual dollar impacts, and flag any tradeoffs or risks.
+
+Don't ask me questions — just run the analysis and deliver the recommendation.`;
+  const input=document.getElementById('advInput');
+  if(input){input.value=prompt;advSend();}
+}
+
+async function advNewChat(){
+  const id=advUuid();
+  try{
+    await fetch('/api/chats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,title:'New conversation'})});
+  }catch(e){}
+  const now=Date.now();
+  advisorChats[id]={id,title:'New conversation',messages:[],messageCount:0,createdAt:now,updatedAt:now};
+  advisorActiveChatId=id;
+  advisorConversation=[];
+  advRenderRail();
+  advRenderMessages();
+  const input=document.getElementById('advInput');if(input)input.focus();
+}
+
+function advRenderRail(){
+  const list=document.getElementById('advRailList');
+  if(!list)return;
+  const sorted=Object.values(advisorChats).sort((a,b)=>b.updatedAt-a.updatedAt);
+  if(sorted.length===0){
+    list.innerHTML=`<div class="adv-rail-empty">No conversations yet.<br>Click "+ New" to start.</div>`;
+    return;
+  }
+  list.innerHTML=sorted.map(c=>{
+    const rel=advRelTime(c.updatedAt);
+    const cnt=c.messages.length||c.messageCount||0;
+    return `<div class="adv-rail-item ${c.id===advisorActiveChatId?'active':''}" onclick="advSwitchChat('${c.id}')">
+      <div class="adv-rail-title">${advEscape(c.title)}</div>
+      <div class="adv-rail-meta">
+        <span>${cnt} msg${cnt===1?'':'s'}</span>
+        <span>${rel}</span>
+      </div>
+      <div class="adv-rail-actions">
+        <button onclick="event.stopPropagation();advRenameChat('${c.id}')" title="Rename">✎</button>
+        <button class="del" onclick="event.stopPropagation();advDeleteChat('${c.id}')" title="Delete">×</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function advRelTime(ts){
+  const diff=Date.now()-ts;
+  const min=Math.floor(diff/60000);
+  if(min<1)return 'now';
+  if(min<60)return min+'m';
+  const hr=Math.floor(min/60);
+  if(hr<24)return hr+'h';
+  const d=Math.floor(hr/24);
+  if(d<7)return d+'d';
+  const w=Math.floor(d/7);
+  if(w<4)return w+'w';
+  return new Date(ts).toLocaleDateString(undefined,{month:'short',day:'numeric'});
+}
+
+async function advSwitchChat(id){
+  if(!advisorChats[id])return;
+  advisorActiveChatId=id;
+  if(!advisorChats[id].messages||advisorChats[id].messages.length===0){
+    await advLoadMessages(id);
+  }
+  advisorConversation=advisorChats[id].messages||[];
+  advRenderRail();
+  advRenderMessages();
+}
+
+async function advRenameChat(id){
+  const c=advisorChats[id];if(!c)return;
+  const t=prompt('Rename conversation:',c.title);
+  if(t&&t.trim()){
+    c.title=t.trim().slice(0,80);c.updatedAt=Date.now();
+    fetch('/api/chats/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:c.title})}).catch(()=>{});
+    advRenderRail();
+  }
+}
+
+async function advDeleteChat(id){
+  const c=advisorChats[id];if(!c)return;
+  if(!confirm(`Delete "${c.title}"? This cannot be undone.`))return;
+  fetch('/api/chats/'+id,{method:'DELETE'}).catch(()=>{});
+  delete advisorChats[id];
+  if(advisorActiveChatId===id){
+    advisorActiveChatId=null;
+    advisorConversation=[];
+    advRenderMessages();
+  }
+  advRenderRail();
+}
+
+function advImportChats(){
+  const input=document.createElement('input');
+  input.type='file';input.accept='application/json,.json';
+  input.onchange=e=>{
+    const file=e.target.files[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const data=JSON.parse(ev.target.result);
+        if(!data.chats||typeof data.chats!=='object')throw new Error('Invalid file format');
+        const incoming=Object.values(data.chats);
+        if(!confirm(`Import ${incoming.length} conversation${incoming.length===1?'':'s'}? Merges with existing chats.`))return;
+        let imported=0;
+        const promises=[];
+        Object.entries(data.chats).forEach(([id,chat])=>{
+          if(chat.id&&chat.messages&&Array.isArray(chat.messages)){
+            const newId=advisorChats[id]?advUuid():id;
+            advisorChats[newId]={...chat,id:newId,messages:chat.messages,messageCount:chat.messages.length,createdAt:chat.createdAt||Date.now(),updatedAt:chat.updatedAt||Date.now()};
+            promises.push(fetch('/api/chats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:newId,title:chat.title||'Imported chat'})})
+              .then(()=>fetch('/api/chats/'+newId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:chat.messages})}))
+              .catch(()=>{}));
+            imported++;
+          }
+        });
+        Promise.all(promises).then(()=>{advRenderRail();alert(`Imported ${imported} conversation${imported===1?'':'s'}.`)});
+      }catch(err){alert('Failed to import: '+err.message)}
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+function advExportChats(){
+  const data={exportedAt:new Date().toISOString(),chats:advisorChats};
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=`advisor-chats-${new Date().toISOString().slice(0,10)}.json`;a.click();
+}
+
+async function advSend(){
+  const input=document.getElementById('advInput');
+  const text=input.value.trim();
+  if(!text)return;
+  if(!advisorActiveChatId||!advisorChats[advisorActiveChatId]){
+    await advNewChat();
+    if(!advisorActiveChatId)return;
+  }
+  input.value='';input.style.height='auto';
+  document.getElementById('advSend').disabled=true;
+  advAddMessage('user',text);
+  advisorConversation.push({role:'user',content:text});
+  const chat=advisorChats[advisorActiveChatId];
+  chat.messages=advisorConversation;
+  if(chat.messages.length===1){chat.title=text.slice(0,50)+(text.length>50?'…':'')}
+  chat.updatedAt=Date.now();
+  advRenderRail();
+  const thinking=advAddMessage('ai','',true);
+  const{R}=run(P);
+  const liveContext=buildLiveContext(R,P);
+  if(advAgenticMode){
+    await advSendAgentic(text,chat,liveContext,thinking);
+  } else {
+    await advSendStream(text,chat,liveContext,thinking);
+  }
+}
+
+async function advSendStream(text,chat,liveContext,thinking){
+  try{
+    const res=await fetch('/api/advisor/stream',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({chatId:advisorActiveChatId,message:text,systemPrompt:liveContext,messages:advisorConversation})
+    });
+    if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||`HTTP ${res.status}`)}
+    thinking.innerHTML='';
+    let fullReply='';
+    const reader=res.body.getReader();const dec=new TextDecoder();let buf='';
+    outer:while(true){
+      const{done,value}=await reader.read();
+      if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      const lines=buf.split('\n');buf=lines.pop();
+      for(const line of lines){
+        if(!line.startsWith('data: '))continue;
+        let payload;try{payload=JSON.parse(line.slice(6))}catch{continue}
+        if(payload.error)throw new Error(payload.error);
+        if(payload.delta){
+          fullReply+=payload.delta;
+          thinking.innerHTML=advMarkdown(fullReply);
+          const msgs=document.getElementById('advMsgs');if(msgs)msgs.scrollTop=msgs.scrollHeight;
+        }
+        if(payload.done)break outer;
+      }
+    }
+    const answer=fullReply||'Sorry, no response. Try again?';
+    thinking.innerHTML=advMarkdown(answer);
+    advisorConversation.push({role:'assistant',content:answer});
+    chat.messages=advisorConversation;chat.updatedAt=Date.now();
+    advRenderRail();
+  }catch(err){
+    thinking.innerHTML=`<p style="color:var(--r)"><strong>Error:</strong> ${advEscape(err.message)}</p><p style="font-size:11px;color:var(--t3);margin-top:4px">Check your connection and try again.</p>`;
+    advisorConversation.pop();chat.messages=advisorConversation;
+  }finally{
+    document.getElementById('advSend').disabled=false;
+    const inp=document.getElementById('advInput');if(inp)inp.focus();
+  }
+}
+
+async function advSendAgentic(text,chat,liveContext,thinking){
+  const toolLog=[]; // collected tool_call events for the proposals panel
+  try{
+    const res=await fetch('/api/advisor/agentic',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({chatId:advisorActiveChatId,message:text,systemPrompt:liveContext,messages:advisorConversation,currentParams:{...P}})
+    });
+    if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||`HTTP ${res.status}`)}
+    thinking.innerHTML='';
+    let fullReply='';
+    const reader=res.body.getReader();const dec=new TextDecoder();let buf='';
+    outer:while(true){
+      const{done,value}=await reader.read();
+      if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      const lines=buf.split('\n');buf=lines.pop();
+      for(const line of lines){
+        if(!line.startsWith('data: '))continue;
+        let payload;try{payload=JSON.parse(line.slice(6))}catch{continue}
+        if(payload.error)throw new Error(payload.error);
+        if(payload.delta){
+          fullReply+=payload.delta;
+          thinking.innerHTML=advMarkdown(fullReply);
+          const msgs=document.getElementById('advMsgs');if(msgs)msgs.scrollTop=msgs.scrollHeight;
+        }
+        if(payload.tool_call){
+          toolLog.push(payload.tool_call);
+          advInsertToolCallBubble(payload.tool_call);
+        }
+        if(payload.done){
+          advPendingProposals=payload.proposedChanges&&payload.proposedChanges.length>0?{changes:payload.proposedChanges,aiParams:payload.aiParams}:null;
+          break outer;
+        }
+      }
+    }
+    const answer=fullReply||'';
+    if(answer)thinking.innerHTML=advMarkdown(answer);
+    else if(thinking.innerHTML==='')thinking.remove();
+    if(advPendingProposals)advShowProposals(advPendingProposals,chat.title);
+    advisorConversation.push({role:'assistant',content:answer||'[Agentic analysis complete]'});
+    chat.messages=advisorConversation;chat.updatedAt=Date.now();
+    advRenderRail();
+  }catch(err){
+    thinking.innerHTML=`<p style="color:var(--r)"><strong>Error:</strong> ${advEscape(err.message)}</p><p style="font-size:11px;color:var(--t3);margin-top:4px">Check your connection and try again.</p>`;
+    advisorConversation.pop();chat.messages=advisorConversation;
+  }finally{
+    document.getElementById('advSend').disabled=false;
+    const inp=document.getElementById('advInput');if(inp)inp.focus();
+  }
+}
+
+function advInsertToolCallBubble(tc){
+  const msgs=document.getElementById('advMsgs');if(!msgs)return;
+  const div=document.createElement('div');div.className='adv-tool-call';
+  let body='';
+  if(tc.name==='set_param'){
+    const old=tc.oldValue!==undefined?`<span class="tc-old">${advEscape(String(tc.oldValue))}</span> → `:'';
+    body=`<strong>set_param</strong>: <code>${advEscape(tc.key)}</code> ${old}<strong>${advEscape(String(tc.value))}</strong>${tc.reason?` — <em>${advEscape(tc.reason)}</em>`:''}`;
+  } else if(tc.name==='run_projection'){
+    const r=tc.result||{};
+    body=`<strong>run_projection</strong>: NW@2058 ${fmt(r.finalNW||0)} · Liquid${fmt(r.finalLiquid||0)} · Deficit yrs ${r.deficitYears||0}`;
+  } else if(tc.name==='save_scenario'){
+    body=`<strong>save_scenario</strong>: proposing "<em>${advEscape(tc.scenarioName||'')}</em>"`;
+  }
+  div.innerHTML=`<span class="tc-icon">🔧</span><span class="tc-body">${body}</span>`;
+  msgs.appendChild(div);msgs.scrollTop=msgs.scrollHeight;
+}
+
+function advShowProposals(proposals,chatTitle){
+  const msgs=document.getElementById('advMsgs');if(!msgs)return;
+  const el=document.createElement('div');el.className='adv-proposals';el.id='advProposalsPanel';
+  const fmtVal=(key,v)=>{
+    if(['investReturn','expenseInflation','tuitionInflation','homeAppreciation','normGrowth','capGainsTaxRate'].includes(key))return(v*100).toFixed(1)+'%';
+    if(['homePrice','startingLiquid','normCashBase','normStockBase','pretax401k'].includes(key))return fmt(v);
+    return String(v);
+  };
+  const rows=proposals.changes.map(c=>`<div class="adv-proposal-row">
+    <span class="adv-proposal-key">${advEscape(c.key)}</span>
+    <span class="adv-proposal-old">${fmtVal(c.key,c.oldValue)}</span>
+    <span class="adv-proposal-arrow">→</span>
+    <span class="adv-proposal-new">${fmtVal(c.key,c.value)}</span>
+    <span class="adv-proposal-reason">${advEscape(c.reason||'')}</span>
+  </div>`).join('');
+  const scenarioName='AI Advisor — '+(chatTitle||'analysis').slice(0,40);
+  el.innerHTML=`
+  <div class="adv-proposals-hdr">
+    <h4>🤖 ${proposals.changes.length} proposed change${proposals.changes.length===1?'':'s'}</h4>
+    <button onclick="document.getElementById('advProposalsPanel').remove()">✕</button>
+  </div>
+  <div class="adv-proposal-list">${rows}</div>
+  <div class="adv-proposals-actions">
+    <button class="adv-proposals-save" onclick="advAcceptProposals('${advEscape(scenarioName).replace(/'/g,"\\'")}')">💾 Save as scenario</button>
+    <button class="adv-proposals-view" onclick="advPreviewProposals()">👁 Preview on chart</button>
+  </div>`;
+  msgs.appendChild(el);msgs.scrollTop=msgs.scrollHeight;
+}
+
+async function advAcceptProposals(name){
+  if(!advPendingProposals)return;
+  const aiP={...D,...migrateP({...advPendingProposals.aiParams})};
+  const id=advUuid();
+  const s={id,name,params:aiP,results:run(aiP),color:COLORS[scenarios.length%COLORS.length]};
+  scenarios.push(s);
+  activeScenarioIdx=scenarios.length-1;
+  fetch('/api/scenarios',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:s.id,name:s.name,color:s.color,params:s.params})}).catch(()=>{});
+  savePlannerState();
+  document.getElementById('advProposalsPanel')?.remove();
+  advPendingProposals=null;
+  showToast('✓ Saved advisor scenario: "'+name+'" — switch to Charts → Compare to see it','green');
+  buildControls();render();
+}
+
+function advPreviewProposals(){
+  if(!advPendingProposals)return;
+  const aiP={...D,...migrateP({...advPendingProposals.aiParams})};
+  const tmp=P;P=aiP;
+  activeTab='nw';
+  document.querySelectorAll('.tabs button[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab==='nw'));
+  render();
+  P=tmp;
+  showToast('Showing AI-proposed plan on chart. Your actual plan is unchanged.','green');
+}
+
+// ═══ INIT ═══
+loadAdvisorState();
+checkMonarchStatus();
+// Handle OAuth redirect results
+(()=>{
+  const p=new URLSearchParams(window.location.search);
+  if(p.has('monarch_connected')){showToast('✓ Monarch connected!','green');history.replaceState({},'','/');setTimeout(syncMonarch,500);}
+  if(p.has('monarch_error')){showToast('Monarch error: '+p.get('monarch_error'),'red');history.replaceState({},'','/');}
+})();
+loadSnapshots().then(()=>{loadFromServer()});
+
+window.onerror=function(msg,src,line,col,err){
+  showToast('JS Error: '+msg+' (line '+line+')','red');
+  console.error('Global error:',err||msg);
+};
+</script>
+</body>
+</html>
