@@ -26,6 +26,7 @@ const CATALOG = {
   'habits:gratitude': { label: 'Gratitude journal', goodWhen: 'up' },
   'habits:cold_shower': { label: 'Cold shower', goodWhen: 'up' },
   'habits:exercise': { label: 'Exercise (habit)', goodWhen: 'up' },
+  'habits:exercise_time_of_day': { label: 'Exercise timing', goodWhen: null },
   'habits:eat_healthy': { label: 'Eating healthy', goodWhen: 'up' },
   'habits:habit_score': { label: 'Habit completion', goodWhen: 'up' },
   'wealth:net_worth': { label: 'Net worth', goodWhen: 'up' },
