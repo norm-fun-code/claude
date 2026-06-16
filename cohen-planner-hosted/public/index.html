@@ -1753,8 +1753,21 @@ function renderGoalsTab(R,P,tT){
         </div>
         <div style="text-align:right">
           <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:var(--p)">${fmtF(Math.round(moAllIn0))}/mo</div>
-          <div style="font-size:9px;color:var(--t3);margin-top:1px">all-in: P&I ${fmtF(Math.round(moPmt))} + tax ${fmtF(Math.round(moPropTax0))} + maint ${fmtF(Math.round(moMaint0))}</div>
+          <div style="font-size:9px;color:var(--t3);margin-top:1px">all-in monthly · ${P.homePurchaseYear}</div>
         </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:14px">
+        ${[
+          {l:'Principal & Interest',mo:moPmt,c:'var(--b)',s:`${P.mortgageRate}% · 30 yr`},
+          {l:'Property Tax',mo:moPropTax0,c:'var(--a)',s:`${(ptRate*100).toFixed(2)}% · rises w/ value`},
+          {l:'Maintenance',mo:moMaint0,c:'var(--t2)',s:'+2%/yr'},
+          {l:'All-In',mo:moAllIn0,c:'var(--p)',s:`${fmtF(Math.round(moAllIn0*12))}/yr`}
+        ].map(x=>`
+        <div style="background:${x.l==='All-In'?'var(--s3)':'var(--s2)'};border-radius:7px;padding:9px 11px${x.l==='All-In'?';border:1px solid var(--bd)':''}">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">${x.l}</div>
+          <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:${x.c}">${fmtF(Math.round(x.mo))}<span style="font-size:9px;color:var(--t3);font-weight:400">/mo</span></div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${x.s}</div>
+        </div>`).join('')}
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:14px">
         <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
