@@ -1177,6 +1177,38 @@ function sensiUpdateDelta(input){
   renderSensitivityTab(window._lastR,window._lastP);
 }
 
+function goalInlineEl(key,display,parseAs){
+  return `<span data-goal-key="${key}" data-goal-parse="${parseAs}" onclick="goalInlineEdit(this)" style="cursor:pointer;border-bottom:1px dashed var(--t3);padding:0 1px;white-space:nowrap" title="Click to edit">${display}</span>`;
+}
+function goalInlineEdit(span){
+  const key=span.dataset.goalKey;
+  const parseAs=span.dataset.goalParse;
+  const cur=P[key];
+  let dflt;
+  if(parseAs==='dollar-m')dflt=(cur/1e6).toFixed(2)+'M';
+  else if(parseAs==='dollar-k')dflt=cur>=1000?Math.round(cur/1000)+'K':String(cur);
+  else if(parseAs==='pct-decimal')dflt=(cur*100).toFixed(1)+'%';
+  else if(parseAs==='pct')dflt=String(cur);
+  else dflt=String(cur);
+  const inp=document.createElement('input');
+  inp.type='text';inp.value=dflt;
+  inp.style.cssText='width:72px;font-size:inherit;font-family:inherit;color:var(--tx);background:var(--s1);border:1px solid var(--accent);border-radius:3px;padding:0 3px;outline:none';
+  const commit=()=>{
+    const s=inp.value.trim().toUpperCase();
+    let v=parseFloat(s.replace(/[$,MK%]/g,''));
+    if(isNaN(v)){span.parentNode&&span.parentNode.replaceChild(span,inp);return;}
+    if(s.includes('M'))v=v*1e6;
+    else if(s.includes('K'))v=v*1000;
+    else if(parseAs==='dollar-m'&&v<10000)v=v*1e6; // bare "2.5" → 2.5M
+    else if(parseAs==='pct-decimal')v=v>1?v/100:v; // "3%" or "3" → 0.03
+    U(key,v);
+  };
+  inp.onblur=commit;
+  inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();commit();}if(e.key==='Escape'){span.parentNode&&span.parentNode.replaceChild(span,inp);}};
+  span.parentNode.replaceChild(inp,span);
+  inp.focus();inp.select();
+}
+
 function renderGoalsTab(R,P,tT){
   const ca=document.getElementById('chartArea');
   destroyCharts();
@@ -1288,7 +1320,7 @@ function renderGoalsTab(R,P,tT){
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
       <div>
         <div style="font-size:13px;font-weight:700;color:var(--tx)">🏠 Home Down Payment</div>
-        <div style="font-size:10px;color:var(--t2);margin-top:2px">${P.homePrice>=1e6?'$'+(P.homePrice/1e6).toFixed(2)+'M':'$'+Math.round(P.homePrice/1000)+'K'} home · ${P.downPctg}% down · ${P.homePurchaseYear}</div>
+        <div style="font-size:10px;color:var(--t2);margin-top:2px">${goalInlineEl('homePrice',P.homePrice>=1e6?'$'+(P.homePrice/1e6).toFixed(2)+'M':'$'+Math.round(P.homePrice/1000)+'K','dollar-m')} home · ${goalInlineEl('downPctg',P.downPctg+'%','pct')} down · ${goalInlineEl('homePurchaseYear',P.homePurchaseYear,'year')}</div>
       </div>
       <div style="text-align:right">
         <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:${dpOnTrack?'var(--g)':'var(--a)'}">${fmt(dp)}</div>
@@ -1355,7 +1387,7 @@ function renderGoalsTab(R,P,tT){
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
         <div>
           <div style="font-size:13px;font-weight:700;color:var(--tx)">🏦 Mortgage</div>
-          <div style="font-size:10px;color:var(--t2);margin-top:2px">${P.homePrice>=1e6?'$'+(P.homePrice/1e6).toFixed(2)+'M':'$'+Math.round(P.homePrice/1000)+'K'} · ${P.mortgageRate}% · 30 yr · closes ${P.homePurchaseYear}</div>
+          <div style="font-size:10px;color:var(--t2);margin-top:2px">${goalInlineEl('homePrice',P.homePrice>=1e6?'$'+(P.homePrice/1e6).toFixed(2)+'M':'$'+Math.round(P.homePrice/1000)+'K','dollar-m')} · ${goalInlineEl('mortgageRate',P.mortgageRate+'%','pct')} · 30 yr · closes ${goalInlineEl('homePurchaseYear',P.homePurchaseYear,'year')}</div>
         </div>
         <div style="text-align:right">
           <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:var(--p)">${fmtF(Math.round(moPmt))}/mo</div>
@@ -1407,10 +1439,11 @@ function renderGoalsTab(R,P,tT){
         }).join('')}
       </div>
       <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--t3);margin-top:3px"><span>${P.homePurchaseYear}</span><span>${payoffYr}</span></div>
-      <div style="margin-top:6px;display:flex;gap:10px;font-size:8.5px;color:var(--t3)">
+      <div style="margin-top:6px;display:flex;gap:10px;flex-wrap:wrap;font-size:8.5px;color:var(--t3)">
         <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--g);border-radius:2px;opacity:.8"></span>Principal</span>
         <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--r);border-radius:2px;opacity:.6"></span>Interest</span>
         <span>Hover bars for year detail</span>
+        <span style="margin-left:auto">Appreciation: ${goalInlineEl('homeAppreciation',(P.homeAppreciation*100).toFixed(1)+'%/yr','pct-decimal')}</span>
       </div>
     </div>`;
   }
@@ -1423,7 +1456,7 @@ function renderGoalsTab(R,P,tT){
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
         <div>
           <div style="font-size:13px;font-weight:700;color:var(--tx)">🎓 Tuition Summit</div>
-          <div style="font-size:10px;color:var(--t2);margin-top:2px">${firstTuRow.yr}–${lastTuRow.yr} · ${tuSpan} year window · ${P.numKids} kid${P.numKids!==1?'s':''}</div>
+          <div style="font-size:10px;color:var(--t2);margin-top:2px">${firstTuRow.yr}–${lastTuRow.yr} · ${tuSpan} year window · ${P.numKids} kid${P.numKids!==1?'s':''} · ${goalInlineEl('yeshivaStartAge',P.yeshivaStartAge+' start age','year')}–${goalInlineEl('yeshivaEndAge',P.yeshivaEndAge+' end age','year')}</div>
         </div>
         <div style="text-align:right">
           <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:var(--r)">${fmt(tT)}</div>
@@ -1459,12 +1492,12 @@ function renderGoalsTab(R,P,tT){
       </div>
       <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--t3);margin-top:3px"><span>${sy}</span><span>${P.planEndYear||2058}</span></div>
       <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
-        ${kidWindows.map((kw,ki)=>`
+        ${kidWindows.map((kw,ki)=>{const bKey=['kid1Birth','kid2Birth','kid3Birth','kid4Birth'][ki];return`
         <div style="background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:6px 10px;font-size:9.5px">
           <span style="font-weight:600;color:var(--tx)">Kid ${ki+1}</span>
-          <span style="color:var(--t2)"> born ${kw.kb} · school ${kw.startYr}–${kw.endYr}</span>
+          <span style="color:var(--t2)"> born ${goalInlineEl(bKey,kw.kb,'year')} · school ${kw.startYr}–${kw.endYr}</span>
           <span style="color:var(--t3)"> (${kw.years} yrs)</span>
-        </div>`).join('')}
+        </div>`;}).join('')}
         ${kidWindows.length>=2?`<div style="background:var(--r-soft);border:1px solid rgba(205,61,100,.15);border-radius:6px;padding:6px 10px;font-size:9.5px;color:var(--r);font-weight:500">
           Overlap: ${Math.max(0,Math.min(...kidWindows.map(kw=>kw.endYr))-Math.max(...kidWindows.map(kw=>kw.startYr))+1)} yrs both in school
         </div>`:''}
