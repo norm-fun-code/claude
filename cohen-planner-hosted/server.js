@@ -653,9 +653,11 @@ function extractCashflowPair(obj) {
     return null;
   };
 
-  const INC = ['income', 'total_income', 'totalIncome', 'income_total', 'incomeTotal'];
+  const INC = ['income', 'total_income', 'totalIncome', 'income_total', 'incomeTotal',
+               'sumIncome', 'sum_income', 'incomeSum'];
   const EXP = ['expenses', 'expense', 'spending', 'total_expenses', 'totalExpenses',
-               'totalSpending', 'expense_total', 'expenseTotal', 'spendingTotal'];
+               'totalSpending', 'expense_total', 'expenseTotal', 'spendingTotal',
+               'sumExpense', 'sumExpenses', 'sum_expense', 'sum_expenses', 'expenseSum'];
 
   // ── Array: sum income and expense across all monthly/category items ──
   if (Array.isArray(obj)) {
@@ -749,7 +751,9 @@ app.get('/api/monarch-cashflow', requireAuth, async (req, res) => {
 
     const pair = extractCashflowPair(rawAll);
     console.log('[cashflow] extracted pair:', pair);
-    if (pair && (pair.income > 0 || pair.expense > 0)) {
+    // Only trust the single unfiltered call if it found BOTH sides — otherwise
+    // fall through to the dual filtered calls (the approach that worked before).
+    if (pair && pair.income > 0 && pair.expense > 0) {
       return res.json({ start, end, income: Math.round(pair.income), expense: Math.round(pair.expense), _debug: { raw: rawAll } });
     }
 
