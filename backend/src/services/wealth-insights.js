@@ -195,7 +195,15 @@ async function buildWealthInsights() {
   try {
     const pacing = await monarchWealth.getBudgetPacing();
     if (pacing && pacing.lines.length) {
-      const overPace = pacing.lines.filter((l) => l.pace >= 1.3 || l.overBudget);
+      // Categories paid as a single monthly lump sum — pace extrapolation doesn't apply.
+      const LUMP_SUM = new Set(['Rent', 'Mortgage', 'Rent & Utilities']);
+
+      // Daily-spend categories: flag if spending 30%+ faster than the month is progressing.
+      const overPace = pacing.lines.filter((l) => {
+        if (l.overBudget) return true;
+        if (LUMP_SUM.has(l.category)) return false;
+        return l.pace >= 1.3;
+      });
       for (const l of overPace.slice(0, 3)) {
         const status = l.overBudget
           ? `over budget (${fmt(l.actual)} of ${fmt(l.budget)})`
@@ -210,6 +218,26 @@ async function buildWealthInsights() {
               : `Spending ${pct((l.pace - 1) * 100)} faster than the month is elapsing.`),
           evidence: { kind: 'budget_pacing', category: l.category, budget: l.budget, actual: l.actual, pace: l.pace, overBudget: l.overBudget },
         });
+      }
+
+      // Lump-sum categories: compare actual vs budget directly.
+      const lumpSumPaid = pacing.lines.filter((l) => LUMP_SUM.has(l.category) && l.actual > 0);
+      for (const l of lumpSumPaid) {
+        if (l.overBudget) {
+          insights.push({
+            type: 'over_budget',
+            title: `${l.category}: over budget (${fmt(l.actual)} of ${fmt(l.budget)})`,
+            detail: `${l.category}: paid ${fmt(l.actual)} vs ${fmt(l.budget)} budget — ${fmt(Math.abs(l.remaining))} over.`,
+            evidence: { kind: 'budget_pacing', category: l.category, budget: l.budget, actual: l.actual, lumpSum: true },
+          });
+        } else {
+          insights.push({
+            type: 'under_budget',
+            title: `${l.category}: ${fmt(l.actual)} of ${fmt(l.budget)} budget — under by ${fmt(l.remaining)}`,
+            detail: `${l.category}: paid ${fmt(l.actual)} vs ${fmt(l.budget)} budget this month — ${fmt(l.remaining)} under budget.`,
+            evidence: { kind: 'budget_pacing', category: l.category, budget: l.budget, actual: l.actual, lumpSum: true },
+          });
+        }
       }
     }
   } catch (err) {
