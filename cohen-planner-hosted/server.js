@@ -632,21 +632,52 @@ app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
   }
 });
 
-// Pull a numeric total out of a GetCashFlow result, regardless of exact shape
+// Extract income+expense pair from a GetCashFlow response (any shape)
+function extractCashflowPair(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  const n = (v) => (v != null) ? Math.abs(num(v)) : null;
+
+  // Direct top-level fields
+  const inc = n(obj.income ?? obj.total_income ?? obj.totalIncome ?? obj.income_total);
+  const exp = n(obj.expenses ?? obj.expense ?? obj.spending ?? obj.total_expenses
+    ?? obj.totalExpenses ?? obj.totalSpending ?? obj.expense_total);
+  if (inc != null || exp != null) return { income: inc ?? 0, expense: exp ?? 0 };
+
+  // Recurse into common container keys (but not into per-category arrays)
+  for (const k of ['summary', 'totals', 'cashFlow', 'cash_flow', 'data', 'result', 'overview']) {
+    if (obj[k] && typeof obj[k] === 'object' && !Array.isArray(obj[k])) {
+      const nested = extractCashflowPair(obj[k]);
+      if (nested) return nested;
+    }
+  }
+
+  // If it's an array with one object, check that
+  if (Array.isArray(obj) && obj.length === 1) return extractCashflowPair(obj[0]);
+
+  return null;
+}
+
+// Pull a single numeric total out of a filtered GetCashFlow result
 function extractCashflowTotal(obj) {
   if (obj == null) return null;
   if (typeof obj === 'number') return obj;
-  if (typeof obj === 'string') { const n = num(obj); return n || null; }
+  if (typeof obj === 'string') { const n2 = num(obj); return n2 || null; }
   if (Array.isArray(obj)) {
+    // Sum only if it looks like a flat list of amounts (not nested summaries)
     let sum = 0, found = false;
-    for (const item of obj) { const v = extractCashflowTotal(item); if (v != null) { sum += v; found = true; } }
+    for (const item of obj) {
+      if (typeof item === 'number') { sum += item; found = true; continue; }
+      if (typeof item === 'object' && item != null) {
+        for (const k of ['total', 'sum', 'amount', 'value']) {
+          if (item[k] != null) { sum += num(item[k]); found = true; break; }
+        }
+      }
+    }
     return found ? sum : null;
   }
-  // object — look for common total-ish keys
-  for (const k of ['total', 'sum', 'amount', 'total_amount', 'net', 'value', 'sum_amount', 'totalAmount']) {
+  for (const k of ['total', 'sum', 'amount', 'total_amount', 'value', 'sum_amount', 'totalAmount']) {
     if (obj[k] != null) return num(obj[k]);
   }
-  // single bucket with one numeric field
   return null;
 }
 
@@ -662,23 +693,36 @@ app.get('/api/monarch-cashflow', requireAuth, async (req, res) => {
 
     await monarchMCPHandshake(accessToken);
 
+    // Single call — no category filter — to get the unified income+expense summary
+    const trAll = await callMonarchMCP(accessToken, 'tools/call', {
+      name: 'GetCashFlow',
+      arguments: { start_date: start, end_date: end },
+    });
+    if (trAll?.error) throw new Error(`GetCashFlow: ${trAll.error.message || JSON.stringify(trAll.error)}`);
+    const rawAll = unwrapMCPResult(trAll);
+
+    const pair = extractCashflowPair(rawAll);
+    if (pair && (pair.income > 0 || pair.expense > 0)) {
+      return res.json({ start, end, income: Math.round(pair.income), expense: Math.round(pair.expense), _debug: { raw: rawAll } });
+    }
+
+    // Fallback: two separate filtered calls
     async function flowFor(categoryType) {
-      const tr = await callMonarchMCP(accessToken, 'tools/call', {
+      const tr2 = await callMonarchMCP(accessToken, 'tools/call', {
         name: 'GetCashFlow',
         arguments: { start_date: start, end_date: end, filters: JSON.stringify({ category_type: categoryType }) },
       });
-      if (tr?.error) throw new Error(`GetCashFlow(${categoryType}): ${tr.error.message || JSON.stringify(tr.error)}`);
-      const parsed = unwrapMCPResult(tr);
+      if (tr2?.error) throw new Error(`GetCashFlow(${categoryType}): ${tr2.error.message || JSON.stringify(tr2.error)}`);
+      const parsed = unwrapMCPResult(tr2);
       return { total: extractCashflowTotal(parsed), raw: parsed };
     }
 
     const [income, expense] = await Promise.all([flowFor('income'), flowFor('expense')]);
-
     res.json({
       start, end,
       income:  Math.abs(Math.round(income.total ?? 0)),
       expense: Math.abs(Math.round(expense.total ?? 0)),
-      _debug: { incomeRaw: income.raw, expenseRaw: expense.raw },
+      _debug: { raw: rawAll, incomeRaw: income.raw, expenseRaw: expense.raw },
     });
   } catch (err) {
     console.error('Monarch cashflow error:', err);

@@ -456,22 +456,27 @@ async function anchorToToday(){
   let projEOY=null;
   try{const rr=run(newP);const row=rr.R.find(x=>x.yr===curYr)||rr.R[0];projEOY=row?row.liq:null;}catch(e){}
 
+  const debugJson=JSON.stringify(cf._debug||{},null,2);
   const ov=document.createElement('div');
   ov.style.cssText='position:fixed;inset:0;background:rgba(10,37,64,.4);z-index:9998;display:flex;align-items:center;justify-content:center;padding:20px';
   const set401=monarchSnapshot.retirement>0;
-  ov.innerHTML=`<div style="background:#fff;border-radius:12px;padding:22px 24px;max-width:420px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.2)">
+  ov.innerHTML=`<div style="background:#fff;border-radius:12px;padding:22px 24px;max-width:460px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.2)">
     <div style="font-size:15px;font-weight:700;color:var(--tx);margin-bottom:4px">⚓ Anchor plan to today</div>
     <div style="font-size:11px;color:var(--t2);margin-bottom:16px;line-height:1.5">Backs out your ${curYr} year-to-date flows to find your implied Jan-1 liquid, so the rest of the year isn't double-counted.</div>
     <div style="display:flex;flex-direction:column;gap:7px;font-size:12px;font-family:'SF Mono',monospace">
       <div style="display:flex;justify-content:space-between"><span style="color:var(--t2)">Today's liquid</span><span style="font-weight:600">${fmtF(todayLiq)}</span></div>
-      <div style="display:flex;justify-content:space-between"><span style="color:var(--t2)">− YTD income</span><span style="color:var(--g)">−${fmtF(ytdInc)}</span></div>
-      <div style="display:flex;justify-content:space-between"><span style="color:var(--t2)">+ YTD spending</span><span style="color:var(--r)">+${fmtF(ytdExp)}</span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--t2)">− YTD income (Monarch)</span><span style="color:var(--g)">−${fmtF(ytdInc)}</span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:var(--t2)">+ YTD spending (Monarch)</span><span style="color:var(--r)">+${fmtF(ytdExp)}</span></div>
       <div style="border-top:1px solid var(--bd);margin:3px 0"></div>
       <div style="display:flex;justify-content:space-between;font-weight:700"><span>= Implied Jan-1 liquid</span><span style="color:var(--accent)">${fmtF(impliedJan1)}</span></div>
       ${projEOY!=null?`<div style="display:flex;justify-content:space-between;margin-top:4px"><span style="color:var(--t2)">→ Projected EOY liquid</span><span style="font-weight:600">${fmtF(projEOY)}</span></div>`:''}
     </div>
-    <div style="font-size:9.5px;color:var(--t3);margin-top:12px;line-height:1.4">Sets <b>Starting Liquid → ${fmtF(impliedJan1)}</b>${set401?` and <b>Starting 401k → ${fmtF(monarchSnapshot.retirement)}</b>`:''}. ${ytdNet<0?'⚠ YTD spending exceeded income so far — implied Jan-1 is above today.':''}</div>
-    <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
+    <div style="font-size:9.5px;color:var(--t3);margin-top:10px;line-height:1.4">Sets <b>Starting Liquid → ${fmtF(impliedJan1)}</b>${set401?` and <b>Starting 401k → ${fmtF(monarchSnapshot.retirement)}</b>`:''}. ${ytdNet<0?'⚠ YTD spending exceeded income so far — implied Jan-1 is above today.':''}</div>
+    <div style="margin-top:8px">
+      <button onclick="const d=this.nextElementSibling;d.style.display=d.style.display==='none'?'block':'none';this.textContent=d.style.display==='none'?'▶ Show raw Monarch data':'▼ Hide raw data'" style="font-size:9px;color:var(--t3);background:none;border:none;cursor:pointer;padding:0;font-family:inherit">▶ Show raw Monarch data</button>
+      <pre style="display:none;margin-top:6px;font-size:8.5px;background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:8px;overflow:auto;max-height:160px;color:var(--t2);white-space:pre-wrap;word-break:break-all">${debugJson.replace(/</g,'&lt;')}</pre>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">
       <button onclick="this.closest('div[style*=fixed]').remove()" style="font-size:12px;padding:8px 14px;background:var(--s2);border:1px solid var(--bd);border-radius:7px;cursor:pointer;font-family:inherit;color:var(--t2)">Cancel</button>
       <button id="anchorConfirmBtn" style="font-size:12px;font-weight:600;padding:8px 16px;background:var(--a);color:#fff;border:none;border-radius:7px;cursor:pointer;font-family:inherit">Anchor it</button>
     </div>
