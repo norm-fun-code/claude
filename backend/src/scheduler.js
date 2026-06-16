@@ -13,6 +13,8 @@ const { autoStartExperiment, proposeExperiments } = require('./intelligence/expe
 const { runNudges, runCheckinReminder, runCheckinEveningReminder, runHabitsReminder } = require('./notify/run');
 const { runWatch } = require('./intelligence/watch');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./notify/morning');
+const { runEveningBriefing } = require('./notify/evening');
+const { runWealthNudges } = require('./intelligence/wealth-nudges');
 const nudgesStore = require('./store/nudges');
 const { runIngest: _runIngest } = require('./ingest/run');
 const { query } = require('./db');
@@ -136,6 +138,11 @@ async function morningRoutine({ reason = 'scheduled' } = {}) {
   } catch (e) { console.error('[scheduler] experiments:', e.message); }
   // Check-in reminder is suppressed here — it has its own 3pm schedule.
   try { await runNudges({ suppressCheckin: true }); } catch (e) { console.error('[scheduler] nudge:', e.message); }
+  // Wealth threshold alerts: over-budget categories, new recurring charges.
+  try {
+    const w = await runWealthNudges({});
+    if (w.sent > 0) console.log(`[scheduler] wealth nudges: sent=${w.sent}`);
+  } catch (e) { console.error('[scheduler] wealth nudges:', e.message); }
   // Pre-build the briefing (warm the cache) and push "briefing ready", so the
   // app opens instantly with today's briefing instead of waiting to build it.
   try {
@@ -263,6 +270,12 @@ function start() {
   const habitsHour = Number(process.env.HABITS_REMINDER_HOUR) || 22; // 10pm
   const habitsMinute = Number(process.env.HABITS_REMINDER_MINUTE) || 0;
   scheduleDaily(habitsHour, habitsMinute, () => runHabitsReminder({}));
+
+  // PM / EOD briefing (6pm) — spend snapshot, portfolio performance, budget flags.
+  const eveningBriefingHour = Number(process.env.EVENING_BRIEFING_HOUR) || 18; // 6pm
+  const eveningBriefingMinute = Number(process.env.EVENING_BRIEFING_MINUTE) || 0;
+  scheduleDaily(eveningBriefingHour, eveningBriefingMinute, () => runEveningBriefing({}));
+
   const hm = (h, m) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   const nextIso = (h, m) => new Date(Date.now() + msUntil(h, m)).toISOString();
   console.log(

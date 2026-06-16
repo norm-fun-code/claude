@@ -54,11 +54,11 @@ function rankPercentile(series, { baselineDays = 30, minN = 8, invert = false } 
  *   rank  20 →  28
  *   rank  50 →  50  (median day = 50)
  *   rank  80 →  72
- *   rank 100 →  92  (ceiling: best day still has room to grow)
+ *   rank 100 → 100  (full marks on a genuinely exceptional day)
  */
 function softScore(rank) {
   if (rank <= 20) return Math.round(10 + rank * 0.9);          // 0→10, 20→28
-  if (rank >= 80) return Math.round(72 + (rank - 80) * 1.0);   // 80→72, 100→92
+  if (rank >= 80) return Math.round(72 + (rank - 80) * 1.4);   // 80→72, 100→100
   return Math.round(28 + (rank - 20) * (44 / 60));             // 20→28, 80→72 linear
 }
 
@@ -291,7 +291,7 @@ function computeHealthComposites(seriesByKey, opts = {}) {
   const eightSleepDebt = latest(seriesByKey['health:sleep_debt']);
   const eightSleepNeed = latest(seriesByKey['health:sleep_need']);
 
-  if (eightSleepDebt != null && eightSleepDebt >= 0.5) {
+  if (eightSleepDebt != null && eightSleepDebt > 0.05) {
     const needFmt = fmtHM(eightSleepNeed ?? 8);
     const avgHours = sleep ? latest(sleep) : null;
     const debtRounded = Math.round(eightSleepDebt * 10) / 10;

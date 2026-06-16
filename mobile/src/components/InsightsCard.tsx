@@ -22,9 +22,12 @@ const TYPE_LABEL: Record<string, string> = {
   recovery: 'RECOVERY',
   sleep_debt: 'SLEEP',
   sleep_consistency: 'SLEEP',
+  sleep_impact: 'SLEEP IMPACT',
   training_load: 'TRAINING LOAD',
+  activity_impact: 'EXERCISE IMPACT',
   habit_consistency: 'HABIT STREAK',
   habit_split: 'HABIT IMPACT',
+  investments: 'INVESTMENTS',
 };
 
 // The intelligence findings — trends and confirmed cross-domain patterns —

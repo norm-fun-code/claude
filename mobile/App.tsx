@@ -26,7 +26,7 @@ import { getColors, spacing } from './src/theme';
 
 import { Header } from './src/components/Header';
 import { TabBar, TabKey, TABS } from './src/components/TabBar';
-import { LeverageCard } from './src/components/LeverageCard';
+import { HabitTrendsCard } from './src/components/HabitTrendsCard';
 import { ForecastCard } from './src/components/ForecastCard';
 import { LibraryCard } from './src/components/LibraryCard';
 import { AffirmationsCard } from './src/components/AffirmationsCard';
@@ -183,15 +183,21 @@ export default function App() {
               builtAt={liveRecovery.recovery ? undefined : d?.builtAt}
             />
             <HealthCard health={health} />
-            {d?.healthInsights && d.healthInsights.length > 0 ? (
-              <InsightsCard insights={d.healthInsights} />
-            ) : (
-              <EmptyNote c={c} text="Health insights (sleep ↔ HRV ↔ focus patterns) appear once a few days of Apple Health + habit data accumulate. Open the app daily so HealthKit syncs, and log your habits on the Today tab." />
-            )}
+            {(() => {
+              const habitTypes = new Set(['habit_consistency', 'habit_split']);
+              const combined = [
+                ...(d?.healthInsights ?? []),
+                ...(d?.insights ?? []).filter((i) => !habitTypes.has(i.type)),
+              ];
+              return combined.length > 0 ? (
+                <InsightsCard insights={combined} />
+              ) : (
+                <EmptyNote c={c} text="Health insights (sleep ↔ HRV ↔ focus patterns) appear once a few days of Apple Health + habit data accumulate. Open the app daily so HealthKit syncs, and log your habits on the Today tab." />
+              );
+            })()}
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} recoveryScore={liveRecovery.recovery?.score ?? null} />
             <WeeklyStateCard briefing={d ?? null} health={health} recovery={liveRecovery.recovery} />
-            <ForecastCard forecasts={d?.forecasts ?? []} />
-            {d?.insights && d.insights.length > 0 && <InsightsCard insights={d.insights} />}
+            <ForecastCard forecasts={d?.forecasts ?? []} />}
             <CheckinHistoryCard />
             {analyzeError && (
               <View style={[styles.errorBox, { borderColor: c.border, backgroundColor: c.card }]}>
@@ -256,6 +262,7 @@ export default function App() {
               {d && (d.calendar?.length ?? 0) > 0 && <CalendarCard events={d.calendar} />}
               <CheckinCard />
               <HabitsCard />
+              <HabitTrendsCard insights={(d?.insights ?? []).filter((i) => i.type === 'habit_consistency' || i.type === 'habit_split')} />
               <GoalsCard weeklyGoals={d?.weeklyGoals} />
               <AnnotationsCard />
               {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}

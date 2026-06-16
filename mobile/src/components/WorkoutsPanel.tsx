@@ -1070,11 +1070,6 @@ function RestContent({
     <View style={[restStyles.card, { backgroundColor: c.card, borderColor: c.border }]}>
       <Text style={restStyles.icon}>🛌</Text>
       <Text style={[restStyles.note, { color: c.subtext }]}>{session.note}</Text>
-      <View style={[restStyles.reminder, { backgroundColor: isDark ? '#2A2A28' : '#F3F3F0' }]}>
-        <Text style={[restStyles.reminderText, { color: c.subtext }]}>
-          Check your daily non-negotiables below.
-        </Text>
-      </View>
     </View>
   );
 }
@@ -1812,12 +1807,6 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
         workoutHistory,
       )}
 
-      <NonNegotiablesStrip
-        c={c}
-        isDark={isDark}
-        values={nonNegotiables}
-        onChange={toggleNonNeg}
-      />
     </View>
   );
 }

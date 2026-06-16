@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Linking, TouchableOpacity, useColorScheme, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, useColorScheme, ActivityIndicator } from 'react-native';
 import Markdown from 'react-native-markdown-display';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
@@ -48,7 +48,6 @@ export function MarketsCard({ markets: initialMarkets }: Props) {
   };
 
   const brief = markets?.brief;
-  const sources = markets?.sources ?? [];
 
   if (!brief && !refreshing) return null;
 
@@ -72,23 +71,6 @@ export function MarketsCard({ markets: initialMarkets }: Props) {
       )}
 
       {brief ? <Markdown style={markdownStyles(c)}>{brief}</Markdown> : null}
-
-      {sources.length > 0 && (
-        <View style={[styles.sources, { borderTopColor: c.border }]}>
-          <Text style={[styles.sourcesLabel, { color: c.subtext }]}>SOURCES</Text>
-          {sources.map((s, i) => (
-            <TouchableOpacity
-              key={i}
-              activeOpacity={s.url ? 0.6 : 1}
-              onPress={() => s.url && Linking.openURL(s.url)}
-            >
-              <Text style={[styles.sourceItem, { color: c.subtext }]} numberOfLines={1}>
-                · {s.title} <Text style={{ color: c.subtext }}>({s.source})</Text>
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
     </View>
   );
 }
@@ -118,7 +100,4 @@ const styles = StyleSheet.create({
   },
   refreshText: { fontSize: 12, fontWeight: '600' },
   refreshedAt: { ...typography.caption, marginBottom: spacing.xs, marginTop: -spacing.xs },
-  sources: { marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1 },
-  sourcesLabel: { ...typography.label, fontSize: 9, marginBottom: 4 },
-  sourceItem: { fontSize: 12, lineHeight: 18, marginBottom: 1 },
 });

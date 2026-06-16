@@ -96,13 +96,13 @@ export function HabitsCard() {
   // Persist the full current state. Each box tap saves immediately (the backend
   // upserts one row per habit per day), so nothing is lost if you don't tap
   // "Save" — and it rehydrates on return, resetting at midnight.
-  async function save(nextChecked = checked, nextEat = eatHealthy) {
+  async function save(nextChecked = checked, nextEat = eatHealthy, extra: Record<string, unknown> = {}) {
     setFailed(false);
     try {
       const res = await fetchWithTimeout(HABITS_URL, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ ...nextChecked, eatHealthy: nextEat }),
+        body: JSON.stringify({ ...nextChecked, eatHealthy: nextEat, ...extra }),
       });
       if (!res.ok) throw new Error(`Server ${res.status}`);
       setSaved(true);
@@ -115,7 +115,9 @@ export function HabitsCard() {
   function toggle(key: Binary) {
     const next = { ...checked, [key]: !checked[key] };
     setChecked(next);
-    save(next, eatHealthy); // save on every tap
+    const extra: Record<string, unknown> = {};
+    if (key === 'exercise' && next.exercise) extra.exerciseCompletedAt = new Date().toISOString();
+    save(next, eatHealthy, extra);
   }
 
   const doneCount = Object.values(checked).filter(Boolean).length;

@@ -31,6 +31,15 @@ function mapHabits(body = {}, { ts, tz = 'UTC' } = {}) {
     metrics.push({ ts: when, domain: DOMAIN, metric, value, unit: 'bool', source: SOURCE });
     count += 1;
     done += value;
+    // Log hour-of-day (0–23.99) when exercise is completed — enables timing vs
+    // sleep/recovery correlations ("late workouts suppress HRV?").
+    if (field === 'exercise' && value === 1 && body.exerciseCompletedAt) {
+      const completedAt = new Date(body.exerciseCompletedAt);
+      if (!isNaN(completedAt.getTime())) {
+        const hoursOfDay = completedAt.getHours() + completedAt.getMinutes() / 60;
+        metrics.push({ ts: when, domain: DOMAIN, metric: 'exercise_time_of_day', value: Math.round(hoursOfDay * 100) / 100, unit: 'hours', source: SOURCE });
+      }
+    }
   }
 
   const eat = Number(body.eatHealthy);

@@ -7,9 +7,7 @@ const metricsStore = require('../store/metrics');
 const { computeSubscriptionInsights } = require('../intelligence/subscriptions');
 const { isInternalTransfer } = require('../connectors/monarch');
 const stats = require('../intelligence/stats');
-
-let monarchApi = null;
-try { monarchApi = require('./monarch-api'); } catch { /* optional */ }
+const monarchWealth = require('./monarch-wealth');
 
 const MIN_SPEND = 50;       // ignore trivially small categories
 const SPIKE_RATIO = 1.15;   // 15%+ over your usual is noteworthy
@@ -124,12 +122,40 @@ async function buildWealthInsights() {
     }
   }
 
-  // 1b) Subscriptions / recurring charges (Rocket-Money-style).
+  // 1b) Subscriptions — authoritative from Monarch recurring streams when available,
+  // heuristic fallback from stored transactions otherwise.
   try {
-    const txns = (await documents.spendTransactions({ days: 150 }))
-      .filter((t) => !isInternalTransfer(t.category));
-    if (txns.length) {
-      for (const s of computeSubscriptionInsights(txns)) insights.push(s);
+    const recurring = await monarchWealth.getRecurring();
+    if (recurring) {
+      const active = recurring.expenses;
+      if (active.length) {
+        const totalMonthly = Math.round(recurring.totalMonthlyExpense);
+        const totalAnnual = Math.round(recurring.totalAnnualExpense);
+        insights.push({
+          type: 'subscriptions',
+          title: `${active.length} recurring charges ≈ ${fmt(totalMonthly)}/mo`,
+          detail:
+            `Monarch tracks ${active.length} recurring expenses totaling ${fmt(totalMonthly)}/month (${fmt(totalAnnual)}/yr). ` +
+            `Top: ${active.slice(0, 3).map((s) => `${s.name} (${fmt(s.monthly)}/mo)`).join(', ')}.`,
+          evidence: { kind: 'subscriptions', count: active.length, totalAnnual, totalMonthly, items: active.slice(0, 10) },
+        });
+        const big = active.find((s) => s.annual >= 200);
+        if (big) {
+          insights.push({
+            type: 'subscription_review',
+            title: `Review: ${big.name} is ${fmt(big.annual)}/yr`,
+            detail: `${big.name} bills ${fmt(big.amount)} ${big.frequency} — about ${fmt(big.annual)} a year. Worth confirming it's still earning its keep.`,
+            evidence: { kind: 'subscription_review', merchant: big.name, annual: big.annual },
+          });
+        }
+      }
+    } else {
+      // Fallback: heuristic detection from stored transactions.
+      const txns = (await documents.spendTransactions({ days: 150 }))
+        .filter((t) => !isInternalTransfer(t.category));
+      if (txns.length) {
+        for (const s of computeSubscriptionInsights(txns)) insights.push(s);
+      }
     }
   } catch (err) {
     console.error('[wealth-insights] subscriptions failed:', err.message);
@@ -165,32 +191,61 @@ async function buildWealthInsights() {
     console.error('[wealth-insights] net-worth path failed:', err.message);
   }
 
-  // 2) Spend vs Monarch budget (if we have a token to read budgets).
-  const token = process.env.MONARCH_TOKEN;
-  if (token && monarchApi?.getBudgets) {
-    try {
-      const now = new Date();
-      const startDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-      const endMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      const endDate = `${endMonth.getFullYear()}-${String(endMonth.getMonth() + 1).padStart(2, '0')}-${String(endMonth.getDate()).padStart(2, '0')}`;
-      const budgets = await monarchApi.getBudgets(token, { startDate, endDate });
-
-      const over = budgets
-        .filter((b) => b.budget >= MIN_SPEND && b.actual > b.budget * OVER_BUDGET)
-        .map((b) => ({ ...b, overBy: b.actual - b.budget }))
-        .sort((a, b) => b.overBy - a.overBy)
-        .slice(0, 3);
-
-      for (const b of over) {
+  // 3) Budget pacing vs Monarch's planned amounts (live, no legacy token needed).
+  try {
+    const pacing = await monarchWealth.getBudgetPacing();
+    if (pacing && pacing.lines.length) {
+      const overPace = pacing.lines.filter((l) => l.pace >= 1.3 || l.overBudget);
+      for (const l of overPace.slice(0, 3)) {
+        const status = l.overBudget
+          ? `over budget (${fmt(l.actual)} of ${fmt(l.budget)})`
+          : `on pace to overspend — ${pct((l.pace - 1) * 100)} ahead of schedule`;
         insights.push({
           type: 'over_budget',
-          title: `Over budget on ${b.category}`,
-          detail: `${b.category}: ${fmt(b.actual)} spent against a ${fmt(b.budget)} budget — ${fmt(b.overBy)} over (${pct((b.actual / b.budget - 1) * 100)}).`,
+          title: `${l.category}: ${status}`,
+          detail:
+            `${l.category}: ${fmt(l.actual)} spent of ${fmt(l.budget)} budget (day ${pacing.dayOfMonth}/${pacing.daysInMonth}). ` +
+            (l.overBudget
+              ? `Already ${fmt(Math.abs(l.remaining))} over.`
+              : `Spending ${pct((l.pace - 1) * 100)} faster than the month is elapsing.`),
+          evidence: { kind: 'budget_pacing', category: l.category, budget: l.budget, actual: l.actual, pace: l.pace, overBudget: l.overBudget },
         });
       }
-    } catch (err) {
-      console.error('[wealth-insights] budgets failed:', err.message);
     }
+  } catch (err) {
+    console.error('[wealth-insights] budget pacing failed:', err.message);
+  }
+
+  // 4) Investment performance (7-day window from Monarch).
+  try {
+    const inv = await monarchWealth.getInvestments();
+    if (inv && inv.totalValue > 0) {
+      const dir = inv.periodChange >= 0 ? 'up' : 'down';
+      const absPct = Math.abs(inv.periodChangePct).toFixed(1);
+      const gainLine = inv.topGainers.length
+        ? ` Top gainer: ${inv.topGainers[0].ticker || 'unknown'} +${fmt(inv.topGainers[0].periodChange)}.`
+        : '';
+      const loseLine = inv.topLosers.length && inv.topLosers[0].periodChange < 0
+        ? ` Biggest drag: ${inv.topLosers[0].ticker || 'unknown'} ${fmt(inv.topLosers[0].periodChange)}.`
+        : '';
+      insights.push({
+        type: 'investments',
+        title: `Portfolio ${dir} ${fmt(Math.abs(inv.periodChange))} (${absPct}%) past 7d`,
+        detail:
+          `Total portfolio value: ${fmt(inv.totalValue)}. Over the past 7 days: ${dir} ${fmt(Math.abs(inv.periodChange))} (${absPct}%).${gainLine}${loseLine}`,
+        evidence: {
+          kind: 'investments',
+          totalValue: Math.round(inv.totalValue),
+          periodChange: Math.round(inv.periodChange),
+          periodChangePct: parseFloat(absPct),
+          holdings: inv.holdings.slice(0, 10),
+          topGainers: inv.topGainers,
+          topLosers: inv.topLosers,
+        },
+      });
+    }
+  } catch (err) {
+    console.error('[wealth-insights] investments failed:', err.message);
   }
 
   return insights;
