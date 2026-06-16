@@ -2458,9 +2458,12 @@ app.get('/api/briefing', async (req, res) => {
   const response = {
     date: dateLabel,
     builtAt: new Date().toISOString(),
-    morningFocus: geminiResult?.morningFocus ?? '',
+    // Carry the prior build's brief when this build's LLM call failed or returned
+    // malformed JSON (no chiefBrief). Without this, a single bad rebuild blanks the
+    // whole Chief-of-Staff card. Fresh always wins when present.
+    morningFocus: geminiResult?.morningFocus || prior?.content?.morningFocus || '',
     // Structured Chief-of-Staff brief (Beta): synthesis + ACTION/RISK/MOVE.
-    chiefBrief: geminiResult?.chiefBrief ?? null,
+    chiefBrief: geminiResult?.chiefBrief ?? prior?.content?.chiefBrief ?? null,
     weather,
     workout,
     calendar,

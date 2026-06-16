@@ -151,14 +151,17 @@ export function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}
       </View>
     ) : null;
 
-  // Brief retrospective — the headline plus the single most important win and
-  // watch-out. Kept short on purpose; the full review lives in the weekly email.
+  // Condensed retrospective — headline, a short narrative, and the top couple of
+  // wins/watch-outs. The full review (all bullets) lives in the weekly email.
   const reviewBlock = hasReview ? (
     <View style={styles.priorBox}>
       <Text style={[styles.label, { color: c.subtext }]}>Last week</Text>
       <Text style={[styles.reviewHeadline, { color: c.text }]}>{review!.headline}</Text>
-      <Bullets label="WIN" items={review!.wins?.slice(0, 1)} color={c.green} />
-      <Bullets label="WATCH-OUT" items={review!.watchouts?.slice(0, 1)} color={c.red} />
+      {review!.narrative ? (
+        <Text style={[styles.reviewNarrative, { color: c.subtext }]} numberOfLines={4}>{review!.narrative}</Text>
+      ) : null}
+      <Bullets label="WINS" items={review!.wins?.slice(0, 2)} color={c.green} />
+      <Bullets label="WATCH-OUTS" items={review!.watchouts?.slice(0, 2)} color={c.red} />
     </View>
   ) : null;
 
@@ -324,6 +327,7 @@ const styles = StyleSheet.create({
   checkmark: { color: '#fff', fontSize: 14, fontWeight: '800', lineHeight: 16 },
   // AI weekly-review block (last week)
   reviewHeadline: { ...typography.subtitle, fontSize: 16, marginTop: 2, marginBottom: spacing.xs },
+  reviewNarrative: { ...typography.body, fontSize: 14, marginBottom: spacing.xs, lineHeight: 20 },
   reviewBlock: { marginTop: spacing.sm },
   blockLabel: { ...typography.label, fontSize: 10, marginBottom: spacing.xs },
   bulletRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginBottom: spacing.xs },
