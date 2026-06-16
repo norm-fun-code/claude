@@ -1044,12 +1044,12 @@ function renderHousingTab(R,P){
   const py=P.homePurchaseYear||2030;
   const ptRate=P.propTaxRate??0.012;
   const maintAnn=P.maintBase||10000;
+  const endYr=P.planEndYear||2058;
 
-  // Net income in purchase year
   const pyRow=R.find(r=>r.yr===py)||R[0];
   const netInc=pyRow?.inc||0;
 
-  // Helper: compute annual housing cost for any price/down/rate combo
+  // All-in annual housing cost for any price/down/rate
   function calcH(hp,dp,mr){
     const loan=hp*(1-dp/100);
     const moR=mr/100/12;
@@ -1057,171 +1057,233 @@ function renderHousingTab(R,P){
     const annTax=ptRate*hp;
     const annM=Math.round(maintAnn*(hp/P.homePrice));
     const total=moPI*12+annTax+annM;
-    return{moPI,annPI:moPI*12,annTax,annM,total,moTotal:moPI+annTax/12+annM/12};
+    return{loan,moPI,annPI:moPI*12,annTax,annM,total,moTotal:total/12};
   }
-
-  // Run model for a given override
-  function proj(overrides){
-    try{const r=run({...P,...overrides});const l=r.R[r.R.length-1];return{nw:l.nw,k401:l.k401,total:l.nw+l.k401,defYrs:r.R.filter(x=>x.surp<0).length};}
-    catch(e){return null;}
+  // Run the live model with overrides → final NW+401k and deficit count
+  function proj(ov){
+    try{const r=run({...P,...ov});const l=r.R[r.R.length-1];return{nw:l.nw,k401:l.k401,total:l.nw+l.k401,defYrs:r.R.filter(x=>x.surp<0).length};}catch(e){return null;}
   }
 
   const cur=calcH(P.homePrice,P.downPctg,P.mortgageRate);
-  const pct=netInc>0?cur.total/netInc:0;
-  const pctColor=pct<0.25?'var(--g)':pct<0.28?'var(--a)':'var(--r)';
-  const target25=Math.round(netInc*0.25);
-  const target28=Math.round(netInc*0.28);
+  const curPct=netInc>0?cur.total/netInc:0;
+  const K=cur.total/P.homePrice;               // housing $/yr per $ of home (current dp & rate)
+  const priceFor=f=>K>0?netInc*f/K:0;          // home price that lands housing at f of net
+  const target25=netInc*0.25;
 
-  // Tradeoff data: run model at 7 price points (same down% and rate as current plan)
+  // Live averages
+  const liveYrs=R.filter(r=>r.yr>=py);
+  const avgLiv=liveYrs.length?liveYrs.reduce((a,b)=>a+b.liv,0)/liveYrs.length:0;
+  const schoolYrs=R.filter(r=>r.tu>0);
+  const avgTuCc=schoolYrs.length?schoolYrs.reduce((a,b)=>a+b.tu+b.cc,0)/schoolYrs.length:0;
+  const buffer=30000;
+  const availHousing=Math.max(0,netInc-avgLiv-avgTuCc-buffer);
+
+  const kY=v=>'$'+Math.round(v/1000)+'K';
+  const kMo=v=>'$'+(v/12/1000).toFixed(1)+'K';
+  const mM=v=>'$'+(v/1e6).toFixed(2)+'M';
+  const fmtM=v=>v>=1e6?'$'+(v/1e6).toFixed(2)+'M':fmt(v);
+
+  // ── Tradeoff data (live model at 7 price points) ──
   const tPrices=[1000000,1200000,1400000,1600000,1700000,1800000,2000000];
-  const tData=tPrices.map(hp=>{
-    const h=calcH(hp,P.downPctg,P.mortgageRate);
-    const p=proj({homePrice:hp});
-    return{price:hp,annHousing:Math.round(h.total),finalNW:p?p.total:0,defYrs:p?p.defYrs:0};
-  });
-  const maxNW=Math.max(...tData.map(d=>d.finalNW));
+  const tNW=tPrices.map(hp=>{const p=proj({homePrice:hp});return p?+(p.total/1e6).toFixed(2):0;});
+  const tCost=tPrices.map(hp=>+(calcH(hp,P.downPctg,P.mortgageRate).total/1000).toFixed(1));
+  const tColors=tPrices.map(hp=>hp===P.homePrice?'rgba(99,91,255,.75)':(hp===1700000?'rgba(26,135,84,.65)':'rgba(0,115,230,.4)'));
 
-  // Five paths (pre-defined combos)
+  // ── Five paths (exact combos from the analysis), live NW ──
   const PATHS=[
-    {label:'A · Smaller, low down', hp:1300000,dp:30,mr:P.mortgageRate,note:'Most NW upside, smallest home'},
-    {label:'B · Smaller, low rate', hp:1400000,dp:25,mr:Math.max(4.0,P.mortgageRate-1.5),note:'Best NW, needs refi to ~4%'},
-    {label:'C · Mid, big down',     hp:1600000,dp:50,mr:P.mortgageRate,note:'Solid balance · likely scenario'},
-    {label:'D · Larger, low rate',  hp:1800000,dp:50,mr:Math.max(4.5,P.mortgageRate-1.0),note:'Bigger home, more tied up'},
-    {label:'E · $2M, huge down',    hp:2000000,dp:60,mr:P.mortgageRate,note:'Largest home, most capital locked'},
+    {label:'A · Smaller home, low down', hp:1300000,dp:30,mr:5.5,col:'#1a8754',note:'Most NW upside, smallest home'},
+    {label:'B · Smaller home, low rate', hp:1400000,dp:25,mr:4.0,col:'#1a8754',note:'Best NW, requires low-rate environment'},
+    {label:'C · Mid-size, big down',     hp:1600000,dp:50,mr:6.0,col:'#0073e6',note:'Solid balance · likely scenario',hi:true},
+    {label:'D · Larger home, low rate',  hp:1800000,dp:50,mr:4.5,col:'#bf6900',note:'Bigger home, more $ tied up'},
+    {label:'E · Original $2M, huge down',hp:2000000,dp:60,mr:5.0,col:'#cd3d64',note:'Largest home, most capital locked up'},
   ];
-  const pathData=PATHS.map(pd=>{
-    const h=calcH(pd.hp,pd.dp,pd.mr);
-    const p=proj({homePrice:pd.hp,downPctg:pd.dp,mortgageRate:pd.mr});
-    const isCur=pd.hp===P.homePrice&&pd.dp===P.downPctg;
-    return{...pd,...h,finalNW:p?p.total:0,defYrs:p?p.defYrs:0,isCur};
-  });
+  const pathData=PATHS.map(pd=>{const h=calcH(pd.hp,pd.dp,pd.mr);const p=proj({homePrice:pd.hp,downPctg:pd.dp,mortgageRate:pd.mr});return{...pd,...h,finalNW:p?p.total:0,defYrs:p?p.defYrs:0};});
   const bestNW=Math.max(...pathData.map(d=>d.finalNW));
 
-  // current plan row (your actual P)
-  const curPath={label:'⬤ Your current plan',hp:P.homePrice,dp:P.downPctg,mr:P.mortgageRate,...cur,finalNW:(R[R.length-1]?.nw||0)+(R[R.length-1]?.k401||0),defYrs:R.filter(r=>r.surp<0).length,isCur:true,note:'Your live plan'};
-
-  const fmtM=v=>v>=1e6?'$'+(v/1e6).toFixed(2)+'M':fmt(v);
-  const rowBorder=nw=>nw>=bestNW?'2px solid var(--g)':nw>=bestNW*.95?'1px solid var(--bd)':'1px solid var(--bd)';
-  const nwColor=nw=>nw>=bestNW?'var(--g)':nw>=bestNW*.9?'var(--tx)':'var(--r)';
+  // Recommendation deltas (live)
+  const nw17=proj({homePrice:1700000})?.total||0;
+  const nw20=proj({homePrice:2000000})?.total||0;
+  const recGain=nw17-nw20;
 
   let pathRows='';
-  [...pathData,curPath].forEach((pd,i)=>{
-    const isYou=pd.isCur&&i===pathData.length;
-    const rowStyle=isYou?'background:var(--a-soft);font-weight:600;border-top:2px solid var(--a)':(i%2===0?'background:var(--s1)':'background:var(--s2)');
-    pathRows+=`<tr style="${rowStyle}">
-      <td style="padding:8px 10px;font-size:11px;color:var(--tx)">${pd.label}</td>
-      <td style="padding:8px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtM(pd.hp)}</td>
-      <td style="padding:8px 10px;font-size:11px;font-family:'SF Mono',monospace">${pd.dp}%</td>
-      <td style="padding:8px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtM(pd.hp*pd.dp/100)}</td>
-      <td style="padding:8px 10px;font-size:11px;font-family:'SF Mono',monospace">${pd.mr.toFixed(1)}%</td>
-      <td style="padding:8px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtF(Math.round(pd.moPI))}</td>
-      <td style="padding:8px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtF(Math.round(pd.annTax))}</td>
-      <td style="padding:8px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtF(Math.round(pd.annM))}</td>
-      <td style="padding:8px 10px;font-size:11px;font-family:'SF Mono',monospace;font-weight:700">${fmtF(Math.round(pd.total))}</td>
-      <td style="padding:8px 10px;font-size:11px;font-family:'SF Mono',monospace;color:${nwColor(pd.finalNW)};font-weight:600">${fmtM(pd.finalNW)}</td>
-      <td style="padding:8px 10px;font-size:10px;color:var(--t2)">${pd.note}</td>
+  pathData.forEach((pd,i)=>{
+    const rowBg=pd.hi?'background:var(--g-soft)':(i%2===0?'background:var(--s1)':'background:var(--s2)');
+    const nwCol=pd.finalNW>=bestNW?'var(--g)':pd.finalNW>=bestNW*.92?'var(--tx)':'var(--r)';
+    pathRows+=`<tr style="${rowBg}${pd.hi?';outline:1px solid var(--g)':''}">
+      <td style="padding:9px 10px;font-size:11px;color:var(--tx);font-weight:600">${pd.label}</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${mM(pd.hp)}</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${pd.dp}%</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtM(pd.hp*pd.dp/100)}</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace;color:${pd.mr<=4.5?'var(--g)':pd.mr>=6?'var(--r)':'var(--a)'}">${pd.mr.toFixed(1)}%</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtM(pd.loan)}</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtF(Math.round(pd.moPI))}</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtF(Math.round(pd.annTax))}</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtF(Math.round(pd.annM))}</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace;font-weight:700;color:var(--g)">${kY(pd.total)}</td>
+      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace;font-weight:700;color:${nwCol}">${mM(pd.finalNW)}</td>
+      <td style="padding:9px 10px;font-size:10px;color:var(--t2)">${pd.note}</td>
     </tr>`;
   });
 
-  // Tradeoff bar widths
-  const tradeoffBars=tData.map(d=>{
-    const barW=Math.round(d.finalNW/maxNW*100);
-    const isActive=d.price===P.homePrice;
-    const color=isActive?'var(--accent)':'var(--b)';
-    const cost=netInc>0?Math.round(d.annHousing/netInc*100)+'%':'—';
-    return`<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
-      <div style="width:62px;font-size:9px;color:${isActive?'var(--accent)':'var(--t2)'};font-weight:${isActive?'700':'400'};font-family:'SF Mono',monospace;text-align:right">$${(d.price/1e6).toFixed(1)}M</div>
-      <div style="flex:1;height:20px;background:var(--s3);border-radius:4px;overflow:hidden;position:relative">
-        <div style="height:100%;width:${barW}%;background:${color};border-radius:4px;opacity:.85;transition:width .4s"></div>
-        ${isActive?'<div style="position:absolute;inset:0;border:2px solid var(--accent);border-radius:4px"></div>':''}
-      </div>
-      <div style="width:64px;font-size:9.5px;font-family:'SF Mono',monospace;color:${isActive?'var(--accent)':'var(--t2)'};font-weight:${isActive?'700':'400'}">${fmtM(d.finalNW)}</div>
-      <div style="width:28px;font-size:8.5px;color:var(--t3);text-align:right">${cost}</div>
-    </div>`;
-  }).join('');
-
-  const pctBadge=`<span style="font-size:12px;font-weight:700;color:${pctColor};background:${pctColor}22;border:1px solid ${pctColor}44;border-radius:5px;padding:2px 7px">${(pct*100).toFixed(0)}% of net income</span>`;
+  const ST='font-size:14px;font-weight:600;color:var(--tx);margin:8px 0 2px';
+  const IB=(border,html)=>`<div style="background:var(--s2);border-left:3px solid ${border};padding:12px 14px;border-radius:0 7px 7px 0;margin-top:10px;font-size:12px;line-height:1.5;color:var(--t2)">${html}</div>`;
 
   ca.innerHTML=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px">
 
-  <!-- KPI row -->
-  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
-    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:13px 15px">
-      <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--t3);margin-bottom:5px">${py} Net Income</div>
-      <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:var(--b)">${fmt(netInc)}</div>
-      <div style="font-size:9px;color:var(--t2);margin-top:2px">25% target: ${fmt(target25)}/yr</div>
+  <!-- Header -->
+  <div style="display:flex;align-items:baseline;justify-content:space-between;border-bottom:1px solid var(--bd);padding-bottom:12px">
+    <div style="font-size:18px;font-weight:700;color:var(--tx)">🏠 Ideal Housing Budget Analysis</div>
+    <div style="font-size:11px;color:var(--t3);font-family:'SF Mono',monospace">Cohen Family · ${py} Purchase</div>
+  </div>
+
+  <!-- THE FRAMING -->
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">📊 ${py} Net Income</div>
+      <div style="font-size:28px;font-weight:700;font-family:'SF Mono',monospace;letter-spacing:-1px;color:var(--c)">${kY(netInc)}</div>
+      <div style="font-size:11px;color:var(--t2);margin-top:3px">Combined household after taxes</div>
     </div>
-    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:13px 15px">
-      <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--t3);margin-bottom:5px">All-In Housing/yr</div>
-      <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:${pctColor}">${fmt(Math.round(cur.total))}</div>
-      <div style="font-size:9px;color:var(--t2);margin-top:2px">${fmtF(Math.round(cur.moTotal))}/mo · ${pctBadge}</div>
+    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">🎯 Housing Target (25%)</div>
+      <div style="font-size:28px;font-weight:700;font-family:'SF Mono',monospace;letter-spacing:-1px;color:var(--g)">${kY(target25)}/yr</div>
+      <div style="font-size:11px;color:var(--t2);margin-top:3px">${kMo(target25)}/mo all-in (mortgage + tax + maint)</div>
     </div>
-    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:13px 15px">
-      <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--t3);margin-bottom:5px">vs 25% Rule</div>
-      <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:${cur.total>target25?'var(--r)':'var(--g)'}">${cur.total>target25?'+':'-'}${fmt(Math.abs(Math.round(cur.total-target25)))}</div>
-      <div style="font-size:9px;color:var(--t2);margin-top:2px">${cur.total>target25?'over':'under'} the 25% guideline/yr</div>
-    </div>
-    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:13px 15px">
-      <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--t3);margin-bottom:5px">Deficit Years</div>
-      <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:${curPath.defYrs>5?'var(--r)':curPath.defYrs>0?'var(--a)':'var(--g)'}">${curPath.defYrs} yrs</div>
-      <div style="font-size:9px;color:var(--t2);margin-top:2px">years liquid runs negative</div>
+    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">${curPct>0.28?'⚠️':'✅'} Current Plan (${mM(P.homePrice)})</div>
+      <div style="font-size:28px;font-weight:700;font-family:'SF Mono',monospace;letter-spacing:-1px;color:${curPct>0.28?'var(--a)':curPct>0.25?'var(--a)':'var(--g)'}">${kY(cur.total)}/yr</div>
+      <div style="font-size:11px;color:var(--t2);margin-top:3px">${kMo(cur.total)}/mo · ~${(curPct*100).toFixed(0)}% of net income</div>
     </div>
   </div>
 
-  <!-- Tradeoff chart -->
-  <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
-    <div style="font-size:13px;font-weight:700;color:var(--tx);margin-bottom:3px">📈 Home Price vs Lifetime NW</div>
-    <div style="font-size:10px;color:var(--t2);margin-bottom:14px">Same down % (${P.downPctg}%) and rate (${P.mortgageRate}%). Your current plan highlighted. Housing cost shown as % of ${py} net income.</div>
-    <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:8px;color:var(--t3);padding-left:70px">
-      <div style="flex:1">← less NW · more NW →</div>
-      <div style="width:64px">Final NW+401k</div>
-      <div style="width:28px;text-align:right">Housing%</div>
+  <!-- WHY 25% -->
+  <div style="${ST}">📐 What's an "ideal" housing cost?</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">The Math</div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <tr><td style="padding:8px 4px;color:var(--t2);border-bottom:1px solid var(--bd)">${py} Net income</td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)"><strong>${kY(netInc)}</strong></td></tr>
+        <tr><td style="padding:8px 4px;color:var(--t2);border-bottom:1px solid var(--bd)">Avg living expenses (ex-housing, ex-tuition)</td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)">~${kY(avgLiv)}</td></tr>
+        <tr><td style="padding:8px 4px;color:var(--t2);border-bottom:1px solid var(--bd)">Avg tuition+childcare (school years)</td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)">~${kY(avgTuCc)}</td></tr>
+        <tr><td style="padding:8px 4px;color:var(--t2);border-bottom:1px solid var(--bd)">Discretionary buffer needed</td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)">~${kY(buffer)}</td></tr>
+        <tr style="background:var(--g-soft)"><td style="padding:8px 4px;color:var(--tx)"><strong>Available for housing</strong></td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;color:var(--g)"><strong>~$0–${Math.round(availHousing/1000)}K</strong></td></tr>
+      </table>
+      ${IB('var(--b)',`<strong style="color:var(--tx)">The hard truth:</strong> During peak tuition years, if you spend more than ~${kY(availHousing)} on housing you're far more likely to run deficits. The classic 28% rule barely works at peak crunch.`)}
     </div>
-    ${tradeoffBars}
-    <div style="margin-top:8px;font-size:9px;color:var(--t3)">Each $100K less in home price saves roughly ${fmtM(Math.round((tData[5].finalNW-tData[3].finalNW)/2))} in final NW due to compounding of freed-up capital.</div>
+    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">Three Reasonable Targets</div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <tr><td style="padding:8px 4px;border-bottom:1px solid var(--bd)"><strong style="color:var(--g)">Conservative (22% of net)</strong></td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)"><strong>${mM(priceFor(.22))} → ${kY(netInc*.22)}/yr</strong></td></tr>
+        <tr><td style="padding:8px 4px;border-bottom:1px solid var(--bd)"><strong style="color:var(--a)">Moderate (25% of net)</strong></td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)"><strong>${mM(priceFor(.25))} → ${kY(netInc*.25)}/yr</strong></td></tr>
+        <tr><td style="padding:8px 4px;border-bottom:1px solid var(--bd)"><strong style="color:var(--b)">Stretch (28% of net)</strong></td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)"><strong>${mM(priceFor(.28))} → ${kY(netInc*.28)}/yr</strong></td></tr>
+        <tr><td style="padding:8px 4px;color:var(--t2)">Current plan (${(curPct*100).toFixed(0)}%)</td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;color:var(--t2)">${mM(P.homePrice)} → ${kY(cur.total)}/yr</td></tr>
+      </table>
+      ${IB('var(--g)',`<strong style="color:var(--tx)">Recommendation: ~$1.7M target.</strong> Adds roughly <strong style="color:var(--g)">${mM(recGain)}</strong> to long-term NW vs a $2M home, while staying realistic for a 4-bed home (rather than $1.5M, which may force compromises on size or quality).`)}
+    </div>
   </div>
 
-  <!-- Five paths -->
-  <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px;overflow-x:auto">
-    <div style="font-size:13px;font-weight:700;color:var(--tx);margin-bottom:3px">🛤️ Five Paths to ~$80K/yr All-In</div>
-    <div style="font-size:10px;color:var(--t2);margin-bottom:12px">Different price/down/rate combos reaching similar monthly cost. Your plan shown at bottom.</div>
-    <table style="width:100%;border-collapse:collapse;font-size:11px">
-      <thead>
-        <tr style="background:var(--s2);border-bottom:1px solid var(--bd)">
-          <th style="padding:8px 10px;text-align:left;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3)">Path</th>
-          <th style="padding:8px 10px;text-align:left;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3)">Price</th>
-          <th style="padding:8px 10px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3)">Down%</th>
-          <th style="padding:8px 10px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3)">Down $</th>
-          <th style="padding:8px 10px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3)">Rate</th>
-          <th style="padding:8px 10px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3)">P&amp;I/mo</th>
-          <th style="padding:8px 10px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3)">Prop Tax</th>
-          <th style="padding:8px 10px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3)">Maint</th>
-          <th style="padding:8px 10px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3)">Total/yr</th>
-          <th style="padding:8px 10px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3)">NW+401k @ ${P.planEndYear||2058}</th>
-          <th style="padding:8px 10px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3)">Note</th>
-        </tr>
-      </thead>
+  <!-- TRADEOFF CHART -->
+  <div style="${ST}">📈 The Tradeoff: Home Price vs Lifecycle NW</div>
+  <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
+    <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">Lower home price → more compounding capital → bigger lifetime NW</div>
+    <div style="position:relative;width:100%;height:300px"><canvas id="housingTradeoff"></canvas></div>
+    ${IB('var(--bd2)',`<strong style="color:var(--tx)">Reading the chart:</strong> Each ~$100K reduction in home price adds roughly ${mM(Math.abs((tNW[6]-tNW[2])/6)*1e6)} to your final NW (NW + 401k at ${endYr}). Roughly linear because the saved capital compounds at ${(P.investReturn*100).toFixed(0)}%/yr for decades.`)}
+  </div>
+
+  <!-- FIVE PATHS -->
+  <div style="${ST}">🛤️ Five Paths to ~$80K/yr All-In Housing</div>
+  <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px;overflow-x:auto">
+    <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">Same housing cost, very different financial outcomes</div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr>
+        ${['Path','Home Price','Down %','Down $','Mort Rate','Loan','P&I/mo','Property Tax','Maint','Total/yr','NW @ '+endYr,'Trade-off'].map(h=>`<th style="text-align:left;padding:8px 10px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);border-bottom:1px solid var(--bd);white-space:nowrap">${h}</th>`).join('')}
+      </tr></thead>
       <tbody>${pathRows}</tbody>
     </table>
   </div>
 
-  <!-- Insight cards -->
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
-    <div style="background:var(--s1);border:1px solid var(--bd);border-left:3px solid var(--g);border-radius:10px;padding:14px 16px">
-      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--g);margin-bottom:6px">Capital Locked vs Compounding</div>
-      <div style="font-size:11.5px;color:var(--t2);line-height:1.6">Putting 60% down on a $2M home locks up <strong style="color:var(--tx)">$1.2M</strong> vs 30% on $1.3M ($390K). That $810K difference compounds at ${P.investReturn*100}%/yr — adding roughly <strong style="color:var(--g)">${fmtM(Math.round(810000*Math.pow(1+P.investReturn,P.planEndYear-py)))}</strong> to your final NW.</div>
+  <!-- VISUALIZE PATHS -->
+  <div style="${ST}">🎨 Visualizing the Five Paths</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">Down Payment Required</div>
+      <div style="position:relative;width:100%;height:260px"><canvas id="housingDown"></canvas></div>
     </div>
-    <div style="background:var(--s1);border:1px solid var(--bd);border-left:3px solid var(--a);border-radius:10px;padding:14px 16px">
-      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--a);margin-bottom:6px">Property Tax Scales Forever</div>
-      <div style="font-size:11.5px;color:var(--t2);line-height:1.6">At ${(ptRate*100).toFixed(1)}%, a $2M home costs <strong style="color:var(--tx)">${fmtF(Math.round(2000000*ptRate))}/yr</strong> in property tax vs <strong style="color:var(--tx)">${fmtF(Math.round(1400000*ptRate))}/yr</strong> on $1.4M. Unlike a mortgage, it grows with your home's value — and never goes away.</div>
+    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">Final NW (NW + 401k @ ${endYr})</div>
+      <div style="position:relative;width:100%;height:260px"><canvas id="housingNW"></canvas></div>
     </div>
-    <div style="background:var(--s1);border:1px solid var(--bd);border-left:3px solid var(--b);border-radius:10px;padding:14px 16px">
-      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--b);margin-bottom:6px">Rate vs Price Tradeoff</div>
-      <div style="font-size:11.5px;color:var(--t2);line-height:1.6">Going from ${P.mortgageRate}% to 4.0% saves ~${fmtF(Math.round(calcH(P.homePrice,P.downPctg,P.mortgageRate).moPI-calcH(P.homePrice,P.downPctg,4.0).moPI))}/mo on P&amp;I. But the bigger lever is <strong style="color:var(--tx)">how much capital you keep liquid</strong> — monthly savings matter less than the compounding of freed capital.</div>
+  </div>
+
+  <!-- HOW TO READ -->
+  <div style="${ST}">🧠 What These Paths Tell You</div>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+    <div style="background:var(--s1);border:1px solid var(--bd);border-left:3px solid var(--g);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--g);margin-bottom:8px">📌 Capital Locked vs Compounding</div>
+      <div style="font-size:13px;line-height:1.6;color:var(--t2)">Path A ($390K down) leaves <strong style="color:var(--g)">$810K more in your portfolio</strong> than Path E ($1.2M down). At ${(P.investReturn*100).toFixed(0)}%/yr for ${endYr-py} years, that's an extra <strong style="color:var(--g)">${mM(810000*Math.pow(1+P.investReturn,endYr-py))}</strong> by ${endYr}.<br><br>The biggest variable here isn't your monthly payment — it's <strong style="color:var(--tx)">how much capital you tie up at closing</strong>.</div>
+    </div>
+    <div style="background:var(--s1);border:1px solid var(--bd);border-left:3px solid var(--a);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--a);margin-bottom:8px">📌 Property Tax & Maintenance Scale</div>
+      <div style="font-size:13px;line-height:1.6;color:var(--t2)">A $2M home costs <strong style="color:var(--tx)">${kY(2000000*ptRate+maintAnn*(2000000/P.homePrice))}/yr in fixed costs</strong> before you even pay the mortgage. A $1.4M home costs ${kY(1400000*ptRate+maintAnn*(1400000/P.homePrice))}. That difference compounds too.<br><br>Property tax doesn't go down — and unlike a mortgage, it grows with your home value forever.</div>
+    </div>
+    <div style="background:var(--s1);border:1px solid var(--bd);border-left:3px solid var(--b);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--b);margin-bottom:8px">📌 Rate vs Price Tradeoff</div>
+      <div style="font-size:13px;line-height:1.6;color:var(--t2)">Going from ${P.mortgageRate}% to 4.0% saves <strong style="color:var(--tx)">~${fmtF(Math.round(calcH(P.homePrice,P.downPctg,P.mortgageRate).moPI-calcH(P.homePrice,P.downPctg,4.0).moPI))}/mo</strong> on P&I.<br><br>But locking in a low rate matters less than people think — your goal is to free up <strong style="color:var(--tx)">capital that can compound</strong>, not minimize the monthly payment.</div>
+    </div>
+  </div>
+
+  <!-- RECOMMENDATION -->
+  <div style="${ST}">🎯 Recommendation</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:6px">
+    <div style="background:var(--s1);border:2px solid var(--g);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--g);margin-bottom:8px">Primary Recommendation</div>
+      <div style="font-size:28px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">$1.7M</div>
+      <div style="font-size:13px;color:var(--t2);margin-top:8px;line-height:1.5">50% down at prevailing rate. Total housing ~${kY(calcH(1700000,50,P.mortgageRate).total)}/yr (${Math.round(calcH(1700000,50,P.mortgageRate).total/netInc*100)}% of net). Adds <strong style="color:var(--g)">${mM(recGain)} to NW</strong> vs the $2M plan. Realistic 4BR price.</div>
+      ${IB('var(--g)',`<strong style="color:var(--tx)">Why not lower:</strong> Below $1.5M likely means smaller (3BR), older, or a compromised location. Doesn't fit a growing family long-term.`)}
+    </div>
+    <div style="background:var(--s1);border:2px solid var(--b);border-radius:10px;padding:16px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--b);margin-bottom:8px">Secondary Levers</div>
+      <div style="font-size:20px;font-weight:700;color:var(--b)">If $2M is the home…</div>
+      <div style="font-size:13px;color:var(--t2);margin-top:8px;line-height:1.6">Compensate by:<br>1. <strong style="color:var(--tx)">Down payment ≥ 50%</strong> — minimizes monthly cost<br>2. <strong style="color:var(--tx)">Refinance opportunistically</strong> if rates fall to 4–4.5%<br>3. <strong style="color:var(--tx)">Nancy 5 days/wk</strong> — cuts deficits materially<br>4. <strong style="color:var(--tx)">Stripe equity event</strong> covers everything</div>
+      ${IB('var(--b)',`$2M only really works if a Stripe liquidity event happens before ${py} and you have meaningful liquidity beyond the down-payment fund.`)}
     </div>
   </div>
 
   </div>`;
+
+  // ── Charts (planner light theme) ──
+  const tick='#8898aa',grid='#e6ebf1',leg='#425466';
+  const baseOpts=(yFmt,y1Fmt)=>({responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{labels:{color:leg,font:{size:11,family:'Inter'},boxWidth:10}},
+      tooltip:{backgroundColor:'#0a2540',titleColor:'#fff',bodyColor:'#fff',padding:8,titleFont:{size:10},bodyFont:{size:10}}},
+    scales:{x:{ticks:{color:tick,font:{size:9,family:'Inter'}},grid:{display:false}},
+      y:{position:'left',ticks:{color:tick,font:{size:9},callback:yFmt},grid:{color:grid}}}});
+
+  const tCtx=document.getElementById('housingTradeoff');
+  if(tCtx)charts.housingTradeoff=new Chart(tCtx.getContext('2d'),{
+    data:{labels:tPrices.map(p=>'$'+(p/1e6).toFixed(1)+'M'),
+      datasets:[
+        {type:'bar',label:'NW @ '+endYr+' ($M)',data:tNW,backgroundColor:tColors,borderRadius:4,yAxisID:'y'},
+        {type:'line',label:'Annual Housing ($K)',data:tCost,borderColor:'#bf6900',backgroundColor:'rgba(191,105,0,.1)',tension:.3,pointRadius:4,borderWidth:2,yAxisID:'y1'}
+      ]},
+    options:{...baseOpts(v=>'$'+v+'M'),
+      scales:{x:{ticks:{color:tick,font:{size:10}},grid:{display:false}},
+        y:{position:'left',ticks:{color:tick,callback:v=>'$'+v+'M'},grid:{color:grid},title:{display:true,text:'NW @ '+endYr,color:tick,font:{size:9}}},
+        y1:{position:'right',ticks:{color:'#bf6900',callback:v=>'$'+v+'K'},grid:{display:false},title:{display:true,text:'Annual Housing',color:'#bf6900',font:{size:9}}}}}
+  });
+
+  const dCtx=document.getElementById('housingDown');
+  if(dCtx)charts.housingDown=new Chart(dCtx.getContext('2d'),{type:'bar',
+    data:{labels:pathData.map(p=>p.label.split(' · ')[0]),
+      datasets:[{label:'Down Payment ($K)',data:pathData.map(p=>Math.round(p.hp*p.dp/100/1000)),backgroundColor:pathData.map(p=>p.col),borderRadius:4}]},
+    options:{...baseOpts(v=>'$'+v+'K'),plugins:{legend:{display:false},tooltip:{backgroundColor:'#0a2540',titleColor:'#fff',bodyColor:'#fff',callbacks:{label:c=>'$'+c.raw+'K down'}}}}
+  });
+
+  const nCtx=document.getElementById('housingNW');
+  if(nCtx)charts.housingNW=new Chart(nCtx.getContext('2d'),{type:'bar',
+    data:{labels:pathData.map(p=>p.label.split(' · ')[0]),
+      datasets:[{label:'NW @ '+endYr+' ($M)',data:pathData.map(p=>+(p.finalNW/1e6).toFixed(2)),backgroundColor:pathData.map(p=>p.col),borderRadius:4}]},
+    options:{...baseOpts(v=>'$'+v+'M'),plugins:{legend:{display:false},tooltip:{backgroundColor:'#0a2540',titleColor:'#fff',bodyColor:'#fff',callbacks:{label:c=>'$'+c.raw.toFixed(2)+'M total'}}}}
+  });
 
   document.getElementById('summaries').innerHTML='';
 }
