@@ -65,14 +65,13 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 .tabs button{padding:6px 12px;border-radius:5px;font-size:11px;font-weight:500;cursor:pointer;border:none;background:transparent;color:var(--t2);font-family:inherit;transition:all .12s}
 .tabs button:hover{color:var(--tx);background:var(--s3)}
 .tabs button.active{background:var(--accent);color:#fff;font-weight:600}
-#mcBtn.active{background:var(--p)!important;color:#fff!important;border-color:var(--p)!important}
 .snap-bar{display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap;align-items:center}
 .snap-chip{padding:4px 9px;border-radius:6px;font-size:9.5px;font-weight:500;cursor:pointer;border:1px solid rgba(8,145,178,.3);background:#e0f7fa;color:var(--c);display:flex;align-items:center;gap:4px;font-family:inherit;transition:all .12s}
 .snap-chip.active{background:var(--c);color:#fff}
 .snap-chip .x{font-size:8px;opacity:.6;margin-left:3px}.snap-chip .x:hover{opacity:1;color:var(--r)}
 @media print{
   body{padding:0;font-size:11px}
-  .panel,.tabs button#mcBtn,.tabs button#inflBtn,.logout-btn,.sync-pill,.adv-input-area,.scenario-bar,.snap-bar{display:none!important}
+  .panel,.tabs button#inflBtn,.logout-btn,.sync-pill,.adv-input-area,.scenario-bar,.snap-bar{display:none!important}
   .tabs button:not(.active){display:none}
   .layout{grid-template-columns:1fr;display:block}
   .cc,.kpi,.sc{box-shadow:none;border-color:#ccc}
@@ -547,11 +546,13 @@ async function confirmSnapshot(overlay){
 }
 
 // ═══ UI ═══
-let activeTab='nw';let charts={};let inflationView=false;let mcView=false;let snapshots=[];let overlaySnapId=null;
+let activeTab='nw';let charts={};let inflationView=false;let snapshots=[];let overlaySnapId=null;
+let _sensiPreset='all';
+let _sensiDeltas={};
 let monarchSnapshot=null; // {netWorth, retirement, assets, liabilities, syncedAt}
 let _lastChartKey='';
 function destroyCharts(){Object.values(charts).forEach(c=>c&&c.destroy());charts={};_lastChartKey=''}
-function _chartKey(){return activeTab+'|'+(mcView&&_mcReady?'mc':'nmc')+'|'+inflationView+'|'+compareMode+'|'+(overlaySnapId||'')}
+function _chartKey(){return activeTab+'|'+inflationView+'|'+compareMode+'|'+(overlaySnapId||'')}
 function _updateChart(datasets,labels){
   if(!charts.main)return false;
   charts.main.data.labels=labels;
@@ -564,14 +565,6 @@ function _updateChart(datasets,labels){
 }
 function deflK(v,yr){if(!inflationView)return Math.round(v/1000);const sy=P.planStartYear||2026;return Math.round(v/Math.pow(1+(P.expenseInflation||.03),yr-sy)/1000)}
 function toggleInflation(){inflationView=!inflationView;const b=document.getElementById('inflBtn');if(b)b.textContent=inflationView?'Nominal $':'Real $';render()}
-function toggleMC(){mcView=!mcView;const b=document.getElementById('mcBtn');if(b)b.classList.toggle('active',mcView);render()}
-
-function mcSummaryCards(mc){
-  const spread=mc.finalP90-mc.finalP10;
-  return `<div class="sc"><h3>🎲 Monte Carlo</h3><p>${mc.trials} trials · ${(mc.vol*100).toFixed(0)}% annual volatility<br>Each year's return drawn from N(${(P.investReturn*100).toFixed(1)}%, ${(mc.vol*100).toFixed(0)}%)</p></div>
-    <div class="sc"><h3>📊 Outcome Range @ 2058</h3><p>p10 <span class="mono" style="color:var(--r)">${fmt(mc.finalP10)}</span> → p90 <span class="mono" style="color:var(--g)">${fmt(mc.finalP90)}</span><br><em style="font-size:7.5px;color:var(--t3)">${fmt(spread)} spread · ${fmt(mc.finalP50)} median</em></p></div>
-    <div class="sc"><h3>⚠️ Sequence Risk</h3><p>Liquid runs negative in <span class="mono" style="color:${mc.ruinPct>5?'var(--r)':'var(--g)'}">${mc.ruinPct.toFixed(1)}%</span> of paths<br><em style="font-size:7.5px;color:var(--t3)">p10 liquid floor: ${fmt(mc.liqFloorP10)}</em></p></div>`;
-}
 
 // ═══ CSV EXPORT ═══
 function exportCSV(){
@@ -887,8 +880,7 @@ async function confirmRollForward(overlay,curYear,nextYear){
 
 const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,nannyEndAge:v=>v+' yrs',nannyHourlyRate:v=>'$'+v,nannyDaysPerWeek:null,daycareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normCashY0:fmtF,normStockY0:fmtF,normCashY1:fmtF,normStockY1:fmtF,normCashY2:fmtF,normStockY2:fmtF,normCashY3:fmtF,normStockY3:fmtF,normCashBase:fmtF,normStockBase:fmtF,normGrowth:v=>(v*100).toFixed(1)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',mcVol:v=>(v*100).toFixed(0)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo',capGainsTaxRate:v=>(v*100).toFixed(1)+'%',costBasisPct:v=>(v*100).toFixed(0)+'%'};
 
-let _mcReady=true,_mcTimer=null;
-function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'+key);const fn=SF[key];if(el&&fn)el.textContent=fn(P[key]);else if(el)el.textContent=P[key];if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear')buildControls();activeScenarioIdx=-1;if(mcView){_mcReady=false;clearTimeout(_mcTimer);_mcTimer=setTimeout(()=>{_mcReady=true;render()},350);}render();savePlannerState()}
+function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'+key);const fn=SF[key];if(el&&fn)el.textContent=fn(P[key]);else if(el)el.textContent=P[key];if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear')buildControls();activeScenarioIdx=-1;render();savePlannerState()}
 
 function loadScenario(i){P={...D,...scenarios[i].params};activeScenarioIdx=i;buildControls();render();savePlannerState()}
 
@@ -992,7 +984,7 @@ function render(){
   const labels=R.map(r=>String(r.yr));const newKey=_chartKey();const reuseChart=(newKey===_lastChartKey&&!!charts.main);if(!reuseChart)destroyCharts();_lastChartKey=newKey;const ca=document.getElementById('chartArea');
   if(activeTab==='advisor'){renderAdvisorTab(R,P);return}
   if(activeTab==='goals'){renderGoalsTab(R,P,tT);return}
-  if(activeTab==='sensitivity'){renderSensitivityTab(R,P);return}
+  if(activeTab==='sensitivity'){window._lastR=R;window._lastP=P;renderSensitivityTab(R,P);return}
   if(activeTab==='compare'){renderCompareTab(R,P);return}
   if(activeTab==='table'){
     ca.innerHTML=`<div class="tw"><table><thead><tr>${['Yr','Norm','Nancy','Gross','Tax','Eff%','Net','Housing','Living','CC','Tuition','TotExp','Surplus','Liquid','Eq','NW'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{const bg=r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';return `<tr style="background:${bg}"><td style="font-weight:700;color:var(--tx)">${r.yr}</td><td style="color:var(--b)">${fmt(r.normG)}</td><td style="color:var(--p)">${fmt(r.nancyG)}</td><td>${fmt(r.gross)}</td><td style="color:var(--r)">${fmt(r.tax)}</td><td style="color:var(--a)">${(r.effRate*100).toFixed(1)}%</td><td style="color:var(--g)">${fmt(r.inc)}</td><td>${fmt(r.h)}</td><td>${fmt(r.liv)}</td><td style="color:${r.cc>0?'var(--a)':'var(--t3)'}">${r.cc>0?fmt(r.cc):'—'}</td><td style="color:${r.tu>100000?'var(--r)':r.tu>0?'var(--a)':'var(--t3)'}">${r.tu>0?fmt(r.tu):'—'}</td><td>${fmt(r.totE)}</td><td style="color:${r.surp>=0?'var(--g)':'var(--r)'};font-weight:600">${r.surp>=0?'+':''}${fmt(r.surp)}</td><td style="color:var(--b)">${fmt(r.liq)}</td><td style="color:var(--p)">${r.eq>0?fmt(r.eq):'—'}</td><td style="color:var(--g);font-weight:600">${fmt(r.nw)}</td></tr>`}).join('')}</tbody></table></div>`;return}
@@ -1018,43 +1010,6 @@ function render(){
   }
   if(activeTab==='nw'){
     const po=posOpts();
-    if(mcView&&!_mcReady){
-      // Slider being dragged — show plain plan line with "recalculating" notice
-      ca.innerHTML='<div style="font-size:10px;color:var(--t3);padding:7px 10px;background:var(--s2);border:1px solid var(--bd);border-radius:6px;margin-bottom:8px">⟳ Stress bands recalculating…</div><canvas id="cv" style="height:300px"></canvas>';
-    }
-    if(mcView&&_mcReady){
-      // Monte Carlo stress band — overlays p10–p90 NW cone + median
-      const mc=runMonteCarlo(P);
-      const dfl=(v,i)=>inflationView?Math.round(v/Math.pow(1.03,i)/1000):Math.round(v/1000);
-      const planK=[startLiqK,...R.map(r=>deflK(r.nw,r.yr))];
-      const p50K=[startLiqK,...mc.band.p50.map(dfl)];
-      const p90K=[startLiqK,...mc.band.p90.map(dfl)];
-      const p10K=[startLiqK,...mc.band.p10.map(dfl)];
-      // Fit the full p90 range by picking a step size that gives ~8 clean gridlines.
-      const trueMax=Math.max(...p90K);
-      const rawStep=trueMax/8;
-      const mag=Math.pow(10,Math.floor(Math.log10(rawStep)));
-      const stepK=Math.ceil(rawStep/mag)*mag; // round up to nearest order-of-magnitude unit
-      const maxK=Math.ceil(trueMax/stepK)*stepK;
-      ca.innerHTML=`<div id="mcInfo" style="display:flex;gap:14px;flex-wrap:wrap;font-size:10px;color:var(--t2);margin-bottom:8px;padding:8px 10px;background:var(--s2);border:1px solid var(--bd);border-radius:6px">
-        <span><strong style="color:var(--tx)">${mc.trials}</strong> trials · <strong>${(mc.vol*100).toFixed(0)}%</strong> annual vol</span>
-        <span>NW @ ${R[R.length-1].yr}: <strong style="color:var(--r)">${fmt(mc.finalP10)}</strong> (p10) · <strong style="color:var(--tx)">${fmt(mc.finalP50)}</strong> (median) · <strong style="color:var(--g)">${fmt(mc.finalP90)}</strong> (p90)</span>
-        <span>Liquid floor p10: <strong style="color:${mc.liqFloorP10<0?'var(--r)':'var(--a)'}">${fmt(mc.liqFloorP10)}</strong></span>
-        <span>Risk of running out of liquid: <strong style="color:${mc.ruinPct>5?'var(--r)':'var(--g)'}">${mc.ruinPct.toFixed(1)}%</strong></span>
-      </div><canvas id="cv" style="height:300px"></canvas>`;
-      const ctx2=document.getElementById('cv').getContext('2d');
-      po.scales.y.max=maxK;
-      po.scales.y.ticks.stepSize=stepK;
-      const ds=[
-        {label:'p10',data:p10K,borderColor:'rgba(205,61,100,.4)',backgroundColor:'rgba(205,61,100,.0)',fill:false,tension:.3,pointRadius:0,borderWidth:1},
-        {label:'p10–p90 range',data:p90K,borderColor:'rgba(26,135,84,.4)',backgroundColor:'rgba(99,91,255,.10)',fill:'-1',tension:.3,pointRadius:0,borderWidth:1},
-        {label:'Median (p50)',data:p50K,borderColor:'#635bff',fill:false,tension:.3,pointRadius:0,borderWidth:2.5},
-        {label:'Your plan (6% flat)',data:planK,borderColor:'#0a2540',fill:false,tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[5,3]}
-      ];
-      charts.main=new Chart(ctx2,{type:'line',data:{labels:nwLabels,datasets:ds},options:po});
-      document.getElementById('summaries').innerHTML=mcSummaryCards(mc);
-      return;
-    }
     const ds=[{label:'Total NW'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.nw,r.yr))],borderColor:'#635bff',backgroundColor:'rgba(99,91,255,.06)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2.5},{label:'Liquid'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.liq,r.yr))],borderColor:'#0073e6',backgroundColor:'rgba(0,115,230,.04)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2},{label:'Equity'+(inflationView?' (real)':''),data:[0,...R.map(r=>deflK(r.eq,r.yr))],borderColor:'#7c3aed',fill:false,tension:.3,pointRadius:1,borderWidth:1.5,borderDash:[4,3]}];
     if(compareMode)scenarios.forEach(s=>{const sLiq=Math.round((s.params.startingLiquid||P.startingLiquid)/1000);ds.push({label:s.name+' Liquid',data:[sLiq,...s.results.R.map(r=>deflK(r.liq,r.yr))],borderColor:s.color,fill:false,tension:.3,pointRadius:3,pointBackgroundColor:s.color,borderWidth:3.5})});
     // Snapshot overlay — compare a saved projection against the current plan
@@ -1085,16 +1040,14 @@ function renderSensitivityTab(R,P){
   const ca=document.getElementById('chartArea');
   destroyCharts();
   const baseNW=R[R.length-1].nw;
-  const sy=P.planStartYear||2026;
   const ey=P.planEndYear||2058;
 
-  // Parameters to stress-test with their deltas and display info
-  const PARAMS=[
+  const ALL_PARAMS=[
     {key:'investReturn',label:'Portfolio Return',delta:0.01,hi:'+1%',lo:'−1%',fmtV:v=>(v*100).toFixed(1)+'%',better:1},
-    {key:'nancyHourlyRate',label:'Nancy Rate',delta:25,hi:'+$25/hr',lo:'−$25/hr',fmtV:v=>'$'+v+'/hr',better:1},
-    {key:'nancyMaxClients',label:'Nancy Max Clients',delta:5,hi:'+5 clients',lo:'−5 clients',fmtV:v=>v+' clients',better:1},
     {key:'normCashBase',label:"Norm Base Cash",delta:25000,hi:'+$25K',lo:'−$25K',fmtV:v=>fmt(v),better:1},
     {key:'normStockBase',label:"Norm Base Stock",delta:25000,hi:'+$25K',lo:'−$25K',fmtV:v=>fmt(v),better:1},
+    {key:'nancyHourlyRate',label:'Nancy Rate',delta:25,hi:'+$25/hr',lo:'−$25/hr',fmtV:v=>'$'+v+'/hr',better:1},
+    {key:'nancyMaxClients',label:'Nancy Max Clients',delta:5,hi:'+5',lo:'−5',fmtV:v=>v+' clients',better:1},
     {key:'pretax401k',label:'401k Contribution',delta:5000,hi:'+$5K/yr',lo:'−$5K/yr',fmtV:v=>fmt(v),better:1},
     {key:'expenseInflation',label:'Expense Inflation',delta:0.005,hi:'+0.5%',lo:'−0.5%',fmtV:v=>(v*100).toFixed(1)+'%',better:-1},
     {key:'taxInflation',label:'Tax Bracket Inflation',delta:0.005,hi:'+0.5%',lo:'−0.5%',fmtV:v=>(v*100).toFixed(1)+'%',better:1},
@@ -1102,13 +1055,24 @@ function renderSensitivityTab(R,P){
     {key:'downPctg',label:'Down Payment %',delta:10,hi:'+10%',lo:'−10%',fmtV:v=>v+'%',better:-1},
     {key:'startingLiquid',label:'Starting Liquid',delta:100000,hi:'+$100K',lo:'−$100K',fmtV:v=>fmt(v),better:1},
     {key:'nancyRampYears',label:'Nancy Ramp Duration',delta:2,hi:'+2 yrs',lo:'−2 yrs',fmtV:v=>v+' yrs',better:-1},
+    {key:'homeAppreciation',label:'Home Appreciation',delta:0.01,hi:'+1%',lo:'−1%',fmtV:v=>(v*100).toFixed(1)+'%',better:1},
   ];
 
-  // Run projections for each param ± delta
+  const PRESETS={
+    all:{label:'All factors',keys:ALL_PARAMS.map(p=>p.key)},
+    income:{label:'Income levers',keys:['investReturn','normCashBase','normStockBase','nancyHourlyRate','nancyMaxClients','pretax401k']},
+    housing:{label:'Housing',keys:['homePrice','downPctg','startingLiquid','homeAppreciation']},
+    costs:{label:'Cost control',keys:['expenseInflation','taxInflation','nancyRampYears','pretax401k']},
+  };
+
+  const preset=PRESETS[_sensiPreset]||PRESETS.all;
+  const PARAMS=ALL_PARAMS.filter(p=>preset.keys.includes(p.key));
+
   const results=PARAMS.map(p=>{
+    const delta=_sensiDeltas[p.key]??p.delta;
     const vBase=P[p.key];
-    const hiV=vBase+p.delta;
-    const loV=Math.max(0,vBase-p.delta); // floor at 0 for non-negative params
+    const hiV=vBase+delta;
+    const loV=Math.max(0,vBase-delta);
     const hiP={...P,[p.key]:hiV};
     const loP={...P,[p.key]:loV};
     const hiR=run(hiP).R;const loR=run(loP).R;
@@ -1117,26 +1081,30 @@ function renderSensitivityTab(R,P){
     const hiDelta=hiNW-baseNW;
     const loDelta=loNW-baseNW;
     const impact=Math.max(Math.abs(hiDelta),Math.abs(loDelta));
-    return{...p,vBase,hiDelta,loDelta,impact};
+    return{...p,delta,vBase,hiDelta,loDelta,impact};
   });
 
-  // Sort by total swing (hi minus lo)
   results.sort((a,b)=>Math.abs(b.hiDelta-b.loDelta)-Math.abs(a.hiDelta-a.loDelta));
   const maxImpact=Math.max(...results.map(r=>r.impact),1);
 
-  // Build tornado bars
+  const presetBtns=Object.entries(PRESETS).map(([k,v])=>
+    `<button onclick="_sensiPreset='${k}';renderSensitivityTab(window._lastR,window._lastP)" style="font-size:10px;padding:4px 10px;border-radius:5px;border:1px solid var(--bd);background:${_sensiPreset===k?'var(--accent)':'var(--s2)'};color:${_sensiPreset===k?'#fff':'var(--t2)'};cursor:pointer;font-family:inherit;font-weight:${_sensiPreset===k?'600':'400'}">${v.label}</button>`
+  ).join('');
+
   let h=`<div style="padding:2px">
-  <div style="margin-bottom:14px">
-    <div style="font-size:13px;font-weight:700;color:var(--tx)">📊 Sensitivity Analysis</div>
-    <div style="font-size:10px;color:var(--t2);margin-top:2px">Impact on final net worth (${ey}) of changing each parameter by one step. Base: <strong>${fmt(baseNW)}</strong></div>
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+    <div>
+      <div style="font-size:13px;font-weight:700;color:var(--tx)">📊 Sensitivity Analysis</div>
+      <div style="font-size:10px;color:var(--t2);margin-top:2px">Impact on final NW (${ey}) per one-step change. Base: <strong>${fmt(baseNW)}</strong></div>
+    </div>
+    <div style="display:flex;gap:5px;flex-wrap:wrap">${presetBtns}</div>
   </div>
   <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;overflow:hidden">
-    <div style="display:grid;grid-template-columns:160px 1fr 1fr;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);padding:8px 12px;border-bottom:1px solid var(--bd);background:var(--s2)">
-      <div>Parameter</div><div style="text-align:center">▼ Worse case</div><div style="text-align:center">▲ Better case</div>
+    <div style="display:grid;grid-template-columns:160px 60px 1fr 1fr;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);padding:8px 12px;border-bottom:1px solid var(--bd);background:var(--s2)">
+      <div>Parameter</div><div style="text-align:center">Step</div><div style="text-align:center">▼ Worse case</div><div style="text-align:center">▲ Better case</div>
     </div>`;
 
   results.forEach((r,i)=>{
-    // hi case: if better===1, increasing param is green; if better===-1, it's red
     const hiIsGood=r.better===1?r.hiDelta>=0:r.hiDelta<=0;
     const loIsGood=r.better===1?r.loDelta>=0:r.loDelta<=0;
     const hiColor=hiIsGood?'var(--g)':'var(--r)';
@@ -1146,12 +1114,21 @@ function renderSensitivityTab(R,P){
     const rowBg=i%2===0?'var(--s1)':'var(--s2)';
     const hiSign=r.hiDelta>=0?'+':'';
     const loSign=r.loDelta>=0?'+':'';
-    const hiDeltaFmt=hiSign+fmt(r.hiDelta);
-    const loDeltaFmt=loSign+fmt(r.loDelta);
-    h+=`<div style="display:grid;grid-template-columns:160px 1fr 1fr;align-items:center;padding:7px 12px;border-bottom:1px solid var(--bd);background:${rowBg}">
+    // Format delta for display in the step input
+    const deltaDisplay=r.key==='investReturn'||r.key==='expenseInflation'||r.key==='taxInflation'||r.key==='homeAppreciation'
+      ? (r.delta*100).toFixed(1)+'%'
+      : r.delta>=1000?'$'+(r.delta/1000).toFixed(0)+'K':String(r.delta);
+    h+=`<div style="display:grid;grid-template-columns:160px 60px 1fr 1fr;align-items:center;padding:7px 12px;border-bottom:1px solid var(--bd);background:${rowBg}">
       <div>
         <div style="font-size:10.5px;font-weight:600;color:var(--tx)">${r.label}</div>
         <div style="font-size:8.5px;color:var(--t3);font-family:'SF Mono',monospace">${r.fmtV(r.vBase)} base</div>
+      </div>
+      <div style="padding:0 4px">
+        <div style="font-size:9px;color:var(--t3);margin-bottom:2px;text-align:center">±</div>
+        <input type="text" value="${deltaDisplay}" data-key="${r.key}" data-rawdelta="${r.delta}"
+          onchange="sensiUpdateDelta(this)"
+          style="width:100%;font-size:9px;font-family:'SF Mono',monospace;text-align:center;padding:3px 4px;border:1px solid var(--bd);border-radius:4px;background:var(--s1);color:var(--tx);outline:none"
+          title="Change step size for ${r.label}">
       </div>
       <div style="padding:0 12px">
         <div style="display:flex;align-items:center;gap:6px;justify-content:flex-end">
@@ -1159,12 +1136,12 @@ function renderSensitivityTab(R,P){
           <div style="flex:1;height:14px;border-radius:3px;background:var(--s3);overflow:hidden">
             <div style="height:100%;width:${loBarPct}%;background:${loColor};border-radius:3px;float:right;opacity:.85"></div>
           </div>
-          <span style="font-size:9.5px;font-family:'SF Mono',monospace;font-weight:600;color:${loColor};min-width:52px;text-align:right">${loDeltaFmt}</span>
+          <span style="font-size:9.5px;font-family:'SF Mono',monospace;font-weight:600;color:${loColor};min-width:52px;text-align:right">${loSign}${fmt(r.loDelta)}</span>
         </div>
       </div>
       <div style="padding:0 12px">
         <div style="display:flex;align-items:center;gap:6px">
-          <span style="font-size:9.5px;font-family:'SF Mono',monospace;font-weight:600;color:${hiColor};min-width:52px">${hiDeltaFmt}</span>
+          <span style="font-size:9.5px;font-family:'SF Mono',monospace;font-weight:600;color:${hiColor};min-width:52px">${hiSign}${fmt(r.hiDelta)}</span>
           <div style="flex:1;height:14px;border-radius:3px;background:var(--s3);overflow:hidden">
             <div style="height:100%;width:${hiBarPct}%;background:${hiColor};border-radius:3px;opacity:.85"></div>
           </div>
@@ -1175,15 +1152,29 @@ function renderSensitivityTab(R,P){
   });
 
   h+=`</div>
-  <div style="margin-top:10px;font-size:9px;color:var(--t3);display:flex;gap:14px;padding:0 2px">
+  <div style="margin-top:10px;font-size:9px;color:var(--t3);display:flex;gap:14px;flex-wrap:wrap;padding:0 2px">
     <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:10px;height:6px;background:var(--g);border-radius:2px;opacity:.85"></span>Increases final NW</span>
     <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:10px;height:6px;background:var(--r);border-radius:2px;opacity:.85"></span>Decreases final NW</span>
-    <span style="color:var(--t3)">Sorted by total swing (hi − lo). Each step is a single parameter change; all others held constant.</span>
+    <span>Edit ± column to change step size. Sorted by total swing.</span>
   </div>
   </div>`;
 
   ca.innerHTML=h;
   document.getElementById('summaries').innerHTML='';
+}
+
+function sensiUpdateDelta(input){
+  const key=input.dataset.key;
+  const raw=input.value.trim().replace(/[$%K,]/gi,'');
+  let val=parseFloat(raw);
+  if(isNaN(val)||val<=0){input.value=input.dataset.rawdelta;return;}
+  // Handle % suffix
+  if(input.value.includes('%'))val=val/100;
+  // Handle K suffix
+  else if(input.value.toUpperCase().includes('K'))val=val*1000;
+  _sensiDeltas[key]=val;
+  input.dataset.rawdelta=val;
+  renderSensitivityTab(window._lastR,window._lastP);
 }
 
 function renderGoalsTab(R,P,tT){
@@ -1613,8 +1604,7 @@ document.getElementById('main').innerHTML=`
     <button data-tab="sensitivity" onclick="setTab('sensitivity')">📊 Sensitivity</button>
     <button data-tab="compare" onclick="setTab('compare')">⚖ Compare</button>
     <button data-tab="advisor" onclick="setTab('advisor')">🤖 AI Advisor</button>
-    <button id="mcBtn" onclick="toggleMC()" style="margin-left:auto;font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Monte Carlo stress band (Net Worth tab)">🎲 Monte Carlo</button>
-    <button id="inflBtn" onclick="toggleInflation()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit">Real $</button>
+    <button id="inflBtn" onclick="toggleInflation()" style="margin-left:auto;font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit">Real $</button>
     <button onclick="exportCSV()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Download projection table as CSV">⬇ CSV</button>
     <button onclick="printPDF()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Print / Save as PDF">🖨 PDF</button>
     <button onclick="showSnapshotInput()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid rgba(8,145,178,.3);background:#e0f7fa;color:var(--c);cursor:pointer;font-family:inherit" title="Save a dated copy of this plan">📸 Snapshot</button>
