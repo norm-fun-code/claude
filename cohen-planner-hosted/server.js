@@ -655,9 +655,10 @@ function extractCashflowPair(obj) {
 
   const INC = ['income', 'total_income', 'totalIncome', 'income_total', 'incomeTotal',
                'sumIncome', 'sum_income', 'incomeSum'];
-  const EXP = ['expenses', 'expense', 'spending', 'total_expenses', 'totalExpenses',
-               'totalSpending', 'expense_total', 'expenseTotal', 'spendingTotal',
-               'sumExpense', 'sumExpenses', 'sum_expense', 'sum_expenses', 'expenseSum'];
+  const EXP = ['total_expense', 'expenses', 'expense', 'spending', 'total_expenses',
+               'totalExpenses', 'totalSpending', 'expense_total', 'expenseTotal',
+               'spendingTotal', 'sumExpense', 'sumExpenses', 'sum_expense',
+               'sum_expenses', 'expenseSum'];
 
   // ── Array: sum income and expense across all monthly/category items ──
   if (Array.isArray(obj)) {
