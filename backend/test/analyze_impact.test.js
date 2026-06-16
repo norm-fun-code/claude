@@ -35,6 +35,42 @@ test('computeSleepImpact: returns nothing without enough nights', () => {
   assert.deepEqual(a.computeSleepImpact({ 'health:sleep_score': short, 'health:hrv': short }), []);
 });
 
+test('computeSleepImpact: falls back to sleep_hours when sleep_score is flat', () => {
+  const N = 42;
+  const flatScore = mkSeries(N, () => 80);          // no spread — old code bailed here
+  const hours = mkSeries(N, (i) => 6 + (i % 7) * 0.5); // sleep_hours varies plenty
+  const hrv = mkSeries(N, (i) => 45 + (i % 7) * 3);    // HRV tracks hours
+  const findings = a.computeSleepImpact({
+    'health:sleep_score': flatScore,
+    'health:sleep_hours': hours,
+    'health:hrv': hrv,
+  });
+  const hrvF = findings.find((f) => f.evidence.outcome === 'health:hrv');
+  assert.ok(hrvF, 'expected a sleep-impact finding driven by sleep_hours');
+  assert.equal(hrvF.evidence.driver, 'health:sleep_hours');
+});
+
+test('computeTrends: binary habits are skipped (no "+133% cold shower" noise)', () => {
+  // 14 days: cold shower 3/7 early, 7/7 late — a huge raw "trend" that is meaningless.
+  const coldShower = mkSeries(14, (i) => (i < 7 ? (i % 2) : 1));
+  const exercise = mkSeries(14, (i) => (i < 7 ? (i % 3 === 0 ? 1 : 0) : 1));
+  const findings = a.computeTrends({
+    'habits:cold_shower': coldShower,
+    'habits:exercise': exercise,
+  });
+  assert.equal(findings.length, 0, 'binary-habit trends should be suppressed');
+});
+
+test('computeAnomalies: labels a prior-day standout "yesterday", not "today"', () => {
+  // 20 days of mood ~4.0 ending on a clearly-past date, with a 5.0 final spike.
+  const mood = mkSeries(20, (i) => (i === 19 ? 5 : 4 + ((i % 3) - 1) * 0.3), '2026-05-01T12:00:00');
+  const findings = a.computeAnomalies({ 'wellbeing:mood': mood });
+  const moodF = findings.find((f) => f.evidence.metric === 'wellbeing:mood');
+  assert.ok(moodF, 'expected a mood anomaly');
+  assert.match(moodF.detail, /yesterday/);
+  assert.doesNotMatch(moodF.detail, /\btoday\b/);
+});
+
 test('computeActivityImpact: flags an exercise type that costs next-day recovery', () => {
   const N = 40;
   const cycle = ['zone2', 'pull', 'intervals', 'push', 'zone2'];

@@ -284,41 +284,45 @@ function computeHealthComposites(seriesByKey, opts = {}) {
     });
   }
 
-  // Sleep debt — prefer Eight Sleep's personalized debt/need (stored during nightly ingest)
-  // over the generic 8h-need computation. Eight Sleep's need is calibrated to the user's
-  // actual sleep patterns (~7h 52m for this user vs a generic 8h).
+  // Sleep debt vs. surplus — derived DIRECTLY from last night's sleep against
+  // Eight Sleep's personalized need, so the headline and the detail can never
+  // contradict each other. (The old path trusted Eight Sleep's `dailySleepDebt`
+  // field, which is clamped to >= 0 at ingest — so a night you slept MORE than
+  // your need still rendered as "debt" while the detail text showed a surplus.)
   const sleep = seriesByKey['health:sleep_hours'];
-  const eightSleepDebt = latest(seriesByKey['health:sleep_debt']);
   const eightSleepNeed = latest(seriesByKey['health:sleep_need']);
+  const lastNight = sleep ? latest(sleep) : null;
 
-  if (eightSleepDebt != null && Math.abs(eightSleepDebt) > 0.05) {
-    const needFmt = fmtHM(eightSleepNeed ?? 8);
-    if (eightSleepDebt < 0) {
-      // Surplus — slept more than the personalized need.
-      const surplusFmt = fmtHM(Math.abs(eightSleepDebt));
+  if (lastNight != null && eightSleepNeed != null) {
+    const need = eightSleepNeed;
+    const delta = lastNight - need; // + = surplus, − = debt
+    const nightFmt = fmtHM(lastNight);
+    const needFmt = fmtHM(need);
+    const MIN = 0.08; // ~5 min — ignore rounding-level differences
+    if (delta >= MIN) {
+      const surplusFmt = fmtHM(delta);
       findings.push({
         type: 'sleep_debt',
         domains: ['health'],
         title: `Sleep surplus: ${surplusFmt}`,
-        detail: `You slept ${surplusFmt} more than your ${needFmt} sleep need last night — well rested.`,
+        detail: `Last night you slept ${nightFmt} vs your ${needFmt} need — ${surplusFmt} above. Well rested.`,
         confidence: 0.85,
-        evidence: { auto: true, kind: 'sleep_surplus', surplusHours: Math.abs(eightSleepDebt), need: eightSleepNeed ?? 8, source: 'eight_sleep' },
+        evidence: { auto: true, kind: 'sleep_surplus', surplusHours: Math.round(delta * 100) / 100, lastNight, need, source: 'eight_sleep' },
       });
-    } else {
-      const needFmtLocal = fmtHM(eightSleepNeed ?? 8);
-      const avgHours = sleep ? latest(sleep) : null;
-      const debtFmt = fmtHM(eightSleepDebt);
-      const avgNote = avgHours != null ? `Averaging ${fmtHM(avgHours)} vs your ${needFmtLocal} need` : `Your personalized sleep need is ${needFmtLocal}`;
+    } else if (delta <= -MIN) {
+      const debtFmt = fmtHM(-delta);
       findings.push({
         type: 'sleep_debt',
         domains: ['health'],
         title: `Sleep debt: ${debtFmt}`,
-        detail: `${avgNote} — ${debtFmt} of debt. An earlier night would start clearing it.`,
+        detail: `Last night you slept ${nightFmt} vs your ${needFmt} need — ${debtFmt} short. An earlier night would start clearing it.`,
         confidence: 0.85,
-        evidence: { auto: true, kind: 'sleep_debt', debtHours: eightSleepDebt, need: eightSleepNeed ?? 8, source: 'eight_sleep' },
+        evidence: { auto: true, kind: 'sleep_debt', debtHours: Math.round(-delta * 100) / 100, lastNight, need, source: 'eight_sleep' },
       });
     }
+    // else: on target — the recovery score already reflects it, no separate finding.
   } else {
+    // No Eight Sleep need available — fall back to the generic cumulative model.
     const debt = sleepDebt(sleep, opts);
     if (debt && debt.debtHours >= 1) {
       findings.push({

@@ -2229,12 +2229,14 @@ app.get('/api/briefing', async (req, res) => {
       errors.push({ service: 'wealth_insights', error: err.message });
     }
 
-    // Health/wellbeing findings for the Health tab — any finding that touches the
-    // health or wellbeing domain (habit↔health splits, sleep/activity impact,
-    // health trends/anomalies/correlations). Already ranked by the curator, so
-    // just filter the curated pool and take the top 5 — no re-sorting needed.
+    // Health (body/physiology) findings for the Health tab — anything that touches
+    // the HEALTH domain: sleep/activity impact, habit↔health splits, sleep→focus
+    // levers, HRV/sleep trends/anomalies/correlations. Wellbeing-ONLY findings
+    // (mood/energy/focus standouts with no body metric) are deliberately excluded
+    // here — they live on Today's HabitTrendsCard — so the same mood anomaly never
+    // shows on two tabs at once. Already ranked by the curator; just filter + cap.
     healthInsights = rankedPool
-      .filter((f) => Array.isArray(f.domains) && f.domains.some((dn) => ['health', 'wellbeing'].includes(dn)))
+      .filter((f) => Array.isArray(f.domains) && f.domains.includes('health'))
       .slice(0, 5)
       .map(slim);
 

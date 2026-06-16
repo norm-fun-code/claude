@@ -40,6 +40,13 @@ const DEFAULTS = {
   trendSkip: [
     'wealth:spending', 'wealth:spending_discretionary', 'wealth:income', 'wealth:net_cashflow',
     'learning:highlights_synced', 'learning:books_synced', 'learning:notion_pages', 'learning:notion_pages_synced',
+    // Binary habits (0/1 daily) and the habit-completion ratio: a 7-day-avg
+    // "trend" on these is noise — "Cold shower up +133%" just means it went from
+    // 3/7 to 7/7 days. Adherence is surfaced properly by computeHabitConsistency
+    // ("Cold shower 11/13 days"); the on/off→health effect by computeHabitHealthSplits.
+    // (exercise_time_of_day is continuous, NOT binary, so it's deliberately kept.)
+    'habits:morning_tm', 'habits:afternoon_tm', 'habits:gratitude', 'habits:cold_shower',
+    'habits:exercise', 'habits:eat_healthy', 'habits:habit_score',
     // Environment metrics are outside the user's control — trending humidity or
     // temperature produces noise, not insight.
     'environment:temperature', 'environment:humidity', 'environment:uv_index', 'environment:aqi',
@@ -172,10 +179,16 @@ function computeAnomalies(seriesByKey, opts = {}) {
     const pctNote = pctDiff != null ? ` (${pctDiff}% ${dir})` : '';
 
     // Use "yesterday" when the latest data point is from a prior calendar day
-    // (common in morning briefings where wellbeing metrics are from yesterday's check-in).
+    // (common in morning briefings where wellbeing metrics are from yesterday's
+    // check-in). NB: series[i].day is a Date object (Postgres DATE) — comparing it
+    // directly against a string yields NaN and silently always picked "today".
+    // Normalize BOTH sides to YYYY-MM-DD strings in the local zone so the check
+    // actually fires.
     const latestDay = series[series.length - 1]?.day;
-    const todayUtc = new Date().toISOString().slice(0, 10);
-    const dayLabel = latestDay && latestDay < todayUtc ? 'yesterday' : 'today';
+    const latestDayKey = latestDay ? toDayKey(latestDay) : null;
+    const tz = process.env.TZ || 'America/New_York';
+    const todayLocal = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    const dayLabel = latestDayKey && latestDayKey < todayLocal ? 'yesterday' : 'today';
 
     findings.push({
       type: 'anomaly',
@@ -519,21 +532,29 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
  * day. Returns up to MAX_RESULTS findings, strongest effect first.
  */
 function computeSleepImpact(seriesByKey) {
-  const MIN_N = 5, MIN_PCT = 0.05, MAX_RESULTS = 4;
-  const driverKey = (seriesByKey['health:sleep_score']?.length ?? 0) >= 2 * MIN_N + 2
-    ? 'health:sleep_score' : 'health:sleep_hours';
-  const driver = seriesByKey[driverKey];
-  if (!driver || driver.length < 2 * MIN_N + 2) return [];
+  const MIN_N = 4, MIN_PCT = 0.05, MAX_RESULTS = 4;
 
-  const driverByDay = new Map();
-  for (const r of driver) {
-    const v = Number(r.value);
-    if (Number.isFinite(v)) driverByDay.set(toDayKey(r.day), v);
+  // Try sleep_score first (richest signal), then sleep_hours — use the first
+  // driver that has enough nights AND enough spread to form best/worst thirds.
+  // The old code locked onto one driver and bailed if it lacked spread, so a
+  // user with very consistent sleep_score got NO sleep-impact insights at all
+  // even when sleep_hours varied plenty. This is the Health tab's headline lever,
+  // so it should fire whenever any sleep dimension has usable variation.
+  let driverKey = null, driverByDay = null, loCut = null, hiCut = null;
+  for (const cand of ['health:sleep_score', 'health:sleep_hours']) {
+    const series = seriesByKey[cand];
+    if (!series || series.length < 2 * MIN_N + 2) continue;
+    const byDay = new Map();
+    for (const r of series) {
+      const v = Number(r.value);
+      if (Number.isFinite(v)) byDay.set(toDayKey(r.day), v);
+    }
+    const vals = [...byDay.values()].sort((a, b) => a - b);
+    const lo = vals[Math.floor((vals.length - 1) / 3)];
+    const hi = vals[Math.ceil((vals.length - 1) * 2 / 3)];
+    if (hi > lo) { driverKey = cand; driverByDay = byDay; loCut = lo; hiCut = hi; break; }
   }
-  const vals = [...driverByDay.values()].sort((a, b) => a - b);
-  const loCut = vals[Math.floor((vals.length - 1) / 3)];
-  const hiCut = vals[Math.ceil((vals.length - 1) * 2 / 3)];
-  if (!(hiCut > loCut)) return []; // not enough spread in sleep to split
+  if (!driverKey) return []; // no sleep dimension with usable spread
 
   const OUTCOMES = {
     'health:hrv':        { label: 'HRV',        unit: 'ms',  good: 'up'   },

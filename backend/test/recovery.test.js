@@ -95,6 +95,35 @@ test('trainingLoad: spike flagged high, steady is optimal', () => {
   assert.equal(steady.band, 'optimal');
 });
 
+test('sleep surplus: slept MORE than Eight Sleep need → surplus, not debt', () => {
+  // 8h14m last night vs 7h44m need — the exact case that was mislabeled "41m debt".
+  const seriesByKey = {
+    'health:hrv': baselineThen(50, 30, 55),
+    'health:resting_hr': baselineThen(55, 30, 52),
+    'health:sleep_hours': baselineThen(7.5, 30, 8 + 14 / 60),
+    'health:sleep_need': series(new Array(31).fill(7 + 44 / 60)),
+  };
+  const findings = r.computeHealthComposites(seriesByKey);
+  const sd = findings.find((f) => f.type === 'sleep_debt');
+  assert.ok(sd, 'expected a sleep_debt-type finding');
+  assert.match(sd.title, /surplus/i);
+  assert.equal(sd.evidence.kind, 'sleep_surplus');
+  assert.doesNotMatch(sd.detail, /\bdebt\b/i); // detail must not contradict the headline
+});
+
+test('sleep debt: slept LESS than need → debt, headline matches detail', () => {
+  const seriesByKey = {
+    'health:hrv': baselineThen(50, 30, 48),
+    'health:resting_hr': baselineThen(55, 30, 58),
+    'health:sleep_hours': baselineThen(7, 30, 6.5),
+    'health:sleep_need': series(new Array(31).fill(7 + 44 / 60)),
+  };
+  const findings = r.computeHealthComposites(seriesByKey);
+  const sd = findings.find((f) => f.type === 'sleep_debt');
+  assert.ok(sd && /debt/i.test(sd.title));
+  assert.match(sd.detail, /short/i);
+});
+
 test('computeHealthComposites: emits findings with evidence', () => {
   const seriesByKey = {
     'health:hrv': baselineThen(50, 30, 30),
