@@ -253,7 +253,7 @@ const D={
   baseCharity:8500,baseMedical:4500,baseTransit:4000,baseUtilsPhoneNet:5500,
   expenseInflation:.03,postKidVacations:10000,
   homePrice:2000000,downPctg:50,mortgageRate:5.0,homePurchaseYear:2030,
-  propTaxBase:18000,maintBase:10000,homeAppreciation:.03,
+  propTaxRate:.012,propTaxBase:18000,maintBase:10000,homeAppreciation:.03,
   suburbAutoBoost:3500,suburbInsBoost:1500,suburbUtilBoost:2500,
   investReturn:.06,capGainsTaxRate:.345,costBasisPct:.55,
   k401Start:210000,
@@ -819,7 +819,7 @@ function buildControls(){
   h+=`<div class="st">📦 Expenses (couple, 2026)</div>`;
   h+=s('Groceries','baseGroceries',4000,15000,500,fmtF)+s('Dining','baseDining',5000,25000,500,fmtF)+s('Shopping','baseShopping',10000,40000,1000,fmtF)+s('Vacations (no kids)','baseVacations',5000,30000,1000,fmtF)+s('Vacations (w/ kids)','postKidVacations',5000,25000,1000,fmtF)+s('Misc','baseMisc',5000,20000,1000,fmtF)+s('Charity','baseCharity',0,20000,500,fmtF)+s('Medical','baseMedical',2000,10000,500,fmtF)+s('Expense inflation','expenseInflation',.02,.05,.005,v=>(v*100).toFixed(1)+'%');
   h+=`<div class="st">🏠 Home</div>`;
-  h+=s('Purchase year','homePurchaseYear',2028,2035,1)+s('Price','homePrice',1000000,3000000,50000,v=>'$'+(v/1e6).toFixed(2)+'M')+s('Down %','downPctg',20,60,5,v=>v+'%')+s('Mortgage rate','mortgageRate',3,8,.25,v=>v+'%')+s('Property tax/yr','propTaxBase',8000,50000,1000,fmtF);
+  h+=s('Purchase year','homePurchaseYear',2028,2035,1)+s('Price','homePrice',1000000,3000000,50000,v=>'$'+(v/1e6).toFixed(2)+'M')+s('Down %','downPctg',20,60,5,v=>v+'%')+s('Mortgage rate','mortgageRate',3,8,.25,v=>v+'%')+s('Property tax %','propTaxRate',0.005,0.03,0.0005,v=>(v*100).toFixed(2)+'%');
   h+=`<div class="st">📈 Returns & Tax</div>`;
   h+=s('Portfolio return','investReturn',.03,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Return volatility (MC)','mcVol',.05,.25,.01,v=>(v*100).toFixed(0)+'%')+s('Home appreciation','homeAppreciation',.01,.05,.005,v=>(v*100).toFixed(1)+'%')+s('Tax bracket inflation','taxInflation',0,.04,.005,v=>(v*100).toFixed(1)+'%')+s('Starting liquid','startingLiquid',500000,2000000,50000,fmtF)+s('Starting 401k','k401Start',0,500000,10000,fmtF)+s('NYC rent','nycRent',4000,8000,100,v=>'$'+v.toLocaleString()+'/mo');
   h+=`<div style="height:1px;background:var(--bd);margin:4px 0"></div>`;
@@ -1376,6 +1376,13 @@ function renderGoalsTab(R,P,tT){
     const totalPaid=moPmt*nPmt;
     const totalInterest=totalPaid-loanAmt;
     const payoffYr=P.homePurchaseYear+30;
+    // Property tax = rate × appreciating home value. Show purchase-year figure
+    // in the headline (it grows with the home over time).
+    const ptRate=P.propTaxRate??.012;
+    const moPropTax0=ptRate*P.homePrice/12;          // year 1
+    const moAllIn0=moPmt+moPropTax0;
+    const homeVal30=P.homePrice*(1+P.homeAppreciation)**30;
+    const moPropTax30=ptRate*homeVal30/12;           // year 30 (tax keeps rising)
     // Year-by-year principal vs interest (annual)
     const mortRows=[];
     for(let y=1;y<=30;y++){
@@ -1392,11 +1399,11 @@ function renderGoalsTab(R,P,tT){
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
         <div>
           <div style="font-size:13px;font-weight:700;color:var(--tx)">🏦 Mortgage</div>
-          <div style="font-size:10px;color:var(--t2);margin-top:2px">${goalInlineEl('homePrice',P.homePrice>=1e6?'$'+(P.homePrice/1e6).toFixed(2)+'M':'$'+Math.round(P.homePrice/1000)+'K','dollar-m')} · ${goalInlineEl('mortgageRate',P.mortgageRate+'%','pct')} · 30 yr · closes ${goalInlineEl('homePurchaseYear',P.homePurchaseYear,'year')}</div>
+          <div style="font-size:10px;color:var(--t2);margin-top:2px">${goalInlineEl('homePrice',P.homePrice>=1e6?'$'+(P.homePrice/1e6).toFixed(2)+'M':'$'+Math.round(P.homePrice/1000)+'K','dollar-m')} · ${goalInlineEl('mortgageRate',P.mortgageRate+'%','pct')} · 30 yr · closes ${goalInlineEl('homePurchaseYear',P.homePurchaseYear,'year')} · tax ${goalInlineEl('propTaxRate',(ptRate*100).toFixed(2)+'%','pct-decimal')}</div>
         </div>
         <div style="text-align:right">
-          <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:var(--p)">${fmtF(Math.round(moPmt))}/mo</div>
-          <div style="font-size:9px;color:var(--t3);margin-top:1px">monthly payment</div>
+          <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:var(--p)">${fmtF(Math.round(moAllIn0))}/mo</div>
+          <div style="font-size:9px;color:var(--t3);margin-top:1px">all-in: P&I ${fmtF(Math.round(moPmt))} + tax ${fmtF(Math.round(moPropTax0))}</div>
         </div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:14px">
@@ -1449,6 +1456,10 @@ function renderGoalsTab(R,P,tT){
         <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--r);border-radius:2px;opacity:.6"></span>Interest</span>
         <span>Hover bars for year detail</span>
         <span style="margin-left:auto">Appreciation: ${goalInlineEl('homeAppreciation',(P.homeAppreciation*100).toFixed(1)+'%/yr','pct-decimal')}</span>
+      </div>
+      <div style="margin-top:8px;padding:8px 10px;background:var(--s2);border-radius:7px;font-size:9px;color:var(--t2);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+        <span>🏛 Property tax (${(ptRate*100).toFixed(2)}% of home value, grows as home appreciates)</span>
+        <span style="font-family:'SF Mono',monospace"><b style="color:var(--tx)">${fmtF(Math.round(moPropTax0))}/mo</b> @ ${P.homePurchaseYear} → <b style="color:var(--tx)">${fmtF(Math.round(moPropTax30))}/mo</b> @ ${payoffYr}</span>
       </div>
     </div>`;
   }
@@ -1764,7 +1775,7 @@ HOME PURCHASE PLAN
 • Target: ${fmt(P.homePrice)} (${(P.downPctg)}% down) in ${P.homePurchaseYear}
 • Down payment: ${fmt(P.homePrice*P.downPctg/100)}
 • Mortgage: ${fmt(P.homePrice-P.homePrice*P.downPctg/100)} @ ${P.mortgageRate}% (30yr)
-• Property tax: ${fmt(P.propTaxBase)}/yr
+• Property tax: ${((P.propTaxRate??.012)*100).toFixed(2)}% of home value (~${fmt(Math.round((P.propTaxRate??.012)*P.homePrice))}/yr at purchase, grows with appreciation)
 • ${y30.yr} liquid after purchase: ${fmt(y30.liq)}
 • ${y30.yr} effective tax rate: ${(y30.effRate*100).toFixed(1)}% (mortgage interest deduction helps)
 

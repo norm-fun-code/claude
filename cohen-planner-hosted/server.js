@@ -970,7 +970,7 @@ app.post('/api/advisor/agentic', requireAuth, async (req, res) => {
 You have tools to explore changes to Norm's plan in a sandbox. Changes never affect his live plan until he explicitly saves the scenario.
 
 Tools available:
-• set_param(key, value, reason) — propose changing a parameter. Available keys: homePrice, downPctg, mortgageRate, homePurchaseYear, investReturn, startingLiquid, expenseInflation, normCashBase, nancyHourlyRate, nancyMaxClients, nancyRampYears, pretax401k, mcVol, tuitionInflation, homeAppreciation, normGrowth, capGainsTaxRate
+• set_param(key, value, reason) — propose changing a parameter. Available keys: homePrice, downPctg, mortgageRate, homePurchaseYear, propTaxRate, investReturn, startingLiquid, expenseInflation, normCashBase, nancyHourlyRate, nancyMaxClients, nancyRampYears, pretax401k, mcVol, tuitionInflation, homeAppreciation, normGrowth, capGainsTaxRate
 • run_projection() — compute key metrics with current sandbox params
 • save_scenario(name) — propose saving this sandbox as a named scenario
 

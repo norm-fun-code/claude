@@ -164,7 +164,12 @@ function run(p,rets){
     const ret=rets?rets[yIdx]:p.investReturn;
     k401+=p.pretax401k+p.company401kMatch;k401*=(1+ret);
     const sub=yr>=p.homePurchaseYear;
-    let h=sub?am+p.propTaxBase*1.02**(yr-p.homePurchaseYear)+p.maintBase*1.02**(yr-p.homePurchaseYear):p.nycRent*12;
+    // Property tax = rate × current home value (appreciates each year). Falls back
+    // to legacy flat propTaxBase/homePrice for saved states without a rate.
+    const ptRate=p.propTaxRate??(p.propTaxBase&&p.homePrice?p.propTaxBase/p.homePrice:0.012);
+    const homeVal=sub?p.homePrice*(1+p.homeAppreciation)**(yr-p.homePurchaseYear):0;
+    const ptax=sub?ptRate*homeVal:0;
+    let h=sub?am+ptax+p.maintBase*1.02**(yr-p.homePurchaseYear):p.nycRent*12;
     const inf=(1+p.expenseInflation)**(yr-sy);
     let gr=p.baseGroceries*inf,di=p.baseDining*inf,sh=p.baseShopping*inf,va=(nk>0?p.postKidVacations:p.baseVacations)*inf;
     let au=p.baseAuto*inf,ins=p.baseInsurance*inf,mi=p.baseMisc*inf,en=p.baseEntertainment*inf;
@@ -198,7 +203,7 @@ function run(p,rets){
     let hv=0,mb=0,eq=0;
     if(sub){const yo=yr-p.homePurchaseYear+1;hv=p.homePrice*(1+p.homeAppreciation)**yo;mb=mBal(ma,p.mortgageRate/100,yo);eq=hv-mb}
     const kiy=kids.filter((k,ki)=>{const a=yr-k;const sa=ki===0?p.kid1YeshivaStartAge:p.yeshivaStartAge;return a>=sa&&a<=p.yeshivaEndAge}).length;
-    R.push({yr,normG:Math.round(normW2),nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,inc,h:Math.round(h),liv:Math.round(liv),cc:Math.round(cc),tu:Math.round(tu),totE:Math.round(totE),surp:Math.round(surp),txS:Math.round(txS),sold:Math.round(sold),liq:Math.round(liq),eq:Math.round(eq),nw:Math.round(liq+eq),k401:Math.round(k401),kiy,nk});
+    R.push({yr,normG:Math.round(normW2),nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,inc,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),liv:Math.round(liv),cc:Math.round(cc),tu:Math.round(tu),totE:Math.round(totE),surp:Math.round(surp),txS:Math.round(txS),sold:Math.round(sold),liq:Math.round(liq),eq:Math.round(eq),nw:Math.round(liq+eq),k401:Math.round(k401),kiy,nk});
   }
   return{R,tT:Math.round(tT),tC:Math.round(tC),tTx:Math.round(tTx),tS:Math.round(tS),am,dp,mm:am/12};
 }
