@@ -203,9 +203,7 @@ export default function App() {
               );
             })()}
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} recoveryScore={liveRecovery.recovery?.score ?? null} />
-            <WeeklyStateCard briefing={d ?? null} health={health} recovery={liveRecovery.recovery} />
             <ForecastCard forecasts={d?.forecasts ?? []} />
-            <CheckinHistoryCard />
             {analyzeError && (
               <View style={[styles.errorBox, { borderColor: c.border, backgroundColor: c.card }]}>
                 <Text style={[styles.errorTitle, { color: c.text }]}>Analysis failed</Text>
@@ -269,6 +267,7 @@ export default function App() {
               {d && (d.calendar?.length ?? 0) > 0 && <CalendarCard events={d.calendar} />}
               <CheckinCard />
               <HabitsCard />
+              <CheckinHistoryCard />
               <HabitTrendsCard insights={(d?.insights ?? []).filter((i) => {
                 if (i.type === 'habit_consistency') return true;
                 const nonHealth = new Set(['habits', 'wellbeing']);

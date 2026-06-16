@@ -44,9 +44,21 @@ function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, cale
           .join('\n')
       : 'No personal calendar events today. (Work calendar not connected — assume a normal workday.)';
 
+  // Compute open focus windows from the gaps between busy blocks (9am–6pm workday).
+  const toMin = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + (m || 0); };
+  const toTime = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+  const busySorted = [...workBusyBlocks].sort((a, b) => toMin(a.start) - toMin(b.start));
+  const openWindows = [];
+  let cursor = toMin('09:00');
+  for (const b of busySorted) {
+    if (toMin(b.start) > cursor + 29) openWindows.push(`${toTime(cursor)}–${b.start}`);
+    cursor = Math.max(cursor, toMin(b.end));
+  }
+  if (cursor < toMin('18:00') - 29) openWindows.push(`${toTime(cursor)}–18:00`);
+
   const workBusySection =
     workBusyBlocks.length > 0
-      ? `${workBusyBlocks.length} block${workBusyBlocks.length > 1 ? 's' : ''}: ${workBusyBlocks.map((b) => `${b.start}–${b.end}`).join(', ')}`
+      ? `MEETINGS (busy — no titles): ${workBusyBlocks.map((b) => `${b.start}–${b.end}`).join(', ')}\nOPEN windows for focus work: ${openWindows.length ? openWindows.join(', ') : 'none'}`
       : 'No busy blocks visible (calendar may be clear or data unavailable).';
 
   return `${selfModel ? selfModel + '\n\n---\n\n' : ''}Today is ${currentDay}.
@@ -57,7 +69,7 @@ ${recoveryContext ? `Recovery status: ${recoveryContext}` : ''}
 Today's calendar (personal — usually light):
 ${calendarSection}
 
-Work calendar (free/busy only — no event titles visible):
+Work calendar (meeting times and open focus windows):
 ${workBusySection}
 
 Recent wellbeing (last 7 days): ${wellbeingContext || 'no recent check-in data'}
@@ -94,7 +106,7 @@ Return ONLY valid JSON with EXACTLY these fields:
 }
 
 Rules:
-- chiefBrief: this is the centerpiece — write it as a person who KNOWS them, not a report. Sharp, caring, blunt, numerate. The synthesis MUST span domains. Calendar rule: use the work free/busy blocks to gauge meeting density — a heavily blocked day (3+ meetings) is meaningful context for energy/recovery framing. The personal calendar is light by default; never open with "no personal events." Draw the ACTION from the leverage engine when present, otherwise from the most consequential thing in their finances/habits/inbox/schedule. RISK from at-risk forecasts/slipping habits. MOVE from a real number that changed — prefer spend/cashflow, a habit rate, or the composite recovery score over raw HRV. Name actual numbers everywhere. Never invent a tie-in or number. Always generate all four fields.
+- chiefBrief: this is the centerpiece — write it as a person who KNOWS them, not a report. Sharp, caring, blunt, numerate. The synthesis MUST span domains. Calendar rule: the MEETINGS lines are BUSY time (actual meetings — not focus blocks). The OPEN windows are the real uninterrupted focus stretches. Use meeting density to gauge the day's cognitive load. Never call a meeting time a "focus block" or "uninterrupted stretch." Draw the ACTION from the leverage engine when present, otherwise from the most consequential thing in their finances/habits/inbox/schedule. RISK from at-risk forecasts/slipping habits. MOVE from a real number that changed — prefer spend/cashflow, a habit rate, or the composite recovery score over raw HRV. Name actual numbers everywhere. Never invent a tie-in or number. Always generate all four fields.
 - morningFocus: draw primarily from the SELF-MODEL (7-day sleep avg, habit adherence rates, recovery trend, confirmed correlations). Use the recovery SCORE (0–100) and BAND (green/yellow/red) as the health anchor — it already synthesizes HRV, RHR, and sleep into one number, so lead with that instead of raw HRV ms. Name habit rates and sleep hours from the self-model. If the recovery trend is slipping, name the score trajectory. This should feel like the one sentence a trusted advisor who knows your week would say before you start your day. Never mention finances, calendar events, or emails here. Always generate something — the self-model always has enough context.
 - urgentEmails: only emails needing a response/action today. Exclude newsletters, digests, marketing — only real emails requiring a response or action.
 - notionQuote: pick a self-contained, meaningful line — never a title, never an intro that trails off (e.g. "Rather than trying to find someone who will:"). If the best idea spans a sentence, quote the whole sentence.
