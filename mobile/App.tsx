@@ -28,7 +28,6 @@ import { Header } from './src/components/Header';
 import { TabBar, TabKey, TABS } from './src/components/TabBar';
 import { ForecastCard } from './src/components/ForecastCard';
 import { LibraryCard } from './src/components/LibraryCard';
-import { AffirmationsCard } from './src/components/AffirmationsCard';
 import { WealthCard } from './src/components/WealthCard';
 import { InsightsCard } from './src/components/InsightsCard';
 import { AskOverlay } from './src/components/AskOverlay';
@@ -230,12 +229,11 @@ export default function App() {
       case 'wisdom':
         return (
           <>
-            <AffirmationsCard />
-            <HighlightsCard />
             {(d?.quote || d?.quoteInsight) && <QuoteCard quote={d!.quote} insight={d!.quoteInsight} />}
             {(d?.notionText || d?.notionInsight) && (
               <NotionCard pageTitle={d?.notionPageTitle ?? ''} notionText={d!.notionText} quote={d?.notionQuote} insight={d!.notionInsight} />
             )}
+            <HighlightsCard />
           </>
         );
       case 'today':
@@ -244,7 +242,7 @@ export default function App() {
           <>
             <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
             <TodayForecastCard forecast={d?.todayForecast} />
-            {d?.dailyQuote && <QuoteCard quote={d.dailyQuote} insight="" title="Quote" emoji="❝" />}
+            <WeatherCard weather={d?.weather ?? null} />
             {d?.crossContextInsights && d.crossContextInsights.length > 0 && (
               <CrossContextCard insights={d.crossContextInsights} />
             )}
@@ -252,7 +250,6 @@ export default function App() {
             <CollapsibleSection title="Today's Full Briefing">
               {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
               <WeeklyIntentionsCard review={d?.weeklyReview ?? null} actions={d?.leverageActions ?? []} />
-              <WeatherCard weather={d?.weather ?? null} />
               <CalendarCard events={d?.calendar ?? []} workBusy={d?.workBusy ?? []} />
               <CheckinHistoryCard insights={(d?.insights ?? []).filter((i) => {
                 if (i.type === 'habit_consistency') return true;

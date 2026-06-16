@@ -15,6 +15,13 @@ const BLOCKS: { key: keyof Omit<ChiefBrief, 'synthesis'>; label: string }[] = [
   { key: 'move', label: 'THE MOVE' },
 ];
 
+// The Chief of Staff closes every brief on these — a fixed daily anchor.
+const AFFIRMATIONS = [
+  'I show up with joy, presence, and courage!',
+  'Everything always works out!',
+  'We will always live and love in abundance!',
+];
+
 export function BriefCard({ brief, fallback }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
@@ -39,6 +46,16 @@ export function BriefCard({ brief, fallback }: Props) {
       ) : (
         <Text style={styles.synthesis}>{fallback}</Text>
       )}
+
+      {/* Affirmations — the Chief of Staff closes every brief on an up note. */}
+      <View style={styles.separator} />
+      <Text style={styles.blockLabel}>AFFIRMATIONS</Text>
+      {AFFIRMATIONS.map((text, i) => (
+        <View key={i} style={styles.affRow}>
+          <Text style={styles.affBullet}>✦</Text>
+          <Text style={styles.affText}>{text}</Text>
+        </View>
+      ))}
     </View>
   );
 }
@@ -82,5 +99,24 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     lineHeight: 21,
+  },
+  affRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    marginTop: 5,
+  },
+  affBullet: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 13,
+    lineHeight: 21,
+  },
+  affText: {
+    ...typography.body,
+    color: '#fff',
+    fontSize: 14,
+    lineHeight: 21,
+    fontStyle: 'italic',
+    flex: 1,
   },
 });
