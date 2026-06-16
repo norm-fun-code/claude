@@ -766,8 +766,12 @@ function renderSnapshotBar(){
   h+='</div>';el.innerHTML=h;
 }
 
+let _collapsedSections=new Set(JSON.parse(localStorage.getItem('plannerCollapsed')||'[]'));
+function toggleSection(key){_collapsedSections.has(key)?_collapsedSections.delete(key):_collapsedSections.add(key);localStorage.setItem('plannerCollapsed',JSON.stringify([..._collapsedSections]));buildControls()}
+
 function buildControls(){
   const s=(l,k,mn,mx,st,fn)=>`<div class="sr"><div class="sh"><span class="sl">${l}</span><span class="sv" id="v_${k}">${fn?fn(P[k]):P[k]}</span></div><input type="range" id="s_${k}" min="${mn}" max="${mx}" step="${st}" value="${P[k]}" oninput="U('${k}',this.value)"></div>`;
+  const ST=(label,key,body)=>{const c=_collapsedSections.has(key);return`<div class="st" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;user-select:none" onclick="toggleSection('${key}')"><span>${label}</span><span style="font-size:9px;color:var(--t3);opacity:.6">${c?'▶':'▼'}</span></div>${c?'':body}`};
   const sy=P.planStartYear||2026;
   const baseYr=sy+4;
   let h=`<div style="font-size:10px;font-weight:700;margin-bottom:8px">⚙️ Parameters</div>`;
@@ -788,41 +792,59 @@ function buildControls(){
     ${scenarios.length>0?`<button class="btn" onclick="toggleCompare()" style="margin-bottom:3px">${compareMode?'Exit Compare':'📊 Compare'}</button>`:''}
     <button class="btn" onclick="rollForward()" style="margin-bottom:3px;border-color:rgba(8,145,178,.3);color:var(--c);background:#e0f7fa">📅 Roll Forward → ${sy+1}</button>
   </div>`;
-  h+=`<div class="st">👶 Kids</div>`;
-  h+=s('# of kids','numKids',1,4,1);h+=s('Kid 1 born','kid1Birth',2026,2030,1);
-  if(P.numKids>=2)h+=s('Kid 2 born','kid2Birth',2028,2035,1);
-  if(P.numKids>=3)h+=s('Kid 3 born','kid3Birth',2031,2040,1);
-  if(P.numKids>=4)h+=s('Kid 4 born','kid4Birth',2034,2044,1);
-  h+=`<div class="st">🍼 Childcare</div>`;
-  h+=s('Nanny until age','nannyEndAge',.5,3,.5,v=>v+' yrs')+s('Nanny $/hr','nannyHourlyRate',20,45,1,v=>'$'+v)+s('Nanny days/wk','nannyDaysPerWeek',2,5,1)+s('Daycare $/mo','daycareMonthly',1500,4500,100,v=>'$'+v.toLocaleString())+s('Kid 1 yeshiva start','kid1YeshivaStartAge',2,5,1,v=>v+' (uses daycare)')+s('Kids 2+ yeshiva start','yeshivaStartAge',2,5,1,v=>v+' (no daycare)');
-  h+=`<div class="st">🎓 Tuition</div>`+s('Tuition inflation','tuitionInflation',.02,.06,.005,v=>(v*100).toFixed(1)+'%');
-  h+=`<div class="st">📅 Plan Start Year</div>`;
-  h+=s('Start year','planStartYear',2026,2035,1);
-  h+=`<div style="font-size:7.5px;color:var(--t3);margin-bottom:6px">Advance each Jan to roll inputs forward. Update Starting Liquid to reflect actual wealth.</div>`;
-  h+=`<div class="st">💼 Norm — Gross Income</div>`;
-  for(let i=0;i<4;i++){const yr=sy+i;h+=s(yr+' cash','normCashY'+i,200000,500000,5000,fmtF)+s(yr+' stock','normStockY'+i,0,300000,5000,fmtF)}
-  h+=s(baseYr+'+ cash base','normCashBase',200000,500000,5000,fmtF)+s(baseYr+'+ stock/yr','normStockBase',0,250000,5000,fmtF)+s('Comp growth','normGrowth',0,.04,.005,v=>(v*100).toFixed(1)+'%');
-  h+=s('401k employee','pretax401k',0,30500,500,fmtF)+s('Benefits pre-tax','pretaxBenefits',0,15000,200,fmtF);
-  h+=`<div id="norm_preview" style="font-size:7.5px;color:var(--t3);margin:1px 0 4px;font-style:italic"></div>`;
-  h+=`<div class="st">👩‍⚕️ Nancy — Gross Income</div>`;
+
+  // Kids
+  let kidsBody=s('# of kids','numKids',1,4,1)+s('Kid 1 born','kid1Birth',2026,2030,1);
+  if(P.numKids>=2)kidsBody+=s('Kid 2 born','kid2Birth',2028,2035,1);
+  if(P.numKids>=3)kidsBody+=s('Kid 3 born','kid3Birth',2031,2040,1);
+  if(P.numKids>=4)kidsBody+=s('Kid 4 born','kid4Birth',2034,2044,1);
+  h+=ST('👶 Kids','kids',kidsBody);
+
+  // Childcare
+  const childcareBody=s('Nanny until age','nannyEndAge',.5,3,.5,v=>v+' yrs')+s('Nanny $/hr','nannyHourlyRate',20,45,1,v=>'$'+v)+s('Nanny days/wk','nannyDaysPerWeek',2,5,1)+s('Daycare $/mo','daycareMonthly',1500,4500,100,v=>'$'+v.toLocaleString())+s('Kid 1 yeshiva start','kid1YeshivaStartAge',2,5,1,v=>v+' (uses daycare)')+s('Kids 2+ yeshiva start','yeshivaStartAge',2,5,1,v=>v+' (no daycare)');
+  h+=ST('🍼 Childcare','childcare',childcareBody);
+
+  // Tuition
+  h+=ST('🎓 Tuition','tuition',s('Tuition inflation','tuitionInflation',.02,.06,.005,v=>(v*100).toFixed(1)+'%'));
+
+  // Plan start
+  const planBody=s('Start year','planStartYear',2026,2035,1)+`<div style="font-size:7.5px;color:var(--t3);margin-bottom:6px">Advance each Jan to roll inputs forward. Update Starting Liquid to reflect actual wealth.</div>`;
+  h+=ST('📅 Plan Start Year','plan-start',planBody);
+
+  // Norm income
+  let normBody='';
+  for(let i=0;i<4;i++){const yr=sy+i;normBody+=s(yr+' cash','normCashY'+i,200000,500000,5000,fmtF)+s(yr+' stock','normStockY'+i,0,300000,5000,fmtF)}
+  normBody+=s(baseYr+'+ cash base','normCashBase',200000,500000,5000,fmtF)+s(baseYr+'+ stock/yr','normStockBase',0,250000,5000,fmtF)+s('Comp growth','normGrowth',0,.04,.005,v=>(v*100).toFixed(1)+'%');
+  normBody+=s('401k employee','pretax401k',0,30500,500,fmtF)+s('Benefits pre-tax','pretaxBenefits',0,15000,200,fmtF);
+  normBody+=`<div id="norm_preview" style="font-size:7.5px;color:var(--t3);margin:1px 0 4px;font-style:italic"></div>`;
+  h+=ST('💼 Norm — Gross Income','norm-income',normBody);
+
+  // Nancy income
+  let nancyBody='';
   if(sy<P.nancyRampYear){
     const nancyW2Yrs=Math.min(4,P.nancyRampYear-sy);
-    h+=`<div style="font-size:7.5px;color:var(--t3);margin-bottom:3px">${sy}–${sy+nancyW2Yrs-1}: W2 gross</div>`;
-    for(let i=0;i<nancyW2Yrs;i++){const yr=sy+i;h+=s(yr,'nancyW2Y'+i,0,200000,5000,fmtF)}
+    nancyBody+=`<div style="font-size:7.5px;color:var(--t3);margin-bottom:3px">${sy}–${sy+nancyW2Yrs-1}: W2 gross</div>`;
+    for(let i=0;i<nancyW2Yrs;i++){const yr=sy+i;nancyBody+=s(yr,'nancyW2Y'+i,0,200000,5000,fmtF)}
   }
-  h+=`<div style="height:1px;background:var(--bd);margin:4px 0"></div><div style="font-size:7.5px;color:var(--t3);margin-bottom:3px">2030+: Practice builder</div>`;
-  h+=s('Rate','nancyHourlyRate',200,500,25,v=>'$'+v+'/hr')+s('Start year','nancyRampYear',2028,2036,1)+s('Starting clients/wk','nancyRampClients',0,10,1)+s('Max clients/wk','nancyMaxClients',5,25,1)+s('Years to max','nancyRampYears',2,10,1)+s('Weeks/yr','nancyWeeksPerYear',40,50,1);
-  h+=s('Solo practice','nancySoloPractice',0,1,1,v=>v?'YES ✓':'No (W2)');
-  if(P.nancySoloPractice){h+=`<div class="solo-box"><div style="font-size:7.5px;font-weight:600;color:var(--g);margin-bottom:3px">🏠 Solo Practice Deductions</div>`;h+=s('Overhead/yr','nancyPracticeOverhead',5000,40000,1000,fmtF)+s('Home office','nancyHomeOfficeDeduct',0,15000,1000,fmtF)+s('QBI rate','nancyQBIRate',0,.20,.01,v=>(v*100).toFixed(0)+'%');h+=`</div>`}
-  h+=`<div id="nancy_preview" style="font-size:7.5px;color:var(--t3);margin:1px 0 4px;font-style:italic"></div>`;
-  h+=`<div class="st">📦 Expenses (couple, 2026)</div>`;
-  h+=s('Groceries','baseGroceries',4000,15000,500,fmtF)+s('Dining','baseDining',5000,25000,500,fmtF)+s('Shopping','baseShopping',10000,40000,1000,fmtF)+s('Vacations (no kids)','baseVacations',5000,30000,1000,fmtF)+s('Vacations (w/ kids)','postKidVacations',5000,25000,1000,fmtF)+s('Misc','baseMisc',5000,20000,1000,fmtF)+s('Charity','baseCharity',0,20000,500,fmtF)+s('Medical','baseMedical',2000,10000,500,fmtF)+s('Expense inflation','expenseInflation',.02,.05,.005,v=>(v*100).toFixed(1)+'%');
-  h+=`<div class="st">🏠 Home</div>`;
-  h+=s('Purchase year','homePurchaseYear',2028,2035,1)+s('Price','homePrice',1000000,3000000,50000,v=>'$'+(v/1e6).toFixed(2)+'M')+s('Down %','downPctg',20,60,5,v=>v+'%')+s('Mortgage rate','mortgageRate',3,8,.25,v=>v+'%')+s('Property tax %','propTaxRate',0.005,0.03,0.0005,v=>(v*100).toFixed(2)+'%');
-  h+=`<div class="st">📈 Returns & Tax</div>`;
-  h+=s('Portfolio return','investReturn',.03,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Home appreciation','homeAppreciation',.01,.05,.005,v=>(v*100).toFixed(1)+'%')+s('Starting liquid','startingLiquid',500000,2000000,50000,fmtF)+s('Starting 401k','k401Start',0,500000,10000,fmtF)+s('NYC rent','nycRent',4000,8000,100,v=>'$'+v.toLocaleString()+'/mo');
-  h+=`<div style="height:1px;background:var(--bd);margin:4px 0"></div>`;
-  h+=s('Cap gains rate (sales)','capGainsTaxRate',.15,.35,.005,v=>(v*100).toFixed(1)+'%')+s('Cost basis %','costBasisPct',.30,.80,.05,v=>(v*100).toFixed(0)+'%');
+  nancyBody+=`<div style="height:1px;background:var(--bd);margin:4px 0"></div><div style="font-size:7.5px;color:var(--t3);margin-bottom:3px">2030+: Practice builder</div>`;
+  nancyBody+=s('Rate','nancyHourlyRate',200,500,25,v=>'$'+v+'/hr')+s('Start year','nancyRampYear',2028,2036,1)+s('Starting clients/wk','nancyRampClients',0,10,1)+s('Max clients/wk','nancyMaxClients',5,25,1)+s('Years to max','nancyRampYears',2,10,1)+s('Weeks/yr','nancyWeeksPerYear',40,50,1);
+  nancyBody+=s('Solo practice','nancySoloPractice',0,1,1,v=>v?'YES ✓':'No (W2)');
+  if(P.nancySoloPractice){nancyBody+=`<div class="solo-box"><div style="font-size:7.5px;font-weight:600;color:var(--g);margin-bottom:3px">🏠 Solo Practice Deductions</div>`;nancyBody+=s('Overhead/yr','nancyPracticeOverhead',5000,40000,1000,fmtF)+s('Home office','nancyHomeOfficeDeduct',0,15000,1000,fmtF)+s('QBI rate','nancyQBIRate',0,.20,.01,v=>(v*100).toFixed(0)+'%');nancyBody+=`</div>`}
+  nancyBody+=`<div id="nancy_preview" style="font-size:7.5px;color:var(--t3);margin:1px 0 4px;font-style:italic"></div>`;
+  h+=ST('👩‍⚕️ Nancy — Gross Income','nancy-income',nancyBody);
+
+  // Expenses
+  const expBody=s('Groceries','baseGroceries',4000,15000,500,fmtF)+s('Dining','baseDining',5000,25000,500,fmtF)+s('Shopping','baseShopping',10000,40000,1000,fmtF)+s('Vacations (no kids)','baseVacations',5000,30000,1000,fmtF)+s('Vacations (w/ kids)','postKidVacations',5000,25000,1000,fmtF)+s('Misc','baseMisc',5000,20000,1000,fmtF)+s('Charity','baseCharity',0,20000,500,fmtF)+s('Medical','baseMedical',2000,10000,500,fmtF)+s('Expense inflation','expenseInflation',.02,.05,.005,v=>(v*100).toFixed(1)+'%');
+  h+=ST('📦 Expenses (couple, 2026)','expenses',expBody);
+
+  // Home
+  const homeBody=s('Purchase year','homePurchaseYear',2028,2035,1)+s('Price','homePrice',1000000,3000000,50000,v=>'$'+(v/1e6).toFixed(2)+'M')+s('Down %','downPctg',20,60,5,v=>v+'%')+s('Mortgage rate','mortgageRate',3,8,.25,v=>v+'%')+s('Property tax %','propTaxRate',0.005,0.03,0.0005,v=>(v*100).toFixed(2)+'%');
+  h+=ST('🏠 Home','home',homeBody);
+
+  // Returns (cap gains hardcoded for NYC)
+  const retBody=s('Portfolio return','investReturn',.03,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Home appreciation','homeAppreciation',.01,.05,.005,v=>(v*100).toFixed(1)+'%')+s('Starting liquid','startingLiquid',500000,2000000,50000,fmtF)+s('Starting 401k','k401Start',0,500000,10000,fmtF)+s('NYC rent','nycRent',4000,8000,100,v=>'$'+v.toLocaleString()+'/mo')+`<div style="font-size:7.5px;color:var(--t3);margin-top:4px">Cap gains: 34.5% · cost basis: 55% (NYC, hardcoded)</div>`;
+  h+=ST('📈 Returns','returns',retBody);
+
   h+=`<div style="height:1px;background:var(--bd);margin:6px 0"></div>`;
   h+=`<button class="btn" onclick="resetAll()">↺ Reset All</button>`;
   h+=`<div style="display:flex;gap:4px;margin-top:4px"><button class="btn" onclick="exportJSON()" style="flex:1;font-size:8px">📤 Export</button><button class="btn" onclick="importJSON()" style="flex:1;font-size:8px">📥 Import</button></div>`;
@@ -877,7 +899,7 @@ async function confirmRollForward(overlay,curYear,nextYear){
   showToast(`✓ Rolled forward to ${nextYear}`,'green');
 }
 
-const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,nannyEndAge:v=>v+' yrs',nannyHourlyRate:v=>'$'+v,nannyDaysPerWeek:null,daycareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normCashY0:fmtF,normStockY0:fmtF,normCashY1:fmtF,normStockY1:fmtF,normCashY2:fmtF,normStockY2:fmtF,normCashY3:fmtF,normStockY3:fmtF,normCashBase:fmtF,normStockBase:fmtF,normGrowth:v=>(v*100).toFixed(1)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo',capGainsTaxRate:v=>(v*100).toFixed(1)+'%',costBasisPct:v=>(v*100).toFixed(0)+'%'};
+const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,nannyEndAge:v=>v+' yrs',nannyHourlyRate:v=>'$'+v,nannyDaysPerWeek:null,daycareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normCashY0:fmtF,normStockY0:fmtF,normCashY1:fmtF,normStockY1:fmtF,normCashY2:fmtF,normStockY2:fmtF,normCashY3:fmtF,normStockY3:fmtF,normCashBase:fmtF,normStockBase:fmtF,normGrowth:v=>(v*100).toFixed(1)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo'};
 
 function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'+key);const fn=SF[key];if(el&&fn)el.textContent=fn(P[key]);else if(el)el.textContent=P[key];if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear')buildControls();activeScenarioIdx=-1;render();savePlannerState()}
 
@@ -1869,9 +1891,9 @@ function renderCompareTab(R,P){
   });
   h+=`</tbody></table></div>`;
   // Parameter diffs
-  const PKEYS=['homePrice','downPctg','mortgageRate','homePurchaseYear','investReturn','startingLiquid','expenseInflation','nancyHourlyRate','nancyMaxClients','normCashBase','normStockBase','pretax401k','taxInflation','numKids'];
-  const PLABELS={homePrice:'Home Price',downPctg:'Down %',mortgageRate:'Mortgage Rate',homePurchaseYear:'Purchase Year',investReturn:'Return %',startingLiquid:'Starting Liquid',expenseInflation:'Exp Inflation',nancyHourlyRate:'Nancy $/hr',nancyMaxClients:'Nancy Max Clients',normCashBase:'Norm Cash Base',normStockBase:'Norm Stock Base',pretax401k:'401k Contrib',taxInflation:'Tax Inflation',numKids:'# Kids'};
-  const fmtPv=(k,v)=>{if(['investReturn','expenseInflation','taxInflation'].includes(k))return(v*100).toFixed(1)+'%';if(['homePrice','startingLiquid','normCashBase','normStockBase','pretax401k'].includes(k))return fmt(v);if(k==='downPctg')return v+'%';if(k==='mortgageRate')return v+'%';return String(v)};
+  const PKEYS=['homePrice','downPctg','mortgageRate','homePurchaseYear','investReturn','startingLiquid','expenseInflation','nancyHourlyRate','nancyMaxClients','normCashBase','normStockBase','pretax401k','numKids'];
+  const PLABELS={homePrice:'Home Price',downPctg:'Down %',mortgageRate:'Mortgage Rate',homePurchaseYear:'Purchase Year',investReturn:'Return %',startingLiquid:'Starting Liquid',expenseInflation:'Exp Inflation',nancyHourlyRate:'Nancy $/hr',nancyMaxClients:'Nancy Max Clients',normCashBase:'Norm Cash Base',normStockBase:'Norm Stock Base',pretax401k:'401k Contrib',numKids:'# Kids'};
+  const fmtPv=(k,v)=>{if(['investReturn','expenseInflation'].includes(k))return(v*100).toFixed(1)+'%';if(['homePrice','startingLiquid','normCashBase','normStockBase','pretax401k'].includes(k))return fmt(v);if(k==='downPctg')return v+'%';if(k==='mortgageRate')return v+'%';return String(v)};
   const diffCols=cols.slice(1).filter(c=>PKEYS.some(k=>c.params[k]!==undefined&&c.params[k]!==P[k]));
   if(diffCols.length){
     h+=`<div style="margin-top:16px"><div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:8px">Parameter differences vs. current plan</div>`;
