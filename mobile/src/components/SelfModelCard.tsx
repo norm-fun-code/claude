@@ -98,16 +98,18 @@ export function SelfModelCard() {
 
       {model && (
         <>
-          {/* Stats strip */}
-          <View style={[styles.stats, { borderColor: c.border }]}>
-            <Stat label="CONFIRMED" value={String(confirmedCount)} sub="correlations" c={c} />
-            <View style={[styles.statDivider, { backgroundColor: c.border }]} />
-            <Stat label="RUNNING" value={String(runningCount)} sub="experiments" c={c} />
-            <View style={[styles.statDivider, { backgroundColor: c.border }]} />
-            <Stat label="COMPLETED" value={String(completedCount)} sub="experiments" c={c} />
-            <View style={[styles.statDivider, { backgroundColor: c.border }]} />
-            <Stat label="GOALS" value={String(s.goals ?? 0)} sub="active" c={c} />
-          </View>
+          {/* Stats strip — only shown when something is actually active */}
+          {(confirmedCount + runningCount + completedCount + (s.goals ?? 0)) > 0 && (
+            <View style={[styles.stats, { borderColor: c.border }]}>
+              <Stat label="CONFIRMED" value={String(confirmedCount)} sub="correlations" c={c} />
+              <View style={[styles.statDivider, { backgroundColor: c.border }]} />
+              <Stat label="RUNNING" value={String(runningCount)} sub="experiments" c={c} />
+              <View style={[styles.statDivider, { backgroundColor: c.border }]} />
+              <Stat label="COMPLETED" value={String(completedCount)} sub="experiments" c={c} />
+              <View style={[styles.statDivider, { backgroundColor: c.border }]} />
+              <Stat label="GOALS" value={String(s.goals ?? 0)} sub="active" c={c} />
+            </View>
+          )}
 
           {/* Habits this week */}
           {habits.length > 0 && (

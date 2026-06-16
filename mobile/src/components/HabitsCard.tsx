@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, Pressable, useColorScheme, AppState } from 'rea
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { API_BASE, HABITS_STREAKS_URL, authHeaders, fetchWithTimeout } from '../config';
+import { AnnotationsCard } from './AnnotationsCard';
 
 const HABITS_URL = `${API_BASE}/api/habits`;
 const HABITS_TODAY_URL = `${API_BASE}/api/habits/today`;
@@ -179,8 +180,11 @@ export function HabitsCard() {
         </Text>
       </Pressable>
       {failed && (
-        <Text style={styles.failed}>Couldn’t save — check your connection and tap Retry.</Text>
+        <Text style={styles.failed}>Couldn't save — check your connection and tap Retry.</Text>
       )}
+      <View style={[styles.contextDivider, { borderTopColor: c.border }]}>
+        <AnnotationsCard inline />
+      </View>
     </View>
   );
 }
@@ -231,4 +235,5 @@ const styles = StyleSheet.create({
   },
   saveText: { fontWeight: '700', fontSize: 15 },
   failed: { ...typography.caption, color: '#C0392B', marginTop: spacing.sm, textAlign: 'center' },
+  contextDivider: { marginTop: spacing.md, paddingTop: spacing.sm, borderTopWidth: 1 },
 });

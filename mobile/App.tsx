@@ -26,7 +26,6 @@ import { getColors, spacing } from './src/theme';
 
 import { Header } from './src/components/Header';
 import { TabBar, TabKey, TABS } from './src/components/TabBar';
-import { HabitTrendsCard } from './src/components/HabitTrendsCard';
 import { ForecastCard } from './src/components/ForecastCard';
 import { LibraryCard } from './src/components/LibraryCard';
 import { AffirmationsCard } from './src/components/AffirmationsCard';
@@ -58,7 +57,6 @@ import { CrossContextCard } from './src/components/CrossContextCard';
 import { SelfModelCard } from './src/components/SelfModelCard';
 import { SleepLogCard } from './src/components/SleepLogCard';
 import { GoalsCard } from './src/components/GoalsCard';
-import { AnnotationsCard } from './src/components/AnnotationsCard';
 import { WeeklyStateCard } from './src/components/WeeklyStateCard';
 import { CheckinHistoryCard } from './src/components/CheckinHistoryCard';
 import { ANALYZE_URL, authHeaders, fetchWithTimeout } from './src/config';
@@ -183,10 +181,9 @@ export default function App() {
               builtAt={liveRecovery.recovery ? undefined : d?.builtAt}
             />
             <HealthCard health={health} />
-            {/* healthInsights is the server-curated top set of health/wellbeing
-                findings — already scored and ranked by signal strength (sleep ↔ HRV
-                ↔ focus impacts, anomalies, correlations). Habit-only findings are
-                routed to the Today tab's HabitTrendsCard instead. */}
+            {/* healthInsights is the server-curated top set of health domain findings,
+                already scored and ranked. Habit/wellbeing-only findings go to the
+                merged CheckinHistoryCard in Today's collapsible. */}
             {(d?.healthInsights?.length ?? 0) > 0 ? (
               <InsightsCard insights={d!.healthInsights!} />
             ) : (
@@ -237,6 +234,7 @@ export default function App() {
             {(d?.notionText || d?.notionInsight) && (
               <NotionCard pageTitle={d?.notionPageTitle ?? ''} notionText={d!.notionText} quote={d?.notionQuote} insight={d!.notionInsight} />
             )}
+            <AffirmationsCard />
           </>
         );
       case 'today':
@@ -257,17 +255,14 @@ export default function App() {
               <CalendarCard events={d?.calendar ?? []} workBusy={d?.workBusy ?? []} />
               <CheckinCard />
               <HabitsCard />
-              <CheckinHistoryCard />
-              <HabitTrendsCard insights={(d?.insights ?? []).filter((i) => {
+              <CheckinHistoryCard insights={(d?.insights ?? []).filter((i) => {
                 if (i.type === 'habit_consistency') return true;
                 const nonHealth = new Set(['habits', 'wellbeing']);
                 return i.domains?.every((dom: string) => nonHealth.has(dom)) ?? false;
               })} />
               <GoalsCard weeklyGoals={d?.weeklyGoals} />
-              <AnnotationsCard />
               {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
               <ReviewCard review={d?.weeklyReview ?? null} compact actions={d?.leverageActions ?? []} />
-              <AffirmationsCard />
               <SleepLogCard />
             </CollapsibleSection>
 

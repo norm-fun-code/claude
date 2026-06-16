@@ -21,7 +21,11 @@ interface Annotation {
   end_ts: string | null;
 }
 
-export function AnnotationsCard() {
+interface AnnotationsProps {
+  inline?: boolean;
+}
+
+export function AnnotationsCard({ inline = false }: AnnotationsProps = {}) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
@@ -66,15 +70,11 @@ export function AnnotationsCard() {
     } catch {} finally { setSaving(false); }
   }
 
-  return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
-      <SectionHeader emoji="📌" title="Life Context" />
-      {annotations.length === 0 ? (
-        <Text style={[styles.empty, { color: c.subtext }]}>
-          Tag what's going on — travel, illness, stress — so insights stay accurate.
-        </Text>
-      ) : (
-        <View style={styles.chips}>
+  const inner = (
+    <>
+      {!inline && <SectionHeader emoji="📌" title="Life Context" />}
+      {annotations.length > 0 && (
+        <View style={[styles.chips, inline && { marginTop: spacing.xs }]}>
           {annotations.slice(0, 5).map(a => (
             <View key={a.id} style={[styles.chip, { backgroundColor: c.accentSoft, borderColor: c.border }]}>
               <Text style={[styles.chipText, { color: c.accent }]}>
@@ -86,10 +86,18 @@ export function AnnotationsCard() {
       )}
       <TouchableOpacity
         onPress={() => setModalVisible(true)}
-        style={[styles.addBtn, { borderColor: c.border }]}
+        style={inline ? styles.inlineBtn : [styles.addBtn, { borderColor: c.border }]}
       >
-        <Text style={[styles.addBtnText, { color: c.subtext }]}>+ Add context</Text>
+        <Text style={[inline ? styles.inlineBtnText : styles.addBtnText, { color: c.subtext }]}>
+          {annotations.length === 0 ? '+ Add life context' : '+ Add more'}
+        </Text>
       </TouchableOpacity>
+    </>
+  );
+
+  return (
+    <View style={inline ? undefined : [styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+      {inner}
 
       <Modal visible={modalVisible} transparent animationType="slide" onRequestClose={() => setModalVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
@@ -140,6 +148,8 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 13, fontWeight: '500' },
   addBtn: { paddingVertical: spacing.sm, borderRadius: radius.md, borderWidth: 1, alignItems: 'center' },
   addBtnText: { fontSize: 14, fontWeight: '500' },
+  inlineBtn: { paddingTop: spacing.xs },
+  inlineBtnText: { fontSize: 13, fontWeight: '500' },
   overlay: { flex: 1, backgroundColor: '#00000055', justifyContent: 'flex-end' },
   sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 1, borderLeftWidth: 1, borderRightWidth: 1, padding: spacing.lg, paddingBottom: spacing.xl + 10 },
   sheetTitle: { fontSize: 18, fontWeight: '700', marginBottom: spacing.md },
