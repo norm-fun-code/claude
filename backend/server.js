@@ -1649,6 +1649,71 @@ app.get('/api/debug/work-calendar', async (req, res) => {
   }
 });
 
+// Diagnostic: full curation score breakdown for every finding in the last analyze
+// pass — so production issues can be diagnosed from data rather than screenshots.
+// Shows each finding's _score, _scoreParts, _signature, and which surface it lands on.
+//   GET /api/debug/insights
+app.get('/api/debug/insights', async (req, res) => {
+  try {
+    const { curate } = require('./src/intelligence/curate');
+    const COMPOSITE_TYPES = ['recovery', 'sleep_debt', 'sleep_consistency', 'training_load'];
+
+    const open = await findingsStore.listFindings({ status: 'open' });
+
+    const composites = open.filter((f) => COMPOSITE_TYPES.includes(f.type));
+    const crossContext = open.filter((f) => f.type === 'cross_context');
+    const insightPool = open.filter(
+      (f) => f.type !== 'leverage' && f.type !== 'forecast' && f.type !== 'cross_context' && !COMPOSITE_TYPES.includes(f.type)
+    );
+
+    // Full curate — annotates each finding with _score, _scoreParts, _signature.
+    const ranked = await curate(insightPool);
+
+    // Mirror the briefing's surface assignments exactly (same filters as /api/briefing).
+    const top12 = ranked.slice(0, 12);
+    const healthTop5 = ranked
+      .filter((f) => Array.isArray(f.domains) && f.domains.includes('health'))
+      .slice(0, 5);
+    const habitFiltered = ranked.filter((f) => {
+      if (f.type === 'habit_consistency') return true;
+      const nonHealth = new Set(['habits', 'wellbeing']);
+      return Array.isArray(f.domains) && f.domains.every((d) => nonHealth.has(d));
+    });
+
+    res.json({
+      generatedAt: new Date().toISOString(),
+      counts: {
+        total: open.length,
+        composites: composites.length,
+        crossContext: crossContext.length,
+        insightPool: insightPool.length,
+        ranked: ranked.length,
+      },
+      // Full ranked pool with score breakdowns — the diagnostic core.
+      rankedPool: ranked.map((f) => ({
+        type: f.type,
+        title: f.title,
+        domains: f.domains,
+        confidence: f.confidence,
+        _signature: f._signature,
+        _score: f._score,
+        _scoreParts: f._scoreParts,
+        evidence: f.evidence,
+      })),
+      // Which findings land on which surface, mirroring the briefing exactly.
+      surfaces: {
+        insights: top12.map((f) => ({ type: f.type, title: f.title, domains: f.domains, _score: f._score })),
+        healthInsights: healthTop5.map((f) => ({ type: f.type, title: f.title, domains: f.domains, _score: f._score })),
+        habitTrends: habitFiltered.map((f) => ({ type: f.type, title: f.title, domains: f.domains, _score: f._score })),
+      },
+      composites: composites.map((f) => ({ type: f.type, title: f.title, detail: f.detail })),
+      crossContext: crossContext.map((f) => ({ title: f.title, confidence: f.confidence, domains: f.domains })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Lightweight Monarch MCP health check — confirms the integration is configured
 // and the refresh-token → access-token exchange works, WITHOUT dumping any
 // financial data.

@@ -384,10 +384,8 @@ async function liveRecovery() {
   const SOURCE_LOCK = {
     'health:hrv': NIGHT_SOURCES,
     'health:resting_hr': NIGHT_SOURCES,
-    'health:sleep_debt': ['eight_sleep'],
-    'health:sleep_need': ['eight_sleep'],
   };
-  for (const key of ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score', 'health:sleep_debt', 'health:sleep_need']) {
+  for (const key of ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score']) {
     const [dm, mt] = key.split(':');
     const rows = await metricsStore.dailyAggregatePreferSource({
       domain: dm, metric: mt, from: from60, agg: 'avg', sources: SOURCE_LOCK[key] ?? null,
