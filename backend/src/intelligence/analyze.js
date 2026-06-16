@@ -524,6 +524,125 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
 }
 
 /**
+ * Pure: daytime HRV/RHR vs lifestyle correlates.
+ *
+ * Apple Watch HRV and RHR daily averages reflect autonomic tone across the whole
+ * waking day, making them a stress/balance signal rather than a pure recovery
+ * signal (that's what night-source-locked Eight Sleep readings capture). Splits
+ * days by eating quality, mood, and focus to surface personal patterns like
+ * "On days you eat well, your daytime HRV averages 48ms vs 37ms."
+ *
+ * Receives a pre-built map that includes ONLY daytime series (loaded from
+ * apple_health source) + the relevant lifestyle inputs — so it never interferes
+ * with the night-source-locked recovery analysis.
+ */
+function computeDaytimeCardio(daytimeMap) {
+  const MIN_N = 5;
+  const MIN_PCT = 0.05;
+  const MAX_RESULTS = 4;
+
+  const OUTCOMES = {
+    'health:hrv_daytime': { label: 'Daytime HRV', unit: 'ms', good: 'up' },
+    'health:rhr_daytime': { label: 'Daytime RHR', unit: 'bpm', good: 'down' },
+  };
+
+  // Each lever: key in daytimeMap, human label, threshold for "high" bucket.
+  const LEVERS = [
+    { key: 'habits:eat_healthy',  label: 'Eating well',    threshold: 3 },
+    { key: 'wellbeing:mood',      label: 'High-mood days',  threshold: 4 },
+    { key: 'wellbeing:focus',     label: 'High-focus days', threshold: 4 },
+  ];
+
+  function dayKey(d) {
+    if (d instanceof Date) return d.toISOString().slice(0, 10);
+    return String(d).slice(0, 10);
+  }
+
+  function toMap(key) {
+    const series = daytimeMap[key];
+    if (!series || series.length === 0) return null;
+    const m = new Map();
+    for (const r of series) m.set(dayKey(r.day), Number(r.value));
+    return m;
+  }
+
+  function splitStats(leverMap, outcomeMap, threshold) {
+    const hiVals = [], loVals = [];
+    for (const [day, val] of outcomeMap) {
+      const l = leverMap.get(day);
+      if (l === undefined || !Number.isFinite(val)) continue;
+      (l >= threshold ? hiVals : loVals).push(val);
+    }
+    if (hiVals.length < MIN_N || loVals.length < MIN_N) return null;
+    const avg = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
+    const hiMean = avg(hiVals);
+    const loMean = avg(loVals);
+    const pct = loMean !== 0 ? (hiMean - loMean) / Math.abs(loMean) : null;
+    if (pct == null || Math.abs(pct) < MIN_PCT) return null;
+    return { hiMean, loMean, pct, hiN: hiVals.length, loN: loVals.length };
+  }
+
+  const candidates = [];
+  for (const lever of LEVERS) {
+    const lMap = toMap(lever.key);
+    if (!lMap) continue;
+    for (const [outKey, outInfo] of Object.entries(OUTCOMES)) {
+      const oMap = toMap(outKey);
+      if (!oMap) continue;
+      const s = splitStats(lMap, oMap, lever.threshold);
+      if (s) candidates.push({ lever, outInfo, outKey, s });
+    }
+  }
+
+  if (!candidates.length) return [];
+
+  // Best lever per outcome — don't flood with all combinations.
+  const bestByOutcome = new Map();
+  for (const c of candidates) {
+    const prev = bestByOutcome.get(c.outInfo.label);
+    if (!prev || Math.abs(c.s.pct) > Math.abs(prev.s.pct)) bestByOutcome.set(c.outInfo.label, c);
+  }
+
+  const top = [...bestByOutcome.values()]
+    .sort((a, b) => Math.abs(b.s.pct) - Math.abs(a.s.pct))
+    .slice(0, MAX_RESULTS);
+
+  const fmt = (n, unit) =>
+    unit === 'ms' || unit === 'bpm' ? `${Math.round(n)}${unit}` : `${round(n, 1)}`;
+
+  return top.map(({ lever, outInfo, outKey, s }) => {
+    const { hiMean, loMean, pct, hiN, loN } = s;
+    const improved = (outInfo.good === 'up' && pct > 0) || (outInfo.good === 'down' && pct < 0);
+    const dir = pct > 0 ? 'higher' : 'lower';
+    const pctStr = `${pct >= 0 ? '+' : ''}${Math.round(pct * 100)}%`;
+    return {
+      type: 'daytime_cardio',
+      domains: ['health', 'wellbeing', 'habits'],
+      title: `${lever.label}: ${outInfo.label} ${fmt(hiMean, outInfo.unit)} vs ${fmt(loMean, outInfo.unit)} (${pctStr})`,
+      detail:
+        `On the ${hiN} days with ${lever.label.toLowerCase()}, your ${outInfo.label.toLowerCase()} averaged ` +
+        `${fmt(hiMean, outInfo.unit)} — ${Math.abs(Math.round(pct * 100))}% ${dir} than on the ${loN} ` +
+        `other days (${fmt(loMean, outInfo.unit)}). ` +
+        (improved
+          ? `${lever.label} is associated with better autonomic tone throughout the day.`
+          : `Association, not proof of cause — other factors may drive this pattern.`),
+      confidence: Math.min(0.9, Math.abs(pct) / 0.3),
+      evidence: {
+        auto: true,
+        kind: 'daytime_cardio',
+        lever: lever.key,
+        outcome: outKey,
+        hiMean: round(hiMean),
+        loMean: round(loMean),
+        pct: round(pct, 3),
+        hiN,
+        loN,
+      },
+    };
+  });
+}
+
+/**
  * Pure: SLEEP-impact split — the lever the user most wants to understand. The
  * general correlation engine tests sleep too, but a best-vs-worst-nights split
  * is far more actionable. Splits nights into the user's best third vs worst third
@@ -797,6 +916,25 @@ async function analyze(opts = {}) {
     }
   }
 
+  // Load Apple Watch daytime HRV/RHR separately from the night-source-locked
+  // series. These go into a private map consumed only by computeDaytimeCardio —
+  // they never enter the general correlation/trend/anomaly engines, so there's
+  // no risk of trivial hrv↔hrv_daytime findings or polluting the recovery signal.
+  const daytimeMap = {};
+  for (const [vtKey, metric] of [['health:hrv_daytime', 'hrv'], ['health:rhr_daytime', 'resting_hr']]) {
+    try {
+      const rows = await metricsStore.dailyAggregatePreferSource({
+        domain: 'health', metric, from, agg: 'avg', sources: ['apple_health'],
+      });
+      if (rows.length) daytimeMap[vtKey] = rows;
+    } catch { /* non-critical */ }
+  }
+  // Include the lifestyle inputs the daytime function needs.
+  for (const k of ['habits:eat_healthy', 'wellbeing:mood', 'wellbeing:focus']) {
+    if (seriesByKey[k]) daytimeMap[k] = seriesByKey[k];
+  }
+  const daytimeCardio = computeDaytimeCardio(daytimeMap);
+
   const trends = computeTrends(seriesByKey, o);
   const correlations = computeCorrelations(seriesByKey, o);
   const anomalies = computeAnomalies(seriesByKey, o);
@@ -851,7 +989,7 @@ async function analyze(opts = {}) {
   // Goal achievement-probability forecasts from the same loaded series.
   const forecasts = computeForecasts(goals, seriesByKey);
 
-  const all = [...trends, ...correlations, ...anomalies, ...composites, ...actions, ...forecasts, ...habitConsistency, ...habitHealthSplits, ...sleepImpact, ...activityImpact];
+  const all = [...trends, ...correlations, ...anomalies, ...composites, ...actions, ...forecasts, ...habitConsistency, ...habitHealthSplits, ...sleepImpact, ...activityImpact, ...daytimeCardio];
   const windowStart = from;
   const windowEnd = new Date();
 
@@ -862,7 +1000,7 @@ async function analyze(opts = {}) {
   const { withTransaction } = require('../db');
   await withTransaction(async (client) => {
     const tx = (text, params) => client.query(text, params);
-    await findingsStore.supersedeAuto(['trend', 'correlation', 'anomaly', 'leverage', 'forecast', 'habit_consistency', 'habit_split', 'sleep_impact', 'activity_impact', ...COMPOSITE_TYPES], tx);
+    await findingsStore.supersedeAuto(['trend', 'correlation', 'anomaly', 'leverage', 'forecast', 'habit_consistency', 'habit_split', 'sleep_impact', 'activity_impact', 'daytime_cardio', ...COMPOSITE_TYPES], tx);
     for (const f of all) {
       await findingsStore.createFinding({ ...f, windowStart, windowEnd }, tx);
     }
@@ -880,10 +1018,11 @@ async function analyze(opts = {}) {
     habitHealthSplits: habitHealthSplits.length,
     sleepImpact: sleepImpact.length,
     activityImpact: activityImpact.length,
+    daytimeCardio: daytimeCardio.length,
   };
 }
 
-module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeHabitHealthSplits, computeSleepImpact, computeActivityImpact, DEFAULTS, CHECKIN_LEVERS };
+module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeHabitHealthSplits, computeSleepImpact, computeActivityImpact, computeDaytimeCardio, DEFAULTS, CHECKIN_LEVERS };
 
 // CLI entrypoint
 if (require.main === module) {
