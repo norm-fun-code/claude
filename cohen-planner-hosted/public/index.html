@@ -1559,7 +1559,7 @@ function renderGoalsTab(R,P,tT){
   const _actions=[];
   // 1. Down payment
   if(!dpOnTrack){_actions.push({icon:'🏠',color:'var(--a)',text:`Need ${fmt(dpShortfall)} more for down payment — save ~${fmt(dpMoNeeded)}/mo for ${yearsLeft} yr${yearsLeft!==1?'s':''}`});}
-  else{_actions.push({icon:'🏠',color:'var(--g)',text:`Down payment on track — projected ${fmt(Math.round(projLiq/dp*100))}% funded in ${P.homePurchaseYear}`});}
+  else{_actions.push({icon:'🏠',color:'var(--g)',text:`Down payment funded — projected ${fmt(projLiq)} liquid covers the ${fmt(dp)} needed in ${P.homePurchaseYear}`});}
   // 2. Nancy trajectory
   const nancyMatYr=P.nancyRampYear+P.nancyRampYears;
   const nancyMatRow=R.find(r=>r.yr===nancyMatYr);
@@ -1594,22 +1594,28 @@ function renderGoalsTab(R,P,tT){
     const nwExcl401k=monarchSnapshot.netWorth-(has401k?monarchSnapshot.retirement:0);
     const nwIncl401k=nwExcl401k+live401k;
     const projTotal=projRow.nw+projRow.k401;
-    const totalDiff=nwIncl401k-projTotal;
     const liqDiff=impliedLiq-projRow.liq;
     const syncDate=new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+    // Only compare what Monarch actually reports. If 401k isn't synced, comparing
+    // a starting balance against the model's projected EOY 401k is apples-to-oranges,
+    // so the headline uses NW-excl-401k (the genuinely comparable figure).
+    const headlineActual=has401k?nwIncl401k:nwExcl401k;
+    const headlinePlan=has401k?projTotal:projRow.nw;
+    const totalDiff=headlineActual-headlinePlan;
     const ahead=totalDiff>=0;
     h+=`<div style="background:var(--a-soft);border:1px solid rgba(191,105,0,.25);border-radius:10px;padding:16px 18px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
         <div>
           <div style="font-size:13px;font-weight:700;color:var(--tx)">📍 Live Snapshot · Monarch</div>
-          <div style="font-size:10px;color:var(--t2);margin-top:2px">As of ${syncDate} · ${curYr} plan year</div>
+          <div style="font-size:10px;color:var(--t2);margin-top:2px">As of ${syncDate} · vs. ${curYr} plan target</div>
         </div>
         <div style="background:${ahead?'var(--g-soft)':'var(--r-soft)'};border:1px solid ${ahead?'rgba(26,135,84,.2)':'rgba(205,61,100,.2)'};border-radius:6px;padding:6px 12px;text-align:center">
           <div style="font-size:11px;font-weight:700;color:${ahead?'var(--g)':'var(--r)'}">${ahead?'▲ Ahead':'▼ Behind'}</div>
           <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:${ahead?'var(--g)':'var(--r)'}">${ahead?'+':''}${fmt(totalDiff)}</div>
-          <div style="font-size:8px;color:var(--t3)">vs plan</div>
+          <div style="font-size:8px;color:var(--t3)">${has401k?'vs plan':'NW ex-401k'}</div>
         </div>
       </div>
+      <div style="font-size:9.5px;color:var(--t2);line-height:1.45;margin-bottom:12px;padding:7px 9px;background:#fff8;border-radius:6px"><b style="color:var(--tx)">"Plan"</b> = where your model projected you'd be by ${curYr} (the ${curYr} row of the projection). The headline compares your real Monarch balances against that target.${has401k?'':` <span style="color:var(--a)">Your 401k isn't synced from Monarch, so it's excluded from the headline</span> — it shows the modeled starting value below for reference only.`}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
         <div style="background:#fff8;border-radius:7px;padding:9px 11px">
           <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">NW (excl 401k)</div>
@@ -1621,13 +1627,13 @@ function renderGoalsTab(R,P,tT){
           <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--b)">${fmt(impliedLiq)}</div>
           <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Plan: ${fmt(projRow.liq)} · ${liqDiff>=0?'+':''}${fmt(liqDiff)}</div>
         </div>
-        <div style="background:#fff8;border-radius:7px;padding:9px 11px">
-          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">401k${has401k?'':' (modeled)'}</div>
+        <div style="background:#fff8;border-radius:7px;padding:9px 11px${has401k?'':';opacity:.6'}">
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">401k${has401k?'':' · not synced'}</div>
           <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--p)">${fmt(live401k)}</div>
-          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Plan: ${fmt(projRow.k401)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${has401k?'Plan: '+fmt(projRow.k401):'modeled estimate'}</div>
         </div>
         <div style="background:#fff8;border-radius:7px;padding:9px 11px">
-          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Total w/ 401k</div>
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Total${has401k?' w/ 401k':' (incl. modeled 401k)'}</div>
           <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">${fmt(nwIncl401k)}</div>
           <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Plan: ${fmt(projTotal)}</div>
         </div>
