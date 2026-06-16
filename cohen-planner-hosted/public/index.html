@@ -1835,9 +1835,10 @@ function renderAdvisorTab(R,P){
     <div class="adv-main">
       <div class="adv-msgs" id="advMsgs"></div>
       <div class="adv-input-area">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;padding:0 2px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;padding:0 2px;gap:6px">
           <button class="adv-agentic-btn" id="advAgenticBtn" onclick="advToggleAgentic()" title="Agentic mode: AI proposes plan changes in its own sandbox scenario">🤖 Propose changes</button>
-          <span id="advAgenticLabel" style="display:none;font-size:9px;color:var(--p);font-weight:600">AI sandbox active — changes go to a separate scenario</span>
+          <button class="adv-agentic-btn" onclick="advOptimize()" style="background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600" title="Run full optimization — AI analyzes all levers and saves best scenario">⚡ Optimize</button>
+          <span id="advAgenticLabel" style="display:none;font-size:9px;color:var(--p);font-weight:600;margin-left:auto">AI sandbox active — changes go to a separate scenario</span>
         </div>
         <div class="adv-input-wrap">
           <textarea class="adv-input" id="advInput" placeholder="Ask anything about your plan, portfolio, scenarios, taxes..." rows="1"></textarea>
@@ -1860,6 +1861,7 @@ function advRenderMessages(){
     msgs.innerHTML=`<div class="adv-welcome">
       <h3>Ask me anything about your plan</h3>
       <p>I have your live planner state — every slider, scenario, and projection. Try one of these or ask your own:</p>
+      <button onclick="advOptimize()" style="width:100%;margin-bottom:14px;padding:13px 18px;background:linear-gradient(135deg,var(--accent),var(--p));color:#fff;border:none;border-radius:9px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px;letter-spacing:-.01em;box-shadow:0 3px 12px rgba(99,91,255,.25);transition:opacity .15s" onmouseover="this.style.opacity='.9'" onmouseout="this.style.opacity='1'">⚡ What should I optimize? <span style="font-size:10px;font-weight:400;opacity:.85">— run full analysis, auto-propose best scenario</span></button>
       <div class="adv-starters">
         <div class="adv-starter" onclick="advAsk('Given my current plan, what should I prioritize in the next 12 months?')"><strong>🎯 Top priority?</strong>Next 12 months</div>
         <div class="adv-starter" onclick="advAsk('Run a stress test - what if equity returns are only 4% instead of 6%?')"><strong>📉 Stress test returns</strong>4% vs 6% returns</div>
@@ -1895,6 +1897,26 @@ function advAddMessage(role,content,isThinking,container){
 }
 
 function advAsk(q){const input=document.getElementById('advInput');if(input){input.value=q;advSend()}}
+
+async function advOptimize(){
+  // Ensure agentic mode is on
+  if(!advAgenticMode)advToggleAgentic();
+  // Create a fresh chat for this run
+  await advNewChat();
+  if(!advisorActiveChatId)return;
+  const prompt=`Optimize my financial plan. Follow these exact steps using your tools:
+
+1. Call run_projection() to lock in the baseline (final NW, deficit years, worst surplus).
+2. Systematically test the levers I can actually control: investReturn, normCashBase, normStockBase, nancyHourlyRate, nancyMaxClients, pretax401k, homePrice, downPctg, homePurchaseYear, expenseInflation. For each, use set_param() then run_projection() to measure the impact on final NW vs baseline.
+3. Pick the top 2-3 changes with the biggest positive impact AND that are realistically achievable given my situation.
+4. Apply all those changes together with set_param() calls, then run_projection() one final time to show the combined effect.
+5. Call save_scenario() with a descriptive name like "Optimized: lower home + higher 401k".
+6. In your final message: lead with the total NW improvement, list the 2-3 changes with individual dollar impacts, and flag any tradeoffs or risks.
+
+Don't ask me questions — just run the analysis and deliver the recommendation.`;
+  const input=document.getElementById('advInput');
+  if(input){input.value=prompt;advSend();}
+}
 
 async function advNewChat(){
   const id=advUuid();
