@@ -54,7 +54,6 @@ import { HealthBackfillCard } from './src/components/HealthBackfillCard';
 import { CrossContextCard } from './src/components/CrossContextCard';
 import { SelfModelCard } from './src/components/SelfModelCard';
 import { SleepLogCard } from './src/components/SleepLogCard';
-import { GoalsCard } from './src/components/GoalsCard';
 import { WeeklyStateCard } from './src/components/WeeklyStateCard';
 import { CheckinHistoryCard } from './src/components/CheckinHistoryCard';
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
@@ -260,7 +259,6 @@ export default function App() {
                 const nonHealth = new Set(['habits', 'wellbeing']);
                 return i.domains?.every((dom: string) => nonHealth.has(dom)) ?? false;
               })} />
-              <GoalsCard weeklyGoals={d?.weeklyGoals} />
               {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
               <SleepLogCard />
             </CollapsibleSection>
