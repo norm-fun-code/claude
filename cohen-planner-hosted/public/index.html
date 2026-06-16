@@ -1729,7 +1729,8 @@ function renderGoalsTab(R,P,tT){
     // in the headline (it grows with the home over time).
     const ptRate=P.propTaxRate??.012;
     const moPropTax0=ptRate*P.homePrice/12;          // year 1
-    const moAllIn0=moPmt+moPropTax0;
+    const moMaint0=(P.maintBase||10000)/12;          // matches model: maintBase, grows 2%/yr
+    const moAllIn0=moPmt+moPropTax0+moMaint0;
     const homeVal30=P.homePrice*(1+P.homeAppreciation)**30;
     const moPropTax30=ptRate*homeVal30/12;           // year 30 (tax keeps rising)
     // Year-by-year principal vs interest (annual)
@@ -1752,7 +1753,7 @@ function renderGoalsTab(R,P,tT){
         </div>
         <div style="text-align:right">
           <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:var(--p)">${fmtF(Math.round(moAllIn0))}/mo</div>
-          <div style="font-size:9px;color:var(--t3);margin-top:1px">all-in: P&I ${fmtF(Math.round(moPmt))} + tax ${fmtF(Math.round(moPropTax0))}</div>
+          <div style="font-size:9px;color:var(--t3);margin-top:1px">all-in: P&I ${fmtF(Math.round(moPmt))} + tax ${fmtF(Math.round(moPropTax0))} + maint ${fmtF(Math.round(moMaint0))}</div>
         </div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:14px">
