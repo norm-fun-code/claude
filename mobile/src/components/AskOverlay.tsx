@@ -175,8 +175,9 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
                     </Text>
                     <View style={styles.suggestions}>
                       {SUGGESTIONS.map((s) => (
-                        <Pressable key={s} onPress={() => submit(s)} style={[styles.chip, { backgroundColor: c.accentSoft }]}>
-                          <Text style={[styles.chipText, { color: c.accent }]}>{s}</Text>
+                        <Pressable key={s} onPress={() => submit(s)} style={[styles.chip, { borderColor: c.border, backgroundColor: c.card }]}>
+                          <Text style={[styles.chipText, { color: c.text }]} numberOfLines={2}>{s}</Text>
+                          <Text style={[styles.chipArrow, { color: c.subtext }]}>›</Text>
                         </Pressable>
                       ))}
                     </View>
@@ -216,20 +217,24 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
                 </View>
               )}
 
-              <View style={[styles.inputRow, { borderColor: c.border, backgroundColor: c.card }]}>
-                <TextInput
-                  ref={inputRef}
-                  style={[styles.input, { color: c.text }]}
-                  placeholder="Ask about your life…"
-                  placeholderTextColor={c.subtext}
-                  value={question}
-                  onChangeText={setQuestion}
-                  onSubmitEditing={() => submit(question)}
-                  returnKeyType="send"
-                />
-                <Pressable onPress={() => submit(question)} style={[styles.send, { backgroundColor: c.accent }]}>
-                  <Text style={styles.sendText}>Ask</Text>
-                </Pressable>
+              <View style={[styles.inputWrap, { borderTopColor: c.border }]}>
+                <View style={[styles.inputRow, { borderColor: c.border, backgroundColor: c.card }]}>
+                  <TextInput
+                    ref={inputRef}
+                    style={[styles.input, { color: c.text }]}
+                    placeholder="Ask about your life…"
+                    placeholderTextColor={c.subtext}
+                    value={question}
+                    onChangeText={setQuestion}
+                    onSubmitEditing={() => submit(question)}
+                    returnKeyType="send"
+                    multiline
+                  />
+                  <Pressable onPress={() => submit(question)} style={[styles.send, { backgroundColor: question.trim() ? c.accent : c.border }]} disabled={!question.trim()}>
+                    <Text style={styles.sendText}>↑</Text>
+                  </Pressable>
+                </View>
+                <Text style={[styles.disclaimer, { color: c.subtext }]}>AI can make mistakes. Verify important information.</Text>
               </View>
             </>
           )}
@@ -286,9 +291,10 @@ const styles = StyleSheet.create({
   emptyState: { paddingTop: spacing.lg, gap: spacing.sm },
   emptyTitle: { fontSize: 22, fontWeight: '700', letterSpacing: -0.3 },
   emptyHint: { fontSize: 14, lineHeight: 21 },
-  suggestions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
-  chip: { paddingHorizontal: spacing.sm + 2, paddingVertical: 8, borderRadius: 18 },
-  chipText: { fontSize: 13, fontWeight: '500' },
+  suggestions: { flexDirection: 'column', gap: spacing.sm, marginTop: spacing.md },
+  chip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.md, paddingVertical: 13, borderRadius: radius.md, borderWidth: 1 },
+  chipText: { fontSize: 14, fontWeight: '500', flex: 1, lineHeight: 20 },
+  chipArrow: { fontSize: 20, fontWeight: '300', marginLeft: spacing.sm },
   bubble: { borderRadius: radius.md, paddingHorizontal: spacing.sm, paddingVertical: 6, marginTop: spacing.sm, maxWidth: '92%' },
   userText: { ...typography.body, fontSize: 15 },
   toolbar: {
@@ -304,18 +310,21 @@ const styles = StyleSheet.create({
   toolBtnText: { fontSize: 14, fontWeight: '700' },
   toolBtnGhost: { paddingHorizontal: spacing.sm, paddingVertical: 8 },
   toolGhostText: { fontSize: 14, fontWeight: '600' },
+  inputWrap: { borderTopWidth: 1, paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.sm },
   inputRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    borderTopWidth: 1,
+    alignItems: 'flex-end',
+    borderWidth: 1,
+    borderRadius: 24,
     paddingLeft: spacing.md,
-    paddingRight: spacing.sm,
-    paddingVertical: spacing.sm,
+    paddingRight: 6,
+    paddingVertical: 6,
     gap: spacing.sm,
   },
-  input: { flex: 1, ...typography.body, fontSize: 16, paddingVertical: spacing.sm },
-  send: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.md },
-  sendText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  input: { flex: 1, ...typography.body, fontSize: 16, paddingVertical: 6, maxHeight: 120 },
+  send: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  sendText: { color: '#fff', fontWeight: '700', fontSize: 18, lineHeight: 20, marginTop: -1 },
+  disclaimer: { fontSize: 11, textAlign: 'center', marginTop: 6, lineHeight: 15 },
   convRow: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, paddingVertical: spacing.md },
   convBody: { flex: 1, paddingRight: spacing.sm },
   convTitle: { fontSize: 15, fontWeight: '600' },
