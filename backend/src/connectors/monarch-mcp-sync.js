@@ -12,7 +12,7 @@
 const rpc = require('../services/monarch-mcp-rpc');
 const monarchMcp = require('../services/monarch-mcp');
 const monarchApi = require('./monarch-api');
-const { isFixedCategory } = require('./monarch');
+const { isFixedCategory, isInternalTransfer } = require('./monarch');
 const { registerSource } = require('../store/sources');
 
 const SOURCE = 'monarch';
@@ -70,9 +70,9 @@ async function dailyCashflow(start, end, categoryType, excludeCategories) {
   return map;
 }
 
-// Discover the user's fixed-housing category NAMES (rent/mortgage/etc.) so they
-// can be excluded from discretionary spend. Defensive about GetCategories shape.
-async function fixedCategoryNames() {
+// Collect all category names from GetCategories, then filter with the predicate.
+// Defensive about the various shapes Monarch's MCP may return.
+async function collectCategoryNames(predicate) {
   try {
     const cats = await rpc.callToolJson('GetCategories', {});
     const names = [];
@@ -87,10 +87,23 @@ async function fixedCategoryNames() {
       collect(cats?.categories);
       collect(cats?.groups);
     }
-    return names.filter((n) => isFixedCategory(n));
+    return names.filter(predicate);
   } catch {
-    return []; // discretionary just won't be emitted — non-critical
+    return [];
   }
+}
+
+// Fixed-housing categories to exclude from discretionary spend.
+function fixedCategoryNames() {
+  return collectCategoryNames(isFixedCategory);
+}
+
+// Transfer / CC-payment categories to exclude from all spending totals.
+// GetCashFlow(category_type:'expense') sometimes includes credit-card payments
+// when they're categorized under an expense-type category in Monarch (the classic
+// Monarch double-count). Mirror the same guard the CSV connector uses.
+function transferCategoryNames() {
+  return collectCategoryNames(isInternalTransfer);
 }
 
 function txnToDocument(t) {
@@ -144,13 +157,26 @@ async function syncViaMcp(ctx) {
     if (Number.isFinite(liabilities)) metrics.push(m('liabilities', liabilities, today));
   }
 
-  // 2) Daily spending / income / cashflow from GetCashFlow (authoritative —
-  //    transfers + CC payments already excluded by Monarch).
-  const excludeNames = await fixedCategoryNames();
+  // 2) Daily spending / income / cashflow from GetCashFlow.
+  //    We explicitly exclude transfer/CC-payment categories from the expense
+  //    totals to avoid the classic Monarch double-count (a CC payment hitting a
+  //    checking account can appear under an expense category_type in Monarch's
+  //    MCP server). Mirror the same guard as the CSV connector's isInternalTransfer.
+  const [fixedNames, transferNames] = await Promise.all([
+    fixedCategoryNames(),
+    transferCategoryNames(),
+  ]);
+  // Dedupe: transfers excluded from all spend; fixed housing also excluded from discretionary.
+  const excludeFromTotal = [...new Set(transferNames)];
+  const excludeFromDiscretionary = [...new Set([...fixedNames, ...transferNames])];
   const [expenseByDay, incomeByDay, discretionaryByDay] = await Promise.all([
-    dailyCashflow(startDate, endDate, 'expense'),
+    excludeFromTotal.length
+      ? dailyCashflow(startDate, endDate, 'expense', excludeFromTotal)
+      : dailyCashflow(startDate, endDate, 'expense'),
     dailyCashflow(startDate, endDate, 'income'),
-    excludeNames.length ? dailyCashflow(startDate, endDate, 'expense', excludeNames) : Promise.resolve(new Map()),
+    excludeFromDiscretionary.length
+      ? dailyCashflow(startDate, endDate, 'expense', excludeFromDiscretionary)
+      : Promise.resolve(new Map()),
   ]);
 
   const days = new Set([...expenseByDay.keys(), ...incomeByDay.keys()]);

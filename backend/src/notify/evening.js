@@ -11,8 +11,13 @@ const fmt = (n) => '$' + Math.round(Math.abs(n)).toLocaleString('en-US');
 /** Today's total spending from the metrics spine (domain=wealth, metric=spending). */
 async function todaySpend() {
   try {
-    const from = new Date();
-    from.setHours(0, 0, 0, 0);
+    // Spending metrics are stored at UTC midnight of the transaction date (dayTs).
+    // Using setHours(0,0,0,0) would give LOCAL midnight, which on an Eastern-TZ
+    // server is 4am UTC — excluding today's rows stored at 00:00Z. Instead, derive
+    // the local calendar date and construct a matching UTC-midnight boundary.
+    const tz = process.env.TZ || 'America/New_York';
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD
+    const from = new Date(`${today}T00:00:00Z`);
     const rows = await metricsStore.dailyAggregate({
       domain: 'wealth', metric: 'spending', from, agg: 'sum', excludeSource: 'seed',
     });
