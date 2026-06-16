@@ -184,10 +184,17 @@ export default function App() {
             />
             <HealthCard health={health} />
             {(() => {
-              const habitTypes = new Set(['habit_consistency', 'habit_split']);
+              // Insights whose ALL domains are within habits/wellbeing go to HabitTrendsCard.
+              // Health card gets: health composites + any insight that touches the health domain
+              // (including cross-domain habit↔health correlations and habit_split findings).
+              const nonHealthDomains = new Set(['habits', 'wellbeing']);
               const combined = [
                 ...(d?.healthInsights ?? []),
-                ...(d?.insights ?? []).filter((i) => !habitTypes.has(i.type)),
+                ...(d?.insights ?? []).filter((i) => {
+                  if (i.type === 'habit_consistency') return false;
+                  // Keep if at least one domain is outside the habits/wellbeing bucket
+                  return i.domains?.some((dom: string) => !nonHealthDomains.has(dom)) ?? true;
+                }),
               ];
               return combined.length > 0 ? (
                 <InsightsCard insights={combined} />
@@ -262,7 +269,11 @@ export default function App() {
               {d && (d.calendar?.length ?? 0) > 0 && <CalendarCard events={d.calendar} />}
               <CheckinCard />
               <HabitsCard />
-              <HabitTrendsCard insights={(d?.insights ?? []).filter((i) => i.type === 'habit_consistency' || i.type === 'habit_split')} />
+              <HabitTrendsCard insights={(d?.insights ?? []).filter((i) => {
+                if (i.type === 'habit_consistency') return true;
+                const nonHealth = new Set(['habits', 'wellbeing']);
+                return i.domains?.every((dom: string) => nonHealth.has(dom)) ?? false;
+              })} />
               <GoalsCard weeklyGoals={d?.weeklyGoals} />
               <AnnotationsCard />
               {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}

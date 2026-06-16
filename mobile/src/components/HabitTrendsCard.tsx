@@ -11,6 +11,8 @@ interface Props {
 const TYPE_LABEL: Record<string, string> = {
   habit_consistency: 'STREAK',
   habit_split: 'IMPACT',
+  trend: 'TREND',
+  anomaly: 'VS YOUR BASELINE',
 };
 
 export function HabitTrendsCard({ insights }: Props) {

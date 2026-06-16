@@ -168,7 +168,8 @@ function startMorningWatcher() {
   // Prevents a notification before you're awake on mornings you sleep past the
   // time Eight Sleep finalizes its score. Set EIGHT_SLEEP_MIN_FIRE_HOUR to a
   // later value (e.g. 8 or 9) if you regularly sleep past 7am.
-  const minFireHour = Number(process.env.EIGHT_SLEEP_MIN_FIRE_HOUR) || 7;
+  const minFireHour = Number(process.env.EIGHT_SLEEP_MIN_FIRE_HOUR) || 8;
+  const minFireMinute = Number(process.env.EIGHT_SLEEP_MIN_FIRE_MINUTE) || 30;
   const backstopHour = Number(process.env.EIGHT_SLEEP_BACKSTOP_HOUR) || 10;   // fire by 10am regardless
   const backstopMinute = Number(process.env.EIGHT_SLEEP_BACKSTOP_MINUTE) || 0;
 
@@ -178,7 +179,7 @@ function startMorningWatcher() {
       const now = new Date();
       const mins = now.getHours() * 60 + now.getMinutes();
       if (mins < pollStartHour * 60) return; // too early to poll
-      const pastMinFire = mins >= minFireHour * 60;
+      const pastMinFire = mins >= minFireHour * 60 + minFireMinute;
       const pastBackstop = mins >= backstopHour * 60 + backstopMinute;
 
       // Pull just Eight Sleep and check whether last night's session has posted.
@@ -205,7 +206,7 @@ function startMorningWatcher() {
   console.log(
     `[scheduler] Eight Sleep watcher enabled — poll every ${pollMin}m from ` +
     `${String(pollStartHour).padStart(2, '0')}:00, min-fire ` +
-    `${String(minFireHour).padStart(2, '0')}:00, backstop ` +
+    `${String(minFireHour).padStart(2, '0')}:${String(minFireMinute).padStart(2, '0')}, backstop ` +
     `${String(backstopHour).padStart(2, '0')}:${String(backstopMinute).padStart(2, '0')}`
   );
 }

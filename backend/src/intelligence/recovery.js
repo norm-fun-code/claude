@@ -291,19 +291,33 @@ function computeHealthComposites(seriesByKey, opts = {}) {
   const eightSleepDebt = latest(seriesByKey['health:sleep_debt']);
   const eightSleepNeed = latest(seriesByKey['health:sleep_need']);
 
-  if (eightSleepDebt != null && eightSleepDebt > 0.05) {
+  if (eightSleepDebt != null && Math.abs(eightSleepDebt) > 0.05) {
     const needFmt = fmtHM(eightSleepNeed ?? 8);
-    const avgHours = sleep ? latest(sleep) : null;
-    const debtRounded = Math.round(eightSleepDebt * 10) / 10;
-    const avgNote = avgHours != null ? `Averaging ${fmtHM(avgHours)} vs your ${needFmt} need` : `Your personalized sleep need is ${needFmt}`;
-    findings.push({
-      type: 'sleep_debt',
-      domains: ['health'],
-      title: `Sleep debt: ${debtRounded}h`,
-      detail: `${avgNote} — ${debtRounded}h of debt. An earlier night would start clearing it.`,
-      confidence: 0.85,
-      evidence: { auto: true, kind: 'sleep_debt', debtHours: debtRounded, need: eightSleepNeed ?? 8, source: 'eight_sleep' },
-    });
+    if (eightSleepDebt < 0) {
+      // Surplus — slept more than the personalized need.
+      const surplusFmt = fmtHM(Math.abs(eightSleepDebt));
+      findings.push({
+        type: 'sleep_debt',
+        domains: ['health'],
+        title: `Sleep surplus: ${surplusFmt}`,
+        detail: `You slept ${surplusFmt} more than your ${needFmt} sleep need last night — well rested.`,
+        confidence: 0.85,
+        evidence: { auto: true, kind: 'sleep_surplus', surplusHours: Math.abs(eightSleepDebt), need: eightSleepNeed ?? 8, source: 'eight_sleep' },
+      });
+    } else {
+      const needFmtLocal = fmtHM(eightSleepNeed ?? 8);
+      const avgHours = sleep ? latest(sleep) : null;
+      const debtFmt = fmtHM(eightSleepDebt);
+      const avgNote = avgHours != null ? `Averaging ${fmtHM(avgHours)} vs your ${needFmtLocal} need` : `Your personalized sleep need is ${needFmtLocal}`;
+      findings.push({
+        type: 'sleep_debt',
+        domains: ['health'],
+        title: `Sleep debt: ${debtFmt}`,
+        detail: `${avgNote} — ${debtFmt} of debt. An earlier night would start clearing it.`,
+        confidence: 0.85,
+        evidence: { auto: true, kind: 'sleep_debt', debtHours: eightSleepDebt, need: eightSleepNeed ?? 8, source: 'eight_sleep' },
+      });
+    }
   } else {
     const debt = sleepDebt(sleep, opts);
     if (debt && debt.debtHours >= 1) {

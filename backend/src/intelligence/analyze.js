@@ -171,12 +171,18 @@ function computeAnomalies(seriesByKey, opts = {}) {
       : null;
     const pctNote = pctDiff != null ? ` (${pctDiff}% ${dir})` : '';
 
+    // Use "yesterday" when the latest data point is from a prior calendar day
+    // (common in morning briefings where wellbeing metrics are from yesterday's check-in).
+    const latestDay = series[series.length - 1]?.day;
+    const todayUtc = new Date().toISOString().slice(0, 10);
+    const dayLabel = latestDay && latestDay < todayUtc ? 'yesterday' : 'today';
+
     findings.push({
       type: 'anomaly',
       domains: [domain],
       title: `${label} ${magnitude} ${dir} your usual${pctNote} — ${tone}`,
       detail:
-        `${label} is ${round(a.latest)} today vs your ~${o.anomalyBaselineDays}d personal baseline of ` +
+        `${label} is ${round(a.latest)} ${dayLabel} vs your ~${o.anomalyBaselineDays}d personal baseline of ` +
         `${round(a.baselineMean)}. That's ${magnitude} outside your normal range.`,
       confidence: Math.min(1, Math.abs(a.z) / 3),
       evidence: {
