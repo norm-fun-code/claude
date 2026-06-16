@@ -32,9 +32,8 @@ import { AffirmationsCard } from './src/components/AffirmationsCard';
 import { WealthCard } from './src/components/WealthCard';
 import { InsightsCard } from './src/components/InsightsCard';
 import { AskOverlay } from './src/components/AskOverlay';
-import { CheckinCard } from './src/components/CheckinCard';
+import { CheckinModal } from './src/components/CheckinModal';
 import { WeeklyIntentionsCard } from './src/components/WeeklyIntentionsCard';
-import { HabitsCard } from './src/components/HabitsCard';
 import { HealthCard } from './src/components/HealthCard';
 import { RecoveryCard } from './src/components/RecoveryCard';
 import { WeatherCard } from './src/components/WeatherCard';
@@ -58,6 +57,7 @@ import { SleepLogCard } from './src/components/SleepLogCard';
 import { GoalsCard } from './src/components/GoalsCard';
 import { WeeklyStateCard } from './src/components/WeeklyStateCard';
 import { CheckinHistoryCard } from './src/components/CheckinHistoryCard';
+import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
 import { ANALYZE_URL, authHeaders, fetchWithTimeout } from './src/config';
 
 export default function App() {
@@ -75,6 +75,8 @@ export default function App() {
   const liveRecovery = useRecovery();
 
   const [tab, setTab] = useState<TabKey>('today');
+  const [checkinOpen, setCheckinOpen] = useState(false);
+  const dailyLog = useDailyLogStatus();
   const [analyzingInsights, setAnalyzingInsights] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   // Health tab refresh only spins on health-local fetches; other tabs include
@@ -117,12 +119,13 @@ export default function App() {
 
   const d = briefing.data;
 
-  // Per-tab explicit refresh — each tab updates only its own content:
-  //   Today/Wealth → "Rebuild briefing" (non-blocking async rebuild, ~60-90s)
-  //   Health       → HealthKit + live recovery score (sub-second)
-  //   Wisdom       → day-locked by design; reloads the morning cache
+  // Per-tab explicit refresh — each tab updates only its own content. Today is
+  // handled separately in the title row (icon arrow + check-in button); the rest
+  // keep a labeled button:
+  //   Wealth → "Rebuild briefing" (non-blocking async rebuild, ~60-90s)
+  //   Health → HealthKit + live recovery score (sub-second)
+  //   Wisdom → day-locked by design; reloads the morning cache
   const tabRefresh: Partial<Record<TabKey, { label: string; busy: boolean; run: () => void }>> = {
-    today: { label: 'Rebuild briefing', busy: briefing.rebuilding, run: briefing.triggerRebuild },
     wealth: { label: 'Rebuild briefing', busy: briefing.rebuilding, run: briefing.triggerRebuild },
     health: {
       label: 'Refresh health data',
@@ -252,8 +255,6 @@ export default function App() {
               <WeeklyIntentionsCard review={d?.weeklyReview ?? null} actions={d?.leverageActions ?? []} />
               <WeatherCard weather={d?.weather ?? null} />
               <CalendarCard events={d?.calendar ?? []} workBusy={d?.workBusy ?? []} />
-              <CheckinCard />
-              <HabitsCard />
               <CheckinHistoryCard insights={(d?.insights ?? []).filter((i) => {
                 if (i.type === 'habit_consistency') return true;
                 const nonHealth = new Set(['habits', 'wellbeing']);
@@ -306,7 +307,31 @@ export default function App() {
               <Text style={[styles.builtAt, { color: c.subtext }]}>{tabSubtitle}</Text>
             )}
           </View>
-          {tabRefresh[tab] && (
+          {tab === 'today' ? (
+            <View style={styles.todayActions}>
+              <TouchableOpacity
+                onPress={() => setCheckinOpen(true)}
+                style={[styles.tabRefreshBtn, { borderColor: c.border, backgroundColor: c.card }]}
+              >
+                <Text style={[styles.tabRefreshTxt, { color: c.accent }]}>✓ Check in</Text>
+                {dailyLog.needsLog && (
+                  <View style={[styles.badge, { backgroundColor: c.accent, borderColor: c.background }]} />
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={briefing.triggerRebuild}
+                disabled={briefing.rebuilding}
+                style={[styles.iconBtn, { borderColor: c.border, backgroundColor: c.card }]}
+                accessibilityLabel="Rebuild briefing"
+              >
+                {briefing.rebuilding ? (
+                  <ActivityIndicator size="small" color={c.subtext} />
+                ) : (
+                  <Text style={[styles.iconBtnTxt, { color: c.accent }]}>↻</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          ) : tabRefresh[tab] ? (
             <TouchableOpacity
               onPress={tabRefresh[tab]!.run}
               disabled={tabRefresh[tab]!.busy}
@@ -320,13 +345,17 @@ export default function App() {
                 </Text>
               )}
             </TouchableOpacity>
-          )}
+          ) : null}
         </View>
         {renderTab()}
         <View style={styles.footer} />
       </ScrollView>
       </SafeAreaView>
 
+      <CheckinModal
+        visible={checkinOpen}
+        onClose={() => { setCheckinOpen(false); dailyLog.refresh(); }}
+      />
       <AskOverlay bottomInset={bottomInset} />
       <TabBar active={tab} onChange={setTab} bottomInset={bottomInset} />
     </View>
@@ -359,6 +388,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
   },
   builtAt: { fontSize: 11, marginTop: 1 },
+  todayActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   tabRefreshBtn: {
     borderWidth: 1,
     borderRadius: 16,
@@ -368,6 +398,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   tabRefreshTxt: { fontSize: 12, fontWeight: '600' },
+  iconBtn: {
+    borderWidth: 1,
+    borderRadius: 16,
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconBtnTxt: { fontSize: 16, fontWeight: '700' },
+  badge: {
+    position: 'absolute',
+    top: -3,
+    right: -3,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 1.5,
+  },
   errorBox: { borderWidth: 1, borderRadius: 12, padding: spacing.md, marginBottom: spacing.md },
   errorTitle: { fontSize: 16, fontWeight: '600', marginBottom: spacing.xs },
   errorMsg: { fontSize: 14, lineHeight: 21, marginBottom: spacing.sm },

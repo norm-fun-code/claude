@@ -32,6 +32,7 @@ export const CONSOLIDATE_URL = `${API_BASE}/api/consolidate`;
 export const SLEEP_LOG_URL = `${API_BASE}/api/ingest/sleep`;
 export const SLEEP_TODAY_URL = `${API_BASE}/api/sleep/today`;
 export const HABITS_STREAKS_URL = `${API_BASE}/api/habits/streaks`;
+export const HABITS_TODAY_URL = `${API_BASE}/api/habits/today`;
 export const WORKOUT_LOG_URL = `${API_BASE}/api/workout/log`;
 export const ACTIVITY_URL = `${API_BASE}/api/activity`;
 export const ANNOTATIONS_URL = `${API_BASE}/api/annotations`;

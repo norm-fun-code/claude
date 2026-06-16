@@ -2,11 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, useColorScheme, AppState } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import { API_BASE, HABITS_STREAKS_URL, authHeaders, fetchWithTimeout } from '../config';
+import { API_BASE, HABITS_STREAKS_URL, HABITS_TODAY_URL, authHeaders, fetchWithTimeout } from '../config';
 import { AnnotationsCard } from './AnnotationsCard';
 
 const HABITS_URL = `${API_BASE}/api/habits`;
-const HABITS_TODAY_URL = `${API_BASE}/api/habits/today`;
 
 type Binary = 'morningTM' | 'afternoonTM' | 'gratitude' | 'coldShower' | 'exercise';
 
