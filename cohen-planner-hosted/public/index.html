@@ -1193,18 +1193,23 @@ function goalInlineEdit(span){
   const inp=document.createElement('input');
   inp.type='text';inp.value=dflt;
   inp.style.cssText='width:72px;font-size:inherit;font-family:inherit;color:var(--tx);background:var(--s1);border:1px solid var(--accent);border-radius:3px;padding:0 3px;outline:none';
+  let committed=false;
   const commit=()=>{
+    if(committed)return;
+    committed=true;
     const s=inp.value.trim().toUpperCase();
     let v=parseFloat(s.replace(/[$,MK%]/g,''));
-    if(isNaN(v)){span.parentNode&&span.parentNode.replaceChild(span,inp);return;}
+    if(isNaN(v)){committed=false;if(inp.parentNode)inp.parentNode.replaceChild(span,inp);return;}
     if(s.includes('M'))v=v*1e6;
     else if(s.includes('K'))v=v*1000;
-    else if(parseAs==='dollar-m'&&v<10000)v=v*1e6; // bare "2.5" → 2.5M
-    else if(parseAs==='pct-decimal')v=v>1?v/100:v; // "3%" or "3" → 0.03
+    else if(parseAs==='dollar-m'&&v<10000)v=v*1e6;
+    else if(parseAs==='pct-decimal')v=v>1?v/100:v;
+    // Restore span before U() so render() doesn't tear down a live input
+    if(inp.parentNode)inp.parentNode.replaceChild(span,inp);
     U(key,v);
   };
   inp.onblur=commit;
-  inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();commit();}if(e.key==='Escape'){span.parentNode&&span.parentNode.replaceChild(span,inp);}};
+  inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();commit();}if(e.key==='Escape'){committed=true;if(inp.parentNode)inp.parentNode.replaceChild(span,inp);}};
   span.parentNode.replaceChild(inp,span);
   inp.focus();inp.select();
 }
