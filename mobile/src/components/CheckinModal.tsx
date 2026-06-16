@@ -3,6 +3,7 @@ import { Modal, View, Text, StyleSheet, ScrollView, TouchableOpacity, useColorSc
 import { getColors, spacing, typography } from '../theme';
 import { CheckinCard } from './CheckinCard';
 import { HabitsCard } from './HabitsCard';
+import { ContextCard } from './ContextCard';
 
 interface Props {
   visible: boolean;
@@ -34,6 +35,7 @@ export function CheckinModal({ visible, onClose }: Props) {
             <>
               <CheckinCard />
               <HabitsCard />
+              <ContextCard />
             </>
           )}
         </ScrollView>

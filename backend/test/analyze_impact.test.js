@@ -93,3 +93,58 @@ test('computeActivityImpact: flags an exercise type that costs next-day recovery
 test('computeActivityImpact: returns nothing with too little data', () => {
   assert.deepEqual(a.computeActivityImpact({ 'health:hrv': mkSeries(3, () => 50) }, { '2026-04-01': 'pull' }), []);
 });
+
+test('computeDaytimeCardio: surfaces eating→daytime-HRV split', () => {
+  const N = 30;
+  // Eat-healthy alternates high (4) / low (1); daytime HRV is higher on eat-well days.
+  const eat = mkSeries(N, (i) => (i % 2 === 0 ? 4 : 1));
+  const hrvDay = mkSeries(N, (i) => (i % 2 === 0 ? 50 : 38));
+  const findings = a.computeDaytimeCardio({
+    'health:hrv_daytime': hrvDay,
+    'habits:eat_healthy': eat,
+  });
+  const f = findings.find((x) => x.evidence.outcome === 'health:hrv_daytime');
+  assert.ok(f, 'expected a daytime-HRV finding');
+  assert.equal(f.type, 'daytime_cardio');
+  assert.equal(f.evidence.lever, 'habits:eat_healthy');
+  assert.ok(f.evidence.hiMean > f.evidence.loMean, 'eat-well days should show higher daytime HRV');
+  assert.ok(f.evidence.hiN >= 5 && f.evidence.loN >= 5);
+});
+
+test('computeDaytimeCardio: RHR lever uses mood and respects good=down direction', () => {
+  const N = 30;
+  // High-mood days (>=4) pair with LOWER daytime RHR (better autonomic tone).
+  const mood = mkSeries(N, (i) => (i % 2 === 0 ? 5 : 2));
+  const rhrDay = mkSeries(N, (i) => (i % 2 === 0 ? 56 : 64));
+  const findings = a.computeDaytimeCardio({
+    'health:rhr_daytime': rhrDay,
+    'wellbeing:mood': mood,
+  });
+  const f = findings.find((x) => x.evidence.outcome === 'health:rhr_daytime');
+  assert.ok(f, 'expected a daytime-RHR finding');
+  assert.equal(f.evidence.lever, 'wellbeing:mood');
+  assert.ok(f.evidence.hiMean < f.evidence.loMean, 'high-mood days should show lower RHR');
+  // good=down + lower-on-high → the narrative should frame it as an improvement.
+  assert.match(f.detail, /better autonomic tone/);
+});
+
+test('computeDaytimeCardio: isolated — ignores nighttime keys entirely', () => {
+  // Only nighttime keys present (no _daytime series). Must produce nothing, so it
+  // can never accidentally analyze the Eight-Sleep-locked recovery series.
+  const N = 30;
+  const findings = a.computeDaytimeCardio({
+    'health:hrv': mkSeries(N, (i) => 45 + (i % 2) * 10),
+    'health:resting_hr': mkSeries(N, (i) => 60 - (i % 2) * 5),
+    'habits:eat_healthy': mkSeries(N, (i) => (i % 2 === 0 ? 4 : 1)),
+  });
+  assert.deepEqual(findings, [], 'no _daytime series → no findings; nighttime keys must be ignored');
+});
+
+test('computeDaytimeCardio: returns nothing without enough days per bucket', () => {
+  const short = mkSeries(6, (i) => (i % 2 === 0 ? 50 : 40));
+  const eat = mkSeries(6, (i) => (i % 2 === 0 ? 4 : 1));
+  assert.deepEqual(
+    a.computeDaytimeCardio({ 'health:hrv_daytime': short, 'habits:eat_healthy': eat }),
+    []
+  );
+});

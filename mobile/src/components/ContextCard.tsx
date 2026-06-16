@@ -1,0 +1,199 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, TextInput, TouchableOpacity, useColorScheme, AppState } from 'react-native';
+import { getColors, spacing, radius, typography } from '../theme';
+import { SectionHeader } from './SectionHeader';
+import { ANNOTATIONS_URL, authHeaders, fetchWithTimeout } from '../config';
+
+// One-tap life-context logging. These annotations explain anomalies in your
+// data ("HRV dipped — you flew yesterday") and surface in the weekly review as
+// the week's context. Each preset writes { category, label }; the backend
+// defaults the window to today + tomorrow morning so it covers the next-day
+// briefing, then expires on its own.
+type Preset = { emoji: string; category: string; label: string };
+const PRESETS: Preset[] = [
+  { emoji: '✈️', category: 'travel', label: 'Travel' },
+  { emoji: '🤒', category: 'illness', label: 'Feeling sick' },
+  { emoji: '😴', category: 'sleep', label: 'Poor sleep' },
+  { emoji: '🌙', category: 'late_night', label: 'Late night' },
+  { emoji: '🍷', category: 'alcohol', label: 'Drinking' },
+  { emoji: '🔥', category: 'stress', label: 'High stress' },
+  { emoji: '📅', category: 'deadline', label: 'Big deadline' },
+  { emoji: '🎉', category: 'social', label: 'Social event' },
+  { emoji: '🧘', category: 'rest', label: 'Rest day' },
+];
+
+type Logged = { id: number; category: string; label: string };
+
+export function ContextCard() {
+  const isDark = useColorScheme() === 'dark';
+  const c = getColors(isDark);
+  const [logged, setLogged] = useState<Logged[]>([]);
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState<string | null>(null); // label currently saving
+  const [failed, setFailed] = useState(false);
+  const fetchDateRef = useRef('');
+
+  function todayET(): string {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+  }
+
+  // Start of today (ET) as an ISO string, for the GET window.
+  function startOfTodayISO(): string {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date()); // YYYY-MM-DD
+    return `${parts}T00:00:00`;
+  }
+
+  async function fetchToday() {
+    fetchDateRef.current = todayET();
+    try {
+      const res = await fetchWithTimeout(`${ANNOTATIONS_URL}?from=${encodeURIComponent(startOfTodayISO())}`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) return;
+      const { annotations } = await res.json();
+      if (!Array.isArray(annotations)) return;
+      setLogged(annotations.map((a: any) => ({ id: a.id, category: a.category, label: a.label })));
+    } catch {
+      // offline — show presets unmarked
+    }
+  }
+
+  useEffect(() => { fetchToday(); }, []);
+
+  // Reset + refetch when returning to foreground on a new calendar day.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && fetchDateRef.current !== todayET()) {
+        setLogged([]);
+        setNote('');
+        setFailed(false);
+        fetchToday();
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
+  const isLogged = (label: string) => logged.some((l) => l.label === label);
+
+  async function log(category: string, label: string, noteText?: string) {
+    if (saving) return;
+    setSaving(label);
+    setFailed(false);
+    try {
+      const res = await fetchWithTimeout(ANNOTATIONS_URL, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          startTs: new Date().toISOString(),
+          category,
+          label,
+          note: noteText || null,
+        }),
+      });
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+      const { id } = await res.json();
+      setLogged((prev) => [{ id, category, label }, ...prev]);
+    } catch {
+      setFailed(true);
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  async function logNote() {
+    const text = note.trim();
+    if (!text) return;
+    await log('note', text);
+    setNote('');
+  }
+
+  return (
+    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+      <SectionHeader emoji="📝" title="Anything going on today?" />
+      <Text style={[styles.hint, { color: c.subtext }]}>
+        Tap what applies — NormOS uses it to explain your numbers and recap your week.
+      </Text>
+
+      <View style={styles.chips}>
+        {PRESETS.map((p) => {
+          const on = isLogged(p.label);
+          const busy = saving === p.label;
+          return (
+            <Pressable
+              key={p.label}
+              onPress={() => !on && log(p.category, p.label)}
+              disabled={on || busy}
+              style={[
+                styles.chip,
+                { borderColor: on ? c.accent : c.border, backgroundColor: on ? c.accent : 'transparent', opacity: busy ? 0.5 : 1 },
+              ]}
+            >
+              <Text style={[styles.chipText, { color: on ? c.card : c.text }]}>
+                {p.emoji} {p.label}{on ? ' ✓' : ''}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <View style={styles.noteRow}>
+        <TextInput
+          style={[styles.noteInput, { color: c.text, borderColor: c.border }]}
+          placeholder="Something else…"
+          placeholderTextColor={c.subtext}
+          value={note}
+          onChangeText={setNote}
+          returnKeyType="done"
+          onSubmitEditing={logNote}
+        />
+        <TouchableOpacity
+          onPress={logNote}
+          disabled={!note.trim() || saving === note.trim()}
+          style={[styles.addBtn, { backgroundColor: c.accent, opacity: note.trim() ? 1 : 0.4 }]}
+        >
+          <Text style={styles.addBtnText}>Add</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Custom (note) entries that aren't one of the presets — confirm they logged. */}
+      {logged.filter((l) => !PRESETS.some((p) => p.label === l.label)).map((l) => (
+        <View key={l.id} style={styles.customRow}>
+          <Text style={[styles.customText, { color: c.subtext }]}>✓ {l.label}</Text>
+        </View>
+      ))}
+
+      {failed && <Text style={styles.failed}>Couldn’t save — check your connection and try again.</Text>}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.md, marginBottom: spacing.md },
+  hint: { ...typography.caption, fontSize: 13, marginBottom: spacing.md, lineHeight: 19 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  chip: {
+    borderWidth: 1,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  chipText: { ...typography.body, fontSize: 14, fontWeight: '600' },
+  noteRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.md },
+  noteInput: {
+    flex: 1,
+    ...typography.body,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  addBtn: { borderRadius: radius.md, paddingVertical: spacing.sm + 2, paddingHorizontal: spacing.lg },
+  addBtnText: { ...typography.body, fontWeight: '700', color: '#fff' },
+  customRow: { marginTop: spacing.sm },
+  customText: { ...typography.caption, fontSize: 13 },
+  failed: { ...typography.caption, color: '#C0392B', marginTop: spacing.sm },
+});
