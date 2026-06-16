@@ -197,7 +197,7 @@ export default function App() {
             })()}
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} recoveryScore={liveRecovery.recovery?.score ?? null} />
             <WeeklyStateCard briefing={d ?? null} health={health} recovery={liveRecovery.recovery} />
-            <ForecastCard forecasts={d?.forecasts ?? []} />}
+            <ForecastCard forecasts={d?.forecasts ?? []} />
             <CheckinHistoryCard />
             {analyzeError && (
               <View style={[styles.errorBox, { borderColor: c.border, backgroundColor: c.card }]}>
