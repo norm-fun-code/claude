@@ -467,14 +467,23 @@ async function anchorToToday(){
       <div style="display:flex;justify-content:space-between"><span style="color:var(--t2)">Today's liquid</span><span style="font-weight:600">${fmtF(todayLiq)}</span></div>
       <div style="display:flex;justify-content:space-between"><span style="color:var(--t2)">− YTD income (Monarch)</span><span style="color:var(--g)">−${fmtF(ytdInc)}</span></div>
       <div style="display:flex;justify-content:space-between"><span style="color:var(--t2)">+ YTD spending (Monarch)</span><span style="color:var(--r)">+${fmtF(ytdExp)}</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="color:var(--t2)">+ Deferred expenses (not yet in Monarch)</span>
+        <span style="display:flex;align-items:center;gap:4px">
+          <span style="color:var(--t2)">$</span>
+          <input id="anchorAdj" type="number" value="0" min="0" step="100"
+            style="width:80px;text-align:right;font-size:12px;font-family:'SF Mono',monospace;padding:2px 5px;border:1px solid var(--bd);border-radius:5px;background:var(--s2);color:var(--tx);outline:none"
+            oninput="anchorRecalc()">
+        </span>
+      </div>
       <div style="border-top:1px solid var(--bd);margin:3px 0"></div>
-      <div style="display:flex;justify-content:space-between;font-weight:700"><span>= Implied Jan-1 liquid</span><span style="color:var(--accent)">${fmtF(impliedJan1)}</span></div>
-      ${projEOY!=null?`<div style="display:flex;justify-content:space-between;margin-top:4px"><span style="color:var(--t2)">→ Projected EOY liquid</span><span style="font-weight:600">${fmtF(projEOY)}</span></div>`:''}
+      <div style="display:flex;justify-content:space-between;font-weight:700"><span>= Implied Jan-1 liquid</span><span id="anchorResult" style="color:var(--accent)">${fmtF(impliedJan1)}</span></div>
+      <div id="anchorEOY" style="display:flex;justify-content:space-between;margin-top:4px">${projEOY!=null?`<span style="color:var(--t2)">→ Projected EOY liquid</span><span style="font-weight:600">${fmtF(projEOY)}</span>`:''}</div>
     </div>
-    <div style="font-size:9.5px;color:var(--t3);margin-top:10px;line-height:1.4">Sets <b>Starting Liquid → ${fmtF(impliedJan1)}</b>${set401?` and <b>Starting 401k → ${fmtF(monarchSnapshot.retirement)}</b>`:''}. ${ytdNet<0?'⚠ YTD spending exceeded income so far — implied Jan-1 is above today.':''}</div>
+    <div style="font-size:9.5px;color:var(--t3);margin-top:10px;line-height:1.4" id="anchorNote">Sets <b>Starting Liquid → ${fmtF(impliedJan1)}</b>${set401?` and <b>Starting 401k → ${fmtF(monarchSnapshot.retirement)}</b>`:''}. ${ytdNet<0?'⚠ YTD spending exceeded income so far — implied Jan-1 is above today.':''}</div>
     <div style="margin-top:8px">
       <button onclick="const d=this.nextElementSibling;d.style.display=d.style.display==='none'?'block':'none';this.textContent=d.style.display==='none'?'▶ Show raw Monarch data':'▼ Hide raw data'" style="font-size:9px;color:var(--t3);background:none;border:none;cursor:pointer;padding:0;font-family:inherit">▶ Show raw Monarch data</button>
-      <pre style="display:none;margin-top:6px;font-size:8.5px;background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:8px;overflow:auto;max-height:160px;color:var(--t2);white-space:pre-wrap;word-break:break-all">${debugJson.replace(/</g,'&lt;')}</pre>
+      <pre style="display:none;margin-top:6px;font-size:8.5px;background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:8px;overflow:auto;max-height:140px;color:var(--t2);white-space:pre-wrap;word-break:break-all">${debugJson.replace(/</g,'&lt;')}</pre>
     </div>
     <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">
       <button onclick="this.closest('div[style*=fixed]').remove()" style="font-size:12px;padding:8px 14px;background:var(--s2);border:1px solid var(--bd);border-radius:7px;cursor:pointer;font-family:inherit;color:var(--t2)">Cancel</button>
@@ -482,12 +491,32 @@ async function anchorToToday(){
     </div>
   </div>`;
   document.body.appendChild(ov);
+
+  // Live recalc when deferred expense adjustment changes
+  const _baseLiq=todayLiq, _baseInc=ytdInc, _baseExp=ytdExp;
+  window.anchorRecalc=function(){
+    const adj=parseFloat(document.getElementById('anchorAdj')?.value||0)||0;
+    const adjNet=_baseInc-(_baseExp+adj);
+    const adjJan1=Math.round(_baseLiq-adjNet);
+    const res=document.getElementById('anchorResult');
+    const note=document.getElementById('anchorNote');
+    const eoy=document.getElementById('anchorEOY');
+    if(res)res.textContent=fmtF(adjJan1);
+    if(note){const s=set401?` and <b>Starting 401k → ${fmtF(monarchSnapshot.retirement)}</b>`:'';note.innerHTML=`Sets <b>Starting Liquid → ${fmtF(adjJan1)}</b>${s}.`;}
+    if(eoy){
+      try{const nr=run({...P,startingLiquid:adjJan1,k401Start:set401?monarchSnapshot.retirement:P.k401Start});const row=nr.R.find(x=>x.yr===curYr)||nr.R[0];eoy.innerHTML=row?`<span style="color:var(--t2)">→ Projected EOY liquid</span><span style="font-weight:600">${fmtF(row.liq)}</span>`:''}catch(e){}
+    }
+  };
+
   ov.querySelector('#anchorConfirmBtn').onclick=()=>{
-    P.startingLiquid=impliedJan1;
+    const adj=parseFloat(document.getElementById('anchorAdj')?.value||0)||0;
+    const adjNet=ytdInc-(ytdExp+adj);
+    const finalJan1=Math.round(todayLiq-adjNet);
+    P.startingLiquid=finalJan1;
     if(set401)P.k401Start=monarchSnapshot.retirement;
     ov.remove();
     savePlannerState();buildControls();render();
-    showToast(`⚓ Anchored · Starting liquid set to ${fmt(impliedJan1)}`,'green');
+    showToast(`⚓ Anchored · Starting liquid set to ${fmt(finalJan1)}`+(adj>0?` (incl. ${fmt(adj)} deferred expenses)`:'')+' ','green');
   };
 }
 
