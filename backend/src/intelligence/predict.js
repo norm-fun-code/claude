@@ -53,8 +53,8 @@ function predictCapacity(s = {}) {
   // band. recovery.js recoveryBand() mirrors them so the Health-tab workout zone
   // matches this grade exactly — keep them in sync.
   let grade, band, headline;
-  if (recoveryScore >= 67)      { grade = 'A'; band = 'green';  headline = 'Full send'; }
-  else if (recoveryScore >= 50) { grade = 'B'; band = 'yellow'; headline = 'Hit your essentials'; }
+  if (recoveryScore >= 63)      { grade = 'A'; band = 'green';  headline = 'Full send'; }
+  else if (recoveryScore >= 40) { grade = 'B'; band = 'yellow'; headline = 'Hit your essentials'; }
   else                          { grade = 'C'; band = 'red';    headline = 'Keep the streak alive'; }
 
   // Name the real drivers behind the grade.

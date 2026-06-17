@@ -172,8 +172,8 @@ function recoveryScore(seriesByKey, opts = {}) {
  *  (A ≥67 = green, B ≥50 = yellow, C <50 = red) so the Today-tab day grade and
  *  the Health-tab workout zone never disagree. Keep these in sync. */
 function recoveryBand(score) {
-  if (score >= 67) return { band: 'green',  guidance: "Green — your body's ready. Full intensity is appropriate today." };
-  if (score >= 50) return { band: 'yellow', guidance: 'Moderate — solid foundation. Push if you feel good, but watch your exertion.' };
+  if (score >= 63) return { band: 'green',  guidance: "Green — your body's ready. Full intensity is appropriate today." };
+  if (score >= 40) return { band: 'yellow', guidance: 'Moderate — solid foundation. Push if you feel good, but watch your exertion.' };
   return { band: 'red', guidance: 'Low — under-recovered. Keep it easy today: mobility or a walk, and protect tonight\'s sleep.' };
 }
 
