@@ -5,17 +5,16 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
 } from 'react-native-reanimated';
-import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, shadow } from '../theme';
 
 export type TabKey = 'today' | 'health' | 'wealth' | 'wisdom';
 
-export const TABS: { key: TabKey; label: string; icon: keyof typeof Ionicons.glyphMap; iconActive: keyof typeof Ionicons.glyphMap }[] = [
-  { key: 'today',  label: 'Today',  icon: 'today-outline',       iconActive: 'today' },
-  { key: 'health', label: 'Health', icon: 'pulse-outline',        iconActive: 'pulse' },
-  { key: 'wealth', label: 'Wealth', icon: 'trending-up-outline',  iconActive: 'trending-up' },
-  { key: 'wisdom', label: 'Wisdom', icon: 'book-outline',         iconActive: 'book' },
+export const TABS: { key: TabKey; label: string; emoji: string; emojiActive: string }[] = [
+  { key: 'today',  label: 'Today',  emoji: '☀️',  emojiActive: '🌟' },
+  { key: 'health', label: 'Health', emoji: '💪',  emojiActive: '❤️' },
+  { key: 'wealth', label: 'Wealth', emoji: '💰',  emojiActive: '💎' },
+  { key: 'wisdom', label: 'Wisdom', emoji: '🧠',  emojiActive: '✨' },
 ];
 
 interface Props {
@@ -52,11 +51,7 @@ function TabItem({
       accessibilityState={{ selected: on }}
     >
       <Animated.View style={[styles.pill, on && { backgroundColor: c.accentSoft }, animStyle]}>
-        <Ionicons
-          name={on ? t.iconActive : t.icon}
-          size={22}
-          color={on ? c.accent : c.subtext}
-        />
+        <Text style={styles.icon}>{on ? t.emojiActive : t.emoji}</Text>
       </Animated.View>
       <Text style={[styles.label, { color: on ? c.accent : c.subtext }, on && styles.labelOn]}>
         {t.label}
@@ -108,6 +103,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  icon: {
+    fontSize: 18,
   },
   label: {
     fontSize: 11,
