@@ -38,6 +38,7 @@ const devicesStore = require('./src/store/devices');
 const nudgesStore = require('./src/store/nudges');
 const { runNudges, runCheckinReminder, runHabitsReminder } = require('./src/notify/run');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./src/notify/morning');
+const { login: eightSleepLogin, resolveUserId: eightSleepResolveUserId, getTrends: eightSleepGetTrends } = require('./src/services/eight-sleep-api');
 const surfacedStore = require('./src/store/surfaced');
 const briefingsStore = require('./src/store/briefings');
 const workoutChecks = require('./src/store/workoutChecks');
@@ -245,6 +246,70 @@ app.post('/api/ingest/eight-sleep', express.json({ limit: '50mb' }), async (req,
     res.json({ sessions: sessions.length, written, skipped });
     // Fire-and-forget: ping if these overnight metrics deviate sharply from baseline.
     if (written > 0) require('./src/intelligence/watch').runWatch().catch((e) => console.error('[watch] eight-sleep ingest:', e.message));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Pull Eight Sleep history for the last N days (default 60) and upsert into the
+// metrics table. Safe to re-run — idempotent. Used for initial baseline backfill
+// so the recovery score has enough history to self-calibrate.
+app.post('/api/ingest/eight-sleep/backfill', async (req, res) => {
+  const email = process.env.EIGHT_SLEEP_EMAIL;
+  const password = process.env.EIGHT_SLEEP_PASSWORD;
+  if (!email || !password) return res.status(503).json({ error: 'Eight Sleep credentials not configured' });
+
+  const days = Math.min(Math.max(Number(req.query.days) || 60, 7), 365);
+  const tz = process.env.TZ || 'America/New_York';
+  const ymd = (d) => new Date(d).toISOString().slice(0, 10);
+  const DAY = 86400000;
+  const ALLOWED = {
+    hrv: [2, 300], resting_hr: [25, 130], sleep_score: [0, 100],
+    sleep_hours: [0.5, 16], deep_sleep_hours: [0, 14], rem_sleep_hours: [0, 14],
+    respiratory_rate: [4, 50], sleep_debt: [0, 40], sleep_need: [4, 12],
+  };
+  const num = (v) => (v == null ? null : Number(v));
+  const hrs = (sec) => (sec == null || !Number.isFinite(Number(sec)) ? null : Number(sec) / 3600);
+  const mapDay = (day) => {
+    const sq = day?.sleepQualityScore || {};
+    const sd = sq.sleepDebt || {};
+    return {
+      hrv: num(sq.hrv?.current), resting_hr: num(sq.heartRate?.current),
+      respiratory_rate: num(sq.respiratoryRate?.current), sleep_score: num(day?.score),
+      sleep_hours: hrs(day?.sleepDuration), deep_sleep_hours: hrs(day?.deepDuration),
+      rem_sleep_hours: hrs(day?.remDuration),
+      sleep_debt: hrs(sd.dailySleepDebtSeconds), sleep_need: hrs(sd.baselineSleepDurationSeconds),
+    };
+  };
+
+  try {
+    await sourcesStore.registerSource({ id: 'eight_sleep', domain: 'health', displayName: 'Eight Sleep' });
+    const auth = await eightSleepLogin(email, password);
+    const userId = auth.userId || await eightSleepResolveUserId(auth.token);
+    const to = new Date();
+    const from = new Date(to.getTime() - days * DAY);
+    const dayRows = await eightSleepGetTrends({ token: auth.token, userId, from: ymd(from), to: ymd(to), tz });
+
+    const metrics = [];
+    for (const day of dayRows) {
+      if (!day?.day) continue;
+      const ts = new Date(`${day.day}T12:00:00Z`);
+      const mapped = mapDay(day);
+      for (const [metric, value] of Object.entries(mapped)) {
+        if (value == null || !Number.isFinite(value)) continue;
+        const bounds = ALLOWED[metric];
+        if (bounds && (value < bounds[0] || value > bounds[1])) continue;
+        const unit = metric === 'hrv' ? 'ms' : metric === 'resting_hr' ? 'bpm'
+          : metric.endsWith('_hours') || metric === 'sleep_debt' || metric === 'sleep_need' ? 'hours'
+          : metric === 'sleep_score' ? 'score' : metric === 'respiratory_rate' ? 'brpm' : null;
+        metrics.push({ ts, domain: 'health', metric, value: Math.round(value * 100) / 100, source: 'eight_sleep', unit });
+      }
+    }
+
+    const written = await metricsStore.insertMetrics(metrics);
+    res.json({ days: dayRows.length, metrics: written });
+    // Re-run analysis so the new history flows into findings and self-model.
+    analyze().catch((e) => console.error('[eight-sleep backfill] analyze:', e.message));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
