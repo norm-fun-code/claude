@@ -5,16 +5,17 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
 } from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, shadow } from '../theme';
 
 export type TabKey = 'today' | 'health' | 'wealth' | 'wisdom';
 
-export const TABS: { key: TabKey; label: string; icon: string }[] = [
-  { key: 'today', label: 'Today', icon: '☀' },
-  { key: 'health', label: 'Health', icon: '❤' },
-  { key: 'wealth', label: 'Wealth', icon: '$' },
-  { key: 'wisdom', label: 'Wisdom', icon: '🧠' },
+export const TABS: { key: TabKey; label: string; icon: keyof typeof Ionicons.glyphMap; iconActive: keyof typeof Ionicons.glyphMap }[] = [
+  { key: 'today',  label: 'Today',  icon: 'today-outline',       iconActive: 'today' },
+  { key: 'health', label: 'Health', icon: 'pulse-outline',        iconActive: 'pulse' },
+  { key: 'wealth', label: 'Wealth', icon: 'trending-up-outline',  iconActive: 'trending-up' },
+  { key: 'wisdom', label: 'Wisdom', icon: 'book-outline',         iconActive: 'book' },
 ];
 
 interface Props {
@@ -36,7 +37,7 @@ function TabItem({
 
   useEffect(() => {
     if (on) {
-      scale.value = withSpring(1.12, { damping: 8, stiffness: 300 }, () => {
+      scale.value = withSpring(1.14, { damping: 7, stiffness: 320 }, () => {
         scale.value = withSpring(1, { damping: 14, stiffness: 300 });
       });
     }
@@ -51,7 +52,11 @@ function TabItem({
       accessibilityState={{ selected: on }}
     >
       <Animated.View style={[styles.pill, on && { backgroundColor: c.accentSoft }, animStyle]}>
-        <Text style={[styles.icon, { color: on ? c.accent : c.subtext }]}>{t.icon}</Text>
+        <Ionicons
+          name={on ? t.iconActive : t.icon}
+          size={22}
+          color={on ? c.accent : c.subtext}
+        />
       </Animated.View>
       <Text style={[styles.label, { color: on ? c.accent : c.subtext }, on && styles.labelOn]}>
         {t.label}
@@ -99,14 +104,10 @@ const styles = StyleSheet.create({
   },
   pill: {
     width: 52,
-    height: 30,
+    height: 32,
     borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  icon: {
-    fontSize: 18,
-    fontWeight: '600',
   },
   label: {
     fontSize: 11,
