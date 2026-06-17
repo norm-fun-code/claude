@@ -617,6 +617,29 @@ app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
 
     const netWorth = assetsTotal - liabTotal;
 
+    // Build portfolio accounts for Portfolio tab
+    const portfolioAccts = [];
+    for (const acct of accounts) {
+      if (matches(acct, excludes)) continue;
+      const bal  = num(acct.currentBalance ?? acct.balance ?? acct.current_balance ?? acct.displayBalance);
+      const name = acct.displayName ?? acct.name ?? '';
+      const type = String(acct.type?.name ?? acct.type ?? '').toLowerCase().replace(/[\s-]/g, '_');
+      const sub  = String(acct.subtype?.name ?? acct.subtype ?? '').toLowerCase().replace(/[\s-]/g, '_');
+      const inst = acct.institution?.name ?? acct.institutionName ?? acct.institution ?? '';
+      const hay  = `${type} ${sub}`;
+      const isRet = /401|403b|457|pension/.test(`${hay} ${name}`.toLowerCase().replace(/[\s-]/g, '_'));
+      let category;
+      if (isRet) category = 'retirement';
+      else if (/credit|credit_card/.test(hay) || bal < 0) category = 'liability';
+      else if (/loan|mortgage|debt/.test(hay)) category = 'liability';
+      else if (/checking|savings|money_market|cd|cash/.test(hay)) category = 'cash';
+      else if (/brokerage|investment|taxable|crypto/.test(hay)) category = 'investment';
+      else if (/real_estate|property|home|vehicle/.test(hay)) category = 'other_asset';
+      else category = 'other';
+      const updAt = acct.updatedAt ?? acct.displayLastUpdatedAt ?? acct.updated_at ?? null;
+      portfolioAccts.push({ name, institution: inst, type, subtype: sub, category, balance: Math.round(bal), updatedAt: updAt });
+    }
+
     const updatedAt = newestAt ?? new Date().toISOString();
     res.json({
       netWorth:    { value: Math.round(netWorth),    updatedAt },
@@ -624,6 +647,7 @@ app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
       assets:      { value: Math.round(assetsTotal), updatedAt },
       liabilities: { value: Math.round(liabTotal),   updatedAt },
       retirement:  retirement > 0 ? { value: Math.round(retirement), updatedAt } : null,
+      accounts: portfolioAccts,
       _debug: { accountCount: accounts.length, retirement, liquid, netWorth, accounts: debugAccts },
     });
   } catch (err) {

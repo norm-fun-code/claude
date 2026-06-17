@@ -419,6 +419,7 @@ async function syncMonarch(){
       liabilities:d.liabilities?.value||0,
       syncedAt:d.netWorth?.updatedAt||new Date().toISOString(),
     };
+    monarchAccounts=d.accounts||[];
     if(btn){btn.textContent='📍 Synced';btn.disabled=false;}
     showToast(`📍 Monarch synced · Liquid ${fmt(monarchSnapshot.liquid)} · 401k ${fmt(monarchSnapshot.retirement)}`,'green');
     savePlannerState(); // persist last sync so it shows instantly next open
@@ -562,6 +563,7 @@ let activeTab='nw';let charts={};let inflationView=false;let snapshots=[];let ov
 let _sensiPreset='all';
 let _sensiDeltas={};
 let monarchSnapshot=null; // {netWorth, retirement, assets, liabilities, syncedAt}
+let monarchAccounts=[];
 let _lastChartKey='';
 function destroyCharts(){Object.values(charts).forEach(c=>c&&c.destroy());charts={};_lastChartKey=''}
 function _chartKey(){return activeTab+'|'+inflationView+'|'+compareMode+'|'+(overlaySnapId||'')}
@@ -1017,6 +1019,7 @@ function render(){
   renderSnapshotBar();
   const labels=R.map(r=>String(r.yr));const newKey=_chartKey();const reuseChart=(newKey===_lastChartKey&&!!charts.main);if(!reuseChart)destroyCharts();_lastChartKey=newKey;const ca=document.getElementById('chartArea');
   if(activeTab==='advisor'){renderAdvisorTab(R,P);return}
+  if(activeTab==='portfolio'){renderPortfolioTab(R,P);return}
   if(activeTab==='goals'){renderGoalsTab(R,P,tT);return}
   if(activeTab==='housing'){renderHousingTab(R,P);return}
   if(activeTab==='sensitivity'){window._lastR=R;window._lastP=P;renderSensitivityTab(R,P);return}
@@ -1079,6 +1082,144 @@ function render(){
     <div class="sc"><h3>🏠 Home</h3><p><span class="mono" style="font-weight:600;color:var(--tx)">${fmt(P.homePrice)}</span> in ${P.homePurchaseYear}<br>${P.downPctg}% down · <span class="mono">${fmt(mm)}/mo</span> at ${P.mortgageRate}%</p></div>
     <div class="sc"><h3>📊 Tax Engine</h3><p>Fed MFJ 2026 + NYS + NYC + FICA<br>SALT $40.4K w/ phaseout above $505K<br>CTC $2.2K/kid w/ AGI phaseout<br>${P.nancySoloPractice?'Nancy: QBI + home office + SE':'Nancy: W2'}</p></div>
     <div class="sc"><h3>💡 Per-Kid Costs</h3><p>Infant +$9K · School +$10K · Teen +$14K/yr<br><em style="font-size:7.5px;color:var(--t3)">${(P.expenseInflation*100).toFixed(1)}%/yr inflation · ${P.numKids} kids</em></p></div>`;
+}
+
+function renderPortfolioTab(R,P){
+  const ca=document.getElementById('chartArea');
+  destroyCharts();
+  document.getElementById('summaries').innerHTML='';
+
+  if(!monarchAccounts||monarchAccounts.length===0){
+    ca.innerHTML=`<div style="padding:40px;text-align:center;color:var(--t2)">
+      <div style="font-size:32px;margin-bottom:12px">📊</div>
+      <div style="font-size:14px;font-weight:600;color:var(--tx);margin-bottom:6px">Portfolio view needs Monarch</div>
+      <div style="font-size:11px;color:var(--t3);margin-bottom:16px">Connect Monarch to see your account breakdown here.</div>
+      <button onclick="connectMonarch()" style="padding:8px 18px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:600">🔗 Connect Monarch</button>
+    </div>`;
+    return;
+  }
+
+  const curYr=new Date().getFullYear();
+  const projRow=R.find(r=>r.yr===curYr)||R[0];
+  const prevRow=R.find(r=>r.yr===curYr-1);
+  const _ys=new Date(curYr,0,1),_ye=new Date(curYr+1,0,1);
+  const yrFrac=Math.min(1,Math.max(0,(new Date()-_ys)/(_ye-_ys)));
+  const startLiq=prevRow?prevRow.liq:(P.startingLiquid||0);
+  const start401=prevRow?prevRow.k401:(P.pretax401k||0);
+  const planLiq=Math.round(startLiq+yrFrac*(projRow.liq-startLiq));
+  const plan401=Math.round(start401+yrFrac*(projRow.k401-start401));
+  const planNW=Math.round((prevRow?prevRow.nw:(P.startingLiquid||0))+yrFrac*(projRow.nw-(prevRow?prevRow.nw:(P.startingLiquid||0))));
+
+  // Categorise accounts
+  const cats={investment:[],retirement:[],cash:[],liability:[],other_asset:[],other:[]};
+  monarchAccounts.forEach(a=>{(cats[a.category]||cats.other).push(a);});
+
+  const totals={
+    investment:cats.investment.reduce((s,a)=>s+Math.max(0,a.balance),0),
+    retirement:cats.retirement.reduce((s,a)=>s+Math.max(0,a.balance),0),
+    cash:cats.cash.reduce((s,a)=>s+Math.max(0,a.balance),0),
+    other_asset:cats.other_asset.reduce((s,a)=>s+Math.max(0,a.balance),0),
+    other:cats.other.reduce((s,a)=>s+Math.max(0,a.balance),0),
+    liabilities:Math.abs(cats.liability.reduce((s,a)=>s+Math.min(0,a.balance),0)),
+  };
+  const totalAssets=totals.investment+totals.retirement+totals.cash+totals.other_asset+totals.other;
+  const actualNW=totalAssets-totals.liabilities;
+  const actualLiq=totals.investment+totals.cash;
+  const actual401=totals.retirement;
+
+  // Donut data — assets only, exclude liabilities and zero-value
+  const donutLabels=['Investments','Retirement','Cash / Savings','Other Assets'].filter((_,i)=>[totals.investment,totals.retirement,totals.cash,totals.other_asset+totals.other][i]>0);
+  const donutData=[totals.investment,totals.retirement,totals.cash,totals.other_asset+totals.other].filter(v=>v>0);
+  const donutColors=['rgba(99,91,255,.8)','rgba(26,135,84,.8)','rgba(0,115,230,.8)','rgba(191,105,0,.8)'];
+
+  function acctRows(list){
+    if(!list||list.length===0)return '<div style="font-size:10px;color:var(--t3);padding:6px 0">None tracked</div>';
+    return list.map(a=>{
+      const pos=a.balance>=0;
+      return`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--bd)">
+        <div>
+          <div style="font-size:10.5px;font-weight:500;color:var(--tx)">${a.name}</div>
+          ${a.institution?`<div style="font-size:8.5px;color:var(--t3)">${a.institution}</div>`:''}
+        </div>
+        <div style="font-size:10.5px;font-family:'SF Mono',monospace;font-weight:600;color:${pos?'var(--tx)':'var(--r)'}">${pos?'':'-'}${fmt(Math.abs(a.balance))}</div>
+      </div>`;
+    }).join('');
+  }
+
+  function planRow(label,actual,plan){
+    const diff=actual-plan;
+    const pct=plan>0?diff/plan:0;
+    const ok=diff>=0;
+    const arrow=ok?'↑':'↓';
+    const col=ok?'var(--g)':'var(--r)';
+    return`<div style="display:grid;grid-template-columns:1fr 110px 110px 80px;gap:4px;align-items:center;padding:7px 12px;border-bottom:1px solid var(--bd)">
+      <div style="font-size:10px;font-weight:500;color:var(--tx)">${label}</div>
+      <div style="text-align:right;font-size:10px;font-family:'SF Mono',monospace;color:var(--b)">${fmt(actual)}</div>
+      <div style="text-align:right;font-size:10px;font-family:'SF Mono',monospace;color:var(--t2)">${fmt(plan)}</div>
+      <div style="text-align:right;font-size:10px;font-family:'SF Mono',monospace;font-weight:600;color:${col}">${arrow} ${fmt(Math.abs(diff))}</div>
+    </div>`;
+  }
+
+  const syncDate=monarchAccounts[0]?.updatedAt?new Date(monarchAccounts[0].updatedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'today';
+
+  ca.innerHTML=`<div style="padding:2px">
+  <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px">
+    <div style="font-size:13px;font-weight:700;color:var(--tx)">📊 Portfolio · Account Breakdown</div>
+    <div style="font-size:9px;color:var(--t3)">Synced from Monarch · ${syncDate}</div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+    ${[
+      {l:'Net Worth',v:fmt(actualNW),s:'assets − liabilities',c:'var(--accent)'},
+      {l:'Investments + Cash',v:fmt(actualLiq),s:'brokerage + savings',c:'var(--b)'},
+      {l:'Retirement',v:fmt(actual401),s:'401k · IRA · pension',c:'var(--g)'},
+      {l:'Liabilities',v:fmt(totals.liabilities),s:'credit + loans',c:'var(--r)'},
+    ].map(k=>`<div class="kpi"><div class="kpi-l">${k.l}</div><div class="kpi-v" style="color:${k.c};font-size:14px">${k.v}</div><div class="kpi-s">${k.s}</div></div>`).join('')}
+  </div>
+
+  <div style="display:grid;grid-template-columns:280px 1fr;gap:10px;margin-bottom:12px">
+    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:10px">Allocation</div>
+      <canvas id="portfolioDonut" style="height:200px"></canvas>
+    </div>
+    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:8px">Accounts</div>
+      ${cats.investment.length?`<div style="font-size:8.5px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;margin:8px 0 2px">Investments</div>${acctRows(cats.investment)}`:''}
+      ${cats.retirement.length?`<div style="font-size:8.5px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;margin:8px 0 2px">Retirement</div>${acctRows(cats.retirement)}`:''}
+      ${cats.cash.length?`<div style="font-size:8.5px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;margin:8px 0 2px">Cash & Savings</div>${acctRows(cats.cash)}`:''}
+      ${cats.other_asset.length||cats.other.length?`<div style="font-size:8.5px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;margin:8px 0 2px">Other Assets</div>${acctRows([...cats.other_asset,...cats.other])}`:''}
+      ${cats.liability.length?`<div style="font-size:8.5px;font-weight:700;color:var(--r);text-transform:uppercase;letter-spacing:.5px;margin:8px 0 2px">Liabilities</div>${acctRows(cats.liability)}`:''}
+    </div>
+  </div>
+
+  <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;overflow:hidden;margin-bottom:10px">
+    <div style="display:grid;grid-template-columns:1fr 110px 110px 80px;gap:4px;padding:8px 12px;border-bottom:1px solid var(--bd);background:var(--s2)">
+      <div style="font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3)">Metric</div>
+      <div style="text-align:right;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--b)">Actual</div>
+      <div style="text-align:right;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3)">Plan (today)</div>
+      <div style="text-align:right;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3)">Δ</div>
+    </div>
+    ${planRow('Liquid (investments + cash)',actualLiq,planLiq)}
+    ${planRow('Retirement (401k + IRA)',actual401,plan401)}
+    ${planRow('Net Worth',actualNW,planNW)}
+  </div>
+  <div style="font-size:9px;color:var(--t3);padding:0 2px">Plan values are pro-rated to today (${Math.round(yrFrac*100)}% through ${curYr}). Holdings detail requires brokerage-level access (not available via Monarch).</div>
+  </div>`;
+
+  if(donutData.length>0){
+    const dCtx=document.getElementById('portfolioDonut').getContext('2d');
+    charts.main=new Chart(dCtx,{
+      type:'doughnut',
+      data:{labels:donutLabels,datasets:[{data:donutData,backgroundColor:donutColors.slice(0,donutData.length),borderWidth:0,hoverOffset:4}]},
+      options:{
+        responsive:true,maintainAspectRatio:false,cutout:'65%',
+        plugins:{
+          legend:{position:'bottom',labels:{font:{size:10,family:"'Inter',sans-serif"},color:'#425466',padding:12,boxWidth:10}},
+          tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${fmt(ctx.raw)} (${totalAssets>0?(ctx.raw/totalAssets*100).toFixed(0):'0'}%)`}}
+        }
+      }
+    });
+  }
 }
 
 function renderHousingTab(R,P){
@@ -2032,6 +2173,7 @@ document.getElementById('main').innerHTML=`
     <button data-tab="housing" onclick="setTab('housing')">🏠 Housing</button>
     <button data-tab="sensitivity" onclick="setTab('sensitivity')">📊 Sensitivity</button>
     <button data-tab="compare" onclick="setTab('compare')">⚖ Compare</button>
+    <button data-tab="portfolio" onclick="setTab('portfolio')">📊 Portfolio</button>
     <button data-tab="advisor" onclick="setTab('advisor')">🤖 AI Advisor</button>
     <button id="inflBtn" onclick="toggleInflation()" style="margin-left:auto;font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit">Real $</button>
     <button id="stressBtn" onclick="_stressMode=!_stressMode;this.style.background=_stressMode?'rgba(205,61,100,.15)':'var(--s2)';this.style.color=_stressMode?'var(--r)':'var(--t2)';this.style.borderColor=_stressMode?'rgba(205,61,100,.3)':'var(--bd)';render()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Show bear/bull range">⚡ Range</button>
