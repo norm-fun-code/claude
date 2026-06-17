@@ -1,6 +1,5 @@
 import React from 'react';
-import { StyleSheet, useColorScheme } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import { View, Text, StyleSheet, useColorScheme } from 'react-native';
 import { getColors, spacing, typography } from '../theme';
 
 interface Props {
@@ -14,32 +13,22 @@ function getGreeting(): string {
   return 'Good evening, Norm';
 }
 
-// Cheap refresh is handled by pull-to-refresh; heavy/explicit refresh by each
-// tab's labeled button. The header is just greeting + date (no refresh icon).
 export function Header({ date }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
   return (
-    <Animated.View entering={FadeInDown.delay(0).duration(400).springify().damping(20)} style={styles.container}>
-      <Animated.View style={styles.textBlock}>
-        <Animated.Text entering={FadeInDown.delay(0).duration(350).springify().damping(18)} style={[styles.greeting, { color: c.text }]}>{getGreeting()}</Animated.Text>
-        <Animated.Text entering={FadeInDown.delay(60).duration(300).springify().damping(20)} style={[styles.date, { color: c.subtext }]}>{date}</Animated.Text>
-      </Animated.View>
-    </Animated.View>
+    <View style={styles.container}>
+      <Text style={[styles.greeting, { color: c.text }]}>{getGreeting()}</Text>
+      <Text style={[styles.date, { color: c.subtext }]}>{date}</Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
     paddingTop: spacing.xl,
     paddingBottom: spacing.md,
-  },
-  textBlock: {
-    flex: 1,
   },
   greeting: {
     ...typography.title,

@@ -1,15 +1,14 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, useColorScheme, TextInput, TouchableOpacity } from 'react-native';
-import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
+import { AnimatedEntry } from './AnimatedEntry';
 import type { ChiefBrief } from '../hooks/useBriefing';
 import { BRIEFING_CONTEXT_URL, authHeaders, fetchWithTimeout } from '../config';
 
 interface Props {
   brief: ChiefBrief | null | undefined;
-  /** Fallback single-paragraph focus, shown when the structured brief isn't ready yet. */
   fallback?: string;
 }
 
@@ -19,7 +18,6 @@ const BLOCKS: { key: keyof Omit<ChiefBrief, 'synthesis'>; label: string }[] = [
   { key: 'move', label: 'THE MOVE' },
 ];
 
-// The Chief of Staff closes every brief on these — a fixed daily anchor.
 const AFFIRMATIONS = [
   'I show up with joy, presence, and courage!',
   'Everything always works out!',
@@ -60,31 +58,36 @@ export function BriefCard({ brief, fallback }: Props) {
   if (!brief && !fallback) return null;
 
   return (
-    <Animated.View entering={FadeIn.duration(400)} style={[styles.card, shadow(isDark)]}>
+    <View style={[styles.card, shadow(isDark)]}>
       <LinearGradient
         colors={['#272730', '#1C1C1E']}
         start={{ x: 0, y: 0 }}
         end={{ x: 0.6, y: 1 }}
         style={styles.gradient}
       />
-      <Text style={[styles.kicker, { color: '#A89CFF' }]}>CHIEF OF STAFF BRIEF</Text>
+      <Text style={styles.kicker}>CHIEF OF STAFF BRIEF</Text>
 
       {brief ? (
         <>
-          <Animated.Text entering={FadeInDown.delay(80).duration(300)} style={styles.synthesis}>{brief.synthesis}</Animated.Text>
+          <AnimatedEntry delay={60} distance={10}>
+            <Text style={styles.synthesis}>{brief.synthesis}</Text>
+          </AnimatedEntry>
           <View style={styles.separator} />
           {BLOCKS.map(({ key, label }, idx) => (
-            <Animated.View key={key} entering={FadeInDown.delay(160 + idx * 60).duration(280)} style={styles.block}>
-              <Text style={styles.blockLabel}>{label}</Text>
-              <Text style={styles.blockText}>{brief[key]}</Text>
-            </Animated.View>
+            <AnimatedEntry key={key} delay={130 + idx * 55} distance={8}>
+              <View style={styles.block}>
+                <Text style={styles.blockLabel}>{label}</Text>
+                <Text style={styles.blockText}>{brief[key]}</Text>
+              </View>
+            </AnimatedEntry>
           ))}
         </>
       ) : (
-        <Animated.Text entering={FadeInDown.delay(80).duration(300)} style={styles.synthesis}>{fallback}</Animated.Text>
+        <AnimatedEntry delay={60} distance={10}>
+          <Text style={styles.synthesis}>{fallback}</Text>
+        </AnimatedEntry>
       )}
 
-      {/* Affirmations — the Chief of Staff closes every brief on an up note. */}
       <View style={styles.separator} />
       <Text style={styles.blockLabel}>AFFIRMATIONS</Text>
       {AFFIRMATIONS.map((text, i) => (
@@ -94,14 +97,13 @@ export function BriefCard({ brief, fallback }: Props) {
         </View>
       ))}
 
-      {/* Context window — freeform note that feeds into the next briefing build. */}
       <View style={styles.separator} />
       <Text style={styles.blockLabel}>ADD CONTEXT FOR NEXT BRIEF</Text>
       <View style={styles.contextRow}>
         <TextInput
           style={styles.contextInput}
           placeholder="Anything the Chief of Staff should know…"
-          placeholderTextColor="rgba(255,255,255,0.45)"
+          placeholderTextColor="rgba(255,255,255,0.4)"
           value={note}
           onChangeText={setNote}
           returnKeyType="send"
@@ -117,7 +119,7 @@ export function BriefCard({ brief, fallback }: Props) {
         </TouchableOpacity>
       </View>
       {noteFailed && <Text style={styles.contextFailed}>Couldn't save — try again.</Text>}
-    </Animated.View>
+    </View>
   );
 }
 
@@ -131,25 +133,25 @@ const styles = StyleSheet.create({
   },
   gradient: {
     ...StyleSheet.absoluteFillObject,
-    borderRadius: radius.xl,
   },
   kicker: {
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 1.4,
+    color: '#A89CFF',
     marginBottom: spacing.sm,
   },
   synthesis: {
     fontSize: 16,
     fontWeight: '400',
     color: '#fff',
-    lineHeight: 25,
+    lineHeight: 26,
     letterSpacing: -0.1,
     marginBottom: spacing.md,
   },
   separator: {
     height: 1,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255,255,255,0.12)',
     marginBottom: spacing.md,
   },
   block: {
@@ -166,7 +168,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: '#fff',
     fontSize: 14,
-    lineHeight: 21,
+    lineHeight: 22,
   },
   affRow: {
     flexDirection: 'row',
@@ -175,15 +177,15 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
   affBullet: {
-    color: 'rgba(255,255,255,0.7)',
+    color: 'rgba(255,255,255,0.5)',
     fontSize: 13,
-    lineHeight: 21,
+    lineHeight: 22,
   },
   affText: {
     ...typography.body,
-    color: '#fff',
+    color: 'rgba(255,255,255,0.85)',
     fontSize: 14,
-    lineHeight: 21,
+    lineHeight: 22,
     fontStyle: 'italic',
     flex: 1,
   },
@@ -199,14 +201,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#fff',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
+    borderColor: 'rgba(255,255,255,0.2)',
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
   contextBtn: {
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.4)',
+    borderColor: 'rgba(255,255,255,0.3)',
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
@@ -218,7 +220,7 @@ const styles = StyleSheet.create({
   },
   contextFailed: {
     ...typography.caption,
-    color: 'rgba(255,255,255,0.7)',
+    color: 'rgba(255,255,255,0.6)',
     marginTop: spacing.xs,
     fontSize: 12,
   },

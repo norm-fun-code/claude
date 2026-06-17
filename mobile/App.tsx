@@ -13,12 +13,8 @@ import {
   Platform,
   useWindowDimensions,
 } from 'react-native';
-import Animated, {
-  FadeInDown,
-  FadeIn,
-  SlideInUp,
-} from 'react-native-reanimated';
 import { StatusBar } from 'expo-status-bar';
+import { AnimatedEntry } from './src/components/AnimatedEntry';
 
 // NormOS is always light (off-white) — easier to read; ignore system dark mode.
 Appearance.setColorScheme('light');
@@ -247,26 +243,25 @@ export default function App() {
         return (
           <>
             {d?.signals && d.signals.length > 0 && (
-              <Animated.View entering={FadeInDown.delay(0).duration(320).springify().damping(18)}>
+              <AnimatedEntry delay={0}>
                 <BriefSignalsCard signals={d.signals} />
-              </Animated.View>
+              </AnimatedEntry>
             )}
-            <Animated.View entering={FadeInDown.delay(40).duration(380).springify().damping(16)}>
+            <AnimatedEntry delay={30}>
               <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
-            </Animated.View>
-            <Animated.View entering={FadeInDown.delay(120).duration(320).springify().damping(18)}>
+            </AnimatedEntry>
+            <AnimatedEntry delay={110}>
               <TodayForecastCard forecast={d?.todayForecast} />
-            </Animated.View>
-            <Animated.View entering={FadeInDown.delay(170).duration(300).springify().damping(18)}>
+            </AnimatedEntry>
+            <AnimatedEntry delay={160}>
               <WeatherCard weather={d?.weather ?? null} />
-            </Animated.View>
+            </AnimatedEntry>
             {d?.crossContextInsights && d.crossContextInsights.length > 0 && (
-              <Animated.View entering={FadeInDown.delay(210).duration(280).springify().damping(18)}>
+              <AnimatedEntry delay={200}>
                 <CrossContextCard insights={d.crossContextInsights} />
-              </Animated.View>
+              </AnimatedEntry>
             )}
-
-            <Animated.View entering={FadeInDown.delay(250).duration(260).springify().damping(20)}>
+            <AnimatedEntry delay={230}>
               <CollapsibleSection title="Today's Full Briefing">
                 {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
                 <WeeklyIntentionsCard review={d?.weeklyReview ?? null} actions={d?.leverageActions ?? []} />
@@ -279,28 +274,31 @@ export default function App() {
                 {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
                 <SleepLogCard />
               </CollapsibleSection>
-            </Animated.View>
-
-            <Animated.View entering={FadeInDown.delay(290).duration(240).springify().damping(20)}>
+            </AnimatedEntry>
+            <AnimatedEntry delay={265}>
               <CollapsibleSection title="NormOS profile">
                 <SelfModelCard />
               </CollapsibleSection>
-            </Animated.View>
+            </AnimatedEntry>
 
             {briefing.error && !d && (
-              <Animated.View entering={FadeIn.duration(400)} style={[styles.errorBox, { backgroundColor: c.card }, shadow(isDark)]}>
-                <Text style={[styles.errorTitle, { color: c.text }]}>Cannot reach backend</Text>
-                <Text style={[styles.errorMsg, { color: c.subtext }]}>
-                  Make sure the backend is running:{'\n'}cd backend && node server.js
-                </Text>
-                <Text style={[styles.errorDetail, { color: c.subtext }]}>{briefing.error}</Text>
-              </Animated.View>
+              <AnimatedEntry delay={0}>
+                <View style={[styles.errorBox, { backgroundColor: c.card }, shadow(isDark)]}>
+                  <Text style={[styles.errorTitle, { color: c.text }]}>Cannot reach backend</Text>
+                  <Text style={[styles.errorMsg, { color: c.subtext }]}>
+                    Make sure the backend is running:{'\n'}cd backend && node server.js
+                  </Text>
+                  <Text style={[styles.errorDetail, { color: c.subtext }]}>{briefing.error}</Text>
+                </View>
+              </AnimatedEntry>
             )}
             {briefing.loading && !d && (
-              <Animated.View entering={FadeIn.duration(400)} style={styles.loadingBlock}>
-                <ActivityIndicator color={c.subtext} />
-                <Text style={[styles.loadingText, { color: c.subtext }]}>Generating your briefing…</Text>
-              </Animated.View>
+              <AnimatedEntry delay={0}>
+                <View style={styles.loadingBlock}>
+                  <ActivityIndicator color={c.subtext} />
+                  <Text style={[styles.loadingText, { color: c.subtext }]}>Generating your briefing…</Text>
+                </View>
+              </AnimatedEntry>
             )}
           </>
         );
@@ -318,7 +316,7 @@ export default function App() {
         showsVerticalScrollIndicator={false}
       >
         <Header date={d?.date ?? today} />
-        <Animated.View key={tab} entering={FadeIn.duration(220)} style={styles.titleRow}>
+        <AnimatedEntry key={tab} delay={0} distance={6} style={styles.titleRow}>
           <View>
             <Text style={[styles.tabTitle, { color: c.text }]}>{tabTitle}</Text>
             {tabSubtitle && (
@@ -364,7 +362,7 @@ export default function App() {
               )}
             </TouchableOpacity>
           ) : null}
-        </Animated.View>
+        </AnimatedEntry>
         {renderTab()}
         <View style={styles.footer} />
       </ScrollView>
