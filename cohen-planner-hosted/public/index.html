@@ -1049,8 +1049,8 @@ function render(){
     if(_stressMode){
       const bear=run({...P,investReturn:Math.max(.02,P.investReturn-.02),expenseInflation:Math.min(.06,P.expenseInflation+.01)});
       const bull=run({...P,investReturn:Math.min(.12,P.investReturn+.02),expenseInflation:Math.max(.01,P.expenseInflation-.005)});
-      ds.push({label:'Bear (return −2%, spend +1%)',data:[startLiqK,...bear.R.map(r=>deflK(r.liq,r.yr))],borderColor:'rgba(205,61,100,.7)',fill:false,tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[4,3]});
-      ds.push({label:'Bull (return +2%, spend −0.5%)',data:[startLiqK,...bull.R.map(r=>deflK(r.liq,r.yr))],borderColor:'rgba(26,135,84,.7)',fill:false,tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[4,3]});
+      ds.push({label:'Upside NW (+2% return, −0.5% spend)',data:[startLiqK,...bull.R.map(r=>deflK(r.nw,r.yr))],borderColor:'rgba(26,135,84,.5)',backgroundColor:'rgba(99,91,255,.08)',fill:'+1',tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[3,3]});
+      ds.push({label:'Downside NW (−2% return, +1% spend)',data:[startLiqK,...bear.R.map(r=>deflK(r.nw,r.yr))],borderColor:'rgba(205,61,100,.5)',fill:false,tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[3,3]});
     }
     if(compareMode)scenarios.forEach(s=>{const sLiq=Math.round((s.params.startingLiquid||P.startingLiquid)/1000);ds.push({label:s.name+' Liquid',data:[sLiq,...s.results.R.map(r=>deflK(r.liq,r.yr))],borderColor:s.color,fill:false,tension:.3,pointRadius:3,pointBackgroundColor:s.color,borderWidth:3.5})});
     // Snapshot overlay — compare a saved projection against the current plan
@@ -1345,17 +1345,17 @@ function renderSensitivityTab(R,P){
 
   const ALL_PARAMS=[
     {key:'investReturn',label:'Portfolio Return',delta:0.01,hi:'+1%',lo:'−1%',fmtV:v=>(v*100).toFixed(1)+'%',better:1},
-    {key:'normCashBase',label:"Norm Base Cash",delta:25000,hi:'+$25K',lo:'−$25K',fmtV:v=>fmt(v),better:1},
-    {key:'normStockBase',label:"Norm Base Stock",delta:25000,hi:'+$25K',lo:'−$25K',fmtV:v=>fmt(v),better:1},
+    {key:'normCashBase',label:'Norm Cash Comp',delta:25000,hi:'+$25K',lo:'−$25K',fmtV:v=>fmt(v),better:1},
+    {key:'normStockBase',label:'Norm Stock Comp',delta:25000,hi:'+$25K',lo:'−$25K',fmtV:v=>fmt(v),better:1},
     {key:'nancyHourlyRate',label:'Nancy Rate',delta:25,hi:'+$25/hr',lo:'−$25/hr',fmtV:v=>'$'+v+'/hr',better:1},
-    {key:'nancyMaxClients',label:'Nancy Max Clients',delta:5,hi:'+5',lo:'−5',fmtV:v=>v+' clients',better:1},
+    {key:'nancyMaxClients',label:'Nancy Clients',delta:5,hi:'+5',lo:'−5',fmtV:v=>v+' clients',better:1},
     {key:'pretax401k',label:'401k Contribution',delta:5000,hi:'+$5K/yr',lo:'−$5K/yr',fmtV:v=>fmt(v),better:1},
     {key:'expenseInflation',label:'Expense Inflation',delta:0.005,hi:'+0.5%',lo:'−0.5%',fmtV:v=>(v*100).toFixed(1)+'%',better:-1},
-    {key:'taxInflation',label:'Tax Bracket Inflation',delta:0.005,hi:'+0.5%',lo:'−0.5%',fmtV:v=>(v*100).toFixed(1)+'%',better:1},
+    {key:'taxInflation',label:'Bracket Inflation',delta:0.005,hi:'+0.5%',lo:'−0.5%',fmtV:v=>(v*100).toFixed(1)+'%',better:1},
     {key:'homePrice',label:'Home Price',delta:200000,hi:'+$200K',lo:'−$200K',fmtV:v=>'$'+(v/1e6).toFixed(2)+'M',better:-1},
     {key:'downPctg',label:'Down Payment %',delta:10,hi:'+10%',lo:'−10%',fmtV:v=>v+'%',better:-1},
     {key:'startingLiquid',label:'Starting Liquid',delta:100000,hi:'+$100K',lo:'−$100K',fmtV:v=>fmt(v),better:1},
-    {key:'nancyRampYears',label:'Nancy Ramp Duration',delta:2,hi:'+2 yrs',lo:'−2 yrs',fmtV:v=>v+' yrs',better:-1},
+    {key:'nancyRampYears',label:'Nancy Ramp',delta:2,hi:'+2 yrs',lo:'−2 yrs',fmtV:v=>v+' yrs',better:-1},
     {key:'homeAppreciation',label:'Home Appreciation',delta:0.01,hi:'+1%',lo:'−1%',fmtV:v=>(v*100).toFixed(1)+'%',better:1},
   ];
 
@@ -1386,69 +1386,52 @@ function renderSensitivityTab(R,P){
   });
 
   results.sort((a,b)=>Math.abs(b.hiDelta-b.loDelta)-Math.abs(a.hiDelta-a.loDelta));
-  const maxImpact=Math.max(...results.map(r=>r.impact),1);
 
   const presetBtns=Object.entries(PRESETS).map(([k,v])=>
     `<button onclick="_sensiPreset='${k}';renderSensitivityTab(window._lastR,window._lastP)" style="font-size:10px;padding:4px 10px;border-radius:5px;border:1px solid var(--bd);background:${_sensiPreset===k?'var(--accent)':'var(--s2)'};color:${_sensiPreset===k?'#fff':'var(--t2)'};cursor:pointer;font-family:inherit;font-weight:${_sensiPreset===k?'600':'400'}">${v.label}</button>`
   ).join('');
 
+  const chartH=Math.max(220,results.length*38+60);
+
   let h=`<div style="padding:2px">
   <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
     <div>
-      <div style="font-size:13px;font-weight:700;color:var(--tx)">📊 Sensitivity Analysis</div>
-      <div style="font-size:10px;color:var(--t2);margin-top:2px">Impact on final NW (${ey}) per one-step change. Base: <strong>${fmt(baseNW)}</strong></div>
+      <div style="font-size:13px;font-weight:700;color:var(--tx)">🌪 Sensitivity — Tornado Chart</div>
+      <div style="font-size:10px;color:var(--t2);margin-top:2px">Impact on ${ey} NW per one-step change. Base: <strong>${fmt(baseNW)}</strong></div>
     </div>
     <div style="display:flex;gap:5px;flex-wrap:wrap">${presetBtns}</div>
   </div>
+  <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:10px">
+    <canvas id="tornadoChart" style="height:${chartH}px"></canvas>
+  </div>
   <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;overflow:hidden">
-    <div style="display:grid;grid-template-columns:160px 60px 1fr 1fr;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);padding:8px 12px;border-bottom:1px solid var(--bd);background:var(--s2)">
-      <div>Parameter</div><div style="text-align:center">Step</div><div style="text-align:center">▼ Worse case</div><div style="text-align:center">▲ Better case</div>
+    <div style="display:grid;grid-template-columns:148px 56px 1fr 1fr;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);padding:8px 12px;border-bottom:1px solid var(--bd);background:var(--s2)">
+      <div>Parameter</div><div style="text-align:center">Step</div><div style="text-align:right">Downside</div><div style="text-align:right">Upside</div>
     </div>`;
 
   results.forEach((r,i)=>{
-    const hiIsGood=r.better===1?r.hiDelta>=0:r.hiDelta<=0;
-    const loIsGood=r.better===1?r.loDelta>=0:r.loDelta<=0;
-    const hiColor=hiIsGood?'var(--g)':'var(--r)';
-    const loColor=loIsGood?'var(--g)':'var(--r)';
-    const hiBarPct=Math.round(Math.abs(r.hiDelta)/maxImpact*100);
-    const loBarPct=Math.round(Math.abs(r.loDelta)/maxImpact*100);
+    const upsideVal=r.better===1?r.hiDelta:r.loDelta;
+    const downsideVal=r.better===1?r.loDelta:r.hiDelta;
+    const uColor=upsideVal>=0?'var(--g)':'var(--r)';
+    const dColor=downsideVal<=0?'var(--r)':'var(--g)';
     const rowBg=i%2===0?'var(--s1)':'var(--s2)';
-    const hiSign=r.hiDelta>=0?'+':'';
-    const loSign=r.loDelta>=0?'+':'';
-    // Format delta for display in the step input
     const deltaDisplay=r.key==='investReturn'||r.key==='expenseInflation'||r.key==='taxInflation'||r.key==='homeAppreciation'
-      ? (r.delta*100).toFixed(1)+'%'
-      : r.delta>=1000?'$'+(r.delta/1000).toFixed(0)+'K':String(r.delta);
-    h+=`<div style="display:grid;grid-template-columns:160px 60px 1fr 1fr;align-items:center;padding:7px 12px;border-bottom:1px solid var(--bd);background:${rowBg}">
+      ?(r.delta*100).toFixed(1)+'%'
+      :r.delta>=1000?'$'+(r.delta/1000).toFixed(0)+'K':String(r.delta);
+    const uSign=upsideVal>=0?'+':'';const dSign=downsideVal>=0?'+':'';
+    h+=`<div style="display:grid;grid-template-columns:148px 56px 1fr 1fr;align-items:center;padding:5px 12px;border-bottom:1px solid var(--bd);background:${rowBg}">
       <div>
-        <div style="font-size:10.5px;font-weight:600;color:var(--tx)">${r.label}</div>
-        <div style="font-size:8.5px;color:var(--t3);font-family:'SF Mono',monospace">${r.fmtV(r.vBase)} base</div>
+        <div style="font-size:10px;font-weight:600;color:var(--tx)">${r.label}</div>
+        <div style="font-size:8px;color:var(--t3);font-family:'SF Mono',monospace">${r.fmtV(r.vBase)} base</div>
       </div>
       <div style="padding:0 4px">
-        <div style="font-size:9px;color:var(--t3);margin-bottom:2px;text-align:center">±</div>
         <input type="text" value="${deltaDisplay}" data-key="${r.key}" data-rawdelta="${r.delta}"
           onchange="sensiUpdateDelta(this)"
           style="width:100%;font-size:9px;font-family:'SF Mono',monospace;text-align:center;padding:3px 4px;border:1px solid var(--bd);border-radius:4px;background:var(--s1);color:var(--tx);outline:none"
           title="Change step size for ${r.label}">
       </div>
-      <div style="padding:0 12px">
-        <div style="display:flex;align-items:center;gap:6px;justify-content:flex-end">
-          <span style="font-size:9px;color:var(--t3);white-space:nowrap">${r.lo}</span>
-          <div style="flex:1;height:14px;border-radius:3px;background:var(--s3);overflow:hidden">
-            <div style="height:100%;width:${loBarPct}%;background:${loColor};border-radius:3px;float:right;opacity:.85"></div>
-          </div>
-          <span style="font-size:9.5px;font-family:'SF Mono',monospace;font-weight:600;color:${loColor};min-width:52px;text-align:right">${loSign}${fmt(r.loDelta)}</span>
-        </div>
-      </div>
-      <div style="padding:0 12px">
-        <div style="display:flex;align-items:center;gap:6px">
-          <span style="font-size:9.5px;font-family:'SF Mono',monospace;font-weight:600;color:${hiColor};min-width:52px">${hiSign}${fmt(r.hiDelta)}</span>
-          <div style="flex:1;height:14px;border-radius:3px;background:var(--s3);overflow:hidden">
-            <div style="height:100%;width:${hiBarPct}%;background:${hiColor};border-radius:3px;opacity:.85"></div>
-          </div>
-          <span style="font-size:9px;color:var(--t3);white-space:nowrap">${r.hi}</span>
-        </div>
-      </div>
+      <div style="text-align:right;padding-right:12px;font-size:9.5px;font-family:'SF Mono',monospace;font-weight:600;color:${dColor}">${dSign}${fmt(downsideVal)}</div>
+      <div style="text-align:right;padding-right:4px;font-size:9.5px;font-family:'SF Mono',monospace;font-weight:600;color:${uColor}">${uSign}${fmt(upsideVal)}</div>
     </div>`;
   });
 
@@ -1462,6 +1445,41 @@ function renderSensitivityTab(R,P){
 
   ca.innerHTML=h;
   document.getElementById('summaries').innerHTML='';
+
+  const tlabels=results.map(r=>r.label);
+  const upsideData=results.map(r=>Math.round(Math.max(0,r.better===1?r.hiDelta:r.loDelta)/1000));
+  const downsideData=results.map(r=>Math.round(Math.min(0,r.better===1?r.loDelta:r.hiDelta)/1000));
+  const tCtx=document.getElementById('tornadoChart').getContext('2d');
+  charts.main=new Chart(tCtx,{
+    type:'bar',
+    data:{
+      labels:tlabels,
+      datasets:[
+        {label:'Downside',data:downsideData,backgroundColor:'rgba(205,61,100,.72)',borderRadius:3,barThickness:16},
+        {label:'Upside',data:upsideData,backgroundColor:'rgba(26,135,84,.72)',borderRadius:3,barThickness:16}
+      ]
+    },
+    options:{
+      indexAxis:'y',
+      responsive:true,
+      maintainAspectRatio:false,
+      plugins:{
+        legend:{display:false},
+        tooltip:{callbacks:{label:ctx=>{const v=ctx.raw;const sign=v>=0?'+':'';return`${ctx.dataset.label}: ${sign}$${Math.abs(v)}K on final NW`;}}}
+      },
+      scales:{
+        x:{
+          grid:{color:'rgba(0,0,0,.04)'},
+          ticks:{callback:v=>`${v>=0?'+':''}$${Math.abs(v)}K`,font:{size:9,family:"'SF Mono','Fira Code',monospace"},color:'#8898aa'},
+          title:{display:true,text:`Impact on ${ey} Net Worth ($K)`,font:{size:9},color:'#8898aa'}
+        },
+        y:{
+          grid:{display:false},
+          ticks:{font:{size:11,family:"'Inter',sans-serif"},color:'#0a2540'}
+        }
+      }
+    }
+  });
 }
 
 function sensiUpdateDelta(input){
@@ -2029,6 +2047,7 @@ let advisorChats={};
 let advisorActiveChatId=null;
 let advisorConversation=[];
 let advAgenticMode=false;
+let _advBriefedChats=new Set();
 let advPendingProposals=null; // {changes:[...], aiParams:{...}} from last agentic response
 let _flowView='income';
 let _stressMode=false;
@@ -2238,7 +2257,14 @@ function renderAdvisorTab(R,P){
 function advRenderMessages(){
   const msgs=document.getElementById('advMsgs');
   if(!msgs)return;
-  if(advisorConversation.length===0){
+  const visible=advisorConversation.filter(m=>!m.hidden);
+  if(visible.length===0){
+    if(advisorActiveChatId&&!_advBriefedChats.has(advisorActiveChatId)){
+      _advBriefedChats.add(advisorActiveChatId);
+      msgs.innerHTML='';
+      advAutoBrief();
+      return;
+    }
     msgs.innerHTML=`<div class="adv-welcome">
       <h3>Ask me anything about your plan</h3>
       <p>I have your live planner state — every slider, scenario, and projection. Try one of these or ask your own:</p>
@@ -2255,7 +2281,7 @@ function advRenderMessages(){
     return;
   }
   msgs.innerHTML='';
-  advisorConversation.forEach(m=>advAddMessage(m.role==='assistant'?'ai':'user',m.content,false,msgs));
+  visible.forEach(m=>advAddMessage(m.role==='assistant'?'ai':'user',m.content,false,msgs));
 }
 
 function advAddMessage(role,content,isThinking,container){
@@ -2297,6 +2323,50 @@ async function advOptimize(){
 Don't ask me questions — just run the analysis and deliver the recommendation.`;
   const input=document.getElementById('advInput');
   if(input){input.value=prompt;advSend();}
+}
+
+async function advAutoBrief(){
+  if(!advisorActiveChatId||!advisorChats[advisorActiveChatId])return;
+  const msgs=document.getElementById('advMsgs');
+  if(!msgs)return;
+  const thinking=advAddMessage('ai','',true);
+  const{R}=run(P);
+  const liveContext=buildLiveContext(R,P);
+  const briefPrompt='Give me a concise quarterly check-in on my financial plan: 3-4 specific things to flag right now. Mix of what\'s on track, what needs attention, and any quick wins. Be direct and specific to my actual numbers — no generic advice.';
+  const chat=advisorChats[advisorActiveChatId];
+  try{
+    const res=await fetch('/api/advisor/stream',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({chatId:advisorActiveChatId,message:briefPrompt,systemPrompt:liveContext,messages:[]})
+    });
+    if(!res.ok)throw new Error('API error '+res.status);
+    thinking.innerHTML='';
+    let fullReply='';
+    const reader=res.body.getReader();const dec=new TextDecoder();let buf='';
+    outer:while(true){
+      const{done,value}=await reader.read();
+      if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      const lines=buf.split('\n');buf=lines.pop();
+      for(const line of lines){
+        if(!line.startsWith('data: '))continue;
+        let payload;try{payload=JSON.parse(line.slice(6))}catch{continue}
+        if(payload.error)throw new Error(payload.error);
+        if(payload.delta){fullReply+=payload.delta;thinking.innerHTML=advMarkdown(fullReply);const m=document.getElementById('advMsgs');if(m)m.scrollTop=m.scrollHeight;}
+        if(payload.done)break outer;
+      }
+    }
+    const answer=fullReply||'(no response)';
+    thinking.innerHTML=advMarkdown(answer);
+    advisorConversation=[{role:'user',content:briefPrompt,hidden:true},{role:'assistant',content:answer}];
+    chat.messages=advisorConversation;
+    chat.title='📋 Quarterly brief';
+    chat.updatedAt=Date.now();
+    advRenderRail();
+  }catch(e){
+    if(thinking)thinking.innerHTML=`<p style="color:var(--r);font-size:11px">Couldn't connect to AI advisor. ${e.message}</p>`;
+  }
 }
 
 async function advNewChat(){
