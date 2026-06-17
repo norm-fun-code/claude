@@ -35,17 +35,17 @@ const SUGGESTIONS = [
   'What should I focus on this quarter?',
 ];
 
-const METRIC_LABELS: Record<string, string> = {
-  'health:hrv': 'HRV',
-  'health:sleep_hours': 'Sleep duration',
-  'health:sleep_score': 'Sleep score',
-  'health:resting_hr': 'Resting heart rate',
-  'habits:cold_shower': 'Cold shower',
-  'habits:exercise': 'Exercise',
-  'habits:eat_healthy': 'Eating healthy',
-  'wellbeing:mood': 'Mood',
-  'wellbeing:energy': 'Energy',
-  'wellbeing:focus': 'Focus',
+const METRICS: Record<string, { label: string; source: string }> = {
+  'health:hrv':         { label: 'HRV',              source: 'Eight Sleep & Apple Health' },
+  'health:sleep_hours': { label: 'Sleep duration',   source: 'Eight Sleep & Apple Health' },
+  'health:sleep_score': { label: 'Sleep score',      source: 'Eight Sleep & Apple Health' },
+  'health:resting_hr':  { label: 'Resting HR',       source: 'Eight Sleep & Apple Health' },
+  'habits:cold_shower': { label: 'Cold shower',      source: 'Daily check-in' },
+  'habits:exercise':    { label: 'Exercise',         source: 'Daily check-in' },
+  'habits:eat_healthy': { label: 'Eating healthy',   source: 'Daily check-in' },
+  'wellbeing:mood':     { label: 'Mood',             source: 'Daily check-in' },
+  'wellbeing:energy':   { label: 'Energy',           source: 'Daily check-in' },
+  'wellbeing:focus':    { label: 'Focus',            source: 'Daily check-in' },
 };
 
 type ExpProposal = {
@@ -320,7 +320,8 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
                         <Text style={[styles.expLabel, { color: c.subtext }]}>EXPERIMENT PROPOSAL</Text>
                         <Text style={[styles.expHypo, { color: c.text }]}>{expState.hypothesis}</Text>
                         <Text style={[styles.expMeta, { color: c.subtext }]}>
-                          Tracking: {METRIC_LABELS[expState.metric] ?? expState.metric}
+                          {`Tracking: ${METRICS[expState.metric]?.label ?? expState.metric}`}
+                          {METRICS[expState.metric]?.source ? `  ·  ${METRICS[expState.metric].source}` : ''}
                         </Text>
                         {!!expState.protocol && (
                           <Text style={[styles.expProtocol, { color: c.text }]}>{expState.protocol}</Text>
