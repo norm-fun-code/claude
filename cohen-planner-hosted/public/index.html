@@ -395,17 +395,16 @@ async function checkMonarchStatus(){
 
 async function loadMonarchInvestments(period){
   if(_investLoading)return; // prevent concurrent fetches causing jump/flicker
-  if(period)_investPeriod=period;
+  if(period){_investPeriod=period;monarchInvestments=null;}
   _investLoading=true;
-  monarchInvestments=null;
-  if(activeTab==='portfolio')render();
+  // Don't call render() here — the caller (renderPortfolioTab) already shows loading state
   try{
     const r=await fetch('/api/monarch-investments?period='+_investPeriod);
     if(!r.ok){const e=await r.json().catch(()=>({}));monarchInvestments=false;showToast('Investments: '+(e.error||'failed'),'red');}
     else{monarchInvestments=await r.json();}
   }catch(e){monarchInvestments=false;showToast('Investments fetch error: '+e.message,'red');}
   _investLoading=false;
-  if(activeTab==='portfolio')render();
+  if(activeTab==='portfolio')render(); // single render once data is ready
 }
 
 async function syncMonarch(){
