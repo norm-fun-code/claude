@@ -162,27 +162,20 @@ async function morningRoutine({ reason = 'scheduled' } = {}) {
  * data never shows (didn't sleep on the Pod, API down).
  */
 function startMorningWatcher() {
-  const pollMin = Number(process.env.EIGHT_SLEEP_POLL_MIN) || 15;        // poll cadence
-  const pollStartHour = Number(process.env.EIGHT_SLEEP_POLL_START_HOUR) || 5; // start polling at 5am
-  // Earliest the routine can fire even if Eight Sleep data is already present.
-  // Prevents a notification before you're awake on mornings you sleep past the
-  // time Eight Sleep finalizes its score. Set EIGHT_SLEEP_MIN_FIRE_HOUR to a
-  // later value (e.g. 8 or 9) if you regularly sleep past 7am.
-  const minFireHour = Number(process.env.EIGHT_SLEEP_MIN_FIRE_HOUR) || 8;
-  const minFireMinute = Number(process.env.EIGHT_SLEEP_MIN_FIRE_MINUTE) || 30;
-  const backstopHour = Number(process.env.EIGHT_SLEEP_BACKSTOP_HOUR) || 10;   // fire by 10am regardless
+  const pollMin = Number(process.env.EIGHT_SLEEP_POLL_MIN) || 15;
+  const pollStartHour = Number(process.env.EIGHT_SLEEP_POLL_START_HOUR) || 7;
+  const pollStartMinute = Number(process.env.EIGHT_SLEEP_POLL_START_MINUTE) || 15;
+  const backstopHour = Number(process.env.EIGHT_SLEEP_BACKSTOP_HOUR) || 10;
   const backstopMinute = Number(process.env.EIGHT_SLEEP_BACKSTOP_MINUTE) || 0;
 
   const tick = async () => {
     try {
-      if (await morningRanToday()) return; // already fired today
+      if (await morningRanToday()) return;
       const now = new Date();
       const mins = now.getHours() * 60 + now.getMinutes();
-      if (mins < pollStartHour * 60) return; // too early to poll
-      const pastMinFire = mins >= minFireHour * 60 + minFireMinute;
+      if (mins < pollStartHour * 60 + pollStartMinute) return; // too early
       const pastBackstop = mins >= backstopHour * 60 + backstopMinute;
 
-      // Pull just Eight Sleep and check whether last night's session has posted.
       let ready = false;
       try {
         await _runIngest({ only: 'eight_sleep_api' });
@@ -191,7 +184,7 @@ function startMorningWatcher() {
         console.error('[scheduler] eight-sleep poll failed:', e.message);
       }
 
-      if (ready && pastMinFire) {
+      if (ready) {
         await morningRoutine({ reason: 'eight-sleep data arrived' });
       } else if (pastBackstop) {
         await morningRoutine({ reason: 'backstop (no eight-sleep data yet)' });
@@ -202,12 +195,11 @@ function startMorningWatcher() {
   };
 
   setInterval(tick, pollMin * 60 * 1000);
-  setTimeout(tick, 30 * 1000); // first check shortly after boot (catch-up)
+  setTimeout(tick, 30 * 1000);
   console.log(
     `[scheduler] Eight Sleep watcher enabled — poll every ${pollMin}m from ` +
-    `${String(pollStartHour).padStart(2, '0')}:00, min-fire ` +
-    `${String(minFireHour).padStart(2, '0')}:${String(minFireMinute).padStart(2, '0')}, backstop ` +
-    `${String(backstopHour).padStart(2, '0')}:${String(backstopMinute).padStart(2, '0')}`
+    `${String(pollStartHour).padStart(2, '0')}:${String(pollStartMinute).padStart(2, '0')}, ` +
+    `backstop ${String(backstopHour).padStart(2, '0')}:${String(backstopMinute).padStart(2, '0')}`
   );
 }
 
