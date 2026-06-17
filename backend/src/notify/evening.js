@@ -21,9 +21,11 @@ async function todaySpendWithBaseline() {
     const today = new Date().toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD
     const from = new Date(`${today}T00:00:00Z`);
     const baselineFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    // Use spending_discretionary so fixed expenses (rent, subscriptions) never
+    // trigger an anomaly question — only genuinely variable spend matters here.
     const [todayRows, baselineRows] = await Promise.all([
-      metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from, agg: 'sum', excludeSource: 'seed' }),
-      metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: baselineFrom, to: from, agg: 'sum', excludeSource: 'seed' }),
+      metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from, agg: 'sum', excludeSource: 'seed' }),
+      metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: baselineFrom, to: from, agg: 'sum', excludeSource: 'seed' }),
     ]);
     const spend = todayRows.reduce((a, r) => a + Number(r.value || 0), 0);
     const baseline = baselineRows.length >= 7
@@ -57,7 +59,7 @@ async function runEveningBriefing(opts = {}) {
   if (spend != null && spend > 0) {
     const isSpike = baseline != null && baseline > 10 && spend > baseline * 1.8;
     if (isSpike) {
-      parts.push(`You spent ${fmt(spend)} today — more than usual (avg ${fmt(baseline)}/day). Anything to explain that?`);
+      parts.push(`You spent ${fmt(spend)} in discretionary today — more than usual (avg ${fmt(baseline)}/day). Anything to explain that?`);
       isAnomalyQuestion = true;
     } else {
       parts.push(`Spent ${fmt(spend)} today.`);

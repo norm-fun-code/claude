@@ -2153,8 +2153,8 @@ app.get('/api/briefing', async (req, res) => {
       const todayFrom = new Date(`${todayDate}T00:00:00Z`);
       const baselineFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       const [todayRows, baselineRows] = await Promise.all([
-        metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: todayFrom, agg: 'sum', excludeSource: 'seed' }),
-        metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: baselineFrom, to: todayFrom, agg: 'sum', excludeSource: 'seed' }),
+        metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: todayFrom, agg: 'sum', excludeSource: 'seed' }),
+        metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: baselineFrom, to: todayFrom, agg: 'sum', excludeSource: 'seed' }),
       ]);
       const dayTotal = todayRows.reduce((s, r) => s + Number(r.value || 0), 0);
       if (dayTotal > 0) todaySpend = dayTotal;
