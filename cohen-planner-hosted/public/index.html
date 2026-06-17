@@ -1862,11 +1862,9 @@ function renderGoalsTab(R,P,tT){
     const live401k=has401k?monarchSnapshot.retirement:jan1_401;
     const liqDiff=impliedLiq-planLiq;
     const diff401=live401k-plan401;
-    // Headline: liquid + 401k comparison — avoids home equity mismatch between model and Monarch.
-    // The model's r.nw includes home equity (liq+eq) which Monarch may or may not track as an asset,
-    // making a NW-vs-planNwNow comparison unreliable. Liquid + 401k is always apples-to-apples.
-    const headlineActual=impliedLiq+live401k;
-    const headlinePlan=planLiq+plan401;
+    // Headline: liquid only — 401k is excluded from all NW calcs (user tracks liquid NW only).
+    const headlineActual=impliedLiq;
+    const headlinePlan=planLiq;
     const totalDiff=headlineActual-headlinePlan;
     const ahead=totalDiff>=0;
     // If multi-year plan and no anchor set, warn that model's prior-year projection is the baseline
@@ -1881,18 +1879,16 @@ function renderGoalsTab(R,P,tT){
         <div style="background:${ahead?'var(--g-soft)':'var(--r-soft)'};border:1px solid ${ahead?'rgba(26,135,84,.2)':'rgba(205,61,100,.2)'};border-radius:6px;padding:6px 12px;text-align:center">
           <div style="font-size:11px;font-weight:700;color:${ahead?'var(--g)':'var(--r)'}">${ahead?'▲ Ahead':'▼ Behind'}</div>
           <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:${ahead?'var(--g)':'var(--r)'}">${ahead?'+':''}${fmt(totalDiff)}</div>
-          <div style="font-size:8px;color:var(--t3)">liquid + 401k</div>
+          <div style="font-size:8px;color:var(--t3)">liquid net worth</div>
         </div>
       </div>
       <div style="font-size:9.5px;color:var(--t2);line-height:1.6;margin-bottom:10px;padding:8px 10px;background:#fff8;border-radius:6px">
         <div><b style="color:var(--tx)">How it's calculated</b>${needsAnchor?` · <b style="color:var(--a)">⚠ No anchor — using model's projected ${curYr-1} year-end as Jan-1. Hit ⚓ Anchor for real data.</b>`:P.anchorJan1!=null?' · <span style="color:var(--g)">⚓ Anchored Jan-1</span>':''}</div>
         <div style="font-family:'SF Mono',monospace;font-size:9px;margin-top:4px;display:grid;grid-template-columns:1fr 1fr;gap:2px 12px">
           <span style="color:var(--t3)">Jan-1 liquid baseline</span><span style="color:var(--tx);font-weight:600">${fmt(jan1Liq)}${P.anchorJan1!=null?' (anchored)':prevRow?' (model)':' (slider)'}</span>
-          <span style="color:var(--t3)">Jan-1 401k baseline</span><span style="color:var(--tx);font-weight:600">${fmt(jan1_401)}${prevRow?' (model prev yr)':' (slider)'}</span>
           <span style="color:var(--t3)">Plan liq growth ${curYr}</span><span style="color:var(--tx);font-weight:600">${annualLiqGrowth>=0?'+':''}${fmt(annualLiqGrowth)} (full year)</span>
-          <span style="color:var(--t3)">Plan 401k growth ${curYr}</span><span style="color:var(--tx);font-weight:600">${annual401Growth>=0?'+':''}${fmt(annual401Growth)} (full year)</span>
-          <span style="color:var(--t3)">Pro-rated to ${pctElapsed}%</span><span style="color:var(--tx);font-weight:600">liq pace ${fmt(planLiq)} · 401k pace ${fmt(plan401)}</span>
-          <span style="color:var(--t3)">Actual (Monarch)</span><span style="color:var(--tx);font-weight:600">liq ${fmt(impliedLiq)} · 401k ${fmt(live401k)}</span>
+          <span style="color:var(--t3)">Pro-rated to ${pctElapsed}%</span><span style="color:var(--tx);font-weight:600">liquid pace ${fmt(planLiq)}</span>
+          <span style="color:var(--t3)">Actual liquid (Monarch)</span><span style="color:var(--tx);font-weight:600">${fmt(impliedLiq)} · <span style="color:${liqDiff>=0?'var(--g)':'var(--r)'};font-weight:700">${liqDiff>=0?'+':''}${fmt(liqDiff)}</span></span>
         </div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
