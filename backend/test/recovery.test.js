@@ -100,7 +100,7 @@ test('sleep surplus: slept MORE than Eight Sleep need → surplus, not debt', ()
   const seriesByKey = {
     'health:hrv': baselineThen(50, 30, 55),
     'health:resting_hr': baselineThen(55, 30, 52),
-    'health:sleep_hours': baselineThen(7.5, 30, 8 + 14 / 60),
+    'health:sleep_hours': baselineThen(8.0, 30, 8 + 14 / 60),
     'health:sleep_need': series(new Array(31).fill(7 + 44 / 60)),
   };
   const findings = r.computeHealthComposites(seriesByKey);
@@ -121,7 +121,7 @@ test('sleep debt: slept LESS than need → debt, headline matches detail', () =>
   const findings = r.computeHealthComposites(seriesByKey);
   const sd = findings.find((f) => f.type === 'sleep_debt');
   assert.ok(sd && /debt/i.test(sd.title));
-  assert.match(sd.detail, /short/i);
+  assert.match(sd.detail, /below your need/i);
 });
 
 test('computeHealthComposites: emits findings with evidence', () => {
