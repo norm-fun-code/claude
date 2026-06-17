@@ -509,6 +509,39 @@ app.get('/api/monarch-tools', requireAuth, async (req, res) => {
   }
 });
 
+// Probe: discover portfolio/holdings tools and try calling them
+app.get('/api/monarch-probe-portfolio', requireAuth, async (req, res) => {
+  try {
+    const accessToken = await getMonarchAccessToken();
+    if (!accessToken) return res.status(401).json({ error: 'Not connected' });
+    await monarchMCPHandshake(accessToken);
+
+    // 1. Get full tool list
+    const list = await callMonarchMCP(accessToken, 'tools/list');
+    const allTools = (list?.result?.tools ?? list?.tools ?? []).map(t => t.name ?? t);
+
+    // 2. Try each likely portfolio tool name
+    const candidates = [
+      'GetPortfolio','GetAccountHoldings','GetHoldings','GetInvestments',
+      'GetSecurities','GetPositions','GetInvestmentAccounts',
+      'get_portfolio','get_account_holdings','get_holdings','get_investments',
+    ];
+    const results = {};
+    for (const name of candidates) {
+      if (!allTools.includes(name)) { results[name] = 'NOT_IN_TOOL_LIST'; continue; }
+      try {
+        const r = await callMonarchMCP(accessToken, 'tools/call', { name, arguments: {} });
+        results[name] = { ok: true, preview: JSON.stringify(unwrapMCPResult(r)).slice(0, 500) };
+      } catch(e) {
+        results[name] = { ok: false, error: e.message };
+      }
+    }
+    res.json({ allTools, results });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 function num(v) {
   if (typeof v === 'number') return v;
   if (typeof v === 'string') { const n = parseFloat(v.replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; }
