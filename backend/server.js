@@ -1343,6 +1343,27 @@ app.get('/api/annotations', async (req, res) => {
   }
 });
 
+// Pre-brief context answers — user responds to a signal question; store as
+// annotation so it flows into annotationsContext on the next briefing build.
+app.post('/api/briefing/context', async (req, res) => {
+  try {
+    const { question, answer, signalKey } = req.body || {};
+    if (!answer || typeof answer !== 'string' || !answer.trim()) {
+      return res.status(400).json({ error: 'answer required' });
+    }
+    const id = await annotationsStore.createAnnotation({
+      startTs: new Date().toISOString(),
+      category: 'brief_context',
+      label: answer.trim().slice(0, 500),
+      note: question ? `Q: ${question.slice(0, 300)}` : (signalKey ?? null),
+    });
+    res.json({ ok: true, id });
+  } catch (err) {
+    console.error('[briefing/context] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Experiments (the hypothesis loop) -----------------------------------
 
 app.get('/api/experiments', async (req, res) => {
@@ -2117,6 +2138,38 @@ app.get('/api/briefing', async (req, res) => {
     errors.push({ service: 'recovery_context', error: err.message });
   }
 
+  // Pre-brief signals: detect anomalies and generate targeted questions for the
+  // mobile app to show before the user reads the brief. Answers come back as
+  // annotations via POST /api/briefing/context, which flow into annotationsContext
+  // automatically on the next build — no extra prompt plumbing needed.
+  let signals = [];
+  try {
+    const preBriefSignals = require('./src/intelligence/pre-brief-signals');
+    let todaySpend = null;
+    let spendBaseline = null;
+    try {
+      const tz = process.env.TZ || 'America/New_York';
+      const todayDate = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+      const todayFrom = new Date(`${todayDate}T00:00:00Z`);
+      const baselineFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const [todayRows, baselineRows] = await Promise.all([
+        metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: todayFrom, agg: 'sum', excludeSource: 'seed' }),
+        metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: baselineFrom, to: todayFrom, agg: 'sum', excludeSource: 'seed' }),
+      ]);
+      const dayTotal = todayRows.reduce((s, r) => s + Number(r.value || 0), 0);
+      if (dayTotal > 0) todaySpend = dayTotal;
+      if (baselineRows.length >= 7) {
+        spendBaseline = baselineRows.reduce((s, r) => s + Number(r.value || 0), 0) / baselineRows.length;
+      }
+    } catch { /* non-critical */ }
+    const allSignals = preBriefSignals.buildSignals({
+      recovery, calendar, workBusy, spend: todaySpend, spendBaseline,
+    });
+    signals = preBriefSignals.selectQuestions(allSignals, 2);
+  } catch (err) {
+    console.error('[pre-brief-signals] failed:', err.message);
+  }
+
   // Experiments feature is paused — hidden from UI until the data quality is
   // high enough to surface meaningful hypotheses. Backend logic is intact.
   const experimentsContext = '';
@@ -2493,6 +2546,7 @@ app.get('/api/briefing', async (req, res) => {
     markets,
     dailyQuote: keep(p?.dailyQuote, dailyQuote),
     alerts,
+    signals,
   };
 
   if (errors.length > 0) {

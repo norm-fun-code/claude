@@ -1,5 +1,7 @@
 // Evening / EOD briefing — a 6pm check-in that surfaces: today's spend, portfolio
 // performance, and budget flags. Short enough to read in one glance.
+// When something looks anomalous (spending spike), the notification asks about it
+// rather than just reporting the number.
 const devicesStore = require('../store/devices');
 const metricsStore = require('../store/metrics');
 const nudgesStore = require('../store/nudges');
@@ -8,8 +10,8 @@ const monarchWealth = require('../services/monarch-wealth');
 
 const fmt = (n) => '$' + Math.round(Math.abs(n)).toLocaleString('en-US');
 
-/** Today's total spending from the metrics spine (domain=wealth, metric=spending). */
-async function todaySpend() {
+/** Today's total spending + 30-day daily average, for anomaly detection. */
+async function todaySpendWithBaseline() {
   try {
     // Spending metrics are stored at UTC midnight of the transaction date (dayTs).
     // Using setHours(0,0,0,0) would give LOCAL midnight, which on an Eastern-TZ
@@ -18,12 +20,18 @@ async function todaySpend() {
     const tz = process.env.TZ || 'America/New_York';
     const today = new Date().toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD
     const from = new Date(`${today}T00:00:00Z`);
-    const rows = await metricsStore.dailyAggregate({
-      domain: 'wealth', metric: 'spending', from, agg: 'sum', excludeSource: 'seed',
-    });
-    return rows.reduce((a, r) => a + Number(r.value || 0), 0);
+    const baselineFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const [todayRows, baselineRows] = await Promise.all([
+      metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from, agg: 'sum', excludeSource: 'seed' }),
+      metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: baselineFrom, to: from, agg: 'sum', excludeSource: 'seed' }),
+    ]);
+    const spend = todayRows.reduce((a, r) => a + Number(r.value || 0), 0);
+    const baseline = baselineRows.length >= 7
+      ? baselineRows.reduce((a, r) => a + Number(r.value || 0), 0) / baselineRows.length
+      : null;
+    return { spend, baseline };
   } catch {
-    return null;
+    return { spend: null, baseline: null };
   }
 }
 
@@ -42,10 +50,19 @@ async function runEveningBriefing(opts = {}) {
   if (recent.has(dedupKey)) return { skipped: 'already_sent', sent: 0 };
 
   const parts = [];
+  let isAnomalyQuestion = false;
 
-  // Today's spending
-  const spend = await todaySpend();
-  if (spend != null && spend > 0) parts.push(`Spent ${fmt(spend)} today.`);
+  // Today's spending — detect anomaly and ask about it instead of just reporting.
+  const { spend, baseline } = await todaySpendWithBaseline();
+  if (spend != null && spend > 0) {
+    const isSpike = baseline != null && baseline > 10 && spend > baseline * 1.8;
+    if (isSpike) {
+      parts.push(`You spent ${fmt(spend)} today — more than usual (avg ${fmt(baseline)}/day). Anything to explain that?`);
+      isAnomalyQuestion = true;
+    } else {
+      parts.push(`Spent ${fmt(spend)} today.`);
+    }
+  }
 
   // Portfolio performance (7-day)
   try {
@@ -73,7 +90,7 @@ async function runEveningBriefing(opts = {}) {
 
   const n = {
     dedupKey,
-    title: 'EOD snapshot 📊',
+    title: isAnomalyQuestion ? 'Chief of Staff 🤔' : 'EOD snapshot 📊',
     body,
     priority: 0.5,
     basis: { type: 'evening_briefing', day },

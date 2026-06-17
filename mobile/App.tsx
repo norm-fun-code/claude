@@ -47,6 +47,7 @@ import { AlertCard } from './src/components/AlertCard';
 import { HighlightsCard } from './src/components/HighlightsCard';
 import { MorningFocusCard } from './src/components/MorningFocusCard';
 import { BriefCard } from './src/components/BriefCard';
+import { BriefSignalsCard } from './src/components/BriefSignalsCard';
 import { TodayForecastCard } from './src/components/TodayForecastCard';
 import { CollapsibleSection } from './src/components/CollapsibleSection';
 import { HealthBackfillCard } from './src/components/HealthBackfillCard';
@@ -240,6 +241,7 @@ export default function App() {
       default:
         return (
           <>
+            {d?.signals && d.signals.length > 0 && <BriefSignalsCard signals={d.signals} />}
             <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
             <TodayForecastCard forecast={d?.todayForecast} />
             <WeatherCard weather={d?.weather ?? null} />

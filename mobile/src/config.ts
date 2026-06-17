@@ -39,6 +39,7 @@ export const ANNOTATIONS_URL = `${API_BASE}/api/annotations`;
 export const CHECKIN_HISTORY_URL = `${API_BASE}/api/checkin/history`;
 export const BRIEFINGS_HISTORY_URL = `${API_BASE}/api/briefings/history`;
 export const MARKETS_REFRESH_URL = `${API_BASE}/api/briefing/markets`;
+export const BRIEFING_CONTEXT_URL = `${API_BASE}/api/briefing/context`;
 
 /** JSON headers, plus the bearer token when one is configured. */
 export function authHeaders(): Record<string, string> {

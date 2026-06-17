@@ -152,6 +152,13 @@ export interface Alert {
   message: string;
 }
 
+export interface BriefSignal {
+  key: string;
+  question: string;
+  context: string;
+  severity: number;
+}
+
 export interface Recovery {
   score: number | null;
   band: 'green' | 'yellow' | 'red' | null;
@@ -249,6 +256,7 @@ export interface BriefingData {
   markets?: Markets | null;
   dailyQuote?: string | null;
   alerts?: Alert[];
+  signals?: BriefSignal[];
   errors?: { service: string; error: string }[];
   // Set by the server when the cache is older than BRIEFING_CACHE_MIN (default 3h).
   // The app shows a "Rebuild briefing" CTA instead of silently serving stale data.
