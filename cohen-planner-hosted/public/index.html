@@ -1845,27 +1845,28 @@ function renderGoalsTab(R,P,tT){
     // Annual NW growth the plan projects for curYr — the INCREMENT only, not the absolute level.
     // This is driven purely by the plan's income/expense model for this year and is reliable
     // regardless of what starting point we use for the comparison.
-    const planBaseNw=(prevRow?prevRow.nw:(P.startingLiquid||0));
-    const planBase401=(prevRow?prevRow.k401:(P.k401Start||0));
-    const annualNwGrowth=(projRow.nw+projRow.k401)-(planBaseNw+planBase401);
-    const annualLiqGrowth=projRow.liq-(prevRow?prevRow.liq:(P.startingLiquid||0));
-    const annual401Growth=projRow.k401-(prevRow?prevRow.k401:(P.k401Start||0));
+    // Liquid and 401k growth from the model — pure increments for curYr, no home equity involved.
+    const jan1LiqBase=prevRow?prevRow.liq:(P.startingLiquid||0);
+    const jan1_401Base=prevRow?prevRow.k401:(P.k401Start||0);
+    const annualLiqGrowth=projRow.liq-jan1LiqBase;
+    const annual401Growth=projRow.k401-jan1_401Base;
     // Actual Jan-1 starting point: prefer P.anchorJan1 (real back-calc from Monarch)
     // over the model's prior-year projection, which can be far from reality.
-    // P.anchorJan1 is set by the Anchor button and never changes P.startingLiquid.
-    const jan1Liq=P.anchorJan1!=null?P.anchorJan1:(prevRow?prevRow.liq:(P.startingLiquid||0));
-    const jan1_401=prevRow?prevRow.k401:(P.k401Start||0);
+    const jan1Liq=P.anchorJan1!=null?P.anchorJan1:jan1LiqBase;
+    const jan1_401=jan1_401Base;
     // Pro-rated plan targets: actual Jan-1 + yrFrac × this year's plan increment
     const planLiq=Math.round(jan1Liq+yrFrac*annualLiqGrowth);
     const plan401=Math.round(jan1_401+yrFrac*annual401Growth);
-    const planNwNow=Math.round((jan1Liq+jan1_401)+yrFrac*annualNwGrowth);
     // 401k: use Monarch's live value if synced
     const has401k=monarchSnapshot.retirement>0;
-    const live401k=has401k?monarchSnapshot.retirement:(P.k401Start||0);
+    const live401k=has401k?monarchSnapshot.retirement:jan1_401;
     const liqDiff=impliedLiq-planLiq;
-    // Headline: actual Monarch NW vs plan's expected NW right now
-    const headlineActual=monarchSnapshot.netWorth;
-    const headlinePlan=planNwNow;
+    const diff401=live401k-plan401;
+    // Headline: liquid + 401k comparison — avoids home equity mismatch between model and Monarch.
+    // The model's r.nw includes home equity (liq+eq) which Monarch may or may not track as an asset,
+    // making a NW-vs-planNwNow comparison unreliable. Liquid + 401k is always apples-to-apples.
+    const headlineActual=impliedLiq+live401k;
+    const headlinePlan=planLiq+plan401;
     const totalDiff=headlineActual-headlinePlan;
     const ahead=totalDiff>=0;
     // If multi-year plan and no anchor set, warn that model's prior-year projection is the baseline
@@ -1880,25 +1881,35 @@ function renderGoalsTab(R,P,tT){
         <div style="background:${ahead?'var(--g-soft)':'var(--r-soft)'};border:1px solid ${ahead?'rgba(26,135,84,.2)':'rgba(205,61,100,.2)'};border-radius:6px;padding:6px 12px;text-align:center">
           <div style="font-size:11px;font-weight:700;color:${ahead?'var(--g)':'var(--r)'}">${ahead?'▲ Ahead':'▼ Behind'}</div>
           <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:${ahead?'var(--g)':'var(--r)'}">${ahead?'+':''}${fmt(totalDiff)}</div>
-          <div style="font-size:8px;color:var(--t3)">total net worth</div>
+          <div style="font-size:8px;color:var(--t3)">liquid + 401k</div>
         </div>
       </div>
-      <div style="font-size:9.5px;color:var(--t2);line-height:1.45;margin-bottom:12px;padding:7px 9px;background:#fff8;border-radius:6px"><b style="color:var(--tx)">"Plan pace"</b> = your actual Jan-1 balance + ${pctElapsed}% of this year's projected NW growth. Your Starting Liquid slider is never changed by this comparison.${needsAnchor?` <b style="color:var(--a)">⚠ No anchor set — using model's projected ${curYr-1} year-end as Jan-1 baseline. Hit ⚓ Anchor to use real Monarch data.</b>`:''}</div>
+      <div style="font-size:9.5px;color:var(--t2);line-height:1.6;margin-bottom:10px;padding:8px 10px;background:#fff8;border-radius:6px">
+        <div><b style="color:var(--tx)">How it's calculated</b>${needsAnchor?` · <b style="color:var(--a)">⚠ No anchor — using model's projected ${curYr-1} year-end as Jan-1. Hit ⚓ Anchor for real data.</b>`:P.anchorJan1!=null?' · <span style="color:var(--g)">⚓ Anchored Jan-1</span>':''}</div>
+        <div style="font-family:'SF Mono',monospace;font-size:9px;margin-top:4px;display:grid;grid-template-columns:1fr 1fr;gap:2px 12px">
+          <span style="color:var(--t3)">Jan-1 liquid baseline</span><span style="color:var(--tx);font-weight:600">${fmt(jan1Liq)}${P.anchorJan1!=null?' (anchored)':prevRow?' (model)':' (slider)'}</span>
+          <span style="color:var(--t3)">Jan-1 401k baseline</span><span style="color:var(--tx);font-weight:600">${fmt(jan1_401)}${prevRow?' (model prev yr)':' (slider)'}</span>
+          <span style="color:var(--t3)">Plan liq growth ${curYr}</span><span style="color:var(--tx);font-weight:600">${annualLiqGrowth>=0?'+':''}${fmt(annualLiqGrowth)} (full year)</span>
+          <span style="color:var(--t3)">Plan 401k growth ${curYr}</span><span style="color:var(--tx);font-weight:600">${annual401Growth>=0?'+':''}${fmt(annual401Growth)} (full year)</span>
+          <span style="color:var(--t3)">Pro-rated to ${pctElapsed}%</span><span style="color:var(--tx);font-weight:600">liq pace ${fmt(planLiq)} · 401k pace ${fmt(plan401)}</span>
+          <span style="color:var(--t3)">Actual (Monarch)</span><span style="color:var(--tx);font-weight:600">liq ${fmt(impliedLiq)} · 401k ${fmt(live401k)}</span>
+        </div>
+      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
         <div style="background:#fff8;border-radius:7px;padding:9px 11px">
           <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Total NW</div>
           <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${fmt(monarchSnapshot.netWorth)}</div>
-          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Pace: ${fmt(planNwNow)} · ${totalDiff>=0?'+':''}${fmt(totalDiff)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Monarch (incl. home equity)</div>
         </div>
-        <div style="background:#fff8;border-radius:7px;padding:9px 11px">
+        <div style="background:${liqDiff>=0?'var(--g-soft)':'var(--r-soft)'};border:1px solid ${liqDiff>=0?'rgba(26,135,84,.15)':'rgba(205,61,100,.15)'};border-radius:7px;padding:9px 11px">
           <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Liquid (est.)</div>
           <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--b)">${fmt(impliedLiq)}</div>
-          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Pace: ${fmt(planLiq)} · ${liqDiff>=0?'+':''}${fmt(liqDiff)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Pace: ${fmt(planLiq)} · <span style="color:${liqDiff>=0?'var(--g)':'var(--r)'};font-weight:700">${liqDiff>=0?'+':''}${fmt(liqDiff)}</span></div>
         </div>
-        <div style="background:#fff8;border-radius:7px;padding:9px 11px${has401k?'':';opacity:.6'}">
+        <div style="background:${diff401>=0?'var(--g-soft)':'var(--r-soft)'};border:1px solid ${diff401>=0?'rgba(26,135,84,.15)':'rgba(205,61,100,.15)'};border-radius:7px;padding:9px 11px${has401k?'':';opacity:.6'}">
           <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">401k${has401k?'':' · not synced'}</div>
           <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--p)">${fmt(live401k)}</div>
-          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${has401k?'Pace: '+fmt(plan401):'modeled estimate'}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${has401k?`Pace: ${fmt(plan401)} · <span style="color:${diff401>=0?'var(--g)':'var(--r)'};font-weight:700">${diff401>=0?'+':''}${fmt(diff401)}</span>`:'modeled estimate'}</div>
         </div>
         <div style="background:#fff8;border-radius:7px;padding:9px 11px">
           <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Home Equity (est.)</div>
@@ -1908,7 +1919,7 @@ function renderGoalsTab(R,P,tT){
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-top:12px">
         <button onclick="anchorToToday()" style="font-size:11px;font-weight:600;padding:7px 14px;background:var(--a);color:#fff;border:none;border-radius:7px;cursor:pointer;font-family:inherit">⚓ Anchor plan to today</button>
-        <span style="font-size:9.5px;color:var(--t2);line-height:1.4">See where you stand vs plan. Your Starting Liquid slider is not changed.</span>
+        <span style="font-size:9.5px;color:var(--t2);line-height:1.4">Calibrates Jan-1 baseline from real Monarch data. Starting Liquid slider is not changed.</span>
       </div>
     </div>`;
   }
