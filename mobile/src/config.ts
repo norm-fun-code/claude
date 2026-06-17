@@ -41,9 +41,19 @@ export const BRIEFINGS_HISTORY_URL = `${API_BASE}/api/briefings/history`;
 export const MARKETS_REFRESH_URL = `${API_BASE}/api/briefing/markets`;
 export const BRIEFING_CONTEXT_URL = `${API_BASE}/api/briefing/context`;
 
-/** JSON headers, plus the bearer token when one is configured. */
+/** Device's IANA timezone — follows the phone when travelling. */
+export function localTz(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
+}
+
+/** Today's date string (YYYY-MM-DD) in the device's local timezone. */
+export function localDateStr(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: localTz() }).format(new Date());
+}
+
+/** JSON headers, plus the bearer token and the device timezone. */
 export function authHeaders(): Record<string, string> {
-  const h: Record<string, string> = { 'Content-Type': 'application/json' };
+  const h: Record<string, string> = { 'Content-Type': 'application/json', 'X-Time-Zone': localTz() };
   if (API_TOKEN) h.Authorization = `Bearer ${API_TOKEN}`;
   return h;
 }

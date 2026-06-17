@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, TextInput, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { getColors, spacing, radius, shadow } from '../theme';
-import { API_BASE, WORKOUT_LOG_URL, ACTIVITY_URL, authHeaders, fetchWithTimeout } from '../config';
+import { API_BASE, WORKOUT_LOG_URL, ACTIVITY_URL, authHeaders, fetchWithTimeout, localTz } from '../config';
 import {
   getTodaysWorkout,
   HRV_ZONES,
@@ -62,7 +62,7 @@ function getWorkoutShortLabel(id: string): string {
   }
 }
 
-const ET_TZ = 'America/New_York';
+const ET_TZ = localTz();
 
 // JS day-of-week (0=Sun..6=Sat) in Eastern Time, matching the backend.
 function getEasternDay(): number {

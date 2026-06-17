@@ -1335,16 +1335,31 @@ app.post('/api/annotations', async (req, res) => {
   }
 });
 
+// Convert a naive datetime string (no Z / no offset) from a named timezone to UTC ISO.
+// The mobile client sends "2026-06-17T00:00:00" meaning midnight in ITS timezone.
+// PostgreSQL would treat that as UTC midnight, which is wrong for ET/PT/etc.
+function naiveToUtcIso(naiveStr, tz) {
+  if (!naiveStr || naiveStr.includes('Z') || naiveStr.match(/[+-]\d{2}:/)) return naiveStr;
+  // Trick: pretend the naive string is UTC, then measure how much local time in `tz`
+  // differs from UTC at that moment, and apply the inverse offset.
+  const asUtc = new Date(naiveStr + 'Z');
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(asUtc);
+  const get = (t) => parts.find((p) => p.type === t)?.value ?? '00';
+  const localStr = `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`;
+  const offsetMs = new Date(localStr + 'Z').getTime() - asUtc.getTime();
+  return new Date(asUtc.getTime() - offsetMs).toISOString();
+}
+
 app.get('/api/annotations', async (req, res) => {
   try {
     let { from, to } = req.query;
-    // The mobile client sends naive datetimes like "2026-06-17T00:00:00" (no Z)
-    // computed from the ET date. PostgreSQL treats naive strings as UTC, which
-    // means late-evening ET annotations (UTC next day) bleed into the next day's
-    // list. Convert naive strings to UTC using the server TZ (America/New_York)
-    // so the boundary is correct: ET midnight → UTC 04:00 in summer.
-    const toUtc = (s) => s && !s.includes('Z') && !s.match(/[+-]\d{2}:/) ? new Date(s).toISOString() : s;
-    res.json({ annotations: await annotationsStore.listAnnotations({ from: toUtc(from), to: toUtc(to) }) });
+    // Use the client's timezone (X-Time-Zone header) so date boundaries are correct
+    // when the user is travelling. Falls back to server TZ (America/New_York).
+    const tz = req.headers['x-time-zone'] || process.env.TZ || 'America/New_York';
+    res.json({ annotations: await annotationsStore.listAnnotations({ from: naiveToUtcIso(from, tz), to: naiveToUtcIso(to, tz) }) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1352,8 +1367,9 @@ app.get('/api/annotations', async (req, res) => {
 
 app.delete('/api/annotations/:id', async (req, res) => {
   try {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'invalid id' });
+    const id = req.params.id;
+    // annotations.id is UUID (gen_random_uuid()) — basic format check only
+    if (!id || typeof id !== 'string' || id.length < 8) return res.status(400).json({ error: 'invalid id' });
     const { query } = require('./src/db');
     await query('DELETE FROM annotations WHERE id = $1', [id]);
     res.json({ ok: true });
@@ -1700,13 +1716,13 @@ app.get('/api/debug/mtd-spend', async (req, res) => {
     const now = new Date();
     const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
     // Pull all monarch transactions for this calendar month from docs table
+    // Transaction-level breakdown from documents (same logic as MCP sync)
     const { rows } = await dbQuery(
       `SELECT metadata->>'category' AS category, (metadata->>'amount')::numeric AS amount,
               (metadata->>'date') AS date, metadata->>'merchant' AS merchant
          FROM documents
         WHERE source = 'monarch' AND domain = 'wealth'
           AND (metadata->>'date') >= $1
-          AND (metadata->>'amount')::numeric < 0
         ORDER BY date DESC, amount ASC`,
       [monthStart.toISOString().slice(0, 10)]
     );
@@ -1715,22 +1731,31 @@ app.get('/api/debug/mtd-spend', async (req, res) => {
     let totalExcluded = 0;
     const excluded = [];
     for (const r of rows) {
+      const amount = Number(r.amount);
+      if (!Number.isFinite(amount) || amount >= 0) continue; // skip income / refunds
       const cat = r.category || 'Uncategorized';
-      const amt = Math.abs(Number(r.amount));
+      const spend = Math.abs(amount);
       if (isInternalTransfer(cat)) {
-        totalExcluded += amt;
-        excluded.push({ category: cat, amount: amt, date: r.date, merchant: r.merchant });
+        totalExcluded += spend;
+        excluded.push({ category: cat, amount: spend, date: r.date, merchant: r.merchant });
       } else {
-        byCategory[cat] = (byCategory[cat] || 0) + amt;
-        totalIncluded += amt;
+        byCategory[cat] = (byCategory[cat] || 0) + spend;
+        totalIncluded += spend;
       }
     }
     const categories = Object.entries(byCategory)
       .map(([category, total]) => ({ category, total: Math.round(total * 100) / 100, fixed: isFixedCategory(category) }))
       .sort((a, b) => b.total - a.total);
+
+    // Also pull the stored metric total so we can compare the two
+    const metricsStore = require('./src/store/metrics');
+    const spendingRows = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: monthStart, agg: 'sum', excludeSource: 'seed' });
+    const metricTotal = spendingRows.reduce((s, r) => s + Number(r.value || 0), 0);
+
     res.json({
       monthStart: monthStart.toISOString().slice(0, 10),
-      totalMtdSpend: Math.round(totalIncluded * 100) / 100,
+      docBasedTotal: Math.round(totalIncluded * 100) / 100,
+      metricBasedTotal: Math.round(metricTotal * 100) / 100,
       totalExcluded: Math.round(totalExcluded * 100) / 100,
       categories,
       excludedSample: excluded.slice(0, 20),

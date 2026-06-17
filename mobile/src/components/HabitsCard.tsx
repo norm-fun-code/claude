@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, useColorScheme, AppState } from 'react-native';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import { API_BASE, HABITS_STREAKS_URL, HABITS_TODAY_URL, authHeaders, fetchWithTimeout } from '../config';
+import { API_BASE, HABITS_STREAKS_URL, HABITS_TODAY_URL, authHeaders, fetchWithTimeout, localDateStr } from '../config';
 import { AnnotationsCard } from './AnnotationsCard';
 
 const HABITS_URL = `${API_BASE}/api/habits`;
@@ -35,15 +35,11 @@ export function HabitsCard() {
   const [failed, setFailed] = useState(false);
   const fetchDateRef = useRef('');
 
-  function todayET(): string {
-    return new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
-    }).format(new Date());
-  }
+  function todayLocal(): string { return localDateStr(); }
 
   // Pre-fill with whatever was already logged today (survives reopening).
   async function fetchToday() {
-    fetchDateRef.current = todayET();
+    fetchDateRef.current = todayLocal();
     try {
       const res = await fetchWithTimeout(HABITS_TODAY_URL, { headers: authHeaders() });
       if (!res.ok) return;
@@ -82,7 +78,7 @@ export function HabitsCard() {
   // yesterday's habits don't show as today's (iOS keeps app alive for days).
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && fetchDateRef.current !== todayET()) {
+      if (state === 'active' && fetchDateRef.current !== todayLocal()) {
         setChecked({ morningTM: false, afternoonTM: false, gratitude: false, coldShower: false, exercise: false });
         setEatHealthy(null);
         setSaved(false);

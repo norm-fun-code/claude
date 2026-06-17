@@ -8,7 +8,7 @@ import Animated, {
 import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import { ANNOTATIONS_URL, authHeaders, fetchWithTimeout } from '../config';
+import { ANNOTATIONS_URL, authHeaders, fetchWithTimeout, localTz, localDateStr } from '../config';
 
 type Preset = { emoji: string; category: string; label: string };
 const PRESETS: Preset[] = [
@@ -23,7 +23,7 @@ const PRESETS: Preset[] = [
   { emoji: '🧘', category: 'rest', label: 'Rest day' },
 ];
 
-type Logged = { id: number; category: string; label: string };
+type Logged = { id: string; category: string; label: string };
 
 // Individual chip with spring-scale press and haptic feedback.
 function Chip({
@@ -76,21 +76,17 @@ export function ContextCard() {
   const [failed, setFailed] = useState(false);
   const fetchDateRef = useRef('');
 
-  function todayET(): string {
-    return new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
-    }).format(new Date());
+  // Use device timezone so the day resets at local midnight even when travelling.
+  function todayLocal(): string {
+    return localDateStr();
   }
 
   function startOfTodayISO(): string {
-    const parts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
-    }).format(new Date());
-    return `${parts}T00:00:00`;
+    return `${localDateStr()}T00:00:00`;
   }
 
   async function fetchToday() {
-    fetchDateRef.current = todayET();
+    fetchDateRef.current = todayLocal();
     try {
       const res = await fetchWithTimeout(`${ANNOTATIONS_URL}?from=${encodeURIComponent(startOfTodayISO())}`, {
         headers: authHeaders(),
@@ -108,7 +104,7 @@ export function ContextCard() {
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && fetchDateRef.current !== todayET()) {
+      if (state === 'active' && fetchDateRef.current !== todayLocal()) {
         setLogged([]);
         setNote('');
         setFailed(false);
@@ -141,7 +137,7 @@ export function ContextCard() {
     }
   }
 
-  async function unlog(id: number, label: string) {
+  async function unlog(id: string, label: string) {
     if (saving) return;
     setSaving(label);
     setFailed(false);

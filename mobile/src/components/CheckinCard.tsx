@@ -8,7 +8,7 @@ import Animated, {
 import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import { CHECKIN_URL, CHECKIN_TODAY_URL, authHeaders, fetchWithTimeout } from '../config';
+import { CHECKIN_URL, CHECKIN_TODAY_URL, authHeaders, fetchWithTimeout, localDateStr } from '../config';
 
 type Scores = { mood: number | null; energy: number | null; focus: number | null };
 const DIMENSIONS: { key: keyof Scores; label: string }[] = [
@@ -62,14 +62,10 @@ export function CheckinCard() {
   const [failed, setFailed] = useState(false);
   const fetchDateRef = useRef('');
 
-  function todayET(): string {
-    return new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
-    }).format(new Date());
-  }
+  function todayLocal(): string { return localDateStr(); }
 
   async function fetchToday() {
-    fetchDateRef.current = todayET();
+    fetchDateRef.current = todayLocal();
     try {
       const res = await fetchWithTimeout(CHECKIN_TODAY_URL, { headers: authHeaders() });
       if (!res.ok) return;
@@ -90,7 +86,7 @@ export function CheckinCard() {
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && fetchDateRef.current !== todayET()) {
+      if (state === 'active' && fetchDateRef.current !== todayLocal()) {
         setScores({ mood: null, energy: null, focus: null });
         setSaved(false);
         setFailed(false);

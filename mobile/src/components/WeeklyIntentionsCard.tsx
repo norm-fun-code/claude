@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import { INTENTIONS_URL, INTENTIONS_CURRENT_URL, INTENTIONS_RESULTS_URL, authHeaders, fetchWithTimeout } from '../config';
+import { INTENTIONS_URL, INTENTIONS_CURRENT_URL, INTENTIONS_RESULTS_URL, authHeaders, fetchWithTimeout, localTz } from '../config';
 import { WeeklyReview, LeverageAction } from '../hooks/useBriefing';
 
 type PriorGoal = { text: string; achieved: boolean };
@@ -26,7 +26,7 @@ interface Props {
 // and lingers until set or dismissed for the week; collapses into a compact
 // "this week's focus" summary once saved.
 const MAX_GOALS = 3;
-const ET_TZ = 'America/New_York';
+const ET_TZ = localTz();
 
 // Day-of-week in Eastern Time, to match the backend's notion of "the week"
 // (intentions are keyed on the ET Sunday). Using device-local time would make

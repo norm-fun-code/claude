@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, TextInput, useColorScheme, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import { ANNOTATIONS_URL, authHeaders, fetchWithTimeout } from '../config';
+import { ANNOTATIONS_URL, authHeaders, fetchWithTimeout, localDateStr } from '../config';
 
 const CATEGORIES = ['travel', 'illness', 'deadline', 'relationship', 'life', 'other'] as const;
 type Category = typeof CATEGORIES[number];
@@ -38,9 +38,7 @@ export function AnnotationsCard({ inline = false }: AnnotationsProps = {}) {
     try {
       // Only load today's annotations — context clears at midnight so the card
       // never shows stale events from prior days.
-      const startOfToday = new Date();
-      startOfToday.setHours(0, 0, 0, 0);
-      const res = await fetchWithTimeout(`${ANNOTATIONS_URL}?from=${startOfToday.toISOString()}`, { headers: authHeaders() });
+      const res = await fetchWithTimeout(`${ANNOTATIONS_URL}?from=${localDateStr()}T00:00:00`, { headers: authHeaders() });
       if (!res.ok) return;
       const d = await res.json();
       setAnnotations(d.annotations ?? []);
