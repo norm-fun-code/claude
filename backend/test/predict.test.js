@@ -27,11 +27,11 @@ test('low recovery → C day, anything that compounds above zero', () => {
   assert.match(r.detail, /HRV is down/i);
 });
 
-test('boundary: 67 is an A, 66 is a B, 50 is a B, 49 is a C', () => {
-  assert.equal(predictCapacity({ recoveryScore: 67 }).grade, 'A');
-  assert.equal(predictCapacity({ recoveryScore: 66 }).grade, 'B');
-  assert.equal(predictCapacity({ recoveryScore: 50 }).grade, 'B');
-  assert.equal(predictCapacity({ recoveryScore: 49 }).grade, 'C');
+test('boundary: 63 is an A, 62 is a B, 40 is a B, 39 is a C', () => {
+  assert.equal(predictCapacity({ recoveryScore: 63 }).grade, 'A');
+  assert.equal(predictCapacity({ recoveryScore: 62 }).grade, 'B');
+  assert.equal(predictCapacity({ recoveryScore: 40 }).grade, 'B');
+  assert.equal(predictCapacity({ recoveryScore: 39 }).grade, 'C');
 });
 
 test('null/invalid recovery score → no forecast', () => {
