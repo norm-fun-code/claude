@@ -1234,6 +1234,62 @@ app.post('/api/advisor/message', requireAuth, async (req, res) => {
   }
 });
 
+// ── Stripe ────────────────────────────────────────────────────────────────────
+async function stripeGet(path) {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error('STRIPE_SECRET_KEY not configured');
+  const r = await fetch(`https://api.stripe.com/v1${path}`, {
+    headers: { Authorization: `Bearer ${key}` },
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.error?.message || `Stripe HTTP ${r.status}`);
+  }
+  return r.json();
+}
+
+app.get('/api/stripe-balance', requireAuth, async (req, res) => {
+  try {
+    const [balance, txList] = await Promise.all([
+      stripeGet('/balance'),
+      stripeGet('/balance_transactions?limit=90&expand[]=data.source'),
+    ]);
+
+    // Stripe balances are in cents; amounts can be multi-currency
+    const usd = (items) =>
+      items.filter(b => b.currency === 'usd').reduce((s, b) => s + b.amount, 0) / 100;
+
+    const available = usd(balance.available);
+    const pending   = usd(balance.pending);
+
+    // Summarise transactions by type for the last 90 items
+    const txs = txList.data || [];
+    const byType = {};
+    let grossRevenue = 0, netRevenue = 0, refunds = 0, fees = 0;
+    for (const tx of txs) {
+      byType[tx.type] = (byType[tx.type] || 0) + tx.amount / 100;
+      if (tx.type === 'charge')    { grossRevenue += tx.amount / 100; fees += (tx.fee || 0) / 100; netRevenue += tx.net / 100; }
+      if (tx.type === 'refund')    refunds += Math.abs(tx.amount) / 100;
+    }
+
+    const recent = txs.slice(0, 20).map(tx => ({
+      id: tx.id,
+      type: tx.type,
+      amount: tx.amount / 100,
+      net: tx.net / 100,
+      fee: (tx.fee || 0) / 100,
+      currency: tx.currency,
+      description: tx.description || tx.type,
+      created: tx.created,
+    }));
+
+    res.json({ available, pending, total: available + pending, grossRevenue, netRevenue, refunds, fees, recent, byType });
+  } catch (err) {
+    console.error('Stripe balance error:', err);
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 

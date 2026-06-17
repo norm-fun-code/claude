@@ -407,6 +407,18 @@ async function loadMonarchInvestments(period){
   if(activeTab==='portfolio')render(); // single render once data is ready
 }
 
+async function loadStripeBalance(){
+  if(_stripeLoading)return;
+  _stripeLoading=true;
+  try{
+    const r=await fetch('/api/stripe-balance');
+    if(!r.ok){const e=await r.json().catch(()=>({}));stripeBalance=false;showToast('Stripe: '+(e.error||'failed'),'red');}
+    else{stripeBalance=await r.json();}
+  }catch(e){stripeBalance=false;showToast('Stripe error: '+e.message,'red');}
+  _stripeLoading=false;
+  if(activeTab==='portfolio')render();
+}
+
 async function syncMonarch(){
   const btn=document.getElementById('monarchSyncBtn');
   if(btn){btn.textContent='⟳ Syncing…';btn.disabled=true;}
@@ -583,6 +595,8 @@ let monarchAccounts=[];
 let monarchInvestments=null; // null=not loaded, false=failed, object=data
 let _investPeriod='1M';
 let _investLoading=false;
+let stripeBalance=null; // null=not loaded, false=failed, object=data
+let _stripeLoading=false;
 let _lastChartKey='';
 function destroyCharts(){Object.values(charts).forEach(c=>c&&c.destroy());charts={};_lastChartKey=''}
 function _chartKey(){return activeTab+'|'+inflationView+'|'+compareMode+'|'+(overlaySnapId||'')}
@@ -1103,6 +1117,56 @@ function render(){
     <div class="sc"><h3>💡 Per-Kid Costs</h3><p>Infant +$9K · School +$10K · Teen +$14K/yr<br><em style="font-size:7.5px;color:var(--t3)">${(P.expenseInflation*100).toFixed(1)}%/yr inflation · ${P.numKids} kids</em></p></div>`;
 }
 
+function renderStripeCard(){
+  if(_stripeLoading){return`<div style="margin-top:10px;padding:14px;background:var(--s1);border:1px solid var(--bd);border-radius:10px;font-size:11px;color:var(--t3)">Loading Stripe balance…</div>`;}
+  if(stripeBalance===null){
+    if(!_stripeLoading)loadStripeBalance();
+    return`<div style="margin-top:10px;padding:14px;background:var(--s1);border:1px solid var(--bd);border-radius:10px;font-size:11px;color:var(--t3)">Loading Stripe balance…</div>`;
+  }
+  if(stripeBalance===false){
+    return`<div style="margin-top:10px;padding:14px;background:var(--s1);border:1px solid var(--bd);border-radius:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:12px;font-weight:600;color:var(--tx)">Stripe</span>
+        <button onclick="stripeBalance=null;_stripeLoading=false;render()" style="font-size:10px;padding:4px 10px;background:var(--accent);color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:inherit">Retry</button>
+      </div>
+      <div style="font-size:10px;color:var(--r);margin-top:6px">Could not load — check STRIPE_SECRET_KEY env var.</div>
+    </div>`;
+  }
+  const sb=stripeBalance;
+  function colorAmt(v){return v>0?'var(--g)':v<0?'var(--r)':'var(--t3)';}
+  function signFmt2(v){return(v>=0?'+':'')+fmt(v);}
+  const typeLabels={charge:'Charge',refund:'Refund',payout:'Payout',transfer:'Transfer',adjustment:'Adjustment',stripe_fee:'Fee',payment:'Payment',payment_refund:'Refund'};
+  return`<div style="margin-top:12px;background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:13px;font-weight:700;color:var(--tx)">Stripe</span>
+        <span style="font-size:9px;background:#635bff20;color:#635bff;border-radius:4px;padding:2px 7px;font-weight:600">LIVE</span>
+      </div>
+      <button onclick="stripeBalance=null;_stripeLoading=false;render()" style="font-size:9px;padding:3px 9px;background:var(--s2);border:1px solid var(--bd);border-radius:5px;cursor:pointer;font-family:inherit;color:var(--t2)">↻ Refresh</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+      <div class="kpi"><div class="kpi-l">Available</div><div class="kpi-v" style="color:var(--g);font-size:14px">${fmt(sb.available)}</div><div class="kpi-s">ready to pay out</div></div>
+      <div class="kpi"><div class="kpi-l">Pending</div><div class="kpi-v" style="color:var(--b);font-size:14px">${fmt(sb.pending)}</div><div class="kpi-s">in transit</div></div>
+      <div class="kpi"><div class="kpi-l">Gross Revenue</div><div class="kpi-v" style="font-size:14px">${fmt(sb.grossRevenue)}</div><div class="kpi-s">last 90 txns</div></div>
+      <div class="kpi"><div class="kpi-l">Net Revenue</div><div class="kpi-v" style="color:var(--g);font-size:14px">${fmt(sb.netRevenue)}</div><div class="kpi-s">after ${fmt(sb.fees)} fees</div></div>
+    </div>
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:6px">Recent Transactions</div>
+    <div style="background:var(--s2);border:1px solid var(--bd);border-radius:8px;overflow:hidden">
+      ${sb.recent.length===0?`<div style="padding:10px 12px;font-size:10px;color:var(--t3)">No recent transactions</div>`
+      :sb.recent.map(tx=>`
+      <div style="display:grid;grid-template-columns:1fr 90px 80px 80px;align-items:center;padding:5px 10px;border-bottom:1px solid var(--bd);font-size:9.5px">
+        <div>
+          <span style="font-size:10px;font-weight:500;color:var(--tx)">${(tx.description||tx.type).slice(0,38)}</span>
+          <span style="font-size:8px;color:var(--t3);margin-left:5px">${new Date(tx.created*1000).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</span>
+        </div>
+        <div style="font-size:8.5px;color:var(--t3)">${typeLabels[tx.type]||tx.type}</div>
+        <div style="text-align:right;font-family:'SF Mono',monospace;font-weight:600;color:${colorAmt(tx.amount)}">${tx.amount>=0?'+':''}${fmt(Math.abs(tx.amount))}</div>
+        <div style="text-align:right;font-family:'SF Mono',monospace;font-size:8.5px;color:var(--t3)">${tx.fee>0?'fee '+fmt(tx.fee):''}</div>
+      </div>`).join('')}
+    </div>
+  </div>`;
+}
+
 function renderPortfolioTab(R,P){
   const ca=document.getElementById('chartArea');
   destroyCharts();
@@ -1239,6 +1303,8 @@ function renderPortfolioTab(R,P){
     }).join('')}
   </div>
   <div style="font-size:9px;color:var(--t3);padding:0 2px">Holdings sourced from Monarch via GetInvestments. Period: ${inv.periodStart} → ${inv.periodEnd}. Values are Monarch's last-synced prices.</div>
+
+  ${renderStripeCard()}
   </div>`;
 
   if(donutData.length>0){
