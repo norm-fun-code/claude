@@ -68,6 +68,13 @@ export function ExperimentsCard() {
     }
   }, []);
 
+  const dismiss = useCallback(async (id: number) => {
+    setExperiments((prev) => prev.filter((e) => e.id !== id));
+    try {
+      await fetch(`${EXPERIMENTS_URL}/${id}`, { method: 'DELETE', headers: authHeaders() });
+    } catch { /* optimistic — silently ignore */ }
+  }, []);
+
   useEffect(() => { fetch_(); }, [fetch_]);
 
   const running = experiments.filter((e) => e.status === 'running');
@@ -103,17 +110,22 @@ export function ExperimentsCard() {
               <Text style={[styles.hypothesis, { color: c.text }]} numberOfLines={2}>
                 {exp.hypothesis}
               </Text>
-              {isRunning ? (
-                <View style={[styles.badge, { backgroundColor: c.accentSoft }]}>
-                  <Text style={[styles.badgeText, { color: c.accent }]}>Active</Text>
-                </View>
-              ) : (
-                <View style={[styles.badge, { backgroundColor: c.border }]}>
-                  <Text style={[styles.badgeText, { color: c.subtext }]}>
-                    {exp.status === 'completed' ? 'Done' : 'Cancelled'}
-                  </Text>
-                </View>
-              )}
+              <View style={styles.rowRight}>
+                {isRunning ? (
+                  <View style={[styles.badge, { backgroundColor: c.accentSoft }]}>
+                    <Text style={[styles.badgeText, { color: c.accent }]}>Active</Text>
+                  </View>
+                ) : (
+                  <View style={[styles.badge, { backgroundColor: c.border }]}>
+                    <Text style={[styles.badgeText, { color: c.subtext }]}>
+                      {exp.status === 'completed' ? 'Done' : 'Cancelled'}
+                    </Text>
+                  </View>
+                )}
+                <TouchableOpacity onPress={() => dismiss(exp.id)} hitSlop={10}>
+                  <Text style={[styles.dismiss, { color: c.subtext }]}>×</Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
             <Text style={[styles.meta, { color: c.subtext }]}>
@@ -161,6 +173,8 @@ const styles = StyleSheet.create({
   label: { ...typography.label, fontSize: 10, letterSpacing: 1, marginBottom: spacing.sm },
   row: { paddingTop: spacing.md, marginTop: spacing.sm, borderTopWidth: 1, gap: 6 },
   rowTop: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing.sm },
+  rowRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexShrink: 0 },
+  dismiss: { fontSize: 20, lineHeight: 20, fontWeight: '300' },
   hypothesis: { fontSize: 14, fontWeight: '600', lineHeight: 20, flex: 1 },
   badge: { borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start' },
   badgeText: { fontSize: 11, fontWeight: '700' },

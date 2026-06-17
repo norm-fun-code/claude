@@ -1600,6 +1600,15 @@ app.post('/api/experiments/:id/evaluate', async (req, res) => {
   }
 });
 
+app.delete('/api/experiments/:id', async (req, res) => {
+  try {
+    await require('./src/db').query('DELETE FROM experiments WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // The ranked "highest leverage actions" — the core NormOS question.
 app.get('/api/actions', async (req, res) => {
   try {

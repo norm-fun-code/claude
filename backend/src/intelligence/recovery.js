@@ -284,32 +284,69 @@ function computeHealthComposites(seriesByKey, opts = {}) {
     });
   }
 
-  // Sleep debt — Eight Sleep's own 7-day rolling debt is the primary number.
-  // It tracks what you want: the cumulative hole from the whole week, not just
-  // last night. Single-night surplus is shown separately when the rolling debt
-  // is clear (Eight Sleep only tracks debt, not rolling surplus).
+  // Sleep balance — computed as the 7-day net of (sleep_hours - sleep_need).
+  // Positive = surplus, negative = debt. We use this instead of Eight Sleep's
+  // sleep_debt API field (dailySleepDebtSeconds) because that field only counts
+  // cumulative deficit and never goes negative, so a surplus week still shows as
+  // debt. This approach matches what Eight Sleep's own "Sleep balance" screen shows.
   const sleep = seriesByKey['health:sleep_hours'];
-  const eightSleepNeed = latest(seriesByKey['health:sleep_need']);
-  const eightSleepDebt = latest(seriesByKey['health:sleep_debt']); // 7-day rolling hours
+  const sleepNeedSeries = seriesByKey['health:sleep_need'];
+  const eightSleepNeed = latest(sleepNeedSeries);
   const lastNight = sleep ? latest(sleep) : null;
   const MIN = 0.08; // ~5 min threshold
 
-  if (eightSleepDebt != null && eightSleepDebt >= MIN) {
-    // Use Eight Sleep's 7-day rolling debt as the headline number.
-    const debtFmt = fmtHM(eightSleepDebt);
+  // Build 7-day net balance from paired daily values.
+  let balance7 = null;
+  if (sleep && sleep.length) {
+    const needMap = new Map();
+    if (sleepNeedSeries) {
+      for (const row of sleepNeedSeries) {
+        const d = new Date(row.day).toISOString().slice(0, 10);
+        needMap.set(d, Number(row.value));
+      }
+    }
+    const recent7 = sleep.slice(-7);
+    let net = 0, nights = 0;
+    for (const row of recent7) {
+      const h = Number(row.value);
+      if (!Number.isFinite(h)) continue;
+      const d = new Date(row.day).toISOString().slice(0, 10);
+      const need = needMap.get(d) ?? eightSleepNeed;
+      if (need == null) continue;
+      net += h - need;
+      nights++;
+    }
+    if (nights >= 3) balance7 = { net: Math.round(net * 100) / 100, nights };
+  }
+
+  if (balance7 != null) {
+    const { net, nights } = balance7;
     const nightCtx = lastNight != null && eightSleepNeed != null
       ? ` Last night: ${fmtHM(lastNight)} vs your ${fmtHM(eightSleepNeed)} need.`
       : '';
-    findings.push({
-      type: 'sleep_debt',
-      domains: ['health'],
-      title: `Sleep debt: ${debtFmt}`,
-      detail: `Seven-day rolling sleep debt is ${debtFmt} (Eight Sleep).${nightCtx}`,
-      confidence: 0.9,
-      evidence: { auto: true, kind: 'sleep_debt', debtHours: eightSleepDebt, lastNight, need: eightSleepNeed, source: 'eight_sleep_rolling' },
-    });
+    if (net <= -MIN) {
+      const debtFmt = fmtHM(-net);
+      findings.push({
+        type: 'sleep_debt',
+        domains: ['health'],
+        title: `Sleep debt: ${debtFmt}`,
+        detail: `Seven-day net sleep is ${debtFmt} below your need.${nightCtx}`,
+        confidence: 0.9,
+        evidence: { auto: true, kind: 'sleep_debt', debtHours: -net, lastNight, need: eightSleepNeed, source: 'seven_day_balance' },
+      });
+    } else if (net >= MIN) {
+      const surplusFmt = fmtHM(net);
+      findings.push({
+        type: 'sleep_debt',
+        domains: ['health'],
+        title: `Sleep surplus: ${surplusFmt}`,
+        detail: `Seven-day net sleep is ${surplusFmt} above your need — well rested this week.${nightCtx}`,
+        confidence: 0.9,
+        evidence: { auto: true, kind: 'sleep_surplus', surplusHours: net, lastNight, need: eightSleepNeed, source: 'seven_day_balance' },
+      });
+    }
   } else if (lastNight != null && eightSleepNeed != null) {
-    // Rolling debt is 0 or not yet available — check single-night delta.
+    // Not enough nights for a weekly balance — fall back to single-night delta.
     const need = eightSleepNeed;
     const delta = lastNight - need;
     const nightFmt = fmtHM(lastNight);
