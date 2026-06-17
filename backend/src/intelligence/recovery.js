@@ -284,21 +284,36 @@ function computeHealthComposites(seriesByKey, opts = {}) {
     });
   }
 
-  // Sleep debt vs. surplus — derived DIRECTLY from last night's sleep against
-  // Eight Sleep's personalized need, so the headline and the detail can never
-  // contradict each other. (The old path trusted Eight Sleep's `dailySleepDebt`
-  // field, which is clamped to >= 0 at ingest — so a night you slept MORE than
-  // your need still rendered as "debt" while the detail text showed a surplus.)
+  // Sleep debt — Eight Sleep's own 7-day rolling debt is the primary number.
+  // It tracks what you want: the cumulative hole from the whole week, not just
+  // last night. Single-night surplus is shown separately when the rolling debt
+  // is clear (Eight Sleep only tracks debt, not rolling surplus).
   const sleep = seriesByKey['health:sleep_hours'];
   const eightSleepNeed = latest(seriesByKey['health:sleep_need']);
+  const eightSleepDebt = latest(seriesByKey['health:sleep_debt']); // 7-day rolling hours
   const lastNight = sleep ? latest(sleep) : null;
+  const MIN = 0.08; // ~5 min threshold
 
-  if (lastNight != null && eightSleepNeed != null) {
+  if (eightSleepDebt != null && eightSleepDebt >= MIN) {
+    // Use Eight Sleep's 7-day rolling debt as the headline number.
+    const debtFmt = fmtHM(eightSleepDebt);
+    const nightCtx = lastNight != null && eightSleepNeed != null
+      ? ` Last night: ${fmtHM(lastNight)} vs your ${fmtHM(eightSleepNeed)} need.`
+      : '';
+    findings.push({
+      type: 'sleep_debt',
+      domains: ['health'],
+      title: `Sleep debt: ${debtFmt}`,
+      detail: `Seven-day rolling sleep debt is ${debtFmt} (Eight Sleep).${nightCtx}`,
+      confidence: 0.9,
+      evidence: { auto: true, kind: 'sleep_debt', debtHours: eightSleepDebt, lastNight, need: eightSleepNeed, source: 'eight_sleep_rolling' },
+    });
+  } else if (lastNight != null && eightSleepNeed != null) {
+    // Rolling debt is 0 or not yet available — check single-night delta.
     const need = eightSleepNeed;
-    const delta = lastNight - need; // + = surplus, − = debt
+    const delta = lastNight - need;
     const nightFmt = fmtHM(lastNight);
     const needFmt = fmtHM(need);
-    const MIN = 0.08; // ~5 min — ignore rounding-level differences
     if (delta >= MIN) {
       const surplusFmt = fmtHM(delta);
       findings.push({
@@ -315,21 +330,20 @@ function computeHealthComposites(seriesByKey, opts = {}) {
         type: 'sleep_debt',
         domains: ['health'],
         title: `Sleep debt: ${debtFmt}`,
-        detail: `Last night you slept ${nightFmt} vs your ${needFmt} need — ${debtFmt} short. An earlier night would start clearing it.`,
+        detail: `Last night you slept ${nightFmt} vs your ${needFmt} need — ${debtFmt} short.`,
         confidence: 0.85,
         evidence: { auto: true, kind: 'sleep_debt', debtHours: Math.round(-delta * 100) / 100, lastNight, need, source: 'eight_sleep' },
       });
     }
-    // else: on target — the recovery score already reflects it, no separate finding.
   } else {
-    // No Eight Sleep need available — fall back to the generic cumulative model.
+    // No Eight Sleep data — fall back to generic 7-day cumulative model.
     const debt = sleepDebt(sleep, opts);
     if (debt && debt.debtHours >= 1) {
       findings.push({
         type: 'sleep_debt',
         domains: ['health'],
         title: `Sleep debt: ${debt.debtHours}h over ${debt.nights} nights`,
-        detail: `Averaging ${fmtHM(debt.avgHours)} vs an ${debt.need}h need — about ${debt.debtHours}h accumulated this week. A couple of earlier nights would clear it.`,
+        detail: `Averaging ${fmtHM(debt.avgHours)} vs an ${debt.need}h need — about ${debt.debtHours}h accumulated this week.`,
         confidence: 0.8,
         evidence: { auto: true, kind: 'sleep_debt', debtHours: debt.debtHours, avgHours: debt.avgHours, nights: debt.nights },
       });

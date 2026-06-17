@@ -1337,7 +1337,14 @@ app.post('/api/annotations', async (req, res) => {
 
 app.get('/api/annotations', async (req, res) => {
   try {
-    res.json({ annotations: await annotationsStore.listAnnotations({ from: req.query.from, to: req.query.to }) });
+    let { from, to } = req.query;
+    // The mobile client sends naive datetimes like "2026-06-17T00:00:00" (no Z)
+    // computed from the ET date. PostgreSQL treats naive strings as UTC, which
+    // means late-evening ET annotations (UTC next day) bleed into the next day's
+    // list. Convert naive strings to UTC using the server TZ (America/New_York)
+    // so the boundary is correct: ET midnight → UTC 04:00 in summer.
+    const toUtc = (s) => s && !s.includes('Z') && !s.match(/[+-]\d{2}:/) ? new Date(s).toISOString() : s;
+    res.json({ annotations: await annotationsStore.listAnnotations({ from: toUtc(from), to: toUtc(to) }) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1683,6 +1690,56 @@ app.get('/api/debug/work-calendar', async (req, res) => {
 });
 
 // Diagnostic: full curation score breakdown for every finding in the last analyze
+// MTD spending breakdown by category — diagnose discrepancies between NormOS
+// totals and Monarch's own Cash Flow report.
+//   GET /api/debug/mtd-spend
+app.get('/api/debug/mtd-spend', async (req, res) => {
+  try {
+    const { query: dbQuery } = require('./src/db');
+    const { isInternalTransfer, isFixedCategory } = require('./src/connectors/monarch');
+    const now = new Date();
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    // Pull all monarch transactions for this calendar month from docs table
+    const { rows } = await dbQuery(
+      `SELECT metadata->>'category' AS category, (metadata->>'amount')::numeric AS amount,
+              (metadata->>'date') AS date, metadata->>'merchant' AS merchant
+         FROM documents
+        WHERE source = 'monarch' AND domain = 'wealth'
+          AND (metadata->>'date') >= $1
+          AND (metadata->>'amount')::numeric < 0
+        ORDER BY date DESC, amount ASC`,
+      [monthStart.toISOString().slice(0, 10)]
+    );
+    const byCategory = {};
+    let totalIncluded = 0;
+    let totalExcluded = 0;
+    const excluded = [];
+    for (const r of rows) {
+      const cat = r.category || 'Uncategorized';
+      const amt = Math.abs(Number(r.amount));
+      if (isInternalTransfer(cat)) {
+        totalExcluded += amt;
+        excluded.push({ category: cat, amount: amt, date: r.date, merchant: r.merchant });
+      } else {
+        byCategory[cat] = (byCategory[cat] || 0) + amt;
+        totalIncluded += amt;
+      }
+    }
+    const categories = Object.entries(byCategory)
+      .map(([category, total]) => ({ category, total: Math.round(total * 100) / 100, fixed: isFixedCategory(category) }))
+      .sort((a, b) => b.total - a.total);
+    res.json({
+      monthStart: monthStart.toISOString().slice(0, 10),
+      totalMtdSpend: Math.round(totalIncluded * 100) / 100,
+      totalExcluded: Math.round(totalExcluded * 100) / 100,
+      categories,
+      excludedSample: excluded.slice(0, 20),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // pass — so production issues can be diagnosed from data rather than screenshots.
 // Shows each finding's _score, _scoreParts, _signature, and which surface it lands on.
 //   GET /api/debug/insights
@@ -2124,7 +2181,15 @@ app.get('/api/briefing', async (req, res) => {
     const active = await annotationsStore.overlapping(startOfToday, new Date());
     if (active.length) {
       annotationsContext = active
-        .map((a) => `${a.category}: ${a.label}${a.note ? ` (${a.note})` : ''}`)
+        .map((a) => {
+          // Include the submission date so the AI can resolve relative terms like
+          // "tomorrow" or "today" in notes entered the night before.
+          const submitted = a.start_ts
+            ? new Date(a.start_ts).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/New_York' })
+            : null;
+          const dateTag = submitted ? `[${submitted}] ` : '';
+          return `${dateTag}${a.label}${a.note ? ` (${a.note})` : ''}`;
+        })
         .slice(0, 5)
         .join('; ');
     }
