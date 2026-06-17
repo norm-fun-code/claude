@@ -542,6 +542,63 @@ app.get('/api/monarch-probe-portfolio', requireAuth, async (req, res) => {
   }
 });
 
+// Investment holdings from Monarch GetInvestments MCP tool
+app.get('/api/monarch-investments', requireAuth, async (req, res) => {
+  try {
+    const accessToken = await getMonarchAccessToken();
+    if (!accessToken) return res.status(401).json({ error: 'Monarch not connected', connectUrl: '/api/monarch-connect' });
+    await monarchMCPHandshake(accessToken);
+
+    const now = new Date();
+    const end = req.query.end || now.toISOString().slice(0, 10);
+    const periodDays = { '1W': 7, '1M': 30, '3M': 90, 'YTD': null, '1Y': 365 };
+    const pd = periodDays[req.query.period] ?? 30;
+    const start = req.query.start || (pd === null
+      ? `${now.getFullYear()}-01-01`
+      : new Date(now.getTime() - pd * 864e5).toISOString().slice(0, 10));
+
+    const result = await callMonarchMCP(accessToken, 'tools/call', {
+      name: 'GetInvestments',
+      arguments: { start_date: start, end_date: end },
+    });
+    const data = unwrapMCPResult(result);
+    if (!data) return res.status(502).json({ error: 'No data returned from GetInvestments' });
+
+    const holdings = (data.investments || []).map(h => ({
+      ticker: h.ticker || '—',
+      value: Math.round(Number(h.value) || 0),
+      securityType: h.security_type || 'other',
+      periodChange: Math.round((Number(h.period_change_dollars) || 0) * 100) / 100,
+      periodChangePct: Math.round((Number(h.period_change_percent) || 0) * 100) / 100,
+      allTimeChange: Math.round((Number(h.variation_dollars) || 0) * 100) / 100,
+      allTimePct: Math.round((Number(h.variation_percent) || 0) * 100) / 100,
+    })).sort((a, b) => b.value - a.value);
+
+    const totalValue = holdings.reduce((s, h) => s + h.value, 0);
+    const periodChange = holdings.reduce((s, h) => s + h.periodChange, 0);
+    const allTimeChange = holdings.reduce((s, h) => s + h.allTimeChange, 0);
+    const priorValue = totalValue - periodChange;
+    const withMoves = holdings.filter(h => h.securityType !== 'cash' && h.periodChange !== 0);
+    const byMove = [...withMoves].sort((a, b) => b.periodChange - a.periodChange);
+
+    res.json({
+      periodStart: start,
+      periodEnd: end,
+      totalValue,
+      periodChange: Math.round(periodChange * 100) / 100,
+      periodChangePct: priorValue > 0 ? Math.round(periodChange / priorValue * 10000) / 100 : 0,
+      allTimeChange: Math.round(allTimeChange * 100) / 100,
+      allTimePct: totalValue - allTimeChange > 0 ? Math.round(allTimeChange / (totalValue - allTimeChange) * 10000) / 100 : 0,
+      holdings,
+      topGainers: byMove.slice(0, 5),
+      topLosers: byMove.slice(-5).reverse().filter(h => h.periodChange < 0),
+    });
+  } catch (err) {
+    console.error('monarch-investments error:', err);
+    res.status(502).json({ error: 'GetInvestments failed: ' + err.message });
+  }
+});
+
 function num(v) {
   if (typeof v === 'number') return v;
   if (typeof v === 'string') { const n = parseFloat(v.replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; }
