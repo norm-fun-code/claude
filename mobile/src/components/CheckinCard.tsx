@@ -1,5 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, useColorScheme, AppState } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+} from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { CHECKIN_URL, CHECKIN_TODAY_URL, authHeaders, fetchWithTimeout } from '../config';
@@ -11,11 +17,43 @@ const DIMENSIONS: { key: keyof Scores; label: string }[] = [
   { key: 'focus', label: 'Focus' },
 ];
 
-// 10-second daily check-in. This is the subjective signal the intelligence
-// layer correlates everything else against. Each tap saves immediately (the
-// backend upserts one row per metric per day), and we rehydrate today's values
-// on mount so switching tabs / reopening shows what you already logged —
-// resetting cleanly at midnight in your timezone.
+// Dot with spring-bounce and haptic on selection.
+function ScoreDot({
+  n, active, onPress, c,
+}: {
+  n: number;
+  active: boolean;
+  onPress: () => void;
+  c: ReturnType<typeof getColors>;
+}) {
+  const scale = useSharedValue(1);
+  const animStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+
+  const handlePress = () => {
+    // Bounce: pop up then settle
+    scale.value = withSpring(1.25, { damping: 6, stiffness: 350 }, () => {
+      scale.value = withSpring(1, { damping: 14, stiffness: 300 });
+    });
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    onPress();
+  };
+
+  return (
+    <Pressable onPress={handlePress} hitSlop={4}>
+      <Animated.View
+        style={[
+          styles.dot,
+          { borderColor: active ? c.accent : c.border },
+          active && { backgroundColor: c.accent },
+          animStyle,
+        ]}
+      >
+        <Text style={[styles.dotText, { color: active ? '#fff' : c.subtext }]}>{n}</Text>
+      </Animated.View>
+    </Pressable>
+  );
+}
+
 export function CheckinCard() {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
@@ -30,7 +68,6 @@ export function CheckinCard() {
     }).format(new Date());
   }
 
-  // Pre-fill with whatever was already checked in today (survives tab switches).
   async function fetchToday() {
     fetchDateRef.current = todayET();
     try {
@@ -49,12 +86,8 @@ export function CheckinCard() {
     }
   }
 
-  useEffect(() => {
-    fetchToday();
-  }, []);
+  useEffect(() => { fetchToday(); }, []);
 
-  // When app returns to foreground on a new calendar day, reset and re-fetch so
-  // yesterday's scores don't show as today's (iOS keeps app alive for days).
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active' && fetchDateRef.current !== todayET()) {
@@ -70,7 +103,7 @@ export function CheckinCard() {
   function set(key: keyof Scores, value: number) {
     const next = { ...scores, [key]: value };
     setScores(next);
-    submit(next); // save every tap, so nothing is lost if you leave mid-way
+    submit(next);
   }
 
   async function submit(next: Scores) {
@@ -85,7 +118,7 @@ export function CheckinCard() {
       setSaved(true);
     } catch {
       setSaved(false);
-      setFailed(true); // tell the user instead of silently dropping the entry
+      setFailed(true);
     }
   }
 
@@ -101,27 +134,20 @@ export function CheckinCard() {
         <View key={key} style={styles.row}>
           <Text style={[styles.label, { color: c.subtext }]}>{label}</Text>
           <View style={styles.scale}>
-            {[1, 2, 3, 4, 5].map((n) => {
-              const active = scores[key] === n;
-              return (
-                <Pressable
-                  key={n}
-                  onPress={() => set(key, n)}
-                  style={[
-                    styles.dot,
-                    { borderColor: c.border },
-                    active && { backgroundColor: c.accent, borderColor: c.accent },
-                  ]}
-                >
-                  <Text style={[styles.dotText, { color: active ? c.card : c.subtext }]}>{n}</Text>
-                </Pressable>
-              );
-            })}
+            {[1, 2, 3, 4, 5].map((n) => (
+              <ScoreDot
+                key={n}
+                n={n}
+                active={scores[key] === n}
+                onPress={() => set(key, n)}
+                c={c}
+              />
+            ))}
           </View>
         </View>
       ))}
       {failed && (
-        <Text style={styles.failed}>Couldn’t save — check your connection and tap again.</Text>
+        <Text style={styles.failed}>Couldn't save — check your connection and tap again.</Text>
       )}
     </View>
   );

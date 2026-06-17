@@ -1,33 +1,64 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, useColorScheme } from 'react-native';
+import { View, Text, StyleSheet, Pressable, useColorScheme } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withSpring,
+  FadeIn,
+  Easing,
+} from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, shadow } from '../theme';
 
 interface Props {
   title: string;
-  /** Open on first render. Default collapsed — the point is to hide the stack. */
   defaultOpen?: boolean;
   children: React.ReactNode;
 }
 
-// A tap-to-expand wrapper. In the Chief-of-Staff Today vision, the brief sits on
-// top and the full card stack lives inside one of these — visible on demand, not
-// a wall by default.
 export function CollapsibleSection({ title, defaultOpen = false, children }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [open, setOpen] = useState(defaultOpen);
 
+  const rotate = useSharedValue(defaultOpen ? 180 : 0);
+  const headerScale = useSharedValue(1);
+
+  const chevronStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${rotate.value}deg` }],
+  }));
+
+  const headerAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: headerScale.value }],
+  }));
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    rotate.value = withTiming(next ? 180 : 0, { duration: 220, easing: Easing.out(Easing.cubic) });
+    Haptics.selectionAsync();
+  };
+
   return (
     <View style={styles.wrap}>
-      <TouchableOpacity
-        onPress={() => setOpen((v) => !v)}
-        activeOpacity={0.7}
-        style={[styles.header, { backgroundColor: c.card }, shadow(isDark)]}
+      <Pressable
+        onPress={toggle}
+        onPressIn={() => { headerScale.value = withSpring(0.97, { damping: 15, stiffness: 400 }); }}
+        onPressOut={() => { headerScale.value = withSpring(1, { damping: 15, stiffness: 400 }); }}
       >
-        <Text style={[styles.title, { color: c.text }]}>{title}</Text>
-        <Text style={[styles.chevron, { color: c.subtext }]}>{open ? '▲' : '▼'}</Text>
-      </TouchableOpacity>
-      {open && <View style={styles.body}>{children}</View>}
+        <Animated.View style={[styles.header, { backgroundColor: c.card }, shadow(isDark), headerAnimStyle]}>
+          <Text style={[styles.title, { color: c.text }]}>{title}</Text>
+          <Animated.View style={chevronStyle}>
+            <Text style={[styles.chevron, { color: c.subtext }]}>▼</Text>
+          </Animated.View>
+        </Animated.View>
+      </Pressable>
+      {open && (
+        <Animated.View entering={FadeIn.duration(200)} style={styles.body}>
+          {children}
+        </Animated.View>
+      )}
     </View>
   );
 }

@@ -1,5 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, TextInput, TouchableOpacity, useColorScheme, AppState } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, useColorScheme, AppState, Pressable } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+} from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { ANNOTATIONS_URL, authHeaders, fetchWithTimeout } from '../config';
@@ -18,6 +24,48 @@ const PRESETS: Preset[] = [
 ];
 
 type Logged = { id: number; category: string; label: string };
+
+// Individual chip with spring-scale press and haptic feedback.
+function Chip({
+  p, on, busy, onTap, c,
+}: {
+  p: Preset;
+  on: boolean;
+  busy: boolean;
+  onTap: () => void;
+  c: ReturnType<typeof getColors>;
+}) {
+  const scale = useSharedValue(1);
+  const chipAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+
+  const handlePress = () => {
+    scale.value = withSpring(0.9, { damping: 10, stiffness: 400 }, () => {
+      scale.value = withSpring(1, { damping: 12, stiffness: 300 });
+    });
+    Haptics.selectionAsync();
+    onTap();
+  };
+
+  return (
+    <Pressable onPress={handlePress} disabled={busy}>
+      <Animated.View
+        style={[
+          styles.chip,
+          {
+            borderColor: on ? c.accent : c.border,
+            backgroundColor: on ? c.accent : 'transparent',
+            opacity: busy ? 0.5 : 1,
+          },
+          chipAnimStyle,
+        ]}
+      >
+        <Text style={[styles.chipText, { color: on ? '#fff' : c.text }]}>
+          {p.emoji} {p.label}{on ? ' ✓' : ''}
+        </Text>
+      </Animated.View>
+    </Pressable>
+  );
+}
 
 export function ContextCard() {
   const isDark = useColorScheme() === 'dark';
@@ -114,6 +162,7 @@ export function ContextCard() {
   async function logNote() {
     const text = note.trim();
     if (!text) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     await log('note', text);
     setNote('');
   }
@@ -130,9 +179,13 @@ export function ContextCard() {
           const on = isLogged(p.label);
           const busy = saving === p.label;
           return (
-            <Pressable
+            <Chip
               key={p.label}
-              onPress={() => {
+              p={p}
+              on={on}
+              busy={busy}
+              c={c}
+              onTap={() => {
                 if (on) {
                   const entry = getLogged(p.label);
                   if (entry) unlog(entry.id, p.label);
@@ -140,16 +193,7 @@ export function ContextCard() {
                   log(p.category, p.label);
                 }
               }}
-              disabled={busy}
-              style={[
-                styles.chip,
-                { borderColor: on ? c.accent : c.border, backgroundColor: on ? c.accent : 'transparent', opacity: busy ? 0.5 : 1 },
-              ]}
-            >
-              <Text style={[styles.chipText, { color: on ? c.card : c.text }]}>
-                {p.emoji} {p.label}{on ? ' ✓' : ''}
-              </Text>
-            </Pressable>
+            />
           );
         })}
       </View>

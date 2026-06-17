@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, StyleSheet, useColorScheme } from 'react-native';
+import { StyleSheet, useColorScheme } from 'react-native';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { getColors, spacing, typography } from '../theme';
 
 interface Props {
@@ -20,12 +21,12 @@ export function Header({ date }: Props) {
   const c = getColors(isDark);
 
   return (
-    <View style={styles.container}>
-      <View style={styles.textBlock}>
-        <Text style={[styles.greeting, { color: c.text }]}>{getGreeting()}</Text>
-        <Text style={[styles.date, { color: c.subtext }]}>{date}</Text>
-      </View>
-    </View>
+    <Animated.View entering={FadeInDown.delay(0).duration(400).springify().damping(20)} style={styles.container}>
+      <Animated.View style={styles.textBlock}>
+        <Animated.Text entering={FadeInDown.delay(0).duration(350).springify().damping(18)} style={[styles.greeting, { color: c.text }]}>{getGreeting()}</Animated.Text>
+        <Animated.Text entering={FadeInDown.delay(60).duration(300).springify().damping(20)} style={[styles.date, { color: c.subtext }]}>{date}</Animated.Text>
+      </Animated.View>
+    </Animated.View>
   );
 }
 

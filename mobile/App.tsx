@@ -13,6 +13,11 @@ import {
   Platform,
   useWindowDimensions,
 } from 'react-native';
+import Animated, {
+  FadeInDown,
+  FadeIn,
+  SlideInUp,
+} from 'react-native-reanimated';
 import { StatusBar } from 'expo-status-bar';
 
 // NormOS is always light (off-white) — easier to read; ignore system dark mode.
@@ -241,45 +246,61 @@ export default function App() {
       default:
         return (
           <>
-            {d?.signals && d.signals.length > 0 && <BriefSignalsCard signals={d.signals} />}
-            <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
-            <TodayForecastCard forecast={d?.todayForecast} />
-            <WeatherCard weather={d?.weather ?? null} />
+            {d?.signals && d.signals.length > 0 && (
+              <Animated.View entering={FadeInDown.delay(0).duration(320).springify().damping(18)}>
+                <BriefSignalsCard signals={d.signals} />
+              </Animated.View>
+            )}
+            <Animated.View entering={FadeInDown.delay(40).duration(380).springify().damping(16)}>
+              <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
+            </Animated.View>
+            <Animated.View entering={FadeInDown.delay(120).duration(320).springify().damping(18)}>
+              <TodayForecastCard forecast={d?.todayForecast} />
+            </Animated.View>
+            <Animated.View entering={FadeInDown.delay(170).duration(300).springify().damping(18)}>
+              <WeatherCard weather={d?.weather ?? null} />
+            </Animated.View>
             {d?.crossContextInsights && d.crossContextInsights.length > 0 && (
-              <CrossContextCard insights={d.crossContextInsights} />
+              <Animated.View entering={FadeInDown.delay(210).duration(280).springify().damping(18)}>
+                <CrossContextCard insights={d.crossContextInsights} />
+              </Animated.View>
             )}
 
-            <CollapsibleSection title="Today's Full Briefing">
-              {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
-              <WeeklyIntentionsCard review={d?.weeklyReview ?? null} actions={d?.leverageActions ?? []} />
-              <CalendarCard events={d?.calendar ?? []} workBusy={d?.workBusy ?? []} />
-              <CheckinHistoryCard insights={(d?.insights ?? []).filter((i) => {
-                if (i.type === 'habit_consistency') return true;
-                const nonHealth = new Set(['habits', 'wellbeing']);
-                return i.domains?.every((dom: string) => nonHealth.has(dom)) ?? false;
-              })} />
-              {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
-              <SleepLogCard />
-            </CollapsibleSection>
+            <Animated.View entering={FadeInDown.delay(250).duration(260).springify().damping(20)}>
+              <CollapsibleSection title="Today's Full Briefing">
+                {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
+                <WeeklyIntentionsCard review={d?.weeklyReview ?? null} actions={d?.leverageActions ?? []} />
+                <CalendarCard events={d?.calendar ?? []} workBusy={d?.workBusy ?? []} />
+                <CheckinHistoryCard insights={(d?.insights ?? []).filter((i) => {
+                  if (i.type === 'habit_consistency') return true;
+                  const nonHealth = new Set(['habits', 'wellbeing']);
+                  return i.domains?.every((dom: string) => nonHealth.has(dom)) ?? false;
+                })} />
+                {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
+                <SleepLogCard />
+              </CollapsibleSection>
+            </Animated.View>
 
-            <CollapsibleSection title="NormOS profile">
-              <SelfModelCard />
-            </CollapsibleSection>
+            <Animated.View entering={FadeInDown.delay(290).duration(240).springify().damping(20)}>
+              <CollapsibleSection title="NormOS profile">
+                <SelfModelCard />
+              </CollapsibleSection>
+            </Animated.View>
 
             {briefing.error && !d && (
-              <View style={[styles.errorBox, { backgroundColor: c.card }, shadow(isDark)]}>
+              <Animated.View entering={FadeIn.duration(400)} style={[styles.errorBox, { backgroundColor: c.card }, shadow(isDark)]}>
                 <Text style={[styles.errorTitle, { color: c.text }]}>Cannot reach backend</Text>
                 <Text style={[styles.errorMsg, { color: c.subtext }]}>
                   Make sure the backend is running:{'\n'}cd backend && node server.js
                 </Text>
                 <Text style={[styles.errorDetail, { color: c.subtext }]}>{briefing.error}</Text>
-              </View>
+              </Animated.View>
             )}
             {briefing.loading && !d && (
-              <View style={styles.loadingBlock}>
+              <Animated.View entering={FadeIn.duration(400)} style={styles.loadingBlock}>
                 <ActivityIndicator color={c.subtext} />
                 <Text style={[styles.loadingText, { color: c.subtext }]}>Generating your briefing…</Text>
-              </View>
+              </Animated.View>
             )}
           </>
         );
@@ -297,7 +318,7 @@ export default function App() {
         showsVerticalScrollIndicator={false}
       >
         <Header date={d?.date ?? today} />
-        <View style={styles.titleRow}>
+        <Animated.View key={tab} entering={FadeIn.duration(220)} style={styles.titleRow}>
           <View>
             <Text style={[styles.tabTitle, { color: c.text }]}>{tabTitle}</Text>
             {tabSubtitle && (
@@ -343,7 +364,7 @@ export default function App() {
               )}
             </TouchableOpacity>
           ) : null}
-        </View>
+        </Animated.View>
         {renderTab()}
         <View style={styles.footer} />
       </ScrollView>

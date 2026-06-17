@@ -12,6 +12,13 @@ import {
   Platform,
   useColorScheme,
 } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  FadeInDown,
+} from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
 import Markdown from 'react-native-markdown-display';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { useChat } from '../hooks/useChat';
@@ -42,6 +49,8 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
   const c = getColors(isDark);
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<'chat' | 'history'>('chat');
+  const fabScale = useSharedValue(1);
+  const fabAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: fabScale.value }] }));
   const [question, setQuestion] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editTitle, setEditTitle] = useState('');
@@ -64,6 +73,7 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
 
   const submit = (q: string) => {
     if (!q.trim()) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setQuestion('');
     send(q);
   };
@@ -87,13 +97,17 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
   return (
     <>
       <Pressable
-        onPress={() => { setView('chat'); setOpen(true); }}
-        style={[styles.fab, { backgroundColor: c.accent, bottom: bottomInset + 70 }, shadow(isDark, 'bar')]}
+        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setView('chat'); setOpen(true); }}
+        onPressIn={() => { fabScale.value = withSpring(0.91, { damping: 12, stiffness: 400 }); }}
+        onPressOut={() => { fabScale.value = withSpring(1, { damping: 10, stiffness: 300 }); }}
+        style={[styles.fabWrap, { bottom: bottomInset + 70 }]}
         accessibilityLabel="Ask NormOS"
         accessibilityRole="button"
       >
-        <Text style={styles.fabIcon}>✦</Text>
-        <Text style={styles.fabText}>Ask</Text>
+        <Animated.View style={[styles.fab, { backgroundColor: c.accent }, shadow(isDark, 'bar'), fabAnimStyle]}>
+          <Text style={styles.fabIcon}>✦</Text>
+          <Text style={styles.fabText}>Ask</Text>
+        </Animated.View>
       </Pressable>
 
       <Modal visible={open} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setOpen(false)}>
@@ -185,8 +199,9 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
                 )}
 
                 {messages.map((m, i) => (
-                  <View
+                  <Animated.View
                     key={i}
+                    entering={FadeInDown.duration(220).springify().damping(18)}
                     style={[
                       styles.bubble,
                       m.role === 'user'
@@ -199,7 +214,7 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
                     ) : (
                       <Markdown style={md}>{m.content}</Markdown>
                     )}
-                  </View>
+                  </Animated.View>
                 ))}
 
                 {loading && <ActivityIndicator color={c.accent} style={{ marginTop: spacing.md }} />}
@@ -264,9 +279,11 @@ function markdownStyles(c: ReturnType<typeof getColors>) {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  fab: {
+  fabWrap: {
     position: 'absolute',
     right: spacing.md,
+  },
+  fab: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,

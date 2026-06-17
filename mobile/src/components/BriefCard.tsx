@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, useColorScheme, TextInput, TouchableOpacity } from 'react-native';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import type { ChiefBrief } from '../hooks/useBriefing';
 import { BRIEFING_CONTEXT_URL, authHeaders, fetchWithTimeout } from '../config';
@@ -34,6 +37,7 @@ export function BriefCard({ brief, fallback }: Props) {
   async function saveNote() {
     const trimmed = note.trim();
     if (!trimmed || noteSaving) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setNoteSaving(true);
     setNoteFailed(false);
     try {
@@ -56,22 +60,28 @@ export function BriefCard({ brief, fallback }: Props) {
   if (!brief && !fallback) return null;
 
   return (
-    <View style={[styles.card, { backgroundColor: c.hero }, shadow(isDark)]}>
-      <Text style={[styles.kicker, { color: c.accent }]}>CHIEF OF STAFF BRIEF</Text>
+    <Animated.View entering={FadeIn.duration(400)} style={[styles.card, shadow(isDark)]}>
+      <LinearGradient
+        colors={['#272730', '#1C1C1E']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0.6, y: 1 }}
+        style={styles.gradient}
+      />
+      <Text style={[styles.kicker, { color: '#A89CFF' }]}>CHIEF OF STAFF BRIEF</Text>
 
       {brief ? (
         <>
-          <Text style={styles.synthesis}>{brief.synthesis}</Text>
+          <Animated.Text entering={FadeInDown.delay(80).duration(300)} style={styles.synthesis}>{brief.synthesis}</Animated.Text>
           <View style={styles.separator} />
-          {BLOCKS.map(({ key, label }) => (
-            <View key={key} style={styles.block}>
+          {BLOCKS.map(({ key, label }, idx) => (
+            <Animated.View key={key} entering={FadeInDown.delay(160 + idx * 60).duration(280)} style={styles.block}>
               <Text style={styles.blockLabel}>{label}</Text>
               <Text style={styles.blockText}>{brief[key]}</Text>
-            </View>
+            </Animated.View>
           ))}
         </>
       ) : (
-        <Text style={styles.synthesis}>{fallback}</Text>
+        <Animated.Text entering={FadeInDown.delay(80).duration(300)} style={styles.synthesis}>{fallback}</Animated.Text>
       )}
 
       {/* Affirmations — the Chief of Staff closes every brief on an up note. */}
@@ -107,26 +117,34 @@ export function BriefCard({ brief, fallback }: Props) {
         </TouchableOpacity>
       </View>
       {noteFailed && <Text style={styles.contextFailed}>Couldn't save — try again.</Text>}
-    </View>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: radius.lg,
-    padding: spacing.md,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
     marginBottom: spacing.md,
+    overflow: 'hidden',
+    backgroundColor: '#1C1C1E',
+  },
+  gradient: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: radius.xl,
   },
   kicker: {
     fontSize: 10,
     fontWeight: '700',
-    letterSpacing: 1.2,
+    letterSpacing: 1.4,
     marginBottom: spacing.sm,
   },
   synthesis: {
-    ...typography.body,
+    fontSize: 16,
+    fontWeight: '400',
     color: '#fff',
-    lineHeight: 23,
+    lineHeight: 25,
+    letterSpacing: -0.1,
     marginBottom: spacing.md,
   },
   separator: {
@@ -140,9 +158,9 @@ const styles = StyleSheet.create({
   blockLabel: {
     fontSize: 10,
     fontWeight: '700',
-    letterSpacing: 0.8,
-    color: 'rgba(99,91,255,0.85)',
-    marginBottom: 3,
+    letterSpacing: 1.0,
+    color: '#A89CFF',
+    marginBottom: 4,
   },
   blockText: {
     ...typography.body,
