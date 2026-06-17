@@ -444,108 +444,56 @@ async function syncMonarch(){
   }
 }
 
-async function anchorToToday(){
+function anchorToToday(){
   if(!monarchSnapshot){showToast('Sync Monarch first','red');return;}
   const curYr=new Date().getFullYear();
-  if((P.planStartYear||2026)!==curYr){
-    showToast(`Roll the plan forward to ${curYr} first, then anchor`,'red');
-    return;
-  }
-  showToast('Fetching year-to-date cash flow…','blue');
-  let cf;
-  try{
-    const r=await fetch('/api/monarch-cashflow');
-    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||'HTTP '+r.status);}
-    cf=await r.json();
-  }catch(e){showToast('Cash flow fetch failed: '+e.message,'red');return;}
-
   const todayLiq=monarchSnapshot.liquid;
-  const ytdInc=cf.income||0, ytdExp=cf.expense||0;
-  const ytdNet=ytdInc-ytdExp;
-  const impliedJan1=Math.round(todayLiq-ytdNet);
-  // Projected EOY using the new starting point
-  const newP={...P,startingLiquid:impliedJan1};
-  if(monarchSnapshot.retirement>0)newP.k401Start=monarchSnapshot.retirement;
-  let projEOY=null;
-  try{const rr=run(newP);const row=rr.R.find(x=>x.yr===curYr)||rr.R[0];projEOY=row?row.liq:null;}catch(e){}
-  // Pro-rate the plan's liquid to today (model rows are year-end, snapshot is mid-year)
+  const totalNw=monarchSnapshot.netWorth;
+  const ret=monarchSnapshot.retirement;
+  const syncDate=new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+  // Pro-rate plan's liquid target to today for comparison
   let planLiqToday=null;
   try{
-    const rr=run(P);
-    const row=rr.R.find(x=>x.yr===curYr)||rr.R[0];
-    const prev=rr.R.find(x=>x.yr===curYr-1);
-    const startL=P.anchorJan1!=null?P.anchorJan1:(prev?prev.liq:(P.startingLiquid||0));
+    const{R}=run(P);
+    const row=R.find(x=>x.yr===curYr)||R[0];
+    const prev=R.find(x=>x.yr===curYr-1);
+    const jan1=prev?prev.liq:(P.startingLiquid||0);
     const _ys=new Date(curYr,0,1),_ye=new Date(curYr+1,0,1);
     const frac=Math.min(1,Math.max(0,(new Date()-_ys)/(_ye-_ys)));
-    planLiqToday=row?Math.round(startL+frac*(row.liq-startL)):null;
+    if(row)planLiqToday=Math.round(jan1+frac*(row.liq-jan1));
   }catch(e){}
-  const actualVsPlan=planLiqToday!=null?todayLiq-planLiqToday:null;
-
-  const debugJson=JSON.stringify(cf._debug||{},null,2);
+  const liqDiff=planLiqToday!=null?todayLiq-planLiqToday:null;
   const ov=document.createElement('div');
   ov.style.cssText='position:fixed;inset:0;background:rgba(10,37,64,.4);z-index:9998;display:flex;align-items:center;justify-content:center;padding:20px';
-  const set401=monarchSnapshot.retirement>0;
-  ov.innerHTML=`<div style="background:#fff;border-radius:12px;padding:22px 24px;max-width:460px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.2)">
-    <div style="font-size:15px;font-weight:700;color:var(--tx);margin-bottom:4px">⚓ Anchor plan to today</div>
-    ${actualVsPlan!=null?`<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:8px 10px;border-radius:8px;background:${actualVsPlan>=0?'rgba(26,135,84,.07)':'rgba(205,61,100,.05)'};border:1px solid ${actualVsPlan>=0?'rgba(26,135,84,.15)':'rgba(205,61,100,.15)'}"><span style="font-size:18px">${actualVsPlan>=0?'▲':'▼'}</span><div><div style="font-size:12px;font-weight:700;color:${actualVsPlan>=0?'var(--g)':'var(--r)'}">${actualVsPlan>=0?'Ahead of plan':'Behind plan'} by ${fmtF(Math.abs(actualVsPlan))}</div><div style="font-size:10px;color:var(--t2)">Plan pace today: ${fmtF(planLiqToday)} liquid · Monarch shows ${fmtF(todayLiq)}</div></div></div>`:''}
-    <div style="font-size:11px;color:var(--t2);margin-bottom:16px;line-height:1.5">Backs out your ${curYr} year-to-date flows to find your implied Jan-1 liquid, so the rest of the year isn't double-counted.</div>
-    <div style="display:flex;flex-direction:column;gap:7px;font-size:12px;font-family:'SF Mono',monospace">
-      <div style="display:flex;justify-content:space-between"><span style="color:var(--t2)">Today's liquid</span><span style="font-weight:600">${fmtF(todayLiq)}</span></div>
-      <div style="display:flex;justify-content:space-between"><span style="color:var(--t2)">− YTD income (Monarch)</span><span style="color:var(--g)">−${fmtF(ytdInc)}</span></div>
-      <div style="display:flex;justify-content:space-between"><span style="color:var(--t2)">+ YTD spending (Monarch)</span><span style="color:var(--r)">+${fmtF(ytdExp)}</span></div>
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <span style="color:var(--t2)">+ Deferred expenses (not yet in Monarch)</span>
-        <span style="display:flex;align-items:center;gap:4px">
-          <span style="color:var(--t2)">$</span>
-          <input id="anchorAdj" type="number" value="0" min="0" step="100"
-            style="width:80px;text-align:right;font-size:12px;font-family:'SF Mono',monospace;padding:2px 5px;border:1px solid var(--bd);border-radius:5px;background:var(--s2);color:var(--tx);outline:none"
-            oninput="anchorRecalc()">
-        </span>
+  ov.innerHTML=`<div style="background:#fff;border-radius:12px;padding:22px 24px;max-width:380px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.2)">
+    <div style="font-size:15px;font-weight:700;color:var(--tx);margin-bottom:2px">📍 Net Worth as of Today</div>
+    <div style="font-size:10px;color:var(--t3);margin-bottom:16px">Monarch · synced ${syncDate}</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--s2);border:1px solid var(--bd);border-radius:8px">
+        <span style="font-size:12px;color:var(--t2)">Liquid</span>
+        <span style="font-size:16px;font-weight:700;font-family:'SF Mono',monospace;color:var(--b)">${fmtF(todayLiq)}</span>
       </div>
-      <div style="border-top:1px solid var(--bd);margin:3px 0"></div>
-      <div style="display:flex;justify-content:space-between;font-weight:700"><span>= Implied Jan-1 liquid</span><span id="anchorResult" style="color:var(--accent)">${fmtF(impliedJan1)}</span></div>
-      <div id="anchorEOY" style="display:flex;justify-content:space-between;margin-top:4px">${projEOY!=null?`<span style="color:var(--t2)">→ Projected EOY liquid</span><span style="font-weight:600">${fmtF(projEOY)}</span>`:''}</div>
+      ${ret>0?`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--s2);border:1px solid var(--bd);border-radius:8px">
+        <span style="font-size:12px;color:var(--t2)">Retirement (401k)</span>
+        <span style="font-size:16px;font-weight:700;font-family:'SF Mono',monospace;color:var(--p)">${fmtF(ret)}</span>
+      </div>`:''}
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--s2);border:1px solid var(--bd);border-radius:8px">
+        <span style="font-size:12px;color:var(--t2)">Total NW (Monarch)</span>
+        <span style="font-size:16px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${fmtF(totalNw)}</span>
+      </div>
+      ${liqDiff!=null?`<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:8px;background:${liqDiff>=0?'rgba(26,135,84,.07)':'rgba(205,61,100,.05)'};border:1px solid ${liqDiff>=0?'rgba(26,135,84,.2)':'rgba(205,61,100,.2)'}">
+        <span style="font-size:18px">${liqDiff>=0?'▲':'▼'}</span>
+        <div>
+          <div style="font-size:12px;font-weight:700;color:${liqDiff>=0?'var(--g)':'var(--r)'}">${liqDiff>=0?'Ahead':'Behind'} plan by ${fmtF(Math.abs(liqDiff))}</div>
+          <div style="font-size:10px;color:var(--t2)">Plan pace: ${fmtF(planLiqToday)} liquid · Actual: ${fmtF(todayLiq)}</div>
+        </div>
+      </div>`:''}
     </div>
-    <div style="font-size:9.5px;color:var(--t3);margin-top:10px;line-height:1.4" id="anchorNote">Records Jan-1 anchor at <b>${fmtF(impliedJan1)}</b> for plan comparison${set401?` and updates <b>401k starting balance to ${fmtF(monarchSnapshot.retirement)}</b>`:''}. Your plan's Starting Liquid slider is <b>not</b> changed. ${ytdNet<0?'⚠ YTD spending exceeded income so far — implied Jan-1 is above today.':''}</div>
-    <div style="margin-top:8px">
-      <button onclick="const d=this.nextElementSibling;d.style.display=d.style.display==='none'?'block':'none';this.textContent=d.style.display==='none'?'▶ Show raw Monarch data':'▼ Hide raw data'" style="font-size:9px;color:var(--t3);background:none;border:none;cursor:pointer;padding:0;font-family:inherit">▶ Show raw Monarch data</button>
-      <pre style="display:none;margin-top:6px;font-size:8.5px;background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:8px;overflow:auto;max-height:140px;color:var(--t2);white-space:pre-wrap;word-break:break-all">${debugJson.replace(/</g,'&lt;')}</pre>
-    </div>
-    <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">
-      <button onclick="this.closest('div[style*=fixed]').remove()" style="font-size:12px;padding:8px 14px;background:var(--s2);border:1px solid var(--bd);border-radius:7px;cursor:pointer;font-family:inherit;color:var(--t2)">Cancel</button>
-      <button id="anchorConfirmBtn" style="font-size:12px;font-weight:600;padding:8px 16px;background:var(--a);color:#fff;border:none;border-radius:7px;cursor:pointer;font-family:inherit">Anchor it</button>
+    <div style="display:flex;justify-content:flex-end;margin-top:16px">
+      <button onclick="this.closest('div[style*=fixed]').remove()" style="font-size:12px;font-weight:600;padding:8px 18px;background:var(--accent);color:#fff;border:none;border-radius:7px;cursor:pointer;font-family:inherit">Done</button>
     </div>
   </div>`;
   document.body.appendChild(ov);
-
-  // Live recalc when deferred expense adjustment changes
-  const _baseLiq=todayLiq, _baseInc=ytdInc, _baseExp=ytdExp;
-  window.anchorRecalc=function(){
-    const adj=parseFloat(document.getElementById('anchorAdj')?.value||0)||0;
-    const adjNet=_baseInc-(_baseExp+adj);
-    const adjJan1=Math.round(_baseLiq-adjNet);
-    const res=document.getElementById('anchorResult');
-    const note=document.getElementById('anchorNote');
-    const eoy=document.getElementById('anchorEOY');
-    if(res)res.textContent=fmtF(adjJan1);
-    if(note){const s=set401?` and updates <b>401k to ${fmtF(monarchSnapshot.retirement)}</b>`:'';note.innerHTML=`Records Jan-1 anchor at <b>${fmtF(adjJan1)}</b> for comparison${s}. Plan's Starting Liquid slider unchanged.`;}
-    if(eoy){
-      try{const nr=run({...P,startingLiquid:adjJan1,k401Start:set401?monarchSnapshot.retirement:P.k401Start});const row=nr.R.find(x=>x.yr===curYr)||nr.R[0];eoy.innerHTML=row?`<span style="color:var(--t2)">→ Projected EOY liquid</span><span style="font-weight:600">${fmtF(row.liq)}</span>`:''}catch(e){}
-    }
-  };
-
-  ov.querySelector('#anchorConfirmBtn').onclick=()=>{
-    const adj=parseFloat(document.getElementById('anchorAdj')?.value||0)||0;
-    const adjNet=ytdInc-(ytdExp+adj);
-    const finalJan1=Math.round(todayLiq-adjNet);
-    // Store as comparison anchor — does NOT touch P.startingLiquid so the plan trajectory is preserved.
-    // The pro-rating in the Goals tab uses this as the actual Jan-1 baseline.
-    P.anchorJan1=finalJan1;
-    if(set401)P.k401Start=monarchSnapshot.retirement;
-    ov.remove();
-    savePlannerState();render();
-    showToast(`⚓ Anchored · Comparison baseline set to ${fmt(finalJan1)}`+(adj>0?` (incl. ${fmt(adj)} deferred expenses)`:'')+' ','green');
-  };
 }
 
 function showSnapshotInput(){
@@ -1845,30 +1793,28 @@ function renderGoalsTab(R,P,tT){
     // Annual NW growth the plan projects for curYr — the INCREMENT only, not the absolute level.
     // This is driven purely by the plan's income/expense model for this year and is reliable
     // regardless of what starting point we use for the comparison.
-    // Liquid and 401k growth from the model — pure increments for curYr, no home equity involved.
-    const jan1LiqBase=prevRow?prevRow.liq:(P.startingLiquid||0);
-    const jan1_401Base=prevRow?prevRow.k401:(P.k401Start||0);
+    // Jan-1 baseline: always use P.startingLiquid (the user's slider input).
+    // For the growth increment, use the model's prior-year row if available (multi-year plan),
+    // so we capture only this year's projected change, not a stale absolute.
+    const jan1Liq=P.startingLiquid||0;
+    const jan1LiqBase=prevRow?prevRow.liq:jan1Liq;
     const annualLiqGrowth=projRow.liq-jan1LiqBase;
-    const annual401Growth=projRow.k401-jan1_401Base;
-    // Actual Jan-1 starting point: prefer P.anchorJan1 (real back-calc from Monarch)
-    // over the model's prior-year projection, which can be far from reality.
-    const jan1Liq=P.anchorJan1!=null?P.anchorJan1:jan1LiqBase;
-    const jan1_401=jan1_401Base;
-    // Pro-rated plan targets: actual Jan-1 + yrFrac × this year's plan increment
+    // Pro-rated plan target: user's starting liquid + this year's pro-rated growth
     const planLiq=Math.round(jan1Liq+yrFrac*annualLiqGrowth);
-    const plan401=Math.round(jan1_401+yrFrac*annual401Growth);
-    // 401k: use Monarch's live value if synced
+    // 401k: informational only (not used in headline comparison)
     const has401k=monarchSnapshot.retirement>0;
-    const live401k=has401k?monarchSnapshot.retirement:jan1_401;
-    const liqDiff=impliedLiq-planLiq;
+    const live401k=has401k?monarchSnapshot.retirement:(P.k401Start||0);
+    const jan1_401=prevRow?prevRow.k401:(P.k401Start||0);
+    const annual401Growth=projRow.k401-jan1_401;
+    const plan401=Math.round(jan1_401+yrFrac*annual401Growth);
     const diff401=live401k-plan401;
-    // Headline: liquid only — 401k is excluded from all NW calcs (user tracks liquid NW only).
+    // Headline: liquid only — 401k excluded (user tracks liquid net worth).
+    const liqDiff=impliedLiq-planLiq;
     const headlineActual=impliedLiq;
     const headlinePlan=planLiq;
     const totalDiff=headlineActual-headlinePlan;
     const ahead=totalDiff>=0;
-    // If multi-year plan and no anchor set, warn that model's prior-year projection is the baseline
-    const needsAnchor=prevRow&&P.anchorJan1==null;
+    const needsAnchor=false;
     const syncDate=new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
     h+=`<div style="background:var(--a-soft);border:1px solid rgba(191,105,0,.25);border-radius:10px;padding:16px 18px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
@@ -1883,11 +1829,11 @@ function renderGoalsTab(R,P,tT){
         </div>
       </div>
       <div style="font-size:9.5px;color:var(--t2);line-height:1.6;margin-bottom:10px;padding:8px 10px;background:#fff8;border-radius:6px">
-        <div><b style="color:var(--tx)">How it's calculated</b>${needsAnchor?` · <b style="color:var(--a)">⚠ No anchor — using model's projected ${curYr-1} year-end as Jan-1. Hit ⚓ Anchor for real data.</b>`:P.anchorJan1!=null?' · <span style="color:var(--g)">⚓ Anchored Jan-1</span>':''}</div>
+        <div><b style="color:var(--tx)">How it's calculated</b></div>
         <div style="font-family:'SF Mono',monospace;font-size:9px;margin-top:4px;display:grid;grid-template-columns:1fr 1fr;gap:2px 12px">
-          <span style="color:var(--t3)">Jan-1 liquid baseline</span><span style="color:var(--tx);font-weight:600">${fmt(jan1Liq)}${P.anchorJan1!=null?' (anchored)':prevRow?' (model)':' (slider)'}</span>
+          <span style="color:var(--t3)">Starting Liquid (slider)</span><span style="color:var(--tx);font-weight:600">${fmt(jan1Liq)}</span>
           <span style="color:var(--t3)">Plan liq growth ${curYr}</span><span style="color:var(--tx);font-weight:600">${annualLiqGrowth>=0?'+':''}${fmt(annualLiqGrowth)} (full year)</span>
-          <span style="color:var(--t3)">Pro-rated to ${pctElapsed}%</span><span style="color:var(--tx);font-weight:600">liquid pace ${fmt(planLiq)}</span>
+          <span style="color:var(--t3)">Pro-rated to ${pctElapsed}%</span><span style="color:var(--tx);font-weight:600">pace ${fmt(planLiq)}</span>
           <span style="color:var(--t3)">Actual liquid (Monarch)</span><span style="color:var(--tx);font-weight:600">${fmt(impliedLiq)} · <span style="color:${liqDiff>=0?'var(--g)':'var(--r)'};font-weight:700">${liqDiff>=0?'+':''}${fmt(liqDiff)}</span></span>
         </div>
       </div>
