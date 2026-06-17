@@ -1252,6 +1252,84 @@ app.post('/api/chat/save', async (req, res) => {
   }
 });
 
+// Extract a self-experiment from a chat conversation using Claude.
+app.post('/api/chat/extract-experiment', async (req, res) => {
+  try {
+    const { messages = [] } = req.body || {};
+    if (!Array.isArray(messages) || !messages.length) {
+      return res.status(400).json({ error: 'messages required' });
+    }
+
+    const METRICS = [
+      { key: 'health:hrv', label: 'HRV (ms)' },
+      { key: 'health:sleep_hours', label: 'Sleep duration (hours)' },
+      { key: 'health:sleep_score', label: 'Sleep score (0-100)' },
+      { key: 'health:resting_hr', label: 'Resting heart rate (bpm)' },
+      { key: 'habits:cold_shower', label: 'Cold shower (yes/no daily)' },
+      { key: 'habits:exercise', label: 'Exercise (yes/no daily)' },
+      { key: 'habits:eat_healthy', label: 'Eating healthy (yes/no daily)' },
+      { key: 'wellbeing:mood', label: 'Mood (1-10)' },
+      { key: 'wellbeing:energy', label: 'Energy (1-10)' },
+      { key: 'wellbeing:focus', label: 'Focus (1-10)' },
+    ];
+
+    const transcript = messages
+      .slice(-20)
+      .map((m) => `${m.role === 'user' ? 'User' : 'NormOS'}: ${m.content}`)
+      .join('\n\n');
+
+    const metricsList = METRICS.map((m) => `  - ${m.key}: ${m.label}`).join('\n');
+
+    const prompt = `Extract ONE concrete self-experiment from this conversation.
+
+CONVERSATION:
+${transcript}
+
+TRACKABLE METRICS (use only these exact keys):
+${metricsList}
+
+Return ONLY valid JSON — no markdown, no explanation.
+
+If an experiment is extractable:
+{"hypothesis":"...","metric":"health:hrv","lever":"...","expected":"up","protocol":"...","testDays":14}
+
+If the conversation has no clear experimental idea to track:
+{"notActionable":true,"reason":"..."}
+
+Rules:
+- expected must be "up" or "down"
+- testDays must be 14, 21, or 28
+- metric must be one of the keys above
+- hypothesis should be one clear sentence`;
+
+    const raw = await llm.generateText({
+      system: 'You extract self-experiments from conversations. Return only valid JSON.',
+      prompt,
+      maxTokens: 400,
+    });
+
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    let result;
+    try {
+      result = JSON.parse(cleaned);
+    } catch {
+      return res.status(500).json({ error: 'parse failed', raw: cleaned.slice(0, 300) });
+    }
+
+    if (!result.notActionable) {
+      const validKeys = METRICS.map((m) => m.key);
+      if (!validKeys.includes(result.metric)) result.metric = 'wellbeing:energy';
+      if (result.expected !== 'down') result.expected = 'up';
+      if (![14, 21, 28].includes(Number(result.testDays))) result.testDays = 14;
+      else result.testDays = Number(result.testDays);
+    }
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // List saved conversations for the sidebar.
 app.get('/api/chat/conversations', async (req, res) => {
   try {

@@ -40,6 +40,8 @@ export const CHECKIN_HISTORY_URL = `${API_BASE}/api/checkin/history`;
 export const BRIEFINGS_HISTORY_URL = `${API_BASE}/api/briefings/history`;
 export const MARKETS_REFRESH_URL = `${API_BASE}/api/briefing/markets`;
 export const BRIEFING_CONTEXT_URL = `${API_BASE}/api/briefing/context`;
+export const EXPERIMENTS_URL = `${API_BASE}/api/experiments`;
+export const EXPERIMENT_EXTRACT_URL = `${API_BASE}/api/chat/extract-experiment`;
 
 /** Device's IANA timezone — follows the phone when travelling. */
 export function localTz(): string {

@@ -22,6 +22,7 @@ import * as Haptics from 'expo-haptics';
 import Markdown from 'react-native-markdown-display';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { useChat } from '../hooks/useChat';
+import { API_BASE, authHeaders, fetchWithTimeout } from '../config';
 
 interface Props {
   /** Home-indicator height, so the launcher floats above the flush tab bar. */
@@ -33,6 +34,34 @@ const SUGGESTIONS = [
   'What habits predict my best weeks?',
   'What should I focus on this quarter?',
 ];
+
+const METRIC_LABELS: Record<string, string> = {
+  'health:hrv': 'HRV',
+  'health:sleep_hours': 'Sleep duration',
+  'health:sleep_score': 'Sleep score',
+  'health:resting_hr': 'Resting heart rate',
+  'habits:cold_shower': 'Cold shower',
+  'habits:exercise': 'Exercise',
+  'habits:eat_healthy': 'Eating healthy',
+  'wellbeing:mood': 'Mood',
+  'wellbeing:energy': 'Energy',
+  'wellbeing:focus': 'Focus',
+};
+
+type ExpProposal = {
+  hypothesis: string;
+  metric: string;
+  lever: string;
+  expected: string;
+  protocol: string;
+  testDays: number;
+};
+type ExpState =
+  | null
+  | 'loading'
+  | { notActionable: true; reason: string }
+  | ExpProposal
+  | { started: true };
 
 function fmtDate(iso: string | null): string {
   if (!iso) return '';
@@ -58,6 +87,9 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
   const scrollRef = useRef<ScrollView>(null);
   const inputRef = useRef<TextInput>(null);
   const [kbHeight, setKbHeight] = useState(0);
+  const [expState, setExpState] = useState<ExpState>(null);
+  const [expDays, setExpDays] = useState<14 | 21 | 28>(14);
+  const [expStarting, setExpStarting] = useState(false);
 
   useEffect(() => {
     const showEv = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -69,13 +101,58 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
 
   useEffect(() => {
     if (open && view === 'chat') requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
-  }, [messages.length, loading, open, view]);
+  }, [messages.length, loading, open, view, expState]);
 
   const submit = (q: string) => {
     if (!q.trim()) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setQuestion('');
     send(q);
+  };
+
+  const clearChat = () => { setExpState(null); clear(); };
+  const saveChat = () => { setExpState(null); save(); };
+
+  const extractExperiment = async () => {
+    if (expState !== null) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setExpState('loading');
+    try {
+      const res = await fetchWithTimeout(
+        `${API_BASE}/api/chat/extract-experiment`,
+        { method: 'POST', headers: authHeaders(), body: JSON.stringify({ messages }) },
+        30000,
+      );
+      if (!res.ok) { setExpState(null); return; }
+      const data = await res.json();
+      if (data.notActionable) {
+        setExpState(data as { notActionable: true; reason: string });
+        setTimeout(() => setExpState(null), 4000);
+      } else {
+        setExpDays((([14, 21, 28].includes(data.testDays) ? data.testDays : 14) as 14 | 21 | 28));
+        setExpState(data as ExpProposal);
+      }
+    } catch { setExpState(null); }
+  };
+
+  const startExperiment = async () => {
+    if (expStarting || expState === null || expState === 'loading' || 'notActionable' in (expState as object) || 'started' in (expState as object)) return;
+    const proposal = expState as ExpProposal;
+    setExpStarting(true);
+    try {
+      const r1 = await fetchWithTimeout(`${API_BASE}/api/experiments`, {
+        method: 'POST', headers: authHeaders(), body: JSON.stringify(proposal),
+      });
+      if (!r1.ok) { setExpStarting(false); return; }
+      const { id } = await r1.json();
+      if (!id) { setExpStarting(false); return; }
+      await fetchWithTimeout(`${API_BASE}/api/experiments/${id}/start`, {
+        method: 'POST', headers: authHeaders(), body: JSON.stringify({ testDays: expDays }),
+      });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setExpState({ started: true });
+      setTimeout(() => setExpState(null), 5000);
+    } catch { } finally { setExpStarting(false); }
   };
 
   const showHistory = () => { loadConversations(); setView('history'); };
@@ -217,16 +294,81 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
                   </Animated.View>
                 ))}
 
+                {expState !== null && (
+                  <Animated.View
+                    entering={FadeInDown.duration(220).springify().damping(18)}
+                    style={[styles.expCard, { backgroundColor: c.card, borderColor: c.border }]}
+                  >
+                    {expState === 'loading' && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+                        <ActivityIndicator color={c.accent} />
+                        <Text style={[styles.expHint, { color: c.subtext }]}>Extracting experiment…</Text>
+                      </View>
+                    )}
+                    {typeof expState === 'object' && 'notActionable' in expState && (
+                      <Text style={[styles.expHint, { color: c.subtext }]}>
+                        💡 No clear experiment in this chat yet — keep exploring the topic!
+                      </Text>
+                    )}
+                    {typeof expState === 'object' && 'started' in expState && (
+                      <Text style={[styles.expSuccess, { color: c.accent }]}>
+                        🧪 Experiment started! Track progress in the Experiments tab.
+                      </Text>
+                    )}
+                    {typeof expState === 'object' && 'hypothesis' in expState && (
+                      <>
+                        <Text style={[styles.expLabel, { color: c.subtext }]}>EXPERIMENT PROPOSAL</Text>
+                        <Text style={[styles.expHypo, { color: c.text }]}>{expState.hypothesis}</Text>
+                        <Text style={[styles.expMeta, { color: c.subtext }]}>
+                          Tracking: {METRIC_LABELS[expState.metric] ?? expState.metric}
+                        </Text>
+                        {!!expState.protocol && (
+                          <Text style={[styles.expProtocol, { color: c.text }]}>{expState.protocol}</Text>
+                        )}
+                        <View style={styles.daysRow}>
+                          {([14, 21, 28] as const).map((d) => (
+                            <Pressable
+                              key={d}
+                              onPress={() => setExpDays(d)}
+                              style={[styles.dayBtn, {
+                                borderColor: expDays === d ? c.accent : c.border,
+                                backgroundColor: expDays === d ? c.accentSoft : 'transparent',
+                              }]}
+                            >
+                              <Text style={[styles.dayBtnText, { color: expDays === d ? c.accent : c.subtext }]}>{d}d</Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                        <Pressable
+                          onPress={startExperiment}
+                          disabled={expStarting}
+                          style={[styles.startBtn, { backgroundColor: c.accent, opacity: expStarting ? 0.6 : 1 }]}
+                        >
+                          <Text style={styles.startBtnText}>{expStarting ? 'Starting…' : 'Start tracking'}</Text>
+                        </Pressable>
+                        <Pressable onPress={() => setExpState(null)} style={{ alignItems: 'center', paddingTop: 4 }}>
+                          <Text style={[styles.expHint, { color: c.subtext }]}>Dismiss</Text>
+                        </Pressable>
+                      </>
+                    )}
+                  </Animated.View>
+                )}
+
                 {loading && <ActivityIndicator color={c.accent} style={{ marginTop: spacing.md }} />}
               </ScrollView>
 
-              {/* Save / Clear toolbar — only when there's something to act on. */}
+              {/* Save / Experiment / Clear toolbar — only when there's something to act on. */}
               {!empty && (
                 <View style={[styles.toolbar, { borderTopColor: c.border }]}>
-                  <Pressable onPress={save} hitSlop={6} style={[styles.toolBtn, { backgroundColor: c.accentSoft }]}>
+                  <Pressable onPress={saveChat} hitSlop={6} style={[styles.toolBtn, { backgroundColor: c.accentSoft }]}>
                     <Text style={[styles.toolBtnText, { color: c.accent }]}>＋ Save & start new</Text>
                   </Pressable>
-                  <Pressable onPress={clear} hitSlop={6} style={styles.toolBtnGhost}>
+                  {expState === null && messages.some((m) => m.role === 'assistant') && (
+                    <Pressable onPress={extractExperiment} hitSlop={6} style={[styles.toolBtnExp, { borderColor: c.border }]}>
+                      <Text style={styles.toolExpText}>🧪</Text>
+                    </Pressable>
+                  )}
+                  <Pressable onPress={clearChat} hitSlop={6} style={styles.toolBtnGhost}>
                     <Text style={[styles.toolGhostText, { color: c.subtext }]}>Clear</Text>
                   </Pressable>
                 </View>
@@ -349,4 +491,18 @@ const styles = StyleSheet.create({
   convMeta: { fontSize: 12, marginTop: 2 },
   rowAction: { paddingHorizontal: spacing.xs, paddingVertical: spacing.xs },
   rowActionIcon: { fontSize: 17 },
+  toolBtnExp: { paddingHorizontal: spacing.sm, paddingVertical: 8, borderRadius: radius.md, borderWidth: 1 },
+  toolExpText: { fontSize: 17 },
+  expCard: { marginTop: spacing.md, padding: spacing.md, borderRadius: radius.md, borderWidth: 1, gap: spacing.sm },
+  expLabel: { fontSize: 10, fontWeight: '700' as const, letterSpacing: 0.8 },
+  expHypo: { fontSize: 15, fontWeight: '700' as const, lineHeight: 22 },
+  expMeta: { fontSize: 13, fontWeight: '500' as const },
+  expProtocol: { fontSize: 14, lineHeight: 21 },
+  expHint: { fontSize: 13, lineHeight: 20 },
+  expSuccess: { fontSize: 14, fontWeight: '700' as const },
+  daysRow: { flexDirection: 'row', gap: spacing.sm },
+  dayBtn: { paddingHorizontal: spacing.md, paddingVertical: 7, borderRadius: radius.md, borderWidth: 1 },
+  dayBtnText: { fontSize: 13, fontWeight: '600' as const },
+  startBtn: { paddingVertical: spacing.sm + 2, borderRadius: radius.md, alignItems: 'center' as const, marginTop: 2 },
+  startBtnText: { color: '#FFF', fontSize: 15, fontWeight: '700' as const },
 });
