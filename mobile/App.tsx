@@ -22,7 +22,7 @@ import { useBriefing } from './src/hooks/useBriefing';
 import { useHealthData } from './src/hooks/useHealthData';
 import { useRecovery } from './src/hooks/useRecovery';
 import { usePushRegistration } from './src/hooks/usePushRegistration';
-import { getColors, spacing } from './src/theme';
+import { getColors, spacing, shadow } from './src/theme';
 
 import { Header } from './src/components/Header';
 import { TabBar, TabKey, TABS } from './src/components/TabBar';
@@ -193,7 +193,7 @@ export default function App() {
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} recoveryScore={liveRecovery.recovery?.score ?? null} />
             <ForecastCard forecasts={d?.forecasts ?? []} />
             {analyzeError && (
-              <View style={[styles.errorBox, { borderColor: c.border, backgroundColor: c.card }]}>
+              <View style={[styles.errorBox, { backgroundColor: c.card }, shadow(isDark)]}>
                 <Text style={[styles.errorTitle, { color: c.text }]}>Analysis failed</Text>
                 <Text style={[styles.errorDetail, { color: c.subtext }]}>{analyzeError}</Text>
               </View>
@@ -267,7 +267,7 @@ export default function App() {
             </CollapsibleSection>
 
             {briefing.error && !d && (
-              <View style={[styles.errorBox, { borderColor: c.border, backgroundColor: c.card }]}>
+              <View style={[styles.errorBox, { backgroundColor: c.card }, shadow(isDark)]}>
                 <Text style={[styles.errorTitle, { color: c.text }]}>Cannot reach backend</Text>
                 <Text style={[styles.errorMsg, { color: c.subtext }]}>
                   Make sure the backend is running:{'\n'}cd backend && node server.js
@@ -360,8 +360,9 @@ export default function App() {
 }
 
 function EmptyNote({ c, text }: { c: ReturnType<typeof getColors>; text: string }) {
+  const isDark = useColorScheme() === 'dark';
   return (
-    <View style={[styles.empty, { borderColor: c.border, backgroundColor: c.card }]}>
+    <View style={[styles.empty, { backgroundColor: c.card }, shadow(isDark)]}>
       <Text style={[styles.emptyText, { color: c.subtext }]}>{text}</Text>
     </View>
   );
@@ -413,13 +414,13 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     borderWidth: 1.5,
   },
-  errorBox: { borderWidth: 1, borderRadius: 12, padding: spacing.md, marginBottom: spacing.md },
+  errorBox: { borderRadius: 12, padding: spacing.md, marginBottom: spacing.md },
   errorTitle: { fontSize: 16, fontWeight: '600', marginBottom: spacing.xs },
   errorMsg: { fontSize: 14, lineHeight: 21, marginBottom: spacing.sm },
   errorDetail: { fontSize: 12, fontStyle: 'italic' },
   loadingBlock: { alignItems: 'center', paddingVertical: spacing.xl, gap: spacing.md },
   loadingText: { fontSize: 14, fontStyle: 'italic' },
-  empty: { borderWidth: 1, borderRadius: 14, padding: spacing.lg, marginBottom: spacing.md },
+  empty: { borderRadius: 14, padding: spacing.lg, marginBottom: spacing.md },
   emptyText: { fontSize: 14, lineHeight: 21, fontStyle: 'italic' },
   analyzeBtn: {
     borderWidth: 1,

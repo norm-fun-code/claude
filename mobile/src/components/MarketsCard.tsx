@@ -52,7 +52,7 @@ export function MarketsCard({ markets: initialMarkets }: Props) {
   if (!brief && !refreshing) return null;
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }, shadow(isDark)]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <View style={styles.headerRow}>
         <SectionHeader emoji="📰" title="Market Brief" />
         <TouchableOpacity onPress={handleRefresh} disabled={refreshing} style={styles.refreshBtn}>
@@ -86,7 +86,7 @@ function markdownStyles(c: ReturnType<typeof getColors>) {
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.md, marginBottom: spacing.md },
+  card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',

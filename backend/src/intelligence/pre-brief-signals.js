@@ -56,7 +56,7 @@ function buildSignals({ recovery, calendar = [], workBusy = [], spend, spendBase
   if (spend != null && spendBaseline != null && spendBaseline > 10 && spend > spendBaseline * 1.8) {
     signals.push({
       key: 'spending_spike',
-      question: `You spent ${fmt(spend)} in discretionary today (avg is ${fmt(spendBaseline)}/day) — anything to explain that?`,
+      question: `You spent ${fmt(spend)} in discretionary yesterday (avg is ${fmt(spendBaseline)}/day) — anything to explain that?`,
       context: 'spending note',
       severity: Math.min(0.8, 0.5 + (spend / spendBaseline - 1.8) * 0.08),
     });

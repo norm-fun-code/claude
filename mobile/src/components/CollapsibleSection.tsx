@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, useColorScheme } from 'react-native';
-import { getColors, spacing, radius } from '../theme';
+import { getColors, spacing, radius, shadow } from '../theme';
 
 interface Props {
   title: string;
@@ -22,7 +22,7 @@ export function CollapsibleSection({ title, defaultOpen = false, children }: Pro
       <TouchableOpacity
         onPress={() => setOpen((v) => !v)}
         activeOpacity={0.7}
-        style={[styles.header, { borderColor: c.border, backgroundColor: c.card }]}
+        style={[styles.header, { backgroundColor: c.card }, shadow(isDark)]}
       >
         <Text style={[styles.title, { color: c.text }]}>{title}</Text>
         <Text style={[styles.chevron, { color: c.subtext }]}>{open ? '▲' : '▼'}</Text>
@@ -38,7 +38,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderWidth: 1,
     borderRadius: radius.lg,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm + 2,

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, useColorScheme, AppState } from 'react-native';
-import { getColors, spacing, radius, typography } from '../theme';
+import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { CHECKIN_URL, CHECKIN_TODAY_URL, authHeaders, fetchWithTimeout } from '../config';
 
@@ -92,7 +92,7 @@ export function CheckinCard() {
   const complete = scores.mood && scores.energy && scores.focus;
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <SectionHeader
         emoji="✅"
         title={complete && saved ? 'Checked in — thanks' : 'How are you today?'}
@@ -130,7 +130,6 @@ export function CheckinCard() {
 const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
-    borderWidth: 1,
     padding: spacing.md,
     marginBottom: spacing.md,
   },

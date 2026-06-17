@@ -26,7 +26,7 @@ export function TabBar({ active, onChange, bottomInset = 0 }: Props) {
   const c = getColors(isDark);
 
   return (
-    <View style={[styles.wrap, { backgroundColor: c.card, borderColor: c.border, paddingBottom: bottomInset || spacing.sm }, shadow(isDark, 'bar')]}>
+    <View style={[styles.wrap, { backgroundColor: c.card, paddingBottom: bottomInset || spacing.sm }, shadow(isDark, 'bar')]}>
       {TABS.map((t) => {
         const on = t.key === active;
         return (
@@ -54,7 +54,6 @@ export function TabBar({ active, onChange, bottomInset = 0 }: Props) {
 const styles = StyleSheet.create({
   wrap: {
     flexDirection: 'row',
-    borderTopWidth: 1,
     paddingTop: spacing.sm,
     paddingHorizontal: spacing.xs,
   },

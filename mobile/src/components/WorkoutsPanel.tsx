@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, TextInput, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
-import { getColors, spacing, radius } from '../theme';
+import { getColors, spacing, radius, shadow } from '../theme';
 import { API_BASE, WORKOUT_LOG_URL, ACTIVITY_URL, authHeaders, fetchWithTimeout } from '../config';
 import {
   getTodaysWorkout,
@@ -269,7 +269,7 @@ function HRVHeaderCard({
       : zone.toUpperCase();
 
   return (
-    <View style={[cardStyles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={[cardStyles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <Text style={[cardStyles.workoutLabel, { color: c.text }]}>{workoutLabel}</Text>
       {workoutDuration && (
         <View style={[cardStyles.durationTag, { backgroundColor: bgTag }]}>
@@ -311,7 +311,6 @@ function HRVHeaderCard({
 const cardStyles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
-    borderWidth: 1,
     padding: spacing.md,
     marginBottom: spacing.md,
     gap: spacing.sm,
@@ -792,7 +791,7 @@ function Zone2Content({
   const bg = isDark ? '#0D1F15' : '#EBF7F2';
 
   return (
-    <View style={[z2Styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={[z2Styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <View style={[z2Styles.hrBand, { backgroundColor: bg }]}>
         <Text style={z2Styles.hrLabel}>Target HR</Text>
         <Text style={z2Styles.hrRange}>135 – 145 BPM</Text>
@@ -810,7 +809,6 @@ function Zone2Content({
 const z2Styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
-    borderWidth: 1,
     padding: spacing.md,
     gap: spacing.sm,
     marginBottom: spacing.md,
@@ -1067,7 +1065,7 @@ function RestContent({
   isDark: boolean;
 }) {
   return (
-    <View style={[restStyles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={[restStyles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <Text style={restStyles.icon}>🛌</Text>
       <Text style={[restStyles.note, { color: c.subtext }]}>{session.note}</Text>
     </View>
@@ -1077,7 +1075,6 @@ function RestContent({
 const restStyles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
-    borderWidth: 1,
     padding: spacing.md,
     gap: spacing.sm,
     marginBottom: spacing.md,
@@ -1120,7 +1117,7 @@ function NonNegotiablesStrip({
   ];
 
   return (
-    <View style={[nnStyles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={[nnStyles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <Text style={[nnStyles.title, { color: c.text }]}>Daily Non-Negotiables</Text>
       {items.map((item) => (
         <TouchableOpacity
@@ -1149,7 +1146,6 @@ function NonNegotiablesStrip({
 const nnStyles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
-    borderWidth: 1,
     padding: spacing.md,
     marginBottom: spacing.md,
     gap: spacing.sm,
@@ -1379,7 +1375,7 @@ function ActivityLogSection({
   onDelete: (id: number) => void;
 }) {
   return (
-    <View style={[actStyles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={[actStyles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <Text style={[actStyles.cardTitle, { color: c.text }]}>What I actually did</Text>
       {activities.length === 0 ? (
         <Text style={[actStyles.empty, { color: c.subtext }]}>
@@ -1410,7 +1406,7 @@ function ActivityLogSection({
 }
 
 const actStyles = StyleSheet.create({
-  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.md, marginBottom: spacing.md, gap: spacing.sm },
+  card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md, gap: spacing.sm },
   cardTitle: { fontSize: 14, fontWeight: '700', letterSpacing: -0.2 },
   empty: { fontSize: 13, lineHeight: 19 },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderBottomWidth: 1, paddingVertical: spacing.sm },

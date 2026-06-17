@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   useColorScheme,
 } from 'react-native';
-import { getColors, spacing, radius, typography } from '../theme';
+import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { INTENTIONS_URL, INTENTIONS_CURRENT_URL, INTENTIONS_RESULTS_URL, authHeaders, fetchWithTimeout } from '../config';
 import { WeeklyReview, LeverageAction } from '../hooks/useBriefing';
@@ -210,7 +210,7 @@ export function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}
   // week's goals, and the highest-leverage actions. Tap to edit.
   if (saved && !editing) {
     return (
-      <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+      <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
         <SectionHeader emoji="🎯" title={hasReview ? 'Weekly review + reset' : 'This week’s focus'} />
         {reviewBlock}
         {currentGoals.length > 0 ? (
@@ -239,7 +239,7 @@ export function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}
 
   // Editor.
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <SectionHeader emoji="🎯" title="Set your week" />
       {reviewBlock}
       <Text style={[styles.hint, { color: c.subtext }]}>
@@ -299,7 +299,7 @@ export function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.md, marginBottom: spacing.md },
+  card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   hint: { ...typography.caption, fontSize: 13, marginBottom: spacing.md, lineHeight: 19 },
   label: { ...typography.caption, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: spacing.xs },
   goalRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.xs },

@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, useColorScheme } from 'react-native';
-import { getColors, spacing, radius, typography, colors } from '../theme';
+import { getColors, spacing, radius, typography, colors, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import type { Recovery, HealthComposite } from '../hooks/useBriefing';
 
@@ -55,7 +55,7 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
       : 'Recovery';
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <SectionHeader emoji="🔋" title="Recovery" />
 
       <View style={styles.scoreRow}>
@@ -132,7 +132,7 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.md, marginBottom: spacing.md },
+  card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   scoreRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   ring: {
     width: 88,

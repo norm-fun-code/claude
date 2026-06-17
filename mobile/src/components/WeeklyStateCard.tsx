@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, useColorScheme } from 'react-native';
-import { getColors, spacing, radius, typography } from '../theme';
+import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { formatHM } from '../utils/format';
 import type { HealthData } from '../hooks/useHealthData';
@@ -35,7 +35,7 @@ export function WeeklyStateCard({ briefing, health, recovery }: Props) {
   const topInsight = briefing?.healthInsights?.[0];
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <SectionHeader emoji="📊" title="This Week" />
       <View style={styles.grid}>
         <View style={[styles.tile, { backgroundColor: c.accentSoft, borderColor: c.border }]}>
@@ -75,7 +75,7 @@ export function WeeklyStateCard({ briefing, health, recovery }: Props) {
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.md, marginBottom: spacing.md },
+  card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   tile: { flex: 1, minWidth: '45%', borderRadius: radius.md, borderWidth: 1, padding: spacing.sm, alignItems: 'center', gap: 2 },
   tileValue: { fontSize: 20, fontWeight: '700' },

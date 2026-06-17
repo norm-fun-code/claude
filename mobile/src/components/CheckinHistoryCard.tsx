@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, useColorScheme } from 'react-native';
-import { getColors, spacing, radius, typography } from '../theme';
+import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { CHECKIN_HISTORY_URL, authHeaders, fetchWithTimeout } from '../config';
 import { Insight } from '../hooks/useBriefing';
 
@@ -59,7 +59,7 @@ export function CheckinHistoryCard({ insights = [] }: Props) {
   };
 
   return (
-    <View style={[styles.card, { borderColor: c.border, backgroundColor: c.card }]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       {recent.length > 0 && (
         <>
           <Text style={[styles.title, { color: c.text }]}>Check-in Trends</Text>
@@ -119,7 +119,7 @@ export function CheckinHistoryCard({ insights = [] }: Props) {
 }
 
 const styles = StyleSheet.create({
-  card: { borderWidth: 1, borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
+  card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   title: { ...typography.subtitle, marginBottom: spacing.sm },
   grid: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
   labelCol: { width: 52 },

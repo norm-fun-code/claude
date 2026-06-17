@@ -29,7 +29,7 @@ export function WealthCard({ wealth }: Props) {
   const show = (s: string) => (hidden ? MASK : s);
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }, shadow(isDark)]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <View style={styles.header}>
         <SectionHeader emoji="◆" title="Net Worth" />
         <Text style={[styles.hint, { color: c.subtext }]}>{hidden ? 'tap to show' : 'tap to hide'}</Text>
@@ -76,7 +76,7 @@ function Stat({ label, value, color, c }: { label: string; value: string; color:
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.md, marginBottom: spacing.md },
+  card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   hint: { fontSize: 10, fontStyle: 'italic' },
   big: { fontSize: 40, fontWeight: '300', letterSpacing: -1.5 },

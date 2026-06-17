@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, useColorScheme } from 'react-native';
-import { getColors, spacing, radius, typography } from '../theme';
+import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 
 interface Props {
@@ -25,7 +25,7 @@ export function NotionCard({ pageTitle, notionText, quote, insight }: Props) {
     : '';
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <SectionHeader emoji="📖" title="Notion Wisdom" />
 
       {pageTitle ? (
@@ -50,7 +50,6 @@ export function NotionCard({ pageTitle, notionText, quote, insight }: Props) {
 const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
-    borderWidth: 1,
     padding: spacing.md,
     marginBottom: spacing.md,
   },

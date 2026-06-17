@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, useColorScheme } from 'react-native';
-import { getColors, spacing, radius, typography } from '../theme';
+import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import type { Weather } from '../hooks/useBriefing';
 import { useWeather } from '../hooks/useWeather';
@@ -72,7 +72,7 @@ export function WeatherCard({ weather: seed }: Props) {
 
   if (!weather) {
     return (
-      <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+      <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
         {header}
         <Text style={[styles.unavailable, { color: c.subtext }]}>
           {loading ? 'Loading weather…' : 'Weather unavailable'}
@@ -84,7 +84,7 @@ export function WeatherCard({ weather: seed }: Props) {
   const emoji = conditionToEmoji(weather.condition);
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       {header}
 
       {/* Main temperature */}
@@ -175,7 +175,6 @@ export function WeatherCard({ weather: seed }: Props) {
 const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
-    borderWidth: 1,
     padding: spacing.md,
     marginBottom: spacing.md,
   },

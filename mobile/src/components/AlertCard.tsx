@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, useColorScheme } from 'react-native';
-import { getColors, spacing, radius, typography } from '../theme';
+import { getColors, spacing, radius, typography, shadow } from '../theme';
 import type { Alert } from '../hooks/useBriefing';
 
 interface Props {
@@ -24,7 +24,7 @@ export function AlertCard({ alerts }: Props) {
         return (
           <View
             key={`${a.source}-${i}`}
-            style={[styles.card, { backgroundColor: bg, borderColor: accent }]}
+            style={[styles.card, { backgroundColor: bg, borderLeftColor: accent }, shadow(isDark)]}
           >
             <Text style={[styles.title, { color: accent }]}>
               {high ? '⚠︎ Action needed' : '⚠︎ Heads up'}
@@ -40,7 +40,6 @@ export function AlertCard({ alerts }: Props) {
 const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
-    borderWidth: 1,
     borderLeftWidth: 4,
     padding: spacing.md,
     marginBottom: spacing.md,

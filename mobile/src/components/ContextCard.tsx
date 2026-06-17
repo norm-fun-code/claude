@@ -1,14 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, TextInput, TouchableOpacity, useColorScheme, AppState } from 'react-native';
-import { getColors, spacing, radius, typography } from '../theme';
+import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { ANNOTATIONS_URL, authHeaders, fetchWithTimeout } from '../config';
 
-// One-tap life-context logging. These annotations explain anomalies in your
-// data ("HRV dipped — you flew yesterday") and surface in the weekly review as
-// the week's context. Each preset writes { category, label }; the backend
-// defaults the window to today + tomorrow morning so it covers the next-day
-// briefing, then expires on its own.
 type Preset = { emoji: string; category: string; label: string };
 const PRESETS: Preset[] = [
   { emoji: '✈️', category: 'travel', label: 'Travel' },
@@ -29,7 +24,7 @@ export function ContextCard() {
   const c = getColors(isDark);
   const [logged, setLogged] = useState<Logged[]>([]);
   const [note, setNote] = useState('');
-  const [saving, setSaving] = useState<string | null>(null); // label currently saving
+  const [saving, setSaving] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const fetchDateRef = useRef('');
 
@@ -39,11 +34,10 @@ export function ContextCard() {
     }).format(new Date());
   }
 
-  // Start of today (ET) as an ISO string, for the GET window.
   function startOfTodayISO(): string {
     const parts = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
-    }).format(new Date()); // YYYY-MM-DD
+    }).format(new Date());
     return `${parts}T00:00:00`;
   }
 
@@ -64,7 +58,6 @@ export function ContextCard() {
 
   useEffect(() => { fetchToday(); }, []);
 
-  // Reset + refetch when returning to foreground on a new calendar day.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active' && fetchDateRef.current !== todayET()) {
@@ -78,8 +71,9 @@ export function ContextCard() {
   }, []);
 
   const isLogged = (label: string) => logged.some((l) => l.label === label);
+  const getLogged = (label: string) => logged.find((l) => l.label === label);
 
-  async function log(category: string, label: string, noteText?: string) {
+  async function log(category: string, label: string) {
     if (saving) return;
     setSaving(label);
     setFailed(false);
@@ -87,16 +81,29 @@ export function ContextCard() {
       const res = await fetchWithTimeout(ANNOTATIONS_URL, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({
-          startTs: new Date().toISOString(),
-          category,
-          label,
-          note: noteText || null,
-        }),
+        body: JSON.stringify({ startTs: new Date().toISOString(), category, label }),
       });
       if (!res.ok) throw new Error(`Server ${res.status}`);
       const { id } = await res.json();
       setLogged((prev) => [{ id, category, label }, ...prev]);
+    } catch {
+      setFailed(true);
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  async function unlog(id: number, label: string) {
+    if (saving) return;
+    setSaving(label);
+    setFailed(false);
+    try {
+      const res = await fetchWithTimeout(`${ANNOTATIONS_URL}/${id}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+      setLogged((prev) => prev.filter((l) => l.id !== id));
     } catch {
       setFailed(true);
     } finally {
@@ -112,10 +119,10 @@ export function ContextCard() {
   }
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <SectionHeader emoji="📝" title="Anything going on today?" />
       <Text style={[styles.hint, { color: c.subtext }]}>
-        Tap what applies — NormOS uses it to explain your numbers and recap your week.
+        Tap to log — tap again to remove. NormOS uses it to explain your numbers.
       </Text>
 
       <View style={styles.chips}>
@@ -125,8 +132,15 @@ export function ContextCard() {
           return (
             <Pressable
               key={p.label}
-              onPress={() => !on && log(p.category, p.label)}
-              disabled={on || busy}
+              onPress={() => {
+                if (on) {
+                  const entry = getLogged(p.label);
+                  if (entry) unlog(entry.id, p.label);
+                } else {
+                  log(p.category, p.label);
+                }
+              }}
+              disabled={busy}
               style={[
                 styles.chip,
                 { borderColor: on ? c.accent : c.border, backgroundColor: on ? c.accent : 'transparent', opacity: busy ? 0.5 : 1 },
@@ -159,20 +173,19 @@ export function ContextCard() {
         </TouchableOpacity>
       </View>
 
-      {/* Custom (note) entries that aren't one of the presets — confirm they logged. */}
       {logged.filter((l) => !PRESETS.some((p) => p.label === l.label)).map((l) => (
         <View key={l.id} style={styles.customRow}>
           <Text style={[styles.customText, { color: c.subtext }]}>✓ {l.label}</Text>
         </View>
       ))}
 
-      {failed && <Text style={styles.failed}>Couldn’t save — check your connection and try again.</Text>}
+      {failed && <Text style={styles.failed}>Couldn't save — check your connection and try again.</Text>}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.md, marginBottom: spacing.md },
+  card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   hint: { ...typography.caption, fontSize: 13, marginBottom: spacing.md, lineHeight: 19 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   chip: {

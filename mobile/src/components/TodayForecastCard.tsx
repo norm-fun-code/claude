@@ -24,7 +24,7 @@ export function TodayForecastCard({ forecast }: Props) {
     cap?.band === 'red' ? c.red : c.subtext;
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }, shadow(isDark)]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <Text style={[styles.kicker, { color: c.subtext }]}>TODAY'S FORECAST</Text>
 
       {cap && (
@@ -54,7 +54,7 @@ export function TodayForecastCard({ forecast }: Props) {
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.md, marginBottom: spacing.md },
+  card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   kicker: { fontSize: 10, fontWeight: '700', letterSpacing: 1.2, marginBottom: spacing.sm },
   gradeRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   gradeBadge: {

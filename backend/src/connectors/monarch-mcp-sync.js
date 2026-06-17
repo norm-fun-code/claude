@@ -157,41 +157,43 @@ async function syncViaMcp(ctx) {
     if (Number.isFinite(liabilities)) metrics.push(m('liabilities', liabilities, today));
   }
 
-  // 2) Daily spending / income / cashflow from GetCashFlow.
-  //    We explicitly exclude transfer/CC-payment categories from the expense
-  //    totals to avoid the classic Monarch double-count (a CC payment hitting a
-  //    checking account can appear under an expense category_type in Monarch's
-  //    MCP server). Mirror the same guard as the CSV connector's isInternalTransfer.
-  const [fixedNames, transferNames] = await Promise.all([
-    fixedCategoryNames(),
-    transferCategoryNames(),
-  ]);
-  // Dedupe: transfers excluded from all spend; fixed housing also excluded from discretionary.
-  const excludeFromTotal = [...new Set(transferNames)];
-  const excludeFromDiscretionary = [...new Set([...fixedNames, ...transferNames])];
-  const [expenseByDay, incomeByDay, discretionaryByDay] = await Promise.all([
-    excludeFromTotal.length
-      ? dailyCashflow(startDate, endDate, 'expense', excludeFromTotal)
-      : dailyCashflow(startDate, endDate, 'expense'),
-    dailyCashflow(startDate, endDate, 'income'),
-    excludeFromDiscretionary.length
-      ? dailyCashflow(startDate, endDate, 'expense', excludeFromDiscretionary)
-      : Promise.resolve(new Map()),
-  ]);
+  // 2) Income from GetCashFlow — no double-count risk on the income side.
+  const incomeByDay = await dailyCashflow(startDate, endDate, 'income');
 
-  const days = new Set([...expenseByDay.keys(), ...incomeByDay.keys()]);
-  for (const day of days) {
-    const spend = expenseByDay.has(day) ? -expenseByDay.get(day) : 0; // expense is negative → positive spend
-    const income = incomeByDay.has(day) ? incomeByDay.get(day) : 0;
-    if (expenseByDay.has(day)) metrics.push(m('spending', spend, day));
-    if (discretionaryByDay.has(day)) metrics.push(m('spending_discretionary', -discretionaryByDay.get(day), day));
-    if (incomeByDay.has(day)) metrics.push(m('income', income, day));
-    metrics.push(m('net_cashflow', income - spend, day));
-  }
-
-  // 3) Per-transaction documents (for the life-chat library + reconciliation).
+  // 3) Spending from individual transactions — transaction-level filtering is the
+  //    only reliable way to exclude CC payments. GetCashFlow's filter parameter is
+  //    not guaranteed to work across Monarch MCP versions, and the double-count
+  //    (CC payment appearing as an expense) is a known Monarch issue. Mirrors
+  //    exactly what the CSV connector's mapTransactions + isInternalTransfer does.
   const txns = await fetchTxnsInRange(startDate, endDate);
   const documents = txns.filter((t) => t && t.id != null).map(txnToDocument);
+
+  const expByDay = new Map();
+  const discByDay = new Map();
+  for (const t of txns) {
+    if (!t || !t.date) continue;
+    const amount = Number(t.amount);
+    // Monarch signs: expenses are negative, income positive.
+    if (!Number.isFinite(amount) || amount >= 0) continue;
+    const category = String(t.category || '');
+    if (isInternalTransfer(category)) continue; // skip CC payments / transfers
+    const day = String(t.date).slice(0, 10);
+    const spend = Math.abs(amount);
+    expByDay.set(day, (expByDay.get(day) || 0) + spend);
+    if (!isFixedCategory(category)) {
+      discByDay.set(day, (discByDay.get(day) || 0) + spend);
+    }
+  }
+
+  const days = new Set([...expByDay.keys(), ...incomeByDay.keys()]);
+  for (const day of days) {
+    const spend = expByDay.get(day) || 0;
+    const income = incomeByDay.has(day) ? incomeByDay.get(day) : 0;
+    if (expByDay.has(day)) metrics.push(m('spending', spend, day));
+    if (discByDay.has(day)) metrics.push(m('spending_discretionary', discByDay.get(day) || 0, day));
+    if (incomeByDay.has(day)) metrics.push(m('income', income, day));
+    if (expByDay.has(day) || incomeByDay.has(day)) metrics.push(m('net_cashflow', income - spend, day));
+  }
 
   // Reconcile the window against Monarch's current truth: prune stored docs it no
   // longer reports there (deleted, or moved to another month).

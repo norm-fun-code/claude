@@ -56,8 +56,8 @@ export function BriefCard({ brief, fallback }: Props) {
   if (!brief && !fallback) return null;
 
   return (
-    <View style={[styles.card, { backgroundColor: c.accent }, shadow(isDark)]}>
-      <Text style={styles.kicker}>CHIEF OF STAFF BRIEF</Text>
+    <View style={[styles.card, { backgroundColor: c.hero }, shadow(isDark)]}>
+      <Text style={[styles.kicker, { color: c.accent }]}>CHIEF OF STAFF BRIEF</Text>
 
       {brief ? (
         <>
@@ -121,7 +121,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 1.2,
-    color: 'rgba(255,255,255,0.7)',
     marginBottom: spacing.sm,
   },
   synthesis: {
@@ -142,7 +141,7 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 0.8,
-    color: 'rgba(255,255,255,0.65)',
+    color: 'rgba(99,91,255,0.85)',
     marginBottom: 3,
   },
   blockText: {

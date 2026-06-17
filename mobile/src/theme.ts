@@ -1,22 +1,23 @@
-// Stripe-inspired palette: blurple accent (#635BFF), deep navy ink (#0A2540),
-// soft light background (#F6F9FC). Light-first for readability.
+// Apple iOS system palette — off-white grouped background, clean white cards,
+// one brand accent (blurple). Typography and spacing follow SF Pro conventions.
 export const colors = {
-  background: '#F6F9FC', // Stripe light
-  card: '#FFFFFF',
-  border: '#E6EBF1', // Stripe hairline
-  text: '#0A2540', // Stripe navy ink
-  subtext: '#425466', // Stripe slate
-  accent: '#635BFF', // Stripe blurple
-  accentSoft: '#EFEEFF', // tint for accent backgrounds
-  green: '#00A86B',
-  yellow: '#E8A400',
-  red: '#E25950',
-  // Dark mode variants (navy, not black — keeps the Stripe feel)
-  backgroundDark: '#0A2540',
-  cardDark: '#0E2E4D',
-  borderDark: '#1F3A5F',
-  textDark: '#F6F9FC',
-  subtextDark: '#8C9CB3',
+  background: '#F2F2F7',           // iOS systemGroupedBackground
+  card: '#FFFFFF',                  // iOS secondarySystemGroupedBackground
+  border: 'rgba(60,60,67,0.12)',    // iOS separator — hairline dividers inside cards
+  text: '#1C1C1E',                  // iOS label
+  subtext: '#8E8E93',               // iOS secondaryLabel
+  accent: '#635BFF',                // brand blurple
+  accentSoft: '#EFEEFF',            // blurple tint for active states
+  green: '#34C759',                 // iOS systemGreen
+  yellow: '#FF9F0A',                // iOS systemYellow
+  red: '#FF3B30',                   // iOS systemRed
+  hero: '#1C1C1E',                  // dark surface for hero cards (BriefCard etc.)
+  // Dark mode (app forces light — kept for completeness)
+  backgroundDark: '#000000',
+  cardDark: '#1C1C1E',
+  borderDark: 'rgba(255,255,255,0.1)',
+  textDark: '#FFFFFF',
+  subtextDark: '#8E8E93',
 };
 
 export const spacing = {
@@ -25,12 +26,14 @@ export const spacing = {
   md: 16,
   lg: 24,
   xl: 32,
+  xxl: 48,
 };
 
 export const radius = {
-  sm: 6,
+  sm: 8,
   md: 12,
   lg: 16,
+  xl: 20,
 };
 
 export const typography = {
@@ -40,13 +43,14 @@ export const typography = {
     letterSpacing: -2,
   },
   title: {
-    fontSize: 22,
-    fontWeight: '600' as const,
+    fontSize: 28,
+    fontWeight: '700' as const,
     letterSpacing: -0.5,
   },
   subtitle: {
-    fontSize: 16,
-    fontWeight: '500' as const,
+    fontSize: 17,
+    fontWeight: '600' as const,
+    letterSpacing: -0.2,
   },
   body: {
     fontSize: 15,
@@ -54,34 +58,35 @@ export const typography = {
     lineHeight: 22,
   },
   caption: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '400' as const,
-    letterSpacing: 0.2,
+    letterSpacing: 0.1,
   },
   label: {
     fontSize: 11,
     fontWeight: '600' as const,
-    letterSpacing: 0.8,
+    letterSpacing: 0.6,
     textTransform: 'uppercase' as const,
   },
 };
 
-// Soft, Apple-style elevation for cards and the floating tab bar.
+// Apple-style elevation: pure black at low opacity, tight radius shadow.
+// Cards float off a grouped background — no visible border needed.
 export function shadow(isDark: boolean, level: 'card' | 'bar' = 'card') {
-  if (isDark) return { borderWidth: 1 };
+  if (isDark) return {};
   const card = {
-    shadowColor: '#0A2540',
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
+    shadowColor: '#000000',
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
   };
   const bar = {
-    shadowColor: '#0A2540',
+    shadowColor: '#000000',
     shadowOpacity: 0.1,
     shadowRadius: 20,
-    shadowOffset: { width: 0, height: -2 },
-    elevation: 12,
+    shadowOffset: { width: 0, height: -1 },
+    elevation: 16,
   };
   return level === 'bar' ? bar : card;
 }
@@ -93,10 +98,11 @@ export function getColors(isDark: boolean) {
     border: isDark ? colors.borderDark : colors.border,
     text: isDark ? colors.textDark : colors.text,
     subtext: isDark ? colors.subtextDark : colors.subtext,
-    accent: colors.accent, // blurple in both modes
-    accentSoft: isDark ? colors.borderDark : colors.accentSoft,
+    accent: colors.accent,
+    accentSoft: isDark ? 'rgba(99,91,255,0.2)' : colors.accentSoft,
     green: colors.green,
     yellow: colors.yellow,
     red: colors.red,
+    hero: colors.hero,
   };
 }

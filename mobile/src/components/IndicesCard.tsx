@@ -65,7 +65,7 @@ export function IndicesCard() {
   if (indices.length === 0) return null;
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }, shadow(isDark)]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <SectionHeader emoji="📊" title="Today's Market" />
       <View style={styles.row}>
         {indices.map((idx) => {
@@ -90,7 +90,7 @@ export function IndicesCard() {
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.md, marginBottom: spacing.md },
+  card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   row: { flexDirection: 'row', gap: spacing.sm },
   cell: {
     flex: 1,

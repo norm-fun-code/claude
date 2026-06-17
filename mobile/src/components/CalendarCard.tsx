@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, useColorScheme } from 'react-native';
-import { getColors, spacing, radius, typography } from '../theme';
+import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import type { CalendarEvent, WorkBusyBlock } from '../hooks/useBriefing';
 
@@ -67,7 +67,7 @@ export function CalendarCard({ events, workBusy = [] }: Props) {
   const isEmpty = items.length === 0;
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <SectionHeader emoji="📅" title="Today's Calendar" />
 
       {isEmpty ? (
@@ -116,7 +116,6 @@ export function CalendarCard({ events, workBusy = [] }: Props) {
 const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
-    borderWidth: 1,
     padding: spacing.md,
     marginBottom: spacing.md,
   },

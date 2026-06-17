@@ -128,7 +128,7 @@ export function SleepLogCard() {
   if (today && saveStatus !== 'ok') return null;
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }, shadow(isDark)]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <View style={styles.headerRow}>
         <SectionHeader emoji="🛏" title="Eight Sleep" preserveCase />
       </View>
@@ -211,7 +211,6 @@ function Field({ label, value, onChange, placeholder, c }: {
 const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
-    borderWidth: 1,
     padding: spacing.md,
     marginBottom: spacing.md,
   },

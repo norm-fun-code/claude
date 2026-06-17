@@ -32,7 +32,7 @@ export function CrossContextCard({ insights }: Props) {
   if (!insights || insights.length === 0) return null;
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.accent }, shadow(isDark)]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <View style={styles.header}>
         <View style={[styles.badge, { backgroundColor: c.accentSoft }]}>
           <Text style={[styles.badgeText, { color: c.accent }]}>CONNECTED BY NORMOS</Text>
@@ -79,7 +79,6 @@ export function CrossContextCard({ insights }: Props) {
 const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
-    borderWidth: 1.5,
     padding: spacing.md,
     marginBottom: spacing.md,
   },

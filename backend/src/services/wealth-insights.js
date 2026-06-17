@@ -245,32 +245,46 @@ async function buildWealthInsights() {
   }
 
   // 4) Investment performance (7-day window from Monarch).
+  //    Suppress when periodChange rounds to $0 — Monarch sometimes returns no
+  //    period_change_dollars (e.g. when the date range has no prior snapshot),
+  //    giving a misleading "up $0 (0.0%)" that looks broken.
   try {
     const inv = await monarchWealth.getInvestments();
     if (inv && inv.totalValue > 0) {
-      const dir = inv.periodChange >= 0 ? 'up' : 'down';
-      const absPct = Math.abs(inv.periodChangePct).toFixed(1);
-      const gainLine = inv.topGainers.length
-        ? ` Top gainer: ${inv.topGainers[0].ticker || 'unknown'} +${fmt(inv.topGainers[0].periodChange)}.`
-        : '';
-      const loseLine = inv.topLosers.length && inv.topLosers[0].periodChange < 0
-        ? ` Biggest drag: ${inv.topLosers[0].ticker || 'unknown'} ${fmt(inv.topLosers[0].periodChange)}.`
-        : '';
-      insights.push({
-        type: 'investments',
-        title: `Portfolio ${dir} ${fmt(Math.abs(inv.periodChange))} (${absPct}%) past 7d`,
-        detail:
-          `Total portfolio value: ${fmt(inv.totalValue)}. Over the past 7 days: ${dir} ${fmt(Math.abs(inv.periodChange))} (${absPct}%).${gainLine}${loseLine}`,
-        evidence: {
-          kind: 'investments',
-          totalValue: Math.round(inv.totalValue),
-          periodChange: Math.round(inv.periodChange),
-          periodChangePct: parseFloat(absPct),
-          holdings: inv.holdings.slice(0, 10),
-          topGainers: inv.topGainers,
-          topLosers: inv.topLosers,
-        },
-      });
+      const hasPerformance = Math.abs(inv.periodChange) >= 10;
+      if (hasPerformance) {
+        const dir = inv.periodChange >= 0 ? 'up' : 'down';
+        const absPct = Math.abs(inv.periodChangePct).toFixed(1);
+        const gainLine = inv.topGainers.length
+          ? ` Top gainer: ${inv.topGainers[0].ticker || 'unknown'} +${fmt(inv.topGainers[0].periodChange)}.`
+          : '';
+        const loseLine = inv.topLosers.length && inv.topLosers[0].periodChange < 0
+          ? ` Biggest drag: ${inv.topLosers[0].ticker || 'unknown'} ${fmt(inv.topLosers[0].periodChange)}.`
+          : '';
+        insights.push({
+          type: 'investments',
+          title: `Portfolio ${dir} ${fmt(Math.abs(inv.periodChange))} (${absPct}%) past 7d`,
+          detail:
+            `Total portfolio value: ${fmt(inv.totalValue)}. Over the past 7 days: ${dir} ${fmt(Math.abs(inv.periodChange))} (${absPct}%).${gainLine}${loseLine}`,
+          evidence: {
+            kind: 'investments',
+            totalValue: Math.round(inv.totalValue),
+            periodChange: Math.round(inv.periodChange),
+            periodChangePct: parseFloat(absPct),
+            holdings: inv.holdings.slice(0, 10),
+            topGainers: inv.topGainers,
+            topLosers: inv.topLosers,
+          },
+        });
+      } else {
+        // Performance data unavailable — show value only.
+        insights.push({
+          type: 'investments',
+          title: `Portfolio value: ${fmt(inv.totalValue)}`,
+          detail: `Total portfolio value: ${fmt(inv.totalValue)}. 7-day performance data not yet available from Monarch.`,
+          evidence: { kind: 'investments', totalValue: Math.round(inv.totalValue) },
+        });
+      }
     }
   } catch (err) {
     console.error('[wealth-insights] investments failed:', err.message);

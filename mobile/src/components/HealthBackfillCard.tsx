@@ -14,7 +14,7 @@ export function HealthBackfillCard() {
   const done = status === 'done';
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }, shadow(isDark)]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <Text style={[styles.label, { color: c.subtext }]}>APPLE HEALTH HISTORY SYNC</Text>
       <Text style={[styles.title, { color: c.text }]}>
         Load {DAYS} Days of Health Data
@@ -60,7 +60,7 @@ export function HealthBackfillCard() {
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.md, marginBottom: spacing.md },
+  card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   label: { ...typography.label, fontSize: 10, letterSpacing: 1, marginBottom: spacing.xs },
   title: { ...typography.subtitle, fontSize: 17, marginBottom: spacing.sm },
   body: { ...typography.body, fontSize: 14, marginBottom: spacing.sm },

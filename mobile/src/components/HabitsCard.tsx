@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, useColorScheme, AppState } from 'react-native';
-import { getColors, spacing, radius, typography } from '../theme';
+import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { API_BASE, HABITS_STREAKS_URL, HABITS_TODAY_URL, authHeaders, fetchWithTimeout } from '../config';
 import { AnnotationsCard } from './AnnotationsCard';
@@ -123,7 +123,7 @@ export function HabitsCard() {
   const doneCount = Object.values(checked).filter(Boolean).length;
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <SectionHeader emoji="🔁" title={saved ? 'Habits logged — nice' : 'Habit Stack'} />
 
       {HABITS.map(({ key, label }) => {
@@ -189,7 +189,7 @@ export function HabitsCard() {
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.md, marginBottom: spacing.md },
+  card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

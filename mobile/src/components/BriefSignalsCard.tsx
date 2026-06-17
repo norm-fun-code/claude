@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, useColorScheme } from 'react-native';
-import { getColors, spacing, radius, typography } from '../theme';
+import { getColors, spacing, radius, typography, shadow } from '../theme';
 import type { BriefSignal } from '../hooks/useBriefing';
 import { BRIEFING_CONTEXT_URL, authHeaders, fetchWithTimeout } from '../config';
 
@@ -54,7 +54,7 @@ export function BriefSignalsCard({ signals }: Props) {
   }
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <Text style={[styles.kicker, { color: c.subtext }]}>CHIEF OF STAFF</Text>
       <Text style={[styles.question, { color: c.text }]}>{current.question}</Text>
 
@@ -92,7 +92,6 @@ export function BriefSignalsCard({ signals }: Props) {
 const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
-    borderWidth: 1,
     padding: spacing.md,
     marginBottom: spacing.md,
   },

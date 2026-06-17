@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, TextInput, useColorScheme, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
-import { getColors, spacing, radius, typography } from '../theme';
+import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { ANNOTATIONS_URL, authHeaders, fetchWithTimeout } from '../config';
 
@@ -96,7 +96,7 @@ export function AnnotationsCard({ inline = false }: AnnotationsProps = {}) {
   );
 
   return (
-    <View style={inline ? undefined : [styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={inline ? undefined : [styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       {inner}
 
       <Modal visible={modalVisible} transparent animationType="slide" onRequestClose={() => setModalVisible(false)}>
@@ -141,7 +141,7 @@ export function AnnotationsCard({ inline = false }: AnnotationsProps = {}) {
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.md, marginBottom: spacing.md },
+  card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   empty: { fontSize: 13, lineHeight: 19, fontStyle: 'italic', marginBottom: spacing.sm },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginBottom: spacing.sm },
   chip: { paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.sm, borderWidth: 1 },

@@ -1343,6 +1343,18 @@ app.get('/api/annotations', async (req, res) => {
   }
 });
 
+app.delete('/api/annotations/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'invalid id' });
+    const { query } = require('./src/db');
+    await query('DELETE FROM annotations WHERE id = $1', [id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Pre-brief context answers — user responds to a signal question; store as
 // annotation so it flows into annotationsContext on the next briefing build.
 app.post('/api/briefing/context', async (req, res) => {
@@ -2145,25 +2157,29 @@ app.get('/api/briefing', async (req, res) => {
   let signals = [];
   try {
     const preBriefSignals = require('./src/intelligence/pre-brief-signals');
-    let todaySpend = null;
+    let recentSpend = null;
     let spendBaseline = null;
     try {
       const tz = process.env.TZ || 'America/New_York';
-      const todayDate = new Date().toLocaleDateString('en-CA', { timeZone: tz });
-      const todayFrom = new Date(`${todayDate}T00:00:00Z`);
-      const baselineFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-      const [todayRows, baselineRows] = await Promise.all([
-        metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: todayFrom, agg: 'sum', excludeSource: 'seed' }),
-        metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: baselineFrom, to: todayFrom, agg: 'sum', excludeSource: 'seed' }),
+      // Use yesterday's completed data — today's Monarch sync only ran this morning
+      // and may be incomplete or attribute yesterday's settled transactions to today.
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const yestDate = yesterday.toLocaleDateString('en-CA', { timeZone: tz });
+      const yestFrom = new Date(`${yestDate}T00:00:00Z`);
+      const yestTo = new Date(yestFrom.getTime() + 24 * 60 * 60 * 1000);
+      const baselineFrom = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
+      const [yestRows, baselineRows] = await Promise.all([
+        metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: yestFrom, to: yestTo, agg: 'sum', excludeSource: 'seed' }),
+        metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: baselineFrom, to: yestFrom, agg: 'sum', excludeSource: 'seed' }),
       ]);
-      const dayTotal = todayRows.reduce((s, r) => s + Number(r.value || 0), 0);
-      if (dayTotal > 0) todaySpend = dayTotal;
+      const yestTotal = yestRows.reduce((s, r) => s + Number(r.value || 0), 0);
+      if (yestTotal > 0) recentSpend = yestTotal;
       if (baselineRows.length >= 7) {
         spendBaseline = baselineRows.reduce((s, r) => s + Number(r.value || 0), 0) / baselineRows.length;
       }
     } catch { /* non-critical */ }
     const allSignals = preBriefSignals.buildSignals({
-      recovery, calendar, workBusy, spend: todaySpend, spendBaseline,
+      recovery, calendar, workBusy, spend: recentSpend, spendBaseline,
     });
     signals = preBriefSignals.selectQuestions(allSignals, 2);
   } catch (err) {

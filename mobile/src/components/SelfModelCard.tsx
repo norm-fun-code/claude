@@ -84,7 +84,7 @@ export function SelfModelCard() {
   const completedCount = s.experiments?.completed?.length ?? 0;
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }, shadow(isDark)]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <View style={styles.headerRow}>
         <SectionHeader emoji="🧬" title="NormOS Profile" preserveCase />
         {model && (
@@ -175,7 +175,6 @@ function Stat({ label, value, sub, c }: { label: string; value: string; sub: str
 const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
-    borderWidth: 1,
     padding: spacing.md,
     marginBottom: spacing.md,
   },

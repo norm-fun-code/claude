@@ -64,7 +64,7 @@ export function InsightsCard({ insights }: Props) {
   if (visible.length === 0) return null;
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }, shadow(isDark)]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <SectionHeader emoji="↗" title="What The Data Shows" />
       {visible.map((ins, i) => (
         <View key={ins.dismissKey ?? i} style={[styles.item, i > 0 && { borderTopColor: c.border, borderTopWidth: 1 }]}>
@@ -85,7 +85,7 @@ export function InsightsCard({ insights }: Props) {
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.md, marginBottom: spacing.md },
+  card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   item: { flexDirection: 'row', alignItems: 'flex-start', paddingTop: spacing.sm, marginTop: spacing.xs },
   itemBody: { flex: 1 },
   tag: { ...typography.label, fontSize: 9, marginBottom: 2 },

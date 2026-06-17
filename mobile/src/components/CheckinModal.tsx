@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, View, Text, StyleSheet, ScrollView, TouchableOpacity, useColorScheme, SafeAreaView } from 'react-native';
+import { Modal, View, Text, StyleSheet, ScrollView, TouchableOpacity, useColorScheme, SafeAreaView, KeyboardAvoidingView, Platform } from 'react-native';
 import { getColors, spacing, typography } from '../theme';
 import { CheckinCard } from './CheckinCard';
 import { HabitsCard } from './HabitsCard';
@@ -26,19 +26,24 @@ export function CheckinModal({ visible, onClose }: Props) {
             <Text style={[styles.closeTxt, { color: c.subtext }]}>✕</Text>
           </TouchableOpacity>
         </View>
-        <ScrollView
-          contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
+        <KeyboardAvoidingView
+          style={styles.kav}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
-          {visible && (
-            <>
-              <CheckinCard />
-              <HabitsCard />
-              <ContextCard />
-            </>
-          )}
-        </ScrollView>
+          <ScrollView
+            contentContainerStyle={styles.content}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            {visible && (
+              <>
+                <CheckinCard />
+                <HabitsCard />
+                <ContextCard />
+              </>
+            )}
+          </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </Modal>
   );
@@ -46,6 +51,7 @@ export function CheckinModal({ visible, onClose }: Props) {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  kav: { flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

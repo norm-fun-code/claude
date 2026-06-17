@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, useColorScheme } from 'react-native';
-import { getColors, spacing, radius, typography } from '../theme';
+import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 
 interface Props {
@@ -17,7 +17,7 @@ export function QuoteCard({ quote, insight, title = 'Quote + Insight', emoji = '
   if (!quote && !insight) return null;
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <SectionHeader emoji={emoji} title={title} />
 
       {quote ? (
@@ -36,7 +36,6 @@ export function QuoteCard({ quote, insight, title = 'Quote + Insight', emoji = '
 const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
-    borderWidth: 1,
     padding: spacing.md,
     marginBottom: spacing.md,
   },

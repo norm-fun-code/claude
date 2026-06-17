@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, useColorScheme } from 'react-native';
-import { getColors, spacing, radius, typography } from '../theme';
+import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { formatHM } from '../utils/format';
 import type { HealthData } from '../hooks/useHealthData';
@@ -40,7 +40,7 @@ export function HealthCard({ health }: Props) {
   const c = getColors(isDark);
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <SectionHeader emoji="❤️" title="Health" />
 
       {/* HRV — primary metric. Baseline-relative grading lives on the Recovery
@@ -92,7 +92,6 @@ export function HealthCard({ health }: Props) {
 const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
-    borderWidth: 1,
     padding: spacing.md,
     marginBottom: spacing.md,
   },

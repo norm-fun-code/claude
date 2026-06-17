@@ -141,7 +141,7 @@ export function AdvisorCard() {
   const webRef = useRef<WebView>(null);
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }, shadow(isDark)]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <SectionHeader emoji="🧮" title="Financial Advisor" preserveCase />
       <Text style={[styles.blurb, { color: c.subtext }]}>
         Personalized Q&A grounded in your live financial plan, scenarios, and projections.
@@ -198,7 +198,7 @@ export function AdvisorCard() {
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.md, marginBottom: spacing.md },
+  card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   blurb: { fontSize: 13, lineHeight: 19, marginBottom: spacing.md },
   btn: {
     borderRadius: radius.md,

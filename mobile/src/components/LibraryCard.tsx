@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, useColorScheme, Linking, TouchableOpacity } from 'react-native';
-import { getColors, spacing, radius, typography } from '../theme';
+import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { RelevantHighlight } from '../hooks/useBriefing';
 
@@ -21,7 +21,7 @@ export function LibraryCard({ highlight }: Props) {
     : highlight.title ?? 'From your library';
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.border }]}>
+    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <SectionHeader emoji="📚" title="From Your Library" />
 
       <View style={[styles.quoteBlock, { borderLeftColor: c.accent, backgroundColor: isDark ? '#0E2E4D' : '#FAFAF8' }]}>
@@ -47,7 +47,6 @@ export function LibraryCard({ highlight }: Props) {
 const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
-    borderWidth: 1,
     padding: spacing.md,
     marginBottom: spacing.md,
   },
