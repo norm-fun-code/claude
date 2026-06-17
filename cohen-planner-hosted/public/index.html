@@ -1808,22 +1808,22 @@ function renderGoalsTab(R,P,tT){
     const planNw=Math.round(startNw+yrFrac*(projRow.nw-startNw));
     const planLiq=Math.round(startLiq+yrFrac*(projRow.liq-startLiq));
     const plan401=Math.round(start401+yrFrac*(projRow.k401-start401));
-    const planTotal=planNw+plan401;
+    const planTotal=planLiq+plan401;
     // 401k: use Monarch's value if it has one, else fall back to the modeled "Starting 401k"
     const has401k=monarchSnapshot.retirement>0;
     const live401k=has401k?monarchSnapshot.retirement:(P.k401Start||0);
-    // NW excluding 401k (matches model's `nw`); and total including 401k
+    // NW from Monarch (for display only — not used in the headline because home equity
+    // timing makes it unreliable mid-year: a home purchase in Dec would make Jun look
+    // way behind even if you're on track on liquid savings).
     const nwExcl401k=monarchSnapshot.netWorth-(has401k?monarchSnapshot.retirement:0);
     const nwIncl401k=nwExcl401k+live401k;
     const liqDiff=impliedLiq-planLiq;
-    const syncDate=new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
-    // Only compare what Monarch actually reports. If 401k isn't synced, comparing
-    // a starting balance against the model's projected 401k is apples-to-oranges,
-    // so the headline uses NW-excl-401k (the genuinely comparable figure).
-    const headlineActual=has401k?nwIncl401k:nwExcl401k;
-    const headlinePlan=has401k?planTotal:planNw;
+    // Headline: liquid savings pace. If 401k is synced, include it for a fuller picture.
+    const headlineActual=has401k?impliedLiq+live401k:impliedLiq;
+    const headlinePlan=has401k?planLiq+plan401:planLiq;
     const totalDiff=headlineActual-headlinePlan;
     const ahead=totalDiff>=0;
+    const syncDate=new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
     h+=`<div style="background:var(--a-soft);border:1px solid rgba(191,105,0,.25);border-radius:10px;padding:16px 18px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
         <div>
@@ -1833,15 +1833,15 @@ function renderGoalsTab(R,P,tT){
         <div style="background:${ahead?'var(--g-soft)':'var(--r-soft)'};border:1px solid ${ahead?'rgba(26,135,84,.2)':'rgba(205,61,100,.2)'};border-radius:6px;padding:6px 12px;text-align:center">
           <div style="font-size:11px;font-weight:700;color:${ahead?'var(--g)':'var(--r)'}">${ahead?'▲ Ahead':'▼ Behind'}</div>
           <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:${ahead?'var(--g)':'var(--r)'}">${ahead?'+':''}${fmt(totalDiff)}</div>
-          <div style="font-size:8px;color:var(--t3)">${has401k?'vs plan':'NW ex-401k'}</div>
+          <div style="font-size:8px;color:var(--t3)">${has401k?'liquid + 401k':'liquid savings'}</div>
         </div>
       </div>
-      <div style="font-size:9.5px;color:var(--t2);line-height:1.45;margin-bottom:12px;padding:7px 9px;background:#fff8;border-radius:6px"><b style="color:var(--tx)">"Plan"</b> = your projection <b style="color:var(--tx)">pro-rated to today</b>: start-of-${curYr} balance plus the ${pctElapsed}% of this year's expected growth you'd have earned by now. (The model's raw rows are year-end figures, so comparing a mid-year snapshot to them would always read "behind".)${has401k?'':` <span style="color:var(--a)">Your 401k isn't synced from Monarch, so it's excluded from the headline</span> — the modeled value is shown below for reference only.`}</div>
+      <div style="font-size:9.5px;color:var(--t2);line-height:1.45;margin-bottom:12px;padding:7px 9px;background:#fff8;border-radius:6px"><b style="color:var(--tx)">"Plan"</b> = liquid savings <b style="color:var(--tx)">pro-rated to today</b>: your Jan-1 balance plus ${pctElapsed}% of this year's projected savings. NW is shown below for reference but excluded from the headline — home equity timing makes it unreliable mid-year.${has401k?'':` <span style="color:var(--a)">401k isn't synced from Monarch; modeled estimate shown for reference.</span>`}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
         <div style="background:#fff8;border-radius:7px;padding:9px 11px">
           <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">NW (excl 401k)</div>
           <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${fmt(nwExcl401k)}</div>
-          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Pace: ${fmt(planNw)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">from Monarch · incl. home equity</div>
         </div>
         <div style="background:#fff8;border-radius:7px;padding:9px 11px">
           <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Liquid (est.)</div>
@@ -1854,9 +1854,9 @@ function renderGoalsTab(R,P,tT){
           <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${has401k?'Pace: '+fmt(plan401):'modeled estimate'}</div>
         </div>
         <div style="background:#fff8;border-radius:7px;padding:9px 11px">
-          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Total${has401k?' w/ 401k':' (incl. modeled 401k)'}</div>
-          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">${fmt(nwIncl401k)}</div>
-          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Pace: ${fmt(planTotal)}</div>
+          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Liquid${has401k?' + 401k':' (no 401k synced)'}</div>
+          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">${fmt(headlineActual)}</div>
+          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Pace: ${fmt(headlinePlan)} · ${totalDiff>=0?'+':''}${fmt(totalDiff)}</div>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-top:12px">
