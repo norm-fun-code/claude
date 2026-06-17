@@ -52,6 +52,7 @@ import { BriefSignalsCard } from './src/components/BriefSignalsCard';
 import { TodayForecastCard } from './src/components/TodayForecastCard';
 import { CollapsibleSection } from './src/components/CollapsibleSection';
 import { HealthBackfillCard } from './src/components/HealthBackfillCard';
+import { ExperimentsCard } from './src/components/ExperimentsCard';
 import { CrossContextCard } from './src/components/CrossContextCard';
 import { SelfModelCard } from './src/components/SelfModelCard';
 import { SleepLogCard } from './src/components/SleepLogCard';
@@ -191,6 +192,7 @@ export default function App() {
             ) : (
               <EmptyNote c={c} text="Health insights (sleep ↔ HRV ↔ focus patterns) appear once a few days of Apple Health + habit data accumulate. Open the app daily so HealthKit syncs, and log your habits on the Today tab." />
             )}
+            <ExperimentsCard />
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} recoveryScore={liveRecovery.recovery?.score ?? null} />
             <ForecastCard forecasts={d?.forecasts ?? []} />
             {analyzeError && (
