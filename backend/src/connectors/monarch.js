@@ -84,7 +84,7 @@ function isFixedCategory(category) {
 // Override with MONARCH_TRANSFER_CATEGORIES="transfer,credit card payment".
 function transferCategories() {
   const custom = (process.env.MONARCH_TRANSFER_CATEGORIES || '').split(',').map((s) => norm(s)).filter(Boolean);
-  return custom.length ? custom : ['transfer', 'credit card payment', 'balance adjustment'];
+  return custom.length ? custom : ['transfer', 'credit card payment', 'balance adjustment', 'loan payment', 'investments', 'investment'];
 }
 function isInternalTransfer(category) {
   const c = norm(category);
