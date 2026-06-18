@@ -23,7 +23,7 @@ async function appliedSet() {
   return new Set(rows.map((r) => r.name));
 }
 
-async function run() {
+async function runMigrations() {
   await ensureTable();
   const applied = await appliedSet();
 
@@ -46,10 +46,16 @@ async function run() {
   }
 
   console.log(count === 0 ? 'Already up to date.' : `Applied ${count} migration(s).`);
-  await pool.end();
 }
 
-run().catch((err) => {
-  console.error('Migration failed:', err.message);
-  process.exit(1);
-});
+module.exports = { runMigrations };
+
+// CLI entrypoint: node src/db/migrate.js
+if (require.main === module) {
+  runMigrations()
+    .then(() => pool.end())
+    .catch((err) => {
+      console.error('Migration failed:', err.message);
+      process.exit(1);
+    });
+}
