@@ -12,7 +12,7 @@
 const rpc = require('../services/monarch-mcp-rpc');
 const monarchMcp = require('../services/monarch-mcp');
 const monarchApi = require('./monarch-api');
-const { isFixedCategory, isInternalTransfer } = require('./monarch');
+const { isFixedCategory, isInternalTransfer, isExcludedIncome } = require('./monarch');
 const { registerSource } = require('../store/sources');
 
 const SOURCE = 'monarch';
@@ -157,42 +157,50 @@ async function syncViaMcp(ctx) {
     if (Number.isFinite(liabilities)) metrics.push(m('liabilities', liabilities, today));
   }
 
-  // 2) Income from GetCashFlow — no double-count risk on the income side.
-  const incomeByDay = await dailyCashflow(startDate, endDate, 'income');
-
-  // 3) Spending from individual transactions — transaction-level filtering is the
-  //    only reliable way to exclude CC payments. GetCashFlow's filter parameter is
-  //    not guaranteed to work across Monarch MCP versions, and the double-count
-  //    (CC payment appearing as an expense) is a known Monarch issue. Mirrors
-  //    exactly what the CSV connector's mapTransactions + isInternalTransfer does.
+  // 2+3) Derive both income and spending from individual transactions — the only
+  //      reliable way to apply consistent filtering. Previously income came from
+  //      GetCashFlow(category_type:'income') which includes dividends, capital
+  //      gains, tax refunds, and interest — inflating savings rate vs Monarch's
+  //      Reports view. Transaction-level lets us exclude those the same way the
+  //      CSV connector's mapTransactions does, and use Monarch's category_type
+  //      field when present as an authoritative transfer signal.
   const txns = await fetchTxnsInRange(startDate, endDate);
   const documents = txns.filter((t) => t && t.id != null).map(txnToDocument);
 
   const expByDay = new Map();
   const discByDay = new Map();
+  const incByDay = new Map();
   for (const t of txns) {
     if (!t || !t.date) continue;
     const amount = Number(t.amount);
-    // Monarch signs: expenses are negative, income positive.
-    if (!Number.isFinite(amount) || amount >= 0) continue;
+    if (!Number.isFinite(amount) || amount === 0) continue;
     const category = String(t.category || '');
-    if (isInternalTransfer(category)) continue; // skip CC payments / transfers
+    const categoryType = String(t.category_type || t.categoryType || '').toLowerCase();
+    // Use Monarch's own category_type first (authoritative), then fall back to
+    // name-matching. Catches CC payments/transfers regardless of custom names.
+    if (categoryType === 'transfer' || isInternalTransfer(category)) continue;
     const day = String(t.date).slice(0, 10);
-    const spend = Math.abs(amount);
-    expByDay.set(day, (expByDay.get(day) || 0) + spend);
-    if (!isFixedCategory(category)) {
-      discByDay.set(day, (discByDay.get(day) || 0) + spend);
+    if (amount < 0) {
+      const spend = Math.abs(amount);
+      expByDay.set(day, (expByDay.get(day) || 0) + spend);
+      if (!isFixedCategory(category)) {
+        discByDay.set(day, (discByDay.get(day) || 0) + spend);
+      }
+    } else if (!isExcludedIncome(category)) {
+      // Earned income only: paychecks, freelance, other income.
+      // Excludes dividends, capital gains, tax refunds, interest income.
+      incByDay.set(day, (incByDay.get(day) || 0) + amount);
     }
   }
 
-  const days = new Set([...expByDay.keys(), ...incomeByDay.keys()]);
+  const days = new Set([...expByDay.keys(), ...incByDay.keys()]);
   for (const day of days) {
     const spend = expByDay.get(day) || 0;
-    const income = incomeByDay.has(day) ? incomeByDay.get(day) : 0;
+    const income = incByDay.get(day) || 0;
     if (expByDay.has(day)) metrics.push(m('spending', spend, day));
     if (discByDay.has(day)) metrics.push(m('spending_discretionary', discByDay.get(day) || 0, day));
-    if (incomeByDay.has(day)) metrics.push(m('income', income, day));
-    if (expByDay.has(day) || incomeByDay.has(day)) metrics.push(m('net_cashflow', income - spend, day));
+    if (incByDay.has(day)) metrics.push(m('income', income, day));
+    if (expByDay.has(day) || incByDay.has(day)) metrics.push(m('net_cashflow', income - spend, day));
   }
 
   // Reconcile the window against Monarch's current truth: prune stored docs it no

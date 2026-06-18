@@ -93,6 +93,31 @@ function isInternalTransfer(category) {
   return transferCategories().some((t) => c.includes(norm(t)));
 }
 
+// Investment / non-earned income categories to exclude from the savings-rate
+// income total. Monarch lumps dividends, capital gains, tax refunds, and
+// interest into its "income" category type, but those inflate the rate vs
+// what Monarch's Reports → Cash Flow view shows (which focuses on earned
+// income like paychecks). Override with MONARCH_EXCLUDE_INCOME_CATEGORIES.
+function excludeIncomeCategories() {
+  const custom = (process.env.MONARCH_EXCLUDE_INCOME_CATEGORIES || '')
+    .split(',').map((s) => norm(s)).filter(Boolean);
+  return custom.length ? custom : [
+    'dividends',
+    'capital gains',
+    'interest income',
+    'investment income',
+    'tax return',
+    'tax refund',
+    'realized gain',
+    'unrealized gain',
+  ];
+}
+function isExcludedIncome(category) {
+  const c = norm(category);
+  if (!c) return false;
+  return excludeIncomeCategories().some((e) => c.includes(norm(e)));
+}
+
 /** Parse a currency/number cell: strips $ and commas, treats (x) as negative. */
 function parseAmount(raw) {
   if (raw == null) return NaN;
@@ -191,7 +216,9 @@ function mapTransactions(records = []) {
       if (!isFixedCategory(category)) {
         discretionaryByDay.set(day, (discretionaryByDay.get(day) || 0) + -amount);
       }
-    } else if (amount > 0) incomeByDay.set(day, (incomeByDay.get(day) || 0) + amount);
+    } else if (amount > 0 && !isExcludedIncome(category)) {
+      incomeByDay.set(day, (incomeByDay.get(day) || 0) + amount);
+    }
 
     // Prefer Monarch's stable transaction id (from the API) as the document
     // identity: it survives edits to date/category/amount, so recategorizing or
@@ -386,4 +413,5 @@ module.exports = {
   parseDay,
   isInternalTransfer,
   isFixedCategory,
+  isExcludedIncome,
 };
