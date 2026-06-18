@@ -111,7 +111,7 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
         </View>
       )}
       {(recovery.rawHrv != null || recovery.rawRhr != null) && (
-        <Text style={[styles.partsCaption, { color: c.subtext }]}>overnight reading · Eight Sleep</Text>
+        <Text style={[styles.partsCaption, { color: c.subtext }]}>Overnight · Eight Sleep</Text>
       )}
 
       {/* Sleep debt / consistency / training-load flags */}
