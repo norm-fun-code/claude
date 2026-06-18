@@ -51,6 +51,7 @@ async function updateExperiment(id, fields) {
     startDate: 'start_date',
     endDate: 'end_date',
     protocol: 'protocol',
+    pausedAt: 'paused_at',
   };
   for (const [k, col] of Object.entries(map)) {
     if (fields[k] !== undefined) {

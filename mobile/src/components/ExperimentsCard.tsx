@@ -27,6 +27,7 @@ type Experiment = {
   end_date: string | null;
   status: string;
   verdict: string | null;
+  paused_at: string | null;
 };
 
 function daysLeft(endDate: string | null): number | null {
@@ -75,11 +76,34 @@ export function ExperimentsCard() {
     } catch { /* optimistic — silently ignore */ }
   }, []);
 
+  const togglePause = useCallback(async (exp: Experiment) => {
+    const action = exp.status === 'paused' ? 'resume' : 'pause';
+    // Optimistic update
+    setExperiments((prev) =>
+      prev.map((e) =>
+        e.id === exp.id
+          ? { ...e, status: action === 'pause' ? 'paused' : 'running', paused_at: action === 'pause' ? new Date().toISOString() : null }
+          : e
+      )
+    );
+    try {
+      await fetch(`${EXPERIMENTS_URL}/${exp.id}`, {
+        method: 'PATCH',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      // Refresh to get updated end_date after resume
+      if (action === 'resume') fetch_();
+    } catch {
+      fetch_(); // rollback on error
+    }
+  }, [fetch_]);
+
   useEffect(() => { fetch_(); }, [fetch_]);
 
-  const running = experiments.filter((e) => e.status === 'running');
+  const active = experiments.filter((e) => e.status === 'running' || e.status === 'paused');
   const completed = experiments.filter((e) => e.status === 'completed' || e.status === 'cancelled');
-  const visible = showAll ? [...running, ...completed] : running;
+  const visible = showAll ? [...active, ...completed] : active;
 
   if (loading) {
     return (
@@ -102,6 +126,8 @@ export function ExperimentsCard() {
         const left = daysLeft(exp.end_date);
         const progress = total && total > 0 ? Math.min(1, elapsed / total) : 0;
         const isRunning = exp.status === 'running';
+        const isPaused = exp.status === 'paused';
+        const isActive = isRunning || isPaused;
         const metricLabel = METRIC_LABELS[exp.metric] ?? exp.metric;
 
         return (
@@ -111,11 +137,17 @@ export function ExperimentsCard() {
                 {exp.hypothesis}
               </Text>
               <View style={styles.rowRight}>
-                {isRunning ? (
+                {isRunning && (
                   <View style={[styles.badge, { backgroundColor: c.accentSoft }]}>
                     <Text style={[styles.badgeText, { color: c.accent }]}>Active</Text>
                   </View>
-                ) : (
+                )}
+                {isPaused && (
+                  <View style={[styles.badge, { backgroundColor: c.border }]}>
+                    <Text style={[styles.badgeText, { color: c.subtext }]}>Paused</Text>
+                  </View>
+                )}
+                {!isActive && (
                   <View style={[styles.badge, { backgroundColor: c.border }]}>
                     <Text style={[styles.badgeText, { color: c.subtext }]}>
                       {exp.status === 'completed' ? 'Done' : 'Cancelled'}
@@ -132,10 +164,10 @@ export function ExperimentsCard() {
               Tracking: {metricLabel}
             </Text>
 
-            {isRunning && total !== null && (
+            {isActive && total !== null && (
               <>
                 <View style={[styles.track, { backgroundColor: c.border }]}>
-                  <View style={[styles.fill, { backgroundColor: c.accent, width: `${Math.round(progress * 100)}%` as any }]} />
+                  <View style={[styles.fill, { backgroundColor: isPaused ? c.subtext : c.accent, width: `${Math.round(progress * 100)}%` as any }]} />
                 </View>
                 <Text style={[styles.meta, { color: c.subtext }]}>
                   {elapsed} / {total} days{left !== null && left > 0 ? `  ·  ${left}d left` : ''}
@@ -148,10 +180,18 @@ export function ExperimentsCard() {
               <Text style={[styles.verdict, { color: c.text }]}>{exp.verdict}</Text>
             )}
 
-            {exp.protocol && isRunning && (
+            {exp.protocol && isActive && (
               <Text style={[styles.protocol, { color: c.subtext }]} numberOfLines={2}>
                 {exp.protocol}
               </Text>
+            )}
+
+            {isActive && (
+              <TouchableOpacity onPress={() => togglePause(exp)} hitSlop={8} style={styles.pauseBtn}>
+                <Text style={[styles.pauseText, { color: c.accent }]}>
+                  {isPaused ? 'Resume experiment' : 'Pause experiment'}
+                </Text>
+              </TouchableOpacity>
             )}
           </View>
         );
@@ -183,6 +223,8 @@ const styles = StyleSheet.create({
   fill: { height: 4, borderRadius: 2 },
   verdict: { fontSize: 13, fontWeight: '500', lineHeight: 18 },
   protocol: { fontSize: 12, lineHeight: 17, fontStyle: 'italic' },
+  pauseBtn: { alignSelf: 'flex-start', marginTop: 2 },
+  pauseText: { fontSize: 12, fontWeight: '600' },
   toggle: { marginTop: spacing.md, alignItems: 'center' },
   toggleText: { fontSize: 13, fontWeight: '600' },
 });

@@ -1609,6 +1609,42 @@ app.delete('/api/experiments/:id', async (req, res) => {
   }
 });
 
+// PATCH /api/experiments/:id — pause or resume an experiment.
+// pause: freezes the clock (status → 'paused', records paused_at)
+// resume: extends end_date by days paused so the experiment keeps its full duration
+app.patch('/api/experiments/:id', async (req, res) => {
+  try {
+    const { action } = req.body || {};
+    const exp = await experimentsStore.getExperiment(req.params.id);
+    if (!exp) return res.status(404).json({ error: 'not found' });
+
+    if (action === 'pause') {
+      if (exp.status !== 'running') return res.status(400).json({ error: 'only running experiments can be paused' });
+      await experimentsStore.updateExperiment(exp.id, { status: 'paused', pausedAt: new Date() });
+      return res.json({ ok: true });
+    }
+
+    if (action === 'resume') {
+      if (exp.status !== 'paused') return res.status(400).json({ error: 'only paused experiments can be resumed' });
+      const daysPaused = exp.paused_at
+        ? Math.round((Date.now() - new Date(exp.paused_at).getTime()) / 86400000)
+        : 0;
+      let newEndDate = exp.end_date ? new Date(exp.end_date) : null;
+      if (newEndDate && daysPaused > 0) newEndDate.setDate(newEndDate.getDate() + daysPaused);
+      await experimentsStore.updateExperiment(exp.id, {
+        status: 'running',
+        pausedAt: null,
+        ...(newEndDate ? { endDate: newEndDate.toISOString().slice(0, 10) } : {}),
+      });
+      return res.json({ ok: true, daysPaused, newEndDate: newEndDate?.toISOString().slice(0, 10) ?? null });
+    }
+
+    res.status(400).json({ error: 'action must be pause or resume' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // The ranked "highest leverage actions" — the core NormOS question.
 app.get('/api/actions', async (req, res) => {
   try {
