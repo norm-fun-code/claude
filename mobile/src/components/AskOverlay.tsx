@@ -22,18 +22,84 @@ import * as Haptics from 'expo-haptics';
 import Markdown from 'react-native-markdown-display';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { useChat } from '../hooks/useChat';
-import { API_BASE, authHeaders, fetchWithTimeout } from '../config';
+import { API_BASE, CONSOLIDATE_URL, authHeaders, fetchWithTimeout } from '../config';
 
 interface Props {
   /** Home-indicator height, so the launcher floats above the flush tab bar. */
   bottomInset?: number;
 }
 
-const SUGGESTIONS = [
+const FALLBACK_SUGGESTIONS = [
   'Why was my focus lower last week?',
   'What habits predict my best weeks?',
   'What should I focus on this quarter?',
+  "Where am I losing the most sleep quality?",
+  "What's the highest-leverage thing I could change right now?",
 ];
+
+// Minimal shape we need from the self-model snapshot.
+interface SnapData {
+  wellbeing?: Record<string, { cur: number | null; prior: number | null }>;
+  health?: Record<string, { cur: number | null; prior: number | null }>;
+  habits?: Record<string, { rate: number | null; label: string; scale?: number; streak?: number }>;
+  experiments?: { completed: unknown[]; running: Record<string, unknown>[] };
+  topFindings?: { title: string }[];
+}
+
+function buildSuggestions(snap: SnapData | null): string[] {
+  const out: string[] = [];
+  if (snap) {
+    const hrv = snap.health?.hrv;
+    const sleep = snap.health?.sleep_hours;
+    const energy = snap.wellbeing?.energy;
+    const mood = snap.wellbeing?.mood;
+
+    if (hrv?.cur != null && hrv.prior != null) {
+      const delta = hrv.cur - hrv.prior;
+      if (delta < -3) out.push(`My HRV dropped ${Math.abs(Math.round(delta))}ms vs last week — what's driving it down?`);
+      else if (delta > 3) out.push(`My HRV is up ${Math.round(delta)}ms this week — what changed?`);
+      else out.push(`My HRV is averaging ${Math.round(hrv.cur)}ms — how do I improve it further?`);
+    }
+
+    if (energy?.cur != null && mood?.cur != null) {
+      const gap = (mood.cur ?? 0) - (energy.cur ?? 0);
+      if (gap >= 0.75) out.push(`My energy (${energy.cur}/5) keeps lagging my mood (${mood.cur}/5) — what closes that gap?`);
+      else if (energy.cur < 3) out.push(`My energy has been ${energy.cur}/5 this week — what levers move it most?`);
+    }
+
+    if (sleep?.cur != null && sleep.cur < 7.5) {
+      out.push(`I'm averaging ${sleep.cur}h of sleep — what's the real impact on my recovery?`);
+    }
+
+    // Best streak habit
+    const habits = snap.habits ?? {};
+    const topStreak = Object.values(habits).filter((h) => (h.streak ?? 0) >= 3)
+      .sort((a, b) => (b.streak ?? 0) - (a.streak ?? 0))[0];
+    if (topStreak) out.push(`I've hit ${topStreak.label} for ${topStreak.streak} weeks straight — how has it moved my numbers?`);
+
+    // Most-slipping habit
+    const slipping = Object.values(habits).find((h) => !h.scale && h.rate != null && h.rate < 50);
+    if (slipping) {
+      const days = Math.round(((slipping.rate ?? 0) / 100) * 7);
+      out.push(`I only hit ${slipping.label} ${days}/7 days this week — what typically gets in the way?`);
+    }
+
+    // Top confirmed correlation
+    if (snap.topFindings?.length) out.push(`You confirmed: "${snap.topFindings[0].title}" — how should I act on that?`);
+
+    // Running experiment
+    const running = snap.experiments?.running ?? [];
+    if (running.length > 0 && running[0].hypothesis) {
+      out.push(`How is the "${running[0].hypothesis}" experiment tracking so far?`);
+    }
+  }
+
+  for (const s of FALLBACK_SUGGESTIONS) {
+    if (out.length >= 5) break;
+    if (!out.includes(s)) out.push(s);
+  }
+  return out.slice(0, 5);
+}
 
 const METRICS: Record<string, { label: string; source: string }> = {
   'health:hrv':         { label: 'HRV',              source: 'Eight Sleep & Apple Health' },
@@ -90,6 +156,7 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
   const [expState, setExpState] = useState<ExpState>(null);
   const [expDays, setExpDays] = useState<14 | 21 | 28>(14);
   const [expStarting, setExpStarting] = useState(false);
+  const [snapshot, setSnapshot] = useState<SnapData | null>(null);
 
   useEffect(() => {
     const showEv = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -98,6 +165,18 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
     const hide = Keyboard.addListener(hideEv, () => setKbHeight(0));
     return () => { show.remove(); hide.remove(); };
   }, []);
+
+  // Load snapshot (for dynamic suggestions) and saved conversations when the overlay opens.
+  useEffect(() => {
+    if (!open) return;
+    loadConversations();
+    (async () => {
+      try {
+        const res = await fetchWithTimeout(CONSOLIDATE_URL, { headers: authHeaders() }, 8000);
+        if (res.ok) { const j = await res.json(); setSnapshot(j.snapshot ?? null); }
+      } catch {}
+    })();
+  }, [open]);
 
   useEffect(() => {
     if (open && view === 'chat') requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
@@ -155,7 +234,7 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
     } catch { } finally { setExpStarting(false); }
   };
 
-  const showHistory = () => { loadConversations(); setView('history'); };
+  const showHistory = () => { setView('history'); };
   const pickConversation = async (id: number) => { await openConvo(id); setView('chat'); };
 
   const startRename = (id: number, current: string) => {
@@ -197,7 +276,7 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
               </Pressable>
             ) : (
               <Pressable onPress={showHistory} hitSlop={8}>
-                <Text style={[styles.headerBtn, { color: c.accent }]}>History</Text>
+                <Text style={[styles.headerBtn, { color: c.accent }]}>Saved</Text>
               </Pressable>
             )}
             <Text style={[styles.title, { color: c.text }]}>{view === 'history' ? 'Saved' : 'Ask NormOS'}</Text>
@@ -265,13 +344,25 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
                       Answered from your own data, habits, and library — and it remembers what you've discussed.
                     </Text>
                     <View style={styles.suggestions}>
-                      {SUGGESTIONS.map((s) => (
+                      {buildSuggestions(snapshot).map((s) => (
                         <Pressable key={s} onPress={() => submit(s)} style={[styles.chip, { borderColor: c.border, backgroundColor: c.card }]}>
                           <Text style={[styles.chipText, { color: c.text }]} numberOfLines={2}>{s}</Text>
                           <Text style={[styles.chipArrow, { color: c.subtext }]}>›</Text>
                         </Pressable>
                       ))}
                     </View>
+                    {conversations.length > 0 && (
+                      <Pressable
+                        onPress={() => pickConversation(conversations[0].id)}
+                        style={[styles.lastConvRow, { borderTopColor: c.border }]}
+                      >
+                        <Text style={[styles.lastConvLabel, { color: c.subtext }]}>Last saved · </Text>
+                        <Text style={[styles.lastConvTitle, { color: c.accent }]} numberOfLines={1}>
+                          {conversations[0].title || conversations[0].first_message || 'Conversation'}
+                        </Text>
+                        <Text style={[styles.chipArrow, { color: c.subtext }]}>›</Text>
+                      </Pressable>
+                    )}
                   </View>
                 )}
 
@@ -453,6 +544,9 @@ const styles = StyleSheet.create({
   emptyHint: { fontSize: 14, lineHeight: 21 },
   suggestions: { flexDirection: 'column', gap: spacing.sm, marginTop: spacing.md },
   chip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.md, paddingVertical: 13, borderRadius: radius.md, borderWidth: 1 },
+  lastConvRow: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, paddingTop: spacing.md, marginTop: spacing.sm },
+  lastConvLabel: { fontSize: 13 },
+  lastConvTitle: { fontSize: 13, fontWeight: '600', flex: 1 },
   chipText: { fontSize: 14, fontWeight: '500', flex: 1, lineHeight: 20 },
   chipArrow: { fontSize: 20, fontWeight: '300', marginLeft: spacing.sm },
   bubble: { borderRadius: radius.md, paddingHorizontal: spacing.sm, paddingVertical: 6, marginTop: spacing.sm, maxWidth: '92%' },
