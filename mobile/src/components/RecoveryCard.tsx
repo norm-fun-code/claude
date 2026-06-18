@@ -68,7 +68,7 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
             {bandLabel}
           </Text>
           {recovery.detail ? (
-            <Text style={[styles.detail, { color: c.subtext }]} numberOfLines={3}>
+            <Text style={[styles.detail, { color: c.subtext }]}>
               {recovery.detail}
             </Text>
           ) : null}
@@ -109,6 +109,9 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
             </Text>
           )}
         </View>
+      )}
+      {(recovery.rawHrv != null || recovery.rawRhr != null) && (
+        <Text style={[styles.partsCaption, { color: c.subtext }]}>overnight reading · Eight Sleep</Text>
       )}
 
       {/* Sleep debt / consistency / training-load flags */}

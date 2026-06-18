@@ -76,7 +76,7 @@ export function AnnotationsCard({ inline = false }: AnnotationsProps = {}) {
           {annotations.slice(0, 5).map(a => (
             <View key={a.id} style={[styles.chip, { backgroundColor: c.accentSoft, borderColor: c.border }]}>
               <Text style={[styles.chipText, { color: c.accent }]}>
-                {CATEGORY_LABELS[a.category] ?? a.category} · {a.label}
+                {CATEGORY_LABELS[a.category] ? `${CATEGORY_LABELS[a.category]} · ` : ''}{a.label}
               </Text>
             </View>
           ))}

@@ -76,6 +76,10 @@ const DEFAULTS = {
     // HRV and RHR are both autonomic markers and always anti-correlated by design —
     // surfacing this as a "pattern" implies it's a personal discovery, but it isn't.
     'health:hrv|health:resting_hr',
+    // Sleep debt is mathematically derived from sleep duration — not independent
+    'health:sleep_debt|health:sleep_hours',
+    // Steps and active energy both measure movement from the same underlying data
+    'health:active_energy|health:steps',
   ]),
 };
 
