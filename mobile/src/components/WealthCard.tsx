@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { Wealth } from '../hooks/useBriefing';
+import { WEALTH_PLAN_URL, authHeaders, fetchWithTimeout } from '../config';
 
 interface Props {
   wealth: Wealth | null;
@@ -18,11 +19,33 @@ const MASK = '••••••';
 // Wealth snapshot from the canonical spine (Monarch import): net worth, this
 // week's spending, income, and net cashflow. Tap the figure to hide all amounts
 // (for when you're showing the app to someone).
+type PlanBaseline = { startingLiquid: number | null; k401Start: number | null } | null;
+
 export function WealthCard({ wealth }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [hidden, setHidden] = useState(false);
+  const [plan, setPlan] = useState<PlanBaseline>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetchWithTimeout(WEALTH_PLAN_URL, { headers: authHeaders() });
+        if (!res.ok) return;
+        const d = await res.json();
+        if (d.available) setPlan({ startingLiquid: d.startingLiquid, k401Start: d.k401Start });
+      } catch {}
+    })();
+  }, []);
+
   if (!wealth) return null;
+
+  // Plan baseline = liquid + 401k at plan start (2026)
+  const planBaseNW =
+    plan && (plan.startingLiquid != null || plan.k401Start != null)
+      ? (plan.startingLiquid ?? 0) + (plan.k401Start ?? 0)
+      : null;
+  const planDelta = planBaseNW != null && wealth.netWorth != null ? wealth.netWorth - planBaseNW : null;
 
   const up = (wealth.netWorthChange ?? 0) >= 0;
   const cashflowPositive = wealth.cashflowThisWeek >= 0;
@@ -42,6 +65,11 @@ export function WealthCard({ wealth }: Props) {
             {hidden ? MASK : `${up ? '▲' : '▼'} ${money(Math.abs(wealth.netWorthChange))} over ~30 days`}
           </Text>
         ) : null}
+        {planDelta != null && !hidden && (
+          <Text style={[styles.change, { color: planDelta >= 0 ? c.green : c.red }]}>
+            {`${planDelta >= 0 ? '▲' : '▼'} ${money(Math.abs(planDelta))} vs. 2026 plan start`}
+          </Text>
+        )}
       </Pressable>
 
       <View style={[styles.row, { borderTopColor: c.border }]}>

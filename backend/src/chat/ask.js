@@ -12,6 +12,7 @@ const intentionsStore = require('../store/intentions');
 const cat = require('../intelligence/catalog');
 const monarchMcp = require('../services/monarch-mcp');
 const { query: dbQuery } = require('../db');
+const { recordRecommendation } = require('../store/recommendations');
 
 const SYSTEM = `You are NormOS — the user's personal chief of staff, executive coach, and data scientist.
 Answer using ONLY the context provided (their own goals, metrics, findings, and library highlights).
@@ -34,7 +35,11 @@ Write a thorough, genuinely useful answer:
 - Use clean Markdown: \`##\` section headers when it helps, **bold** for key terms, and \`-\` bullet lists for multiple points. Keep paragraphs to 2-4 sentences.
 - Be honest: if the context is thin, say what's missing. Correlations are associations, not proof of cause — flag that when relevant.
 
-Aim for depth and usefulness over brevity, but never pad with filler.`;
+Aim for depth and usefulness over brevity, but never pad with filler.
+
+When you make a specific, actionable recommendation — something the user should concretely try, change, or start — append exactly one tag at the very end of your response:
+<rec>One-line summary of the recommendation</rec>
+Only include this when the answer contains a genuinely new, specific action (not general encouragement, not restating what they already do). Omit it entirely for idea/concept questions.`;
 
 // Cheap intent check: does the question seem to be about the user's own life /
 // data / planning (vs. a pure idea/concept lookup)? Personal questions get the
@@ -370,6 +375,18 @@ async function ask(question, { history = [], k = 14 } = {}) {
   }
   if (answer == null) {
     answer = await llm.generateText({ system, prompt, temperature: 0.3, maxTokens: 1600 });
+  }
+
+  // Extract and record any recommendation the model flagged via <rec> tag.
+  const recMatch = answer.match(/<rec>([\s\S]*?)<\/rec>/i);
+  if (recMatch) {
+    const recTitle = recMatch[1].trim();
+    answer = answer.replace(/<rec>[\s\S]*?<\/rec>/i, '').trim();
+    recordRecommendation({
+      type: 'leverage',
+      title: recTitle,
+      surfacedIn: 'chat',
+    }).catch(() => {});
   }
 
   return {
