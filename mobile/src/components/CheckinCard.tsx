@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, useColorScheme, AppState } from 'react-native';
+import { View, Text, StyleSheet, Pressable, TextInput, useColorScheme, AppState } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -58,6 +58,8 @@ export function CheckinCard() {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [scores, setScores] = useState<Scores>({ mood: null, energy: null, focus: null });
+  const [note, setNote] = useState('');
+  const noteRef = useRef('');
   const [saved, setSaved] = useState(false);
   const [failed, setFailed] = useState(false);
   const fetchDateRef = useRef('');
@@ -76,6 +78,7 @@ export function CheckinCard() {
         energy: Number.isFinite(t.energy) ? t.energy : null,
         focus: Number.isFinite(t.focus) ? t.focus : null,
       });
+      if (t.note) { setNote(t.note); noteRef.current = t.note; }
       setSaved(true);
     } catch {
       // offline — start blank
@@ -99,16 +102,18 @@ export function CheckinCard() {
   function set(key: keyof Scores, value: number) {
     const next = { ...scores, [key]: value };
     setScores(next);
-    submit(next);
+    submit(next, noteRef.current);
   }
 
-  async function submit(next: Scores) {
+  async function submit(next: Scores, noteText = '') {
     setFailed(false);
     try {
+      const body: Record<string, unknown> = { ...next };
+      if (noteText.trim()) body.note = noteText.trim();
       const res = await fetchWithTimeout(CHECKIN_URL, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify(next),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(`Server ${res.status}`);
       setSaved(true);
@@ -142,6 +147,18 @@ export function CheckinCard() {
           </View>
         </View>
       ))}
+      <TextInput
+        style={[styles.noteInput, { color: c.text, borderColor: c.border, backgroundColor: c.background }]}
+        placeholder="Anything on your mind? (optional)"
+        placeholderTextColor={c.subtext}
+        value={note}
+        onChangeText={(text) => { setNote(text); noteRef.current = text; }}
+        onBlur={() => { if (scores.mood || scores.energy || scores.focus) submit(scores, noteRef.current); }}
+        multiline
+        maxLength={500}
+        returnKeyType="done"
+        blurOnSubmit
+      />
       {failed && (
         <Text style={styles.failed}>Couldn't save — check your connection and tap again.</Text>
       )}
@@ -173,4 +190,15 @@ const styles = StyleSheet.create({
   },
   dotText: { ...typography.subtitle, fontSize: 13 },
   failed: { ...typography.caption, color: '#C0392B', marginTop: spacing.sm },
+  noteInput: {
+    ...typography.body,
+    fontSize: 14,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    marginTop: spacing.sm,
+    minHeight: 64,
+    textAlignVertical: 'top',
+  },
 });

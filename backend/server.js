@@ -459,20 +459,28 @@ app.get('/api/briefings/history', async (req, res) => {
 app.get('/api/checkin/today', async (req, res) => {
   try {
     const tz = process.env.TZ || 'America/New_York';
-    const { rows } = await db.query(
-      `SELECT metric, value FROM metrics
-        WHERE domain = 'wellbeing' AND source = 'checkin'
-          AND (ts AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
-        ORDER BY ts ASC`,
-      [tz]
-    );
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD
+    const [metricsResult, noteResult] = await Promise.all([
+      db.query(
+        `SELECT metric, value FROM metrics
+          WHERE domain = 'wellbeing' AND source = 'checkin'
+            AND (ts AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
+          ORDER BY ts ASC`,
+        [tz]
+      ),
+      db.query(
+        `SELECT content FROM documents WHERE source = 'checkin' AND external_id = $1 LIMIT 1`,
+        [`note:${today}`]
+      ),
+    ]);
     const v = {};
-    for (const r of rows) v[r.metric] = Number(r.value); // latest wins
+    for (const r of metricsResult.rows) v[r.metric] = Number(r.value);
     res.json({
-      logged: rows.length > 0,
+      logged: metricsResult.rows.length > 0,
       mood: Number.isFinite(v.mood) ? v.mood : null,
       energy: Number.isFinite(v.energy) ? v.energy : null,
       focus: Number.isFinite(v.focus) ? v.focus : null,
+      note: noteResult.rows[0]?.content ?? null,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
