@@ -13,6 +13,7 @@ export interface MetricConfig {
   metric: string;
   label: string;
   unit: string;
+  source?: string;
   formatValue: (v: number) => string;
   lowerIsBetter?: boolean;
 }
@@ -21,6 +22,11 @@ interface Props extends MetricConfig {
   visible: boolean;
   onClose: () => void;
 }
+
+const SOURCE_LABEL: Record<string, string> = {
+  eight_sleep: 'Eight Sleep',
+  apple_health: 'Apple Health',
+};
 
 const PERIODS = [
   { label: '7D', days: 7 },
@@ -74,7 +80,7 @@ function StatBox({
 }
 
 export function MetricDetailSheet({
-  metric, label, unit, formatValue, lowerIsBetter = false, visible, onClose,
+  metric, label, unit, source, formatValue, lowerIsBetter = false, visible, onClose,
 }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
@@ -86,8 +92,9 @@ export function MetricDetailSheet({
     if (!visible) return;
     setLoading(true);
     setRows([]);
+    const srcParam = source ? `&source=${encodeURIComponent(source)}` : '';
     fetchWithTimeout(
-      `${METRICS_HISTORY_URL}?metric=${encodeURIComponent(metric)}&days=${days}`,
+      `${METRICS_HISTORY_URL}?metric=${encodeURIComponent(metric)}&days=${days}${srcParam}`,
       { headers: authHeaders() }
     )
       .then(r => r.json())
@@ -186,7 +193,7 @@ export function MetricDetailSheet({
                 )}
               </View>
               <Text style={[styles.caption, { color: c.subtext }]}>
-                {unit} · last {days} days
+                {unit}{source ? ` · ${SOURCE_LABEL[source] ?? source}` : ''} · last {days} days
               </Text>
             </>
           )}

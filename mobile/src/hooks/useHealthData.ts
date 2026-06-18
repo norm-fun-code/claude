@@ -315,7 +315,7 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
             { metric: 'sleep_score', value: finalSleepScore as number, unit: 'score' },
             { metric: 'steps', value: steps as number, unit: 'count' },
             { metric: 'active_energy', value: activeCalories as number, unit: 'kcal' },
-            { metric: 'vo2_max', value: vo2Max as number, unit: 'mL/kg/min' },
+            // vo2_max is pushed above with actual workout timestamps for trend history
           ]);
         }
       }
@@ -409,8 +409,9 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
         }
       );
 
-      // VO2 max — only updated during outdoor workouts, so query last 90 days
-      // and take the most recent reading.
+      // VO2 max — only updated during outdoor workouts, so query last 90 days.
+      // Push ALL readings with their actual workout dates so the trend chart
+      // has real historical data (not just today's re-push of the latest value).
       AppleHealthKit.getVo2MaxSamples(
         { startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(), endDate: now } as any,
         (err, results: HealthValue[]) => {
@@ -419,6 +420,14 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
               (a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
             );
             vo2Max = Math.round(sorted[0].value * 10) / 10;
+            pushHealthData(
+              sorted.map(r => ({
+                metric: 'vo2_max',
+                value: Math.round(r.value * 10) / 10,
+                unit: 'mL/kg/min',
+                ts: r.startDate,
+              }))
+            );
           }
           checkDone();
         }

@@ -18,20 +18,18 @@ const { runWealthNudges } = require('./intelligence/wealth-nudges');
 const nudgesStore = require('./store/nudges');
 const { runIngest: _runIngest } = require('./ingest/run');
 const { query } = require('./db');
+const { getSource, updateConfig } = require('./store/sources');
+const eightSleepApi = require('./services/eight-sleep-api');
 
 /** Is the Eight Sleep auto-sync configured (creds present)? */
 function eightSleepConfigured() {
   return Boolean(process.env.EIGHT_SLEEP_EMAIL && process.env.EIGHT_SLEEP_PASSWORD);
 }
 
-/** Has last night's Eight Sleep session posted to the spine for today? Drives the
- *  data-arrival trigger so the brief fires when your night syncs, not at a fixed
- *  clock time (you might wake at 7am one day and sleep in to 9:40 the next). */
+/** Has last night's Eight Sleep session posted to the spine for today? */
 async function eightSleepReadyToday() {
   const tz = process.env.TZ || 'America/New_York';
   const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
-  // Require value > 0: Eight Sleep returns score = 0 (or null) for sessions that
-  // are still in progress. A non-zero score means the session has been finalized.
   const { rows } = await query(
     `SELECT 1 FROM metrics
       WHERE domain = 'health' AND metric = 'sleep_score' AND source = 'eight_sleep'
@@ -41,6 +39,41 @@ async function eightSleepReadyToday() {
     [tz, today]
   );
   return rows.length > 0;
+}
+
+/** Retrieve a valid Eight Sleep token from the cached source config, re-logging
+ *  if expired. Returns null if credentials aren't configured. */
+async function getEightSleepCreds() {
+  const email = process.env.EIGHT_SLEEP_EMAIL;
+  const password = process.env.EIGHT_SLEEP_PASSWORD;
+  if (!email || !password) return null;
+  try {
+    const source = await getSource('eight_sleep_api');
+    const cfg = source?.config ?? {};
+    if (cfg.eightToken && cfg.eightTokenExpiresAt && Date.now() < cfg.eightTokenExpiresAt - 60_000) {
+      return { token: cfg.eightToken, userId: cfg.eightUserId };
+    }
+    const auth = await eightSleepApi.login(email, password);
+    const newCfg = { ...cfg, eightToken: auth.token, eightUserId: cfg.eightUserId, eightTokenExpiresAt: auth.expiresAt };
+    await updateConfig('eight_sleep_api', newCfg);
+    return { token: auth.token, userId: cfg.eightUserId };
+  } catch (e) {
+    console.error('[scheduler] getEightSleepCreds failed:', e.message);
+    return null;
+  }
+}
+
+/** Returns true if an Eight Sleep interval is currently in progress (still sleeping).
+ *  On any failure, returns false so the watcher doesn't get stuck. */
+async function eightSleepSessionInProgress() {
+  try {
+    const creds = await getEightSleepCreds();
+    if (!creds?.token || !creds?.userId) return false;
+    return await eightSleepApi.getIntervalPresent(creds.token, creds.userId);
+  } catch (e) {
+    console.error('[scheduler] session-present check failed:', e.message);
+    return false;
+  }
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -185,7 +218,15 @@ function startMorningWatcher() {
       }
 
       if (ready) {
-        await morningRoutine({ reason: 'eight-sleep data arrived' });
+        // Eight Sleep can return a non-zero score for an in-progress session.
+        // Check the /intervals/present endpoint to confirm the session has ended
+        // before waking the user with a "briefing ready" push.
+        const stillSleeping = await eightSleepSessionInProgress();
+        if (stillSleeping) {
+          console.log('[scheduler] Eight Sleep score ready but session still in progress — waiting for wake');
+        } else {
+          await morningRoutine({ reason: 'eight-sleep data arrived' });
+        }
       } else if (pastBackstop) {
         await morningRoutine({ reason: 'backstop (no eight-sleep data yet)' });
       }

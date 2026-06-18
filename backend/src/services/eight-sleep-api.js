@@ -74,4 +74,21 @@ async function getTrends({ token, userId, from, to, tz = 'America/New_York' }) {
   return Array.isArray(json?.days) ? json.days : [];
 }
 
-module.exports = { login, resolveUserId, getTrends };
+/** Check if the user currently has an active (in-progress) sleep interval.
+ *  Returns true if the session is still running, false if done or unknown.
+ *  Eight Sleep returns 404 (or an interval with no endTs) when no session is active. */
+async function getIntervalPresent(token, userId) {
+  const res = await fetch(`${CLIENT_API_URL}/users/${userId}/intervals/present`, {
+    headers: { ...HEADERS, authorization: `Bearer ${token}` },
+  });
+  if (res.status === 404) return false;
+  if (!res.ok) {
+    const err = new Error(`Eight Sleep present failed: ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  const json = await res.json();
+  return json?.interval != null;
+}
+
+module.exports = { login, resolveUserId, getTrends, getIntervalPresent };

@@ -56,29 +56,32 @@ function StatRow({
 }
 
 const METRICS: Record<string, MetricConfig> = {
+  // Overnight metrics: use Eight Sleep — it has the full historical record
+  // and is the authoritative source for recovery-related readings.
   hrv: {
-    metric: 'hrv', label: 'HRV', unit: 'ms',
+    metric: 'hrv', label: 'HRV', unit: 'ms', source: 'eight_sleep',
     formatValue: v => `${Math.round(v)}`,
   },
   resting_hr: {
-    metric: 'resting_hr', label: 'Resting HR', unit: 'bpm',
+    metric: 'resting_hr', label: 'Resting HR', unit: 'bpm', source: 'eight_sleep',
     formatValue: v => `${Math.round(v)}`,
     lowerIsBetter: true,
   },
   sleep_hours: {
-    metric: 'sleep_hours', label: 'Sleep', unit: 'hours',
+    metric: 'sleep_hours', label: 'Sleep', unit: 'hours', source: 'eight_sleep',
     formatValue: v => formatHM(v),
   },
+  // Activity metrics: Apple Health is the only source.
   steps: {
-    metric: 'steps', label: 'Steps', unit: 'steps',
+    metric: 'steps', label: 'Steps', unit: 'steps', source: 'apple_health',
     formatValue: v => Math.round(v).toLocaleString(),
   },
   active_energy: {
-    metric: 'active_energy', label: 'Active Cal', unit: 'kcal',
+    metric: 'active_energy', label: 'Active Cal', unit: 'kcal', source: 'apple_health',
     formatValue: v => Math.round(v).toLocaleString(),
   },
   vo2_max: {
-    metric: 'vo2_max', label: 'VO2 Max', unit: 'mL/kg/min',
+    metric: 'vo2_max', label: 'VO2 Max', unit: 'mL/kg/min', source: 'apple_health',
     formatValue: v => `${Math.round(v * 10) / 10}`,
   },
 };

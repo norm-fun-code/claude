@@ -911,16 +911,20 @@ app.get('/api/metrics', async (req, res) => {
 // Returns the last N days of raw readings for a single metric, ordered oldest
 // to newest. Used by charts that need the full time-series (not aggregated).
 app.get('/api/metrics/history', async (req, res) => {
-  const { metric, days } = req.query;
+  const { metric, days, source } = req.query;
   if (!metric) return res.status(400).json({ error: 'metric is required' });
   const numDays = Math.max(1, Number(days) || 60);
   try {
+    const params = [metric, String(numDays)];
+    let sourceClause = '';
+    if (source) { params.push(source); sourceClause = `AND source = $${params.length}`; }
     const { rows } = await db.query(
       `SELECT ts, value FROM metrics
        WHERE metric = $1
          AND ts >= now() - ($2 || ' days')::interval
+         ${sourceClause}
        ORDER BY ts ASC`,
-      [metric, numDays]
+      params
     );
     res.json({ rows: rows.map((r) => ({ ts: r.ts, value: Number(r.value) })) });
   } catch (err) {
