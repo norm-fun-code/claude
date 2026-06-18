@@ -1542,6 +1542,41 @@ app.post('/api/briefing/context', async (req, res) => {
   }
 });
 
+// --- Goals ----------------------------------------------------------------
+
+const goalsStore = require('./src/store/goals');
+
+app.get('/api/goals', async (req, res) => {
+  try {
+    const status = req.query.status ?? 'active';
+    res.json({ goals: await goalsStore.listGoals({ status: status === 'all' ? null : status }) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/goals', async (req, res) => {
+  try {
+    const { title, domain, metric, targetValue, unit, targetDate, baselineValue } = req.body ?? {};
+    if (!title?.trim()) return res.status(400).json({ error: 'title required' });
+    const goal = await goalsStore.createGoal({ title: title.trim(), domain, metric, targetValue, unit, targetDate, baselineValue });
+    res.json({ goal });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.patch('/api/goals/:id', async (req, res) => {
+  try {
+    const { status, title } = req.body ?? {};
+    await goalsStore.updateGoal(req.params.id, { status, title });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/goals/:id', async (req, res) => {
+  try {
+    await goalsStore.deleteGoal(req.params.id);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // --- Experiments (the hypothesis loop) -----------------------------------
 
 app.get('/api/experiments', async (req, res) => {

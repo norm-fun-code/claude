@@ -98,7 +98,30 @@ async function gatherHealth(d7, d14) {
   return out;
 }
 
-async function gatherHabits(d7) {
+// How many consecutive weeks the user hit the habit threshold.
+// Weeks are Mon–Sun; the current (partial) week counts if already at target.
+function computeStreak(rows, threshold) {
+  const weekMap = new Map();
+  for (const row of rows) {
+    const d = new Date(row.day);
+    const dow = d.getDay(); // 0=Sun
+    const monday = new Date(d);
+    monday.setDate(d.getDate() - ((dow + 6) % 7));
+    const key = monday.toISOString().slice(0, 10);
+    if (!weekMap.has(key)) weekMap.set(key, []);
+    weekMap.get(key).push(Number(row.value));
+  }
+  const weeks = [...weekMap.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+  let streak = 0;
+  for (const [, vals] of weeks) {
+    const weekAvg = vals.reduce((a, b) => a + b, 0) / vals.length;
+    if (weekAvg >= threshold) streak++;
+    else break;
+  }
+  return streak;
+}
+
+async function gatherHabits(d7, d56) {
   const BINARY = ['morning_tm', 'afternoon_tm', 'gratitude', 'cold_shower', 'exercise'];
   const LABELS = {
     morning_tm: 'Morning TM', afternoon_tm: 'Afternoon TM', gratitude: 'Gratitude',
@@ -106,12 +129,16 @@ async function gatherHabits(d7) {
   };
   const out = {};
   for (const m of BINARY) {
-    const rows = await metricsStore.dailyAggregate({ domain: 'habits', metric: m, from: d7, agg: 'avg', excludeSource: 'seed' });
-    const rate = avg(rows);
-    out[m] = { rate: rate != null ? Math.round(rate * 100) : null, label: LABELS[m] };
+    const rows = await metricsStore.dailyAggregate({ domain: 'habits', metric: m, from: d56, agg: 'avg', excludeSource: 'seed' });
+    const recent = rows.filter((r) => new Date(r.day) >= d7);
+    const rate = avg(recent);
+    const streak = computeStreak(rows, 0.71); // ≥5/7 days per week
+    out[m] = { rate: rate != null ? Math.round(rate * 100) : null, label: LABELS[m], streak };
   }
-  const eatRows = await metricsStore.dailyAggregate({ domain: 'habits', metric: 'eat_healthy', from: d7, agg: 'avg', excludeSource: 'seed' });
-  out.eat_healthy = { rate: round1(avg(eatRows)), label: LABELS.eat_healthy, scale: 5 };
+  const eatRows = await metricsStore.dailyAggregate({ domain: 'habits', metric: 'eat_healthy', from: d56, agg: 'avg', excludeSource: 'seed' });
+  const recentEat = eatRows.filter((r) => new Date(r.day) >= d7);
+  const eatStreak = computeStreak(eatRows, 3.5); // ≥3.5/5 per week
+  out.eat_healthy = { rate: round1(avg(recentEat)), label: LABELS.eat_healthy, scale: 5, streak: eatStreak };
   return out;
 }
 
@@ -139,7 +166,7 @@ async function gatherWealth(d30) {
 async function gatherGoals() {
   try {
     const { rows } = await dbQuery(
-      `SELECT domain, title, metric, target_value, unit, target_date, status, baseline_value
+      `SELECT id, domain, title, metric, target_value, unit, target_date, status, baseline_value
          FROM goals WHERE status = 'active' ORDER BY target_date NULLS LAST LIMIT 8`
     );
     return rows;
@@ -293,12 +320,13 @@ async function consolidate({ kind = 'nightly' } = {}) {
   const d7 = new Date(now - 7 * DAY);
   const d14 = new Date(now - 14 * DAY);
   const d30 = new Date(now - 30 * DAY);
+  const d56 = new Date(now - 56 * DAY);
 
   const [wellbeing, health, habits, wealth, goals, experiments, findings, annotations, intentionArr] =
     await Promise.all([
       gatherWellbeing(d7, d14),
       gatherHealth(d7, d14),
-      gatherHabits(d7),
+      gatherHabits(d7, d56),
       gatherWealth(d30),
       gatherGoals(),
       gatherExperiments(),
@@ -309,7 +337,17 @@ async function consolidate({ kind = 'nightly' } = {}) {
 
   const intention = intentionArr[0] ?? null;
 
-  const snapshot = { wellbeing, health, habits, wealth, goals: goals.length, experiments, findings: findings.correlations.length };
+  const snapshot = {
+    wellbeing,
+    health,
+    habits,
+    wealth,
+    goals: goals.length,
+    goalsList: goals.slice(0, 6).map((g) => ({ id: g.id, title: g.title, targetDate: g.target_date ?? null })),
+    experiments,
+    findings: findings.correlations.length,
+    topFindings: findings.correlations.slice(0, 3).map((f) => ({ title: f.title })),
+  };
   const content = buildModelText({ wellbeing, health, habits, wealth, goals, experiments, findings, annotations, intention, generatedAt: now });
 
   await selfModelStore.saveModel({ content, snapshot, kind });
