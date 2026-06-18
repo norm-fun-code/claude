@@ -1511,10 +1511,23 @@ app.get('/api/annotations', async (req, res) => {
 app.delete('/api/annotations/:id', async (req, res) => {
   try {
     const id = req.params.id;
-    // annotations.id is UUID (gen_random_uuid()) — basic format check only
     if (!id || typeof id !== 'string' || id.length < 8) return res.status(400).json({ error: 'invalid id' });
     const { query } = require('./src/db');
     await query('DELETE FROM annotations WHERE id = $1', [id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/annotations/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!id || typeof id !== 'string' || id.length < 8) return res.status(400).json({ error: 'invalid id' });
+    const { label } = req.body || {};
+    if (!label || !label.trim()) return res.status(400).json({ error: 'label required' });
+    const { query } = require('./src/db');
+    await query('UPDATE annotations SET label = $1 WHERE id = $2', [label.trim(), id]);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, useColorScheme, AppState, Pressable } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, useColorScheme, AppState, Pressable, Alert } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -74,6 +74,8 @@ export function ContextCard() {
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
   const fetchDateRef = useRef('');
 
   // Use device timezone so the day resets at local midnight even when travelling.
@@ -163,6 +165,36 @@ export function ContextCard() {
     setNote('');
   }
 
+  function startEdit(id: string, currentLabel: string) {
+    setEditingId(id);
+    setEditText(currentLabel);
+  }
+
+  async function saveEdit() {
+    const text = editText.trim();
+    if (!text || !editingId) { setEditingId(null); return; }
+    setSaving(editingId);
+    try {
+      const res = await fetchWithTimeout(`${ANNOTATIONS_URL}/${editingId}`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify({ label: text }),
+      });
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+      setLogged((prev) => prev.map((l) => l.id === editingId ? { ...l, label: text } : l));
+    } catch {
+      setFailed(true);
+    } finally {
+      setSaving(null);
+      setEditingId(null);
+    }
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditText('');
+  }
+
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <SectionHeader emoji="📝" title="Anything going on today?" />
@@ -215,7 +247,36 @@ export function ContextCard() {
 
       {logged.filter((l) => !PRESETS.some((p) => p.label === l.label)).map((l) => (
         <View key={l.id} style={styles.customRow}>
-          <Text style={[styles.customText, { color: c.subtext }]}>✓ {l.label}</Text>
+          {editingId === l.id ? (
+            <View style={styles.editRow}>
+              <TextInput
+                style={[styles.editInput, { color: c.text, borderColor: c.accent }]}
+                value={editText}
+                onChangeText={setEditText}
+                autoFocus
+                returnKeyType="done"
+                onSubmitEditing={saveEdit}
+              />
+              <TouchableOpacity onPress={saveEdit} disabled={saving === l.id} style={[styles.editSaveBtn, { backgroundColor: c.accent }]}>
+                <Text style={styles.editSaveTxt}>{saving === l.id ? '…' : 'Save'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={cancelEdit} hitSlop={8} style={styles.editCancelBtn}>
+                <Text style={[styles.editCancelTxt, { color: c.subtext }]}>✕</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.customNoteRow}>
+              <Text style={[styles.customText, { color: c.subtext }]} numberOfLines={3}>✓ {l.label}</Text>
+              <View style={styles.noteActions}>
+                <TouchableOpacity onPress={() => startEdit(l.id, l.label)} hitSlop={8} style={styles.noteAction}>
+                  <Text style={[styles.noteActionTxt, { color: c.accent }]}>Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => unlog(l.id, l.label)} hitSlop={8} style={styles.noteAction}>
+                  <Text style={[styles.noteActionTxt, { color: c.subtext }]}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
         </View>
       ))}
 
@@ -247,6 +308,16 @@ const styles = StyleSheet.create({
   addBtn: { borderRadius: radius.md, paddingVertical: spacing.sm + 2, paddingHorizontal: spacing.lg },
   addBtnText: { ...typography.body, fontWeight: '700', color: '#fff' },
   customRow: { marginTop: spacing.sm },
-  customText: { ...typography.caption, fontSize: 13 },
+  customNoteRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing.sm },
+  customText: { ...typography.caption, fontSize: 13, flex: 1, lineHeight: 18 },
+  noteActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingTop: 1 },
+  noteAction: { paddingHorizontal: 2 },
+  noteActionTxt: { fontSize: 13, fontWeight: '600' },
+  editRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  editInput: { flex: 1, ...typography.body, fontSize: 13, borderWidth: 1, borderRadius: radius.sm, paddingHorizontal: spacing.sm, paddingVertical: 5 },
+  editSaveBtn: { borderRadius: radius.sm, paddingHorizontal: spacing.sm, paddingVertical: 5 },
+  editSaveTxt: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  editCancelBtn: { paddingHorizontal: 2 },
+  editCancelTxt: { fontSize: 14, fontWeight: '600' },
   failed: { ...typography.caption, color: '#C0392B', marginTop: spacing.sm },
 });
