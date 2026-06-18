@@ -41,6 +41,7 @@ const { runMorningBriefing, runWeeklyReviewWithPush } = require('./src/notify/mo
 const { login: eightSleepLogin, resolveUserId: eightSleepResolveUserId, getTrends: eightSleepGetTrends } = require('./src/services/eight-sleep-api');
 const surfacedStore = require('./src/store/surfaced');
 const briefingsStore = require('./src/store/briefings');
+const recommendationsStore = require('./src/store/recommendations');
 const workoutChecks = require('./src/store/workoutChecks');
 const intentionsStore = require('./src/store/intentions');
 const dailyPicksStore = require('./src/store/dailyPicks');
@@ -2553,6 +2554,34 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[selfModel] failed:', err.message);
   }
 
+  // Pipeline health: inject a data-gap warning into annotationsContext when a
+  // critical connector hasn't synced recently. The LLM sees this and caveats
+  // stale-data claims; avoids confidently citing week-old numbers.
+  const STALE_THRESHOLDS_H = {
+    eight_sleep_api:  { hours: 26, label: 'recovery/sleep metrics' },
+    monarch_mcp_sync: { hours: 26, label: 'wealth/spending data' },
+    monarch:          { hours: 48, label: 'wealth data' },
+    health:           { hours: 6,  label: 'activity/steps' },
+  };
+  try {
+    const allSources = await sourcesStore.listSources();
+    const gaps = [];
+    for (const s of allSources) {
+      const thresh = STALE_THRESHOLDS_H[s.id];
+      if (!thresh || !s.last_sync_at) continue;
+      const hoursAgo = (Date.now() - new Date(s.last_sync_at).getTime()) / 3_600_000;
+      if (hoursAgo > thresh.hours) {
+        gaps.push(`${s.display_name || s.id} (${thresh.label}, last synced ${Math.round(hoursAgo)}h ago)`);
+      }
+    }
+    if (gaps.length) {
+      const warning = `DATA GAPS — these sources have not synced recently: ${gaps.join('; ')}. Caveat any claims that rely on this data.`;
+      annotationsContext = annotationsContext ? `${annotationsContext}; ${warning}` : warning;
+    }
+  } catch (err) {
+    console.error('[pipeline health] failed:', err.message);
+  }
+
   // Leverage + risk context for the Chief-of-Staff brief. THE ACTION comes from
   // the leverage engine; THE RISK from the most at-risk forecast. Fetched before
   // the LLM call so the brief can name them. (The same findings are re-read later
@@ -2561,11 +2590,11 @@ app.get('/api/briefing', async (req, res) => {
   let leverageContext = '';
   try {
     const open = await findingsStore.listFindings({ status: 'open' });
-    const lev = open
+    const levFindings = open
       .filter((f) => f.type === 'leverage')
       .sort((a, b) => (a.evidence?.rank ?? 99) - (b.evidence?.rank ?? 99))
-      .slice(0, 3)
-      .map((f, i) => `${i + 1}. ${f.title}${f.detail ? ` — ${f.detail}` : ''}`);
+      .slice(0, 3);
+    const lev = levFindings.map((f, i) => `${i + 1}. ${f.title}${f.detail ? ` — ${f.detail}` : ''}`);
     const risks = open
       .filter((f) => f.type === 'forecast' && (f.evidence?.status === 'off_track' || f.evidence?.status === 'at_risk'))
       .sort((a, b) => (a.confidence ?? 1) - (b.confidence ?? 1))
@@ -2575,6 +2604,28 @@ app.get('/api/briefing', async (req, res) => {
     if (lev.length) parts.push(`HIGHEST-LEVERAGE ACTIONS (leverage engine):\n${lev.join('\n')}`);
     if (risks.length) parts.push(`TRENDING WRONG (at-risk forecasts):\n${risks.join('\n')}`);
     leverageContext = parts.join('\n\n');
+
+    // Log leverage actions to the recommendation ledger (fire-and-forget).
+    // Deduplicated to 3-day window so the same finding isn't recorded daily.
+    if (levFindings.length) {
+      recommendationsStore.recentTitles(3).then((recent) => {
+        for (const f of levFindings) {
+          if (recent.has(f.title)) continue;
+          const ev = f.evidence || {};
+          recommendationsStore.recordRecommendation({
+            type: 'leverage',
+            findingId: f.id ?? null,
+            title: f.title,
+            detail: f.detail ?? null,
+            lever: ev.basis?.lever ?? null,
+            outcomeMetric: ev.basis?.outcome ?? null,
+            expectedDirection: ev.basis?.r != null ? (ev.basis.r >= 0 ? 'up' : 'down') : null,
+            score: ev.score ?? null,
+            surfacedIn: 'briefing',
+          }).catch((e) => console.error('[recommendations] log failed:', e.message));
+        }
+      }).catch((e) => console.error('[recommendations] dedup check failed:', e.message));
+    }
   } catch (err) {
     console.error('[leverage context] failed:', err.message);
   }
@@ -2964,6 +3015,86 @@ app.get('/api/briefing', async (req, res) => {
     .then(() => require('./src/notify/run').runNudges({ suppressCheckin: true })
       .catch((e) => console.error('[proactive nudge]', e.message)))
     .catch((err) => console.error('[ingest/analyze] failed:', err.message));
+});
+
+// Pipeline health — per-connector freshness + staleness status. The authoritative
+// version of the stale check that also runs silently inside the briefing build.
+// Useful for debugging "why is my briefing citing old numbers?"
+const PIPELINE_STALE_THRESHOLDS = {
+  eight_sleep_api:  { hours: 26, criticalFor: 'recovery/sleep' },
+  monarch_mcp_sync: { hours: 26, criticalFor: 'wealth/spending' },
+  monarch:          { hours: 48, criticalFor: 'wealth' },
+  health:           { hours: 6,  criticalFor: 'activity/steps' },
+  checkin:          { hours: 36, criticalFor: 'mood/energy/focus' },
+  habits:           { hours: 36, criticalFor: 'habits' },
+  readwise:         { hours: 72, criticalFor: 'highlights' },
+};
+const PIPELINE_DEFAULT_STALE_H = 72;
+
+app.get('/api/pipeline-health', async (req, res) => {
+  try {
+    const sources = await sourcesStore.listSources();
+    const now = Date.now();
+    const connectors = sources.map((s) => {
+      const thresh = PIPELINE_STALE_THRESHOLDS[s.id] ?? { hours: PIPELINE_DEFAULT_STALE_H, criticalFor: null };
+      const hoursAgo = s.last_sync_at
+        ? (now - new Date(s.last_sync_at).getTime()) / 3_600_000
+        : null;
+      const isStale = hoursAgo == null || hoursAgo > thresh.hours;
+      return {
+        id: s.id,
+        displayName: s.display_name,
+        domain: s.domain,
+        status: s.status ?? 'unknown',
+        lastSyncAt: s.last_sync_at ?? null,
+        lastError: s.last_error ?? null,
+        hoursAgo: hoursAgo != null ? Math.round(hoursAgo * 10) / 10 : null,
+        staleThresholdHours: thresh.hours,
+        isStale,
+        criticalFor: thresh.criticalFor,
+      };
+    });
+    const stale = connectors.filter((c) => c.isStale && PIPELINE_STALE_THRESHOLDS[c.id]);
+    res.json({
+      connectors,
+      anyStale: stale.length > 0,
+      staleSummary: stale.length
+        ? `${stale.length} source(s) stale: ${stale.map((c) => c.displayName || c.id).join(', ')}`
+        : 'All monitored sources are fresh.',
+      checkedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Recommendation ledger — what leverage actions have been surfaced + outcome data.
+// GET /api/recommendations?limit=50&since=YYYY-MM-DD&pending=1
+app.get('/api/recommendations', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const since = req.query.since ? new Date(req.query.since) : null;
+    const rows = await recommendationsStore.listRecommendations({ limit, since });
+    // Summary stats for the weekly review "What I Tried" view.
+    const measured = rows.filter((r) => r.outcome_measured_at != null);
+    const positive = measured.filter((r) => {
+      if (r.outcome_delta == null) return false;
+      return r.expected_direction === 'down'
+        ? Number(r.outcome_delta) < 0
+        : Number(r.outcome_delta) > 0;
+    });
+    res.json({
+      recommendations: rows,
+      stats: {
+        total: rows.length,
+        measured: measured.length,
+        positive: positive.length,
+        hitRate: measured.length ? Math.round((positive.length / measured.length) * 100) : null,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 const { runMigrations } = require('./src/db/migrate');

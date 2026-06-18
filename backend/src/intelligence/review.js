@@ -160,6 +160,16 @@ Write the weekly review as JSON with EXACTLY:
 }
 
 async function runReview({ asOf = new Date(), persist = true } = {}) {
+  // Measure outcomes for recommendations surfaced in the last 10 days before
+  // generating the review, so the "what I tried" data is ready for the prompt.
+  try {
+    const { measureOutcomes } = require('../store/recommendations');
+    const measured = await measureOutcomes(10);
+    if (measured > 0) console.log(`[review] measured ${measured} recommendation outcome(s)`);
+  } catch (err) {
+    console.error('[review] outcome measurement failed:', err.message);
+  }
+
   const ctx = await gatherWeek(asOf);
   const { system: baseSystem, prompt } = composeReview(ctx);
 
