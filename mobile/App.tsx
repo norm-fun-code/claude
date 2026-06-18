@@ -50,7 +50,7 @@ import { CollapsibleSection } from './src/components/CollapsibleSection';
 import { SelfModelCard } from './src/components/SelfModelCard';
 import { WeeklyStateCard } from './src/components/WeeklyStateCard';
 import { CheckinHistoryCard } from './src/components/CheckinHistoryCard';
-import { HabitsCard } from './src/components/HabitsCard';
+import { HabitsModal } from './src/components/HabitsModal';
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
 
 export default function App() {
@@ -69,6 +69,7 @@ export default function App() {
 
   const [tab, setTab] = useState<TabKey>('today');
   const [checkinOpen, setCheckinOpen] = useState(false);
+  const [habitsOpen, setHabitsOpen] = useState(false);
   const [pendingAskQ, setPendingAskQ] = useState('');
   const dailyLog = useDailyLogStatus();
   // Health tab refresh only spins on health-local fetches; other tabs include
@@ -109,9 +110,14 @@ export default function App() {
   // Tapping the morning "briefing ready" push should load the cache the server
   // already warmed at 8:30 — instant, not a 15-40s forced rebuild. Health still
   // refreshes from the device.
-  const onNotificationTap = useCallback(() => {
-    briefing.reload();
-    health.refetch();
+  const onNotificationTap = useCallback((data: Record<string, unknown>) => {
+    const key = typeof data.key === 'string' ? data.key : '';
+    if (key.startsWith('habits:')) {
+      setHabitsOpen(true);
+    } else {
+      briefing.reload();
+      health.refetch();
+    }
   }, [briefing, health]);
 
   usePushRegistration(onNotificationTap);
@@ -165,7 +171,6 @@ export default function App() {
             <ExperimentsCard />
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} recoveryScore={liveRecovery.recovery?.score ?? null} />
             <ForecastCard forecasts={d?.forecasts ?? []} />
-            <HabitsCard />
             <CollapsibleSection title="NormOS profile">
               <SelfModelCard />
             </CollapsibleSection>
@@ -346,6 +351,10 @@ export default function App() {
       <CheckinModal
         visible={checkinOpen}
         onClose={() => { setCheckinOpen(false); dailyLog.refresh(); }}
+      />
+      <HabitsModal
+        visible={habitsOpen}
+        onClose={() => setHabitsOpen(false)}
       />
       <TabBar
         active={tab}

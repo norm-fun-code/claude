@@ -57,11 +57,11 @@ async function registerForPush(): Promise<string | null> {
 }
 
 /**
- * Registers this device for push, and (optionally) refreshes when a
- * notification is tapped — so tapping "Your morning briefing is ready!" opens
- * the app to fresh content instead of a stale view.
+ * Registers this device for push. The onNotificationTap callback receives the
+ * notification's data payload so callers can route by type (e.g. open the
+ * habits modal on a habits push vs. reload the briefing on a morning push).
  */
-export function usePushRegistration(onNotificationTap?: () => void) {
+export function usePushRegistration(onNotificationTap?: (data: Record<string, unknown>) => void) {
   const registered = useRef(false);
   const tapCb = useRef(onNotificationTap);
   tapCb.current = onNotificationTap;
@@ -85,10 +85,10 @@ export function usePushRegistration(onNotificationTap?: () => void) {
     })();
   }, []);
 
-  // Refresh when the user taps a notification (e.g. the morning briefing).
   useEffect(() => {
-    const sub = Notifications.addNotificationResponseReceivedListener(() => {
-      tapCb.current?.();
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = (response.notification.request.content.data ?? {}) as Record<string, unknown>;
+      tapCb.current?.(data);
     });
     return () => sub.remove();
   }, []);
