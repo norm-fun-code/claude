@@ -116,8 +116,22 @@ export interface HealthData {
   sleepScore: number | null;
   steps: number | null;
   activeCalories: number | null;
+  vo2Max: number | null;
+  vo2MaxCategory: string | null;
   loading: boolean;
   error: string | null;
+}
+
+// Apple's VO2 max fitness classification for adult males (mL/kg/min).
+// VO2 max updates only during outdoor workouts so we show the most recent
+// reading rather than a daily value.
+function getVo2Category(vo2: number): string {
+  if (vo2 >= 55) return 'Very High';
+  if (vo2 >= 48) return 'High';
+  if (vo2 >= 42) return 'Above Average';
+  if (vo2 >= 36) return 'Average';
+  if (vo2 >= 30) return 'Below Average';
+  return 'Low';
 }
 
 const PERMISSIONS: HealthKitPermissions = {
@@ -129,6 +143,7 @@ const PERMISSIONS: HealthKitPermissions = {
       AppleHealthKit.Constants.Permissions.Steps,
       AppleHealthKit.Constants.Permissions.ActiveEnergyBurned,
       AppleHealthKit.Constants.Permissions.HeartRate,
+      AppleHealthKit.Constants.Permissions.Vo2Max,
     ],
     write: [],
   },
@@ -222,6 +237,8 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
     sleepScore: null,
     steps: null,
     activeCalories: null,
+    vo2Max: null,
+    vo2MaxCategory: null,
     loading: false,
     error: null,
   });
@@ -254,11 +271,12 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
       let remSleepHours: number | null = null;
       let steps: number | null = null;
       let activeCalories: number | null = null;
+      let vo2Max: number | null = null;
       // Eight Sleep sleep score only — HRV and RHR on the Health card use Apple
       // Watch so you can see live intraday readings during the day. Recovery card
       // and all coaching logic still use Eight Sleep for overnight accuracy.
       let eightSleepScore: number | null = null;
-      let pending = 6;
+      let pending = 7;
 
       function checkDone() {
         pending -= 1;
@@ -277,6 +295,8 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
             sleepScore: finalSleepScore,
             steps,
             activeCalories,
+            vo2Max,
+            vo2MaxCategory: vo2Max !== null ? getVo2Category(vo2Max) : null,
             loading: false,
             error: null,
           });
@@ -295,6 +315,7 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
             { metric: 'sleep_score', value: finalSleepScore as number, unit: 'score' },
             { metric: 'steps', value: steps as number, unit: 'count' },
             { metric: 'active_energy', value: activeCalories as number, unit: 'kcal' },
+            { metric: 'vo2_max', value: vo2Max as number, unit: 'mL/kg/min' },
           ]);
         }
       }
@@ -383,6 +404,21 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
             activeCalories = Math.round(
               results.reduce((sum, r) => sum + r.value, 0)
             );
+          }
+          checkDone();
+        }
+      );
+
+      // VO2 max — only updated during outdoor workouts, so query last 90 days
+      // and take the most recent reading.
+      AppleHealthKit.getVo2MaxSamples(
+        { startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(), endDate: now } as any,
+        (err, results: HealthValue[]) => {
+          if (!err && results && results.length > 0) {
+            const sorted = [...results].sort(
+              (a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
+            );
+            vo2Max = Math.round(sorted[0].value * 10) / 10;
           }
           checkDone();
         }

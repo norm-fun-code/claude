@@ -59,12 +59,6 @@ export function HealthCard({ health }: Props) {
       {/* Stats grid */}
       <StatRow label="Resting HR" value={health.restingHR} unit="bpm" c={c} />
       <StatRow
-        label="Sleep score"
-        value={health.sleepScore}
-        unit={health.sleepScore !== null ? '/ 100' : undefined}
-        c={c}
-      />
-      <StatRow
         label="Sleep"
         value={health.sleepHours !== null ? formatHM(health.sleepHours) : null}
         unit={health.sleepQuality ?? undefined}
@@ -79,6 +73,14 @@ export function HealthCard({ health }: Props) {
       )}
       <StatRow label="Steps" value={health.steps !== null ? health.steps.toLocaleString() : null} c={c} />
       <StatRow label="Active Cal" value={health.activeCalories !== null ? health.activeCalories.toLocaleString() : null} unit="kcal" c={c} />
+      {health.vo2Max !== null && (
+        <StatRow
+          label="VO2 Max"
+          value={health.vo2Max}
+          unit={`mL/kg/min · ${health.vo2MaxCategory}`}
+          c={c}
+        />
+      )}
 
       {health.error && (
         <Text style={[styles.errorText, { color: c.subtext }]}>
