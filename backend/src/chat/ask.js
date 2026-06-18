@@ -166,7 +166,20 @@ function snippet(text, n = 400) {
 }
 
 /** Pure: assemble the prompt from retrieved context. Exported for testing. */
-function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [], snapshot = null, experiments = [], pastConversations = [] }) {
+async function wealthContext() {
+  try {
+    const { buildWealthInsights } = require('../services/wealth-insights');
+    const insights = await buildWealthInsights();
+    if (!insights || !insights.length) return null;
+    return 'WEALTH DASHBOARD (live computed insights — use these numbers, they are current):\n' +
+      insights.slice(0, 8).map((i) => `- [${i.type}] ${i.title}${i.detail ? ` — ${i.detail}` : ''}`).join('\n');
+  } catch (err) {
+    console.error('[chat] wealthContext failed:', err.message);
+    return null;
+  }
+}
+
+function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [], snapshot = null, experiments = [], pastConversations = [], wealthInsights = null }) {
   const parts = [];
 
   // Personal goals + metric trends first (only present for personal questions).
@@ -174,6 +187,8 @@ function buildPrompt({ question, findings = [], docs = [], annotations = [], his
     const block = renderSnapshot(snapshot);
     if (block) parts.push(block);
   }
+
+  if (wealthInsights) parts.push(wealthInsights);
 
   // Long-term memory: relevant things discussed in PAST conversations (beyond the
   // recent tail). Lets NormOS say "when you asked about this before, we landed on…"
@@ -347,7 +362,19 @@ async function ask(question, { history = [], k = 14 } = {}) {
     selfModelText = (await require('../store/selfModel').latestModelText()) ?? '';
   } catch { /* optional */ }
 
-  const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments, pastConversations });
+  // Also inject the long-range financial plan (income projections, housing plan,
+  // kids + tuition, portfolio) so forward-looking questions can be answered.
+  let wealthInsights = null;
+  if (isFinancialQuestion(question)) {
+    const [wCtx, planCtx] = await Promise.all([
+      wealthContext(),
+      require('../services/financial-plan').buildPlanContext().catch(() => null),
+    ]);
+    const parts = [wCtx, planCtx].filter(Boolean);
+    wealthInsights = parts.length ? parts.join('\n\n') : null;
+  }
+
+  const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments, pastConversations, wealthInsights });
   let system = selfModelText ? `${baseSystem}\n\n${selfModelText}` : baseSystem;
 
   // Financial questions: when Monarch MCP is configured, give Claude LIVE access

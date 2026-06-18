@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,11 @@ import Markdown from 'react-native-markdown-display';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { useChat } from '../hooks/useChat';
 import { API_BASE, CONSOLIDATE_URL, authHeaders, fetchWithTimeout } from '../config';
+
+export interface AskOverlayHandle {
+  /** Open the overlay, optionally pre-filling the input with a question. */
+  openWith: (question?: string) => void;
+}
 
 interface Props {
   /** Home-indicator height, so the launcher floats above the flush tab bar. */
@@ -139,7 +144,7 @@ function fmtDate(iso: string | null): string {
 // Global "Ask NormOS" command bar: a floating button on every tab that opens a
 // full conversation sheet. Save the current thread to the sidebar, browse saved
 // ones, resume, or delete — all backed by the persistent server history.
-export function AskOverlay({ bottomInset = 0 }: Props) {
+export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverlay({ bottomInset = 0 }, ref) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [open, setOpen] = useState(false);
@@ -157,6 +162,13 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
   const [expDays, setExpDays] = useState<14 | 21 | 28>(14);
   const [expStarting, setExpStarting] = useState(false);
   const [snapshot, setSnapshot] = useState<SnapData | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    openWith(question?: string) {
+      setOpen(true);
+      if (question) setQuestion(question);
+    },
+  }));
 
   useEffect(() => {
     const showEv = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -491,7 +503,7 @@ export function AskOverlay({ bottomInset = 0 }: Props) {
       </Modal>
     </>
   );
-}
+});
 
 function markdownStyles(c: ReturnType<typeof getColors>) {
   return {

@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ScrollView,
   StyleSheet,
@@ -31,7 +31,7 @@ import { ForecastCard } from './src/components/ForecastCard';
 import { LibraryCard } from './src/components/LibraryCard';
 import { WealthCard } from './src/components/WealthCard';
 import { InsightsCard } from './src/components/InsightsCard';
-import { AskOverlay } from './src/components/AskOverlay';
+import { AskOverlay, AskOverlayHandle } from './src/components/AskOverlay';
 import { CheckinModal } from './src/components/CheckinModal';
 import { WeeklyIntentionsCard } from './src/components/WeeklyIntentionsCard';
 import { HealthCard } from './src/components/HealthCard';
@@ -70,6 +70,7 @@ export default function App() {
 
   const [tab, setTab] = useState<TabKey>('today');
   const [checkinOpen, setCheckinOpen] = useState(false);
+  const askRef = useRef<AskOverlayHandle>(null);
   const dailyLog = useDailyLogStatus();
   // Health tab refresh only spins on health-local fetches; other tabs include
   // briefing loading AND any async rebuild in progress.
@@ -175,6 +176,13 @@ export default function App() {
             {!d?.wealth && (
               <EmptyNote c={c} text="Connect Monarch (your monthly export) to see net worth, spending, and cashflow here." />
             )}
+            <TouchableOpacity
+              style={[styles.wealthAskBtn, { backgroundColor: c.accent }]}
+              onPress={() => askRef.current?.openWith('Walk me through my wealth dashboard and financial plan')}
+              activeOpacity={0.82}
+            >
+              <Text style={styles.wealthAskBtnText}>Ask about my finances</Text>
+            </TouchableOpacity>
           </>
         );
       case 'wisdom':
@@ -337,7 +345,7 @@ export default function App() {
         visible={checkinOpen}
         onClose={() => { setCheckinOpen(false); dailyLog.refresh(); }}
       />
-      <AskOverlay bottomInset={bottomInset} />
+      <AskOverlay ref={askRef} bottomInset={bottomInset} />
       <TabBar active={tab} onChange={setTab} bottomInset={bottomInset} />
     </View>
   );
@@ -407,4 +415,12 @@ const styles = StyleSheet.create({
   empty: { borderRadius: 14, padding: spacing.lg, marginBottom: spacing.md },
   emptyText: { fontSize: 14, lineHeight: 21, fontStyle: 'italic' },
   footer: { height: spacing.lg },
+  wealthAskBtn: {
+    borderRadius: 14,
+    paddingVertical: spacing.md,
+    alignItems: 'center' as const,
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  wealthAskBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' as const },
 });
