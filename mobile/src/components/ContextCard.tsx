@@ -76,6 +76,7 @@ export function ContextCard() {
   const [failed, setFailed] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
+  const [noteDays, setNoteDays] = useState(0); // 0 = today only
   const fetchDateRef = useRef('');
 
   // Use device timezone so the day resets at local midnight even when travelling.
@@ -157,12 +158,40 @@ export function ContextCard() {
     }
   }
 
+  function endOfDay(daysFromNow: number): Date {
+    const d = new Date();
+    d.setDate(d.getDate() + daysFromNow);
+    d.setHours(23, 59, 59, 0);
+    return d;
+  }
+
   async function logNote() {
     const text = note.trim();
     if (!text) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await log('note', text);
-    setNote('');
+    setSaving(text);
+    setFailed(false);
+    try {
+      const res = await fetchWithTimeout(ANNOTATIONS_URL, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          startTs: new Date().toISOString(),
+          endTs: endOfDay(noteDays).toISOString(),
+          category: 'note',
+          label: text,
+        }),
+      });
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+      const { id } = await res.json();
+      setLogged((prev) => [{ id, category: 'note', label: text }, ...prev]);
+      setNote('');
+      setNoteDays(0);
+    } catch {
+      setFailed(true);
+    } finally {
+      setSaving(null);
+    }
   }
 
   function startEdit(id: string, currentLabel: string) {
@@ -238,12 +267,30 @@ export function ContextCard() {
         />
         <TouchableOpacity
           onPress={logNote}
-          disabled={!note.trim() || saving === note.trim()}
+          disabled={!note.trim() || !!saving}
           style={[styles.addBtn, { backgroundColor: c.accent, opacity: note.trim() ? 1 : 0.4 }]}
         >
           <Text style={styles.addBtnText}>Add</Text>
         </TouchableOpacity>
       </View>
+      {note.trim().length > 0 && (
+        <View style={styles.durationRow}>
+          {[{label:'Today',days:0},{label:'Tomorrow',days:1},{label:'3 days',days:3},{label:'1 week',days:7}].map((opt) => (
+            <TouchableOpacity
+              key={opt.days}
+              onPress={() => setNoteDays(opt.days)}
+              style={[styles.durationBtn, {
+                borderColor: noteDays === opt.days ? c.accent : c.border,
+                backgroundColor: noteDays === opt.days ? c.accentSoft : 'transparent',
+              }]}
+            >
+              <Text style={[styles.durationBtnTxt, { color: noteDays === opt.days ? c.accent : c.subtext }]}>
+                {opt.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
 
       {logged.filter((l) => !PRESETS.some((p) => p.label === l.label)).map((l) => (
         <View key={l.id} style={styles.customRow}>
@@ -297,6 +344,9 @@ const styles = StyleSheet.create({
   },
   chipText: { ...typography.body, fontSize: 14, fontWeight: '600' },
   noteRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.md },
+  durationRow: { flexDirection: 'row', gap: spacing.xs, marginTop: spacing.xs },
+  durationBtn: { flex: 1, borderWidth: 1, borderRadius: radius.md, paddingVertical: 5, alignItems: 'center' },
+  durationBtnTxt: { fontSize: 11, fontWeight: '600' },
   noteInput: {
     flex: 1,
     ...typography.body,

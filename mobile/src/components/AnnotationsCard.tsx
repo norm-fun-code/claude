@@ -25,6 +25,20 @@ interface AnnotationsProps {
   inline?: boolean;
 }
 
+const DURATION_OPTS = [
+  { label: 'Today',    days: 0 },
+  { label: 'Tomorrow', days: 1 },
+  { label: '3 days',   days: 3 },
+  { label: '1 week',   days: 7 },
+];
+
+function endOfDay(daysFromNow: number): Date {
+  const d = new Date();
+  d.setDate(d.getDate() + daysFromNow);
+  d.setHours(23, 59, 59, 0);
+  return d;
+}
+
 export function AnnotationsCard({ inline = false }: AnnotationsProps = {}) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
@@ -32,6 +46,7 @@ export function AnnotationsCard({ inline = false }: AnnotationsProps = {}) {
   const [modalVisible, setModalVisible] = useState(false);
   const [category, setCategory] = useState<Category>('life');
   const [label, setLabel] = useState('');
+  const [durationDays, setDurationDays] = useState(1); // default: through tomorrow
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
@@ -51,20 +66,16 @@ export function AnnotationsCard({ inline = false }: AnnotationsProps = {}) {
     if (!label.trim()) return;
     setSaving(true);
     try {
-      const now = new Date();
-      const endOfTomorrow = new Date(now);
-      endOfTomorrow.setDate(endOfTomorrow.getDate() + 1);
-      endOfTomorrow.setHours(23, 59, 59, 0);
       const res = await fetchWithTimeout(ANNOTATIONS_URL, {
         method: 'POST', headers: authHeaders(),
         body: JSON.stringify({
           category,
           label: label.trim(),
-          startTs: now.toISOString(),
-          endTs: endOfTomorrow.toISOString(),
+          startTs: new Date().toISOString(),
+          endTs: endOfDay(durationDays).toISOString(),
         }),
       });
-      if (res.ok) { setModalVisible(false); setLabel(''); load(); }
+      if (res.ok) { setModalVisible(false); setLabel(''); setDurationDays(1); load(); }
     } catch {} finally { setSaving(false); }
   }
 
@@ -122,6 +133,23 @@ export function AnnotationsCard({ inline = false }: AnnotationsProps = {}) {
               placeholder="e.g. Work trip to NYC"
               placeholderTextColor={c.subtext}
             />
+            <Text style={[styles.durationLabel, { color: c.subtext }]}>Lasts through</Text>
+            <View style={styles.durationRow}>
+              {DURATION_OPTS.map((opt) => (
+                <TouchableOpacity
+                  key={opt.days}
+                  onPress={() => setDurationDays(opt.days)}
+                  style={[styles.durationBtn, {
+                    borderColor: durationDays === opt.days ? c.accent : c.border,
+                    backgroundColor: durationDays === opt.days ? c.accentSoft : 'transparent',
+                  }]}
+                >
+                  <Text style={[styles.durationBtnTxt, { color: durationDays === opt.days ? c.accent : c.subtext }]}>
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
             <View style={styles.sheetBtns}>
               <TouchableOpacity onPress={() => setModalVisible(false)} style={[styles.sheetBtn, { borderColor: c.border }]}>
                 <Text style={[styles.sheetBtnTxt, { color: c.subtext }]}>Cancel</Text>
@@ -155,6 +183,10 @@ const styles = StyleSheet.create({
   catChip: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: 20, borderWidth: 1, marginRight: spacing.sm },
   catChipText: { fontSize: 13, fontWeight: '600' },
   labelInput: { borderWidth: 1, borderRadius: 10, padding: spacing.sm, fontSize: 15, marginBottom: spacing.md },
+  durationLabel: { fontSize: 12, fontWeight: '600', letterSpacing: 0.4, marginBottom: spacing.xs, marginTop: spacing.sm },
+  durationRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
+  durationBtn: { flex: 1, borderWidth: 1, borderRadius: radius.md, paddingVertical: spacing.sm - 1, alignItems: 'center' },
+  durationBtnTxt: { fontSize: 13, fontWeight: '600' },
   sheetBtns: { flexDirection: 'row', gap: spacing.sm },
   sheetBtn: { flex: 1, borderRadius: 10, borderWidth: 1, paddingVertical: spacing.sm + 2, alignItems: 'center' },
   sheetBtnTxt: { fontSize: 15, fontWeight: '600' },
