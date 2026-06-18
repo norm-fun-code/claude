@@ -46,8 +46,11 @@ import { BriefSignalsCard } from './src/components/BriefSignalsCard';
 import { TodayForecastCard } from './src/components/TodayForecastCard';
 import { ExperimentsCard } from './src/components/ExperimentsCard';
 import { CrossContextCard } from './src/components/CrossContextCard';
+import { CollapsibleSection } from './src/components/CollapsibleSection';
+import { SelfModelCard } from './src/components/SelfModelCard';
 import { WeeklyStateCard } from './src/components/WeeklyStateCard';
 import { CheckinHistoryCard } from './src/components/CheckinHistoryCard';
+import { HabitsCard } from './src/components/HabitsCard';
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
 
 export default function App() {
@@ -162,6 +165,10 @@ export default function App() {
             <ExperimentsCard />
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} recoveryScore={liveRecovery.recovery?.score ?? null} />
             <ForecastCard forecasts={d?.forecasts ?? []} />
+            <HabitsCard />
+            <CollapsibleSection title="NormOS profile">
+              <SelfModelCard />
+            </CollapsibleSection>
           </>
         );
       case 'wealth':
