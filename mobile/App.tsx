@@ -244,45 +244,64 @@ export default function App() {
       default:
         return (
           <>
-            {/* Recovery grade first — most decision-relevant signal of the day */}
+            {/* Chief Brief first — the narrative leads */}
             <AnimatedEntry delay={0}>
+              <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
+            </AnimatedEntry>
+            {/* Recovery grade */}
+            <AnimatedEntry delay={20}>
               <TodayForecastCard forecast={d?.todayForecast} />
             </AnimatedEntry>
+            {/* Streak / trend signals */}
             {d?.signals && d.signals.length > 0 && (
-              <AnimatedEntry delay={30}>
+              <AnimatedEntry delay={40}>
                 <BriefSignalsCard signals={d.signals} />
               </AnimatedEntry>
             )}
-            <AnimatedEntry delay={60}>
-              <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
-            </AnimatedEntry>
-            {/* Cross-domain insights before weather — they're more actionable */}
+            {/* Alerts / highest-leverage flags */}
+            {d?.alerts && d.alerts.length > 0 && (
+              <AnimatedEntry delay={60}>
+                <AlertCard alerts={d.alerts} />
+              </AnimatedEntry>
+            )}
+            {/* Cross-domain patterns */}
             {d?.crossContextInsights && d.crossContextInsights.length > 0 && (
-              <AnimatedEntry delay={120}>
+              <AnimatedEntry delay={80}>
                 <CrossContextCard insights={d.crossContextInsights} />
               </AnimatedEntry>
             )}
-            {/* Check-in trends visible without scrolling into the collapsible */}
-            <AnimatedEntry delay={160}>
+            {/* Check-in trends */}
+            <AnimatedEntry delay={100}>
               <CheckinHistoryCard insights={(d?.insights ?? []).filter((i) => {
                 if (i.type === 'habit_consistency') return true;
                 const nonHealth = new Set(['habits', 'wellbeing']);
                 return i.domains?.every((dom: string) => nonHealth.has(dom)) ?? false;
               })} />
             </AnimatedEntry>
-            <AnimatedEntry delay={200}>
+            {/* Weather */}
+            <AnimatedEntry delay={120}>
               <WeatherCard weather={d?.weather ?? null} />
             </AnimatedEntry>
-            <AnimatedEntry delay={240}>
-              <CollapsibleSection title="Today's Full Briefing">
-                {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
-                <WeeklyIntentionsCard review={d?.weeklyReview ?? null} actions={d?.leverageActions ?? []} />
-                <CalendarCard events={d?.calendar ?? []} workBusy={d?.workBusy ?? []} />
-                {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
-                <SleepLogCard />
-              </CollapsibleSection>
+            {/* Weekly review + intentions */}
+            <AnimatedEntry delay={140}>
+              <WeeklyIntentionsCard review={d?.weeklyReview ?? null} actions={d?.leverageActions ?? []} />
             </AnimatedEntry>
-            <AnimatedEntry delay={275}>
+            {/* Calendar */}
+            <AnimatedEntry delay={160}>
+              <CalendarCard events={d?.calendar ?? []} workBusy={d?.workBusy ?? []} />
+            </AnimatedEntry>
+            {/* Off-track forecasts */}
+            {d && (d.forecasts ?? []).some((f) => f.status === 'off_track' || f.status === 'at_risk') && (
+              <AnimatedEntry delay={180}>
+                <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />
+              </AnimatedEntry>
+            )}
+            {/* Sleep log */}
+            <AnimatedEntry delay={200}>
+              <SleepLogCard />
+            </AnimatedEntry>
+            {/* NormOS profile — reference/settings, keep collapsible */}
+            <AnimatedEntry delay={220}>
               <CollapsibleSection title="NormOS profile">
                 <SelfModelCard />
               </CollapsibleSection>
