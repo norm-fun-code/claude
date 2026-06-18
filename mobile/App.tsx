@@ -28,7 +28,6 @@ import { getColors, spacing, shadow } from './src/theme';
 import { Header } from './src/components/Header';
 import { TabBar, TabKey, TABS } from './src/components/TabBar';
 import { ForecastCard } from './src/components/ForecastCard';
-import { LibraryCard } from './src/components/LibraryCard';
 import { WealthCard } from './src/components/WealthCard';
 import { InsightsCard } from './src/components/InsightsCard';
 import { AskOverlay } from './src/components/AskOverlay';
@@ -51,6 +50,9 @@ import { SelfModelCard } from './src/components/SelfModelCard';
 import { WeeklyStateCard } from './src/components/WeeklyStateCard';
 import { CheckinHistoryCard } from './src/components/CheckinHistoryCard';
 import { HabitsModal } from './src/components/HabitsModal';
+import { LibraryCard } from './src/components/LibraryCard';
+import { RecommendationLedgerCard } from './src/components/RecommendationLedgerCard';
+import { ActiveExperimentBanner } from './src/components/ActiveExperimentBanner';
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
 
 export default function App() {
@@ -179,11 +181,6 @@ export default function App() {
       case 'wealth':
         return (
           <>
-            <WealthCard wealth={d?.wealth ?? null} />
-            <InsightsCard insights={d?.wealthInsights ?? []} />
-            {!d?.wealth && (
-              <EmptyNote c={c} text="Connect Monarch (your monthly export) to see net worth, spending, and cashflow here." />
-            )}
             <TouchableOpacity
               style={[styles.wealthAskBtn, { backgroundColor: c.accent }]}
               onPress={() => { setPendingAskQ('Walk me through my wealth dashboard and financial plan'); setTab('ask'); }}
@@ -191,6 +188,11 @@ export default function App() {
             >
               <Text style={styles.wealthAskBtnText}>Ask about my finances</Text>
             </TouchableOpacity>
+            <WealthCard wealth={d?.wealth ?? null} />
+            <InsightsCard insights={d?.wealthInsights ?? []} />
+            {!d?.wealth && (
+              <EmptyNote c={c} text="Connect Monarch (your monthly export) to see net worth, spending, and cashflow here." />
+            )}
           </>
         );
       case 'wisdom':
@@ -200,6 +202,8 @@ export default function App() {
             {d?.notionText && d?.notionInsight && (
               <NotionCard pageTitle={d?.notionPageTitle ?? ''} notionText={d.notionText} quote={d?.notionQuote} insight={d.notionInsight} />
             )}
+            {/* Semantically matched highlight — surfaced based on your wellbeing patterns */}
+            <LibraryCard highlight={d?.relevantHighlight ?? null} wellbeingTheme={d?.wellbeingTheme} />
             <HighlightsCard />
           </>
         );
@@ -213,9 +217,19 @@ export default function App() {
             <AnimatedEntry delay={0}>
               <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
             </AnimatedEntry>
+            {/* Goal forecasts — all statuses, prominent after the brief */}
+            {(d?.forecasts ?? []).length > 0 && (
+              <AnimatedEntry delay={10}>
+                <ForecastCard forecasts={d!.forecasts} />
+              </AnimatedEntry>
+            )}
             {/* Recovery grade */}
             <AnimatedEntry delay={20}>
               <TodayForecastCard forecast={d?.todayForecast} />
+            </AnimatedEntry>
+            {/* Active experiment indicator */}
+            <AnimatedEntry delay={30}>
+              <ActiveExperimentBanner />
             </AnimatedEntry>
             {/* Streak / trend signals */}
             {d?.signals && d.signals.length > 0 && (
@@ -247,12 +261,10 @@ export default function App() {
             <AnimatedEntry delay={120}>
               <WeeklyIntentionsCard review={d?.weeklyReview ?? null} actions={d?.leverageActions ?? []} />
             </AnimatedEntry>
-            {/* Off-track forecasts */}
-            {d && (d.forecasts ?? []).some((f) => f.status === 'off_track' || f.status === 'at_risk') && (
-              <AnimatedEntry delay={180}>
-                <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />
-              </AnimatedEntry>
-            )}
+            {/* Recommendation ledger — what was recommended and did it work */}
+            <AnimatedEntry delay={140}>
+              <RecommendationLedgerCard />
+            </AnimatedEntry>
             {briefing.error && !d && (
               <AnimatedEntry delay={0}>
                 <View style={[styles.errorBox, { backgroundColor: c.card }, shadow(isDark)]}>

@@ -6,11 +6,12 @@ import { RelevantHighlight } from '../hooks/useBriefing';
 
 interface Props {
   highlight: RelevantHighlight | null;
+  wellbeingTheme?: string | null;
 }
 
 // Relevant-not-random: the one highlight from your Readwise + Notion library
 // that speaks to today's top priority (semantic match), not a random pick.
-export function LibraryCard({ highlight }: Props) {
+export function LibraryCard({ highlight, wellbeingTheme }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -39,7 +40,11 @@ export function LibraryCard({ highlight }: Props) {
         ) : null}
       </View>
 
-      <Text style={[styles.why, { color: c.subtext }]}>Surfaced for where you are right now.</Text>
+      <Text style={[styles.why, { color: c.subtext }]}>
+        {wellbeingTheme
+          ? `Matched to: ${wellbeingTheme}`
+          : 'Surfaced for where you are right now.'}
+      </Text>
     </View>
   );
 }

@@ -2972,6 +2972,7 @@ app.get('/api/briefing', async (req, res) => {
     weeklyReview,
     wealth,
     markets,
+    wellbeingTheme: keep(p?.wellbeingTheme, wellbeingTheme || null),
     dailyQuote: keep(p?.dailyQuote, dailyQuote),
     alerts,
     signals,

@@ -251,6 +251,7 @@ export interface BriefingData {
   forecasts: Forecast[];
   weeklyGoals?: WeeklyGoals | null;
   relevantHighlight: RelevantHighlight | null;
+  wellbeingTheme?: string | null;
   weeklyReview: WeeklyReview | null;
   wealth: Wealth | null;
   markets?: Markets | null;
