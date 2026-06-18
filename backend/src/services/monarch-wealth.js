@@ -75,9 +75,9 @@ async function getBudgetPacing({ now = new Date() } = {}) {
   const lines = [];
   for (const d of r?.data || []) {
     if (d.category_type !== 'expense') continue;           // skip income & transfers
-    const budget = Number(d.budget_amount) || 0;
+    const budget = Math.abs(Number(d.budget_amount) || 0); // Monarch signs expenses negative
     if (budget <= 0) continue;                             // only real budgets
-    const actual = Number(d.actual_amount) || 0;
+    const actual = Math.abs(Number(d.actual_amount) || 0); // same sign convention
     const expectedByNow = budget * elapsed;
     lines.push({
       category: d.category,

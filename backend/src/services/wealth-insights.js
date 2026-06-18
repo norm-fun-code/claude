@@ -198,13 +198,11 @@ async function buildWealthInsights() {
       // Categories paid as a single monthly lump sum — pace extrapolation doesn't apply.
       const LUMP_SUM = new Set(['Rent', 'Mortgage', 'Rent & Utilities']);
 
-      // Daily-spend categories: flag if spending 30%+ faster than the month is progressing.
-      const overPace = pacing.lines.filter((l) => {
-        if (l.overBudget) return true;
-        if (LUMP_SUM.has(l.category)) return false;
-        return l.pace >= 1.3;
-      });
-      for (const l of overPace.slice(0, 3)) {
+      // Daily-spend categories: show ALL that are already over budget, then cap
+      // "on pace to overspend" warnings at 2 so the list doesn't flood.
+      const alreadyOver = pacing.lines.filter((l) => l.overBudget && !LUMP_SUM.has(l.category));
+      const pacingAhead = pacing.lines.filter((l) => !l.overBudget && !LUMP_SUM.has(l.category) && l.pace >= 1.3);
+      for (const l of [...alreadyOver, ...pacingAhead.slice(0, 2)]) {
         const status = l.overBudget
           ? `over budget (${fmt(l.actual)} of ${fmt(l.budget)})`
           : `on pace to overspend — ${pct((l.pace - 1) * 100)} ahead of schedule`;
