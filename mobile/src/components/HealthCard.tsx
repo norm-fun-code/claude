@@ -56,14 +56,18 @@ function StatRow({
 }
 
 const METRICS: Record<string, MetricConfig> = {
-  // Overnight metrics: use Eight Sleep — it has the full historical record
-  // and is the authoritative source for recovery-related readings.
+  // HRV and RHR: Apple Watch is primary (live intraday, shown on this card).
+  // Eight Sleep is overlaid as secondary so you can compare overnight vs daytime.
   hrv: {
-    metric: 'hrv', label: 'HRV', unit: 'ms', source: 'eight_sleep',
+    metric: 'hrv', label: 'HRV', unit: 'ms',
+    source: 'apple_health', sourceLabel: 'Apple Watch',
+    dualSource: { source: 'eight_sleep', label: 'Eight Sleep', color: '#FF9F0A' },
     formatValue: v => `${Math.round(v)}`,
   },
   resting_hr: {
-    metric: 'resting_hr', label: 'Resting HR', unit: 'bpm', source: 'eight_sleep',
+    metric: 'resting_hr', label: 'Resting HR', unit: 'bpm',
+    source: 'apple_health', sourceLabel: 'Apple Watch',
+    dualSource: { source: 'eight_sleep', label: 'Eight Sleep', color: '#FF9F0A' },
     formatValue: v => `${Math.round(v)}`,
     lowerIsBetter: true,
   },

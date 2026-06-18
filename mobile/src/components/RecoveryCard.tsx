@@ -1,8 +1,10 @@
-import React from 'react';
-import { View, Text, StyleSheet, useColorScheme } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, useColorScheme, TouchableOpacity } from 'react-native';
 import { getColors, spacing, radius, typography, colors, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import type { Recovery, HealthComposite } from '../hooks/useBriefing';
+import { MetricDetailSheet, type MetricConfig } from './MetricDetailSheet';
+import { formatHM } from '../utils/format';
 
 interface Props {
   recovery: Recovery | null | undefined;
@@ -23,10 +25,24 @@ const COMPOSITE_EMOJI: Record<string, string> = {
   training_load: '🏋️',
 };
 
-// The headline "how recovered am I" number — a composite of HRV, resting HR, and
-// sleep, each graded against the user's OWN baseline (Whoop/Oura-style). Shown as
-// a colored ring with the contributing parts and any sleep-debt / training-load
-// flags beneath.
+// Eight Sleep is primary on Recovery card (authoritative overnight source).
+// Apple Watch is the secondary overlay so both are visible in one chart.
+const RECOVERY_METRICS: Record<string, MetricConfig> = {
+  hrv: {
+    metric: 'hrv', label: 'HRV', unit: 'ms',
+    source: 'eight_sleep', sourceLabel: 'Eight Sleep',
+    dualSource: { source: 'apple_health', label: 'Apple Watch', color: '#635BFF' },
+    formatValue: v => `${Math.round(v)}`,
+  },
+  resting_hr: {
+    metric: 'resting_hr', label: 'Resting HR', unit: 'bpm',
+    source: 'eight_sleep', sourceLabel: 'Eight Sleep',
+    dualSource: { source: 'apple_health', label: 'Apple Watch', color: '#635BFF' },
+    formatValue: v => `${Math.round(v)}`,
+    lowerIsBetter: true,
+  },
+};
+
 function formatBuiltAt(iso: string | undefined): string | null {
   if (!iso) return null;
   const d = new Date(iso);
@@ -37,12 +53,10 @@ function formatBuiltAt(iso: string | undefined): string | null {
 export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
+  const [selected, setSelected] = useState<MetricConfig | null>(null);
 
   if (!recovery || recovery.score == null) return null;
 
-  // Only the three known bands get a status color/label; an unknown/missing band
-  // is shown neutral grey rather than falling through to red "Low" (which would
-  // be a false alarm on a valid score with no band).
   const bandColor =
     recovery.band === 'green' ? colors.green
       : recovery.band === 'yellow' ? colors.yellow
@@ -64,13 +78,9 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
           <Text style={[styles.scoreUnit, { color: c.subtext }]}>/ 100</Text>
         </View>
         <View style={styles.scoreMeta}>
-          <Text style={[styles.band, { color: bandColor }]}>
-            {bandLabel}
-          </Text>
+          <Text style={[styles.band, { color: bandColor }]}>{bandLabel}</Text>
           {recovery.detail ? (
-            <Text style={[styles.detail, { color: c.subtext }]}>
-              {recovery.detail}
-            </Text>
+            <Text style={[styles.detail, { color: c.subtext }]}>{recovery.detail}</Text>
           ) : null}
         </View>
       </View>
@@ -95,23 +105,29 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
         </Text>
       )}
 
-      {/* Raw sensor readings — the actual ms/bpm values, separate from the baseline percentiles */}
+      {/* Raw sensor readings — tappable to open trend charts */}
       {(recovery.rawHrv != null || recovery.rawRhr != null) && (
         <View style={[styles.rawRow, { borderTopColor: c.border }]}>
           {recovery.rawHrv != null && (
-            <Text style={[styles.rawItem, { color: c.subtext }]}>
-              HRV <Text style={{ color: c.text, fontWeight: '600' }}>{Math.round(recovery.rawHrv)}ms</Text>
-            </Text>
+            <TouchableOpacity onPress={() => setSelected(RECOVERY_METRICS.hrv)} activeOpacity={0.6} style={styles.rawTap}>
+              <Text style={[styles.rawItem, { color: c.subtext }]}>
+                HRV <Text style={{ color: c.text, fontWeight: '600' }}>{Math.round(recovery.rawHrv)}ms</Text>
+                <Text style={{ color: c.border }}> ›</Text>
+              </Text>
+            </TouchableOpacity>
           )}
           {recovery.rawRhr != null && (
-            <Text style={[styles.rawItem, { color: c.subtext }]}>
-              RHR <Text style={{ color: c.text, fontWeight: '600' }}>{Math.round(recovery.rawRhr)}bpm</Text>
-            </Text>
+            <TouchableOpacity onPress={() => setSelected(RECOVERY_METRICS.resting_hr)} activeOpacity={0.6} style={styles.rawTap}>
+              <Text style={[styles.rawItem, { color: c.subtext }]}>
+                RHR <Text style={{ color: c.text, fontWeight: '600' }}>{Math.round(recovery.rawRhr)}bpm</Text>
+                <Text style={{ color: c.border }}> ›</Text>
+              </Text>
+            </TouchableOpacity>
           )}
         </View>
       )}
       {(recovery.rawHrv != null || recovery.rawRhr != null) && (
-        <Text style={[styles.partsCaption, { color: c.subtext }]}>Overnight · Eight Sleep</Text>
+        <Text style={[styles.partsCaption, { color: c.subtext }]}>Overnight · Eight Sleep · tap to see trends</Text>
       )}
 
       {/* Sleep debt / consistency / training-load flags */}
@@ -130,6 +146,14 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
           ))}
         </View>
       )}
+
+      {selected && (
+        <MetricDetailSheet
+          {...selected}
+          visible
+          onClose={() => setSelected(null)}
+        />
+      )}
     </View>
   );
 }
@@ -137,26 +161,13 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
 const styles = StyleSheet.create({
   card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   scoreRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  ring: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    borderWidth: 6,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  ring: { width: 88, height: 88, borderRadius: 44, borderWidth: 6, alignItems: 'center', justifyContent: 'center' },
   score: { fontSize: 30, fontWeight: '700', letterSpacing: -1 },
   scoreUnit: { ...typography.caption, fontSize: 11, marginTop: -2 },
   scoreMeta: { flex: 1, gap: spacing.xs },
   band: { ...typography.subtitle, fontSize: 16, fontWeight: '700' },
   detail: { ...typography.caption, fontSize: 13, lineHeight: 18 },
-  parts: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    borderTopWidth: 1,
-    marginTop: spacing.md,
-    paddingTop: spacing.md,
-  },
+  parts: { flexDirection: 'row', justifyContent: 'space-around', borderTopWidth: 1, marginTop: spacing.md, paddingTop: spacing.md },
   part: { alignItems: 'center' },
   partValRow: { flexDirection: 'row', alignItems: 'baseline', gap: 2 },
   partVal: { ...typography.subtitle, fontSize: 20, fontWeight: '600' },
@@ -164,6 +175,7 @@ const styles = StyleSheet.create({
   partLabel: { ...typography.caption, fontSize: 11, marginTop: 2 },
   partsCaption: { ...typography.caption, fontSize: 11, textAlign: 'center', marginTop: spacing.xs, fontStyle: 'italic' },
   rawRow: { flexDirection: 'row', gap: spacing.lg, justifyContent: 'center', borderTopWidth: 1, marginTop: spacing.sm, paddingTop: spacing.sm },
+  rawTap: { paddingVertical: 2, paddingHorizontal: 4 },
   rawItem: { fontSize: 12 },
   flags: { borderTopWidth: 1, marginTop: spacing.md, paddingTop: spacing.sm, gap: spacing.sm },
   flagRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' },
