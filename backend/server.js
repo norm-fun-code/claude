@@ -1131,7 +1131,7 @@ app.get('/api/diag/scheduler', (req, res) => {
   const minute = Number(process.env.SCHEDULE_MINUTE) || 30;
   const checkinH = Number(process.env.CHECKIN_REMINDER_HOUR) || 15;
   const eveningH = Number(process.env.CHECKIN_EVENING_REMINDER_HOUR) || 21;
-  const habitsH = Number(process.env.HABITS_REMINDER_HOUR) || 22;
+  const habitsH = Number(process.env.HABITS_REMINDER_HOUR) || 21;
 
   const nextMs = (h, m) => {
     try { return msUntil(h, m); } catch { return null; }

@@ -300,8 +300,8 @@ function start() {
     try { await consolidate(); console.log('[scheduler] self-model consolidated'); } catch (e) { console.error('[scheduler] consolidate:', e.message); }
   });
 
-  // Evening habits reminder (10pm) — only pushes if you haven't logged habits yet.
-  const habitsHour = Number(process.env.HABITS_REMINDER_HOUR) || 22; // 10pm
+  // Evening habits reminder (9pm) — only pushes if you haven't logged habits yet.
+  const habitsHour = Number(process.env.HABITS_REMINDER_HOUR) || 21; // 9pm
   const habitsMinute = Number(process.env.HABITS_REMINDER_MINUTE) || 0;
   scheduleDaily(habitsHour, habitsMinute, () => runHabitsReminder({}));
 
