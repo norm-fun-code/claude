@@ -1875,8 +1875,9 @@ app.get('/api/debug/mtd-spend', async (req, res) => {
          FROM documents
         WHERE source = 'monarch' AND domain = 'wealth'
           AND (metadata->>'date') >= $1
+          AND (metadata->>'date') <= $2
         ORDER BY date DESC, amount ASC`,
-      [monthStart.toISOString().slice(0, 10)]
+      [monthStart.toISOString().slice(0, 10), now.toISOString().slice(0, 10)]
     );
     const byCategory = {};
     let totalIncluded = 0;
@@ -1901,7 +1902,7 @@ app.get('/api/debug/mtd-spend', async (req, res) => {
 
     // Also pull the stored metric total so we can compare the two
     const metricsStore = require('./src/store/metrics');
-    const spendingRows = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: monthStart, agg: 'sum', excludeSource: 'seed' });
+    const spendingRows = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: monthStart, to: now, agg: 'sum', excludeSource: 'seed' });
     const metricTotal = spendingRows.reduce((s, r) => s + Number(r.value || 0), 0);
 
     res.json({
@@ -2691,9 +2692,10 @@ app.get('/api/briefing', async (req, res) => {
     const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const nw = await metricsStore.latest({ domain: 'wealth', metric: 'net_worth' });
     const nwPrev = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'net_worth', from: monthAgo, to: weekAgo, agg: 'avg', excludeSource: 'seed' });
-    const spend = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: weekAgo, agg: 'sum', excludeSource: 'seed' });
-    const discretionary = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: weekAgo, agg: 'sum', excludeSource: 'seed' });
-    const income = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'income', from: weekAgo, agg: 'sum', excludeSource: 'seed' });
+    const now = new Date();
+    const spend = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: weekAgo, to: now, agg: 'sum', excludeSource: 'seed' });
+    const discretionary = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: weekAgo, to: now, agg: 'sum', excludeSource: 'seed' });
+    const income = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'income', from: weekAgo, to: now, agg: 'sum', excludeSource: 'seed' });
     if (nw || spend.length) {
       const netWorth = nw ? Number(nw.value) : null;
       const priorNw = nwPrev.length ? sum(nwPrev) / nwPrev.length : null;

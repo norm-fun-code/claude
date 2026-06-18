@@ -206,6 +206,7 @@ async function monthlyCategorySpend({ months = 4 } = {}) {
        FROM documents
       WHERE source = 'monarch'
         AND occurred_at >= date_trunc('month', now()) - ($1::int - 1) * interval '1 month'
+        AND occurred_at <= now()
         AND metadata ? 'amount'
       GROUP BY 1, 2
       HAVING SUM(CASE WHEN (metadata->>'amount')::numeric < 0
