@@ -8,13 +8,14 @@ import Animated, {
 import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, shadow } from '../theme';
 
-export type TabKey = 'today' | 'health' | 'wealth' | 'wisdom';
+export type TabKey = 'today' | 'health' | 'wealth' | 'wisdom' | 'ask';
 
 export const TABS: { key: TabKey; label: string; emoji: string; emojiActive: string }[] = [
   { key: 'today',  label: 'Today',  emoji: '☀️',  emojiActive: '🌟' },
   { key: 'health', label: 'Health', emoji: '💪',  emojiActive: '❤️' },
   { key: 'wealth', label: 'Wealth', emoji: '💰',  emojiActive: '💎' },
   { key: 'wisdom', label: 'Wisdom', emoji: '🧠',  emojiActive: '✨' },
+  { key: 'ask',    label: 'Ask',    emoji: '✦',   emojiActive: '✦' },
 ];
 
 interface Props {

@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   ScrollView,
   StyleSheet,
@@ -31,7 +31,7 @@ import { ForecastCard } from './src/components/ForecastCard';
 import { LibraryCard } from './src/components/LibraryCard';
 import { WealthCard } from './src/components/WealthCard';
 import { InsightsCard } from './src/components/InsightsCard';
-import { AskOverlay, AskOverlayHandle } from './src/components/AskOverlay';
+import { AskOverlay } from './src/components/AskOverlay';
 import { CheckinModal } from './src/components/CheckinModal';
 import { WeeklyIntentionsCard } from './src/components/WeeklyIntentionsCard';
 import { HealthCard } from './src/components/HealthCard';
@@ -41,15 +41,11 @@ import { QuoteCard } from './src/components/QuoteCard';
 import { NotionCard } from './src/components/NotionCard';
 import { AlertCard } from './src/components/AlertCard';
 import { HighlightsCard } from './src/components/HighlightsCard';
-import { MorningFocusCard } from './src/components/MorningFocusCard';
 import { BriefCard } from './src/components/BriefCard';
 import { BriefSignalsCard } from './src/components/BriefSignalsCard';
 import { TodayForecastCard } from './src/components/TodayForecastCard';
-import { CollapsibleSection } from './src/components/CollapsibleSection';
 import { ExperimentsCard } from './src/components/ExperimentsCard';
 import { CrossContextCard } from './src/components/CrossContextCard';
-import { SelfModelCard } from './src/components/SelfModelCard';
-import { SleepLogCard } from './src/components/SleepLogCard';
 import { WeeklyStateCard } from './src/components/WeeklyStateCard';
 import { CheckinHistoryCard } from './src/components/CheckinHistoryCard';
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
@@ -70,7 +66,7 @@ export default function App() {
 
   const [tab, setTab] = useState<TabKey>('today');
   const [checkinOpen, setCheckinOpen] = useState(false);
-  const askRef = useRef<AskOverlayHandle>(null);
+  const [pendingAskQ, setPendingAskQ] = useState('');
   const dailyLog = useDailyLogStatus();
   // Health tab refresh only spins on health-local fetches; other tabs include
   // briefing loading AND any async rebuild in progress.
@@ -178,7 +174,7 @@ export default function App() {
             )}
             <TouchableOpacity
               style={[styles.wealthAskBtn, { backgroundColor: c.accent }]}
-              onPress={() => askRef.current?.openWith('Walk me through my wealth dashboard and financial plan')}
+              onPress={() => { setPendingAskQ('Walk me through my wealth dashboard and financial plan'); setTab('ask'); }}
               activeOpacity={0.82}
             >
               <Text style={styles.wealthAskBtnText}>Ask about my finances</Text>
@@ -195,6 +191,8 @@ export default function App() {
             <HighlightsCard />
           </>
         );
+      case 'ask':
+        return null; // rendered outside the ScrollView below
       case 'today':
       default:
         return (
@@ -243,17 +241,6 @@ export default function App() {
                 <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />
               </AnimatedEntry>
             )}
-            {/* Sleep log */}
-            <AnimatedEntry delay={200}>
-              <SleepLogCard />
-            </AnimatedEntry>
-            {/* NormOS profile — reference/settings, keep collapsible */}
-            <AnimatedEntry delay={220}>
-              <CollapsibleSection title="NormOS profile">
-                <SelfModelCard />
-              </CollapsibleSection>
-            </AnimatedEntry>
-
             {briefing.error && !d && (
               <AnimatedEntry delay={0}>
                 <View style={[styles.errorBox, { backgroundColor: c.card }, shadow(isDark)]}>
@@ -282,70 +269,77 @@ export default function App() {
     <View style={[styles.root, { backgroundColor: c.background }]}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <SafeAreaView style={styles.safe}>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={[styles.content, { backgroundColor: c.background }]}
-        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={c.subtext} />}
-        showsVerticalScrollIndicator={false}
-      >
-        <Header date={d?.date ?? today} />
-        <AnimatedEntry key={tab} delay={0} distance={6} style={styles.titleRow}>
-          <View>
-            <Text style={[styles.tabTitle, { color: c.text }]}>{tabTitle}</Text>
-            {tabSubtitle && (
-              <Text style={[styles.builtAt, { color: c.subtext }]}>{tabSubtitle}</Text>
-            )}
-          </View>
-          {tab === 'today' ? (
-            <View style={styles.todayActions}>
-              <TouchableOpacity
-                onPress={() => setCheckinOpen(true)}
-                style={[styles.tabRefreshBtn, { borderColor: c.border, backgroundColor: c.card }]}
-              >
-                <Text style={[styles.tabRefreshTxt, { color: c.accent }]}>✓ Check in</Text>
-                {dailyLog.needsLog && (
-                  <View style={[styles.badge, { backgroundColor: c.accent, borderColor: c.background }]} />
+        {tab === 'ask' ? (
+          <AskOverlay
+            embedded
+            initialQuestion={pendingAskQ}
+            bottomInset={bottomInset}
+          />
+        ) : (
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={[styles.content, { backgroundColor: c.background }]}
+            refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={c.subtext} />}
+            showsVerticalScrollIndicator={false}
+          >
+            <Header date={d?.date ?? today} />
+            <AnimatedEntry key={tab} delay={0} distance={6} style={styles.titleRow}>
+              <View>
+                <Text style={[styles.tabTitle, { color: c.text }]}>{tabTitle}</Text>
+                {tabSubtitle && (
+                  <Text style={[styles.builtAt, { color: c.subtext }]}>{tabSubtitle}</Text>
                 )}
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={briefing.triggerRebuild}
-                disabled={briefing.rebuilding}
-                style={[styles.iconBtn, { borderColor: c.border, backgroundColor: c.card }]}
-                accessibilityLabel="Rebuild briefing"
-              >
-                {briefing.rebuilding ? (
-                  <ActivityIndicator size="small" color={c.subtext} />
-                ) : (
-                  <Text style={[styles.iconBtnTxt, { color: c.accent }]}>↻</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          ) : tabRefresh[tab] ? (
-            <TouchableOpacity
-              onPress={tabRefresh[tab]!.run}
-              disabled={tabRefresh[tab]!.busy}
-              style={[styles.tabRefreshBtn, { borderColor: c.border, backgroundColor: c.card }]}
-            >
-              {tabRefresh[tab]!.busy ? (
-                <ActivityIndicator size="small" color={c.subtext} />
-              ) : (
-                <Text style={[styles.tabRefreshTxt, { color: c.accent }]}>
-                  ↻ {tabRefresh[tab]!.label}
-                </Text>
-              )}
-            </TouchableOpacity>
-          ) : null}
-        </AnimatedEntry>
-        {renderTab()}
-        <View style={styles.footer} />
-      </ScrollView>
+              </View>
+              {tab === 'today' ? (
+                <View style={styles.todayActions}>
+                  <TouchableOpacity
+                    onPress={() => setCheckinOpen(true)}
+                    style={[styles.tabRefreshBtn, { borderColor: c.border, backgroundColor: c.card }]}
+                  >
+                    <Text style={[styles.tabRefreshTxt, { color: c.accent }]}>✓ Check in</Text>
+                    {dailyLog.needsLog && (
+                      <View style={[styles.badge, { backgroundColor: c.accent, borderColor: c.background }]} />
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={briefing.triggerRebuild}
+                    disabled={briefing.rebuilding}
+                    style={[styles.iconBtn, { borderColor: c.border, backgroundColor: c.card }]}
+                    accessibilityLabel="Rebuild briefing"
+                  >
+                    {briefing.rebuilding ? (
+                      <ActivityIndicator size="small" color={c.subtext} />
+                    ) : (
+                      <Text style={[styles.iconBtnTxt, { color: c.accent }]}>↻</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              ) : tabRefresh[tab] ? (
+                <TouchableOpacity
+                  onPress={tabRefresh[tab]!.run}
+                  disabled={tabRefresh[tab]!.busy}
+                  style={[styles.tabRefreshBtn, { borderColor: c.border, backgroundColor: c.card }]}
+                >
+                  {tabRefresh[tab]!.busy ? (
+                    <ActivityIndicator size="small" color={c.subtext} />
+                  ) : (
+                    <Text style={[styles.tabRefreshTxt, { color: c.accent }]}>
+                      ↻ {tabRefresh[tab]!.label}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              ) : null}
+            </AnimatedEntry>
+            {renderTab()}
+            <View style={styles.footer} />
+          </ScrollView>
+        )}
       </SafeAreaView>
 
       <CheckinModal
         visible={checkinOpen}
         onClose={() => { setCheckinOpen(false); dailyLog.refresh(); }}
       />
-      <AskOverlay ref={askRef} bottomInset={bottomInset} />
       <TabBar active={tab} onChange={setTab} bottomInset={bottomInset} />
     </View>
   );

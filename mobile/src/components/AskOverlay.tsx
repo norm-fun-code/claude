@@ -32,6 +32,10 @@ export interface AskOverlayHandle {
 interface Props {
   /** Home-indicator height, so the launcher floats above the flush tab bar. */
   bottomInset?: number;
+  /** Render as a full-screen tab (no FAB, no Modal wrapper, always visible). */
+  embedded?: boolean;
+  /** Pre-fill the question input when navigating here programmatically. */
+  initialQuestion?: string;
 }
 
 const FALLBACK_SUGGESTIONS = [
@@ -144,7 +148,7 @@ function fmtDate(iso: string | null): string {
 // Global "Ask NormOS" command bar: a floating button on every tab that opens a
 // full conversation sheet. Save the current thread to the sidebar, browse saved
 // ones, resume, or delete — all backed by the persistent server history.
-export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverlay({ bottomInset = 0 }, ref) {
+export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverlay({ bottomInset = 0, embedded = false, initialQuestion }, ref) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [open, setOpen] = useState(false);
@@ -170,6 +174,11 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
     },
   }));
 
+  // In embedded mode, pre-fill when a question is pushed from outside (e.g. Wealth tab button).
+  useEffect(() => {
+    if (embedded && initialQuestion) setQuestion(initialQuestion);
+  }, [embedded, initialQuestion]);
+
   useEffect(() => {
     const showEv = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEv = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
@@ -178,9 +187,9 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
     return () => { show.remove(); hide.remove(); };
   }, []);
 
-  // Load snapshot (for dynamic suggestions) and saved conversations when the overlay opens.
+  // Load snapshot + conversations when the overlay opens (or on mount if embedded).
   useEffect(() => {
-    if (!open) return;
+    if (!open && !embedded) return;
     loadConversations();
     (async () => {
       try {
@@ -188,7 +197,7 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
         if (res.ok) { const j = await res.json(); setSnapshot(j.snapshot ?? null); }
       } catch {}
     })();
-  }, [open]);
+  }, [open, embedded]);
 
   useEffect(() => {
     if (open && view === 'chat') requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
@@ -262,40 +271,28 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
   const md = markdownStyles(c);
   const empty = messages.length === 0;
 
-  return (
-    <>
-      <Pressable
-        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setView('chat'); setOpen(true); }}
-        onPressIn={() => { fabScale.value = withSpring(0.91, { damping: 12, stiffness: 400 }); }}
-        onPressOut={() => { fabScale.value = withSpring(1, { damping: 10, stiffness: 300 }); }}
-        style={[styles.fabWrap, { bottom: bottomInset + 70 }]}
-        accessibilityLabel="Ask NormOS"
-        accessibilityRole="button"
-      >
-        <Animated.View style={[styles.fab, { backgroundColor: c.accent }, shadow(isDark, 'bar'), fabAnimStyle]}>
-          <Text style={styles.fabIcon}>✦</Text>
-          <Text style={styles.fabText}>Ask</Text>
-        </Animated.View>
-      </Pressable>
-
-      <Modal visible={open} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setOpen(false)}>
-        <View style={[styles.sheet, { backgroundColor: c.background, paddingBottom: kbHeight }]}>
-          {/* Header */}
-          <View style={[styles.header, { borderBottomColor: c.border }]}>
-            {view === 'history' ? (
-              <Pressable onPress={() => setView('chat')} hitSlop={8}>
-                <Text style={[styles.headerBtn, { color: c.accent }]}>‹ Back</Text>
-              </Pressable>
-            ) : (
-              <Pressable onPress={showHistory} hitSlop={8}>
-                <Text style={[styles.headerBtn, { color: c.accent }]}>Saved</Text>
-              </Pressable>
-            )}
-            <Text style={[styles.title, { color: c.text }]}>{view === 'history' ? 'Saved' : 'Ask NormOS'}</Text>
-            <Pressable onPress={() => setOpen(false)} hitSlop={8}>
-              <Text style={[styles.headerBtn, { color: c.accent }]}>Done</Text>
-            </Pressable>
-          </View>
+  const chatSheet = (
+    <View style={[styles.sheet, { backgroundColor: c.background, paddingBottom: kbHeight }]}>
+      {/* Header */}
+      <View style={[styles.header, { borderBottomColor: c.border }]}>
+        {view === 'history' ? (
+          <Pressable onPress={() => setView('chat')} hitSlop={8}>
+            <Text style={[styles.headerBtn, { color: c.accent }]}>‹ Back</Text>
+          </Pressable>
+        ) : (
+          <Pressable onPress={showHistory} hitSlop={8}>
+            <Text style={[styles.headerBtn, { color: c.accent }]}>Saved</Text>
+          </Pressable>
+        )}
+        <Text style={[styles.title, { color: c.text }]}>{view === 'history' ? 'Saved' : 'Ask NormOS'}</Text>
+        {embedded ? (
+          <View style={{ width: 44 }} />
+        ) : (
+          <Pressable onPress={() => setOpen(false)} hitSlop={8}>
+            <Text style={[styles.headerBtn, { color: c.accent }]}>Done</Text>
+          </Pressable>
+        )}
+      </View>
 
           {view === 'history' ? (
             <ScrollView style={styles.flex} contentContainerStyle={styles.threadContent} keyboardShouldPersistTaps="handled">
@@ -500,6 +497,27 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
             </>
           )}
         </View>
+  );
+
+  if (embedded) return chatSheet;
+
+  return (
+    <>
+      <Pressable
+        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setView('chat'); setOpen(true); }}
+        onPressIn={() => { fabScale.value = withSpring(0.91, { damping: 12, stiffness: 400 }); }}
+        onPressOut={() => { fabScale.value = withSpring(1, { damping: 10, stiffness: 300 }); }}
+        style={[styles.fabWrap, { bottom: bottomInset + 70 }]}
+        accessibilityLabel="Ask NormOS"
+        accessibilityRole="button"
+      >
+        <Animated.View style={[styles.fab, { backgroundColor: c.accent }, shadow(isDark, 'bar'), fabAnimStyle]}>
+          <Text style={styles.fabIcon}>✦</Text>
+          <Text style={styles.fabText}>Ask</Text>
+        </Animated.View>
+      </Pressable>
+      <Modal visible={open} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setOpen(false)}>
+        {chatSheet}
       </Modal>
     </>
   );
