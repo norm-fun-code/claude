@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Cohen Family — Interactive Financial Planner v5</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <script src="/model.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -1134,15 +1135,34 @@ function renderPortfolioTab(R,P){
   const periods=['1W','1M','3M','YTD','1Y'];
   const periodBtns=periods.map(p=>`<button onclick="loadMonarchInvestments('${p}')" style="font-size:9.5px;padding:3px 9px;border-radius:4px;border:1px solid ${_investPeriod===p?'var(--accent)':'var(--bd)'};background:${_investPeriod===p?'var(--accent)':'var(--s1)'};color:${_investPeriod===p?'#fff':'var(--t2)'};cursor:pointer;font-family:inherit;font-weight:${_investPeriod===p?600:400}">${p}</button>`).join('');
 
-  // Donut data — top 9 + Other
-  const top9=holdings.slice(0,9);
-  const otherVal=holdings.slice(9).reduce((s,h)=>s+h.value,0);
-  const donutLabels=[...top9.map(h=>h.ticker),(otherVal>0?'Other':'')].filter(Boolean);
-  const donutData=[...top9.map(h=>h.value),(otherVal>0?otherVal:null)].filter(v=>v!=null);
+  // Stripe account from Monarch accounts list
+  const stripeAcct=monarchAccounts.find(a=>a.name.toLowerCase().includes('stripe'));
+  const stripeBalance=stripeAcct&&stripeAcct.balance>0?stripeAcct.balance:0;
+
+  // Donut data — top 8 holdings + Stripe (if present) + Other
+  const maxHoldings=stripeBalance>0?8:9;
+  const top=holdings.slice(0,maxHoldings);
+  const otherVal=holdings.slice(maxHoldings).reduce((s,h)=>s+h.value,0);
+  const donutTotal=totalVal+(stripeBalance||0);
+  const donutLabels=[
+    ...top.map(h=>h.ticker),
+    ...(stripeBalance>0?['Stripe']:[]),
+    ...(otherVal>0?['Other']:[]),
+  ];
+  const donutData=[
+    ...top.map(h=>h.value),
+    ...(stripeBalance>0?[stripeBalance]:[]),
+    ...(otherVal>0?[otherVal]:[]),
+  ];
   const donutColors=[
     '#635bff','#0073e6','#1a8754','#bf6900','#cd3d64','#0891b2','#7c3aed','#059669','#d97706',
-    '#94a3b8',
+    '#a855f7','#94a3b8',
   ];
+  // Stripe always gets its own distinct purple
+  if(stripeBalance>0){
+    const stripeIdx=donutLabels.indexOf('Stripe');
+    if(stripeIdx>=0)donutColors[stripeIdx]='#6772e5';
+  }
 
   function colorPct(v){return v>0?'var(--g)':v<0?'var(--r)':'var(--t3)';}
   function signFmt(v){const s=v>=0?'+':'';return s+fmt(v);}
@@ -1230,6 +1250,60 @@ function renderPortfolioTab(R,P){
   </div>
   <div style="font-size:9px;color:var(--t3);padding:0 2px">Holdings sourced from Monarch via GetInvestments. Period: ${inv.periodStart} → ${inv.periodEnd}. Values are Monarch's last-synced prices.</div>
 
+  ${(()=>{
+    // ── Portfolio analysis blurb ─────────────────────────────────────────────
+    const observations=[];
+    const flags=[];
+
+    // Concentration
+    const topH=holdings[0];
+    const top3Val=holdings.slice(0,3).reduce((s,h)=>s+h.value,0);
+    const top3Pct=totalVal>0?top3Val/totalVal*100:0;
+    const topPct=totalVal>0&&topH?(topH.value/totalVal*100):0;
+    if(topPct>25)flags.push({c:'var(--a)',t:`⚠ ${topH.ticker} is ${topPct.toFixed(0)}% of portfolio — heavy single-stock concentration.`});
+    else observations.push({c:'var(--g)',t:`✓ Top holding ${topH?.ticker||'—'} is ${topPct.toFixed(0)}% — concentration is manageable.`});
+
+    if(top3Pct>60)flags.push({c:'var(--a)',t:`Top 3 positions (${holdings.slice(0,3).map(h=>h.ticker).join(', ')}) = ${top3Pct.toFixed(0)}% of portfolio.`});
+
+    // Cash drag
+    const cashHoldings=holdings.filter(h=>h.securityType==='cash');
+    const cashVal=cashHoldings.reduce((s,h)=>s+h.value,0);
+    const cashPct=totalVal>0?cashVal/totalVal*100:0;
+    if(cashPct>12)flags.push({c:'var(--r)',t:`Cash is ${cashPct.toFixed(0)}% of investment portfolio — potential drag on long-run returns.`});
+    else if(cashPct>0)observations.push({c:'var(--t2)',t:`Cash position: ${cashPct.toFixed(0)}% — within normal range.`});
+
+    // Stripe account
+    if(stripeBalance>0){
+      const stripePct=donutTotal>0?stripeBalance/donutTotal*100:0;
+      observations.push({c:'#6772e5',t:`Stripe account: ${fmt(stripeBalance)} (${stripePct.toFixed(1)}% of total including accounts).`});
+    }
+
+    // Period performance
+    const periodPct=inv.periodChangePct||0;
+    if(Math.abs(periodPct)>5)observations.push({c:colorPct(periodPct),t:`${periodPct>0?'Strong':'Weak'} period: ${signPct(periodPct)} over ${_investPeriod}. ${periodPct>0?'Broad momentum intact.':'Monitor for continuation.'}`});
+
+    // All-time
+    const allPct=inv.allTimePct||0;
+    if(allPct>0)observations.push({c:'var(--g)',t:`All-time return: ${signPct(allPct)} — portfolio is in the green overall.`});
+    else if(allPct<0)flags.push({c:'var(--r)',t:`Portfolio is down ${signPct(allPct)} all-time — cost-basis is above current value.`});
+
+    // Type diversity
+    const types=[...new Set(holdings.filter(h=>h.securityType!=='cash').map(h=>h.securityType))];
+    const typeNames=types.map(t=>({equity:'Equities',etf:'ETFs',mutual_fund:'Funds',bond:'Bonds',crypto:'Crypto',option:'Options'}[t]||t));
+    if(types.length>=2)observations.push({c:'var(--t2)',t:`Spread across ${typeNames.join(', ')} — ${holdings.length} total positions.`});
+
+    const allItems=[...flags,...observations];
+    if(allItems.length===0)return'';
+    return`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:10px">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:10px">Portfolio Analysis</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${allItems.map(o=>`<div style="display:flex;align-items:flex-start;gap:8px;padding:7px 10px;background:var(--s2);border-radius:7px">
+          <div style="font-size:11px;color:${o.c};line-height:1.45">${o.t}</div>
+        </div>`).join('')}
+      </div>
+    </div>`;
+  })()}
+
   ${renderMonarchAccountsCard()}
   </div>`;
 
@@ -1239,12 +1313,32 @@ function renderPortfolioTab(R,P){
       type:'doughnut',
       data:{labels:donutLabels,datasets:[{data:donutData,backgroundColor:donutColors.slice(0,donutData.length),borderWidth:0,hoverOffset:4}]},
       options:{
-        responsive:true,maintainAspectRatio:false,cutout:'62%',
+        responsive:true,maintainAspectRatio:false,cutout:'58%',
         plugins:{
-          legend:{position:'bottom',labels:{font:{size:9,family:"'Inter',sans-serif"},color:'#425466',padding:8,boxWidth:8}},
-          tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${fmt(ctx.raw)} (${totalVal>0?(ctx.raw/totalVal*100).toFixed(1):'0'}%)`}}
+          legend:{position:'bottom',labels:{
+            font:{size:9,family:"'Inter',sans-serif"},color:'#425466',padding:8,boxWidth:8,
+            generateLabels:chart=>{
+              const ds=chart.data.datasets[0];
+              return chart.data.labels.map((lbl,i)=>{
+                const val=ds.data[i];
+                const pct=donutTotal>0?(val/donutTotal*100).toFixed(1):'0';
+                return{text:`${lbl} ${pct}%`,fillStyle:ds.backgroundColor[i],strokeStyle:'transparent',hidden:false,index:i};
+              });
+            }
+          }},
+          tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${fmt(ctx.raw)} (${donutTotal>0?(ctx.raw/donutTotal*100).toFixed(1):'0'}%)`}},
+          datalabels:{
+            color:'#fff',
+            font:{size:9,weight:'bold',family:"'Inter',sans-serif"},
+            formatter:(val,ctx)=>{
+              const pct=donutTotal>0?val/donutTotal*100:0;
+              return pct>=5?pct.toFixed(0)+'%':'';
+            },
+            anchor:'center',align:'center',
+          }
         }
-      }
+      },
+      plugins:[ChartDataLabels]
     });
   }
 }
