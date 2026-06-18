@@ -14,7 +14,7 @@ export function QuoteCard({ quote, insight, title = 'Quote + Insight', emoji = '
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
-  if (!quote && !insight) return null;
+  if (!quote || !insight) return null;
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>

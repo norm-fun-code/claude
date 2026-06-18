@@ -14,7 +14,7 @@ export function NotionCard({ pageTitle, notionText, quote, insight }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
-  if (!notionText && !insight) return null;
+  if (!notionText || !insight) return null;
 
   // Prefer the LLM-selected passage (a complete thought that matches the insight);
   // fall back to a first-line excerpt only if one wasn't provided.

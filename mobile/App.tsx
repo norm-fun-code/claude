@@ -196,9 +196,9 @@ export default function App() {
       case 'wisdom':
         return (
           <>
-            {(d?.quote || d?.quoteInsight) && <QuoteCard quote={d!.quote} insight={d!.quoteInsight} />}
-            {(d?.notionText || d?.notionInsight) && (
-              <NotionCard pageTitle={d?.notionPageTitle ?? ''} notionText={d!.notionText} quote={d?.notionQuote} insight={d!.notionInsight} />
+            {d?.quote && d?.quoteInsight && <QuoteCard quote={d.quote} insight={d.quoteInsight} />}
+            {d?.notionText && d?.notionInsight && (
+              <NotionCard pageTitle={d?.notionPageTitle ?? ''} notionText={d.notionText} quote={d?.notionQuote} insight={d.notionInsight} />
             )}
             <HighlightsCard />
           </>
