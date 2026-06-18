@@ -315,6 +315,51 @@ function computeCorrelations(seriesByKey, opts = {}) {
 }
 
 /**
+ * Detect a persistent gap between mood and energy over the last 7 days.
+ * High mood + low energy is the "running on adrenaline" pattern —
+ * you feel good but the body is depleted. Surface it so the user doesn't
+ * mistake motivation for physical readiness.
+ */
+function computeWellbeingGap(seriesByKey) {
+  const moodSeries = seriesByKey['wellbeing:mood'];
+  const energySeries = seriesByKey['wellbeing:energy'];
+  if (!moodSeries || !energySeries) return [];
+
+  const cutoff = Date.now() - 7 * 86400000;
+  const logged = (series) =>
+    series
+      .filter((r) => new Date(r.day).getTime() >= cutoff && Number(r.value) > 0)
+      .map((r) => Number(r.value));
+
+  const moodVals = logged(moodSeries);
+  const energyVals = logged(energySeries);
+  if (moodVals.length < 4 || energyVals.length < 4) return [];
+
+  const mean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
+  const r1 = (n) => Math.round(n * 10) / 10;
+  const avgMood = mean(moodVals);
+  const avgEnergy = mean(energyVals);
+  const gap = avgMood - avgEnergy;
+  if (gap < 0.75) return [];
+
+  return [{
+    type: 'wellbeing_gap',
+    title: `Energy (${r1(avgEnergy)}/5) running ${r1(gap)} pts below mood (${r1(avgMood)}/5)`,
+    detail: `Over the last 7 days, mood averaged ${r1(avgMood)}/5 while energy averaged ${r1(avgEnergy)}/5 — a ${r1(gap)}-point gap. High mood with low energy often means running on drive rather than physical reserves. Sleep quality and movement are the fastest levers.`,
+    domains: ['wellbeing'],
+    confidence: Math.min(1, gap / 2),
+    evidence: {
+      auto: true,
+      kind: 'wellbeing_gap',
+      avgMood: r1(avgMood),
+      avgEnergy: r1(avgEnergy),
+      gap: r1(gap),
+      n: Math.min(moodVals.length, energyVals.length),
+    },
+  }];
+}
+
+/**
  * Pure: positive habit consistency findings. Surfaces when a binary habit has
  * been maintained at ≥80% adherence over the last 14 logged days — the "this is
  * sticking" signal that the trend engine misses because there's no *change* to
@@ -963,6 +1008,7 @@ async function analyze(opts = {}) {
   const sleepImpact = computeSleepImpact(seriesByKey);
   const activityTypeByDay = await loadActivityTypeByDay(seriesByKey, from);
   const activityImpact = computeActivityImpact(seriesByKey, activityTypeByDay);
+  const wellbeingGap = computeWellbeingGap(seriesByKey);
 
   // Rank the highest-leverage actions from the findings + any off-track goals.
   const latestByKey = {};
@@ -989,7 +1035,7 @@ async function analyze(opts = {}) {
   // Goal achievement-probability forecasts from the same loaded series.
   const forecasts = computeForecasts(goals, seriesByKey);
 
-  const all = [...trends, ...correlations, ...anomalies, ...composites, ...actions, ...forecasts, ...habitConsistency, ...habitHealthSplits, ...sleepImpact, ...activityImpact, ...daytimeCardio];
+  const all = [...trends, ...correlations, ...anomalies, ...composites, ...actions, ...forecasts, ...habitConsistency, ...habitHealthSplits, ...sleepImpact, ...activityImpact, ...daytimeCardio, ...wellbeingGap];
   const windowStart = from;
   const windowEnd = new Date();
 
@@ -1000,7 +1046,7 @@ async function analyze(opts = {}) {
   const { withTransaction } = require('../db');
   await withTransaction(async (client) => {
     const tx = (text, params) => client.query(text, params);
-    await findingsStore.supersedeAuto(['trend', 'correlation', 'anomaly', 'leverage', 'forecast', 'habit_consistency', 'habit_split', 'sleep_impact', 'activity_impact', 'daytime_cardio', ...COMPOSITE_TYPES], tx);
+    await findingsStore.supersedeAuto(['trend', 'correlation', 'anomaly', 'leverage', 'forecast', 'habit_consistency', 'habit_split', 'sleep_impact', 'activity_impact', 'daytime_cardio', 'wellbeing_gap', ...COMPOSITE_TYPES], tx);
     for (const f of all) {
       await findingsStore.createFinding({ ...f, windowStart, windowEnd }, tx);
     }
@@ -1022,7 +1068,7 @@ async function analyze(opts = {}) {
   };
 }
 
-module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeHabitHealthSplits, computeSleepImpact, computeActivityImpact, computeDaytimeCardio, DEFAULTS, CHECKIN_LEVERS };
+module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeHabitHealthSplits, computeSleepImpact, computeActivityImpact, computeDaytimeCardio, computeWellbeingGap, DEFAULTS, CHECKIN_LEVERS };
 
 // CLI entrypoint
 if (require.main === module) {

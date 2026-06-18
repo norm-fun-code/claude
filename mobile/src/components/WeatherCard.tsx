@@ -114,24 +114,6 @@ export function WeatherCard({ weather: seed }: Props) {
         </View>
       </View>
 
-      {/* Sunrise / Sunset */}
-      {(weather.sunrise || weather.sunset) && (
-        <View style={styles.sunRow}>
-          {weather.sunrise && (
-            <View style={styles.sunItem}>
-              <Text style={styles.sunEmoji}>🌅</Text>
-              <Text style={[styles.sunTime, { color: c.subtext }]}>{weather.sunrise}</Text>
-            </View>
-          )}
-          {weather.sunset && (
-            <View style={styles.sunItem}>
-              <Text style={styles.sunEmoji}>🌇</Text>
-              <Text style={[styles.sunTime, { color: c.subtext }]}>{weather.sunset}</Text>
-            </View>
-          )}
-        </View>
-      )}
-
       {/* Outfit recommendation */}
       {(() => {
         const { outfit, note } = getOutfitAdvice(weather.temp, weather.condition);

@@ -170,7 +170,7 @@ export default function App() {
       const ageH = Math.floor(ageMin / 60);
       label = ageH < 24 ? `Built ${ageH}h ago` : `Built ${Math.floor(ageH / 24)}d ago`;
     }
-    return d.stale ? `${label} · stale` : label;
+    return label;
   }, [tab, health.lastFetched, d?.builtAt, d?.stale, briefing.rebuilding]);
 
   const renderTab = () => {
@@ -244,40 +244,45 @@ export default function App() {
       default:
         return (
           <>
+            {/* Recovery grade first — most decision-relevant signal of the day */}
+            <AnimatedEntry delay={0}>
+              <TodayForecastCard forecast={d?.todayForecast} />
+            </AnimatedEntry>
             {d?.signals && d.signals.length > 0 && (
-              <AnimatedEntry delay={0}>
+              <AnimatedEntry delay={30}>
                 <BriefSignalsCard signals={d.signals} />
               </AnimatedEntry>
             )}
-            <AnimatedEntry delay={30}>
+            <AnimatedEntry delay={60}>
               <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
             </AnimatedEntry>
-            <AnimatedEntry delay={110}>
-              <TodayForecastCard forecast={d?.todayForecast} />
-            </AnimatedEntry>
-            <AnimatedEntry delay={160}>
-              <WeatherCard weather={d?.weather ?? null} />
-            </AnimatedEntry>
+            {/* Cross-domain insights before weather — they're more actionable */}
             {d?.crossContextInsights && d.crossContextInsights.length > 0 && (
-              <AnimatedEntry delay={200}>
+              <AnimatedEntry delay={120}>
                 <CrossContextCard insights={d.crossContextInsights} />
               </AnimatedEntry>
             )}
-            <AnimatedEntry delay={230}>
+            {/* Check-in trends visible without scrolling into the collapsible */}
+            <AnimatedEntry delay={160}>
+              <CheckinHistoryCard insights={(d?.insights ?? []).filter((i) => {
+                if (i.type === 'habit_consistency') return true;
+                const nonHealth = new Set(['habits', 'wellbeing']);
+                return i.domains?.every((dom: string) => nonHealth.has(dom)) ?? false;
+              })} />
+            </AnimatedEntry>
+            <AnimatedEntry delay={200}>
+              <WeatherCard weather={d?.weather ?? null} />
+            </AnimatedEntry>
+            <AnimatedEntry delay={240}>
               <CollapsibleSection title="Today's Full Briefing">
                 {d?.alerts && d.alerts.length > 0 && <AlertCard alerts={d.alerts} />}
                 <WeeklyIntentionsCard review={d?.weeklyReview ?? null} actions={d?.leverageActions ?? []} />
                 <CalendarCard events={d?.calendar ?? []} workBusy={d?.workBusy ?? []} />
-                <CheckinHistoryCard insights={(d?.insights ?? []).filter((i) => {
-                  if (i.type === 'habit_consistency') return true;
-                  const nonHealth = new Set(['habits', 'wellbeing']);
-                  return i.domains?.every((dom: string) => nonHealth.has(dom)) ?? false;
-                })} />
                 {d && <ForecastCard forecasts={(d.forecasts ?? []).filter((f) => f.status === 'off_track' || f.status === 'at_risk')} />}
                 <SleepLogCard />
               </CollapsibleSection>
             </AnimatedEntry>
-            <AnimatedEntry delay={265}>
+            <AnimatedEntry delay={275}>
               <CollapsibleSection title="NormOS profile">
                 <SelfModelCard />
               </CollapsibleSection>
