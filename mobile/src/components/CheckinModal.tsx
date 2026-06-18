@@ -91,6 +91,12 @@ export function CheckinModal({ visible, onClose }: Props) {
 
   useEffect(() => {
     if (!visible) return;
+    // Reset on every open so reopening mid-flow starts clean; fetchToday will
+    // restore today's scores and jump to step 3 if already fully logged.
+    setStep(0);
+    setScores({ energy: null, mood: null, focus: null });
+    setNote(''); noteRef.current = '';
+    setSaved(false); setFailed(false);
     fetchToday();
   }, [visible]);
 

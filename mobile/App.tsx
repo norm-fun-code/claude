@@ -347,7 +347,14 @@ export default function App() {
         visible={checkinOpen}
         onClose={() => { setCheckinOpen(false); dailyLog.refresh(); }}
       />
-      <TabBar active={tab} onChange={setTab} bottomInset={bottomInset} />
+      <TabBar
+        active={tab}
+        onChange={(key) => {
+          if (tab === 'ask' && key !== 'ask') setPendingAskQ('');
+          setTab(key);
+        }}
+        bottomInset={bottomInset}
+      />
     </View>
   );
 }
