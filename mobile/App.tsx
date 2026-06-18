@@ -36,14 +36,9 @@ import { CheckinModal } from './src/components/CheckinModal';
 import { WeeklyIntentionsCard } from './src/components/WeeklyIntentionsCard';
 import { HealthCard } from './src/components/HealthCard';
 import { RecoveryCard } from './src/components/RecoveryCard';
-import { WeatherCard } from './src/components/WeatherCard';
 import { WorkoutsPanel } from './src/components/WorkoutsPanel';
-import { CalendarCard } from './src/components/CalendarCard';
 import { QuoteCard } from './src/components/QuoteCard';
 import { NotionCard } from './src/components/NotionCard';
-import { MarketsCard } from './src/components/MarketsCard';
-import { IndicesCard } from './src/components/IndicesCard';
-import { AdvisorCard } from './src/components/AdvisorCard';
 import { AlertCard } from './src/components/AlertCard';
 import { HighlightsCard } from './src/components/HighlightsCard';
 import { MorningFocusCard } from './src/components/MorningFocusCard';
@@ -51,7 +46,6 @@ import { BriefCard } from './src/components/BriefCard';
 import { BriefSignalsCard } from './src/components/BriefSignalsCard';
 import { TodayForecastCard } from './src/components/TodayForecastCard';
 import { CollapsibleSection } from './src/components/CollapsibleSection';
-import { HealthBackfillCard } from './src/components/HealthBackfillCard';
 import { ExperimentsCard } from './src/components/ExperimentsCard';
 import { CrossContextCard } from './src/components/CrossContextCard';
 import { SelfModelCard } from './src/components/SelfModelCard';
@@ -59,7 +53,6 @@ import { SleepLogCard } from './src/components/SleepLogCard';
 import { WeeklyStateCard } from './src/components/WeeklyStateCard';
 import { CheckinHistoryCard } from './src/components/CheckinHistoryCard';
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
-import { ANALYZE_URL, authHeaders, fetchWithTimeout } from './src/config';
 
 export default function App() {
   const isDark = useColorScheme() === 'dark';
@@ -78,35 +71,12 @@ export default function App() {
   const [tab, setTab] = useState<TabKey>('today');
   const [checkinOpen, setCheckinOpen] = useState(false);
   const dailyLog = useDailyLogStatus();
-  const [analyzingInsights, setAnalyzingInsights] = useState(false);
-  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   // Health tab refresh only spins on health-local fetches; other tabs include
   // briefing loading AND any async rebuild in progress.
   const isRefreshing =
     tab === 'health'
       ? health.loading || liveRecovery.loading
       : briefing.loading || briefing.rebuilding || health.loading;
-
-  const refreshInsights = useCallback(async () => {
-    if (analyzingInsights || briefing.rebuilding) return;
-    setAnalyzingInsights(true);
-    setAnalyzeError(null);
-    try {
-      const res = await fetchWithTimeout(ANALYZE_URL, { method: 'POST', headers: authHeaders() }, 60000);
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        setAnalyzeError(body.error ?? `Server error ${res.status}`);
-      } else {
-        // Rebuild the briefing so the new findings appear — this is non-blocking,
-        // the `rebuilding` flag shows progress while the 60-90s rebuild runs.
-        briefing.triggerRebuild();
-      }
-    } catch (err: unknown) {
-      setAnalyzeError(err instanceof Error ? err.message : 'Network error');
-    } finally {
-      setAnalyzingInsights(false);
-    }
-  }, [analyzingInsights, briefing]);
 
   // Pull-to-refresh is always CHEAP: device HealthKit (instant) + the warm
   // server cache (instant) + the fast recovery endpoint on Health. Nothing
@@ -195,26 +165,6 @@ export default function App() {
             <ExperimentsCard />
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} recoveryScore={liveRecovery.recovery?.score ?? null} />
             <ForecastCard forecasts={d?.forecasts ?? []} />
-            {analyzeError && (
-              <View style={[styles.errorBox, { backgroundColor: c.card }, shadow(isDark)]}>
-                <Text style={[styles.errorTitle, { color: c.text }]}>Analysis failed</Text>
-                <Text style={[styles.errorDetail, { color: c.subtext }]}>{analyzeError}</Text>
-              </View>
-            )}
-            <TouchableOpacity
-              onPress={refreshInsights}
-              disabled={analyzingInsights || briefing.rebuilding}
-              style={[styles.analyzeBtn, { borderColor: c.border, backgroundColor: c.card }]}
-            >
-              {analyzingInsights || briefing.rebuilding ? (
-                <ActivityIndicator size="small" color={c.subtext} />
-              ) : (
-                <Text style={[styles.analyzeBtnText, { color: c.accent }]}>↻ Re-run analysis</Text>
-              )}
-            </TouchableOpacity>
-            <CollapsibleSection title="Sync Apple Health history">
-              <HealthBackfillCard />
-            </CollapsibleSection>
           </>
         );
       case 'wealth':
@@ -222,9 +172,6 @@ export default function App() {
           <>
             <WealthCard wealth={d?.wealth ?? null} />
             <InsightsCard insights={d?.wealthInsights ?? []} />
-            <AdvisorCard />
-            <IndicesCard />
-            <MarketsCard markets={d?.markets} />
             {!d?.wealth && (
               <EmptyNote c={c} text="Connect Monarch (your monthly export) to see net worth, spending, and cashflow here." />
             )}
@@ -278,17 +225,9 @@ export default function App() {
                 return i.domains?.every((dom: string) => nonHealth.has(dom)) ?? false;
               })} />
             </AnimatedEntry>
-            {/* Weather */}
-            <AnimatedEntry delay={120}>
-              <WeatherCard weather={d?.weather ?? null} />
-            </AnimatedEntry>
             {/* Weekly review + intentions */}
-            <AnimatedEntry delay={140}>
+            <AnimatedEntry delay={120}>
               <WeeklyIntentionsCard review={d?.weeklyReview ?? null} actions={d?.leverageActions ?? []} />
-            </AnimatedEntry>
-            {/* Calendar */}
-            <AnimatedEntry delay={160}>
-              <CalendarCard events={d?.calendar ?? []} workBusy={d?.workBusy ?? []} />
             </AnimatedEntry>
             {/* Off-track forecasts */}
             {d && (d.forecasts ?? []).some((f) => f.status === 'off_track' || f.status === 'at_risk') && (
@@ -467,13 +406,5 @@ const styles = StyleSheet.create({
   loadingText: { fontSize: 14, fontStyle: 'italic' },
   empty: { borderRadius: 14, padding: spacing.lg, marginBottom: spacing.md },
   emptyText: { fontSize: 14, lineHeight: 21, fontStyle: 'italic' },
-  analyzeBtn: {
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-    alignItems: 'center',
-  },
-  analyzeBtnText: { fontSize: 13, fontWeight: '600' },
   footer: { height: spacing.lg },
 });
