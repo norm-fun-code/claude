@@ -42,6 +42,7 @@ export const MARKETS_REFRESH_URL = `${API_BASE}/api/briefing/markets`;
 export const BRIEFING_CONTEXT_URL = `${API_BASE}/api/briefing/context`;
 export const EXPERIMENTS_URL = `${API_BASE}/api/experiments`;
 export const GOALS_URL = `${API_BASE}/api/goals`;
+export const METRICS_HISTORY_URL = `${API_BASE}/api/metrics/history`;
 export const EXPERIMENT_EXTRACT_URL = `${API_BASE}/api/chat/extract-experiment`;
 export const EIGHT_SLEEP_BACKFILL_URL = `${API_BASE}/api/ingest/eight-sleep/backfill`;
 

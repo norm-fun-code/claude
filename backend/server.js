@@ -907,6 +907,27 @@ app.get('/api/metrics', async (req, res) => {
   }
 });
 
+// GET /api/metrics/history?metric=hrv&days=60
+// Returns the last N days of raw readings for a single metric, ordered oldest
+// to newest. Used by charts that need the full time-series (not aggregated).
+app.get('/api/metrics/history', async (req, res) => {
+  const { metric, days } = req.query;
+  if (!metric) return res.status(400).json({ error: 'metric is required' });
+  const numDays = Math.max(1, Number(days) || 60);
+  try {
+    const { rows } = await db.query(
+      `SELECT ts, value FROM metrics
+       WHERE metric = $1
+         AND ts >= now() - ($2 || ' days')::interval
+       ORDER BY ts ASC`,
+      [metric, numDays]
+    );
+    res.json({ rows: rows.map((r) => ({ ts: r.ts, value: Number(r.value) })) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/findings', async (req, res) => {
   try {
     res.json({ findings: await findingsStore.listFindings({ status: req.query.status }) });
