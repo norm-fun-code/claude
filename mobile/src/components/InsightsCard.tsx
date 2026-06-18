@@ -16,6 +16,7 @@ const TYPE_LABEL: Record<string, string> = {
   savings_rate: 'SAVINGS RATE',
   spending_pattern: 'SPENDING',
   over_budget: 'BUDGET',
+  under_budget: 'UNDER BUDGET',
   subscriptions: 'SUBSCRIPTIONS',
   subscription_review: 'REVIEW',
   net_worth_path: 'NET WORTH PATH',
