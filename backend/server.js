@@ -1956,6 +1956,31 @@ app.get('/api/wealth/snapshot', async (req, res) => {
   }
 });
 
+// Plan baseline for "net worth vs. plan" comparison in the Wealth tab.
+// Returns the key starting-position figures from planner_state so the mobile
+// app can show actual NW vs. where the plan said you'd start.
+app.get('/api/wealth/plan', async (req, res) => {
+  try {
+    const { buildPlanContext } = require('./src/services/financial-plan');
+    const result = await pool.query('SELECT state FROM planner_state WHERE id = 1');
+    if (!result.rows.length || !result.rows[0].state?.P) {
+      return res.json({ available: false });
+    }
+    const P = result.rows[0].state.P;
+    // startingLiquid = liquid/investable NW at plan start (2026)
+    // k401Start      = 401k balance at plan start
+    // Together these cover the trackable NW: investable + retirement
+    res.json({
+      available: true,
+      startingLiquid: P.startingLiquid ?? null,
+      k401Start: P.k401Start ?? null,
+      planYear: 2026,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/sources', async (req, res) => {
   try {
     res.json({ sources: await sourcesStore.listSources() });
