@@ -453,7 +453,7 @@ async function liveRecovery() {
   if (!hrvSeries || !hrvSeries.length) return null;
   const latestDay = new Date(hrvSeries[hrvSeries.length - 1].day);
   const daysSinceReading = (Date.now() - latestDay.getTime()) / 864e5;
-  if (daysSinceReading > 2) return null;
+  if (daysSinceReading > 1) return null;
 
   const rawHrv = latest(hrvSeries);
   const rawRhr = seriesByKey['health:resting_hr'] ? latest(seriesByKey['health:resting_hr']) : null;
