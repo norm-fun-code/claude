@@ -1965,14 +1965,31 @@ app.get('/api/wealth/plan', async (req, res) => {
     const plan = await loadPlan(); // DB-first, falls back to financial-plan.json
     if (!plan || !plan.P) return res.json({ available: false });
     const P = plan.P;
-    // startingLiquid = liquid/investable NW at plan start (2026)
-    // k401Start      = 401k balance at plan start
-    // Together these cover the trackable NW: investable + retirement
+
+    // Compute how far through the plan year we are, then pro-rate the
+    // annual liquid growth to get today's expected liquid NW (the "pace").
+    // This mirrors the Cohen Financial Planner's "Live Snapshot" calculation.
+    const planYear = 2026;
+    const yearStart = new Date(`${planYear}-01-01T00:00:00`);
+    const yearEnd   = new Date(`${planYear + 1}-01-01T00:00:00`);
+    const now       = new Date();
+    const pctYear   = Math.min(1, Math.max(0,
+      (now - yearStart) / (yearEnd - yearStart)
+    ));
+    const startingLiquid = P.startingLiquid ?? null;
+    const growth2026     = P.planLiquidGrowth2026 ?? null;
+    const planLiquidAtPace = startingLiquid != null && growth2026 != null
+      ? Math.round(startingLiquid + growth2026 * pctYear)
+      : null;
+
     res.json({
       available: true,
-      startingLiquid: P.startingLiquid ?? null,
+      startingLiquid,
       k401Start: P.k401Start ?? null,
-      planYear: 2026,
+      planLiquidGrowth2026: growth2026,
+      planLiquidAtPace,
+      pctYearElapsed: Math.round(pctYear * 100),
+      planYear,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

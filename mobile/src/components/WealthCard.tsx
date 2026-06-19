@@ -19,13 +19,16 @@ const MASK = '••••••';
 // Wealth snapshot from the canonical spine (Monarch import): net worth, this
 // week's spending, income, and net cashflow. Tap the figure to hide all amounts
 // (for when you're showing the app to someone).
-type PlanBaseline = { startingLiquid: number | null; k401Start: number | null } | null;
+type PlanData = {
+  planLiquidAtPace: number | null;
+  pctYearElapsed: number | null;
+} | null;
 
 export function WealthCard({ wealth }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [hidden, setHidden] = useState(false);
-  const [plan, setPlan] = useState<PlanBaseline>(null);
+  const [plan, setPlan] = useState<PlanData>(null);
 
   useEffect(() => {
     (async () => {
@@ -33,19 +36,18 @@ export function WealthCard({ wealth }: Props) {
         const res = await fetchWithTimeout(WEALTH_PLAN_URL, { headers: authHeaders() });
         if (!res.ok) return;
         const d = await res.json();
-        if (d.available) setPlan({ startingLiquid: d.startingLiquid, k401Start: d.k401Start });
+        if (d.available) setPlan({ planLiquidAtPace: d.planLiquidAtPace, pctYearElapsed: d.pctYearElapsed });
       } catch {}
     })();
   }, []);
 
   if (!wealth) return null;
 
-  // Plan baseline = liquid + 401k at plan start (2026)
-  const planBaseNW =
-    plan && (plan.startingLiquid != null || plan.k401Start != null)
-      ? (plan.startingLiquid ?? 0) + (plan.k401Start ?? 0)
-      : null;
-  const planDelta = planBaseNW != null && wealth.netWorth != null ? wealth.netWorth - planBaseNW : null;
+  // Plan pace: how far ahead or behind the 2026 liquid growth plan right now.
+  // planLiquidAtPace = startingLiquid + planLiquidGrowth2026 × pctYearElapsed (server-computed).
+  const planDelta = plan?.planLiquidAtPace != null && wealth.netWorth != null
+    ? wealth.netWorth - plan.planLiquidAtPace
+    : null;
 
   const up = (wealth.netWorthChange ?? 0) >= 0;
   const cashflowPositive = wealth.cashflowThisWeek >= 0;
@@ -67,7 +69,10 @@ export function WealthCard({ wealth }: Props) {
         ) : null}
         {planDelta != null && !hidden && (
           <Text style={[styles.change, { color: planDelta >= 0 ? c.green : c.red }]}>
-            {`${planDelta >= 0 ? '▲' : '▼'} ${money(Math.abs(planDelta))} vs. 2026 plan start`}
+            {`${planDelta >= 0 ? '▲' : '▼'} ${money(Math.abs(planDelta))} ${planDelta >= 0 ? 'ahead' : 'behind'} of plan pace`}
+            {plan?.pctYearElapsed != null ? (
+              <Text style={[styles.pacePct, { color: c.subtext }]}>{`  ·  ${plan.pctYearElapsed}% through 2026`}</Text>
+            ) : null}
           </Text>
         )}
       </Pressable>
@@ -120,4 +125,5 @@ const styles = StyleSheet.create({
   statValue: { ...typography.subtitle, fontWeight: '600', fontSize: 15 },
   statLabel: { ...typography.caption, fontSize: 11, marginTop: 2 },
   discretionary: { ...typography.caption, fontSize: 12, marginTop: spacing.sm, textAlign: 'center' },
+  pacePct: { fontSize: 11 },
 });
