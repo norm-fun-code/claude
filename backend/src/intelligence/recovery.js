@@ -443,7 +443,19 @@ async function liveRecovery() {
     });
     if (rows.length) seriesByKey[key] = rows;
   }
-  const rawHrv = seriesByKey['health:hrv'] ? latest(seriesByKey['health:hrv']) : null;
+
+  // Staleness guard: if the most recent Eight Sleep reading is more than 2 days
+  // old (e.g. user on vacation, device unplugged), suppress the live recovery
+  // context entirely rather than surfacing yesterday's (or last week's) score as
+  // if it reflects today. The historical series is still used for the score math
+  // but we return null so the briefing omits recovery rather than misleading.
+  const hrvSeries = seriesByKey['health:hrv'];
+  if (!hrvSeries || !hrvSeries.length) return null;
+  const latestDay = new Date(hrvSeries[hrvSeries.length - 1].day);
+  const daysSinceReading = (Date.now() - latestDay.getTime()) / 864e5;
+  if (daysSinceReading > 2) return null;
+
+  const rawHrv = latest(hrvSeries);
   const rawRhr = seriesByKey['health:resting_hr'] ? latest(seriesByKey['health:resting_hr']) : null;
 
   const rec = recoveryScore(seriesByKey);
