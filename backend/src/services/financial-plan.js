@@ -124,4 +124,4 @@ NAMED SCENARIOS IN PLAN: ${scenarioNames}`;
   }
 }
 
-module.exports = { buildPlanContext };
+module.exports = { buildPlanContext, loadPlan };

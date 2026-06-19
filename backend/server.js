@@ -1961,12 +1961,10 @@ app.get('/api/wealth/snapshot', async (req, res) => {
 // app can show actual NW vs. where the plan said you'd start.
 app.get('/api/wealth/plan', async (req, res) => {
   try {
-    const { buildPlanContext } = require('./src/services/financial-plan');
-    const result = await pool.query('SELECT state FROM planner_state WHERE id = 1');
-    if (!result.rows.length || !result.rows[0].state?.P) {
-      return res.json({ available: false });
-    }
-    const P = result.rows[0].state.P;
+    const { loadPlan } = require('./src/services/financial-plan');
+    const plan = await loadPlan(); // DB-first, falls back to financial-plan.json
+    if (!plan || !plan.P) return res.json({ available: false });
+    const P = plan.P;
     // startingLiquid = liquid/investable NW at plan start (2026)
     // k401Start      = 401k balance at plan start
     // Together these cover the trackable NW: investable + retirement
