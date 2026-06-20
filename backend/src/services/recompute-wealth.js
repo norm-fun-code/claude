@@ -27,13 +27,25 @@ async function recomputeWealthFlows() {
   // there are no transaction documents, leave existing metrics untouched.
   if (rows.length === 0) return { transactions: 0, metricsWritten: 0, skipped: 'no transactions' };
 
-  const records = rows.map((r) => ({
-    date: (r.occurred_at instanceof Date ? r.occurred_at.toISOString() : String(r.occurred_at)).slice(0, 10),
-    amount: r.metadata.amount,
-    category: r.metadata.category || '',
-    account: r.metadata.account || '',
-    merchant: r.metadata.merchant || '',
-  }));
+  const today = new Date().toISOString().slice(0, 10);
+  const seen = new Set();
+  const records = [];
+  for (const r of rows) {
+    const date = (r.occurred_at instanceof Date ? r.occurred_at.toISOString() : String(r.occurred_at)).slice(0, 10);
+    if (date > today) continue; // skip future-dated documents
+    // Deduplicate by (date, amount, category, merchant, account) — prevents
+    // CSV-imported and MCP-synced docs for the same transaction from doubling metrics.
+    const key = `${date}|${r.metadata.amount}|${r.metadata.category || ''}|${r.metadata.merchant || ''}|${r.metadata.account || ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    records.push({
+      date,
+      amount: r.metadata.amount,
+      category: r.metadata.category || '',
+      account: r.metadata.account || '',
+      merchant: r.metadata.merchant || '',
+    });
+  }
   const { metrics } = mapTransactions(records);
 
   // 3) Clear the old flow rows first — a day that was pure transfers now has no

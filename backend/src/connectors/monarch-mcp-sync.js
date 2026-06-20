@@ -180,6 +180,7 @@ async function syncViaMcp(ctx) {
     // name-matching. Catches CC payments/transfers regardless of custom names.
     if (categoryType === 'transfer' || isInternalTransfer(category)) continue;
     const day = String(t.date).slice(0, 10);
+    if (day > today) continue; // skip pending/future-dated transactions
     if (amount < 0) {
       const spend = Math.abs(amount);
       expByDay.set(day, (expByDay.get(day) || 0) + spend);
