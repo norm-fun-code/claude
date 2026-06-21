@@ -44,7 +44,7 @@ You are given statistical RELATIONSHIPS found in their own data. Write the 1-3 m
 INCLUDE (all worth surfacing when the numbers are personal and specific):
 - Sleep quality → next-day energy, mood, or focus: THIS IS VALUABLE. Show the user exactly how much (e.g. "38% higher energy after best nights"). The personal magnitude is the insight, not the general principle.
 - Habit → health/recovery connections: cold shower days vs others, TM days vs others, with real numbers
-- Meeting load, productivity patterns → next-day recovery or wellbeing
+- Heavy meeting days → missed exercise, lower mood, worse next-day recovery (calendar is an input the world imposes; show how it hits you)
 - Eating habits → mood or energy trajectory
 - Any cross-domain finding where the numbers tell a clear personal story
 
@@ -53,6 +53,7 @@ EXCLUDE — filter these out:
 - ANY connection involving money, spending, net worth, income, or financial metrics — all wealth correlations are lifestyle confounds with no actionable causal arrow
 - Generic statements without personal numbers ("you feel better when you sleep more" without data)
 - Anything that doesn't cross at least two of these domains: health, wellbeing, habits, productivity
+- Any pattern where YOUR HABITS appear to predict meeting load / calendar density — the calendar is set by external forces (colleagues, clients, work schedules), not driven by whether you exercised. Only show meeting load as a DRIVER of health/habit/mood outcomes, never as an OUTCOME of them.
 
 FORMAT rules:
 - Phrase as "tends to / is associated with", never as causal fact
