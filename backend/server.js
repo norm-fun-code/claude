@@ -2545,6 +2545,10 @@ app.get('/api/briefing', async (req, res) => {
       // rawHrv/rawRhr are actual measurements (ms / bpm), not the 0-100 score components.
       if (recovery.rawHrv != null) recoveryContext += `, HRV ${Math.round(recovery.rawHrv)}ms`;
       if (recovery.rawRhr != null) recoveryContext += `, RHR ${Math.round(recovery.rawRhr)}bpm`;
+    } else {
+      // No fresh Eight Sleep data (device away or not worn). Explicitly flag this
+      // so the LLM doesn't cite stale HRV/recovery numbers from trend findings or the self-model.
+      recoveryContext = 'UNAVAILABLE — Eight Sleep device not worn recently. Do NOT reference HRV, resting heart rate, or recovery score in today\'s brief.';
     }
   } catch (err) {
     console.error('[recovery context] failed:', err.message);
@@ -2886,7 +2890,19 @@ app.get('/api/briefing', async (req, res) => {
   let weeklyReview = null;
   try {
     const wr = await briefingsStore.latestBriefing('weekly');
-    if (wr) weeklyReview = { ...wr.content, generatedAt: wr.generated_at };
+    if (wr) {
+      let contentObj = wr.content;
+      // Recovery: if the LLM JSON parse failed at generation time, the fallback stores
+      // the raw JSON text in `narrative`. Try to re-parse it so the card renders correctly.
+      if (typeof contentObj?.narrative === 'string' && contentObj.narrative.trim().startsWith('{')) {
+        try {
+          const { extractJson } = require('./src/services/briefing-ai');
+          const recovered = extractJson(contentObj.narrative);
+          if (recovered?.headline && recovered?.narrative) contentObj = recovered;
+        } catch { /* non-critical */ }
+      }
+      weeklyReview = { ...contentObj, generatedAt: wr.generated_at };
+    }
   } catch (err) {
     console.error('[weeklyReview] failed:', err.message);
     errors.push({ service: 'weekly_review', error: err.message });

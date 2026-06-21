@@ -61,7 +61,9 @@ export function InsightsCard({ insights }: Props) {
     });
   };
 
-  const visible = (insights || []).filter((ins) => !(ins.dismissKey && hidden.has(ins.dismissKey)));
+  const visible = (insights || [])
+    .filter((ins) => !(ins.dismissKey && hidden.has(ins.dismissKey)))
+    .slice(0, 5);
   if (visible.length === 0) return null;
 
   return (

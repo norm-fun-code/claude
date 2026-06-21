@@ -231,12 +231,18 @@ function computeCorrelations(seriesByKey, opts = {}) {
   const corrSkipPairs = o.corrSkipPairs || new Set();
   const skipKey = (k) => corrSkip.has(k) || corrSkipDomains.has(k.split(':')[0]);
   const skipPair = (ka, kb) => corrSkipPairs.has([ka, kb].sort().join('|'));
+  // Habit-to-habit correlations are structurally meaningless: habit_score is a
+  // composite of all individual habits, so cold_shower ↔ habit_score or
+  // eat_healthy ↔ habit_score are trivially correlated, not discoveries.
+  // Individual habits also co-vary because they share the same "good day" driver.
+  const skipHabitPair = (ka, kb) => ka.split(':')[0] === 'habits' && kb.split(':')[0] === 'habits';
 
   for (let i = 0; i < keys.length; i++) {
     if (skipKey(keys[i])) continue;
     for (let j = i + 1; j < keys.length; j++) {
       if (skipKey(keys[j])) continue;
       if (skipPair(keys[i], keys[j])) continue;
+      if (skipHabitPair(keys[i], keys[j])) continue;
       const a = seriesByKey[keys[i]];
       const b = seriesByKey[keys[j]];
 
@@ -997,8 +1003,14 @@ async function analyze(opts = {}) {
     const startOfYesterday = new Date(); startOfYesterday.setDate(startOfYesterday.getDate() - 1); startOfYesterday.setHours(0, 0, 0, 0);
     const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
     const active = await annotationsStore.overlapping(startOfYesterday, new Date());
-    if (active.length) {
-      const ctx = active.map((a) => {
+    // Exclude spending/wealth annotations — those only belong in wealth insights,
+    // not as context for health or habit anomaly findings.
+    const lifeAnnotations = active.filter((a) => {
+      const cat = String(a.category || '').toLowerCase();
+      return !cat.includes('spend') && !cat.includes('wealth') && !cat.includes('financ');
+    });
+    if (lifeAnnotations.length) {
+      const ctx = lifeAnnotations.map((a) => {
         const when = new Date(a.start_ts) >= startOfToday ? 'today' : 'yesterday';
         return `${a.label || a.category} (${when})`;
       }).slice(0, 3).join('; ');
