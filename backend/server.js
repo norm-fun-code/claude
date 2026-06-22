@@ -2357,15 +2357,13 @@ app.get('/api/briefing', async (req, res) => {
     try {
       const wr = await briefingsStore.latestBriefing('weekly');
       if (wr) {
-        let contentObj = wr.content;
-        if (typeof contentObj?.narrative === 'string' && contentObj.narrative.trim().startsWith('{')) {
-          try {
-            const { extractJson } = require('./src/services/briefing-ai');
-            const recovered = extractJson(contentObj.narrative);
-            if (recovered?.headline && recovered?.narrative) contentObj = recovered;
-          } catch { /* non-critical */ }
-        }
-        weeklyReview = { ...contentObj, generatedAt: wr.generated_at };
+        const contentObj = wr.content;
+        // If narrative looks like raw JSON it means extractJson failed at generation
+        // time and the LLM output was stored verbatim as the fallback narrative.
+        // Suppress the broken review so the card hides rather than showing JSON.
+        const narrativeIsBroken = typeof contentObj?.narrative === 'string'
+          && contentObj.narrative.trim().startsWith('{');
+        if (!narrativeIsBroken) weeklyReview = { ...contentObj, generatedAt: wr.generated_at };
       }
     } catch (err) {
       console.error('[briefing cache] weeklyReview refresh failed:', err.message);
@@ -2910,17 +2908,12 @@ app.get('/api/briefing', async (req, res) => {
   try {
     const wr = await briefingsStore.latestBriefing('weekly');
     if (wr) {
-      let contentObj = wr.content;
-      // Recovery: if the LLM JSON parse failed at generation time, the fallback stores
-      // the raw JSON text in `narrative`. Try to re-parse it so the card renders correctly.
-      if (typeof contentObj?.narrative === 'string' && contentObj.narrative.trim().startsWith('{')) {
-        try {
-          const { extractJson } = require('./src/services/briefing-ai');
-          const recovered = extractJson(contentObj.narrative);
-          if (recovered?.headline && recovered?.narrative) contentObj = recovered;
-        } catch { /* non-critical */ }
-      }
-      weeklyReview = { ...contentObj, generatedAt: wr.generated_at };
+      const contentObj = wr.content;
+      // If narrative is raw JSON (LLM parse failed at generation, fallback stored verbatim),
+      // suppress the review so the card hides rather than showing broken JSON.
+      const narrativeIsBroken = typeof contentObj?.narrative === 'string'
+        && contentObj.narrative.trim().startsWith('{');
+      if (!narrativeIsBroken) weeklyReview = { ...contentObj, generatedAt: wr.generated_at };
     }
   } catch (err) {
     console.error('[weeklyReview] failed:', err.message);
