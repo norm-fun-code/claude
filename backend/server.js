@@ -2367,12 +2367,12 @@ app.get('/api/briefing', async (req, res) => {
       const wr = await briefingsStore.latestBriefing('weekly');
       if (wr) {
         const contentObj = wr.content;
-        // If narrative looks like raw JSON it means extractJson failed at generation
-        // time and the LLM output was stored verbatim as the fallback narrative.
-        // Suppress the broken review so the card hides rather than showing JSON.
-        const narrativeIsBroken = typeof contentObj?.narrative === 'string'
-          && contentObj.narrative.trim().startsWith('{');
-        if (!narrativeIsBroken) weeklyReview = { ...contentObj, generatedAt: wr.generated_at };
+        // 'Weekly review' is the exact fallback headline set when extractJson fails
+        // at generation time. A real review always has a specific punchy headline.
+        // Suppress the broken record so the card hides rather than rendering raw JSON.
+        if (contentObj?.headline !== 'Weekly review') {
+          weeklyReview = { ...contentObj, generatedAt: wr.generated_at };
+        }
       }
     } catch (err) {
       console.error('[briefing cache] weeklyReview refresh failed:', err.message);
@@ -2918,11 +2918,11 @@ app.get('/api/briefing', async (req, res) => {
     const wr = await briefingsStore.latestBriefing('weekly');
     if (wr) {
       const contentObj = wr.content;
-      // If narrative is raw JSON (LLM parse failed at generation, fallback stored verbatim),
-      // suppress the review so the card hides rather than showing broken JSON.
-      const narrativeIsBroken = typeof contentObj?.narrative === 'string'
-        && contentObj.narrative.trim().startsWith('{');
-      if (!narrativeIsBroken) weeklyReview = { ...contentObj, generatedAt: wr.generated_at };
+      // 'Weekly review' is the exact fallback headline when extractJson fails —
+      // a real review always has a specific punchy headline. Suppress the broken record.
+      if (contentObj?.headline !== 'Weekly review') {
+        weeklyReview = { ...contentObj, generatedAt: wr.generated_at };
+      }
     }
   } catch (err) {
     console.error('[weeklyReview] failed:', err.message);
