@@ -87,7 +87,7 @@ async function getBudgetPacing({ now = new Date() } = {}) {
       remaining: budget - actual,
       // pace: >1 means spending faster than the month is elapsing
       pace: expectedByNow > 0 ? actual / expectedByNow : (actual > 0 ? Infinity : 0),
-      overBudget: actual > budget,
+      overBudget: actual > budget + 0.01, // >1¢ over — avoids floating-point false positives
     });
   }
   lines.sort((a, b) => b.pace - a.pace);

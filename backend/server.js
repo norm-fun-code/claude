@@ -2282,7 +2282,7 @@ app.post('/api/briefing/rebuild', (req, res) => {
     console.error('[bg rebuild] loopback failed:', err.message);
     _rebuildInFlight = false;
   });
-  r.setTimeout(130000, () => { r.destroy(); _rebuildInFlight = false; });
+  r.setTimeout(200000, () => { r.destroy(); _rebuildInFlight = false; });
   r.end();
 });
 

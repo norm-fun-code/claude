@@ -2,7 +2,7 @@
 // Claude has no embeddings API, so embeddings come from the embed provider.
 const axios = require('axios');
 
-async function generateText({ system, prompt, maxTokens = 4096 }) {
+async function generateText({ system, prompt, maxTokens = 4096, timeoutMs = 110000 }) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
   const model = process.env.ANTHROPIC_MODEL || 'claude-opus-4-8';
@@ -17,6 +17,7 @@ async function generateText({ system, prompt, maxTokens = 4096 }) {
       messages: [{ role: 'user', content: prompt }],
     },
     {
+      timeout: timeoutMs,
       headers: {
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
