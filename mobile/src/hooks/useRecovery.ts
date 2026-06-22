@@ -25,6 +25,7 @@ export function scoreToBand(score: number | null | undefined): RecoveryBand | nu
 export function useRecovery() {
   const [recovery, setRecovery] = useState<Recovery | null>(null);
   const [loading, setLoading] = useState(false);
+  const [fetched, setFetched] = useState(false);
 
   const refetch = useCallback(async () => {
     setLoading(true);
@@ -32,10 +33,12 @@ export function useRecovery() {
       const res = await fetchWithTimeout(RECOVERY_URL, { headers: authHeaders() });
       if (res.ok) {
         const d = await res.json();
-        if (d?.recovery) setRecovery(d.recovery);
+        // Always update — including null, so stale recovery clears when Eight Sleep is away.
+        setRecovery(d?.recovery ?? null);
+        setFetched(true);
       }
     } catch {
-      // keep the last value (or the briefing fallback) on failure
+      // keep the last value on network failure (don't clear valid data on flaky connections)
     } finally {
       setLoading(false);
     }
@@ -45,5 +48,5 @@ export function useRecovery() {
     refetch();
   }, [refetch]);
 
-  return { recovery, loading, refetch };
+  return { recovery, loading, fetched, refetch };
 }

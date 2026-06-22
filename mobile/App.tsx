@@ -157,9 +157,9 @@ export default function App() {
         return (
           <>
             <RecoveryCard
-              recovery={liveRecovery.recovery ?? d?.recovery}
+              recovery={liveRecovery.fetched ? liveRecovery.recovery : (liveRecovery.recovery ?? d?.recovery)}
               composites={d?.healthComposites ?? []}
-              builtAt={liveRecovery.recovery ? undefined : d?.builtAt}
+              builtAt={liveRecovery.fetched ? undefined : d?.builtAt}
             />
             <HealthCard health={health} />
             {/* healthInsights is the server-curated top set of health domain findings,

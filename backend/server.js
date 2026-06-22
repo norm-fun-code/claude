@@ -2351,9 +2351,28 @@ app.get('/api/briefing', async (req, res) => {
     } catch (err) {
       console.error('[briefing cache] dismissals failed:', err.message);
     }
+    // Re-fetch weekly review on every cache serve so the parsed/recovered version
+    // always shows — the stored briefing may have the raw-JSON-as-narrative fallback.
+    let weeklyReview = cachedContent.weeklyReview ?? null;
+    try {
+      const wr = await briefingsStore.latestBriefing('weekly');
+      if (wr) {
+        let contentObj = wr.content;
+        if (typeof contentObj?.narrative === 'string' && contentObj.narrative.trim().startsWith('{')) {
+          try {
+            const { extractJson } = require('./src/services/briefing-ai');
+            const recovered = extractJson(contentObj.narrative);
+            if (recovered?.headline && recovered?.narrative) contentObj = recovered;
+          } catch { /* non-critical */ }
+        }
+        weeklyReview = { ...contentObj, generatedAt: wr.generated_at };
+      }
+    } catch (err) {
+      console.error('[briefing cache] weeklyReview refresh failed:', err.message);
+    }
     // Always serve the cache — never block the client on a 60-90s rebuild.
     // `stale: true` signals the app to show a "Rebuild briefing" button.
-    return res.json({ ...cachedContent, weeklyGoals, cached: true, stale: isStale, cachedAgeMin: Math.round(ageMin) });
+    return res.json({ ...cachedContent, weeklyGoals, weeklyReview, cached: true, stale: isStale, cachedAgeMin: Math.round(ageMin) });
   }
 
   // Format today's date label
