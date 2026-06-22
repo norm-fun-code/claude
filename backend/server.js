@@ -2351,6 +2351,15 @@ app.get('/api/briefing', async (req, res) => {
     } catch (err) {
       console.error('[briefing cache] dismissals failed:', err.message);
     }
+    // Re-check live recovery on every cache serve. If Eight Sleep data is stale
+    // (device away), override the cached recovery with null so the card hides even
+    // on cached responses — the mobile falls back to d?.recovery, so clearing it
+    // here suppresses the card without requiring a mobile rebuild.
+    try {
+      const freshRecovery = await require('./src/intelligence/recovery').liveRecovery();
+      cachedContent.recovery = freshRecovery ?? null;
+    } catch { /* non-critical — leave cached value on error */ }
+
     // Re-fetch weekly review on every cache serve so the parsed/recovered version
     // always shows — the stored briefing may have the raw-JSON-as-narrative fallback.
     let weeklyReview = cachedContent.weeklyReview ?? null;
