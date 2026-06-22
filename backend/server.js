@@ -2352,12 +2352,21 @@ app.get('/api/briefing', async (req, res) => {
       console.error('[briefing cache] dismissals failed:', err.message);
     }
     // Re-check live recovery on every cache serve. If Eight Sleep data is stale
-    // (device away), override the cached recovery with null so the card hides even
-    // on cached responses — the mobile falls back to d?.recovery, so clearing it
-    // here suppresses the card without requiring a mobile rebuild.
+    // (device away), clear recovery-derived fields so neither the Health tab's
+    // RecoveryCard nor the Today tab's TodayForecastCard show stale green data.
     try {
       const freshRecovery = await require('./src/intelligence/recovery').liveRecovery();
       cachedContent.recovery = freshRecovery ?? null;
+      if (!freshRecovery) {
+        // todayForecast capacity is recovery-driven; without fresh data it should be null.
+        // healthComposites may include a stale recovery composite — suppress them too.
+        cachedContent.todayForecast = { capacity: null, sleepDebt: cachedContent.todayForecast?.sleepDebt ?? null };
+        if (Array.isArray(cachedContent.healthComposites)) {
+          cachedContent.healthComposites = cachedContent.healthComposites.filter(
+            (c) => c?.type !== 'recovery'
+          );
+        }
+      }
     } catch { /* non-critical — leave cached value on error */ }
 
     // Re-fetch weekly review on every cache serve so the parsed/recovered version
