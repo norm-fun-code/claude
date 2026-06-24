@@ -60,7 +60,7 @@ export function useChat() {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ question: q }),
-      }, 45000);
+      }, 90000);
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         setMessages((prev) => [...prev, { role: 'assistant', content: `NormOS hit an error (${res.status}). Please try again in a moment.` }]);

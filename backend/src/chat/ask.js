@@ -55,7 +55,7 @@ function isPersonalQuestion(q) {
 // PostgreSQL snapshot — specific spend, merchants, categories, balances, etc.
 // When Monarch MCP is configured these route through Claude's MCP connector so
 // the answer reflects real-time account data instead of yesterday's aggregate.
-const FINANCE_RE = /\b(spend|spent|spending|budget|transaction|transactions|merchant|purchase|purchases|bought|expense|expenses|income|salary|paycheck|cash\s?flow|net\s?worth|balance|balances|checking|savings|credit\s?card|dining|groceries|grocery|restaurant|restaurants|subscription|subscriptions|invest|portfolio|afford)\b|how much (did|do|have) i/i;
+const FINANCE_RE = /\b(spend|spent|spending|budget|transaction|transactions|merchant|purchase|purchases|bought|expense|expenses|income|salary|paycheck|cash\s?flow|net\s?worth|balance|balances|checking|savings|credit\s?card|dining|groceries|grocery|restaurant|restaurants|subscription|subscriptions|invest|portfolio|afford|lifestyle\s?creep)\b|how much (did|do|have) i/i;
 
 function isFinancialQuestion(q) {
   return FINANCE_RE.test(q || '');

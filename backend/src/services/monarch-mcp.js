@@ -143,7 +143,7 @@ async function answerWithMonarch({ system, prompt, maxTokens = 1600 }) {
         'anthropic-beta': MCP_BETA,
         'content-type': 'application/json',
       },
-      timeout: Number(process.env.MONARCH_MCP_TIMEOUT_MS || 60000),
+      timeout: Number(process.env.MONARCH_MCP_TIMEOUT_MS || 30000),
     }
   );
 
