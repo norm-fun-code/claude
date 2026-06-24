@@ -71,9 +71,15 @@ async function cancelExperimentsByMetricDomain(domain) {
   );
 }
 
-/** Cancel ALL proposed/running experiments — clears the slate before re-proposing. */
-async function cancelAllActiveExperiments() {
-  await query(`UPDATE experiments SET status = 'cancelled' WHERE status IN ('proposed', 'running')`);
+/** Cancel all PROPOSED (not yet started) experiments — clears stale proposals before re-proposing.
+ *  Never touches running experiments; those require explicit user action to cancel. */
+async function cancelAllProposedExperiments() {
+  await query(`UPDATE experiments SET status = 'cancelled' WHERE status = 'proposed'`);
 }
 
-module.exports = { createExperiment, listExperiments, getExperiment, updateExperiment, cancelExperimentsByMetricDomain, cancelAllActiveExperiments };
+/** @deprecated Use cancelAllProposedExperiments — this name was misleading and cancelled running experiments. */
+async function cancelAllActiveExperiments() {
+  return cancelAllProposedExperiments();
+}
+
+module.exports = { createExperiment, listExperiments, getExperiment, updateExperiment, cancelExperimentsByMetricDomain, cancelAllActiveExperiments, cancelAllProposedExperiments };

@@ -3192,6 +3192,46 @@ app.get('/api/recommendations', async (req, res) => {
   }
 });
 
+// ONE-TIME FIX — delete after running once in production.
+// Restores the diaphragmatic-breathing experiment that was incorrectly cancelled
+// by proposeExperiments() and cancels the auto-started gratitude experiment.
+app.post('/api/admin/fix-experiments-2024-06', async (req, res) => {
+  const { query: dbQuery } = require('./src/db');
+  const results = {};
+  try {
+    const { rows: breathing } = await dbQuery(
+      `SELECT id, hypothesis, status FROM experiments WHERE hypothesis ILIKE '%diaphragmatic breathing%' ORDER BY created_at DESC LIMIT 1`
+    );
+    if (!breathing.length) {
+      results.breathing = 'not found';
+    } else {
+      const exp = breathing[0];
+      if (exp.status === 'cancelled') {
+        const today = new Date().toISOString().slice(0, 10);
+        const end = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        await dbQuery(`UPDATE experiments SET status='running', start_date=$1, end_date=$2 WHERE id=$3`, [today, end, exp.id]);
+        results.breathing = `restored to running, ends ${end}`;
+      } else {
+        results.breathing = `already ${exp.status}`;
+      }
+    }
+  } catch (e) { results.breathing = `error: ${e.message}`; }
+
+  try {
+    const { rows: gratitude } = await dbQuery(
+      `SELECT id, hypothesis, status FROM experiments WHERE hypothesis ILIKE '%gratitude%' AND status = 'running' ORDER BY created_at DESC LIMIT 1`
+    );
+    if (!gratitude.length) {
+      results.gratitude = 'not found or not running';
+    } else {
+      await dbQuery(`UPDATE experiments SET status='cancelled' WHERE id=$1`, [gratitude[0].id]);
+      results.gratitude = `cancelled "${gratitude[0].hypothesis}"`;
+    }
+  } catch (e) { results.gratitude = `error: ${e.message}`; }
+
+  res.json(results);
+});
+
 const { runMigrations } = require('./src/db/migrate');
 runMigrations()
   .catch((err) => console.error('[migrate] failed, starting anyway:', err.message))

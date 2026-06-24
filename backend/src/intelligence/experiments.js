@@ -153,8 +153,9 @@ async function autoStartExperiment() {
   const running = all.filter((e) => e.status === 'running');
   const runningMetrics = new Set(running.map((e) => e.metric));
 
-  // Skip auto-start if already running 2+ experiments — avoid overload.
-  if (running.length >= 2) return null;
+  // Never auto-start if any experiment is already running — user-initiated experiments
+  // take priority and should not be overridden or run in parallel without approval.
+  if (running.length >= 1) return null;
 
   const proposed = all.filter((e) => e.status === 'proposed' && !runningMetrics.has(e.metric));
   if (!proposed.length) return null;
