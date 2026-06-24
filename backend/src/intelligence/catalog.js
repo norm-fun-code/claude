@@ -18,6 +18,7 @@ const CATALOG = {
   'health:respiratory_rate': { label: 'Respiratory rate', goodWhen: null },
   'health:body_fat': { label: 'Body fat', goodWhen: 'down' },
   'health:weight': { label: 'Weight', goodWhen: null },
+  'health:wake_time': { label: 'Wake time', goodWhen: null },
   'wellbeing:mood': { label: 'Mood', goodWhen: 'up' },
   'wellbeing:energy': { label: 'Energy', goodWhen: 'up' },
   'wellbeing:focus': { label: 'Focus', goodWhen: 'up' },

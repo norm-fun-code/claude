@@ -26,15 +26,36 @@ const ALLOWED = {
   // baseline (the nightly duration Eight Sleep considers your true need).
   sleep_debt: [0, 40],
   sleep_need: [4, 12],
+  // Wake time as decimal hours since midnight (3 AM = 3.0, 7:30 AM = 7.5).
+  wake_time: [3, 14],
 };
 
 const num = (v) => (v == null ? null : Number(v));
 const hrs = (sec) => (sec == null || !Number.isFinite(Number(sec)) ? null : Number(sec) / 3600);
 
 /** Map one Eight Sleep `day` trend object to NormOS metric values. */
-function mapDay(day) {
+function mapDay(day, tz = 'America/New_York') {
   const sq = day?.sleepQualityScore || {};
   const sd = sq.sleepDebt || {};
+
+  // Wake time as decimal hours since midnight in the local timezone.
+  // Eight Sleep exposes session-end timing under various field names depending
+  // on API version; try the known variants and take the first hit.
+  let wake_time = null;
+  const timing = day?.timingInfo || day?.timing || {};
+  const wakeRaw = timing?.wakeTime ?? timing?.wakeup ?? timing?.wakeUpTime ?? timing?.exitBed;
+  if (wakeRaw) {
+    const wakeDate = new Date(wakeRaw);
+    if (!isNaN(wakeDate.getTime())) {
+      const parts = wakeDate
+        .toLocaleTimeString('en-US', { timeZone: tz, hour12: false, hour: '2-digit', minute: '2-digit' })
+        .split(':');
+      const h = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10);
+      if (!isNaN(h) && !isNaN(m)) wake_time = h + m / 60;
+    }
+  }
+
   return {
     hrv: num(sq.hrv?.current),
     resting_hr: num(sq.heartRate?.current),
@@ -47,6 +68,7 @@ function mapDay(day) {
     // generic 8h need). sleep_need is the baseline duration Eight Sleep computes.
     sleep_debt: hrs(sd.dailySleepDebtSeconds),
     sleep_need: hrs(sd.baselineSleepDurationSeconds),
+    wake_time,
   };
 }
 
@@ -109,7 +131,7 @@ module.exports = {
     for (const day of days) {
       if (!day?.day) continue;
       const ts = new Date(`${day.day}T12:00:00Z`);
-      const mapped = mapDay(day);
+      const mapped = mapDay(day, tz);
       for (const [metric, value] of Object.entries(mapped)) {
         if (value == null || !Number.isFinite(value)) continue;
         const bounds = ALLOWED[metric];

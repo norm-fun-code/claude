@@ -42,7 +42,9 @@ async function fetchRandomQuote() {
   const lines = fullText
     .split('\n')
     .map((l) => l.trim())
-    .filter((l) => l.length > 30);
+    .filter((l) => l.length > 30)
+    .filter((l) => !/^[★☆#]/.test(l))   // skip decorative heading markers
+    .filter((l) => !l.endsWith(':'));      // skip intro fragments like "Chapter 3:"
 
   if (lines.length === 0) {
     return { quote: 'No quotes available.' };

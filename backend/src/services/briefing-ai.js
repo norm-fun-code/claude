@@ -101,7 +101,7 @@ Return ONLY valid JSON with EXACTLY these fields:
     { "from": "sender", "subject": "subject", "action": "1-2 sentences on what action is needed and why it's urgent" }
   ],
   "quoteInsight": "2 sentences drawing out the deeper idea or principle in the quote",
-  "notionQuote": "the single most resonant COMPLETE sentence or passage from the Notion wisdom above — verbatim, not cut off mid-thought, not a heading or intro fragment ending in a colon",
+  "notionQuote": "the single most resonant COMPLETE sentence or passage from the Notion wisdom above — verbatim. Must be actual wisdom: a full thought with a subject and verb that stands alone as insight. NEVER pick: a [section: ...] label, a chapter or book title, text that starts with ★ ☆ or an emoji, a fragment ending in a colon, or any organizational marker. If no single sentence qualifies, return empty string.",
   "notionInsight": "2 sentences drawing out the key idea in the SPECIFIC notionQuote you selected (the commentary must match that exact passage)"
 }
 
@@ -169,13 +169,25 @@ async function generateBriefing(emailData, notionText, quote, currentDay, workou
       ? { synthesis: cb.synthesis, action: cb.action, risk: cb.risk, move: cb.move }
       : null;
 
+  // Reject notionQuote if it looks like a heading or organizational marker —
+  // a guardrail against the LLM picking [section: ...] labels, ★-prefixed
+  // chapter titles, or short fragments that aren't real sentences.
+  const rawNotionQuote = typeof parsed.notionQuote === 'string' ? parsed.notionQuote.trim() : '';
+  const looksLikeHeading = (s) =>
+    !s ||
+    /^\[section:/i.test(s) ||
+    /^[★☆#]/.test(s) ||
+    s.endsWith(':') ||
+    (s.length < 25 && !/[.!?,;]/.test(s));
+  const notionQuote = looksLikeHeading(rawNotionQuote) ? '' : rawNotionQuote;
+
   return {
     morningFocus: typeof parsed.morningFocus === 'string' ? parsed.morningFocus : '',
     chiefBrief,
     urgentEmails: Array.isArray(parsed.urgentEmails) ? parsed.urgentEmails : [],
     quoteInsight: typeof parsed.quoteInsight === 'string' ? parsed.quoteInsight : '',
-    notionQuote: typeof parsed.notionQuote === 'string' ? parsed.notionQuote : '',
-    notionInsight: typeof parsed.notionInsight === 'string' ? parsed.notionInsight : '',
+    notionQuote,
+    notionInsight: notionQuote ? (typeof parsed.notionInsight === 'string' ? parsed.notionInsight : '') : '',
   };
 }
 

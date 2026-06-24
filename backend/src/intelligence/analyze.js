@@ -53,6 +53,9 @@ const DEFAULTS = {
     // Calendar event counts are an input signal (meeting load) used in correlations,
     // but a raw "calendar events down 71%" trend finding has no actionable meaning.
     'productivity:calendar_events',
+    // Wake time is tracked for correlation with daytime RHR; a "wake time up 15%"
+    // trend finding is confusing (it means waking later on average), not actionable.
+    'health:wake_time',
   ],
   // All wealth metrics are excluded from correlation search. Wealth variables
   // (spending, net worth, cashflow, income) correlate with health and habit
@@ -289,16 +292,28 @@ function computeCorrelations(seriesByKey, opts = {}) {
     const labelA = cat.label(a.domain, a.metric);
     const labelB = cat.label(b.domain, b.metric);
     const strength = Math.abs(c.r) >= 0.7 ? 'strong' : 'moderate';
-    const sign = c.r >= 0 ? 'positive' : 'negative';
-    const timing = c.lag === 0 ? 'same-day' : `next-day`;
+    const positive = c.r >= 0;
+    const timing = c.lag === 0 ? 'same-day' : 'next-day';
     const domains = [...new Set([a.domain, b.domain])];
-    const confirmNote = c.confirmed ? `confirmed across ${c.n} days` : `candidate — ${c.n} days, needs more data`;
+    const confirmNote = c.confirmed ? `confirmed, ${c.n} days` : `${c.n}-day emerging pattern`;
+
+    // Plain English titles — no ↔ notation or statistical symbols.
+    const direction = positive ? 'higher' : 'lower';
+    const title = c.lag === 0
+      ? `Higher ${labelA} goes with ${direction} ${labelB} (${confirmNote})`
+      : `Higher ${labelA} today → ${direction} ${labelB} tomorrow (${confirmNote})`;
+
+    const movePhrase = positive ? 'move together' : 'move in opposite directions';
+    const confirmPhrase = c.confirmed
+      ? 'held consistently in both earlier and more recent periods of your data'
+      : 'is still building toward full confirmation';
+    const detail = `${labelA} and ${labelB} tend to ${movePhrase} — a ${strength} ${timing} personal pattern that ${confirmPhrase}. Association, not proof of cause.`;
 
     return {
       type: 'correlation',
       domains,
-      title: `${labelA} ↔ ${labelB}: ${strength} ${timing} link (${confirmNote})`,
-      detail: `${labelA} and ${labelB} move ${sign === 'positive' ? 'together' : 'inversely'} — a ${strength} ${timing} association${c.confirmed ? ' that held consistently across your data' : ' not yet confirmed on a holdout'}. r=${round(c.r)}, n=${c.n}. Association, not proof of cause.`,
+      title,
+      detail,
       // Confidence blends effect size with statistical significance, so a strong
       // r on thin data isn't over-trusted.
       confidence: round(Math.abs(c.r) * (c.confirmed ? 1 : 0.6) * (c.p != null && c.p < 0.05 ? 1 : 0.7), 3),
@@ -597,9 +612,12 @@ function computeDaytimeCardio(daytimeMap) {
 
   // Each lever: key in daytimeMap, human label, threshold for "high" bucket.
   const LEVERS = [
-    { key: 'habits:eat_healthy',  label: 'Eating well',    threshold: 3 },
-    { key: 'wellbeing:mood',      label: 'High-mood days',  threshold: 4 },
-    { key: 'wellbeing:focus',     label: 'High-focus days', threshold: 4 },
+    { key: 'habits:eat_healthy',  label: 'Eating well',      threshold: 3 },
+    { key: 'wellbeing:mood',      label: 'High-mood days',   threshold: 4 },
+    { key: 'wellbeing:focus',     label: 'High-focus days',  threshold: 4 },
+    // Wake time >= 7 = woke at/after 7am. Threshold chosen to split typical
+    // sleep pattern in halves — 7am is the user's approximate midpoint.
+    { key: 'health:wake_time',    label: 'Waking after 7am', threshold: 7.0 },
   ];
 
   function dayKey(d) {
@@ -982,6 +1000,14 @@ async function analyze(opts = {}) {
   for (const k of ['habits:eat_healthy', 'wellbeing:mood', 'wellbeing:focus']) {
     if (seriesByKey[k]) daytimeMap[k] = seriesByKey[k];
   }
+  // Eight Sleep wake time pairs naturally with daytime autonomic tone even though
+  // it's a nightly metric — load it here rather than the night-locked series.
+  try {
+    const wakeRows = await metricsStore.dailyAggregatePreferSource({
+      domain: 'health', metric: 'wake_time', from, agg: 'avg', sources: ['eight_sleep'],
+    });
+    if (wakeRows.length) daytimeMap['health:wake_time'] = wakeRows;
+  } catch { /* non-critical — Eight Sleep may not have timing data */ }
   const daytimeCardio = computeDaytimeCardio(daytimeMap);
 
   const trends = computeTrends(seriesByKey, o);
