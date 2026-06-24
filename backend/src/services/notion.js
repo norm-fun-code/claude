@@ -17,6 +17,14 @@ function extractTextFromBlocks(blocks) {
 
     if (!content) continue;
 
+    // Heading blocks are section labels, not quotable wisdom — mark them so the
+    // LLM doesn't pick them as the notionQuote.
+    if (type === 'heading_1' || type === 'heading_2' || type === 'heading_3') {
+      const text = content.rich_text?.map((rt) => rt.plain_text).join('') || '';
+      if (text.trim()) lines.push(`[section: ${text.trim()}]`);
+      continue;
+    }
+
     // Blocks that have rich_text arrays
     if (content.rich_text) {
       const text = content.rich_text.map((rt) => rt.plain_text).join('');

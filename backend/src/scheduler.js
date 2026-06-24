@@ -222,9 +222,12 @@ function startMorningWatcher() {
         // Check the /intervals/present endpoint to confirm the session has ended
         // before waking the user with a "briefing ready" push.
         const stillSleeping = await eightSleepSessionInProgress();
-        if (stillSleeping) {
+        if (stillSleeping && !pastBackstop) {
           console.log('[scheduler] Eight Sleep score ready but session still in progress — waiting for wake');
         } else {
+          if (stillSleeping) {
+            console.log('[scheduler] Eight Sleep session still flagged in-progress past backstop — firing anyway');
+          }
           await morningRoutine({ reason: 'eight-sleep data arrived' });
         }
       } else if (pastBackstop) {

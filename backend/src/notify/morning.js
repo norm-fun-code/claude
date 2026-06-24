@@ -19,7 +19,7 @@ async function warmBriefing() {
   const headers = {};
   if (process.env.NORMOS_API_TOKEN) headers.Authorization = `Bearer ${process.env.NORMOS_API_TOKEN}`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 90000); // builds can take ~40s
+  const timer = setTimeout(() => controller.abort(), 150000); // LLM can take up to ~110s
   try {
     const res = await fetch(url, { headers, signal: controller.signal });
     if (!res.ok) throw new Error(`briefing build returned ${res.status}`);
