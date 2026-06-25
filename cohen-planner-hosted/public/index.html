@@ -2477,7 +2477,8 @@ async function loadAdvisorState(){
   try{
     const res=await fetch('/api/chats');
     if(!res.ok)return;
-    const chats=await res.json();
+    const raw=await res.json();
+    const chats=Array.isArray(raw)?raw:[];
     advisorChats={};
     chats.forEach(c=>{
       advisorChats[c.id]={
