@@ -197,7 +197,7 @@ async function morningRoutine({ reason = 'scheduled' } = {}) {
 function startMorningWatcher() {
   const pollMin = Number(process.env.EIGHT_SLEEP_POLL_MIN) || 15;
   const pollStartHour = Number(process.env.EIGHT_SLEEP_POLL_START_HOUR) || 7;
-  const pollStartMinute = Number(process.env.EIGHT_SLEEP_POLL_START_MINUTE) || 15;
+  const pollStartMinute = Number(process.env.EIGHT_SLEEP_POLL_START_MINUTE) || 30;
   const backstopHour = Number(process.env.EIGHT_SLEEP_BACKSTOP_HOUR) || 10;
   const backstopMinute = Number(process.env.EIGHT_SLEEP_BACKSTOP_MINUTE) || 0;
 

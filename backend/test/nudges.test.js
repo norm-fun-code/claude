@@ -110,9 +110,11 @@ test('check-in reminder is suppressed once already sent today', () => {
   assert.equal(out.length, 0);
 });
 
-test('quiet hours wrap midnight (21:00–07:00 by default)', () => {
+test('quiet hours wrap midnight (21:00–07:30 by default)', () => {
   assert.equal(withinQuietHours(new Date('2026-05-30T03:00:00')), true);
   assert.equal(withinQuietHours(new Date('2026-05-30T22:00:00')), true);
-  assert.equal(withinQuietHours(new Date('2026-05-30T07:30:00')), false);
+  assert.equal(withinQuietHours(new Date('2026-05-30T07:00:00')), true);   // quiet until 7:30
+  assert.equal(withinQuietHours(new Date('2026-05-30T07:29:00')), true);   // still quiet
+  assert.equal(withinQuietHours(new Date('2026-05-30T07:30:00')), false);  // 7:30 is ok
   assert.equal(withinQuietHours(new Date('2026-05-30T12:00:00')), false);
 });

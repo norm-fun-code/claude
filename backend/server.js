@@ -2958,8 +2958,13 @@ app.get('/api/briefing', async (req, res) => {
   let wealth = null;
   try {
     const sum = (arr) => arr.reduce((s, r) => s + Number(r.value), 0);
+    // Truncate to UTC midnight so the range boundary aligns with how metrics
+    // are stored (dayTs → YYYY-MM-DDT00:00:00Z). Without this, a rolling-ms
+    // weekAgo of "Jun 18 12:00 UTC" would exclude Jun 18 00:00 UTC metrics.
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    weekAgo.setUTCHours(0, 0, 0, 0);
     const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    monthAgo.setUTCHours(0, 0, 0, 0);
     const nw = await metricsStore.latest({ domain: 'wealth', metric: 'net_worth' });
     const nwPrev = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'net_worth', from: monthAgo, to: weekAgo, agg: 'avg', excludeSource: 'seed' });
     const now = new Date();

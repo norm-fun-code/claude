@@ -154,12 +154,14 @@ function buildNudges({ findings = [], recentKeys = new Set(), hasCheckinToday = 
 }
 
 /**
- * Is `date` inside the quiet window [endHour, startHour) wrapping midnight?
- * Defaults to 21:00–07:00 local. Used by the runner to avoid 3am pings.
+ * Is `date` inside the quiet window [endHour:endMinute, startHour:startMinute) wrapping midnight?
+ * Defaults to 21:00–07:30 local. Used by the runner to avoid pre-wake pings.
  */
-function withinQuietHours(date = new Date(), { startHour = 21, endHour = 7 } = {}) {
-  const h = date.getHours();
-  return startHour > endHour ? h >= startHour || h < endHour : h >= startHour && h < endHour;
+function withinQuietHours(date = new Date(), { startHour = 21, startMinute = 0, endHour = 7, endMinute = 30 } = {}) {
+  const mins = date.getHours() * 60 + date.getMinutes();
+  const startMins = startHour * 60 + startMinute;
+  const endMins = endHour * 60 + endMinute;
+  return startMins > endMins ? mins >= startMins || mins < endMins : mins >= startMins && mins < endMins;
 }
 
 module.exports = { buildNudges, withinQuietHours, checkinReminder, habitReminder, slugify, DEFAULTS };
