@@ -114,6 +114,25 @@ export function HealthCard({ health }: Props) {
 
       <View style={[styles.divider, { backgroundColor: c.border }]} />
 
+      {health.vo2Max !== null && (
+        <>
+          <TouchableOpacity onPress={() => open('vo2_max')} activeOpacity={0.6} style={styles.vo2Row}>
+            <View style={styles.vo2Left}>
+              <Text style={[styles.vo2Number, { color: vo2Color(health.vo2MaxCategory) }]}>
+                {health.vo2Max}
+              </Text>
+              <Text style={[styles.vo2Unit, { color: c.subtext }]}>mL/kg/min VO2</Text>
+            </View>
+            {health.vo2MaxCategory && (
+              <View style={[styles.vo2Badge, { backgroundColor: vo2Color(health.vo2MaxCategory) + '22', borderColor: vo2Color(health.vo2MaxCategory) + '55' }]}>
+                <Text style={[styles.vo2BadgeText, { color: vo2Color(health.vo2MaxCategory) }]}>{health.vo2MaxCategory}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+          <View style={[styles.divider, { backgroundColor: c.border }]} />
+        </>
+      )}
+
       <StatRow
         label="Resting HR" value={health.restingHR} unit="bpm"
         onPress={() => open('resting_hr')} c={c}
@@ -142,15 +161,6 @@ export function HealthCard({ health }: Props) {
         unit="kcal"
         onPress={() => open('active_energy')} c={c}
       />
-      {health.vo2Max !== null && (
-        <StatRow
-          label="VO2 Max"
-          value={health.vo2Max}
-          subtitle={health.vo2MaxCategory ?? undefined}
-          subtitleColor={vo2Color(health.vo2MaxCategory)}
-          onPress={() => open('vo2_max')} c={c}
-        />
-      )}
 
       {health.error && (
         <Text style={[styles.errorText, { color: c.subtext }]}>
@@ -195,4 +205,15 @@ const styles = StyleSheet.create({
   statUnit: { ...typography.caption },
   statSubtitle: { fontSize: 11, fontWeight: '500', marginTop: 1 },
   errorText: { ...typography.caption, marginTop: spacing.sm, fontStyle: 'italic' },
+  vo2Row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
+  vo2Left: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.xs },
+  vo2Number: { fontSize: 32, fontWeight: '300', letterSpacing: -1 },
+  vo2Unit: { ...typography.caption, fontSize: 13 },
+  vo2Badge: { borderRadius: radius.sm, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3 },
+  vo2BadgeText: { fontSize: 11, fontWeight: '700' },
 });

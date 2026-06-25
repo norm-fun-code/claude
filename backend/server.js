@@ -2963,9 +2963,13 @@ app.get('/api/briefing', async (req, res) => {
     const nw = await metricsStore.latest({ domain: 'wealth', metric: 'net_worth' });
     const nwPrev = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'net_worth', from: monthAgo, to: weekAgo, agg: 'avg', excludeSource: 'seed' });
     const now = new Date();
-    const spend = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: weekAgo, to: now, agg: 'sum', excludeSource: 'seed' });
-    const discretionary = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: weekAgo, to: now, agg: 'sum', excludeSource: 'seed' });
-    const income = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'income', from: weekAgo, to: now, agg: 'sum', excludeSource: 'seed' });
+    const [spend, discretionary, income, spendMonth, incomeMonth] = await Promise.all([
+      metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: weekAgo, to: now, agg: 'sum', excludeSource: 'seed' }),
+      metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: weekAgo, to: now, agg: 'sum', excludeSource: 'seed' }),
+      metricsStore.dailyAggregate({ domain: 'wealth', metric: 'income', from: weekAgo, to: now, agg: 'sum', excludeSource: 'seed' }),
+      metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: monthAgo, to: now, agg: 'sum', excludeSource: 'seed' }),
+      metricsStore.dailyAggregate({ domain: 'wealth', metric: 'income', from: monthAgo, to: now, agg: 'sum', excludeSource: 'seed' }),
+    ]);
     if (nw || spend.length) {
       const netWorth = nw ? Number(nw.value) : null;
       const priorNw = nwPrev.length ? sum(nwPrev) / nwPrev.length : null;
@@ -2973,10 +2977,13 @@ app.get('/api/briefing', async (req, res) => {
         netWorth,
         netWorthChange: netWorth != null && priorNw ? Math.round((netWorth - priorNw)) : null,
         spendingThisWeek: Math.round(sum(spend)),
-        // Discretionary = ex rent/mortgage; null when there's no such data yet.
         discretionaryThisWeek: discretionary.length ? Math.round(sum(discretionary)) : null,
         incomeThisWeek: Math.round(sum(income)),
         cashflowThisWeek: Math.round(sum(income) - sum(spend)),
+        spendingThisMonth: Math.round(sum(spendMonth)),
+        incomeThisMonth: Math.round(sum(incomeMonth)),
+        cashflowThisMonth: Math.round(sum(incomeMonth) - sum(spendMonth)),
+        syncedAt: nw?.ts ? new Date(nw.ts).toISOString() : null,
       };
     }
   } catch (err) {
@@ -3203,6 +3210,29 @@ app.get('/api/recommendations', async (req, res) => {
         hitRate: measured.length ? Math.round((positive.length / measured.length) * 100) : null,
       },
     });
+    // Background: auto-measure outcomes for any pending recs with enough elapsed time.
+    recommendationsStore.measureOutcomes(14).catch(() => {});
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/recommendations/:id/outcome — explicit thumbs-up/down from the user.
+app.post('/api/recommendations/:id/outcome', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { thumbsUp } = req.body;
+    if (typeof thumbsUp !== 'boolean') return res.status(400).json({ error: 'thumbsUp required' });
+    const { query: dbQuery } = require('./src/db');
+    const { rows } = await dbQuery('SELECT expected_direction FROM recommendations WHERE id = $1', [id]);
+    if (!rows.length) return res.status(404).json({ error: 'not found' });
+    const { expected_direction } = rows[0];
+    // thumbsUp = true means "it worked as expected"; delta sign follows expected direction.
+    const delta = thumbsUp
+      ? (expected_direction === 'down' ? -1 : 1)
+      : (expected_direction === 'down' ? 1 : -1);
+    await recommendationsStore.setOutcome(id, { delta, measuredAt: new Date() });
+    res.json({ ok: true, delta });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

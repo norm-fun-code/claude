@@ -130,7 +130,7 @@ async function proposeExperiments() {
   // proposeFromFindings (EXPERIMENT_LEVERS, MIN_R, MIN_N) ensure only meaningful
   // hypotheses come back. This prevents stale entries like "Steps improves Net worth"
   // from lingering indefinitely.
-  await experimentsStore.cancelAllActiveExperiments().catch(() => {});
+  await experimentsStore.cancelAllProposedExperiments().catch(() => {});
   const open = await findingsStore.listFindings({ status: 'open' });
   const proposals = proposeFromFindings(open);
   let created = 0;
@@ -142,37 +142,12 @@ async function proposeExperiments() {
 }
 
 /**
- * Auto-start the highest-priority proposed experiment that isn't already
- * running for the same metric. Called after proposeExperiments() so the loop
- * is self-sustaining: correlations → proposals → running → verdicts → briefing.
- * Starts at most one new experiment per call to avoid overwhelming the user.
+ * Previously auto-started a proposed experiment without user approval.
+ * Disabled: proposals are now surfaced in the Experiments card and must be
+ * started explicitly by the user. This prevents state changes without consent.
  */
 async function autoStartExperiment() {
-  const experimentsStore = require('../store/experiments');
-  const all = await experimentsStore.listExperiments();
-  const running = all.filter((e) => e.status === 'running');
-  const runningMetrics = new Set(running.map((e) => e.metric));
-
-  // Never auto-start if any experiment is already running — user-initiated experiments
-  // take priority and should not be overridden or run in parallel without approval.
-  if (running.length >= 1) return null;
-
-  const proposed = all.filter((e) => e.status === 'proposed' && !runningMetrics.has(e.metric));
-  if (!proposed.length) return null;
-
-  // Pick the first proposal (listExperiments returns created_at DESC).
-  const pick = proposed[0];
-  const startDate = new Date().toISOString().slice(0, 10);
-  const endDate = new Date(Date.now() + (pick.baseline_days || 14) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-
-  await experimentsStore.updateExperiment(pick.id, {
-    status: 'running',
-    startDate,
-    endDate,
-  });
-
-  console.log(`[experiments] auto-started: "${pick.hypothesis}" (ends ${endDate})`);
-  return { id: pick.id, hypothesis: pick.hypothesis, startDate, endDate };
+  return null;
 }
 
 /** Evaluate one running experiment against its baseline + test windows. */

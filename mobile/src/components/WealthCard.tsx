@@ -51,6 +51,10 @@ export function WealthCard({ wealth }: Props) {
 
   const up = (wealth.netWorthChange ?? 0) >= 0;
   const cashflowPositive = wealth.cashflowThisWeek >= 0;
+  const cashflowMonthPositive = (wealth.cashflowThisMonth ?? 0) >= 0;
+  const syncedDate = wealth.syncedAt
+    ? new Date(wealth.syncedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : null;
   const show = (s: string) => (hidden ? MASK : s);
 
   return (
@@ -75,7 +79,19 @@ export function WealthCard({ wealth }: Props) {
             ) : null}
           </Text>
         )}
+        {syncedDate && !hidden && (
+          <Text style={[styles.syncedAt, { color: c.subtext }]}>as of {syncedDate}</Text>
+        )}
       </Pressable>
+
+      {wealth.cashflowThisMonth != null && (
+        <View style={[styles.monthRow, { borderTopColor: c.border }]}>
+          <Text style={[styles.monthLabel, { color: c.subtext }]}>30-day net</Text>
+          <Text style={[styles.monthValue, { color: hidden ? c.text : cashflowMonthPositive ? c.green : c.red }]}>
+            {hidden ? MASK : `${cashflowMonthPositive ? '+' : '−'}${money(Math.abs(wealth.cashflowThisMonth))}`}
+          </Text>
+        </View>
+      )}
 
       <View style={[styles.row, { borderTopColor: c.border }]}>
         <Stat label="Spending (7d)" value={show(money(wealth.spendingThisWeek))} color={c.text} c={c} />
@@ -126,4 +142,15 @@ const styles = StyleSheet.create({
   statLabel: { ...typography.caption, fontSize: 11, marginTop: 2 },
   discretionary: { ...typography.caption, fontSize: 12, marginTop: spacing.sm, textAlign: 'center' },
   pacePct: { fontSize: 11 },
+  syncedAt: { ...typography.caption, fontSize: 11, marginTop: 3 },
+  monthRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+  },
+  monthLabel: { ...typography.caption, fontSize: 12 },
+  monthValue: { ...typography.subtitle, fontWeight: '600', fontSize: 15 },
 });

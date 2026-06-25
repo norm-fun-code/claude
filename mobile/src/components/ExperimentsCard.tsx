@@ -76,6 +76,22 @@ export function ExperimentsCard() {
     } catch { /* optimistic — silently ignore */ }
   }, []);
 
+  const startExperiment = useCallback(async (id: number) => {
+    setExperiments((prev) =>
+      prev.map((e) => e.id === id ? { ...e, status: 'running', start_date: new Date().toISOString() } : e)
+    );
+    try {
+      await fetch(`${EXPERIMENTS_URL}/${id}`, {
+        method: 'PATCH',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'start' }),
+      });
+      fetch_();
+    } catch {
+      fetch_();
+    }
+  }, [fetch_]);
+
   const togglePause = useCallback(async (exp: Experiment) => {
     const action = exp.status === 'paused' ? 'resume' : 'pause';
     // Optimistic update
@@ -101,9 +117,10 @@ export function ExperimentsCard() {
 
   useEffect(() => { fetch_(); }, [fetch_]);
 
+  const proposed = experiments.filter((e) => e.status === 'proposed');
   const active = experiments.filter((e) => e.status === 'running' || e.status === 'paused');
   const completed = experiments.filter((e) => e.status === 'completed' || e.status === 'cancelled');
-  const visible = showAll ? [...active, ...completed] : active;
+  const visible = showAll ? [...proposed, ...active, ...completed] : [...proposed, ...active];
 
   if (loading) {
     return (
@@ -125,6 +142,7 @@ export function ExperimentsCard() {
         const total = totalDays(exp.start_date, exp.end_date);
         const left = daysLeft(exp.end_date);
         const progress = total && total > 0 ? Math.min(1, elapsed / total) : 0;
+        const isProposed = exp.status === 'proposed';
         const isRunning = exp.status === 'running';
         const isPaused = exp.status === 'paused';
         const isActive = isRunning || isPaused;
@@ -137,6 +155,11 @@ export function ExperimentsCard() {
                 {exp.hypothesis}
               </Text>
               <View style={styles.rowRight}>
+                {isProposed && (
+                  <View style={[styles.badge, { backgroundColor: '#FFF3E0' }]}>
+                    <Text style={[styles.badgeText, { color: '#E65100' }]}>Proposed</Text>
+                  </View>
+                )}
                 {isRunning && (
                   <View style={[styles.badge, { backgroundColor: c.accentSoft }]}>
                     <Text style={[styles.badgeText, { color: c.accent }]}>Active</Text>
@@ -147,7 +170,7 @@ export function ExperimentsCard() {
                     <Text style={[styles.badgeText, { color: c.subtext }]}>Paused</Text>
                   </View>
                 )}
-                {!isActive && (
+                {!isActive && !isProposed && (
                   <View style={[styles.badge, { backgroundColor: c.border }]}>
                     <Text style={[styles.badgeText, { color: c.subtext }]}>
                       {exp.status === 'completed' ? 'Done' : 'Cancelled'}
@@ -163,6 +186,18 @@ export function ExperimentsCard() {
             <Text style={[styles.meta, { color: c.subtext }]}>
               Tracking: {metricLabel}
             </Text>
+
+            {isProposed && exp.protocol && (
+              <Text style={[styles.protocol, { color: c.subtext }]} numberOfLines={3}>
+                {exp.protocol}
+              </Text>
+            )}
+
+            {isProposed && (
+              <TouchableOpacity onPress={() => startExperiment(exp.id)} hitSlop={8} style={styles.startBtn}>
+                <Text style={[styles.startText, { color: c.accent }]}>Start 14-day experiment →</Text>
+              </TouchableOpacity>
+            )}
 
             {isActive && total !== null && (
               <>
@@ -225,6 +260,8 @@ const styles = StyleSheet.create({
   protocol: { fontSize: 12, lineHeight: 17, fontStyle: 'italic' },
   pauseBtn: { alignSelf: 'flex-start', marginTop: 2 },
   pauseText: { fontSize: 12, fontWeight: '600' },
+  startBtn: { alignSelf: 'flex-start', marginTop: spacing.xs },
+  startText: { fontSize: 13, fontWeight: '700' },
   toggle: { marginTop: spacing.md, alignItems: 'center' },
   toggleText: { fontSize: 13, fontWeight: '600' },
 });

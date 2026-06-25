@@ -144,6 +144,10 @@ export interface Wealth {
   discretionaryThisWeek?: number | null;
   incomeThisWeek: number;
   cashflowThisWeek: number;
+  spendingThisMonth?: number;
+  incomeThisMonth?: number;
+  cashflowThisMonth?: number;
+  syncedAt?: string | null;
 }
 
 export interface Alert {

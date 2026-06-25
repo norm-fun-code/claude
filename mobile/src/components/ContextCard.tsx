@@ -23,15 +23,21 @@ const PRESETS: Preset[] = [
   { emoji: '🧘', category: 'rest', label: 'Rest day' },
 ];
 
-type Logged = { id: string; category: string; label: string };
+type Logged = { id: string; category: string; label: string; end_ts?: string | null };
+
+function isExtended(end_ts?: string | null): boolean {
+  if (!end_ts) return false;
+  return (new Date(end_ts).getTime() - Date.now()) / 3600000 > 48;
+}
 
 // Individual chip with spring-scale press and haptic feedback.
 function Chip({
-  p, on, busy, onTap, c,
+  p, on, busy, extended, onTap, c,
 }: {
   p: Preset;
   on: boolean;
   busy: boolean;
+  extended?: boolean;
   onTap: () => void;
   c: ReturnType<typeof getColors>;
 }) {
@@ -46,21 +52,25 @@ function Chip({
     onTap();
   };
 
+  const amberOn = on && extended;
+  const bgColor = amberOn ? '#FF9F0A' : on ? c.accent : 'transparent';
+  const borderColor = amberOn ? '#FF9F0A' : on ? c.accent : c.border;
+
   return (
     <Pressable onPress={handlePress} disabled={busy}>
       <Animated.View
         style={[
           styles.chip,
           {
-            borderColor: on ? c.accent : c.border,
-            backgroundColor: on ? c.accent : 'transparent',
+            borderColor,
+            backgroundColor: bgColor,
             opacity: busy ? 0.5 : 1,
           },
           chipAnimStyle,
         ]}
       >
         <Text style={[styles.chipText, { color: on ? '#fff' : c.text }]}>
-          {p.emoji} {p.label}{on ? ' ✓' : ''}
+          {p.emoji} {p.label}{on ? (amberOn ? ' ↻' : ' ✓') : ''}
         </Text>
       </Animated.View>
     </Pressable>
@@ -98,7 +108,7 @@ export function ContextCard() {
       if (!res.ok) return;
       const { annotations } = await res.json();
       if (!Array.isArray(annotations)) return;
-      setLogged(annotations.map((a: any) => ({ id: a.id, category: a.category, label: a.label })));
+      setLogged(annotations.map((a: any) => ({ id: a.id, category: a.category, label: a.label, end_ts: a.end_ts ?? null })));
     } catch {
       // offline — show presets unmarked
     }
@@ -242,6 +252,7 @@ export function ContextCard() {
               p={p}
               on={on}
               busy={busy}
+              extended={on ? isExtended(getLogged(p.label)?.end_ts) : false}
               c={c}
               onTap={() => {
                 if (on) {

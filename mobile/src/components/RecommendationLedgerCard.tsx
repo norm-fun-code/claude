@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, useColorScheme, Animated, PanResponder,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { RECOMMENDATIONS_URL, authHeaders, fetchWithTimeout } from '../config';
 
@@ -22,12 +23,19 @@ function relDays(iso: string): string {
   return d === 0 ? 'today' : d === 1 ? '1d ago' : `${d}d ago`;
 }
 
-function outcomeChip(rec: Rec, c: ReturnType<typeof getColors>) {
-  if (!rec.outcome_measured_at) return { label: 'Pending', color: c.subtext, bg: c.border };
-  if (rec.outcome_delta == null) return { label: 'No data', color: c.subtext, bg: c.border };
+function outcomeChip(
+  rec: Rec,
+  c: ReturnType<typeof getColors>,
+  localMeasuredAt?: string | null,
+  localDelta?: number | null,
+) {
+  const measuredAt = localMeasuredAt !== undefined ? localMeasuredAt : rec.outcome_measured_at;
+  const delta = localDelta !== undefined ? localDelta : rec.outcome_delta;
+  if (!measuredAt) return { label: 'Pending', color: c.subtext, bg: c.border };
+  if (delta == null) return { label: 'No data', color: c.subtext, bg: c.border };
   const hit =
-    rec.expected_direction === 'up' ? rec.outcome_delta > 0 :
-    rec.expected_direction === 'down' ? rec.outcome_delta < 0 : false;
+    rec.expected_direction === 'up' ? delta > 0 :
+    rec.expected_direction === 'down' ? delta < 0 : false;
   return hit
     ? { label: 'Worked ↑', color: '#2E7D32', bg: '#E8F5E9' }
     : { label: 'No effect', color: '#9E9E9E', bg: c.border };
@@ -37,8 +45,18 @@ function SwipeableRow({
   rec, c, onDelete,
 }: { rec: Rec; c: ReturnType<typeof getColors>; onDelete: (id: number) => void }) {
   const translateX = useRef(new Animated.Value(0)).current;
-  const rowHeight = useRef(new Animated.Value(1)).current; // used as scale for collapse
+  const entryX = useRef(new Animated.Value(-18)).current;
   const [deleting, setDeleting] = useState(false);
+  const [localMeasuredAt, setLocalMeasuredAt] = useState<string | null | undefined>(undefined);
+  const [localDelta, setLocalDelta] = useState<number | null | undefined>(undefined);
+
+  // Brief left-peek entry animation to hint at swipe affordance.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      Animated.spring(entryX, { toValue: 0, useNativeDriver: true, damping: 14, stiffness: 200 }).start();
+    }, 400);
+    return () => clearTimeout(t);
+  }, [entryX]);
 
   const SWIPE_THRESHOLD = 80;
 
@@ -49,8 +67,8 @@ function SwipeableRow({
     },
     onPanResponderRelease: (_, g) => {
       if (g.dx < -SWIPE_THRESHOLD) {
-        // Swipe far enough — animate out then delete
         Animated.timing(translateX, { toValue: -400, duration: 200, useNativeDriver: true }).start(() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
           setDeleting(true);
           fetchWithTimeout(`${RECOMMENDATIONS_URL}/${rec.id}`, {
             method: 'DELETE', headers: authHeaders(),
@@ -62,11 +80,33 @@ function SwipeableRow({
     },
   })).current;
 
+  async function markOutcome(thumbsUp: boolean) {
+    const expectedDir = rec.expected_direction;
+    const delta = thumbsUp
+      ? (expectedDir === 'down' ? -1 : 1)
+      : (expectedDir === 'down' ? 1 : -1);
+    const measuredAt = new Date().toISOString();
+    setLocalMeasuredAt(measuredAt);
+    setLocalDelta(delta);
+    try {
+      await fetchWithTimeout(`${RECOMMENDATIONS_URL}/${rec.id}/outcome`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ thumbsUp }),
+      });
+      Haptics.selectionAsync();
+    } catch {
+      setLocalMeasuredAt(undefined);
+      setLocalDelta(undefined);
+    }
+  }
+
   if (deleting) return null;
 
-  const chip = outcomeChip(rec, c);
+  const chip = outcomeChip(rec, c, localMeasuredAt, localDelta);
   const source = rec.surfaced_in === 'briefing' ? 'morning brief'
     : rec.surfaced_in === 'chat' ? 'Ask' : rec.surfaced_in;
+  const showThumbs = (localMeasuredAt === undefined ? !rec.outcome_measured_at : !localMeasuredAt);
 
   return (
     <View style={{ overflow: 'hidden' }}>
@@ -75,12 +115,25 @@ function SwipeableRow({
         <Text style={styles.deleteHintText}>Delete</Text>
       </View>
       <Animated.View
-        style={[styles.row, { borderTopColor: c.border, backgroundColor: c.card, transform: [{ translateX }] }]}
+        style={[
+          styles.row,
+          { borderTopColor: c.border, backgroundColor: c.card, transform: [{ translateX: Animated.add(translateX, entryX) }] },
+        ]}
         {...panResponder.panHandlers}
       >
         <View style={styles.rowMain}>
           <Text style={[styles.recTitle, { color: c.text }]} numberOfLines={2}>{rec.title}</Text>
           <Text style={[styles.recMeta, { color: c.subtext }]}>{relDays(rec.created_at)} · {source}</Text>
+          {showThumbs && (
+            <View style={styles.thumbsRow}>
+              <TouchableOpacity onPress={() => markOutcome(true)} hitSlop={8} style={styles.thumbBtn}>
+                <Text style={styles.thumbText}>👍</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => markOutcome(false)} hitSlop={8} style={styles.thumbBtn}>
+                <Text style={styles.thumbText}>👎</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
         <View style={[styles.chip, { backgroundColor: chip.bg }]}>
           <Text style={[styles.chipText, { color: chip.color }]}>{chip.label}</Text>
@@ -124,7 +177,7 @@ export function RecommendationLedgerCard() {
             {stats.total} made{stats.hitRate != null ? ` · ${Math.round(stats.hitRate)}% effective` : ''}
           </Text>
         )}
-        <Text style={[styles.hint, { color: c.subtext }]}>Swipe left to dismiss</Text>
+        <Text style={[styles.hint, { color: c.subtext }]}>Swipe left to dismiss · 👍👎 to close the loop</Text>
       </View>
 
       {visible.map((rec) => (
@@ -168,6 +221,9 @@ const styles = StyleSheet.create({
   rowMain: { flex: 1 },
   recTitle: { fontSize: 13, fontWeight: '500', lineHeight: 18, marginBottom: 2 },
   recMeta: { ...typography.caption, fontSize: 11 },
+  thumbsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
+  thumbBtn: { padding: 2 },
+  thumbText: { fontSize: 16 },
   chip: {
     borderRadius: radius.sm,
     paddingHorizontal: 8,

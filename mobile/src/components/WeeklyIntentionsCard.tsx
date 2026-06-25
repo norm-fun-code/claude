@@ -206,12 +206,17 @@ export function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}
 
   const cleanGoals = goals.map((g) => g.trim()).filter(Boolean);
 
-  // Saved summary — the day-to-day view: last week's AI review (if any), this
-  // week's goals, and the highest-leverage actions. Tap to edit.
+  const daysSinceWeekStart = currentWeek
+    ? Math.floor((Date.now() - new Date(currentWeek).getTime()) / 86400000)
+    : 0;
+  const intentionIsStale = daysSinceWeekStart > 5;
+
+  // Saved summary — the day-to-day view: last week’s AI review (if any), this
+  // week’s goals, and the highest-leverage actions. Tap to edit.
   if (saved && !editing) {
     return (
       <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
-        <SectionHeader emoji="🎯" title={hasReview ? 'Weekly review + reset' : 'This week’s focus'} />
+        <SectionHeader emoji="🎯" title={hasReview ? ‘Weekly review + reset’ : ‘This week’s focus’} />
         {reviewBlock}
         {currentGoals.length > 0 ? (
           <View style={hasReview ? styles.thisWeekBox : undefined}>
@@ -230,6 +235,11 @@ export function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}
         )}
         {context ? <Text style={[styles.summaryContext, { color: c.subtext }]} numberOfLines={4}>{context}</Text> : null}
         {leverageBlock}
+        {intentionIsStale && (
+          <Text style={[styles.staleNote, { color: c.subtext }]}>
+            Set {daysSinceWeekStart}d ago — ready to update for the new week?
+          </Text>
+        )}
         <TouchableOpacity onPress={() => setEditing(true)} style={styles.editLink}>
           <Text style={[styles.editLinkText, { color: c.accent }]}>Edit</Text>
         </TouchableOpacity>
@@ -346,4 +356,5 @@ const styles = StyleSheet.create({
   thisWeekBox: { marginTop: spacing.sm },
   editLink: { marginTop: spacing.sm },
   editLinkText: { ...typography.body, fontWeight: '600' },
+  staleNote: { ...typography.caption, fontSize: 12, marginTop: spacing.sm, fontStyle: 'italic' },
 });
