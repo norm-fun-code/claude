@@ -190,8 +190,8 @@ export default function App() {
             </TouchableOpacity>
             <WealthCard wealth={d?.wealth ?? null} />
             <IndicesCard />
-            <MarketsCard markets={d?.markets ?? null} />
             <InsightsCard insights={d?.wealthInsights ?? []} />
+            <MarketsCard markets={d?.markets ?? null} />
             {!d?.wealth && (
               <EmptyNote c={c} text="Connect Monarch (your monthly export) to see net worth, spending, and cashflow here." />
             )}

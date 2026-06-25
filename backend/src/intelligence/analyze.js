@@ -83,6 +83,11 @@ const DEFAULTS = {
     'health:sleep_debt|health:sleep_hours',
     // Steps and active energy both measure movement from the same underlying data
     'health:active_energy|health:steps',
+    // Energy is an OUTPUT of HRV recovery, not a lever for improving HRV. Surfacing
+    // this as "high-energy days run better HRV" inverts the causal direction and
+    // generates misleading briefing recommendations.
+    'health:hrv|wellbeing:energy',
+    'health:resting_hr|wellbeing:energy',
   ]),
 };
 
