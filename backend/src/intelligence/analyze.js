@@ -239,16 +239,12 @@ function computeCorrelations(seriesByKey, opts = {}) {
   // eat_healthy ↔ habit_score are trivially correlated, not discoveries.
   // Individual habits also co-vary because they share the same "good day" driver.
   const skipHabitPair = (ka, kb) => ka.split(':')[0] === 'habits' && kb.split(':')[0] === 'habits';
-  // Environment metrics may only correlate with health:resting_hr. Env↔env pairs
-  // are weather physics; env↔anything-else is noise that doesn't drive action.
-  // Only weather↔RHR is a genuine personal signal worth surfacing.
-  const skipEnvPair = (ka, kb) => {
-    const aEnv = ka.split(':')[0] === 'environment';
-    const bEnv = kb.split(':')[0] === 'environment';
-    if (!aEnv && !bEnv) return false;
-    if (aEnv && bEnv) return true;
-    return (aEnv ? kb : ka) !== 'health:resting_hr';
-  };
+  // Environment metrics are handled exclusively by computeDaytimeCardio, which
+  // correlates them against Apple Watch daytime HRV/RHR. Block all env pairs here
+  // so the general engine never surfaces weather correlations against Eight Sleep
+  // overnight data or any other non-daytime metric.
+  const skipEnvPair = (ka, kb) =>
+    ka.split(':')[0] === 'environment' || kb.split(':')[0] === 'environment';
   // Tautological pairs: the lever is definitionally an input to the outcome formula,
   // so the correlation carries no information (exercise habit → active energy burned).
   const TAUTOLOGICAL = new Set([
@@ -641,12 +637,16 @@ function computeDaytimeCardio(daytimeMap) {
 
   // Each lever: key in daytimeMap, human label, threshold for "high" bucket.
   const LEVERS = [
-    { key: 'habits:eat_healthy',  label: 'Eating well',      threshold: 3 },
-    { key: 'wellbeing:mood',      label: 'High-mood days',   threshold: 4 },
-    { key: 'wellbeing:focus',     label: 'High-focus days',  threshold: 4 },
+    { key: 'habits:eat_healthy',        label: 'Eating well',          threshold: 3 },
+    { key: 'wellbeing:mood',            label: 'High-mood days',       threshold: 4 },
+    { key: 'wellbeing:focus',           label: 'High-focus days',      threshold: 4 },
     // Wake time >= 7 = woke at/after 7am. Threshold chosen to split typical
     // sleep pattern in halves — 7am is the user's approximate midpoint.
-    { key: 'health:wake_time',    label: 'Waking after 7am', threshold: 7.0 },
+    { key: 'health:wake_time',          label: 'Waking after 7am',     threshold: 7.0 },
+    // Weather levers — Apple Watch daytime RHR/HRV vs outdoor conditions.
+    // 70°F splits warm vs cool days; 65% splits muggy vs comfortable humidity.
+    { key: 'environment:temperature',   label: 'Warm days (>70°F)',    threshold: 70 },
+    { key: 'environment:humidity',      label: 'High-humidity days',   threshold: 65 },
   ];
 
   function dayKey(d) {
@@ -1030,14 +1030,19 @@ async function analyze(opts = {}) {
     if (seriesByKey[k]) daytimeMap[k] = seriesByKey[k];
   }
   // Eight Sleep wake time pairs naturally with daytime autonomic tone even though
-  // it's a nightly metric — but prefer Apple Health so all daytime signals come
-  // from the same source. Falls back silently if Apple doesn't have timing data.
+  // it's a nightly metric — load it here rather than the night-locked series.
   try {
     const wakeRows = await metricsStore.dailyAggregatePreferSource({
-      domain: 'health', metric: 'wake_time', from, agg: 'avg', sources: ['apple_health'],
+      domain: 'health', metric: 'wake_time', from, agg: 'avg', sources: ['eight_sleep'],
     });
     if (wakeRows.length) daytimeMap['health:wake_time'] = wakeRows;
-  } catch { /* non-critical */ }
+  } catch { /* non-critical — Eight Sleep may not have timing data */ }
+  // Environment metrics (temperature, humidity) enter daytimeMap so computeDaytimeCardio
+  // can correlate them against Apple Watch daytime HRV/RHR. They are explicitly blocked
+  // from the general computeCorrelations engine below (env data is NOT from Apple Watch).
+  for (const envKey of ['environment:temperature', 'environment:humidity']) {
+    if (seriesByKey[envKey]) daytimeMap[envKey] = seriesByKey[envKey];
+  }
   const daytimeCardio = computeDaytimeCardio(daytimeMap);
 
   const trends = computeTrends(seriesByKey, o);
