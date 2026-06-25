@@ -3227,12 +3227,28 @@ runMigrations()
     app.listen(PORT, () => {
       console.log(`NormOS backend running on http://localhost:${PORT}`);
       console.log(`Health check: http://localhost:${PORT}/api/health`);
-      // One-time cleanup: delete recommendation ledger entries that are Monarch
-      // query steps (the LLM was tagging "Pull Jan–Jun..." as <rec> recommendations).
-      // Safe to re-run: the pattern is specific enough not to touch real recs.
+      // Cleanup: delete recommendation ledger entries that are Monarch query steps
+      // (the LLM was tagging "Pull Jan–Jun..." as <rec> recommendations).
       require('./src/db').query(
         `DELETE FROM recommendations WHERE title ~* '^(pull|export|fetch|get|check|look|query|run|import|download|analyze|review|compare) '`
       ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} bad query-step recommendation(s)`); })
+        .catch(() => {});
+
+      // Cleanup: delete spurious env-to-env correlation findings (humidity↔UV, etc.)
+      // and tautological findings (exercise habit → active energy). These are now
+      // filtered at analysis time; this removes any already in the DB.
+      require('./src/db').query(
+        `DELETE FROM findings
+          WHERE evidence->>'kind' = 'correlation'
+            AND (
+              (evidence->>'a' LIKE 'environment:%' AND evidence->>'b' LIKE 'environment:%')
+              OR (evidence->>'a', evidence->>'b') IN (
+                ('habits:exercise','health:active_energy'),('health:active_energy','habits:exercise'),
+                ('habits:exercise','health:exercise_minutes'),('health:exercise_minutes','habits:exercise'),
+                ('health:exercise_minutes','health:active_energy'),('health:active_energy','health:exercise_minutes')
+              )
+            )`
+      ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} spurious/tautological finding(s)`); })
         .catch(() => {});
 
       // Optional self-running morning routine (cloud deploys; ENABLE_SCHEDULER=true).

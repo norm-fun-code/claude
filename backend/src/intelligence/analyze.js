@@ -239,6 +239,20 @@ function computeCorrelations(seriesByKey, opts = {}) {
   // eat_healthy ↔ habit_score are trivially correlated, not discoveries.
   // Individual habits also co-vary because they share the same "good day" driver.
   const skipHabitPair = (ka, kb) => ka.split(':')[0] === 'habits' && kb.split(':')[0] === 'habits';
+  // Environment-to-environment correlations (humidity ↔ UV index, temp ↔ AQI) are
+  // weather physics, not personal insights. Skip any pair where both sides are env.
+  const skipEnvPair = (ka, kb) => ka.split(':')[0] === 'environment' && kb.split(':')[0] === 'environment';
+  // Tautological pairs: the lever is definitionally an input to the outcome formula,
+  // so the correlation carries no information (exercise habit → active energy burned).
+  const TAUTOLOGICAL = new Set([
+    'habits:exercise|health:active_energy',
+    'habits:exercise|health:exercise_minutes',
+    'health:exercise_minutes|health:active_energy',
+    'health:sleep_hours|health:sleep_score',
+    'health:deep_sleep_hours|health:sleep_score',
+    'health:rem_sleep_hours|health:sleep_score',
+  ]);
+  const skipTautological = (ka, kb) => TAUTOLOGICAL.has([ka, kb].sort().join('|'));
 
   for (let i = 0; i < keys.length; i++) {
     if (skipKey(keys[i])) continue;
@@ -246,6 +260,8 @@ function computeCorrelations(seriesByKey, opts = {}) {
       if (skipKey(keys[j])) continue;
       if (skipPair(keys[i], keys[j])) continue;
       if (skipHabitPair(keys[i], keys[j])) continue;
+      if (skipEnvPair(keys[i], keys[j])) continue;
+      if (skipTautological(keys[i], keys[j])) continue;
       const a = seriesByKey[keys[i]];
       const b = seriesByKey[keys[j]];
 
