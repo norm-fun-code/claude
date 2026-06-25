@@ -216,7 +216,7 @@ export function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}
   if (saved && !editing) {
     return (
       <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
-        <SectionHeader emoji="🎯" title={hasReview ? ‘Weekly review + reset’ : ‘This week’s focus’} />
+        <SectionHeader emoji="🎯" title={hasReview ? ‘Weekly review + reset’ : "This week’s focus"} />
         {reviewBlock}
         {currentGoals.length > 0 ? (
           <View style={hasReview ? styles.thisWeekBox : undefined}>
