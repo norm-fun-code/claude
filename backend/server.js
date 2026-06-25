@@ -1542,6 +1542,19 @@ app.get('/api/annotations', async (req, res) => {
   }
 });
 
+// Returns annotations that are CURRENTLY ACTIVE — same overlapping() query the
+// briefing uses. Needed because multi-day events (travel) have start_ts in the
+// past, so they're invisible to the ?from=today list query in the ContextCard.
+app.get('/api/annotations/active', async (req, res) => {
+  try {
+    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+    const active = await annotationsStore.overlapping(startOfToday, new Date());
+    res.json({ annotations: active });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete('/api/annotations/:id', async (req, res) => {
   try {
     const id = req.params.id;

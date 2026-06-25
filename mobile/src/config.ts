@@ -36,6 +36,7 @@ export const HABITS_TODAY_URL = `${API_BASE}/api/habits/today`;
 export const WORKOUT_LOG_URL = `${API_BASE}/api/workout/log`;
 export const ACTIVITY_URL = `${API_BASE}/api/activity`;
 export const ANNOTATIONS_URL = `${API_BASE}/api/annotations`;
+export const ANNOTATIONS_ACTIVE_URL = `${API_BASE}/api/annotations/active`;
 export const CHECKIN_HISTORY_URL = `${API_BASE}/api/checkin/history`;
 export const BRIEFINGS_HISTORY_URL = `${API_BASE}/api/briefings/history`;
 export const MARKETS_REFRESH_URL = `${API_BASE}/api/briefing/markets`;

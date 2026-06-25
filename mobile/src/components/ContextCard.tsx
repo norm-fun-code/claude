@@ -8,7 +8,7 @@ import Animated, {
 import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import { ANNOTATIONS_URL, authHeaders, fetchWithTimeout, localTz, localDateStr } from '../config';
+import { ANNOTATIONS_URL, ANNOTATIONS_ACTIVE_URL, authHeaders, fetchWithTimeout, localTz, localDateStr } from '../config';
 
 type Preset = { emoji: string; category: string; label: string };
 const PRESETS: Preset[] = [
@@ -91,9 +91,10 @@ export function ContextCard() {
   async function fetchToday() {
     fetchDateRef.current = todayLocal();
     try {
-      const res = await fetchWithTimeout(`${ANNOTATIONS_URL}?from=${encodeURIComponent(startOfTodayISO())}`, {
-        headers: authHeaders(),
-      });
+      // Use the /active endpoint — same overlapping() query the briefing uses — so
+      // multi-day annotations (e.g. a travel note from last week with a future end_ts)
+      // are visible here and can be deleted rather than invisibly polluting the brief.
+      const res = await fetchWithTimeout(ANNOTATIONS_ACTIVE_URL, { headers: authHeaders() });
       if (!res.ok) return;
       const { annotations } = await res.json();
       if (!Array.isArray(annotations)) return;
