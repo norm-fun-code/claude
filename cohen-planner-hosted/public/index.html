@@ -1074,11 +1074,12 @@ function renderMonarchAccountsCard(){
         <span style="font-size:11px;font-weight:700;font-family:'SF Mono',monospace;color:${isLiab?'var(--r)':'var(--tx)'}">${isLiab?'−':''}${fmt(Math.abs(total))}</span>
       </div>
       ${accts.map(a=>{
-        const isStripe=a.name.toLowerCase().includes('stripe');
+        const nm=a.name||'';
+        const isStripe=nm.toLowerCase().includes('stripe');
         return`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 10px;background:${isStripe?'rgba(99,91,255,.06)':'var(--s2)'};border:1px solid ${isStripe?'rgba(99,91,255,.2)':'var(--bd)'};border-radius:6px;margin-bottom:3px">
           <div>
-            <span style="font-size:10.5px;font-weight:${isStripe?700:500};color:var(--tx)">${a.name}</span>
-            ${a.institution?`<span style="font-size:8px;color:var(--t3);margin-left:5px">${a.institution}</span>`:''}
+            <span style="font-size:10.5px;font-weight:${isStripe?700:500};color:var(--tx)">${advEscape(nm)}</span>
+            ${a.institution?`<span style="font-size:8px;color:var(--t3);margin-left:5px">${advEscape(a.institution)}</span>`:''}
           </div>
           <span style="font-size:11px;font-weight:600;font-family:'SF Mono',monospace;color:${a.balance<0?'var(--r)':catColor[c]}">${a.balance<0?'−':''}${fmt(Math.abs(a.balance||0))}</span>
         </div>`;
@@ -1200,7 +1201,7 @@ function renderPortfolioTab(R,P){
           ${(inv.topGainers||[]).length===0?`<div style="font-size:10px;color:var(--t3)">No movers this period</div>`:(inv.topGainers||[]).map(h=>`
           <div style="display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--bd)">
             <div>
-              <span style="font-size:10.5px;font-weight:600;color:var(--tx);font-family:'SF Mono',monospace">${h.ticker}</span>
+              <span style="font-size:10.5px;font-weight:600;color:var(--tx);font-family:'SF Mono',monospace">${advEscape(h.ticker||"")}</span>
               <span style="font-size:8px;color:var(--t3);margin-left:4px">${typeLabel[h.securityType]||''}</span>
             </div>
             <div style="text-align:right">
@@ -1214,7 +1215,7 @@ function renderPortfolioTab(R,P){
           ${(inv.topLosers||[]).length===0?`<div style="font-size:10px;color:var(--t3)">No losers this period</div>`:(inv.topLosers||[]).map(h=>`
           <div style="display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--bd)">
             <div>
-              <span style="font-size:10.5px;font-weight:600;color:var(--tx);font-family:'SF Mono',monospace">${h.ticker}</span>
+              <span style="font-size:10.5px;font-weight:600;color:var(--tx);font-family:'SF Mono',monospace">${advEscape(h.ticker||"")}</span>
               <span style="font-size:8px;color:var(--t3);margin-left:4px">${typeLabel[h.securityType]||''}</span>
             </div>
             <div style="text-align:right">
@@ -1236,7 +1237,7 @@ function renderPortfolioTab(R,P){
       const isCash=h.securityType==='cash';
       const rowBg=i%2===0?'var(--s1)':'var(--s2)';
       return`<div style="display:grid;grid-template-columns:90px 70px 1fr 90px 90px 90px 90px;align-items:center;padding:5px 12px;border-bottom:1px solid var(--bd);background:${rowBg}">
-        <div style="font-size:10.5px;font-weight:600;color:${isCash?'var(--t2)':'var(--tx)'};font-family:'SF Mono',monospace">${h.ticker}</div>
+        <div style="font-size:10.5px;font-weight:600;color:${isCash?'var(--t2)':'var(--tx)'};font-family:'SF Mono',monospace">${advEscape(h.ticker||"")}</div>
         <div style="font-size:8.5px;color:var(--t3)">${typeLabel[h.securityType]||h.securityType||'—'}</div>
         <div>
           <div style="font-size:10px;font-family:'SF Mono',monospace;font-weight:500;color:var(--tx)">${fmt(h.value)}</div>
@@ -2400,20 +2401,24 @@ function advUuid(){return Date.now().toString(36)+Math.random().toString(36).sli
 function advEscape(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 
 function advMarkdown(text){
-  let h=text;
-  h=h.replace(/```([\s\S]*?)```/g,(m,c)=>`<pre>${advEscape(c.trim())}</pre>`);
+  // Escape the ENTIRE input first so any raw HTML in the model output or reloaded
+  // chat history is inert (prevents stored XSS). Markdown tokens (* ` # | -) are
+  // unaffected by escaping, so the rules below still match; inner advEscape calls
+  // are no longer needed since everything is already escaped.
+  let h=advEscape(text);
+  h=h.replace(/```([\s\S]*?)```/g,(m,c)=>`<pre>${c.trim()}</pre>`);
   h=h.replace(/`([^`]+)`/g,'<code>$1</code>');
   h=h.replace(/\n((?:\|.+\|\n)+)/g,(m,tbl)=>{
     const rows=tbl.trim().split('\n');if(rows.length<2)return m;
-    const hdr=rows[0].split('|').slice(1,-1).map(c=>advEscape(c.trim()));
+    const hdr=rows[0].split('|').slice(1,-1).map(c=>c.trim());
     const isSep=rows[1].match(/^[\s|:\-]+$/);
     const body=isSep?rows.slice(2):rows.slice(1);
     let t='<table><thead><tr>'+hdr.map(x=>`<th>${x}</th>`).join('')+'</tr></thead><tbody>';
-    body.forEach(r=>{const cells=r.split('|').slice(1,-1).map(c=>advEscape(c.trim()));t+='<tr>'+cells.map(c=>`<td>${c}</td>`).join('')+'</tr>'});
+    body.forEach(r=>{const cells=r.split('|').slice(1,-1).map(c=>c.trim());t+='<tr>'+cells.map(c=>`<td>${c}</td>`).join('')+'</tr>'});
     return '\n'+t+'</tbody></table>';
   });
-  h=h.replace(/^### (.+)$/gm,(m,t)=>`<h3>${advEscape(t)}</h3>`);
-  h=h.replace(/^#### (.+)$/gm,(m,t)=>`<h4>${advEscape(t)}</h4>`);
+  h=h.replace(/^### (.+)$/gm,(m,t)=>`<h3>${t}</h3>`);
+  h=h.replace(/^#### (.+)$/gm,(m,t)=>`<h4>${t}</h4>`);
   h=h.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
   h=h.replace(/(?:^|\n)((?:[\-\*] .+\n?)+)/g,(m,l)=>{const items=l.trim().split('\n').map(x=>x.replace(/^[\-\*] /,''));return '\n<ul>'+items.map(i=>`<li>${i}</li>`).join('')+'</ul>'});
   h=h.split('\n\n').map(p=>{p=p.trim();if(!p)return '';if(p.startsWith('<'))return p;return '<p>'+p.replace(/\n/g,'<br>')+'</p>'}).join('\n');

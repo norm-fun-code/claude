@@ -87,6 +87,14 @@ function requireAuth(req, res, next) {
   res.redirect('/login');
 }
 
+// Debug/introspection endpoints are off by default; set ENABLE_DEBUG_ENDPOINTS=1
+// to expose them (they leak schema/host info and shouldn't run in production).
+const DEBUG_ENDPOINTS = process.env.ENABLE_DEBUG_ENDPOINTS === '1';
+function requireDebug(req, res, next) {
+  if (!DEBUG_ENDPOINTS) return res.status(404).json({ error: 'Not found' });
+  return requireAuth(req, res, next);
+}
+
 // ── Auth routes ─────────────────────────────────────────────────────────────
 app.get('/login', (req, res) => {
   if (req.session && req.session.authenticated) return res.redirect('/');
@@ -260,7 +268,7 @@ app.delete('/api/scenarios/:id', requireAuth, async (req, res) => {
 });
 
 // ── Debug ──────────────────────────────────────────────────────────────────
-app.get('/api/debug/db', requireAuth, async (req, res) => {
+app.get('/api/debug/db', requireDebug, async (req, res) => {
   try {
     const [sc, pl, sn, cols] = await Promise.all([
       db.query('SELECT id, name, color, created_at FROM scenarios ORDER BY created_at'),
@@ -279,7 +287,7 @@ app.get('/api/debug/db', requireAuth, async (req, res) => {
       db_url_host: (process.env.DATABASE_URL||'').replace(/:[^:@]*@/,':*****@'),
     });
   } catch (err) {
-    res.status(500).json({ error: err.message, stack: err.stack });
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -497,7 +505,7 @@ app.post('/api/monarch-disconnect', requireAuth, async (req, res) => {
 });
 
 // Debug: list available MCP tools + schemas
-app.get('/api/monarch-tools', requireAuth, async (req, res) => {
+app.get('/api/monarch-tools', requireDebug, async (req, res) => {
   try {
     const accessToken = await getMonarchAccessToken();
     if (!accessToken) return res.status(401).json({ error: 'Not connected' });
@@ -510,7 +518,7 @@ app.get('/api/monarch-tools', requireAuth, async (req, res) => {
 });
 
 // Probe: discover portfolio/holdings tools and try calling them
-app.get('/api/monarch-probe-portfolio', requireAuth, async (req, res) => {
+app.get('/api/monarch-probe-portfolio', requireDebug, async (req, res) => {
   try {
     const accessToken = await getMonarchAccessToken();
     if (!accessToken) return res.status(401).json({ error: 'Not connected' });
