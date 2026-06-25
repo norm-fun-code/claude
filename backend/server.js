@@ -3269,18 +3269,23 @@ runMigrations()
       ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} bad query-step recommendation(s)`); })
         .catch(() => {});
 
-      // Cleanup: delete spurious env-to-env correlation findings (humidity↔UV, etc.)
-      // and tautological findings (exercise habit → active energy). These are now
-      // filtered at analysis time; this removes any already in the DB.
+      // Cleanup: delete any correlation findings where either side is an environment
+      // metric. Env correlations now come exclusively from computeDaytimeCardio
+      // (Apple Watch daytime HRV/RHR) — not the general Pearson engine. Also remove
+      // tautological findings (exercise habit → active energy) and the energy↔HRV
+      // pair (energy is an output of HRV, not a lever for improving it).
       require('./src/db').query(
         `DELETE FROM findings
           WHERE evidence->>'kind' = 'correlation'
             AND (
-              (evidence->>'a' LIKE 'environment:%' AND evidence->>'b' LIKE 'environment:%')
+              evidence->>'a' LIKE 'environment:%'
+              OR evidence->>'b' LIKE 'environment:%'
               OR (evidence->>'a', evidence->>'b') IN (
                 ('habits:exercise','health:active_energy'),('health:active_energy','habits:exercise'),
                 ('habits:exercise','health:exercise_minutes'),('health:exercise_minutes','habits:exercise'),
-                ('health:exercise_minutes','health:active_energy'),('health:active_energy','health:exercise_minutes')
+                ('health:exercise_minutes','health:active_energy'),('health:active_energy','health:exercise_minutes'),
+                ('health:hrv','wellbeing:energy'),('wellbeing:energy','health:hrv'),
+                ('health:resting_hr','wellbeing:energy'),('wellbeing:energy','health:resting_hr')
               )
             )`
       ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} spurious/tautological finding(s)`); })
