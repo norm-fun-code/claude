@@ -1030,13 +1030,14 @@ async function analyze(opts = {}) {
     if (seriesByKey[k]) daytimeMap[k] = seriesByKey[k];
   }
   // Eight Sleep wake time pairs naturally with daytime autonomic tone even though
-  // it's a nightly metric — load it here rather than the night-locked series.
+  // it's a nightly metric — but prefer Apple Health so all daytime signals come
+  // from the same source. Falls back silently if Apple doesn't have timing data.
   try {
     const wakeRows = await metricsStore.dailyAggregatePreferSource({
-      domain: 'health', metric: 'wake_time', from, agg: 'avg', sources: ['eight_sleep'],
+      domain: 'health', metric: 'wake_time', from, agg: 'avg', sources: ['apple_health'],
     });
     if (wakeRows.length) daytimeMap['health:wake_time'] = wakeRows;
-  } catch { /* non-critical — Eight Sleep may not have timing data */ }
+  } catch { /* non-critical */ }
   const daytimeCardio = computeDaytimeCardio(daytimeMap);
 
   const trends = computeTrends(seriesByKey, o);

@@ -52,6 +52,8 @@ import { CheckinHistoryCard } from './src/components/CheckinHistoryCard';
 import { HabitsModal } from './src/components/HabitsModal';
 import { LibraryCard } from './src/components/LibraryCard';
 import { RecommendationLedgerCard } from './src/components/RecommendationLedgerCard';
+import { IndicesCard } from './src/components/IndicesCard';
+import { MarketsCard } from './src/components/MarketsCard';
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
 
 export default function App() {
@@ -187,6 +189,8 @@ export default function App() {
               <Text style={styles.wealthAskBtnText}>Ask about my finances</Text>
             </TouchableOpacity>
             <WealthCard wealth={d?.wealth ?? null} />
+            <IndicesCard />
+            <MarketsCard markets={d?.markets ?? null} />
             <InsightsCard insights={d?.wealthInsights ?? []} />
             {!d?.wealth && (
               <EmptyNote c={c} text="Connect Monarch (your monthly export) to see net worth, spending, and cashflow here." />
