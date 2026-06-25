@@ -62,6 +62,18 @@ async function recentTitles(withinDays = 3) {
 }
 
 /**
+ * All recommendation titles (any source) within the last `withinDays` days —
+ * used by the chat path for cross-source deduplication.
+ */
+async function recentTitlesAll(withinDays = 7) {
+  const { rows } = await query(
+    `SELECT title FROM recommendations WHERE created_at >= now() - ($1 || ' days')::interval`,
+    [withinDays]
+  );
+  return new Set(rows.map((r) => r.title));
+}
+
+/**
  * For recommendations surfaced in the last `lookbackDays` that have an
  * outcome_metric, compute the 7-day delta from metrics and write it back.
  * Called on Sunday morning from the weekly review flow.
@@ -103,4 +115,4 @@ async function measureOutcomes(lookbackDays = 10) {
   return measured;
 }
 
-module.exports = { recordRecommendation, listRecommendations, setOutcome, recentTitles, measureOutcomes };
+module.exports = { recordRecommendation, listRecommendations, setOutcome, recentTitles, recentTitlesAll, measureOutcomes };

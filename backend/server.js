@@ -2693,11 +2693,14 @@ app.get('/api/briefing', async (req, res) => {
     leverageContext = parts.join('\n\n');
 
     // Log leverage actions to the recommendation ledger (fire-and-forget).
-    // Deduplicated to 3-day window so the same finding isn't recorded daily.
+    // Deduplicated to 7-day window using prefix matching (first 40 chars) so
+    // minor percentage variations like "HRV is 14% better" vs "15% better"
+    // don't generate new rows every day.
     if (levFindings.length) {
-      recommendationsStore.recentTitles(3).then((recent) => {
+      recommendationsStore.recentTitles(7).then((recent) => {
+        const recentPrefixes = new Set([...recent].map((t) => t.slice(0, 40).toLowerCase()));
         for (const f of levFindings) {
-          if (recent.has(f.title)) continue;
+          if (recentPrefixes.has(f.title.slice(0, 40).toLowerCase())) continue;
           const ev = f.evidence || {};
           recommendationsStore.recordRecommendation({
             type: 'leverage',
@@ -3199,6 +3202,14 @@ runMigrations()
     app.listen(PORT, () => {
       console.log(`NormOS backend running on http://localhost:${PORT}`);
       console.log(`Health check: http://localhost:${PORT}/api/health`);
+      // One-time cleanup: delete recommendation ledger entries that are Monarch
+      // query steps (the LLM was tagging "Pull Jan–Jun..." as <rec> recommendations).
+      // Safe to re-run: the pattern is specific enough not to touch real recs.
+      require('./src/db').query(
+        `DELETE FROM recommendations WHERE title ~* '^(pull|export|fetch|get|check|look|query|run|import|download|analyze|review|compare) '`
+      ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} bad query-step recommendation(s)`); })
+        .catch(() => {});
+
       // Optional self-running morning routine (cloud deploys; ENABLE_SCHEDULER=true).
       require('./src/scheduler').start();
 

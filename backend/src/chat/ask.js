@@ -37,9 +37,9 @@ Write a thorough, genuinely useful answer:
 
 Aim for depth and usefulness over brevity, but never pad with filler.
 
-When you make a specific, actionable recommendation — something the user should concretely try, change, or start — append exactly one tag at the very end of your response:
-<rec>One-line summary of the recommendation</rec>
-Only include this when the answer contains a genuinely new, specific action (not general encouragement, not restating what they already do). Omit it entirely for idea/concept questions.`;
+When your answer contains a specific behavior change the user should make in their own life — a habit to start or stop, a routine to adjust, something to prioritize — append exactly one tag at the very end:
+<rec>One-line summary of the behavior change</rec>
+ONLY use this for changes the USER makes to their habits or lifestyle. NEVER use it for data queries, analysis steps, things to investigate, or anything the AI should do. Omit it entirely for idea/concept questions, financial data lookups, or any answer that doesn't include a concrete personal behavior change.`;
 
 // Cheap intent check: does the question seem to be about the user's own life /
 // data / planning (vs. a pure idea/concept lookup)? Personal questions get the
@@ -405,15 +405,26 @@ async function ask(question, { history = [], k = 14 } = {}) {
   }
 
   // Extract and record any recommendation the model flagged via <rec> tag.
+  // Validate: reject query/analysis steps the model accidentally tagged
+  // (e.g. "Pull Jan–Jun spend from Monarch" — not a user behavior change).
+  const DATA_QUERY_RE = /^(pull|export|fetch|get|check|look|query|run|import|download|analyze|review|compare|examine|investigate|show|find|list|calculate)\b/i;
   const recMatch = answer.match(/<rec>([\s\S]*?)<\/rec>/i);
   if (recMatch) {
     const recTitle = recMatch[1].trim();
     answer = answer.replace(/<rec>[\s\S]*?<\/rec>/i, '').trim();
-    recordRecommendation({
-      type: 'leverage',
-      title: recTitle,
-      surfacedIn: 'chat',
-    }).catch(() => {});
+    if (recTitle && !DATA_QUERY_RE.test(recTitle)) {
+      // Dedup: skip if we've recorded a title with the same opening words in the last 7 days.
+      const prefix = recTitle.slice(0, 40).toLowerCase();
+      const recentStore = require('../store/recommendations');
+      recentStore.recentTitlesAll(7).then((recent) => {
+        const alreadySeen = [...recent].some((t) => t.slice(0, 40).toLowerCase() === prefix);
+        if (!alreadySeen) {
+          recordRecommendation({ type: 'leverage', title: recTitle, surfacedIn: 'chat' }).catch(() => {});
+        }
+      }).catch(() => {
+        recordRecommendation({ type: 'leverage', title: recTitle, surfacedIn: 'chat' }).catch(() => {});
+      });
+    }
   }
 
   return {
