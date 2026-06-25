@@ -52,7 +52,6 @@ import { CheckinHistoryCard } from './src/components/CheckinHistoryCard';
 import { HabitsModal } from './src/components/HabitsModal';
 import { LibraryCard } from './src/components/LibraryCard';
 import { RecommendationLedgerCard } from './src/components/RecommendationLedgerCard';
-import { ActiveExperimentBanner } from './src/components/ActiveExperimentBanner';
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
 
 export default function App() {
@@ -170,7 +169,6 @@ export default function App() {
             ) : (
               <EmptyNote c={c} text="Health insights (sleep ↔ HRV ↔ focus patterns) appear once a few days of Apple Health + habit data accumulate. Open the app daily so HealthKit syncs, and log your habits on the Today tab." />
             )}
-            <ExperimentsCard />
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} recoveryScore={liveRecovery.recovery?.score ?? null} />
             <ForecastCard forecasts={d?.forecasts ?? []} />
             <CollapsibleSection title="NormOS profile">
@@ -227,9 +225,9 @@ export default function App() {
             <AnimatedEntry delay={20}>
               <TodayForecastCard forecast={d?.todayForecast} />
             </AnimatedEntry>
-            {/* Active experiment indicator */}
+            {/* Experiments — proposed + active, with start / pause controls */}
             <AnimatedEntry delay={30}>
-              <ActiveExperimentBanner />
+              <ExperimentsCard />
             </AnimatedEntry>
             {/* Streak / trend signals */}
             {d?.signals && d.signals.length > 0 && (

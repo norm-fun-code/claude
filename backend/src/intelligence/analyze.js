@@ -239,9 +239,16 @@ function computeCorrelations(seriesByKey, opts = {}) {
   // eat_healthy ↔ habit_score are trivially correlated, not discoveries.
   // Individual habits also co-vary because they share the same "good day" driver.
   const skipHabitPair = (ka, kb) => ka.split(':')[0] === 'habits' && kb.split(':')[0] === 'habits';
-  // Environment-to-environment correlations (humidity ↔ UV index, temp ↔ AQI) are
-  // weather physics, not personal insights. Skip any pair where both sides are env.
-  const skipEnvPair = (ka, kb) => ka.split(':')[0] === 'environment' && kb.split(':')[0] === 'environment';
+  // Environment metrics may only correlate with health:resting_hr. Env↔env pairs
+  // are weather physics; env↔anything-else is noise that doesn't drive action.
+  // Only weather↔RHR is a genuine personal signal worth surfacing.
+  const skipEnvPair = (ka, kb) => {
+    const aEnv = ka.split(':')[0] === 'environment';
+    const bEnv = kb.split(':')[0] === 'environment';
+    if (!aEnv && !bEnv) return false;
+    if (aEnv && bEnv) return true;
+    return (aEnv ? kb : ka) !== 'health:resting_hr';
+  };
   // Tautological pairs: the lever is definitionally an input to the outcome formula,
   // so the correlation carries no information (exercise habit → active energy burned).
   const TAUTOLOGICAL = new Set([

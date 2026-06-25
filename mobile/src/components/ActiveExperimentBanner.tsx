@@ -53,7 +53,7 @@ export function ActiveExperimentBanner() {
           </Text>
         </View>
         {total !== null && (
-          <Text style={[styles.dayCount, { color: c.subtext }]}>Day {elapsed}/{total}</Text>
+          <Text style={[styles.dayCount, { color: c.subtext }]}>Day {elapsed + 1}/{total}</Text>
         )}
       </View>
       <Text style={[styles.hypothesis, { color: c.text }]} numberOfLines={2}>

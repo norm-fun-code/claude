@@ -81,10 +81,10 @@ export function ExperimentsCard() {
       prev.map((e) => e.id === id ? { ...e, status: 'running', start_date: new Date().toISOString() } : e)
     );
     try {
-      await fetch(`${EXPERIMENTS_URL}/${id}`, {
-        method: 'PATCH',
+      await fetch(`${EXPERIMENTS_URL}/${id}/start`, {
+        method: 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'start' }),
+        body: JSON.stringify({ testDays: 14 }),
       });
       fetch_();
     } catch {
@@ -205,7 +205,7 @@ export function ExperimentsCard() {
                   <View style={[styles.fill, { backgroundColor: isPaused ? c.subtext : c.accent, width: `${Math.round(progress * 100)}%` as any }]} />
                 </View>
                 <Text style={[styles.meta, { color: c.subtext }]}>
-                  {elapsed} / {total} days{left !== null && left > 0 ? `  ·  ${left}d left` : ''}
+                  Day {elapsed + 1} / {total}{left !== null && left > 0 ? `  ·  ${left}d left` : ''}
                   {exp.end_date ? `  ·  ends ${fmtDate(exp.end_date)}` : ''}
                 </Text>
               </>

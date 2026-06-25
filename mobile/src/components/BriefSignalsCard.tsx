@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, useColorScheme } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import type { BriefSignal } from '../hooks/useBriefing';
 import { BRIEFING_CONTEXT_URL, authHeaders, fetchWithTimeout } from '../config';
@@ -8,18 +9,47 @@ interface Props {
   signals: BriefSignal[];
 }
 
+const STORAGE_KEY = 'briefSignalsAnswered';
+const TTL_MS = 24 * 60 * 60 * 1000;
+
+type StoredEntry = { key: string; ts: number };
+
+function persistDismiss(key: string) {
+  AsyncStorage.getItem(STORAGE_KEY).then((val) => {
+    const existing: StoredEntry[] = val ? JSON.parse(val) : [];
+    const cutoff = Date.now() - TTL_MS;
+    const fresh = existing.filter((s) => s.ts > cutoff && s.key !== key);
+    fresh.push({ key, ts: Date.now() });
+    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(fresh)).catch(() => {});
+  }).catch(() => {});
+}
+
 // One question at a time — show the first unanswered signal, answer it, then
 // the card slides to the next (or disappears). Answers POST as annotations so
 // they flow automatically into the next briefing build's annotationsContext.
+// Answered/skipped keys are persisted for 24h so the card doesn't reappear
+// on pull-to-refresh or app restart while the signal is still firing.
 export function BriefSignalsCard({ signals }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
-  // Track which signal keys the user has already answered this session.
   const [answered, setAnswered] = useState<Set<string>>(new Set());
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    AsyncStorage.getItem(STORAGE_KEY).then((val) => {
+      if (!val) return;
+      const stored: StoredEntry[] = JSON.parse(val);
+      const cutoff = Date.now() - TTL_MS;
+      const fresh = stored.filter((s) => s.ts > cutoff);
+      if (fresh.length > 0) setAnswered(new Set(fresh.map((s) => s.key)));
+      if (fresh.length < stored.length) {
+        AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(fresh)).catch(() => {});
+      }
+    }).catch(() => {});
+  }, []);
 
   const pending = signals.filter((s) => !answered.has(s.key));
   if (pending.length === 0) return null;
@@ -39,6 +69,7 @@ export function BriefSignalsCard({ signals }: Props) {
       });
       if (!res.ok) throw new Error(`Server ${res.status}`);
       setAnswered((prev) => new Set([...prev, current.key]));
+      persistDismiss(current.key);
       setText('');
     } catch {
       setFailed(true);
@@ -49,6 +80,7 @@ export function BriefSignalsCard({ signals }: Props) {
 
   function skip() {
     setAnswered((prev) => new Set([...prev, current.key]));
+    persistDismiss(current.key);
     setText('');
     setFailed(false);
   }
