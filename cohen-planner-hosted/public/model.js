@@ -162,7 +162,9 @@ function run(p,rets){
     const tax=calcTax(grossIncome,taxP,yr,ctcKids);
     const inc=tax.net;
     const ret=rets?rets[yIdx]:p.investReturn;
-    k401+=p.pretax401k+p.company401kMatch;k401*=(1+ret);
+    // Half-year convention: prior balance compounds a full year, this year's
+    // contributions (deposited throughout the year) earn ~half a year of return.
+    k401=k401*(1+ret)+(p.pretax401k+p.company401kMatch)*(1+ret/2);
     const sub=yr>=p.homePurchaseYear;
     // Property tax = rate × current home value (appreciates each year). Falls back
     // to legacy flat propTaxBase/homePrice for saved states without a rate.
@@ -196,10 +198,14 @@ function run(p,rets){
     }
     tT+=tu;
     const totE=h+liv+cc+tu,surp=inc-totE;
-    if(yr===p.homePurchaseYear)liq-=dp;
-    let txS=0,sold=0;
-    if(surp>=0){liq+=surp}else{const def=Math.abs(surp),gp=1-p.costBasisPct,td=gp*p.capGainsTaxRate,gs=def/(1-td);txS=gs-def;sold=gs;liq-=gs}
-    liq*=(1+ret);tTx+=txS;tS+=sold;
+    // Net within-year cash flow to/from the liquid pool. Deficits are funded by
+    // selling taxable assets, grossed up for cap-gains tax on the gain fraction.
+    let txS=0,sold=0,netFlow=surp;
+    if(surp<0){const def=Math.abs(surp),gp=1-p.costBasisPct,td=gp*p.capGainsTaxRate,gs=def/(1-td);txS=gs-def;sold=gs;netFlow=-gs}
+    if(yr===p.homePurchaseYear)netFlow-=dp;
+    // Half-year convention: prior balance compounds a full year, this year's net
+    // flow (surplus, withdrawals, down payment) earns ~half a year of return.
+    liq=liq*(1+ret)+netFlow*(1+ret/2);tTx+=txS;tS+=sold;
     let hv=0,mb=0,eq=0;
     if(sub){const yo=yr-p.homePurchaseYear+1;hv=p.homePrice*(1+p.homeAppreciation)**yo;mb=mBal(ma,p.mortgageRate/100,yo);eq=hv-mb}
     const kiy=kids.filter((k,ki)=>{const a=yr-k;const sa=ki===0?p.kid1YeshivaStartAge:p.yeshivaStartAge;return a>=sa&&a<=p.yeshivaEndAge}).length;
