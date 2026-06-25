@@ -222,14 +222,26 @@ function randNorm(mean,sd){
 function runMonteCarlo(p,trials=600){
   const sy=p.planStartYear||2026;const ey=p.planEndYear||2058;const nYears=ey-sy+1;
   const vol=p.mcVol??.14;const mean=p.investReturn;
-  const nwPaths=[],liqPaths=[],finalNW=[],floorLiq=[];let ruin=0;
+  // Lognormal returns: treat `mean` as the ARITHMETIC expected return and derive the
+  // log-drift so the simulated geometric mean is correct (drift = ln(1+mean) − vol²/2).
+  // A 1+r ~ lognormal draw can never fall below −100% and has a realistic fat right tail,
+  // unlike the previous additive-normal draws which understated crash frequency and
+  // overstated compounding (E[normal] = arithmetic mean ignores volatility drag).
+  const logDrift=Math.log(1+mean)-0.5*vol*vol;
+  const drawRet=()=>Math.exp(randNorm(logDrift,vol))-1;
+  const geomMean=Math.exp(logDrift)-1; // expected compounded annual growth
+  const nwPaths=[],liqPaths=[],finalNW=[],floorLiq=[];let ruin=0,dpFail=0;
+  const dpYr=p.homePurchaseYear,dpNeed=p.homePrice*(p.downPctg/100),dpIdx=dpYr-sy;
   for(let t=0;t<trials;t++){
-    const rets=[];for(let i=0;i<nYears;i++)rets.push(Math.max(-.6,randNorm(mean,vol)));
+    const rets=[];for(let i=0;i<nYears;i++)rets.push(drawRet());
     const{R}=run(p,rets);
     nwPaths.push(R.map(r=>r.nw));liqPaths.push(R.map(r=>r.liq));
     finalNW.push(R[R.length-1].nw);
     const minLiq=Math.min(...R.map(r=>r.liq));floorLiq.push(minLiq);
     if(minLiq<0)ruin++;
+    // Sequence-of-returns risk: probability the liquid pool can't cover the down
+    // payment in the purchase year (measured at the prior year-end, before the outflow).
+    if(dpIdx>=1&&dpIdx<R.length&&R[dpIdx-1].liq<dpNeed)dpFail++;
   }
   const pct=(arr,q)=>{const s=[...arr].sort((a,b)=>a-b);const idx=(s.length-1)*q;const lo=Math.floor(idx),hi=Math.ceil(idx);return s[lo]+(s[hi]-s[lo])*(idx-lo)};
   const band={p10:[],p50:[],p90:[]};
@@ -238,9 +250,10 @@ function runMonteCarlo(p,trials=600){
     band.p10.push(pct(col,.10));band.p50.push(pct(col,.50));band.p90.push(pct(col,.90));
   }
   finalNW.sort((a,b)=>a-b);
-  return{band,trials,vol,
+  return{band,trials,vol,geomMean,
     finalP10:pct(finalNW,.10),finalP50:pct(finalNW,.50),finalP90:pct(finalNW,.90),
     ruinPct:ruin/trials*100,
+    dpFailPct:dpIdx>=1?dpFail/trials*100:null,
     liqFloorP10:pct(floorLiq,.10)};
 }
 

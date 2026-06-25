@@ -1817,6 +1817,44 @@ function goalInlineEdit(span){
   inp.focus();inp.select();
 }
 
+function runGoalsRiskAnalysis(){
+  const out=document.getElementById('goalsRiskOut');
+  if(!out)return;
+  out.innerHTML='<div style="font-size:11px;color:var(--t3);padding:12px 0">Running 800 market scenarios…</div>';
+  // Defer the heavy compute so the loading state paints first.
+  setTimeout(()=>{
+    let mc;
+    try{mc=runMonteCarlo(P,800);}catch(e){out.innerHTML=`<div style="font-size:11px;color:var(--r);padding:8px 0">Simulation failed: ${advEscape(e.message)}</div>`;return;}
+    const horizon=P.planEndYear||2058;
+    const geomPct=(mc.geomMean*100).toFixed(1);
+    const ruin=mc.ruinPct,dpFail=mc.dpFailPct;
+    const ruinCol=ruin<5?'var(--g)':ruin<15?'var(--a)':'var(--r)';
+    const dpCol=dpFail==null?'var(--t3)':dpFail<10?'var(--g)':dpFail<25?'var(--a)':'var(--r)';
+    const floorCol=mc.liqFloorP10>=0?'var(--g)':'var(--r)';
+    const stat=(label,val,sub,col)=>`<div style="background:var(--s2);border:1px solid var(--bd);border-radius:7px;padding:9px 11px">
+      <div style="font-size:8.5px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--t3);margin-bottom:3px">${label}</div>
+      <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:${col||'var(--tx)'}">${val}</div>
+      <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${sub}</div>
+    </div>`;
+    out.innerHTML=`<div style="margin-top:10px">
+      <div style="font-size:10px;color:var(--t2);margin-bottom:8px">Net worth at ${horizon} across 800 scenarios — your single-line plan is roughly the median (P50):</div>
+      <div class="pf-quad" style="margin-bottom:10px">
+        ${stat('Pessimistic (P10)',fmt(mc.finalP10),'1-in-10 downside','var(--r)')}
+        ${stat('Median (P50)',fmt(mc.finalP50),'expected path','var(--tx)')}
+        ${stat('Optimistic (P90)',fmt(mc.finalP90),'1-in-10 upside','var(--g)')}
+        ${stat('Geo. return',geomPct+'%','compounded/yr','var(--b)')}
+      </div>
+      <div class="pf-quad">
+        ${stat('Liquid floor (P10)',fmt(mc.liqFloorP10),'lowest liquid, bad case',floorCol)}
+        ${stat('Cash-crunch risk',ruin.toFixed(0)+'%',ruin<5?'very unlikely':ruin<15?'watch closely':'elevated',ruinCol)}
+        ${dpFail!=null?stat('Down-payment risk',dpFail.toFixed(0)+'%',`can't cover ${P.homePurchaseYear} DP`,dpCol):stat('Down-payment risk','—','no purchase set','var(--t3)')}
+        ${stat('Volatility',Math.round((mc.vol)*100)+'%','annual std dev','var(--t3)')}
+      </div>
+      <div style="font-size:9px;color:var(--t3);margin-top:8px;line-height:1.5">Lognormal returns calibrated so the simulated compounded growth matches your ${Math.round((P.investReturn||.06)*100)}% assumption. "Cash-crunch risk" = share of scenarios where liquid goes negative at any point; "down-payment risk" = share where liquid can't cover the down payment the year before purchase.</div>
+    </div>`;
+  },30);
+}
+
 function renderGoalsTab(R,P,tT){
   const ca=document.getElementById('chartArea');
   destroyCharts();
@@ -2006,6 +2044,58 @@ function renderGoalsTab(R,P,tT){
       </div>
     </div>`;
   }
+
+  // ── Risk & Confidence (Monte Carlo, on-demand) ──
+  h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <div style="font-size:13px;font-weight:700;color:var(--tx)">🎲 Risk & Confidence</div>
+      <button onclick="runGoalsRiskAnalysis()" style="font-size:11px;font-weight:600;padding:6px 13px;background:var(--accent);color:#fff;border:none;border-radius:7px;cursor:pointer;font-family:inherit">Run simulation</button>
+    </div>
+    <div style="font-size:10.5px;color:var(--t2);line-height:1.5;margin-bottom:4px">Runs 800 market scenarios (lognormal returns, ${Math.round((P.mcVol??.14)*100)}% volatility) against your plan to show the range of outcomes — not just the single-line projection.</div>
+    <div id="goalsRiskOut"></div>
+  </div>`;
+
+  // ── Planning Opportunities (advisory — does not change your plan) ──
+  const _cy=new Date().getFullYear();
+  const _curRow=R.find(r=>r.yr===_cy)||R[0];
+  const annualExp=_curRow.totE||0;
+  const ef6=Math.round(annualExp/2),ef12=Math.round(annualExp);
+  const efHave=P.startingLiquid||0;
+  const efOk=efHave>=ef6;
+  const rothPerSpouse=7000,rothTotal=rothPerSpouse*2; // 2026 IRA limit; couple
+  const ny529Deduct=10000; // NY 529 MFJ state deduction cap
+  const nyMarginalState=0.0685; // approx NYS+NYC marginal for this income
+  const ny529Save=Math.round(ny529Deduct*nyMarginalState);
+  const totalTuition=tT||0;
+  const opps=[
+    {ic:'🛟',co:efOk?'var(--g)':'var(--a)',ti:'Emergency fund',
+     bd:`Target <b>${fmt(ef6)}–${fmt(ef12)}</b> (6–12 mo of ${fmt(annualExp)}/yr expenses). You hold ${fmt(efHave)} liquid — ${efOk?'comfortably covered. Keep this slice in cash/T-bills, separate from invested liquid.':'consider carving out a dedicated cash reserve before investing the rest.'}`},
+    {ic:'🏦',co:'var(--accent)',ti:'Backdoor Roth IRA',
+     bd:`Your income is above the Roth limit, but a <b>backdoor Roth</b> lets each of you contribute <b>${fmt(rothPerSpouse)}/yr</b> (≈${fmt(rothTotal)}/yr combined) to tax-free growth. Over decades this is one of the largest tax-free buckets available to high earners.`},
+    {ic:'🚀',co:'var(--p)',ti:'Mega-backdoor Roth',
+     bd:`If Norm's 401k plan allows after-tax contributions + in-plan conversion, you can add up to <b>~$46k/yr</b> beyond the ${fmt(P.pretax401k||23500)} pre-tax limit, all converting to Roth. Worth confirming with the plan administrator.`},
+    {ic:'🎓',co:'var(--b)',ti:'529 for tuition',
+     bd:`You're projected to pay <b>${fmt(totalTuition)}</b> in yeshiva tuition over the plan. NY 529 contributions are state-tax deductible up to <b>${fmt(ny529Deduct)}/yr</b> (~${fmt(ny529Save)}/yr saved) and grow tax-free; K-12 tuition withdrawals up to $10k/yr are federally qualified. Even short-hold 529 routing of tuition dollars captures the deduction.`},
+    {ic:'📉',co:'var(--g)',ti:'Tax-loss harvesting',
+     bd:`Your taxable account funds every deficit year by realizing gains (taxed at ~${Math.round((P.capGainsTaxRate||.345)*100)}%). Harvesting losses in down years banks carryforwards that offset those future gains — directly lowering the drag modeled in your deficit years.`},
+    {ic:'🛡️',co:'var(--r)',ti:'Insurance gaps',
+     bd:`Two dependents + a self-employed earner (Nancy) and a future suburban home argue for: <b>term life</b> on both incomes, <b>own-occupation disability</b> for Nancy's practice, and an <b>umbrella liability</b> policy. None are in the expense model — add the premiums so the plan reflects true cash flow.`},
+    {ic:'🛬',co:'var(--a)',ti:'De-risk before the home purchase',
+     bd:`The plan grows all liquid at a flat ${Math.round((P.investReturn||.06)*100)}% through ${P.homePurchaseYear}. Money needed for the ${fmt(dp)} down payment in ${P.homePurchaseYear} shouldn't ride the market in the final 1–2 years — shift the down-payment slice to cash/short T-bills to avoid a sequence-of-returns shortfall.`},
+  ];
+  h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
+    <div style="font-size:13px;font-weight:700;color:var(--tx);margin-bottom:3px">💡 Planning Opportunities</div>
+    <div style="font-size:9.5px;color:var(--t3);margin-bottom:12px">Advisor-grade suggestions. These are guidance only — they don't change your plan or numbers.</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      ${opps.map(o=>`<div style="display:flex;gap:10px;align-items:flex-start;padding:9px 11px;background:var(--s2);border:1px solid var(--bd);border-left:3px solid ${o.co};border-radius:7px">
+        <span style="font-size:15px;flex-shrink:0;line-height:1.3">${o.ic}</span>
+        <div>
+          <div style="font-size:11.5px;font-weight:700;color:var(--tx);margin-bottom:2px">${o.ti}</div>
+          <div style="font-size:10.5px;color:var(--t2);line-height:1.5">${o.bd}</div>
+        </div>
+      </div>`).join('')}
+    </div>
+  </div>`;
 
   // GOAL 1: Home purchase
   h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
