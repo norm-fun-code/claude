@@ -59,9 +59,9 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 .kpi-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:12px}
 .kpi{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:9px 11px;box-shadow:var(--shadow-sm);transition:box-shadow .15s}
 .kpi:hover{box-shadow:var(--shadow)}
-.kpi-l{font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:var(--t3);margin-bottom:3px}
+.kpi-l{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px}
 .kpi-v{font-size:16px;font-weight:700;font-family:'SF Mono',monospace;letter-spacing:-.5px;color:var(--tx)}
-.kpi-s{font-size:8.5px;color:var(--t2);margin-top:2px}
+.kpi-s{font-size:9.5px;color:var(--t2);margin-top:2px}
 .tabs{display:flex;gap:3px;margin-bottom:10px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:3px;box-shadow:var(--shadow-sm)}
 .tabs button{padding:6px 12px;border-radius:5px;font-size:11px;font-weight:500;cursor:pointer;border:none;background:transparent;color:var(--t2);font-family:inherit;transition:all .12s}
 .tabs button:hover{color:var(--tx);background:var(--s3)}
@@ -81,11 +81,11 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 .cc{background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:12px;box-shadow:var(--shadow-sm)}
 .sg{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .sc{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:11px;box-shadow:var(--shadow-sm)}
-.sc h3{font-size:8.5px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:var(--t3);margin-bottom:4px}
-.sc p{font-size:10px;color:var(--t2);line-height:1.55}
+.sc h3{font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:4px}
+.sc p{font-size:10.5px;color:var(--t2);line-height:1.55}
 .tw{max-height:340px;overflow-y:auto;border:1px solid var(--bd);border-radius:8px}
 table{width:100%;border-collapse:collapse;font-size:10px;font-family:'SF Mono',monospace}
-th{padding:6px 4px;text-align:right;font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:var(--t3);border-bottom:1px solid var(--bd);font-family:'Inter',sans-serif;position:sticky;top:0;background:var(--s2);z-index:1}
+th{padding:6px 4px;text-align:right;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.3px;color:var(--t3);border-bottom:1px solid var(--bd);font-family:'Inter',sans-serif;position:sticky;top:0;background:var(--s2);z-index:1}
 td{padding:3px 4px;text-align:right;border-bottom:1px solid var(--bd);color:var(--t2)}
 tr:hover td{background:var(--s2)}
 .btn{padding:6px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--s1);color:var(--t2);font-size:10px;font-weight:500;cursor:pointer;width:100%;margin-top:3px;font-family:inherit;transition:all .12s}
@@ -210,6 +210,24 @@ tr:hover td{background:var(--s2)}
 .adv-main{display:flex;flex-direction:column;overflow:hidden;background:var(--s1)}
 @media(max-width:900px){.adv-wrap{grid-template-columns:1fr}.adv-rail{display:none}}
 @media(max-width:640px){.adv-wrap{height:auto;min-height:350px}.adv{height:auto;min-height:350px}.adv-starters{grid-template-columns:1fr}}
+/* ── Accessibility: visible keyboard focus everywhere ── */
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* ── Portfolio responsive grids (replace inline fixed-px so they collapse on mobile) ── */
+.pf-split{display:grid;grid-template-columns:260px 1fr;gap:10px;margin-bottom:12px}
+.pf-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+.pf-cols2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pf-quad{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px}
+.pf-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+@media(max-width:760px){
+  .pf-split{grid-template-columns:1fr}
+  .pf-kpis{grid-template-columns:repeat(2,1fr)}
+  .pf-quad{grid-template-columns:1fr 1fr}
+}
+@media(max-width:480px){
+  .pf-kpis{grid-template-columns:1fr 1fr}
+  .pf-quad{grid-template-columns:1fr}
+}
 </style>
 </head>
 <body>
@@ -959,7 +977,7 @@ async function deleteScenario(i){
 function toggleCompare(){compareMode=!compareMode;buildControls();render();savePlannerState()}
 
 function fmtK(v){const a=Math.abs(v);const s=v<0?'-':'';if(a>=1000)return s+'$'+(a/1000).toFixed(1).replace(/\.0$/,'')+'M';return s+'$'+a+'K'}
-function chartOpts(){return{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#425466',font:{size:8.5,family:'Inter'},boxWidth:8}},tooltip:{backgroundColor:'#0a2540',borderColor:'#0a2540',borderWidth:0,titleFont:{size:10,family:'Inter'},bodyFont:{size:9,family:'Inter'},titleColor:'#fff',bodyColor:'#fff',padding:8,callbacks:{label:c=>c.dataset.label+': $'+(c.raw||0).toLocaleString()+'K'}}},scales:{x:{ticks:{color:'#8898aa',font:{size:8,family:'Inter'},maxRotation:45},grid:{display:false}},y:{ticks:{color:'#8898aa',font:{size:8,family:'Inter'},stepSize:500,callback:v=>fmtK(v)},grid:{color:'#e6ebf1'}}}}}
+function chartOpts(){return{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#425466',font:{size:10,family:'Inter'},boxWidth:9}},tooltip:{backgroundColor:'#0a2540',borderColor:'#0a2540',borderWidth:0,titleFont:{size:11,family:'Inter'},bodyFont:{size:10,family:'Inter'},titleColor:'#fff',bodyColor:'#fff',padding:8,callbacks:{label:c=>c.dataset.label+': $'+(c.raw||0).toLocaleString()+'K'}}},scales:{x:{ticks:{color:'#8898aa',font:{size:10,family:'Inter'},maxRotation:45},grid:{display:false}},y:{ticks:{color:'#8898aa',font:{size:10,family:'Inter'},stepSize:500,callback:v=>fmtK(v)},grid:{color:'#e6ebf1'}}}}}
 function posOpts(){const o=chartOpts();o.scales.y.min=0;return o}
 
 function render(){
@@ -1180,7 +1198,7 @@ function renderPortfolioTab(R,P){
     </div>
   </div>
 
-  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+  <div class="pf-kpis">
     ${[
       {l:'Total Value',v:fmt(totalVal),s:'investment portfolio',c:'var(--accent)'},
       {l:'Period Return',v:signFmt(inv.periodChange||0),s:signPct(inv.periodChangePct||0)+' this period',c:colorPct(inv.periodChange||0)},
@@ -1189,13 +1207,13 @@ function renderPortfolioTab(R,P){
     ].map(k=>`<div class="kpi"><div class="kpi-l">${k.l}</div><div class="kpi-v" style="color:${k.c};font-size:14px">${k.v}</div><div class="kpi-s">${k.s}</div></div>`).join('')}
   </div>
 
-  <div style="display:grid;grid-template-columns:260px 1fr;gap:10px;margin-bottom:12px">
+  <div class="pf-split">
     <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px">
       <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:10px">Allocation by Holding</div>
       <div style="height:220px;position:relative"><canvas id="portfolioDonut"></canvas></div>
     </div>
     <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="pf-cols2">
         <div>
           <div style="font-size:8.5px;font-weight:700;color:var(--g);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">▲ Top Gainers (period)</div>
           ${(inv.topGainers||[]).length===0?`<div style="font-size:10px;color:var(--t3)">No movers this period</div>`:(inv.topGainers||[]).map(h=>`
@@ -1228,8 +1246,9 @@ function renderPortfolioTab(R,P){
     </div>
   </div>
 
-  <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;overflow:hidden;margin-bottom:10px">
-    <div style="display:grid;grid-template-columns:90px 70px 1fr 90px 90px 90px 90px;gap:0;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);padding:7px 12px;border-bottom:1px solid var(--bd);background:var(--s2)">
+  <div class="pf-scroll" style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;margin-bottom:10px">
+   <div style="min-width:620px">
+    <div style="display:grid;grid-template-columns:90px 70px 1fr 90px 90px 90px 90px;gap:0;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--t3);padding:7px 12px;border-bottom:1px solid var(--bd);background:var(--s2)">
       <div>Ticker</div><div>Type</div><div>Value</div><div style="text-align:right">% Portfolio</div><div style="text-align:right">Period Δ$</div><div style="text-align:right">Period Δ%</div><div style="text-align:right">All-time Δ%</div>
     </div>
     ${holdings.map((h,i)=>{
@@ -1249,6 +1268,7 @@ function renderPortfolioTab(R,P){
         <div style="text-align:right;font-size:9.5px;font-family:'SF Mono',monospace;font-weight:600;color:${isCash?'var(--t3)':colorPct(h.allTimePct)}">${isCash?'—':signPct(h.allTimePct)}</div>
       </div>`;
     }).join('')}
+   </div>
   </div>
   <div style="font-size:9px;color:var(--t3);padding:0 2px">Holdings sourced from Monarch via GetInvestments. Period: ${inv.periodStart} → ${inv.periodEnd}. Values are Monarch's last-synced prices.</div>
 
@@ -1318,7 +1338,7 @@ function renderPortfolioTab(R,P){
         responsive:true,maintainAspectRatio:false,cutout:'58%',
         plugins:{
           legend:{position:'bottom',labels:{
-            font:{size:9,family:"'Inter',sans-serif"},color:'#425466',padding:8,boxWidth:8,
+            font:{size:10,family:"'Inter',sans-serif"},color:'#425466',padding:8,boxWidth:8,
             generateLabels:chart=>{
               const ds=chart.data.datasets[0];
               return chart.data.labels.map((lbl,i)=>{
@@ -1331,7 +1351,7 @@ function renderPortfolioTab(R,P){
           tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${fmt(ctx.raw)} (${donutTotal>0?(ctx.raw/donutTotal*100).toFixed(1):'0'}%)`}},
           datalabels:{
             color:'#fff',
-            font:{size:9,weight:'bold',family:"'Inter',sans-serif"},
+            font:{size:10,weight:'bold',family:"'Inter',sans-serif"},
             formatter:(val,ctx)=>{
               const pct=donutTotal>0?val/donutTotal*100:0;
               return pct>=5?pct.toFixed(0)+'%':'';
@@ -1568,8 +1588,8 @@ function renderHousingTab(R,P){
   const baseOpts=(yFmt,y1Fmt)=>({responsive:true,maintainAspectRatio:false,
     plugins:{legend:{labels:{color:leg,font:{size:11,family:'Inter'},boxWidth:10}},
       tooltip:{backgroundColor:'#0a2540',titleColor:'#fff',bodyColor:'#fff',padding:8,titleFont:{size:10},bodyFont:{size:10}}},
-    scales:{x:{ticks:{color:tick,font:{size:9,family:'Inter'}},grid:{display:false}},
-      y:{position:'left',ticks:{color:tick,font:{size:9},callback:yFmt},grid:{color:grid}}}});
+    scales:{x:{ticks:{color:tick,font:{size:10,family:'Inter'}},grid:{display:false}},
+      y:{position:'left',ticks:{color:tick,font:{size:10},callback:yFmt},grid:{color:grid}}}});
 
   const tCtx=document.getElementById('housingTradeoff');
   if(tCtx)charts.housingTradeoff=new Chart(tCtx.getContext('2d'),{
@@ -1580,8 +1600,8 @@ function renderHousingTab(R,P){
       ]},
     options:{...baseOpts(v=>'$'+v+'M'),
       scales:{x:{ticks:{color:tick,font:{size:10}},grid:{display:false}},
-        y:{position:'left',ticks:{color:tick,callback:v=>'$'+v+'M'},grid:{color:grid},title:{display:true,text:'NW @ '+endYr,color:tick,font:{size:9}}},
-        y1:{position:'right',ticks:{color:'#bf6900',callback:v=>'$'+v+'K'},grid:{display:false},title:{display:true,text:'Annual Housing',color:'#bf6900',font:{size:9}}}}}
+        y:{position:'left',ticks:{color:tick,callback:v=>'$'+v+'M'},grid:{color:grid},title:{display:true,text:'NW @ '+endYr,color:tick,font:{size:10}}},
+        y1:{position:'right',ticks:{color:'#bf6900',callback:v=>'$'+v+'K'},grid:{display:false},title:{display:true,text:'Annual Housing',color:'#bf6900',font:{size:10}}}}}
   });
 
   const dCtx=document.getElementById('housingDown');
@@ -1734,8 +1754,8 @@ function renderSensitivityTab(R,P){
       scales:{
         x:{
           grid:{color:'rgba(0,0,0,.04)'},
-          ticks:{callback:v=>`${v>=0?'+':''}$${Math.abs(v)}K`,font:{size:9,family:"'SF Mono','Fira Code',monospace"},color:'#8898aa'},
-          title:{display:true,text:`Impact on ${ey} Net Worth ($K)`,font:{size:9},color:'#8898aa'}
+          ticks:{callback:v=>`${v>=0?'+':''}$${Math.abs(v)}K`,font:{size:10,family:"'SF Mono','Fira Code',monospace"},color:'#8898aa'},
+          title:{display:true,text:`Impact on ${ey} Net Worth ($K)`,font:{size:10},color:'#8898aa'}
         },
         y:{
           grid:{display:false},
@@ -1958,7 +1978,7 @@ function renderGoalsTab(R,P,tT){
           <span style="color:var(--t3)">Actual liquid (Monarch)</span><span style="color:var(--tx);font-weight:600">${fmt(impliedLiq)} · <span style="color:${liqDiff>=0?'var(--g)':'var(--r)'};font-weight:700">${liqDiff>=0?'+':''}${fmt(liqDiff)}</span></span>
         </div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+      <div class="pf-quad">
         <div style="background:#fff8;border-radius:7px;padding:9px 11px">
           <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Total NW</div>
           <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${fmt(monarchSnapshot.netWorth)}</div>
@@ -2321,24 +2341,24 @@ function renderCompareTab(R,P){
   ca.innerHTML=h;
   document.getElementById('summaries').innerHTML='';
 }
-function setTab(t){if(t==='cashflow'){t='income';_flowView='cashflow';}activeTab=t;document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));render();savePlannerState()}
+function setTab(t){if(t==='cashflow'){t='income';_flowView='cashflow';}activeTab=t;document.querySelectorAll('.tabs button[role=tab]').forEach(b=>{const on=b.dataset.tab===t;b.classList.toggle('active',on);b.setAttribute('aria-selected',on?'true':'false');});render();savePlannerState()}
 document.getElementById('main').innerHTML=`
   <div class="kpi-grid" id="kpis"></div><div id="scenarioBar"></div><div id="snapshotBar"></div>
-  <div class="tabs">
-    <button class="active" data-tab="nw" onclick="setTab('nw')">📈 Net Worth</button>
-    <button data-tab="income" onclick="setTab('income')">💰 Income & Cash Flow</button>
-    <button data-tab="table" onclick="setTab('table')">📋 Table</button>
-    <button data-tab="goals" onclick="setTab('goals')">🎯 Goals</button>
-    <button data-tab="housing" onclick="setTab('housing')">🏠 Housing</button>
-    <button data-tab="sensitivity" onclick="setTab('sensitivity')">📊 Sensitivity</button>
-    <button data-tab="compare" onclick="setTab('compare')">⚖ Compare</button>
-    <button data-tab="portfolio" onclick="setTab('portfolio')">📊 Portfolio</button>
-    <button data-tab="advisor" onclick="setTab('advisor')">🤖 AI Advisor</button>
-    <button id="inflBtn" onclick="toggleInflation()" style="margin-left:auto;font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit">Real $</button>
-    <button id="stressBtn" onclick="_stressMode=!_stressMode;this.style.background=_stressMode?'rgba(205,61,100,.15)':'var(--s2)';this.style.color=_stressMode?'var(--r)':'var(--t2)';this.style.borderColor=_stressMode?'rgba(205,61,100,.3)':'var(--bd)';render()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Show bear/bull range">⚡ Range</button>
-    <button onclick="exportCSV()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Download projection table as CSV">⬇ CSV</button>
-    <button onclick="printPDF()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Print / Save as PDF">🖨 PDF</button>
-    <button onclick="showSnapshotInput()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid rgba(8,145,178,.3);background:#e0f7fa;color:var(--c);cursor:pointer;font-family:inherit" title="Save a dated copy of this plan">📸 Snapshot</button>
+  <div class="tabs" role="tablist" aria-label="Plan views">
+    <button role="tab" aria-selected="true" class="active" data-tab="nw" onclick="setTab('nw')">📈 Net Worth</button>
+    <button role="tab" aria-selected="false" data-tab="income" onclick="setTab('income')">💰 Income & Cash Flow</button>
+    <button role="tab" aria-selected="false" data-tab="table" onclick="setTab('table')">📋 Table</button>
+    <button role="tab" aria-selected="false" data-tab="goals" onclick="setTab('goals')">🎯 Goals</button>
+    <button role="tab" aria-selected="false" data-tab="housing" onclick="setTab('housing')">🏠 Housing</button>
+    <button role="tab" aria-selected="false" data-tab="sensitivity" onclick="setTab('sensitivity')">🎚️ Sensitivity</button>
+    <button role="tab" aria-selected="false" data-tab="compare" onclick="setTab('compare')">⚖ Compare</button>
+    <button role="tab" aria-selected="false" data-tab="portfolio" onclick="setTab('portfolio')">📊 Portfolio</button>
+    <button role="tab" aria-selected="false" data-tab="advisor" onclick="setTab('advisor')">🤖 AI Advisor</button>
+    <button id="inflBtn" aria-label="Toggle real vs nominal dollars" onclick="toggleInflation()" style="margin-left:auto;font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit">Real $</button>
+    <button id="stressBtn" aria-label="Toggle bear/bull range overlay" onclick="_stressMode=!_stressMode;this.style.background=_stressMode?'rgba(205,61,100,.15)':'var(--s2)';this.style.color=_stressMode?'var(--r)':'var(--t2)';this.style.borderColor=_stressMode?'rgba(205,61,100,.3)':'var(--bd)';render()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Show bear/bull range">⚡ Range</button>
+    <button aria-label="Download projection as CSV" onclick="exportCSV()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Download projection table as CSV">⬇ CSV</button>
+    <button aria-label="Print or save as PDF" onclick="printPDF()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Print / Save as PDF">🖨 PDF</button>
+    <button aria-label="Save a dated snapshot of this plan" onclick="showSnapshotInput()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid rgba(8,145,178,.3);background:#e0f7fa;color:var(--c);cursor:pointer;font-family:inherit" title="Save a dated copy of this plan">📸 Snapshot</button>
   </div>
   <div class="cc" id="chartArea"><canvas id="cv" style="height:300px"></canvas></div>
   <div class="sg" id="summaries"></div>`;
