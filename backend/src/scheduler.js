@@ -64,15 +64,17 @@ async function getEightSleepCreds() {
 }
 
 /** Returns true if an Eight Sleep interval is currently in progress (still sleeping).
- *  On any failure, returns false so the watcher doesn't get stuck. */
+ *  Fails SAFE — returns true (assume still sleeping) on any error or missing creds,
+ *  so an API hiccup can never wake the user early. The backstop handles the case
+ *  where this stays true all morning. */
 async function eightSleepSessionInProgress() {
   try {
     const creds = await getEightSleepCreds();
-    if (!creds?.token || !creds?.userId) return false;
+    if (!creds?.token || !creds?.userId) return true; // can't check → assume sleeping
     return await eightSleepApi.getIntervalPresent(creds.token, creds.userId);
   } catch (e) {
-    console.error('[scheduler] session-present check failed:', e.message);
-    return false;
+    console.error('[scheduler] session-present check failed (assuming in-progress):', e.message);
+    return true; // fail safe: don't fire if we can't confirm the session ended
   }
 }
 
