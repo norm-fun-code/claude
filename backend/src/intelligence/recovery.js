@@ -446,14 +446,15 @@ async function liveRecovery() {
 
   // Staleness guard: if the most recent Eight Sleep reading is more than 2 days
   // old (e.g. user on vacation, device unplugged), suppress the live recovery
-  // context entirely rather than surfacing yesterday's (or last week's) score as
-  // if it reflects today. The historical series is still used for the score math
-  // but we return null so the briefing omits recovery rather than misleading.
+  // context entirely rather than surfacing last week's score as if it reflects
+  // today. Must be > 2 (not > 1) because Eight Sleep readings are always dated
+  // "last night" — by 10am the reading is already ~34 hours old (1.4 days), so
+  // a threshold of 1 would fire every morning on perfectly fresh data.
   const hrvSeries = seriesByKey['health:hrv'];
   if (!hrvSeries || !hrvSeries.length) return null;
   const latestDay = new Date(hrvSeries[hrvSeries.length - 1].day);
   const daysSinceReading = (Date.now() - latestDay.getTime()) / 864e5;
-  if (daysSinceReading > 1) return null;
+  if (daysSinceReading > 2) return null;
 
   const rawHrv = latest(hrvSeries);
   const rawRhr = seriesByKey['health:resting_hr'] ? latest(seriesByKey['health:resting_hr']) : null;

@@ -3208,6 +3208,18 @@ app.get('/api/recommendations', async (req, res) => {
   }
 });
 
+app.delete('/api/recommendations/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { query: dbQuery } = require('./src/db');
+    const { rowCount } = await dbQuery('DELETE FROM recommendations WHERE id = $1', [id]);
+    if (!rowCount) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const { runMigrations } = require('./src/db/migrate');
 runMigrations()
   .catch((err) => console.error('[migrate] failed, starting anyway:', err.message))
