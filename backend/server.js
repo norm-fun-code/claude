@@ -1589,9 +1589,13 @@ app.post('/api/briefing/context', async (req, res) => {
     if (!answer || typeof answer !== 'string' || !answer.trim()) {
       return res.status(400).json({ error: 'answer required' });
     }
+    // Tag spending-related answers so they're excluded from health/recovery anomaly
+    // context (a "$665 on vacation" answer must never explain a low-HRV deviation).
+    // The 'spend' substring is what the anomaly filter in analyze.js keys off.
+    const isSpending = /spend|financ|wealth|budget|money/i.test(`${signalKey || ''} ${question || ''}`);
     const id = await annotationsStore.createAnnotation({
       startTs: new Date().toISOString(),
-      category: 'brief_context',
+      category: isSpending ? 'spending note' : 'brief_context',
       label: answer.trim().slice(0, 500),
       note: question ? `Q: ${question.slice(0, 300)}` : (signalKey ?? null),
     });
@@ -3289,6 +3293,17 @@ runMigrations()
               )
             )`
       ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} spurious/tautological finding(s)`); })
+        .catch(() => {});
+
+      // Cleanup: delete habit_split findings whose lever is a subjective wellbeing
+      // state (high-mood / high-energy / high-focus days). These invert causality —
+      // mood/energy/focus are OUTPUTS of recovery, not levers that drive HRV/sleep.
+      // No longer generated; this removes any already in the DB.
+      require('./src/db').query(
+        `DELETE FROM findings
+          WHERE evidence->>'kind' = 'habit_split'
+            AND evidence->>'habit' IN ('High-mood days','High-energy days','High-focus days')`
+      ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} backwards wellbeing-lever finding(s)`); })
         .catch(() => {});
 
       // Optional self-running morning routine (cloud deploys; ENABLE_SCHEDULER=true).

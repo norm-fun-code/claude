@@ -464,12 +464,6 @@ function computeHabitConsistency(seriesByKey, opts = {}) {
   return findings;
 }
 
-const CHECKIN_LEVERS = {
-  'wellbeing:mood':   'High-mood days',
-  'wellbeing:energy': 'High-energy days',
-  'wellbeing:focus':  'High-focus days',
-};
-
 /**
  * Pure: habit-vs-health split analysis. Splits each day as "habit on" or
  * "habit off" and computes the mean health-metric value on each side.
@@ -555,17 +549,11 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
     }
   }
 
-  // Checkin levers: high-mood / high-energy / high-focus days vs health outcomes.
-  for (const [checkinKey, habitLabel] of Object.entries(CHECKIN_LEVERS)) {
-    const cMap = toMap(checkinKey);
-    if (!cMap) continue;
-    for (const [outcomeKey, info] of Object.entries(OUTCOMES)) {
-      const oMap = toMap(outcomeKey);
-      if (!oMap) continue;
-      const s = splitStats(cMap, oMap, 4);
-      if (s) candidates.push({ habitLabel, info, outcomeKey, s });
-    }
-  }
+  // NOTE: subjective wellbeing states (mood / energy / focus) are deliberately NOT
+  // used as levers here. They are OUTPUTS of autonomic recovery and sleep, not
+  // inputs to them — "high-energy days run better HRV" inverts the causal arrow
+  // (good HRV makes you feel energetic, not the reverse) and produces misleading
+  // recommendations. Only real, controllable behaviors belong in this split.
 
   // Best effect per outcome so we don't flood with 5 rows about HRV.
   const bestByOutcome = new Map();
@@ -1064,10 +1052,15 @@ async function analyze(opts = {}) {
     const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
     const active = await annotationsStore.overlapping(startOfYesterday, new Date());
     // Exclude spending/wealth annotations — those only belong in wealth insights,
-    // not as context for health or habit anomaly findings.
+    // not as context for health or habit anomaly findings. Check both the category
+    // AND the stored question/label: a spending-spike answer ("vacation bills") may
+    // have been saved under the generic brief_context category, but its question
+    // ("You spent $665...") still identifies it as financial, not a health driver.
+    const SPEND_RE = /spend|wealth|financ|budget|\$\d|money|bill/i;
     const lifeAnnotations = active.filter((a) => {
       const cat = String(a.category || '').toLowerCase();
-      return !cat.includes('spend') && !cat.includes('wealth') && !cat.includes('financ');
+      if (cat.includes('spend') || cat.includes('wealth') || cat.includes('financ')) return false;
+      return !SPEND_RE.test(`${a.label || ''} ${a.note || ''}`);
     });
     if (lifeAnnotations.length) {
       const ctx = lifeAnnotations.map((a) => {
@@ -1144,7 +1137,7 @@ async function analyze(opts = {}) {
   };
 }
 
-module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeHabitHealthSplits, computeSleepImpact, computeActivityImpact, computeDaytimeCardio, computeWellbeingGap, DEFAULTS, CHECKIN_LEVERS };
+module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeHabitHealthSplits, computeSleepImpact, computeActivityImpact, computeDaytimeCardio, computeWellbeingGap, DEFAULTS };
 
 // CLI entrypoint
 if (require.main === module) {
