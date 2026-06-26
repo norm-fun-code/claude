@@ -66,6 +66,41 @@ test('baselineAnomaly flags deviations from personal norm', () => {
   assert.equal(stats.baselineAnomaly(series.slice(0, 5)), null);
 });
 
+test('studentTTwoSided matches table values', () => {
+  // Two-sided p for |t| at given df (R: 2*pt(-|t|, df)).
+  assert.ok(Math.abs(stats.studentTTwoSided(2.0, 8) - 0.0805) < 1e-3);
+  assert.ok(Math.abs(stats.studentTTwoSided(1.96, 1000) - 0.0502) < 2e-3);
+  assert.equal(stats.studentTTwoSided(0, 8), 1);
+  assert.equal(stats.studentTTwoSided(2, 0), null);
+});
+
+test('tCritical recovers the 0.975 quantile', () => {
+  assert.ok(Math.abs(stats.tCritical(8) - 2.306) < 1e-2);   // t_{0.975,8}
+  assert.ok(Math.abs(stats.tCritical(20) - 2.086) < 1e-2);  // t_{0.975,20}
+  assert.ok(Math.abs(stats.tCritical(1e6) - 1.96) < 1e-2);  // → normal
+});
+
+test('welchTTest: clean separation is significant, noisy overlap is not', () => {
+  const lo = [36, 38, 37, 39, 35];
+  const hi = [50, 52, 48, 51, 49];
+  const sep = stats.welchTTest(lo, hi);
+  assert.ok(sep.diff > 0 && sep.p < 0.001, 'separated groups → tiny p');
+  assert.ok(sep.cohenD > 2, 'large effect size');
+  // Two noisy, overlapping samples with a small mean gap — must NOT be significant.
+  const a = [45, 58, 38, 62, 41, 55, 40];
+  const b = [48, 60, 41, 64, 44, 57, 43];
+  const noise = stats.welchTTest(a, b);
+  assert.ok(noise.p > 0.2, `overlapping noise should be non-significant, got p=${noise.p}`);
+});
+
+test('welchTTest: handles flat groups without NaN', () => {
+  const flatDiff = stats.welchTTest([50, 50, 50], [60, 60, 60]);
+  assert.equal(flatDiff.p, 0);                  // perfectly separated, zero variance
+  const flatSame = stats.welchTTest([50, 50, 50], [50, 50, 50]);
+  assert.equal(flatSame.p, 1);                  // identical → no effect
+  assert.equal(stats.welchTTest([1], [2, 3]), null); // too few per group
+});
+
 test('fitByDay gives a true per-day slope on irregularly-sampled data', () => {
   // Rising exactly 2/day, logged with gaps (days 0, 2, 7, 14).
   const series = [

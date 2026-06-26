@@ -9,7 +9,7 @@ const stats = require('./stats');
 const cat = require('./catalog');
 const { LEVERS, OUTCOMES } = require('./leverage');
 
-const DEFAULTS = { baselineDays: 14, testDays: 14, minN: 4, minEffect: 0.3, minPct: 0.03 };
+const DEFAULTS = { baselineDays: 14, testDays: 14, minN: 4, minEffect: 0.3, minPct: 0.03, alpha: 0.05 };
 
 function splitKey(key) {
   const i = key.indexOf(':');
@@ -25,22 +25,30 @@ function verdict(baselineValues, testValues, expected = 'up', opts = {}) {
     return { verdict: 'inconclusive', reason: 'insufficient data', n: { baseline: b.length, test: t.length } };
   }
 
-  const baselineMean = stats.mean(b);
-  const testMean = stats.mean(t);
-  const delta = testMean - baselineMean;
-  const sb = stats.std(b) ?? 0;
-  const st = stats.std(t) ?? 0;
-  const pooled = Math.sqrt((sb * sb + st * st) / 2) || 1e-9;
-  const effectSize = delta / pooled; // Cohen's d
+  // Welch two-sample test of test-window vs baseline-window. This is the "find
+  // truth" step, so it must be the MOST rigorous part of the pipeline — a verdict
+  // of "confirmed" needs the difference to be statistically distinguishable from
+  // noise (a real p-value), not merely a large Cohen's d on a handful of days.
+  const w = stats.welchTTest(b, t); // diff = test − baseline
+  if (!w) {
+    return { verdict: 'inconclusive', reason: 'insufficient variance/data', n: { baseline: b.length, test: t.length } };
+  }
+  const baselineMean = w.meanA;
+  const testMean = w.meanB;
+  const delta = w.diff;
+  const effectSize = w.cohenD; // Cohen's d (pooled SD)
   const expectedSign = expected === 'down' ? -1 : 1;
   const pctChange = baselineMean !== 0 ? delta / Math.abs(baselineMean) : null;
 
-  // Require both a real effect size AND a non-trivial percent change, so a tiny
-  // absolute shift with low variance doesn't get called a result.
+  // A result must clear THREE bars: statistical significance (p ≤ alpha), a real
+  // effect size, and a non-trivial percent change. Anything short of all three is
+  // "inconclusive" — we don't call noise a discovery, and we don't over-call a
+  // tiny-but-tight shift. Direction then decides confirmed vs refuted.
   let v = 'inconclusive';
+  const significant = w.p != null && w.p <= o.alpha;
   const bigEnough =
     Math.abs(effectSize) >= o.minEffect && (pctChange == null || Math.abs(pctChange) >= o.minPct);
-  if (bigEnough) {
+  if (significant && bigEnough) {
     v = Math.sign(delta) === expectedSign ? 'confirmed' : 'refuted';
   }
 
@@ -51,6 +59,12 @@ function verdict(baselineValues, testValues, expected = 'up', opts = {}) {
     delta: round(delta),
     pctChange: pctChange == null ? null : round(pctChange, 3),
     effectSize: round(effectSize, 2),
+    p: w.p == null ? null : round(w.p, 4),
+    ci: [round(w.ciLow), round(w.ciHigh)],
+    // Honest caveat for the user: an N-of-1 before/after comparison cannot rule
+    // out regression to the mean or seasonality — a 14-day test is a strong hint,
+    // not proof. Surfaced in the experiment card narrative.
+    caveat: 'N-of-1 before/after — association, not proof; regression to the mean and seasonal effects are not controlled.',
     n: { baseline: b.length, test: t.length },
   };
 }

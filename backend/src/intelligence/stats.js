@@ -137,18 +137,132 @@ function normalCdf(z) {
 }
 
 /**
+ * Lanczos approximation of ln Γ(z) — the building block for the regularized
+ * incomplete beta function (and thus the exact Student-t tail).
+ */
+function logGamma(z) {
+  const c = [
+    0.99999999999980993, 676.5203681218851, -1259.1392167224028,
+    771.32342877765313, -176.61502916214059, 12.507343278686905,
+    -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7,
+  ];
+  if (z < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * z)) - logGamma(1 - z);
+  z -= 1;
+  let x = c[0];
+  for (let i = 1; i < 9; i++) x += c[i] / (z + i);
+  const t = z + 7.5;
+  return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t) - t + Math.log(x);
+}
+
+/** Continued-fraction expansion for the incomplete beta (Numerical Recipes). */
+function betacf(a, b, x) {
+  const FPMIN = 1e-30, EPS = 3e-12, MAXIT = 200;
+  const qab = a + b, qap = a + 1, qam = a - 1;
+  let c = 1;
+  let d = 1 - (qab * x) / qap;
+  if (Math.abs(d) < FPMIN) d = FPMIN;
+  d = 1 / d;
+  let h = d;
+  for (let m = 1; m <= MAXIT; m++) {
+    const m2 = 2 * m;
+    let aa = (m * (b - m) * x) / ((qam + m2) * (a + m2));
+    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d; h *= d * c;
+    aa = (-(a + m) * (qab + m) * x) / ((a + m2) * (qap + m2));
+    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d;
+    const del = d * c; h *= del;
+    if (Math.abs(del - 1) < EPS) break;
+  }
+  return h;
+}
+
+/** Regularized incomplete beta I_x(a,b) — exact (to ~1e-12) for any a,b>0. */
+function incompleteBeta(a, b, x) {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  const lbt = logGamma(a + b) - logGamma(a) - logGamma(b) + a * Math.log(x) + b * Math.log(1 - x);
+  const bt = Math.exp(lbt);
+  return x < (a + 1) / (a + b + 2)
+    ? (bt * betacf(a, b, x)) / a
+    : 1 - (bt * betacf(b, a, 1 - x)) / b;
+}
+
+/**
+ * Two-sided p-value P(|T| > |t|) for a Student-t statistic with `df` degrees of
+ * freedom — the EXACT tail (via the regularized incomplete beta), not the normal
+ * approximation. This matters at the small n the split/experiment engines run on:
+ * the normal approx is materially anticonservative (e.g. at df=8 it underestimates
+ * a tail by ~2×), which is exactly how noise gets mislabeled "significant".
+ */
+function studentTTwoSided(t, df) {
+  if (!Number.isFinite(t) || !Number.isFinite(df) || df <= 0) return null;
+  if (t === 0) return 1;
+  return incompleteBeta(df / 2, 0.5, df / (df + t * t));
+}
+
+/** 0.975-quantile |t| for `df` (two-sided alpha) via bisection on the exact tail. */
+function tCritical(df, twoSidedAlpha = 0.05) {
+  if (!Number.isFinite(df) || df <= 0) return null;
+  let lo = 0, hi = 1000;
+  for (let i = 0; i < 80; i++) {
+    const mid = (lo + hi) / 2;
+    if (studentTTwoSided(mid, df) > twoSidedAlpha) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+/**
  * Two-sided p-value for a Pearson correlation r over n pairs, via the
- * t-statistic t = r·√((n−2)/(1−r²)) under H0: ρ=0. For the modest n we deal with
- * we approximate the t-distribution's tail with the normal CDF (slightly
- * anticonservative for very small n, but it's only a gate, and we also require a
- * minimum n upstream). Returns a p-value in [0,1], or null if undefined.
+ * t-statistic t = r·√((n−2)/(1−r²)) under H0: ρ=0, using the EXACT Student-t
+ * tail with n−2 degrees of freedom. Returns a p-value in [0,1], or null if
+ * undefined (n<3 or |r|≥1 handled at the bounds).
  */
 function pearsonPValue(r, n) {
   if (r == null || !Number.isFinite(r) || n == null || n < 3) return null;
   if (Math.abs(r) >= 1) return 0;
   const t = Math.abs(r) * Math.sqrt((n - 2) / (1 - r * r));
-  // Two-sided tail. normalCdf(t) is P(Z≤t); upper tail is 1−that, ×2 for two-sided.
-  return Math.min(1, 2 * (1 - normalCdf(t)));
+  return studentTTwoSided(t, n - 2);
+}
+
+/**
+ * Welch's unequal-variance two-sample t-test — the correct comparison for the
+ * group-split engines (habit-on vs habit-off days, best vs worst nights, etc.),
+ * where the two groups are small, differently sized, and have different spread.
+ * Convention: `diff = mean(b) − mean(a)`, so feed (lowGroup, highGroup) to get a
+ * difference that carries the "high minus low" sign. Returns
+ * { meanA, meanB, diff, t, df, p, cohenD, ciLow, ciHigh, nA, nB } or null when
+ * either group has <2 finite values. cohenD uses the pooled SD; the 95% CI is on
+ * the mean difference using the exact t critical value at the Welch df.
+ */
+function welchTTest(a, b) {
+  const xa = (a || []).filter(Number.isFinite);
+  const xb = (b || []).filter(Number.isFinite);
+  const nA = xa.length, nB = xb.length;
+  if (nA < 2 || nB < 2) return null;
+  const mA = mean(xa), mB = mean(xb);
+  const vA = xa.reduce((s, v) => s + (v - mA) ** 2, 0) / (nA - 1);
+  const vB = xb.reduce((s, v) => s + (v - mB) ** 2, 0) / (nB - 1);
+  const diff = mB - mA;
+  const pooledSd = Math.sqrt(((nA - 1) * vA + (nB - 1) * vB) / (nA + nB - 2));
+  const cohenD = pooledSd > 0 ? diff / pooledSd : 0;
+  const seA = vA / nA, seB = vB / nB;
+  const se = Math.sqrt(seA + seB);
+  if (se === 0) {
+    // Both groups perfectly flat. If their means differ at all the separation is
+    // total (p→0); if identical there is no effect (p=1).
+    const same = diff === 0;
+    return { meanA: mA, meanB: mB, diff, t: same ? 0 : Infinity, df: nA + nB - 2,
+      p: same ? 1 : 0, cohenD, ciLow: diff, ciHigh: diff, nA, nB };
+  }
+  const t = diff / se;
+  const df = (seA + seB) ** 2 / (seA ** 2 / (nA - 1) + seB ** 2 / (nB - 1));
+  const p = studentTTwoSided(t, df);
+  const tc = tCritical(df) ?? 1.96;
+  return { meanA: mA, meanB: mB, diff, t, df, p, cohenD, ciLow: diff - tc * se, ciHigh: diff + tc * se, nA, nB };
 }
 
 /**
@@ -272,6 +386,10 @@ module.exports = {
   std,
   pearson,
   pearsonPValue,
+  studentTTwoSided,
+  tCritical,
+  incompleteBeta,
+  welchTTest,
   benjaminiHochberg,
   baselineAnomaly,
   linregSlope,

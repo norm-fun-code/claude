@@ -91,6 +91,14 @@ const DEFAULTS = {
   ]),
 };
 
+// Significance gates shared by every group-split engine (habit / sleep / activity
+// / daytime cardio). A finding must clear BOTH a per-test significance bar AND a
+// minimum practical effect size — statistical significance alone surfaces trivial
+// effects on large n; a raw effect alone surfaces noise on small n. The FDR step
+// then controls false positives across the many comparisons each engine runs.
+const SPLIT_ALPHA = 0.05;  // per-test two-sided Welch p-value bar
+const SPLIT_FDR_Q = 0.1;   // Benjamini–Hochberg false-discovery rate across candidates
+
 function pct(n) {
   return `${n >= 0 ? '+' : ''}${Math.round(n * 100)}%`;
 }
@@ -515,7 +523,12 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
     const onMean = mean(onVals), offMean = mean(offVals);
     const pct = offMean !== 0 ? (onMean - offMean) / Math.abs(offMean) : null;
     if (pct == null || Math.abs(pct) < MIN_PCT) return null;
-    return { onMean, offMean, pct, onN: onVals.length, offN: offVals.length };
+    // Significance gate: a raw mean gap between two small groups of noisy daily
+    // readings is mostly sampling noise (two random 5-day samples differ >5% all
+    // the time). Require a real two-sample test before this becomes a "finding".
+    const w = stats.welchTTest(offVals, onVals); // diff = on − off
+    if (!w || w.p == null || w.p > SPLIT_ALPHA) return null;
+    return { onMean, offMean, pct, onN: onVals.length, offN: offVals.length, p: w.p, cohenD: w.cohenD, ciLow: w.ciLow, ciHigh: w.ciHigh };
   }
 
   const candidates = [];
@@ -555,9 +568,16 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
   // (good HRV makes you feel energetic, not the reverse) and produces misleading
   // recommendations. Only real, controllable behaviors belong in this split.
 
+  // Multiple-comparisons control: we tested many habit × outcome combinations and
+  // are about to surface the strongest. Selecting the max of many comparisons
+  // inflates false positives (garden of forking paths), so keep only the pairs
+  // whose p-value survives Benjamini–Hochberg FDR across the whole candidate set.
+  const sigKeep = stats.benjaminiHochberg(candidates.map((c) => c.s.p), SPLIT_FDR_Q);
+  const significant = candidates.filter((_, i) => sigKeep[i]);
+
   // Best effect per outcome so we don't flood with 5 rows about HRV.
   const bestByOutcome = new Map();
-  for (const c of candidates) {
+  for (const c of significant) {
     const prev = bestByOutcome.get(c.info.label);
     if (!prev || Math.abs(c.s.pct) > Math.abs(prev.s.pct)) bestByOutcome.set(c.info.label, c);
   }
@@ -600,6 +620,9 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
         pct:     round(pct, 3),
         onN,
         offN,
+        p: round(s.p, 4),
+        cohenD: round(s.cohenD, 2),
+        ci: [round(s.ciLow, 2), round(s.ciHigh, 2)],
       },
     };
   });
@@ -668,7 +691,10 @@ function computeDaytimeCardio(daytimeMap) {
     const loMean = avg(loVals);
     const pct = loMean !== 0 ? (hiMean - loMean) / Math.abs(loMean) : null;
     if (pct == null || Math.abs(pct) < MIN_PCT) return null;
-    return { hiMean, loMean, pct, hiN: hiVals.length, loN: loVals.length };
+    // Two-sample significance gate — see computeHabitHealthSplits for rationale.
+    const w = stats.welchTTest(loVals, hiVals); // diff = hi − lo
+    if (!w || w.p == null || w.p > SPLIT_ALPHA) return null;
+    return { hiMean, loMean, pct, hiN: hiVals.length, loN: loVals.length, p: w.p, cohenD: w.cohenD, ciLow: w.ciLow, ciHigh: w.ciHigh };
   }
 
   const candidates = [];
@@ -685,9 +711,14 @@ function computeDaytimeCardio(daytimeMap) {
 
   if (!candidates.length) return [];
 
+  // FDR control across all lever × outcome comparisons before picking the best.
+  const sigKeep = stats.benjaminiHochberg(candidates.map((c) => c.s.p), SPLIT_FDR_Q);
+  const significant = candidates.filter((_, i) => sigKeep[i]);
+  if (!significant.length) return [];
+
   // Best lever per outcome — don't flood with all combinations.
   const bestByOutcome = new Map();
-  for (const c of candidates) {
+  for (const c of significant) {
     const prev = bestByOutcome.get(c.outInfo.label);
     if (!prev || Math.abs(c.s.pct) > Math.abs(prev.s.pct)) bestByOutcome.set(c.outInfo.label, c);
   }
@@ -726,6 +757,9 @@ function computeDaytimeCardio(daytimeMap) {
         pct: round(pct, 3),
         hiN,
         loN,
+        p: round(s.p, 4),
+        cohenD: round(s.cohenD, 2),
+        ci: [round(s.ciLow, 2), round(s.ciHigh, 2)],
       },
     };
   });
@@ -791,12 +825,17 @@ function computeSleepImpact(seriesByKey) {
     const gm = mean(goodVals), pm = mean(poorVals);
     const pct = pm !== 0 ? (gm - pm) / Math.abs(pm) : null;
     if (pct == null || Math.abs(pct) < MIN_PCT) continue;
+    // Significance gate: best-third vs worst-third nights are still two small,
+    // noisy samples. Require a real two-sample test before calling sleep a "lever".
+    const w = stats.welchTTest(poorVals, goodVals); // diff = good − poor
+    if (!w || w.p == null || w.p > SPLIT_ALPHA) continue;
 
     const better = (info.good === 'up' && pct > 0) || (info.good === 'down' && pct < 0);
     const dir = pct > 0 ? 'higher' : 'lower';
     const domains = okey.startsWith('wellbeing') ? ['health', 'wellbeing'] : ['health'];
     scored.push({
       absPct: Math.abs(pct),
+      p: w.p,
       finding: {
         type: 'sleep_impact',
         domains,
@@ -813,12 +852,16 @@ function computeSleepImpact(seriesByKey) {
           auto: true, kind: 'sleep_impact', driver: driverKey, outcome: okey,
           goodMean: round(gm), poorMean: round(pm), pct: round(pct, 3),
           goodN: goodVals.length, poorN: poorVals.length,
+          p: round(w.p, 4), cohenD: round(w.cohenD, 2), ci: [round(w.ciLow, 2), round(w.ciHigh, 2)],
         },
       },
     });
   }
-  scored.sort((a, b) => b.absPct - a.absPct);
-  return scored.slice(0, MAX_RESULTS).map((s) => s.finding);
+  // FDR control across the outcomes tested against the sleep driver.
+  const keep = stats.benjaminiHochberg(scored.map((s) => s.p), SPLIT_FDR_Q);
+  const sig = scored.filter((_, i) => keep[i]);
+  sig.sort((a, b) => b.absPct - a.absPct);
+  return sig.slice(0, MAX_RESULTS).map((s) => s.finding);
 }
 
 /**
@@ -867,15 +910,29 @@ function computeActivityImpact(seriesByKey, activityTypeByDay) {
     if (allVals.length < 2 * MIN_N) continue;
     const overall = mean(allVals);
 
-    let best = null;
+    // Test each activity type against the days following ALL OTHER types (a
+    // type-vs-rest two-sample test), not against an overall mean that includes
+    // the type itself. Gate on Welch significance, then BH-correct across the
+    // types tested so the strongest of many isn't a forking-paths artifact.
+    const typeCands = [];
     for (const [type, arr] of Object.entries(byType)) {
       if (arr.length < MIN_N) continue;
+      const rest = [];
+      for (const [t2, arr2] of Object.entries(byType)) if (t2 !== type) rest.push(...arr2);
+      if (rest.length < MIN_N) continue;
       const m = mean(arr);
       const pct = overall !== 0 ? (m - overall) / Math.abs(overall) : null;
       if (pct == null || Math.abs(pct) < MIN_PCT) continue;
-      if (!best || Math.abs(pct) > Math.abs(best.pct)) best = { type, m, pct, n: arr.length };
+      const w = stats.welchTTest(rest, arr); // diff = type − rest
+      if (!w || w.p == null || w.p > SPLIT_ALPHA) continue;
+      typeCands.push({ type, m, pct, n: arr.length, p: w.p, cohenD: w.cohenD, ciLow: w.ciLow, ciHigh: w.ciHigh });
     }
-    if (!best) continue;
+    if (!typeCands.length) continue;
+    const keepT = stats.benjaminiHochberg(typeCands.map((c) => c.p), SPLIT_FDR_Q);
+    const sigT = typeCands.filter((_, i) => keepT[i]);
+    if (!sigT.length) continue;
+    let best = null;
+    for (const c of sigT) if (!best || Math.abs(c.pct) > Math.abs(best.pct)) best = c;
 
     const typeLabel = TYPE_LABELS[best.type] || best.type;
     const dir = best.pct > 0 ? 'higher' : 'lower';
@@ -894,6 +951,7 @@ function computeActivityImpact(seriesByKey, activityTypeByDay) {
       evidence: {
         auto: true, kind: 'activity_impact', activity: best.type, outcome: okey,
         typeMean: round(best.m), overallMean: round(overall), pct: round(best.pct, 3), n: best.n,
+        p: round(best.p, 4), cohenD: round(best.cohenD, 2), ci: [round(best.ciLow, 2), round(best.ciHigh, 2)],
       },
     });
   }

@@ -148,3 +148,30 @@ test('computeDaytimeCardio: returns nothing without enough days per bucket', () 
     []
   );
 });
+
+test('computeDaytimeCardio: a noisy ~6% gap is NOT surfaced (significance gate)', () => {
+  // Eat-well vs other days differ by only a few percent on average, but the
+  // within-group day-to-day spread is large — exactly the kind of sampling noise
+  // the OLD raw-mean engine would have mislabeled "Eating well: HRV +6%".
+  const N = 30;
+  // High variance on BOTH buckets, tiny true mean shift.
+  const hiNoise = [50, 38, 62, 41, 58, 36, 60, 44, 55, 40, 64, 39, 57, 42, 59];
+  const loNoise = [44, 60, 38, 56, 41, 59, 37, 62, 40, 54, 43, 58, 39, 61, 45];
+  let hI = 0, lI = 0;
+  const hrvDay = mkSeries(N, (i) => (i % 2 === 0 ? hiNoise[hI++] : loNoise[lI++]));
+  const eat = mkSeries(N, (i) => (i % 2 === 0 ? 4 : 1));
+  const findings = a.computeDaytimeCardio({ 'health:hrv_daytime': hrvDay, 'habits:eat_healthy': eat });
+  assert.deepEqual(findings, [], 'noisy, overlapping buckets must not produce a finding');
+});
+
+test('computeDaytimeCardio: surfaced findings carry a p-value, effect size, and CI', () => {
+  const N = 30;
+  const eat = mkSeries(N, (i) => (i % 2 === 0 ? 4 : 1));
+  const hrvDay = mkSeries(N, (i) => (i % 2 === 0 ? 50 : 38));
+  const f = a.computeDaytimeCardio({ 'health:hrv_daytime': hrvDay, 'habits:eat_healthy': eat })
+    .find((x) => x.evidence.outcome === 'health:hrv_daytime');
+  assert.ok(f, 'expected a finding on cleanly-separated data');
+  assert.ok(f.evidence.p != null && f.evidence.p < 0.05, 'evidence should carry a significant p');
+  assert.ok(Number.isFinite(f.evidence.cohenD), 'evidence should carry Cohen d');
+  assert.ok(Array.isArray(f.evidence.ci) && f.evidence.ci.length === 2, 'evidence should carry a CI');
+});
