@@ -247,7 +247,11 @@ function trainingLoad(seriesByKey, { acuteDays = 7, chronicDays = 28, minChronic
   const acwr = acute / chronic;
 
   let band, note;
-  if (acwr > 1.5) { band = 'high'; note = 'Load is spiking well above your recent norm — elevated strain/injury risk. Consider an easier day.'; }
+  // NB: deliberately avoids claiming a validated "injury-risk threshold" — the
+  // acute:chronic sweet-spot model is a useful heuristic, but the specific 1.5
+  // cutoff has been substantially critiqued. Frame it as a load spike to manage,
+  // not a clinical risk score.
+  if (acwr > 1.5) { band = 'high'; note = 'Load has jumped sharply above your recent norm. Big week-over-week spikes tend to outpace tissue adaptation, so favor an easier day or two before loading up again.'; }
   else if (acwr < 0.8) { band = 'low'; note = 'Training load has dropped below your norm — fine for recovery, but fitness may erode if sustained.'; }
   else { band = 'optimal'; note = 'Training load is in the productive sweet spot relative to your recent norm.'; }
 
@@ -270,17 +274,28 @@ function computeHealthComposites(seriesByKey, opts = {}) {
   const findings = [];
   const round1 = (n) => Math.round(n * 10) / 10;
 
+  // Training load is computed once here — used both for its own finding below AND
+  // to temper the recovery headline. A green readiness score is a ceiling, not a
+  // license: stacked on a spiking load it still warrants a controlled day, because
+  // autonomic recovery (HRV) can read "ready" while muscle/connective tissue is
+  // still catching up.
+  const load = trainingLoad(seriesByKey, opts);
+
   // Recovery score
   const rec = recoveryScore(seriesByKey, opts);
   if (rec) {
     const { band, guidance } = recoveryBand(rec.score);
+    let detail = guidance;
+    if (band === 'green' && load && load.band === 'high') {
+      detail += ` One caveat: your training load is spiking (ACWR ${load.acwr}) — keep today controlled rather than all-out, so recovery keeps pace with the load.`;
+    }
     findings.push({
       type: 'recovery',
       domains: ['health'],
       title: `Recovery ${rec.score}/100 — ${band}`,
-      detail: guidance,
+      detail,
       confidence: rec.inputs >= 3 ? 0.9 : 0.7,
-      evidence: { auto: true, kind: 'recovery', score: rec.score, band, parts: rec.parts },
+      evidence: { auto: true, kind: 'recovery', score: rec.score, band, parts: rec.parts, acwr: load ? load.acwr : null },
     });
   }
 
@@ -394,14 +409,13 @@ function computeHealthComposites(seriesByKey, opts = {}) {
       type: 'sleep_consistency',
       domains: ['health'],
       title: `Irregular sleep (${cons.score}/100 consistency)`,
-      detail: `Your nightly sleep varies by ±${round1(cons.stdHours)}h. Steadier sleep timing improves recovery and HRV more than total hours alone.`,
+      detail: `Your nightly sleep duration swings by ±${round1(cons.stdHours)}h. Consistent sleep — a steady duration, and even more so a steady bed and wake time — supports recovery and HRV more than total hours alone.`,
       confidence: 0.75,
       evidence: { auto: true, kind: 'sleep_consistency', score: cons.score, stdHours: cons.stdHours },
     });
   }
 
-  // Training load (ACWR)
-  const load = trainingLoad(seriesByKey, opts);
+  // Training load (ACWR) — `load` computed above, reused here for its own finding.
   if (load && load.band !== 'optimal') {
     findings.push({
       type: 'training_load',

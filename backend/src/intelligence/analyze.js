@@ -56,7 +56,18 @@ const DEFAULTS = {
     // Wake time is tracked for correlation with daytime RHR; a "wake time up 15%"
     // trend finding is confusing (it means waking later on average), not actionable.
     'health:wake_time',
+    // Eight Sleep DERIVED intermediates (sleep need/debt) feed only the recovery /
+    // sleep-balance composites. A raw "Sleep Debt down 52%" trend on a tiny derived
+    // value is noise — and they aren't user-controllable inputs. Excluded from the
+    // trend AND anomaly engines (both gate on trendSkip).
+    'health:sleep_debt', 'health:sleep_need',
   ],
+  // Per-key correlation exclusions. Derived intermediates (sleep need/debt) aren't
+  // independent inputs; VO₂ max is an Apple Watch FITNESS ESTIMATE that barely
+  // moves day to day, so a daily "correlation" against it (e.g. the spurious
+  // "higher VO₂ max today → lower sleep need tomorrow") is two near-flat noise
+  // series lining up by chance, not physiology. None belong in the Pearson engine.
+  corrSkip: ['health:sleep_debt', 'health:sleep_need', 'health:vo2_max'],
   // All wealth metrics are excluded from correlation search. Wealth variables
   // (spending, net worth, cashflow, income) correlate with health and habit
   // metrics purely as lifestyle confounds — high-activity people tend to earn
@@ -607,7 +618,7 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
         `On the ${onN} days you logged ${habitLabel.toLowerCase()}, ${info.label.toLowerCase()} averaged ` +
         `${onFmt} — ${Math.abs(Math.round(pct * 100))}% ${direction} than on the ${offN} days without (${offFmt}). ` +
         (improved
-          ? `This pattern is consistent with ${habitLabel.toLowerCase()} supporting your ${info.label.toLowerCase()}.`
+          ? `Consistent with ${habitLabel.toLowerCase()} supporting your ${info.label.toLowerCase()} — but it's an association, not proof: days you keep the habit may differ in other ways (better sleep, lower stress), and the arrow can run the other way (you may skip the habit on days you already feel off).`
           : `Association, not proof of cause — other factors may drive this pattern.`),
       confidence: Math.min(0.9, Math.abs(pct) / 0.3),
       evidence: {
@@ -744,7 +755,7 @@ function computeDaytimeCardio(daytimeMap) {
         `${fmt(hiMean, outInfo.unit)} — ${Math.abs(Math.round(pct * 100))}% ${dir} than on the ${loN} ` +
         `other days (${fmt(loMean, outInfo.unit)}). ` +
         (improved
-          ? `${lever.label} is associated with better autonomic tone throughout the day.`
+          ? `${lever.label} tracks with better autonomic tone during the day — an association, not proof: the two may share a common driver, and for mood/focus the effect can even run the other way (good autonomic state makes you feel better, not only the reverse).`
           : `Association, not proof of cause — other factors may drive this pattern.`),
       confidence: Math.min(0.9, Math.abs(pct) / 0.3),
       evidence: {

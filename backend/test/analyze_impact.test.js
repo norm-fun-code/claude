@@ -50,6 +50,29 @@ test('computeSleepImpact: falls back to sleep_hours when sleep_score is flat', (
   assert.equal(hrvF.evidence.driver, 'health:sleep_hours');
 });
 
+test('computeTrends: derived sleep_debt/sleep_need never produce a trend', () => {
+  const N = 20;
+  const debt = mkSeries(N, (i) => (i < 10 ? 0.7 : 0.2)); // a big % "drop" — but derived
+  const need = mkSeries(N, (i) => 7 + (i < 10 ? 0 : 1));  // a big % "rise" — but derived
+  const findings = a.computeTrends({ 'health:sleep_debt': debt, 'health:sleep_need': need });
+  assert.equal(findings.length, 0, 'derived sleep intermediates must not trend');
+});
+
+test('computeCorrelations: VO₂ max and sleep_need are excluded from the engine', () => {
+  const N = 30;
+  // Strongly related series that WOULD survive the engine without the skip.
+  const vo2 = mkSeries(N, (i) => 50 + (i % 6));
+  const need = mkSeries(N, (i) => 8 - (i % 6) * 0.1);
+  const hrv = mkSeries(N, (i) => 45 + (i % 6));
+  const findings = a.computeCorrelations({
+    'health:vo2_max': vo2, 'health:sleep_need': need, 'health:hrv': hrv,
+  });
+  for (const f of findings) {
+    assert.ok(f.evidence.a !== 'health:vo2_max' && f.evidence.b !== 'health:vo2_max', 'no VO₂ max correlation should surface');
+    assert.ok(f.evidence.a !== 'health:sleep_need' && f.evidence.b !== 'health:sleep_need', 'no sleep_need correlation should surface');
+  }
+});
+
 test('computeTrends: binary habits are skipped (no "+133% cold shower" noise)', () => {
   // 14 days: cold shower 3/7 early, 7/7 late — a huge raw "trend" that is meaningless.
   const coldShower = mkSeries(14, (i) => (i < 7 ? (i % 2) : 1));

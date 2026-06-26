@@ -3306,6 +3306,20 @@ runMigrations()
       ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} backwards wellbeing-lever finding(s)`); })
         .catch(() => {});
 
+      // Cleanup: delete trend findings on Eight Sleep DERIVED intermediates
+      // (sleep need/debt) and any correlation involving them or VO₂ max. These
+      // leaked into the general trend/correlation engines before being excluded;
+      // they're derived or near-flat estimate series, so patterns like
+      // "higher VO₂ max → lower sleep need" are noise, not physiology.
+      require('./src/db').query(
+        `DELETE FROM findings
+          WHERE (evidence->>'kind' = 'trend' AND evidence->>'metric' IN ('health:sleep_debt','health:sleep_need'))
+             OR (evidence->>'kind' = 'correlation' AND (
+                   evidence->>'a' IN ('health:sleep_debt','health:sleep_need','health:vo2_max')
+                OR evidence->>'b' IN ('health:sleep_debt','health:sleep_need','health:vo2_max')))`
+      ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} derived/estimate-metric finding(s)`); })
+        .catch(() => {});
+
       // Optional self-running morning routine (cloud deploys; ENABLE_SCHEDULER=true).
       require('./src/scheduler').start();
 
