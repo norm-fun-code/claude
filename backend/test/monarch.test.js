@@ -55,6 +55,20 @@ test('mapTransactions aggregates spending/income per day and emits documents', (
   }
 });
 
+test('mapTransactions does not count refunds/reimbursements/cashback as income', () => {
+  const records = [
+    { Date: '2026-05-01', Merchant: 'Paycheck', Category: 'Paychecks', Account: 'Checking', Amount: '5000.00' },
+    { Date: '2026-05-01', Merchant: 'Airline refund', Category: 'Travel Refund', Account: 'Amex', Amount: '600.00' },
+    { Date: '2026-05-01', Merchant: 'Employer', Category: 'Reimbursement', Account: 'Checking', Amount: '1200.00' },
+    { Date: '2026-05-01', Merchant: 'Amex', Category: 'Cashback Rewards', Account: 'Amex', Amount: '40.00' },
+  ];
+  const { metrics } = m.mapTransactions(records);
+  const income = metrics.find((x) => x.metric === 'income')?.value;
+  assert.equal(income, 5000, 'only the paycheck counts as income; refund/reimbursement/cashback excluded');
+  assert.equal(m.isNonIncomePositive('Travel Refund'), true);
+  assert.equal(m.isNonIncomePositive('Paychecks'), false);
+});
+
 test('mapTransactions excludes internal transfers and card payments from flows', () => {
   const records = [
     { Date: '2026-06-05', Merchant: 'Fidelity', Category: 'Transfer', Account: 'Checking', Amount: '-16000.00' },

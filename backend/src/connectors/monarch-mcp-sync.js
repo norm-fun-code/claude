@@ -12,7 +12,7 @@
 const rpc = require('../services/monarch-mcp-rpc');
 const monarchMcp = require('../services/monarch-mcp');
 const monarchApi = require('./monarch-api');
-const { isFixedCategory, isInternalTransfer, isExcludedIncome } = require('./monarch');
+const { isFixedCategory, isInternalTransfer, isExcludedIncome, isNonIncomePositive } = require('./monarch');
 const { registerSource } = require('../store/sources');
 
 const SOURCE = 'monarch';
@@ -187,10 +187,20 @@ async function syncViaMcp(ctx) {
       if (!isFixedCategory(category)) {
         discByDay.set(day, (discByDay.get(day) || 0) + spend);
       }
-    } else if (!isExcludedIncome(category)) {
-      // Earned income only: paychecks, freelance, other income.
-      // Excludes dividends, capital gains, tax refunds, interest income.
-      incByDay.set(day, (incByDay.get(day) || 0) + amount);
+    } else {
+      // Earned income only. Anchor to Monarch's OWN classification
+      // (category_type === 'income') — the same basis as its Income report — so
+      // refunds, reimbursements, cashback and money-received (positive amounts in
+      // non-income categories) are NOT miscounted as income, which was inflating
+      // the 30-day income figure. When category_type is missing, fall back to the
+      // name heuristic plus the non-income-positive guard. Still drop investment
+      // income (dividends/cap gains/interest) to keep this EARNED income.
+      const looksIncome = categoryType
+        ? categoryType === 'income'
+        : (!isExcludedIncome(category) && !isNonIncomePositive(category));
+      if (looksIncome && !isExcludedIncome(category)) {
+        incByDay.set(day, (incByDay.get(day) || 0) + amount);
+      }
     }
   }
 

@@ -118,6 +118,21 @@ function isExcludedIncome(category) {
   return excludeIncomeCategories().some((e) => c.includes(norm(e)));
 }
 
+// Positive (money-in) transactions that are NOT earned income: refunds,
+// reimbursements, cashback/rewards, returned purchases, balance adjustments.
+// Monarch's own Income report excludes these (they aren't category_type=income),
+// so counting them inflated the 30-day income figure. Used as a name-based guard
+// only when Monarch's authoritative category_type isn't available (e.g. CSV).
+const NON_INCOME_POSITIVE = [
+  'refund', 'reimburs', 'cashback', 'cash back', 'rewards', 'returned purchase',
+  'balance adjustment', 'credit card payment',
+];
+function isNonIncomePositive(category) {
+  const c = norm(category);
+  if (!c) return false;
+  return NON_INCOME_POSITIVE.some((e) => c.includes(norm(e)));
+}
+
 /** Parse a currency/number cell: strips $ and commas, treats (x) as negative. */
 function parseAmount(raw) {
   if (raw == null) return NaN;
@@ -216,7 +231,9 @@ function mapTransactions(records = []) {
       if (!isFixedCategory(category)) {
         discretionaryByDay.set(day, (discretionaryByDay.get(day) || 0) + -amount);
       }
-    } else if (amount > 0 && !isExcludedIncome(category)) {
+    } else if (amount > 0 && !isExcludedIncome(category) && !isNonIncomePositive(category)) {
+      // CSV path has no category_type, so guard against refunds/reimbursements/
+      // cashback being miscounted as income via the category name.
       incomeByDay.set(day, (incomeByDay.get(day) || 0) + amount);
     }
 
@@ -414,4 +431,5 @@ module.exports = {
   isInternalTransfer,
   isFixedCategory,
   isExcludedIncome,
+  isNonIncomePositive,
 };
