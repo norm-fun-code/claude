@@ -2963,16 +2963,17 @@ app.get('/api/briefing', async (req, res) => {
   // to evergreen growth themes when there's no recent check-in data.
   let relevantHighlight = null;
   try {
-    const theme = wellbeingTheme || quoteData.quote || 'presence, growth, resilience, gratitude';
-    const [vec] = await withTimeout(llm.embed([theme]), EXT, 'embed');
-    if (vec) {
-      const hits = await documentsStore.searchSimilar(vec, { k: 25, domain: 'learning' });
-      const seen = await surfacedStore.recentRefs('highlight', 30);
-      const [pick] = surfacedStore.pickFresh(hits, seen, { max: 1, keyFn: (h) => h.id });
-      if (pick) {
-        relevantHighlight = { title: pick.title, author: pick.author, content: pick.content, url: pick.url };
-        if (!priorIsToday) await surfacedStore.record('highlight', pick.id);
-      }
+    const rh = require('./src/intelligence/relevant-highlight');
+    // Semantic-match against the user's CURRENT situation (goals, life context,
+    // any low-wellbeing themes) — not the daily quote — and have the LLM name the
+    // connection ("why now") or admit it's only a loose fit (→ honest factual
+    // frame on the card). excludeAuthor drops same-author echoes of today's quote.
+    relevantHighlight = await withTimeout(
+      rh.buildRelevantHighlight({ themes: wellbeingTheme, excludeAuthor: quoteData?.author || null }),
+      EXT, 'highlight'
+    );
+    if (relevantHighlight && relevantHighlight.id && !priorIsToday) {
+      await surfacedStore.record('highlight', relevantHighlight.id);
     }
   } catch (err) {
     console.error('[relevantHighlight] failed:', err.message);

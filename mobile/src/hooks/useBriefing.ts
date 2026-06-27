@@ -102,6 +102,8 @@ export interface RelevantHighlight {
   author: string | null;
   content: string;
   url: string | null;
+  reason?: string | null;        // specific "why now" when the match is genuine
+  relevance?: 'high' | 'medium' | 'low';
 }
 
 export interface Forecast {

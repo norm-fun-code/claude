@@ -40,10 +40,12 @@ export function LibraryCard({ highlight, wellbeingTheme }: Props) {
         ) : null}
       </View>
 
+      {/* Specific "why now" when the match is genuine; otherwise an honest factual
+          frame — never a vague unfounded "surfaced for you" claim. */}
       <Text style={[styles.why, { color: c.subtext }]}>
-        {wellbeingTheme
-          ? `Matched to: ${wellbeingTheme}`
-          : 'Surfaced for where you are right now.'}
+        {highlight.reason
+          ? `✦ ${highlight.reason}`
+          : 'From your library — worth revisiting.'}
       </Text>
     </View>
   );
