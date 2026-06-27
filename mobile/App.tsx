@@ -189,8 +189,10 @@ export default function App() {
               <Text style={styles.wealthAskBtnText}>Ask about my finances</Text>
             </TouchableOpacity>
             <WealthCard wealth={d?.wealth ?? null} />
-            <IndicesCard />
+            {/* "What the data shows" (personal finance insights) leads; the market
+                scoreboard + brief group together below it as market context. */}
             <InsightsCard insights={d?.wealthInsights ?? []} />
+            <IndicesCard />
             <MarketsCard markets={d?.markets ?? null} />
             {!d?.wealth && (
               <EmptyNote c={c} text="Connect Monarch (your monthly export) to see net worth, spending, and cashflow here." />
