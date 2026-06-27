@@ -1147,7 +1147,13 @@ app.post('/api/recovery/self-report', async (req, res) => {
     }
     const written = await metricsStore.insertMetrics(rows);
     const recovery = await require('./src/intelligence/recovery').liveRecovery();
+    // Respond immediately with the new proxy recovery, then build the brief in the
+    // background and push "ready" — so logging sleep is what triggers the morning
+    // brief (no brief is built until you log, on a no-Pod night).
     res.json({ ok: true, written, recovery });
+    require('./src/notify/morning')
+      .warmAndNotify({ send: true })
+      .catch((e) => console.error('[self-report] brief build failed:', e.message));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

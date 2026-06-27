@@ -29,11 +29,9 @@ async function warmBriefing() {
   }
 }
 
-/**
- * Pre-build the briefing and push a "ready" notification.
- * @param {{ send?: boolean }} [opts]
- */
-async function runMorningBriefing(opts = {}) {
+/** Build the briefing and push the "ready" notification. Shared by the morning
+ *  routine AND the sleep check-in (which triggers it after you log). */
+async function warmAndNotify(opts = {}) {
   const send = opts.send !== false;
   let built = false;
   let briefing = null;
@@ -69,6 +67,43 @@ async function runMorningBriefing(opts = {}) {
     console.error('[morning] push failed:', err.message);
     return { built, sent: 0, error: err.message };
   }
+}
+
+/** Push the "log your sleep" prompt (no brief is built — it waits for the log). */
+async function pushSleepCheckIn(opts = {}) {
+  if (opts.send === false) return { built: false, sleepCheckIn: true, sent: 0 };
+  const tokens = await devicesStore.listActiveTokens();
+  if (tokens.length === 0) return { built: false, sleepCheckIn: true, sent: 0, reason: 'no_devices' };
+  try {
+    const r = await sendPush(tokens, {
+      title: 'How did you sleep? 🛌',
+      body: 'No Eight Sleep reading last night — log your sleep and I’ll build your brief with a recovery score.',
+      data: { type: 'sleep_checkin' },
+    });
+    for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
+    return { built: false, sleepCheckIn: true, sent: r.sent };
+  } catch (err) {
+    console.error('[morning] sleep check-in push failed:', err.message);
+    return { built: false, sleepCheckIn: true, sent: 0, error: err.message };
+  }
+}
+
+/**
+ * Morning routine. On nights with no Eight Sleep reading, DON'T build a brief on
+ * empty recovery — push the sleep check-in instead, and the brief builds itself
+ * when the user logs (POST /api/recovery/self-report → warmAndNotify). Otherwise
+ * pre-build the briefing and push "ready".
+ * @param {{ send?: boolean }} [opts]
+ */
+async function runMorningBriefing(opts = {}) {
+  try {
+    const needs = await require('../intelligence/recovery').needsSleepCheckIn();
+    if (needs) return await pushSleepCheckIn(opts);
+  } catch (err) {
+    console.error('[morning] sleep check-in check failed:', err.message);
+    // fall through to the normal briefing build
+  }
+  return warmAndNotify(opts);
 }
 
 /**
@@ -112,4 +147,4 @@ async function runWeeklyReviewWithPush(opts = {}) {
   }
 }
 
-module.exports = { runMorningBriefing, warmBriefing, runWeeklyReviewWithPush };
+module.exports = { runMorningBriefing, warmBriefing, warmAndNotify, pushSleepCheckIn, runWeeklyReviewWithPush };
