@@ -87,7 +87,11 @@ async function getBudgetPacing({ now = new Date() } = {}) {
       remaining: budget - actual,
       // pace: >1 means spending faster than the month is elapsing
       pace: expectedByNow > 0 ? actual / expectedByNow : (actual > 0 ? Infinity : 0),
-      overBudget: actual > budget + 0.01, // >1¢ over — avoids floating-point false positives
+      // Only "over budget" once the overage is MEANINGFUL (>1% of the budget or
+      // >$1, whichever is larger). A few cents/dollars over — which rounds to
+      // "$0 over" in the UI — shouldn't fire an "over budget" alert (e.g. a fixed
+      // $252 auto-payment landing at $252.30).
+      overBudget: actual > budget + Math.max(1, budget * 0.01),
     });
   }
   lines.sort((a, b) => b.pace - a.pace);

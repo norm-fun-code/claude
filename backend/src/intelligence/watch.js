@@ -78,14 +78,25 @@ function fmtValue(v, cfg) {
   return String(Math.round(v));
 }
 
+// Spending/financial annotations are never a driver of a HEALTH anomaly — a
+// "Vacation bills" note explains your wallet, not your HRV. Same filter the
+// analyze anomaly path uses, so the two stay consistent.
+const SPEND_RE = /spend|wealth|financ|budget|\$\d|money|bill/i;
+function isSpendingAnnotation(a) {
+  const cat = String(a.category || '').toLowerCase();
+  if (cat.includes('spend') || cat.includes('wealth') || cat.includes('financ')) return true;
+  return SPEND_RE.test(`${a.label || ''} ${a.note || ''}`);
+}
+
 /** Active life-context labels overlapping yesterday→now, e.g. "travel", "late night". */
 async function contextNote() {
   try {
     const annotationsStore = require('../store/annotations');
     const start = new Date(); start.setDate(start.getDate() - 1); start.setHours(0, 0, 0, 0);
     const active = await annotationsStore.overlapping(start, new Date());
-    if (!active.length) return '';
-    const labels = active.slice(0, 2).map((a) => a.label || a.category).filter(Boolean);
+    const life = active.filter((a) => !isSpendingAnnotation(a));
+    if (!life.length) return '';
+    const labels = life.slice(0, 2).map((a) => a.label || a.category).filter(Boolean);
     return labels.length ? ` You logged: ${labels.join(', ')}.` : '';
   } catch {
     return '';
@@ -122,6 +133,18 @@ async function runWatch(opts = {}) {
         domain: 'health', metric: cfg.metric, from, agg: 'avg', sources: cfg.sources,
       });
     } catch { continue; }
+
+    // Staleness guard: Eight Sleep reads are dated by the WAKE morning, so a fresh
+    // overnight value carries today's date. If the latest reading predates today,
+    // there was no session last night — don't push "your HRV dropped" on a
+    // 1–2-night-old reading (the whole point is fresh-overnight alerts).
+    const latestDay = series.length ? series[series.length - 1].day : null;
+    if (latestDay) {
+      const readingDayKey = new Date(latestDay).toISOString().slice(0, 10);
+      const todayLocal = new Date(asOf).toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/New_York' });
+      if (readingDayKey < todayLocal) continue;
+    }
+
     const a = baselineAnomaly(series, { baselineDays: BASELINE_DAYS, minN: MIN_N });
     if (!a) continue;
 
