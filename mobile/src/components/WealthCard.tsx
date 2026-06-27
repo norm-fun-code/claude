@@ -50,8 +50,12 @@ export function WealthCard({ wealth }: Props) {
     : null;
 
   const up = (wealth.netWorthChange ?? 0) >= 0;
-  const cashflowPositive = wealth.cashflowThisWeek >= 0;
+  // Cashflow/income use a ROLLING 30-day window (always spans a full pay cycle),
+  // so lumpy/biweekly income never produces a misleading "$7 income, −$3,854
+  // cashflow" the way a 7-day window does. Budgets stay calendar-MTD elsewhere.
   const cashflowMonthPositive = (wealth.cashflowThisMonth ?? 0) >= 0;
+  const has30d =
+    wealth.spendingThisMonth != null && wealth.incomeThisMonth != null && wealth.cashflowThisMonth != null;
   const syncedDate = wealth.syncedAt
     ? new Date(wealth.syncedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     : null;
@@ -84,32 +88,37 @@ export function WealthCard({ wealth }: Props) {
         )}
       </Pressable>
 
-      {wealth.cashflowThisMonth != null && (
-        <View style={[styles.monthRow, { borderTopColor: c.border }]}>
-          <Text style={[styles.monthLabel, { color: c.subtext }]}>30-day net</Text>
-          <Text style={[styles.monthValue, { color: hidden ? c.text : cashflowMonthPositive ? c.green : c.red }]}>
-            {hidden ? MASK : `${cashflowMonthPositive ? '+' : '−'}${money(Math.abs(wealth.cashflowThisMonth))}`}
+      {has30d ? (
+        <>
+          <View style={[styles.row, { borderTopColor: c.border }]}>
+            <Stat label="Income (30d)" value={show(money(wealth.incomeThisMonth!))} color={c.text} c={c} />
+            <Stat label="Spending (30d)" value={show(money(wealth.spendingThisMonth!))} color={c.text} c={c} />
+            <Stat
+              label="Net (30d)"
+              value={hidden ? MASK : `${cashflowMonthPositive ? '+' : '−'}${money(Math.abs(wealth.cashflowThisMonth!))}`}
+              color={hidden ? c.text : cashflowMonthPositive ? c.green : c.red}
+              c={c}
+            />
+          </View>
+          <Text style={[styles.discretionary, { color: c.subtext }]}>
+            {show(money(wealth.spendingThisWeek))} spent in the last 7 days
+            {wealth.discretionaryThisMonth != null && wealth.spendingThisMonth! > 0
+              ? ` · ${show(money(wealth.discretionaryThisMonth))} discretionary (30d, ex rent/mortgage)`
+              : ''}
           </Text>
+        </>
+      ) : (
+        // Fallback for older payloads without 30-day fields.
+        <View style={[styles.row, { borderTopColor: c.border }]}>
+          <Stat label="Spending (7d)" value={show(money(wealth.spendingThisWeek))} color={c.text} c={c} />
+          <Stat label="Income (7d)" value={show(money(wealth.incomeThisWeek))} color={c.text} c={c} />
+          <Stat
+            label="Net (7d)"
+            value={hidden ? MASK : `${wealth.cashflowThisWeek >= 0 ? '+' : '−'}${money(Math.abs(wealth.cashflowThisWeek))}`}
+            color={hidden ? c.text : wealth.cashflowThisWeek >= 0 ? c.green : c.red}
+            c={c}
+          />
         </View>
-      )}
-
-      <View style={[styles.row, { borderTopColor: c.border }]}>
-        <Stat label="Spending (7d)" value={show(money(wealth.spendingThisWeek))} color={c.text} c={c} />
-        <Stat label="Income (7d)" value={show(money(wealth.incomeThisWeek))} color={c.text} c={c} />
-        <Stat
-          label="Net cashflow"
-          value={hidden ? MASK : `${cashflowPositive ? '+' : '−'}${money(Math.abs(wealth.cashflowThisWeek))}`}
-          color={hidden ? c.text : cashflowPositive ? c.green : c.red}
-          c={c}
-        />
-      </View>
-
-      {wealth.discretionaryThisWeek != null &&
-        wealth.spendingThisWeek > 0 &&
-        wealth.discretionaryThisWeek / wealth.spendingThisWeek < 0.95 && (
-        <Text style={[styles.discretionary, { color: c.subtext }]}>
-          {show(money(wealth.discretionaryThisWeek))} discretionary (ex rent/mortgage)
-        </Text>
       )}
     </View>
   );

@@ -147,6 +147,7 @@ export interface Wealth {
   spendingThisMonth?: number;
   incomeThisMonth?: number;
   cashflowThisMonth?: number;
+  discretionaryThisMonth?: number | null;
   syncedAt?: string | null;
 }
 

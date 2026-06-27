@@ -40,6 +40,7 @@ async function buildWealthInsights() {
       const positive = rate >= 0;
       insights.push({
         type: 'savings_rate',
+        tone: positive ? 'win' : 'watch',
         title: positive
           ? `Saving ${ratePct}% of income (30d)`
           : `Spending ${Math.abs(ratePct)}% more than you earned (30d)`,
@@ -113,6 +114,8 @@ async function buildWealthInsights() {
       for (const s of spikes.slice(0, 3)) {
         insights.push({
           type: 'spending_pattern',
+          tone: 'watch',
+          category: s.category,
           title: `${s.category} trending ${s.over} above your usual`,
           detail: projected
             ? `You've spent ${fmt(s.current)} on ${s.category} so far this month — on pace for about ${fmt(s.projected)}, roughly ${s.over} above your recent average of ${fmt(s.avg)}.`
@@ -133,6 +136,7 @@ async function buildWealthInsights() {
         const totalAnnual = Math.round(recurring.totalAnnualExpense);
         insights.push({
           type: 'subscriptions',
+          tone: 'neutral',
           title: `${active.length} recurring charges ≈ ${fmt(totalMonthly)}/mo`,
           detail:
             `Monarch tracks ${active.length} recurring expenses totaling ${fmt(totalMonthly)}/month (${fmt(totalAnnual)}/yr). ` +
@@ -143,6 +147,7 @@ async function buildWealthInsights() {
         if (big) {
           insights.push({
             type: 'subscription_review',
+            tone: 'neutral',
             title: `Review: ${big.name} is ${fmt(big.annual)}/yr`,
             detail: `${big.name} bills ${fmt(big.amount)} ${big.frequency} — about ${fmt(big.annual)} a year. Worth confirming it's still earning its keep.`,
             evidence: { kind: 'subscription_review', merchant: big.name, annual: big.annual },
@@ -179,6 +184,7 @@ async function buildWealthInsights() {
         const dir = monthlyChange >= 0 ? 'growing' : 'declining';
         insights.push({
           type: 'net_worth_path',
+          tone: monthlyChange >= 0 ? 'win' : 'watch',
           title: `Net worth ${dir} ~${fmt(Math.abs(monthlyChange))}/mo`,
           detail:
             `Based on your 4-month trend, net worth is ${dir} about ${fmt(Math.abs(monthlyChange))}/month — ` +
@@ -208,6 +214,8 @@ async function buildWealthInsights() {
           : `on pace to overspend — ${pct((l.pace - 1) * 100)} ahead of schedule`;
         insights.push({
           type: 'over_budget',
+          tone: 'watch',
+          category: l.category,
           title: `${l.category}: ${status}`,
           detail:
             `${l.category}: ${fmt(l.actual)} spent of ${fmt(l.budget)} budget (day ${pacing.dayOfMonth}/${pacing.daysInMonth}). ` +
@@ -224,6 +232,8 @@ async function buildWealthInsights() {
         if (l.overBudget) {
           insights.push({
             type: 'over_budget',
+            tone: 'watch',
+            category: l.category,
             title: `${l.category}: over budget (${fmt(l.actual)} of ${fmt(l.budget)})`,
             detail: `${l.category}: paid ${fmt(l.actual)} vs ${fmt(l.budget)} budget — ${fmt(Math.abs(l.remaining))} over.`,
             evidence: { kind: 'budget_pacing', category: l.category, budget: l.budget, actual: l.actual, lumpSum: true },
@@ -231,6 +241,8 @@ async function buildWealthInsights() {
         } else {
           insights.push({
             type: 'under_budget',
+            tone: 'win',
+            category: l.category,
             title: `${l.category}: ${fmt(l.actual)} of ${fmt(l.budget)} budget — under by ${fmt(l.remaining)}`,
             detail: `${l.category}: paid ${fmt(l.actual)} vs ${fmt(l.budget)} budget this month — ${fmt(l.remaining)} under budget.`,
             evidence: { kind: 'budget_pacing', category: l.category, budget: l.budget, actual: l.actual, lumpSum: true },
@@ -259,11 +271,16 @@ async function buildWealthInsights() {
         const loseLine = inv.topLosers.length && inv.topLosers[0].periodChange < 0
           ? ` Biggest drag: ${inv.topLosers[0].ticker || 'unknown'} ${fmt(inv.topLosers[0].periodChange)}.`
           : '';
+        // Lead with portfolio VALUE (the number that matters for a long-term
+        // investor), and frame the 7-day move as context, not a headline. A single
+        // week's swing is noise; surfacing "down $X this week" as the title nudges
+        // toward anxiety and market-timing — the two behaviors that hurt returns.
         insights.push({
           type: 'investments',
-          title: `Portfolio ${dir} ${fmt(Math.abs(inv.periodChange))} (${absPct}%) past 7d`,
+          tone: 'neutral',
+          title: `Portfolio ${fmt(inv.totalValue)}`,
           detail:
-            `Total portfolio value: ${fmt(inv.totalValue)}. Over the past 7 days: ${dir} ${fmt(Math.abs(inv.periodChange))} (${absPct}%).${gainLine}${loseLine}`,
+            `Worth ${fmt(inv.totalValue)} today. The past 7 days are ${dir} ${fmt(Math.abs(inv.periodChange))} (${absPct}%) — normal short-term movement; what matters is the multi-year trajectory, not any single week.${gainLine}${loseLine}`,
           evidence: {
             kind: 'investments',
             totalValue: Math.round(inv.totalValue),
@@ -278,6 +295,7 @@ async function buildWealthInsights() {
         // Performance data unavailable — show value only.
         insights.push({
           type: 'investments',
+          tone: 'neutral',
           title: `Portfolio value: ${fmt(inv.totalValue)}`,
           detail: `Total portfolio value: ${fmt(inv.totalValue)}. 7-day performance data not yet available from Monarch.`,
           evidence: { kind: 'investments', totalValue: Math.round(inv.totalValue) },
@@ -288,7 +306,27 @@ async function buildWealthInsights() {
     console.error('[wealth-insights] investments failed:', err.message);
   }
 
-  return insights;
+  // Dedupe: if a category is already flagged "over budget" (authoritative — it's
+  // vs a real budget), drop a redundant "trending above usual" run-rate spike for
+  // the SAME category, so one overspend doesn't occupy two cards.
+  const overBudgetCats = new Set(
+    insights.filter((i) => i.type === 'over_budget' && i.category).map((i) => i.category)
+  );
+  let deduped = insights.filter(
+    (i) => !(i.type === 'spending_pattern' && i.category && overBudgetCats.has(i.category))
+  );
+
+  // Lead with the wins. Stable-sort by tone so the user sees what's going RIGHT
+  // (saving 57%, net worth growing, under budget) before the watch-outs, instead
+  // of a wall of negatives — without dropping any signal. Order preserved within
+  // each tone band.
+  const toneRank = { win: 0, neutral: 1, watch: 2 };
+  deduped = deduped
+    .map((ins, i) => ({ ins, i }))
+    .sort((a, b) => (toneRank[a.ins.tone] ?? 1) - (toneRank[b.ins.tone] ?? 1) || a.i - b.i)
+    .map((x) => x.ins);
+
+  return deduped;
 }
 
 module.exports = { buildWealthInsights };

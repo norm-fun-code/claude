@@ -2977,12 +2977,13 @@ app.get('/api/briefing', async (req, res) => {
     const nw = await metricsStore.latest({ domain: 'wealth', metric: 'net_worth' });
     const nwPrev = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'net_worth', from: monthAgo, to: weekAgo, agg: 'avg', excludeSource: 'seed' });
     const now = new Date();
-    const [spend, discretionary, income, spendMonth, incomeMonth] = await Promise.all([
+    const [spend, discretionary, income, spendMonth, incomeMonth, discretionaryMonth] = await Promise.all([
       metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: weekAgo, to: now, agg: 'sum', excludeSource: 'seed' }),
       metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: weekAgo, to: now, agg: 'sum', excludeSource: 'seed' }),
       metricsStore.dailyAggregate({ domain: 'wealth', metric: 'income', from: weekAgo, to: now, agg: 'sum', excludeSource: 'seed' }),
       metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: monthAgo, to: now, agg: 'sum', excludeSource: 'seed' }),
       metricsStore.dailyAggregate({ domain: 'wealth', metric: 'income', from: monthAgo, to: now, agg: 'sum', excludeSource: 'seed' }),
+      metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: monthAgo, to: now, agg: 'sum', excludeSource: 'seed' }),
     ]);
     if (nw || spend.length) {
       const netWorth = nw ? Number(nw.value) : null;
@@ -2994,9 +2995,15 @@ app.get('/api/briefing', async (req, res) => {
         discretionaryThisWeek: discretionary.length ? Math.round(sum(discretionary)) : null,
         incomeThisWeek: Math.round(sum(income)),
         cashflowThisWeek: Math.round(sum(income) - sum(spend)),
+        // NB: the *ThisMonth fields are ROLLING 30 days (monthAgo = now − 30d),
+        // not calendar MTD. Rolling is the right basis for cashflow/income/savings
+        // (constant-length window, always spans a full pay cycle, so lumpy income
+        // doesn't distort it). Budget adherence stays MTD elsewhere — budgets are
+        // calendar-month. The card labels these "(30d)" so the two never blur.
         spendingThisMonth: Math.round(sum(spendMonth)),
         incomeThisMonth: Math.round(sum(incomeMonth)),
         cashflowThisMonth: Math.round(sum(incomeMonth) - sum(spendMonth)),
+        discretionaryThisMonth: discretionaryMonth.length ? Math.round(sum(discretionaryMonth)) : null,
         syncedAt: nw?.ts ? new Date(nw.ts).toISOString() : null,
       };
     }
