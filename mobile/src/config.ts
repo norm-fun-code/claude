@@ -44,6 +44,7 @@ export const BRIEFING_CONTEXT_URL = `${API_BASE}/api/briefing/context`;
 export const EXPERIMENTS_URL = `${API_BASE}/api/experiments`;
 export const RECOMMENDATIONS_URL = `${API_BASE}/api/recommendations`;
 export const WEALTH_PLAN_URL = `${API_BASE}/api/wealth/plan`;
+export const WEALTH_ALLOCATION_URL = `${API_BASE}/api/wealth/allocation`;
 export const GOALS_URL = `${API_BASE}/api/goals`;
 export const METRICS_HISTORY_URL = `${API_BASE}/api/metrics/history`;
 export const EXPERIMENT_EXTRACT_URL = `${API_BASE}/api/chat/extract-experiment`;

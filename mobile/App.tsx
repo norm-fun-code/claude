@@ -29,6 +29,7 @@ import { Header } from './src/components/Header';
 import { TabBar, TabKey, TABS } from './src/components/TabBar';
 import { ForecastCard } from './src/components/ForecastCard';
 import { WealthCard } from './src/components/WealthCard';
+import { AssetMixCard } from './src/components/AssetMixCard';
 import { InsightsCard } from './src/components/InsightsCard';
 import { AskOverlay } from './src/components/AskOverlay';
 import { CheckinModal } from './src/components/CheckinModal';
@@ -189,6 +190,9 @@ export default function App() {
               <Text style={styles.wealthAskBtnText}>Ask about my finances</Text>
             </TouchableOpacity>
             <WealthCard wealth={d?.wealth ?? null} />
+            {/* Asset Mix — structural allocation + single-name concentration,
+                sits right under net worth (a natural extension of it). */}
+            <AssetMixCard />
             {/* "What the data shows" (personal finance insights) leads; the market
                 scoreboard + brief group together below it as market context. */}
             <InsightsCard insights={d?.wealthInsights ?? []} />

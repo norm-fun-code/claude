@@ -63,3 +63,22 @@ test('buildAllocationInsights stays quiet when nothing is concentrated', () => {
   const out = buildAllocationInsights(diversified);
   assert.ok(!out.find((i) => i.type === 'concentration'), 'no single position >15% → no concentration flag');
 });
+
+test('computeAllocationView returns structured slices + concentration for the card', () => {
+  const { computeAllocationView } = require('../src/intelligence/allocation');
+  const view = computeAllocationView(accountsData);
+  assert.ok(view);
+  assert.equal(view.netWorth, 1336374);
+  // pct is a 0–1 fraction; slices sum to ~1.
+  const sum = view.slices.reduce((s, x) => s + x.pct, 0);
+  assert.ok(Math.abs(sum - 1) < 1e-9);
+  assert.ok(view.concentration && view.concentration.name === 'Stripe');
+  assert.ok(view.concentration.illiquid === true);
+  assert.ok(view.concentration.pct > 0.29 && view.concentration.pct < 0.31);
+});
+
+test('computeAllocationView returns null without accounts', () => {
+  const { computeAllocationView } = require('../src/intelligence/allocation');
+  assert.equal(computeAllocationView(null), null);
+  assert.equal(computeAllocationView({ accounts: [] }), null);
+});

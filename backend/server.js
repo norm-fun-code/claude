@@ -2013,6 +2013,20 @@ app.get('/api/wealth/plan', async (req, res) => {
   }
 });
 
+// Asset allocation + single-name concentration for the dedicated Asset Mix card.
+app.get('/api/wealth/allocation', async (req, res) => {
+  try {
+    const monarchWealth = require('./src/services/monarch-wealth');
+    const { computeAllocationView } = require('./src/intelligence/allocation');
+    const accountsData = await monarchWealth.getAccounts();
+    const view = computeAllocationView(accountsData);
+    if (!view) return res.json({ available: false });
+    res.json({ available: true, ...view });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/sources', async (req, res) => {
   try {
     res.json({ sources: await sourcesStore.listSources() });

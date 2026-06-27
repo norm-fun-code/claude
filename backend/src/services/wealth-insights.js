@@ -307,14 +307,9 @@ async function buildWealthInsights() {
     console.error('[wealth-insights] investments failed:', err.message);
   }
 
-  // 5) Asset allocation + single-name concentration (e.g. a large pre-IPO stock
-  //    position) from the per-account balances. Pure logic in intelligence/allocation.
-  try {
-    const accountsData = await monarchWealth.getAccounts();
-    for (const ins of buildAllocationInsights(accountsData)) insights.push(ins);
-  } catch (err) {
-    console.error('[wealth-insights] allocation failed:', err.message);
-  }
+  // NB: asset allocation + single-name concentration are NOT pushed into this
+  // text feed — they have a dedicated visual "Asset Mix" card (GET
+  // /api/wealth/allocation), since they're a structural view, not a daily insight.
 
   // Dedupe: if a category is already flagged "over budget" (authoritative — it's
   // vs a real budget), drop a redundant "trending above usual" run-rate spike for

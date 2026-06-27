@@ -118,4 +118,26 @@ function buildAllocationInsights(accountsData, { concentrationPct = 0.15 } = {})
   return out;
 }
 
-module.exports = { classifyAccount, assetAllocation, topConcentration, buildAllocationInsights };
+/**
+ * Structured allocation view for the dedicated Asset Mix card (visual bar + a
+ * concentration callout). Returns { total, netWorth, slices:[{cls,label,value,
+ * pct}], concentration } with pct as a 0–1 fraction, or null if no accounts.
+ */
+function computeAllocationView(accountsData, { concentrationPct = 0.15 } = {}) {
+  if (!accountsData || !Array.isArray(accountsData.accounts) || !accountsData.accounts.length) return null;
+  const alloc = assetAllocation(accountsData.accounts);
+  if (!alloc) return null;
+  const netWorth = accountsData.netWorth != null ? accountsData.netWorth : alloc.total;
+  const conc = topConcentration(accountsData.accounts, netWorth);
+  return {
+    total: Math.round(alloc.total),
+    netWorth: netWorth != null ? Math.round(netWorth) : null,
+    slices: alloc.slices.map((s) => ({ cls: s.cls, label: s.label, value: Math.round(s.value), pct: s.pct })),
+    concentration:
+      conc && conc.pct >= concentrationPct
+        ? { name: conc.name, balance: Math.round(conc.balance), pct: conc.pct, cls: conc.cls, illiquid: conc.cls === 'other' }
+        : null,
+  };
+}
+
+module.exports = { classifyAccount, assetAllocation, topConcentration, buildAllocationInsights, computeAllocationView };
