@@ -139,4 +139,50 @@ async function getInvestments({ start, end } = {}) {
   };
 }
 
-module.exports = { isConfigured, getRecurring, getBudgetPacing, getInvestments };
+function numOrNull(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Normalize one GetAccounts row across Monarch's varying field shapes (the MCP
+ * sometimes returns nested {type:{name}} objects, sometimes flat strings). Returns
+ * { name, type, subtype, balance, isAsset } or null if unparseable.
+ */
+function normAccount(a) {
+  if (!a || typeof a !== 'object') return null;
+  const name = a.display_name || a.displayName || a.name || a.account_name || 'Account';
+  const typeObj = a.type ?? a.account_type ?? '';
+  const type = String(typeof typeObj === 'object' ? (typeObj.name || typeObj.type || '') : typeObj).toLowerCase();
+  const subObj = a.subtype ?? '';
+  const subtype = String(typeof subObj === 'object' ? (subObj.name || '') : subObj).toLowerCase();
+  const balance = numOrNull(
+    a.current_balance ?? a.displayBalance ?? a.currentBalance ?? a.balance ?? a.value
+  );
+  if (balance == null) return null;
+  const isAsset = a.is_asset != null ? !!a.is_asset : (a.isAsset != null ? !!a.isAsset : balance >= 0);
+  return { name, type, subtype, balance, isAsset };
+}
+
+/**
+ * Per-account balances from GetAccounts — the basis for asset allocation and
+ * single-name concentration. Returns { netWorth, totalAssets, totalLiabilities,
+ * accounts: [{name,type,subtype,balance,isAsset}] } or null if MCP isn't
+ * configured / returns nothing.
+ */
+async function getAccounts() {
+  if (!isConfigured()) return null;
+  const r = await rpc.callToolJson('GetAccounts', {});
+  if (!r) return null;
+  const raw = Array.isArray(r.accounts) ? r.accounts : (Array.isArray(r.data) ? r.data : []);
+  const accounts = raw.map(normAccount).filter(Boolean);
+  if (!accounts.length) return null;
+  return {
+    netWorth: numOrNull(r.total_balance),
+    totalAssets: numOrNull(r.total_asset_balance),
+    totalLiabilities: Math.abs(numOrNull(r.total_liabilities_balance) ?? 0),
+    accounts,
+  };
+}
+
+module.exports = { isConfigured, getRecurring, getBudgetPacing, getInvestments, getAccounts, normAccount };

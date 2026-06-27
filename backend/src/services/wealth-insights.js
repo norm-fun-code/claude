@@ -8,6 +8,7 @@ const { computeSubscriptionInsights } = require('../intelligence/subscriptions')
 const { isInternalTransfer } = require('../connectors/monarch');
 const stats = require('../intelligence/stats');
 const monarchWealth = require('./monarch-wealth');
+const { buildAllocationInsights } = require('../intelligence/allocation');
 
 const MIN_SPEND = 50;       // ignore trivially small categories
 const SPIKE_RATIO = 1.15;   // 15%+ over your usual is noteworthy
@@ -304,6 +305,15 @@ async function buildWealthInsights() {
     }
   } catch (err) {
     console.error('[wealth-insights] investments failed:', err.message);
+  }
+
+  // 5) Asset allocation + single-name concentration (e.g. a large pre-IPO stock
+  //    position) from the per-account balances. Pure logic in intelligence/allocation.
+  try {
+    const accountsData = await monarchWealth.getAccounts();
+    for (const ins of buildAllocationInsights(accountsData)) insights.push(ins);
+  } catch (err) {
+    console.error('[wealth-insights] allocation failed:', err.message);
   }
 
   // Dedupe: if a category is already flagged "over budget" (authoritative — it's
