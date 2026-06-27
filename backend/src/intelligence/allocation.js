@@ -58,6 +58,30 @@ function topConcentration(accounts, netWorth) {
   return { name: largest.name, balance: largest.balance, pct: largest.balance / netWorth, cls: classifyAccount(largest) };
 }
 
+/**
+ * Flatten brokerage holdings (individual tickers) + private single-asset accounts
+ * (e.g. a manual "Stripe" pre-IPO account) into a list of true SINGLE-NAME
+ * positions, largest first. A diversified brokerage ACCOUNT is deliberately NOT a
+ * position here — its individual holdings are. `holdings` is getInvestments()
+ * holdings (may be null); `accounts` is getAccounts().accounts.
+ */
+function buildPositions(holdings, accounts) {
+  const positions = [];
+  for (const h of holdings || []) {
+    if (!h || !(h.value > 0)) continue;
+    if (String(h.securityType || '').toLowerCase() === 'cash') continue; // sweep cash isn't a name
+    positions.push({ name: h.ticker || h.name || 'Holding', value: h.value, kind: 'holding' });
+  }
+  // Private / alt single-asset accounts are genuine single names that public
+  // holdings don't cover (illiquid pre-IPO stock, RSUs, an alt position).
+  for (const a of accounts || []) {
+    if (a.isAsset && a.balance > 0 && classifyAccount(a) === 'other') {
+      positions.push({ name: a.name, value: a.balance, kind: 'private' });
+    }
+  }
+  return positions.sort((x, y) => y.value - x.value);
+}
+
 const fmt = (n) => '$' + Math.round(n).toLocaleString('en-US');
 const pctStr = (x) => Math.round(x * 100) + '%';
 
@@ -123,21 +147,40 @@ function buildAllocationInsights(accountsData, { concentrationPct = 0.15 } = {})
  * concentration callout). Returns { total, netWorth, slices:[{cls,label,value,
  * pct}], concentration } with pct as a 0–1 fraction, or null if no accounts.
  */
-function computeAllocationView(accountsData, { concentrationPct = 0.15 } = {}) {
+function computeAllocationView(accountsData, { holdings = null, concentrationPct = 0.15, maxPositions = 8 } = {}) {
   if (!accountsData || !Array.isArray(accountsData.accounts) || !accountsData.accounts.length) return null;
   const alloc = assetAllocation(accountsData.accounts);
   if (!alloc) return null;
   const netWorth = accountsData.netWorth != null ? accountsData.netWorth : alloc.total;
-  const conc = topConcentration(accountsData.accounts, netWorth);
+
+  // True single-name positions: brokerage tickers (from getInvestments) + private
+  // single-asset accounts. A diversified brokerage account is NOT a position.
+  const positions = buildPositions(holdings, accountsData.accounts);
+  const posTotal = positions.reduce((s, p) => s + p.value, 0);
+  const topPositions = positions.slice(0, maxPositions).map((p) => ({
+    name: p.name,
+    value: Math.round(p.value),
+    kind: p.kind,
+    pctNw: netWorth > 0 ? p.value / netWorth : null,
+    pctPort: posTotal > 0 ? p.value / posTotal : null,
+  }));
+
+  // Concentration = the largest TRUE single name as a share of net worth — a
+  // single ticker or a private position, never a diversified account.
+  const top = positions[0] || null;
+  const concentration =
+    top && netWorth > 0 && top.value / netWorth >= concentrationPct
+      ? { name: top.name, balance: Math.round(top.value), pct: top.value / netWorth, kind: top.kind, illiquid: top.kind === 'private' }
+      : null;
+
   return {
     total: Math.round(alloc.total),
     netWorth: netWorth != null ? Math.round(netWorth) : null,
     slices: alloc.slices.map((s) => ({ cls: s.cls, label: s.label, value: Math.round(s.value), pct: s.pct })),
-    concentration:
-      conc && conc.pct >= concentrationPct
-        ? { name: conc.name, balance: Math.round(conc.balance), pct: conc.pct, cls: conc.cls, illiquid: conc.cls === 'other' }
-        : null,
+    positions: topPositions,
+    positionsTotal: Math.round(posTotal),
+    concentration,
   };
 }
 
-module.exports = { classifyAccount, assetAllocation, topConcentration, buildAllocationInsights, computeAllocationView };
+module.exports = { classifyAccount, assetAllocation, topConcentration, buildPositions, buildAllocationInsights, computeAllocationView };

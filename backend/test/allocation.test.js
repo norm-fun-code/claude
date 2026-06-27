@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { classifyAccount, assetAllocation, topConcentration, buildAllocationInsights } = require('../src/intelligence/allocation');
+const { classifyAccount, assetAllocation, topConcentration, buildAllocationInsights, buildPositions, computeAllocationView } = require('../src/intelligence/allocation');
 
 // A realistic account set: a large pre-IPO "Stripe" position, brokerage, 401k,
 // a home, and cash. Net worth ~$1.336M.
@@ -81,4 +81,37 @@ test('computeAllocationView returns null without accounts', () => {
   const { computeAllocationView } = require('../src/intelligence/allocation');
   assert.equal(computeAllocationView(null), null);
   assert.equal(computeAllocationView({ accounts: [] }), null);
+});
+
+test('buildPositions: tickers + private accounts, excluding diversified accounts and cash', () => {
+  const positions = buildPositions(
+    [{ ticker: 'MU', value: 50000, securityType: 'equity' }, { ticker: 'SWEEP', value: 1000, securityType: 'cash' }],
+    [{ name: 'Stripe', type: 'other', balance: 5000, isAsset: true }, { name: 'Fidelity', type: 'brokerage', balance: 600000, isAsset: true }]
+  );
+  // MU (50k) > Stripe (5k); the diversified Fidelity account and the cash sweep are excluded.
+  assert.deepEqual(positions.map((p) => p.name), ['MU', 'Stripe']);
+});
+
+test('computeAllocationView: concentration is the largest HOLDING, not a diversified account', () => {
+  const accounts = [
+    { name: 'Fidelity', type: 'brokerage', balance: 620063, isAsset: true },
+    { name: 'Chase Checking', type: 'depository', balance: 42862, isAsset: true },
+    { name: '401(k)', type: 'retirement', balance: 38904, isAsset: true },
+    { name: 'Stripe', type: 'other', balance: 5000, isAsset: true },
+  ];
+  const holdings = [
+    { ticker: 'NVDA', value: 220000, securityType: 'equity' },
+    { ticker: 'MSFT', value: 150000, securityType: 'equity' },
+    { ticker: 'AAPL', value: 120000, securityType: 'equity' },
+    { ticker: 'VTI', value: 130063, securityType: 'etf' },
+    { ticker: 'SWEEP', value: 0, securityType: 'cash' },
+  ];
+  const view = computeAllocationView({ netWorth: 706829, accounts }, { holdings });
+  assert.notEqual(view.concentration && view.concentration.name, 'Fidelity'); // not the whole account
+  assert.equal(view.concentration.name, 'NVDA');                              // largest single name
+  assert.ok(view.concentration.pct > 0.3);
+  assert.equal(view.positions[0].name, 'NVDA');                               // top holdings, largest first
+  assert.ok(view.positions.find((p) => p.name === 'MSFT'));
+  assert.ok(view.positions.find((p) => p.name === 'Stripe' && p.kind === 'private'));
+  assert.ok(!view.positions.find((p) => p.name === 'SWEEP'));                 // cash sweep excluded
 });

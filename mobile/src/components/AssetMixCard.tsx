@@ -5,12 +5,15 @@ import { SectionHeader } from './SectionHeader';
 import { WEALTH_ALLOCATION_URL, authHeaders, fetchWithTimeout } from '../config';
 
 type Slice = { cls: string; label: string; value: number; pct: number };
-type Concentration = { name: string; balance: number; pct: number; cls: string; illiquid: boolean } | null;
+type Position = { name: string; value: number; kind: 'holding' | 'private'; pctNw: number | null; pctPort: number | null };
+type Concentration = { name: string; balance: number; pct: number; kind: string; illiquid: boolean } | null;
 type AllocationView = {
   available: boolean;
   total: number;
   netWorth: number | null;
   slices: Slice[];
+  positions: Position[];
+  positionsTotal: number;
   concentration: Concentration;
 };
 
@@ -55,7 +58,8 @@ export function AssetMixCard() {
   }, []);
 
   if (!data || !data.slices?.length) return null;
-  const { slices, concentration } = data;
+  const { slices, concentration, positions } = data;
+  const maxPos = positions && positions.length ? positions[0].value : 0;
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
@@ -92,6 +96,37 @@ export function AssetMixCard() {
         ))}
       </View>
 
+      {/* Top individual holdings — drills into the Stocks bucket. */}
+      {positions && positions.length > 0 && (
+        <View style={styles.holdings}>
+          <Text style={[styles.subhead, { color: c.subtext }]}>TOP HOLDINGS</Text>
+          {positions.map((p) => (
+            <View key={`${p.name}-${p.value}`} style={styles.holdingRow}>
+              <View style={styles.holdingLeft}>
+                <Text style={[styles.holdingName, { color: c.text }]} numberOfLines={1}>
+                  {p.name}
+                  {p.kind === 'private' ? <Text style={[styles.privateTag, { color: c.subtext }]}>  private</Text> : null}
+                </Text>
+                <View style={[styles.holdingBarTrack, { backgroundColor: c.border }]}>
+                  <View
+                    style={[
+                      styles.holdingBarFill,
+                      { width: `${maxPos > 0 ? Math.max(3, (p.value / maxPos) * 100) : 0}%`, backgroundColor: p.kind === 'private' ? CLASS_COLOR.other : CLASS_COLOR.investments },
+                    ]}
+                  />
+                </View>
+              </View>
+              <View style={styles.holdingRight}>
+                <Text style={[styles.holdingVal, { color: c.text }]}>{money(p.value)}</Text>
+                {p.pctNw != null && (
+                  <Text style={[styles.holdingPct, { color: c.subtext }]}>{pctLabel(p.pctNw)} of NW</Text>
+                )}
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+
       {/* Single-name concentration callout */}
       {concentration && (
         <View style={[styles.concBox, { backgroundColor: (isDark ? '#EC6A5E' : '#EC6A5E') + '1A', borderColor: '#EC6A5E55' }]}>
@@ -123,6 +158,17 @@ const styles = StyleSheet.create({
   legendLabel: { fontSize: 13, fontWeight: '500', flex: 1, textTransform: 'capitalize' },
   legendPct: { fontSize: 13, fontWeight: '700', width: 46, textAlign: 'right' },
   legendVal: { ...typography.caption, fontSize: 12, width: 96, textAlign: 'right' },
+  holdings: { marginTop: spacing.md, gap: spacing.sm },
+  subhead: { ...typography.label, fontSize: 10, letterSpacing: 0.6, marginBottom: 2 },
+  holdingRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  holdingLeft: { flex: 1 },
+  holdingName: { fontSize: 13, fontWeight: '600' },
+  privateTag: { fontSize: 10, fontWeight: '500', fontStyle: 'italic' },
+  holdingBarTrack: { height: 5, borderRadius: 3, marginTop: 4, overflow: 'hidden' },
+  holdingBarFill: { height: 5, borderRadius: 3 },
+  holdingRight: { alignItems: 'flex-end', width: 110 },
+  holdingVal: { fontSize: 13, fontWeight: '600' },
+  holdingPct: { ...typography.caption, fontSize: 11 },
   concBox: {
     marginTop: spacing.md,
     borderRadius: radius.md,

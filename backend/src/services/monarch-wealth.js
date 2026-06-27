@@ -114,6 +114,7 @@ async function getInvestments({ start, end } = {}) {
   const r = await rpc.callToolJson('GetInvestments', { start_date: s, end_date: e });
   const holdings = (r?.investments || []).map((h) => ({
     ticker: h.ticker,
+    name: h.name || h.security_name || h.securityName || h.ticker || null,
     value: Number(h.value) || 0,
     securityType: h.security_type || null,
     periodChange: Number(h.period_change_dollars) || 0,

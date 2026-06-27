@@ -2018,8 +2018,11 @@ app.get('/api/wealth/allocation', async (req, res) => {
   try {
     const monarchWealth = require('./src/services/monarch-wealth');
     const { computeAllocationView } = require('./src/intelligence/allocation');
-    const accountsData = await monarchWealth.getAccounts();
-    const view = computeAllocationView(accountsData);
+    const [accountsData, investments] = await Promise.all([
+      monarchWealth.getAccounts(),
+      monarchWealth.getInvestments().catch(() => null),
+    ]);
+    const view = computeAllocationView(accountsData, { holdings: investments?.holdings || null });
     if (!view) return res.json({ available: false });
     res.json({ available: true, ...view });
   } catch (err) {
