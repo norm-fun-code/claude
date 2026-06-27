@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, useColorScheme, TouchableOpacity } from 'react-native';
 import { getColors, spacing, radius, typography, colors, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
+import { RecoveryOrb } from './RecoveryOrb';
 import type { Recovery, HealthComposite } from '../hooks/useBriefing';
 import { MetricDetailSheet, type MetricConfig } from './MetricDetailSheet';
 import { formatHM } from '../utils/format';
@@ -73,10 +74,7 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
       <SectionHeader emoji="🔋" title="Recovery" />
 
       <View style={styles.scoreRow}>
-        <View style={[styles.ring, { borderColor: bandColor }]}>
-          <Text style={[styles.score, { color: c.text }]}>{Math.round(recovery.score)}</Text>
-          <Text style={[styles.scoreUnit, { color: c.subtext }]}>/ 100</Text>
-        </View>
+        <RecoveryOrb score={recovery.score} band={recovery.band} size={96} />
         <View style={styles.scoreMeta}>
           <Text style={[styles.band, { color: bandColor }]}>{bandLabel}</Text>
           {recovery.detail ? (

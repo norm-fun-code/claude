@@ -20,6 +20,29 @@ export const colors = {
   subtextDark: '#8E8E93',
 };
 
+// Signature band gradients for the recovery orb (and future state visuals) —
+// a light, alive top color into a saturated core. The "wow" comes from depth +
+// motion + a colored glow, not flat fills.
+export const bandGradient: Record<string, [string, string]> = {
+  green: ['#5AE89A', '#16A34A'],
+  yellow: ['#FFC44D', '#F59E0B'],
+  red: ['#FF8478', '#EF4444'],
+  neutral: ['#B7B7C2', '#7C7C88'],
+};
+
+// A soft, color-tinted glow — the premium "lit from within" feel for hero
+// elements. iOS renders the colored shadow; Android falls back to a neutral
+// elevation.
+export function glow(color: string, intensity = 0.5, r = 20) {
+  return {
+    shadowColor: color,
+    shadowOpacity: intensity,
+    shadowRadius: r,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 10,
+  };
+}
+
 export const spacing = {
   xs: 4,
   sm: 8,
