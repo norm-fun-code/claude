@@ -24,6 +24,7 @@ export function scoreToBand(score: number | null | undefined): RecoveryBand | nu
  */
 export function useRecovery() {
   const [recovery, setRecovery] = useState<Recovery | null>(null);
+  const [needsSleepCheckIn, setNeedsSleepCheckIn] = useState(false);
   const [loading, setLoading] = useState(false);
   const [fetched, setFetched] = useState(false);
 
@@ -35,6 +36,7 @@ export function useRecovery() {
         const d = await res.json();
         // Always update — including null, so stale recovery clears when Eight Sleep is away.
         setRecovery(d?.recovery ?? null);
+        setNeedsSleepCheckIn(Boolean(d?.needsSleepCheckIn));
         setFetched(true);
       }
     } catch {
@@ -48,5 +50,5 @@ export function useRecovery() {
     refetch();
   }, [refetch]);
 
-  return { recovery, loading, fetched, refetch };
+  return { recovery, needsSleepCheckIn, loading, fetched, refetch };
 }

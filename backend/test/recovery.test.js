@@ -177,3 +177,23 @@ test('fitnessFinding: features VO₂ max with current value and quarter trajecto
 test('fitnessFinding: returns null without VO₂ max data', () => {
   assert.equal(r.fitnessFinding({ 'health:hrv': series([50, 51, 52]) }), null);
 });
+
+test('selfReportRecovery: quality-weighted proxy with sensible bands', () => {
+  // A solid self-reported night → green-ish.
+  const good = r.selfReportRecovery({ quality: 4, hours: 7, need: 7.7 });
+  assert.ok(good && good.score >= 63, `4/5, 7h should land green-ish, got ${good && good.score}`);
+  // A poor short night → low.
+  const poor = r.selfReportRecovery({ quality: 2, hours: 5, need: 7.7 });
+  assert.ok(poor.score < 50, `2/5, 5h should be low, got ${poor.score}`);
+  // Quality dominates: a 5/5 outranks a 3/5 at equal hours.
+  assert.ok(r.selfReportRecovery({ quality: 5, hours: 7 }).score > r.selfReportRecovery({ quality: 3, hours: 7 }).score);
+  // Never pegs at 0/100.
+  assert.ok(r.selfReportRecovery({ quality: 1, hours: 3 }).score >= 5);
+  assert.ok(r.selfReportRecovery({ quality: 5, hours: 10 }).score <= 98);
+  // Bad input → null.
+  assert.equal(r.selfReportRecovery({ quality: 0 }), null);
+  assert.equal(r.selfReportRecovery({ quality: 6 }), null);
+  assert.equal(r.selfReportRecovery({}), null);
+  // Hours optional — quality alone still scores.
+  assert.ok(r.selfReportRecovery({ quality: 4 }).score > 0);
+});

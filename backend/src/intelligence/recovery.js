@@ -544,6 +544,93 @@ function computeHealthComposites(seriesByKey, opts = {}) {
 }
 
 /**
+ * Subjective recovery proxy from a self-reported night — used on mornings with no
+ * Eight Sleep reading. Sleep quality (1–5) is a validated readiness signal, so we
+ * blend it (quality-weighted) with duration adequacy vs the user's need. Pure;
+ * returns { score, parts } on the same 0–100 scale as recoveryBand, or null on
+ * bad input.
+ */
+function selfReportRecovery({ quality, hours, need = 7.5 } = {}) {
+  const q = Number(quality);
+  if (!Number.isFinite(q) || q < 1 || q > 5) return null;
+  // Quality 1..5 → soft 0..100 (never a literal 0/100). Interpolate non-integers.
+  const QMAP = { 1: 20, 2: 38, 3: 55, 4: 75, 5: 92 };
+  const lo = Math.max(1, Math.floor(q));
+  const hi = Math.min(5, Math.ceil(q));
+  const qScore = lo === hi ? QMAP[lo] : QMAP[lo] + (QMAP[hi] - QMAP[lo]) * (q - lo);
+  // Duration adequacy vs need: at/above need ~88, docking ~12/hr short, small
+  // bonus for extra, clamped so neither dimension can peg the score.
+  const nd = Number.isFinite(need) && need > 0 ? need : 7.5;
+  const h = Number(hours);
+  let dScore = 88;
+  if (Number.isFinite(h) && h > 0) {
+    dScore = 88 - Math.max(0, nd - h) * 12 + Math.max(0, h - nd) * 3;
+    dScore = Math.max(10, Math.min(95, dScore));
+  }
+  const score = Math.max(5, Math.min(98, Math.round(0.6 * qScore + 0.4 * dScore)));
+  return { score, parts: { quality: Math.round(qScore), duration: Math.round(dScore) } };
+}
+
+/** Load today's self-reported sleep and build a proxy recovery, or null. */
+async function liveSelfReport(metricsStore, from60, todayLocal) {
+  const q = await metricsStore.dailyAggregatePreferSource({
+    domain: 'health', metric: 'sleep_quality', from: from60, agg: 'avg', sources: ['self_report'],
+  });
+  if (!q.length) return null;
+  const qDayKey = new Date(q[q.length - 1].day).toISOString().slice(0, 10);
+  if (qDayKey < todayLocal) return null; // self-report isn't from today
+  const quality = Number(q[q.length - 1].value);
+
+  const hRows = await metricsStore.dailyAggregatePreferSource({
+    domain: 'health', metric: 'sleep_hours', from: from60, agg: 'avg', sources: ['self_report'],
+  });
+  const hours = hRows.length ? Number(hRows[hRows.length - 1].value) : null;
+
+  // Personalize the duration target from the Eight Sleep baseline need if present.
+  let need = 7.5;
+  try {
+    const needRows = await metricsStore.dailyAggregatePreferSource({
+      domain: 'health', metric: 'sleep_need', from: from60, agg: 'avg', sources: ['eight_sleep'],
+    });
+    if (needRows.length) need = Number(needRows[needRows.length - 1].value) || 7.5;
+  } catch { /* fall back to 7.5 */ }
+
+  const proxy = selfReportRecovery({ quality, hours, need });
+  if (!proxy) return null;
+  const { band, guidance } = recoveryBand(proxy.score);
+  const hStr = Number.isFinite(hours) && hours > 0 ? `, ~${fmtHM(hours)}` : '';
+  return {
+    score: proxy.score, band, parts: proxy.parts,
+    detail: `${guidance} Based on your self-reported sleep (${Math.round(quality)}/5${hStr}) — no Eight Sleep reading last night.`,
+    source: 'self_report', proxy: true, rawHrv: null, rawRhr: null,
+    quality: Math.round(quality), hours: Number.isFinite(hours) ? hours : null,
+  };
+}
+
+/**
+ * Does the user need a sleep check-in prompt right now? True when they normally
+ * use Eight Sleep (have HRV history) but there's no Pod reading for today AND no
+ * self-report logged today. Lets the mobile card show exactly when there's a gap.
+ */
+async function needsSleepCheckIn() {
+  const metricsStore = require('../store/metrics');
+  const from = new Date(Date.now() - 7 * 864e5);
+  const tz = process.env.TZ || 'America/New_York';
+  const todayLocal = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  const hrv = await metricsStore.dailyAggregatePreferSource({
+    domain: 'health', metric: 'hrv', from, agg: 'avg', sources: ['eight_sleep', 'eight_sleep_baseline'],
+  });
+  if (!hrv.length) return false; // not an Eight Sleep user — don't prompt
+  const lastHrv = new Date(hrv[hrv.length - 1].day).toISOString().slice(0, 10);
+  if (lastHrv >= todayLocal) return false; // fresh Pod reading today
+  const sr = await metricsStore.dailyAggregatePreferSource({
+    domain: 'health', metric: 'sleep_quality', from, agg: 'avg', sources: ['self_report'],
+  });
+  if (sr.length && new Date(sr[sr.length - 1].day).toISOString().slice(0, 10) >= todayLocal) return false;
+  return true; // no Pod reading + no self-report today → prompt
+}
+
+/**
  * Compute the live recovery score directly from the metrics spine — a handful
  * of fast aggregate queries, no LLM and no briefing build. Used by the
  * briefing AND by GET /api/recovery so the Health tab can refresh the card
@@ -574,18 +661,16 @@ async function liveRecovery() {
   // Staleness guard: Eight Sleep dates each reading by the WAKE morning, so a
   // session for LAST NIGHT carries today's date. If the most recent reading
   // predates today, there was no Pod session last night (slept elsewhere, device
-  // unplugged, vacation) — suppress the live recovery context entirely rather than
-  // serving a 1+-night-old score as if it reflected this morning. (The old 2-day
-  // window let a 2-nights-ago reading through, mislabeled "overnight".)
-  const hrvSeries = seriesByKey['health:hrv'];
-  if (!hrvSeries || !hrvSeries.length) return null;
-  const latestDay = new Date(hrvSeries[hrvSeries.length - 1].day);
-  // The metric ts is anchored at noon UTC of the Eight Sleep day, so the UTC date
-  // slice IS that night's (wake-morning) date. Compare to today in the local zone.
+  // unplugged, vacation) — fall back to a self-reported sleep check-in if the user
+  // logged one for today, otherwise return null (the caller then prompts the
+  // check-in). The old 2-day window let a 2-nights-ago reading through.
   const tz = process.env.TZ || 'America/New_York';
-  const readingDayKey = latestDay.toISOString().slice(0, 10);
   const todayLocal = new Date().toLocaleDateString('en-CA', { timeZone: tz });
-  if (readingDayKey < todayLocal) return null;
+  const hrvSeries = seriesByKey['health:hrv'];
+  const hrvFresh =
+    hrvSeries && hrvSeries.length &&
+    new Date(hrvSeries[hrvSeries.length - 1].day).toISOString().slice(0, 10) >= todayLocal;
+  if (!hrvFresh) return await liveSelfReport(metricsStore, from60, todayLocal);
 
   const rawHrv = latest(hrvSeries);
   const rawRhr = seriesByKey['health:resting_hr'] ? latest(seriesByKey['health:resting_hr']) : null;
@@ -649,4 +734,6 @@ module.exports = {
   baselineScore,
   trendScore,
   liveRecovery,
+  selfReportRecovery,
+  needsSleepCheckIn,
 };

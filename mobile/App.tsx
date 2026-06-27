@@ -36,6 +36,7 @@ import { CheckinModal } from './src/components/CheckinModal';
 import { WeeklyIntentionsCard } from './src/components/WeeklyIntentionsCard';
 import { HealthCard } from './src/components/HealthCard';
 import { RecoveryCard } from './src/components/RecoveryCard';
+import { SleepCheckInCard } from './src/components/SleepCheckInCard';
 import { WorkoutsPanel } from './src/components/WorkoutsPanel';
 import { QuoteCard } from './src/components/QuoteCard';
 import { NotionCard } from './src/components/NotionCard';
@@ -158,6 +159,7 @@ export default function App() {
       case 'health':
         return (
           <>
+            <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={liveRecovery.refetch} />
             <RecoveryCard
               recovery={liveRecovery.fetched ? liveRecovery.recovery : (liveRecovery.recovery ?? d?.recovery)}
               composites={d?.healthComposites ?? []}
@@ -228,6 +230,9 @@ export default function App() {
                 cross-domain insight; goal forecasts, trends, weekly review, and the
                 ledger drop below the fold. */}
 
+            {/* 0. Sleep check-in — only when there's no Pod reading to fill the gap.
+                Leads when present so logging sleep is the first action. */}
+            <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={liveRecovery.refetch} />
             {/* 1. Chief Brief — the one thing, leads */}
             <AnimatedEntry delay={0}>
               <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
