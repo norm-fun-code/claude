@@ -8,7 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <script src="/model.js"></script>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
   --bg:#f6f9fc;
@@ -228,9 +228,83 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
   .pf-kpis{grid-template-columns:1fr 1fr}
   .pf-quad{grid-template-columns:1fr}
 }
+/* ═══════════════════════════════════════════════════════════════
+   NEXT-GEN VISUAL FOUNDATION — glass / spatial design system
+   (1) ambient mesh canvas  (2) glass material + elevation
+   (3) typographic scale + tabular numerals  (4) motion layer
+   (5) hero net-worth band
+   ═══════════════════════════════════════════════════════════════ */
+
+/* (1) Ambient gradient-mesh canvas behind everything ─────────── */
+body{background:transparent}
+.mesh-bg{position:fixed;inset:-20%;z-index:-2;pointer-events:none;
+  background:
+    radial-gradient(38% 42% at 10% 2%, rgba(99,91,255,.16), transparent 62%),
+    radial-gradient(34% 40% at 96% 6%, rgba(8,145,178,.13), transparent 60%),
+    radial-gradient(40% 42% at 82% 96%, rgba(230,73,128,.09), transparent 62%),
+    radial-gradient(42% 46% at 22% 100%, rgba(124,58,237,.10), transparent 64%),
+    linear-gradient(180deg,#f7f9fd 0%,#eef2f9 100%);
+  filter:saturate(112%);will-change:transform;
+  animation:meshDrift 26s ease-in-out infinite alternate}
+@keyframes meshDrift{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(0,-2.2%,0) scale(1.05)}}
+
+/* (2) Glass material — frosted surfaces + layered elevation ──── */
+.panel,.cc,.kpi,.sc,.tabs,.tw,.adv,.adv-wrap{
+  background:rgba(255,255,255,.72);
+  backdrop-filter:blur(18px) saturate(165%);
+  -webkit-backdrop-filter:blur(18px) saturate(165%);
+  border:1px solid rgba(255,255,255,.65);
+  box-shadow:0 1px 1px rgba(10,37,64,.04), 0 14px 32px -20px rgba(10,37,64,.28);
+}
+.kpi{transition:transform .2s cubic-bezier(.22,1,.36,1), box-shadow .2s ease, border-color .2s ease}
+.kpi:hover{transform:translateY(-3px);
+  box-shadow:0 1px 1px rgba(10,37,64,.04), 0 22px 44px -22px rgba(99,91,255,.45);
+  border-color:rgba(99,91,255,.28)}
+.cc{transition:box-shadow .25s ease}
+.cc:hover{box-shadow:0 1px 1px rgba(10,37,64,.04), 0 22px 48px -26px rgba(10,37,64,.34)}
+.tabs button.active{box-shadow:0 6px 16px -6px rgba(99,91,255,.6)}
+
+/* (3) Typographic scale + tabular numerals ──────────────────── */
+.kpi-v,.hero-v,.sv,.mono,table,td,th,.adv-rail-meta,.sync-pill{font-variant-numeric:tabular-nums;font-feature-settings:'tnum','ss01','cv11'}
+.kpi-v{font-size:17px}
+.hdr h1{letter-spacing:-.5px;font-weight:700}
+
+/* (4) Motion layer — entrance, count-up, tab cross-fade ─────── */
+@keyframes riseIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.reveal{animation:riseIn .6s cubic-bezier(.22,1,.36,1) both}
+.tab-fade{animation:fadeIn .4s ease both}
+
+/* (5) Hero net-worth band ───────────────────────────────────── */
+.hero{position:relative;overflow:hidden;border-radius:18px;padding:22px 26px;margin-bottom:14px;
+  display:flex;align-items:center;justify-content:space-between;gap:24px;
+  background:linear-gradient(118deg, rgba(99,91,255,.13) 0%, rgba(8,145,178,.07) 55%, rgba(230,73,128,.06) 100%);
+  border:1px solid rgba(255,255,255,.6);
+  backdrop-filter:blur(20px) saturate(170%);-webkit-backdrop-filter:blur(20px) saturate(170%);
+  box-shadow:0 1px 1px rgba(10,37,64,.05), 0 26px 56px -30px rgba(99,91,255,.5)}
+.hero::before{content:'';position:absolute;top:-60%;right:-10%;width:340px;height:340px;border-radius:50%;
+  background:radial-gradient(circle,rgba(99,91,255,.22),transparent 68%);pointer-events:none}
+.hero-main{position:relative;z-index:1}
+.hero-eyebrow{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--accent);
+  margin-bottom:8px;display:flex;align-items:center;gap:7px}
+.hero-eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--g);box-shadow:0 0 0 3px rgba(26,135,84,.18);animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.hero-v{font-size:48px;font-weight:800;letter-spacing:-1.8px;line-height:.95;color:var(--tx)}
+.hero-sub{font-size:12.5px;color:var(--t2);margin-top:10px;line-height:1.5}
+.hero-sub b{color:var(--tx);font-weight:600}
+.hero-spark{position:relative;z-index:1;flex-shrink:0}
+@media(max-width:640px){.hero{flex-direction:column;align-items:flex-start;padding:18px 18px}.hero-v{font-size:36px;letter-spacing:-1.2px}.hero-spark{width:100%}.hero-spark svg{width:100%}}
+
+/* Respect reduced-motion preference ─────────────────────────── */
+@media(prefers-reduced-motion:reduce){
+  .mesh-bg,.hero-eyebrow .dot{animation:none}
+  .reveal,.tab-fade{animation:none}
+  .kpi{transition:none}
+}
 </style>
 </head>
 <body>
+<div class="mesh-bg"></div>
 <div class="hdr">
   <h1>💰 Cohen Family — Financial Planner v5</h1>
   <div class="hdr-right">
@@ -980,6 +1054,48 @@ function fmtK(v){const a=Math.abs(v);const s=v<0?'-':'';if(a>=1000)return s+'$'+
 function chartOpts(){return{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#425466',font:{size:10,family:'Inter'},boxWidth:9}},tooltip:{backgroundColor:'#0a2540',borderColor:'#0a2540',borderWidth:0,titleFont:{size:11,family:'Inter'},bodyFont:{size:10,family:'Inter'},titleColor:'#fff',bodyColor:'#fff',padding:8,callbacks:{label:c=>c.dataset.label+': $'+(c.raw||0).toLocaleString()+'K'}}},scales:{x:{ticks:{color:'#8898aa',font:{size:10,family:'Inter'},maxRotation:45},grid:{display:false}},y:{ticks:{color:'#8898aa',font:{size:10,family:'Inter'},stepSize:500,callback:v=>fmtK(v)},grid:{color:'#e6ebf1'}}}}}
 function posOpts(){const o=chartOpts();o.scales.y.min=0;return o}
 
+// ═══ MOTION + HERO HELPERS (next-gen visual layer) ═══
+let _firstPaint=true;
+const _reduceMotion=()=>window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+// Tween a formatted number element ("$1.2M", "34.5%", "+$450K") from 0 → its value
+function _animEl(el){
+  if(!el)return;
+  const final=el.textContent.trim();
+  const m=final.match(/^([^\d-]*)(-?[\d,]*\.?\d+)(.*)$/);
+  if(!m||_reduceMotion()){return}
+  const prefix=m[1],numStr=m[2],suffix=m[3];
+  const grouped=numStr.includes(',');
+  const decimals=(numStr.split('.')[1]||'').length;
+  const target=parseFloat(numStr.replace(/,/g,''));
+  if(!isFinite(target))return;
+  const fmtNum=v=>{let s=v.toFixed(decimals);if(grouped)s=Number(s).toLocaleString('en-US',{minimumFractionDigits:decimals,maximumFractionDigits:decimals});return prefix+s+suffix};
+  const dur=850,t0=performance.now();
+  function step(now){const p=Math.min(1,(now-t0)/dur);const e=1-Math.pow(1-p,3);el.textContent=fmtNum(target*e);if(p<1)requestAnimationFrame(step);else el.textContent=final}
+  requestAnimationFrame(step);
+}
+// Crisp inline sparkline (bespoke, no Chart.js) for the hero band
+function _sparkSVG(vals,w,h,color){
+  if(!vals||vals.length<2)return'';
+  const min=Math.min(...vals),max=Math.max(...vals),rng=(max-min)||1,pad=4;
+  const pts=vals.map((v,i)=>[pad+i/(vals.length-1)*(w-2*pad), h-pad-((v-min)/rng)*(h-2*pad)]);
+  const line=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+  const area=line+` L${(w-pad).toFixed(1)} ${h-pad} L${pad} ${h-pad} Z`;
+  const lastPt=pts[pts.length-1],gid='sp'+(''+color).replace(/[^a-z0-9]/gi,'');
+  return `<svg class="hero-spark-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${color}" stop-opacity=".28"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
+    <path d="${area}" fill="url(#${gid})"/>
+    <path d="${line}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${lastPt[0].toFixed(1)}" cy="${lastPt[1].toFixed(1)}" r="3.4" fill="${color}"/>
+    <circle cx="${lastPt[0].toFixed(1)}" cy="${lastPt[1].toFixed(1)}" r="6" fill="${color}" opacity=".22"/>
+  </svg>`;
+}
+function _introAnimate(){
+  const hb=document.getElementById('heroBand');if(hb&&hb.firstElementChild){hb.firstElementChild.classList.add('reveal');}
+  document.querySelectorAll('#heroBand .hero-v').forEach(_animEl);
+  document.querySelectorAll('#kpis .kpi').forEach((c,i)=>{c.classList.add('reveal');c.style.animationDelay=(60+i*45)+'ms'});
+  document.querySelectorAll('#kpis .kpi-v').forEach((el,i)=>setTimeout(()=>_animEl(el),120+i*45));
+}
 function render(){
   const{R,tT,tC,tTx,tS,dp,mm}=run(P);
   const last=R[R.length-1],pur=R.find(r=>r.yr===P.homePurchaseYear),pliq=pur?pur.liq:0;
@@ -994,6 +1110,21 @@ function render(){
     <div class="kpi"><div class="kpi-l">🏁 NW (${last.yr})</div><div class="kpi-v" style="color:var(--g)">${fmt(last.nw)}</div><div class="kpi-s">+${fmt(last.k401)} 401k</div></div>
     <div class="kpi"><div class="kpi-l">🏦 Total w/ 401k</div><div class="kpi-v" style="color:var(--c)">${fmt(last.nw+last.k401)}</div></div>
     ${monarchSnapshot?`<div class="kpi" style="border-color:rgba(191,105,0,.3);background:var(--a-soft)"><div class="kpi-l" style="color:var(--a)">📍 Live NW</div><div class="kpi-v" style="color:var(--a);font-size:13px">${fmt(monarchSnapshot.netWorth)}</div><div class="kpi-s">${new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div></div>`:''}`;
+  // ─── Hero net-worth band ───
+  const _hb=document.getElementById('heroBand');
+  if(_hb){
+    const liveLiq=monarchSnapshot?monarchSnapshot.liquid:null;
+    const spark=_sparkSVG(R.map(r=>r.nw),190,66,'#635bff');
+    _hb.innerHTML=`<div class="hero">
+      <div class="hero-main">
+        <div class="hero-eyebrow"><span class="dot"></span>Projected net worth · ${last.yr}</div>
+        <div class="hero-v">${fmt(last.nw)}</div>
+        <div class="hero-sub"><b>${fmt(last.liq)}</b> liquid · <b>${fmt(last.eq)}</b> home equity${liveLiq!=null?` · today <b>${fmt(liveLiq)}</b> liquid`:''}</div>
+      </div>
+      <div class="hero-spark">${spark}</div>
+    </div>`;
+  }
+  if(_firstPaint){_firstPaint=false;if(!_reduceMotion())requestAnimationFrame(_introAnimate);}
   const np=document.getElementById('norm_preview');
   const _sy=P.planStartYear||2026;const _by=_sy+4;
   if(np)np.textContent=`${_by}: ${fmtF(Math.round((P.normCashBase??275000)+(P.normStockBase??150000)))} · ${_by+10}: ${fmtF(Math.round((P.normCashBase??275000)*(1+P.normGrowth)**10+(P.normStockBase??150000)))}`;
@@ -2431,8 +2562,9 @@ function renderCompareTab(R,P){
   ca.innerHTML=h;
   document.getElementById('summaries').innerHTML='';
 }
-function setTab(t){if(t==='cashflow'){t='income';_flowView='cashflow';}activeTab=t;document.querySelectorAll('.tabs button[role=tab]').forEach(b=>{const on=b.dataset.tab===t;b.classList.toggle('active',on);b.setAttribute('aria-selected',on?'true':'false');});render();savePlannerState()}
+function setTab(t){if(t==='cashflow'){t='income';_flowView='cashflow';}activeTab=t;document.querySelectorAll('.tabs button[role=tab]').forEach(b=>{const on=b.dataset.tab===t;b.classList.toggle('active',on);b.setAttribute('aria-selected',on?'true':'false');});render();if(!_reduceMotion())requestAnimationFrame(()=>{['chartArea','summaries'].forEach(id=>{const e=document.getElementById(id);if(e){e.classList.remove('tab-fade');void e.offsetWidth;e.classList.add('tab-fade')}})});savePlannerState()}
 document.getElementById('main').innerHTML=`
+  <div id="heroBand"></div>
   <div class="kpi-grid" id="kpis"></div><div id="scenarioBar"></div><div id="snapshotBar"></div>
   <div class="tabs" role="tablist" aria-label="Plan views">
     <button role="tab" aria-selected="true" class="active" data-tab="nw" onclick="setTab('nw')">📈 Net Worth</button>
