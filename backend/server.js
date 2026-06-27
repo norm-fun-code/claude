@@ -3400,6 +3400,16 @@ runMigrations()
         .then((n) => { if (n > 0) console.log(`[boot] collapsed ${n} duplicate recommendation(s)`); })
         .catch(() => {});
 
+      // Cleanup: delete stale "High-energy days → HRV" ledger rows — a backwards-
+      // causality recommendation from before that finding was removed (energy is an
+      // output of HRV, not a lever). Only un-rated rows, so no feedback is lost.
+      require('./src/db').query(
+        `DELETE FROM recommendations
+          WHERE outcome_measured_at IS NULL
+            AND title ILIKE '%high-energy days%'`
+      ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} backwards energy→HRV recommendation(s)`); })
+        .catch(() => {});
+
       // Optional self-running morning routine (cloud deploys; ENABLE_SCHEDULER=true).
       require('./src/scheduler').start();
 

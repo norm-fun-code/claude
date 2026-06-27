@@ -204,3 +204,15 @@ test('computeDaytimeCardio: surfaced findings carry a p-value, effect size, and 
   assert.ok(Number.isFinite(f.evidence.cohenD), 'evidence should carry Cohen d');
   assert.ok(Array.isArray(f.evidence.ci) && f.evidence.ci.length === 2, 'evidence should carry a CI');
 });
+
+test('computeAnomalies: stale Pod HRV/RHR (not from today) is suppressed', () => {
+  // 20 days of HRV ending well in the past, with a final low spike — would flag,
+  // but since the latest reading predates "today" it's a stale Pod read → no anomaly.
+  const hrv = mkSeries(20, (i) => (i === 19 ? 24 : 45 + ((i % 3) - 1) * 2), '2026-05-01T12:00:00');
+  const stale = a.computeAnomalies({ 'health:hrv': hrv });
+  assert.equal(stale.find((f) => f.evidence.metric === 'health:hrv'), undefined, 'stale HRV must not raise an anomaly');
+  // With today injected as the reading's own day, the same series DOES flag — proving
+  // it's the staleness gate (not the data) doing the suppression.
+  const fresh = a.computeAnomalies({ 'health:hrv': hrv }, { today: '2026-05-20' });
+  assert.ok(fresh.find((f) => f.evidence.metric === 'health:hrv'), 'a same-day reading should still flag');
+});

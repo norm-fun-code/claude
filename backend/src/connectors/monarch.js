@@ -372,6 +372,18 @@ module.exports = {
   displayName: 'Monarch (CSV import)',
 
   async sync(ctx = {}) {
+    // The MCP auto-sync is the source of truth when configured; this CSV importer
+    // is only the manual fallback for when it isn't. Running BOTH writes the same
+    // transactions under different external_id schemes (monarch:<id> vs a content
+    // hash), producing transient duplicate documents that double category spend
+    // until a reconcile prunes them. Stay dormant when MCP is live.
+    try {
+      const monarchMcp = require('../services/monarch-mcp');
+      if (monarchMcp.isConfigured && monarchMcp.isConfigured()) {
+        return { metrics: [], documents: [], config: ctx.config || {} };
+      }
+    } catch { /* MCP module unavailable — run the CSV importer normally */ }
+
     const dir = importDir();
     if (!fs.existsSync(dir)) {
       return { metrics: [], documents: [], config: ctx.config || {} };

@@ -597,11 +597,19 @@ async function liveSelfReport(metricsStore, from60, todayLocal) {
 
   const proxy = selfReportRecovery({ quality, hours, need });
   if (!proxy) return null;
-  const { band, guidance } = recoveryBand(proxy.score);
+  const { band } = recoveryBand(proxy.score);
+  // Temper the guidance: this is a SUBJECTIVE proxy (no autonomic data), so even a
+  // green score shouldn't greenlight maximal effort the way an objective read does.
+  const proxyGuidance =
+    band === 'green'
+      ? 'Looks like a decent night — train roughly as planned, but this is self-reported, so let how you actually feel be the final call.'
+      : band === 'yellow'
+        ? 'A so-so night by your own rating — keep intensity sensible and don’t force a hard session.'
+        : 'You rated it a rough night — keep today easy (mobility or a walk) and protect tonight’s sleep.';
   const hStr = Number.isFinite(hours) && hours > 0 ? `, ~${fmtHM(hours)}` : '';
   return {
     score: proxy.score, band, parts: proxy.parts,
-    detail: `${guidance} Based on your self-reported sleep (${Math.round(quality)}/5${hStr}) — no Eight Sleep reading last night.`,
+    detail: `${proxyGuidance} Based on your self-reported sleep (${Math.round(quality)}/5${hStr}) — no Eight Sleep reading last night.`,
     source: 'self_report', proxy: true, rawHrv: null, rawRhr: null,
     quality: Math.round(quality), hours: Number.isFinite(hours) ? hours : null,
   };

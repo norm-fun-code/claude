@@ -189,8 +189,20 @@ function computeAnomalies(seriesByKey, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   const findings = [];
 
+  // Eight Sleep HRV/RHR are wake-dated, so a reading for last night carries
+  // today's date. If the latest is older than today, there was no Pod session last
+  // night — don't raise a "HRV below your usual" anomaly on a 1–2-night-old reading
+  // (mirrors the recovery-card staleness guard; otherwise a stale value keeps
+  // flagging, mislabeled "yesterday", with stale life-context attached).
+  const NIGHT_LOCKED = new Set(['health:hrv', 'health:resting_hr']);
+  const todayKey = o.today || new Date().toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/New_York' });
+
   for (const [key, series] of Object.entries(seriesByKey)) {
     if (o.trendSkip && o.trendSkip.includes(key)) continue; // sparse flow metrics
+    if (NIGHT_LOCKED.has(key) && series.length) {
+      const readingDayKey = toDayKey(series[series.length - 1].day);
+      if (readingDayKey < todayKey) continue; // stale Pod reading — no anomaly
+    }
     const a = stats.baselineAnomaly(series, { baselineDays: o.anomalyBaselineDays, minN: o.anomalyMinN });
     if (!a || Math.abs(a.z) < o.anomalyMinZ) continue;
 

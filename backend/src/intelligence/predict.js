@@ -148,6 +148,21 @@ async function computeTodayForecast({ recovery = null, asOf = new Date() } = {})
     sleepDebtHours,
     acwrBand,
   });
+
+  // Self-reported (proxy) recovery is subjective — no autonomic data — so don't let
+  // a green proxy greenlight maximal effort ("Full send"). Temper the call and make
+  // clear the body, not the score, sets the ceiling.
+  if (rec.proxy && capacity) {
+    capacity.proxy = true;
+    if (capacity.grade === 'A') {
+      capacity.headline = 'Green-ish — your call';
+      capacity.prescription =
+        'You rated last night decent (self-reported, no Pod data), so train roughly as planned — but let how you actually feel set the ceiling, not the score.';
+    } else {
+      capacity.prescription = `${capacity.prescription} Self-reported recovery — listen to your body.`;
+    }
+  }
+
   const debt = sleepDebtTrajectory({ debtHours: sleepDebtHours, needHours: sleepNeed, asOf });
 
   return { capacity, sleepDebt: debt };
