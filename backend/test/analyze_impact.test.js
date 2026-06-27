@@ -64,12 +64,18 @@ test('computeCorrelations: VO₂ max and sleep_need are excluded from the engine
   const vo2 = mkSeries(N, (i) => 50 + (i % 6));
   const need = mkSeries(N, (i) => 8 - (i % 6) * 0.1);
   const hrv = mkSeries(N, (i) => 45 + (i % 6));
+  // Respiratory rate vs mood: strong but spurious — must be excluded too.
+  const resp = mkSeries(N, (i) => 14 + (i % 6) * 0.3);
+  const mood = mkSeries(N, (i) => 3 + (i % 6) * 0.2);
   const findings = a.computeCorrelations({
     'health:vo2_max': vo2, 'health:sleep_need': need, 'health:hrv': hrv,
+    'health:respiratory_rate': resp, 'wellbeing:mood': mood,
   });
   for (const f of findings) {
-    assert.ok(f.evidence.a !== 'health:vo2_max' && f.evidence.b !== 'health:vo2_max', 'no VO₂ max correlation should surface');
-    assert.ok(f.evidence.a !== 'health:sleep_need' && f.evidence.b !== 'health:sleep_need', 'no sleep_need correlation should surface');
+    const { a: ka, b: kb } = f.evidence;
+    for (const blocked of ['health:vo2_max', 'health:sleep_need', 'health:respiratory_rate']) {
+      assert.ok(ka !== blocked && kb !== blocked, `no ${blocked} correlation should surface`);
+    }
   }
 });
 

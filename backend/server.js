@@ -3315,8 +3315,8 @@ runMigrations()
         `DELETE FROM findings
           WHERE (evidence->>'kind' = 'trend' AND evidence->>'metric' IN ('health:sleep_debt','health:sleep_need'))
              OR (evidence->>'kind' = 'correlation' AND (
-                   evidence->>'a' IN ('health:sleep_debt','health:sleep_need','health:vo2_max')
-                OR evidence->>'b' IN ('health:sleep_debt','health:sleep_need','health:vo2_max')))`
+                   evidence->>'a' IN ('health:sleep_debt','health:sleep_need','health:vo2_max','health:respiratory_rate')
+                OR evidence->>'b' IN ('health:sleep_debt','health:sleep_need','health:vo2_max','health:respiratory_rate')))`
       ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} derived/estimate-metric finding(s)`); })
         .catch(() => {});
 

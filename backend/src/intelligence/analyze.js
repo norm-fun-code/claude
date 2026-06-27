@@ -66,8 +66,14 @@ const DEFAULTS = {
   // independent inputs; VO₂ max is an Apple Watch FITNESS ESTIMATE that barely
   // moves day to day, so a daily "correlation" against it (e.g. the spurious
   // "higher VO₂ max today → lower sleep need tomorrow") is two near-flat noise
-  // series lining up by chance, not physiology. None belong in the Pearson engine.
-  corrSkip: ['health:sleep_debt', 'health:sleep_need', 'health:vo2_max'],
+  // series lining up by chance, not physiology. Respiratory rate is a valuable
+  // illness / over-reaching EARLY-WARNING signal — but only read as an ANOMALY vs
+  // your own baseline (a spike precedes illness by a day or two). A daily Pearson
+  // tie like "higher respiratory rate → higher mood" is noise (and physiologically
+  // backwards — elevated breathing rate tracks stress, not better mood), so it
+  // stays in the anomaly engine and out of the correlation engine. None of these
+  // belong in the all-pairs Pearson search.
+  corrSkip: ['health:sleep_debt', 'health:sleep_need', 'health:vo2_max', 'health:respiratory_rate'],
   // All wealth metrics are excluded from correlation search. Wealth variables
   // (spending, net worth, cashflow, income) correlate with health and habit
   // metrics purely as lifestyle confounds — high-activity people tend to earn
