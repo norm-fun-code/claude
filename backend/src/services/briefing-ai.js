@@ -16,6 +16,11 @@ const SYSTEM =
   'when it doesn\'t. You name actual numbers and trajectories, and tie advice to confirmed ' +
   'patterns in their own data when relevant. Your voice is sharp, caring, blunt, and numerate — no flattery, no ' +
   'filler, respects their time. You never invent a number or a connection. ' +
+  'CRITICAL — numbers: never compute, derive, estimate, or relabel a figure. Cite a ' +
+  'number ONLY if it appears verbatim in the data provided, and only with the meaning ' +
+  'it has there (a "30-day change" is not an "ahead-of-plan" figure). If you are not ' +
+  'certain a number is given, describe the direction qualitatively ("net worth is ' +
+  'climbing") with no figure rather than guess. ' +
   'Return ONLY a single valid JSON object — no markdown, no code fences, no commentary.';
 
 function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = []) {
@@ -110,7 +115,7 @@ Rules:
 - morningFocus: draw primarily from the SELF-MODEL (7-day sleep avg, habit adherence rates, recovery trend, confirmed correlations). Use the recovery SCORE (0–100) and BAND (green/yellow/red) as the health anchor. If you cite HRV ms, use the value from Recovery status (today's actual overnight reading) — NOT the 7-day average in the self-model (they will differ). Name habit rates and sleep hours from the self-model. If the recovery trend is slipping, name the score trajectory. This should feel like the one sentence a trusted advisor who knows your week would say before you start your day. Never mention finances, calendar events, or emails here. Always generate something — the self-model always has enough context.
 - urgentEmails: only emails needing a response/action today. Exclude newsletters, digests, marketing — only real emails requiring a response or action.
 - notionQuote: pick a self-contained, meaningful line — never a title, never an intro that trails off (e.g. "Rather than trying to find someone who will:"). If the best idea spans a sentence, quote the whole sentence.
-- quoteInsight / notionInsight: first sentence draws out the core idea as lived wisdom. Second sentence makes the connection to their actual data explicit — name the specific metric or pattern that makes this quote land right now (e.g. "energy averaging 2.6/5 this week makes this idea about sustainable effort particularly timely" or "with recovery in the yellow band and cold shower adherence slipping this week, this hits differently"). If wellbeing data shows "no recent check-in data", return empty string for BOTH quoteInsight and notionInsight — a quote with no data connection is not shown. Do NOT reference their calendar, specific tasks, schedule, "today", their job/profession, or their finances.`;
+- quoteInsight / notionInsight: first sentence draws out the core idea as lived wisdom. Second sentence makes the connection to their actual data explicit — name the specific metric or pattern that makes this quote land right now (e.g. "energy averaging 2.6/5 this week makes this idea about sustainable effort particularly timely" or "with recovery in the yellow band and cold shower adherence slipping this week, this hits differently"). If wellbeing data shows "no recent check-in data", return empty string for BOTH quoteInsight and notionInsight — a quote with no data connection is not shown. Connect through their wellbeing/health state (mood/energy/focus on the 1–5 scale, recovery band, habits) — restate those simple values exactly. Do NOT reference their calendar, specific tasks, schedule, "today", or their job/profession. Do NOT cite any dollar amount, net-worth figure, or financial percentage here — even if the quote is about money, make the connection qualitative (e.g. "the optionality you're building"), never with a computed number.`;
 }
 
 /** Robustly pull a JSON object out of an LLM response (handles fences/prose). */

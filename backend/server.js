@@ -1114,6 +1114,11 @@ app.get('/api/diag/gemini', async (req, res) => {
 // waiting out a full briefing rebuild.
 app.get('/api/recovery', async (req, res) => {
   try {
+    // Debug: ?forceCheckIn=1 forces the sleep check-in card to show (so the
+    // no-Pod flow can be tested without an actual no-Pod night).
+    if (req.query.forceCheckIn === '1') {
+      return res.json({ recovery: null, needsSleepCheckIn: true });
+    }
     const rec = require('./src/intelligence/recovery');
     const recovery = await rec.liveRecovery();
     // When there's no recovery (no Pod reading last night) AND no self-report yet,
