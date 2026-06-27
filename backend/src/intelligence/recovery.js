@@ -571,17 +571,21 @@ async function liveRecovery() {
     if (rows.length) seriesByKey[key] = rows;
   }
 
-  // Staleness guard: if the most recent Eight Sleep reading is more than 2 days
-  // old (e.g. user on vacation, device unplugged), suppress the live recovery
-  // context entirely rather than surfacing last week's score as if it reflects
-  // today. Must be > 2 (not > 1) because Eight Sleep readings are always dated
-  // "last night" — by 10am the reading is already ~34 hours old (1.4 days), so
-  // a threshold of 1 would fire every morning on perfectly fresh data.
+  // Staleness guard: Eight Sleep dates each reading by the WAKE morning, so a
+  // session for LAST NIGHT carries today's date. If the most recent reading
+  // predates today, there was no Pod session last night (slept elsewhere, device
+  // unplugged, vacation) — suppress the live recovery context entirely rather than
+  // serving a 1+-night-old score as if it reflected this morning. (The old 2-day
+  // window let a 2-nights-ago reading through, mislabeled "overnight".)
   const hrvSeries = seriesByKey['health:hrv'];
   if (!hrvSeries || !hrvSeries.length) return null;
   const latestDay = new Date(hrvSeries[hrvSeries.length - 1].day);
-  const daysSinceReading = (Date.now() - latestDay.getTime()) / 864e5;
-  if (daysSinceReading > 2) return null;
+  // The metric ts is anchored at noon UTC of the Eight Sleep day, so the UTC date
+  // slice IS that night's (wake-morning) date. Compare to today in the local zone.
+  const tz = process.env.TZ || 'America/New_York';
+  const readingDayKey = latestDay.toISOString().slice(0, 10);
+  const todayLocal = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  if (readingDayKey < todayLocal) return null;
 
   const rawHrv = latest(hrvSeries);
   const rawRhr = seriesByKey['health:resting_hr'] ? latest(seriesByKey['health:resting_hr']) : null;
