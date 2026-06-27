@@ -98,6 +98,32 @@ function fixedCategoryNames() {
   return collectCategoryNames(isFixedCategory);
 }
 
+// The set of category names Monarch classifies as INCOME (Paychecks, Other
+// Income, …) — the same basis as Monarch's Income report. We sum income ONLY from
+// these categories so positive amounts that are really transfers / deposits /
+// reimbursements (which inflated the figure to ~$33k vs Monarch's ~$22k) are
+// excluded. Reads category_type from the category or its inherited group type.
+async function incomeCategoryNames() {
+  try {
+    const cats = await rpc.callToolJson('GetCategories', {});
+    const names = new Set();
+    const isIncome = (t) => String(t || '').toLowerCase() === 'income';
+    const collect = (arr, inheritedType) => {
+      for (const x of arr || []) {
+        if (!x) continue;
+        const type = x.category_type || x.type || x.group_type || x.group?.type || inheritedType;
+        if (typeof x.name === 'string' && isIncome(type)) names.add(x.name.toLowerCase());
+        if (Array.isArray(x.categories)) collect(x.categories, type);
+      }
+    };
+    if (Array.isArray(cats)) collect(cats);
+    else { collect(cats?.categories); collect(cats?.groups); }
+    return names;
+  } catch {
+    return new Set();
+  }
+}
+
 // Transfer / CC-payment categories to exclude from all spending totals.
 // GetCashFlow(category_type:'expense') sometimes includes credit-card payments
 // when they're categorized under an expense-type category in Monarch (the classic
@@ -167,6 +193,10 @@ async function syncViaMcp(ctx) {
   const txns = await fetchTxnsInRange(startDate, endDate);
   const documents = txns.filter((t) => t && t.id != null).map(txnToDocument);
 
+  // Monarch's income-typed category names — income is summed ONLY from these, so
+  // it matches Monarch's Income report instead of catching every positive inflow.
+  const incomeCats = await incomeCategoryNames();
+
   const expByDay = new Map();
   const discByDay = new Map();
   const incByDay = new Map();
@@ -188,17 +218,17 @@ async function syncViaMcp(ctx) {
         discByDay.set(day, (discByDay.get(day) || 0) + spend);
       }
     } else {
-      // Earned income only. Anchor to Monarch's OWN classification
-      // (category_type === 'income') — the same basis as its Income report — so
-      // refunds, reimbursements, cashback and money-received (positive amounts in
-      // non-income categories) are NOT miscounted as income, which was inflating
-      // the 30-day income figure. When category_type is missing, fall back to the
-      // name heuristic plus the non-income-positive guard. Still drop investment
-      // income (dividends/cap gains/interest) to keep this EARNED income.
-      const looksIncome = categoryType
-        ? categoryType === 'income'
-        : (!isExcludedIncome(category) && !isNonIncomePositive(category));
-      if (looksIncome && !isExcludedIncome(category)) {
+      // Earned income only — count a positive amount ONLY when its category is one
+      // Monarch classifies as INCOME (Paychecks, Other Income, …). This matches
+      // Monarch's Income report and excludes the transfers / deposits /
+      // reimbursements that inflated the figure (~$33k vs Monarch's ~$22k).
+      // Fallbacks (if GetCategories was unavailable): category_type==='income',
+      // else the name heuristic + non-income-positive guard. Investment income
+      // (dividends / capital gains / tax refunds) is still dropped.
+      const inIncomeCategory = incomeCats.size
+        ? incomeCats.has(category.toLowerCase())
+        : (categoryType ? categoryType === 'income' : (!isExcludedIncome(category) && !isNonIncomePositive(category)));
+      if (inIncomeCategory && !isExcludedIncome(category)) {
         incByDay.set(day, (incByDay.get(day) || 0) + amount);
       }
     }
