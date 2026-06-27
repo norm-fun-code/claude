@@ -1186,7 +1186,7 @@ async function analyze(opts = {}) {
   // Supersede old findings and write the new set atomically, so a mid-run
   // failure can't leave the user with everything superseded and only a partial
   // set re-created (which the dashboard reads as 'open').
-  const COMPOSITE_TYPES = ['recovery', 'sleep_debt', 'sleep_consistency', 'training_load'];
+  const COMPOSITE_TYPES = ['recovery', 'sleep_debt', 'sleep_consistency', 'training_load', 'strain', 'fitness'];
   const { withTransaction } = require('../db');
   await withTransaction(async (client) => {
     const tx = (text, params) => client.query(text, params);

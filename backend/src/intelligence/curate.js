@@ -30,11 +30,17 @@ const { dismissKey } = require('../store/dismissedInsights');
 // cares. cross_context (cross-domain synthesis) is the differentiator and tops
 // the scale; raw trends are the least actionable and sit at the bottom.
 const IMPORTANCE = {
+  // Under-recovery synthesis is the highest-priority actionable warning — a
+  // multi-signal overreaching flag the user needs to see before a single low card.
+  strain: 0.96,
   cross_context: 1.0,
   sleep_impact: 0.92,
   activity_impact: 0.88,
   habit_split: 0.88,
   anomaly: 0.8,
+  // VO₂ max — a featured longevity metric. Not urgent-today, but high enough to
+  // resurface periodically rather than getting buried under daily churn.
+  fitness: 0.7,
   correlation: 0.68,
   habit_consistency: 0.55,
   trend: 0.5,
@@ -95,6 +101,13 @@ function magnitude(f) {
       return ev.pct != null ? clamp01(Math.abs(ev.pct) / 0.3) : 0.5;
     case 'habit_consistency':
       return ev.adherence != null ? clamp01(ev.adherence) : 0.6;
+    case 'strain':
+      // Severity already blends signal count + autonomic pair + magnitude (0–1).
+      return ev.severity != null ? clamp01(ev.severity) : 0.8;
+    case 'fitness':
+      // Mostly steady; floor it so a strong-but-flat VO₂ max still surfaces, and
+      // a real quarter-over-quarter move (≥3 pts) reads as a big deal.
+      return ev.per90 != null ? clamp01(0.4 + Math.abs(ev.per90) / 3) : 0.5;
     case 'cross_context':
       // LLM synthesis carries no numeric effect — lean on its confidence.
       return f.confidence != null ? clamp01(f.confidence) : 0.7;

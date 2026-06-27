@@ -138,3 +138,42 @@ test('computeHealthComposites: emits findings with evidence', () => {
     assert.ok(f.title && f.detail && f.evidence && f.evidence.auto);
   }
 });
+
+test('strainSynthesis: HRV down + RHR up together fires an autonomic-pair warning', () => {
+  const hrv = series(Array.from({ length: 14 }, (_, i) => 60 - i * 1.2)); // falling
+  const rhr = series(Array.from({ length: 14 }, (_, i) => 50 + i * 0.6)); // rising
+  const f = r.strainSynthesis({ 'health:hrv': hrv, 'health:resting_hr': rhr });
+  assert.ok(f, 'expected a strain finding');
+  assert.equal(f.type, 'strain');
+  assert.deepEqual(f.evidence.signals.sort(), ['hrv', 'rhr']);
+  assert.match(f.detail, /parasympathetic|overreaching/i);
+  assert.ok(f.evidence.severity > 0 && f.evidence.severity <= 1);
+});
+
+test('strainSynthesis: a single signal is not enough (no false overreaching flag)', () => {
+  const hrv = series(Array.from({ length: 14 }, (_, i) => 60 - i * 1.2)); // falling
+  const rhr = series(Array.from({ length: 14 }, () => 50));               // flat
+  assert.equal(r.strainSynthesis({ 'health:hrv': hrv, 'health:resting_hr': rhr }), null);
+});
+
+test('strainSynthesis: a single bad night does not trigger overreaching', () => {
+  // 13 steady days + one alcohol-style HRV crash — a 7-day mean shift, not a trend.
+  const hrv = series([...Array(13).fill(55), 24]);
+  const rhr = series([...Array(13).fill(50), 62]);
+  assert.equal(r.strainSynthesis({ 'health:hrv': hrv, 'health:resting_hr': rhr }), null);
+});
+
+test('fitnessFinding: features VO₂ max with current value and quarter trajectory', () => {
+  const vo2 = series(Array.from({ length: 30 }, (_, i) => 47 + i * 0.03)); // slowly rising
+  const f = r.fitnessFinding({ 'health:vo2_max': vo2 });
+  assert.ok(f, 'expected a fitness finding');
+  assert.equal(f.type, 'fitness');
+  assert.match(f.title, /VO₂ max 4[78]/);
+  assert.match(f.detail, /longevity|lifespan|long-term health/i);
+  assert.equal(f.evidence.metric, 'health:vo2_max');
+  assert.ok(f.evidence.per90 > 0, 'rising VO₂ max should have positive quarter slope');
+});
+
+test('fitnessFinding: returns null without VO₂ max data', () => {
+  assert.equal(r.fitnessFinding({ 'health:hrv': series([50, 51, 52]) }), null);
+});

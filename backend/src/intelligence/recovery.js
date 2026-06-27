@@ -269,6 +269,111 @@ function trainingLoad(seriesByKey, { acuteDays = 7, chronicDays = 28, minChronic
 // Findings: turn the constructs into dashboard findings
 // ---------------------------------------------------------------------------
 
+/**
+ * Multi-signal under-recovery (overreaching) synthesis — the gestalt a coach
+ * actually watches, which no single card captures. Individual findings flag a low
+ * recovery score, a load spike, or a sleep deficit in ISOLATION; the meaningful
+ * pattern is when they stack. The strongest single marker is parasympathetic
+ * withdrawal — HRV falling AND resting HR rising together — and when that sits on
+ * top of a training-load spike and a sleep deficit, it's early non-functional
+ * overreaching: the moment to deload before it turns into injury, illness, or
+ * burnout. Fires only when ≥2 signals point the same way. Returns one finding or
+ * null. `load` is the already-computed trainingLoad() result (may be null).
+ */
+function strainSynthesis(seriesByKey, { load = null } = {}) {
+  const hrv = seriesByKey['health:hrv'];
+  const rhr = seriesByKey['health:resting_hr'];
+  const sleep = seriesByKey['health:sleep_hours'];
+  const sleepNeed = seriesByKey['health:sleep_need'];
+
+  const signals = [];
+
+  // 1. HRV declining week-over-week — parasympathetic withdrawal.
+  const hrvT = stats.trendStats(hrv || [], 7);
+  if (hrvT && hrvT.pctChange != null && hrvT.pctChange <= -0.06) {
+    signals.push({ key: 'hrv', text: `HRV down ${Math.round(Math.abs(hrvT.pctChange) * 100)}% vs last week`, w: Math.min(1, Math.abs(hrvT.pctChange) / 0.2) });
+  }
+  // 2. Resting HR rising week-over-week — sympathetic dominance / strain / illness.
+  const rhrT = stats.trendStats(rhr || [], 7);
+  if (rhrT && rhrT.pctChange != null && rhrT.pctChange >= 0.04) {
+    signals.push({ key: 'rhr', text: `resting HR up ${Math.round(rhrT.pctChange * 100)}% vs last week`, w: Math.min(1, rhrT.pctChange / 0.12) });
+  }
+  // 3. Training-load spike (ACWR high).
+  if (load && load.band === 'high') {
+    signals.push({ key: 'load', text: `training load spiking (ACWR ${load.acwr})`, w: Math.min(1, (load.acwr - 1.5) + 0.5) });
+  }
+  // 4. Accumulated sleep debt over the week.
+  const need = latest(sleepNeed) ?? 8;
+  let debtH = null;
+  if (sleep && sleep.length) {
+    const recent = sleep.slice(-7).map((p) => Number(p.value)).filter(Number.isFinite);
+    if (recent.length >= 4) {
+      const net = recent.reduce((a, h) => a + (h - need), 0);
+      if (net <= -3) { debtH = -net; signals.push({ key: 'sleep', text: `${fmtHM(-net)} sleep debt this week`, w: Math.min(1, -net / 8) }); }
+    }
+  }
+
+  if (signals.length < 2) return null;
+
+  // HRV down + RHR up together is the strongest single indicator — call it out.
+  const autonomicPair = signals.some((s) => s.key === 'hrv') && signals.some((s) => s.key === 'rhr');
+  const severity = Math.min(1, (signals.length / 4) * 0.6 + (autonomicPair ? 0.3 : 0) + Math.max(...signals.map((s) => s.w)) * 0.1);
+  const lead = autonomicPair
+    ? 'HRV is falling while resting HR climbs — the classic parasympathetic-withdrawal signature of accumulating fatigue.'
+    : 'Several recovery signals are trending the wrong way at once.';
+
+  return {
+    type: 'strain',
+    domains: ['health'],
+    title: `Under-recovery building — ${signals.length} signals trending down`,
+    detail: `${lead} Right now: ${signals.map((s) => s.text).join(', ')}. This is what early overreaching looks like. Take 1–2 deliberately easy days (Zone 2 or mobility, not intensity), protect sleep, and let HRV climb back to baseline before loading up again.`,
+    confidence: Math.min(0.9, 0.55 + 0.1 * signals.length),
+    evidence: {
+      auto: true, kind: 'strain', signals: signals.map((s) => s.key),
+      severity: Math.round(severity * 100) / 100,
+      hrvPct: hrvT?.pctChange != null ? Math.round(hrvT.pctChange * 1000) / 1000 : null,
+      rhrPct: rhrT?.pctChange != null ? Math.round(rhrT.pctChange * 1000) / 1000 : null,
+      acwr: load?.band === 'high' ? load.acwr : null,
+      sleepDebtH: debtH != null ? Math.round(debtH * 10) / 10 : null,
+    },
+  };
+}
+
+/**
+ * VO₂ max — cardiorespiratory fitness is the single strongest MODIFIABLE predictor
+ * of all-cause mortality and healthspan (Mandsager, JAMA 2018), yet it's easy to
+ * ignore because it barely moves day to day. Feature it as a longevity metric:
+ * current estimate + multi-week trajectory + the lever that moves it. Returns one
+ * 'fitness' finding or null.
+ */
+function fitnessFinding(seriesByKey) {
+  const vo2 = seriesByKey['health:vo2_max'];
+  if (!vo2 || vo2.length < 2) return null;
+  const current = latest(vo2);
+  if (current == null) return null;
+  const round1 = (n) => Math.round(n * 10) / 10;
+  // Apple's VO₂ max estimate moves slowly, so express the slope over a quarter
+  // (per-day slope is noise). Only call a direction when the quarter-move clears
+  // ~0.5 pts — below that it's holding steady.
+  const fit = stats.fitByDay(vo2);
+  const per90 = fit && fit.slope != null ? fit.slope * 90 : null;
+  const moving = per90 != null && Math.abs(per90) >= 0.5;
+  const dir = moving ? (per90 > 0 ? 'rising' : 'declining') : 'steady';
+  const trajTitle = moving ? ` — ${dir} ~${Math.abs(round1(per90))} pts/quarter` : '';
+  const trajDetail = moving
+    ? `and ${dir} (~${Math.abs(round1(per90))} pts/quarter)`
+    : 'and holding steady';
+
+  return {
+    type: 'fitness',
+    domains: ['health'],
+    title: `VO₂ max ${round1(current)}${trajTitle}`,
+    detail: `VO₂ max — your cardiorespiratory fitness — is among the strongest predictors of long-term health and lifespan. Yours is ${round1(current)} ${trajDetail}. What moves it: a base of Zone 2 (conversational-pace) cardio for volume, plus one weekly dose of harder intervals to lift the ceiling.`,
+    confidence: 0.8,
+    evidence: { auto: true, kind: 'fitness', metric: 'health:vo2_max', current: round1(current), per90: per90 == null ? null : round1(per90), n: vo2.length },
+  };
+}
+
 /** Build health-composite findings from the loaded series. Pure. */
 function computeHealthComposites(seriesByKey, opts = {}) {
   const findings = [];
@@ -427,6 +532,14 @@ function computeHealthComposites(seriesByKey, opts = {}) {
     });
   }
 
+  // Under-recovery synthesis — the multi-signal overreaching warning (uses `load`).
+  const strain = strainSynthesis(seriesByKey, { load });
+  if (strain) findings.push(strain);
+
+  // VO₂ max — featured longevity / cardiorespiratory-fitness metric.
+  const fitness = fitnessFinding(seriesByKey);
+  if (fitness) findings.push(fitness);
+
   return findings;
 }
 
@@ -527,6 +640,8 @@ module.exports = {
   sleepConsistency,
   trainingLoad,
   computeHealthComposites,
+  strainSynthesis,
+  fitnessFinding,
   baselineScore,
   trendScore,
   liveRecovery,
