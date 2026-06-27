@@ -58,27 +58,74 @@ function topConcentration(accounts, netWorth) {
   return { name: largest.name, balance: largest.balance, pct: largest.balance / netWorth, cls: classifyAccount(largest) };
 }
 
+// Broad diversified funds aren't single-NAME risk — a 31% position in an S&P 500
+// index fund is concentration in US large-cap, not in one company. These still
+// show in the holdings list, but are excluded from the single-name concentration
+// flag. Detect by security type, classic 5-char mutual-fund tickers (…X), or a
+// small set of common ETFs.
+const KNOWN_ETFS = new Set([
+  'VTI', 'VOO', 'SPY', 'QQQ', 'VEA', 'VWO', 'BND', 'VXUS', 'SCHB', 'ITOT', 'IVV',
+  'VUG', 'VTV', 'VIG', 'SCHD', 'VYM', 'VT', 'AGG', 'VNQ', 'VGT', 'VEU', 'DIA', 'IWM',
+]);
+function isFundLike(ticker, securityType) {
+  const st = String(securityType || '').toLowerCase();
+  if (/etf|mutual|index|fund/.test(st)) return true;
+  const t = String(ticker || '').toUpperCase();
+  if (/^[A-Z]{4}X$/.test(t)) return true; // 5-char mutual fund ending in X (FXAIX, VTSAX)
+  return KNOWN_ETFS.has(t);
+}
+
 /**
- * Flatten brokerage holdings (individual tickers) + private single-asset accounts
- * (e.g. a manual "Stripe" pre-IPO account) into a list of true SINGLE-NAME
- * positions, largest first. A diversified brokerage ACCOUNT is deliberately NOT a
- * position here — its individual holdings are. `holdings` is getInvestments()
- * holdings (may be null); `accounts` is getAccounts().accounts.
+ * Flatten brokerage holdings (individual tickers) + manually-tracked single-asset
+ * accounts (e.g. a private "Stripe" pre-IPO stake, an "other" alt) into positions,
+ * largest first. A SYNCED diversified brokerage account is NOT a position — its
+ * individual holdings are. A MANUAL investment account has no synced ticker
+ * breakdown, so it IS a single position. Each position carries `single` (is it
+ * single-COMPANY risk, vs a diversified fund) for the concentration flag.
+ * `holdings` is getInvestments() holdings (may be null); `accounts` is
+ * getAccounts().accounts.
  */
 function buildPositions(holdings, accounts) {
   const positions = [];
+  let holdingsTotal = 0;
   for (const h of holdings || []) {
     if (!h || !(h.value > 0)) continue;
     if (String(h.securityType || '').toLowerCase() === 'cash') continue; // sweep cash isn't a name
-    positions.push({ name: h.ticker || h.name || 'Holding', value: h.value, kind: 'holding' });
+    positions.push({
+      name: h.ticker || h.name || 'Holding',
+      value: h.value,
+      kind: 'holding',
+      single: !isFundLike(h.ticker, h.securityType),
+    });
+    holdingsTotal += h.value;
   }
-  // Private / alt single-asset accounts are genuine single names that public
-  // holdings don't cover (illiquid pre-IPO stock, RSUs, an alt position).
+
+  // Investment-class accounts: synced ones are already represented by the holdings
+  // above; a manually-tracked one is a genuine single position. Trust the account's
+  // manual flag when present, else infer from holdings coverage (largest synced
+  // accounts soak up the holdings total; whatever's left over is manual).
+  const inv = (accounts || [])
+    .filter((a) => a.isAsset && a.balance > 0 && classifyAccount(a) === 'investments')
+    .sort((x, y) => y.balance - x.balance);
+  let remaining = holdingsTotal;
+  for (const a of inv) {
+    let manual = a.isManual;
+    if (manual == null) {
+      if (remaining >= 0.5 * a.balance) { remaining = Math.max(0, remaining - a.balance); manual = false; }
+      else manual = true;
+    } else if (!manual) {
+      remaining = Math.max(0, remaining - a.balance);
+    }
+    if (manual) positions.push({ name: a.name, value: a.balance, kind: 'private', single: true });
+  }
+
+  // 'other'/alt single-asset accounts never have a ticker breakdown.
   for (const a of accounts || []) {
     if (a.isAsset && a.balance > 0 && classifyAccount(a) === 'other') {
-      positions.push({ name: a.name, value: a.balance, kind: 'private' });
+      positions.push({ name: a.name, value: a.balance, kind: 'private', single: true });
     }
   }
+
   return positions.sort((x, y) => y.value - x.value);
 }
 
@@ -165,9 +212,11 @@ function computeAllocationView(accountsData, { holdings = null, concentrationPct
     pctPort: posTotal > 0 ? p.value / posTotal : null,
   }));
 
-  // Concentration = the largest TRUE single name as a share of net worth — a
-  // single ticker or a private position, never a diversified account.
-  const top = positions[0] || null;
+  // Concentration = the largest single-COMPANY position as a share of net worth —
+  // an individual stock or a private position. Diversified funds/ETFs (single=false)
+  // are NOT single-name risk (a big S&P 500 index position is fine), and a whole
+  // brokerage account is never a position.
+  const top = positions.filter((p) => p.single).sort((a, b) => b.value - a.value)[0] || null;
   const concentration =
     top && netWorth > 0 && top.value / netWorth >= concentrationPct
       ? { name: top.name, balance: Math.round(top.value), pct: top.value / netWorth, kind: top.kind, illiquid: top.kind === 'private' }

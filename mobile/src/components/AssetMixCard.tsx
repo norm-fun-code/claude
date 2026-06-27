@@ -5,7 +5,7 @@ import { SectionHeader } from './SectionHeader';
 import { WEALTH_ALLOCATION_URL, authHeaders, fetchWithTimeout } from '../config';
 
 type Slice = { cls: string; label: string; value: number; pct: number };
-type Position = { name: string; value: number; kind: 'holding' | 'private'; pctNw: number | null; pctPort: number | null };
+type Position = { name: string; value: number; kind: 'holding' | 'private'; single?: boolean; pctNw: number | null; pctPort: number | null };
 type Concentration = { name: string; balance: number; pct: number; kind: string; illiquid: boolean } | null;
 type AllocationView = {
   available: boolean;

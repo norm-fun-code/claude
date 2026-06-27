@@ -83,13 +83,50 @@ test('computeAllocationView returns null without accounts', () => {
   assert.equal(computeAllocationView({ accounts: [] }), null);
 });
 
-test('buildPositions: tickers + private accounts, excluding diversified accounts and cash', () => {
+test('buildPositions: tickers + private accounts, excluding synced diversified accounts and cash', () => {
   const positions = buildPositions(
     [{ ticker: 'MU', value: 50000, securityType: 'equity' }, { ticker: 'SWEEP', value: 1000, securityType: 'cash' }],
-    [{ name: 'Stripe', type: 'other', balance: 5000, isAsset: true }, { name: 'Fidelity', type: 'brokerage', balance: 600000, isAsset: true }]
+    [
+      { name: 'Stripe', type: 'other', balance: 5000, isAsset: true },
+      { name: 'Fidelity', type: 'brokerage', balance: 600000, isAsset: true, isManual: false }, // linked → its holdings represent it
+    ]
   );
-  // MU (50k) > Stripe (5k); the diversified Fidelity account and the cash sweep are excluded.
+  // MU (50k) > Stripe (5k); the linked Fidelity account and the cash sweep are excluded.
   assert.deepEqual(positions.map((p) => p.name), ['MU', 'Stripe']);
+});
+
+test('buildPositions: a MANUAL investment account (private stock) surfaces as a position', () => {
+  const positions = buildPositions(
+    [{ ticker: 'FXAIX', value: 420000, securityType: 'mutual_fund' }, { ticker: 'MU', value: 100000, securityType: 'equity' }],
+    [
+      { name: 'Fidelity', type: 'brokerage', balance: 520000, isAsset: true, isManual: false }, // covered by the 2 holdings
+      { name: 'Stripe', type: 'brokerage', balance: 600000, isAsset: true, isManual: true },     // manual → single position
+    ]
+  );
+  const stripe = positions.find((p) => p.name === 'Stripe');
+  assert.ok(stripe, 'manual investment account should surface');
+  assert.equal(stripe.kind, 'private');
+  assert.equal(stripe.single, true);
+  assert.ok(!positions.find((p) => p.name === 'Fidelity'), 'the linked diversified account is not a position');
+});
+
+test('concentration skips diversified funds, flags the private stake instead', () => {
+  // FXAIX (index fund) is the biggest holding, but the manual Stripe stake is the
+  // real single-name concentration.
+  const accounts = [
+    { name: 'Fidelity', type: 'brokerage', balance: 520000, isAsset: true, isManual: false },
+    { name: 'Stripe', type: 'brokerage', balance: 600000, isAsset: true, isManual: true },
+  ];
+  const holdings = [
+    { ticker: 'FXAIX', value: 420000, securityType: 'mutual_fund' },
+    { ticker: 'MU', value: 100000, securityType: 'equity' },
+  ];
+  const view = computeAllocationView({ netWorth: 1120000, accounts }, { holdings });
+  assert.ok(view.concentration, 'expected a concentration flag');
+  assert.equal(view.concentration.name, 'Stripe');     // not FXAIX (a diversified fund)
+  assert.equal(view.concentration.illiquid, true);
+  // FXAIX still appears in the holdings list, just isn't the concentration.
+  assert.ok(view.positions.find((p) => p.name === 'FXAIX'));
 });
 
 test('computeAllocationView: concentration is the largest HOLDING, not a diversified account', () => {

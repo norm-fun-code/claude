@@ -162,7 +162,18 @@ function normAccount(a) {
   );
   if (balance == null) return null;
   const isAsset = a.is_asset != null ? !!a.is_asset : (a.isAsset != null ? !!a.isAsset : balance >= 0);
-  return { name, type, subtype, balance, isAsset };
+  // Manual (vs linked) flag — a manually-tracked investment account (e.g. private
+  // pre-IPO stock) has no synced ticker holdings, so it's a single position. Only
+  // infer when a relevant field is actually present; otherwise leave null and let
+  // the holdings-coverage heuristic decide.
+  let isManual = null;
+  if ('is_manual' in a) isManual = !!a.is_manual;
+  else if ('isManual' in a) isManual = !!a.isManual;
+  else if ('manual' in a) isManual = !!a.manual;
+  else if ('institution' in a || 'institution_name' in a || 'credential' in a) {
+    isManual = !(a.institution || a.institution_name || a.credential);
+  }
+  return { name, type, subtype, balance, isAsset, isManual };
 }
 
 /**
