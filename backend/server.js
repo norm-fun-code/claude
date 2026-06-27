@@ -2710,14 +2710,19 @@ app.get('/api/briefing', async (req, res) => {
     leverageContext = parts.join('\n\n');
 
     // Log leverage actions to the recommendation ledger (fire-and-forget).
-    // Deduplicated to 7-day window using prefix matching (first 40 chars) so
-    // minor percentage variations like "HRV is 14% better" vs "15% better"
-    // don't generate new rows every day.
+    // Deduplicated over a 7-day window by NUMBER-NORMALIZED title, so minor
+    // percentage variations like "→ 13% better HRV" vs "→ 12% better HRV" (the
+    // number sits mid-title, where a prefix match missed it) collapse to one
+    // recommendation. A per-run guard also blocks two findings that normalize the
+    // same from both landing in a single briefing.
     if (levFindings.length) {
       recommendationsStore.recentTitles(7).then((recent) => {
-        const recentPrefixes = new Set([...recent].map((t) => t.slice(0, 40).toLowerCase()));
+        const recentNorm = new Set([...recent].map(recommendationsStore.normalizeRecTitle));
+        const seenThisRun = new Set();
         for (const f of levFindings) {
-          if (recentPrefixes.has(f.title.slice(0, 40).toLowerCase())) continue;
+          const normKey = recommendationsStore.normalizeRecTitle(f.title);
+          if (recentNorm.has(normKey) || seenThisRun.has(normKey)) continue;
+          seenThisRun.add(normKey);
           const ev = f.evidence || {};
           recommendationsStore.recordRecommendation({
             type: 'leverage',
@@ -3318,6 +3323,13 @@ runMigrations()
                    evidence->>'a' IN ('health:sleep_debt','health:sleep_need','health:vo2_max','health:respiratory_rate')
                 OR evidence->>'b' IN ('health:sleep_debt','health:sleep_need','health:vo2_max','health:respiratory_rate')))`
       ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} derived/estimate-metric finding(s)`); })
+        .catch(() => {});
+
+      // Cleanup: collapse near-duplicate PENDING recommendations that differ only
+      // by the numbers in their title (e.g. "Best sleep nights → 13% better HRV"
+      // vs "→ 12%"). Keeps the newest; never touches rows the user has rated.
+      recommendationsStore.dedupePending()
+        .then((n) => { if (n > 0) console.log(`[boot] collapsed ${n} duplicate recommendation(s)`); })
         .catch(() => {});
 
       // Optional self-running morning routine (cloud deploys; ENABLE_SCHEDULER=true).

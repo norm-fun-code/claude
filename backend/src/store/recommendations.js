@@ -1,6 +1,21 @@
 // Recommendation ledger — persistence for leverage actions surfaced to the user.
 const { query } = require('../db');
 
+/**
+ * Collapse a recommendation title to its number-independent shape so that
+ * "Best sleep nights → 13% better HRV" and "… 12% better HRV" dedupe to one
+ * recommendation. The previous prefix-match dedup failed because the number
+ * lives in the MIDDLE of the title. Strips numbers + their attached units (%,
+ * ms, bpm, h, pts, /5, …) to a placeholder, leaving the semantic words intact.
+ */
+function normalizeRecTitle(title) {
+  return String(title || '')
+    .toLowerCase()
+    .replace(/[+\-]?\d[\d,]*(\.\d+)?\s*(%|ms|bpm|hrs?|hours?|pts?|mins?|days?|x|h|\/\d+)?/g, '#')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 async function recordRecommendation({
   type = 'leverage',
   findingId = null,
@@ -115,4 +130,29 @@ async function measureOutcomes(lookbackDays = 10) {
   return measured;
 }
 
-module.exports = { recordRecommendation, listRecommendations, setOutcome, recentTitles, recentTitlesAll, measureOutcomes };
+/**
+ * Collapse already-stored near-duplicate PENDING recommendations (no user
+ * feedback yet) that differ only by the numbers in their title, keeping the most
+ * recent. Rows the user has rated (outcome_measured_at set) are never touched, so
+ * no feedback is lost. Returns the count removed. Safe to call on boot.
+ */
+async function dedupePending() {
+  const { rows } = await query(
+    `SELECT id, title FROM recommendations
+      WHERE outcome_measured_at IS NULL
+      ORDER BY created_at DESC, id DESC`
+  );
+  const seen = new Set();
+  const toDelete = [];
+  for (const r of rows) {
+    const key = normalizeRecTitle(r.title);
+    if (seen.has(key)) toDelete.push(r.id);
+    else seen.add(key);
+  }
+  if (toDelete.length) {
+    await query(`DELETE FROM recommendations WHERE id = ANY($1::int[])`, [toDelete]);
+  }
+  return toDelete.length;
+}
+
+module.exports = { recordRecommendation, listRecommendations, setOutcome, recentTitles, recentTitlesAll, measureOutcomes, normalizeRecTitle, dedupePending };

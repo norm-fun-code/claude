@@ -413,11 +413,12 @@ async function ask(question, { history = [], k = 14 } = {}) {
     const recTitle = recMatch[1].trim();
     answer = answer.replace(/<rec>[\s\S]*?<\/rec>/i, '').trim();
     if (recTitle && !DATA_QUERY_RE.test(recTitle)) {
-      // Dedup: skip if we've recorded a title with the same opening words in the last 7 days.
-      const prefix = recTitle.slice(0, 40).toLowerCase();
+      // Dedup by NUMBER-NORMALIZED title (matches the briefing path), so the same
+      // recommendation with a slightly different percentage doesn't double-log.
       const recentStore = require('../store/recommendations');
+      const normKey = recentStore.normalizeRecTitle(recTitle);
       recentStore.recentTitlesAll(7).then((recent) => {
-        const alreadySeen = [...recent].some((t) => t.slice(0, 40).toLowerCase() === prefix);
+        const alreadySeen = [...recent].some((t) => recentStore.normalizeRecTitle(t) === normKey);
         if (!alreadySeen) {
           recordRecommendation({ type: 'leverage', title: recTitle, surfacedIn: 'chat' }).catch(() => {});
         }
