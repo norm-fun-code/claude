@@ -198,19 +198,40 @@ async function randomHighlights({ limit = 5, favoritesOnly = false, exclude = []
  * month (YYYY-MM) for the trailing `months` window. Powers wealth insights.
  */
 async function monthlyCategorySpend({ months = 4 } = {}) {
+  // De-dup at read time: two Monarch importers (CSV + live MCP) can both write
+  // source='monarch' under different external_id schemes, so the same transaction
+  // momentarily exists as two documents (it self-corrects once a sync re-prunes).
+  // DISTINCT ON a transaction signature (day + merchant + amount + account)
+  // collapses those duplicates so a category can never double-count. Split
+  // children keep DIFFERENT amounts, so they're preserved (counted once each).
   const { rows } = await query(
-    `SELECT to_char(date_trunc('month', occurred_at), 'YYYY-MM') AS month,
-            COALESCE(NULLIF(metadata->>'category', ''), 'Uncategorized')  AS category,
-            SUM(CASE WHEN (metadata->>'amount')::numeric < 0
-                     THEN -(metadata->>'amount')::numeric ELSE 0 END)     AS spend
-       FROM documents
-      WHERE source = 'monarch'
-        AND occurred_at >= date_trunc('month', now()) - ($1::int - 1) * interval '1 month'
-        AND occurred_at <= now()
-        AND metadata ? 'amount'
+    `WITH deduped AS (
+       SELECT DISTINCT ON (
+                occurred_at::date,
+                lower(coalesce(metadata->>'merchant','')),
+                metadata->>'amount',
+                lower(coalesce(metadata->>'account',''))
+              )
+              occurred_at,
+              COALESCE(NULLIF(metadata->>'category', ''), 'Uncategorized') AS category,
+              (metadata->>'amount')::numeric AS amount
+         FROM documents
+        WHERE source = 'monarch'
+          AND occurred_at >= date_trunc('month', now()) - ($1::int - 1) * interval '1 month'
+          AND occurred_at <= now()
+          AND metadata ? 'amount'
+        ORDER BY occurred_at::date,
+                 lower(coalesce(metadata->>'merchant','')),
+                 metadata->>'amount',
+                 lower(coalesce(metadata->>'account','')),
+                 occurred_at
+     )
+     SELECT to_char(date_trunc('month', occurred_at), 'YYYY-MM') AS month,
+            category,
+            SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) AS spend
+       FROM deduped
       GROUP BY 1, 2
-      HAVING SUM(CASE WHEN (metadata->>'amount')::numeric < 0
-                      THEN -(metadata->>'amount')::numeric ELSE 0 END) > 0
+      HAVING SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) > 0
       ORDER BY 1 DESC, 3 DESC`,
     [months]
   );
@@ -223,8 +244,16 @@ async function monthlyCategorySpend({ months = 4 } = {}) {
  * amount as a positive spend figure, newest first.
  */
 async function spendTransactions({ days = 120 } = {}) {
+  // Same read-time de-dup as monthlyCategorySpend — transient duplicate documents
+  // (two importers) must not double-count toward recurring-charge detection.
   const { rows } = await query(
-    `SELECT occurred_at::date AS day,
+    `SELECT DISTINCT ON (
+              occurred_at::date,
+              lower(coalesce(metadata->>'merchant','')),
+              metadata->>'amount',
+              lower(coalesce(metadata->>'account',''))
+            )
+            occurred_at::date AS day,
             COALESCE(NULLIF(metadata->>'merchant',''), title, 'Transaction') AS merchant,
             -(metadata->>'amount')::numeric AS amount,
             COALESCE(NULLIF(metadata->>'category',''), 'Uncategorized') AS category
@@ -233,7 +262,11 @@ async function spendTransactions({ days = 120 } = {}) {
         AND occurred_at >= now() - ($1::int || ' days')::interval
         AND metadata ? 'amount'
         AND (metadata->>'amount')::numeric < 0
-      ORDER BY occurred_at DESC`,
+      ORDER BY occurred_at::date,
+               lower(coalesce(metadata->>'merchant','')),
+               metadata->>'amount',
+               lower(coalesce(metadata->>'account','')),
+               occurred_at DESC`,
     [days]
   );
   return rows.map((r) => ({ day: r.day, merchant: r.merchant, amount: Number(r.amount), category: r.category }));
