@@ -149,6 +149,7 @@ export function RecommendationLedgerCard() {
   const [recs, setRecs] = useState<Rec[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -171,13 +172,32 @@ export function RecommendationLedgerCard() {
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <View style={styles.header}>
-        <Text style={[styles.title, { color: c.text }]}>Recommendation Ledger</Text>
+        <View style={styles.titleRow}>
+          <Text style={[styles.title, { color: c.text }]}>Recommendation Ledger</Text>
+          <TouchableOpacity onPress={() => setShowInfo((v) => !v)} hitSlop={8} style={styles.infoBtn}>
+            <Text style={[styles.infoToggle, { color: c.accent }]}>{showInfo ? 'Hide' : "What's this?"}</Text>
+          </TouchableOpacity>
+        </View>
         {stats && (
           <Text style={[styles.statsText, { color: c.subtext }]}>
             {stats.total} made{stats.hitRate != null ? ` · ${Math.round(stats.hitRate)}% effective` : ''}
           </Text>
         )}
-        <Text style={[styles.hint, { color: c.subtext }]}>Swipe left to dismiss · 👍👎 to close the loop</Text>
+        {showInfo ? (
+          <View style={[styles.infoBox, { backgroundColor: c.border + '55' }]}>
+            <Text style={[styles.infoText, { color: c.text }]}>
+              Every action NormOS suggests you — in your morning brief or in Ask — gets logged here, along with the
+              metric it was meant to move. It then checks whether that metric actually changed, so over time it learns
+              which levers really work for you.
+            </Text>
+            <Text style={[styles.infoText, { color: c.text, marginTop: spacing.xs }]}>
+              👍 you tried it and it helped (or the advice was useful) · 👎 it didn't help / wasn't right for you ·
+              swipe left to dismiss. Didn't try it? Just leave it — NormOS auto-checks your data after ~2 weeks.
+            </Text>
+          </View>
+        ) : (
+          <Text style={[styles.hint, { color: c.subtext }]}>Swipe left to dismiss · 👍👎 to close the loop</Text>
+        )}
       </View>
 
       {visible.map((rec) => (
@@ -198,7 +218,12 @@ export function RecommendationLedgerCard() {
 const styles = StyleSheet.create({
   card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   header: { marginBottom: spacing.sm },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { fontSize: 16, fontWeight: '700', marginBottom: 2 },
+  infoBtn: { paddingVertical: 2, paddingLeft: spacing.sm },
+  infoToggle: { fontSize: 12, fontWeight: '600' },
+  infoBox: { borderRadius: radius.sm, padding: spacing.sm, marginTop: spacing.xs },
+  infoText: { fontSize: 12, lineHeight: 17 },
   statsText: { ...typography.caption, fontSize: 12 },
   hint: { ...typography.caption, fontSize: 11, marginTop: 2 },
   deleteHint: {

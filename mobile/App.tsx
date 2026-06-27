@@ -215,56 +215,63 @@ export default function App() {
       default:
         return (
           <>
-            {/* Chief Brief first — the narrative leads */}
+            {/* TODAY-FIRST ordering: the home tab answers "what's the one thing,
+                how am I today, what's urgent, what am I running" before any
+                reflective/historical detail. The brief leads, recovery grade and
+                urgent flags sit right under it, then today's experiment and the
+                cross-domain insight; goal forecasts, trends, weekly review, and the
+                ledger drop below the fold. */}
+
+            {/* 1. Chief Brief — the one thing, leads */}
             <AnimatedEntry delay={0}>
               <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
             </AnimatedEntry>
-            {/* Goal forecasts — all statuses, prominent after the brief */}
-            {(d?.forecasts ?? []).length > 0 && (
-              <AnimatedEntry delay={10}>
-                <ForecastCard forecasts={d!.forecasts} />
-              </AnimatedEntry>
-            )}
-            {/* Recovery grade */}
-            <AnimatedEntry delay={20}>
+            {/* 2. Recovery grade — "how am I TODAY" is the home-tab question */}
+            <AnimatedEntry delay={10}>
               <TodayForecastCard forecast={d?.todayForecast} />
             </AnimatedEntry>
-            {/* Experiments — proposed + active, with start / pause controls */}
-            <AnimatedEntry delay={30}>
-              <ExperimentsCard />
-            </AnimatedEntry>
-            {/* Streak / trend signals */}
-            {d?.signals && d.signals.length > 0 && (
-              <AnimatedEntry delay={40}>
-                <BriefSignalsCard signals={d.signals} />
-              </AnimatedEntry>
-            )}
-            {/* Alerts / highest-leverage flags */}
+            {/* 3. Alerts / highest-leverage flags — anything urgent today */}
             {d?.alerts && d.alerts.length > 0 && (
-              <AnimatedEntry delay={60}>
+              <AnimatedEntry delay={20}>
                 <AlertCard alerts={d.alerts} />
               </AnimatedEntry>
             )}
-            {/* Cross-domain patterns */}
+            {/* 4. Experiments — what I'm actively running */}
+            <AnimatedEntry delay={30}>
+              <ExperimentsCard />
+            </AnimatedEntry>
+            {/* 5. Cross-domain patterns — the differentiating insight */}
             {d?.crossContextInsights && d.crossContextInsights.length > 0 && (
-              <AnimatedEntry delay={80}>
+              <AnimatedEntry delay={45}>
                 <CrossContextCard insights={d.crossContextInsights} />
               </AnimatedEntry>
             )}
-            {/* Check-in trends */}
-            <AnimatedEntry delay={100}>
+            {/* 6. Goal forecasts — trajectory, not a daily action → below the fold */}
+            {(d?.forecasts ?? []).length > 0 && (
+              <AnimatedEntry delay={60}>
+                <ForecastCard forecasts={d!.forecasts} />
+              </AnimatedEntry>
+            )}
+            {/* 7. Streak / trend signals (one-question prompts) */}
+            {d?.signals && d.signals.length > 0 && (
+              <AnimatedEntry delay={75}>
+                <BriefSignalsCard signals={d.signals} />
+              </AnimatedEntry>
+            )}
+            {/* 8. Check-in trends + habit streaks — reference detail */}
+            <AnimatedEntry delay={90}>
               <CheckinHistoryCard insights={(d?.insights ?? []).filter((i) => {
                 if (i.type === 'habit_consistency') return true;
                 const nonHealth = new Set(['habits', 'wellbeing']);
                 return i.domains?.every((dom: string) => nonHealth.has(dom)) ?? false;
               })} />
             </AnimatedEntry>
-            {/* Weekly review + intentions */}
-            <AnimatedEntry delay={120}>
+            {/* 9. Weekly review + intentions */}
+            <AnimatedEntry delay={110}>
               <WeeklyIntentionsCard review={d?.weeklyReview ?? null} actions={d?.leverageActions ?? []} />
             </AnimatedEntry>
-            {/* Recommendation ledger — what was recommended and did it work */}
-            <AnimatedEntry delay={140}>
+            {/* 10. Recommendation ledger — what was recommended and did it work */}
+            <AnimatedEntry delay={130}>
               <RecommendationLedgerCard />
             </AnimatedEntry>
             {briefing.error && !d && (
