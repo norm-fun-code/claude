@@ -244,9 +244,20 @@ function buildModelText(data) {
   const wbParts = [];
   const wbLabel = { mood: 'Mood', energy: 'Energy', focus: 'Focus' };
   const wbLevel = (v) => v == null ? null : v >= 4 ? 'strong' : v >= 3 ? 'moderate' : 'low';
+  // Mood/energy/focus are logged on a coarse 1–5 scale, so a small week-over-week
+  // dip while a metric is still in the 'strong' band (≥4) is noise, not a
+  // downtrend. Suppress the down-arrow in that case so the brief doesn't escalate
+  // a 4.6→4.3 wiggle into "mood is sliding". A real drop (≥0.5 pt) or a fall out
+  // of the strong band still shows ↓.
+  const wbArrow = (cur, prior) => {
+    if (prior == null) return '';
+    const a = dirArrow(cur, prior, 'up');
+    if (a === ' ↓' && cur >= 4 && (prior - cur) < 0.5) return ' →';
+    return a;
+  };
   for (const [k, v] of Object.entries(wb)) {
     if (v.cur == null) continue;
-    wbParts.push(`${wbLabel[k]} ${v.cur}/5 (${wbLevel(v.cur)}${v.prior != null ? dirArrow(v.cur, v.prior, 'up') : ''})`);
+    wbParts.push(`${wbLabel[k]} ${v.cur}/5 (${wbLevel(v.cur)}${wbArrow(v.cur, v.prior)})`);
   }
   if (wbParts.length) lines.push(`WELLBEING (last 7 days): ${wbParts.join(' · ')}`);
 
