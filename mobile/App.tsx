@@ -360,7 +360,16 @@ export default function App() {
                     style={[styles.tabRefreshBtn, { borderColor: c.border, backgroundColor: c.card }]}
                   >
                     <Text style={[styles.tabRefreshTxt, { color: c.accent }]}>✓ Check in</Text>
-                    {dailyLog.needsLog && (
+                    {!dailyLog.checkinLogged && (
+                      <View style={[styles.badge, { backgroundColor: c.accent, borderColor: c.background }]} />
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setHabitsOpen(true)}
+                    style={[styles.tabRefreshBtn, { borderColor: c.border, backgroundColor: c.card }]}
+                  >
+                    <Text style={[styles.tabRefreshTxt, { color: c.accent }]}>🔁 Habits</Text>
+                    {!dailyLog.habitsLogged && (
                       <View style={[styles.badge, { backgroundColor: c.accent, borderColor: c.background }]} />
                     )}
                   </TouchableOpacity>
@@ -405,7 +414,7 @@ export default function App() {
       />
       <HabitsModal
         visible={habitsOpen}
-        onClose={() => setHabitsOpen(false)}
+        onClose={() => { setHabitsOpen(false); dailyLog.refresh(); }}
       />
       <TabBar
         active={tab}

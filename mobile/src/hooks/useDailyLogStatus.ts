@@ -38,5 +38,10 @@ export function useDailyLogStatus() {
     return () => sub.remove();
   }, [refresh]);
 
-  return { needsLog: !checkinLogged || !habitsLogged, refresh };
+  return {
+    needsLog: !checkinLogged || !habitsLogged, // either outstanding (back-compat)
+    checkinLogged,
+    habitsLogged,
+    refresh,
+  };
 }
