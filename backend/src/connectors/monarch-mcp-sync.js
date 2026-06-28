@@ -281,9 +281,10 @@ module.exports = {
     }
   },
 
-  // exported for testing
+  // exported for testing / diagnostics
   fetchTxnsInRange,
   dailyCashflow,
   txnToDocument,
   syncViaMcp,
+  incomeCategoryNames,
 };

@@ -831,6 +831,62 @@ app.post('/api/ingest/metrics', async (req, res) => {
   }
 });
 
+// Diagnostic: show EXACTLY how 30-day income/spending are computed from Monarch
+// transactions, so a mismatch with Monarch's report can be debugged from the data
+// (not screenshots). Mirrors the sync's classification. ?days=30 by default.
+app.get('/api/debug/wealth-income', async (req, res) => {
+  try {
+    const sync = require('./src/connectors/monarch-mcp-sync');
+    const monarchMcp = require('./src/services/monarch-mcp');
+    const { isInternalTransfer, isExcludedIncome, isNonIncomePositive } = require('./src/connectors/monarch');
+    const days = Math.min(Number(req.query.days) || 30, 90);
+    const ymd = (d) => new Date(d).toISOString().slice(0, 10);
+    const start = ymd(new Date(Date.now() - days * 864e5));
+    const end = ymd(new Date());
+    const today = end;
+
+    const [txns, incomeCats] = await Promise.all([
+      sync.fetchTxnsInRange(start, end),
+      sync.incomeCategoryNames(),
+    ]);
+
+    let income = 0, spend = 0, transfersSkipped = 0;
+    const incomeTxns = [], excludedPositives = [];
+    for (const t of txns || []) {
+      if (!t || !t.date) continue;
+      const amount = Number(t.amount);
+      if (!Number.isFinite(amount) || amount === 0) continue;
+      const category = String(t.category || '');
+      const categoryType = String(t.category_type || t.categoryType || '').toLowerCase();
+      if (categoryType === 'transfer' || isInternalTransfer(category)) { transfersSkipped++; continue; }
+      if (String(t.date).slice(0, 10) > today) continue;
+      if (amount < 0) { spend += Math.abs(amount); continue; }
+      const inIncomeCategory = incomeCats.size
+        ? incomeCats.has(category.toLowerCase())
+        : (categoryType ? categoryType === 'income' : (!isExcludedIncome(category) && !isNonIncomePositive(category)));
+      const row = { date: String(t.date).slice(0, 10), merchant: t.merchant, category, categoryType, amount: Math.round(amount) };
+      if (inIncomeCategory && !isExcludedIncome(category)) { income += amount; incomeTxns.push(row); }
+      else excludedPositives.push(row);
+    }
+    incomeTxns.sort((a, b) => b.amount - a.amount);
+    excludedPositives.sort((a, b) => b.amount - a.amount);
+
+    res.json({
+      window: { start, end, days },
+      mcpConfigured: monarchMcp.isConfigured(),
+      incomeCategoriesDetected: [...incomeCats],   // empty ⇒ GetCategories shape didn't parse → heuristic fallback
+      txnCount: (txns || []).length,
+      income30d: Math.round(income),
+      spending30d: Math.round(spend),
+      transfersSkipped,
+      topIncomeTxns: incomeTxns.slice(0, 20),       // what's COUNTED as income
+      topExcludedPositives: excludedPositives.slice(0, 20), // positives NOT counted (refunds/transfers)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Trigger all server-side connectors on demand. ?full=1 forces a complete
 // re-sync (ignores each source's last-sync timestamp).
 app.post('/api/ingest/run', async (req, res) => {
