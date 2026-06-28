@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
+import { RecoveryOrb } from './RecoveryOrb';
 import type { TodayForecast } from '../hooks/useBriefing';
 
 interface Props {
@@ -29,9 +30,7 @@ export function TodayForecastCard({ forecast }: Props) {
 
       {cap && (
         <View style={styles.gradeRow}>
-          <View style={[styles.gradeBadge, { borderColor: gradeColor }]}>
-            <Text style={[styles.gradeLetter, { color: gradeColor }]}>{cap.grade}</Text>
-          </View>
+          <RecoveryOrb grade={cap.grade} band={cap.band} size={62} />
           <View style={styles.gradeBody}>
             <Text style={[styles.headline, { color: c.text }]}>{cap.headline}</Text>
             {!!cap.detail && <Text style={[styles.detail, { color: c.subtext }]}>{cap.detail}</Text>}

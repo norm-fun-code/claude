@@ -98,11 +98,11 @@ export const typography = {
 export function shadow(isDark: boolean, level: 'card' | 'bar' = 'card') {
   if (isDark) return {};
   const card = {
-    shadowColor: '#000000',
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
+    shadowColor: '#0B0B12',
+    shadowOpacity: 0.1,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
   };
   const bar = {
     shadowColor: '#000000',
