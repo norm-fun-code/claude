@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, useColorScheme, TextInput, TouchableOpacity } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
-import { getColors, spacing, radius, typography, shadow } from '../theme';
+import { getColors, spacing, radius, typography, shadow, glow, accentGradient } from '../theme';
 import { AnimatedEntry } from './AnimatedEntry';
 import type { ChiefBrief } from '../hooks/useBriefing';
 import { BRIEFING_CONTEXT_URL, authHeaders, fetchWithTimeout } from '../config';
@@ -58,13 +58,15 @@ export function BriefCard({ brief, fallback }: Props) {
   if (!brief && !fallback) return null;
 
   return (
-    <View style={[styles.card, shadow(isDark)]}>
+    <View style={[styles.card, glow('#5A52F0', 0.22, 26)]}>
       <LinearGradient
-        colors={['#272730', '#1C1C1E']}
+        colors={['#2A2A36', '#1A1A1F']}
         start={{ x: 0, y: 0 }}
-        end={{ x: 0.6, y: 1 }}
+        end={{ x: 0.7, y: 1 }}
         style={styles.gradient}
       />
+      {/* signature accent bar */}
+      <LinearGradient colors={accentGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.accentBar} />
       <Text style={styles.kicker}>CHIEF OF STAFF BRIEF</Text>
 
       {brief ? (
@@ -133,6 +135,12 @@ const styles = StyleSheet.create({
   },
   gradient: {
     ...StyleSheet.absoluteFillObject,
+  },
+  accentBar: {
+    width: 44,
+    height: 3,
+    borderRadius: 2,
+    marginBottom: spacing.sm,
   },
   kicker: {
     fontSize: 10,
