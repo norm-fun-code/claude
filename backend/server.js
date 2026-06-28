@@ -1152,13 +1152,12 @@ app.post('/api/recovery/self-report', async (req, res) => {
     }
     const written = await metricsStore.insertMetrics(rows);
     const recovery = await require('./src/intelligence/recovery').liveRecovery();
-    // Respond immediately with the new proxy recovery, then build the brief in the
-    // background and push "ready" — so logging sleep is what triggers the morning
-    // brief (no brief is built until you log, on a no-Pod night).
+    // Return the new proxy recovery immediately. The mobile then fires its normal
+    // non-blocking briefing rebuild (triggerRebuild) which picks up this stored
+    // self-report — so the brief rebuilds with the recovery score AND the app
+    // actually refetches it (the old server-only background build never reached
+    // the client, so the briefing looked unchanged after submit).
     res.json({ ok: true, written, recovery });
-    require('./src/notify/morning')
-      .warmAndNotify({ send: true })
-      .catch((e) => console.error('[self-report] brief build failed:', e.message));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

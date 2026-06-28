@@ -161,7 +161,7 @@ export default function App() {
       case 'health':
         return (
           <>
-            <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={liveRecovery.refetch} />
+            <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={() => { liveRecovery.refetch(); briefing.triggerRebuild(); }} />
             <RecoveryCard
               recovery={liveRecovery.fetched ? liveRecovery.recovery : (liveRecovery.recovery ?? d?.recovery)}
               composites={d?.healthComposites ?? []}
@@ -232,7 +232,7 @@ export default function App() {
 
             {/* 0. Sleep check-in — only when there's no Pod reading to fill the gap.
                 Leads when present so logging sleep is the first action. */}
-            <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={liveRecovery.refetch} />
+            <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={() => { liveRecovery.refetch(); briefing.triggerRebuild(); }} />
             {/* 1. Chief Brief — the one thing, leads */}
             <AnimatedEntry delay={0}>
               <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
