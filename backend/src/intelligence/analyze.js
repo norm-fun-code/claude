@@ -1149,12 +1149,23 @@ async function analyze(opts = {}) {
       if (cat.includes('spend') || cat.includes('wealth') || cat.includes('financ')) return false;
       return !SPEND_RE.test(`${a.label || ''} ${a.note || ''}`);
     });
+    // Life context (a late meal, a drink, a hot room, travel, a rough night) can
+    // plausibly explain a RECOVERY or WELLBEING deviation — HRV, resting HR, sleep,
+    // breathing rate, mood/energy/focus. It does NOT explain an ACTIVITY metric:
+    // "a heavy meal explains low steps" is nonsense. Only attach the context to
+    // anomalies it could actually account for.
+    const CONTEXTABLE = new Set([
+      'health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score',
+      'health:deep_sleep_hours', 'health:rem_sleep_hours', 'health:respiratory_rate',
+      'wellbeing:mood', 'wellbeing:energy', 'wellbeing:focus',
+    ]);
     if (lifeAnnotations.length) {
       const ctx = lifeAnnotations.map((a) => {
         const when = new Date(a.start_ts) >= startOfToday ? 'today' : 'yesterday';
         return `${a.label || a.category} (${when})`;
       }).slice(0, 3).join('; ');
       for (const a of anomalies) {
+        if (!CONTEXTABLE.has(a.evidence?.metric)) continue; // not a deviation this context explains
         a.detail += ` (Context: ${ctx} — may explain this deviation.)`;
       }
     }
