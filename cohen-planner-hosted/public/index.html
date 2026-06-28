@@ -225,6 +225,10 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .pf-quad{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px}
 .pf-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .glass-card{background:rgba(255,255,255,.72);backdrop-filter:blur(18px) saturate(165%);-webkit-backdrop-filter:blur(18px) saturate(165%);border:1px solid rgba(255,255,255,.65);border-radius:12px;box-shadow:0 1px 1px rgba(10,37,64,.04),0 14px 32px -20px rgba(10,37,64,.28)}
+/* Shimmer loading skeleton */
+.skel{background:linear-gradient(100deg,rgba(10,37,64,.06) 28%,rgba(10,37,64,.12) 50%,rgba(10,37,64,.06) 72%);background-size:200% 100%;border-radius:8px;animation:shimmer 1.5s ease-in-out infinite}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+@media(prefers-reduced-motion:reduce){.skel{animation:none}}
 @media(max-width:760px){
   .pf-split{grid-template-columns:1fr}
   .pf-kpis{grid-template-columns:repeat(2,1fr)}
@@ -1320,8 +1324,15 @@ function renderPortfolioTab(R,P){
   // Auto-load investments on first visit (guard prevents concurrent re-entry)
   if(monarchInvestments===null){
     if(!_investLoading)loadMonarchInvestments();
-    ca.innerHTML=`<div style="padding:40px;text-align:center;color:var(--t2)">
-      <div style="font-size:13px;color:var(--t3);margin-top:8px">Loading investments from Monarch…</div>
+    ca.innerHTML=`<div style="padding:2px">
+      <div class="skel" style="height:16px;width:180px;margin-bottom:14px"></div>
+      <div class="pf-kpis">${[0,0,0,0].map(()=>`<div class="glass-card" style="padding:12px"><div class="skel" style="height:9px;width:60%;margin-bottom:9px"></div><div class="skel" style="height:18px;width:80%;margin-bottom:7px"></div><div class="skel" style="height:8px;width:50%"></div></div>`).join('')}</div>
+      <div class="pf-split">
+        <div class="glass-card" style="padding:18px;display:flex;align-items:center;justify-content:center"><div class="skel" style="width:150px;height:150px;border-radius:50%"></div></div>
+        <div class="glass-card" style="padding:16px">${[0,0,0,0,0].map(()=>`<div style="display:flex;justify-content:space-between;margin-bottom:14px"><div class="skel" style="height:11px;width:34%"></div><div class="skel" style="height:11px;width:18%"></div></div>`).join('')}</div>
+      </div>
+      <div class="glass-card" style="padding:14px">${[0,0,0,0,0,0].map(()=>`<div class="skel" style="height:13px;width:100%;margin-bottom:10px"></div>`).join('')}</div>
+      <div style="text-align:center;font-size:10px;color:var(--t3);margin-top:14px">Loading investments from Monarch…</div>
     </div>`;
     return;
   }
