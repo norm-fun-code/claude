@@ -63,33 +63,48 @@ export const radius = {
 // The brand's signature gradient — used on primary CTAs and accents.
 export const accentGradient: [string, string] = ['#7A73FF', '#5A52F0'];
 
+// Custom type hook points. UNDEFINED = system face (SF Pro) — safe to ship as-is.
+// After the native font install (see DESIGN_NATIVE_SETUP.md), set these to the
+// loaded family names and the whole app adopts the custom type in one edit:
+//   display: 'Sora_700Bold'  ·  text: 'Inter_400Regular'
+export const FONTS: { display?: string; text?: string } = {
+  display: undefined, // headlines + numbers
+  text: undefined,    // body, captions, labels
+};
+
 export const typography = {
   largeNumber: {
+    fontFamily: FONTS.display,
     fontSize: 56,
     fontWeight: '300' as const,
     letterSpacing: -2,
   },
   title: {
+    fontFamily: FONTS.display,
     fontSize: 28,
     fontWeight: '700' as const,
     letterSpacing: -0.5,
   },
   subtitle: {
+    fontFamily: FONTS.text,
     fontSize: 17,
     fontWeight: '600' as const,
     letterSpacing: -0.2,
   },
   body: {
+    fontFamily: FONTS.text,
     fontSize: 15,
     fontWeight: '400' as const,
     lineHeight: 22,
   },
   caption: {
+    fontFamily: FONTS.text,
     fontSize: 13,
     fontWeight: '400' as const,
     letterSpacing: 0.1,
   },
   label: {
+    fontFamily: FONTS.text,
     fontSize: 11,
     fontWeight: '600' as const,
     letterSpacing: 0.6,
