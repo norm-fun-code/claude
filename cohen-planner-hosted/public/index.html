@@ -124,11 +124,11 @@ tr:hover td{background:var(--s2)}
 .adv-msg{display:flex;gap:10px;max-width:760px}
 .adv-msg.user{flex-direction:row-reverse;align-self:flex-end;max-width:560px}
 .adv-avatar{width:26px;height:26px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;font-family:'SF Mono',monospace}
-.adv-avatar.ai{background:var(--accent);color:#fff}
+.adv-avatar.ai{background:linear-gradient(135deg,#6e66ff,#5048d6);color:#fff;box-shadow:0 3px 8px -2px rgba(80,72,214,.5)}
 .adv-avatar.user{background:var(--s3);color:var(--tx);border:1px solid var(--bd2)}
 .adv-bubble{padding:10px 14px;border-radius:8px;font-size:12.5px;line-height:1.6;color:var(--tx)}
-.adv-msg.user .adv-bubble{background:var(--accent-soft);border:1px solid rgba(99,91,255,.15);color:var(--tx)}
-.adv-msg.ai .adv-bubble{background:var(--s1);border:1px solid var(--bd);box-shadow:var(--shadow-sm)}
+.adv-msg.user .adv-bubble{background:linear-gradient(135deg,rgba(99,91,255,.12),rgba(99,91,255,.06));border:1px solid rgba(99,91,255,.18);color:var(--tx)}
+.adv-msg.ai .adv-bubble{background:rgba(255,255,255,.72);backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%);border:1px solid rgba(255,255,255,.65);box-shadow:0 1px 1px rgba(10,37,64,.04),0 10px 26px -18px rgba(10,37,64,.3)}
 .adv-bubble p{margin-bottom:8px}.adv-bubble p:last-child{margin-bottom:0}
 .adv-bubble ul,.adv-bubble ol{margin:6px 0 6px 20px}.adv-bubble li{margin-bottom:3px}
 .adv-bubble strong{color:var(--tx);font-weight:600}
@@ -141,10 +141,11 @@ tr:hover td{background:var(--s2)}
 .adv-bubble h4{font-size:12px;font-weight:600;margin:8px 0 3px;color:var(--t2)}
 .adv-input-area{padding:12px 18px 14px;border-top:1px solid var(--bd);background:var(--s1)}
 .adv-input-wrap{display:flex;gap:6px;align-items:flex-end;background:var(--s2);border:1px solid var(--bd2);border-radius:8px;padding:6px}
-.adv-input-wrap:focus-within{border-color:var(--accent)}
+.adv-input-wrap{transition:border-color .15s ease,box-shadow .15s ease}
+.adv-input-wrap:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px rgba(99,91,255,.14)}
 .adv-input{flex:1;background:transparent;border:none;color:var(--tx);font-family:inherit;font-size:12.5px;resize:none;outline:none;padding:6px;min-height:20px;max-height:140px;line-height:1.5}
-.adv-send{background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:5px;cursor:pointer;font-weight:600;font-size:11.5px;font-family:inherit;height:32px}
-.adv-send:hover{background:var(--accent-d)}.adv-send:disabled{background:var(--bd2);cursor:not-allowed}
+.adv-send{background:linear-gradient(135deg,#6e66ff,#5048d6);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:11.5px;font-family:inherit;height:32px;box-shadow:0 4px 12px -4px rgba(80,72,214,.6);transition:transform .12s ease,box-shadow .12s ease}
+.adv-send:hover{transform:translateY(-1px);box-shadow:0 7px 16px -5px rgba(80,72,214,.7)}.adv-send:disabled{background:var(--bd2);cursor:not-allowed;box-shadow:none;transform:none}
 .adv-agentic-btn{background:var(--s2);border:1px solid var(--bd);color:var(--t2);padding:5px 9px;border-radius:5px;cursor:pointer;font-size:11px;font-family:inherit;height:32px;transition:all .12s;white-space:nowrap}
 .adv-agentic-btn:hover{border-color:var(--p);color:var(--p)}
 .adv-agentic-btn.active{background:var(--p);color:#fff;border-color:var(--p)}
@@ -175,10 +176,11 @@ tr:hover td{background:var(--s2)}
 .adv-thinking span:nth-child(2){animation-delay:.2s}.adv-thinking span:nth-child(3){animation-delay:.4s}
 @keyframes advblink{0%,80%,100%{opacity:.3}40%{opacity:1}}
 .adv-welcome{padding:20px;text-align:center;color:var(--t2);font-size:13px;line-height:1.6}
-.adv-welcome h3{color:var(--tx);font-size:16px;margin-bottom:8px;font-weight:700}
+.adv-welcome h3{color:var(--tx);font-size:20px;margin-bottom:8px;font-weight:800;letter-spacing:-.4px}
 .adv-starters{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-top:14px;text-align:left;max-width:600px;margin-left:auto;margin-right:auto}
 .adv-starter{padding:10px 12px;background:var(--s2);border:1px solid var(--bd);border-radius:6px;cursor:pointer;font-size:11.5px;color:var(--t2);line-height:1.4;transition:all .15s}
-.adv-starter:hover{border-color:var(--accent);color:var(--tx)}
+.adv-starter{transition:border-color .15s ease,color .15s ease,transform .15s cubic-bezier(.22,1,.36,1),box-shadow .15s ease}
+.adv-starter:hover{border-color:var(--accent);color:var(--tx);transform:translateY(-2px);box-shadow:0 12px 26px -16px rgba(99,91,255,.55)}
 .adv-starter strong{display:block;color:var(--tx);font-size:12px;margin-bottom:2px}
 .adv-toolbar{display:flex;gap:6px;padding:8px 18px;border-bottom:1px solid var(--bd);background:var(--s1);align-items:center}
 .adv-toolbar .ctx-pill{background:var(--s2);border:1px solid var(--bd);padding:3px 8px;border-radius:4px;font-size:9.5px;color:var(--t2);font-family:'SF Mono',monospace}
@@ -189,13 +191,14 @@ tr:hover td{background:var(--s2)}
 .adv-rail{background:var(--s2);border-right:1px solid var(--bd);display:flex;flex-direction:column;overflow:hidden}
 .adv-rail-hdr{padding:12px 14px;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center;background:var(--s2)}
 .adv-rail-hdr h4{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:1.1px;color:var(--t3);margin:0}
-.adv-rail-new{background:var(--accent);color:#fff;border:none;padding:4px 10px;border-radius:5px;cursor:pointer;font-size:10.5px;font-weight:600;font-family:inherit;transition:background .12s}
-.adv-rail-new:hover{background:var(--accent-d)}
+.adv-rail-new{background:linear-gradient(135deg,#6e66ff,#5048d6);color:#fff;border:none;padding:4px 11px;border-radius:6px;cursor:pointer;font-size:10.5px;font-weight:600;font-family:inherit;box-shadow:0 3px 9px -3px rgba(80,72,214,.6);transition:transform .12s ease,box-shadow .12s ease}
+.adv-rail-new:hover{transform:translateY(-1px);box-shadow:0 6px 13px -4px rgba(80,72,214,.7)}
 .adv-rail-list{flex:1;overflow-y:auto;padding:8px}
 .adv-rail-list::-webkit-scrollbar{width:5px}.adv-rail-list::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:3px}
 .adv-rail-item{padding:9px 11px;border-radius:6px;cursor:pointer;margin-bottom:3px;border:1px solid transparent;font-size:11.5px;color:var(--t2);position:relative;transition:all .12s}
 .adv-rail-item:hover{background:var(--s1);border-color:var(--bd)}
-.adv-rail-item.active{background:var(--s1);border-color:var(--accent)}
+.adv-rail-item{transition:background .12s ease,border-color .12s ease,transform .12s ease}
+.adv-rail-item.active{background:linear-gradient(135deg,rgba(99,91,255,.10),rgba(99,91,255,.04));border-color:rgba(99,91,255,.4)}
 .adv-rail-title{font-weight:600;color:var(--tx);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:22px;font-size:11.5px;line-height:1.3}
 .adv-rail-meta{font-size:9.5px;color:var(--t3);font-family:'SF Mono',monospace;display:flex;justify-content:space-between}
 .adv-rail-actions{position:absolute;top:6px;right:6px;display:none;gap:2px}
@@ -219,6 +222,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .pf-cols2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .pf-quad{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px}
 .pf-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.glass-card{background:rgba(255,255,255,.72);backdrop-filter:blur(18px) saturate(165%);-webkit-backdrop-filter:blur(18px) saturate(165%);border:1px solid rgba(255,255,255,.65);border-radius:12px;box-shadow:0 1px 1px rgba(10,37,64,.04),0 14px 32px -20px rgba(10,37,64,.28)}
 @media(max-width:760px){
   .pf-split{grid-template-columns:1fr}
   .pf-kpis{grid-template-columns:repeat(2,1fr)}
@@ -1318,7 +1322,7 @@ function renderPortfolioTab(R,P){
 
   // Period selector
   const periods=['1W','1M','3M','YTD','1Y'];
-  const periodBtns=periods.map(p=>`<button onclick="loadMonarchInvestments('${p}')" style="font-size:9.5px;padding:3px 9px;border-radius:4px;border:1px solid ${_investPeriod===p?'var(--accent)':'var(--bd)'};background:${_investPeriod===p?'var(--accent)':'var(--s1)'};color:${_investPeriod===p?'#fff':'var(--t2)'};cursor:pointer;font-family:inherit;font-weight:${_investPeriod===p?600:400}">${p}</button>`).join('');
+  const periodBtns=periods.map(p=>`<button onclick="loadMonarchInvestments('${p}')" style="font-size:9.5px;padding:3px 10px;border-radius:6px;border:1px solid ${_investPeriod===p?'transparent':'var(--bd)'};background:${_investPeriod===p?'linear-gradient(135deg,#6e66ff,#5048d6)':'rgba(255,255,255,.6)'};color:${_investPeriod===p?'#fff':'var(--t2)'};cursor:pointer;font-family:inherit;font-weight:${_investPeriod===p?600:400};${_investPeriod===p?'box-shadow:0 3px 9px -3px rgba(80,72,214,.6)':''}">${p}</button>`).join('');
 
   // Stripe account from Monarch accounts list
   const stripeAcct=monarchAccounts.find(a=>a.name.toLowerCase().includes('stripe'));
@@ -1373,11 +1377,11 @@ function renderPortfolioTab(R,P){
   </div>
 
   <div class="pf-split">
-    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px">
+    <div class="glass-card" style="padding:14px">
       <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:10px">Allocation by Holding</div>
       <div style="height:220px;position:relative"><canvas id="portfolioDonut"></canvas></div>
     </div>
-    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px">
+    <div class="glass-card" style="padding:14px">
       <div class="pf-cols2">
         <div>
           <div style="font-size:8.5px;font-weight:700;color:var(--g);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">▲ Top Gainers (period)</div>
@@ -1411,21 +1415,21 @@ function renderPortfolioTab(R,P){
     </div>
   </div>
 
-  <div class="pf-scroll" style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;margin-bottom:10px">
+  <div class="pf-scroll glass-card" style="margin-bottom:10px">
    <div style="min-width:620px">
-    <div style="display:grid;grid-template-columns:90px 70px 1fr 90px 90px 90px 90px;gap:0;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--t3);padding:7px 12px;border-bottom:1px solid var(--bd);background:var(--s2)">
+    <div style="display:grid;grid-template-columns:90px 70px 1fr 90px 90px 90px 90px;gap:0;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--t3);padding:7px 12px;border-bottom:1px solid var(--bd);background:rgba(255,255,255,.45)">
       <div>Ticker</div><div>Type</div><div>Value</div><div style="text-align:right">% Portfolio</div><div style="text-align:right">Period Δ$</div><div style="text-align:right">Period Δ%</div><div style="text-align:right">All-time Δ%</div>
     </div>
     ${holdings.map((h,i)=>{
       const pct=totalVal>0?(h.value/totalVal*100):0;
       const isCash=h.securityType==='cash';
-      const rowBg=i%2===0?'var(--s1)':'var(--s2)';
+      const rowBg=i%2===0?'transparent':'rgba(10,37,64,.025)';
       return`<div style="display:grid;grid-template-columns:90px 70px 1fr 90px 90px 90px 90px;align-items:center;padding:5px 12px;border-bottom:1px solid var(--bd);background:${rowBg}">
         <div style="font-size:10.5px;font-weight:600;color:${isCash?'var(--t2)':'var(--tx)'};font-family:'SF Mono',monospace">${advEscape(h.ticker||"")}</div>
         <div style="font-size:8.5px;color:var(--t3)">${typeLabel[h.securityType]||h.securityType||'—'}</div>
         <div>
           <div style="font-size:10px;font-family:'SF Mono',monospace;font-weight:500;color:var(--tx)">${fmt(h.value)}</div>
-          <div style="height:3px;background:var(--s3);border-radius:2px;margin-top:3px;max-width:120px"><div style="height:100%;width:${Math.min(100,pct*2)}%;background:${isCash?'var(--t4)':'var(--accent)'};border-radius:2px"></div></div>
+          <div style="height:4px;background:rgba(10,37,64,.07);border-radius:3px;margin-top:3px;max-width:120px"><div style="height:100%;width:${Math.min(100,pct*2)}%;background:${isCash?'var(--t4)':'linear-gradient(90deg,#6e66ff,#5048d6)'};border-radius:3px"></div></div>
         </div>
         <div style="text-align:right;font-size:9.5px;font-family:'SF Mono',monospace;color:var(--t2)">${pct.toFixed(1)}%</div>
         <div style="text-align:right;font-size:9.5px;font-family:'SF Mono',monospace;font-weight:600;color:${isCash?'var(--t3)':colorPct(h.periodChange)}">${isCash?'—':signFmt(h.periodChange)}</div>
@@ -1481,10 +1485,10 @@ function renderPortfolioTab(R,P){
 
     const allItems=[...flags,...observations];
     if(allItems.length===0)return'';
-    return`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:10px">
+    return`<div class="glass-card" style="padding:14px;margin-bottom:10px">
       <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:10px">Portfolio Analysis</div>
       <div style="display:flex;flex-direction:column;gap:6px">
-        ${allItems.map(o=>`<div style="display:flex;align-items:flex-start;gap:8px;padding:7px 10px;background:var(--s2);border-radius:7px">
+        ${allItems.map(o=>`<div style="display:flex;align-items:flex-start;gap:8px;padding:7px 10px;background:rgba(10,37,64,.03);border-radius:7px;border-left:2px solid ${o.c}">
           <div style="font-size:11px;color:${o.c};line-height:1.45">${o.t}</div>
         </div>`).join('')}
       </div>
