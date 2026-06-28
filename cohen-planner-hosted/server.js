@@ -1051,13 +1051,17 @@ app.post('/api/advisor/stream', requireAuth, async (req, res) => {
 
   const send = (payload) => res.write(`data: ${JSON.stringify(payload)}\n\n`);
 
+  // Anthropic requires ≥1 message. The auto-brief sends messages:[] with the prompt in `message`,
+  // so fall back to a single user turn built from `message` when the array is empty.
+  const apiMessages = (Array.isArray(messages) && messages.length) ? messages : [{ role: 'user', content: message }];
+
   try {
     let fullReply = '';
     const stream = anthropic.messages.stream({
       model: 'claude-sonnet-4-6',
       max_tokens: 4000,
       system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
-      messages,
+      messages: apiMessages,
     });
 
     stream.on('text', (text) => {
@@ -1109,7 +1113,7 @@ app.post('/api/advisor/agentic', requireAuth, async (req, res) => {
 
   let aiParams = { ...(currentParams || {}) };
   const proposedChanges = [];
-  let conversationMsgs = [...messages];
+  let conversationMsgs = (Array.isArray(messages) && messages.length) ? [...messages] : [{ role: 'user', content: message }];
   let fullReply = '';
 
   const agenticSystemPrompt = systemPrompt + `
