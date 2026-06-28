@@ -838,17 +838,46 @@ app.get('/api/debug/wealth-income', async (req, res) => {
   try {
     const sync = require('./src/connectors/monarch-mcp-sync');
     const monarchMcp = require('./src/services/monarch-mcp');
-    const { isInternalTransfer, isExcludedIncome, isNonIncomePositive } = require('./src/connectors/monarch');
+    const { isInternalTransfer, isExcludedIncome, isNonIncomePositive, isFixedCategory } = require('./src/connectors/monarch');
     const days = Math.min(Number(req.query.days) || 30, 90);
     const ymd = (d) => new Date(d).toISOString().slice(0, 10);
     const start = ymd(new Date(Date.now() - days * 864e5));
     const end = ymd(new Date());
     const today = end;
 
-    const [txns, incomeCats] = await Promise.all([
+    const [txns, incomeCats, transferCats, fixedCats] = await Promise.all([
       sync.fetchTxnsInRange(start, end),
       sync.incomeCategoryNames(),
+      sync.transferCategoryNames(),
+      sync.fixedCategoryNames(),
     ]);
+
+    // Monarch's OWN aggregation (now the PRIMARY source for the stored metrics).
+    // These are the numbers that should match Monarch's Reports view to the dollar.
+    const sumCash = (cf) => {
+      let total = 0;
+      for (const [k, v] of cf || new Map()) {
+        if (String(k).slice(0, 10) > today) continue;
+        total += Math.abs(v);
+      }
+      return Math.round(total);
+    };
+    let cashflow = null;
+    try {
+      const [ci, ce, cd] = await Promise.all([
+        sync.dailyCashflow(start, end, 'income', transferCats),
+        sync.dailyCashflow(start, end, 'expense', transferCats),
+        sync.dailyCashflow(start, end, 'expense', [...new Set([...transferCats, ...fixedCats])]),
+      ]);
+      cashflow = {
+        income: sumCash(ci),
+        spending: sumCash(ce),
+        spending_discretionary: sumCash(cd),
+        note: 'GetCashFlow (Monarch Reports math) — PRIMARY source for stored metrics',
+      };
+    } catch (err) {
+      cashflow = { error: err.message };
+    }
 
     let income = 0, spend = 0, transfersSkipped = 0;
     const incomeTxns = [], excludedPositives = [];
@@ -874,12 +903,16 @@ app.get('/api/debug/wealth-income', async (req, res) => {
     res.json({
       window: { start, end, days },
       mcpConfigured: monarchMcp.isConfigured(),
+      cashflow,                                     // ⇐ PRIMARY: should match Monarch Reports
       incomeCategoriesDetected: [...incomeCats],   // empty ⇒ GetCategories shape didn't parse → heuristic fallback
+      transferCategoriesDetected: [...transferCats],
       txnCount: (txns || []).length,
-      income30d: Math.round(income),
-      spending30d: Math.round(spend),
-      transfersSkipped,
-      topIncomeTxns: incomeTxns.slice(0, 20),       // what's COUNTED as income
+      txnDerived: {                                 // FALLBACK math (only used if GetCashFlow is down)
+        income30d: Math.round(income),
+        spending30d: Math.round(spend),
+        transfersSkipped,
+      },
+      topIncomeTxns: incomeTxns.slice(0, 20),       // what's COUNTED as income (fallback path)
       topExcludedPositives: excludedPositives.slice(0, 20), // positives NOT counted (refunds/transfers)
     });
   } catch (err) {

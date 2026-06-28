@@ -234,14 +234,62 @@ async function syncViaMcp(ctx) {
     }
   }
 
-  const days = new Set([...expByDay.keys(), ...incByDay.keys()]);
+  // PRIMARY SOURCE for income & spending: Monarch's OWN GetCashFlow day
+  // aggregation (category_type income/expense). This is the exact math behind
+  // Monarch's Reports view, so the totals match to the dollar — unlike the
+  // transaction-level re-derivation above, which over-counted income (positive
+  // deposits/reimbursements that Monarch's income report excludes) and missed
+  // refund-netting on spending. The transaction loop is kept as a FALLBACK for
+  // when GetCashFlow is unavailable, and still backs spending_discretionary.
+  //
+  // GetCashFlow is Monarch-signed: income rows positive, expense rows negative.
+  // exclude_categories drops transfers / CC-payments so we never double-count.
+  const [transferCats, fixedCats] = await Promise.all([
+    transferCategoryNames(),
+    fixedCategoryNames(),
+  ]);
+  let cashIncome = new Map();
+  let cashExpense = new Map();
+  let cashDiscretionary = new Map();
+  try {
+    [cashIncome, cashExpense, cashDiscretionary] = await Promise.all([
+      dailyCashflow(startDate, endDate, 'income', transferCats),
+      dailyCashflow(startDate, endDate, 'expense', transferCats),
+      dailyCashflow(startDate, endDate, 'expense', [...new Set([...transferCats, ...fixedCats])]),
+    ]);
+  } catch (err) {
+    console.error('[monarch_mcp_sync] GetCashFlow failed, using transaction-derived totals:', err.message);
+  }
+
+  // Normalize a Monarch-signed cash-flow Map into a positive, YYYY-MM-DD-keyed
+  // Map. Income/expense are made positive; keys are sliced to the day.
+  const normalize = (cf) => {
+    const out = new Map();
+    for (const [k, v] of cf) {
+      const day = String(k).slice(0, 10);
+      if (day > today) continue; // skip future-dated buckets
+      out.set(day, (out.get(day) || 0) + Math.abs(v));
+    }
+    return out;
+  };
+  const incCash = normalize(cashIncome);
+  const expCash = normalize(cashExpense);
+  const discCash = normalize(cashDiscretionary);
+
+  // Prefer Monarch's aggregation; fall back to transaction-derived maps when the
+  // GetCashFlow call returned nothing (so finances still flow if it's down).
+  const incSrc = incCash.size ? incCash : incByDay;
+  const expSrc = expCash.size ? expCash : expByDay;
+  const discSrc = discCash.size ? discCash : discByDay;
+
+  const days = new Set([...expSrc.keys(), ...incSrc.keys()]);
   for (const day of days) {
-    const spend = expByDay.get(day) || 0;
-    const income = incByDay.get(day) || 0;
-    if (expByDay.has(day)) metrics.push(m('spending', spend, day));
-    if (discByDay.has(day)) metrics.push(m('spending_discretionary', discByDay.get(day) || 0, day));
-    if (incByDay.has(day)) metrics.push(m('income', income, day));
-    if (expByDay.has(day) || incByDay.has(day)) metrics.push(m('net_cashflow', income - spend, day));
+    const spend = expSrc.get(day) || 0;
+    const income = incSrc.get(day) || 0;
+    if (expSrc.has(day)) metrics.push(m('spending', spend, day));
+    if (discSrc.has(day)) metrics.push(m('spending_discretionary', discSrc.get(day) || 0, day));
+    if (incSrc.has(day)) metrics.push(m('income', income, day));
+    if (expSrc.has(day) || incSrc.has(day)) metrics.push(m('net_cashflow', income - spend, day));
   }
 
   // Reconcile the window against Monarch's current truth: prune stored docs it no
@@ -287,4 +335,6 @@ module.exports = {
   txnToDocument,
   syncViaMcp,
   incomeCategoryNames,
+  transferCategoryNames,
+  fixedCategoryNames,
 };
