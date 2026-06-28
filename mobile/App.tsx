@@ -35,6 +35,7 @@ import { AskOverlay } from './src/components/AskOverlay';
 import { CheckinModal } from './src/components/CheckinModal';
 import { WeeklyIntentionsCard } from './src/components/WeeklyIntentionsCard';
 import { HealthCard } from './src/components/HealthCard';
+import { LinearGradient } from 'expo-linear-gradient';
 import { RecoveryCard } from './src/components/RecoveryCard';
 import { SleepCheckInCard } from './src/components/SleepCheckInCard';
 import { WorkoutsPanel } from './src/components/WorkoutsPanel';
@@ -326,6 +327,25 @@ export default function App() {
             refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={c.subtext} />}
             showsVerticalScrollIndicator={false}
           >
+            {/* Signature hero glow — a soft aurora at the top tinted by today's
+                recovery band, fading into the page. The "wow on open". */}
+            {(() => {
+              const b = liveRecovery.recovery?.band;
+              const hero: [string, string] =
+                b === 'green' ? ['rgba(90,232,154,0.22)', 'rgba(90,232,154,0)']
+                : b === 'yellow' ? ['rgba(255,196,77,0.22)', 'rgba(255,196,77,0)']
+                : b === 'red' ? ['rgba(255,132,120,0.20)', 'rgba(255,132,120,0)']
+                : ['rgba(99,91,255,0.14)', 'rgba(99,91,255,0)'];
+              return (
+                <LinearGradient
+                  colors={hero}
+                  start={{ x: 0.5, y: 0 }}
+                  end={{ x: 0.5, y: 1 }}
+                  style={styles.heroGlow}
+                  pointerEvents="none"
+                />
+              );
+            })()}
             <Header date={d?.date ?? today} />
             <AnimatedEntry key={tab} delay={0} distance={6} style={styles.titleRow}>
               <View>
@@ -414,6 +434,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
   scroll: { flex: 1 },
   content: { paddingHorizontal: spacing.md, paddingBottom: spacing.xl },
+  heroGlow: { position: 'absolute', top: -120, left: -spacing.md, right: -spacing.md, height: 420 },
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
