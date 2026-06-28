@@ -105,24 +105,48 @@ app.get('/login', (req, res) => {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Cohen Financial Planner — Sign In</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Inter',-apple-system,sans-serif;background:#f6f9fc;min-height:100vh;display:flex;align-items:center;justify-content:center;color:#0a2540}
-.card{background:#fff;border:1px solid #e6ebf1;border-radius:12px;padding:40px 36px;width:100%;max-width:380px;box-shadow:0 4px 16px rgba(50,71,92,.08)}
-h1{font-size:20px;font-weight:700;margin-bottom:6px}
-p{color:#425466;font-size:13px;margin-bottom:24px;line-height:1.5}
-label{display:block;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:#8898aa;margin-bottom:6px}
-input{width:100%;background:#fafbfc;border:1px solid #d0d7de;color:#0a2540;font-family:inherit;font-size:14px;padding:11px 13px;border-radius:8px;outline:none;transition:border-color .15s}
-input:focus{border-color:#635bff;box-shadow:0 0 0 3px rgba(99,91,255,.12)}
-button{width:100%;background:#635bff;color:#fff;border:none;padding:12px;border-radius:8px;cursor:pointer;font-weight:600;font-size:14px;font-family:inherit;margin-top:16px;transition:background .15s}
-button:hover{background:#4f48cc}
-button:disabled{background:#adbdcc;cursor:not-allowed}
-.err{background:#fceaee;border:1px solid rgba(205,61,100,.25);color:#cd3d64;padding:10px 12px;border-radius:6px;font-size:12px;margin-top:12px;display:none}
+body{font-family:'Inter',-apple-system,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;color:#0a2540;padding:20px;-webkit-font-smoothing:antialiased;overflow:hidden}
+.mesh{position:fixed;inset:-20%;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(38% 42% at 12% 4%, rgba(99,91,255,.20), transparent 62%),
+    radial-gradient(34% 40% at 94% 8%, rgba(8,145,178,.16), transparent 60%),
+    radial-gradient(40% 42% at 82% 96%, rgba(230,73,128,.12), transparent 62%),
+    radial-gradient(42% 46% at 20% 100%, rgba(124,58,237,.14), transparent 64%),
+    linear-gradient(180deg,#f7f9fd 0%,#eef2f9 100%);
+  animation:drift 26s ease-in-out infinite alternate}
+@keyframes drift{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(0,-2.4%,0) scale(1.06)}}
+.card{background:rgba(255,255,255,.72);backdrop-filter:blur(22px) saturate(170%);-webkit-backdrop-filter:blur(22px) saturate(170%);
+  border:1px solid rgba(255,255,255,.65);border-radius:18px;padding:36px 34px 32px;width:100%;max-width:392px;
+  box-shadow:0 1px 1px rgba(10,37,64,.05),0 30px 60px -28px rgba(99,91,255,.5);
+  animation:rise .6s cubic-bezier(.22,1,.36,1) both}
+@keyframes rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+.brand{display:flex;align-items:center;gap:13px;margin-bottom:22px}
+.mark{width:46px;height:46px;border-radius:13px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#7d76ff 0%,#5048d6 55%,#7c3aed 100%);
+  box-shadow:0 8px 20px -5px rgba(80,72,214,.65),inset 0 1px 0 rgba(255,255,255,.35)}
+.brand h1{font-size:18px;font-weight:800;letter-spacing:-.5px;line-height:1.05;
+  background:linear-gradient(95deg,#0a2540,#5048d6);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.brand .sub{font-size:9.5px;font-weight:600;color:#8898aa;text-transform:uppercase;letter-spacing:1.3px;margin-top:3px}
+p{color:#425466;font-size:13px;margin-bottom:22px;line-height:1.5}
+label{display:block;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:#8898aa;margin-bottom:7px}
+input{width:100%;background:rgba(255,255,255,.6);border:1px solid #d0d7de;color:#0a2540;font-family:inherit;font-size:14px;padding:12px 14px;border-radius:10px;outline:none;transition:border-color .15s,box-shadow .15s}
+input:focus{border-color:#635bff;box-shadow:0 0 0 3px rgba(99,91,255,.14)}
+button{width:100%;background:linear-gradient(135deg,#6e66ff,#5048d6);color:#fff;border:none;padding:13px;border-radius:10px;cursor:pointer;font-weight:600;font-size:14px;font-family:inherit;margin-top:18px;box-shadow:0 8px 20px -6px rgba(80,72,214,.6);transition:transform .15s cubic-bezier(.22,1,.36,1),box-shadow .15s ease}
+button:hover{transform:translateY(-1px);box-shadow:0 12px 26px -7px rgba(80,72,214,.7)}
+button:active{transform:translateY(0)}
+button:disabled{background:#adbdcc;cursor:not-allowed;box-shadow:none;transform:none}
+.err{background:rgba(252,234,238,.85);border:1px solid rgba(205,61,100,.25);color:#cd3d64;padding:10px 12px;border-radius:8px;font-size:12px;margin-top:12px;display:none}
 </style>
 </head>
 <body>
+<div class="mesh"></div>
 <div class="card">
-  <h1>💰 Cohen Financial Planner</h1>
+  <div class="brand">
+    <div class="mark" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 20 20" fill="none"><path d="M3 13.5 L7.5 9 L10.5 12 L17 4.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="17" cy="4.5" r="1.7" fill="#fff"/></svg></div>
+    <div><h1>Cohen Family</h1><div class="sub">Financial Planner</div></div>
+  </div>
   <p>Sign in to access your family financial plan.</p>
   <label>Password</label>
   <input type="password" id="pw" placeholder="Enter password" autofocus>
