@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, useColorScheme, ActivityIndic
 import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography, shadow, colors } from '../theme';
 import { SectionHeader } from './SectionHeader';
+import { GradientButton } from './GradientButton';
 import { RECOVERY_SELF_REPORT_URL, authHeaders, fetchWithTimeout } from '../config';
 
 interface Props {
@@ -98,16 +99,13 @@ export function SleepCheckInCard({ visible, onSubmitted }: Props) {
         </TouchableOpacity>
       </View>
 
-      <TouchableOpacity
+      <GradientButton
+        label="Log sleep"
         onPress={submit}
-        disabled={quality == null || submitting}
-        style={[styles.submit, { backgroundColor: quality == null ? c.border : c.accent }]}
-        activeOpacity={0.85}
-      >
-        {submitting
-          ? <ActivityIndicator size="small" color="#fff" />
-          : <Text style={[styles.submitText, { color: quality == null ? c.subtext : '#fff' }]}>Log sleep</Text>}
-      </TouchableOpacity>
+        disabled={quality == null}
+        loading={submitting}
+        style={{ marginTop: spacing.md }}
+      />
     </View>
   );
 }

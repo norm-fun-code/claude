@@ -38,6 +38,7 @@ import { HealthCard } from './src/components/HealthCard';
 import { LinearGradient } from 'expo-linear-gradient';
 import { RecoveryCard } from './src/components/RecoveryCard';
 import { SleepCheckInCard } from './src/components/SleepCheckInCard';
+import { GradientButton } from './src/components/GradientButton';
 import { WorkoutsPanel } from './src/components/WorkoutsPanel';
 import { QuoteCard } from './src/components/QuoteCard';
 import { NotionCard } from './src/components/NotionCard';
@@ -185,13 +186,11 @@ export default function App() {
       case 'wealth':
         return (
           <>
-            <TouchableOpacity
-              style={[styles.wealthAskBtn, { backgroundColor: c.accent }]}
+            <GradientButton
+              label="Ask about my finances"
               onPress={() => { setPendingAskQ('Walk me through my wealth dashboard and financial plan'); setTab('ask'); }}
-              activeOpacity={0.82}
-            >
-              <Text style={styles.wealthAskBtnText}>Ask about my finances</Text>
-            </TouchableOpacity>
+              style={styles.wealthAskBtn}
+            />
             <WealthCard wealth={d?.wealth ?? null} />
             {/* Asset Mix — structural allocation + single-name concentration,
                 sits right under net worth (a natural extension of it). */}
@@ -486,11 +485,7 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 14, lineHeight: 21, fontStyle: 'italic' },
   footer: { height: spacing.lg },
   wealthAskBtn: {
-    borderRadius: 14,
-    paddingVertical: spacing.md,
-    alignItems: 'center' as const,
     marginTop: spacing.sm,
     marginBottom: spacing.md,
   },
-  wealthAskBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' as const },
 });
