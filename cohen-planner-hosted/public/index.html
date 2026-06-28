@@ -263,6 +263,10 @@ body{background:transparent}
 .cc{transition:box-shadow .25s ease}
 .cc:hover{box-shadow:0 1px 1px rgba(10,37,64,.04), 0 22px 48px -26px rgba(10,37,64,.34)}
 .tabs button.active{box-shadow:0 6px 16px -6px rgba(99,91,255,.6)}
+/* Secondary buttons & chips lift subtly on hover */
+.btn,.scenario-chip,.snap-chip,.logout-btn{transition:transform .15s cubic-bezier(.22,1,.36,1),box-shadow .15s ease,border-color .15s ease,background .15s ease,color .15s ease}
+.btn:hover,.scenario-chip:hover,.snap-chip:hover{transform:translateY(-1px)}
+.btn-g:hover{box-shadow:0 8px 18px -8px rgba(99,91,255,.7)}
 
 /* (3) Typographic scale + tabular numerals ──────────────────── */
 .kpi-v,.hero-v,.sv,.mono,table,td,th,.adv-rail-meta,.sync-pill{font-variant-numeric:tabular-nums;font-feature-settings:'tnum','ss01','cv11'}
@@ -471,10 +475,11 @@ const fmtF=n=>`$${Math.round(n).toLocaleString()}`;
 
 function showToast(msg,type){
   const d=document.createElement('div');
-  const c=type==='green'?'#1a8754':type==='red'?'#cd3d64':'#0a2540';
-  d.style.cssText=`position:fixed;top:16px;right:16px;background:${c};color:#fff;padding:10px 16px;border-radius:8px;font-size:12px;font-weight:500;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.15);max-width:300px`;
+  const c=type==='green'?'#1a8754':type==='red'?'#cd3d64':'#635bff';
+  d.style.cssText=`position:fixed;top:18px;right:18px;background:rgba(255,255,255,.85);backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%);color:#0a2540;padding:11px 15px 11px 16px;border-radius:11px;font-size:12px;font-weight:500;z-index:9999;box-shadow:0 1px 1px rgba(10,37,64,.04),0 16px 40px -14px rgba(10,37,64,.4);max-width:320px;border:1px solid rgba(255,255,255,.7);border-left:3px solid ${c};opacity:0;transform:translateY(-8px) scale(.98);transition:opacity .35s cubic-bezier(.22,1,.36,1),transform .35s cubic-bezier(.22,1,.36,1)`;
   d.textContent=msg;document.body.appendChild(d);
-  setTimeout(()=>{d.style.opacity='0';d.style.transition='opacity .3s';setTimeout(()=>d.remove(),300)},3000);
+  requestAnimationFrame(()=>{d.style.opacity='1';d.style.transform='none'});
+  setTimeout(()=>{d.style.opacity='0';d.style.transform='translateY(-8px) scale(.98)';setTimeout(()=>d.remove(),350)},3000);
 }
 function showConfirm(msg){return window.confirm?window.confirm(msg):true;}
 function toggleMobileControls(){
@@ -1122,6 +1127,8 @@ function _introAnimate(){
   document.querySelectorAll('#heroBand .hero-v').forEach(_animEl);
   document.querySelectorAll('#kpis .kpi').forEach((c,i)=>{c.classList.add('reveal');c.style.animationDelay=(60+i*45)+'ms'});
   document.querySelectorAll('#kpis .kpi-v').forEach((el,i)=>setTimeout(()=>_animEl(el),120+i*45));
+  const ca=document.getElementById('chartArea');if(ca){ca.classList.add('reveal');ca.style.animationDelay='420ms'}
+  document.querySelectorAll('#summaries .sc').forEach((c,i)=>{c.classList.add('reveal');c.style.animationDelay=(480+i*60)+'ms'});
 }
 function render(){
   const{R,tT,tC,tTx,tS,dp,mm}=run(P);
