@@ -158,7 +158,7 @@ export function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}
       <Text style={[styles.label, { color: c.subtext }]}>Last week</Text>
       <Text style={[styles.reviewHeadline, { color: c.text }]}>{review!.headline}</Text>
       {review!.narrative ? (
-        <Text style={[styles.reviewNarrative, { color: c.subtext }]} numberOfLines={4}>{review!.narrative}</Text>
+        <Text style={[styles.reviewNarrative, { color: c.subtext }]}>{review!.narrative}</Text>
       ) : null}
       <Bullets label="WINS" items={review!.wins?.slice(0, 2)} color={c.green} />
       <Bullets label="WATCH-OUTS" items={review!.watchouts?.slice(0, 2)} color={c.red} />
