@@ -2902,7 +2902,7 @@ function advRenderMessages(){
     }
     msgs.innerHTML=`<div class="adv-welcome">
       <h3>Ask me anything about your plan</h3>
-      <p>I have your live planner state — every slider, scenario, and projection. Try one of these or ask your own:</p>
+      <p>I have your live planner state <em>and</em> read-only access to your Monarch data — real balances, transactions, spending, and holdings. Try one of these or ask your own:</p>
       <button onclick="advOptimize()" style="width:100%;margin-bottom:14px;padding:13px 18px;background:linear-gradient(135deg,var(--accent),var(--p));color:#fff;border:none;border-radius:9px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px;letter-spacing:-.01em;box-shadow:0 3px 12px rgba(99,91,255,.25);transition:opacity .15s" onmouseover="this.style.opacity='.9'" onmouseout="this.style.opacity='1'">⚡ What should I optimize? <span style="font-size:10px;font-weight:400;opacity:.85">— run full analysis, auto-propose best scenario</span></button>
       <div class="adv-starters">
         <div class="adv-starter" onclick="advAsk('Given my current plan, what should I prioritize in the next 12 months?')"><strong>🎯 Top priority?</strong>Next 12 months</div>
@@ -2910,7 +2910,7 @@ function advRenderMessages(){
         <div class="adv-starter" onclick="advAsk('Should I sell some Stripe RSU now to reduce concentration risk, or wait for IPO?')"><strong>⚠️ Stripe concentration</strong>Sell now or wait?</div>
         <div class="adv-starter" onclick="advAsk('How would moving from a \$2M to \$1.7M home affect my plan? Be specific.')"><strong>🏠 Home tradeoff</strong>\$2M vs \$1.7M</div>
         <div class="adv-starter" onclick="advAsk('What\\'s the single biggest risk I\\'m underweighting in this plan?')"><strong>🔍 Blind spots</strong>What am I missing?</div>
-        <div class="adv-starter" onclick="advAsk('Where should I deploy my next \$25K of monthly savings - FXAIX, individual stocks, or cash?')"><strong>💰 Deploy \$25K</strong>Where to invest</div>
+        <div class="adv-starter" onclick="advAsk('Using my live Monarch data, what did I actually spend over the last 3 months, broken down by category? Flag anything that looks high.')"><strong>📊 My real spending</strong>Live from Monarch</div>
       </div>
     </div>`;
     return;
@@ -3176,7 +3176,8 @@ async function advSendStream(text,chat,liveContext,thinking){
     });
     if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||`HTTP ${res.status}`)}
     thinking.innerHTML='';
-    let fullReply='';
+    let fullReply='';let toolNote='';
+    const _renderBubble=()=>{thinking.innerHTML=toolNote+advMarkdown(fullReply);const m=document.getElementById('advMsgs');if(m)m.scrollTop=m.scrollHeight;};
     const reader=res.body.getReader();const dec=new TextDecoder();let buf='';
     outer:while(true){
       const{done,value}=await reader.read();
@@ -3187,16 +3188,20 @@ async function advSendStream(text,chat,liveContext,thinking){
         if(!line.startsWith('data: '))continue;
         let payload;try{payload=JSON.parse(line.slice(6))}catch{continue}
         if(payload.error)throw new Error(payload.error);
+        if(payload.tool_call){
+          const nm=(payload.tool_call.name||'').replace(/^monarch_/,'');
+          toolNote=`<div class="adv-tool-call"><span class="tc-icon">🔍</span><span class="tc-body">Querying live Monarch data · <strong>${advEscape(nm)}</strong></span></div>`;
+          _renderBubble();
+        }
         if(payload.delta){
           fullReply+=payload.delta;
-          thinking.innerHTML=advMarkdown(fullReply);
-          const msgs=document.getElementById('advMsgs');if(msgs)msgs.scrollTop=msgs.scrollHeight;
+          _renderBubble();
         }
         if(payload.done)break outer;
       }
     }
     const answer=fullReply||'Sorry, no response. Try again?';
-    thinking.innerHTML=advMarkdown(answer);
+    thinking.innerHTML=(fullReply?'':toolNote)+advMarkdown(answer);
     advisorConversation.push({role:'assistant',content:answer});
     chat.messages=advisorConversation;chat.updatedAt=Date.now();
     advRenderRail();

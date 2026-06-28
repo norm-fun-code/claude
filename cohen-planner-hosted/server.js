@@ -681,6 +681,52 @@ async function monarchMCPHandshake(accessToken) {
   } catch { /* notifications may 202/204 with empty body — ignore */ }
 }
 
+// ── Monarch tools for the AI Advisor ─────────────────────────────────────────
+// Expose Monarch's read-only MCP tools (the Get* family) to the advisor so it can
+// query the user's LIVE financial data. Schemas are pulled from Monarch's own
+// tools/list so the model always sees correct argument shapes. Cached briefly.
+let _monarchAdvToolsCache = { ts: 0, tools: null };
+async function getMonarchAdvisorTools(accessToken) {
+  if (!accessToken) return [];
+  const now = Date.now();
+  if (_monarchAdvToolsCache.tools && (now - _monarchAdvToolsCache.ts) < 10 * 60 * 1000) {
+    return _monarchAdvToolsCache.tools;
+  }
+  try {
+    await monarchMCPHandshake(accessToken);
+    const list = await callMonarchMCP(accessToken, 'tools/list');
+    const raw = list?.result?.tools || list?.tools || [];
+    // Read-only only — the Get* family. Never expose Create/Update/Delete to the advisor.
+    const tools = raw
+      .filter(t => /^Get/.test(t.name || ''))
+      .map(t => ({
+        name: 'monarch_' + t.name,
+        description: ('[Live Monarch data] ' + (t.description || t.name)).slice(0, 900),
+        input_schema: t.inputSchema && t.inputSchema.type ? t.inputSchema : { type: 'object', properties: {} },
+      }));
+    _monarchAdvToolsCache = { ts: now, tools };
+    return tools;
+  } catch (e) {
+    console.error('Monarch advisor tools/list failed:', e.message);
+    return [];
+  }
+}
+// Execute one Monarch read tool call from the advisor; returns a compact string for the model.
+async function runMonarchAdvisorTool(accessToken, toolName, args) {
+  const realName = String(toolName || '').replace(/^monarch_/, '');
+  if (!/^Get/.test(realName)) return { error: 'Only read-only Monarch tools are allowed.' };
+  try {
+    const r = await callMonarchMCP(accessToken, 'tools/call', { name: realName, arguments: args || {} });
+    if (r?.error) return { error: r.error.message || JSON.stringify(r.error) };
+    const data = unwrapMCPResult(r);
+    let out = typeof data === 'string' ? data : JSON.stringify(data);
+    if (out && out.length > 8000) out = out.slice(0, 8000) + ' …[truncated]';
+    return out || '(no data)';
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
 app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
   try {
     const accessToken = await getMonarchAccessToken();
@@ -1056,20 +1102,49 @@ app.post('/api/advisor/stream', requireAuth, async (req, res) => {
   const apiMessages = (Array.isArray(messages) && messages.length) ? messages : [{ role: 'user', content: message }];
 
   try {
+    // Give the advisor live read-only access to Monarch when the user has connected it.
+    const accessToken = await getMonarchAccessToken().catch(() => null);
+    const monarchTools = await getMonarchAdvisorTools(accessToken);
+    const sys = systemPrompt + (monarchTools.length ? `
+
+═══ LIVE MONARCH ACCESS ═══
+You can query the user's REAL Monarch Money data with the monarch_* tools (accounts & balances, transactions, cash flow, spending by category, investments, recurring, net worth history, and more). When the user asks about actual spending, balances, holdings, budgets, or recent activity, CALL these tools and answer from real data instead of the plan's assumptions. Dates are ISO (YYYY-MM-DD). Today is ${new Date().toISOString().slice(0,10)}. Be specific with real numbers and say when a figure comes from live Monarch data.` : '');
+
     let fullReply = '';
-    const stream = anthropic.messages.stream({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 4000,
-      system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
-      messages: apiMessages,
-    });
+    let convo = apiMessages.slice();
+    let lastUsage = null;
+    let loop = 0;
+    while (loop++ < 6) {
+      const stream = anthropic.messages.stream({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 4000,
+        system: [{ type: 'text', text: sys, cache_control: { type: 'ephemeral' } }],
+        messages: convo,
+        ...(monarchTools.length ? { tools: monarchTools } : {}),
+      });
+      stream.on('text', (text) => { fullReply += text; send({ delta: text }); });
+      const msg = await stream.finalMessage();
+      lastUsage = msg.usage;
 
-    stream.on('text', (text) => {
-      fullReply += text;
-      send({ delta: text });
-    });
-
-    const msg = await stream.finalMessage();
+      if (msg.stop_reason === 'tool_use') {
+        const toolResults = [];
+        for (const block of msg.content) {
+          if (block.type !== 'tool_use') continue;
+          send({ tool_call: { name: block.name } });
+          const result = accessToken
+            ? await runMonarchAdvisorTool(accessToken, block.name, block.input)
+            : { error: 'Monarch is not connected.' };
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: block.id,
+            content: typeof result === 'string' ? result : JSON.stringify(result),
+          });
+        }
+        convo = [...convo, { role: 'assistant', content: msg.content }, { role: 'user', content: toolResults }];
+        continue;
+      }
+      break;
+    }
 
     // Persist atomically — only after a successful stream
     const pair = [
@@ -1090,7 +1165,7 @@ app.post('/api/advisor/stream', requireAuth, async (req, res) => {
       await db.query('UPDATE advisor_chats SET title=$1 WHERE id=$2', [title, chatId]);
     }
 
-    send({ done: true, usage: msg.usage });
+    send({ done: true, usage: lastUsage });
     res.end();
   } catch (err) {
     console.error('Advisor stream error:', err);
@@ -1128,6 +1203,15 @@ Tools available:
 
 Workflow: understand what he's asking → set_param for each change → run_projection → interpret results → save_scenario if it's a worthwhile alternative. Be specific and quantitative in your analysis.`;
 
+  // Live read-only Monarch access (same tools as the normal chat) so the AI can ground
+  // its proposals in real balances, spending and holdings — not just plan assumptions.
+  const monarchAccessToken = await getMonarchAccessToken().catch(() => null);
+  const monarchTools = await getMonarchAdvisorTools(monarchAccessToken);
+  const fullSystemPrompt = agenticSystemPrompt + (monarchTools.length ? `
+
+═══ LIVE MONARCH ACCESS ═══
+You also have monarch_* tools to read Norm's REAL Monarch Money data (accounts, transactions, cash flow, spending by category, investments, recurring, net worth history). Use them to ground proposals in actual numbers. Dates are ISO; today is ${new Date().toISOString().slice(0,10)}.` : '');
+
   try {
     let loopCount = 0;
     while (loopCount++ < 8) {
@@ -1135,9 +1219,9 @@ Workflow: understand what he's asking → set_param for each change → run_proj
       const stream = anthropic.messages.stream({
         model: 'claude-sonnet-4-6',
         max_tokens: 4000,
-        system: [{ type: 'text', text: agenticSystemPrompt, cache_control: { type: 'ephemeral' } }],
+        system: [{ type: 'text', text: fullSystemPrompt, cache_control: { type: 'ephemeral' } }],
         messages: conversationMsgs,
-        tools: ADVISOR_TOOLS,
+        tools: [...ADVISOR_TOOLS, ...monarchTools],
       });
 
       stream.on('text', (text) => {
@@ -1185,9 +1269,15 @@ Workflow: understand what he's asking → set_param for each change → run_proj
           } else if (block.name === 'save_scenario') {
             send({ tool_call: { name: 'save_scenario', scenarioName: block.input.name, aiParams: { ...aiParams } } });
             result = { ok: true, name: block.input.name };
+
+          } else if (block.name && block.name.startsWith('monarch_')) {
+            send({ tool_call: { name: block.name } });
+            result = monarchAccessToken
+              ? await runMonarchAdvisorTool(monarchAccessToken, block.name, block.input)
+              : { error: 'Monarch is not connected.' };
           }
 
-          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: typeof result === 'string' ? result : JSON.stringify(result) });
         }
 
         conversationMsgs = [
