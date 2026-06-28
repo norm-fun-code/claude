@@ -104,6 +104,8 @@ app.get('/login', (req, res) => {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Cohen Financial Planner — Sign In</title>
+<meta name="theme-color" content="#635bff">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%237d76ff'/><stop offset='.55' stop-color='%235048d6'/><stop offset='1' stop-color='%237c3aed'/></linearGradient></defs><rect width='32' height='32' rx='7' fill='url(%23g)'/><path d='M6 21L13 14L17 18L26 8' stroke='%23fff' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/><circle cx='26' cy='8' r='2.4' fill='%23fff'/></svg>">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
