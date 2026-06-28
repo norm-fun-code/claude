@@ -688,11 +688,13 @@ function _updateChart(datasets,labels){
   if(!charts.main)return false;
   charts.main.data.labels=labels;
   for(let i=0;i<datasets.length;i++){
-    if(charts.main.data.datasets[i]){Object.assign(charts.main.data.datasets[i],{data:datasets[i].data,label:datasets[i].label})}
+    // Sync FULL styling (not just data/label) so reused datasets don't keep stale point/fill config.
+    if(charts.main.data.datasets[i]){Object.assign(charts.main.data.datasets[i],datasets[i])}
     else{charts.main.data.datasets.push(datasets[i])}
   }
   while(charts.main.data.datasets.length>datasets.length)charts.main.data.datasets.pop();
-  charts.main.update('active');return true;
+  // Normal update — 'active' mode would force every point into its hover state (big dots).
+  charts.main.update();return true;
 }
 function deflK(v,yr){if(!inflationView)return Math.round(v/1000);const sy=P.planStartYear||2026;return Math.round(v/Math.pow(1+(P.expenseInflation||.03),yr-sy)/1000)}
 function toggleInflation(){inflationView=!inflationView;const b=document.getElementById('inflBtn');if(b)b.textContent=inflationView?'Nominal $':'Real $';render()}
