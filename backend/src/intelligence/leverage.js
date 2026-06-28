@@ -99,6 +99,14 @@ function round(n, d = 2) {
   return Math.round(n * f) / f;
 }
 
+// Human-readable metric value for prose: large counts (steps, calories) render
+// as comma-grouped integers — "10,781", not "10780.7" — while small values
+// (HRV, sleep hours) keep one decimal where it carries meaning.
+function fmtMean(n) {
+  if (n == null || !Number.isFinite(n)) return '?';
+  return Math.abs(n) >= 1000 ? Math.round(n).toLocaleString('en-US') : String(round(n, 1));
+}
+
 // ── Source generators ──────────────────────────────────────────────────────
 
 // Worsening trend → coaching nudge. Only fires for metrics where we have a
@@ -122,7 +130,7 @@ function fromTrend(f) {
 
   return {
     title: `${label} down ${absPct}% — act this week`,
-    detail: `${label} dropped ${absPct}% recently (${round(ev.recentMean, 1)} vs ${round(ev.priorMean, 1)} prior). ${coaching}`,
+    detail: `${label} dropped ${absPct}% recently (${fmtMean(ev.recentMean)} vs ${fmtMean(ev.priorMean)} prior). ${coaching}`,
     domains: [domain],
     impact,
     confidence,
@@ -192,7 +200,6 @@ function fromHabitSplit(f) {
   const outcomeLabel = cat.label(domain, metric);
   const onFmt = ev.onMean != null ? round(ev.onMean, 1) : '?';
   const offFmt = ev.offMean != null ? round(ev.offMean, 1) : '?';
-  const pctStr = `${Math.round(Math.abs(pct) * 100)}%`;
   const unit = metric === 'hrv' ? 'ms' : metric === 'resting_hr' ? 'bpm' : metric === 'sleep_hours' ? 'h' : '';
   const fmtVal = (v) => unit ? `${v}${unit}` : String(v);
 
@@ -202,8 +209,8 @@ function fromHabitSplit(f) {
   const confidence = Math.min(0.88, 0.4 + Math.abs(pct) * 2);
 
   return {
-    title: `${habit}: your ${outcomeLabel} is ${pctStr} better on those days`,
-    detail: `Your own data (${ev.onN} days on vs ${ev.offN} off): ${habit} days → ${outcomeLabel} ${fmtVal(onFmt)} vs ${fmtVal(offFmt)} otherwise. That's a ${pctStr} personal effect. Streak it this week.`,
+    title: `${habit}: stronger ${outcomeLabel} on the days you do it`,
+    detail: `Your own data (${ev.onN} days on vs ${ev.offN} off): ${habit} days → ${outcomeLabel} ${fmtVal(onFmt)} vs ${fmtVal(offFmt)} otherwise. Streak it this week.`,
     domains: [domain, 'habits'],
     impact,
     confidence,
@@ -228,7 +235,6 @@ function fromSleepImpact(f) {
   if (!improved) return null;
 
   const outcomeLabel = cat.label(domain, metric);
-  const pctStr = `${Math.round(Math.abs(pct) * 100)}%`;
   const goodFmt = ev.goodMean != null ? round(ev.goodMean, 1) : '?';
   const poorFmt = ev.poorMean != null ? round(ev.poorMean, 1) : '?';
   const unit = metric === 'hrv' ? 'ms' : metric === 'resting_hr' ? 'bpm' : '';
@@ -239,8 +245,8 @@ function fromSleepImpact(f) {
   const ease = 0.5;
 
   return {
-    title: `Best sleep nights → ${pctStr} better ${outcomeLabel}`,
-    detail: `After your best-slept nights: ${outcomeLabel} ${fmtVal(goodFmt)} vs ${fmtVal(poorFmt)} after poor nights — ${pctStr} swing across ${ev.goodN}+${ev.poorN} days. Sleep quality is one of your strongest personal levers. Protect tomorrow's bedtime window.`,
+    title: `Best sleep nights lift your next-day ${outcomeLabel}`,
+    detail: `After your best-slept nights, ${outcomeLabel} runs ${fmtVal(goodFmt)} vs ${fmtVal(poorFmt)} after poor ones — across ${ev.goodN}+${ev.poorN} days. Sleep quality is one of your strongest personal levers. Protect tomorrow's bedtime window.`,
     domains: [domain, 'health'],
     impact,
     confidence,
@@ -265,7 +271,6 @@ function fromActivityImpact(f) {
 
   const outcomeLabel = cat.label(domain, metric);
   const activity = ev.activity || 'that workout';
-  const pctStr = `${Math.round(Math.abs(pct) * 100)}%`;
   const typeFmt = ev.typeMean != null ? round(ev.typeMean, 1) : '?';
   const overallFmt = ev.overallMean != null ? round(ev.overallMean, 1) : '?';
   const unit = metric === 'hrv' ? 'ms' : metric === 'resting_hr' ? 'bpm' : '';
@@ -281,9 +286,9 @@ function fromActivityImpact(f) {
 
   return {
     title: improved
-      ? `${activity} day → next-day ${outcomeLabel} is ${pctStr} above average`
-      : `${activity} → next-day ${outcomeLabel} drops ${pctStr} — plan recovery`,
-    detail: `Across ${ev.n} post-${activity} days, ${outcomeLabel} averaged ${fmtVal(typeFmt)} vs ${fmtVal(overallFmt)} overall (${pctStr} ${improved ? 'above' : 'below'} your norm). ${actionStr}`,
+      ? `${activity} days → stronger next-day ${outcomeLabel}`
+      : `${activity} → softer next-day ${outcomeLabel} — plan recovery`,
+    detail: `Across ${ev.n} post-${activity} days, ${outcomeLabel} averaged ${fmtVal(typeFmt)} vs ${fmtVal(overallFmt)} overall. ${actionStr}`,
     domains: ['health'],
     impact,
     confidence,
@@ -311,7 +316,7 @@ function fromGoal(goal, latestByKey = {}) {
     title: `Close the gap: ${goal.title}`,
     detail: (() => {
       const by = formatDate(goal.target_date);
-      return `${Math.round(progress * 100)}% to target (${cat.label(goal.domain, goal.metric)} ${round(current)} → ${round(goal.target_value)}${by ? `, by ${by}` : ''}). This is off-track.`;
+      return `${Math.round(progress * 100)}% to target (${cat.label(goal.domain, goal.metric)} ${fmtMean(current)} → ${fmtMean(goal.target_value)}${by ? `, by ${by}` : ''}). This is off-track.`;
     })(),
     domains: [goal.domain],
     impact,
