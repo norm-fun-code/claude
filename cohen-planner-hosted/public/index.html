@@ -189,6 +189,9 @@ tr:hover td{background:var(--s2)}
 .adv-toolbar .ctx-pill strong{color:var(--g)}
 .adv-toolbar button{background:var(--s2);border:1px solid var(--bd);color:var(--t2);padding:4px 9px;border-radius:4px;cursor:pointer;font-size:10px;font-family:inherit;font-weight:500;margin-left:auto}
 .adv-toolbar button:hover{border-color:var(--bd2);color:var(--tx)}
+.adv-toolbar button.adv-tb-new{background:linear-gradient(135deg,#6e66ff,#5048d6);color:#fff;border-color:transparent;font-weight:600;box-shadow:0 3px 9px -3px rgba(80,72,214,.6)}
+.adv-toolbar button.adv-tb-new:hover{color:#fff;transform:translateY(-1px);box-shadow:0 6px 13px -4px rgba(80,72,214,.7)}
+.adv-toolbar button.adv-tb-chats{margin-left:0;display:none}/* only shown on mobile, where the rail is hidden */
 .adv-wrap{display:grid;grid-template-columns:240px 1fr;gap:0;height:calc(100vh - 220px);min-height:500px;border:1px solid var(--bd);border-radius:9px;overflow:hidden;background:var(--s1)}
 .adv-rail{background:var(--s2);border-right:1px solid var(--bd);display:flex;flex-direction:column;overflow:hidden}
 .adv-rail-hdr{padding:12px 14px;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center;background:var(--s2)}
@@ -213,7 +216,13 @@ tr:hover td{background:var(--s2)}
 .adv-rail-footer button{background:var(--s1);border:1px solid var(--bd);color:var(--t2);padding:6px 9px;border-radius:5px;cursor:pointer;font-size:10.5px;font-family:inherit;font-weight:500;text-align:left;transition:all .12s}
 .adv-rail-footer button:hover{border-color:var(--bd2);color:var(--tx)}
 .adv-main{display:flex;flex-direction:column;overflow:hidden;background:var(--s1)}
-@media(max-width:900px){.adv-wrap{grid-template-columns:1fr}.adv-rail{display:none}}
+@media(max-width:900px){.adv-wrap{grid-template-columns:1fr}.adv-rail{display:none}
+  .adv-toolbar button.adv-tb-chats{display:inline-block}
+  .adv-rail.mob-show{display:flex;max-height:48vh;border-right:none;border-bottom:1px solid var(--bd)}
+  /* No hover on touch — keep rename/delete always reachable, with larger tap targets */
+  .adv-rail-actions{display:flex}
+  .adv-rail-actions button{width:26px;height:26px;font-size:13px}
+  .adv-rail-title{padding-right:60px}}
 @media(max-width:640px){.adv-wrap{height:auto;min-height:350px}.adv{height:auto;min-height:350px}.adv-starters{grid-template-columns:1fr}}
 /* ── Accessibility: visible keyboard focus everywhere ── */
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
@@ -2845,6 +2854,8 @@ function renderAdvisorTab(R,P){
   const ca=document.getElementById('chartArea');
   ca.innerHTML=`<div class="adv-toolbar">
     <span class="ctx-pill">Context: <strong>LIVE</strong> · ${R.length}yr plan · $${(R[R.length-1].nw/1e6).toFixed(1)}M @ ${R[R.length-1].yr}</span>
+    <button class="adv-tb-new" onclick="advNewChat()" title="Start a new conversation">＋ New chat</button>
+    <button class="adv-tb-chats" onclick="advToggleRailMobile()" title="Switch or delete conversations">🗂 Chats</button>
     <button onclick="advExportChats()">📥 Export</button>
     <button onclick="advImportChats()">📤 Import</button>
   </div>
@@ -2993,7 +3004,16 @@ async function advAutoBrief(){
   }
 }
 
+function advToggleRailMobile(){
+  const rail=document.querySelector('.adv-rail');
+  if(rail)rail.classList.toggle('mob-show');
+}
+function _advHideRailMobile(){
+  const rail=document.querySelector('.adv-rail');
+  if(rail)rail.classList.remove('mob-show');
+}
 async function advNewChat(){
+  _advHideRailMobile();
   const id=advUuid();
   try{
     await fetch('/api/chats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,title:'New conversation'})});
@@ -3048,6 +3068,7 @@ function advRelTime(ts){
 
 async function advSwitchChat(id){
   if(!advisorChats[id])return;
+  _advHideRailMobile();
   advisorActiveChatId=id;
   if(!advisorChats[id].messages||advisorChats[id].messages.length===0){
     await advLoadMessages(id);
