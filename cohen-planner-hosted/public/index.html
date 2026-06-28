@@ -299,6 +299,21 @@ body{background:transparent}
 .hero-spark{position:relative;z-index:1;flex-shrink:0}
 @media(max-width:640px){.hero{flex-direction:column;align-items:flex-start;padding:18px 18px}.hero-v{font-size:36px;letter-spacing:-1.2px}.hero-spark{width:100%}.hero-spark svg{width:100%}}
 
+/* (6) Premium range sliders — the whole control rail ────────── */
+.sr input[type=range]{-webkit-appearance:none;appearance:none;background:transparent;height:16px;width:100%;cursor:pointer;margin:2px 0}
+.sr input[type=range]::-webkit-slider-runnable-track{height:5px;border-radius:6px;background:rgba(10,37,64,.11)}
+.sr input[type=range]::-moz-range-track{height:5px;border-radius:6px;background:rgba(10,37,64,.11)}
+.sr input[type=range]::-moz-range-progress{height:5px;border-radius:6px;background:linear-gradient(90deg,#6e66ff,#5048d6)}
+.sr input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:15px;height:15px;margin-top:-5px;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%,#8079ff,#5048d6);
+  box-shadow:0 1px 3px rgba(80,72,214,.5),0 0 0 3px rgba(99,91,255,.12);transition:transform .12s ease,box-shadow .12s ease}
+.sr input[type=range]::-moz-range-thumb{width:15px;height:15px;border:none;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%,#8079ff,#5048d6);box-shadow:0 1px 3px rgba(80,72,214,.5),0 0 0 3px rgba(99,91,255,.12)}
+.sr input[type=range]:hover::-webkit-slider-thumb{transform:scale(1.15)}
+.sr input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15);box-shadow:0 2px 5px rgba(80,72,214,.6),0 0 0 5px rgba(99,91,255,.2)}
+.sr input[type=range]:focus{outline:none}
+.sr input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 1px 3px rgba(80,72,214,.5),0 0 0 4px rgba(99,91,255,.3)}
+
 /* Respect reduced-motion preference ─────────────────────────── */
 @media(prefers-reduced-motion:reduce){
   .mesh-bg,.hero-eyebrow .dot{animation:none}
@@ -1476,12 +1491,12 @@ function renderPortfolioTab(R,P){
     const dCtx=document.getElementById('portfolioDonut').getContext('2d');
     charts.main=new Chart(dCtx,{
       type:'doughnut',
-      data:{labels:donutLabels,datasets:[{data:donutData,backgroundColor:donutColors.slice(0,donutData.length),borderWidth:0,hoverOffset:4}]},
+      data:{labels:donutLabels,datasets:[{data:donutData,backgroundColor:donutColors.slice(0,donutData.length),borderWidth:2,borderColor:'rgba(255,255,255,.85)',hoverOffset:7,hoverBorderColor:'#fff'}]},
       options:{
-        responsive:true,maintainAspectRatio:false,cutout:'58%',
+        responsive:true,maintainAspectRatio:false,cutout:'62%',
         plugins:{
           legend:{position:'bottom',labels:{
-            font:{size:10,family:"'Inter',sans-serif"},color:'#425466',padding:8,boxWidth:8,
+            font:{size:10,family:"'Inter',sans-serif"},color:'#425466',padding:10,usePointStyle:true,pointStyle:'circle',boxWidth:7,boxHeight:7,
             generateLabels:chart=>{
               const ds=chart.data.datasets[0];
               return chart.data.labels.map((lbl,i)=>{
@@ -1491,7 +1506,7 @@ function renderPortfolioTab(R,P){
               });
             }
           }},
-          tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${fmt(ctx.raw)} (${donutTotal>0?(ctx.raw/donutTotal*100).toFixed(1):'0'}%)`}},
+          tooltip:{..._GLASS_TOOLTIP,callbacks:{label:ctx=>`  ${ctx.label}: ${fmt(ctx.raw)} (${donutTotal>0?(ctx.raw/donutTotal*100).toFixed(1):'0'}%)`}},
           datalabels:{
             color:'#fff',
             font:{size:10,weight:'bold',family:"'Inter',sans-serif"},
@@ -1727,12 +1742,12 @@ function renderHousingTab(R,P){
   </div>`;
 
   // ── Charts (planner light theme) ──
-  const tick='#8898aa',grid='#e6ebf1',leg='#425466';
-  const baseOpts=(yFmt,y1Fmt)=>({responsive:true,maintainAspectRatio:false,
-    plugins:{legend:{labels:{color:leg,font:{size:11,family:'Inter'},boxWidth:10}},
-      tooltip:{backgroundColor:'#0a2540',titleColor:'#fff',bodyColor:'#fff',padding:8,titleFont:{size:10},bodyFont:{size:10}}},
-    scales:{x:{ticks:{color:tick,font:{size:10,family:'Inter'}},grid:{display:false}},
-      y:{position:'left',ticks:{color:tick,font:{size:10},callback:yFmt},grid:{color:grid}}}});
+  const tick='#8898aa',grid='rgba(10,37,64,.05)',leg='#425466';
+  const baseOpts=(yFmt,y1Fmt)=>({responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},animations:{colors:false},
+    plugins:{legend:{align:'end',labels:{color:leg,font:{size:10.5,family:'Inter',weight:'500'},usePointStyle:true,pointStyle:'circle',boxWidth:7,boxHeight:7,padding:15}},
+      tooltip:_GLASS_TOOLTIP},
+    scales:{x:{ticks:{color:tick,font:{size:10,family:'Inter'}},grid:{display:false},border:{display:false}},
+      y:{position:'left',ticks:{color:tick,font:{size:10},callback:yFmt,padding:6},grid:{color:grid,drawTicks:false},border:{display:false}}}});
 
   const tCtx=document.getElementById('housingTradeoff');
   if(tCtx)charts.housingTradeoff=new Chart(tCtx.getContext('2d'),{
@@ -1751,14 +1766,14 @@ function renderHousingTab(R,P){
   if(dCtx)charts.housingDown=new Chart(dCtx.getContext('2d'),{type:'bar',
     data:{labels:pathData.map(p=>p.label.split(' · ')[0]),
       datasets:[{label:'Down Payment ($K)',data:pathData.map(p=>Math.round(p.hp*p.dp/100/1000)),backgroundColor:pathData.map(p=>p.col),borderRadius:4}]},
-    options:{...baseOpts(v=>'$'+v+'K'),plugins:{legend:{display:false},tooltip:{backgroundColor:'#0a2540',titleColor:'#fff',bodyColor:'#fff',callbacks:{label:c=>'$'+c.raw+'K down'}}}}
+    options:{...baseOpts(v=>'$'+v+'K'),plugins:{legend:{display:false},tooltip:{..._GLASS_TOOLTIP,callbacks:{label:c=>'$'+c.raw+'K down'}}}}
   });
 
   const nCtx=document.getElementById('housingNW');
   if(nCtx)charts.housingNW=new Chart(nCtx.getContext('2d'),{type:'bar',
     data:{labels:pathData.map(p=>p.label.split(' · ')[0]),
       datasets:[{label:'NW @ '+endYr+' ($M)',data:pathData.map(p=>+(p.finalNW/1e6).toFixed(2)),backgroundColor:pathData.map(p=>p.col),borderRadius:4}]},
-    options:{...baseOpts(v=>'$'+v+'M'),plugins:{legend:{display:false},tooltip:{backgroundColor:'#0a2540',titleColor:'#fff',bodyColor:'#fff',callbacks:{label:c=>'$'+c.raw.toFixed(2)+'M total'}}}}
+    options:{...baseOpts(v=>'$'+v+'M'),plugins:{legend:{display:false},tooltip:{..._GLASS_TOOLTIP,callbacks:{label:c=>'$'+c.raw.toFixed(2)+'M total'}}}}
   });
 
   document.getElementById('summaries').innerHTML='';
@@ -1892,11 +1907,11 @@ function renderSensitivityTab(R,P){
       maintainAspectRatio:false,
       plugins:{
         legend:{display:false},
-        tooltip:{callbacks:{label:ctx=>{const v=ctx.raw;const sign=v>=0?'+':'';return`${ctx.dataset.label}: ${sign}$${Math.abs(v)}K on final NW`;}}}
+        tooltip:{..._GLASS_TOOLTIP,callbacks:{label:ctx=>{const v=ctx.raw;const sign=v>=0?'+':'';return`  ${ctx.dataset.label}: ${sign}$${Math.abs(v)}K on final NW`;}}}
       },
       scales:{
         x:{
-          grid:{color:'rgba(0,0,0,.04)'},
+          grid:{color:'rgba(10,37,64,.05)'},border:{display:false},
           ticks:{callback:v=>`${v>=0?'+':''}$${Math.abs(v)}K`,font:{size:10,family:"'SF Mono','Fira Code',monospace"},color:'#8898aa'},
           title:{display:true,text:`Impact on ${ey} Net Worth ($K)`,font:{size:10},color:'#8898aa'}
         },
