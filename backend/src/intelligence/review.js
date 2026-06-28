@@ -95,7 +95,15 @@ async function gatherWeek(asOf = new Date()) {
       .sort((x, y) => (x.evidence?.rank ?? 9) - (y.evidence?.rank ?? 9))
       .slice(0, 5),
     annotations: await annotationsStore.listAnnotations({ from: periodStart, limit: 20 }),
-    intentions: await intentionsStore.recentIntentions({ days: 14 }).catch(() => []),
+    // ONLY the check-in that governed THIS review week — the intention whose
+    // week_start matches the period being reviewed. A rolling 14-day pull grabbed
+    // the prior week's check-in too, so the review claimed wins "across both
+    // check-ins" and cited goals (e.g. Steffan convo, CF&S → DIP) from two weeks
+    // back. weekStart(periodStart) is the Sunday that opened the reviewed week.
+    intentions: await intentionsStore
+      .intentionForWeek(intentionsStore.weekStart(periodStart))
+      .then((it) => (it ? [it] : []))
+      .catch(() => []),
   };
 }
 
@@ -142,7 +150,7 @@ ${fc}
 HIGHEST-LEVERAGE ACTIONS RIGHT NOW:
 ${lev}
 
-THEIR STATED FOCUS & LIFE CONTEXT (from the weekly Sunday check-in — use this to judge whether the week matched their intentions):
+THEIR STATED FOCUS & LIFE CONTEXT (from THIS week's Sunday check-in only — judge the week against THESE goals; do not reference prior weeks' goals or "both check-ins"):
 ${intentions}
 
 LIFE CONTEXT (annotations) THIS WEEK:

@@ -130,6 +130,7 @@ module.exports = {
   saveGoalResults,
   currentIntention,
   priorIntention,
+  intentionForWeek,
   recentIntentions,
   weekStart,
   priorWeekStart,
