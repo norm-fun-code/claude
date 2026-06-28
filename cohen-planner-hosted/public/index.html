@@ -65,7 +65,7 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 .tabs{display:flex;gap:3px;margin-bottom:10px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:3px;box-shadow:var(--shadow-sm)}
 .tabs button{padding:6px 12px;border-radius:5px;font-size:11px;font-weight:500;cursor:pointer;border:none;background:transparent;color:var(--t2);font-family:inherit;transition:all .12s}
 .tabs button:hover{color:var(--tx);background:var(--s3)}
-.tabs button.active{background:var(--accent);color:#fff;font-weight:600}
+.tabs button.active{background:linear-gradient(135deg,#6e66ff,#5048d6);color:#fff;font-weight:600}
 .snap-bar{display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap;align-items:center}
 .snap-chip{padding:4px 9px;border-radius:6px;font-size:9.5px;font-weight:500;cursor:pointer;border:1px solid rgba(8,145,178,.3);background:#e0f7fa;color:var(--c);display:flex;align-items:center;gap:4px;font-family:inherit;transition:all .12s}
 .snap-chip.active{background:var(--c);color:#fff}
@@ -267,7 +267,11 @@ body{background:transparent}
 /* (3) Typographic scale + tabular numerals ──────────────────── */
 .kpi-v,.hero-v,.sv,.mono,table,td,th,.adv-rail-meta,.sync-pill{font-variant-numeric:tabular-nums;font-feature-settings:'tnum','ss01','cv11'}
 .kpi-v{font-size:17px}
-.hdr h1{letter-spacing:-.5px;font-weight:700}
+.hdr{position:relative;border-bottom:none;padding-bottom:12px}
+.hdr::after{content:'';position:absolute;left:0;bottom:0;height:2px;width:100%;border-radius:2px;
+  background:linear-gradient(90deg,var(--accent) 0%,rgba(8,145,178,.5) 35%,rgba(230,73,128,.25) 70%,transparent 100%)}
+.hdr h1{font-size:18px;letter-spacing:-.5px;font-weight:700}
+.logout-btn,#monarchSyncBtn,#monarchConnectBtn{backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
 
 /* (4) Motion layer — entrance, count-up, tab cross-fade ─────── */
 @keyframes riseIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
@@ -1051,7 +1055,15 @@ async function deleteScenario(i){
 function toggleCompare(){compareMode=!compareMode;buildControls();render();savePlannerState()}
 
 function fmtK(v){const a=Math.abs(v);const s=v<0?'-':'';if(a>=1000)return s+'$'+(a/1000).toFixed(1).replace(/\.0$/,'')+'M';return s+'$'+a+'K'}
-function chartOpts(){return{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#425466',font:{size:10,family:'Inter'},boxWidth:9}},tooltip:{backgroundColor:'#0a2540',borderColor:'#0a2540',borderWidth:0,titleFont:{size:11,family:'Inter'},bodyFont:{size:10,family:'Inter'},titleColor:'#fff',bodyColor:'#fff',padding:8,callbacks:{label:c=>c.dataset.label+': $'+(c.raw||0).toLocaleString()+'K'}}},scales:{x:{ticks:{color:'#8898aa',font:{size:10,family:'Inter'},maxRotation:45},grid:{display:false}},y:{ticks:{color:'#8898aa',font:{size:10,family:'Inter'},stepSize:500,callback:v=>fmtK(v)},grid:{color:'#e6ebf1'}}}}}
+// Bespoke chart styling — glass tooltip, near-invisible gridlines, point-style legend
+const _GLASS_TOOLTIP={enabled:true,backgroundColor:'rgba(255,255,255,.94)',titleColor:'#0a2540',bodyColor:'#425466',borderColor:'rgba(10,37,64,.08)',borderWidth:1,cornerRadius:11,padding:{top:10,bottom:10,left:13,right:13},titleFont:{size:11.5,family:'Inter',weight:'700'},bodyFont:{size:11,family:'Inter'},boxPadding:6,usePointStyle:true,caretSize:6,titleMarginBottom:7};
+function _hexA(hex,a){const n=parseInt(hex.slice(1),16);return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`}
+// Canvas gradient fill that resolves lazily against the plotted area
+function _areaGrad(hex,a1,a2){return(ctx)=>{const ch=ctx.chart,area=ch.chartArea;if(!area)return _hexA(hex,a1);const g=ch.ctx.createLinearGradient(0,area.top,0,area.bottom);g.addColorStop(0,_hexA(hex,a1));g.addColorStop(1,_hexA(hex,a2));return g}}
+// Bar gradient (vertical, fades toward baseline)
+function _barGrad(hex,a1,a2){return(ctx)=>{const ch=ctx.chart,area=ch.chartArea;if(!area)return _hexA(hex,a1);const g=ch.ctx.createLinearGradient(0,area.top,0,area.bottom);g.addColorStop(0,_hexA(hex,a1));g.addColorStop(1,_hexA(hex,a2));return g}}
+if(window.Chart&&Chart.defaults){Chart.defaults.font.family='Inter';Chart.defaults.font.size=10;Chart.defaults.color='#8898aa';Chart.defaults.animation={duration:900,easing:'easeOutQuart'};Chart.defaults.animations.colors=false;Chart.defaults.elements.point.hoverBorderWidth=2;Chart.defaults.elements.line.capBezierPoints=true;}
+function chartOpts(){return{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},animations:{colors:false},plugins:{legend:{position:'top',align:'end',labels:{color:'#425466',font:{size:10.5,family:'Inter',weight:'500'},usePointStyle:true,pointStyle:'circle',boxWidth:7,boxHeight:7,padding:15}},tooltip:{..._GLASS_TOOLTIP,callbacks:{label:c=>'  '+c.dataset.label+': $'+(c.raw||0).toLocaleString()+'K'}}},scales:{x:{ticks:{color:'#8898aa',font:{size:10,family:'Inter'},maxRotation:45},grid:{display:false},border:{display:false}},y:{ticks:{color:'#8898aa',font:{size:10,family:'Inter'},stepSize:500,callback:v=>fmtK(v),padding:6},grid:{color:'rgba(10,37,64,.05)',drawTicks:false},border:{display:false}}}}}
 function posOpts(){const o=chartOpts();o.scales.y.min=0;return o}
 
 // ═══ MOTION + HERO HELPERS (next-gen visual layer) ═══
@@ -1108,7 +1120,7 @@ function render(){
     <div class="kpi"><div class="kpi-l">💸 Tax on Sales</div><div class="kpi-v" style="color:var(--r)">${fmt(tTx)}</div><div class="kpi-s">${fmt(tS)} sold</div></div>
     <div class="kpi"><div class="kpi-l">📉 Liquid Floor</div><div class="kpi-v" style="color:${minL.liq>500000?'var(--g)':'var(--a)'}">${fmt(minL.liq)}</div><div class="kpi-s">${minL.yr}</div></div>
     <div class="kpi"><div class="kpi-l">🏁 NW (${last.yr})</div><div class="kpi-v" style="color:var(--g)">${fmt(last.nw)}</div><div class="kpi-s">+${fmt(last.k401)} 401k</div></div>
-    <div class="kpi"><div class="kpi-l">🏦 Total w/ 401k</div><div class="kpi-v" style="color:var(--c)">${fmt(last.nw+last.k401)}</div></div>
+    <div class="kpi"><div class="kpi-l">🏦 Total w/ 401k</div><div class="kpi-v" style="color:var(--tx)">${fmt(last.nw+last.k401)}</div><div class="kpi-s">incl. retirement</div></div>
     ${monarchSnapshot?`<div class="kpi" style="border-color:rgba(191,105,0,.3);background:var(--a-soft)"><div class="kpi-l" style="color:var(--a)">📍 Live NW</div><div class="kpi-v" style="color:var(--a);font-size:13px">${fmt(monarchSnapshot.netWorth)}</div><div class="kpi-s">${new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div></div>`:''}`;
   // ─── Hero net-worth band ───
   const _hb=document.getElementById('heroBand');
@@ -1166,7 +1178,7 @@ function render(){
   }
   if(activeTab==='nw'){
     const po=posOpts();
-    const ds=[{label:'Total NW'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.nw,r.yr))],borderColor:'#635bff',backgroundColor:'rgba(99,91,255,.06)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2.5},{label:'Liquid'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.liq,r.yr))],borderColor:'#0073e6',backgroundColor:'rgba(0,115,230,.04)',fill:true,tension:.3,pointRadius:1.5,borderWidth:2},{label:'Equity'+(inflationView?' (real)':''),data:[0,...R.map(r=>deflK(r.eq,r.yr))],borderColor:'#7c3aed',fill:false,tension:.3,pointRadius:1,borderWidth:1.5,borderDash:[4,3]}];
+    const ds=[{label:'Total NW'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.nw,r.yr))],borderColor:'#635bff',backgroundColor:_areaGrad('#635bff',.24,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#635bff',pointBorderColor:'#fff',borderWidth:2.5,borderCapStyle:'round'},{label:'Liquid'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.liq,r.yr))],borderColor:'#0073e6',backgroundColor:_areaGrad('#0073e6',.14,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#0073e6',pointBorderColor:'#fff',borderWidth:2,borderCapStyle:'round'},{label:'Equity'+(inflationView?' (real)':''),data:[0,...R.map(r=>deflK(r.eq,r.yr))],borderColor:'#7c3aed',fill:false,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#7c3aed',pointBorderColor:'#fff',borderWidth:1.5,borderDash:[4,3]}];
     if(_stressMode){
       const bear=run({...P,investReturn:Math.max(.02,P.investReturn-.02),expenseInflation:Math.min(.06,P.expenseInflation+.01)});
       const bull=run({...P,investReturn:Math.min(.12,P.investReturn+.02),expenseInflation:Math.max(.01,P.expenseInflation-.005)});
@@ -1188,11 +1200,11 @@ function render(){
       ca.insertAdjacentElement('beforebegin',toggleEl);
     }
     if(_flowView==='cashflow'){
-      const dsCF=[{label:'Surplus',data:R.map(r=>Math.round(r.surp/1000)),backgroundColor:R.map(r=>r.surp>=0?'rgba(26,135,84,.6)':'rgba(205,61,100,.6)'),borderRadius:2}];
+      const dsCF=[{label:'Surplus',data:R.map(r=>Math.round(r.surp/1000)),backgroundColor:R.map(r=>r.surp>=0?'rgba(26,135,84,.78)':'rgba(205,61,100,.78)'),borderRadius:4,borderSkipped:false,maxBarThickness:26}];
       if(compareMode)scenarios.forEach(s=>{dsCF.push({label:s.name,data:s.results.R.map(r=>Math.round(r.surp/1000)),type:'line',borderColor:s.color,fill:false,tension:.3,pointRadius:2,pointBackgroundColor:s.color,borderWidth:3})});
       if(!reuseChart||!_updateChart(dsCF,labels))charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:dsCF},options:opts});
     } else {
-      const dsInc=[{label:'Norm Gross',data:R.map(r=>Math.round(r.normG/1000)),backgroundColor:'rgba(0,115,230,.6)',borderRadius:2},{label:'Nancy Gross',data:R.map(r=>Math.round(r.nancyG/1000)),backgroundColor:'rgba(124,58,237,.6)',borderRadius:2},{label:'Tax',data:R.map(r=>-Math.round(r.tax/1000)),backgroundColor:'rgba(205,61,100,.5)',borderRadius:2}];
+      const dsInc=[{label:'Norm Gross',data:R.map(r=>Math.round(r.normG/1000)),backgroundColor:_barGrad('#0073e6',.85,.5),borderRadius:4,borderSkipped:false},{label:'Nancy Gross',data:R.map(r=>Math.round(r.nancyG/1000)),backgroundColor:_barGrad('#7c3aed',.85,.5),borderRadius:4,borderSkipped:false},{label:'Tax',data:R.map(r=>-Math.round(r.tax/1000)),backgroundColor:_barGrad('#cd3d64',.7,.4),borderRadius:4,borderSkipped:false}];
       if(!reuseChart||!_updateChart(dsInc,labels))charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:dsInc},options:{...opts,scales:{x:{stacked:true,...opts.scales.x},y:{stacked:true,...opts.scales.y,ticks:{...opts.scales.y.ticks,callback:v=>fmtK(v)}}}}});
     }
   }
