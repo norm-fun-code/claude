@@ -278,7 +278,18 @@ body{background:transparent}
 .hdr{position:relative;border-bottom:none;padding-bottom:12px}
 .hdr::after{content:'';position:absolute;left:0;bottom:0;height:2px;width:100%;border-radius:2px;
   background:linear-gradient(90deg,var(--accent) 0%,rgba(8,145,178,.5) 35%,rgba(230,73,128,.25) 70%,transparent 100%)}
-.hdr h1{font-size:18px;letter-spacing:-.5px;font-weight:700}
+/* Brand lockup — gradient mark + wordmark */
+.brand{display:flex;align-items:center;gap:12px}
+.brand-mark{width:38px;height:38px;border-radius:11px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#7d76ff 0%,#5048d6 55%,#7c3aed 100%);
+  box-shadow:0 7px 18px -5px rgba(80,72,214,.65),inset 0 1px 0 rgba(255,255,255,.35);
+  transition:transform .2s cubic-bezier(.22,1,.36,1),box-shadow .2s ease}
+.brand:hover .brand-mark{transform:translateY(-1px) rotate(-3deg);box-shadow:0 10px 22px -5px rgba(80,72,214,.75),inset 0 1px 0 rgba(255,255,255,.35)}
+.brand-text h1{font-size:19px;font-weight:800;letter-spacing:-.6px;line-height:1.02;
+  background:linear-gradient(95deg,#0a2540 0%,#5048d6 110%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:#5048d6}
+.brand-sub{font-size:9.5px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:1.3px;margin-top:3px;display:flex;align-items:center;gap:7px}
+.brand-ver{background:var(--accent-soft);color:var(--accent);padding:1px 6px;border-radius:5px;font-size:8.5px;letter-spacing:.6px;font-weight:700}
+@media(max-width:640px){.brand-mark{width:32px;height:32px;border-radius:9px}.brand-text h1{font-size:15px}.brand-sub{font-size:8.5px;letter-spacing:1px}}
 .logout-btn,#monarchSyncBtn,#monarchConnectBtn{backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
 
 /* (4) Motion layer — entrance, count-up, tab cross-fade ─────── */
@@ -333,7 +344,13 @@ body{background:transparent}
 <body>
 <div class="mesh-bg"></div>
 <div class="hdr">
-  <h1>💰 Cohen Family — Financial Planner v5</h1>
+  <div class="brand">
+    <div class="brand-mark" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 13.5 L7.5 9 L10.5 12 L17 4.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="17" cy="4.5" r="1.7" fill="#fff"/></svg></div>
+    <div class="brand-text">
+      <h1>Cohen Family</h1>
+      <div class="brand-sub">Financial Planner <span class="brand-ver">v5</span></div>
+    </div>
+  </div>
   <div class="hdr-right">
       <button id="monarchSyncBtn" onclick="syncMonarch()" style="font-size:9px;padding:3px 9px;background:var(--a-soft);border:1px solid rgba(191,105,0,.3);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--a);transition:all .12s;display:none">📍 Sync Monarch</button>
       <button id="monarchConnectBtn" onclick="connectMonarch()" style="font-size:9px;padding:3px 9px;background:var(--s2);border:1px solid var(--bd);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2);transition:all .12s">🔗 Connect Monarch</button>
