@@ -49,7 +49,7 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 .sync-pill.saving{color:var(--a)}
 .sync-pill.synced{color:var(--g)}
 .sync-pill.error{color:var(--r)}
-.logout-btn{font-size:9px;padding:3px 9px;background:var(--s2);border:1px solid var(--bd);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3);transition:all .12s}
+.logout-btn{font-size:10px;padding:5px 11px;background:rgba(255,255,255,.55);border:1px solid var(--bd);border-radius:7px;cursor:pointer;font-family:inherit;color:var(--t3);transition:all .14s}
 .logout-btn:hover{border-color:var(--r);color:var(--r)}
 .layout{display:grid;grid-template-columns:268px 1fr;gap:12px}
 .panel{background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px;max-height:calc(100vh - 70px);overflow-y:auto;box-shadow:var(--shadow-sm)}
@@ -284,6 +284,12 @@ body{background:transparent}
 .hdr{position:relative;border-bottom:none;padding-bottom:12px}
 .hdr::after{content:'';position:absolute;left:0;bottom:0;height:2px;width:100%;border-radius:2px;
   background:linear-gradient(90deg,var(--accent) 0%,rgba(8,145,178,.5) 35%,rgba(230,73,128,.25) 70%,transparent 100%)}
+/* Cohesive thin scrollbars across the app */
+*{scrollbar-width:thin;scrollbar-color:rgba(10,37,64,.18) transparent}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(10,37,64,.16);border-radius:6px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:rgba(99,91,255,.4);background-clip:padding-box}
 /* Brand lockup — gradient mark + wordmark */
 .brand{display:flex;align-items:center;gap:12px}
 .brand-mark{width:38px;height:38px;border-radius:11px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
@@ -358,8 +364,8 @@ body{background:transparent}
     </div>
   </div>
   <div class="hdr-right">
-      <button id="monarchSyncBtn" onclick="syncMonarch()" style="font-size:9px;padding:3px 9px;background:var(--a-soft);border:1px solid rgba(191,105,0,.3);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--a);transition:all .12s;display:none">📍 Sync Monarch</button>
-      <button id="monarchConnectBtn" onclick="connectMonarch()" style="font-size:9px;padding:3px 9px;background:var(--s2);border:1px solid var(--bd);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2);transition:all .12s">🔗 Connect Monarch</button>
+      <button id="monarchSyncBtn" onclick="syncMonarch()" style="font-size:10px;font-weight:500;padding:5px 11px;background:var(--a-soft);border:1px solid rgba(191,105,0,.3);border-radius:7px;cursor:pointer;font-family:inherit;color:var(--a);transition:all .14s;display:none">📍 Sync Monarch</button>
+      <button id="monarchConnectBtn" onclick="connectMonarch()" style="font-size:10px;font-weight:500;padding:5px 11px;background:var(--accent-soft);border:1px solid rgba(99,91,255,.25);border-radius:7px;cursor:pointer;font-family:inherit;color:var(--accent);transition:all .14s">🔗 Connect Monarch</button>
     <span class="sync-pill" id="syncStatus"></span>
     <button class="logout-btn" onclick="doLogout()">Log out</button>
   </div>
