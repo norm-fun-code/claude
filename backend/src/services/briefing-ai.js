@@ -21,6 +21,9 @@ const SYSTEM =
   'it has there (a "30-day change" is not an "ahead-of-plan" figure). If you are not ' +
   'certain a number is given, describe the direction qualitatively ("net worth is ' +
   'climbing") with no figure rather than guess. ' +
+  'WRITING: complete, well-punctuated sentences. Never run two independent clauses ' +
+  'together without a period, semicolon, or conjunction (no "a strong base for the week your ' +
+  'stated focus is…" — close the first thought, then start the next). ' +
   'Return ONLY a single valid JSON object — no markdown, no code fences, no commentary.';
 
 function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = []) {

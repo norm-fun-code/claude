@@ -45,18 +45,9 @@ function SwipeableRow({
   rec, c, onDelete,
 }: { rec: Rec; c: ReturnType<typeof getColors>; onDelete: (id: number) => void }) {
   const translateX = useRef(new Animated.Value(0)).current;
-  const entryX = useRef(new Animated.Value(-18)).current;
   const [deleting, setDeleting] = useState(false);
   const [localMeasuredAt, setLocalMeasuredAt] = useState<string | null | undefined>(undefined);
   const [localDelta, setLocalDelta] = useState<number | null | undefined>(undefined);
-
-  // Brief left-peek entry animation to hint at swipe affordance.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      Animated.spring(entryX, { toValue: 0, useNativeDriver: true, damping: 14, stiffness: 200 }).start();
-    }, 400);
-    return () => clearTimeout(t);
-  }, [entryX]);
 
   const SWIPE_THRESHOLD = 80;
 
@@ -117,7 +108,7 @@ function SwipeableRow({
       <Animated.View
         style={[
           styles.row,
-          { borderTopColor: c.border, backgroundColor: c.card, transform: [{ translateX: Animated.add(translateX, entryX) }] },
+          { borderTopColor: c.border, backgroundColor: c.card, transform: [{ translateX }] },
         ]}
         {...panResponder.panHandlers}
       >
