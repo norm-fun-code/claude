@@ -204,4 +204,20 @@ import { bandGradient, glow, FONTS } from '../theme';
 - [ ] `eas build --profile development --platform ios` (native modules → must be a build, NOT an OTA update).
 - [ ] Install on device; confirm: custom type app-wide, gradient arc around the recovery orb, no crash.
 - [ ] `git add -A && git commit && git push`.
-- [ ] Tell the agent: **"fonts + Skia are installed."** It will then wire `Sparkline` into the trends + allocation cards and tune the per-surface type scale (OTA-safe from here).
+- [ ] Tell the agent: **"fonts + Skia are installed."**
+
+---
+
+## 12. (Agent, OTA after rebuild) swap continuous-metric bars → Skia lines
+
+The trend charts already ship as RN bars (`viz/MiniBars`). Once Skia is in the
+binary, the agent swaps the **continuous** signals to the gradient `Sparkline`
+(line/area) and leaves **discrete** amounts as bars — OTA-safe once the native
+module exists. No action from you; listed so the plan is captured.
+
+- Continuous → `Sparkline` (line): recovery trend (`RecoveryCard`), net worth
+  (`WealthCard`), HRV & resting-HR rows (`HealthCard`).
+- Stay bars (`MiniBars`): steps, active energy, sleep; habit adherence stays
+  dots (`viz/DotRow`).
+- Also wire `Sparkline` into the asset-mix card and tune the per-surface type
+  scale now that the custom font is live.
