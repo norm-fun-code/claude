@@ -67,9 +67,10 @@ export const accentGradient: [string, string] = ['#7A73FF', '#5A52F0'];
 // After the native font install (see DESIGN_NATIVE_SETUP.md), set these to the
 // loaded family names and the whole app adopts the custom type in one edit:
 //   display: 'Sora_700Bold'  ·  text: 'Inter_400Regular'
-export const FONTS: { display?: string; text?: string } = {
-  display: undefined, // headlines + numbers
-  text: undefined,    // body, captions, labels
+export const FONTS: { display?: string; text?: string; displayHeavy?: string } = {
+  display: 'Sora_700Bold',        // headlines + numbers
+  text: 'Inter_400Regular',       // body, captions, labels
+  displayHeavy: 'Sora_800ExtraBold',
 };
 
 export const typography = {

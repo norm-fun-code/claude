@@ -1,4 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
+import { useFonts, Sora_600SemiBold, Sora_700Bold, Sora_800ExtraBold } from '@expo-google-fonts/sora';
+import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
 import {
   ScrollView,
   StyleSheet,
@@ -76,6 +78,10 @@ export default function App() {
   const eveningBrief = useEveningBrief();
   const health = useHealthData();
   const liveRecovery = useRecovery();
+  const [fontsLoaded] = useFonts({
+    Sora_600SemiBold, Sora_700Bold, Sora_800ExtraBold,
+    Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold,
+  });
 
   const [tab, setTab] = useState<TabKey>('today');
   const [checkinOpen, setCheckinOpen] = useState(false);
@@ -325,6 +331,7 @@ export default function App() {
     }
   };
 
+  if (!fontsLoaded) return null; // wait for custom fonts before first paint
   return (
     <View style={[styles.root, { backgroundColor: c.background }]}>
       <StatusBar style={isDark ? 'light' : 'dark'} />

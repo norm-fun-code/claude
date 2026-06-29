@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, useColorScheme, TouchableOpacity } from 'react-
 import { getColors, spacing, radius, typography, colors, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { RecoveryOrb } from './RecoveryOrb';
+import { ProgressArc } from './viz/ProgressArc';
 import type { Recovery, HealthComposite } from '../hooks/useBriefing';
 import { MetricDetailSheet, type MetricConfig } from './MetricDetailSheet';
 import { formatHM } from '../utils/format';
@@ -82,7 +83,12 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
       <SectionHeader emoji="🔋" title="Recovery" />
 
       <View style={styles.scoreRow}>
-        <RecoveryOrb score={recovery.score} band={recovery.band} size={96} />
+        <View style={{ width: 104, height: 104, alignItems: 'center', justifyContent: 'center' }}>
+          <View style={{ position: 'absolute' }}>
+            <ProgressArc score={recovery.score} band={recovery.band} size={104} />
+          </View>
+          <RecoveryOrb score={recovery.score} band={recovery.band} size={84} />
+        </View>
         <View style={styles.scoreMeta}>
           <Text style={[styles.band, { color: bandColor }]}>{bandLabel}</Text>
           {recovery.detail ? (

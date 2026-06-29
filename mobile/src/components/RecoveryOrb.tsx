@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { bandGradient, glow } from '../theme';
+import { bandGradient, glow, FONTS } from '../theme';
 
 interface Props {
   /** Animated 0–100 score (counts up, shows "/ 100"). Ignored if `grade` is set. */
@@ -89,7 +89,7 @@ export function RecoveryOrb({ score, grade, band, size = 100, label }: Props) {
 
 const styles = StyleSheet.create({
   orb: { alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  score: { color: '#FFFFFF', fontWeight: '800', letterSpacing: -1, marginBottom: -3 },
+  score: { color: '#FFFFFF', fontFamily: FONTS.displayHeavy, fontWeight: '800', letterSpacing: -1, marginBottom: -3 },
   unit: { color: 'rgba(255,255,255,0.82)', fontSize: 10.5, fontWeight: '700' },
   label: { color: '#FFFFFF', fontSize: 9.5, fontWeight: '800', letterSpacing: 0.8, marginTop: 2, textTransform: 'uppercase' },
 });
