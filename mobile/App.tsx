@@ -20,6 +20,7 @@ import { AnimatedEntry } from './src/components/AnimatedEntry';
 Appearance.setColorScheme('light');
 
 import { useBriefing } from './src/hooks/useBriefing';
+import { useEveningBrief } from './src/hooks/useEveningBrief';
 import { useHealthData } from './src/hooks/useHealthData';
 import { useRecovery } from './src/hooks/useRecovery';
 import { usePushRegistration } from './src/hooks/usePushRegistration';
@@ -45,6 +46,7 @@ import { NotionCard } from './src/components/NotionCard';
 import { AlertCard } from './src/components/AlertCard';
 import { HighlightsCard } from './src/components/HighlightsCard';
 import { BriefCard } from './src/components/BriefCard';
+import { EveningBriefCard } from './src/components/EveningBriefCard';
 import { BriefSignalsCard } from './src/components/BriefSignalsCard';
 import { TodayForecastCard } from './src/components/TodayForecastCard';
 import { ExperimentsCard } from './src/components/ExperimentsCard';
@@ -71,6 +73,7 @@ export default function App() {
   const bottomInset = Platform.OS === 'ios' && winH >= 812 ? 34 : 0;
 
   const briefing = useBriefing();
+  const eveningBrief = useEveningBrief();
   const health = useHealthData();
   const liveRecovery = useRecovery();
 
@@ -119,13 +122,18 @@ export default function App() {
   // refreshes from the device.
   const onNotificationTap = useCallback((data: Record<string, unknown>) => {
     const key = typeof data.key === 'string' ? data.key : '';
+    const type = typeof data.type === 'string' ? data.type : '';
     if (key.startsWith('habits:')) {
       setHabitsOpen(true);
+    } else if (type === 'evening_health_brief') {
+      setTab('today');
+      eveningBrief.refetch();
+      health.refetch();
     } else {
       briefing.reload();
       health.refetch();
     }
-  }, [briefing, health]);
+  }, [briefing, health, eveningBrief]);
 
   usePushRegistration(onNotificationTap);
 
@@ -233,6 +241,14 @@ export default function App() {
             {/* 0. Sleep check-in — only when there's no Pod reading to fill the gap.
                 Leads when present so logging sleep is the first action. */}
             <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={() => { liveRecovery.refetch(); briefing.triggerRebuild(); }} />
+            {/* 0.5 Evening wind-down brief — leads in the evening (self-hides during
+                the day and when no brief is built), so the home tab feels alive at
+                night instead of showing a stale morning memo. */}
+            {eveningBrief.brief && (
+              <AnimatedEntry delay={0}>
+                <EveningBriefCard brief={eveningBrief.brief} />
+              </AnimatedEntry>
+            )}
             {/* 1. Chief Brief — the one thing, leads */}
             <AnimatedEntry delay={0}>
               <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />

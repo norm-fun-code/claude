@@ -14,6 +14,7 @@ const { runNudges, runCheckinReminder, runCheckinEveningReminder, runHabitsRemin
 const { runWatch } = require('./intelligence/watch');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./notify/morning');
 const { runEveningBriefing } = require('./notify/evening');
+const { runEveningHealthBrief } = require('./notify/evening-brief');
 const { runWealthNudges } = require('./intelligence/wealth-nudges');
 const nudgesStore = require('./store/nudges');
 const { runIngest: _runIngest } = require('./ingest/run');
@@ -303,6 +304,11 @@ function start() {
     try { await analyze(); } catch (e) { console.error('[scheduler] evening analyze:', e.message); }
     try { await generateCrossContext(); } catch (e) { console.error('[scheduler] evening crossContext:', e.message); }
     try { await consolidate(); console.log('[scheduler] self-model consolidated'); } catch (e) { console.error('[scheduler] consolidate:', e.message); }
+    // Wind-down brief LAST, so it reads the freshest analyze/consolidate output.
+    try {
+      const r = await runEveningHealthBrief({});
+      console.log(`[scheduler] evening wind-down brief: built=${r.built} pushed=${r.sent}`);
+    } catch (e) { console.error('[scheduler] evening wind-down brief:', e.message); }
   });
 
   // Evening habits reminder (9pm) — only pushes if you haven't logged habits yet.

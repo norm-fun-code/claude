@@ -2070,6 +2070,39 @@ app.post('/api/review/run', async (req, res) => {
   }
 });
 
+// Evening wind-down brief (Apple-Health daytime HRV/RHR → autonomic tone). Returns
+// today's brief if already built, else null so the card hides. ?refresh=1 builds
+// it on demand (no push) — used by the card if you open the app before 9:30pm.
+app.get('/api/evening-brief', async (req, res) => {
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    const refresh = req.query.refresh === '1' || req.query.refresh === 'true';
+    let latest = await briefingsStore.latestBriefing('evening');
+    const isToday = latest && latest.content && latest.content.day === today;
+    if (!isToday && refresh) {
+      const { runEveningHealthBrief } = require('./src/notify/evening-brief');
+      const r = await runEveningHealthBrief({ send: false, tz });
+      return res.json({ ...r.content, generatedAt: new Date().toISOString(), fresh: true });
+    }
+    if (!isToday) return res.json(null);
+    res.json({ ...latest.content, generatedAt: latest.generated_at });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Build + push the evening brief on demand (mirrors the 9:30pm scheduler job).
+app.post('/api/evening-brief/run', async (req, res) => {
+  try {
+    const { runEveningHealthBrief } = require('./src/notify/evening-brief');
+    const send = req.query.send !== '0' && req.query.send !== 'false';
+    res.json(await runEveningHealthBrief({ send }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Lightweight wealth snapshot for external integrations (e.g. a financial planner).
 // Returns the latest stored values for net worth and per-bucket totals.
 // 401k is NOT a separate metric — Monarch balance exports aggregate all accounts into
