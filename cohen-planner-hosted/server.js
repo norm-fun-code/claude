@@ -681,6 +681,11 @@ async function monarchMCPHandshake(accessToken) {
   } catch { /* notifications may 202/204 with empty body — ignore */ }
 }
 
+// Resolve a promise but give up (with a fallback) after `ms` so a slow Monarch
+// handshake can never hang the advisor response.
+const withTimeout = (p, ms, fallback) =>
+  Promise.race([p.catch(() => fallback), new Promise(r => setTimeout(() => r(fallback), ms))]);
+
 // ── Monarch tools for the AI Advisor ─────────────────────────────────────────
 // Expose Monarch's read-only MCP tools (the Get* family) to the advisor so it can
 // query the user's LIVE financial data. Schemas are pulled from Monarch's own
@@ -696,13 +701,22 @@ async function getMonarchAdvisorTools(accessToken) {
     await monarchMCPHandshake(accessToken);
     const list = await callMonarchMCP(accessToken, 'tools/list');
     const raw = list?.result?.tools || list?.tools || [];
+    // Anthropic's input_schema only accepts a clean JSON-Schema object — Monarch's schemas
+    // carry extra keys ($schema, additionalProperties, title…) that trigger a 400
+    // "Extra inputs are not permitted". Rebuild a minimal, valid schema.
+    const cleanSchema = (s) => {
+      const props = (s && s.properties && typeof s.properties === 'object') ? s.properties : {};
+      const out = { type: 'object', properties: props };
+      if (Array.isArray(s && s.required) && s.required.length) out.required = s.required;
+      return out;
+    };
     // Read-only only — the Get* family. Never expose Create/Update/Delete to the advisor.
     const tools = raw
       .filter(t => /^Get/.test(t.name || ''))
       .map(t => ({
         name: 'monarch_' + t.name,
         description: ('[Live Monarch data] ' + (t.description || t.name)).slice(0, 900),
-        input_schema: t.inputSchema && t.inputSchema.type ? t.inputSchema : { type: 'object', properties: {} },
+        input_schema: cleanSchema(t.inputSchema),
       }));
     _monarchAdvToolsCache = { ts: now, tools };
     return tools;
@@ -1101,10 +1115,14 @@ app.post('/api/advisor/stream', requireAuth, async (req, res) => {
   // so fall back to a single user turn built from `message` when the array is empty.
   const apiMessages = (Array.isArray(messages) && messages.length) ? messages : [{ role: 'user', content: message }];
 
+  // Warm the SSE connection immediately so the client doesn't see an idle socket
+  // dropped ("Load failed") while we set up Monarch access below.
+  res.write(': keep-alive\n\n');
+
   try {
     // Give the advisor live read-only access to Monarch when the user has connected it.
-    const accessToken = await getMonarchAccessToken().catch(() => null);
-    const monarchTools = await getMonarchAdvisorTools(accessToken);
+    const accessToken = await withTimeout(getMonarchAccessToken(), 5000, null);
+    const monarchTools = await withTimeout(getMonarchAdvisorTools(accessToken), 7000, []);
     const sys = systemPrompt + (monarchTools.length ? `
 
 ═══ LIVE MONARCH ACCESS ═══
@@ -1205,8 +1223,8 @@ Workflow: understand what he's asking → set_param for each change → run_proj
 
   // Live read-only Monarch access (same tools as the normal chat) so the AI can ground
   // its proposals in real balances, spending and holdings — not just plan assumptions.
-  const monarchAccessToken = await getMonarchAccessToken().catch(() => null);
-  const monarchTools = await getMonarchAdvisorTools(monarchAccessToken);
+  const monarchAccessToken = await withTimeout(getMonarchAccessToken(), 5000, null);
+  const monarchTools = await withTimeout(getMonarchAdvisorTools(monarchAccessToken), 7000, []);
   const fullSystemPrompt = agenticSystemPrompt + (monarchTools.length ? `
 
 ═══ LIVE MONARCH ACCESS ═══
