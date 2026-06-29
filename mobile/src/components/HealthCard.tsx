@@ -14,11 +14,21 @@ interface Props {
 }
 
 // A 14-day trend for one metric, fetched on demand. Pure RN bars — OTA-shippable.
-function RowSpark({ metric, source, color, height = 22, width }: {
-  metric: string; source?: string; color: string; height?: number; width?: number;
+// `cumulative` metrics (steps, active energy) build through the day, so today's
+// running partial is dropped from the trend — otherwise an early-in-the-day total
+// renders as a misleading cliff next to the full prior days.
+function RowSpark({ metric, source, color, height = 22, width, cumulative }: {
+  metric: string; source?: string; color: string; height?: number; width?: number; cumulative?: boolean;
 }) {
   const url = `${METRICS_HISTORY_URL}?metric=${metric}&days=14${source ? `&source=${source}` : ''}`;
-  const { values } = useSeries(url);
+  const { rows } = useSeries(url);
+  let pts = rows;
+  if (cumulative && pts.length) {
+    const todayLocal = new Date().toLocaleDateString('en-CA');
+    const lastDay = new Date(pts[pts.length - 1].ts).toLocaleDateString('en-CA');
+    if (lastDay === todayLocal) pts = pts.slice(0, -1);
+  }
+  const values = pts.map((p) => p.value);
   if (values.length < 3) return null;
   return (
     <View style={width ? { width } : undefined}>
@@ -178,14 +188,14 @@ export function HealthCard({ health }: Props) {
         label="Steps"
         value={health.steps !== null ? health.steps.toLocaleString() : null}
         onPress={() => open('steps')} c={c}
-        spark={<RowSpark metric="steps" source="apple_health" color={c.accent} width={64} />}
+        spark={<RowSpark metric="steps" source="apple_health" color={c.accent} width={64} cumulative />}
       />
       <StatRow
         label="Active Cal"
         value={health.activeCalories !== null ? health.activeCalories.toLocaleString() : null}
         unit="kcal"
         onPress={() => open('active_energy')} c={c}
-        spark={<RowSpark metric="active_energy" source="apple_health" color={c.accent} width={64} />}
+        spark={<RowSpark metric="active_energy" source="apple_health" color={c.accent} width={64} cumulative />}
       />
 
       {health.error && (
