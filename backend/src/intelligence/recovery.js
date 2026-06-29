@@ -751,18 +751,44 @@ async function recoveryHistory({ days = 30 } = {}) {
     });
     if (rows.length) seriesByKey[key] = rows;
   }
+
+  // Self-reported sleep (no-Pod nights) → the same proxy recovery the live orb
+  // uses, so the trend INCLUDES those days and never contradicts the orb (a green
+  // self-report day no longer shows a stale red Eight Sleep night as "latest").
+  const dayKey = (d) => new Date(d).toISOString().slice(0, 10);
+  const [srQ, srH] = await Promise.all([
+    metricsStore.dailyAggregatePreferSource({ domain: 'health', metric: 'sleep_quality', from, agg: 'avg', sources: ['self_report'] }),
+    metricsStore.dailyAggregatePreferSource({ domain: 'health', metric: 'sleep_hours', from, agg: 'avg', sources: ['self_report'] }),
+  ]);
+  const srHByDay = new Map(srH.map((r) => [dayKey(r.day), Number(r.value)]));
+  const selfByDay = new Map(srQ.map((r) => [dayKey(r.day), { quality: Number(r.value), hours: srHByDay.get(dayKey(r.day)) }]));
+
   const hrv = seriesByKey['health:hrv'] || [];
+  const hrvDays = new Set(hrv.map((r) => dayKey(r.day)));
   const cutoff = new Date(Date.now() - days * 864e5).getTime();
+  const dayTs = (d) => new Date(`${d}T12:00:00Z`).getTime();
+
+  // Union of objective overnight days and self-report days within the window.
+  const allDays = new Set();
+  for (const r of hrv) if (new Date(r.day).getTime() >= cutoff) allDays.add(dayKey(r.day));
+  for (const d of selfByDay.keys()) if (dayTs(d) >= cutoff && !hrvDays.has(d)) allDays.add(d);
+
   const out = [];
-  for (const r of hrv) {
-    const dTime = new Date(r.day).getTime();
-    if (dTime < cutoff) continue;
-    const trunc = {};
-    for (const k of Object.keys(seriesByKey)) {
-      trunc[k] = seriesByKey[k].filter((x) => new Date(x.day).getTime() <= dTime);
+  for (const d of [...allDays].sort()) {
+    let score = null;
+    if (hrvDays.has(d)) {
+      const trunc = {};
+      for (const k of Object.keys(seriesByKey)) {
+        trunc[k] = seriesByKey[k].filter((x) => new Date(x.day).getTime() <= dayTs(d));
+      }
+      const rec = recoveryScore(trunc);
+      if (rec) score = Math.round(rec.score);
+    } else {
+      const sr = selfByDay.get(d);
+      const proxy = sr && selfReportRecovery({ quality: sr.quality, hours: sr.hours });
+      if (proxy) score = proxy.score;
     }
-    const rec = recoveryScore(trunc);
-    if (rec) out.push({ ts: r.day, value: Math.round(rec.score) });
+    if (score != null) out.push({ ts: new Date(`${d}T12:00:00Z`).toISOString(), value: score, proxy: !hrvDays.has(d) });
   }
   return out;
 }

@@ -100,7 +100,7 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
               avg {Math.round(trend.values.reduce((a, b) => a + b, 0) / trend.values.length)}
             </Text>
           </View>
-          <MiniBars values={trend.values} height={38} colorFor={(_i, v) => bandFor(v)} />
+          <MiniBars values={trend.values} height={38} colorFor={(_i, v) => bandFor(v)} highlightLast />
         </View>
       )}
 

@@ -75,7 +75,7 @@ export function WealthCard({ wealth }: Props) {
         <Text style={[styles.big, { color: c.text }]}>{show(money(wealth.netWorth))}</Text>
         {!hidden && nwTrend.values.length >= 3 && (
           <View style={styles.nwTrend}>
-            <MiniBars values={nwTrend.values} height={30} color={up ? c.green : c.red} max={30} />
+            <MiniBars values={nwTrend.values} height={30} color={up ? c.green : c.red} max={30} highlightLast />
           </View>
         )}
         {wealth.netWorthChange != null ? (

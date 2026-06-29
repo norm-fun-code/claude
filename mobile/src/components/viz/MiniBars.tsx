@@ -11,12 +11,16 @@ interface Props {
   /** Cap how many trailing points to show (keeps bars readable on long windows). */
   max?: number;
   gap?: number;
+  /** Emphasize the final bar as "current". Only truthful when the last point is
+   *  reliably today — off by default so a stale/partial last reading isn't
+   *  asserted as the current value next to a live number. */
+  highlightLast?: boolean;
 }
 
 // A compact bar sparkline built from plain RN views (no native chart dep) — the
 // same rendering approach as the metric detail sheet, so it's OTA-shippable today.
 // Scales to the data's own min→max so the SHAPE of the trend reads clearly.
-export function MiniBars({ values, height = 34, color = '#635BFF', colorFor, max = 40, gap = 2 }: Props) {
+export function MiniBars({ values, height = 34, color = '#635BFF', colorFor, max = 40, gap = 2, highlightLast = false }: Props) {
   const data = (values || []).filter((v) => Number.isFinite(v)).slice(-max);
   if (data.length < 2) return null;
 
@@ -38,7 +42,7 @@ export function MiniBars({ values, height = 34, color = '#635BFF', colorFor, max
               flex: 1,
               height: Math.max(2, frac * height),
               backgroundColor: c,
-              opacity: isLast ? 1 : 0.28,
+              opacity: highlightLast ? (isLast ? 1 : 0.32) : 0.8,
               borderRadius: 2,
             }}
           />
