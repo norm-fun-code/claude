@@ -34,6 +34,7 @@ export const SLEEP_LOG_URL = `${API_BASE}/api/ingest/sleep`;
 export const SLEEP_TODAY_URL = `${API_BASE}/api/sleep/today`;
 export const HABITS_STREAKS_URL = `${API_BASE}/api/habits/streaks`;
 export const HABITS_TODAY_URL = `${API_BASE}/api/habits/today`;
+export const HABITS_HISTORY_URL = `${API_BASE}/api/habits/history`;
 export const WORKOUT_LOG_URL = `${API_BASE}/api/workout/log`;
 export const ACTIVITY_URL = `${API_BASE}/api/activity`;
 export const ANNOTATIONS_URL = `${API_BASE}/api/annotations`;
@@ -49,6 +50,7 @@ export const WEALTH_ALLOCATION_URL = `${API_BASE}/api/wealth/allocation`;
 export const RECOVERY_SELF_REPORT_URL = `${API_BASE}/api/recovery/self-report`;
 export const GOALS_URL = `${API_BASE}/api/goals`;
 export const METRICS_HISTORY_URL = `${API_BASE}/api/metrics/history`;
+export const RECOVERY_HISTORY_URL = `${API_BASE}/api/recovery/history`;
 export const EXPERIMENT_EXTRACT_URL = `${API_BASE}/api/chat/extract-experiment`;
 export const EIGHT_SLEEP_BACKFILL_URL = `${API_BASE}/api/ingest/eight-sleep/backfill`;
 

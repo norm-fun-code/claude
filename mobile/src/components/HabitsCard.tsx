@@ -2,8 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, useColorScheme, AppState } from 'react-native';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import { API_BASE, HABITS_STREAKS_URL, HABITS_TODAY_URL, authHeaders, fetchWithTimeout, localDateStr } from '../config';
+import { API_BASE, HABITS_STREAKS_URL, HABITS_TODAY_URL, HABITS_HISTORY_URL, authHeaders, fetchWithTimeout, localDateStr } from '../config';
 import { AnnotationsCard } from './AnnotationsCard';
+import { DotRow } from './viz/DotRow';
 
 const HABITS_URL = `${API_BASE}/api/habits`;
 
@@ -30,6 +31,7 @@ export function HabitsCard() {
     exercise: false,
   });
   const [streaks, setStreaks] = useState<Record<string, number>>({});
+  const [history, setHistory] = useState<Record<string, boolean[]>>({});
   const [eatHealthy, setEatHealthy] = useState<number | null>(null);
   const [saved, setSaved] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -66,12 +68,20 @@ export function HabitsCard() {
       .catch(() => {});
   }
 
+  async function fetchHistory() {
+    fetchWithTimeout(`${HABITS_HISTORY_URL}?days=14`, { headers: authHeaders() })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.history) setHistory(d.history); })
+      .catch(() => {});
+  }
+
   useEffect(() => {
     fetchToday();
   }, []);
 
   useEffect(() => {
     fetchStreaks();
+    fetchHistory();
   }, []);
 
   // When app returns to foreground on a new calendar day, reset and re-fetch so
@@ -124,25 +134,33 @@ export function HabitsCard() {
 
       {HABITS.map(({ key, label }) => {
         const on = checked[key];
+        const hist = history[key];
         return (
-          <Pressable key={key} onPress={() => toggle(key)} style={styles.row}>
-            <View style={styles.labelRow}>
-              <Text style={[styles.label, { color: c.text }]}>{label}</Text>
-              {(streaks[key] ?? 0) > 0 && (
-                <Text style={[styles.streak, { color: c.subtext }]}>
-                  {streaks[key]}d
-                </Text>
-              )}
+          <Pressable key={key} onPress={() => toggle(key)} style={styles.habitItem}>
+            <View style={styles.row}>
+              <View style={styles.labelRow}>
+                <Text style={[styles.label, { color: c.text }]}>{label}</Text>
+                {(streaks[key] ?? 0) > 0 && (
+                  <Text style={[styles.streak, { color: c.subtext }]}>
+                    {streaks[key]}d
+                  </Text>
+                )}
+              </View>
+              <View
+                style={[
+                  styles.box,
+                  { borderColor: c.border },
+                  on && { backgroundColor: c.accent, borderColor: c.accent },
+                ]}
+              >
+                {on && <Text style={styles.check}>✓</Text>}
+              </View>
             </View>
-            <View
-              style={[
-                styles.box,
-                { borderColor: c.border },
-                on && { backgroundColor: c.accent, borderColor: c.accent },
-              ]}
-            >
-              {on && <Text style={styles.check}>✓</Text>}
-            </View>
+            {hist && hist.length >= 7 && (
+              <View style={styles.habitDots}>
+                <DotRow values={hist} size={6} gap={3} max={14} activeColor={c.accent} inactiveColor={c.border} />
+              </View>
+            )}
           </Pressable>
         );
       })}
@@ -186,6 +204,8 @@ export function HabitsCard() {
 
 const styles = StyleSheet.create({
   card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
+  habitItem: {},
+  habitDots: { marginTop: -spacing.xs, paddingBottom: spacing.sm },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

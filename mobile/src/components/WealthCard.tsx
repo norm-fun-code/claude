@@ -3,7 +3,9 @@ import { View, Text, StyleSheet, Pressable, useColorScheme } from 'react-native'
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { Wealth } from '../hooks/useBriefing';
-import { WEALTH_PLAN_URL, authHeaders, fetchWithTimeout } from '../config';
+import { WEALTH_PLAN_URL, METRICS_HISTORY_URL, authHeaders, fetchWithTimeout } from '../config';
+import { MiniBars } from './viz/MiniBars';
+import { useSeries } from '../hooks/useSeries';
 
 interface Props {
   wealth: Wealth | null;
@@ -29,6 +31,7 @@ export function WealthCard({ wealth }: Props) {
   const c = getColors(isDark);
   const [hidden, setHidden] = useState(false);
   const [plan, setPlan] = useState<PlanData>(null);
+  const nwTrend = useSeries(`${METRICS_HISTORY_URL}?metric=net_worth&days=30`);
 
   useEffect(() => {
     (async () => {
@@ -70,6 +73,11 @@ export function WealthCard({ wealth }: Props) {
 
       <Pressable onPress={() => setHidden((h) => !h)}>
         <Text style={[styles.big, { color: c.text }]}>{show(money(wealth.netWorth))}</Text>
+        {!hidden && nwTrend.values.length >= 3 && (
+          <View style={styles.nwTrend}>
+            <MiniBars values={nwTrend.values} height={30} color={up ? c.green : c.red} max={30} />
+          </View>
+        )}
         {wealth.netWorthChange != null ? (
           <Text style={[styles.change, { color: hidden ? c.subtext : up ? c.green : c.red }]}>
             {hidden ? MASK : `${up ? '▲' : '▼'} ${money(Math.abs(wealth.netWorthChange))} over ~30 days`}
@@ -100,6 +108,20 @@ export function WealthCard({ wealth }: Props) {
               c={c}
             />
           </View>
+          {!hidden && wealth.incomeThisMonth! > 0 && (() => {
+            const spendPct = Math.round((wealth.spendingThisMonth! / wealth.incomeThisMonth!) * 100);
+            const savedPct = 100 - spendPct;
+            return (
+              <View style={styles.savingsWrap}>
+                <View style={[styles.savingsTrack, { backgroundColor: c.green + '33' }]}>
+                  <View style={[styles.savingsFill, { width: `${Math.min(100, Math.max(0, spendPct))}%`, backgroundColor: spendPct > 100 ? c.red : c.subtext }]} />
+                </View>
+                <Text style={[styles.savingsLabel, { color: c.subtext }]}>
+                  {spendPct}% of income spent · {savedPct >= 0 ? `${savedPct}% saved` : `${Math.abs(savedPct)}% over`} (30d)
+                </Text>
+              </View>
+            );
+          })()}
           <Text style={[styles.discretionary, { color: c.subtext }]}>
             {show(money(wealth.spendingThisWeek))} spent in the last 7 days
             {wealth.discretionaryThisMonth != null && wealth.spendingThisMonth! > 0
@@ -138,6 +160,7 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   hint: { fontSize: 10, fontStyle: 'italic' },
   big: { fontSize: 40, fontWeight: '300', letterSpacing: -1.5 },
+  nwTrend: { marginTop: spacing.sm, marginBottom: 2 },
   change: { ...typography.caption, fontSize: 13, marginTop: 2 },
   row: {
     flexDirection: 'row',
@@ -149,6 +172,10 @@ const styles = StyleSheet.create({
   stat: { alignItems: 'flex-start', flex: 1 },
   statValue: { ...typography.subtitle, fontWeight: '600', fontSize: 15 },
   statLabel: { ...typography.caption, fontSize: 11, marginTop: 2 },
+  savingsWrap: { marginTop: spacing.md },
+  savingsTrack: { height: 8, borderRadius: 4, overflow: 'hidden' },
+  savingsFill: { height: 8, borderRadius: 4 },
+  savingsLabel: { ...typography.caption, fontSize: 11, marginTop: spacing.xs, textAlign: 'center' },
   discretionary: { ...typography.caption, fontSize: 12, marginTop: spacing.sm, textAlign: 'center' },
   pacePct: { fontSize: 11 },
   syncedAt: { ...typography.caption, fontSize: 11, marginTop: 3 },

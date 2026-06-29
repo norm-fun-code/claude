@@ -6,6 +6,9 @@ import { RecoveryOrb } from './RecoveryOrb';
 import type { Recovery, HealthComposite } from '../hooks/useBriefing';
 import { MetricDetailSheet, type MetricConfig } from './MetricDetailSheet';
 import { formatHM } from '../utils/format';
+import { MiniBars } from './viz/MiniBars';
+import { useSeries } from '../hooks/useSeries';
+import { RECOVERY_HISTORY_URL } from '../config';
 
 interface Props {
   recovery: Recovery | null | undefined;
@@ -55,8 +58,13 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [selected, setSelected] = useState<MetricConfig | null>(null);
+  const trend = useSeries(`${RECOVERY_HISTORY_URL}?days=30`);
 
   if (!recovery || recovery.score == null) return null;
+
+  // Per-day band coloring so the trend shows not just direction but how often you
+  // were in the green vs the red.
+  const bandFor = (v: number) => (v >= 66 ? colors.green : v >= 34 ? colors.yellow : colors.red);
 
   const bandColor =
     recovery.band === 'green' ? colors.green
@@ -82,6 +90,19 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
           ) : null}
         </View>
       </View>
+
+      {/* 30-day recovery trend — same scorer as the orb, replayed per day */}
+      {trend.values.length >= 5 && (
+        <View style={[styles.trendBlock, { borderTopColor: c.border }]}>
+          <View style={styles.trendHead}>
+            <Text style={[styles.trendLabel, { color: c.subtext }]}>30-DAY TREND</Text>
+            <Text style={[styles.trendMeta, { color: c.subtext }]}>
+              avg {Math.round(trend.values.reduce((a, b) => a + b, 0) / trend.values.length)}
+            </Text>
+          </View>
+          <MiniBars values={trend.values} height={38} colorFor={(_i, v) => bandFor(v)} />
+        </View>
+      )}
 
       {/* Contributing parts (each a percentile of your own baseline) */}
       {Object.keys(recovery.parts || {}).length > 0 && (
@@ -172,6 +193,10 @@ const styles = StyleSheet.create({
   partValUnit: { ...typography.caption, fontSize: 11 },
   partLabel: { ...typography.caption, fontSize: 11, marginTop: 2 },
   partsCaption: { ...typography.caption, fontSize: 11, textAlign: 'center', marginTop: spacing.xs, fontStyle: 'italic' },
+  trendBlock: { borderTopWidth: 1, marginTop: spacing.md, paddingTop: spacing.md },
+  trendHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm },
+  trendLabel: { ...typography.label, fontSize: 10 },
+  trendMeta: { ...typography.caption, fontSize: 11 },
   rawRow: { flexDirection: 'row', gap: spacing.lg, justifyContent: 'center', borderTopWidth: 1, marginTop: spacing.sm, paddingTop: spacing.sm },
   rawTap: { paddingVertical: 2, paddingHorizontal: 4 },
   rawItem: { fontSize: 12 },

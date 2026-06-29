@@ -5,9 +5,26 @@ import { SectionHeader } from './SectionHeader';
 import { formatHM } from '../utils/format';
 import type { HealthData } from '../hooks/useHealthData';
 import { MetricDetailSheet, type MetricConfig } from './MetricDetailSheet';
+import { MiniBars } from './viz/MiniBars';
+import { useSeries } from '../hooks/useSeries';
+import { METRICS_HISTORY_URL } from '../config';
 
 interface Props {
   health: HealthData;
+}
+
+// A 14-day trend for one metric, fetched on demand. Pure RN bars — OTA-shippable.
+function RowSpark({ metric, source, color, height = 22, width }: {
+  metric: string; source?: string; color: string; height?: number; width?: number;
+}) {
+  const url = `${METRICS_HISTORY_URL}?metric=${metric}&days=14${source ? `&source=${source}` : ''}`;
+  const { values } = useSeries(url);
+  if (values.length < 3) return null;
+  return (
+    <View style={width ? { width } : undefined}>
+      <MiniBars values={values} height={height} color={color} max={14} gap={1.5} />
+    </View>
+  );
 }
 
 function vo2Color(category: string | null): string {
@@ -18,7 +35,7 @@ function vo2Color(category: string | null): string {
 }
 
 function StatRow({
-  label, value, unit, subtitle, subtitleColor, onPress, c,
+  label, value, unit, subtitle, subtitleColor, onPress, c, spark,
 }: {
   label: string;
   value: string | number | null;
@@ -27,10 +44,12 @@ function StatRow({
   subtitleColor?: string;
   onPress?: () => void;
   c: ReturnType<typeof getColors>;
+  spark?: React.ReactNode;
 }) {
   const inner = (
     <View style={styles.statRow}>
       <Text style={[styles.statLabel, { color: c.subtext }]}>{label}</Text>
+      {spark ? <View style={styles.statSpark}>{spark}</View> : null}
       <View style={styles.statRight}>
         <View style={styles.statValueRow}>
           <Text style={[styles.statValue, { color: c.text }]}>{value ?? '—'}</Text>
@@ -101,13 +120,16 @@ export function HealthCard({ health }: Props) {
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <SectionHeader emoji="❤️" title="Health" />
 
-      {/* HRV hero — tappable to open trend sheet */}
+      {/* HRV hero — tappable to open trend sheet, with a 14-day trend alongside */}
       <TouchableOpacity onPress={() => open('hrv')} activeOpacity={0.6} style={styles.hrvRow}>
         <View style={styles.hrvLeft}>
           <Text style={[styles.hrvNumber, { color: c.text }]}>
             {health.hrv ?? '—'}
           </Text>
           <Text style={[styles.hrvUnit, { color: c.subtext }]}>ms HRV</Text>
+        </View>
+        <View style={styles.hrvSpark}>
+          <RowSpark metric="hrv" source="apple_health" color={c.accent} height={32} />
         </View>
         <Text style={[styles.hrvChevron, { color: c.border }]}>›</Text>
       </TouchableOpacity>
@@ -136,12 +158,14 @@ export function HealthCard({ health }: Props) {
       <StatRow
         label="Resting HR" value={health.restingHR} unit="bpm"
         onPress={() => open('resting_hr')} c={c}
+        spark={<RowSpark metric="resting_hr" source="apple_health" color={c.accent} width={64} />}
       />
       <StatRow
         label="Sleep"
         value={health.sleepHours !== null ? formatHM(health.sleepHours) : null}
         unit={health.sleepQuality ?? undefined}
         onPress={() => open('sleep_hours')} c={c}
+        spark={<RowSpark metric="sleep_hours" source="eight_sleep" color={c.accent} width={64} />}
       />
       {(health.deepSleepHours !== null || health.remSleepHours !== null) && (
         <StatRow
@@ -154,12 +178,14 @@ export function HealthCard({ health }: Props) {
         label="Steps"
         value={health.steps !== null ? health.steps.toLocaleString() : null}
         onPress={() => open('steps')} c={c}
+        spark={<RowSpark metric="steps" source="apple_health" color={c.accent} width={64} />}
       />
       <StatRow
         label="Active Cal"
         value={health.activeCalories !== null ? health.activeCalories.toLocaleString() : null}
         unit="kcal"
         onPress={() => open('active_energy')} c={c}
+        spark={<RowSpark metric="active_energy" source="apple_health" color={c.accent} width={64} />}
       />
 
       {health.error && (
@@ -190,6 +216,7 @@ const styles = StyleSheet.create({
   hrvLeft: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.xs },
   hrvNumber: { fontSize: 48, fontWeight: '300', letterSpacing: -2 },
   hrvUnit: { ...typography.caption, fontSize: 14 },
+  hrvSpark: { flex: 1, alignItems: 'flex-end', justifyContent: 'flex-end', marginHorizontal: spacing.md, paddingBottom: 8 },
   hrvChevron: { fontSize: 22, fontWeight: '300' },
   divider: { height: 1, marginBottom: spacing.md },
   statRow: {
@@ -199,7 +226,8 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs + 2,
   },
   statLabel: { ...typography.body },
-  statRight: { alignItems: 'flex-end' },
+  statSpark: { flex: 1, alignItems: 'flex-end', justifyContent: 'center', marginHorizontal: spacing.md },
+  statRight: { alignItems: 'flex-end', minWidth: 56 },
   statValueRow: { flexDirection: 'row', alignItems: 'baseline' },
   statValue: { ...typography.subtitle },
   statUnit: { ...typography.caption },

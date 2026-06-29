@@ -605,6 +605,52 @@ app.get('/api/habits/streaks', async (req, res) => {
   }
 });
 
+// Per-habit adherence for the last N days as boolean arrays (oldest→newest), with
+// gaps filled false — drives the habit dot-rows. One round trip for all habits.
+app.get('/api/habits/history', async (req, res) => {
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const days = Math.max(7, Math.min(Number(req.query.days) || 14, 60));
+    const HABIT_METRICS = ['morning_tm', 'afternoon_tm', 'cold_shower', 'gratitude', 'exercise'];
+    const { rows } = await db.query(
+      `SELECT metric,
+              (ts AT TIME ZONE $1)::date AS day,
+              AVG(value) AS val
+         FROM metrics
+        WHERE domain = 'habits' AND metric = ANY($2) AND source != 'seed'
+          AND (ts AT TIME ZONE $1)::date > (now() AT TIME ZONE $1)::date - $3::int
+        GROUP BY metric, day`,
+      [tz, HABIT_METRICS, days]
+    );
+    const done = {}; // metric -> Set(YYYY-MM-DD where val>=0.5)
+    for (const r of rows) {
+      const key = String(r.day).slice(0, 10);
+      if (Number(r.val) >= 0.5) (done[r.metric] ||= new Set()).add(key);
+    }
+    // Build the contiguous day axis (oldest→newest) in the configured tz.
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    const axis = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(`${todayStr}T12:00:00Z`);
+      d.setUTCDate(d.getUTCDate() - i);
+      axis.push(d.toISOString().slice(0, 10));
+    }
+    const series = (metric) => axis.map((day) => done[metric]?.has(day) || false);
+    res.json({
+      days, axis,
+      history: {
+        morningTM: series('morning_tm'),
+        afternoonTM: series('afternoon_tm'),
+        coldShower: series('cold_shower'),
+        gratitude: series('gratitude'),
+        exercise: series('exercise'),
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Per-exercise / non-negotiable workout checkmarks. Like the check-in, each tap
 // saves immediately and the app rehydrates the day's checks on mount. The client
 // owns the local date (?date=YYYY-MM-DD, ET) so it matches the workout strip.
@@ -1214,6 +1260,18 @@ app.get('/api/recovery', async (req, res) => {
     // tell the client to prompt the sleep check-in.
     const needsSleepCheckIn = recovery ? false : await rec.needsSleepCheckIn();
     res.json({ recovery, needsSleepCheckIn });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Recovery-score trend: the last N days of composite recovery, computed with the
+// same scorer as the live card. Returns { rows:[{ts,value}] } like metrics/history.
+app.get('/api/recovery/history', async (req, res) => {
+  try {
+    const days = Math.max(7, Math.min(Number(req.query.days) || 30, 90));
+    const rec = require('./src/intelligence/recovery');
+    res.json({ rows: await rec.recoveryHistory({ days }) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

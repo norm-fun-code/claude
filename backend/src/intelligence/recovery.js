@@ -730,6 +730,43 @@ async function liveRecovery() {
   return { score: rec.score, band, parts: rec.parts, detail: guidance + workoutNote, rawHrv, rawRhr };
 }
 
+/**
+ * Recovery score for each of the last `days` days — replays recoveryScore() over
+ * the source-locked overnight series truncated to each day, so the trend uses the
+ * exact same math as the live card. Returns [{ ts, value }] (oldest→newest),
+ * matching /api/metrics/history so the client charts it the same way. Days
+ * without an overnight HRV reading are skipped (recovery is a night signal).
+ */
+async function recoveryHistory({ days = 30 } = {}) {
+  const metricsStore = require('../store/metrics');
+  // Pull extra lead-in days so early points in the window still have a baseline.
+  const from = new Date(Date.now() - (days + 40) * 864e5);
+  const NIGHT_SOURCES = ['eight_sleep', 'eight_sleep_baseline'];
+  const SOURCE_LOCK = { 'health:hrv': NIGHT_SOURCES, 'health:resting_hr': NIGHT_SOURCES };
+  const seriesByKey = {};
+  for (const key of ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score']) {
+    const [dm, mt] = key.split(':');
+    const rows = await metricsStore.dailyAggregatePreferSource({
+      domain: dm, metric: mt, from, agg: 'avg', sources: SOURCE_LOCK[key] ?? null,
+    });
+    if (rows.length) seriesByKey[key] = rows;
+  }
+  const hrv = seriesByKey['health:hrv'] || [];
+  const cutoff = new Date(Date.now() - days * 864e5).getTime();
+  const out = [];
+  for (const r of hrv) {
+    const dTime = new Date(r.day).getTime();
+    if (dTime < cutoff) continue;
+    const trunc = {};
+    for (const k of Object.keys(seriesByKey)) {
+      trunc[k] = seriesByKey[k].filter((x) => new Date(x.day).getTime() <= dTime);
+    }
+    const rec = recoveryScore(trunc);
+    if (rec) out.push({ ts: r.day, value: Math.round(rec.score) });
+  }
+  return out;
+}
+
 module.exports = {
   recoveryScore,
   recoveryBand,
@@ -742,6 +779,7 @@ module.exports = {
   baselineScore,
   trendScore,
   liveRecovery,
+  recoveryHistory,
   selfReportRecovery,
   needsSleepCheckIn,
 };
