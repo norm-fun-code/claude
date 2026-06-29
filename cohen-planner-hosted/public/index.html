@@ -2894,17 +2894,12 @@ function advRenderMessages(){
   if(!msgs)return;
   const visible=advisorConversation.filter(m=>!m.hidden);
   if(visible.length===0){
-    if(advisorActiveChatId&&!_advBriefedChats.has(advisorActiveChatId)){
-      _advBriefedChats.add(advisorActiveChatId);
-      msgs.innerHTML='';
-      advAutoBrief();
-      return;
-    }
     msgs.innerHTML=`<div class="adv-welcome">
       <h3>Ask me anything about your plan</h3>
       <p>I have your live planner state <em>and</em> read-only access to your Monarch data — real balances, transactions, spending, and holdings. Try one of these or ask your own:</p>
       <button onclick="advOptimize()" style="width:100%;margin-bottom:14px;padding:13px 18px;background:linear-gradient(135deg,var(--accent),var(--p));color:#fff;border:none;border-radius:9px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px;letter-spacing:-.01em;box-shadow:0 3px 12px rgba(99,91,255,.25);transition:opacity .15s" onmouseover="this.style.opacity='.9'" onmouseout="this.style.opacity='1'">⚡ What should I optimize? <span style="font-size:10px;font-weight:400;opacity:.85">— run full analysis, auto-propose best scenario</span></button>
       <div class="adv-starters">
+        <div class="adv-starter" onclick="advAsk('Give me a concise quarterly check-in on my financial plan: 3-4 specific things to flag right now — what\\'s on track, what needs attention, and any quick wins. Be direct and specific to my actual numbers.')"><strong>📋 Quarterly check-in</strong>What to flag right now</div>
         <div class="adv-starter" onclick="advAsk('Given my current plan, what should I prioritize in the next 12 months?')"><strong>🎯 Top priority?</strong>Next 12 months</div>
         <div class="adv-starter" onclick="advAsk('Run a stress test - what if equity returns are only 4% instead of 6%?')"><strong>📉 Stress test returns</strong>4% vs 6% returns</div>
         <div class="adv-starter" onclick="advAsk('Should I sell some Stripe RSU now to reduce concentration risk, or wait for IPO?')"><strong>⚠️ Stripe concentration</strong>Sell now or wait?</div>
