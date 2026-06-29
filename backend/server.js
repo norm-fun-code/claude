@@ -2893,6 +2893,15 @@ app.get('/api/briefing', async (req, res) => {
   let selfModel = '';
   try {
     selfModel = (await require('./src/store/selfModel').latestModelText()) ?? '';
+    // The daily brief shouldn't surface net worth (it's noise day-to-day and the
+    // LLM kept forcing nonsensical "net worth tied to your work" ties). Strip the
+    // net-worth figure from the WEALTH line for the brief only — keep MTD spending
+    // so genuine spending insights still flow. The full model keeps net worth for
+    // other surfaces (Ask, wealth tab).
+    selfModel = selfModel.replace(/^WEALTH:.*$/m, (line) => {
+      const spend = line.match(/MTD spending \$[\d,]+/);
+      return spend ? `WEALTH: ${spend[0]}` : '';
+    });
   } catch (err) {
     console.error('[selfModel] failed:', err.message);
   }
