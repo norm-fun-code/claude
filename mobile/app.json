@@ -33,7 +33,8 @@
         {
           "isClinicalDataEnabled": false
         }
-      ]
+      ],
+      "expo-font"
     ],
     "assetBundlePatterns": [
       "**/*"
