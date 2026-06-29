@@ -109,7 +109,7 @@ Return ONLY valid JSON with EXACTLY these fields:
     { "from": "sender", "subject": "subject", "action": "1-2 sentences on what action is needed and why it's urgent" }
   ],
   "quoteInsight": "2 sentences drawing out the deeper idea or principle in the quote",
-  "notionQuote": "the single most resonant COMPLETE sentence or passage from the Notion wisdom above — verbatim. Must be actual wisdom: a full thought with a subject and verb that stands alone as insight. NEVER pick: a [section: ...] label, a chapter or book title, text that starts with ★ ☆ or an emoji, a fragment ending in a colon, or any organizational marker. If no single sentence qualifies, return empty string.",
+  "notionQuote": "the single most resonant COMPLETE sentence or passage from the Notion wisdom above — verbatim. Must be actual wisdom: a full thought with a subject and verb that stands alone as insight. NEVER pick: a [section: ...] label, a chapter or book title, text that starts with ★ ☆ or an emoji, a fragment ending in a colon, or any organizational marker. CRITICAL: if the Notion wisdom includes an 'ALREADY SHOWN' list, do NOT select any passage on it — pick a genuinely different one; if nothing else on the page qualifies, return empty string rather than repeat. If no single sentence qualifies, return empty string.",
   "notionInsight": "2 sentences drawing out the key idea in the SPECIFIC notionQuote you selected (the commentary must match that exact passage)"
 }
 

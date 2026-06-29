@@ -2990,19 +2990,34 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[leverage context] failed:', err.message);
   }
 
+  // Dedup the Notion wisdom at the QUOTE level (not just the page): list the
+  // quotes shown in the last 30 days so the LLM picks a different passage, even
+  // when the same page recurs or a page has one standout line.
+  const seenNotionQuotes = await surfacedStore.recentRefs('notion_quote', 30).catch(() => new Set());
+  const notionTextForBrief = seenNotionQuotes.size
+    ? `${notionData.text}\n\n[ALREADY SHOWN in the last 30 days — do NOT select any of these; choose a DIFFERENT passage (return empty string if the page has nothing else worthwhile):\n${[...seenNotionQuotes].slice(0, 60).map((q) => `- ${q}`).join('\n')}]`
+    : notionData.text;
+
   // Call the LLM with whatever data we have
   let geminiResult = null;
   try {
     // The LLM call can be slow; bound it so a stalled model doesn't hang the
     // briefing (it degrades to the data-only sections).
     geminiResult = await withTimeout(
-      generateBriefing(emails, notionData.text, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy),
+      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy),
       Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000),
       'gemini'
     );
   } catch (err) {
     console.error('[gemini] failed:', err.message);
     errors.push({ service: 'gemini', error: err.message });
+  }
+
+  // Record the surfaced wisdom quote so it won't repeat for 30 days. Only on a
+  // fresh (non-same-day) build, matching the page-dedup recording above.
+  if (!priorIsToday && geminiResult?.notionQuote) {
+    const ref = String(geminiResult.notionQuote).toLowerCase().replace(/\s+/g, ' ').replace(/[“”"']/g, '').trim().slice(0, 300);
+    if (ref) surfacedStore.record('notion_quote', ref).catch(() => {});
   }
 
   // LLM fallback: if the AI call failed and there's a prior build today (or
