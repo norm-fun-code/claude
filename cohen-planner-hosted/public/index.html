@@ -228,7 +228,7 @@ tr:hover td{background:var(--s2)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
 button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 /* ── Portfolio responsive grids (replace inline fixed-px so they collapse on mobile) ── */
-.pf-split{display:grid;grid-template-columns:260px 1fr;gap:10px;margin-bottom:12px}
+.pf-split{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
 .pf-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
 .pf-cols2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .pf-quad{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px}
@@ -1426,7 +1426,7 @@ function renderPortfolioTab(R,P){
   <div class="pf-split">
     <div class="glass-card" style="padding:14px">
       <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:10px">Allocation by Holding</div>
-      <div style="height:220px;position:relative"><canvas id="portfolioDonut"></canvas></div>
+      <div style="height:280px;position:relative"><canvas id="portfolioDonut"></canvas></div>
     </div>
     <div class="glass-card" style="padding:14px">
       <div class="pf-cols2">
