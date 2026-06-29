@@ -26,23 +26,18 @@ export interface EveningBrief {
   generatedAt?: string;
 }
 
-// The wind-down brief is an evening artifact. Before ~3pm there's nothing useful to
-// say, so the card stays hidden. After that it fetches today's brief; if the 9:30pm
-// build hasn't run yet (you opened the app early), ?refresh=1 builds it on demand.
-const EVENING_HOUR = 15;
-
+// The wind-down brief is built + pushed by the 9:30pm scheduler job. The card
+// only ever SHOWS what that job created — it never builds on demand — so it can't
+// appear early (e.g. opening the app at 3pm). Until tonight's build exists, the
+// fetch returns null and the card stays hidden.
 export function useEveningBrief() {
   const [brief, setBrief] = useState<EveningBrief | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const isEvening = () => new Date().getHours() >= EVENING_HOUR;
-
-  const fetchBrief = useCallback(async (refresh = false): Promise<EveningBrief | null> => {
-    if (!isEvening()) { setBrief(null); return null; }
+  const fetchBrief = useCallback(async (): Promise<EveningBrief | null> => {
     setLoading(true);
     try {
-      const url = refresh ? `${EVENING_BRIEF_URL}?refresh=1` : EVENING_BRIEF_URL;
-      const res = await fetchWithTimeout(url, { headers: authHeaders() }, refresh ? 30000 : 12000);
+      const res = await fetchWithTimeout(EVENING_BRIEF_URL, { headers: authHeaders() }, 12000);
       if (res.ok) {
         const data = await res.json();
         const next = data && data.headline ? (data as EveningBrief) : null;
@@ -57,23 +52,16 @@ export function useEveningBrief() {
     return null;
   }, []);
 
-  // First load: fetch today's brief; if nothing's built yet this evening (you
-  // opened the app before the 9:30pm job), build it on demand.
-  useEffect(() => {
-    (async () => {
-      if (!isEvening()) return;
-      const found = await fetchBrief(false);
-      if (!found) await fetchBrief(true);
-    })();
-  }, [fetchBrief]);
+  // Fetch today's brief on mount (null until the 9:30pm job has built it).
+  useEffect(() => { fetchBrief(); }, [fetchBrief]);
 
-  // Re-check when returning to foreground (e.g. crossed into the evening window).
+  // Re-check on foreground — picks up the brief once the evening push has fired.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (s) => {
-      if (s === 'active') fetchBrief(false);
+      if (s === 'active') fetchBrief();
     });
     return () => sub.remove();
   }, [fetchBrief]);
 
-  return { brief, loading, refetch: () => fetchBrief(true) };
+  return { brief, loading, refetch: fetchBrief };
 }
