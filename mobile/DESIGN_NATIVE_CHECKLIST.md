@@ -201,7 +201,10 @@ import { bandGradient, glow, FONTS } from '../theme';
 ## 11. Verify, build, ship
 
 - [ ] `npx tsc --noEmit` → no errors.
-- [ ] `eas build --profile development --platform ios` (native modules → must be a build, NOT an OTA update).
+- [ ] Build natively (native modules → must be a build, NOT an OTA update). Pick the profile by goal:
+  - **Standalone, just-use-it (recommended):** `npx eas-cli build --profile preview --platform ios` — JS is bundled, opens straight into the app, no Metro tether, still takes OTA updates.
+  - **TestFlight:** `npx eas-cli build --profile production --platform ios --auto-submit`.
+  - **Active development only:** `--profile development` — this is a DEV CLIENT; it boots to a "Development servers" launcher and needs `npx expo start --dev-client` running. Do NOT use it if you just want to run the app.
 - [ ] Install on device; confirm: custom type app-wide, gradient arc around the recovery orb, no crash.
 - [ ] `git add -A && git commit && git push`.
 - [ ] Tell the agent: **"fonts + Skia are installed."**
