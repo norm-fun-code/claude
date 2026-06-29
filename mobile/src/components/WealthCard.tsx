@@ -4,7 +4,7 @@ import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { Wealth } from '../hooks/useBriefing';
 import { WEALTH_PLAN_URL, METRICS_HISTORY_URL, authHeaders, fetchWithTimeout } from '../config';
-import { MiniBars } from './viz/MiniBars';
+import { Trend } from './viz/Trend';
 import { useSeries } from '../hooks/useSeries';
 
 interface Props {
@@ -75,7 +75,7 @@ export function WealthCard({ wealth }: Props) {
         <Text style={[styles.big, { color: c.text }]}>{show(money(wealth.netWorth))}</Text>
         {!hidden && nwTrend.values.length >= 3 && (
           <View style={styles.nwTrend}>
-            <MiniBars values={nwTrend.values} height={30} color={up ? c.green : c.red} max={30} highlightLast />
+            <Trend values={nwTrend.values} height={32} color={up ? c.green : c.red} max={30} />
           </View>
         )}
         {wealth.netWorthChange != null ? (

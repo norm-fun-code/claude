@@ -7,7 +7,7 @@ import { ProgressArc } from './viz/ProgressArc';
 import type { Recovery, HealthComposite } from '../hooks/useBriefing';
 import { MetricDetailSheet, type MetricConfig } from './MetricDetailSheet';
 import { formatHM } from '../utils/format';
-import { MiniBars } from './viz/MiniBars';
+import { Trend } from './viz/Trend';
 import { useSeries } from '../hooks/useSeries';
 import { RECOVERY_HISTORY_URL } from '../config';
 
@@ -63,9 +63,6 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
 
   if (!recovery || recovery.score == null) return null;
 
-  // Per-day band coloring so the trend shows not just direction but how often you
-  // were in the green vs the red.
-  const bandFor = (v: number) => (v >= 66 ? colors.green : v >= 34 ? colors.yellow : colors.red);
 
   const bandColor =
     recovery.band === 'green' ? colors.green
@@ -106,7 +103,7 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
               avg {Math.round(trend.values.reduce((a, b) => a + b, 0) / trend.values.length)}
             </Text>
           </View>
-          <MiniBars values={trend.values} height={38} colorFor={(_i, v) => bandFor(v)} highlightLast />
+          <Trend values={trend.values} height={40} color={bandColor} />
         </View>
       )}
 

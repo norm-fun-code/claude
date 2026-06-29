@@ -6,6 +6,7 @@ import { formatHM } from '../utils/format';
 import type { HealthData } from '../hooks/useHealthData';
 import { MetricDetailSheet, type MetricConfig } from './MetricDetailSheet';
 import { MiniBars } from './viz/MiniBars';
+import { Trend } from './viz/Trend';
 import { useSeries } from '../hooks/useSeries';
 import { METRICS_HISTORY_URL } from '../config';
 
@@ -13,12 +14,13 @@ interface Props {
   health: HealthData;
 }
 
-// A 14-day trend for one metric, fetched on demand. Pure RN bars — OTA-shippable.
+// A 14-day trend for one metric, fetched on demand. Continuous signals (HRV, RHR)
+// render as a Skia line; discrete amounts (steps, active energy, sleep) as bars.
 // `cumulative` metrics (steps, active energy) build through the day, so today's
-// running partial is dropped from the trend — otherwise an early-in-the-day total
-// renders as a misleading cliff next to the full prior days.
-function RowSpark({ metric, source, color, height = 22, width, cumulative }: {
-  metric: string; source?: string; color: string; height?: number; width?: number; cumulative?: boolean;
+// running partial is dropped — otherwise an early-in-the-day total renders as a
+// misleading cliff next to the full prior days.
+function RowSpark({ metric, source, color, height = 22, width, cumulative, line }: {
+  metric: string; source?: string; color: string; height?: number; width?: number; cumulative?: boolean; line?: boolean;
 }) {
   const url = `${METRICS_HISTORY_URL}?metric=${metric}&days=14${source ? `&source=${source}` : ''}`;
   const { rows } = useSeries(url);
@@ -32,7 +34,9 @@ function RowSpark({ metric, source, color, height = 22, width, cumulative }: {
   if (values.length < 3) return null;
   return (
     <View style={width ? { width } : undefined}>
-      <MiniBars values={values} height={height} color={color} max={14} gap={1.5} />
+      {line
+        ? <Trend values={values} height={height} color={color} max={14} />
+        : <MiniBars values={values} height={height} color={color} max={14} gap={1.5} />}
     </View>
   );
 }
@@ -139,7 +143,7 @@ export function HealthCard({ health }: Props) {
           <Text style={[styles.hrvUnit, { color: c.subtext }]}>ms HRV</Text>
         </View>
         <View style={styles.hrvSpark}>
-          <RowSpark metric="hrv" source="apple_health" color={c.accent} height={32} />
+          <RowSpark metric="hrv" source="apple_health" color={c.accent} height={34} width={130} line />
         </View>
         <Text style={[styles.hrvChevron, { color: c.border }]}>›</Text>
       </TouchableOpacity>
@@ -168,7 +172,7 @@ export function HealthCard({ health }: Props) {
       <StatRow
         label="Resting HR" value={health.restingHR} unit="bpm"
         onPress={() => open('resting_hr')} c={c}
-        spark={<RowSpark metric="resting_hr" source="apple_health" color={c.accent} width={64} />}
+        spark={<RowSpark metric="resting_hr" source="apple_health" color={c.accent} width={64} height={26} line />}
       />
       <StatRow
         label="Sleep"
