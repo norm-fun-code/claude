@@ -710,6 +710,34 @@ app.post('/api/context', async (req, res) => {
   }
 });
 
+// Active context tags per day over a window, keyed by wake date (YYYY-MM-DD).
+// Lets a chart tooltip answer "why did HRV plunge here?" by joining the tapped
+// data point's date to whatever was logged that night.
+app.get('/api/context/history', async (req, res) => {
+  const numDays = Math.max(1, Math.min(Number(req.query.days) || 60, 400));
+  try {
+    const { CONTEXT_TAGS } = require('./src/intelligence/context-tags');
+    const meta = Object.fromEntries(CONTEXT_TAGS.map((t) => [t.key, t]));
+    const tz = process.env.TZ || 'America/New_York';
+    const { rows } = await db.query(
+      `SELECT to_char((ts AT TIME ZONE $1)::date, 'YYYY-MM-DD') AS day, metric
+         FROM metrics
+        WHERE domain = 'context' AND value >= 0.5
+          AND ts >= now() - ($2 || ' days')::interval`,
+      [tz, String(numDays)]
+    );
+    const history = {};
+    for (const r of rows) {
+      const m = meta[r.metric]; // skips `_submitted` and any retired tag
+      if (!m) continue;
+      (history[r.day] ||= []).push({ key: m.key, label: m.label, emoji: m.emoji });
+    }
+    res.json({ history });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Per-exercise / non-negotiable workout checkmarks. Like the check-in, each tap
 // saves immediately and the app rehydrates the day's checks on mount. The client
 // owns the local date (?date=YYYY-MM-DD, ET) so it matches the workout strip.

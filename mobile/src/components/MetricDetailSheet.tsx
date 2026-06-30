@@ -4,8 +4,8 @@ import {
   StyleSheet, useColorScheme,
 } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
-import { METRICS_HISTORY_URL, authHeaders, fetchWithTimeout } from '../config';
-import { LineChart } from './viz/LineChart';
+import { METRICS_HISTORY_URL, CONTEXT_HISTORY_URL, authHeaders, fetchWithTimeout } from '../config';
+import { LineChart, type ContextTag } from './viz/LineChart';
 
 // Continuous signals render as lines; cumulative counts stay as bars.
 const BAR_METRICS = new Set(['steps', 'active_energy']);
@@ -137,6 +137,7 @@ export function MetricDetailSheet({
   const [days, setDays] = useState(30);
   const [primaryRows, setPrimaryRows] = useState<DataRow[]>([]);
   const [secondaryRows, setSecondaryRows] = useState<DataRow[]>([]);
+  const [contextByDay, setContextByDay] = useState<Record<string, ContextTag[]>>({});
   const [loading, setLoading] = useState(false);
 
   const DUAL_SOFT = dualSource ? dualSource.color + '55' : '#FF9F0A55';
@@ -152,6 +153,10 @@ export function MetricDetailSheet({
       `${METRICS_HISTORY_URL}?metric=${encodeURIComponent(metric)}&days=${days}${srcParam}`,
       { headers: authHeaders() }
     ).then(r => r.json()).then(d => setPrimaryRows(d.rows ?? [])).catch(() => {});
+
+    // Context tags for the same window, so a tapped point can show what was logged.
+    fetchWithTimeout(`${CONTEXT_HISTORY_URL}?days=${days}`, { headers: authHeaders() })
+      .then(r => r.json()).then(d => setContextByDay(d.history ?? {})).catch(() => setContextByDay({}));
 
     const promises: Promise<void>[] = [p1];
     if (dualSource) {
@@ -263,12 +268,22 @@ export function MetricDetailSheet({
               ) : isDual ? (
                 <LineChart
                   series={[
-                    { values: dualGroups.map((g) => g.primary), color: c.accent },
-                    { values: dualGroups.map((g) => g.secondary), color: dualSource!.color },
+                    { values: dualGroups.map((g) => g.primary), color: c.accent, label: sourceLabel ?? 'Primary' },
+                    { values: dualGroups.map((g) => g.secondary), color: dualSource!.color, label: dualSource!.label },
                   ]}
+                  dates={dualGroups.map((g) => g.day)}
+                  unit={unit}
+                  formatValue={formatValue}
+                  contextByDay={contextByDay}
                 />
               ) : (
-                <LineChart series={[{ values: primaryPoints.map((p) => p.value), color: c.accent, fill: true }]} />
+                <LineChart
+                  series={[{ values: primaryPoints.map((p) => p.value), color: c.accent, fill: true }]}
+                  dates={primaryPoints.map((p) => p.day)}
+                  unit={unit}
+                  formatValue={formatValue}
+                  contextByDay={contextByDay}
+                />
               )}
 
               {firstDay && lastDay && (

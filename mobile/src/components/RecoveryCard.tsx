@@ -36,13 +36,13 @@ const RECOVERY_METRICS: Record<string, MetricConfig> = {
   hrv: {
     metric: 'hrv', label: 'HRV', unit: 'ms',
     source: 'eight_sleep', sourceLabel: 'Eight Sleep',
-    dualSource: { source: 'apple_health', label: 'Apple Watch', color: '#635BFF' },
+    dualSource: { source: 'apple_health', label: 'Apple Watch', color: '#FF9F0A' },
     formatValue: v => `${Math.round(v)}`,
   },
   resting_hr: {
     metric: 'resting_hr', label: 'Resting HR', unit: 'bpm',
     source: 'eight_sleep', sourceLabel: 'Eight Sleep',
-    dualSource: { source: 'apple_health', label: 'Apple Watch', color: '#635BFF' },
+    dualSource: { source: 'apple_health', label: 'Apple Watch', color: '#FF9F0A' },
     formatValue: v => `${Math.round(v)}`,
     lowerIsBetter: true,
   },
