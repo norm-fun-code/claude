@@ -41,6 +41,7 @@ import { WeeklyIntentionsCard } from './src/components/WeeklyIntentionsCard';
 import { HealthCard } from './src/components/HealthCard';
 import { LinearGradient } from 'expo-linear-gradient';
 import { RecoveryCard } from './src/components/RecoveryCard';
+import { NightContextCard } from './src/components/NightContextCard';
 import { SleepCheckInCard } from './src/components/SleepCheckInCard';
 import { GradientButton } from './src/components/GradientButton';
 import { WorkoutsPanel } from './src/components/WorkoutsPanel';
@@ -188,6 +189,7 @@ export default function App() {
               composites={d?.healthComposites ?? []}
               builtAt={liveRecovery.fetched ? undefined : d?.builtAt}
             />
+            <NightContextCard />
             <HealthCard health={health} />
             {/* healthInsights is the server-curated top set of health domain findings,
                 already scored and ranked. Habit/wellbeing-only findings go to the
