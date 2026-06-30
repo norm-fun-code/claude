@@ -852,51 +852,8 @@ app.get('/api/workout/progression', async (req, res) => {
     if (!exercise) return res.status(400).json({ error: 'exercise required' });
     const names = Array.isArray(exercise) ? exercise : [exercise];
     const lim = Math.min(Math.max(Number(limit) || 10, 2), 30);
-
-    const { rows } = await db.query(
-      `SELECT exercise, to_char(log_date, 'YYYY-MM-DD') AS day,
-              json_agg(json_build_object('reps', reps, 'weight_lbs', weight_lbs) ORDER BY set_number) AS sets
-         FROM workout_logs
-        WHERE exercise = ANY($1)
-        GROUP BY exercise, log_date
-        ORDER BY exercise, log_date ASC`,
-      [names]
-    );
-
-    const epley = (w, r) => (w > 0 && r > 0 ? w * (1 + r / 30) : 0);
-    const byEx = {};
-    for (const row of rows) {
-      let e1rm = 0, volume = 0, topW = 0, topR = 0, reps = 0;
-      for (const s of row.sets || []) {
-        const w = Number(s.weight_lbs) || 0, r = Number(s.reps) || 0;
-        volume += w * r; reps += r;
-        const e = epley(w, r);
-        if (e > e1rm) e1rm = e;
-        if (w > topW) { topW = w; topR = r; }
-      }
-      (byEx[row.exercise] ||= []).push({
-        date: row.day, e1rm: Math.round(e1rm), volume: Math.round(volume), reps, topWeight: topW, topReps: topR,
-      });
-    }
-
-    const progression = names.filter((n) => byEx[n]).map((name) => {
-      const all = byEx[name];
-      const sessions = all.slice(-lim);
-      const weighted = sessions.some((s) => s.e1rm > 0);
-      const metric = weighted ? 'e1rm' : 'reps';
-      const unit = weighted ? 'lb' : 'reps';
-      // Trend across sessions that have the metric.
-      const pts = sessions.filter((s) => s[metric] > 0);
-      let delta = null;
-      if (pts.length >= 2) {
-        const first = pts[0][metric], last = pts[pts.length - 1][metric];
-        delta = { first, last, pct: first ? Math.round(((last - first) / first) * 100) : null };
-      }
-      const best = sessions.reduce((b, s) => (s[metric] > (b?.[metric] ?? -1) ? s : b), null);
-      return { exercise: name, metric, unit, n: sessions.length, sessions, delta, best };
-    }).filter((p) => p.n >= 2); // only show exercises with at least two sessions
-
-    res.json({ progression });
+    const { fetchProgression } = require('./src/intelligence/strength-progression');
+    res.json({ progression: await fetchProgression(names, lim) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -3270,13 +3227,21 @@ app.get('/api/briefing', async (req, res) => {
     ? `${notionData.text}\n\n[ALREADY SHOWN in the last 30 days — do NOT select any of these; choose a DIFFERENT passage (return empty string if the page has nothing else worthwhile):\n${[...seenNotionQuotes].slice(0, 60).map((q) => `- ${q}`).join('\n')}]`
     : notionData.text;
 
+  // Strength progression nugget — the biggest recent estimated-1RM gain across
+  // logged lifts, so the chief-of-staff can call out training wins.
+  let strengthContext = '';
+  try {
+    strengthContext = (await require('./src/intelligence/strength-progression')
+      .topProgressionNote({ days: 45, minSessions: 3 })) || '';
+  } catch { /* non-critical */ }
+
   // Call the LLM with whatever data we have
   let geminiResult = null;
   try {
     // The LLM call can be slow; bound it so a stalled model doesn't hang the
     // briefing (it degrades to the data-only sections).
     geminiResult = await withTimeout(
-      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy),
+      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext),
       Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000),
       'gemini'
     );
