@@ -340,9 +340,15 @@ export default function App() {
           inset), fading into the page. Sits behind all content; the transparent
           ScrollView lets it show through the top. */}
       {tab !== 'ask' && (() => {
+        // The band tint means "today's body state" — it belongs on the health
+        // surfaces (Today, Health). On Wealth/Wisdom it would be an arbitrary green
+        // wash, so those get a neutral brand tint instead (keeps the top-of-screen
+        // color coverage without implying a recovery signal where there isn't one).
+        const healthTab = tab === 'today' || tab === 'health';
         const b = liveRecovery.recovery?.band;
-        const hero: [string, string] =
-          b === 'green' ? ['rgba(90,232,154,0.22)', 'rgba(90,232,154,0)']
+        const hero: [string, string] = !healthTab
+          ? ['rgba(99,91,255,0.10)', 'rgba(99,91,255,0)']
+          : b === 'green' ? ['rgba(90,232,154,0.22)', 'rgba(90,232,154,0)']
           : b === 'yellow' ? ['rgba(255,196,77,0.22)', 'rgba(255,196,77,0)']
           : b === 'red' ? ['rgba(255,132,120,0.20)', 'rgba(255,132,120,0)']
           : ['rgba(99,91,255,0.14)', 'rgba(99,91,255,0)'];
