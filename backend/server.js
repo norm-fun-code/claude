@@ -670,8 +670,13 @@ app.get('/api/context/today', async (req, res) => {
       [tz]
     );
     const active = {};
-    for (const r of rows) if (Number(r.value) >= 0.5) active[r.metric] = true;
-    res.json({ logged: rows.length > 0, active });
+    let submitted = false;
+    for (const r of rows) {
+      if (r.metric === '_submitted') { submitted = Number(r.value) >= 0.5; continue; }
+      if (Number(r.value) >= 0.5) active[r.metric] = true;
+    }
+    // `submitted` lets the card hide itself for the rest of the day once dismissed.
+    res.json({ logged: rows.length > 0, submitted, active });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -693,8 +698,13 @@ app.post('/api/context', async (req, res) => {
     const metrics = TAG_KEYS.map((k) => ({
       ts, domain: 'context', metric: k, value: active.has(k) ? 1 : 0, unit: 'bool', source: 'self_report',
     }));
+    // A `submitted` marker (not a tracked tag, so it never enters correlations) so
+    // the card can hide for the rest of the day once the user taps Submit.
+    if (body.submitted) {
+      metrics.push({ ts, domain: 'context', metric: '_submitted', value: 1, unit: 'bool', source: 'self_report' });
+    }
     const written = await metricsStore.insertMetrics(metrics);
-    res.json({ ok: true, date: dateStr, active: [...active], written });
+    res.json({ ok: true, date: dateStr, active: [...active], submitted: !!body.submitted, written });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

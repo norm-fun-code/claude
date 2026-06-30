@@ -11,7 +11,7 @@ const TAGS: { key: string; label: string; emoji: string }[] = [
   { key: 'magnesium',     label: 'Magnesium',         emoji: '💊' },
   { key: 'alcohol',       label: 'Alcohol',           emoji: '🍷' },
   { key: 'late_meal',     label: 'Late meal',         emoji: '🍽️' },
-  { key: 'late_caffeine', label: 'Late caffeine',     emoji: '☕' },
+  { key: 'melatonin',     label: 'Melatonin',         emoji: '😴' },
   { key: 'late_workout',  label: 'Late workout',      emoji: '🏋️' },
   { key: 'stressful_day', label: 'Stressful day',     emoji: '😣' },
   { key: 'sauna',         label: 'Sauna / heat',      emoji: '🧖' },
@@ -30,6 +30,7 @@ export function NightContextCard() {
   const c = getColors(isDark);
   const [active, setActive] = useState<Record<string, boolean>>({});
   const [savedTick, setSavedTick] = useState(false);
+  const [dismissed, setDismissed] = useState(false); // hidden for the day after Submit
   const fetchDateRef = useRef('');
 
   async function fetchToday() {
@@ -39,6 +40,7 @@ export function NightContextCard() {
       if (!res.ok) return;
       const t = await res.json();
       if (t?.active) setActive(t.active);
+      if (t?.submitted) setDismissed(true); // already submitted today → stay hidden
     } catch { /* offline — start blank */ }
   }
 
@@ -49,6 +51,7 @@ export function NightContextCard() {
     const sub = AppState.addEventListener('change', (s) => {
       if (s === 'active' && fetchDateRef.current !== localDateStr()) {
         setActive({});
+        setDismissed(false);
         fetchToday();
       }
     });
@@ -74,7 +77,21 @@ export function NightContextCard() {
     save(next);
   }
 
+  async function submit() {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setDismissed(true); // hide immediately; persist the submit marker in the background
+    try {
+      await fetchWithTimeout(CONTEXT_URL, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ active, submitted: true }),
+      });
+    } catch { /* already hidden locally; resends next session if needed */ }
+  }
+
   const count = Object.values(active).filter(Boolean).length;
+
+  if (dismissed) return null; // submitted today — card is hidden until tomorrow
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
@@ -103,9 +120,12 @@ export function NightContextCard() {
           );
         })}
       </View>
+      <Pressable onPress={submit} style={[styles.submit, { backgroundColor: c.accent }]}>
+        <Text style={styles.submitText}>{count > 0 ? `Submit · ${count} tagged` : 'Nothing to note — done'}</Text>
+      </Pressable>
       {count > 0 && (
         <Text style={[styles.footer, { color: c.subtext }]}>
-          {count} tagged · patterns appear in your Health insights as they build up
+          Patterns appear in your Health insights as they build up
         </Text>
       )}
     </View>
@@ -128,5 +148,12 @@ const styles = StyleSheet.create({
   chipEmoji: { fontSize: 14 },
   chipLabel: { fontSize: 13, fontWeight: '500' },
   chipLabelOn: { fontWeight: '700' },
-  footer: { ...typography.caption, fontSize: 11, marginTop: spacing.md, fontStyle: 'italic' },
+  submit: {
+    marginTop: spacing.md,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm + 2,
+    alignItems: 'center',
+  },
+  submitText: { color: '#FFFFFF', fontWeight: '700', fontSize: 15 },
+  footer: { ...typography.caption, fontSize: 11, marginTop: spacing.sm, fontStyle: 'italic', textAlign: 'center' },
 });

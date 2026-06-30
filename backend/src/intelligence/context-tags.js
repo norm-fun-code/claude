@@ -12,7 +12,7 @@ const CONTEXT_TAGS = [
   { key: 'magnesium',     label: 'Magnesium',      emoji: '💊' },
   { key: 'alcohol',       label: 'Alcohol',        emoji: '🍷' },
   { key: 'late_meal',     label: 'Late meal',      emoji: '🍽️' },
-  { key: 'late_caffeine', label: 'Late caffeine',  emoji: '☕' },
+  { key: 'melatonin',     label: 'Melatonin',      emoji: '😴' },
   { key: 'late_workout',  label: 'Late workout',   emoji: '🏋️' },
   { key: 'stressful_day', label: 'Stressful day',  emoji: '😣' },
   { key: 'sauna',         label: 'Sauna / heat',   emoji: '🧖' },
