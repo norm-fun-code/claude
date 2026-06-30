@@ -5,6 +5,10 @@ import {
 } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { METRICS_HISTORY_URL, authHeaders, fetchWithTimeout } from '../config';
+import { LineChart } from './viz/LineChart';
+
+// Continuous signals render as lines; cumulative counts stay as bars.
+const BAR_METRICS = new Set(['steps', 'active_energy']);
 
 interface DataRow { ts: string; value: number }
 interface DayPoint { day: string; value: number }
@@ -244,16 +248,27 @@ export function MetricDetailSheet({
             <Text style={[styles.empty, { color: c.subtext }]}>No data for this period</Text>
           ) : (
             <>
-              {isDual ? (
-                <DualSparkline
-                  groups={dualGroups}
-                  primaryColor={c.accent}
-                  secondaryColor={dualSource!.color}
-                  primarySoft={c.accentSoft}
-                  secondarySoft={DUAL_SOFT}
+              {BAR_METRICS.has(metric) ? (
+                isDual ? (
+                  <DualSparkline
+                    groups={dualGroups}
+                    primaryColor={c.accent}
+                    secondaryColor={dualSource!.color}
+                    primarySoft={c.accentSoft}
+                    secondarySoft={DUAL_SOFT}
+                  />
+                ) : (
+                  <Sparkline points={primaryPoints} color={c.accent} softColor={c.accentSoft} />
+                )
+              ) : isDual ? (
+                <LineChart
+                  series={[
+                    { values: dualGroups.map((g) => g.primary), color: c.accent },
+                    { values: dualGroups.map((g) => g.secondary), color: dualSource!.color },
+                  ]}
                 />
               ) : (
-                <Sparkline points={primaryPoints} color={c.accent} softColor={c.accentSoft} />
+                <LineChart series={[{ values: primaryPoints.map((p) => p.value), color: c.accent, fill: true }]} />
               )}
 
               {firstDay && lastDay && (
