@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, useColorScheme } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -10,12 +11,16 @@ import { getColors, spacing, radius, shadow } from '../theme';
 
 export type TabKey = 'today' | 'health' | 'wealth' | 'wisdom' | 'ask';
 
-export const TABS: { key: TabKey; label: string; emoji: string; emojiActive: string }[] = [
-  { key: 'today',  label: 'Today',  emoji: '☀️',  emojiActive: '🌟' },
-  { key: 'health', label: 'Health', emoji: '💪',  emojiActive: '❤️' },
-  { key: 'wealth', label: 'Wealth', emoji: '💰',  emojiActive: '💎' },
-  { key: 'wisdom', label: 'Wisdom', emoji: '🧠',  emojiActive: '✨' },
-  { key: 'ask',    label: 'Ask',    emoji: '✦',   emojiActive: '✦' },
+type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
+
+// Outline when inactive, filled when active — the standard premium tab pattern,
+// replacing the emoji set with a cohesive line-icon system.
+export const TABS: { key: TabKey; label: string; icon: IoniconName; iconActive: IoniconName }[] = [
+  { key: 'today',  label: 'Today',  icon: 'sunny-outline',    iconActive: 'sunny' },
+  { key: 'health', label: 'Health', icon: 'heart-outline',    iconActive: 'heart' },
+  { key: 'wealth', label: 'Wealth', icon: 'wallet-outline',   iconActive: 'wallet' },
+  { key: 'wisdom', label: 'Wisdom', icon: 'book-outline',     iconActive: 'book' },
+  { key: 'ask',    label: 'Ask',    icon: 'sparkles-outline', iconActive: 'sparkles' },
 ];
 
 interface Props {
@@ -52,7 +57,7 @@ function TabItem({
       accessibilityState={{ selected: on }}
     >
       <Animated.View style={[styles.pill, on && { backgroundColor: c.accentSoft }, animStyle]}>
-        <Text style={styles.icon}>{on ? t.emojiActive : t.emoji}</Text>
+        <Ionicons name={on ? t.iconActive : t.icon} size={21} color={on ? c.accent : c.subtext} />
       </Animated.View>
       <Text style={[styles.label, { color: on ? c.accent : c.subtext }, on && styles.labelOn]}>
         {t.label}

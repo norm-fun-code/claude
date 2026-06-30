@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Sora_300Light, Sora_600SemiBold, Sora_700Bold, Sora_800ExtraBold } from '@expo-google-fonts/sora';
 import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
 import {
@@ -81,6 +82,7 @@ export default function App() {
   const [fontsLoaded] = useFonts({
     Sora_300Light, Sora_600SemiBold, Sora_700Bold, Sora_800ExtraBold,
     Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold,
+    ...Ionicons.font, // preload tab-bar icon glyphs so they don't flash in
   });
 
   const [tab, setTab] = useState<TabKey>('today');
