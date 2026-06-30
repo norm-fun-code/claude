@@ -9,12 +9,15 @@ export function Sparkline({ values, width, height, color = '#5A52F0' }: Props) {
   // chart feels alive on appear instead of snapping in.
   const end = useSharedValue(0);
   const fill = useSharedValue(0);
+  // Stable signature so the draw-on plays once per real data/size change — not on
+  // every parent re-render (which would re-trigger the animation and flicker).
+  const sig = `${width}:${values.join(',')}`;
   useEffect(() => {
     end.value = 0;
     fill.value = 0;
     end.value = withTiming(1, { duration: 480, easing: Easing.out(Easing.cubic) });
     fill.value = withTiming(1, { duration: 560, easing: Easing.out(Easing.cubic) });
-  }, [values, width]);
+  }, [sig]);
 
   if (!values || values.length < 2) return null;
   const min = Math.min(...values), max = Math.max(...values);

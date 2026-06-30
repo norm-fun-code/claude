@@ -11,7 +11,7 @@
     "userInterfaceStyle": "light",
     "splash": {
       "resizeMode": "contain",
-      "backgroundColor": "#0E1420"
+      "backgroundColor": "#F2F2F7"
     },
     "ios": {
       "supportsTablet": false,
