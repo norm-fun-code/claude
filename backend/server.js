@@ -744,7 +744,11 @@ app.get('/api/context/history', async (req, res) => {
          ) AS gd
         WHERE COALESCE(a.end_ts, a.start_ts) >= now() - ($2 || ' days')::interval
           AND a.start_ts <= now()
-          AND a.label IS NOT NULL`,
+          AND a.label IS NOT NULL
+          -- Exclude financial/spending context (answers to spending prompts are
+          -- tagged 'spending note') — health charts shouldn't surface money notes.
+          AND a.category NOT ILIKE '%spend%'
+          AND a.category NOT ILIKE '%financ%'`,
       [tz, window]
     );
     const [{ rows: tagRows }, { rows: noteRows }] = await Promise.all([tagRowsP, noteRowsP]);
