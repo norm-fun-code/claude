@@ -125,6 +125,14 @@ function round(n, d = 2) {
   return Math.round(n * f) / f;
 }
 
+// Human-readable metric value for prose: large counts (steps, calories) as
+// comma-grouped integers — "14,787", not "14786.71" — while small values
+// (HRV, sleep hours) keep one decimal where it carries meaning.
+function fmtMean(n) {
+  if (n == null || !Number.isFinite(n)) return '?';
+  return Math.abs(n) >= 1000 ? Math.round(n).toLocaleString('en-US') : String(round(n, 1));
+}
+
 function splitKey(key) {
   const i = key.indexOf(':');
   return { domain: key.slice(0, i), metric: key.slice(i + 1) };
@@ -161,8 +169,8 @@ function computeTrends(seriesByKey, opts = {}) {
       domains: [domain],
       title: `${label} ${dir} ${pct(t.pctChange)} over ${o.trendWindow}d${qualifier}`,
       detail:
-        `${label}: last ${o.trendWindow}d avg ${round(t.recentMean)} vs prior ${round(t.priorMean)} ` +
-        `(${pct(t.pctChange)}). Latest ${round(t.latest)}.`,
+        `${label}: last ${o.trendWindow}d avg ${fmtMean(t.recentMean)} vs prior ${fmtMean(t.priorMean)} ` +
+        `(${pct(t.pctChange)}). Latest ${fmtMean(t.latest)}.`,
       confidence: Math.min(1, Math.abs(t.pctChange) / 0.5),
       evidence: {
         auto: true,
