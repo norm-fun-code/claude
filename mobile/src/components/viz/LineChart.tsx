@@ -13,6 +13,7 @@ export interface LineSeries {
 }
 
 export interface ContextTag { label: string; emoji: string }
+export interface ContextNote { text: string; category?: string }
 
 // A Skia line chart for the metric detail sheet: 1–2 series on a shared scale,
 // traced in on appear. Nulls are bridged (the line spans available readings), so
@@ -29,13 +30,15 @@ export function LineChart({
   unit,
   formatValue = (v: number) => `${Math.round(v)}`,
   contextByDay,
+  notesByDay,
 }: {
   series: LineSeries[];
   height?: number;
   dates?: string[];               // YYYY-MM-DD aligned to each value index
   unit?: string;
   formatValue?: (v: number) => string;
-  contextByDay?: Record<string, ContextTag[]>;
+  contextByDay?: Record<string, ContextTag[]>;   // nightly tags
+  notesByDay?: Record<string, ContextNote[]>;    // free-text context you wrote
 }) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
@@ -100,6 +103,8 @@ export function LineChart({
     : [];
   const selDay = sel != null && dates ? dates[sel] : undefined;
   const selTags = selDay && contextByDay ? contextByDay[selDay] : undefined;
+  const selNotes = selDay && notesByDay ? notesByDay[selDay] : undefined;
+  const hasContext = (selTags && selTags.length) || (selNotes && selNotes.length);
 
   const TIP_W = 168;
   const tipLeft = Math.max(0, Math.min(w - TIP_W, selX - TIP_W / 2));
@@ -120,15 +125,25 @@ export function LineChart({
             </View>
           ))}
           <View style={[styles.tipDivider, { backgroundColor: c.border }]} />
-          {selTags && selTags.length ? (
-            <View style={styles.tipChips}>
-              {selTags.map((t) => (
-                <View key={t.label} style={[styles.tipChip, { backgroundColor: c.accentSoft }]}>
-                  <Text style={styles.tipChipEmoji}>{t.emoji}</Text>
-                  <Text style={[styles.tipChipTxt, { color: c.accent }]} numberOfLines={1}>{t.label}</Text>
+          {hasContext ? (
+            <>
+              {selTags && selTags.length > 0 && (
+                <View style={styles.tipChips}>
+                  {selTags.map((t) => (
+                    <View key={t.label} style={[styles.tipChip, { backgroundColor: c.accentSoft }]}>
+                      <Text style={styles.tipChipEmoji}>{t.emoji}</Text>
+                      <Text style={[styles.tipChipTxt, { color: c.accent }]} numberOfLines={1}>{t.label}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+              {selNotes && selNotes.map((nt, i) => (
+                <View key={i} style={styles.tipNote}>
+                  <Text style={[styles.tipNoteBullet, { color: c.accent }]}>“</Text>
+                  <Text style={[styles.tipNoteTxt, { color: c.text }]} numberOfLines={3}>{nt.text}</Text>
                 </View>
               ))}
-            </View>
+            </>
           ) : (
             <Text style={[styles.tipNoCtx, { color: c.subtext }]}>No context logged</Text>
           )}
@@ -205,5 +220,8 @@ const styles = StyleSheet.create({
   tipChip: { flexDirection: 'row', alignItems: 'center', gap: 3, borderRadius: radius.pill, paddingVertical: 2, paddingHorizontal: 6 },
   tipChipEmoji: { fontSize: 10 },
   tipChipTxt: { fontSize: 10, fontWeight: '600' },
+  tipNote: { flexDirection: 'row', gap: 3, marginTop: 4 },
+  tipNoteBullet: { fontSize: 12, fontWeight: '800', lineHeight: 14 },
+  tipNoteTxt: { fontSize: 11, flex: 1, lineHeight: 14 },
   tipNoCtx: { fontSize: 10, fontStyle: 'italic' },
 });

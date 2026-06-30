@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { getColors, spacing, radius, typography } from '../theme';
 import { METRICS_HISTORY_URL, CONTEXT_HISTORY_URL, authHeaders, fetchWithTimeout } from '../config';
-import { LineChart, type ContextTag } from './viz/LineChart';
+import { LineChart, type ContextTag, type ContextNote } from './viz/LineChart';
 
 // Continuous signals render as lines; cumulative counts stay as bars.
 const BAR_METRICS = new Set(['steps', 'active_energy']);
@@ -138,6 +138,7 @@ export function MetricDetailSheet({
   const [primaryRows, setPrimaryRows] = useState<DataRow[]>([]);
   const [secondaryRows, setSecondaryRows] = useState<DataRow[]>([]);
   const [contextByDay, setContextByDay] = useState<Record<string, ContextTag[]>>({});
+  const [notesByDay, setNotesByDay] = useState<Record<string, ContextNote[]>>({});
   const [loading, setLoading] = useState(false);
 
   const DUAL_SOFT = dualSource ? dualSource.color + '55' : '#FF9F0A55';
@@ -154,9 +155,12 @@ export function MetricDetailSheet({
       { headers: authHeaders() }
     ).then(r => r.json()).then(d => setPrimaryRows(d.rows ?? [])).catch(() => {});
 
-    // Context tags for the same window, so a tapped point can show what was logged.
+    // Context for the same window, so a tapped point can show what was logged:
+    // nightly tags + any free-text notes (chief-of-staff answers, travel, …).
     fetchWithTimeout(`${CONTEXT_HISTORY_URL}?days=${days}`, { headers: authHeaders() })
-      .then(r => r.json()).then(d => setContextByDay(d.history ?? {})).catch(() => setContextByDay({}));
+      .then(r => r.json())
+      .then(d => { setContextByDay(d.history ?? {}); setNotesByDay(d.notes ?? {}); })
+      .catch(() => { setContextByDay({}); setNotesByDay({}); });
 
     const promises: Promise<void>[] = [p1];
     if (dualSource) {
@@ -275,6 +279,7 @@ export function MetricDetailSheet({
                   unit={unit}
                   formatValue={formatValue}
                   contextByDay={contextByDay}
+                  notesByDay={notesByDay}
                 />
               ) : (
                 <LineChart
@@ -283,6 +288,7 @@ export function MetricDetailSheet({
                   unit={unit}
                   formatValue={formatValue}
                   contextByDay={contextByDay}
+                  notesByDay={notesByDay}
                 />
               )}
 

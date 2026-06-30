@@ -710,29 +710,59 @@ app.post('/api/context', async (req, res) => {
   }
 });
 
-// Active context tags per day over a window, keyed by wake date (YYYY-MM-DD).
-// Lets a chart tooltip answer "why did HRV plunge here?" by joining the tapped
-// data point's date to whatever was logged that night.
+// Context per day over a window, keyed by date (YYYY-MM-DD). Lets a chart
+// tooltip answer "why did HRV plunge here?" by joining the tapped point's date to
+// (a) the nightly tags toggled that night (magnesium, alcohol, …) and (b) any
+// free-text context you wrote — chief-of-staff briefing answers, travel/illness
+// notes, etc. (annotations), attached to every day they span.
 app.get('/api/context/history', async (req, res) => {
   const numDays = Math.max(1, Math.min(Number(req.query.days) || 60, 400));
   try {
     const { CONTEXT_TAGS } = require('./src/intelligence/context-tags');
     const meta = Object.fromEntries(CONTEXT_TAGS.map((t) => [t.key, t]));
     const tz = process.env.TZ || 'America/New_York';
-    const { rows } = await db.query(
+    const window = String(numDays);
+
+    const tagRowsP = db.query(
       `SELECT to_char((ts AT TIME ZONE $1)::date, 'YYYY-MM-DD') AS day, metric
          FROM metrics
         WHERE domain = 'context' AND value >= 0.5
           AND ts >= now() - ($2 || ' days')::interval`,
-      [tz, String(numDays)]
+      [tz, window]
     );
+    // Each annotation contributes its text to every calendar day it covers
+    // (start→end), so a multi-day "Travel" note shows on every point it spans.
+    const noteRowsP = db.query(
+      `SELECT to_char(gd, 'YYYY-MM-DD') AS day, a.category AS category, a.label AS label
+         FROM annotations a,
+         LATERAL generate_series(
+           GREATEST((a.start_ts AT TIME ZONE $1)::date::timestamp,
+                    (now() AT TIME ZONE $1)::date - ($2 || ' days')::interval),
+           LEAST((COALESCE(a.end_ts, a.start_ts) AT TIME ZONE $1)::date::timestamp,
+                 (now() AT TIME ZONE $1)::date::timestamp),
+           interval '1 day'
+         ) AS gd
+        WHERE COALESCE(a.end_ts, a.start_ts) >= now() - ($2 || ' days')::interval
+          AND a.start_ts <= now()
+          AND a.label IS NOT NULL`,
+      [tz, window]
+    );
+    const [{ rows: tagRows }, { rows: noteRows }] = await Promise.all([tagRowsP, noteRowsP]);
+
     const history = {};
-    for (const r of rows) {
+    for (const r of tagRows) {
       const m = meta[r.metric]; // skips `_submitted` and any retired tag
       if (!m) continue;
       (history[r.day] ||= []).push({ key: m.key, label: m.label, emoji: m.emoji });
     }
-    res.json({ history });
+    const notes = {};
+    for (const r of noteRows) {
+      const text = String(r.label || '').trim().slice(0, 140);
+      if (!text) continue;
+      const arr = (notes[r.day] ||= []);
+      if (arr.length < 4 && !arr.some((x) => x.text === text)) arr.push({ text, category: r.category });
+    }
+    res.json({ history, notes });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
