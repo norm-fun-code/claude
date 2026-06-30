@@ -74,18 +74,26 @@ export function WelcomeScreen({ ready, onDone }: Props) {
 
   return (
     <Animated.View style={[StyleSheet.absoluteFill, styles.root, rootStyle]} pointerEvents={fading ? 'none' : 'auto'}>
+      {/* Light lavender → periwinkle, airy and premium (the reference palette). */}
       <LinearGradient
-        colors={['#4B44D6', '#7A73FF', '#A8A3E6', '#D9DAE7']}
-        locations={[0, 0.42, 0.74, 1]}
-        start={{ x: 0.1, y: 0 }}
-        end={{ x: 0.9, y: 1 }}
+        colors={['#EFEDFC', '#E2E6F8', '#CFD9F2']}
+        locations={[0, 0.5, 1]}
+        start={{ x: 0.05, y: 0 }}
+        end={{ x: 0.95, y: 1 }}
         style={StyleSheet.absoluteFill}
       />
-      {/* soft top sheen for a silvery highlight */}
+      {/* soft white sheen up top for a lit, glassy highlight */}
       <LinearGradient
-        colors={['rgba(255,255,255,0.28)', 'rgba(255,255,255,0)']}
+        colors={['rgba(255,255,255,0.45)', 'rgba(255,255,255,0)']}
         start={{ x: 0.5, y: 0 }}
-        end={{ x: 0.5, y: 0.5 }}
+        end={{ x: 0.5, y: 0.45 }}
+        style={StyleSheet.absoluteFill}
+      />
+      {/* a faint purple bloom from the lower edge, echoing the chart accent */}
+      <LinearGradient
+        colors={['rgba(108,99,255,0)', 'rgba(108,99,255,0.12)']}
+        start={{ x: 0.5, y: 0.55 }}
+        end={{ x: 0.5, y: 1 }}
         style={StyleSheet.absoluteFill}
       />
       <View style={styles.center}>
@@ -102,15 +110,12 @@ const styles = StyleSheet.create({
   root: { zIndex: 1000, elevation: 1000 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
   greeting: {
-    fontFamily: FONTS.display,
-    fontSize: 32,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: -0.4,
+    fontFamily: FONTS.displayHeavy,
+    fontSize: 34,
+    fontWeight: '800',
+    color: '#1C2340', // deep navy on the light gradient (matches the reference numbers)
+    letterSpacing: -0.6,
     textAlign: 'center',
-    textShadowColor: 'rgba(40,30,90,0.25)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 12,
   },
-  cursor: { fontFamily: FONTS.display, fontSize: 32, color: 'rgba(255,255,255,0.85)' },
+  cursor: { fontFamily: FONTS.display, fontSize: 32, color: '#6C63FF' },
 });
