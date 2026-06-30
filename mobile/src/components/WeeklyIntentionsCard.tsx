@@ -332,7 +332,7 @@ const styles = StyleSheet.create({
   saveBtn: { borderRadius: radius.md, paddingVertical: spacing.sm + 2, paddingHorizontal: spacing.lg },
   saveText: { ...typography.body, fontWeight: '700', color: '#fff' },
   priorBox: { marginBottom: spacing.md, paddingBottom: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#8884' },
-  priorRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.xs },
+  priorRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginTop: spacing.xs },
   checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   checkmark: { color: '#fff', fontSize: 14, fontWeight: '800', lineHeight: 16 },
   // AI weekly-review block (last week)
@@ -351,7 +351,7 @@ const styles = StyleSheet.create({
   actionBody: { flex: 1 },
   actionTitle: { ...typography.subtitle, marginBottom: 2 },
   actionDetail: { ...typography.body, fontSize: 13 },
-  summaryGoal: { ...typography.body, fontWeight: '500', marginBottom: 2 },
+  summaryGoal: { ...typography.body, fontWeight: '500', marginBottom: 2, flex: 1 },
   summaryContext: { ...typography.caption, fontSize: 13, marginTop: spacing.sm, lineHeight: 19 },
   thisWeekBox: { marginTop: spacing.sm },
   editLink: { marginTop: spacing.sm },
