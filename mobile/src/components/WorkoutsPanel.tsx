@@ -1229,12 +1229,14 @@ function renderWorkoutContent(
 // Log what you ACTUALLY did when it differs from the plan (e.g. scheduled Pull
 // but you walked / did Zone 2 instead).
 
+interface ActivityEstimate { steps: number; kcal: number; met?: number | null }
 interface Activity {
   id: number;
   activity_type: string;
   label: string | null;
   duration_min: number | null;
   note: string | null;
+  estimate?: ActivityEstimate;
 }
 
 const ACTIVITY_TYPES: { id: string; label: string; emoji: string }[] = [
@@ -1243,7 +1245,19 @@ const ACTIVITY_TYPES: { id: string; label: string; emoji: string }[] = [
   { id: 'run', label: 'Run', emoji: '🏃' },
   { id: 'strength', label: 'Strength', emoji: '🏋️' },
   { id: 'intervals', label: 'Intervals', emoji: '⚡️' },
-  { id: 'mobility', label: 'Mobility', emoji: '🧘' },
+  { id: 'mobility', label: 'Mobility', emoji: '🧎' },
+  { id: 'basketball', label: 'Basketball', emoji: '🏀' },
+  { id: 'soccer', label: 'Soccer', emoji: '⚽️' },
+  { id: 'tennis', label: 'Tennis', emoji: '🎾' },
+  { id: 'pickleball', label: 'Pickleball', emoji: '🏓' },
+  { id: 'dance', label: 'Dance', emoji: '💃' },
+  { id: 'hike', label: 'Hike', emoji: '🥾' },
+  { id: 'swim', label: 'Swim', emoji: '🏊' },
+  { id: 'cycle', label: 'Cycle', emoji: '🚴' },
+  { id: 'yoga', label: 'Yoga', emoji: '🧘' },
+  { id: 'golf', label: 'Golf', emoji: '⛳️' },
+  { id: 'ski', label: 'Ski', emoji: '⛷️' },
+  { id: 'box', label: 'Boxing', emoji: '🥊' },
   { id: 'rest', label: 'Rest', emoji: '😴' },
   { id: 'other', label: 'Other', emoji: '➕' },
 ];
@@ -1265,15 +1279,16 @@ function ActivityLogModal({
   c: ReturnType<typeof getColors>;
   isDark: boolean;
   onClose: () => void;
-  onSave: (a: { activity_type: string; label: string; duration_min: number | null; note: string | null }) => Promise<void>;
+  onSave: (a: { activity_type: string; label: string; duration_min: number | null; note: string | null; no_watch: boolean }) => Promise<void>;
 }) {
   const [type, setType] = useState('walk');
   const [duration, setDuration] = useState('');
   const [note, setNote] = useState('');
+  const [noWatch, setNoWatch] = useState(false);
   const [saving, setSaving] = useState(false);
 
   React.useEffect(() => {
-    if (visible) { setType('walk'); setDuration(''); setNote(''); }
+    if (visible) { setType('walk'); setDuration(''); setNote(''); setNoWatch(false); }
   }, [visible]);
 
   async function handleSave() {
@@ -1285,6 +1300,7 @@ function ActivityLogModal({
         label: labelBase,
         duration_min: duration ? parseInt(duration) : null,
         note: note.trim() || null,
+        no_watch: noWatch,
       });
       onClose();
     } catch { /* surfaced by caller */ } finally {
@@ -1299,7 +1315,8 @@ function ActivityLogModal({
           <View style={[logStyles.sheet, { backgroundColor: c.card, borderColor: c.border }]}>
             <Text style={[logStyles.title, { color: c.text }]}>Log a different activity</Text>
             <Text style={[logStyles.hint, { color: c.subtext }]}>
-              Scheduled: {plannedType}. Record what you actually did instead.
+              Scheduled: {plannedType}. Record what you actually did instead. If you didn't wear your watch,
+              NormOS estimates the steps & energy from the type and duration.
             </Text>
 
             <View style={actStyles.typeGrid}>
@@ -1346,6 +1363,19 @@ function ActivityLogModal({
               </View>
             </View>
 
+            <TouchableOpacity
+              onPress={() => setNoWatch((v) => !v)}
+              activeOpacity={0.7}
+              style={[actStyles.watchToggle, { borderColor: noWatch ? c.accent : c.border, backgroundColor: noWatch ? c.accent + '15' : 'transparent' }]}
+            >
+              <View style={[actStyles.checkbox, { borderColor: noWatch ? c.accent : c.border, backgroundColor: noWatch ? c.accent : 'transparent' }]}>
+                {noWatch ? <Text style={actStyles.checkboxTick}>✓</Text> : null}
+              </View>
+              <Text style={[actStyles.watchToggleTxt, { color: noWatch ? c.accent : c.text }]}>
+                I didn't wear my watch — estimate steps & energy
+              </Text>
+            </TouchableOpacity>
+
             <View style={logStyles.buttons}>
               <TouchableOpacity onPress={onClose} style={[logStyles.btn, { borderColor: c.border }]}>
                 <Text style={[logStyles.btnTxt, { color: c.subtext }]}>Cancel</Text>
@@ -1390,6 +1420,11 @@ function ActivityLogSection({
                 {a.label ?? a.activity_type}
                 {a.duration_min ? ` · ${a.duration_min} min` : ''}
               </Text>
+              {a.estimate && (a.estimate.steps > 0 || a.estimate.kcal > 0) ? (
+                <Text style={[actStyles.rowNote, { color: c.accent }]}>
+                  ≈{a.estimate.steps > 0 ? ` ${a.estimate.steps.toLocaleString()} steps ·` : ''} {a.estimate.kcal.toLocaleString()} kcal
+                </Text>
+              ) : null}
               {a.note ? <Text style={[actStyles.rowNote, { color: c.subtext }]}>{a.note}</Text> : null}
             </View>
             <TouchableOpacity onPress={() => onDelete(a.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -1420,6 +1455,10 @@ const actStyles = StyleSheet.create({
   typeChip: { flexDirection: 'row', alignItems: 'center', gap: 5, borderWidth: 1, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7 },
   typeChipEmoji: { fontSize: 15 },
   typeChipLabel: { fontSize: 13, fontWeight: '600' },
+  watchToggle: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderRadius: radius.md, paddingVertical: 10, paddingHorizontal: 12, marginBottom: spacing.md },
+  checkbox: { width: 18, height: 18, borderRadius: 5, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
+  checkboxTick: { color: '#FFF', fontSize: 12, fontWeight: '800' },
+  watchToggleTxt: { fontSize: 13, fontWeight: '600', flex: 1 },
 });
 
 // Full day-by-day workout view (HRV-aware) — embedded in the Health tab.
@@ -1679,7 +1718,7 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
   // Log an alternate activity for the selected day. Optimistic insert with a
   // temp id; on success we swap in the server row. Logging a non-rest activity
   // for TODAY also marks the Exercise habit so streaks/insights stay in sync.
-  async function addActivity(a: { activity_type: string; label: string; duration_min: number | null; note: string | null }) {
+  async function addActivity(a: { activity_type: string; label: string; duration_min: number | null; note: string | null; no_watch: boolean }) {
     try {
       const res = await fetchWithTimeout(ACTIVITY_URL, {
         method: 'POST',
@@ -1687,8 +1726,8 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
         body: JSON.stringify({ date: selectedKey, planned_type: workout.label, ...a }),
       });
       if (!res.ok) throw new Error(`Server ${res.status}`);
-      const { activity } = await res.json();
-      setActivities((prev) => [...prev, activity]);
+      const { activity, estimate } = await res.json();
+      setActivities((prev) => [...prev, { ...activity, estimate }]);
 
       if (selectedKey === todayKey && a.activity_type !== 'rest') {
         setWeeklyCompleted((prev) => ({ ...prev, [todayKey]: true }));

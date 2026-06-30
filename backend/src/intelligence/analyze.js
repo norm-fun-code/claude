@@ -698,6 +698,10 @@ function computeDaytimeCardio(daytimeMap) {
   // Each lever: key in daytimeMap, human label, threshold for "high" bucket.
   const LEVERS = [
     { key: 'habits:eat_healthy',        label: 'Eating well',          threshold: 3 },
+    // TM: tm_am marks any-TM days (morning or twice); tm_pm marks the twice-daily
+    // days. Two binary splits give the morning-vs-none and twice-vs-rest contrasts.
+    { key: 'context:tm_am',             label: 'TM days',              threshold: 1 },
+    { key: 'context:tm_pm',             label: 'Twice-daily TM',       threshold: 1 },
     { key: 'wellbeing:mood',            label: 'High-mood days',       threshold: 4 },
     { key: 'wellbeing:focus',           label: 'High-focus days',      threshold: 4 },
     // Wake time >= 7 = woke at/after 7am. Threshold chosen to split typical
@@ -1121,7 +1125,7 @@ async function analyze(opts = {}) {
     } catch { /* non-critical */ }
   }
   // Include the lifestyle inputs the daytime function needs.
-  for (const k of ['habits:eat_healthy', 'wellbeing:mood', 'wellbeing:focus']) {
+  for (const k of ['habits:eat_healthy', 'wellbeing:mood', 'wellbeing:focus', 'context:tm_am', 'context:tm_pm']) {
     if (seriesByKey[k]) daytimeMap[k] = seriesByKey[k];
   }
   // Eight Sleep wake time pairs naturally with daytime autonomic tone even though

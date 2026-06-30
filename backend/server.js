@@ -866,17 +866,42 @@ app.get('/api/workout/log/history', async (req, res) => {
 // Roll a day's logged activity minutes into the metrics spine as
 // health:exercise_minutes (source 'activity'), so logged Zone 2 walks etc. feed
 // training-load (ACWR), trends, and correlations like any other health metric.
+// ALSO estimates the steps + active energy those activities burned (from type ×
+// duration × body weight) and writes them under source 'activity_est', so days
+// you didn't wear the watch still get credited. Both writes recompute the day's
+// full total each call (idempotent via the (ts,domain,metric,source) upsert).
 async function syncActivityMinutes(date) {
   try {
+    const metricsStore = require('./src/store/metrics');
+    const { estimateActivity } = require('./src/intelligence/activity-estimates');
+    const ts = new Date(`${date}T12:00:00`);
+
     const { rows } = await db.query(
-      `SELECT COALESCE(SUM(duration_min), 0) AS mins FROM activity_logs
+      `SELECT activity_type, duration_min, no_watch FROM activity_logs
        WHERE log_date = $1 AND duration_min IS NOT NULL`, [date]
     );
-    const mins = Number(rows[0]?.mins || 0);
-    await require('./src/store/metrics').insertMetrics([{
-      ts: new Date(`${date}T12:00:00`),
-      domain: 'health', metric: 'exercise_minutes', value: mins, unit: 'min', source: 'activity',
-    }]);
+    const mins = rows.reduce((s, r) => s + Number(r.duration_min || 0), 0);
+
+    // Latest logged body weight (lbs) for the energy formula; estimator falls back
+    // to a default if none is on record.
+    const weightRow = await metricsStore.latest({ domain: 'health', metric: 'weight' }).catch(() => null);
+    const weightLb = weightRow ? Number(weightRow.value) : undefined;
+
+    // Only watch-off activities contribute an estimate — otherwise the watch
+    // already measured the movement and adding it would double-count.
+    let estSteps = 0, estKcal = 0;
+    for (const r of rows) {
+      if (!r.no_watch) continue;
+      const e = estimateActivity({ type: r.activity_type, minutes: r.duration_min, weightLb });
+      estSteps += e.steps;
+      estKcal += e.kcal;
+    }
+
+    await metricsStore.insertMetrics([
+      { ts, domain: 'health', metric: 'exercise_minutes', value: mins, unit: 'min', source: 'activity' },
+      { ts, domain: 'health', metric: 'steps', value: estSteps, unit: 'count', source: 'activity_est' },
+      { ts, domain: 'health', metric: 'active_energy', value: estKcal, unit: 'kcal', source: 'activity_est' },
+    ]);
   } catch (err) {
     console.error('[syncActivityMinutes] failed:', err.message);
   }
@@ -887,11 +912,20 @@ app.get('/api/activity', async (req, res) => {
   try {
     const date = req.query.date || new Date().toISOString().slice(0, 10);
     const { rows } = await db.query(
-      `SELECT id, activity_type, label, duration_min, note, planned_type, created_at
+      `SELECT id, activity_type, label, duration_min, note, planned_type, no_watch, created_at
        FROM activity_logs WHERE log_date = $1
        ORDER BY created_at ASC`, [date]
     );
-    res.json({ activities: rows });
+    // Attach the estimated steps/energy for watch-off activities (the only ones
+    // that contribute an estimate to the day's totals).
+    const { estimateActivity } = require('./src/intelligence/activity-estimates');
+    const weightRow = await require('./src/store/metrics').latest({ domain: 'health', metric: 'weight' }).catch(() => null);
+    const weightLb = weightRow ? Number(weightRow.value) : undefined;
+    const activities = rows.map((r) => ({
+      ...r,
+      estimate: r.no_watch ? estimateActivity({ type: r.activity_type, minutes: r.duration_min, weightLb }) : null,
+    }));
+    res.json({ activities });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -901,16 +935,23 @@ app.get('/api/activity', async (req, res) => {
 // duration_min?, note?, planned_type? }. Returns the inserted row.
 app.post('/api/activity', async (req, res) => {
   try {
-    const { date, activity_type, label = null, duration_min = null, note = null, planned_type = null } = req.body || {};
+    const { date, activity_type, label = null, duration_min = null, note = null, planned_type = null, no_watch = false } = req.body || {};
     if (!date || !activity_type) return res.status(400).json({ error: 'date and activity_type required' });
     const { rows } = await db.query(
-      `INSERT INTO activity_logs (log_date, activity_type, label, duration_min, note, planned_type)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, activity_type, label, duration_min, note, planned_type, created_at`,
-      [date, activity_type, label, duration_min == null ? null : Number(duration_min), note, planned_type]
+      `INSERT INTO activity_logs (log_date, activity_type, label, duration_min, note, planned_type, no_watch)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, activity_type, label, duration_min, note, planned_type, no_watch, created_at`,
+      [date, activity_type, label, duration_min == null ? null : Number(duration_min), note, planned_type, !!no_watch]
     );
     await syncActivityMinutes(date);
-    res.json({ activity: rows[0] });
+    // Per-activity estimate so the client can show "≈ 1,240 steps · 540 kcal".
+    // Only meaningful for watch-off activities (otherwise the watch already counted it).
+    const { estimateActivity } = require('./src/intelligence/activity-estimates');
+    const weightRow = await require('./src/store/metrics').latest({ domain: 'health', metric: 'weight' }).catch(() => null);
+    const estimate = no_watch
+      ? estimateActivity({ type: activity_type, minutes: duration_min, weightLb: weightRow ? Number(weightRow.value) : undefined })
+      : null;
+    res.json({ activity: rows[0], estimate });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

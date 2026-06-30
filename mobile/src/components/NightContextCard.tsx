@@ -77,6 +77,20 @@ export function NightContextCard() {
     save(next);
   }
 
+  // TM is a 3-state practice mapped onto two binary tags: none / morning (tm_am) /
+  // twice-daily (tm_am + tm_pm). The engine then separates "any TM" from the
+  // second session when correlating against daytime & overnight HRV/RHR.
+  const tmLevel = active.tm_pm ? 2 : active.tm_am ? 1 : 0;
+  function setTM(level: number) {
+    Haptics.selectionAsync();
+    const next = { ...active };
+    delete next.tm_am; delete next.tm_pm;
+    if (level >= 1) next.tm_am = true;
+    if (level >= 2) next.tm_pm = true;
+    setActive(next);
+    save(next);
+  }
+
   async function submit() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setDismissed(true); // hide immediately; persist the submit marker in the background
@@ -99,6 +113,27 @@ export function NightContextCard() {
       <Text style={[styles.sub, { color: c.subtext }]}>
         Tag what was different — NormOS learns how each moves your sleep & HRV.
       </Text>
+
+      <Text style={[styles.tmLabel, { color: c.subtext }]}>🧘 Meditation (TM)</Text>
+      <View style={styles.segment}>
+        {[{ l: 0, t: 'None' }, { l: 1, t: 'Morning' }, { l: 2, t: 'Twice-daily' }].map((seg) => {
+          const on = tmLevel === seg.l;
+          return (
+            <Pressable
+              key={seg.l}
+              onPress={() => setTM(seg.l)}
+              style={[
+                styles.segBtn,
+                { borderColor: c.border, backgroundColor: c.background },
+                on && { backgroundColor: c.accentSoft, borderColor: c.accent },
+              ]}
+            >
+              <Text style={[styles.segTxt, { color: on ? c.accent : c.text }, on && styles.segTxtOn]}>{seg.t}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
       <View style={styles.chips}>
         {TAGS.map((t) => {
           const on = !!active[t.key];
@@ -135,6 +170,18 @@ export function NightContextCard() {
 const styles = StyleSheet.create({
   card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   sub: { ...typography.caption, fontSize: 12, marginBottom: spacing.md, marginTop: -2, lineHeight: 17 },
+  tmLabel: { fontSize: 12, fontWeight: '600', marginBottom: spacing.xs },
+  segment: { flexDirection: 'row', gap: spacing.xs, marginBottom: spacing.md },
+  segBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: radius.pill,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  segTxt: { fontSize: 12, fontWeight: '500' },
+  segTxtOn: { fontWeight: '700' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   chip: {
     flexDirection: 'row',

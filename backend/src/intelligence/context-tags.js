@@ -9,6 +9,11 @@
 // discovered from your own data, not assumed (your alcohol effect may differ from
 // the textbook one).
 const CONTEXT_TAGS = [
+  // Transcendental Meditation, tracked as two binary markers so the engine can
+  // separate "any TM" from the twice-daily practice (morning vs morning+afternoon
+  // vs none). The mobile card sets both via a single 3-way control.
+  { key: 'tm_am',         label: 'TM — morning',   emoji: '🧘' },
+  { key: 'tm_pm',         label: 'TM — afternoon', emoji: '🌅' },
   { key: 'magnesium',     label: 'Magnesium',      emoji: '💊' },
   { key: 'alcohol',       label: 'Alcohol',        emoji: '🍷' },
   { key: 'late_meal',     label: 'Late meal',      emoji: '🍽️' },
