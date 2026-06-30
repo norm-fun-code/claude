@@ -44,7 +44,7 @@ jobs:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
 
-      - name: Publish OTA update (production channel)
+      - name: Publish OTA update (production + preview channels)
         working-directory: mobile
         # These EXPO_PUBLIC_* vars get baked into the JS bundle, exactly like the
         # native build does via eas.json. Without them the OTA bundle ships with an
@@ -64,4 +64,9 @@ jobs:
           fi
           # First line only, and pass with = + quotes so it's never treated as flags.
           MSG="$(printf '%s' "$COMMIT_MSG" | head -n1)"
+          # Publish to BOTH channels so internal `preview` builds AND store/
+          # TestFlight `production` builds receive the update. A build subscribes
+          # to one channel at build time; publishing only to production left
+          # preview-profile installs stranded (they never got any OTA).
           eas update --branch production --message="$MSG" --non-interactive
+          eas update --branch preview --message="$MSG" --non-interactive
