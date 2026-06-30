@@ -1,4 +1,5 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import * as SplashScreen from 'expo-splash-screen';
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Sora_300Light, Sora_600SemiBold, Sora_700Bold, Sora_800ExtraBold } from '@expo-google-fonts/sora';
 import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
@@ -21,6 +22,12 @@ import { AnimatedEntry } from './src/components/AnimatedEntry';
 
 // NormOS is always light (off-white) — easier to read; ignore system dark mode.
 Appearance.setColorScheme('light');
+
+// Hold the native splash until the first real frame is ready (fonts loaded), then
+// fade it out — so cold launch goes splash → content with no blank flash or pop.
+// The splash background already matches the app, so the fade is seamless.
+SplashScreen.preventAutoHideAsync().catch(() => {});
+SplashScreen.setOptions({ fade: true, duration: 280 });
 
 import { useBriefing } from './src/hooks/useBriefing';
 import { useEveningBrief } from './src/hooks/useEveningBrief';
@@ -85,6 +92,12 @@ export default function App() {
     Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold,
     ...Ionicons.font, // preload tab-bar icon glyphs so they don't flash in
   });
+
+  // Reveal (fade out the held splash) only once fonts are ready and we have the
+  // first frame to show — no blank gap between splash and content.
+  useEffect(() => {
+    if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
+  }, [fontsLoaded]);
 
   const [tab, setTab] = useState<TabKey>('today');
   const [checkinOpen, setCheckinOpen] = useState(false);
