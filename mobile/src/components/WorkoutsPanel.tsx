@@ -497,6 +497,8 @@ function ExerciseRow({
   day,
   loggedSets,
   lastHistory,
+  onSetSaved,
+  onAllSetsLogged,
 }: {
   exercise: Exercise;
   completed: boolean;
@@ -510,6 +512,8 @@ function ExerciseRow({
   day: string;
   loggedSets: Array<{set_number: number; reps: number | null; weight_lbs: number | null}>;
   lastHistory: Array<{set_number: number; reps: number | null; weight_lbs: number | null}>;
+  onSetSaved?: (exercise: string, setNum: number, reps: number | null, weight: number | null) => void;
+  onAllSetsLogged?: (exercise: string) => void;
 }) {
   const bgTag = isDark ? '#2A2A28' : '#F3F3F0';
   const setsText = isYellow && showSetsDimmed
@@ -585,6 +589,13 @@ function ExerciseRow({
           onClose={() => setLogModalSet(null)}
           onSaved={(setNum, reps, weight) => {
             setLogModalSet(null);
+            onSetSaved?.(exercise.name, setNum, reps, weight);
+            // When the final set's logged, auto-check the exercise's circle.
+            const distinct = new Set(loggedSets.map((s) => s.set_number));
+            distinct.add(setNum);
+            if (numSets > 0 && distinct.size >= numSets && !completed) {
+              onAllSetsLogged?.(exercise.name);
+            }
           }}
         />
       )}
@@ -703,6 +714,8 @@ function StrengthContent({
   day,
   workoutLogs,
   workoutHistory,
+  onSetSaved,
+  onAllSetsLogged,
 }: {
   session: StrengthSession;
   zone: HRVZone;
@@ -715,6 +728,8 @@ function StrengthContent({
   day: string;
   workoutLogs: Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>;
   workoutHistory: Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>;
+  onSetSaved: (exercise: string, setNum: number, reps: number | null, weight: number | null) => void;
+  onAllSetsLogged: (exercise: string) => void;
 }) {
   const isYellow = zone === 'yellow';
 
@@ -736,6 +751,8 @@ function StrengthContent({
             day={day}
             loggedSets={workoutLogs[ex.name] ?? []}
             lastHistory={workoutHistory[ex.name] ?? []}
+            onSetSaved={onSetSaved}
+            onAllSetsLogged={onAllSetsLogged}
           />
         ))}
       </CollapsibleSection>
@@ -1189,6 +1206,8 @@ function renderWorkoutContent(
   day: string,
   workoutLogs: Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>,
   workoutHistory: Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>,
+  onSetSaved: (exercise: string, setNum: number, reps: number | null, weight: number | null) => void,
+  onAllSetsLogged: (exercise: string) => void,
 ) {
   if (workout.id === 'push' || workout.id === 'pull') {
     return (
@@ -1204,6 +1223,8 @@ function renderWorkoutContent(
         day={day}
         workoutLogs={workoutLogs}
         workoutHistory={workoutHistory}
+        onSetSaved={onSetSaved}
+        onAllSetsLogged={onAllSetsLogged}
       />
     );
   }
@@ -1690,6 +1711,28 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
     });
   }
 
+  // Optimistically reflect a saved set in the chips (previously they only updated
+  // on refetch). The child decides when it's the *last* set and calls the auto-check.
+  function handleSetSaved(exercise: string, setNum: number, reps: number | null, weight: number | null) {
+    setWorkoutLogs((prev) => {
+      const cur = prev[exercise] ?? [];
+      const next = cur.filter((s) => s.set_number !== setNum).concat([{ set_number: setNum, reps, weight_lbs: weight }]);
+      return { ...prev, [exercise]: next };
+    });
+  }
+
+  // Tick an exercise's circle when its final set is logged. Idempotent (only adds),
+  // so it never un-checks something already done.
+  function markExerciseComplete(name: string) {
+    if (completedExercises.has(name)) return;
+    setCompletedExercises((prev) => {
+      if (prev.has(name)) return prev;
+      const next = new Set(prev); next.add(name); return next;
+    });
+    const rollback = () => setCompletedExercises((cur) => { const s = new Set(cur); s.delete(name); return s; });
+    saveCheck(name, 'exercise', true, rollback);
+  }
+
   function toggleCue(name: string) {
     setExpandedCues((prev) => {
       const next = new Set(prev);
@@ -1925,6 +1968,8 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
         getDateKey(selectedDayIndex),
         workoutLogs,
         workoutHistory,
+        handleSetSaved,
+        markExerciseComplete,
       )}
 
     </View>
