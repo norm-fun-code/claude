@@ -119,10 +119,13 @@ export const typography = {
 export function shadow(isDark: boolean, level: 'card' | 'bar' = 'card') {
   if (isDark) return {};
   const card = {
-    shadowColor: '#0B0B12',
-    shadowOpacity: 0.1,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 8 },
+    // Soft, large, slightly cool-tinted drop — a "lifted glass" float rather than
+    // a hard iOS-default shadow, so the light cards feel of-a-piece with the
+    // premium hero cards.
+    shadowColor: '#15172B',
+    shadowOpacity: 0.09,
+    shadowRadius: 28,
+    shadowOffset: { width: 0, height: 10 },
     elevation: 4,
   };
   const bar = {

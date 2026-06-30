@@ -33,7 +33,9 @@ const styles = StyleSheet.create({
   },
   title: {
     ...typography.label,
-    fontSize: 13,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.9,
   },
   preserve: {
     textTransform: 'none',
