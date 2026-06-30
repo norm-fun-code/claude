@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, TextInput, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { getColors, spacing, radius, shadow } from '../theme';
-import { API_BASE, WORKOUT_LOG_URL, ACTIVITY_URL, authHeaders, fetchWithTimeout, localTz } from '../config';
+import { API_BASE, WORKOUT_LOG_URL, WORKOUT_OVERRIDE_URL, WORKOUT_OVERRIDES_URL, ACTIVITY_URL, authHeaders, fetchWithTimeout, localTz } from '../config';
 import {
   getTodaysWorkout,
   HRV_ZONES,
@@ -61,6 +61,9 @@ function getWorkoutShortLabel(id: string): string {
     default: return 'Rest';
   }
 }
+
+// Sessions the user can manually swap a day to (each has a full logging view).
+const SWAP_CHOICES = ['push', 'pull', 'zone2', 'intervals', 'mobility', 'rest'];
 
 const ET_TZ = localTz();
 
@@ -135,12 +138,14 @@ function WeeklyStrip({
   weeklyCompleted,
   selectedDayIndex,
   onDayPress,
+  swapByDay,
 }: {
   c: ReturnType<typeof getColors>;
   isDark: boolean;
   weeklyCompleted: Record<string, boolean>;
   selectedDayIndex: number;
   onDayPress: (dayIndex: number) => void;
+  swapByDay: Record<string, string>;
 }) {
   const todayIndex = getTodayDayIndex();
 
@@ -152,7 +157,7 @@ function WeeklyStrip({
         const isPast = i < todayIndex;
         const dateKey = getDateKey(i);
         const done = !!weeklyCompleted[dateKey];
-        const workoutId = getWeekDayWorkoutId(i);
+        const workoutId = swapByDay[dateKey] ?? getWeekDayWorkoutId(i);
         const dotColor = WORKOUT_TYPE_COLORS[workoutId] ?? '#666';
         const shortLabel = getWorkoutShortLabel(workoutId);
 
@@ -1481,6 +1486,9 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
   const [activities, setActivities] = useState<Activity[]>([]);
   const [showActivityModal, setShowActivityModal] = useState(false);
   const [useScheduledWorkout, setUseScheduledWorkout] = useState(false);
+  // Manual per-day workout swaps (dateKey → workoutId), loaded for the visible week.
+  const [swapByDay, setSwapByDay] = useState<Record<string, string>>({});
+  const [showSwap, setShowSwap] = useState(false);
 
   const todayKey = getDateKey(todayDayIndex);
   const selectedKey = getDateKey(selectedDayIndex);
@@ -1528,6 +1536,35 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
     return () => { cancelled = true; };
   }, [selectedKey]);
 
+  // Load manual workout swaps for the visible week (Mon..Sun around today).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const from = getDateKey(0), to = getDateKey(6);
+        const res = await fetchWithTimeout(`${WORKOUT_OVERRIDES_URL}?from=${from}&to=${to}`, { headers: authHeaders() });
+        if (cancelled || !res.ok) return;
+        const { overrides } = await res.json();
+        if (!cancelled) setSwapByDay(overrides ?? {});
+      } catch { /* offline — no swaps */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Swap (or revert) the selected day's workout. Empty id reverts to scheduled.
+  async function swapWorkout(workoutId: string | null) {
+    const next = { ...swapByDay };
+    if (workoutId) next[selectedKey] = workoutId; else delete next[selectedKey];
+    setSwapByDay(next);
+    setShowSwap(false);
+    try {
+      await fetchWithTimeout(WORKOUT_OVERRIDE_URL, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ date: selectedKey, workoutId }),
+      });
+    } catch { setSaveFailed(true); }
+  }
+
   // Load logged alternate activities for the selected day.
   useEffect(() => {
     let cancelled = false;
@@ -1570,13 +1607,14 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
 
   useEffect(() => {
     const day = getDateKey(selectedDayIndex);
-    const currentWorkoutId = getWeekDayWorkoutId(selectedDayIndex);
-    if (currentWorkoutId === 'push' || currentWorkoutId === 'pull') {
-      // We'll fetch logs; gather exercise names after workout is resolved
-      setWorkoutLogs({});
+    // Use the swapped id if the day was manually swapped, else the scheduled one,
+    // so set-logging loads for a swapped-in Push/Pull session too.
+    const effId = swapByDay[day] ?? getWeekDayWorkoutId(selectedDayIndex);
+    setWorkoutLogs({});
+    if (effId === 'push' || effId === 'pull') {
       fetchLogsForDay(day, []);
     }
-  }, [selectedDayIndex]);
+  }, [selectedDayIndex, swapByDay]);
 
   // Persist a single check for the selected day. On failure we surface it and
   // roll the checkbox back, so the UI never claims something was saved when it
@@ -1617,10 +1655,16 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
     zone2: ZONE2, mobility: MOBILITY, push: SESSION_A, pull: SESSION_B, rest: REST, intervals: INTERVALS,
   };
   const scheduledId = WEEKLY_SCHEDULE[selectedJsDay] ?? 'rest';
-  const workout = useScheduledWorkout && !!override && isViewingToday
-    ? SESSION_MAP[scheduledId] ?? REST
-    : _autoWorkout;
-  const displayOverride = useScheduledWorkout && !!override && isViewingToday ? undefined : override;
+  // A manual swap wins over everything (the scheduled split AND any recovery
+  // auto-downgrade) — the user deliberately chose this day's session.
+  const swappedId = swapByDay[selectedKey];
+  const workout = swappedId
+    ? SESSION_MAP[swappedId] ?? REST
+    : useScheduledWorkout && !!override && isViewingToday
+      ? SESSION_MAP[scheduledId] ?? REST
+      : _autoWorkout;
+  // Hide the recovery-downgrade note when a manual swap is in effect.
+  const displayOverride = swappedId || (useScheduledWorkout && !!override && isViewingToday) ? undefined : override;
 
   function handleDayPress(dayIndex: number) {
     setSelectedDayIndex(dayIndex);
@@ -1766,6 +1810,7 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
         weeklyCompleted={weeklyCompleted}
         selectedDayIndex={selectedDayIndex}
         onDayPress={handleDayPress}
+        swapByDay={swapByDay}
       />
 
       <HRVHeaderCard
@@ -1779,7 +1824,47 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
         recoveryScore={isViewingToday ? (recoveryScore ?? null) : null}
       />
 
-      {isViewingToday && !!override && (
+      {/* Manual workout swap — choose a different session for this day and log it fully. */}
+      <View style={swapStyles.wrap}>
+        <TouchableOpacity
+          onPress={() => setShowSwap((v) => !v)}
+          style={[swapStyles.btn, { borderColor: swappedId ? '#0C447C' : c.border, backgroundColor: swappedId ? '#0C447C15' : 'transparent' }]}
+          activeOpacity={0.7}
+        >
+          <Text style={[swapStyles.btnTxt, { color: swappedId ? '#0C447C' : c.subtext }]}>
+            {swappedId ? `🔄 Swapped to ${getWorkoutShortLabel(swappedId)} · change` : '🔄 Swap this day’s workout'}
+          </Text>
+        </TouchableOpacity>
+
+        {showSwap && (
+          <View style={swapStyles.options}>
+            {SWAP_CHOICES.map((id) => {
+              const sel = swappedId === id;
+              return (
+                <TouchableOpacity
+                  key={id}
+                  onPress={() => swapWorkout(id)}
+                  style={[swapStyles.chip, { borderColor: sel ? '#0C447C' : c.border, backgroundColor: sel ? '#0C447C15' : 'transparent' }]}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[swapStyles.chipTxt, { color: sel ? '#0C447C' : c.text }]}>{getWorkoutShortLabel(id)}</Text>
+                </TouchableOpacity>
+              );
+            })}
+            {swappedId && (
+              <TouchableOpacity
+                onPress={() => swapWorkout(null)}
+                style={[swapStyles.chip, { borderColor: c.border }]}
+                activeOpacity={0.7}
+              >
+                <Text style={[swapStyles.chipTxt, { color: c.subtext }]}>↺ Scheduled ({getWorkoutShortLabel(scheduledId)})</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+      </View>
+
+      {isViewingToday && !!override && !swappedId && (
         <TouchableOpacity
           onPress={() => setUseScheduledWorkout((v) => !v)}
           style={[
@@ -1880,4 +1965,30 @@ const schedOverrideStyles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
+});
+
+const swapStyles = StyleSheet.create({
+  wrap: { marginBottom: spacing.md },
+  btn: {
+    alignSelf: 'center',
+    borderWidth: 1,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  btnTxt: { fontSize: 13, fontWeight: '600' },
+  options: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  chip: {
+    borderWidth: 1,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 2,
+  },
+  chipTxt: { fontSize: 13, fontWeight: '600' },
 });

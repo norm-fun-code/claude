@@ -799,6 +799,48 @@ app.post('/api/workout/checks', async (req, res) => {
   }
 });
 
+// Manual per-day workout swaps. GET returns a date→workoutId map across a range
+// (so the week strip can show swapped days); POST sets one day (empty/null
+// workoutId reverts that day to the scheduled split).
+const VALID_WORKOUT_IDS = new Set(['push', 'pull', 'zone2', 'mobility', 'intervals', 'rest']);
+
+app.get('/api/workout/overrides', async (req, res) => {
+  try {
+    const { from = null, to = null } = req.query;
+    const { rows } = await db.query(
+      `SELECT to_char(log_date, 'YYYY-MM-DD') AS day, workout_id FROM workout_overrides
+        WHERE ($1::date IS NULL OR log_date >= $1)
+          AND ($2::date IS NULL OR log_date <= $2)`,
+      [from, to]
+    );
+    const overrides = {};
+    for (const r of rows) overrides[r.day] = r.workout_id;
+    res.json({ overrides });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/workout/override', async (req, res) => {
+  try {
+    const { date, workoutId } = req.body || {};
+    if (!date) return res.status(400).json({ error: 'date is required' });
+    if (!workoutId) {
+      await db.query('DELETE FROM workout_overrides WHERE log_date = $1', [date]);
+      return res.json({ ok: true, date, workoutId: null });
+    }
+    if (!VALID_WORKOUT_IDS.has(workoutId)) return res.status(400).json({ error: 'invalid workoutId' });
+    await db.query(
+      `INSERT INTO workout_overrides (log_date, workout_id) VALUES ($1, $2)
+       ON CONFLICT (log_date) DO UPDATE SET workout_id = EXCLUDED.workout_id, created_at = now()`,
+      [date, workoutId]
+    );
+    res.json({ ok: true, date, workoutId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Per-set workout logs — actual reps and weight performed, for progressive
 // overload tracking and auto-population of "last session" data.
 
