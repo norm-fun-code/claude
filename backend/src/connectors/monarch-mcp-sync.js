@@ -282,14 +282,22 @@ async function syncViaMcp(ctx) {
   const expSrc = expCash.size ? expCash : expByDay;
   const discSrc = discCash.size ? discCash : discByDay;
 
-  const days = new Set([...expSrc.keys(), ...incSrc.keys()]);
-  for (const day of days) {
-    const spend = expSrc.get(day) || 0;
-    const income = incSrc.get(day) || 0;
-    if (expSrc.has(day)) metrics.push(m('spending', spend, day));
+  // Spending / discretionary: emit on the days Monarch reports them (unchanged).
+  for (const day of new Set([...expSrc.keys(), ...discSrc.keys()])) {
+    if (expSrc.has(day)) metrics.push(m('spending', expSrc.get(day) || 0, day));
     if (discSrc.has(day)) metrics.push(m('spending_discretionary', discSrc.get(day) || 0, day));
-    if (incSrc.has(day)) metrics.push(m('income', income, day));
-    if (expSrc.has(day) || incSrc.has(day)) metrics.push(m('net_cashflow', income - spend, day));
+  }
+  // Income / net_cashflow: emit for EVERY day in the window (0 when none). Income
+  // lands on only ~10 paycheck days, but the OLD transaction-level sync counted
+  // deposits/transfers as income across many more days. Emitting only on new-income
+  // days left that stale per-day income in place, inflating the 30-day total
+  // (~$30k vs Monarch's ~$19.5k). Writing 0 on the non-income days overwrites it.
+  // Spending never had this bug — expense days are frequent and all get rewritten.
+  for (let day = startDate; day <= endDate; day = nextDay(day)) {
+    const income = incSrc.get(day) || 0;
+    const spend = expSrc.get(day) || 0;
+    metrics.push(m('income', income, day));
+    metrics.push(m('net_cashflow', income - spend, day));
   }
 
   // Reconcile the window against Monarch's current truth: prune stored docs it no
