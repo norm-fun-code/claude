@@ -39,6 +39,7 @@ export const CONTEXT_URL = `${API_BASE}/api/context`;
 export const CONTEXT_TODAY_URL = `${API_BASE}/api/context/today`;
 export const CONTEXT_HISTORY_URL = `${API_BASE}/api/context/history`;
 export const WORKOUT_LOG_URL = `${API_BASE}/api/workout/log`;
+export const WORKOUT_PROGRESSION_URL = `${API_BASE}/api/workout/progression`;
 export const WORKOUT_OVERRIDE_URL = `${API_BASE}/api/workout/override`;
 export const WORKOUT_OVERRIDES_URL = `${API_BASE}/api/workout/overrides`;
 export const ACTIVITY_URL = `${API_BASE}/api/activity`;

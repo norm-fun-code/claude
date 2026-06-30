@@ -841,6 +841,67 @@ app.post('/api/workout/override', async (req, res) => {
   }
 });
 
+// GET /api/workout/progression?exercise=A&exercise=B&limit=10 — per-exercise
+// progression over recent sessions. For each session it computes estimated 1RM
+// (Epley: w × (1 + reps/30), best set) and total volume (Σ reps × weight), then
+// the trend across the window. Powers the post-session "Strength progression"
+// card. Bodyweight-only exercises fall back to total reps as the trend metric.
+app.get('/api/workout/progression', async (req, res) => {
+  try {
+    const { exercise, limit = 10 } = req.query;
+    if (!exercise) return res.status(400).json({ error: 'exercise required' });
+    const names = Array.isArray(exercise) ? exercise : [exercise];
+    const lim = Math.min(Math.max(Number(limit) || 10, 2), 30);
+
+    const { rows } = await db.query(
+      `SELECT exercise, to_char(log_date, 'YYYY-MM-DD') AS day,
+              json_agg(json_build_object('reps', reps, 'weight_lbs', weight_lbs) ORDER BY set_number) AS sets
+         FROM workout_logs
+        WHERE exercise = ANY($1)
+        GROUP BY exercise, log_date
+        ORDER BY exercise, log_date ASC`,
+      [names]
+    );
+
+    const epley = (w, r) => (w > 0 && r > 0 ? w * (1 + r / 30) : 0);
+    const byEx = {};
+    for (const row of rows) {
+      let e1rm = 0, volume = 0, topW = 0, topR = 0, reps = 0;
+      for (const s of row.sets || []) {
+        const w = Number(s.weight_lbs) || 0, r = Number(s.reps) || 0;
+        volume += w * r; reps += r;
+        const e = epley(w, r);
+        if (e > e1rm) e1rm = e;
+        if (w > topW) { topW = w; topR = r; }
+      }
+      (byEx[row.exercise] ||= []).push({
+        date: row.day, e1rm: Math.round(e1rm), volume: Math.round(volume), reps, topWeight: topW, topReps: topR,
+      });
+    }
+
+    const progression = names.filter((n) => byEx[n]).map((name) => {
+      const all = byEx[name];
+      const sessions = all.slice(-lim);
+      const weighted = sessions.some((s) => s.e1rm > 0);
+      const metric = weighted ? 'e1rm' : 'reps';
+      const unit = weighted ? 'lb' : 'reps';
+      // Trend across sessions that have the metric.
+      const pts = sessions.filter((s) => s[metric] > 0);
+      let delta = null;
+      if (pts.length >= 2) {
+        const first = pts[0][metric], last = pts[pts.length - 1][metric];
+        delta = { first, last, pct: first ? Math.round(((last - first) / first) * 100) : null };
+      }
+      const best = sessions.reduce((b, s) => (s[metric] > (b?.[metric] ?? -1) ? s : b), null);
+      return { exercise: name, metric, unit, n: sessions.length, sessions, delta, best };
+    }).filter((p) => p.n >= 2); // only show exercises with at least two sessions
+
+    res.json({ progression });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Per-set workout logs — actual reps and weight performed, for progressive
 // overload tracking and auto-population of "last session" data.
 

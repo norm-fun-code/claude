@@ -21,6 +21,7 @@ import {
   type Exercise,
   type HRVZone,
 } from '../data/workouts';
+import { WorkoutProgressionCard } from './WorkoutProgressionCard';
 
 interface Props {
   hrv: number | null;
@@ -1510,6 +1511,8 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
   // Manual per-day workout swaps (dateKey → workoutId), loaded for the visible week.
   const [swapByDay, setSwapByDay] = useState<Record<string, string>>({});
   const [showSwap, setShowSwap] = useState(false);
+  // Bumped when a set is saved so the progression card refetches with today's lift.
+  const [progressionVersion, setProgressionVersion] = useState(0);
 
   const todayKey = getDateKey(todayDayIndex);
   const selectedKey = getDateKey(selectedDayIndex);
@@ -1719,6 +1722,7 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
       const next = cur.filter((s) => s.set_number !== setNum).concat([{ set_number: setNum, reps, weight_lbs: weight }]);
       return { ...prev, [exercise]: next };
     });
+    setProgressionVersion((v) => v + 1);
   }
 
   // Tick an exercise's circle when its final set is logged. Idempotent (only adds),
@@ -1970,6 +1974,13 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
         workoutHistory,
         handleSetSaved,
         markExerciseComplete,
+      )}
+
+      {(workout.id === 'push' || workout.id === 'pull') && (
+        <WorkoutProgressionCard
+          exercises={(workout as StrengthSession).working.map((e) => e.name)}
+          version={progressionVersion}
+        />
       )}
 
     </View>
