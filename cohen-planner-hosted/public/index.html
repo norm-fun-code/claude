@@ -1493,15 +1493,25 @@ function renderPortfolioTab(R,P){
     const observations=[];
     const flags=[];
 
-    // Concentration
-    const topH=holdings[0];
-    const top3Val=holdings.slice(0,3).reduce((s,h)=>s+h.value,0);
-    const top3Pct=totalVal>0?top3Val/totalVal*100:0;
-    const topPct=totalVal>0&&topH?(topH.value/totalVal*100):0;
-    if(topPct>25)flags.push({c:'var(--a)',t:`⚠ ${topH.ticker} is ${topPct.toFixed(0)}% of portfolio — heavy single-stock concentration.`});
-    else observations.push({c:'var(--g)',t:`✓ Top holding ${topH?.ticker||'—'} is ${topPct.toFixed(0)}% — concentration is manageable.`});
+    // Concentration — only single-name positions (equity/crypto/option/bond) carry
+    // concentration risk. A diversified fund/ETF (e.g. an S&P 500 fund) being a large
+    // slice is normal allocation, not single-stock risk, so it's tracked separately.
+    const isDiversified=h=>h.securityType==='etf'||h.securityType==='mutual_fund';
+    const topFund=holdings.find(isDiversified);
+    const topFundPct=totalVal>0&&topFund?(topFund.value/totalVal*100):0;
+    if(topFund&&topFundPct>15)observations.push({c:'var(--t2)',t:`${topFund.ticker} (diversified fund) is ${topFundPct.toFixed(0)}% of portfolio — broad-market exposure, not single-stock risk.`});
 
-    if(top3Pct>60)flags.push({c:'var(--a)',t:`Top 3 positions (${holdings.slice(0,3).map(h=>h.ticker).join(', ')}) = ${top3Pct.toFixed(0)}% of portfolio.`});
+    const singleNames=holdings.filter(h=>!isDiversified(h)&&h.securityType!=='cash');
+    const topSingle=singleNames[0];
+    const topSinglePct=totalVal>0&&topSingle?(topSingle.value/totalVal*100):0;
+    if(topSingle){
+      if(topSinglePct>25)flags.push({c:'var(--a)',t:`⚠ ${topSingle.ticker} is ${topSinglePct.toFixed(0)}% of portfolio — heavy single-stock concentration.`});
+      else observations.push({c:'var(--g)',t:`✓ Largest single-stock position (${topSingle.ticker}) is ${topSinglePct.toFixed(0)}% — concentration is manageable.`});
+    }
+
+    const top3Single=singleNames.slice(0,3);
+    const top3SinglePct=totalVal>0?top3Single.reduce((s,h)=>s+h.value,0)/totalVal*100:0;
+    if(top3SinglePct>40)flags.push({c:'var(--a)',t:`Top 3 single-stock positions (${top3Single.map(h=>h.ticker).join(', ')}) = ${top3SinglePct.toFixed(0)}% of portfolio.`});
 
     // Cash drag
     const cashHoldings=holdings.filter(h=>h.securityType==='cash');
