@@ -50,6 +50,7 @@ import { AlertCard } from './src/components/AlertCard';
 import { HighlightsCard } from './src/components/HighlightsCard';
 import { BriefCard } from './src/components/BriefCard';
 import { EveningBriefCard } from './src/components/EveningBriefCard';
+import { SkeletonCard } from './src/components/viz/Skeleton';
 import { BriefSignalsCard } from './src/components/BriefSignalsCard';
 import { TodayForecastCard } from './src/components/TodayForecastCard';
 import { ExperimentsCard } from './src/components/ExperimentsCard';
@@ -200,6 +201,9 @@ export default function App() {
           </>
         );
       case 'wealth':
+        if (!d && briefing.loading) {
+          return (<><SkeletonCard tall rows={4} /><SkeletonCard rows={5} /></>);
+        }
         return (
           <>
             <GradientButton
@@ -222,6 +226,9 @@ export default function App() {
           </>
         );
       case 'wisdom':
+        if (!d && briefing.loading) {
+          return (<><SkeletonCard tall rows={3} /><SkeletonCard rows={4} /></>);
+        }
         return (
           <>
             {d?.quote && d?.quoteInsight && <QuoteCard quote={d.quote} insight={d.quoteInsight} />}
@@ -237,6 +244,18 @@ export default function App() {
         return null; // rendered outside the ScrollView below
       case 'today':
       default:
+        // Cold load (no cached briefing yet): show a skeleton feed so the layout
+        // is reserved and nothing pops in / reflows. Warm opens have cached data
+        // and skip straight to content.
+        if (!d && briefing.loading) {
+          return (
+            <>
+              <SkeletonCard tall rows={5} />
+              <SkeletonCard rows={3} />
+              <SkeletonCard rows={3} />
+            </>
+          );
+        }
         return (
           <>
             {/* TODAY-FIRST ordering: the home tab answers "what's the one thing,
