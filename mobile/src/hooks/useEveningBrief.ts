@@ -33,6 +33,10 @@ export interface EveningBrief {
 export function useEveningBrief() {
   const [brief, setBrief] = useState<EveningBrief | null>(null);
   const [loading, setLoading] = useState(false);
+  // True once the first fetch has resolved — so the cold-open welcome can wait for
+  // the evening brief (which inserts at the top of the feed) to settle before it
+  // dissolves, instead of revealing a feed that then jumps.
+  const [fetched, setFetched] = useState(false);
 
   const fetchBrief = useCallback(async (): Promise<EveningBrief | null> => {
     setLoading(true);
@@ -48,6 +52,7 @@ export function useEveningBrief() {
       /* offline — leave prior state */
     } finally {
       setLoading(false);
+      setFetched(true);
     }
     return null;
   }, []);
@@ -63,5 +68,5 @@ export function useEveningBrief() {
     return () => sub.remove();
   }, [fetchBrief]);
 
-  return { brief, loading, refetch: fetchBrief };
+  return { brief, loading, fetched, refetch: fetchBrief };
 }

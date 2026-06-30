@@ -50,6 +50,7 @@ import { AlertCard } from './src/components/AlertCard';
 import { HighlightsCard } from './src/components/HighlightsCard';
 import { BriefCard } from './src/components/BriefCard';
 import { EveningBriefCard } from './src/components/EveningBriefCard';
+import { WelcomeScreen } from './src/components/WelcomeScreen';
 import { SkeletonCard } from './src/components/viz/Skeleton';
 import { BriefSignalsCard } from './src/components/BriefSignalsCard';
 import { TodayForecastCard } from './src/components/TodayForecastCard';
@@ -87,6 +88,9 @@ export default function App() {
   });
 
   const [tab, setTab] = useState<TabKey>('today');
+  // Cold-open welcome: shown once per launch (App mount = cold start), it covers
+  // the whole feed assembly so the jumpy mount/insert is never seen.
+  const [showWelcome, setShowWelcome] = useState(true);
   const [checkinOpen, setCheckinOpen] = useState(false);
   const [habitsOpen, setHabitsOpen] = useState(false);
   const [pendingAskQ, setPendingAskQ] = useState('');
@@ -480,6 +484,12 @@ export default function App() {
         }}
         bottomInset={bottomInset}
       />
+
+      {/* Cold-open welcome overlay — covers the feed assembly, then slow-dissolves
+          into a fully-settled Today tab. Last child + zIndex so it's on top. */}
+      {showWelcome && (
+        <WelcomeScreen ready={!!d && eveningBrief.fetched} onDone={() => setShowWelcome(false)} />
+      )}
     </View>
   );
 }
