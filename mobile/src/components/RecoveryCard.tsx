@@ -7,8 +7,9 @@ import { ProgressArc } from './viz/ProgressArc';
 import type { Recovery, HealthComposite } from '../hooks/useBriefing';
 import { MetricDetailSheet, type MetricConfig } from './MetricDetailSheet';
 import { formatHM } from '../utils/format';
-import { Trend } from './viz/Trend';
+import { LineChart } from './viz/LineChart';
 import { useSeries } from '../hooks/useSeries';
+import { useContextHistory } from '../hooks/useContextHistory';
 import { RECOVERY_HISTORY_URL } from '../config';
 
 interface Props {
@@ -60,6 +61,7 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
   const c = getColors(isDark);
   const [selected, setSelected] = useState<MetricConfig | null>(null);
   const trend = useSeries(`${RECOVERY_HISTORY_URL}?days=30`);
+  const { contextByDay, notesByDay } = useContextHistory(30);
 
   if (!recovery || recovery.score == null) return null;
 
@@ -103,7 +105,14 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
               avg {Math.round(trend.values.reduce((a, b) => a + b, 0) / trend.values.length)}
             </Text>
           </View>
-          <Trend values={trend.values} height={40} color={bandColor} />
+          <LineChart
+            series={[{ values: trend.values, color: bandColor, fill: true }]}
+            dates={trend.rows.map((r) => r.ts.slice(0, 10))}
+            height={56}
+            formatValue={(v) => `${Math.round(v)} / 100`}
+            contextByDay={contextByDay}
+            notesByDay={notesByDay}
+          />
         </View>
       )}
 
