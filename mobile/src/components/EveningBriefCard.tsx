@@ -2,7 +2,6 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { spacing, radius, typography, glow, bandGradient } from '../theme';
-import { AnimatedEntry } from './AnimatedEntry';
 import type { EveningBrief, EveningTone } from '../hooks/useEveningBrief';
 
 interface Props {
@@ -51,13 +50,8 @@ export function EveningBriefCard({ brief }: Props) {
 
       <Text style={styles.kicker}>EVENING · WIND DOWN</Text>
 
-      <AnimatedEntry delay={60} distance={10}>
-        <Text style={styles.headline}>{brief.headline}</Text>
-      </AnimatedEntry>
-
-      <AnimatedEntry delay={110} distance={8}>
-        <Text style={styles.readiness}>{brief.readiness}</Text>
-      </AnimatedEntry>
+      <Text style={styles.headline}>{brief.headline}</Text>
+      <Text style={styles.readiness}>{brief.readiness}</Text>
 
       {chips.length > 0 && (
         <View style={styles.chipRow}>
@@ -69,13 +63,11 @@ export function EveningBriefCard({ brief }: Props) {
 
       <View style={styles.separator} />
 
-      {BLOCKS.filter(({ key }) => (brief[key] || '').trim()).map(({ key, label }, idx) => (
-        <AnimatedEntry key={key} delay={150 + idx * 50} distance={8}>
-          <View style={styles.block}>
-            <Text style={styles.blockLabel}>{label}</Text>
-            <Text style={styles.blockText}>{brief[key]}</Text>
-          </View>
-        </AnimatedEntry>
+      {BLOCKS.filter(({ key }) => (brief[key] || '').trim()).map(({ key, label }) => (
+        <View key={key} style={styles.block}>
+          <Text style={styles.blockLabel}>{label}</Text>
+          <Text style={styles.blockText}>{brief[key]}</Text>
+        </View>
       ))}
     </View>
   );

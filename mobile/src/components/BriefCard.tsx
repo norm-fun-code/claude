@@ -3,7 +3,6 @@ import { View, Text, StyleSheet, useColorScheme, TextInput, TouchableOpacity } f
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography, shadow, glow, accentGradient } from '../theme';
-import { AnimatedEntry } from './AnimatedEntry';
 import type { ChiefBrief } from '../hooks/useBriefing';
 import { BRIEFING_CONTEXT_URL, authHeaders, fetchWithTimeout } from '../config';
 
@@ -71,23 +70,17 @@ export function BriefCard({ brief, fallback }: Props) {
 
       {brief ? (
         <>
-          <AnimatedEntry delay={60} distance={10}>
-            <Text style={styles.synthesis}>{brief.synthesis}</Text>
-          </AnimatedEntry>
+          <Text style={styles.synthesis}>{brief.synthesis}</Text>
           <View style={styles.separator} />
-          {BLOCKS.map(({ key, label }, idx) => (
-            <AnimatedEntry key={key} delay={130 + idx * 55} distance={8}>
-              <View style={styles.block}>
-                <Text style={styles.blockLabel}>{label}</Text>
-                <Text style={styles.blockText}>{brief[key]}</Text>
-              </View>
-            </AnimatedEntry>
+          {BLOCKS.map(({ key, label }) => (
+            <View key={key} style={styles.block}>
+              <Text style={styles.blockLabel}>{label}</Text>
+              <Text style={styles.blockText}>{brief[key]}</Text>
+            </View>
           ))}
         </>
       ) : (
-        <AnimatedEntry delay={60} distance={10}>
-          <Text style={styles.synthesis}>{fallback}</Text>
-        </AnimatedEntry>
+        <Text style={styles.synthesis}>{fallback}</Text>
       )}
 
       <View style={styles.separator} />

@@ -272,7 +272,10 @@ export default function App() {
                 the day and when no brief is built), so the home tab feels alive at
                 night instead of showing a stale morning memo. */}
             {eveningBrief.brief && (
-              <AnimatedEntry delay={0}>
+              // Opacity-only fade (no translateY): it loads async and inserts at the
+              // top, so a slide would compound with the layout shift and read as a
+              // shake. A clean fade-in-place is smooth.
+              <AnimatedEntry delay={0} distance={0}>
                 <EveningBriefCard brief={eveningBrief.brief} />
               </AnimatedEntry>
             )}
