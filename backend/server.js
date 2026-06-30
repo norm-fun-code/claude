@@ -3013,11 +3013,18 @@ app.get('/api/briefing', async (req, res) => {
     errors.push({ service: 'gemini', error: err.message });
   }
 
-  // Record the surfaced wisdom quote so it won't repeat for 30 days. Only on a
-  // fresh (non-same-day) build, matching the page-dedup recording above.
+  // Dedup the wisdom quote DETERMINISTICALLY (the model often ignores the
+  // avoid-list in the prompt). On a fresh build: if it surfaced a quote already
+  // shown in the last 30 days, suppress it so the Notion wisdom card hides today
+  // rather than repeating; otherwise record it so future days dedup against it.
   if (!priorIsToday && geminiResult?.notionQuote) {
     const ref = String(geminiResult.notionQuote).toLowerCase().replace(/\s+/g, ' ').replace(/[“”"']/g, '').trim().slice(0, 300);
-    if (ref) surfacedStore.record('notion_quote', ref).catch(() => {});
+    if (ref && seenNotionQuotes.has(ref)) {
+      geminiResult.notionQuote = '';
+      geminiResult.notionInsight = '';
+    } else if (ref) {
+      surfacedStore.record('notion_quote', ref).catch(() => {});
+    }
   }
 
   // LLM fallback: if the AI call failed and there's a prior build today (or

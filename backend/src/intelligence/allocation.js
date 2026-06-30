@@ -52,6 +52,7 @@ function topConcentration(accounts, netWorth) {
   if (!(netWorth > 0)) return null;
   const risky = (accounts || []).filter(
     (a) => a.isAsset && a.balance > 0 && !['cash', 'real_estate'].includes(classifyAccount(a))
+      && !isBrokerageName(a.name) // a diversified brokerage/retirement acct isn't single-name risk
   );
   if (!risky.length) return null;
   const largest = risky.reduce((m, a) => (a.balance > m.balance ? a : m));
@@ -73,6 +74,16 @@ function isFundLike(ticker, securityType) {
   const t = String(ticker || '').toUpperCase();
   if (/^[A-Z]{4}X$/.test(t)) return true; // 5-char mutual fund ending in X (FXAIX, VTSAX)
   return KNOWN_ETFS.has(t);
+}
+
+// An account name that denotes a DIVERSIFIED brokerage or retirement account — a
+// "Norman's Fidelity" or "Schwab brokerage" holds many securities and is liquid,
+// so it is NOT single-name concentration and not illiquid pre-IPO stock, even when
+// its individual holdings don't sync. Distinct from a private stake named after a
+// single company (Stripe, Mercury, …), which IS single-name risk.
+const BROKERAGE_RE = /fidelity|schwab|vanguard|robinhood|e[\s*-]?trade|merrill|ameritrade|morgan stanley|wealthfront|betterment|interactive brokers|ibkr|webull|\bsofi\b|tastytrade|\bm1\b|ally invest|t\.?\s?rowe|brokerage|\b401\s?k?\b|\bira\b|\broth\b|\bhsa\b/i;
+function isBrokerageName(name) {
+  return BROKERAGE_RE.test(String(name || ''));
 }
 
 /**
@@ -116,7 +127,12 @@ function buildPositions(holdings, accounts) {
     } else if (!manual) {
       remaining = Math.max(0, remaining - a.balance);
     }
-    if (manual) positions.push({ name: a.name, value: a.balance, kind: 'private', single: true });
+    if (manual) {
+      // A brokerage/retirement account is diversified + liquid even unsynced — not
+      // a single-name, not illiquid private stock.
+      const brokerage = isBrokerageName(a.name);
+      positions.push({ name: a.name, value: a.balance, kind: brokerage ? 'account' : 'private', single: !brokerage });
+    }
   }
 
   // 'other'/alt single-asset accounts never have a ticker breakdown.

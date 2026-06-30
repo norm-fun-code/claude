@@ -197,12 +197,26 @@ async function morningRoutine({ reason = 'scheduled' } = {}) {
  * you actually wake. A backstop time guarantees a brief still lands on days the
  * data never shows (didn't sleep on the Pod, API down).
  */
+// When we first observe the Eight Sleep session as ended (this process run). The
+// session's "present interval" disappears a few minutes BEFORE the smart alarm
+// fires (Eight Sleep finalizes once you enter the wake-up light-sleep window), so
+// we hold a short wake buffer past this before building — otherwise the brief
+// lands while the user is still asleep. Reset whenever the session reads in
+// progress again. Module-level so it persists across ticks; a process restart
+// resets it, which is fine (the once-per-day guard prevents a double brief).
+let sessionEndedSeenAt = null;
+
 function startMorningWatcher() {
-  const pollMin = Number(process.env.EIGHT_SLEEP_POLL_MIN) || 15;
+  // Poll fairly often so the wake buffer below resolves promptly (the buffer, not
+  // the poll cadence, is what gates the build).
+  const pollMin = Number(process.env.EIGHT_SLEEP_POLL_MIN) || 6;
   const pollStartHour = Number(process.env.EIGHT_SLEEP_POLL_START_HOUR) || 7;
   const pollStartMinute = Number(process.env.EIGHT_SLEEP_POLL_START_MINUTE) || 30;
   const backstopHour = Number(process.env.EIGHT_SLEEP_BACKSTOP_HOUR) || 10;
   const backstopMinute = Number(process.env.EIGHT_SLEEP_BACKSTOP_MINUTE) || 0;
+  // How long after the session reads "ended" to wait before building, so the brief
+  // lands after the smart alarm / actual wake rather than in the gap before it.
+  const wakeBufferMs = (Number(process.env.EIGHT_SLEEP_WAKE_BUFFER_MIN) || 12) * 60 * 1000;
 
   const tick = async () => {
     try {
@@ -225,13 +239,24 @@ function startMorningWatcher() {
         // Check the /intervals/present endpoint to confirm the session has ended
         // before waking the user with a "briefing ready" push.
         const stillSleeping = await eightSleepSessionInProgress();
-        if (stillSleeping && !pastBackstop) {
-          console.log('[scheduler] Eight Sleep score ready but session still in progress — waiting for wake');
-        } else {
-          if (stillSleeping) {
+        if (stillSleeping) {
+          sessionEndedSeenAt = null; // back in a session — restart the buffer clock
+          if (pastBackstop) {
             console.log('[scheduler] Eight Sleep session still flagged in-progress past backstop — firing anyway');
+            await morningRoutine({ reason: 'eight-sleep data arrived (backstop)' });
+          } else {
+            console.log('[scheduler] Eight Sleep score ready but session still in progress — waiting for wake');
           }
-          await morningRoutine({ reason: 'eight-sleep data arrived' });
+        } else {
+          // Session reads ended. Hold a wake buffer past the first time we see it
+          // ended, so we don't fire in the gap before the smart alarm wakes them.
+          if (sessionEndedSeenAt == null) sessionEndedSeenAt = Date.now();
+          const sinceEnded = Date.now() - sessionEndedSeenAt;
+          if (sinceEnded >= wakeBufferMs || pastBackstop) {
+            await morningRoutine({ reason: 'eight-sleep data arrived (post-wake buffer)' });
+          } else {
+            console.log(`[scheduler] Eight Sleep session ended ${Math.round(sinceEnded / 60000)}m ago — holding ${Math.round(wakeBufferMs / 60000)}m wake buffer before briefing`);
+          }
         }
       } else if (pastBackstop) {
         await morningRoutine({ reason: 'backstop (no eight-sleep data yet)' });
