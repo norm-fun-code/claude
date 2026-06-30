@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, useColorScheme, TouchableOpacity } from 'react-native';
-import { getColors, spacing, radius, typography, shadow, colors } from '../theme';
+import { getColors, spacing, radius, typography, shadow, colors, FONTS } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { formatHM } from '../utils/format';
 import type { HealthData } from '../hooks/useHealthData';
@@ -228,7 +228,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   hrvLeft: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.xs },
-  hrvNumber: { fontSize: 48, fontWeight: '300', letterSpacing: -2 },
+  hrvNumber: { fontFamily: FONTS.displayLight, fontSize: 48, fontWeight: '300', letterSpacing: -2 },
   hrvUnit: { ...typography.caption, fontSize: 14 },
   hrvSpark: { flex: 1, alignItems: 'flex-end', justifyContent: 'flex-end', marginHorizontal: spacing.md, paddingBottom: 8 },
   hrvChevron: { fontSize: 22, fontWeight: '300' },
@@ -254,7 +254,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   vo2Left: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.xs },
-  vo2Number: { fontSize: 32, fontWeight: '300', letterSpacing: -1 },
+  vo2Number: { fontFamily: FONTS.displayLight, fontSize: 32, fontWeight: '300', letterSpacing: -1 },
   vo2Unit: { ...typography.caption, fontSize: 13 },
   vo2Badge: { borderRadius: radius.sm, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3 },
   vo2BadgeText: { fontSize: 11, fontWeight: '700' },

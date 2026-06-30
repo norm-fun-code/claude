@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, useColorScheme } from 'react-native';
-import { getColors, spacing, radius, typography, shadow } from '../theme';
+import { getColors, spacing, radius, typography, shadow, FONTS } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { Wealth } from '../hooks/useBriefing';
 import { WEALTH_PLAN_URL, METRICS_HISTORY_URL, authHeaders, fetchWithTimeout } from '../config';
@@ -159,7 +159,7 @@ const styles = StyleSheet.create({
   card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   hint: { fontSize: 10, fontStyle: 'italic' },
-  big: { fontSize: 40, fontWeight: '300', letterSpacing: -1.5 },
+  big: { fontFamily: FONTS.displayLight, fontSize: 40, fontWeight: '300', letterSpacing: -1.5 },
   nwTrend: { marginTop: spacing.sm, marginBottom: 2 },
   change: { ...typography.caption, fontSize: 13, marginTop: 2 },
   row: {

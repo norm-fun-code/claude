@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, useColorScheme } from 'react-native';
-import { getColors, spacing, radius, typography, shadow } from '../theme';
+import { getColors, spacing, radius, typography, shadow, FONTS } from '../theme';
 import { RecoveryOrb } from './RecoveryOrb';
 import type { TodayForecast } from '../hooks/useBriefing';
 
@@ -60,7 +60,7 @@ const styles = StyleSheet.create({
     width: 52, height: 52, borderRadius: 26, borderWidth: 2,
     alignItems: 'center', justifyContent: 'center',
   },
-  gradeLetter: { fontSize: 28, fontWeight: '800', letterSpacing: -1 },
+  gradeLetter: { fontFamily: FONTS.displayHeavy, fontSize: 28, fontWeight: '800', letterSpacing: -1 },
   gradeBody: { flex: 1 },
   headline: { ...typography.subtitle, fontSize: 17, fontWeight: '700' },
   detail: { ...typography.body, fontSize: 13, marginTop: 1 },

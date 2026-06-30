@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { useFonts, Sora_600SemiBold, Sora_700Bold, Sora_800ExtraBold } from '@expo-google-fonts/sora';
+import { useFonts, Sora_300Light, Sora_600SemiBold, Sora_700Bold, Sora_800ExtraBold } from '@expo-google-fonts/sora';
 import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
 import {
   ScrollView,
@@ -26,7 +26,7 @@ import { useEveningBrief } from './src/hooks/useEveningBrief';
 import { useHealthData } from './src/hooks/useHealthData';
 import { useRecovery } from './src/hooks/useRecovery';
 import { usePushRegistration } from './src/hooks/usePushRegistration';
-import { getColors, spacing, shadow } from './src/theme';
+import { getColors, spacing, shadow, FONTS } from './src/theme';
 
 import { Header } from './src/components/Header';
 import { TabBar, TabKey, TABS } from './src/components/TabBar';
@@ -79,7 +79,7 @@ export default function App() {
   const health = useHealthData();
   const liveRecovery = useRecovery();
   const [fontsLoaded] = useFonts({
-    Sora_600SemiBold, Sora_700Bold, Sora_800ExtraBold,
+    Sora_300Light, Sora_600SemiBold, Sora_700Bold, Sora_800ExtraBold,
     Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold,
   });
 
@@ -478,6 +478,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
   tabTitle: {
+    fontFamily: FONTS.display,
     fontSize: 28,
     fontWeight: '700',
     letterSpacing: -0.5,
