@@ -585,9 +585,13 @@ app.get('/api/monarch-investments', requireAuth, async (req, res) => {
 
     const now = new Date();
     const end = req.query.end || now.toISOString().slice(0, 10);
-    const periodDays = { '1W': 7, '1M': 30, '3M': 90, 'YTD': null, '1Y': 365 };
-    const pd = periodDays[req.query.period] ?? 30;
-    const start = req.query.start || (pd === null
+    // YTD has no fixed day-count — handle it before the lookup so it can't fall through
+    // to the `?? 30` default (periodDays['YTD'] is intentionally null, and `??` treats
+    // null the same as "missing", which previously silently aliased YTD to 1M).
+    const isYTD = req.query.period === 'YTD';
+    const periodDays = { '1W': 7, '1M': 30, '3M': 90, '1Y': 365 };
+    const pd = isYTD ? null : (periodDays[req.query.period] ?? 30);
+    const start = req.query.start || (isYTD
       ? `${now.getFullYear()}-01-01`
       : new Date(now.getTime() - pd * 864e5).toISOString().slice(0, 10));
 
@@ -624,7 +628,7 @@ app.get('/api/monarch-investments', requireAuth, async (req, res) => {
       allTimeChange: Math.round(allTimeChange * 100) / 100,
       allTimePct: totalValue - allTimeChange > 0 ? Math.round(allTimeChange / (totalValue - allTimeChange) * 10000) / 100 : 0,
       holdings,
-      topGainers: byMove.slice(0, 5),
+      topGainers: byMove.slice(0, 5).filter(h => h.periodChange > 0),
       topLosers: byMove.slice(-5).reverse().filter(h => h.periodChange < 0),
     });
   } catch (err) {
