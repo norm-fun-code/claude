@@ -745,10 +745,13 @@ app.get('/api/context/history', async (req, res) => {
         WHERE COALESCE(a.end_ts, a.start_ts) >= now() - ($2 || ' days')::interval
           AND a.start_ts <= now()
           AND a.label IS NOT NULL
-          -- Exclude financial/spending context (answers to spending prompts are
-          -- tagged 'spending note') — health charts shouldn't surface money notes.
+          -- Exclude financial/spending context — health charts shouldn't surface
+          -- money notes. Catches both the tagged category (answers to spending
+          -- prompts → 'spending note') and free-text notes that read as financial
+          -- (e.g. "Vacation car rental") which land in the generic brief_context.
           AND a.category NOT ILIKE '%spend%'
-          AND a.category NOT ILIKE '%financ%'`,
+          AND a.category NOT ILIKE '%financ%'
+          AND a.label !~* '(\y(spent|spend|spending|bill|bills|rent|rental|invoice|purchase|bought|payment|paid|expense|expenses|budget|refund|deposit|salary|paycheck|mortgage|loan|vacation|flight|hotel|dollars?|cost|costs)\y|\$)'`,
       [tz, window]
     );
     const [{ rows: tagRows }, { rows: noteRows }] = await Promise.all([tagRowsP, noteRowsP]);
@@ -1902,7 +1905,11 @@ app.post('/api/briefing/context', async (req, res) => {
     // Tag spending-related answers so they're excluded from health/recovery anomaly
     // context (a "$665 on vacation" answer must never explain a low-HRV deviation).
     // The 'spend' substring is what the anomaly filter in analyze.js keys off.
-    const isSpending = /spend|financ|wealth|budget|money/i.test(`${signalKey || ''} ${question || ''}`);
+    // Scan the prompt AND the free-text answer — notes typed into the generic
+    // "add context" box carry no signalKey, so "Vacation car rental" must be
+    // caught by its own wording.
+    const FINANCIAL_RE = /\b(spend|spent|spending|financ|wealth|budget|money|bill|bills|rent|rental|invoice|purchase|bought|payment|paid|expense|refund|salary|paycheck|mortgage|loan|vacation|flight|hotel|dollar|cost)\b|\$/i;
+    const isSpending = FINANCIAL_RE.test(`${signalKey || ''} ${question || ''} ${answer}`);
     const id = await annotationsStore.createAnnotation({
       startTs: new Date().toISOString(),
       category: isSpending ? 'spending note' : 'brief_context',

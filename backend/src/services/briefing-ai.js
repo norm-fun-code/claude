@@ -24,6 +24,8 @@ const SYSTEM =
   'WRITING: complete, well-punctuated sentences. Never run two independent clauses ' +
   'together without a period, semicolon, or conjunction (no "a strong base for the week your ' +
   'stated focus is…" — close the first thought, then start the next). ' +
+  'TIMES: always use a 12-hour clock with am/pm exactly as given in the data (e.g. "2:00 PM", ' +
+  '"9:00 AM–6:00 PM"). Never write 24-hour times like "09:00" or "18:00". ' +
   'Return ONLY a single valid JSON object — no markdown, no code fences, no commentary.';
 
 function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = []) {
@@ -53,8 +55,24 @@ function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, cale
       : 'No personal calendar events today. (Work calendar not connected — assume a normal workday.)';
 
   // Compute open focus windows from the gaps between busy blocks (9am–6pm workday).
-  const toMin = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + (m || 0); };
-  const toTime = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+  // Calendar/free-busy times arrive as 12-hour strings ("2:00 PM"); parse the
+  // meridiem so afternoon meetings aren't mistaken for the morning, and re-emit
+  // everything in 12-hour form so the brief never mixes clocks.
+  const toMin = (t) => {
+    const m = String(t).match(/(\d{1,2}):(\d{2})\s*([AaPp][Mm])?/);
+    if (!m) return 0;
+    let h = Number(m[1]);
+    const mer = m[3] ? m[3].toUpperCase() : null;
+    if (mer === 'PM' && h !== 12) h += 12;
+    if (mer === 'AM' && h === 12) h = 0;
+    return h * 60 + Number(m[2]);
+  };
+  const toTime = (min) => {
+    const h24 = Math.floor(min / 60), mm = min % 60;
+    const mer = h24 >= 12 ? 'PM' : 'AM';
+    const h = h24 % 12 || 12;
+    return `${h}:${String(mm).padStart(2, '0')} ${mer}`;
+  };
   const busySorted = [...workBusyBlocks].sort((a, b) => toMin(a.start) - toMin(b.start));
   const openWindows = [];
   let cursor = toMin('09:00');
@@ -62,7 +80,7 @@ function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, cale
     if (toMin(b.start) > cursor + 29) openWindows.push(`${toTime(cursor)}–${b.start}`);
     cursor = Math.max(cursor, toMin(b.end));
   }
-  if (cursor < toMin('18:00') - 29) openWindows.push(`${toTime(cursor)}–18:00`);
+  if (cursor < toMin('18:00') - 29) openWindows.push(`${toTime(cursor)}–${toTime(toMin('18:00'))}`);
 
   const workBusySection =
     workBusyBlocks.length > 0
