@@ -527,12 +527,19 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
     'habits:gratitude':    'Gratitude practice',
     'habits:exercise':     'Exercise',
   };
+  // Nightly context tags (Magnesium, Alcohol, …) correlate against the same
+  // outcomes — bidirectionally, so "alcohol nights → lower HRV" surfaces too.
+  for (const t of require('./context-tags').CONTEXT_TAGS) {
+    HABITS[`context:${t.key}`] = t.label;
+  }
 
   const OUTCOMES = {
-    'health:hrv':         { label: 'HRV',         unit: 'ms',  good: 'up'   },
-    'health:resting_hr':  { label: 'Resting HR',  unit: 'bpm', good: 'down' },
-    'health:sleep_score': { label: 'Sleep score', unit: '',    good: 'up'   },
-    'health:sleep_hours': { label: 'Sleep',       unit: 'h',   good: 'up'   },
+    'health:hrv':              { label: 'HRV',         unit: 'ms',  good: 'up'   },
+    'health:resting_hr':       { label: 'Resting HR',  unit: 'bpm', good: 'down' },
+    'health:sleep_score':      { label: 'Sleep score', unit: '',    good: 'up'   },
+    'health:sleep_hours':      { label: 'Sleep',       unit: 'h',   good: 'up'   },
+    'health:rem_sleep_hours':  { label: 'REM sleep',   unit: 'h',   good: 'up'   },
+    'health:deep_sleep_hours': { label: 'Deep sleep',  unit: 'h',   good: 'up'   },
   };
 
   function dayKey(d) {

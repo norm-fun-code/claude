@@ -651,6 +651,55 @@ app.get('/api/habits/history', async (req, res) => {
   }
 });
 
+// --- Nightly context tags (Magnesium, Alcohol, …) -----------------------------
+// Stored as daily 0/1 metrics under the `context` domain so the habit-split engine
+// correlates them against HRV / sleep — our own version of Eight Sleep's tag
+// insights, but cross-domain. Anchored at noon-UTC of the wake date (today), to
+// line up with the wake-dated sleep metrics.
+app.get('/api/context/tags', (req, res) => {
+  res.json({ tags: require('./src/intelligence/context-tags').CONTEXT_TAGS });
+});
+
+app.get('/api/context/today', async (req, res) => {
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const { rows } = await db.query(
+      `SELECT metric, value FROM metrics
+        WHERE domain = 'context'
+          AND (ts AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date`,
+      [tz]
+    );
+    const active = {};
+    for (const r of rows) if (Number(r.value) >= 0.5) active[r.metric] = true;
+    res.json({ logged: rows.length > 0, active });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Log tonight's/last-night's context. Records EVERY catalog tag as 0/1 for the day
+// so untagged tags are explicit "off" days for the correlation (not missing).
+app.post('/api/context', async (req, res) => {
+  try {
+    const { TAG_KEYS } = require('./src/intelligence/context-tags');
+    const body = req.body || {};
+    const active = body.active && typeof body.active === 'object'
+      ? new Set(Object.keys(body.active).filter((k) => body.active[k]))
+      : new Set(Array.isArray(body.tags) ? body.tags : []);
+    const tz = process.env.TZ || 'America/New_York';
+    const dateStr = body.date || new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    const ts = new Date(`${dateStr}T12:00:00Z`);
+    await sourcesStore.registerSource({ id: 'self_report', domain: 'health', displayName: 'Self-reported' }).catch(() => {});
+    const metrics = TAG_KEYS.map((k) => ({
+      ts, domain: 'context', metric: k, value: active.has(k) ? 1 : 0, unit: 'bool', source: 'self_report',
+    }));
+    const written = await metricsStore.insertMetrics(metrics);
+    res.json({ ok: true, date: dateStr, active: [...active], written });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Per-exercise / non-negotiable workout checkmarks. Like the check-in, each tap
 // saves immediately and the app rehydrates the day's checks on mount. The client
 // owns the local date (?date=YYYY-MM-DD, ET) so it matches the workout strip.

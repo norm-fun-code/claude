@@ -46,6 +46,12 @@ const CATALOG = {
   'environment:uv_index': { label: 'UV index', goodWhen: null },
 };
 
+// Nightly context tags (context:<key>) — registered so the intelligence layer
+// tracks/correlates them. goodWhen null: direction is learned from the data.
+for (const t of require('./context-tags').CONTEXT_TAGS) {
+  CATALOG[`context:${t.key}`] = { label: t.label, goodWhen: null };
+}
+
 // Flow/count metrics are summed per day; everything else is averaged.
 const SUM_METRICS = new Set([
   'steps',
