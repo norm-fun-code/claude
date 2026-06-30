@@ -172,7 +172,7 @@ async function runReview({ asOf = new Date(), persist = true } = {}) {
   // generating the review, so the "what I tried" data is ready for the prompt.
   try {
     const { measureOutcomes } = require('../store/recommendations');
-    const measured = await measureOutcomes(10);
+    const measured = await measureOutcomes();
     if (measured > 0) console.log(`[review] measured ${measured} recommendation outcome(s)`);
   } catch (err) {
     console.error('[review] outcome measurement failed:', err.message);

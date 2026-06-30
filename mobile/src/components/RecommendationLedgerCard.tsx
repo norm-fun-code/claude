@@ -12,6 +12,7 @@ type Rec = {
   created_at: string;
   outcome_delta: number | null;
   outcome_measured_at: string | null;
+  outcome_metric: string | null;
   expected_direction: 'up' | 'down' | null;
   surfaced_in: string;
 };
@@ -31,7 +32,13 @@ function outcomeChip(
 ) {
   const measuredAt = localMeasuredAt !== undefined ? localMeasuredAt : rec.outcome_measured_at;
   const delta = localDelta !== undefined ? localDelta : rec.outcome_delta;
-  if (!measuredAt) return { label: 'Pending', color: c.subtext, bg: c.border };
+  if (!measuredAt) {
+    // A metric-backed rec is on track for an automatic data check (≈1 week out);
+    // one without a tracked metric just waits for your thumbs.
+    return rec.outcome_metric
+      ? { label: 'Measuring…', color: c.subtext, bg: c.border }
+      : { label: 'Pending', color: c.subtext, bg: c.border };
+  }
   if (delta == null) return { label: 'No data', color: c.subtext, bg: c.border };
   const hit =
     rec.expected_direction === 'up' ? delta > 0 :
@@ -183,7 +190,11 @@ export function RecommendationLedgerCard() {
             </Text>
             <Text style={[styles.infoText, { color: c.text, marginTop: spacing.xs }]}>
               👍 you tried it and it helped (or the advice was useful) · 👎 it didn't help / wasn't right for you ·
-              swipe left to dismiss. Didn't try it? Just leave it — NormOS auto-checks your data after ~2 weeks.
+              swipe left to dismiss. You can tap any time — no need to wait.
+            </Text>
+            <Text style={[styles.infoText, { color: c.text, marginTop: spacing.xs }]}>
+              “Measuring…” means NormOS is watching the target metric and will auto-judge it once about a week of
+              data is in (“Worked ↑” or “No effect”). “Pending” is waiting on your thumbs. Didn't try it? Just leave it.
             </Text>
           </View>
         ) : (

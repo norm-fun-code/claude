@@ -3631,7 +3631,7 @@ app.get('/api/recommendations', async (req, res) => {
       },
     });
     // Background: auto-measure outcomes for any pending recs with enough elapsed time.
-    recommendationsStore.measureOutcomes(14).catch(() => {});
+    recommendationsStore.measureOutcomes().catch(() => {});
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -3736,6 +3736,13 @@ runMigrations()
       // vs "→ 12%"). Keeps the newest; never touches rows the user has rated.
       recommendationsStore.dedupePending()
         .then((n) => { if (n > 0) console.log(`[boot] collapsed ${n} duplicate recommendation(s)`); })
+        .catch(() => {});
+
+      // Cleanup: undo outcomes the old engine auto-measured after only ~3 days
+      // (premature "No effect"). Returns them to "Measuring…" for a proper check.
+      // User thumbs (exact ±1 delta) are preserved.
+      recommendationsStore.clearPrematureAutoOutcomes()
+        .then((n) => { if (n > 0) console.log(`[boot] reset ${n} prematurely-measured recommendation(s)`); })
         .catch(() => {});
 
       // Cleanup: delete stale "High-energy days → HRV" ledger rows — a backwards-

@@ -93,7 +93,14 @@ async function recentTitlesAll(withinDays = 7) {
  * outcome_metric, compute the 7-day delta from metrics and write it back.
  * Called on Sunday morning from the weekly review flow.
  */
-async function measureOutcomes(lookbackDays = 10) {
+// Auto-measurement only fires once a recommendation has had a real chance to
+// land: at least MIN_ELAPSED_DAYS of calendar time AND MIN_AFTER_DAYS of actual
+// follow-up readings. Before that the verdict would be a 2-3 day blip of noise,
+// so the row stays "Measuring…" rather than being prematurely called "No effect".
+const MIN_ELAPSED_DAYS = 7;
+const MIN_AFTER_DAYS = 5;
+
+async function measureOutcomes(lookbackDays = 21) {
   const metricsStore = require('./metrics');
   const { rows } = await query(
     `SELECT id, outcome_metric, expected_direction, created_at
@@ -110,6 +117,8 @@ async function measureOutcomes(lookbackDays = 10) {
       const [domain, metric] = rec.outcome_metric.split(':');
       if (!domain || !metric) continue;
       const recDate = new Date(rec.created_at);
+      // Don't judge until the recommendation has had time to take effect.
+      if ((Date.now() - recDate.getTime()) / 864e5 < MIN_ELAPSED_DAYS) continue;
       // Before window: 7 days ending on rec date. After window: 7 days after.
       const beforeStart = new Date(recDate.getTime() - 7 * 864e5);
       const afterEnd = new Date(recDate.getTime() + 7 * 864e5);
@@ -120,7 +129,7 @@ async function measureOutcomes(lookbackDays = 10) {
       const avg = (rows) => rows.length ? rows.reduce((s, r) => s + Number(r.value), 0) / rows.length : null;
       const beforeVal = avg(before);
       const afterVal = avg(after);
-      if (beforeVal == null || afterVal == null || before.length < 3 || after.length < 3) continue;
+      if (beforeVal == null || afterVal == null || before.length < 3 || after.length < MIN_AFTER_DAYS) continue;
       await setOutcome(rec.id, { delta: afterVal - beforeVal, measuredAt: new Date() });
       measured++;
     } catch {
@@ -155,4 +164,25 @@ async function dedupePending() {
   return toDelete.length;
 }
 
-module.exports = { recordRecommendation, listRecommendations, setOutcome, recentTitles, recentTitlesAll, measureOutcomes, normalizeRecTitle, dedupePending };
+/**
+ * One-time repair: clear outcomes that were AUTO-measured before a recommendation
+ * had MIN_ELAPSED_DAYS to take effect (the old engine judged after ~3 days, so
+ * short-window noise got stamped "No effect"). User thumbs are preserved — those
+ * write an exact ±1 delta, which an auto-measurement (a raw metric difference)
+ * effectively never produces. Cleared rows return to "Measuring…" and get
+ * re-judged once a real window of data is in. Safe to call on boot.
+ */
+async function clearPrematureAutoOutcomes() {
+  const { rowCount } = await query(
+    `UPDATE recommendations
+        SET outcome_delta = NULL, outcome_measured_at = NULL
+      WHERE outcome_measured_at IS NOT NULL
+        AND outcome_delta IS NOT NULL
+        AND abs(outcome_delta) <> 1
+        AND outcome_measured_at < created_at + ($1 || ' days')::interval`,
+    [String(MIN_ELAPSED_DAYS)]
+  );
+  return rowCount;
+}
+
+module.exports = { recordRecommendation, listRecommendations, setOutcome, recentTitles, recentTitlesAll, measureOutcomes, normalizeRecTitle, dedupePending, clearPrematureAutoOutcomes };
