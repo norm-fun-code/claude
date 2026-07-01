@@ -3513,13 +3513,26 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[cashflow lookahead] failed:', err.message);
   }
 
+  // "You vs past you" — Monday-only longitudinal zoom-out (trailing 4 weeks vs
+  // ~3 months ago). Weekly cadence keeps it a perspective beat, not a daily
+  // ritual; the module itself only reports shifts that clear real thresholds.
+  let progressContext = '';
+  try {
+    const weekday = new Date().toLocaleDateString('en-US', { weekday: 'long', timeZone: process.env.TZ || 'America/New_York' });
+    if (weekday === 'Monday') {
+      progressContext = await require('./src/intelligence/progress').computeProgressContext();
+    }
+  } catch (err) {
+    console.error('[progress context] failed:', err.message);
+  }
+
   // Call the LLM with whatever data we have
   let geminiResult = null;
   try {
     // The LLM call can be slow; bound it so a stalled model doesn't hang the
     // briefing (it degrades to the data-only sections).
     geminiResult = await withTimeout(
-      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext),
+      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext),
       Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000),
       'gemini'
     );
