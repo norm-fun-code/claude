@@ -209,6 +209,39 @@ function sleepDebt(sleepSeries, { need = 8, days = 7, maxCreditPerNight = 1 } = 
  * times). Lower is steadier. Returns { stdHours, score } where score is 0..100
  * (100 = perfectly regular). Returns null without enough nights.
  */
+/**
+ * 7-day net sleep balance: Σ(actual hours − need) over the last 7 nights that
+ * have both values. Positive = surplus, negative = debt. Matches Eight Sleep's
+ * own "Sleep balance" screen — deliberately NOT their sleep_debt API field
+ * (dailySleepDebtSeconds), which only counts cumulative deficit and never goes
+ * negative, so a surplus week still reads as debt. This is the single source of
+ * truth for sleep debt/surplus in the app; anywhere debt is shown should call
+ * this rather than reading the raw Eight Sleep field directly.
+ */
+function sleepBalance7(sleepSeries, sleepNeedSeries) {
+  if (!sleepSeries || !sleepSeries.length) return null;
+  const needMap = new Map();
+  if (sleepNeedSeries) {
+    for (const row of sleepNeedSeries) {
+      const d = new Date(row.day).toISOString().slice(0, 10);
+      needMap.set(d, Number(row.value));
+    }
+  }
+  const eightSleepNeed = latest(sleepNeedSeries);
+  const recent7 = sleepSeries.slice(-7);
+  let net = 0, nights = 0;
+  for (const row of recent7) {
+    const h = Number(row.value);
+    if (!Number.isFinite(h)) continue;
+    const d = new Date(row.day).toISOString().slice(0, 10);
+    const need = needMap.get(d) ?? eightSleepNeed;
+    if (need == null) continue;
+    net += h - need;
+    nights++;
+  }
+  return nights >= 3 ? { net: Math.round(net * 100) / 100, nights, need: eightSleepNeed } : null;
+}
+
 function sleepConsistency(sleepSeries, { days = 14, minN = 5 } = {}) {
   if (!sleepSeries) return null;
   const recent = sleepSeries.slice(-days).map((p) => Number(p.value)).filter(Number.isFinite);
@@ -432,40 +465,14 @@ function computeHealthComposites(seriesByKey, opts = {}) {
     });
   }
 
-  // Sleep balance — computed as the 7-day net of (sleep_hours - sleep_need).
-  // Positive = surplus, negative = debt. We use this instead of Eight Sleep's
-  // sleep_debt API field (dailySleepDebtSeconds) because that field only counts
-  // cumulative deficit and never goes negative, so a surplus week still shows as
-  // debt. This approach matches what Eight Sleep's own "Sleep balance" screen shows.
+  // Sleep balance — see sleepBalance7() for why this is used instead of Eight
+  // Sleep's raw sleep_debt API field.
   const sleep = seriesByKey['health:sleep_hours'];
   const sleepNeedSeries = seriesByKey['health:sleep_need'];
   const eightSleepNeed = latest(sleepNeedSeries);
   const lastNight = sleep ? latest(sleep) : null;
   const MIN = 0.08; // ~5 min threshold
-
-  // Build 7-day net balance from paired daily values.
-  let balance7 = null;
-  if (sleep && sleep.length) {
-    const needMap = new Map();
-    if (sleepNeedSeries) {
-      for (const row of sleepNeedSeries) {
-        const d = new Date(row.day).toISOString().slice(0, 10);
-        needMap.set(d, Number(row.value));
-      }
-    }
-    const recent7 = sleep.slice(-7);
-    let net = 0, nights = 0;
-    for (const row of recent7) {
-      const h = Number(row.value);
-      if (!Number.isFinite(h)) continue;
-      const d = new Date(row.day).toISOString().slice(0, 10);
-      const need = needMap.get(d) ?? eightSleepNeed;
-      if (need == null) continue;
-      net += h - need;
-      nights++;
-    }
-    if (nights >= 3) balance7 = { net: Math.round(net * 100) / 100, nights };
-  }
+  const balance7 = sleepBalance7(sleep, sleepNeedSeries);
 
   if (balance7 != null) {
     const { net, nights } = balance7;
@@ -838,6 +845,7 @@ module.exports = {
   recoveryScore,
   recoveryBand,
   sleepDebt,
+  sleepBalance7,
   sleepConsistency,
   trainingLoad,
   computeHealthComposites,

@@ -1581,6 +1581,10 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
     if (workoutId) next[selectedKey] = workoutId; else delete next[selectedKey];
     setSwapByDay(next);
     setShowSwap(false);
+    // Swapping to a different session invalidates any exercise-name completion
+    // state from the day's previous session — otherwise an exercise that happens
+    // to share a name across sessions would show as already checked off.
+    setCompletedExercises(new Set());
     try {
       await fetchWithTimeout(WORKOUT_OVERRIDE_URL, {
         method: 'POST', headers: authHeaders(),

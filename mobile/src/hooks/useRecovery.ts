@@ -11,8 +11,8 @@ export type RecoveryBand = 'green' | 'yellow' | 'red';
  *  score is missing (no baseline yet) so callers can fall back to neutral. */
 export function scoreToBand(score: number | null | undefined): RecoveryBand | null {
   if (score == null) return null;
-  if (score >= 67) return 'green';
-  if (score >= 34) return 'yellow';
+  if (score >= 63) return 'green';
+  if (score >= 40) return 'yellow';
   return 'red';
 }
 

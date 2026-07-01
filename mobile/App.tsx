@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Sora_300Light, Sora_600SemiBold, Sora_700Bold, Sora_800ExtraBold } from '@expo-google-fonts/sora';
 import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
@@ -19,9 +19,9 @@ import { StatusBar } from 'expo-status-bar';
 import { AnimatedEntry } from './src/components/AnimatedEntry';
 
 // NormOS follows the system appearance by default; a stored user override
-// (Auto / Light / Dark, toggled in the header) is applied as early as possible.
+// (Auto / Light / Dark, toggled in the header) is applied before first paint —
+// see the themeReady gate below, alongside fontsLoaded.
 import { loadThemePref } from './src/theme-pref';
-loadThemePref();
 
 import { useBriefing } from './src/hooks/useBriefing';
 import { useEveningBrief } from './src/hooks/useEveningBrief';
@@ -89,6 +89,11 @@ export default function App() {
     Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold,
     ...Ionicons.font, // preload tab-bar icon glyphs so they don't flash in
   });
+  // Gate first paint on the stored theme preference too, not just fonts —
+  // otherwise a fast font load could render one frame in the OS scheme before
+  // a stored Light/Dark override applies.
+  const [themeReady, setThemeReady] = useState(false);
+  useEffect(() => { loadThemePref().then(() => setThemeReady(true)); }, []);
 
   const [tab, setTab] = useState<TabKey>('today');
   // Cold-open welcome: shown once per launch (App mount = cold start), it covers
@@ -365,7 +370,7 @@ export default function App() {
     }
   };
 
-  if (!fontsLoaded) return null; // wait for custom fonts before first paint
+  if (!fontsLoaded || !themeReady) return null; // wait for custom fonts + theme pref before first paint
   return (
     <View style={[styles.root, { backgroundColor: c.background }]}>
       <StatusBar style={isDark ? 'light' : 'dark'} />

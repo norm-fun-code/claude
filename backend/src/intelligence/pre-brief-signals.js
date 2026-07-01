@@ -10,6 +10,21 @@
 
 const fmt = (n) => '$' + Math.round(Math.abs(n)).toLocaleString('en-US');
 
+// workBusy/calendar times arrive as bare 12-hour strings ("2:00 PM"), which
+// `new Date(...)` cannot parse (silently returns Invalid Date) — this used to
+// leave the packed-calendar signal permanently dead (meetingMin always 0, the
+// isNaN guard skipping every block without ever logging anything). Parse the
+// clock string directly instead of routing it through Date.
+function toMinutesSinceMidnight(t) {
+  const m = String(t).match(/(\d{1,2}):(\d{2})\s*([AaPp][Mm])?/);
+  if (!m) return null;
+  let h = Number(m[1]);
+  const mer = m[3] ? m[3].toUpperCase() : null;
+  if (mer === 'PM' && h !== 12) h += 12;
+  if (mer === 'AM' && h === 12) h = 0;
+  return h * 60 + Number(m[2]);
+}
+
 function buildSignals({ recovery, calendar = [], workBusy = [], spend, spendBaseline }) {
   const signals = [];
 
@@ -28,15 +43,15 @@ function buildSignals({ recovery, calendar = [], workBusy = [], spend, spendBase
   if (workBusy.length > 0 || calendar.length > 0) {
     let meetingMin = 0;
     for (const b of workBusy) {
-      const s = new Date(b.start);
-      const e = new Date(b.end);
-      if (!isNaN(s) && !isNaN(e)) meetingMin += (e - s) / 60000;
+      const s = toMinutesSinceMidnight(b.start);
+      const e = toMinutesSinceMidnight(b.end);
+      if (s != null && e != null && e > s) meetingMin += e - s;
     }
     for (const ev of calendar) {
       if (!ev.allDay && ev.startTime && ev.endTime) {
-        const s = new Date(ev.startTime);
-        const e = new Date(ev.endTime);
-        if (!isNaN(s) && !isNaN(e)) meetingMin += (e - s) / 60000;
+        const s = toMinutesSinceMidnight(ev.startTime);
+        const e = toMinutesSinceMidnight(ev.endTime);
+        if (s != null && e != null && e > s) meetingMin += e - s;
       }
     }
     const meetingH = meetingMin / 60;

@@ -163,8 +163,24 @@ async function computeTodayForecast({ recovery = null, asOf = new Date() } = {})
   };
 
   const sleepHours = await latestOf('sleep_hours', ['eight_sleep']);
-  const sleepDebtHours = await latestOf('sleep_debt', ['eight_sleep']);
   const sleepNeed = await latestOf('sleep_need', ['eight_sleep']);
+
+  // Sleep debt: use the corrected 7-day balance (recovery.sleepBalance7) instead
+  // of Eight Sleep's raw sleep_debt field, which only counts cumulative deficit
+  // and never goes negative — so a genuinely well-rested week still showed
+  // phantom debt here (this forecast predates recovery.js's fix and was never
+  // updated to use it). null when there isn't enough history to judge (< 3
+  // paired nights); 0 on a surplus week; positive hours on a real deficit.
+  let sleepDebtHours = null;
+  try {
+    const seriesFrom = new Date(Date.now() - 14 * 864e5); // enough history for 7 paired nights
+    const [sleepSeries, sleepNeedSeries] = await Promise.all([
+      metricsStore.dailyAggregatePreferSource({ domain: 'health', metric: 'sleep_hours', from: seriesFrom, agg: 'avg', sources: ['eight_sleep'] }),
+      metricsStore.dailyAggregatePreferSource({ domain: 'health', metric: 'sleep_need', from: seriesFrom, agg: 'avg', sources: ['eight_sleep'] }),
+    ]);
+    const balance = require('./recovery').sleepBalance7(sleepSeries, sleepNeedSeries);
+    sleepDebtHours = balance ? Math.max(0, -balance.net) : null;
+  } catch { /* non-critical */ }
 
   // Training-load band from the stored composite finding (computed in analyze).
   let acwrBand = null;

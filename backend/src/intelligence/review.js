@@ -194,8 +194,9 @@ Write the weekly review as JSON with EXACTLY:
 }
 
 async function runReview({ asOf = new Date(), persist = true } = {}) {
-  // Measure outcomes for recommendations surfaced in the last 10 days before
-  // generating the review, so the "what I tried" data is ready for the prompt.
+  // Measure outcomes for recently-surfaced recommendations (measureOutcomes'
+  // own default lookback window) before generating the review, so the "what I
+  // tried" data is ready for the prompt.
   try {
     const { measureOutcomes } = require('../store/recommendations');
     const measured = await measureOutcomes();
