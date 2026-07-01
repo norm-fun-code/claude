@@ -1899,6 +1899,23 @@ function renderHousingTab(R,P){
     </div>
   </div>
 
+  <!-- REFINANCE BREAK-EVEN CALCULATOR -->
+  <div style="${ST}">🔄 Refinance Break-Even Calculator</div>
+  <div class="glass-card" style="padding:16px 18px">
+    <div style="font-size:11px;color:var(--t2);line-height:1.5;margin-bottom:12px">At your current ${P.mortgageRate}% rate on a ${fmt(P.homePrice*(1-P.downPctg/100))} loan, how many months until a lower rate pays for its own closing costs?</div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:4px">
+      <div class="sr" style="flex:1;min-width:160px">
+        <div class="sh"><span class="sl">New rate</span><span class="sv" id="refiRateVal">${Math.max(2.5,P.mortgageRate-1).toFixed(2)}%</span></div>
+        <input type="range" id="refiRateInput" min="2.5" max="${P.mortgageRate}" step="0.05" value="${Math.max(2.5,P.mortgageRate-1)}" oninput="document.getElementById('refiRateVal').textContent=parseFloat(this.value).toFixed(2)+'%';updateRefiCalc()">
+      </div>
+      <div class="sr" style="flex:1;min-width:160px">
+        <div class="sh"><span class="sl">Closing costs</span><span class="sv" id="refiCostVal">${fmtF(6000)}</span></div>
+        <input type="range" id="refiCostInput" min="1000" max="20000" step="500" value="6000" oninput="document.getElementById('refiCostVal').textContent=fmtF(parseFloat(this.value));updateRefiCalc()">
+      </div>
+    </div>
+    <div id="refiResult" style="margin-top:10px"></div>
+  </div>
+
   </div>`;
 
   // ── Charts (planner light theme) ──
@@ -1936,7 +1953,33 @@ function renderHousingTab(R,P){
     options:{...baseOpts(v=>'$'+v+'M'),plugins:{legend:{display:false},tooltip:{..._GLASS_TOOLTIP,callbacks:{label:c=>'$'+c.raw.toFixed(2)+'M total'}}}}
   });
 
+  updateRefiCalc();
   document.getElementById('summaries').innerHTML='';
+}
+// Refi break-even calc — reads the two sliders, uses mPmt() from model.js for P&I.
+function updateRefiCalc(){
+  const rateInp=document.getElementById('refiRateInput');
+  const costInp=document.getElementById('refiCostInput');
+  const out=document.getElementById('refiResult');
+  if(!rateInp||!costInp||!out)return;
+  const newRate=parseFloat(rateInp.value);
+  const closingCost=parseFloat(costInp.value)||0;
+  const loan=P.homePrice*(1-P.downPctg/100);
+  const curPI=mPmt(loan,P.mortgageRate/100)/12;
+  const newPI=mPmt(loan,newRate/100)/12;
+  const monthlySavings=curPI-newPI;
+  if(monthlySavings<=0){
+    out.innerHTML=`<div style="font-size:11px;color:var(--r);padding:8px 0">New rate (${newRate.toFixed(2)}%) isn't lower than your current ${P.mortgageRate}% — no savings to break even on.</div>`;
+    return;
+  }
+  const breakEvenMo=closingCost/monthlySavings;
+  out.innerHTML=`<div class="pf-quad">
+    <div class="kpi"><div class="kpi-l">Monthly Savings</div><div class="kpi-v" style="color:var(--g);font-size:14px">${fmt(monthlySavings)}</div><div class="kpi-s">${fmtF(curPI)} → ${fmtF(newPI)}</div></div>
+    <div class="kpi"><div class="kpi-l">Break-even</div><div class="kpi-v" style="color:${breakEvenMo<=24?'var(--g)':breakEvenMo<=48?'var(--a)':'var(--r)'};font-size:14px">${breakEvenMo.toFixed(0)} mo</div><div class="kpi-s">${(breakEvenMo/12).toFixed(1)} years</div></div>
+    <div class="kpi"><div class="kpi-l">Closing Costs</div><div class="kpi-v" style="font-size:14px">${fmt(closingCost)}</div><div class="kpi-s">one-time</div></div>
+    <div class="kpi"><div class="kpi-l">Rate Drop</div><div class="kpi-v" style="color:var(--b);font-size:14px">${(P.mortgageRate-newRate).toFixed(2)}pt</div><div class="kpi-s">${P.mortgageRate}% → ${newRate.toFixed(2)}%</div></div>
+  </div>
+  <div style="font-size:9.5px;color:var(--t3);margin-top:8px;line-height:1.5">If you stay in the home past the break-even point, refinancing is a net win. Assumes ${fmt(loan)} loan balance — recalculate near the actual refi date since your balance will have amortized down.</div>`;
 }
 
 function renderSensitivityTab(R,P){
