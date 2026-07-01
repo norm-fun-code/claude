@@ -1612,6 +1612,38 @@ function renderPortfolioTab(R,P){
     </div>`;
   })()}
 
+  ${(()=>{
+    // ── Tax-loss harvesting scanner ─────────────────────────────────────────
+    // allTimeChange = unrealized gain/loss vs. cost basis (Monarch's variation_dollars).
+    const lossHoldings=holdings.filter(h=>h.securityType!=='cash'&&(h.allTimeChange||0)<0).sort((a,b)=>a.allTimeChange-b.allTimeChange);
+    if(lossHoldings.length===0)return'';
+    const totalLoss=lossHoldings.reduce((s,h)=>s+h.allTimeChange,0); // negative
+    const taxRate=P.capGainsTaxRate??.345;
+    const estSavings=Math.abs(totalLoss)*taxRate;
+    return`<div class="glass-card" style="padding:14px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:6px">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3)">🧾 Tax-Loss Harvesting Opportunities</div>
+        <div style="font-size:10px;color:var(--t2)">Est. tax savings if harvested: <strong style="color:var(--g)">${fmt(estSavings)}</strong></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:8px">
+        ${lossHoldings.map(h=>{
+          const pct=totalVal>0?(h.value/totalVal*100):0;
+          return`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;background:rgba(205,61,100,.05);border-radius:7px;border-left:2px solid var(--r)">
+            <div>
+              <span style="font-size:11px;font-weight:600;color:var(--tx);font-family:'SF Mono',monospace">${advEscape(h.ticker||'')}</span>
+              <span style="font-size:8.5px;color:var(--t3);margin-left:5px">${typeLabel[h.securityType]||''} · ${pct.toFixed(1)}% of portfolio</span>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:10.5px;font-weight:700;color:var(--r);font-family:'SF Mono',monospace">${fmt(h.allTimeChange)}</div>
+              <div style="font-size:8.5px;color:var(--t3)">~${fmt(Math.abs(h.allTimeChange)*taxRate)} tax savings</div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div style="font-size:9px;color:var(--t3);line-height:1.5">Unrealized loss vs. cost basis (all-time), at your ${(taxRate*100).toFixed(1)}% capital-gains rate. Harvesting realizes the loss to offset gains elsewhere — but the IRS wash-sale rule disallows the deduction if you buy the same or a "substantially identical" security within 30 days before or after the sale. Consider a similar (not identical) fund if you want to stay invested.</div>
+    </div>`;
+  })()}
+
   ${renderMonarchAccountsCard()}
   </div>`;
 
