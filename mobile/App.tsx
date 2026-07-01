@@ -18,7 +18,10 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { AnimatedEntry } from './src/components/AnimatedEntry';
 
-// NormOS follows the system appearance (light / dark).
+// NormOS follows the system appearance by default; a stored user override
+// (Auto / Light / Dark, toggled in the header) is applied as early as possible.
+import { loadThemePref } from './src/theme-pref';
+loadThemePref();
 
 import { useBriefing } from './src/hooks/useBriefing';
 import { useEveningBrief } from './src/hooks/useEveningBrief';
