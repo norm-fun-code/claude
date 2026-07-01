@@ -804,7 +804,7 @@ function printPDF(){
   function fmtK(v){return v<0?`-$${Math.round(-v/1000)}K`:`$${Math.round(v/1000)}K`}
 
   const kpiHtml=kpis.map(k=>`
-    <div style="background:#fff;border:1px solid #e6ebf1;border-radius:8px;padding:10px 12px">
+    <div class="kpi-card" style="--kc:${k.c}">
       <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:#8898aa;margin-bottom:3px">${k.l}</div>
       <div style="font-size:18px;font-weight:700;font-family:'SF Mono',monospace;color:${k.c};letter-spacing:-.5px">${k.v}</div>
       <div style="font-size:9px;color:#425466;margin-top:2px">${k.s}</div>
@@ -870,26 +870,48 @@ function printPDF(){
 <meta charset="UTF-8">
 <title>Cohen Family Financial Plan — ${today}</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Inter',-apple-system,sans-serif;color:#0a2540;font-size:11px;background:#fff;padding:2cm}
-h1{font-size:22px;font-weight:700;letter-spacing:-.5px;color:#0a2540}
-h2{font-size:13px;font-weight:600;color:#0a2540;margin:20px 0 10px;border-bottom:1px solid #e6ebf1;padding-bottom:5px}
-.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:20px}
+body{font-family:'Inter',-apple-system,sans-serif;color:#0a2540;font-size:11px;padding:2cm;
+  background:
+    radial-gradient(38% 30% at 8% 0%, rgba(99,91,255,.09), transparent 60%),
+    radial-gradient(32% 26% at 96% 4%, rgba(8,145,178,.08), transparent 58%),
+    #fff}
+.brand{display:flex;align-items:center;gap:11px}
+.brand-mark{width:34px;height:34px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#7d76ff 0%,#5048d6 55%,#7c3aed 100%);box-shadow:0 4px 10px -3px rgba(80,72,214,.5)}
+h1{font-size:21px;font-weight:800;letter-spacing:-.5px;
+  background:linear-gradient(95deg,#0a2540,#5048d6);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+h2{font-size:12px;font-weight:700;color:#0a2540;margin:22px 0 10px;padding-bottom:6px;position:relative}
+h2::after{content:'';position:absolute;left:0;bottom:0;width:100%;height:1px;background:linear-gradient(90deg,#635bff 0%,rgba(8,145,178,.4) 40%,#e6ebf1 100%)}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-bottom:20px}
+.kpi-card{background:#fff;border:1px solid #ecebf7;border-radius:9px;padding:10px 12px;box-shadow:0 1px 2px rgba(10,37,64,.04),0 6px 14px -8px rgba(99,91,255,.25);border-left:3px solid var(--kc,#635bff)}
 table{width:100%;border-collapse:collapse;font-size:9px}
-th{text-align:right;padding:5px 6px;font-size:7.5px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:#8898aa;border-bottom:2px solid #e6ebf1}
+th{text-align:right;padding:6px 6px;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#8898aa;border-bottom:1.5px solid #635bff}
 th:first-child{text-align:left}
 td{text-align:right;padding:4px 6px;border-bottom:1px solid #f0f4f8;font-family:'SF Mono','Fira Code',monospace}
 td:first-child{text-align:left;font-family:'Inter',sans-serif}
 tr:hover td{background:#f6f9fc}
-.footer{margin-top:24px;padding-top:8px;border-top:1px solid #e6ebf1;font-size:9px;color:#8898aa;display:flex;justify-content:space-between}
-@media print{body{padding:0}@page{margin:1.5cm;size:A4 portrait}}
+.footer{margin-top:24px;padding-top:9px;border-top:1px solid #e6ebf1;font-size:9px;color:#8898aa;display:flex;justify-content:space-between}
+@media print{
+  body{padding:0;background:#fff}
+  @page{margin:1.5cm;size:A4 portrait}
+  /* Browsers print with "background graphics" off by default, which would make the
+     gradient-clipped h1 text invisible (its fill is transparent, painted only by the
+     background). Force a solid fallback color so the title is never blank on paper. */
+  h1{-webkit-text-fill-color:#0a2540;background:none;color:#0a2540}
+  h2::after{background:#635bff}
+  .kpi-card{box-shadow:none;border-color:#e6ebf1}
+}
 </style>
 </head><body>
-<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid #635bff">
-  <div>
-    <h1>Cohen Family Financial Plan</h1>
-    <div style="font-size:11px;color:#8898aa;margin-top:3px">${P.planStartYear||2026}–${ey} · ${planYears}-year projection · Generated ${today}</div>
+<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:20px;padding-bottom:14px;border-bottom:2px solid #635bff;border-image:linear-gradient(90deg,#635bff,rgba(8,145,178,.5),rgba(230,73,128,.25)) 1">
+  <div class="brand">
+    <div class="brand-mark" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 20 20" fill="none"><path d="M3 13.5 L7.5 9 L10.5 12 L17 4.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="17" cy="4.5" r="1.7" fill="#fff"/></svg></div>
+    <div>
+      <h1>Cohen Family Financial Plan</h1>
+      <div style="font-size:10.5px;color:#8898aa;margin-top:2px">${P.planStartYear||2026}–${ey} · ${planYears}-year projection · Generated ${today}</div>
+    </div>
   </div>
   <div style="text-align:right;font-size:9px;color:#8898aa">
     <div>Norm: ${fmtK((P.normCashBase||275000)+(P.normStockBase||150000))}/yr base</div>
