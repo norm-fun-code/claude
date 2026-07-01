@@ -223,6 +223,13 @@ export interface TodayForecast {
     nights: number;
     detail: string;
   } | null;
+  tomorrow?: {
+    band: 'green' | 'yellow' | 'red';
+    projectedScore: number;
+    detail: string;
+    lever: string;
+    confidence: number;
+  } | null;
 }
 
 export interface BriefingData {

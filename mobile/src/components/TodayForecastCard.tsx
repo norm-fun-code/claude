@@ -17,12 +17,11 @@ export function TodayForecastCard({ forecast }: Props) {
 
   const cap = forecast?.capacity;
   const debt = forecast?.sleepDebt;
+  const tmr = forecast?.tomorrow;
   if (!cap && !debt) return null;
 
-  const gradeColor =
-    cap?.band === 'green' ? c.green :
-    cap?.band === 'yellow' ? c.yellow :
-    cap?.band === 'red' ? c.red : c.subtext;
+  const bandColor = (b?: string) =>
+    b === 'green' ? c.green : b === 'yellow' ? c.yellow : b === 'red' ? c.red : c.subtext;
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
@@ -48,6 +47,19 @@ export function TodayForecastCard({ forecast }: Props) {
           <Text style={[styles.debtText, { color: c.subtext }]}>{debt.detail}</Text>
         </View>
       ) : null}
+
+      {tmr ? (
+        <View style={[styles.debtRow, { borderTopColor: c.border }]}>
+          <View style={styles.tmrHead}>
+            <View style={[styles.tmrDot, { backgroundColor: bandColor(tmr.band) }]} />
+            <Text style={[styles.debtLabel, { color: c.subtext, marginBottom: 0 }]}>TOMORROW'S LEAN</Text>
+            {tmr.confidence != null && (
+              <Text style={[styles.tmrConf, { color: c.subtext }]}>{tmr.confidence}% confidence</Text>
+            )}
+          </View>
+          <Text style={[styles.debtText, { color: c.subtext }]}>{tmr.detail} {tmr.lever}</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -68,4 +80,7 @@ const styles = StyleSheet.create({
   debtRow: { borderTopWidth: 1, marginTop: spacing.md, paddingTop: spacing.sm },
   debtLabel: { ...typography.label, fontSize: 9, marginBottom: 3 },
   debtText: { fontSize: 13, lineHeight: 19 },
+  tmrHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
+  tmrDot: { width: 8, height: 8, borderRadius: 4 },
+  tmrConf: { fontSize: 10, marginLeft: 'auto', fontStyle: 'italic' },
 });

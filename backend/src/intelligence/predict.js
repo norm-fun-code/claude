@@ -87,6 +87,40 @@ function predictCapacity(s = {}) {
 const WEEKDAY = (d) => d.toLocaleDateString('en-US', { weekday: 'long' });
 
 /**
+ * Tomorrow's recovery lean — a projection, not a promise. Anchors on today's
+ * recovery and applies pressure from the things that carry overnight: training
+ * load (ACWR), accumulated sleep debt, and today's session fatigue. Deliberately
+ * modest — the biggest lever (tonight's sleep) is still unwritten, so it always
+ * names that as the controllable. Returns { band, projectedScore, detail, lever,
+ * confidence } or null.
+ */
+function forecastTomorrow({ recoveryScore, acwrBand, sleepDebtHours, hardSessionToday = false } = {}) {
+  if (recoveryScore == null || !Number.isFinite(recoveryScore)) return null;
+  let proj = recoveryScore;
+  const drags = [];
+  if (acwrBand === 'high') { proj -= 8; drags.push('training load is spiking'); }
+  if (hardSessionToday)    { proj -= 6; drags.push("today's hard session adds fatigue"); }
+  if (sleepDebtHours != null && sleepDebtHours >= 2) { proj -= 6; drags.push(`${fmtHM(sleepDebtHours)} of sleep debt`); }
+  const easy = (acwrBand === 'low' || acwrBand == null) && (sleepDebtHours == null || sleepDebtHours < 1) && !hardSessionToday;
+  if (easy) proj += 4;
+
+  proj = Math.max(0, Math.min(100, proj));
+  const band = proj >= 63 ? 'green' : proj >= 40 ? 'yellow' : 'red';
+  const leans = band === 'green' ? 'green' : band === 'yellow' ? 'moderate' : 'low';
+  const dragStr = drags.length <= 1 ? drags.join('')
+    : `${drags.slice(0, -1).join(', ')} and ${drags[drags.length - 1]}`;
+  const detail = drags.length
+    ? `Leaning ${leans} — ${dragStr} carry into tomorrow.`
+    : `Leaning ${leans} — nothing today is dragging on tomorrow.`;
+  const lever = band === 'green'
+    ? 'Protect a normal bedtime tonight and it should hold.'
+    : 'The swing factor is tonight: hit your sleep need and this likely rebounds a band.';
+  // More confident at the extremes; a mid projection is genuinely a coin-flip.
+  const confidence = Math.round((Math.abs(proj - 51) / 51) * 40 + 45); // 45–85
+  return { band, projectedScore: Math.round(proj), detail, lever, confidence };
+}
+
+/**
  * Forward sleep-debt projection — a number you control entirely. Returns
  * { debtHours, nights, detail } or null when debt is negligible (< 1h).
  *
@@ -165,7 +199,27 @@ async function computeTodayForecast({ recovery = null, asOf = new Date() } = {})
 
   const debt = sleepDebtTrajectory({ debtHours: sleepDebtHours, needHours: sleepNeed, asOf });
 
-  return { capacity, sleepDebt: debt };
+  // Did today already include a hard session? Elevated active energy vs the
+  // 30-day norm is a decent proxy without needing the workout plan here.
+  let hardSessionToday = false;
+  try {
+    const rows = await metricsStore.dailyAggregate({ domain: 'health', metric: 'active_energy', from, agg: 'sum', excludeSource: 'seed' });
+    if (rows.length >= 8) {
+      const today = Number(rows[rows.length - 1].value);
+      const prior = rows.slice(0, -1).map((r) => Number(r.value)).filter(Number.isFinite);
+      const mean = prior.reduce((a, b) => a + b, 0) / prior.length;
+      if (mean > 0 && today > mean * 1.3) hardSessionToday = true;
+    }
+  } catch { /* non-critical */ }
+
+  const tomorrow = forecastTomorrow({
+    recoveryScore: rec.score,
+    acwrBand,
+    sleepDebtHours,
+    hardSessionToday,
+  });
+
+  return { capacity, sleepDebt: debt, tomorrow };
 }
 
-module.exports = { predictCapacity, sleepDebtTrajectory, computeTodayForecast, fmtHM };
+module.exports = { predictCapacity, sleepDebtTrajectory, forecastTomorrow, computeTodayForecast, fmtHM };
