@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Modal, View, Text, StyleSheet, Pressable, ScrollView, useColorScheme, Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { getColors, spacing, radius } from '../theme';
 import { HabitsCard } from './HabitsCard';
@@ -21,7 +22,10 @@ export function HabitsModal({ visible, onClose }: Props) {
       presentationStyle="formSheet"
       onRequestClose={onClose}
     >
-      <View style={[styles.sheet, { backgroundColor: c.background }]}>
+      <KeyboardAvoidingView
+        style={[styles.sheet, { backgroundColor: c.background }]}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
         {/* Drag handle */}
         <View style={styles.handleWrap}>
           <View style={[styles.handle, { backgroundColor: c.border }]} />
@@ -40,7 +44,7 @@ export function HabitsModal({ visible, onClose }: Props) {
             <Text style={styles.doneBtnText}>Done</Text>
           </Pressable>
         </ScrollView>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
