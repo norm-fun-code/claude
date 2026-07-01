@@ -3209,9 +3209,52 @@ app.get('/api/briefing', async (req, res) => {
   // the LLM call so the brief can name them. (The same findings are re-read later
   // for the card sections — a cheap duplicate read that avoids reordering the
   // larger findings/recovery block below.)
+  const openFindingsForBrief = await findingsStore.listFindings({ status: 'open' }).catch(() => []);
+
+  // Streak context: without this, the chief-of-staff brief has zero memory of what
+  // it said yesterday, so when the same 2-3 signals dominate for a stretch of
+  // days (e.g. steps down all week), it re-derives and re-explains the identical
+  // story fresh every morning — technically true each time, but it reads as a
+  // stuck record. Two signals fix this: (1) how long the LEADING finding has
+  // actually been open, from the same first-seen ledger the insight curator uses
+  // for novelty, so the model can say "day 4 of the same flag" instead of
+  // resetting to a fresh explainer; (2) the last few days' actual brief text, so
+  // repeated PHRASING (not just repeated topics) is visible and avoidable too.
+  let streakContext = '';
+  try {
+    const NARRATABLE = new Set(['trend', 'anomaly', 'habit_split', 'sleep_impact', 'activity_impact', 'correlation', 'daytime_cardio']);
+    const curateLib = require('./src/intelligence/curate');
+    const candidates = openFindingsForBrief.filter((f) => NARRATABLE.has(f.type));
+    const sigs = candidates.map(curateLib.signature);
+    const firstSeenBySig = await curateLib.recordAndLoadFirstSeen(sigs).catch(() => new Map());
+    const now = Date.now();
+    const streaks = candidates
+      .map((f) => {
+        const first = firstSeenBySig.get(curateLib.signature(f));
+        const days = first ? Math.floor((now - new Date(first).getTime()) / 864e5) : 0;
+        return { f, days };
+      })
+      .filter((x) => x.days >= 3)
+      .sort((a, b) => b.days - a.days)
+      .slice(0, 4)
+      .map((x) => `- ${x.f.title} — open ${x.days} days running (this isn't new; if it's today's lead, name the streak and escalate rather than re-explaining it)`);
+
+    const openers = await briefingsStore.recentDailyBriefOpeners(3).catch(() => []);
+    const openerLines = openers.map((o) =>
+      `- ${o.day}: "${o.synthesis || ''}" | action: "${o.action || ''}"`
+    );
+
+    const parts = [];
+    if (streaks.length) parts.push(`PERSISTENT ISSUES (from the novelty ledger):\n${streaks.join('\n')}`);
+    if (openerLines.length) parts.push(`YOUR LAST ${openerLines.length} MORNING BRIEFS (do not reuse this phrasing or structure — if the same topic is genuinely still the lead, change the angle, escalate, or ask a pointed question instead of restating the setup):\n${openerLines.join('\n')}`);
+    streakContext = parts.join('\n\n');
+  } catch (err) {
+    console.error('[streak context] failed:', err.message);
+  }
+
   let leverageContext = '';
   try {
-    const open = await findingsStore.listFindings({ status: 'open' });
+    const open = openFindingsForBrief;
     const levFindings = open
       .filter((f) => f.type === 'leverage')
       .sort((a, b) => (a.evidence?.rank ?? 99) - (b.evidence?.rank ?? 99))
@@ -3282,7 +3325,7 @@ app.get('/api/briefing', async (req, res) => {
     // The LLM call can be slow; bound it so a stalled model doesn't hang the
     // briefing (it degrades to the data-only sections).
     geminiResult = await withTimeout(
-      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext),
+      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, streakContext),
       Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000),
       'gemini'
     );

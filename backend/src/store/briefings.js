@@ -27,4 +27,28 @@ async function listBriefings({ kind = 'weekly', limit = 4 } = {}) {
   return rows;
 }
 
-module.exports = { saveBriefing, latestBriefing, listBriefings };
+/**
+ * The last `days` distinct CALENDAR days' chief-of-staff briefs, most recent
+ * first, excluding today. Multiple manual rebuilds in one day each insert their
+ * own row (no upsert), so this dedupes to the LATEST build per local day — the
+ * version the user actually saw most. Used to give the brief-writer concrete
+ * "here's what you said the last few mornings" grounding so it can recognize
+ * when it's about to repeat itself instead of re-explaining a stale story fresh
+ * every day.
+ */
+async function recentDailyBriefOpeners(days = 3) {
+  const rows = await listBriefings({ kind: 'daily', limit: 40 });
+  const tz = process.env.TZ || 'America/New_York';
+  const localDay = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: tz });
+  const todayLocal = localDay(new Date());
+  const byDay = new Map(); // rows are DESC by generated_at, so first hit per day = that day's LAST build
+  for (const r of rows) {
+    const day = localDay(r.generated_at);
+    if (day === todayLocal || byDay.has(day)) continue;
+    const cb = r.content?.chiefBrief;
+    if (cb) byDay.set(day, { day, ...cb });
+  }
+  return [...byDay.values()].slice(0, days);
+}
+
+module.exports = { saveBriefing, latestBriefing, listBriefings, recentDailyBriefOpeners };
