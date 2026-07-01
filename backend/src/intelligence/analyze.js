@@ -555,10 +555,18 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
     return m;
   }
 
-  function splitStats(habitMap, outcomeMap, threshold = 0.5) {
+  // Shift a YYYY-MM-DD key by whole days (UTC math avoids DST drift).
+  function shiftDay(day, delta) {
+    const t = new Date(day + 'T00:00:00Z').getTime() + delta * 86400000;
+    return new Date(t).toISOString().slice(0, 10);
+  }
+
+  // lagDays>0 pairs the habit on day D with the OUTCOME lagDays later (D+lag) —
+  // e.g. alcohol tonight vs HRV two mornings from now.
+  function splitStats(habitMap, outcomeMap, threshold = 0.5, lagDays = 0) {
     const onVals = [], offVals = [];
     for (const [day, val] of outcomeMap) {
-      const h = habitMap.get(day);
+      const h = habitMap.get(lagDays ? shiftDay(day, -lagDays) : day);
       if (h === undefined || !Number.isFinite(val)) continue;
       (h >= threshold ? onVals : offVals).push(val);
     }
@@ -577,7 +585,7 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
 
   const candidates = [];
 
-  // Single habit × outcome pairs.
+  // Single habit × outcome pairs (same-day, lag 0).
   for (const [habitKey, habitLabel] of Object.entries(HABITS)) {
     const hMap = toMap(habitKey);
     if (!hMap) continue;
@@ -585,7 +593,24 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
       const oMap = toMap(outcomeKey);
       if (!oMap) continue;
       const s = splitStats(hMap, oMap);
-      if (s) candidates.push({ habitLabel, info, outcomeKey, s });
+      if (s) candidates.push({ habitLabel, info, outcomeKey, s, lag: 0 });
+    }
+  }
+
+  // Lagged effects for the nightly context tags — a behavior tonight can move HRV
+  // one or two mornings later (the classic "alcohol hits two nights out"). Scoped
+  // to context tags so the comparison count (and FDR penalty) stays sane.
+  for (const [habitKey, habitLabel] of Object.entries(HABITS)) {
+    if (!habitKey.startsWith('context:')) continue;
+    const hMap = toMap(habitKey);
+    if (!hMap) continue;
+    for (const lag of [1, 2]) {
+      for (const [outcomeKey, info] of Object.entries(OUTCOMES)) {
+        const oMap = toMap(outcomeKey);
+        if (!oMap) continue;
+        const s = splitStats(hMap, oMap, 0.5, lag);
+        if (s) candidates.push({ habitLabel, info, outcomeKey, s, lag });
+      }
     }
   }
 
@@ -602,7 +627,7 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
       const oMap = toMap(outcomeKey);
       if (!oMap) continue;
       const s = splitStats(bothMap, oMap);
-      if (s) candidates.push({ habitLabel: 'Both meditations', info, outcomeKey, s });
+      if (s) candidates.push({ habitLabel: 'Both meditations', info, outcomeKey, s, lag: 0 });
     }
   }
 
@@ -619,11 +644,13 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
   const sigKeep = stats.benjaminiHochberg(candidates.map((c) => c.s.p), SPLIT_FDR_Q);
   const significant = candidates.filter((_, i) => sigKeep[i]);
 
-  // Best effect per outcome so we don't flood with 5 rows about HRV.
+  // Best effect per (outcome, lag) so we don't flood with 5 rows about HRV, but a
+  // same-day and a next-day HRV effect are distinct findings and both can surface.
   const bestByOutcome = new Map();
   for (const c of significant) {
-    const prev = bestByOutcome.get(c.info.label);
-    if (!prev || Math.abs(c.s.pct) > Math.abs(prev.s.pct)) bestByOutcome.set(c.info.label, c);
+    const k = `${c.info.label}|${c.lag ?? 0}`;
+    const prev = bestByOutcome.get(k);
+    if (!prev || Math.abs(c.s.pct) > Math.abs(prev.s.pct)) bestByOutcome.set(k, c);
   }
   const top = [...bestByOutcome.values()]
     .sort((a, b) => Math.abs(b.s.pct) - Math.abs(a.s.pct))
@@ -635,21 +662,25 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
     return String(Math.round(n));
   };
 
-  return top.map(({ habitLabel, info, outcomeKey, s }) => {
+  return top.map(({ habitLabel, info, outcomeKey, s, lag = 0 }) => {
     const { onMean, offMean, pct, onN, offN } = s;
     const improved = (info.good === 'up' && pct > 0) || (info.good === 'down' && pct < 0);
     const direction = pct > 0 ? 'higher' : 'lower';
     const pctStr = `${pct >= 0 ? '+' : ''}${Math.round(pct * 100)}%`;
     const onFmt = fmt(onMean, info.unit);
     const offFmt = fmt(offMean, info.unit);
+    // Lag phrasing: 0 = same morning, 1 = the next morning, 2 = two mornings later.
+    const lagTitle = lag === 0 ? '' : lag === 1 ? ' (next day)' : ` (${lag} days later)`;
+    const lagWhen = lag === 0 ? '' : lag === 1 ? ' the next morning' : ` ${lag} mornings later`;
 
     return {
       type: 'habit_split',
       domains: ['habits', 'health'],
-      title: `${habitLabel}: ${info.label} ${onFmt} vs ${offFmt} on other days (${pctStr})`,
+      title: `${habitLabel}${lagTitle}: ${info.label} ${onFmt} vs ${offFmt} on other days (${pctStr})`,
       detail:
-        `On the ${onN} days you logged ${habitLabel.toLowerCase()}, ${info.label.toLowerCase()} averaged ` +
+        `On the ${onN} days you logged ${habitLabel.toLowerCase()}, ${info.label.toLowerCase()}${lagWhen} averaged ` +
         `${onFmt} — ${Math.abs(Math.round(pct * 100))}% ${direction} than on the ${offN} days without (${offFmt}). ` +
+        (lag > 0 ? 'This is a lagged effect — it shows up days after, not the same night. ' : '') +
         (improved
           ? `Consistent with ${habitLabel.toLowerCase()} supporting your ${info.label.toLowerCase()} — but it's an association, not proof: days you keep the habit may differ in other ways (better sleep, lower stress), and the arrow can run the other way (you may skip the habit on days you already feel off).`
           : `Association, not proof of cause — other factors may drive this pattern.`),
@@ -658,6 +689,7 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
         auto: true,
         kind: 'habit_split',
         habit: habitLabel,
+        lag,
         outcome: outcomeKey,
         onMean:  round(onMean),
         offMean: round(offMean),
