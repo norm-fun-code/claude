@@ -1120,13 +1120,18 @@ async function confirmRollForward(overlay,curYear,nextYear){
   P.normCashY0=P.normCashY1;P.normCashY1=P.normCashY2;P.normCashY2=P.normCashY3;P.normCashY3=P.normCashBase;
   P.normStockY0=P.normStockY1;P.normStockY1=P.normStockY2;P.normStockY2=P.normStockY3;P.normStockY3=P.normStockBase;
   // Nancy W2 years shift forward. Y3 has no separate steady-state base field (unlike Norm's
-  // cash/stock), so backfill it using the same ramp-client formula model.js itself uses —
-  // otherwise Y3 was left holding a stale duplicate of the pre-roll year's value, which only
-  // surfaces once nancyRampYear is pushed late enough for Y3 to still be "in range" (model.js
-  // only reads nancyW2Y3 when yr<nancyRampYear) after more than one roll-forward.
-  const _y3Yr=nextYear+3,_yrsIn=_y3Yr-P.nancyRampYear;
-  const _y3Cl=_yrsIn<0?0:_yrsIn>=P.nancyRampYears?P.nancyMaxClients:P.nancyRampClients+(P.nancyMaxClients-P.nancyRampClients)*(_yrsIn/P.nancyRampYears);
-  P.nancyW2Y0=P.nancyW2Y1;P.nancyW2Y1=P.nancyW2Y2;P.nancyW2Y2=P.nancyW2Y3;P.nancyW2Y3=Math.round(_y3Cl*P.nancyHourlyRate*P.nancyWeeksPerYear);
+  // cash/stock), so there's no real "new" value to pull in. Two things that DON'T work:
+  //  - Leaving Y3 untouched (original bug): after the first roll Y2(new)=Y3(old), and Y3
+  //    stays pinned at that same pre-roll value forever on every subsequent roll — it never
+  //    updates again.
+  //  - A flat carry-forward (Y3=new Y2) is mathematically identical to the above over
+  //    repeated rolls, since new Y2 is already old Y3 — so it's a no-op in disguise, not a fix.
+  //  - Backfilling via model.js's ramp-client formula: that formula is mathematically 0
+  //    clients whenever yr<nancyRampYear, which is the ONLY regime model.js ever reads
+  //    nancyW2Y3 in — so it injects a spurious $0 income instead of a plausible figure.
+  // Apply modest ongoing growth instead (using the same inflation assumption as everything
+  // else in the plan) so Y3 keeps moving instead of permanently freezing at one figure.
+  P.nancyW2Y0=P.nancyW2Y1;P.nancyW2Y1=P.nancyW2Y2;P.nancyW2Y2=P.nancyW2Y3;P.nancyW2Y3=Math.round(P.nancyW2Y2*(1+(P.expenseInflation??0.03)));
   P.planStartYear=nextYear;
   const v=parseFloat(String(liqStr).replace(/[,$\s]/g,''));
   if(!isNaN(v)&&v>0)P.startingLiquid=v;
