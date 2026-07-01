@@ -3291,22 +3291,12 @@ app.get('/api/briefing', async (req, res) => {
     errors.push({ service: 'gemini', error: err.message });
   }
 
-  // Dedup the wisdom quote DETERMINISTICALLY (the model often ignores the
-  // avoid-list in the prompt). On a fresh build: if it surfaced a quote already
-  // shown in the last 30 days, suppress it so the Notion wisdom card hides today
-  // rather than repeating; otherwise record it so future days dedup against it.
-  if (!priorIsToday && geminiResult?.notionQuote) {
-    const ref = String(geminiResult.notionQuote).toLowerCase().replace(/\s+/g, ' ').replace(/[“”"']/g, '').trim().slice(0, 300);
-    if (ref && seenNotionQuotes.has(ref)) {
-      geminiResult.notionQuote = '';
-      geminiResult.notionInsight = '';
-    } else if (ref) {
-      surfacedStore.record('notion_quote', ref).catch(() => {});
-    }
-  }
-
   // LLM fallback: if the AI call failed and there's a prior build today (or
   // yesterday), carry over its email/wisdom sections so the briefing doesn't go blank.
+  // Must run BEFORE the dedup check below — otherwise a carried-forward notionQuote
+  // (which can be from any earlier day) would bypass the 30-day no-repeat memory
+  // entirely: skipped by the check (geminiResult was null at that point) and never
+  // recorded, so it could silently resurface weeks later on any LLM hiccup.
   if (!geminiResult && prior?.content) {
     const p = prior.content;
     if (p.urgentEmails?.length || p.quoteInsight || p.notionInsight) {
@@ -3317,6 +3307,22 @@ app.get('/api/briefing', async (req, res) => {
         notionInsight: p.notionInsight ?? '',
       };
       errors.push({ service: 'gemini_fallback', error: 'LLM unavailable — showing prior build summaries' });
+    }
+  }
+
+  // Dedup the wisdom quote DETERMINISTICALLY (the model often ignores the
+  // avoid-list in the prompt, and the LLM-failure fallback above can carry an
+  // older quote forward verbatim). Runs on whatever notionQuote will actually be
+  // shown today — live pick or fallback — so neither path can bypass the 30-day
+  // no-repeat memory. On a fresh build: if it's already shown in the last 30 days,
+  // suppress it so the card hides today rather than repeating; otherwise record it.
+  if (!priorIsToday && geminiResult?.notionQuote) {
+    const ref = String(geminiResult.notionQuote).toLowerCase().replace(/\s+/g, ' ').replace(/[“”"']/g, '').trim().slice(0, 300);
+    if (ref && seenNotionQuotes.has(ref)) {
+      geminiResult.notionQuote = '';
+      geminiResult.notionInsight = '';
+    } else if (ref) {
+      surfacedStore.record('notion_quote', ref).catch(() => {});
     }
   }
 
