@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useFonts, Sora_300Light, Sora_600SemiBold, Sora_700Bold, Sora_800ExtraBold } from '@expo-google-fonts/sora';
 import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
@@ -96,6 +96,11 @@ export default function App() {
   useEffect(() => { loadThemePref().then(() => setThemeReady(true)); }, []);
 
   const [tab, setTab] = useState<TabKey>('today');
+  // All tabs share ONE ScrollView (only its contents swap), so switching tabs
+  // never reset scroll on its own — it stayed wherever the previous tab left it.
+  // Snap to top whenever the active tab changes.
+  const scrollRef = useRef<ScrollView>(null);
+  useEffect(() => { scrollRef.current?.scrollTo({ y: 0, animated: false }); }, [tab]);
   // Cold-open welcome: shown once per launch (App mount = cold start), it covers
   // the whole feed assembly so the jumpy mount/insert is never seen.
   const [showWelcome, setShowWelcome] = useState(true);
@@ -410,6 +415,7 @@ export default function App() {
           />
         ) : (
           <ScrollView
+            ref={scrollRef}
             style={styles.scroll}
             contentContainerStyle={styles.content}
             refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={c.subtext} />}
