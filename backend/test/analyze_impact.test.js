@@ -216,3 +216,33 @@ test('computeAnomalies: stale Pod HRV/RHR (not from today) is suppressed', () =>
   const fresh = a.computeAnomalies({ 'health:hrv': hrv }, { today: '2026-05-20' });
   assert.ok(fresh.find((f) => f.evidence.metric === 'health:hrv'), 'a same-day reading should still flag');
 });
+
+test('computeHabitHealthSplits: mood is a first-class outcome of habits', () => {
+  const N = 42;
+  // Meditation on even days; mood clearly (and consistently) higher those days.
+  const tm = mkSeries(N, (i) => (i % 2 === 0 ? 1 : 0));
+  const mood = mkSeries(N, (i) => (i % 2 === 0 ? 4.4 : 3.2) + (i % 5) * 0.05);
+  const findings = a.computeHabitHealthSplits({
+    'habits:morning_tm': tm,
+    'wellbeing:mood': mood,
+  });
+  const f = findings.find((x) => x.evidence.outcome === 'wellbeing:mood');
+  assert.ok(f, 'expected a mood habit-split finding');
+  assert.equal(f.type, 'habit_split');
+  assert.ok(f.domains.includes('wellbeing'), 'mood finding should be tagged wellbeing, not health');
+  assert.match(f.title, /\/5/, 'mood values should render on the /5 scale');
+  assert.ok(f.evidence.onMean > f.evidence.offMean, 'meditation days should show higher mood');
+  assert.ok(f.evidence.p < 0.05, 'must pass the significance gate');
+});
+
+test('computeHabitHealthSplits: noisy overlapping mood must not produce a finding', () => {
+  const N = 42;
+  const tm = mkSeries(N, (i) => (i % 2 === 0 ? 1 : 0));
+  // Mood varies 3..5 with no relationship to the habit.
+  const mood = mkSeries(N, (i) => 3 + ((i * 7) % 5) * 0.5);
+  const findings = a.computeHabitHealthSplits({
+    'habits:morning_tm': tm,
+    'wellbeing:mood': mood,
+  });
+  assert.equal(findings.find((x) => x.evidence.outcome === 'wellbeing:mood'), undefined);
+});

@@ -200,7 +200,8 @@ function fromHabitSplit(f) {
   const outcomeLabel = cat.label(domain, metric);
   const onFmt = ev.onMean != null ? round(ev.onMean, 1) : '?';
   const offFmt = ev.offMean != null ? round(ev.offMean, 1) : '?';
-  const unit = metric === 'hrv' ? 'ms' : metric === 'resting_hr' ? 'bpm' : metric === 'sleep_hours' ? 'h' : '';
+  const unit = metric === 'hrv' ? 'ms' : metric === 'resting_hr' ? 'bpm' : metric === 'sleep_hours' ? 'h'
+    : domain === 'wellbeing' ? '/5' : '';
   const fmtVal = (v) => unit ? `${v}${unit}` : String(v);
 
   const habitKey = HABIT_KEY[habit] || null;

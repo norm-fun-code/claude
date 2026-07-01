@@ -510,10 +510,11 @@ function computeHabitConsistency(seriesByKey, opts = {}) {
 }
 
 /**
- * Pure: habit-vs-health split analysis. Splits each day as "habit on" or
- * "habit off" and computes the mean health-metric value on each side.
- * Far more actionable than a raw Pearson r — "on cold-shower days, HRV
- * averages 62ms vs 49ms" is a concrete, personal finding.
+ * Pure: habit-vs-outcome split analysis. Splits each day as "habit on" or
+ * "habit off" and computes the mean outcome value on each side — physiology
+ * (HRV, sleep) AND how you actually felt (mood, energy). Far more actionable
+ * than a raw Pearson r — "on cold-shower days, HRV averages 62ms vs 49ms" or
+ * "on meditation days, mood runs 4.1/5 vs 3.5/5" is a concrete, personal finding.
  */
 function computeHabitHealthSplits(seriesByKey, opts = {}) {
   const MIN_N = 5;       // per group (habit-on AND habit-off)
@@ -540,6 +541,12 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
     'health:sleep_hours':      { label: 'Sleep',       unit: 'h',   good: 'up'   },
     'health:rem_sleep_hours':  { label: 'REM sleep',   unit: 'h',   good: 'up'   },
     'health:deep_sleep_hours': { label: 'Deep sleep',  unit: 'h',   good: 'up'   },
+    // How you FEEL is a first-class outcome, not just physiology. These are
+    // outputs here (behavior → mood), never levers — see the note below on why
+    // the reverse direction is causally invalid. Answers "what actually moves
+    // my mood/energy" with the same statistical rigor as the HRV splits.
+    'wellbeing:mood':          { label: 'Mood',        unit: '/5',  good: 'up'   },
+    'wellbeing:energy':        { label: 'Energy',      unit: '/5',  good: 'up'   },
   };
 
   function dayKey(d) {
@@ -636,6 +643,7 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
   // inputs to them — "high-energy days run better HRV" inverts the causal arrow
   // (good HRV makes you feel energetic, not the reverse) and produces misleading
   // recommendations. Only real, controllable behaviors belong in this split.
+  // (They DO appear above as OUTCOMES — behavior → mood is the valid direction.)
 
   // Multiple-comparisons control: we tested many habit × outcome combinations and
   // are about to surface the strongest. Selecting the max of many comparisons
@@ -658,6 +666,7 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
 
   const fmt = (n, unit) => {
     if (unit === 'h')              return `${Math.round(n * 10) / 10}h`;
+    if (unit === '/5')             return `${Math.round(n * 10) / 10}/5`;
     if (unit === 'ms' || unit === 'bpm') return `${Math.round(n)}${unit}`;
     return String(Math.round(n));
   };
@@ -675,7 +684,7 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
 
     return {
       type: 'habit_split',
-      domains: ['habits', 'health'],
+      domains: ['habits', outcomeKey.startsWith('wellbeing:') ? 'wellbeing' : 'health'],
       title: `${habitLabel}${lagTitle}: ${info.label} ${onFmt} vs ${offFmt} on other days (${pctStr})`,
       detail:
         `On the ${onN} days you logged ${habitLabel.toLowerCase()}, ${info.label.toLowerCase()}${lagWhen} averaged ` +
