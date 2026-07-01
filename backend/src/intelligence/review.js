@@ -125,16 +125,19 @@ function composeReview(ctx) {
   const DOMAIN_HEADS = [
     ['health', 'HEALTH'], ['wealth', 'WEALTH'], ['wellbeing', 'FOCUS & WELLBEING'],
   ];
-  const grouped = DOMAIN_HEADS
+  const known = new Set(DOMAIN_HEADS.map(([d]) => d));
+  const sections = DOMAIN_HEADS
     .map(([d, head]) => {
       const rows = ctx.metrics.filter((m) => m.domain === d);
       if (!rows.length) return null;
       const extra = d === 'health' && ctx.strength ? `\n- ${ctx.strength}` : '';
       return `${head}:\n${rows.map(fmtMetric).join('\n')}${extra}`;
     })
-    .filter(Boolean)
-    .join('\n\n') || '- (not enough data this week)';
-  const metricsBlock = grouped;
+    .filter(Boolean);
+  // Any metric without a recognized domain still shows, so nothing is silently dropped.
+  const others = ctx.metrics.filter((m) => !known.has(m.domain));
+  if (others.length) sections.push(`OTHER:\n${others.map(fmtMetric).join('\n')}`);
+  const metricsBlock = sections.join('\n\n') || '- (not enough data this week)';
   const corr = ctx.correlations.map((f) => `- ${f.title}`).join('\n') || '- none confirmed';
   const fc = ctx.forecasts.map((f) => `- ${f.title}`).join('\n') || '- none';
   const lev = ctx.leverage.map((f, i) => `${i + 1}. ${f.title}`).join('\n') || '- none';
