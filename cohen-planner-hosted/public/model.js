@@ -83,7 +83,10 @@ function calcTax(grossIncome,p,yr,numKids){
     const qbiPhaseBase=383900*f; // also index QBI phaseout thresholds
     const qbiPhaseTop=483900*f;
     if(agi<qbiPhaseBase)qbi=qbiBase;
-    else if(agi<qbiPhaseTop)qbi=qbiBase*(1-(agi-qbiPhaseBase)/100000);
+    // Phaseout band width must scale with `f` too (qbiPhaseTop-qbiPhaseBase), not stay
+    // flat at $100K — otherwise the phaseout runs too fast in later (inflated) years and
+    // can drive qbi negative, which would perversely *increase* taxable income.
+    else if(agi<qbiPhaseTop)qbi=Math.max(0,qbiBase*(1-(agi-qbiPhaseBase)/(100000*f)));
   }
 
   const fedTaxable=Math.max(0,agi-deduction-qbi);
@@ -207,7 +210,10 @@ function run(p,rets){
     // flow (surplus, withdrawals, down payment) earns ~half a year of return.
     liq=liq*(1+ret)+netFlow*(1+ret/2);tTx+=txS;tS+=sold;
     let hv=0,mb=0,eq=0;
-    if(sub){const yo=yr-p.homePurchaseYear+1;hv=p.homePrice*(1+p.homeAppreciation)**yo;mb=mBal(ma,p.mortgageRate/100,yo);eq=hv-mb}
+    // yo = years of ownership elapsed. 0 in the purchase year itself (just closed,
+    // no appreciation/paydown yet) — matches the property-tax calc above and the
+    // mortgage-interest amortization in calcTax(), both of which start at 0 elapsed years.
+    if(sub){const yo=yr-p.homePurchaseYear;hv=p.homePrice*(1+p.homeAppreciation)**yo;mb=mBal(ma,p.mortgageRate/100,yo);eq=hv-mb}
     const kiy=kids.filter((k,ki)=>{const a=yr-k;const sa=ki===0?p.kid1YeshivaStartAge:p.yeshivaStartAge;return a>=sa&&a<=p.yeshivaEndAge}).length;
     R.push({yr,normG:Math.round(normW2),nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,inc,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),liv:Math.round(liv),cc:Math.round(cc),tu:Math.round(tu),totE:Math.round(totE),surp:Math.round(surp),txS:Math.round(txS),sold:Math.round(sold),liq:Math.round(liq),eq:Math.round(eq),nw:Math.round(liq+eq),k401:Math.round(k401),kiy,nk});
   }
