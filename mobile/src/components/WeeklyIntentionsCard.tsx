@@ -160,6 +160,12 @@ export function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}
       {review!.narrative ? (
         <Text style={[styles.reviewNarrative, { color: c.subtext }]}>{review!.narrative}</Text>
       ) : null}
+      {review!.crossDomain ? (
+        <View style={[styles.crossBox, { borderColor: c.accent, backgroundColor: c.accentSoft }]}>
+          <Text style={[styles.crossLabel, { color: c.accent }]}>🔗 THE CONNECTION</Text>
+          <Text style={[styles.crossTxt, { color: c.text }]}>{review!.crossDomain}</Text>
+        </View>
+      ) : null}
       <Bullets label="WINS" items={review!.wins?.slice(0, 2)} color={c.green} />
       <Bullets label="WATCH-OUTS" items={review!.watchouts?.slice(0, 2)} color={c.red} />
     </View>
@@ -338,6 +344,9 @@ const styles = StyleSheet.create({
   // AI weekly-review block (last week)
   reviewHeadline: { ...typography.subtitle, fontSize: 16, marginTop: 2, marginBottom: spacing.xs },
   reviewNarrative: { ...typography.body, fontSize: 14, marginBottom: spacing.xs, lineHeight: 20 },
+  crossBox: { borderWidth: 1, borderRadius: radius.md, padding: spacing.sm, marginBottom: spacing.sm, marginTop: 2 },
+  crossLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 0.8, marginBottom: 3 },
+  crossTxt: { fontSize: 13, lineHeight: 19, fontWeight: '500' },
   reviewBlock: { marginTop: spacing.sm },
   blockLabel: { ...typography.label, fontSize: 10, marginBottom: spacing.xs },
   bulletRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginBottom: spacing.xs },

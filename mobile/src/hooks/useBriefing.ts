@@ -132,6 +132,8 @@ export interface WeeklyGoals {
 export interface WeeklyReview {
   headline: string;
   narrative: string;
+  crossDomain?: string;
+  domainReads?: { health?: string; wealth?: string; focus?: string };
   wins?: string[];
   watchouts?: string[];
   focus?: string[];

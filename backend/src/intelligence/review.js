@@ -76,6 +76,7 @@ async function gatherWeek(asOf = new Date()) {
     if (a == null) continue;
     const kind = rollupKind(metric);
     metrics.push({
+      domain,
       label: cat.label(domain, metric),
       thisWeek: round(a), lastWeek: round(b),
       change: b ? round((a - b) / Math.abs(b), 3) : null,
@@ -86,8 +87,10 @@ async function gatherWeek(asOf = new Date()) {
   }
 
   const open = await findingsStore.listFindings({ status: 'open', limit: 60 });
+  const strength = await require('./strength-progression')
+    .topProgressionNote({ days: 30, minSessions: 2 }).catch(() => null);
   return {
-    periodStart, periodEnd, metrics,
+    periodStart, periodEnd, metrics, strength,
     correlations: open.filter((f) => f.type === 'correlation').slice(0, 8),
     forecasts: open.filter((f) => f.type === 'forecast'),
     leverage: open
@@ -109,15 +112,29 @@ async function gatherWeek(asOf = new Date()) {
 
 const SYSTEM = `You are NormOS — the user's chief of staff and personal data scientist, writing their WEEKLY REVIEW.
 Be specific, honest, and concise. Use the numbers provided; never invent data. Correlations are associations, not proof of cause — say so when you lean on one.
+Cross-domain synthesis is the point of this review: read health, wealth, and focus/wellbeing as ONE life and connect them when the data genuinely supports it — but never manufacture a link that isn't there.
 Voice: a sharp, caring advisor who tells the truth. Return ONLY valid JSON.`;
 
 /** Pure: assemble the review prompt from gathered context. */
 function composeReview(ctx) {
   const fmtPct = (c) => (c == null ? '' : ` (${c >= 0 ? '+' : ''}${Math.round(c * 100)}% vs last week)`);
   const KIND_LABEL = { total: ' (weekly total)', latest: ' (current/latest)', avg: ' (weekly avg)' };
-  const metricsBlock = ctx.metrics
-    .map((m) => `- ${m.label}: ${m.thisWeek}${KIND_LABEL[m.rollup] || (m.isTotal ? ' (weekly total)' : ' (weekly avg)')}${fmtPct(m.change)}${m.goodWhen ? ` [better when ${m.goodWhen}]` : ''}`)
-    .join('\n') || '- (not enough data this week)';
+  const fmtMetric = (m) => `- ${m.label}: ${m.thisWeek}${KIND_LABEL[m.rollup] || (m.isTotal ? ' (weekly total)' : ' (weekly avg)')}${fmtPct(m.change)}${m.goodWhen ? ` [better when ${m.goodWhen}]` : ''}`;
+  // Group metrics by domain so the model reads each leg (body / money / focus)
+  // and can then connect them, rather than one flat list.
+  const DOMAIN_HEADS = [
+    ['health', 'HEALTH'], ['wealth', 'WEALTH'], ['wellbeing', 'FOCUS & WELLBEING'],
+  ];
+  const grouped = DOMAIN_HEADS
+    .map(([d, head]) => {
+      const rows = ctx.metrics.filter((m) => m.domain === d);
+      if (!rows.length) return null;
+      const extra = d === 'health' && ctx.strength ? `\n- ${ctx.strength}` : '';
+      return `${head}:\n${rows.map(fmtMetric).join('\n')}${extra}`;
+    })
+    .filter(Boolean)
+    .join('\n\n') || '- (not enough data this week)';
+  const metricsBlock = grouped;
   const corr = ctx.correlations.map((f) => `- ${f.title}`).join('\n') || '- none confirmed';
   const fc = ctx.forecasts.map((f) => `- ${f.title}`).join('\n') || '- none';
   const lev = ctx.leverage.map((f, i) => `${i + 1}. ${f.title}`).join('\n') || '- none';
@@ -138,7 +155,7 @@ function composeReview(ctx) {
 
   const prompt = `Week of ${ctx.periodStart.toISOString().slice(0, 10)} to ${ctx.periodEnd.toISOString().slice(0, 10)}.
 
-KEY METRICS (each tagged how it's rolled up — total / current / average):
+KEY METRICS BY DOMAIN (each tagged how it's rolled up — total / current / average):
 ${metricsBlock}
 
 CONFIRMED RELATIONSHIPS:
@@ -158,8 +175,14 @@ ${ann}
 
 Write the weekly review as JSON with EXACTLY:
 {
-  "headline": "one punchy sentence capturing the week",
-  "narrative": "2-3 short paragraphs: what happened, what drove it (cite a relationship/number), and the honest read",
+  "headline": "one punchy sentence capturing the week across all three domains",
+  "narrative": "2-3 short paragraphs: what happened, what drove it (cite a relationship/number), and the honest read. Read the week as a whole person — don't silo body, money, and focus.",
+  "domainReads": {
+    "health": "one sentence — the week's body/recovery story with a number, or '' if no data",
+    "wealth": "one sentence — the week's money story with a number, or '' if no data",
+    "focus": "one sentence — the week's focus/wellbeing story vs their stated goals, or '' if no data"
+  },
+  "crossDomain": "ONE sentence connecting two or more domains this week when the data genuinely supports it (e.g. 'the stressful-deal week tracked with your worst sleep and a spend spike') — '' if there's no honest connection. Never manufacture a link.",
   "wins": ["1-3 specific wins, with numbers"],
   "watchouts": ["1-3 specific risks or declines, with numbers"],
   "focus": ["the single most important focus for next week, plus at most one more"]
