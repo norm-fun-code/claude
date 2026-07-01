@@ -12,15 +12,13 @@ import {
   useColorScheme,
   ActivityIndicator,
   SafeAreaView,
-  Appearance,
   Platform,
   useWindowDimensions,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { AnimatedEntry } from './src/components/AnimatedEntry';
 
-// NormOS is always light (off-white) — easier to read; ignore system dark mode.
-Appearance.setColorScheme('light');
+// NormOS follows the system appearance (light / dark).
 
 import { useBriefing } from './src/hooks/useBriefing';
 import { useEveningBrief } from './src/hooks/useEveningBrief';

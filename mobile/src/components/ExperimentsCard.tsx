@@ -156,8 +156,8 @@ export function ExperimentsCard() {
               </Text>
               <View style={styles.rowRight}>
                 {isProposed && (
-                  <View style={[styles.badge, { backgroundColor: '#FFF3E0' }]}>
-                    <Text style={[styles.badgeText, { color: '#E65100' }]}>Proposed</Text>
+                  <View style={[styles.badge, { backgroundColor: isDark ? 'rgba(255,159,10,0.22)' : '#FFF3E0' }]}>
+                    <Text style={[styles.badgeText, { color: isDark ? '#FFB84D' : '#E65100' }]}>Proposed</Text>
                   </View>
                 )}
                 {isRunning && (
