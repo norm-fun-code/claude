@@ -5,6 +5,7 @@ import { SectionHeader } from './SectionHeader';
 import { API_BASE, HABITS_STREAKS_URL, HABITS_TODAY_URL, HABITS_HISTORY_URL, authHeaders, fetchWithTimeout, localDateStr } from '../config';
 import { AnnotationsCard } from './AnnotationsCard';
 import { DotRow } from './viz/DotRow';
+import { EatHealthyHelper } from './EatHealthyHelper';
 
 const HABITS_URL = `${API_BASE}/api/habits`;
 
@@ -186,6 +187,7 @@ export function HabitsCard() {
           })}
         </View>
       </View>
+      <EatHealthyHelper onApply={(n) => { setEatHealthy(n); save(checked, n); }} />
 
       <Pressable onPress={() => save()} style={[styles.save, { backgroundColor: saved ? c.accentSoft : c.accent }]}>
         <Text style={[styles.saveText, { color: saved ? c.accent : '#FFFFFF' }]}>

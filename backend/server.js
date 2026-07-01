@@ -537,6 +537,70 @@ app.get('/api/habits/today', async (req, res) => {
   }
 });
 
+// Eating Healthy helper — "not sure how to rate today?" Log free-text of what
+// you ate/drank and get an AI-suggested 1-5 score + rationale. Applying the
+// suggestion still goes through the normal POST /api/habits eatHealthy field;
+// this only produces the suggestion and keeps the raw log for reference.
+const mealLogsStore = require('./src/store/mealLogs');
+
+function mealLogDateStr(tz) {
+  return new Date().toLocaleDateString('en-CA', { timeZone: tz });
+}
+
+app.get('/api/habits/eat-healthy/today', async (req, res) => {
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const row = await mealLogsStore.getByDate(mealLogDateStr(tz));
+    res.json({
+      text: row?.text ?? '',
+      score: row?.score ?? null,
+      rationale: row?.rationale ?? null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/habits/eat-healthy/score', async (req, res) => {
+  try {
+    const text = String(req.body?.text || '').trim();
+    if (!text) return res.status(400).json({ error: 'text is required' });
+
+    const prompt = `Rate how healthy this day of eating was, on a 1-5 scale (1 = poor, 5 = excellent), based on what they logged eating and drinking:
+
+"${text.slice(0, 2000)}"
+
+Consider: whole/minimally-processed foods vs. ultra-processed or fast food, vegetables/fruit/fiber, protein adequacy, added sugar and alcohol, hydration, and portion reasonableness. This is about long-term health, not calorie-counting or weight loss.
+
+Return ONLY valid JSON — no markdown, no explanation:
+{"score": <integer 1-5>, "rationale": "<1-2 sentences, specific to what they actually logged, honest but encouraging>"}`;
+
+    const raw = await llm.generateText({
+      system: 'You help someone honestly assess how healthy a day of eating was, from their own free-text log. Return only valid JSON.',
+      prompt,
+      maxTokens: 250,
+    });
+
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    let result;
+    try {
+      result = JSON.parse(cleaned);
+    } catch {
+      return res.status(500).json({ error: 'parse failed', raw: cleaned.slice(0, 300) });
+    }
+
+    const score = Math.max(1, Math.min(5, Math.round(Number(result.score))));
+    const rationale = String(result.rationale || '').slice(0, 500);
+    if (!Number.isFinite(score)) return res.status(500).json({ error: 'invalid score from model' });
+
+    const tz = process.env.TZ || 'America/New_York';
+    await mealLogsStore.upsert({ logDate: mealLogDateStr(tz), text, score, rationale });
+    res.json({ score, rationale });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Habit streaks — consecutive days (ending today or yesterday) where each habit
 // was logged with value >= 0.5. Covers the last 90 days.
 app.get('/api/habits/streaks', async (req, res) => {
@@ -1803,7 +1867,7 @@ app.post('/api/chat/extract-experiment', async (req, res) => {
       { key: 'health:resting_hr', label: 'Resting heart rate (bpm)' },
       { key: 'habits:cold_shower', label: 'Cold shower (yes/no daily)' },
       { key: 'habits:exercise', label: 'Exercise (yes/no daily)' },
-      { key: 'habits:eat_healthy', label: 'Eating healthy (yes/no daily)' },
+      { key: 'habits:eat_healthy', label: 'Eating healthy (1-5 daily score)' },
       { key: 'wellbeing:mood', label: 'Mood (1-10)' },
       { key: 'wellbeing:energy', label: 'Energy (1-10)' },
       { key: 'wellbeing:focus', label: 'Focus (1-10)' },
