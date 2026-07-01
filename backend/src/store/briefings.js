@@ -46,7 +46,11 @@ async function recentDailyBriefOpeners(days = 3) {
     const day = localDay(r.generated_at);
     if (day === todayLocal || byDay.has(day)) continue;
     const cb = r.content?.chiefBrief;
-    if (cb) byDay.set(day, { day, ...cb });
+    // tomorrowForecast: that day's prediction for the NEXT day (i.e. potentially
+    // today), carried alongside the opener text so a caller can check whether
+    // the forecast held — see computeTodayForecast's `tomorrow` field.
+    const tomorrowForecast = r.content?.todayForecast?.tomorrow ?? null;
+    if (cb || tomorrowForecast) byDay.set(day, { day, ...(cb || {}), tomorrowForecast });
   }
   return [...byDay.values()].slice(0, days);
 }

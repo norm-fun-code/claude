@@ -3211,16 +3211,17 @@ app.get('/api/briefing', async (req, res) => {
   // larger findings/recovery block below.)
   const openFindingsForBrief = await findingsStore.listFindings({ status: 'open' }).catch(() => []);
 
-  // Streak context: without this, the chief-of-staff brief has zero memory of what
-  // it said yesterday, so when the same 2-3 signals dominate for a stretch of
-  // days (e.g. steps down all week), it re-derives and re-explains the identical
-  // story fresh every morning — technically true each time, but it reads as a
-  // stuck record. Two signals fix this: (1) how long the LEADING finding has
-  // actually been open, from the same first-seen ledger the insight curator uses
-  // for novelty, so the model can say "day 4 of the same flag" instead of
-  // resetting to a fresh explainer; (2) the last few days' actual brief text, so
-  // repeated PHRASING (not just repeated topics) is visible and avoidable too.
-  let streakContext = '';
+  // Continuity context: without this, the chief-of-staff brief has zero memory
+  // across days — no awareness of what it already said, what it told the user to
+  // do, or whether its own predictions held up. Bundles four "does this feel like
+  // it knows me" signals: (1) how long the leading finding has actually been
+  // open, so a stretch of days on the same issue reads as "day 4 of this" instead
+  // of a fresh explainer every morning; (2) the last suggested action's outcome,
+  // for real follow-up instead of only ever proposing something new; (3) whether
+  // yesterday's tomorrow-forecast actually held, for honest self-grading; (4) the
+  // last few days' raw brief text, so repeated PHRASING is visible even when the
+  // underlying topic isn't formally tracked as a finding.
+  let continuityContext = '';
   try {
     const NARRATABLE = new Set(['trend', 'anomaly', 'habit_split', 'sleep_impact', 'activity_impact', 'correlation', 'daytime_cardio']);
     const curateLib = require('./src/intelligence/curate');
@@ -3274,13 +3275,50 @@ app.get('/api/briefing', async (req, res) => {
       console.error('[last action] failed:', err.message);
     }
 
+    // Explicit calibration: compare YESTERDAY's tomorrow-forecast against TODAY's
+    // actual recovery. Only surfaced on a genuine miss (or a low-confidence call
+    // that happened to land) — a correct routine call isn't news and forcing a
+    // "yesterday I predicted X" ritual into every brief would just become another
+    // rote pattern. The credibility payoff specifically comes from owning misses.
+    let calibrationLine = null;
+    try {
+      const yesterday = openers[0] ?? null;
+      const fc = yesterday?.tomorrowForecast;
+      if (fc && recovery?.score != null && recovery?.band) {
+        const missed = fc.band !== recovery.band;
+        const lowConfHit = !missed && fc.confidence != null && fc.confidence < 60;
+        if (missed || lowConfHit) {
+          calibrationLine = `CALIBRATION CHECK: yesterday's forecast leaned ${fc.band} (~${fc.projectedScore}/100, ${fc.confidence}% confidence) for today; today actually came in ${recovery.band} at ${recovery.score}/100. ${missed ? 'That is a miss — if recovery is part of today\'s synthesis or risk, briefly own the earlier call rather than ignoring it (admitting a miss builds more trust than always sounding certain).' : 'The low-confidence call happened to hold — a brief, light callback is fine if relevant, not a big deal either way.'}`;
+        }
+      }
+    } catch (err) {
+      console.error('[calibration] failed:', err.message);
+    }
+
+    // Multi-day training periodization: look at the REST of the week's scheduled
+    // sessions (not just today), so back-to-back hard days can be flagged before
+    // they stack — a real coach plans the week, not just today. Deliberately rare:
+    // only fires when training load is already elevated AND hard days cluster, so
+    // it doesn't become a standing weekly notice about a schedule that's fixed.
+    let periodizationLine = null;
+    try {
+      const acwrFinding = openFindingsForBrief.find((f) => f.type === 'training_load');
+      const acwrBand = acwrFinding?.evidence?.band ?? null;
+      const upcoming = require('./src/services/workout').getUpcomingWorkouts(3);
+      periodizationLine = require('./src/intelligence/periodization').computePeriodizationNote({ upcoming, acwrBand });
+    } catch (err) {
+      console.error('[periodization] failed:', err.message);
+    }
+
     const parts = [];
     if (streaks.length) parts.push(`PERSISTENT ISSUES (from the novelty ledger):\n${streaks.join('\n')}`);
     if (lastActionLine) parts.push(lastActionLine);
+    if (calibrationLine) parts.push(calibrationLine);
+    if (periodizationLine) parts.push(`WEEK-AHEAD PERIODIZATION: ${periodizationLine}`);
     if (openerLines.length) parts.push(`YOUR LAST ${openerLines.length} MORNING BRIEFS (do not reuse this phrasing or structure — if the same topic is genuinely still the lead, change the angle, escalate, or ask a pointed question instead of restating the setup):\n${openerLines.join('\n')}`);
-    streakContext = parts.join('\n\n');
+    continuityContext = parts.join('\n\n');
   } catch (err) {
-    console.error('[streak context] failed:', err.message);
+    console.error('[continuity context] failed:', err.message);
   }
 
   let leverageContext = '';
@@ -3380,7 +3418,7 @@ app.get('/api/briefing', async (req, res) => {
     // The LLM call can be slow; bound it so a stalled model doesn't hang the
     // briefing (it degrades to the data-only sections).
     geminiResult = await withTimeout(
-      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, streakContext, cashflowContext),
+      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext),
       Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000),
       'gemini'
     );
