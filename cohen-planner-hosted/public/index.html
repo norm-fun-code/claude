@@ -406,6 +406,12 @@ body{background:transparent}
 #storyNext:hover{color:#fff}
 @media(max-width:640px){.story-card{padding:26px 20px}.story-title{font-size:19px}.story-stats{gap:18px}}
 
+/* (9) Milestone celebration confetti ──────────────────────────── */
+@keyframes confettiFall{
+  0%{transform:translate(0,0) rotate(0deg);opacity:1}
+  100%{transform:translate(var(--dx),110vh) rotate(var(--rot));opacity:0}
+}
+
 /* Respect reduced-motion preference ─────────────────────────── */
 @media(prefers-reduced-motion:reduce){
   .mesh-bg,.hero-eyebrow .dot{animation:none}
@@ -1241,6 +1247,57 @@ function _sparkSVG(vals,w,h,color){
     <circle cx="${lastPt[0].toFixed(1)}" cy="${lastPt[1].toFixed(1)}" r="6" fill="${color}" opacity=".22"/>
   </svg>`;
 }
+// ═══ MILESTONE CELEBRATIONS — real (Monarch-synced) net-worth crossings ═══
+const _MILESTONE_KEY='cohenPlannerNWMilestone';
+function _milestoneThresholds(){
+  const th=[];
+  for(let v=250000;v<1e6;v+=250000)th.push(v);
+  for(let v=1e6;v<=10e6;v+=1e6)th.push(v);
+  for(let v=15e6;v<=50e6;v+=5e6)th.push(v);
+  return th;
+}
+function _checkMilestone(nw){
+  if(nw==null||!isFinite(nw))return;
+  const thresholds=_milestoneThresholds();
+  let hit=null;
+  for(const t of thresholds){if(nw>=t)hit=t;else break}
+  if(hit==null)return;
+  let stored=NaN;
+  try{stored=parseFloat(localStorage.getItem(_MILESTONE_KEY));}catch(e){}
+  if(!isFinite(stored)){
+    // First time ever checking on this browser — seed silently, don't celebrate
+    // whatever the number already happens to be on first load.
+    try{localStorage.setItem(_MILESTONE_KEY,String(hit));}catch(e){}
+    return;
+  }
+  if(hit>stored){
+    try{localStorage.setItem(_MILESTONE_KEY,String(hit));}catch(e){}
+    _celebrateMilestone(hit);
+  }
+}
+function _celebrateMilestone(v){
+  showToast(`🎉 Crossed ${fmt(v)} in real net worth!`,'green');
+  if(!_reduceMotion())_confettiBurst();
+}
+function _confettiBurst(){
+  const colors=['#635bff','#1a8754','#0891b2','#bf6900','#cd3d64','#7c3aed'];
+  const root=document.createElement('div');
+  root.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:10000;overflow:hidden';
+  document.body.appendChild(root);
+  for(let i=0;i<42;i++){
+    const p=document.createElement('div');
+    const x=30+Math.random()*40;
+    const size=5+Math.random()*5;
+    const color=colors[i%colors.length];
+    const dx=(Math.random()-0.5)*70;
+    const dur=1.1+Math.random()*0.9;
+    const delay=Math.random()*0.15;
+    const rot=(Math.random()*720-360);
+    p.style.cssText=`position:absolute;top:-4vh;left:${x}vw;width:${size}px;height:${size*1.6}px;background:${color};border-radius:2px;opacity:.95;animation:confettiFall ${dur}s cubic-bezier(.25,.46,.45,.94) ${delay}s forwards;--dx:${dx}vw;--rot:${rot}deg`;
+    root.appendChild(p);
+  }
+  setTimeout(()=>root.remove(),2300);
+}
 function _introAnimate(){
   const hb=document.getElementById('heroBand');if(hb&&hb.firstElementChild){hb.firstElementChild.classList.add('reveal');}
   document.querySelectorAll('#heroBand .hero-v').forEach(_animEl);
@@ -1277,6 +1334,9 @@ function render(){
       <div class="hero-spark">${spark}</div>
     </div>`;
   }
+  // Celebrate real net-worth milestones (Monarch's actual synced value — not the
+  // projected/plan figure, which changes on every slider drag and would fire constantly).
+  if(monarchSnapshot)_checkMilestone(monarchSnapshot.netWorth);
   if(_firstPaint){_firstPaint=false;if(!_reduceMotion())requestAnimationFrame(_introAnimate);}
   const np=document.getElementById('norm_preview');
   const _sy=P.planStartYear||2026;const _by=_sy+4;
