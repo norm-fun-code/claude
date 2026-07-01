@@ -571,7 +571,7 @@ async function doLogout(){
   window.location.href='/login';
 }
 
-const fmt=n=>Math.abs(n)>=1e6?`$${(n/1e6).toFixed(2)}M`:Math.abs(n)>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${Math.round(n)}`;
+const fmt=n=>{const a=Math.abs(n),s=n<0?'-':'';return a>=1e6?`${s}$${(a/1e6).toFixed(2)}M`:a>=1e3?`${s}$${(a/1e3).toFixed(0)}K`:`${s}$${Math.round(a)}`};
 const fmtF=n=>`$${Math.round(n).toLocaleString()}`;
 
 function showToast(msg,type){
@@ -751,7 +751,11 @@ let _investPeriod='1M';
 let _investLoading=false;
 let _lastChartKey='';
 function destroyCharts(){Object.values(charts).forEach(c=>c&&c.destroy());charts={};_lastChartKey=''}
-function _chartKey(){return activeTab+'|'+inflationView+'|'+compareMode+'|'+(overlaySnapId||'')}
+// _flowView must be in the key: income vs cash-flow are both activeTab==='income' but use
+// different Chart.js `options` (stacked scales vs not) — and _updateChart() only syncs
+// datasets/labels on reuse, never options, so omitting it left stale stacked-axis config
+// applied to whichever view was rendered second.
+function _chartKey(){return activeTab+'|'+inflationView+'|'+compareMode+'|'+(overlaySnapId||'')+'|'+_flowView}
 function _updateChart(datasets,labels){
   if(!charts.main)return false;
   charts.main.data.labels=labels;
@@ -862,7 +866,7 @@ function printPDF(){
           <td style="text-align:right;padding:6px 8px;border-bottom:1px solid #f0f4f8;color:${defYrs>0?'#cd3d64':'#1a8754'}">${defYrs}</td>
         </tr>
         ${allRes.map(s=>`<tr>
-          <td style="padding:6px 8px;border-bottom:1px solid #f0f4f8;color:${s.color};font-weight:500">● ${s.name}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #f0f4f8;color:${s.color};font-weight:500">● ${advEscape(s.name)}</td>
           <td style="text-align:right;padding:6px 8px;color:#1a8754;border-bottom:1px solid #f0f4f8">${fmtK(s.finalNW)}</td>
           <td style="text-align:right;padding:6px 8px;color:#0891b2;border-bottom:1px solid #f0f4f8">${fmtK(s.finalTotal)}</td>
           <td style="text-align:right;padding:6px 8px;border-bottom:1px solid #f0f4f8">${fmtK(s.liqFloor)}</td>
@@ -1012,7 +1016,7 @@ function buildControls(){
         <button class="btn" onclick="hideSaveInput()" style="flex:1;font-size:10px">Cancel</button>
       </div>
     </div>
-    ${activeScenarioIdx>=0?`<button class="btn" onclick="updateScenario(${activeScenarioIdx})" style="margin-bottom:3px;border-color:rgba(245,183,49,.3);color:var(--a)">🔄 Update "${scenarios[activeScenarioIdx]?.name||''}"</button>`:''}
+    ${activeScenarioIdx>=0?`<button class="btn" onclick="updateScenario(${activeScenarioIdx})" style="margin-bottom:3px;border-color:rgba(245,183,49,.3);color:var(--a)">🔄 Update "${advEscape(scenarios[activeScenarioIdx]?.name||'')}"</button>`:''}
     ${scenarios.length>0?`<button class="btn" onclick="toggleCompare()" style="margin-bottom:3px">${compareMode?'Exit Compare':'📊 Compare'}</button>`:''}
     <button class="btn" onclick="rollForward()" style="margin-bottom:3px;border-color:rgba(8,145,178,.3);color:var(--c);background:#e0f7fa">📅 Roll Forward → ${sy+1}</button>
   </div>`;
@@ -1344,7 +1348,7 @@ function render(){
   const nap=document.getElementById('nancy_preview');
   if(nap){const matYr=P.nancyRampYear+P.nancyRampYears;const nc=Math.min(P.nancyMaxClients,P.nancyRampClients+(P.nancyMaxClients-P.nancyRampClients)*Math.max(0,Math.min(1,(matYr-P.nancyRampYear)/P.nancyRampYears)));nap.textContent=`${matYr}: ~${Math.round(nc)} clients → ${fmtF(Math.round(nc*P.nancyHourlyRate*P.nancyWeeksPerYear))} gross`}
   let sc='';if(scenarios.length>0){sc='<div class="scenario-bar"><span style="font-size:7px;color:var(--t3);font-weight:600">SAVED:</span>';
-    scenarios.forEach((s,i)=>{const isA=activeScenarioIdx===i;sc+=`<div class="scenario-chip" onclick="loadScenario(${i})" style="border-color:${isA?s.color:s.color+'40'};color:${s.color};${isA?'background:'+s.color+'15':''}"><span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:${s.color}"></span>${s.name}${isA?' ✓':''}<span class="x" onclick="event.stopPropagation();deleteScenario(${i})">✕</span></div>`});
+    scenarios.forEach((s,i)=>{const isA=activeScenarioIdx===i;sc+=`<div class="scenario-chip" onclick="loadScenario(${i})" style="border-color:${isA?s.color:s.color+'40'};color:${s.color};${isA?'background:'+s.color+'15':''}"><span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:${s.color}"></span>${advEscape(s.name)}${isA?' ✓':''}<span class="x" onclick="event.stopPropagation();deleteScenario(${i})">✕</span></div>`});
     if(activeScenarioIdx===-1)sc+=`<span style="font-size:7px;color:var(--t3);font-style:italic;padding:3px">● Unsaved</span>`;sc+='</div>'}
   document.getElementById('scenarioBar').innerHTML=sc;
   renderSnapshotBar();
@@ -1386,12 +1390,19 @@ function render(){
       ds.push({label:'Upside NW (+2% return, −0.5% spend)',data:[startLiqK,...bull.R.map(r=>deflK(r.nw,r.yr))],borderColor:'rgba(26,135,84,.5)',backgroundColor:'rgba(99,91,255,.08)',fill:'+1',tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[3,3]});
       ds.push({label:'Downside NW (−2% return, +1% spend)',data:[startLiqK,...bear.R.map(r=>deflK(r.nw,r.yr))],borderColor:'rgba(205,61,100,.5)',fill:false,tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[3,3]});
     }
-    if(_bandMode&&_cachedBand&&_cachedBand.sy===sy0){
-      const{p10,p50,p90}=_cachedBand.band;const toK=v=>Math.round(v/1000);
-      const src=_cachedBand.mode==='historical'?'historical':'synthetic';
-      ds.push({label:`P90 upside (${src})`,data:[startLiqK,...p90.map(toK)],borderColor:'rgba(26,135,84,.55)',backgroundColor:'rgba(99,91,255,.06)',fill:'+2',tension:.3,pointRadius:0,borderWidth:1.3,borderDash:[2,2]});
-      ds.push({label:'P50 median',data:[startLiqK,...p50.map(toK)],borderColor:'rgba(10,37,64,.55)',fill:false,tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[5,3]});
-      ds.push({label:'P10 downside',data:[startLiqK,...p10.map(toK)],borderColor:'rgba(205,61,100,.55)',fill:false,tension:.3,pointRadius:0,borderWidth:1.3,borderDash:[2,2]});
+    if(_bandMode){
+      if(_cachedBand&&_cachedBand.sig===_bandParamSig()){
+        const{p10,p50,p90}=_cachedBand.band;const toK=v=>Math.round(v/1000);
+        const src=_cachedBand.mode==='historical'?'historical':'synthetic';
+        ds.push({label:`P90 upside (${src})`,data:[startLiqK,...p90.map(toK)],borderColor:'rgba(26,135,84,.55)',backgroundColor:'rgba(99,91,255,.06)',fill:'+2',tension:.3,pointRadius:0,borderWidth:1.3,borderDash:[2,2]});
+        ds.push({label:'P50 median',data:[startLiqK,...p50.map(toK)],borderColor:'rgba(10,37,64,.55)',fill:false,tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[5,3]});
+        ds.push({label:'P10 downside',data:[startLiqK,...p10.map(toK)],borderColor:'rgba(205,61,100,.55)',fill:false,tension:.3,pointRadius:0,borderWidth:1.3,borderDash:[2,2]});
+      } else {
+        // Cache is stale (a slider moved since the last simulation) — don't render a band
+        // that no longer matches the current assumptions; refresh it in the background
+        // instead of blocking every render on an 500-trial Monte Carlo.
+        _scheduleBandRefresh();
+      }
     }
     if(compareMode)scenarios.forEach(s=>{const sLiq=Math.round((s.params.startingLiquid||P.startingLiquid)/1000);ds.push({label:s.name+' Liquid',data:[sLiq,...s.results.R.map(r=>deflK(r.liq,r.yr))],borderColor:s.color,fill:false,tension:.3,pointRadius:3,pointBackgroundColor:s.color,borderWidth:3.5})});
     // Snapshot overlay — compare a saved projection against the current plan
@@ -2951,7 +2962,7 @@ document.getElementById('main').innerHTML=`
     <button role="tab" aria-selected="false" data-tab="portfolio" onclick="setTab('portfolio')">📊 Portfolio</button>
     <button role="tab" aria-selected="false" data-tab="advisor" onclick="setTab('advisor')">🤖 AI Advisor</button>
     <button id="inflBtn" aria-label="Toggle real vs nominal dollars" onclick="toggleInflation()" style="margin-left:auto;font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit">Real $</button>
-    <button id="stressBtn" aria-label="Toggle bear/bull range overlay" onclick="_stressMode=!_stressMode;this.style.background=_stressMode?'rgba(205,61,100,.15)':'var(--s2)';this.style.color=_stressMode?'var(--r)':'var(--t2)';this.style.borderColor=_stressMode?'rgba(205,61,100,.3)':'var(--bd)';render()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Show bear/bull range">⚡ Range</button>
+    <button id="stressBtn" aria-label="Toggle bear/bull range overlay" onclick="toggleStressMode()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Show bear/bull range">⚡ Range</button>
     <button id="bandBtn" aria-label="Toggle Monte Carlo confidence band" onclick="toggleBandMode()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Show P10/P50/P90 confidence band">🎲 Bands</button>
     <button aria-label="Download projection as CSV" onclick="exportCSV()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Download projection table as CSV">⬇ CSV</button>
     <button aria-label="Print or save as PDF" onclick="printPDF()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Print / Save as PDF">🖨 PDF</button>
@@ -2973,13 +2984,18 @@ let _stressMode=false;
 // ── Monte Carlo confidence band overlay (NW chart) ──
 let _bandMode=false;
 let _mcMode='lognormal'; // 'lognormal' | 'historical' — shared with the Goals Risk & Confidence card
-let _cachedBand=null; // {mode, sy, band:{p10,p50,p90}} — last-computed band, avoids recompute on every render
+let _cachedBand=null; // {mode, sig, band:{p10,p50,p90}} — last-computed band, avoids recompute on every render
+// Signature of every P field the projection actually reads. runMonteCarlo()/run() depend on
+// nearly all of P (return rate, vol, home price/down/rate/year, income assumptions, etc.), so
+// keying staleness on just {mode, planStartYear} let the band silently go stale — and stay
+// stale looking authoritative — the moment any OTHER slider (e.g. Investment Return) moved.
+function _bandParamSig(){return _mcMode+'|'+JSON.stringify(P)}
 function _recomputeBandIfStale(){
-  const sy0=P.planStartYear||2026;
-  if(!_cachedBand||_cachedBand.mode!==_mcMode||_cachedBand.sy!==sy0){
+  const sig=_bandParamSig();
+  if(!_cachedBand||_cachedBand.sig!==sig){
     showToast('Running 500 market scenarios for confidence band…','blue');
     setTimeout(()=>{
-      try{const mc=runMonteCarlo(P,500,_mcMode);_cachedBand={mode:_mcMode,sy:sy0,band:mc.band};}
+      try{const mc=runMonteCarlo(P,500,_mcMode);_cachedBand={sig,mode:_mcMode,band:mc.band};}
       catch(e){showToast('Simulation failed: '+e.message,'red');_bandMode=false;}
       render();
     },30);
@@ -2987,12 +3003,32 @@ function _recomputeBandIfStale(){
   }
   return false;
 }
+// Debounced refresh — called after any parameter change while the band overlay is showing.
+// Avoids re-running an 500-trial Monte Carlo synchronously on every slider-drag tick (which
+// would freeze the UI); instead waits for a short pause in input before recomputing.
+let _bandRefreshTimer=null;
+function _scheduleBandRefresh(){
+  if(!_bandMode)return;
+  clearTimeout(_bandRefreshTimer);
+  _bandRefreshTimer=setTimeout(()=>{if(_bandMode)_recomputeBandIfStale()},700);
+}
 function toggleBandMode(){
   _bandMode=!_bandMode;
   if(_stressMode&&_bandMode){_stressMode=false;const sb=document.getElementById('stressBtn');if(sb){sb.style.background='var(--s2)';sb.style.color='var(--t2)';sb.style.borderColor='var(--bd)'}}
   const btn=document.getElementById('bandBtn');
   if(btn){btn.style.background=_bandMode?'rgba(99,91,255,.15)':'var(--s2)';btn.style.color=_bandMode?'var(--accent)':'var(--t2)';btn.style.borderColor=_bandMode?'rgba(99,91,255,.3)':'var(--bd)'}
   if(!(_bandMode&&_recomputeBandIfStale()))render();
+}
+// Mirrors toggleBandMode()'s mutual exclusion in the other direction — without this,
+// enabling Bands then Range (or vice versa) left both true, and the confidence-band
+// dataset's fill:'+2' (meant to skip over the P50 line to reach P10) would instead land
+// on whichever dataset the stress-mode lines pushed into that slot, shading the wrong span.
+function toggleStressMode(){
+  _stressMode=!_stressMode;
+  if(_bandMode&&_stressMode){_bandMode=false;const bb=document.getElementById('bandBtn');if(bb){bb.style.background='var(--s2)';bb.style.color='var(--t2)';bb.style.borderColor='var(--bd)'}}
+  const btn=document.getElementById('stressBtn');
+  if(btn){btn.style.background=_stressMode?'rgba(205,61,100,.15)':'var(--s2)';btn.style.color=_stressMode?'var(--r)':'var(--t2)';btn.style.borderColor=_stressMode?'rgba(205,61,100,.3)':'var(--bd)'}
+  render();
 }
 
 // ═══ COMMAND PALETTE (⌘K) ═══
