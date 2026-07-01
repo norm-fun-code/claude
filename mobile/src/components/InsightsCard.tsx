@@ -23,6 +23,7 @@ const TYPE_LABEL: Record<string, string> = {
   recovery: 'RECOVERY',
   sleep_debt: 'SLEEP',
   sleep_consistency: 'SLEEP',
+  sleep_regularity: 'SLEEP',
   sleep_impact: 'SLEEP IMPACT',
   training_load: 'TRAINING LOAD',
   activity_impact: 'EXERCISE IMPACT',

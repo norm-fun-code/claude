@@ -220,6 +220,34 @@ function sleepConsistency(sleepSeries, { days = 14, minN = 5 } = {}) {
   return { stdHours: Math.round(sd * 100) / 100, score, nights: recent.length };
 }
 
+/**
+ * Sleep Regularity Index — how steady your sleep TIMING is, not just duration.
+ * Onset time is derived as (wake_time − sleep_hours); we score the day-to-day
+ * variability of onset and wake clock times (the two things you actually control).
+ * Lower variability → higher regularity. Returns { score(0..100), onsetStdMin,
+ * wakeStdMin, nights } or null. Timing regularity predicts HRV and deep sleep
+ * beyond total hours, which is why it's separate from duration consistency.
+ */
+function sleepRegularity(sleepSeries, wakeSeries, { days = 14, minN = 5 } = {}) {
+  if (!sleepSeries || !wakeSeries) return null;
+  const dayKey = (d) => (d instanceof Date ? d.toISOString() : String(d)).slice(0, 10);
+  const sleepByDay = new Map(sleepSeries.map((p) => [dayKey(p.day), Number(p.value)]));
+  const pairs = [];
+  for (const p of wakeSeries) {
+    const wake = Number(p.value);
+    const sleep = sleepByDay.get(dayKey(p.day));
+    if (Number.isFinite(wake) && Number.isFinite(sleep)) pairs.push({ onset: wake - sleep, wake });
+  }
+  const recent = pairs.slice(-days);
+  if (recent.length < minN) return null;
+  const onsetSd = stats.std(recent.map((p) => p.onset));
+  const wakeSd = stats.std(recent.map((p) => p.wake));
+  if (onsetSd == null || wakeSd == null) return null;
+  const timingSd = (onsetSd + wakeSd) / 2; // hours
+  const score = Math.round(Math.max(0, Math.min(100, 100 * (1 - timingSd / 2))));
+  return { score, onsetStdMin: Math.round(onsetSd * 60), wakeStdMin: Math.round(wakeSd * 60), nights: recent.length };
+}
+
 // ---------------------------------------------------------------------------
 // Training load — acute:chronic workload ratio (ACWR)
 // ---------------------------------------------------------------------------
@@ -517,6 +545,19 @@ function computeHealthComposites(seriesByKey, opts = {}) {
       detail: `Your nightly sleep duration swings by ±${round1(cons.stdHours)}h. Consistent sleep — a steady duration, and even more so a steady bed and wake time — supports recovery and HRV more than total hours alone.`,
       confidence: 0.75,
       evidence: { auto: true, kind: 'sleep_consistency', score: cons.score, stdHours: cons.stdHours },
+    });
+  }
+
+  // Sleep regularity (timing) — the science-backed companion to duration consistency.
+  const reg = sleepRegularity(sleep, seriesByKey['health:wake_time'], opts);
+  if (reg && reg.score < 80) {
+    findings.push({
+      type: 'sleep_regularity',
+      domains: ['health'],
+      title: `Sleep regularity ${reg.score}/100`,
+      detail: `Your sleep timing drifts by ±${reg.onsetStdMin}m at bedtime and ±${reg.wakeStdMin}m at wake over ${reg.nights} nights. A steady schedule — same bed and wake time daily — is one of the strongest controllable levers for HRV and deep sleep, independent of how many hours you get.`,
+      confidence: 0.75,
+      evidence: { auto: true, kind: 'sleep_regularity', score: reg.score, onsetStdMin: reg.onsetStdMin, wakeStdMin: reg.wakeStdMin, nights: reg.nights },
     });
   }
 

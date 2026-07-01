@@ -28,6 +28,7 @@ const PART_LABEL: Record<string, string> = {
 const COMPOSITE_EMOJI: Record<string, string> = {
   sleep_debt: '🛌',
   sleep_consistency: '🌙',
+  sleep_regularity: '⏰',
   training_load: '🏋️',
 };
 

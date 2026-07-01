@@ -2567,7 +2567,7 @@ app.get('/api/debug/mtd-spend', async (req, res) => {
 app.get('/api/debug/insights', async (req, res) => {
   try {
     const { curate } = require('./src/intelligence/curate');
-    const COMPOSITE_TYPES = ['recovery', 'sleep_debt', 'sleep_consistency', 'training_load'];
+    const COMPOSITE_TYPES = ['recovery', 'sleep_debt', 'sleep_consistency', 'sleep_regularity', 'training_load'];
 
     const open = await findingsStore.listFindings({ status: 'open' });
 
@@ -3310,7 +3310,7 @@ app.get('/api/briefing', async (req, res) => {
     // Live health composites (recovery/sleep-debt/etc.) are current status, not
     // rotating insights — pull them out so they're shown fresh every day and
     // surface the recovery score as its own headline field.
-    const COMPOSITE_TYPES = ['recovery', 'sleep_debt', 'sleep_consistency', 'training_load'];
+    const COMPOSITE_TYPES = ['recovery', 'sleep_debt', 'sleep_consistency', 'sleep_regularity', 'training_load'];
 
     // Recovery is computed LIVE from the spine at every briefing build, not
     // re-served from the finding analyze() stored at its morning run. The
