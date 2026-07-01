@@ -2918,6 +2918,17 @@ app.get('/api/briefing', async (req, res) => {
   // is pure stats and consolidate() is DB queries + string building (no LLM), so
   // this adds ~a few seconds to the already-60-90s build. Best-effort: a failure
   // here must not block the briefing.
+  // A forced/manual rebuild ("Rebuild briefing" tap) should reflect whatever Eight
+  // Sleep has posted RIGHT NOW — don't depend on the background scheduler having
+  // already polled (it only starts at a fixed floor and gates the AUTOMATIC brief
+  // on a separate wake buffer; neither should block an explicit user request).
+  // Best-effort: a failed/absent connector must not block the briefing.
+  try {
+    await runIngest({ only: 'eight_sleep_api' });
+  } catch (err) {
+    console.error('[briefing force] eight-sleep pull failed:', err.message);
+  }
+
   try {
     await analyze();
     // Cross-context insights depend on fresh correlation findings — regenerate

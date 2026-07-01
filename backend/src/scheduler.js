@@ -210,8 +210,12 @@ function startMorningWatcher() {
   // Poll fairly often so the wake buffer below resolves promptly (the buffer, not
   // the poll cadence, is what gates the build).
   const pollMin = Number(process.env.EIGHT_SLEEP_POLL_MIN) || 6;
-  const pollStartHour = Number(process.env.EIGHT_SLEEP_POLL_START_HOUR) || 7;
-  const pollStartMinute = Number(process.env.EIGHT_SLEEP_POLL_START_MINUTE) || 30;
+  // This floor is ONLY a rate-limit guard against pointless 2-6am polling — actual
+  // wake detection is the stillSleeping + wake-buffer check below, which already
+  // adapts to whenever the session really ends. Keep this early enough that it
+  // never gates an early riser (a 5am wake is rare but should still work).
+  const pollStartHour = Number(process.env.EIGHT_SLEEP_POLL_START_HOUR) || 5;
+  const pollStartMinute = Number(process.env.EIGHT_SLEEP_POLL_START_MINUTE) || 0;
   const backstopHour = Number(process.env.EIGHT_SLEEP_BACKSTOP_HOUR) || 10;
   const backstopMinute = Number(process.env.EIGHT_SLEEP_BACKSTOP_MINUTE) || 0;
   // How long after the session reads "ended" to wait before building, so the brief
