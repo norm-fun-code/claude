@@ -219,7 +219,30 @@ function randNorm(mean,sd){
   return mean+sd*Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
 }
 
-function runMonteCarlo(p,trials=600){
+// ── Historical S&P 500 total annual returns (dividends included), 1928–2023 ──
+// Approximate, widely-cited figures used only for the optional "historical bootstrap"
+// Monte Carlo mode — illustrative of real sequences (crashes, recoveries, boom years),
+// not represented as precise to the decimal or audited against a canonical source.
+const HIST_SP500_RETURNS=[
+  .438,-.083,-.251,-.438,-.086,.500,-.012,.477,.339,-.353,.311,-.004,-.098,-.116,.203,.259,
+  .197,.364,-.081,.057,.055,.188,.317,.240,.184,-.010,.526,.316,.066,-.108,.434,.120,.005,
+  .269,-.087,.228,.165,.125,-.101,.240,.111,-.085,.040,.143,.190,-.147,-.265,.372,.238,-.072,
+  .066,.184,.324,-.049,.214,.225,.063,.322,.185,.058,.165,.317,-.031,.305,.076,.101,.013,
+  .376,.230,.334,.286,.210,-.091,-.119,-.221,.287,.109,.049,.158,.055,-.370,.265,.151,.021,
+  .160,.324,.137,.014,.120,.218,-.044,.315,.184,.287,-.181,.263
+];
+// Block bootstrap: draw a random contiguous run from real history (wrapping if the plan
+// horizon exceeds the dataset) so autocorrelation/sequence-of-returns risk is preserved,
+// unlike i.i.d. draws which understate how real bad decades cluster.
+function drawHistoricalBlock(nYears){
+  const H=HIST_SP500_RETURNS,n=H.length;
+  const startIdx=Math.floor(Math.random()*n);
+  const out=[];
+  for(let i=0;i<nYears;i++)out.push(H[(startIdx+i)%n]);
+  return out;
+}
+
+function runMonteCarlo(p,trials=600,mode='lognormal'){
   const sy=p.planStartYear||2026;const ey=p.planEndYear||2058;const nYears=ey-sy+1;
   const vol=p.mcVol??.14;const mean=p.investReturn;
   // Lognormal returns: treat `mean` as the ARITHMETIC expected return and derive the
@@ -229,11 +252,14 @@ function runMonteCarlo(p,trials=600){
   // overstated compounding (E[normal] = arithmetic mean ignores volatility drag).
   const logDrift=Math.log(1+mean)-0.5*vol*vol;
   const drawRet=()=>Math.exp(randNorm(logDrift,vol))-1;
-  const geomMean=Math.exp(logDrift)-1; // expected compounded annual growth
+  const isHist=mode==='historical';
+  const geomMean=isHist
+    ? HIST_SP500_RETURNS.reduce((a,b)=>a*(1+b),1)**(1/HIST_SP500_RETURNS.length)-1
+    : Math.exp(logDrift)-1; // expected compounded annual growth
   const nwPaths=[],liqPaths=[],finalNW=[],floorLiq=[];let ruin=0,dpFail=0;
   const dpYr=p.homePurchaseYear,dpNeed=p.homePrice*(p.downPctg/100),dpIdx=dpYr-sy;
   for(let t=0;t<trials;t++){
-    const rets=[];for(let i=0;i<nYears;i++)rets.push(drawRet());
+    const rets=isHist?drawHistoricalBlock(nYears):Array.from({length:nYears},drawRet);
     const{R}=run(p,rets);
     nwPaths.push(R.map(r=>r.nw));liqPaths.push(R.map(r=>r.liq));
     finalNW.push(R[R.length-1].nw);
@@ -250,7 +276,7 @@ function runMonteCarlo(p,trials=600){
     band.p10.push(pct(col,.10));band.p50.push(pct(col,.50));band.p90.push(pct(col,.90));
   }
   finalNW.sort((a,b)=>a-b);
-  return{band,trials,vol,geomMean,
+  return{band,trials,vol,geomMean,mode,
     finalP10:pct(finalNW,.10),finalP50:pct(finalNW,.50),finalP90:pct(finalNW,.90),
     ruinPct:ruin/trials*100,
     dpFailPct:dpIdx>=1?dpFail/trials*100:null,
@@ -260,5 +286,6 @@ function runMonteCarlo(p,trials=600){
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
   module.exports={bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
-    FED_BR_2026,NYS_BR_2026,NYC_BR_2026,SS_CAP_2026,SALT_BASE_2026,STD_DEDUCT_2026};
+    FED_BR_2026,NYS_BR_2026,NYC_BR_2026,SS_CAP_2026,SALT_BASE_2026,STD_DEDUCT_2026,
+    HIST_SP500_RETURNS};
 }

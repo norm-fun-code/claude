@@ -354,6 +354,58 @@ body{background:transparent}
 .sr input[type=range]:focus{outline:none}
 .sr input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 1px 3px rgba(80,72,214,.5),0 0 0 4px rgba(99,91,255,.3)}
 
+/* (7) Command palette (⌘K) ───────────────────────────────────── */
+#cmdPalette{position:fixed;inset:0;background:rgba(10,37,64,.45);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding-top:11vh;animation:fadeIn .15s ease both}
+.cmdk-panel{width:100%;max-width:560px;margin:0 16px;background:rgba(255,255,255,.85);backdrop-filter:blur(26px) saturate(180%);-webkit-backdrop-filter:blur(26px) saturate(180%);
+  border:1px solid rgba(255,255,255,.7);border-radius:14px;overflow:hidden;
+  box-shadow:0 1px 1px rgba(10,37,64,.05),0 40px 80px -20px rgba(10,37,64,.5);
+  animation:riseIn .18s cubic-bezier(.22,1,.36,1) both}
+.cmdk-input-wrap{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid rgba(10,37,64,.08)}
+.cmdk-icon{font-size:15px;color:var(--accent)}
+.cmdk-input-wrap input{flex:1;border:none;outline:none;background:transparent;font-family:inherit;font-size:15px;color:var(--tx)}
+.cmdk-input-wrap input::placeholder{color:var(--t3)}
+.cmdk-esc{font-size:9.5px;font-weight:600;color:var(--t3);background:rgba(10,37,64,.06);padding:2px 6px;border-radius:4px;font-family:'SF Mono',monospace}
+.cmdk-list{max-height:min(50vh,420px);overflow-y:auto;padding:6px}
+.cmdk-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;cursor:pointer;font-size:12.5px;color:var(--t2)}
+.cmdk-item:hover,.cmdk-item.active{background:linear-gradient(135deg,rgba(99,91,255,.12),rgba(99,91,255,.05))}
+.cmdk-item-icon{font-size:14px;width:20px;text-align:center;flex-shrink:0}
+.cmdk-item-label{flex:1;color:var(--tx);font-weight:500}
+.cmdk-item-hint{font-size:9.5px;color:var(--t3);text-transform:uppercase;letter-spacing:.5px}
+.cmdk-empty{padding:24px;text-align:center;color:var(--t3);font-size:12px}
+.cmdk-trigger{font-size:9.5px;font-weight:500;padding:5px 9px;background:rgba(255,255,255,.55);border:1px solid var(--bd);border-radius:7px;cursor:pointer;font-family:inherit;color:var(--t2);display:flex;align-items:center;gap:5px;transition:all .14s}
+.cmdk-trigger kbd{font-family:'SF Mono',monospace;font-size:9px;background:rgba(10,37,64,.07);padding:1px 4px;border-radius:3px}
+
+/* (8) Story mode — milestone walkthrough ─────────────────────── */
+#storyOverlay{position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;
+  background:radial-gradient(50% 60% at 15% 10%, rgba(99,91,255,.16), transparent 62%),
+    radial-gradient(45% 55% at 90% 90%, rgba(8,145,178,.14), transparent 60%),
+    rgba(247,249,253,.97);
+  backdrop-filter:blur(6px);animation:fadeIn .2s ease both}
+.story-close{position:absolute;top:20px;right:24px;width:36px;height:36px;border-radius:50%;border:1px solid var(--bd);background:rgba(255,255,255,.7);color:var(--t2);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.story-close:hover{background:#fff;color:var(--tx)}
+.story-dots{display:flex;gap:6px;margin-bottom:22px}
+.story-dot{width:7px;height:7px;border-radius:50%;background:rgba(10,37,64,.15);cursor:pointer;transition:all .2s;border:none;padding:0}
+.story-dot.active{background:var(--accent);width:22px;border-radius:4px}
+.story-stage{width:100%;max-width:420px;display:flex;justify-content:center}
+.story-card{background:rgba(255,255,255,.78);backdrop-filter:blur(22px) saturate(170%);-webkit-backdrop-filter:blur(22px) saturate(170%);
+  border:1px solid rgba(255,255,255,.7);border-radius:20px;padding:32px 30px;width:100%;text-align:center;
+  box-shadow:0 1px 1px rgba(10,37,64,.05),0 40px 80px -24px rgba(99,91,255,.5)}
+.story-icon{font-size:38px;margin-bottom:8px}
+.story-year{font-size:12px;font-weight:700;color:var(--accent);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px}
+.story-title{font-size:22px;font-weight:800;color:var(--tx);letter-spacing:-.4px;margin-bottom:8px}
+.story-sub{font-size:13px;color:var(--t2);line-height:1.5;margin-bottom:18px}
+.story-spark{margin-bottom:18px;display:flex;justify-content:center}
+.story-stats{display:flex;justify-content:center;gap:28px}
+.story-stat-l{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px}
+.story-stat-v{font-size:17px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)}
+.story-nav{display:flex;gap:10px;margin-top:26px}
+.story-nav button{padding:9px 20px;border-radius:9px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;border:1px solid var(--bd);background:rgba(255,255,255,.7);color:var(--t2);transition:all .15s}
+.story-nav button:hover{border-color:var(--bd2);color:var(--tx)}
+.story-nav button:disabled{opacity:.4;cursor:not-allowed}
+#storyNext{background:linear-gradient(135deg,#6e66ff,#5048d6);color:#fff;border-color:transparent;box-shadow:0 6px 16px -6px rgba(80,72,214,.6)}
+#storyNext:hover{color:#fff}
+@media(max-width:640px){.story-card{padding:26px 20px}.story-title{font-size:19px}.story-stats{gap:18px}}
+
 /* Respect reduced-motion preference ─────────────────────────── */
 @media(prefers-reduced-motion:reduce){
   .mesh-bg,.hero-eyebrow .dot{animation:none}
@@ -373,6 +425,7 @@ body{background:transparent}
     </div>
   </div>
   <div class="hdr-right">
+      <button class="cmdk-trigger" onclick="openPalette()" title="Command palette"><span>🔎</span>Jump to… <kbd id="cmdkKbdHint">⌘K</kbd></button>
       <button id="monarchSyncBtn" onclick="syncMonarch()" style="font-size:10px;font-weight:500;padding:5px 11px;background:var(--a-soft);border:1px solid rgba(191,105,0,.3);border-radius:7px;cursor:pointer;font-family:inherit;color:var(--a);transition:all .14s;display:none">📍 Sync Monarch</button>
       <button id="monarchConnectBtn" onclick="connectMonarch()" style="font-size:10px;font-weight:500;padding:5px 11px;background:var(--accent-soft);border:1px solid rgba(99,91,255,.25);border-radius:7px;cursor:pointer;font-family:inherit;color:var(--accent);transition:all .14s">🔗 Connect Monarch</button>
     <span class="sync-pill" id="syncStatus"></span>
@@ -1251,6 +1304,13 @@ function render(){
       ds.push({label:'Upside NW (+2% return, −0.5% spend)',data:[startLiqK,...bull.R.map(r=>deflK(r.nw,r.yr))],borderColor:'rgba(26,135,84,.5)',backgroundColor:'rgba(99,91,255,.08)',fill:'+1',tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[3,3]});
       ds.push({label:'Downside NW (−2% return, +1% spend)',data:[startLiqK,...bear.R.map(r=>deflK(r.nw,r.yr))],borderColor:'rgba(205,61,100,.5)',fill:false,tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[3,3]});
     }
+    if(_bandMode&&_cachedBand&&_cachedBand.sy===sy0){
+      const{p10,p50,p90}=_cachedBand.band;const toK=v=>Math.round(v/1000);
+      const src=_cachedBand.mode==='historical'?'historical':'synthetic';
+      ds.push({label:`P90 upside (${src})`,data:[startLiqK,...p90.map(toK)],borderColor:'rgba(26,135,84,.55)',backgroundColor:'rgba(99,91,255,.06)',fill:'+2',tension:.3,pointRadius:0,borderWidth:1.3,borderDash:[2,2]});
+      ds.push({label:'P50 median',data:[startLiqK,...p50.map(toK)],borderColor:'rgba(10,37,64,.55)',fill:false,tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[5,3]});
+      ds.push({label:'P10 downside',data:[startLiqK,...p10.map(toK)],borderColor:'rgba(205,61,100,.55)',fill:false,tension:.3,pointRadius:0,borderWidth:1.3,borderDash:[2,2]});
+    }
     if(compareMode)scenarios.forEach(s=>{const sLiq=Math.round((s.params.startingLiquid||P.startingLiquid)/1000);ds.push({label:s.name+' Liquid',data:[sLiq,...s.results.R.map(r=>deflK(r.liq,r.yr))],borderColor:s.color,fill:false,tension:.3,pointRadius:3,pointBackgroundColor:s.color,borderWidth:3.5})});
     // Snapshot overlay — compare a saved projection against the current plan
     if(overlaySnapId){const sn=snapshots.find(x=>x.id===overlaySnapId);if(sn&&sn.params){const sr=run({...D,...migrateP(sn.params)});const so=String((sn.params.planStartYear||sy0)-1);ds.push({label:'📸 '+sn.label+' (NW)',data:[Math.round((sn.params.startingLiquid||P.startingLiquid)/1000),...sr.R.map(r=>deflK(r.nw,r.yr))],borderColor:'#bf6900',fill:false,tension:.3,pointRadius:0,borderWidth:2,borderDash:[6,3]})}}
@@ -2043,6 +2103,17 @@ function goalInlineEdit(span){
   inp.focus();inp.select();
 }
 
+function setMCMode(mode){
+  if(_mcMode===mode)return;
+  _mcMode=mode;
+  document.querySelectorAll('.mc-mode-btn').forEach(b=>{
+    const on=b.dataset.mode===mode;
+    b.style.background=on?'linear-gradient(135deg,#6e66ff,#5048d6)':'var(--s1)';
+    b.style.color=on?'#fff':'var(--t2)';
+  });
+  runGoalsRiskAnalysis();
+  if(_bandMode)_recomputeBandIfStale(); // keep the NW chart's band overlay in sync
+}
 function runGoalsRiskAnalysis(){
   const out=document.getElementById('goalsRiskOut');
   if(!out)return;
@@ -2050,7 +2121,7 @@ function runGoalsRiskAnalysis(){
   // Defer the heavy compute so the loading state paints first.
   setTimeout(()=>{
     let mc;
-    try{mc=runMonteCarlo(P,800);}catch(e){out.innerHTML=`<div style="font-size:11px;color:var(--r);padding:8px 0">Simulation failed: ${advEscape(e.message)}</div>`;return;}
+    try{mc=runMonteCarlo(P,800,_mcMode);}catch(e){out.innerHTML=`<div style="font-size:11px;color:var(--r);padding:8px 0">Simulation failed: ${advEscape(e.message)}</div>`;return;}
     const horizon=P.planEndYear||2058;
     const geomPct=(mc.geomMean*100).toFixed(1);
     const ruin=mc.ruinPct,dpFail=mc.dpFailPct;
@@ -2076,7 +2147,7 @@ function runGoalsRiskAnalysis(){
         ${dpFail!=null?stat('Down-payment risk',dpFail.toFixed(0)+'%',`can't cover ${P.homePurchaseYear} DP`,dpCol):stat('Down-payment risk','—','no purchase set','var(--t3)')}
         ${stat('Volatility',Math.round((mc.vol)*100)+'%','annual std dev','var(--t3)')}
       </div>
-      <div style="font-size:9px;color:var(--t3);margin-top:8px;line-height:1.5">Lognormal returns calibrated so the simulated compounded growth matches your ${Math.round((P.investReturn||.06)*100)}% assumption. "Cash-crunch risk" = share of scenarios where liquid goes negative at any point; "down-payment risk" = share where liquid can't cover the down payment the year before purchase.</div>
+      <div style="font-size:9px;color:var(--t3);margin-top:8px;line-height:1.5">${mc.mode==='historical'?'Historical bootstrap: each trial replays a real contiguous run of actual annual S&P 500 returns (1928–2023, dividends included), preserving how bad decades cluster.':`Lognormal returns calibrated so the simulated compounded growth matches your ${Math.round((P.investReturn||.06)*100)}% assumption.`} "Cash-crunch risk" = share of scenarios where liquid goes negative at any point; "down-payment risk" = share where liquid can't cover the down payment the year before purchase.</div>
     </div>`;
   },30);
 }
@@ -2273,11 +2344,17 @@ function renderGoalsTab(R,P,tT){
 
   // ── Risk & Confidence (Monte Carlo, on-demand) ──
   h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:8px">
       <div style="font-size:13px;font-weight:700;color:var(--tx)">🎲 Risk & Confidence</div>
-      <button onclick="runGoalsRiskAnalysis()" style="font-size:11px;font-weight:600;padding:6px 13px;background:var(--accent);color:#fff;border:none;border-radius:7px;cursor:pointer;font-family:inherit">Run simulation</button>
+      <div style="display:flex;gap:6px;align-items:center">
+        <div style="display:flex;border:1px solid var(--bd);border-radius:7px;overflow:hidden">
+          <button class="mc-mode-btn" data-mode="lognormal" onclick="setMCMode('lognormal')" title="Synthetic lognormal returns calibrated to your assumed rate" style="font-size:9.5px;font-weight:600;padding:5px 9px;border:none;cursor:pointer;font-family:inherit;background:${_mcMode==='lognormal'?'linear-gradient(135deg,#6e66ff,#5048d6)':'var(--s1)'};color:${_mcMode==='lognormal'?'#fff':'var(--t2)'}">Synthetic</button>
+          <button class="mc-mode-btn" data-mode="historical" onclick="setMCMode('historical')" title="Bootstrap real historical S&amp;P 500 return sequences (1928-2023)" style="font-size:9.5px;font-weight:600;padding:5px 9px;border:none;cursor:pointer;font-family:inherit;background:${_mcMode==='historical'?'linear-gradient(135deg,#6e66ff,#5048d6)':'var(--s1)'};color:${_mcMode==='historical'?'#fff':'var(--t2)'}">Historical</button>
+        </div>
+        <button onclick="runGoalsRiskAnalysis()" style="font-size:11px;font-weight:600;padding:6px 13px;background:var(--accent);color:#fff;border:none;border-radius:7px;cursor:pointer;font-family:inherit">Run simulation</button>
+      </div>
     </div>
-    <div style="font-size:10.5px;color:var(--t2);line-height:1.5;margin-bottom:4px">Runs 800 market scenarios (lognormal returns, ${Math.round((P.mcVol??.14)*100)}% volatility) against your plan to show the range of outcomes — not just the single-line projection.</div>
+    <div style="font-size:10.5px;color:var(--t2);line-height:1.5;margin-bottom:4px">Runs 800 market scenarios against your plan to show the range of outcomes — not just the single-line projection. <strong>Synthetic</strong> uses a calibrated random distribution; <strong>Historical</strong> replays real market sequences.</div>
     <div id="goalsRiskOut"></div>
   </div>`;
 
@@ -2673,9 +2750,11 @@ document.getElementById('main').innerHTML=`
     <button role="tab" aria-selected="false" data-tab="advisor" onclick="setTab('advisor')">🤖 AI Advisor</button>
     <button id="inflBtn" aria-label="Toggle real vs nominal dollars" onclick="toggleInflation()" style="margin-left:auto;font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit">Real $</button>
     <button id="stressBtn" aria-label="Toggle bear/bull range overlay" onclick="_stressMode=!_stressMode;this.style.background=_stressMode?'rgba(205,61,100,.15)':'var(--s2)';this.style.color=_stressMode?'var(--r)':'var(--t2)';this.style.borderColor=_stressMode?'rgba(205,61,100,.3)':'var(--bd)';render()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Show bear/bull range">⚡ Range</button>
+    <button id="bandBtn" aria-label="Toggle Monte Carlo confidence band" onclick="toggleBandMode()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Show P10/P50/P90 confidence band">🎲 Bands</button>
     <button aria-label="Download projection as CSV" onclick="exportCSV()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Download projection table as CSV">⬇ CSV</button>
     <button aria-label="Print or save as PDF" onclick="printPDF()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Print / Save as PDF">🖨 PDF</button>
     <button aria-label="Save a dated snapshot of this plan" onclick="showSnapshotInput()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid rgba(8,145,178,.3);background:#e0f7fa;color:var(--c);cursor:pointer;font-family:inherit" title="Save a dated copy of this plan">📸 Snapshot</button>
+    <button aria-label="Play plan as a story" onclick="openStoryMode()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid rgba(99,91,255,.3);background:var(--accent-soft);color:var(--accent);cursor:pointer;font-family:inherit" title="Walk through your plan's milestones">🎬 Story</button>
   </div>
   <div class="cc" id="chartArea"><canvas id="cv" style="height:300px"></canvas></div>
   <div class="sg" id="summaries"></div>`;
@@ -2689,6 +2768,236 @@ let _advBriefedChats=new Set();
 let advPendingProposals=null; // {changes:[...], aiParams:{...}} from last agentic response
 let _flowView='income';
 let _stressMode=false;
+// ── Monte Carlo confidence band overlay (NW chart) ──
+let _bandMode=false;
+let _mcMode='lognormal'; // 'lognormal' | 'historical' — shared with the Goals Risk & Confidence card
+let _cachedBand=null; // {mode, sy, band:{p10,p50,p90}} — last-computed band, avoids recompute on every render
+function _recomputeBandIfStale(){
+  const sy0=P.planStartYear||2026;
+  if(!_cachedBand||_cachedBand.mode!==_mcMode||_cachedBand.sy!==sy0){
+    showToast('Running 500 market scenarios for confidence band…','blue');
+    setTimeout(()=>{
+      try{const mc=runMonteCarlo(P,500,_mcMode);_cachedBand={mode:_mcMode,sy:sy0,band:mc.band};}
+      catch(e){showToast('Simulation failed: '+e.message,'red');_bandMode=false;}
+      render();
+    },30);
+    return true; // async recompute kicked off
+  }
+  return false;
+}
+function toggleBandMode(){
+  _bandMode=!_bandMode;
+  if(_stressMode&&_bandMode){_stressMode=false;const sb=document.getElementById('stressBtn');if(sb){sb.style.background='var(--s2)';sb.style.color='var(--t2)';sb.style.borderColor='var(--bd)'}}
+  const btn=document.getElementById('bandBtn');
+  if(btn){btn.style.background=_bandMode?'rgba(99,91,255,.15)':'var(--s2)';btn.style.color=_bandMode?'var(--accent)':'var(--t2)';btn.style.borderColor=_bandMode?'rgba(99,91,255,.3)':'var(--bd)'}
+  if(!(_bandMode&&_recomputeBandIfStale()))render();
+}
+
+// ═══ COMMAND PALETTE (⌘K) ═══
+let _paletteState=null;
+function _paletteCommands(){
+  const cmds=[
+    {icon:'📈',label:'Net Worth',hint:'View',run:()=>setTab('nw')},
+    {icon:'💰',label:'Income & Cash Flow',hint:'View',run:()=>setTab('income')},
+    {icon:'📋',label:'Table',hint:'View',run:()=>setTab('table')},
+    {icon:'🎯',label:'Goals',hint:'View',run:()=>setTab('goals')},
+    {icon:'🏠',label:'Housing',hint:'View',run:()=>setTab('housing')},
+    {icon:'🎚️',label:'Sensitivity',hint:'View',run:()=>setTab('sensitivity')},
+    {icon:'⚖',label:'Compare',hint:'View',run:()=>setTab('compare')},
+    {icon:'📊',label:'Portfolio',hint:'View',run:()=>setTab('portfolio')},
+    {icon:'🤖',label:'AI Advisor',hint:'View',run:()=>setTab('advisor')},
+    {icon:'🎬',label:'Play plan as a story',hint:'Story mode',run:()=>openStoryMode()},
+    {icon:inflationView?'🔢':'💵',label:inflationView?'Show nominal dollars':'Show real (inflation-adjusted) dollars',hint:'Toggle',run:()=>toggleInflation()},
+    {icon:'🎲',label:(_bandMode?'Hide':'Show')+' confidence bands',hint:'Chart overlay',run:()=>toggleBandMode()},
+    {icon:'⚡',label:(_stressMode?'Hide':'Show')+' bear/bull range',hint:'Chart overlay',run:()=>{const b=document.getElementById('stressBtn');if(b)b.click()}},
+    {icon:'⬇',label:'Export CSV',hint:'Export',run:()=>exportCSV()},
+    {icon:'🖨',label:'Print / Save as PDF',hint:'Export',run:()=>printPDF()},
+    {icon:'📸',label:'Save snapshot',hint:'Snapshot',run:()=>showSnapshotInput()},
+    {icon:'💾',label:'Save as new scenario',hint:'Scenario',run:()=>showSaveInput()},
+    {icon:'📅',label:'Roll forward to next year',hint:'Plan',run:()=>rollForward()},
+    {icon:'🔗',label:monarchSnapshot?'Sync Monarch':'Connect Monarch',hint:'Monarch',run:()=>monarchSnapshot?syncMonarch():connectMonarch()},
+  ];
+  scenarios.forEach((s,i)=>cmds.push({icon:'📌',label:'Load scenario: '+s.name,hint:'Scenario',run:()=>loadScenario(i)}));
+  return cmds;
+}
+function openPalette(){
+  if(document.getElementById('cmdPalette'))return;
+  const ov=document.createElement('div');
+  ov.id='cmdPalette';
+  ov.innerHTML=`<div class="cmdk-panel">
+    <div class="cmdk-input-wrap">
+      <span class="cmdk-icon">🔎</span>
+      <input id="cmdkInput" autocomplete="off" placeholder="Jump to a view, toggle, or action…">
+      <span class="cmdk-esc">esc</span>
+    </div>
+    <div class="cmdk-list" id="cmdkList"></div>
+  </div>`;
+  ov.addEventListener('click',e=>{if(e.target===ov)closePalette()});
+  document.body.appendChild(ov);
+  const items=_paletteCommands();
+  _paletteState={items,filtered:items,activeIdx:0};
+  _renderPaletteList();
+  const inp=document.getElementById('cmdkInput');
+  inp.addEventListener('input',()=>{
+    const q=inp.value.toLowerCase();
+    _paletteState.filtered=items.filter(it=>it.label.toLowerCase().includes(q)||it.hint.toLowerCase().includes(q));
+    _paletteState.activeIdx=0;
+    _renderPaletteList();
+  });
+  inp.addEventListener('keydown',e=>{
+    if(e.key==='Escape'){e.preventDefault();closePalette();}
+    else if(e.key==='ArrowDown'){e.preventDefault();_paletteState.activeIdx=Math.min(_paletteState.filtered.length-1,_paletteState.activeIdx+1);_renderPaletteList();}
+    else if(e.key==='ArrowUp'){e.preventDefault();_paletteState.activeIdx=Math.max(0,_paletteState.activeIdx-1);_renderPaletteList();}
+    else if(e.key==='Enter'){e.preventDefault();_runPaletteItem(_paletteState.activeIdx);}
+  });
+  setTimeout(()=>inp.focus(),20);
+}
+function closePalette(){
+  const ov=document.getElementById('cmdPalette');
+  if(ov)ov.remove();
+  _paletteState=null;
+}
+function _renderPaletteList(){
+  const list=document.getElementById('cmdkList');
+  if(!list||!_paletteState)return;
+  const{filtered,activeIdx}=_paletteState;
+  if(filtered.length===0){list.innerHTML='<div class="cmdk-empty">No matches</div>';return;}
+  list.innerHTML=filtered.map((it,i)=>`<div class="cmdk-item ${i===activeIdx?'active':''}" onclick="_runPaletteItem(${i})">
+    <span class="cmdk-item-icon">${it.icon}</span>
+    <span class="cmdk-item-label">${advEscape(it.label)}</span>
+    <span class="cmdk-item-hint">${advEscape(it.hint)}</span>
+  </div>`).join('');
+  const activeEl=list.querySelector('.cmdk-item.active');
+  if(activeEl)activeEl.scrollIntoView({block:'nearest'});
+}
+function _runPaletteItem(idx){
+  const it=_paletteState&&_paletteState.filtered[idx];
+  if(!it)return;
+  closePalette();
+  try{it.run();}catch(e){showToast('Action failed: '+e.message,'red');}
+}
+document.addEventListener('keydown',e=>{
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){
+    e.preventDefault();
+    if(document.getElementById('cmdPalette'))closePalette();else openPalette();
+  }
+});
+(function(){const hint=document.getElementById('cmdkKbdHint');if(hint&&!/Mac|iPhone|iPad/.test(navigator.platform||navigator.userAgent))hint.textContent='Ctrl K';})();
+
+// ═══ STORY MODE — scroll/click-through walkthrough of the plan's milestones ═══
+function _storyMilestones(R,P){
+  const sy=P.planStartYear||2026;
+  const kids=[P.kid1Birth];
+  if(P.numKids>=2)kids.push(P.kid2Birth);
+  if(P.numKids>=3)kids.push(P.kid3Birth);
+  if(P.numKids>=4)kids.push(P.kid4Birth);
+  const ms=[];
+  ms.push({yr:sy,icon:'🚀',title:'Today',sub:`Starting liquid: ${fmt(P.startingLiquid)}`});
+  kids.forEach((kb,i)=>{if(kb>=sy)ms.push({yr:kb,icon:'👶',title:`Kid ${i+1} born`,sub:`Family grows to ${i+2} in the household`})});
+  if(P.homePurchaseYear>=sy)ms.push({yr:P.homePurchaseYear,icon:'🏠',title:'Home purchase',sub:`${fmt(P.homePrice*(P.downPctg/100))} down on a ${fmt(P.homePrice)} home`});
+  const firstTu=R.find(r=>r.tu>0);
+  if(firstTu)ms.push({yr:firstTu.yr,icon:'🎓',title:'Tuition begins',sub:`First year of school costs: ${fmt(firstTu.tu)}`});
+  const peakTu=R.reduce((a,b)=>b.tu>a.tu?b:a,R[0]);
+  if(peakTu&&peakTu.tu>0)ms.push({yr:peakTu.yr,icon:'📚',title:'Peak tuition year',sub:`${fmt(peakTu.tu)}/yr — the most expensive school year`});
+  const nancyMatYr=P.nancyRampYear+P.nancyRampYears;
+  const nancyRow=R.find(r=>r.yr===nancyMatYr);
+  if(nancyRow)ms.push({yr:nancyMatYr,icon:'💼',title:"Nancy's practice matures",sub:`Full client roster reached — ${fmt(nancyRow.nancyG)}/yr gross`});
+  const last=R[R.length-1];
+  ms.push({yr:last.yr,icon:'🏁',title:'End of plan',sub:`Projected net worth: ${fmt(last.nw)} (+${fmt(last.k401)} in 401k)`});
+  const seen=new Set();
+  return ms.filter(m=>{if(seen.has(m.yr))return false;seen.add(m.yr);return true})
+    .sort((a,b)=>a.yr-b.yr)
+    // "Today" (yr===sy) is the true starting point, before any year of growth/spending —
+    // use startingLiquid directly rather than R[0], which is already 2026's year-end value.
+    .map(m=>({...m,row:m.yr===sy?{nw:P.startingLiquid,liq:P.startingLiquid}:(R.find(r=>r.yr===m.yr)||R[0])}));
+}
+// Like _sparkSVG, but highlights a specific index (not just the last point) with a guide line.
+function _sparkSVGAt(vals,w,h,color,idx){
+  if(!vals||vals.length<2)return'';
+  const min=Math.min(...vals),max=Math.max(...vals),rng=(max-min)||1,pad=4;
+  const pts=vals.map((v,i)=>[pad+i/(vals.length-1)*(w-2*pad), h-pad-((v-min)/rng)*(h-2*pad)]);
+  const line=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+  const area=line+` L${(w-pad).toFixed(1)} ${h-pad} L${pad} ${h-pad} Z`;
+  const hi=idx>=0&&idx<pts.length?pts[idx]:pts[pts.length-1];
+  const gid='sa'+(''+color).replace(/[^a-z0-9]/gi,'');
+  return `<svg class="story-spark-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${color}" stop-opacity=".22"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
+    <path d="${area}" fill="url(#${gid})"/>
+    <path d="${line}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <line x1="${hi[0].toFixed(1)}" y1="${pad}" x2="${hi[0].toFixed(1)}" y2="${h-pad}" stroke="${color}" stroke-width="1" stroke-dasharray="2,2" opacity=".4"/>
+    <circle cx="${hi[0].toFixed(1)}" cy="${hi[1].toFixed(1)}" r="4.5" fill="${color}"/>
+    <circle cx="${hi[0].toFixed(1)}" cy="${hi[1].toFixed(1)}" r="8" fill="${color}" opacity=".2"/>
+  </svg>`;
+}
+let _storyState=null;
+function openStoryMode(){
+  const{R}=run(P);
+  const milestones=_storyMilestones(R,P);
+  if(!milestones.length){showToast('Not enough plan data yet','red');return;}
+  _storyState={R,milestones,idx:0};
+  const ov=document.createElement('div');
+  ov.id='storyOverlay';
+  ov.innerHTML=`<button class="story-close" onclick="closeStoryMode()" aria-label="Close story">✕</button>
+    <div class="story-dots" id="storyDots"></div>
+    <div class="story-stage" id="storyStage"></div>
+    <div class="story-nav">
+      <button id="storyPrev" onclick="storyStep(-1)">← Back</button>
+      <button id="storyNext" onclick="storyStep(1)">Next →</button>
+    </div>`;
+  document.body.appendChild(ov);
+  document.addEventListener('keydown',_storyKeyHandler);
+  _renderStory();
+}
+function closeStoryMode(){
+  const ov=document.getElementById('storyOverlay');if(ov)ov.remove();
+  document.removeEventListener('keydown',_storyKeyHandler);
+  _storyState=null;
+}
+function _storyKeyHandler(e){
+  if(!_storyState)return;
+  if(e.key==='Escape')closeStoryMode();
+  else if(e.key==='ArrowRight')storyStep(1);
+  else if(e.key==='ArrowLeft')storyStep(-1);
+}
+function storyStep(dir){
+  if(!_storyState)return;
+  const n=_storyState.milestones.length;
+  _storyState.idx=Math.max(0,Math.min(n-1,_storyState.idx+dir));
+  _renderStory();
+}
+function _renderStory(){
+  if(!_storyState)return;
+  const{R,milestones,idx}=_storyState;
+  const m=milestones[idx];
+  const stage=document.getElementById('storyStage');
+  const dots=document.getElementById('storyDots');
+  if(!stage)return;
+  // Prepend the true starting point (before any year of growth/spending) so "Today"
+  // highlights day zero rather than 2026's year-end value, matching the hero chart.
+  const sparkVals=[P.startingLiquid,...R.map(r=>r.nw)];
+  const rIdx=m.yr===(P.planStartYear||2026)?0:1+R.findIndex(r=>r.yr===m.yr);
+  const spark=_sparkSVGAt(sparkVals,320,110,'#635bff',rIdx);
+  stage.innerHTML=`<div class="story-card reveal">
+    <div class="story-icon">${m.icon}</div>
+    <div class="story-year">${m.yr}</div>
+    <div class="story-title">${advEscape(m.title)}</div>
+    <div class="story-sub">${advEscape(m.sub)}</div>
+    <div class="story-spark">${spark}</div>
+    <div class="story-stats">
+      <div><div class="story-stat-l">Net worth</div><div class="story-stat-v">${fmt(m.row.nw)}</div></div>
+      <div><div class="story-stat-l">Liquid</div><div class="story-stat-v">${fmt(m.row.liq)}</div></div>
+    </div>
+  </div>`;
+  if(dots)dots.innerHTML=milestones.map((_,i)=>`<span class="story-dot ${i===idx?'active':''}" onclick="_storyState.idx=${i};_renderStory()"></span>`).join('');
+  const prevBtn=document.getElementById('storyPrev'),nextBtn=document.getElementById('storyNext');
+  if(prevBtn)prevBtn.disabled=idx===0;
+  if(nextBtn){
+    const isLast=idx===milestones.length-1;
+    nextBtn.textContent=isLast?'Done ✓':'Next →';
+    nextBtn.onclick=isLast?closeStoryMode:()=>storyStep(1);
+  }
+}
 
 function advToggleAgentic(){
   advAgenticMode=!advAgenticMode;
