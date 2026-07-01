@@ -26,7 +26,6 @@ export const CHAT_SAVE_URL = `${API_BASE}/api/chat/save`;
 export const CHAT_CONVERSATIONS_URL = `${API_BASE}/api/chat/conversations`;
 export const DEVICE_REGISTER_URL = `${API_BASE}/api/devices/register`;
 export const HIGHLIGHTS_URL = `${API_BASE}/api/highlights`;
-export const SHOP_URL = `${API_BASE}/api/shop`;
 export const ANALYZE_URL = `${API_BASE}/api/analyze`;
 export const INSIGHT_DISMISS_URL = `${API_BASE}/api/insights/dismiss`;
 export const CONSOLIDATE_URL = `${API_BASE}/api/consolidate`;
@@ -46,7 +45,6 @@ export const ACTIVITY_URL = `${API_BASE}/api/activity`;
 export const ANNOTATIONS_URL = `${API_BASE}/api/annotations`;
 export const ANNOTATIONS_ACTIVE_URL = `${API_BASE}/api/annotations/active`;
 export const CHECKIN_HISTORY_URL = `${API_BASE}/api/checkin/history`;
-export const BRIEFINGS_HISTORY_URL = `${API_BASE}/api/briefings/history`;
 export const MARKETS_REFRESH_URL = `${API_BASE}/api/briefing/markets`;
 export const BRIEFING_CONTEXT_URL = `${API_BASE}/api/briefing/context`;
 export const EXPERIMENTS_URL = `${API_BASE}/api/experiments`;
@@ -58,8 +56,6 @@ export const GOALS_URL = `${API_BASE}/api/goals`;
 export const METRICS_HISTORY_URL = `${API_BASE}/api/metrics/history`;
 export const RECOVERY_HISTORY_URL = `${API_BASE}/api/recovery/history`;
 export const SOURCES_FRESHNESS_URL = `${API_BASE}/api/sources/freshness`;
-export const EXPERIMENT_EXTRACT_URL = `${API_BASE}/api/chat/extract-experiment`;
-export const EIGHT_SLEEP_BACKFILL_URL = `${API_BASE}/api/ingest/eight-sleep/backfill`;
 
 /** Device's IANA timezone — follows the phone when travelling. */
 export function localTz(): string {
