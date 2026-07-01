@@ -81,6 +81,18 @@ const loginLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// The advisor endpoints proxy paid Anthropic API calls with a multi-turn tool-use loop —
+// with a 30-day session cookie and no other throttle, a leaked/stolen session could run up
+// unbounded API spend by looping requests. This doesn't rate-limit legitimate use (a human
+// sending chat messages), just runaway/scripted request volume.
+const advisorLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  message: { error: 'Too many advisor requests — please slow down.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 function requireAuth(req, res, next) {
   if (req.session && req.session.authenticated) return next();
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Not authenticated' });
@@ -187,8 +199,24 @@ async function login() {
 app.post('/api/login', loginLimiter, async (req, res) => {
   const { password } = req.body;
   if (password === process.env.APP_PASSWORD) {
-    req.session.authenticated = true;
-    return res.json({ ok: true });
+    // Regenerate the session ID on successful auth (session-fixation defense) — without
+    // this, an attacker who got a victim to use a session ID they control before login
+    // would inherit an authenticated session once the victim logs in, since express-session
+    // otherwise keeps the same ID across the anonymous->authenticated transition.
+    return req.session.regenerate((err) => {
+      if (err) {
+        console.error('Session regenerate error:', err);
+        return res.status(500).json({ error: 'Login failed' });
+      }
+      req.session.authenticated = true;
+      req.session.save((saveErr) => {
+        if (saveErr) {
+          console.error('Session save error:', saveErr);
+          return res.status(500).json({ error: 'Login failed' });
+        }
+        res.json({ ok: true });
+      });
+    });
   }
   await new Promise(r => setTimeout(r, 500));
   res.status(401).json({ error: 'Wrong password' });
@@ -331,6 +359,13 @@ async function monarchOAuthRow() {
   return r.rows[0]?.data ?? null;
 }
 
+// Multiple requests (concurrent tabs, or the advisor endpoint fetching both a Monarch
+// snapshot and its tool schema) can all see an expired cached token at once. Without
+// dedup, each independently POSTs the same refresh_token — if Monarch rotates refresh
+// tokens (single-use), the second call invalidates what the first call just received,
+// silently breaking one of the two concurrent requests. Share one in-flight refresh.
+let _refreshInFlight = null;
+
 async function getMonarchAccessToken() {
   const stored = await monarchOAuthRow();
   if (!stored) return null;
@@ -340,34 +375,53 @@ async function getMonarchAccessToken() {
   }
   // Try refresh_token
   if (!stored.refresh_token) return null;
-  const r = await fetch(`${MONARCH_AUTH}/oauth/token/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: stored.refresh_token,
-      client_id: stored.client_id,
-      resource: MONARCH_MCP,
-    }),
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!r.ok) {
-    // Refresh failed — clear tokens so user reconnects
-    await db.query("DELETE FROM oauth_tokens WHERE key='monarch'");
-    return null;
-  }
-  const tokens = await r.json();
-  const updated = {
-    ...stored,
-    access_token: tokens.access_token,
-    refresh_token: tokens.refresh_token || stored.refresh_token,
-    expires_at: Date.now() + (tokens.expires_in || 3600) * 1000,
-  };
-  await db.query(
-    "INSERT INTO oauth_tokens(key,data) VALUES('monarch',$1) ON CONFLICT(key) DO UPDATE SET data=$1,updated_at=NOW()",
-    [JSON.stringify(updated)]
-  );
-  return updated.access_token;
+  if (_refreshInFlight) return _refreshInFlight;
+  _refreshInFlight = (async () => {
+    try {
+      const r = await fetch(`${MONARCH_AUTH}/oauth/token/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: stored.refresh_token,
+          client_id: stored.client_id,
+          resource: MONARCH_MCP,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!r.ok) {
+        // Only a definitive auth rejection (4xx — e.g. invalid_grant, revoked token) means
+        // the refresh token itself is dead and reconnect is required. A 5xx or network
+        // hiccup is transient — clearing tokens then would force a full re-authorization
+        // for what might just be a momentary Monarch outage, so leave them in place to
+        // retry on the next request.
+        if (r.status >= 400 && r.status < 500) {
+          await db.query("DELETE FROM oauth_tokens WHERE key='monarch'");
+        } else {
+          console.error('Monarch token refresh transient failure:', r.status);
+        }
+        return null;
+      }
+      const tokens = await r.json();
+      const updated = {
+        ...stored,
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token || stored.refresh_token,
+        expires_at: Date.now() + (tokens.expires_in || 3600) * 1000,
+      };
+      await db.query(
+        "INSERT INTO oauth_tokens(key,data) VALUES('monarch',$1) ON CONFLICT(key) DO UPDATE SET data=$1,updated_at=NOW()",
+        [JSON.stringify(updated)]
+      );
+      return updated.access_token;
+    } catch (e) {
+      console.error('Monarch token refresh error:', e.message);
+      return null;
+    } finally {
+      _refreshInFlight = null;
+    }
+  })();
+  return _refreshInFlight;
 }
 
 function parseSSEorJSON(text) {
@@ -1104,7 +1158,7 @@ app.delete('/api/chats/:id', requireAuth, async (req, res) => {
 });
 
 // ── Anthropic proxy — SSE streaming ──────────────────────────────────────────
-app.post('/api/advisor/stream', requireAuth, async (req, res) => {
+app.post('/api/advisor/stream', requireAuth, advisorLimiter, async (req, res) => {
   const { chatId, message, systemPrompt, messages } = req.body;
   if (!chatId || !message) return res.status(400).json({ error: 'chatId and message required' });
 
@@ -1123,6 +1177,12 @@ app.post('/api/advisor/stream', requireAuth, async (req, res) => {
   // dropped ("Load failed") while we set up Monarch access below.
   res.write(': keep-alive\n\n');
 
+  // Declared outside the try so the catch block can persist whatever text streamed to the
+  // client before a later loop iteration failed (e.g. Anthropic returns a transient 5xx on
+  // the 2nd tool-use round) — previously the DB write only happened after the whole loop
+  // completed, so a reply the user already saw appear on screen was silently never saved.
+  let fullReply = '';
+
   try {
     // Give the advisor live read-only access to Monarch when the user has connected it.
     const accessToken = await withTimeout(getMonarchAccessToken(), 5000, null);
@@ -1132,7 +1192,6 @@ app.post('/api/advisor/stream', requireAuth, async (req, res) => {
 ═══ LIVE MONARCH ACCESS ═══
 You can query the user's REAL Monarch Money data with the monarch_* tools (accounts & balances, transactions, cash flow, spending by category, investments, recurring, net worth history, and more). When the user asks about actual spending, balances, holdings, budgets, or recent activity, CALL these tools and answer from real data instead of the plan's assumptions. Dates are ISO (YYYY-MM-DD). Today is ${new Date().toISOString().slice(0,10)}. Be specific with real numbers and say when a figure comes from live Monarch data.` : '');
 
-    let fullReply = '';
     let convo = apiMessages.slice();
     let lastUsage = null;
     let loop = 0;
@@ -1191,13 +1250,30 @@ You can query the user's REAL Monarch Money data with the monarch_* tools (accou
     res.end();
   } catch (err) {
     console.error('Advisor stream error:', err);
+    // If we'd already streamed partial text to the client before this failure, persist it
+    // rather than silently dropping it — otherwise the user sees a reply on screen that
+    // never made it into the chat's saved history.
+    if (fullReply) {
+      const pair = [
+        { role: 'user', content: message },
+        { role: 'assistant', content: fullReply },
+      ];
+      try {
+        await db.query(
+          `UPDATE advisor_chats SET messages = messages || $1::jsonb, updated_at = NOW() WHERE id = $2`,
+          [JSON.stringify(pair), chatId]
+        );
+      } catch (dbErr) {
+        console.error('Advisor stream: failed to persist partial reply:', dbErr);
+      }
+    }
     send({ error: (err.message || 'Anthropic API error').slice(0, 200) });
     res.end();
   }
 });
 
 // ── Anthropic proxy — agentic mode (tool-use + streaming) ────────────────────
-app.post('/api/advisor/agentic', requireAuth, async (req, res) => {
+app.post('/api/advisor/agentic', requireAuth, advisorLimiter, async (req, res) => {
   const { chatId, message, systemPrompt, messages, currentParams } = req.body;
   if (!chatId || !message) return res.status(400).json({ error: 'chatId and message required' });
 
@@ -1335,13 +1411,29 @@ You also have monarch_* tools to read Norm's REAL Monarch Money data (accounts, 
     res.end();
   } catch (err) {
     console.error('Advisor agentic error:', err);
+    // Same gap as /api/advisor/stream: persist any partial reply already shown to the
+    // client before a later tool-use round failed, instead of silently dropping it.
+    if (fullReply) {
+      const pair = [
+        { role: 'user', content: message },
+        { role: 'assistant', content: fullReply },
+      ];
+      try {
+        await db.query(
+          `UPDATE advisor_chats SET messages = messages || $1::jsonb, updated_at = NOW() WHERE id = $2`,
+          [JSON.stringify(pair), chatId]
+        );
+      } catch (dbErr) {
+        console.error('Advisor agentic: failed to persist partial reply:', dbErr);
+      }
+    }
     send({ error: (err.message || 'Anthropic API error').slice(0, 200) });
     res.end();
   }
 });
 
 // ── Anthropic proxy — non-streaming fallback ──────────────────────────────────
-app.post('/api/advisor/message', requireAuth, async (req, res) => {
+app.post('/api/advisor/message', requireAuth, advisorLimiter, async (req, res) => {
   const { chatId, message, systemPrompt, messages } = req.body;
   if (!chatId || !message) return res.status(400).json({ error: 'chatId and message required' });
 
