@@ -1276,6 +1276,29 @@ app.get('/api/metrics', async (req, res) => {
   }
 });
 
+// GET /api/sources/freshness — most recent DATA date per key source, so the app
+// can show "Eight Sleep: last night / 3 days behind" and catch a missed sync.
+// Metrics are anchored at noon-UTC of their data date, so the UTC date of the
+// latest row IS the day the data covers (not the sync clock time).
+app.get('/api/sources/freshness', async (req, res) => {
+  try {
+    const LABELS = { eight_sleep: 'Eight Sleep', apple_health: 'Apple Watch', monarch: 'Finances' };
+    const { rows } = await db.query(
+      `SELECT source, to_char(max(ts) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS date
+         FROM metrics WHERE source = ANY($1) GROUP BY source`,
+      [Object.keys(LABELS)]
+    );
+    const todayUtc = new Date().toISOString().slice(0, 10);
+    const ageDays = (d) => Math.round((new Date(todayUtc + 'T00:00:00Z') - new Date(d + 'T00:00:00Z')) / 86400000);
+    const sources = rows
+      .map((r) => ({ source: r.source, label: LABELS[r.source], date: r.date, ageDays: ageDays(r.date) }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    res.json({ sources });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/metrics/history?metric=hrv&days=60
 // Returns the last N days of raw readings for a single metric, ordered oldest
 // to newest. Used by charts that need the full time-series (not aggregated).

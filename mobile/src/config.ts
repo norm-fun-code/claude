@@ -57,6 +57,7 @@ export const RECOVERY_SELF_REPORT_URL = `${API_BASE}/api/recovery/self-report`;
 export const GOALS_URL = `${API_BASE}/api/goals`;
 export const METRICS_HISTORY_URL = `${API_BASE}/api/metrics/history`;
 export const RECOVERY_HISTORY_URL = `${API_BASE}/api/recovery/history`;
+export const SOURCES_FRESHNESS_URL = `${API_BASE}/api/sources/freshness`;
 export const EXPERIMENT_EXTRACT_URL = `${API_BASE}/api/chat/extract-experiment`;
 export const EIGHT_SLEEP_BACKFILL_URL = `${API_BASE}/api/ingest/eight-sleep/backfill`;
 

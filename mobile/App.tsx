@@ -42,6 +42,7 @@ import { HealthCard } from './src/components/HealthCard';
 import { LinearGradient } from 'expo-linear-gradient';
 import { RecoveryCard } from './src/components/RecoveryCard';
 import { NightContextCard } from './src/components/NightContextCard';
+import { DataFreshnessBar } from './src/components/DataFreshnessBar';
 import { SleepCheckInCard } from './src/components/SleepCheckInCard';
 import { GradientButton } from './src/components/GradientButton';
 import { WorkoutsPanel } from './src/components/WorkoutsPanel';
@@ -184,6 +185,7 @@ export default function App() {
         return (
           <>
             <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={() => { liveRecovery.refetch(); briefing.triggerRebuild(); }} />
+            <DataFreshnessBar version={health.lastFetched ? health.lastFetched.getTime() : 0} />
             <RecoveryCard
               recovery={liveRecovery.fetched ? liveRecovery.recovery : (liveRecovery.recovery ?? d?.recovery)}
               composites={d?.healthComposites ?? []}
