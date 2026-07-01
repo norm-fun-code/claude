@@ -3080,6 +3080,7 @@ app.get('/api/briefing', async (req, res) => {
   // annotations via POST /api/briefing/context, which flow into annotationsContext
   // automatically on the next build — no extra prompt plumbing needed.
   let signals = [];
+  let spendingContext = ''; // a discretionary-spend anomaly the brief can call out
   try {
     const preBriefSignals = require('./src/intelligence/pre-brief-signals');
     let recentSpend = null;
@@ -3103,6 +3104,12 @@ app.get('/api/briefing', async (req, res) => {
         spendBaseline = baselineRows.reduce((s, r) => s + Number(r.value || 0), 0) / baselineRows.length;
       }
     } catch { /* non-critical */ }
+    // Anomaly callout for the brief narrative (distinct from the user-facing
+    // question): flag yesterday's discretionary spend when it's well above normal.
+    if (recentSpend != null && spendBaseline != null && spendBaseline > 10 && recentSpend > spendBaseline * 1.8) {
+      const mult = (recentSpend / spendBaseline).toFixed(1);
+      spendingContext = `Discretionary spending yesterday was $${Math.round(recentSpend)} vs a $${Math.round(spendBaseline)}/day average (${mult}× normal).`;
+    }
     const allSignals = preBriefSignals.buildSignals({
       recovery, calendar, workBusy, spend: recentSpend, spendBaseline,
     });
@@ -3241,7 +3248,7 @@ app.get('/api/briefing', async (req, res) => {
     // The LLM call can be slow; bound it so a stalled model doesn't hang the
     // briefing (it degrades to the data-only sections).
     geminiResult = await withTimeout(
-      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext),
+      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext),
       Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000),
       'gemini'
     );

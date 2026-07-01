@@ -28,7 +28,7 @@ const SYSTEM =
   '"9:00 AM–6:00 PM"). Never write 24-hour times like "09:00" or "18:00". ' +
   'Return ONLY a single valid JSON object — no markdown, no code fences, no commentary.';
 
-function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '') {
+function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '') {
   // Input size wasn't the timeout cause (the proven Apps Script sends 15K/email
   // and is fine) — OUTPUT length was. So allow a generous 15K/email like that
   // setup, with a total budget as a safety net against a huge unread pile.
@@ -102,7 +102,7 @@ Recent wellbeing (last 7 days): ${wellbeingContext || 'no recent check-in data'}
 
 Active life context: ${annotationsContext || 'none'}
 
-${strengthContext ? `Strength progression (logged lifts): ${strengthContext}\n\n` : ''}${leverageContext ? `${leverageContext}\n\n` : ''}Today's quote/principle:
+${spendingContext ? `Spending signal: ${spendingContext}\n\n` : ''}${strengthContext ? `Strength progression (logged lifts): ${strengthContext}\n\n` : ''}${leverageContext ? `${leverageContext}\n\n` : ''}Today's quote/principle:
 "${quote}"
 
 Today's Notion wisdom:
@@ -163,11 +163,11 @@ const EMPTY = {
   morningFocus: '', chiefBrief: null, urgentEmails: [], quoteInsight: '', notionQuote: '', notionInsight: '',
 };
 
-async function generateBriefing(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '') {
+async function generateBriefing(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '') {
   // Apply the same hard filter as generateEmailBriefs so automated senders
   // never reach the main briefing LLM call either.
   const filteredEmails = filterActionableEmails(emailData);
-  const prompt = buildPrompt(filteredEmails, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusyBlocks, strengthContext);
+  const prompt = buildPrompt(filteredEmails, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusyBlocks, strengthContext, spendingContext);
 
   let text = '';
   try {
