@@ -2634,6 +2634,8 @@ function renderGoalsTab(R,P,tT){
   ca.innerHTML=h;
 }
 
+let _compareDiffIdx=-1; // index into `scenarios` currently shown in the Compare tab's diff view; -1 = none
+function setCompareDiff(idx){_compareDiffIdx=idx;render();}
 function renderCompareTab(R,P){
   const ca=document.getElementById('chartArea');
   destroyCharts();
@@ -2670,6 +2672,49 @@ function renderCompareTab(R,P){
     {label:'Effective Tax Rate',get:(r,p)=>r.R[0].effRate,fmt:v=>(v*100).toFixed(1)+'%',b:-1},
     {label:'Net Take-Home',get:(r,p)=>r.R[0].inc,fmt:fmt,b:1},
   ];
+  // ── Diff view: focused two-column deltas vs current plan for one selected scenario ──
+  let diffHtml='';
+  if(scenarios.length>0){
+    const selOptions=scenarios.map((s,i)=>`<option value="${i}" ${i===_compareDiffIdx?'selected':''}>${advEscape(s.name)}</option>`).join('');
+    diffHtml+=`<div class="glass-card" style="padding:14px 16px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:${_compareDiffIdx>=0?'10px':'0'}">
+        <div style="font-size:12px;font-weight:700;color:var(--tx)">🔀 Diff view — Current Plan vs.</div>
+        <select onchange="setCompareDiff(this.value===''?-1:parseInt(this.value))" style="font-size:11px;padding:5px 9px;border-radius:6px;border:1px solid var(--bd);background:var(--s1);color:var(--tx);font-family:inherit">
+          <option value="">Select a scenario…</option>
+          ${selOptions}
+        </select>
+      </div>`;
+    if(_compareDiffIdx>=0&&scenarios[_compareDiffIdx]){
+      const s=scenarios[_compareDiffIdx];
+      const sRes=run({...D,...migrateP(s.params)});
+      diffHtml+=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px">
+        <thead><tr>
+          <th style="text-align:left;padding:6px 8px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t3);border-bottom:1px solid var(--bd)">Metric</th>
+          <th style="text-align:right;padding:6px 10px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t3);border-bottom:1px solid var(--bd)">Current</th>
+          <th style="text-align:right;padding:6px 10px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${s.color};border-bottom:1px solid var(--bd)">${advEscape(s.name)}</th>
+          <th style="text-align:right;padding:6px 10px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t3);border-bottom:1px solid var(--bd)">Δ Change</th>
+        </tr></thead><tbody>`;
+      METRICS.forEach(m=>{
+        if(m.sep){diffHtml+=`<tr><td colspan="4" style="padding:8px 8px 3px;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);background:var(--s3)">${m.label}</td></tr>`;return;}
+        const base=m.get(planRes,P),scen=m.get(sRes,s.params);
+        const delta=scen-base;
+        const pct=base!==0?delta/Math.abs(base)*100:null;
+        const favorable=!m.b?null:(m.b===1?delta>0:delta<0);
+        const dColor=delta===0?'var(--t3)':favorable===null?'var(--t2)':favorable?'var(--g)':'var(--r)';
+        const dSign=delta>0?'+':'';
+        diffHtml+=`<tr>
+          <td style="padding:6px 8px;color:var(--t2);font-weight:500;border-bottom:1px solid var(--bd)">${m.label}</td>
+          <td style="padding:6px 10px;text-align:right;font-family:'SF Mono',monospace;color:var(--tx);border-bottom:1px solid var(--bd)">${m.fmt(base)}</td>
+          <td style="padding:6px 10px;text-align:right;font-family:'SF Mono',monospace;color:${s.color};font-weight:600;border-bottom:1px solid var(--bd)">${m.fmt(scen)}</td>
+          <td style="padding:6px 10px;text-align:right;font-family:'SF Mono',monospace;font-weight:700;color:${dColor};border-bottom:1px solid var(--bd)">${dSign}${m.fmt(delta)}${pct!==null?` <span style="font-size:9px;opacity:.75">(${dSign}${Math.abs(pct).toFixed(1)}%)</span>`:''}</td>
+        </tr>`;
+      });
+      diffHtml+=`</tbody></table></div>`;
+    } else {
+      diffHtml+=`<div style="font-size:11px;color:var(--t3);padding:6px 0">Pick a saved scenario above to see exactly what changes and by how much, metric by metric.</div>`;
+    }
+    diffHtml+=`</div>`;
+  }
   const vals=METRICS.map(m=>m.sep?null:cols.map(c=>m.get(c.res,c.params)));
   const best=METRICS.map((m,mi)=>{
     if(m.sep||!m.b)return[];
@@ -2731,7 +2776,7 @@ function renderCompareTab(R,P){
     });
     h+=`</div></div>`;
   }
-  ca.innerHTML=h;
+  ca.innerHTML=diffHtml+h;
   document.getElementById('summaries').innerHTML='';
 }
 function setTab(t){if(t==='cashflow'){t='income';_flowView='cashflow';}activeTab=t;document.querySelectorAll('.tabs button[role=tab]').forEach(b=>{const on=b.dataset.tab===t;b.classList.toggle('active',on);b.setAttribute('aria-selected',on?'true':'false');});render();if(!_reduceMotion())requestAnimationFrame(()=>{['chartArea','summaries'].forEach(id=>{const e=document.getElementById(id);if(e){e.classList.remove('tab-fade');void e.offsetWidth;e.classList.add('tab-fade')}})});savePlannerState()}
