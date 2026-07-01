@@ -11,6 +11,7 @@ export interface EveningBrief {
   today: string;
   tomorrow: string;
   habits: string;
+  reflection?: string;
   signals: {
     hrv: number | null;
     hrvBaseline: number | null;

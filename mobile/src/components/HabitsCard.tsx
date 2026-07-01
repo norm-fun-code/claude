@@ -6,6 +6,7 @@ import { API_BASE, HABITS_STREAKS_URL, HABITS_TODAY_URL, HABITS_HISTORY_URL, aut
 import { AnnotationsCard } from './AnnotationsCard';
 import { DotRow } from './viz/DotRow';
 import { EatHealthyHelper } from './EatHealthyHelper';
+import { GratitudeReflection } from './GratitudeReflection';
 
 const HABITS_URL = `${API_BASE}/api/habits`;
 
@@ -137,32 +138,46 @@ export function HabitsCard() {
         const on = checked[key];
         const hist = history[key];
         return (
-          <Pressable key={key} onPress={() => toggle(key)} style={styles.habitItem}>
-            <View style={styles.row}>
-              <View style={styles.labelRow}>
-                <Text style={[styles.label, { color: c.text }]}>{label}</Text>
-                {(streaks[key] ?? 0) > 0 && (
-                  <Text style={[styles.streak, { color: c.subtext }]}>
-                    {streaks[key]}d
-                  </Text>
-                )}
+          <React.Fragment key={key}>
+            <Pressable onPress={() => toggle(key)} style={styles.habitItem}>
+              <View style={styles.row}>
+                <View style={styles.labelRow}>
+                  <Text style={[styles.label, { color: c.text }]}>{label}</Text>
+                  {(streaks[key] ?? 0) > 0 && (
+                    <Text style={[styles.streak, { color: c.subtext }]}>
+                      {streaks[key]}d
+                    </Text>
+                  )}
+                </View>
+                <View
+                  style={[
+                    styles.box,
+                    { borderColor: c.border },
+                    on && { backgroundColor: c.accent, borderColor: c.accent },
+                  ]}
+                >
+                  {on && <Text style={styles.check}>✓</Text>}
+                </View>
               </View>
-              <View
-                style={[
-                  styles.box,
-                  { borderColor: c.border },
-                  on && { backgroundColor: c.accent, borderColor: c.accent },
-                ]}
-              >
-                {on && <Text style={styles.check}>✓</Text>}
-              </View>
-            </View>
-            {hist && hist.length >= 7 && (
-              <View style={styles.habitDots}>
-                <DotRow values={hist} size={6} gap={3} max={14} activeColor={c.accent} inactiveColor={c.border} />
-              </View>
+              {hist && hist.length >= 7 && (
+                <View style={styles.habitDots}>
+                  <DotRow values={hist} size={6} gap={3} max={14} activeColor={c.accent} inactiveColor={c.border} />
+                </View>
+              )}
+            </Pressable>
+            {/* Gratitude is the one habit with a reflective practice attached:
+                naming what you're grateful for (optional) both logs the habit and
+                feeds the evening wind-down brief. */}
+            {key === 'gratitude' && (
+              <GratitudeReflection
+                onSaved={() => {
+                  const next = { ...checked, gratitude: true };
+                  setChecked(next);
+                  save(next, eatHealthy);
+                }}
+              />
             )}
-          </Pressable>
+          </React.Fragment>
         );
       })}
 

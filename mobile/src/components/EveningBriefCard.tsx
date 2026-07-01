@@ -73,6 +73,15 @@ export function EveningBriefCard({ brief }: Props) {
           <Text style={styles.blockText}>{brief[key]}</Text>
         </View>
       ))}
+
+      {/* Presence beat — the mindfulness counterpart to the body read. Set apart
+          from the somatic blocks with its own quiet styling. */}
+      {(brief.reflection || '').trim() ? (
+        <View style={styles.reflection}>
+          <Text style={styles.reflectionLabel}>REFLECT</Text>
+          <Text style={styles.reflectionText}>{brief.reflection}</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -104,4 +113,12 @@ const styles = StyleSheet.create({
   block: { marginBottom: spacing.sm + 2 },
   blockLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.0, color: 'rgba(255,255,255,0.55)', marginBottom: 4 },
   blockText: { ...typography.body, color: '#fff', fontSize: 14, lineHeight: 22 },
+  reflection: {
+    marginTop: spacing.xs,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.10)',
+  },
+  reflectionLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.0, color: 'rgba(255,255,255,0.45)', marginBottom: 4 },
+  reflectionText: { ...typography.body, color: 'rgba(255,255,255,0.9)', fontSize: 14, lineHeight: 22, fontStyle: 'italic' },
 });

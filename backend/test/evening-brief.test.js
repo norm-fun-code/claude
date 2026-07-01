@@ -50,3 +50,11 @@ test('signals are passed through for the card chips', () => {
   assert.equal(c.signals.rhr, 58);
   assert.equal(c.signals.steps, 12000);
 });
+
+test('reflection: recent gratitude → echo, none → invite', () => {
+  const withG = composeFallback({ ...sig({ tone: 'settled' }), gratitude: [{ log_date: '2026-07-01', text: 'a quiet morning' }] });
+  assert.match(withG.reflection, /grateful for/i);
+  const none = composeFallback(sig({ tone: 'settled' }));
+  assert.match(none.reflection, /grateful/i);
+  assert.notEqual(withG.reflection, none.reflection);
+});

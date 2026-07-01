@@ -26,7 +26,7 @@ const TONE_HEADLINE = {
 
 // ── deterministic fallback (also the LLM's scaffold) ─────────────────────────
 
-function composeFallback({ autonomic, load, openHabits }) {
+function composeFallback({ autonomic, load, openHabits, gratitude = [] }) {
   const { hrv, hrvBaseline, rhr, rhrBaseline, tone, sampleThin } = autonomic;
 
   let readiness;
@@ -79,6 +79,14 @@ function composeFallback({ autonomic, load, openHabits }) {
     ? `Still open: ${openHabits.join(', ')} — quick wins before bed.`
     : '';
 
+  // Presence beat — the mindfulness counterpart to the body read. The LLM pass
+  // writes the nuanced version; this deterministic path keeps it graceful if the
+  // model is down: a soft echo when there's a recent gratitude note, a gentle
+  // invite otherwise.
+  const reflection = gratitude.length
+    ? 'Carry what you were grateful for today into tomorrow — that thread matters as much as the numbers.'
+    : 'Before sleep, name one thing you’re grateful for — a small close that steadies the day.';
+
   return {
     tone: tone || 'unknown',
     headline: TONE_HEADLINE[tone] || TONE_HEADLINE.unknown,
@@ -86,6 +94,7 @@ function composeFallback({ autonomic, load, openHabits }) {
     today,
     tomorrow,
     habits,
+    reflection,
     signals: {
       hrv, hrvBaseline, rhr, rhrBaseline,
       steps: load.steps, stepsBaseline: load.stepsBaseline, activeEnergy: load.activeEnergy,
@@ -105,7 +114,7 @@ const SYSTEM =
   'Return ONLY valid JSON.';
 
 function buildPrompt(signals) {
-  const { autonomic: a, load: l, openHabits } = signals;
+  const { autonomic: a, load: l, openHabits, gratitude = [] } = signals;
   const lines = [
     `Autonomic tone: ${a.tone}${a.sampleThin ? ' (thin data — soft-pedal)' : ''}`,
     a.hrv != null ? `Daytime HRV today: ${ms(a.hrv)}${a.hrvBaseline != null ? ` (your norm ${ms(a.hrvBaseline)})` : ''}` : 'Daytime HRV today: (none)',
@@ -113,6 +122,9 @@ function buildPrompt(signals) {
     l.steps != null ? `Steps today: ${commas(l.steps)}${l.stepsBaseline != null ? ` (norm ${commas(l.stepsBaseline)})` : ''}` : 'Steps today: (none)',
     l.activeEnergy != null ? `Active energy today: ${commas(l.activeEnergy)} kcal` : null,
     openHabits.length ? `Evening habits still open: ${openHabits.join(', ')}` : 'Evening habits: all logged',
+    gratitude.length
+      ? `Recent gratitude notes (most recent first — reflect the THEME back in your own words, do not quote verbatim or list): ${gratitude.map((g) => `"${String(g.text).slice(0, 200)}"`).join(' | ')}`
+      : 'Recent gratitude notes: (none logged)',
   ].filter(Boolean);
 
   return `Tonight's signals:
@@ -124,7 +136,8 @@ Write the evening wind-down brief as JSON with EXACTLY these string fields:
   "readiness": "1-2 sentences on autonomic tone from the HRV/RHR vs the user's norm, and what it means for tonight. If data is thin, say so and defer to how they feel.",
   "today": "ONE sentence closing the loop on today's movement (steps/energy). Empty string if no data.",
   "tomorrow": "ONE sentence: the bedtime/wind-down lever that sets up tomorrow. Do not cite a recovery score.",
-  "habits": "ONE short nudge listing the still-open evening habits, or empty string if none."
+  "habits": "ONE short nudge listing the still-open evening habits, or empty string if none.",
+  "reflection": "ONE sentence — the presence beat that closes the day, the mindfulness counterpart to the body read above. If recent gratitude notes are present, gently echo their theme in your own words (never quote verbatim, never list them like a report) so the reflection lands as something a person who was listening would say. If none are present, warmly invite one line of gratitude before bed. Keep it human and unforced; empty string only if anything here would feel hollow."
 }`;
 }
 
@@ -132,7 +145,7 @@ function validate(parsed) {
   if (!parsed || typeof parsed !== 'object') return null;
   const s = (k) => (typeof parsed[k] === 'string' ? parsed[k].trim() : '');
   if (!s('headline') || !s('readiness')) return null; // the two load-bearing fields
-  return { headline: s('headline'), readiness: s('readiness'), today: s('today'), tomorrow: s('tomorrow'), habits: s('habits') };
+  return { headline: s('headline'), readiness: s('readiness'), today: s('today'), tomorrow: s('tomorrow'), habits: s('habits'), reflection: s('reflection') };
 }
 
 function extractJson(text) {
@@ -174,6 +187,14 @@ async function runEveningHealthBrief(opts = {}) {
   const day = new Date().toLocaleDateString('en-CA', { timeZone: tz });
 
   const signals = await gatherEvening({ tz });
+  // Recent gratitude reflections feed the evening presence beat — what you wrote
+  // in the habit stack gets reflected back instead of being write-only.
+  try {
+    signals.gratitude = await require('../store/gratitudeLogs').recent(5);
+  } catch (err) {
+    console.error('[evening-brief] gratitude fetch failed:', err.message);
+    signals.gratitude = [];
+  }
   const content = await composeEveningBrief(signals);
   content.day = day;
   content.builtAt = new Date().toISOString();

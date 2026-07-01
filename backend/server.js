@@ -601,6 +601,43 @@ Return ONLY valid JSON — no markdown, no explanation:
   }
 });
 
+// Gratitude reflection — turns the binary gratitude checkbox into an actual
+// practice: log one line of what you're grateful for. Saving a reflection also
+// marks the gratitude habit done (writing it IS doing it). The text is reflected
+// back in the evening wind-down brief so it isn't write-only.
+const gratitudeLogsStore = require('./src/store/gratitudeLogs');
+
+app.get('/api/habits/gratitude/today', async (req, res) => {
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const row = await gratitudeLogsStore.getByDate(mealLogDateStr(tz));
+    res.json({ text: row?.text ?? '' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/habits/gratitude', async (req, res) => {
+  try {
+    const text = String(req.body?.text || '').trim();
+    if (!text) return res.status(400).json({ error: 'text is required' });
+    const tz = process.env.TZ || 'America/New_York';
+    await gratitudeLogsStore.upsert({ logDate: mealLogDateStr(tz), text: text.slice(0, 1000) });
+
+    // Writing a reflection counts as doing gratitude — mark the binary habit so
+    // the two never drift out of sync (a saved reflection with an unchecked box).
+    await sourcesStore.registerSource({ id: HABITS_SOURCE, domain: 'habits', displayName: 'Habit Stack' });
+    const { metrics } = mapHabits({ gratitude: true }, { ts: req.query.ts, tz });
+    await metricsStore.insertMetrics(metrics);
+    await recomputeHabitScore(tz);
+    await sourcesStore.markSync(HABITS_SOURCE);
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Habit streaks — consecutive days (ending today or yesterday) where each habit
 // was logged with value >= 0.5. Covers the last 90 days.
 app.get('/api/habits/streaks', async (req, res) => {
