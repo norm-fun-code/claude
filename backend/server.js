@@ -3244,8 +3244,39 @@ app.get('/api/briefing', async (req, res) => {
       `- ${o.day}: "${o.synthesis || ''}" | action: "${o.action || ''}"`
     );
 
+    // Closed-loop accountability: a real chief of staff follows up on what they
+    // told you to do, not just picks a fresh action every morning. Reuses the
+    // recommendation ledger's own outcome tracking (thumbs, or auto-measured once
+    // ~a week of data exists) so the brief can say "yesterday I said X — here's
+    // what happened" instead of only ever suggesting something new.
+    let lastActionLine = null;
+    try {
+      const todayLocalDateStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+      const startOfTodayUtc = new Date(naiveToUtcIso(`${todayLocalDateStr}T00:00:00`, tz));
+      const lastAction = await recommendationsStore.mostRecentLeverageAction(startOfTodayUtc);
+      if (lastAction) {
+        const daysAgo = Math.floor((Date.now() - new Date(lastAction.created_at).getTime()) / 864e5);
+        if (daysAgo <= 7) {
+          const thumbed = lastAction.outcome_measured_at != null && Math.abs(Number(lastAction.outcome_delta)) === 1;
+          const dir = lastAction.expected_direction;
+          const delta = lastAction.outcome_delta != null ? Number(lastAction.outcome_delta) : null;
+          const hit = delta != null && (dir === 'down' ? delta < 0 : delta > 0);
+          const status = thumbed
+            ? (hit ? 'they gave it 👍 — marked it helped' : 'they gave it 👎 — marked it did not help')
+            : lastAction.outcome_measured_at != null
+              ? (delta == null ? 'no data to judge it yet' : hit ? "their data shows it worked" : 'their data shows no effect')
+              : 'no feedback yet — neither thumbed nor enough data to auto-judge';
+          const whenStr = daysAgo === 0 ? 'earlier today' : daysAgo === 1 ? '1 day ago' : `${daysAgo} days ago`;
+          lastActionLine = `LAST ACTION SUGGESTED (${whenStr}): "${lastAction.title}" — ${status}.`;
+        }
+      }
+    } catch (err) {
+      console.error('[last action] failed:', err.message);
+    }
+
     const parts = [];
     if (streaks.length) parts.push(`PERSISTENT ISSUES (from the novelty ledger):\n${streaks.join('\n')}`);
+    if (lastActionLine) parts.push(lastActionLine);
     if (openerLines.length) parts.push(`YOUR LAST ${openerLines.length} MORNING BRIEFS (do not reuse this phrasing or structure — if the same topic is genuinely still the lead, change the angle, escalate, or ask a pointed question instead of restating the setup):\n${openerLines.join('\n')}`);
     streakContext = parts.join('\n\n');
   } catch (err) {
@@ -3319,13 +3350,37 @@ app.get('/api/briefing', async (req, res) => {
       .topProgressionNote({ days: 45, minSessions: 3 })) || '';
   } catch { /* non-critical */ }
 
+  // Forward-looking cashflow: unlike the spending-anomaly check above (which
+  // reports on what already happened), this looks at Monarch's recurring-bill
+  // forecast for what's ABOUT to hit, so the brief can warn before the balance
+  // drops rather than after. Best-effort and bounded — Monarch's MCP round-trip
+  // must never hold up the rest of the briefing.
+  let cashflowContext = '';
+  try {
+    const monarchWealth = require('./src/services/monarch-wealth');
+    if (monarchWealth.isConfigured()) {
+      const [recurring, accountsData] = await Promise.all([
+        withTimeout(monarchWealth.getRecurring(), EXT, 'monarchRecurring').catch(() => null),
+        withTimeout(monarchWealth.getAccounts(), EXT, 'monarchAccounts').catch(() => null),
+      ]);
+      if (recurring) {
+        const { computeCashflowLookahead } = require('./src/intelligence/cashflow-lookahead');
+        const streams = [...(recurring.expenses || []), ...(recurring.creditCards || [])];
+        const { detail } = computeCashflowLookahead({ streams, accounts: accountsData?.accounts || [] });
+        if (detail) cashflowContext = detail;
+      }
+    }
+  } catch (err) {
+    console.error('[cashflow lookahead] failed:', err.message);
+  }
+
   // Call the LLM with whatever data we have
   let geminiResult = null;
   try {
     // The LLM call can be slow; bound it so a stalled model doesn't hang the
     // briefing (it degrades to the data-only sections).
     geminiResult = await withTimeout(
-      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, streakContext),
+      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, streakContext, cashflowContext),
       Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000),
       'gemini'
     );

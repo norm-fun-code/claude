@@ -52,6 +52,22 @@ async function listRecommendations({ limit = 50, since = null, outcomeMetric = n
 }
 
 /**
+ * The last leverage action surfaced in a PRIOR day's briefing (before `beforeDate`,
+ * normally today's local midnight) — so the chief-of-staff brief can follow up on
+ * it ("yesterday I said X — did it happen?") instead of only ever suggesting new
+ * actions and never checking back in.
+ */
+async function mostRecentLeverageAction(beforeDate) {
+  const { rows } = await query(
+    `SELECT * FROM recommendations
+      WHERE type = 'leverage' AND surfaced_in = 'briefing' AND created_at < $1
+      ORDER BY created_at DESC LIMIT 1`,
+    [beforeDate]
+  );
+  return rows[0] ?? null;
+}
+
+/**
  * Store the measured outcome for a recommendation.
  * delta: actual change in outcome_metric over the 7 days following the recommendation.
  */
@@ -185,4 +201,4 @@ async function clearPrematureAutoOutcomes() {
   return rowCount;
 }
 
-module.exports = { recordRecommendation, listRecommendations, setOutcome, recentTitles, recentTitlesAll, measureOutcomes, normalizeRecTitle, dedupePending, clearPrematureAutoOutcomes };
+module.exports = { recordRecommendation, listRecommendations, setOutcome, recentTitles, recentTitlesAll, measureOutcomes, normalizeRecTitle, dedupePending, clearPrematureAutoOutcomes, mostRecentLeverageAction };
