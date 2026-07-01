@@ -1119,8 +1119,14 @@ async function confirmRollForward(overlay,curYear,nextYear){
   await saveSnapshot(true,`${curYear} plan · rolled forward ${new Date().toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`);
   P.normCashY0=P.normCashY1;P.normCashY1=P.normCashY2;P.normCashY2=P.normCashY3;P.normCashY3=P.normCashBase;
   P.normStockY0=P.normStockY1;P.normStockY1=P.normStockY2;P.normStockY2=P.normStockY3;P.normStockY3=P.normStockBase;
-  // Nancy W2 years shift forward; Y3 carries forward its steady-state value (no separate Nancy base defined)
-  P.nancyW2Y0=P.nancyW2Y1;P.nancyW2Y1=P.nancyW2Y2;P.nancyW2Y2=P.nancyW2Y3;
+  // Nancy W2 years shift forward. Y3 has no separate steady-state base field (unlike Norm's
+  // cash/stock), so backfill it using the same ramp-client formula model.js itself uses —
+  // otherwise Y3 was left holding a stale duplicate of the pre-roll year's value, which only
+  // surfaces once nancyRampYear is pushed late enough for Y3 to still be "in range" (model.js
+  // only reads nancyW2Y3 when yr<nancyRampYear) after more than one roll-forward.
+  const _y3Yr=nextYear+3,_yrsIn=_y3Yr-P.nancyRampYear;
+  const _y3Cl=_yrsIn<0?0:_yrsIn>=P.nancyRampYears?P.nancyMaxClients:P.nancyRampClients+(P.nancyMaxClients-P.nancyRampClients)*(_yrsIn/P.nancyRampYears);
+  P.nancyW2Y0=P.nancyW2Y1;P.nancyW2Y1=P.nancyW2Y2;P.nancyW2Y2=P.nancyW2Y3;P.nancyW2Y3=Math.round(_y3Cl*P.nancyHourlyRate*P.nancyWeeksPerYear);
   P.planStartYear=nextYear;
   const v=parseFloat(String(liqStr).replace(/[,$\s]/g,''));
   if(!isNaN(v)&&v>0)P.startingLiquid=v;
@@ -1192,6 +1198,11 @@ async function deleteScenario(i){
   if(!scenarios.length)compareMode=false;
   if(activeScenarioIdx===i)activeScenarioIdx=-1;
   else if(activeScenarioIdx>i)activeScenarioIdx--;
+  // Compare tab's diff-view selector holds a scenario index too — without this it goes
+  // stale after a delete (either points past the end, silently hiding the diff table, or
+  // — worse — points at a scenario that shifted down and now shows the wrong one's data).
+  if(_compareDiffIdx===i)_compareDiffIdx=-1;
+  else if(_compareDiffIdx>i)_compareDiffIdx--;
   buildControls();render();savePlannerState();
   if(s.id){
     try{
@@ -1405,8 +1416,23 @@ function render(){
       }
     }
     if(compareMode)scenarios.forEach(s=>{const sLiq=Math.round((s.params.startingLiquid||P.startingLiquid)/1000);ds.push({label:s.name+' Liquid',data:[sLiq,...s.results.R.map(r=>deflK(r.liq,r.yr))],borderColor:s.color,fill:false,tension:.3,pointRadius:3,pointBackgroundColor:s.color,borderWidth:3.5})});
-    // Snapshot overlay — compare a saved projection against the current plan
-    if(overlaySnapId){const sn=snapshots.find(x=>x.id===overlaySnapId);if(sn&&sn.params){const sr=run({...D,...migrateP(sn.params)});const so=String((sn.params.planStartYear||sy0)-1);ds.push({label:'📸 '+sn.label+' (NW)',data:[Math.round((sn.params.startingLiquid||P.startingLiquid)/1000),...sr.R.map(r=>deflK(r.nw,r.yr))],borderColor:'#bf6900',fill:false,tension:.3,pointRadius:0,borderWidth:2,borderDash:[6,3]})}}
+    // Snapshot overlay — compare a saved projection against the current plan.
+    // Map by calendar year (not array position): the snapshot's own planStartYear can
+    // differ from the live plan's (e.g. after any roll-forward since it was saved), and
+    // Chart.js plots array data positionally against the shared `nwLabels` — plotting
+    // sr.R by index silently shifted the whole snapshot line by N years whenever the two
+    // start years didn't match.
+    if(overlaySnapId){
+      const sn=snapshots.find(x=>x.id===overlaySnapId);
+      if(sn&&sn.params){
+        const sr=run({...D,...migrateP(sn.params)});
+        const snSy=sn.params.planStartYear||sy0;
+        const byYr={};sr.R.forEach(r=>{byYr[r.yr]=deflK(r.nw,r.yr)});
+        byYr[snSy-1]=Math.round((sn.params.startingLiquid||P.startingLiquid)/1000);
+        const snData=nwLabels.map(lbl=>{const v=byYr[parseInt(lbl,10)];return v===undefined?null:v});
+        ds.push({label:'📸 '+sn.label+' (NW)',data:snData,borderColor:'#bf6900',fill:false,tension:.3,pointRadius:0,borderWidth:2,borderDash:[6,3],spanGaps:false});
+      }
+    }
     const _mNwDot=_mDotDs(_mImpliedLiqK,'📍 Actual NW (Monarch)');if(_mNwDot)ds.push(_mNwDot);
     if(!reuseChart||!_updateChart(ds,nwLabels)){if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';const ctx2=document.getElementById('cv').getContext('2d');charts.main=new Chart(ctx2,{type:'line',data:{labels:nwLabels,datasets:ds},options:po})}
   } else if(activeTab==='income'){
