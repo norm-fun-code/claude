@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, useColorScheme } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, useColorScheme, Animated } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, shadow } from '../theme';
 import { WORKOUT_PROGRESSION_URL, authHeaders, fetchWithTimeout } from '../config';
 import { Trend } from './viz/Trend';
@@ -40,6 +41,31 @@ export function WorkoutProgressionCard({ exercises, version }: { exercises: stri
 
   if (!rows.length) return null;
   const hasWeighted = rows.some((p) => p.metric !== 'reps');
+  const prLifts = rows.filter((p) => p.newPR).map((p) => p.exercise);
+
+  return (
+    <CardBody
+      c={c} isDark={isDark} rows={rows} prLifts={prLifts} hasWeighted={hasWeighted}
+      metricMode={metricMode} setMetricMode={setMetricMode} selected={selected} setSelected={setSelected}
+    />
+  );
+}
+
+// Split out so the celebratory animation can fire off `prLifts` cleanly on mount/change.
+function CardBody({ c, isDark, rows, prLifts, hasWeighted, metricMode, setMetricMode, selected, setSelected }: {
+  c: ReturnType<typeof getColors>; isDark: boolean; rows: Prog[]; prLifts: string[]; hasWeighted: boolean;
+  metricMode: 'e1rm' | 'volume'; setMetricMode: (m: 'e1rm' | 'volume') => void;
+  selected: Prog | null; setSelected: (p: Prog | null) => void;
+}) {
+  const pop = useRef(new Animated.Value(0)).current;
+  const prKey = prLifts.join('|');
+  useEffect(() => {
+    if (!prKey) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    pop.setValue(0);
+    Animated.spring(pop, { toValue: 1, useNativeDriver: true, friction: 5, tension: 80 }).start();
+  }, [prKey]);
+  const scale = pop.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1] });
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
@@ -62,6 +88,12 @@ export function WorkoutProgressionCard({ exercises, version }: { exercises: stri
           </View>
         )}
       </View>
+
+      {prLifts.length > 0 && (
+        <Animated.View style={[styles.prBanner, { backgroundColor: c.green + '18', borderColor: c.green, transform: [{ scale }] }]}>
+          <Text style={[styles.prBannerTxt, { color: c.green }]}>🏆 New PR — {prLifts.join(', ')}</Text>
+        </Animated.View>
+      )}
 
       {rows.map((p) => {
         const eff = p.metric === 'reps' ? 'reps' : metricMode;
@@ -106,6 +138,8 @@ const styles = StyleSheet.create({
   toggle: { flexDirection: 'row', gap: 4 },
   toggleBtn: { borderWidth: 1, borderRadius: radius.pill, paddingHorizontal: 10, paddingVertical: 3 },
   toggleTxt: { fontSize: 11, fontWeight: '700' },
+  prBanner: { borderWidth: 1, borderRadius: radius.md, paddingVertical: spacing.xs + 2, paddingHorizontal: spacing.sm, marginTop: spacing.xs, alignItems: 'center' },
+  prBannerTxt: { fontSize: 13, fontWeight: '700' },
   row: { borderTopWidth: 1, paddingTop: spacing.sm, marginTop: spacing.sm },
   rowHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   exName: { fontSize: 14, fontWeight: '600', flex: 1, marginRight: spacing.sm },
