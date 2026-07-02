@@ -39,7 +39,16 @@ Aim for depth and usefulness over brevity, but never pad with filler.
 
 When your answer contains a specific behavior change the user should make in their own life — a habit to start or stop, a routine to adjust, something to prioritize — append exactly one tag at the very end:
 <rec>One-line summary of the behavior change</rec>
-ONLY use this for changes the USER makes to their habits or lifestyle. NEVER use it for data queries, analysis steps, things to investigate, or anything the AI should do. Omit it entirely for idea/concept questions, financial data lookups, or any answer that doesn't include a concrete personal behavior change.`;
+ONLY use this for changes the USER makes to their habits or lifestyle. NEVER use it for data queries, analysis steps, things to investigate, or anything the AI should do. Omit it entirely for idea/concept questions, financial data lookups, or any answer that doesn't include a concrete personal behavior change.
+
+TAKING ACTION — you are a chief of staff who DOES things, not just advises. When the user TELLS you they did something or want to change something in the app right now (a statement of fact or intent, not a question), actually do it: acknowledge it plainly at the START of your answer ("Done — I've swapped today's Push session to an easy Zone 2 walk.") and append exactly one action tag at the very end. Distinguish carefully: "should I walk instead?" is a QUESTION → advise only, no action. "I'm walking instead" / "I switched to a walk" / "log my cold shower" / "I did gratitude" is a STATEMENT → take the action.
+<action>{"type":"swap_workout","workoutId":"zone2"}</action>
+Valid actions (emit AT MOST ONE, compact JSON, only for these concrete app changes — never for advice, analysis, or anything else):
+- {"type":"swap_workout","workoutId":"push|pull|zone2|mobility|intervals|rest"} — a walk / easy cardio / Zone 2 → "zone2"; a rest or off day → "rest". Use TODAY'S PLANNED WORKOUT (below) to acknowledge the swap accurately.
+- {"type":"log_habit","habit":"morningTM|afternoonTM|gratitude|coldShower|exercise"} — when they say they DID it.
+- {"type":"add_context","text":"<short note for tomorrow's brief, e.g. traveling today>"}
+- {"type":"add_chapter","kind":"pregnancy|countdown|note","label":"<short>","keyDate":"YYYY-MM-DD or null","keyDateLabel":"due|deadline|null"} — a standing life fact to remember long-term.
+Still give your normal useful answer around the acknowledgment (e.g. how the substitute stacks up against their goal) — the action tag is IN ADDITION to a real answer, not a replacement for one.`;
 
 // Cheap intent check: does the question seem to be about the user's own life /
 // data / planning (vs. a pure idea/concept lookup)? Personal questions get the
@@ -390,6 +399,13 @@ async function ask(question, { history = [], k = 14 } = {}) {
   const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments, pastConversations, wealthInsights });
   let system = selfModelText ? `${baseSystem}\n\n${selfModelText}` : baseSystem;
   if (chaptersText) system += `\n\nLIFE CHAPTERS (standing long-arc facts, auto-updated — never ask the user to re-confirm these):\n${chaptersText}`;
+  // Today's planned session — so a swap_workout action can be acknowledged
+  // accurately ("swapped your Push session to…") and the answer can judge the
+  // substitute against the plan.
+  try {
+    const w = require('../services/workout').getTodayWorkout();
+    if (w?.type) system += `\n\nTODAY'S PLANNED WORKOUT: ${w.type}${w.duration ? ` (${w.duration})` : ''}.`;
+  } catch { /* non-critical */ }
 
   // Financial questions: when Monarch MCP is configured, give Claude LIVE access
   // to the user's Monarch account so it can pull exact current transactions,
@@ -437,8 +453,17 @@ async function ask(question, { history = [], k = 14 } = {}) {
     }
   }
 
+  // Extract an app ACTION the model chose to take (<action>{...}</action>) —
+  // the same inline-tag pattern as <rec>, so natural language ("I switched to a
+  // walk", "log my cold shower") changes real app state in the SAME turn that
+  // answers, on both the text and voice paths. The caller executes it (it holds
+  // the DB helpers); ask() only detects, validates, and strips the tag.
+  const action = parseAction(answer);
+  if (action) answer = answer.replace(/<action>[\s\S]*?<\/action>/i, '').trim();
+
   return {
     answer,
+    action, // validated { action, ... } for the caller to execute, or null
     questionEmbedding, // for the caller to persist on the user turn (long-term recall)
     sources: docs.map((d) => ({
       title: d.title,
@@ -449,4 +474,32 @@ async function ask(question, { history = [], k = 14 } = {}) {
   };
 }
 
-module.exports = { ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot };
+const ACTION_WORKOUTS = new Set(['push', 'pull', 'zone2', 'mobility', 'intervals', 'rest']);
+const ACTION_HABITS = new Set(['morningTM', 'afternoonTM', 'gratitude', 'coldShower', 'exercise']);
+
+/** Parse + validate the model's <action> tag into the executor's shape, or null.
+ *  Strict allowlist: an unknown type or a bad enum value yields null (no side
+ *  effect), so a hallucinated tag can never touch app state. */
+function parseAction(text) {
+  const m = String(text || '').match(/<action>([\s\S]*?)<\/action>/i);
+  if (!m) return null;
+  let p;
+  try { p = JSON.parse(m[1].trim()); } catch { return null; }
+  if (!p || typeof p !== 'object') return null;
+  const type = String(p.type || '').trim();
+  if (type === 'swap_workout' && ACTION_WORKOUTS.has(p.workoutId)) return { action: 'swap_workout', workoutId: p.workoutId };
+  if (type === 'log_habit' && ACTION_HABITS.has(p.habit)) return { action: 'log_habit', habit: p.habit };
+  if (type === 'add_context' && p.text && String(p.text).trim()) return { action: 'add_context', text: String(p.text).slice(0, 200) };
+  if (type === 'add_chapter' && p.label && String(p.label).trim()) {
+    return {
+      action: 'add_chapter',
+      kind: ['pregnancy', 'countdown', 'note'].includes(p.kind) ? p.kind : 'note',
+      label: String(p.label).slice(0, 120),
+      keyDate: p.keyDate || null,
+      keyDateLabel: p.keyDateLabel || null,
+    };
+  }
+  return null;
+}
+
+module.exports = { ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot, parseAction };

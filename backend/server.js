@@ -1888,22 +1888,15 @@ app.post('/api/chat', async (req, res) => {
       }
     }
 
-    // Typed commands: a message that opens with "remember/note/log/swap" gets
-    // the same action router as voice ("Remember: Nancy is due January 6th" →
-    // life chapter). Gated on the prefix so normal questions never pay the
-    // extra routing call.
-    let askInput = question;
-    if (/^\s*(remember|note|log|swap)\b/i.test(String(question || ''))) {
-      const routed = await routeVoiceAction(question);
-      if (routed.action !== 'none') {
-        const action = await executeVoiceAction(routed);
-        if (action?.done) {
-          askInput = `${question}\n\n[System: the assistant just executed this on the user's behalf: "${action.description}". Acknowledge it naturally in one clause, then answer anything else in the message.]`;
-        }
-      }
-    }
+    const result = await ask(question, { history: priorHistory });
 
-    const result = await ask(askInput, { history: priorHistory });
+    // The chief of staff DOES things: if the answer emitted an inline action
+    // (natural language — "I switched to a walk", "log my cold shower"), execute
+    // it now. The prose already acknowledged it; this makes it real.
+    let executed = null;
+    if (result.action) {
+      executed = await executeAction(result.action);
+    }
 
     // Append this turn so the next question remembers it. Pre-resolve the active
     // thread once (the two saves run concurrently, so this avoids both racing to
@@ -1914,9 +1907,10 @@ app.post('/api/chat', async (req, res) => {
     chatStore.saveMessage({ role: 'assistant', content: result.answer, sources: result.sources ?? [], conversationId: convId })
       .catch((e) => console.error('[chat memory] save assistant failed:', e.message));
 
-    // Don't leak the raw embedding vector to the client.
-    const { questionEmbedding, ...clientResult } = result;
-    res.json(clientResult);
+    // Don't leak the raw embedding vector or the internal parsed action to the
+    // client; surface a simple executed-action summary instead.
+    const { questionEmbedding, action: _parsed, ...clientResult } = result;
+    res.json({ ...clientResult, action: executed });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1957,10 +1951,18 @@ app.get('/api/briefing/audio', async (req, res) => {
     const tz = process.env.TZ || 'America/New_York';
     const day = new Date().toLocaleDateString('en-CA', { timeZone: tz });
     const rows = await briefingsStore.listBriefings({ kind: 'daily', limit: 10 });
-    const todays = rows.find((r) => new Date(r.generated_at).toLocaleDateString('en-CA', { timeZone: tz }) === day);
-    if (!todays?.content) return res.status(404).json({ error: 'no brief yet today' });
-    const out = await briefAudioFor(todays.content, day);
-    if (!out) return res.status(404).json({ error: 'brief has nothing to narrate' });
+    // Prefer today's build; fall back to the most recent brief so "Listen"
+    // still works if the tz-day match is off or the day just rolled over.
+    const target = rows.find((r) => new Date(r.generated_at).toLocaleDateString('en-CA', { timeZone: tz }) === day) || rows[0];
+    if (!target?.content) return res.status(404).json({ error: 'no_brief', message: 'No briefing to narrate yet.' });
+    let out;
+    try {
+      out = await briefAudioFor(target.content, day);
+    } catch (ttsErr) {
+      console.error('[briefing audio] TTS failed:', ttsErr.message);
+      return res.status(502).json({ error: 'tts_failed', message: 'Narration is temporarily unavailable.' });
+    }
+    if (!out) return res.status(404).json({ error: 'nothing_to_narrate', message: 'This brief has nothing to read aloud.' });
     res.set('Content-Type', out.mime);
     res.set('Cache-Control', 'private, max-age=300');
     res.send(out.audio);
@@ -1969,34 +1971,11 @@ app.get('/api/briefing/audio', async (req, res) => {
   }
 });
 
-// Voice command router: detects an explicit "do something" in the transcript
-// and executes it against existing app state. Advice-seeking is NOT an action.
-async function routeVoiceAction(transcript) {
-  const tz = process.env.TZ || 'America/New_York';
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
-  const prompt = `The user said (voice, verbatim): "${transcript.slice(0, 600)}"
-Today is ${today}.
-
-If — and ONLY if — the message contains an explicit request to CHANGE or RECORD something, return the matching action JSON. Asking for advice, opinions, or information is NOT an action ("should I walk instead?" → none; "swap today to a walk" → swap_workout).
-
-Actions:
-- {"action":"swap_workout","workoutId":"push"|"pull"|"zone2"|"mobility"|"intervals"|"rest"}  (a walk/easy cardio maps to "zone2")
-- {"action":"log_habit","habit":"morningTM"|"afternoonTM"|"gratitude"|"coldShower"|"exercise"}  (they say they DID it)
-- {"action":"add_chapter","kind":"pregnancy"|"countdown"|"note","label":"<short>","keyDate":"YYYY-MM-DD" or null,"keyDateLabel":"due"|"deadline"|"on" or null}  (a standing life fact to remember long-term)
-- {"action":"add_context","text":"<short note>"}  (context for the next brief, e.g. "traveling today")
-- {"action":"none"}
-
-Return ONLY the JSON object.`;
-  try {
-    const raw = await llm.generateText({ system: 'You route voice commands. Return only valid JSON.', prompt, temperature: 0, maxTokens: 200 });
-    const m = raw.match(/\{[\s\S]*\}/);
-    return m ? JSON.parse(m[0]) : { action: 'none' };
-  } catch {
-    return { action: 'none' };
-  }
-}
-
-async function executeVoiceAction(routed) {
+// Execute a validated app action the Ask brain chose to take (parsed + strictly
+// validated in src/chat/ask.js's parseAction, so `routed` is already a known,
+// enum-checked shape). Shared by the typed /api/chat and voice /api/voice/ask
+// paths. Returns { done, description } or null.
+async function executeAction(routed) {
   const tz = process.env.TZ || 'America/New_York';
   const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
   try {
@@ -2056,18 +2035,12 @@ app.post('/api/voice/ask', async (req, res) => {
     const question = await voiceService.transcribe(String(audio), mime || 'audio/wav');
     if (!question) return res.status(422).json({ error: 'no_speech', message: "Couldn't hear anything in that." });
 
-    // Action routing runs in parallel with loading chat history.
     const chatStore = require('./src/store/chat');
-    const [routed, historyRows] = await Promise.all([
-      routeVoiceAction(question),
-      chatStore.recentMessages({ limit: 20 }).catch(() => []),
-    ]);
-    const action = routed.action !== 'none' ? await executeVoiceAction(routed) : null;
-
-    const askInput = action?.done
-      ? `${question}\n\n[System: the assistant just executed this on the user's behalf: "${action.description}". Acknowledge it naturally in one clause, then answer the rest of the message.]`
-      : question;
-    const result = await ask(askInput, { history: historyRows.map((m) => ({ role: m.role, content: m.content })) });
+    const historyRows = await chatStore.recentMessages({ limit: 20 }).catch(() => []);
+    // One brain call: ask() both answers AND decides any action inline (no
+    // separate routing round-trip — that was the main latency cost).
+    const result = await ask(question, { history: historyRows.map((m) => ({ role: m.role, content: m.content })) });
+    const executed = result.action ? await executeAction(result.action) : null;
 
     // Persist to the shared thread (same as the typed /api/chat path).
     const convId = await chatStore.ensureActiveConversation();
@@ -2089,7 +2062,7 @@ app.post('/api/voice/ask', async (req, res) => {
     res.json({
       question,
       answer: result.answer,
-      action: action ? { ...routed, ...action } : null,
+      action: executed,
       audio: audioOut?.data ?? null,
       audioMime: audioOut?.mime ?? null,
     });

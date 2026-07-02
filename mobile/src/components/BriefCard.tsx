@@ -127,7 +127,7 @@ export function BriefCard({ brief, fallback }: Props) {
   const [noteFailed, setNoteFailed] = useState(false);
   const [noteSaving, setNoteSaving] = useState(false);
   // Spoken narration — streamed from the server's pre-warmed neural TTS.
-  const [audioState, setAudioState] = useState<'idle' | 'loading' | 'playing'>('idle');
+  const [audioState, setAudioState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
   useEffect(() => () => { stopPlayback(); }, []);
 
   async function toggleListen() {
@@ -140,9 +140,18 @@ export function BriefCard({ brief, fallback }: Props) {
     setAudioState('loading');
     try {
       const ok = await playRemote(BRIEFING_AUDIO_URL, authHeaders(), () => setAudioState('idle'));
-      setAudioState(ok ? 'playing' : 'idle');
+      if (ok) {
+        setAudioState('playing');
+      } else {
+        // playRemote returns false only when the native audio module is absent
+        // (older binary) — the button shouldn't even be shown then, but be safe.
+        setAudioState('idle');
+      }
     } catch {
-      setAudioState('idle');
+      // Endpoint returned an error (no brief / TTS unavailable) or playback
+      // failed — surface it briefly instead of silently doing nothing.
+      setAudioState('error');
+      setTimeout(() => setAudioState((s) => (s === 'error' ? 'idle' : s)), 3000);
     }
   }
 
@@ -188,7 +197,9 @@ export function BriefCard({ brief, fallback }: Props) {
             {audioState === 'loading' ? (
               <ActivityIndicator size="small" color="#A89CFF" />
             ) : (
-              <Text style={styles.listenText}>{audioState === 'playing' ? '◼ Stop' : '▶ Listen'}</Text>
+              <Text style={styles.listenText}>
+                {audioState === 'playing' ? '◼ Stop' : audioState === 'error' ? 'Unavailable' : '▶ Listen'}
+              </Text>
             )}
           </Pressable>
         )}
