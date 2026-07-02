@@ -2,7 +2,7 @@
   "expo": {
     "name": "NormOS",
     "slug": "normos",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -16,7 +16,6 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.normancohen.normos",
-      "buildNumber": "2",
       "infoPlist": {
         "NSHealthShareUsageDescription": "NormOS reads your HRV, resting heart rate, sleep, steps, and active calories to personalize your daily workout recommendation and health insights.",
         "NSHealthUpdateUsageDescription": "NormOS does not write health data.",
