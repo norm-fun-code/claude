@@ -1888,7 +1888,22 @@ app.post('/api/chat', async (req, res) => {
       }
     }
 
-    const result = await ask(question, { history: priorHistory });
+    // Typed commands: a message that opens with "remember/note/log/swap" gets
+    // the same action router as voice ("Remember: Nancy is due January 6th" →
+    // life chapter). Gated on the prefix so normal questions never pay the
+    // extra routing call.
+    let askInput = question;
+    if (/^\s*(remember|note|log|swap)\b/i.test(String(question || ''))) {
+      const routed = await routeVoiceAction(question);
+      if (routed.action !== 'none') {
+        const action = await executeVoiceAction(routed);
+        if (action?.done) {
+          askInput = `${question}\n\n[System: the assistant just executed this on the user's behalf: "${action.description}". Acknowledge it naturally in one clause, then answer anything else in the message.]`;
+        }
+      }
+    }
+
+    const result = await ask(askInput, { history: priorHistory });
 
     // Append this turn so the next question remembers it. Pre-resolve the active
     // thread once (the two saves run concurrently, so this avoids both racing to
