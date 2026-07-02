@@ -61,7 +61,7 @@ export function SleepCheckInCard({ visible, onSubmitted }: Props) {
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
-      <SectionHeader emoji="🛌" title="How did you sleep?" />
+      <SectionHeader emoji="🛌" title="How did you sleep?" tint="blue" />
       <Text style={[styles.subtitle, { color: c.subtext }]}>
         No Eight Sleep reading last night — rate it so your recovery still works today.
       </Text>

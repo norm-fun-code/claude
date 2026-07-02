@@ -30,6 +30,32 @@ export const bandGradient: Record<string, [string, string]> = {
   neutral: ['#B7B7C2', '#7C7C88'],
 };
 
+// Overlay a hex color at a given alpha. Used for the tinted "app-icon" tiles
+// behind section-header emoji and other soft accent fills, so one base color
+// yields both its solid form and a subtle wash without hand-writing rgba().
+export function withAlpha(hex: string, a: number): string {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map((x) => x + x).join('') : h;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+// Named tints for section-header emoji tiles — a small, controlled palette so
+// each domain's tile reads as intentional (Apple-Settings-style colored chips)
+// rather than a rainbow. Header defaults to 'accent'; hero cards opt into their
+// domain color. Keyed values are the vivid base; the tile derives its soft
+// fill + hairline from it via withAlpha.
+export const tileTint: Record<string, string> = {
+  accent: '#635BFF',
+  green: '#34C759',
+  gold: '#FF9F0A',
+  red: '#FF6B6B',
+  blue: '#3B9EFF',
+  violet: '#A78BFA',
+};
+
 // A soft, color-tinted glow — the premium "lit from within" feel for hero
 // elements. iOS renders the colored shadow; Android falls back to a neutral
 // elevation.
@@ -80,6 +106,24 @@ export const typography = {
     fontSize: 56,
     fontWeight: '300' as const,
     letterSpacing: -2,
+  },
+  // Hero metric — the number a card is *about* (recovery score, net worth, a
+  // chip value). Tabular figures so digits don't jitter as values change, and
+  // a big enough jump from body text that the eye lands on it first. Two sizes
+  // fill the gap between largeNumber (56, marquee) and subtitle (17).
+  metric: {
+    fontFamily: FONTS.displayHeavy,
+    fontSize: 34,
+    fontWeight: '700' as const,
+    letterSpacing: -1,
+    fontVariant: ['tabular-nums'] as const,
+  },
+  metricSmall: {
+    fontFamily: FONTS.displayHeavy,
+    fontSize: 22,
+    fontWeight: '700' as const,
+    letterSpacing: -0.6,
+    fontVariant: ['tabular-nums'] as const,
   },
   title: {
     fontFamily: FONTS.display,

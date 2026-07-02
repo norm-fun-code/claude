@@ -132,7 +132,7 @@ export function HealthCard({ health }: Props) {
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
-      <SectionHeader emoji="❤️" title="Health" />
+      <SectionHeader emoji="❤️" title="Health" tint="red" />
 
       {/* HRV hero — tappable to open trend sheet, with a 14-day trend alongside */}
       <TouchableOpacity onPress={() => open('hrv')} activeOpacity={0.6} style={styles.hrvRow}>

@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { CHECKIN_HISTORY_URL, authHeaders, fetchWithTimeout } from '../config';
 import { Insight } from '../hooks/useBriefing';
+import { SectionHeader } from './SectionHeader';
 
 interface DayEntry {
   date: string;
@@ -62,7 +63,7 @@ export function CheckinHistoryCard({ insights = [] }: Props) {
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       {recent.length > 0 && (
         <>
-          <Text style={[styles.title, { color: c.text }]}>Check-in Trends</Text>
+          <SectionHeader emoji="📊" title="Check-in Trends" tint="violet" />
 
           {/* Header row: day labels */}
           <View style={styles.grid}>

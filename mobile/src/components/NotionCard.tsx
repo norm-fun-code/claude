@@ -26,7 +26,7 @@ export function NotionCard({ pageTitle, notionText, quote, insight }: Props) {
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
-      <SectionHeader emoji="📖" title="Notion Wisdom" />
+      <SectionHeader emoji="📖" title="Notion Wisdom" tint="gold" />
 
       {pageTitle ? (
         <Text style={[styles.pageTitle, { color: c.subtext }]}>{pageTitle}</Text>

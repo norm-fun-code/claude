@@ -99,7 +99,7 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
-      <SectionHeader emoji="🔋" title="Recovery" />
+      <SectionHeader emoji="🔋" title="Recovery" tint="green" />
 
       <View style={styles.scoreRow}>
         <View style={{ width: 104, height: 104, alignItems: 'center', justifyContent: 'center' }}>

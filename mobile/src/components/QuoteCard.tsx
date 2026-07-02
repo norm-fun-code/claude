@@ -18,7 +18,7 @@ export function QuoteCard({ quote, insight, title = 'Quote + Insight', emoji = '
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
-      <SectionHeader emoji={emoji} title={title} />
+      <SectionHeader emoji={emoji} title={title} tint="gold" />
 
       {quote ? (
         <View style={[styles.quoteBlock, { borderLeftColor: c.border, backgroundColor: isDark ? '#1A1A18' : '#FAFAF8' }]}>
