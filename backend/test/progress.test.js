@@ -2,9 +2,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { composeProgressNote } = require('../src/intelligence/progress');
 
+// `p` here stands in for a pre-computed Welch p-value (composeProgressNote
+// accepts either a raw `p` or `recent.vals`/`baseline.vals` to compute one
+// itself) — 0.001 is a stand-in "clearly significant" result so tests that
+// aren't specifically about the significance gate don't need to construct
+// realistic per-day value arrays.
 const row = (over = {}) => ({
   label: 'HRV', unit: 'ms', good: 'up', decimals: 0, minRel: 0.05,
-  recent: { avg: 52, n: 24 }, baseline: { avg: 47, n: 22 },
+  recent: { avg: 52, n: 24 }, baseline: { avg: 47, n: 22 }, p: 0.001,
   ...over,
 });
 
@@ -73,4 +78,38 @@ test('caps at three lines, strongest relative shifts first', () => {
 test('empty input and missing windows return null', () => {
   assert.equal(composeProgressNote([]), null);
   assert.equal(composeProgressNote([{ label: 'HRV', unit: 'ms', good: 'up', minRel: 0.05, recent: null, baseline: { avg: 5, n: 20 } }]), null);
+});
+
+test('a mean gap that clears the threshold but is not statistically significant stays silent', () => {
+  // Same +11% gap as the first test, but p is above the 0.05 bar (e.g. a noisy,
+  // widely-overlapping pair of samples) — must not be reported as "real".
+  const note = composeProgressNote([row({ p: 0.4 })]);
+  assert.equal(note, null);
+});
+
+test('a row with no supplied p and no raw vals to test cannot qualify', () => {
+  const note = composeProgressNote([row({ p: undefined })]);
+  assert.equal(note, null);
+});
+
+test('significance is computed from raw per-day values when p is not pre-supplied', () => {
+  // Cleanly separated distributions -> real Welch p well under 0.05.
+  const clean = composeProgressNote([
+    row({
+      p: undefined,
+      recent: { avg: 52, n: 20, vals: Array.from({ length: 20 }, (_, i) => 51 + (i % 3)) },
+      baseline: { avg: 47, n: 20, vals: Array.from({ length: 20 }, (_, i) => 46 + (i % 3)) },
+    }),
+  ]);
+  assert.ok(clean, 'a clean separation should qualify via a real Welch test');
+
+  // Same means, but wildly noisy/overlapping raw values -> high p, excluded.
+  const noisy = composeProgressNote([
+    row({
+      p: undefined,
+      recent: { avg: 52, n: 20, vals: [10, 90, 20, 84, 15, 88, 12, 92, 18, 86, 22, 80, 9, 95, 25, 78, 30, 74, 5, 99] },
+      baseline: { avg: 47, n: 20, vals: [8, 85, 92, 12, 79, 18, 88, 22, 76, 14, 90, 20, 82, 16, 94, 24, 72, 28, 68, 96] },
+    }),
+  ]);
+  assert.equal(noisy, null);
 });
