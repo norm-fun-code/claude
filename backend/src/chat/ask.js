@@ -367,6 +367,14 @@ async function ask(question, { history = [], k = 14 } = {}) {
     selfModelText = (await require('../store/selfModel').latestModelText()) ?? '';
   } catch { /* optional */ }
 
+  // Life chapters — standing long-arc facts (pregnancy week, countdowns) so the
+  // chat knows the user's life, not just their metrics.
+  let chaptersText = '';
+  try {
+    const chapters = await require('../store/lifeChapters').listActive();
+    chaptersText = require('../intelligence/chapters').composeChapterContext(chapters);
+  } catch { /* optional */ }
+
   // Also inject the long-range financial plan (income projections, housing plan,
   // kids + tuition, portfolio) so forward-looking questions can be answered.
   let wealthInsights = null;
@@ -381,6 +389,7 @@ async function ask(question, { history = [], k = 14 } = {}) {
 
   const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments, pastConversations, wealthInsights });
   let system = selfModelText ? `${baseSystem}\n\n${selfModelText}` : baseSystem;
+  if (chaptersText) system += `\n\nLIFE CHAPTERS (standing long-arc facts, auto-updated — never ask the user to re-confirm these):\n${chaptersText}`;
 
   // Financial questions: when Monarch MCP is configured, give Claude LIVE access
   // to the user's Monarch account so it can pull exact current transactions,

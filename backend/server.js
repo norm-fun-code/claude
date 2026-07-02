@@ -1179,6 +1179,47 @@ app.post('/api/intentions/results', async (req, res) => {
   }
 });
 
+// Life chapters — persistent long-arc facts (a pregnancy + due date, a big
+// deadline) that auto-advance and inform every brief without being re-typed
+// into weekly context. Creatable here or by telling the Ask chat / voice chief
+// ("remember: Nancy is due January 6th").
+const lifeChaptersStore = require('./src/store/lifeChapters');
+
+app.get('/api/chapters', async (req, res) => {
+  try {
+    const chapters = await lifeChaptersStore.listActive();
+    res.json({ chapters });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/chapters', async (req, res) => {
+  try {
+    const { kind, label, keyDate, keyDateLabel, notes } = req.body || {};
+    if (!label || !String(label).trim()) return res.status(400).json({ error: 'label is required' });
+    const chapter = await lifeChaptersStore.create({
+      kind: ['pregnancy', 'countdown', 'note'].includes(kind) ? kind : 'countdown',
+      label: String(label).trim().slice(0, 120),
+      keyDate: keyDate || null,
+      keyDateLabel: keyDateLabel ? String(keyDateLabel).slice(0, 40) : null,
+      notes: notes ? String(notes).slice(0, 500) : null,
+    });
+    res.json({ chapter });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/chapters/:id', async (req, res) => {
+  try {
+    const ok = await lifeChaptersStore.deactivate(req.params.id);
+    res.json({ ok });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Standalone weather — so the Today card can show/refresh weather on its own,
 // fast, without waiting on the full LLM briefing. Cached briefly in-memory so
 // repeated loads (and the briefing) don't hammer the provider; ?refresh=1
@@ -3535,6 +3576,17 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[progress context] failed:', err.message);
   }
 
+  // Life chapters — standing long-arc facts (pregnancy week auto-derived from
+  // the due date, countdowns to key dates) so the brief knows the user's life,
+  // not just their metrics, without weekly re-typing.
+  let chaptersContext = '';
+  try {
+    const chapters = await lifeChaptersStore.listActive();
+    chaptersContext = require('./src/intelligence/chapters').composeChapterContext(chapters);
+  } catch (err) {
+    console.error('[chapters context] failed:', err.message);
+  }
+
   // This week's stated goals (the Sunday check-in) — fetched BEFORE the LLM
   // call so the chief of staff can surface an important goal that's still
   // unchecked as the week runs out, instead of the goals living only as a
@@ -3566,7 +3618,7 @@ app.get('/api/briefing', async (req, res) => {
     // The LLM call can be slow; bound it so a stalled model doesn't hang the
     // briefing (it degrades to the data-only sections).
     geminiResult = await withTimeout(
-      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext),
+      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext),
       Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000),
       'gemini'
     );
