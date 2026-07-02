@@ -297,10 +297,21 @@ export default function App() {
                 <EveningBriefCard brief={eveningBrief.brief} />
               </AnimatedEntry>
             )}
-            {/* 1. Chief Brief — the one thing, leads */}
-            <AnimatedEntry delay={0}>
-              <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
-            </AnimatedEntry>
+            {/* 1. Chief Brief — the one thing, leads the day. Once the evening
+                wind-down is live, the day is over and this is yesterday-morning
+                news: it steps back into a collapsed recap so the evening card
+                owns the screen (time-of-day adaptive home). */}
+            {eveningBrief.brief ? (
+              <AnimatedEntry delay={10}>
+                <CollapsibleSection title="This morning's brief">
+                  <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
+                </CollapsibleSection>
+              </AnimatedEntry>
+            ) : (
+              <AnimatedEntry delay={0}>
+                <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
+              </AnimatedEntry>
+            )}
             {/* 2. Recovery grade — "how am I TODAY" is the home-tab question */}
             <AnimatedEntry delay={10}>
               <TodayForecastCard forecast={d?.todayForecast} />
