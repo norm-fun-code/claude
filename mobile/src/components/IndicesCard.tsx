@@ -16,6 +16,26 @@ const SYMBOLS = [
   { symbol: '^IXIC', label: 'NASDAQ' },
 ];
 
+// Before the 9:30am ET open, yesterday's index close is stale news — futures
+// are what's actually moving. Same Yahoo endpoint, futures symbols.
+const FUTURES = [
+  { symbol: 'ES=F', label: 'S&P FUTURES' },
+  { symbol: 'NQ=F', label: 'NASDAQ FUTURES' },
+];
+
+// True on weekday mornings before the 9:30am ET cash open (ET-anchored so it
+// behaves correctly when traveling).
+function isPreMarketET(): boolean {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false,
+  }).formatToParts(new Date());
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  const wd = get('weekday');
+  if (wd === 'Sat' || wd === 'Sun') return false;
+  const mins = Number(get('hour')) * 60 + Number(get('minute'));
+  return mins < 9 * 60 + 30;
+}
+
 // Fetched from the device (not the server) — finance APIs block datacenter IPs
 // like Railway's, but answer a phone's residential/cellular connection fine.
 async function fetchIndex({ symbol, label }: { symbol: string; label: string }): Promise<Idx> {
@@ -53,9 +73,17 @@ export function IndicesCard() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const results = await Promise.allSettled(SYMBOLS.map(fetchIndex));
-      if (cancelled) return;
-      setIndices(results.filter((r) => r.status === 'fulfilled').map((r) => (r as PromiseFulfilledResult<Idx>).value));
+      const preMarket = isPreMarketET();
+      const primary = preMarket ? FUTURES : SYMBOLS;
+      let results = await Promise.allSettled(primary.map(fetchIndex));
+      let quotes = results.filter((r) => r.status === 'fulfilled').map((r) => (r as PromiseFulfilledResult<Idx>).value);
+      // Futures quotes can be unavailable (holiday halts, symbol hiccups) —
+      // fall back to the index close rather than showing nothing.
+      if (preMarket && quotes.length === 0) {
+        results = await Promise.allSettled(SYMBOLS.map(fetchIndex));
+        quotes = results.filter((r) => r.status === 'fulfilled').map((r) => (r as PromiseFulfilledResult<Idx>).value);
+      }
+      if (!cancelled) setIndices(quotes);
     })();
     return () => {
       cancelled = true;

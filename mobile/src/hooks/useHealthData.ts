@@ -276,6 +276,11 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
       // Watch so you can see live intraday readings during the day. Recovery card
       // and all coaching logic still use Eight Sleep for overnight accuracy.
       let eightSleepScore: number | null = null;
+      // Server-side sleep for nights HealthKit has nothing (no pod, watch not
+      // worn to bed) — the /api/sleep/today fetch below returns Eight Sleep or,
+      // failing that, the manual sleep check-in. Display fallback ONLY: never
+      // pushed back via pushHealthData, so it can't loop into the spine.
+      let serverSleepHours: number | null = null;
       let pending = 7;
 
       function checkDone() {
@@ -284,12 +289,13 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
           const finalHrv = hrv;           // Apple Watch — live intraday reading
           const finalRhr = restingHR;     // Apple Watch — live intraday reading
           const finalSleepScore = eightSleepScore ?? getSleepScore(sleepHours, deepSleepHours, remSleepHours);
+          const displaySleep = sleepHours ?? serverSleepHours;
           setData({
             hrv: finalHrv,
             hrvStatus: getHRVStatus(finalHrv),
             restingHR: finalRhr,
-            sleepHours,
-            sleepQuality: getSleepQuality(sleepHours),
+            sleepHours: displaySleep,
+            sleepQuality: getSleepQuality(displaySleep),
             deepSleepHours,
             remSleepHours,
             sleepScore: finalSleepScore,
@@ -433,12 +439,14 @@ export function useHealthData(): HealthData & { refetch: () => void; lastFetched
         }
       );
 
-      // Fetch Eight Sleep sleep score for the nightly summary row. HRV and RHR
-      // intentionally NOT overridden here — they come from Apple Watch above.
+      // Fetch Eight Sleep sleep score for the nightly summary row (server falls
+      // back to the manual sleep check-in when the pod wasn't slept on). HRV and
+      // RHR intentionally NOT overridden here — they come from Apple Watch above.
       fetchWithTimeout(SLEEP_TODAY_URL, { headers: authHeaders() }, 6000)
         .then((r) => r.json())
         .then((d: any) => {
           if (d?.metrics?.sleep_score) eightSleepScore = Math.round(d.metrics.sleep_score);
+          if (Number.isFinite(d?.metrics?.sleep_hours)) serverSleepHours = d.metrics.sleep_hours;
         })
         .catch(() => {})
         .finally(() => checkDone());
