@@ -104,6 +104,16 @@ export default function App() {
   // Summonable Ask: long-press the Ask tab from anywhere to open the chat as a
   // sheet ABOVE the current tab — ask without losing your place.
   const quickAskRef = useRef<AskOverlayHandle>(null);
+  // Evening layout mode, LATCHED once per app session when the evening-brief
+  // fetch first resolves. Deliberately not live: if it flipped the moment the
+  // 9:30pm brief lands, the morning BriefCard would swap subtrees mid-use and
+  // remount — wiping a half-typed context note and collapsing the card under
+  // the user's finger. A session that starts in the morning stays morning-
+  // shaped; the next open (evening) gets the evening layout.
+  const [eveningMode, setEveningMode] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (eveningMode === null && eveningBrief.fetched) setEveningMode(!!eveningBrief.brief);
+  }, [eveningMode, eveningBrief.fetched, eveningBrief.brief]);
   // Cold-open welcome: shown once per launch (App mount = cold start), it covers
   // the whole feed assembly so the jumpy mount/insert is never seen.
   const [showWelcome, setShowWelcome] = useState(true);
@@ -301,11 +311,12 @@ export default function App() {
                 <EveningBriefCard brief={eveningBrief.brief} />
               </AnimatedEntry>
             )}
-            {/* 1. Chief Brief — the one thing, leads the day. Once the evening
-                wind-down is live, the day is over and this is yesterday-morning
-                news: it steps back into a collapsed recap so the evening card
-                owns the screen (time-of-day adaptive home). */}
-            {eveningBrief.brief ? (
+            {/* 1. Chief Brief — the one thing, leads the day. On sessions that
+                START in the evening (wind-down brief already live), the day is
+                over and this is yesterday-morning news: it steps back into a
+                collapsed recap so the evening card owns the screen. Latched per
+                session (see eveningMode) so it never swaps subtrees mid-use. */}
+            {eveningMode ? (
               <AnimatedEntry delay={10}>
                 <CollapsibleSection title="This morning's brief">
                   <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />

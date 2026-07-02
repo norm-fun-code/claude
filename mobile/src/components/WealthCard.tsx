@@ -67,7 +67,7 @@ export function WealthCard({ wealth }: Props) {
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <View style={styles.header}>
-        <SectionHeader emoji="◆" title="Net Worth" />
+        <SectionHeader emoji="◆" title="Net Worth" tint="gold" />
         <Text style={[styles.hint, { color: c.subtext }]}>{hidden ? 'tap to show' : 'tap to hide'}</Text>
       </View>
 

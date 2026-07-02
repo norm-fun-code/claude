@@ -54,7 +54,7 @@ export function MarketsCard({ markets: initialMarkets }: Props) {
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <View style={styles.headerRow}>
-        <SectionHeader emoji="📰" title="Market Brief" />
+        <SectionHeader emoji="📰" title="Market Brief" tint="gold" />
         <TouchableOpacity onPress={handleRefresh} disabled={refreshing} style={styles.refreshBtn}>
           {refreshing ? (
             <ActivityIndicator size="small" color={c.subtext} />

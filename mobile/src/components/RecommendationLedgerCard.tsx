@@ -3,6 +3,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, useColorScheme, Animated, PanResponder,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import { SectionHeader } from './SectionHeader';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { RECOMMENDATIONS_URL, authHeaders, fetchWithTimeout } from '../config';
 
@@ -171,7 +172,7 @@ export function RecommendationLedgerCard() {
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <View style={styles.header}>
         <View style={styles.titleRow}>
-          <Text style={[styles.title, { color: c.text }]}>Recommendation Ledger</Text>
+          <SectionHeader emoji="📋" title="Recommendation Ledger" preserveCase />
           <TouchableOpacity onPress={() => setShowInfo((v) => !v)} hitSlop={8} style={styles.infoBtn}>
             <Text style={[styles.infoToggle, { color: c.accent }]}>{showInfo ? 'Hide' : "What's this?"}</Text>
           </TouchableOpacity>

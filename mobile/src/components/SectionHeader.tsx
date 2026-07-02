@@ -31,7 +31,9 @@ export function SectionHeader({ emoji, title, preserveCase, tint = 'accent' }: P
           },
         ]}
       >
-        <Text style={styles.emoji}>{emoji}</Text>
+        {/* color only affects plain text glyphs (↗, ◆) — true emoji ignore it.
+            Without this, dark glyphs vanish against the dark-mode tile. */}
+        <Text style={[styles.emoji, { color: base }]}>{emoji}</Text>
       </View>
       <Text style={[styles.title, { color: c.text }, preserveCase && styles.preserve]}>{title}</Text>
     </View>

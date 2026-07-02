@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, useColorScheme } from 'react-native';
+import { SectionHeader } from './SectionHeader';
 import { getColors, spacing, radius, typography, shadow, FONTS } from '../theme';
 import { RecoveryOrb } from './RecoveryOrb';
 import type { TodayForecast } from '../hooks/useBriefing';
@@ -25,7 +26,7 @@ export function TodayForecastCard({ forecast }: Props) {
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
-      <Text style={[styles.kicker, { color: c.subtext }]}>TODAY'S FORECAST</Text>
+      <SectionHeader emoji="🔮" title="Today's Forecast" tint="violet" />
 
       {cap && (
         <View style={styles.gradeRow}>

@@ -31,20 +31,55 @@ const AFFIRMATIONS = [
 // are its payload — set them in the accent so the eye catches "64", "29%",
 // "$7,497" before reading a word. Word-level match (not a global regex) so
 // "30-minute" stays plain while "10,314", "4.6/5", "38.4ms" light up.
-const NUM_CORE = /^([("']*)(\$?\d[\d,.]*(?:%|ms|bpm|h|k|x)?(?:\/\d+)?)([)"',.;:!?]*)$/;
+// The numeric core must END in a digit (no trailing-comma/period absorption:
+// "at 64." highlights "64", not "64.") and allows one decimal part, so
+// version-ish strings like "1.1.0" stay plain.
+const NUM_CORE = /^([("']*)(\$?\d(?:[\d,]*\d)?(?:\.\d+)?(?:%|ms|bpm|h|k|x)?(?:\/\d+)?)([)"',.;:!?]*)$/;
+
+// Recovery-band words render in their actual color — "green" IS green — and a
+// number shortly after one ("green at 64") matches the band color instead of
+// the generic accent, so the headline's state + score read as one signal.
+const BAND_WORD: Record<string, string> = {
+  green: '#5AE89A',
+  yellow: '#FFC44D',
+  red: '#FF8478',
+};
+const BAND_RE = /^[("']*(green|yellow|red)[)"',.;:!?]*$/i;
 
 function HighlightedSynthesis({ text }: { text: string }) {
   const words = text.split(' ');
+  // How many upcoming number tokens inherit the band color ("green at 64").
+  let bandColor: string | null = null;
+  let bandReach = 0;
   return (
     <Text style={styles.synthesis}>
       {words.map((w, i) => {
-        const m = w.match(NUM_CORE);
         const space = i < words.length - 1 ? ' ' : '';
+        const band = w.match(BAND_RE);
+        if (band) {
+          const color = BAND_WORD[band[1].toLowerCase()];
+          bandColor = color;
+          bandReach = 3;
+          const core = band[1];
+          const pre = w.slice(0, w.indexOf(core));
+          const post = w.slice(pre.length + core.length);
+          return (
+            <React.Fragment key={i}>
+              {pre}
+              <Text style={{ color, fontWeight: '800' }}>{core}</Text>
+              {post + space}
+            </React.Fragment>
+          );
+        }
+        const m = w.match(NUM_CORE);
+        if (bandReach > 0) bandReach -= 1;
         if (!m) return w + space;
+        const numColor = bandReach > 0 && bandColor ? bandColor : undefined;
+        if (bandReach > 0) { bandReach = 0; bandColor = null; } // one number per band mention
         return (
           <React.Fragment key={i}>
             {m[1]}
-            <Text style={styles.synthesisNum}>{m[2]}</Text>
+            <Text style={[styles.synthesisNum, numColor ? { color: numColor } : null]}>{m[2]}</Text>
             {m[3] + space}
           </React.Fragment>
         );
@@ -142,7 +177,9 @@ export function BriefCard({ brief, fallback }: Props) {
         </>
       ) : (
         <AnimatedEntry delay={60} distance={10}>
-          <Text style={styles.synthesis}>{fallback}</Text>
+          {/* morningFocus is the lead text whenever the chief brief hasn't
+              generated — it gets the same headline number treatment. */}
+          <HighlightedSynthesis text={fallback ?? ''} />
         </AnimatedEntry>
       )}
 

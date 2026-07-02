@@ -63,7 +63,7 @@ export function AssetMixCard() {
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
-      <SectionHeader emoji="🧬" title="Asset Mix" />
+      <SectionHeader emoji="🧬" title="Asset Mix" tint="gold" />
 
       {/* Stacked allocation bar */}
       <View style={styles.bar}>

@@ -28,6 +28,9 @@ export function RecoveryOrb({ score, grade, band, size = 100, label }: Props) {
   const scale = useRef(new Animated.Value(0.86)).current;
   const opacity = useRef(new Animated.Value(0)).current;
   const breath = useRef(new Animated.Value(1)).current;
+  // Hoisted: the count-up re-renders every frame for 750ms; an inline
+  // Animated.multiply would rebuild + reattach its native node each render.
+  const orbScale = useRef(Animated.multiply(scale, breath)).current;
 
   // Slow breathing — a barely-perceptible 4s in / 4s out oscillation that makes
   // the orb read as alive rather than printed. Starts after the entrance spring
@@ -67,7 +70,7 @@ export function RecoveryOrb({ score, grade, band, size = 100, label }: Props) {
   const r = size / 2;
   return (
     <Animated.View
-      style={[glow(colors[1], 0.42, 18), { width: size, height: size, borderRadius: r, transform: [{ scale: Animated.multiply(scale, breath) }], opacity }]}
+      style={[glow(colors[1], 0.42, 18), { width: size, height: size, borderRadius: r, transform: [{ scale: orbScale }], opacity }]}
     >
       <LinearGradient
         colors={colors}

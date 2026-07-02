@@ -124,5 +124,5 @@ export function useChat() {
     }
   }, [loadConversations]);
 
-  return { messages, loading, conversations, send, clear, save, open, remove, rename, loadConversations };
+  return { messages, loading, conversations, send, clear, save, open, remove, rename, loadConversations, loadHistory };
 }

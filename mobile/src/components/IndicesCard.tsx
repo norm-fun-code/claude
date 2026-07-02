@@ -66,7 +66,7 @@ export function IndicesCard() {
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
-      <SectionHeader emoji="📊" title="Today's Market" />
+      <SectionHeader emoji="📊" title="Today's Market" tint="gold" />
       <View style={styles.row}>
         {indices.map((idx) => {
           const up = idx.change >= 0;

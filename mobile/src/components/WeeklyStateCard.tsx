@@ -78,7 +78,7 @@ const styles = StyleSheet.create({
   card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   tile: { flex: 1, minWidth: '45%', borderRadius: radius.md, borderWidth: 1, padding: spacing.sm, alignItems: 'center', gap: 2 },
-  tileValue: { fontSize: 20, fontWeight: '700' },
+  tileValue: { ...typography.metricSmall },
   tileLabel: { fontSize: 11, fontWeight: '500' },
   insightRow: { borderTopWidth: 1, marginTop: spacing.sm, paddingTop: spacing.sm },
   insightText: { fontSize: 13, lineHeight: 19, fontStyle: 'italic' },

@@ -94,7 +94,11 @@ export function TabBar({ active, onChange, bottomInset = 0, healthDot, onLongPre
           t={t}
           on={t.key === active}
           onPress={() => handleChange(t.key)}
-          onLongPress={onLongPress ? () => onLongPress(t.key) : undefined}
+          // Attach ONLY where the app actually handles it (Ask): a defined
+          // onLongPress makes TouchableOpacity swallow the tap once the
+          // long-press threshold fires, so a no-op handler on the other tabs
+          // would eat press-and-hold taps and make the bar feel dead.
+          onLongPress={onLongPress && t.key === 'ask' ? () => onLongPress(t.key) : undefined}
           c={c}
           dot={t.key === 'health' ? healthDot : null}
         />

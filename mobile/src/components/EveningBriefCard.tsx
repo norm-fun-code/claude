@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { spacing, radius, typography, glow, bandGradient } from '../theme';
+import { spacing, radius, typography, glow, bandGradient, withAlpha } from '../theme';
 import type { EveningBrief, EveningTone } from '../hooks/useEveningBrief';
 
 interface Props {
@@ -17,10 +17,12 @@ const TONE_BAND: Record<EveningTone, keyof typeof bandGradient> = {
   unknown: 'neutral',
 };
 
-const BLOCKS: { key: keyof Pick<EveningBrief, 'today' | 'tomorrow' | 'habits'>; label: string }[] = [
-  { key: 'today', label: 'TODAY' },
-  { key: 'tomorrow', label: 'SET UP TOMORROW' },
-  { key: 'habits', label: 'STILL OPEN' },
+// Same tinted mini-tile beat language as the morning BriefCard, so the two
+// hero briefs speak one design system on the same Today screen.
+const BLOCKS: { key: keyof Pick<EveningBrief, 'today' | 'tomorrow' | 'habits'>; label: string; emoji: string; tint: string }[] = [
+  { key: 'today', label: 'TODAY', emoji: '👣', tint: '#3B9EFF' },
+  { key: 'tomorrow', label: 'SET UP TOMORROW', emoji: '🌙', tint: '#A78BFA' },
+  { key: 'habits', label: 'STILL OPEN', emoji: '✅', tint: '#FFC44D' },
 ];
 
 function Chip({ label, value }: { label: string; value: string }) {
@@ -67,10 +69,15 @@ export function EveningBriefCard({ brief }: Props) {
 
       <View style={styles.separator} />
 
-      {BLOCKS.filter(({ key }) => (brief[key] || '').trim()).map(({ key, label }) => (
-        <View key={key} style={styles.block}>
-          <Text style={styles.blockLabel}>{label}</Text>
-          <Text style={styles.blockText}>{brief[key]}</Text>
+      {BLOCKS.filter(({ key }) => (brief[key] || '').trim()).map(({ key, label, emoji, tint }) => (
+        <View key={key} style={styles.beat}>
+          <View style={[styles.beatTile, { backgroundColor: withAlpha(tint, 0.16), borderColor: withAlpha(tint, 0.28) }]}>
+            <Text style={styles.beatEmoji}>{emoji}</Text>
+          </View>
+          <View style={styles.beatBody}>
+            <Text style={[styles.blockLabel, { color: tint }]}>{label}</Text>
+            <Text style={styles.blockText}>{brief[key]}</Text>
+          </View>
         </View>
       ))}
 
@@ -78,8 +85,15 @@ export function EveningBriefCard({ brief }: Props) {
           from the somatic blocks with its own quiet styling. */}
       {(brief.reflection || '').trim() ? (
         <View style={styles.reflection}>
-          <Text style={styles.reflectionLabel}>REFLECT</Text>
-          <Text style={styles.reflectionText}>{brief.reflection}</Text>
+          <View style={styles.beat}>
+            <View style={[styles.beatTile, { backgroundColor: withAlpha('#5AE89A', 0.14), borderColor: withAlpha('#5AE89A', 0.24) }]}>
+              <Text style={styles.beatEmoji}>✨</Text>
+            </View>
+            <View style={styles.beatBody}>
+              <Text style={[styles.blockLabel, { color: '#5AE89A' }]}>REFLECT</Text>
+              <Text style={styles.reflectionText}>{brief.reflection}</Text>
+            </View>
+          </View>
         </View>
       ) : null}
     </View>
@@ -107,10 +121,21 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     minWidth: 64,
   },
-  chipValue: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: -0.2 },
+  chipValue: { ...typography.metricSmall, color: '#fff', fontSize: 18, letterSpacing: -0.4 },
   chipLabel: { color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: '600', marginTop: 2, letterSpacing: 0.3 },
   separator: { height: 1, backgroundColor: 'rgba(255,255,255,0.12)', marginBottom: spacing.md },
-  block: { marginBottom: spacing.sm + 2 },
+  beat: { flexDirection: 'row', gap: spacing.sm + 2, marginBottom: spacing.md, alignItems: 'flex-start' },
+  beatTile: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  beatEmoji: { fontSize: 12, lineHeight: 16 },
+  beatBody: { flex: 1 },
   blockLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.0, color: 'rgba(255,255,255,0.55)', marginBottom: 4 },
   blockText: { ...typography.body, color: '#fff', fontSize: 14, lineHeight: 22 },
   reflection: {
@@ -119,6 +144,5 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: 'rgba(255,255,255,0.10)',
   },
-  reflectionLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.0, color: 'rgba(255,255,255,0.45)', marginBottom: 4 },
   reflectionText: { ...typography.body, color: 'rgba(255,255,255,0.9)', fontSize: 14, lineHeight: 22, fontStyle: 'italic' },
 });

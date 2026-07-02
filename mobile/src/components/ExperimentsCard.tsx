@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, useColorScheme } from 'react-native';
+import { SectionHeader } from './SectionHeader';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { EXPERIMENTS_URL, authHeaders } from '../config';
 
@@ -125,7 +126,7 @@ export function ExperimentsCard() {
   if (loading) {
     return (
       <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
-        <Text style={[styles.label, { color: c.subtext }]}>EXPERIMENTS</Text>
+        <SectionHeader emoji="🧪" title="Experiments" tint="violet" />
         <ActivityIndicator color={c.accent} style={{ marginTop: spacing.sm }} />
       </View>
     );
@@ -135,7 +136,7 @@ export function ExperimentsCard() {
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
-      <Text style={[styles.label, { color: c.subtext }]}>EXPERIMENTS</Text>
+      <SectionHeader emoji="🧪" title="Experiments" tint="violet" />
 
       {visible.map((exp) => {
         const elapsed = daysElapsed(exp.start_date);

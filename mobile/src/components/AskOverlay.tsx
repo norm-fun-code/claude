@@ -161,7 +161,7 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
   const [question, setQuestion] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editTitle, setEditTitle] = useState('');
-  const { messages, loading, conversations, send, clear, save, open: openConvo, remove, rename, loadConversations } = useChat();
+  const { messages, loading, conversations, send, clear, save, open: openConvo, remove, rename, loadConversations, loadHistory } = useChat();
   const scrollRef = useRef<ScrollView>(null);
   const inputRef = useRef<TextInput>(null);
   const [kbHeight, setKbHeight] = useState(0);
@@ -172,6 +172,7 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
 
   useImperativeHandle(ref, () => ({
     openWith(question?: string) {
+      setView('chat'); // never reopen on the Saved-history screen
       setOpen(true);
       if (question) setQuestion(question);
     },
@@ -183,16 +184,22 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
   }, [embedded, initialQuestion]);
 
   useEffect(() => {
+    // The global quick-ask instance stays mounted (closed) app-wide — don't
+    // let it re-render on every keyboard event from unrelated screens.
+    if (!open && !embedded) return;
     const showEv = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEv = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
     const show = Keyboard.addListener(showEv, (e) => setKbHeight(e.endCoordinates.height));
     const hide = Keyboard.addListener(hideEv, () => setKbHeight(0));
     return () => { show.remove(); hide.remove(); };
-  }, []);
+  }, [open, embedded]);
 
   // Load snapshot + conversations when the overlay opens (or on mount if embedded).
   useEffect(() => {
     if (!open && !embedded) return;
+    // The quick-ask instance stays mounted between summons — re-sync the shared
+    // server thread on each open so it never shows a stale conversation.
+    if (!embedded) loadHistory();
     loadConversations();
     (async () => {
       try {

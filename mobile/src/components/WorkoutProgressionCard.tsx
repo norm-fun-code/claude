@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, useColorScheme, Animated } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import { SectionHeader } from './SectionHeader';
 import { getColors, spacing, radius, shadow } from '../theme';
 import { WORKOUT_PROGRESSION_URL, authHeaders, fetchWithTimeout } from '../config';
 import { Trend } from './viz/Trend';
@@ -70,7 +71,7 @@ function CardBody({ c, isDark, rows, prLifts, hasWeighted, metricMode, setMetric
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <View style={styles.head}>
-        <Text style={[styles.title, { color: c.text }]}>📈 Strength progression</Text>
+        <SectionHeader emoji="📈" title="Strength progression" preserveCase tint="green" />
         {hasWeighted && (
           <View style={styles.toggle}>
             {(['e1rm', 'volume'] as const).map((m) => {
