@@ -7,11 +7,13 @@ async function generateText({ system, prompt, maxTokens = 4096, timeoutMs = 1100
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
   const model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5';
 
-  // Every caller's system prompt is a fixed string (built once per module, no
-  // per-request interpolation), so it's always safe to mark as a cache
-  // breakpoint — callers that repeat it verbatim (briefing, chat, review) get
-  // cheap cache reads; anything below the model's minimum cacheable prefix
-  // just silently doesn't cache (no error, no extra cost).
+  // Always safe to mark the system prompt as a cache breakpoint, whether or
+  // not it happens to repeat verbatim: a prefix that changes call to call
+  // (e.g. chat/review, which append a periodically-regenerated self-model
+  // string) just misses the cache like it always did; anything below the
+  // model's minimum cacheable prefix silently doesn't cache either — neither
+  // case is an error or adds cost. It only pays off for callers whose prompt
+  // is genuinely byte-identical across calls (e.g. briefing-ai.js's SYSTEM).
   const systemBlock = system
     ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
     : undefined;
