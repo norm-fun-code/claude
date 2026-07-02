@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, TextInput, ActivityIndicator, useColorScheme } from 'react-native';
+import { View, Text, StyleSheet, Pressable, TextInput, ActivityIndicator, useColorScheme, AppState } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography } from '../theme';
-import { GRATITUDE_TODAY_URL, GRATITUDE_URL, authHeaders, fetchWithTimeout } from '../config';
+import { GRATITUDE_TODAY_URL, GRATITUDE_URL, authHeaders, fetchWithTimeout, localDateStr } from '../config';
 
 interface Props {
   // Called after a reflection saves — the parent marks the gratitude habit done,
@@ -22,21 +22,42 @@ export function GratitudeReflection({ onSaved }: Props) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState(false);
-  const [loadedToday, setLoadedToday] = useState(false);
+  // Tracks which calendar day the reflection above was loaded for — NOT a
+  // boolean, so a midnight rollover (app staying open/backgrounded, same
+  // pattern HabitsCard guards against) forces a refetch instead of showing
+  // yesterday's text under an "already saved" label forever.
+  const [loadedForDate, setLoadedForDate] = useState('');
 
-  // Prefill from today's saved reflection (if any) the first time it opens.
+  // Prefill from today's saved reflection (if any) whenever it opens for a day
+  // it hasn't loaded yet.
   useEffect(() => {
-    if (!expanded || loadedToday) return;
-    setLoadedToday(true);
+    if (!expanded || loadedForDate === localDateStr()) return;
+    const today = localDateStr();
+    setLoadedForDate(today);
     (async () => {
       try {
         const res = await fetchWithTimeout(GRATITUDE_TODAY_URL, { headers: authHeaders() });
         if (!res.ok) return;
         const t = await res.json();
-        if (t?.text) { setText(t.text); setSaved(true); }
+        setText(t?.text || '');
+        setSaved(!!t?.text);
       } catch { /* start blank */ }
     })();
-  }, [expanded, loadedToday]);
+  }, [expanded, loadedForDate]);
+
+  // App staying alive across midnight: reset so a new day never shows (or lets
+  // you re-save) yesterday's reflection.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && loadedForDate && loadedForDate !== localDateStr()) {
+        setText('');
+        setSaved(false);
+        setError(false);
+        setLoadedForDate('');
+      }
+    });
+    return () => sub.remove();
+  }, [loadedForDate]);
 
   async function save() {
     const trimmed = text.trim();

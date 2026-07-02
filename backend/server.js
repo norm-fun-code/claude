@@ -503,6 +503,12 @@ app.post('/api/habits', async (req, res) => {
     // composite consistent with its components instead of leaving it stale.
     await recomputeHabitScore(tz);
     await sourcesStore.markSync(HABITS_SOURCE);
+    // Unchecking the gratitude box must also clear today's reflection text —
+    // otherwise a written-then-unchecked reflection survives in gratitude_logs
+    // and the evening brief keeps echoing gratitude for a day marked incomplete.
+    if (req.body?.gratitude === false) {
+      await require('./src/store/gratitudeLogs').upsert({ logDate: mealLogDateStr(tz), text: '' }).catch(() => {});
+    }
     res.json({ written });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, TextInput, ActivityIndicator, useColorScheme } from 'react-native';
+import { View, Text, StyleSheet, Pressable, TextInput, ActivityIndicator, useColorScheme, AppState } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography } from '../theme';
-import { EAT_HEALTHY_TODAY_URL, EAT_HEALTHY_SCORE_URL, authHeaders, fetchWithTimeout } from '../config';
+import { EAT_HEALTHY_TODAY_URL, EAT_HEALTHY_SCORE_URL, authHeaders, fetchWithTimeout, localDateStr } from '../config';
 
 interface Props {
   onApply: (score: number) => void;
@@ -21,22 +21,42 @@ export function EatHealthyHelper({ onApply }: Props) {
   const [scoring, setScoring] = useState(false);
   const [suggestion, setSuggestion] = useState<{ score: number; rationale: string } | null>(null);
   const [error, setError] = useState(false);
-  const [loadedToday, setLoadedToday] = useState(false);
+  // Tracks which calendar day the log/score above was loaded for — NOT a
+  // boolean, so a midnight rollover (the app staying open/backgrounded, same
+  // pattern HabitsCard guards against) forces a refetch instead of silently
+  // showing yesterday's text/score forever, which could get applied as today's.
+  const [loadedForDate, setLoadedForDate] = useState('');
 
-  // Prefill from today's saved log (if any) the first time the helper opens.
+  // Prefill from today's saved log (if any) whenever the helper opens for a day
+  // it hasn't loaded yet.
   useEffect(() => {
-    if (!expanded || loadedToday) return;
-    setLoadedToday(true);
+    if (!expanded || loadedForDate === localDateStr()) return;
+    const today = localDateStr();
+    setLoadedForDate(today);
     (async () => {
       try {
         const res = await fetchWithTimeout(EAT_HEALTHY_TODAY_URL, { headers: authHeaders() });
         if (!res.ok) return;
         const t = await res.json();
-        if (t?.text) setText(t.text);
-        if (Number.isFinite(t?.score)) setSuggestion({ score: t.score, rationale: t.rationale || '' });
+        setText(t?.text || '');
+        setSuggestion(Number.isFinite(t?.score) ? { score: t.score, rationale: t.rationale || '' } : null);
       } catch { /* start blank */ }
     })();
-  }, [expanded, loadedToday]);
+  }, [expanded, loadedForDate]);
+
+  // App staying alive across midnight: reset so a new day never shows (or lets
+  // you apply) yesterday's meal log/score.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && loadedForDate && loadedForDate !== localDateStr()) {
+        setText('');
+        setSuggestion(null);
+        setError(false);
+        setLoadedForDate('');
+      }
+    });
+    return () => sub.remove();
+  }, [loadedForDate]);
 
   async function getScore() {
     const trimmed = text.trim();
