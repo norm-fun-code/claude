@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, useColorScheme, TouchableOpacity } from 'react-native';
 import { getColors, spacing, radius, typography, colors, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
@@ -10,7 +10,9 @@ import { formatHM } from '../utils/format';
 import { LineChart } from './viz/LineChart';
 import { useSeries } from '../hooks/useSeries';
 import { useContextHistory } from '../hooks/useContextHistory';
-import { RECOVERY_HISTORY_URL } from '../config';
+import { RECOVERY_HISTORY_URL, SOURCES_FRESHNESS_URL, authHeaders, fetchWithTimeout } from '../config';
+
+interface StaleSource { source: string; label: string; ageDays: number }
 
 interface Props {
   recovery: Recovery | null | undefined;
@@ -64,6 +66,23 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
   const trend = useSeries(`${RECOVERY_HISTORY_URL}?days=30`);
   const { contextByDay, notesByDay } = useContextHistory(30);
 
+  // Per-source freshness — stays silent when everything's current; only worth
+  // a mention when a source has actually gone stale (2+ days), since that's
+  // the one time it affects whether this score can be trusted.
+  const [staleSources, setStaleSources] = useState<StaleSource[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetchWithTimeout(SOURCES_FRESHNESS_URL, { headers: authHeaders() });
+        if (cancelled || !res.ok) return;
+        const { sources } = await res.json();
+        if (!cancelled) setStaleSources((sources ?? []).filter((s: StaleSource) => s.ageDays >= 2));
+      } catch { /* offline — stay silent rather than guess */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   if (!recovery || recovery.score == null) return null;
 
 
@@ -94,6 +113,11 @@ export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
           {recovery.detail ? (
             <Text style={[styles.detail, { color: c.subtext }]}>{recovery.detail}</Text>
           ) : null}
+          {staleSources.length > 0 && (
+            <Text style={[styles.staleTxt, { color: staleSources.some((s) => s.ageDays >= 3) ? colors.red : colors.yellow }]}>
+              {staleSources.map((s) => `${s.label} ${s.ageDays}d old`).join(' · ')}
+            </Text>
+          )}
         </View>
       </View>
 
@@ -199,6 +223,7 @@ const styles = StyleSheet.create({
   scoreMeta: { flex: 1, gap: spacing.xs },
   band: { ...typography.subtitle, fontSize: 16, fontWeight: '700' },
   detail: { ...typography.caption, fontSize: 13, lineHeight: 18 },
+  staleTxt: { ...typography.caption, fontSize: 11, fontWeight: '600', marginTop: 2 },
   parts: { flexDirection: 'row', justifyContent: 'space-around', borderTopWidth: 1, marginTop: spacing.md, paddingTop: spacing.md },
   part: { alignItems: 'center' },
   partValRow: { flexDirection: 'row', alignItems: 'baseline', gap: 2 },
