@@ -3465,6 +3465,29 @@ app.get('/api/briefing', async (req, res) => {
     if (streaks.length) parts.push(`PERSISTENT ISSUES (from the novelty ledger):\n${streaks.join('\n')}`);
     if (lastActionLine) parts.push(lastActionLine);
     if (calibrationLine) parts.push(calibrationLine);
+    // Fresh experiment verdicts — the payoff of a multi-week self-test lands
+    // LOUDLY in the next brief instead of sitting silently in the experiments
+    // list. Fresh = concluded within the last 2 days (verdicts land on end_date).
+    try {
+      const allExps = await require('./src/store/experiments').listExperiments({ status: 'completed' });
+      const fresh = (allExps || []).filter((e) => {
+        if (!e.verdict || !e.end_date) return false;
+        const end = new Date(typeof e.end_date === 'string' ? `${e.end_date}T12:00:00Z` : e.end_date);
+        return Date.now() - end.getTime() < 2 * 864e5;
+      }).slice(0, 2);
+      for (const e of fresh) {
+        const icon = e.verdict === 'confirmed' ? 'CONFIRMED ✓' : e.verdict === 'refuted' ? 'REFUTED ✗' : 'INCONCLUSIVE ~';
+        const pct = e.result?.pctChange != null ? ` — ${e.result.pctChange > 0 ? '+' : ''}${Math.round(e.result.pctChange * 100)}% on ${e.metric}` : '';
+        parts.push(
+          `EXPERIMENT VERDICT (fresh — this is the payoff of a multi-week self-test; announce it prominently today, in plain words): ${icon}: "${e.hypothesis}"${pct}. ` +
+            (e.verdict === 'confirmed'
+              ? 'This is now PROVEN on their own data — going forward it is a fact about them, not a suggestion.'
+              : e.verdict === 'refuted'
+                ? 'Their own data says this one does not work for them — respect the result and do not re-pitch it.'
+                : 'The data could not decide — say so honestly; a longer or cleaner test is a fair next step.')
+        );
+      }
+    } catch { /* verdict announcement is best-effort */ }
     if (periodizationLine) parts.push(`WEEK-AHEAD PERIODIZATION: ${periodizationLine}`);
     if (openerLines.length) parts.push(`YOUR LAST ${openerLines.length} MORNING BRIEFS (do not reuse this phrasing or structure — if the same topic is genuinely still the lead, change the angle, escalate, or ask a pointed question instead of restating the setup):\n${openerLines.join('\n')}`);
     continuityContext = parts.join('\n\n');
@@ -4022,7 +4045,42 @@ app.get('/api/briefing', async (req, res) => {
       // Propose experiments from unconfirmed correlations; evaluate due ones.
       return Promise.all([
         experiments.proposeExperiments().catch((e) => console.error('[propose]', e.message)),
-        experiments.evaluateDue().catch((e) => console.error('[evaluate]', e.message)),
+        experiments.evaluateDue()
+          .then(async (evaluated) => {
+            // A verdict is the payoff of a multi-week self-test — push it to the
+            // phone the moment it lands instead of letting it sit silently.
+            for (const exp of evaluated || []) {
+              if (!exp?.verdict) continue;
+              const icon = exp.verdict === 'confirmed' ? '✓ Confirmed' : exp.verdict === 'refuted' ? '✗ Refuted' : '~ Inconclusive';
+              const pct = exp.result?.pctChange != null ? ` (${exp.result.pctChange > 0 ? '+' : ''}${Math.round(exp.result.pctChange * 100)}%)` : '';
+              try {
+                const nudgesStore = require('./src/store/nudges');
+                const devicesStore = require('./src/store/devices');
+                const { sendPush } = require('./src/notify/expo');
+                const dedupKey = `experiment_verdict:${exp.id}`;
+                const recent = await nudgesStore.recentlySentKeys(7);
+                if (recent.has(dedupKey)) continue;
+                const id = await nudgesStore.recordNudge({
+                  dedupKey,
+                  title: `🧪 Experiment verdict: ${icon}`,
+                  body: `${exp.hypothesis}${pct}`,
+                  priority: 0.8,
+                  basis: { type: 'experiment_verdict', id: exp.id, verdict: exp.verdict },
+                  status: 'pending',
+                });
+                const tokens = await devicesStore.listActiveTokens();
+                if (tokens.length) {
+                  const r = await sendPush(tokens, { title: `🧪 Experiment verdict: ${icon}`, body: `${exp.hypothesis}${pct}`, data: { type: 'experiment_verdict' } });
+                  for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
+                  await nudgesStore.markStatus(id, 'sent');
+                }
+              } catch (e) {
+                console.error('[verdict push] failed:', e.message);
+              }
+            }
+            return evaluated;
+          })
+          .catch((e) => console.error('[evaluate]', e.message)),
       ]);
     })
     // Synthesize cross-domain relationships into plain-language insights, then run

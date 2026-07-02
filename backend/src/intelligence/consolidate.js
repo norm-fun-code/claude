@@ -294,13 +294,25 @@ function buildModelText(data) {
     lines.push(`ACTIVE GOALS: ${goalLines.join(' · ')}`);
   }
 
-  // --- Experiments ---
-  const expLines = [];
-  for (const e of experiments.completed) {
-    const icon = e.verdict === 'confirmed' ? '✓ Confirmed' : e.verdict === 'refuted' ? '✗ Refuted' : '~ Inconclusive';
-    const pctStr = e.result?.pctChange != null ? ` (${e.result.pctChange > 0 ? '+' : ''}${Math.round(e.result.pctChange * 100)}%)` : '';
-    expLines.push(`${icon}: "${e.hypothesis}"${pctStr}`);
+  // --- Experiments: self-tested causal knowledge, the strongest ground there is ---
+  const expPct = (e) => (e.result?.pctChange != null ? ` (${e.result.pctChange > 0 ? '+' : ''}${Math.round(e.result.pctChange * 100)}% on ${e.metric})` : '');
+  const proven = experiments.completed.filter((e) => e.verdict === 'confirmed');
+  const ruledOut = experiments.completed.filter((e) => e.verdict === 'refuted');
+  const inconclusive = experiments.completed.filter((e) => e.verdict && e.verdict !== 'confirmed' && e.verdict !== 'refuted');
+  if (proven.length) {
+    lines.push(
+      `PROVEN ON YOU (self-tested experiments CONFIRMED on their own data — cite these as proof, not association; this is your strongest ground for advice):\n` +
+        proven.map((e) => `  ✓ "${e.hypothesis}"${expPct(e)}`).join('\n')
+    );
   }
+  if (ruledOut.length) {
+    lines.push(
+      `RULED OUT (self-tested, showed no effect on THEM — do not re-suggest as if untried):\n` +
+        ruledOut.map((e) => `  ✗ "${e.hypothesis}"${expPct(e)}`).join('\n')
+    );
+  }
+  const expLines = [];
+  for (const e of inconclusive) expLines.push(`~ Inconclusive: "${e.hypothesis}"${expPct(e)}`);
   for (const e of experiments.running) {
     const daysLeft = e.end_date ? Math.max(0, Math.ceil((new Date(e.end_date) - Date.now()) / DAY)) : null;
     expLines.push(`⟳ Running: "${e.hypothesis}"${daysLeft != null ? ` (${daysLeft} days left)` : ''}`);
