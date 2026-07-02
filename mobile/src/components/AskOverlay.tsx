@@ -25,8 +25,11 @@ import { useChat } from '../hooks/useChat';
 import { API_BASE, CONSOLIDATE_URL, authHeaders, fetchWithTimeout } from '../config';
 
 export interface AskOverlayHandle {
-  /** Open the overlay, optionally pre-filling the input with a question. */
-  openWith: (question?: string) => void;
+  /** Open the overlay, optionally pre-filling the input with a question.
+      `starters` are context-aware one-tap questions (built by the caller from
+      whatever screen the user summoned Ask from) shown as chips above the
+      input — the chief of staff arrives already knowing what you're looking at. */
+  openWith: (question?: string, starters?: string[]) => void;
 }
 
 interface Props {
@@ -169,11 +172,14 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
   const [expDays, setExpDays] = useState<14 | 21 | 28>(14);
   const [expStarting, setExpStarting] = useState(false);
   const [snapshot, setSnapshot] = useState<SnapData | null>(null);
+  // Context-aware one-tap questions for the current summon (quick-ask only).
+  const [starters, setStarters] = useState<string[]>([]);
 
   useImperativeHandle(ref, () => ({
-    openWith(question?: string) {
+    openWith(question?: string, starters?: string[]) {
       setView('chat'); // never reopen on the Saved-history screen
       setOpen(true);
+      setStarters(starters ?? []); // refresh per summon so stale context never lingers
       if (question) setQuestion(question);
     },
   }));
@@ -217,6 +223,7 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
     if (!q.trim()) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setQuestion('');
+    setStarters([]); // context chips served their purpose once anything is asked
     send(q);
   };
 
@@ -486,6 +493,20 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
               )}
 
               <View style={[styles.inputWrap, { borderTopColor: c.border }]}>
+                {/* Context starters — one-tap questions seeded from the screen
+                    the user summoned quick-ask from ("FROM THIS SCREEN"). */}
+                {starters.length > 0 && (
+                  <View style={styles.startersWrap}>
+                    <Text style={[styles.startersLabel, { color: c.subtext }]}>FROM THIS SCREEN</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.startersRow}>
+                      {starters.map((s) => (
+                        <Pressable key={s} onPress={() => submit(s)} style={[styles.starterChip, { borderColor: c.accent, backgroundColor: c.accentSoft }]}>
+                          <Text style={[styles.starterText, { color: c.accent }]} numberOfLines={1}>{s}</Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
                 <View style={[styles.inputRow, { borderColor: c.border, backgroundColor: c.card }]}>
                   <TextInput
                     ref={inputRef}
@@ -607,6 +628,17 @@ const styles = StyleSheet.create({
   toolBtnGhost: { paddingHorizontal: spacing.sm, paddingVertical: 8 },
   toolGhostText: { fontSize: 14, fontWeight: '600' },
   inputWrap: { borderTopWidth: 1, paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.sm },
+  startersWrap: { marginBottom: spacing.sm },
+  startersLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.0, marginBottom: 5 },
+  startersRow: { gap: spacing.sm, paddingRight: spacing.md },
+  starterChip: {
+    borderWidth: 1,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 7,
+    maxWidth: 300,
+  },
+  starterText: { fontSize: 13, fontWeight: '600' },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',

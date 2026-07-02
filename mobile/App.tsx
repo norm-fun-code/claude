@@ -536,7 +536,31 @@ export default function App() {
         onLongPress={(key) => {
           if (key === 'ask' && tab !== 'ask') {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-            quickAskRef.current?.openWith();
+            // Context-aware summon: seed one-tap questions from the screen the
+            // user is looking at, grounded in live numbers where we have them.
+            const score = liveRecovery.recovery?.score;
+            const band = liveRecovery.recovery?.band;
+            const starters =
+              tab === 'health' ? [
+                score != null ? `Why is my recovery ${score} (${band ?? 'unknown'}) today?` : 'Why is my recovery where it is today?',
+                "What's been moving my HRV lately?",
+                "Should I adjust today's workout given my recovery?",
+              ]
+              : tab === 'wealth' ? [
+                'How is my spending pacing this month?',
+                'What changed in my net worth recently?',
+                'Where am I overspending vs my usual?',
+              ]
+              : tab === 'wisdom' ? [
+                "Connect today's quote to what my data shows this week",
+                'What from my library should I revisit right now?',
+              ]
+              : [ // today
+                "What's the single most important thing right now?",
+                d?.chiefBrief?.risk ? 'Go deeper on the risk in my brief' : "What am I missing in today's plan?",
+                'How are my weekly goals tracking?',
+              ];
+            quickAskRef.current?.openWith(undefined, starters);
           }
         }}
       />
