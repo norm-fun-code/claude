@@ -6,7 +6,7 @@ import { getColors, spacing, radius, typography, shadow, glow, accentGradient, w
 import { AnimatedEntry } from './AnimatedEntry';
 import type { ChiefBrief } from '../hooks/useBriefing';
 import { BRIEFING_CONTEXT_URL, BRIEFING_AUDIO_URL, authHeaders, fetchWithTimeout } from '../config';
-import { voiceAvailable, playRemote, stopPlayback } from '../lib/voice';
+import { voiceAvailable, playBase64, stopPlayback } from '../lib/voice';
 
 interface Props {
   brief: ChiefBrief | null | undefined;
@@ -139,17 +139,18 @@ export function BriefCard({ brief, fallback }: Props) {
     Haptics.selectionAsync();
     setAudioState('loading');
     try {
-      const ok = await playRemote(BRIEFING_AUDIO_URL, authHeaders(), () => setAudioState('idle'));
-      if (ok) {
-        setAudioState('playing');
-      } else {
-        // playRemote returns false only when the native audio module is absent
-        // (older binary) — the button shouldn't even be shown then, but be safe.
-        setAudioState('idle');
-      }
+      // Fetch the narration as base64 JSON (auth headers sent reliably via
+      // fetch), then play from a local file — the same path the voice reply
+      // uses. Streaming the URL through expo-av dropped auth on iOS and 401'd.
+      const res = await fetchWithTimeout(BRIEFING_AUDIO_URL, { headers: authHeaders() }, 30000);
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+      const data = await res.json();
+      if (!data?.audio) throw new Error('no audio');
+      const ok = await playBase64(data.audio, data.mime || 'audio/wav', () => setAudioState('idle'));
+      setAudioState(ok ? 'playing' : 'idle');
     } catch {
-      // Endpoint returned an error (no brief / TTS unavailable) or playback
-      // failed — surface it briefly instead of silently doing nothing.
+      // No brief / TTS unavailable / playback failed — surface it briefly
+      // instead of silently doing nothing.
       setAudioState('error');
       setTimeout(() => setAudioState((s) => (s === 'error' ? 'idle' : s)), 3000);
     }

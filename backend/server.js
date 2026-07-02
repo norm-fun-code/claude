@@ -1963,9 +1963,11 @@ app.get('/api/briefing/audio', async (req, res) => {
       return res.status(502).json({ error: 'tts_failed', message: 'Narration is temporarily unavailable.' });
     }
     if (!out) return res.status(404).json({ error: 'nothing_to_narrate', message: 'This brief has nothing to read aloud.' });
-    res.set('Content-Type', out.mime);
-    res.set('Cache-Control', 'private, max-age=300');
-    res.send(out.audio);
+    // Return base64 JSON (not a raw stream) so the client fetches it with normal
+    // auth headers and plays from a local file — the same path the voice reply
+    // uses and proven to work. Streaming the URL through expo-av dropped the
+    // Authorization header on iOS and 401'd.
+    res.json({ audio: out.audio.toString('base64'), mime: out.mime });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
