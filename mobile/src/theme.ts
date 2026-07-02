@@ -12,7 +12,7 @@ export const colors = {
   yellow: '#FF9F0A',                // iOS systemYellow
   red: '#FF3B30',                   // iOS systemRed
   hero: '#1C1C1E',                  // dark surface for hero cards (BriefCard etc.)
-  // Dark mode (app forces light — kept for completeness)
+  // Dark mode
   backgroundDark: '#000000',
   cardDark: '#1C1C1E',
   borderDark: 'rgba(255,255,255,0.1)',
