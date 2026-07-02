@@ -8,6 +8,34 @@
 const devicesStore = require('../store/devices');
 const { sendPush } = require('./expo');
 
+// Default: don't auto-rebuild + push if the user already built a brief within
+// the last 2 hours (opened the app / hit Rebuild this morning). Overridable via
+// BRIEFING_FRESH_SKIP_MS (0 disables the guard entirely).
+const FRESH_SKIP_MS = Number(process.env.BRIEFING_FRESH_SKIP_MS ?? 2 * 60 * 60 * 1000);
+
+/**
+ * Pure: was a briefing built recently enough that an automatic rebuild + "ready"
+ * push would be redundant? `lastGeneratedAt` is the newest daily briefing's
+ * timestamp (or null/undefined if none).
+ */
+function isRecentlyBuilt(lastGeneratedAt, { now = Date.now(), windowMs = FRESH_SKIP_MS } = {}) {
+  if (!lastGeneratedAt || windowMs <= 0) return false;
+  const t = new Date(lastGeneratedAt).getTime();
+  if (!Number.isFinite(t)) return false;
+  return now - t < windowMs;
+}
+
+/** The newest daily briefing's build time, or null. */
+async function lastBriefingBuiltAt() {
+  try {
+    const rows = await require('../store/briefings').listBriefings({ kind: 'daily', limit: 1 });
+    return rows[0]?.generated_at ?? null;
+  } catch (e) {
+    console.error('[morning] freshness lookup failed (proceeding):', e.message);
+    return null; // on error, don't suppress — better a rare dup than a missed brief
+  }
+}
+
 function selfBase() {
   const port = process.env.PORT || 3001;
   return `http://127.0.0.1:${port}`;
@@ -96,6 +124,18 @@ async function pushSleepCheckIn(opts = {}) {
  * @param {{ send?: boolean }} [opts]
  */
 async function runMorningBriefing(opts = {}) {
+  // Skip the automatic morning rebuild + push (brief-ready OR sleep check-in) if
+  // the user already built a briefing themselves within the freshness window —
+  // otherwise the scheduled run overwrites their fresh brief and pings a
+  // redundant "ready" notification. Explicit test triggers pass { force: true }.
+  if (opts.force !== true) {
+    const builtAt = await lastBriefingBuiltAt();
+    if (isRecentlyBuilt(builtAt)) {
+      const ageMin = Math.round((Date.now() - new Date(builtAt).getTime()) / 60000);
+      console.log(`[morning] briefing built ${ageMin}m ago — skipping automatic rebuild + push`);
+      return { built: false, sent: 0, skipped: 'recently_built', ageMinutes: ageMin };
+    }
+  }
   try {
     const needs = await require('../intelligence/recovery').needsSleepCheckIn();
     if (needs) return await pushSleepCheckIn(opts);
@@ -147,4 +187,4 @@ async function runWeeklyReviewWithPush(opts = {}) {
   }
 }
 
-module.exports = { runMorningBriefing, warmBriefing, warmAndNotify, pushSleepCheckIn, runWeeklyReviewWithPush };
+module.exports = { runMorningBriefing, warmBriefing, warmAndNotify, pushSleepCheckIn, runWeeklyReviewWithPush, isRecentlyBuilt };

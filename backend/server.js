@@ -2640,11 +2640,13 @@ app.post('/api/watch/run', async (req, res) => {
 
 // Manually trigger the morning routine (pre-build briefing + "ready" push).
 // Lets you test the 8am flow on demand; pass { dryRun: true } to build without
-// pushing.
+// pushing. Explicit test trigger — forces past the "already built recently"
+// guard by default so it always runs; pass { force: false } to exercise the
+// guard itself.
 app.post('/api/morning/run', async (req, res) => {
   try {
-    const { dryRun = false } = req.body || {};
-    res.json(await runMorningBriefing({ send: !dryRun }));
+    const { dryRun = false, force = true } = req.body || {};
+    res.json(await runMorningBriefing({ send: !dryRun, force }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
