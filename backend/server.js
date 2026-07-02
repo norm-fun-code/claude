@@ -2017,13 +2017,18 @@ async function executeVoiceAction(routed) {
       return { done: true, description: `Logged ${routed.habit} as done` };
     }
     if (routed.action === 'add_chapter' && routed.label) {
-      await lifeChaptersStore.create({
+      const { replaced } = await lifeChaptersStore.createOrReplace({
         kind: ['pregnancy', 'countdown', 'note'].includes(routed.kind) ? routed.kind : 'note',
         label: String(routed.label).slice(0, 120),
         keyDate: routed.keyDate || null,
         keyDateLabel: routed.keyDateLabel || null,
       });
-      return { done: true, description: `Remembered as a standing life chapter: ${routed.label}` };
+      return {
+        done: true,
+        description: replaced
+          ? `Updated the standing life chapter: ${routed.label}${routed.keyDate ? ` (${routed.keyDateLabel || 'date'}: ${routed.keyDate})` : ''}`
+          : `Remembered as a standing life chapter: ${routed.label}`,
+      };
     }
     if (routed.action === 'add_context' && routed.text) {
       await annotationsStore.createAnnotation({

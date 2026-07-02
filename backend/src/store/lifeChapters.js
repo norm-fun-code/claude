@@ -19,6 +19,24 @@ async function create({ kind = 'countdown', label, keyDate = null, keyDateLabel 
   return rows[0];
 }
 
+/**
+ * Create-or-correct: "Nancy is due January 2, not January 6" must UPDATE the
+ * standing fact, not add a second pregnancy. A new chapter replaces any active
+ * one it clearly refers to — same kind for a pregnancy (there's one at a time),
+ * same normalized label otherwise — by deactivating the old row first.
+ * Returns { chapter, replaced } so callers can phrase "updated" vs "remembered".
+ */
+async function createOrReplace(input) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+  const existing = await listActive();
+  const matches = existing.filter((ch) =>
+    input.kind === 'pregnancy' ? ch.kind === 'pregnancy' : norm(ch.label) === norm(input.label)
+  );
+  for (const ch of matches) await deactivate(ch.id);
+  const chapter = await create(input);
+  return { chapter, replaced: matches.length > 0 };
+}
+
 async function deactivate(id) {
   const { rowCount } = await query(
     `UPDATE life_chapters SET active = false, updated_at = now() WHERE id = $1`,
@@ -27,4 +45,4 @@ async function deactivate(id) {
   return rowCount > 0;
 }
 
-module.exports = { listActive, create, deactivate };
+module.exports = { listActive, create, createOrReplace, deactivate };
