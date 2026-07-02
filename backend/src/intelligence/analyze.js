@@ -16,6 +16,12 @@ const DEFAULTS = {
   loadDays: 60, // history window pulled from the spine
   trendWindow: 7, // days per side for recent-vs-prior
   trendMinPct: 0.2, // |change| >= 20% to report
+  // Trend findings compare the last trendWindow days against a LONGER trailing
+  // baseline (median), not just the immediately-prior week — otherwise one
+  // abnormal week (a hiking vacation, travel) becomes the reference and the
+  // return to normal life reads as a dramatic fake "trend" for a week straight.
+  trendBaselineDays: 28,
+  trendBaselineMinN: 10, // require a real baseline before claiming a trend
   corrWindow: 30, // days considered for correlation
   corrMinN: 20, // min aligned day-pairs (raised: r≥0.5 at n=10 isn't significant)
   corrMinAbsR: 0.5, // |r| >= 0.5 to report
@@ -61,6 +67,11 @@ const DEFAULTS = {
     // value is noise — and they aren't user-controllable inputs. Excluded from the
     // trend AND anomaly engines (both gate on trendSkip).
     'health:sleep_debt', 'health:sleep_need',
+    // Liabilities swing with credit-card statement cycles — a balance posting
+    // makes "liabilities up 32% over 7d" fire for a week straight with no real
+    // meaning. Balance-sheet structure belongs to wealth insights / the plan
+    // check, not a short-window trend alarm.
+    'wealth:liabilities',
   ],
   // Per-key correlation exclusions. Derived intermediates (sleep need/debt) aren't
   // independent inputs; VO₂ max is an Apple Watch FITNESS ESTIMATE that barely
@@ -153,7 +164,11 @@ function computeTrends(seriesByKey, opts = {}) {
 
   for (const [key, series] of Object.entries(seriesByKey)) {
     if (o.trendSkip && o.trendSkip.includes(key)) continue;
-    const t = stats.trendStats(series, o.trendWindow);
+    const t = stats.trendStats(series, o.trendWindow, {
+      baselineWindow: o.trendBaselineDays ?? o.trendWindow,
+      minPriorN: o.trendBaselineMinN ?? 3,
+      robust: true,
+    });
     if (!t || t.pctChange == null || Math.abs(t.pctChange) < o.trendMinPct) continue;
 
     const { domain, metric } = splitKey(key);
@@ -167,9 +182,9 @@ function computeTrends(seriesByKey, opts = {}) {
     findings.push({
       type: 'trend',
       domains: [domain],
-      title: `${label} ${dir} ${pct(t.pctChange)} over ${o.trendWindow}d${qualifier}`,
+      title: `${label} ${dir} ${pct(t.pctChange)} vs your ${o.trendBaselineDays ?? o.trendWindow}d norm${qualifier}`,
       detail:
-        `${label}: last ${o.trendWindow}d avg ${fmtMean(t.recentMean)} vs prior ${fmtMean(t.priorMean)} ` +
+        `${label}: last ${o.trendWindow}d avg ${fmtMean(t.recentMean)} vs your ${o.trendBaselineDays ?? o.trendWindow}d norm ${fmtMean(t.priorMean)} ` +
         `(${pct(t.pctChange)}). Latest ${fmtMean(t.latest)}.`,
       confidence: Math.min(1, Math.abs(t.pctChange) / 0.5),
       evidence: {

@@ -24,6 +24,17 @@ function avg(rows) {
   return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
 }
 
+// Median for the BASELINE side of "current vs baseline" comparisons: one
+// anomalous week (a hiking vacation, a travel bender) inside the window barely
+// moves a median, where it drags a mean and makes the return to normal life
+// read as a dramatic decline against an abnormal reference.
+function medianOf(rows) {
+  const v = rows.map((r) => Number(r.value)).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!v.length) return null;
+  const mid = Math.floor(v.length / 2);
+  return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
+}
+
 function sum(rows) {
   const v = rows.map((r) => Number(r.value)).filter(Number.isFinite);
   return v.length ? v.reduce((a, b) => a + b, 0) : null;
@@ -48,25 +59,25 @@ function dirArrow(current, prior, goodWhen = 'up') {
 
 function fmtPct(n) {
   if (n == null) return '';
-  return ` (${n >= 0 ? '+' : ''}${n}% vs prior week)`;
+  return ` (${n >= 0 ? '+' : ''}${n}% vs your 28d norm)`;
 }
 
 // ---- Data gatherers ----
 
-async function gatherWellbeing(d7, d14) {
+async function gatherWellbeing(d7, d35) {
   const metrics = ['mood', 'energy', 'focus'];
   const out = {};
   for (const m of metrics) {
     const [cur, prior] = await Promise.all([
       metricsStore.dailyAggregate({ domain: 'wellbeing', metric: m, from: d7, agg: 'avg', excludeSource: 'seed' }),
-      metricsStore.dailyAggregate({ domain: 'wellbeing', metric: m, from: d14, to: d7, agg: 'avg', excludeSource: 'seed' }),
+      metricsStore.dailyAggregate({ domain: 'wellbeing', metric: m, from: d35, to: d7, agg: 'avg', excludeSource: 'seed' }),
     ]);
-    out[m] = { cur: round1(avg(cur)), prior: round1(avg(prior)) };
+    out[m] = { cur: round1(avg(cur)), prior: round1(medianOf(prior)) };
   }
   return out;
 }
 
-async function gatherHealth(d7, d14) {
+async function gatherHealth(d7, d35) {
   // HRV/RHR: source-lock to Eight Sleep manual entries + the seeded baseline so
   // the self-model uses the same night-vs-night comparison as analyze() and
   // liveRecovery(). Without this, Apple Watch daytime HRV bleeds in on days
@@ -91,9 +102,9 @@ async function gatherHealth(d7, d14) {
       : (opts) => metricsStore.dailyAggregate({ ...opts, agg, excludeSource: 'seed' });
     const [cur, prior] = await Promise.all([
       aggFn({ domain: 'health', metric: m, from: d7 }),
-      aggFn({ domain: 'health', metric: m, from: d14, to: d7 }),
+      aggFn({ domain: 'health', metric: m, from: d35, to: d7 }),
     ]);
-    out[m] = { cur: round1(avg(cur)), prior: round1(avg(prior)), goodWhen: gw };
+    out[m] = { cur: round1(avg(cur)), prior: round1(medianOf(prior)), goodWhen: gw };
   }
   return out;
 }
@@ -329,14 +340,17 @@ function buildModelText(data) {
 async function consolidate({ kind = 'nightly' } = {}) {
   const now = new Date();
   const d7 = new Date(now - 7 * DAY);
-  const d14 = new Date(now - 14 * DAY);
+  // Baseline window: the 28 days BEFORE the current week (d35→d7), compared as
+  // a median — so one vacation week can't become "the reference" and make the
+  // return to normal life read as a decline.
+  const d35 = new Date(now - 35 * DAY);
   const d30 = new Date(now - 30 * DAY);
   const d56 = new Date(now - 56 * DAY);
 
   const [wellbeing, health, habits, wealth, goals, experiments, findings, annotations, intentionArr] =
     await Promise.all([
-      gatherWellbeing(d7, d14),
-      gatherHealth(d7, d14),
+      gatherWellbeing(d7, d35),
+      gatherHealth(d7, d35),
       gatherHabits(d7, d56),
       gatherWealth(d30),
       gatherGoals(),

@@ -350,21 +350,36 @@ function alignByDay(seriesA, seriesB, lag = 0) {
   return { xs, ys, n: xs.length };
 }
 
+function median(arr) {
+  if (!arr.length) return null;
+  const s = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
 /**
  * Recent-vs-prior trend over a daily series [{ day, value }].
- * Compares the mean of the last `window` days to the `window` days before it.
+ * Compares the mean of the last `window` days to the days before it.
+ *
+ * baselineWindow: how many days BEFORE the recent window form the comparison
+ * baseline (defaults to `window`, i.e. classic week-vs-week — the short-term
+ * momentum read the recovery score wants). robust: compare against the
+ * baseline MEDIAN instead of the mean — one anomalous week (a hiking
+ * vacation's step counts, a travel week's HRV) inside a 28d baseline barely
+ * moves the median, where it drags a mean and fabricates a "trend" against an
+ * abnormal reference the moment normal life resumes.
  */
-function trendStats(series, window = 7, { minPriorN = 3 } = {}) {
+function trendStats(series, window = 7, { minPriorN = 3, baselineWindow = window, robust = false } = {}) {
   const values = series.map((p) => Number(p.value)).filter(Number.isFinite);
   if (values.length < 4) return null;
 
   const recent = values.slice(-window);
-  const prior = values.slice(-2 * window, -window);
+  const prior = values.slice(-(window + baselineWindow), -window);
   const recentMean = mean(recent);
   // Require a real prior window before reporting a % change. Otherwise an 8-day
   // series gives a 1-day "prior", so a single low first day reads as a fake,
   // maximally-confident "+100% improving" trend in the user's second week.
-  const priorMean = prior.length >= minPriorN ? mean(prior) : null;
+  const priorMean = prior.length >= minPriorN ? (robust ? median(prior) : mean(prior)) : null;
 
   let pctChange = null;
   if (priorMean != null && priorMean !== 0) {
@@ -400,5 +415,6 @@ module.exports = {
   normalCdf,
   alignByDay,
   trendStats,
+  median,
   dayKey,
 };

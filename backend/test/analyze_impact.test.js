@@ -246,3 +246,27 @@ test('computeHabitHealthSplits: noisy overlapping mood must not produce a findin
   });
   assert.equal(findings.find((x) => x.evidence.outcome === 'wellbeing:mood'), undefined);
 });
+
+test('computeTrends: one anomalous week cannot become the baseline (vacation lapping)', () => {
+  // 28 normal days ~12k steps, then a 7-day hiking-vacation week ~20k, then a
+  // normal week ~12k. Week-vs-week math screams "steps down 38% (worsening)"
+  // the moment normal life resumes; the 28d-median baseline sees a normal week
+  // against a normal norm and stays quiet.
+  const N = 42;
+  const steps = mkSeries(N, (i) => {
+    if (i >= 28 && i < 35) return 20000 + (i % 3) * 300; // vacation week
+    return 12000 + (i % 5) * 200;                        // normal life
+  });
+  const findings = a.computeTrends({ 'health:steps': steps });
+  assert.equal(findings.find((f) => f.evidence.metric === 'health:steps'), undefined,
+    'returning to normal after a vacation week must not read as a steps crash');
+});
+
+test('computeTrends: a genuine sustained decline still fires against the 28d norm', () => {
+  // Four normal weeks ~12k, then a real slump week ~8k (-33% vs norm).
+  const N = 42;
+  const steps = mkSeries(N, (i) => (i >= 35 ? 8000 + (i % 3) * 150 : 12000 + (i % 5) * 200));
+  const f = a.computeTrends({ 'health:steps': steps }).find((x) => x.evidence.metric === 'health:steps');
+  assert.ok(f, 'a real decline vs the personal norm must still surface');
+  assert.match(f.title, /vs your 28d norm/);
+});
