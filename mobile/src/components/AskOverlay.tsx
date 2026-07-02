@@ -36,6 +36,9 @@ interface Props {
   embedded?: boolean;
   /** Pre-fill the question input when navigating here programmatically. */
   initialQuestion?: string;
+  /** Modal mode without the floating launcher — summoned only via the ref
+      (openWith), e.g. by long-pressing the Ask tab from anywhere in the app. */
+  hideFab?: boolean;
 }
 
 const FALLBACK_SUGGESTIONS = [
@@ -148,7 +151,7 @@ function fmtDate(iso: string | null): string {
 // Global "Ask NormOS" command bar: a floating button on every tab that opens a
 // full conversation sheet. Save the current thread to the sidebar, browse saved
 // ones, resume, or delete — all backed by the persistent server history.
-export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverlay({ bottomInset = 0, embedded = false, initialQuestion }, ref) {
+export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverlay({ bottomInset = 0, embedded = false, initialQuestion, hideFab = false }, ref) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [open, setOpen] = useState(false);
@@ -503,19 +506,21 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
 
   return (
     <>
-      <Pressable
-        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setView('chat'); setOpen(true); }}
-        onPressIn={() => { fabScale.value = withSpring(0.91, { damping: 12, stiffness: 400 }); }}
-        onPressOut={() => { fabScale.value = withSpring(1, { damping: 10, stiffness: 300 }); }}
-        style={[styles.fabWrap, { bottom: bottomInset + 70 }]}
-        accessibilityLabel="Ask NormOS"
-        accessibilityRole="button"
-      >
-        <Animated.View style={[styles.fab, { backgroundColor: c.accent }, shadow(isDark, 'bar'), fabAnimStyle]}>
-          <Text style={styles.fabIcon}>✦</Text>
-          <Text style={styles.fabText}>Ask</Text>
-        </Animated.View>
-      </Pressable>
+      {!hideFab && (
+        <Pressable
+          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setView('chat'); setOpen(true); }}
+          onPressIn={() => { fabScale.value = withSpring(0.91, { damping: 12, stiffness: 400 }); }}
+          onPressOut={() => { fabScale.value = withSpring(1, { damping: 10, stiffness: 300 }); }}
+          style={[styles.fabWrap, { bottom: bottomInset + 70 }]}
+          accessibilityLabel="Ask NormOS"
+          accessibilityRole="button"
+        >
+          <Animated.View style={[styles.fab, { backgroundColor: c.accent }, shadow(isDark, 'bar'), fabAnimStyle]}>
+            <Text style={styles.fabIcon}>✦</Text>
+            <Text style={styles.fabText}>Ask</Text>
+          </Animated.View>
+        </Pressable>
+      )}
       <Modal visible={open} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setOpen(false)}>
         {chatSheet}
       </Modal>

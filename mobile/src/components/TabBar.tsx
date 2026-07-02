@@ -29,14 +29,17 @@ interface Props {
   bottomInset?: number;
   /** Recovery-band color for the ambient dot on the Health tab (null = hidden). */
   healthDot?: string | null;
+  /** Long-press on a tab (e.g. Ask summons the overlay above the current tab). */
+  onLongPress?: (key: TabKey) => void;
 }
 
 function TabItem({
-  t, on, onPress, c, dot,
+  t, on, onPress, onLongPress, c, dot,
 }: {
   t: typeof TABS[number];
   on: boolean;
   onPress: () => void;
+  onLongPress?: () => void;
   c: ReturnType<typeof getColors>;
   dot?: string | null;
 }) {
@@ -56,6 +59,7 @@ function TabItem({
       style={styles.tab}
       activeOpacity={0.7}
       onPress={onPress}
+      onLongPress={onLongPress}
       accessibilityRole="button"
       accessibilityState={{ selected: on }}
     >
@@ -71,7 +75,7 @@ function TabItem({
   );
 }
 
-export function TabBar({ active, onChange, bottomInset = 0, healthDot }: Props) {
+export function TabBar({ active, onChange, bottomInset = 0, healthDot, onLongPress }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -90,6 +94,7 @@ export function TabBar({ active, onChange, bottomInset = 0, healthDot }: Props) 
           t={t}
           on={t.key === active}
           onPress={() => handleChange(t.key)}
+          onLongPress={onLongPress ? () => onLongPress(t.key) : undefined}
           c={c}
           dot={t.key === 'health' ? healthDot : null}
         />

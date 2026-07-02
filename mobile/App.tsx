@@ -28,6 +28,7 @@ import { useEveningBrief } from './src/hooks/useEveningBrief';
 import { useHealthData } from './src/hooks/useHealthData';
 import { useRecovery } from './src/hooks/useRecovery';
 import { usePushRegistration } from './src/hooks/usePushRegistration';
+import * as Haptics from 'expo-haptics';
 import { getColors, spacing, shadow, FONTS } from './src/theme';
 
 import { Header } from './src/components/Header';
@@ -36,7 +37,7 @@ import { ForecastCard } from './src/components/ForecastCard';
 import { WealthCard } from './src/components/WealthCard';
 import { AssetMixCard } from './src/components/AssetMixCard';
 import { InsightsCard } from './src/components/InsightsCard';
-import { AskOverlay } from './src/components/AskOverlay';
+import { AskOverlay, type AskOverlayHandle } from './src/components/AskOverlay';
 import { CheckinModal } from './src/components/CheckinModal';
 import { WeeklyIntentionsCard } from './src/components/WeeklyIntentionsCard';
 import { HealthCard } from './src/components/HealthCard';
@@ -100,6 +101,9 @@ export default function App() {
   // Snap to top whenever the active tab changes.
   const scrollRef = useRef<ScrollView>(null);
   useEffect(() => { scrollRef.current?.scrollTo({ y: 0, animated: false }); }, [tab]);
+  // Summonable Ask: long-press the Ask tab from anywhere to open the chat as a
+  // sheet ABOVE the current tab — ask without losing your place.
+  const quickAskRef = useRef<AskOverlayHandle>(null);
   // Cold-open welcome: shown once per launch (App mount = cold start), it covers
   // the whole feed assembly so the jumpy mount/insert is never seen.
   const [showWelcome, setShowWelcome] = useState(true);
@@ -501,6 +505,10 @@ export default function App() {
         visible={habitsOpen}
         onClose={() => { setHabitsOpen(false); dailyLog.refresh(); }}
       />
+      {/* Quick Ask — summoned by long-pressing the Ask tab; opens as a sheet
+          over whatever tab you're on (the FAB is hidden; the tab itself remains
+          the full-screen destination). */}
+      <AskOverlay ref={quickAskRef} hideFab bottomInset={bottomInset} />
       <TabBar
         active={tab}
         onChange={(key) => {
@@ -514,6 +522,12 @@ export default function App() {
             : liveRecovery.recovery?.band === 'red' ? c.red
             : null
         }
+        onLongPress={(key) => {
+          if (key === 'ask' && tab !== 'ask') {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            quickAskRef.current?.openWith();
+          }
+        }}
       />
 
       {/* Cold-open welcome overlay — covers the feed assembly, then slow-dissolves
