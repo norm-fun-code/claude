@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, useColorScheme, TextInput, TouchableOpacity, Pressable, LayoutAnimation } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, useColorScheme, TextInput, TouchableOpacity, Pressable, LayoutAnimation, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography, shadow, glow, accentGradient, withAlpha, FONTS } from '../theme';
 import { AnimatedEntry } from './AnimatedEntry';
 import type { ChiefBrief } from '../hooks/useBriefing';
-import { BRIEFING_CONTEXT_URL, authHeaders, fetchWithTimeout } from '../config';
+import { BRIEFING_CONTEXT_URL, BRIEFING_AUDIO_URL, authHeaders, fetchWithTimeout } from '../config';
+import { voiceAvailable, playRemote, stopPlayback } from '../lib/voice';
 
 interface Props {
   brief: ChiefBrief | null | undefined;
@@ -125,6 +126,25 @@ export function BriefCard({ brief, fallback }: Props) {
   const [noteSaved, setNoteSaved] = useState(false);
   const [noteFailed, setNoteFailed] = useState(false);
   const [noteSaving, setNoteSaving] = useState(false);
+  // Spoken narration — streamed from the server's pre-warmed neural TTS.
+  const [audioState, setAudioState] = useState<'idle' | 'loading' | 'playing'>('idle');
+  useEffect(() => () => { stopPlayback(); }, []);
+
+  async function toggleListen() {
+    if (audioState === 'playing') {
+      await stopPlayback();
+      setAudioState('idle');
+      return;
+    }
+    Haptics.selectionAsync();
+    setAudioState('loading');
+    try {
+      const ok = await playRemote(BRIEFING_AUDIO_URL, authHeaders(), () => setAudioState('idle'));
+      setAudioState(ok ? 'playing' : 'idle');
+    } catch {
+      setAudioState('idle');
+    }
+  }
 
   async function saveNote() {
     const trimmed = note.trim();
@@ -161,7 +181,18 @@ export function BriefCard({ brief, fallback }: Props) {
       />
       {/* signature accent bar */}
       <LinearGradient colors={accentGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.accentBar} />
-      <Text style={styles.kicker}>CHIEF OF STAFF BRIEF</Text>
+      <View style={styles.kickerRow}>
+        <Text style={styles.kicker}>CHIEF OF STAFF BRIEF</Text>
+        {voiceAvailable && brief && (
+          <Pressable onPress={toggleListen} hitSlop={8} style={styles.listenBtn}>
+            {audioState === 'loading' ? (
+              <ActivityIndicator size="small" color="#A89CFF" />
+            ) : (
+              <Text style={styles.listenText}>{audioState === 'playing' ? '◼ Stop' : '▶ Listen'}</Text>
+            )}
+          </Pressable>
+        )}
+      </View>
 
       {brief ? (
         <>
@@ -235,13 +266,28 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     marginBottom: spacing.sm,
   },
+  kickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+  },
   kicker: {
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 1.4,
     color: '#A89CFF',
-    marginBottom: spacing.sm,
   },
+  listenBtn: {
+    borderWidth: 1,
+    borderColor: 'rgba(168,156,255,0.4)',
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: 3,
+    minWidth: 64,
+    alignItems: 'center',
+  },
+  listenText: { color: '#A89CFF', fontSize: 11, fontWeight: '700', letterSpacing: 0.4 },
   // The synthesis IS the headline — editorial display type, not body copy.
   synthesis: {
     fontFamily: FONTS.display,

@@ -1907,6 +1907,177 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
+// ── Voice chief of staff ──────────────────────────────────────────────────────
+const voiceService = require('./src/services/voice');
+
+/** Generate (or reuse) today's brief narration audio; returns the cache row. */
+async function briefAudioFor(content, day) {
+  const script = voiceService.composeNarrationScript(content);
+  if (!script) return null;
+  const hash = crypto.createHash('sha1').update(script).digest('hex').slice(0, 10);
+  const cacheKey = `brief:${day}:${hash}`;
+  const { rows } = await db.query(`SELECT audio, mime FROM tts_audio WHERE cache_key = $1`, [cacheKey]);
+  if (rows[0]) return { audio: rows[0].audio, mime: rows[0].mime };
+  const { audio, mime } = await voiceService.synthesize(script);
+  await db.query(
+    `INSERT INTO tts_audio (cache_key, audio, mime) VALUES ($1, $2, $3)
+     ON CONFLICT (cache_key) DO NOTHING`,
+    [cacheKey, audio, mime]
+  );
+  // Prune stale narrations so the table never grows past a handful of rows.
+  db.query(`DELETE FROM tts_audio WHERE created_at < now() - interval '7 days'`).catch(() => {});
+  return { audio, mime };
+}
+
+async function prewarmBriefAudio(content) {
+  const tz = process.env.TZ || 'America/New_York';
+  const day = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  await briefAudioFor(content, day);
+}
+
+// Spoken narration of today's chief-of-staff brief — cached per content hash,
+// so a rebuild re-narrates and an unchanged brief streams instantly.
+app.get('/api/briefing/audio', async (req, res) => {
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const day = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    const rows = await briefingsStore.listBriefings({ kind: 'daily', limit: 10 });
+    const todays = rows.find((r) => new Date(r.generated_at).toLocaleDateString('en-CA', { timeZone: tz }) === day);
+    if (!todays?.content) return res.status(404).json({ error: 'no brief yet today' });
+    const out = await briefAudioFor(todays.content, day);
+    if (!out) return res.status(404).json({ error: 'brief has nothing to narrate' });
+    res.set('Content-Type', out.mime);
+    res.set('Cache-Control', 'private, max-age=300');
+    res.send(out.audio);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Voice command router: detects an explicit "do something" in the transcript
+// and executes it against existing app state. Advice-seeking is NOT an action.
+async function routeVoiceAction(transcript) {
+  const tz = process.env.TZ || 'America/New_York';
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  const prompt = `The user said (voice, verbatim): "${transcript.slice(0, 600)}"
+Today is ${today}.
+
+If — and ONLY if — the message contains an explicit request to CHANGE or RECORD something, return the matching action JSON. Asking for advice, opinions, or information is NOT an action ("should I walk instead?" → none; "swap today to a walk" → swap_workout).
+
+Actions:
+- {"action":"swap_workout","workoutId":"push"|"pull"|"zone2"|"mobility"|"intervals"|"rest"}  (a walk/easy cardio maps to "zone2")
+- {"action":"log_habit","habit":"morningTM"|"afternoonTM"|"gratitude"|"coldShower"|"exercise"}  (they say they DID it)
+- {"action":"add_chapter","kind":"pregnancy"|"countdown"|"note","label":"<short>","keyDate":"YYYY-MM-DD" or null,"keyDateLabel":"due"|"deadline"|"on" or null}  (a standing life fact to remember long-term)
+- {"action":"add_context","text":"<short note>"}  (context for the next brief, e.g. "traveling today")
+- {"action":"none"}
+
+Return ONLY the JSON object.`;
+  try {
+    const raw = await llm.generateText({ system: 'You route voice commands. Return only valid JSON.', prompt, temperature: 0, maxTokens: 200 });
+    const m = raw.match(/\{[\s\S]*\}/);
+    return m ? JSON.parse(m[0]) : { action: 'none' };
+  } catch {
+    return { action: 'none' };
+  }
+}
+
+async function executeVoiceAction(routed) {
+  const tz = process.env.TZ || 'America/New_York';
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  try {
+    if (routed.action === 'swap_workout' && VALID_WORKOUT_IDS.has(routed.workoutId)) {
+      await db.query(
+        `INSERT INTO workout_overrides (log_date, workout_id) VALUES ($1, $2)
+         ON CONFLICT (log_date) DO UPDATE SET workout_id = EXCLUDED.workout_id, created_at = now()`,
+        [today, routed.workoutId]
+      );
+      return { done: true, description: `Swapped today's workout to ${routed.workoutId}` };
+    }
+    if (routed.action === 'log_habit' && ['morningTM', 'afternoonTM', 'gratitude', 'coldShower', 'exercise'].includes(routed.habit)) {
+      await sourcesStore.registerSource({ id: HABITS_SOURCE, domain: 'habits', displayName: 'Habit Stack' });
+      const { metrics } = mapHabits({ [routed.habit]: true }, { tz });
+      await metricsStore.insertMetrics(metrics);
+      await recomputeHabitScore(tz);
+      await sourcesStore.markSync(HABITS_SOURCE);
+      return { done: true, description: `Logged ${routed.habit} as done` };
+    }
+    if (routed.action === 'add_chapter' && routed.label) {
+      await lifeChaptersStore.create({
+        kind: ['pregnancy', 'countdown', 'note'].includes(routed.kind) ? routed.kind : 'note',
+        label: String(routed.label).slice(0, 120),
+        keyDate: routed.keyDate || null,
+        keyDateLabel: routed.keyDateLabel || null,
+      });
+      return { done: true, description: `Remembered as a standing life chapter: ${routed.label}` };
+    }
+    if (routed.action === 'add_context' && routed.text) {
+      await annotationsStore.createAnnotation({
+        category: 'brief_context',
+        label: String(routed.text).slice(0, 200),
+        startTs: new Date(),
+        endTs: new Date(Date.now() + 24 * 3600 * 1000),
+      });
+      return { done: true, description: `Noted for the next brief: ${routed.text}` };
+    }
+  } catch (err) {
+    console.error('[voice action] failed:', err.message);
+    return { done: false, description: `Tried to ${routed.action} but it failed` };
+  }
+  return null;
+}
+
+// Push-to-talk: audio in → transcript → (optional action) → Ask brain →
+// spoken answer out. Persists to the same chat thread as typed Ask.
+app.post('/api/voice/ask', async (req, res) => {
+  try {
+    const { audio, mime } = req.body || {};
+    if (!audio) return res.status(400).json({ error: 'audio (base64) is required' });
+
+    const question = await voiceService.transcribe(String(audio), mime || 'audio/wav');
+    if (!question) return res.status(422).json({ error: 'no_speech', message: "Couldn't hear anything in that." });
+
+    // Action routing runs in parallel with loading chat history.
+    const chatStore = require('./src/store/chat');
+    const [routed, historyRows] = await Promise.all([
+      routeVoiceAction(question),
+      chatStore.recentMessages({ limit: 20 }).catch(() => []),
+    ]);
+    const action = routed.action !== 'none' ? await executeVoiceAction(routed) : null;
+
+    const askInput = action?.done
+      ? `${question}\n\n[System: the assistant just executed this on the user's behalf: "${action.description}". Acknowledge it naturally in one clause, then answer the rest of the message.]`
+      : question;
+    const result = await ask(askInput, { history: historyRows.map((m) => ({ role: m.role, content: m.content })) });
+
+    // Persist to the shared thread (same as the typed /api/chat path).
+    const convId = await chatStore.ensureActiveConversation();
+    chatStore.saveMessage({ role: 'user', content: question, embedding: result.questionEmbedding ?? null, conversationId: convId })
+      .catch((e) => console.error('[voice chat] save user failed:', e.message));
+    chatStore.saveMessage({ role: 'assistant', content: result.answer, sources: result.sources ?? [], conversationId: convId })
+      .catch((e) => console.error('[voice chat] save assistant failed:', e.message));
+
+    // Speak the answer (trimmed for latency; full text still returned).
+    let audioOut = null;
+    try {
+      const spoken = voiceService.speakable(result.answer).slice(0, 1400);
+      const t = await voiceService.synthesize(spoken);
+      audioOut = { data: t.audio.toString('base64'), mime: t.mime };
+    } catch (err) {
+      console.error('[voice tts] failed (returning text only):', err.message);
+    }
+
+    res.json({
+      question,
+      answer: result.answer,
+      action: action ? { ...routed, ...action } : null,
+      audio: audioOut?.data ?? null,
+      audioMime: audioOut?.mime ?? null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Read the persisted conversation (for the app to render prior turns on open).
 app.get('/api/chat/history', async (req, res) => {
   try {
@@ -4020,6 +4191,10 @@ app.get('/api/briefing', async (req, res) => {
   // Fire-and-forget: never let persistence failures affect the live response.
   briefingsStore.saveBriefing({ kind: 'daily', content: response })
     .catch((err) => console.error('[persist briefing] failed:', err.message));
+
+  // Pre-warm the spoken narration so the first tap of "Listen" plays instantly
+  // instead of waiting on synthesis. Fire-and-forget.
+  prewarmBriefAudio(response).catch((err) => console.error('[brief audio prewarm] failed:', err.message));
 
   runIngest()
     .then((results) => {

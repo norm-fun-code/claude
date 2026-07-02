@@ -11,6 +11,8 @@ export const API_TOKEN = process.env.EXPO_PUBLIC_API_TOKEN || '';
 
 export const BRIEFING_URL = `${API_BASE}/api/briefing`;
 export const BRIEFING_REBUILD_URL = `${API_BASE}/api/briefing/rebuild`;
+export const BRIEFING_AUDIO_URL = `${API_BASE}/api/briefing/audio`;
+export const VOICE_ASK_URL = `${API_BASE}/api/voice/ask`;
 export const EVENING_BRIEF_URL = `${API_BASE}/api/evening-brief`;
 export const WEATHER_URL = `${API_BASE}/api/weather`;
 export const HEALTH_INGEST_URL = `${API_BASE}/api/ingest/health`;

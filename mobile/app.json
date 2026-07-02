@@ -20,6 +20,8 @@
       "infoPlist": {
         "NSHealthShareUsageDescription": "NormOS reads your HRV, resting heart rate, sleep, steps, and active calories to personalize your daily workout recommendation and health insights.",
         "NSHealthUpdateUsageDescription": "NormOS does not write health data.",
+        "NSMicrophoneUsageDescription": "NormOS uses the microphone so you can talk to your chief of staff — ask questions and give voice commands.",
+        "UIBackgroundModes": ["audio"],
         "ITSAppUsesNonExemptEncryption": false
       },
       "entitlements": {

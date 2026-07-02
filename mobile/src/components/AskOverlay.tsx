@@ -20,9 +20,10 @@ import Animated, {
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import Markdown from 'react-native-markdown-display';
-import { getColors, spacing, radius, typography, shadow } from '../theme';
+import { getColors, spacing, radius, typography, shadow, withAlpha } from '../theme';
 import { useChat } from '../hooks/useChat';
-import { API_BASE, CONSOLIDATE_URL, authHeaders, fetchWithTimeout } from '../config';
+import { API_BASE, CONSOLIDATE_URL, VOICE_ASK_URL, authHeaders, fetchWithTimeout } from '../config';
+import { voiceAvailable, ensureMicPermission, startRecording, stopRecording, playBase64, stopPlayback } from '../lib/voice';
 
 export interface AskOverlayHandle {
   /** Open the overlay, optionally pre-filling the input with a question.
@@ -174,6 +175,43 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
   const [snapshot, setSnapshot] = useState<SnapData | null>(null);
   // Context-aware one-tap questions for the current summon (quick-ask only).
   const [starters, setStarters] = useState<string[]>([]);
+  // Push-to-talk: hold the mic, speak, release → transcript + spoken answer.
+  const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'thinking'>('idle');
+
+  async function voicePressIn() {
+    if (voiceState !== 'idle') return;
+    if (!(await ensureMicPermission())) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      await startRecording();
+      setVoiceState('recording');
+    } catch { setVoiceState('idle'); }
+  }
+
+  async function voicePressOut() {
+    if (voiceState !== 'recording') return;
+    setVoiceState('thinking');
+    try {
+      const rec = await stopRecording();
+      if (!rec) { setVoiceState('idle'); return; }
+      Haptics.selectionAsync();
+      const res = await fetchWithTimeout(VOICE_ASK_URL, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ audio: rec.base64, mime: rec.mime }),
+      }, 90000);
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+      const data = await res.json();
+      // The server persisted both turns to the shared thread — re-sync the view.
+      await loadHistory();
+      if (data.action?.done) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      if (data.audio) playBase64(data.audio, data.audioMime || 'audio/wav').catch(() => {});
+    } catch {
+      // Silent fail — the thread simply doesn't gain a turn; mic returns to idle.
+    } finally {
+      setVoiceState('idle');
+    }
+  }
 
   useImperativeHandle(ref, () => ({
     openWith(question?: string, starters?: string[]) {
@@ -507,18 +545,37 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
                     </ScrollView>
                   </View>
                 )}
-                <View style={[styles.inputRow, { borderColor: c.border, backgroundColor: c.card }]}>
+                <View style={[styles.inputRow, { borderColor: voiceState === 'recording' ? '#FF6B6B' : c.border, backgroundColor: c.card }]}>
                   <TextInput
                     ref={inputRef}
                     style={[styles.input, { color: c.text }]}
-                    placeholder="Ask about your life…"
-                    placeholderTextColor={c.subtext}
+                    placeholder={voiceState === 'recording' ? 'Listening… release to send' : voiceState === 'thinking' ? 'Thinking…' : 'Ask about your life…'}
+                    placeholderTextColor={voiceState === 'recording' ? '#FF6B6B' : c.subtext}
                     value={question}
                     onChangeText={setQuestion}
                     onSubmitEditing={() => submit(question)}
                     returnKeyType="send"
                     multiline
+                    editable={voiceState === 'idle'}
                   />
+                  {voiceAvailable && !question.trim() && (
+                    <Pressable
+                      onPressIn={voicePressIn}
+                      onPressOut={voicePressOut}
+                      disabled={voiceState === 'thinking'}
+                      style={[styles.mic, {
+                        backgroundColor: voiceState === 'recording' ? '#FF6B6B' : withAlpha('#635BFF', 0.15),
+                        borderColor: voiceState === 'recording' ? '#FF6B6B' : withAlpha('#635BFF', 0.35),
+                      }]}
+                      accessibilityLabel="Hold to speak"
+                    >
+                      {voiceState === 'thinking' ? (
+                        <ActivityIndicator size="small" color={c.accent} />
+                      ) : (
+                        <Text style={[styles.micIcon, voiceState === 'recording' && { color: '#fff' }]}>🎙</Text>
+                      )}
+                    </Pressable>
+                  )}
                   <Pressable onPress={() => submit(question)} style={[styles.send, { backgroundColor: question.trim() ? c.accent : c.border }]} disabled={!question.trim()}>
                     <Text style={styles.sendText}>↑</Text>
                   </Pressable>
@@ -650,6 +707,16 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   input: { flex: 1, ...typography.body, fontSize: 16, paddingVertical: 6, maxHeight: 120 },
+  mic: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 6,
+  },
+  micIcon: { fontSize: 16 },
   send: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   sendText: { color: '#fff', fontWeight: '700', fontSize: 18, lineHeight: 20, marginTop: -1 },
   disclaimer: { fontSize: 11, textAlign: 'center', marginTop: 6, lineHeight: 15 },
