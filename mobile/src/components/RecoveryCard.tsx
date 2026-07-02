@@ -227,7 +227,7 @@ const styles = StyleSheet.create({
   parts: { flexDirection: 'row', justifyContent: 'space-around', borderTopWidth: 1, marginTop: spacing.md, paddingTop: spacing.md },
   part: { alignItems: 'center' },
   partValRow: { flexDirection: 'row', alignItems: 'baseline', gap: 2 },
-  partVal: { ...typography.subtitle, fontSize: 20, fontWeight: '600' },
+  partVal: { ...typography.metricSmall },
   partValUnit: { ...typography.caption, fontSize: 11 },
   partLabel: { ...typography.caption, fontSize: 11, marginTop: 2 },
   partsCaption: { ...typography.caption, fontSize: 11, textAlign: 'center', marginTop: spacing.xs, fontStyle: 'italic' },

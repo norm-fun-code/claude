@@ -36,7 +36,6 @@ export function Header({ date }: Props) {
         hitSlop={8}
       >
         <Text style={styles.themeIcon}>{THEME_ICON[pref]}</Text>
-        <Text style={[styles.themeLabel, { color: c.subtext }]}>{THEME_LABEL[pref]}</Text>
       </TouchableOpacity>
     </View>
   );
@@ -60,16 +59,16 @@ const styles = StyleSheet.create({
     ...typography.body,
     fontSize: 15,
   },
+  // Icon-only — a quiet 34px circle instead of a labeled pill, so a settings
+  // control stops competing with the greeting for prime top-right real estate.
   themeBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     borderWidth: 1,
-    borderRadius: radius.pill,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 4,
   },
-  themeIcon: { fontSize: 14 },
-  themeLabel: { fontSize: 12, fontWeight: '600' },
+  themeIcon: { fontSize: 15 },
 });

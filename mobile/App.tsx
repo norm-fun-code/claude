@@ -208,7 +208,7 @@ export default function App() {
             {(d?.healthInsights?.length ?? 0) > 0 ? (
               <InsightsCard insights={d!.healthInsights!} />
             ) : (
-              <EmptyNote c={c} text="Health insights (sleep ↔ HRV ↔ focus patterns) appear once a few days of Apple Health + habit data accumulate. Open the app daily so HealthKit syncs, and log your habits on the Today tab." />
+              <EmptyNote c={c} text="Insights appear after a few days of health + habit data." />
             )}
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} recoveryScore={liveRecovery.recovery?.score ?? null} />
             <ForecastCard forecasts={d?.forecasts ?? []} />
@@ -238,7 +238,7 @@ export default function App() {
             <IndicesCard />
             <MarketsCard markets={d?.markets ?? null} />
             {!d?.wealth && (
-              <EmptyNote c={c} text="Connect Monarch (your monthly export) to see net worth, spending, and cashflow here." />
+              <EmptyNote c={c} text="Connect Monarch to see net worth, spending, and cashflow." />
             )}
           </>
         );

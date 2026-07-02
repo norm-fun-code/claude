@@ -116,14 +116,14 @@ export const typography = {
     fontSize: 34,
     fontWeight: '700' as const,
     letterSpacing: -1,
-    fontVariant: ['tabular-nums'] as const,
+    fontVariant: ['tabular-nums' as const],
   },
   metricSmall: {
     fontFamily: FONTS.displayHeavy,
     fontSize: 22,
     fontWeight: '700' as const,
     letterSpacing: -0.6,
-    fontVariant: ['tabular-nums'] as const,
+    fontVariant: ['tabular-nums' as const],
   },
   title: {
     fontFamily: FONTS.display,
