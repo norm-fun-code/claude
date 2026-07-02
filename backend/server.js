@@ -374,11 +374,14 @@ app.get('/api/sleep/today', async (req, res) => {
     const METRICS = ['hrv', 'resting_hr', 'sleep_score', 'sleep_hours', 'respiratory_rate', 'sleep_debt', 'sleep_need'];
     const result = {};
     await Promise.all(METRICS.map(async (m) => {
+      // Eight Sleep first; fall back to the manual sleep check-in (self_report)
+      // so a night off the pod still shows the sleep the user logged instead
+      // of a blank row.
       const { rows } = await require('./src/db').query(
         `SELECT value FROM metrics
-          WHERE domain = 'health' AND metric = $1 AND source = 'eight_sleep'
+          WHERE domain = 'health' AND metric = $1 AND source IN ('eight_sleep', 'self_report')
             AND date_trunc('day', ts AT TIME ZONE $2) = $3::date
-          ORDER BY ts DESC LIMIT 1`,
+          ORDER BY CASE source WHEN 'eight_sleep' THEN 1 ELSE 2 END, ts DESC LIMIT 1`,
         [m, tz, today]
       );
       if (rows[0]) result[m] = Number(rows[0].value);
@@ -3373,7 +3376,7 @@ app.get('/api/briefing', async (req, res) => {
             ? (hit ? 'they gave it 👍 — marked it helped' : 'they gave it 👎 — marked it did not help')
             : lastAction.outcome_measured_at != null
               ? (delta == null ? 'no data to judge it yet' : hit ? "their data shows it worked" : 'their data shows no effect')
-              : 'no feedback yet — neither thumbed nor enough data to auto-judge';
+              : 'outcome still being measured automatically from their data (takes about a week) — the user owes NOTHING here; never ask for feedback or count days waiting';
           const whenStr = daysAgo === 0 ? 'earlier today' : daysAgo === 1 ? '1 day ago' : `${daysAgo} days ago`;
           lastActionLine = `LAST ACTION SUGGESTED (${whenStr}): "${lastAction.title}" — ${status}.`;
         }

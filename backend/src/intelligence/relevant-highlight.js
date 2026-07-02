@@ -40,7 +40,8 @@ function buildPrompt(context, candidates) {
     `Return JSON: {"index": <number of the best match>, ` +
     `"reason": "<one specific line, max ~110 chars, naming the real connection — e.g. \\"You're prepping the raise — Klaff on why neediness reads as weakness\\">", ` +
     `"relevance": "high" | "medium" | "low"}. ` +
-    `Use "low" when the best candidate is only a generic or loose fit; then leave reason empty.`
+    `Use "low" when the best candidate is only a generic or loose fit; then leave reason empty. ` +
+    `TIMING: situation entries are dated (today/yesterday) — use only the timing given, never phrases like "last night" for anything not dated today/yesterday, and never invent recency.`
   );
 }
 
@@ -65,9 +66,22 @@ async function gatherSituation() {
   } catch { /* goals optional */ }
   try {
     const annotationsStore = require('../store/annotations');
-    const start = new Date(); start.setDate(start.getDate() - 5); start.setHours(0, 0, 0, 0);
+    // Only the last 48h — transient somatic context (a heavy meal, a drink, a
+    // hot room) is stale after a night or two, and an undated week-old tag
+    // reads as "last night" in the surfaced reason. Each entry carries its
+    // actual recency so the model can't invent timing.
+    const start = new Date(); start.setDate(start.getDate() - 1); start.setHours(0, 0, 0, 0);
     const active = await annotationsStore.overlapping(start, new Date());
-    out.lifeContext = active.map((a) => a.label || a.category).filter(Boolean).slice(0, 5);
+    const todayStr = new Date().toDateString();
+    out.lifeContext = active
+      .map((a) => {
+        const label = a.label || a.category;
+        if (!label) return null;
+        const when = new Date(a.start_ts).toDateString() === todayStr ? 'today' : 'yesterday';
+        return `${label} (${when})`;
+      })
+      .filter(Boolean)
+      .slice(0, 5);
   } catch { /* annotations optional */ }
   return out;
 }
