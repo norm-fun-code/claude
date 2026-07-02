@@ -51,6 +51,9 @@ export function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  // Last week's retrospective is reference material once read — collapsed by
+  // default so THIS week's goals (the actionable part) lead the card.
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   // Current week's goals with live achieved state — tappable any day of the week.
   const [currentGoals, setCurrentGoals] = useState<PriorGoal[]>([]);
@@ -155,7 +158,6 @@ export function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}
   // wins/watch-outs. The full review (all bullets) lives in the weekly email.
   const reviewBlock = hasReview ? (
     <View style={styles.priorBox}>
-      <Text style={[styles.label, { color: c.subtext }]}>Last week</Text>
       <Text style={[styles.reviewHeadline, { color: c.text }]}>{review!.headline}</Text>
       {review!.narrative ? (
         <Text style={[styles.reviewNarrative, { color: c.subtext }]}>{review!.narrative}</Text>
@@ -217,16 +219,15 @@ export function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}
     : 0;
   const intentionIsStale = daysSinceWeekStart > 5;
 
-  // Saved summary — the day-to-day view: last week’s AI review (if any), this
-  // week’s goals, and the highest-leverage actions. Tap to edit.
+  // Saved summary — the day-to-day view: THIS week's goals lead (always
+  // visible, tappable), then leverage actions; last week's retrospective is a
+  // collapsed disclosure below — reference, not something to scroll past daily.
   if (saved && !editing) {
     return (
       <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
-        <SectionHeader emoji="🎯" title={hasReview ? 'Weekly review + reset' : "This week's focus"} />
-        {reviewBlock}
+        <SectionHeader emoji="🎯" title="This week's focus" />
         {currentGoals.length > 0 ? (
-          <View style={hasReview ? styles.thisWeekBox : undefined}>
-            {hasReview && <Text style={[styles.label, { color: c.subtext, marginBottom: 6 }]}>This week</Text>}
+          <View>
             {currentGoals.map((g, i) => (
               <TouchableOpacity key={i} onPress={() => toggleCurrent(i)} style={styles.priorRow} activeOpacity={0.6}>
                 <View style={[styles.checkbox, { borderColor: g.achieved ? c.accent : c.border, backgroundColor: g.achieved ? c.accent : 'transparent' }]}>
@@ -241,6 +242,15 @@ export function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}
         )}
         {context ? <Text style={[styles.summaryContext, { color: c.subtext }]} numberOfLines={4}>{context}</Text> : null}
         {leverageBlock}
+        {hasReview && (
+          <>
+            <TouchableOpacity onPress={() => setReviewOpen((v) => !v)} style={[styles.reviewToggle, { borderTopColor: c.border }]} activeOpacity={0.6}>
+              <Text style={[styles.reviewToggleText, { color: c.subtext }]}>Last week's review</Text>
+              <Text style={[styles.reviewToggleChevron, { color: c.subtext }]}>{reviewOpen ? '▲' : '▼'}</Text>
+            </TouchableOpacity>
+            {reviewOpen && reviewBlock}
+          </>
+        )}
         {intentionIsStale && (
           <Text style={[styles.staleNote, { color: c.subtext }]}>
             Set {daysSinceWeekStart}d ago — ready to update for the new week?
@@ -338,6 +348,17 @@ const styles = StyleSheet.create({
   saveBtn: { borderRadius: radius.md, paddingVertical: spacing.sm + 2, paddingHorizontal: spacing.lg },
   saveText: { ...typography.body, fontWeight: '700', color: '#fff' },
   priorBox: { marginBottom: spacing.md, paddingBottom: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#8884' },
+  reviewToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
+    marginTop: spacing.md,
+    paddingTop: spacing.sm + 2,
+    paddingBottom: spacing.xs,
+  },
+  reviewToggleText: { fontSize: 13, fontWeight: '600' },
+  reviewToggleChevron: { fontSize: 10 },
   priorRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginTop: spacing.xs },
   checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   checkmark: { color: '#fff', fontSize: 14, fontWeight: '800', lineHeight: 16 },
@@ -362,7 +383,6 @@ const styles = StyleSheet.create({
   actionDetail: { ...typography.body, fontSize: 13 },
   summaryGoal: { ...typography.body, fontWeight: '500', marginBottom: 2, flex: 1 },
   summaryContext: { ...typography.caption, fontSize: 13, marginTop: spacing.sm, lineHeight: 19 },
-  thisWeekBox: { marginTop: spacing.sm },
   editLink: { marginTop: spacing.sm },
   editLinkText: { ...typography.body, fontWeight: '600' },
   staleNote: { ...typography.caption, fontSize: 12, marginTop: spacing.sm, fontStyle: 'italic' },

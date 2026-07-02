@@ -3532,13 +3532,38 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[progress context] failed:', err.message);
   }
 
+  // This week's stated goals (the Sunday check-in) — fetched BEFORE the LLM
+  // call so the chief of staff can surface an important goal that's still
+  // unchecked as the week runs out, instead of the goals living only as a
+  // silent checklist on the Insights tab. Reused for the response payload.
+  let weeklyGoals = null;
+  let weeklyGoalsContext = '';
+  try {
+    const [currentInt, priorInt] = await Promise.all([
+      intentionsStore.currentIntention(),
+      intentionsStore.priorIntention(),
+    ]);
+    if (currentInt || priorInt) weeklyGoals = { current: currentInt ?? null, prior: priorInt ?? null };
+    const goals = currentInt?.goals ?? [];
+    if (goals.length) {
+      const done = goals.filter((g) => g.achieved).map((g) => `[done] ${g.text}`);
+      const open = goals.filter((g) => !g.achieved).map((g) => `[OPEN] ${g.text}`);
+      weeklyGoalsContext =
+        `${[...open, ...done].join(' · ')}` +
+        (currentInt?.context ? ` (week context: "${String(currentInt.context).slice(0, 300)}")` : '');
+    }
+  } catch (err) {
+    console.error('[weeklyGoals] failed:', err.message);
+    errors.push({ service: 'weekly_goals', error: err.message });
+  }
+
   // Call the LLM with whatever data we have
   let geminiResult = null;
   try {
     // The LLM call can be slow; bound it so a stalled model doesn't hang the
     // briefing (it degrades to the data-only sections).
     geminiResult = await withTimeout(
-      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext),
+      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext),
       Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000),
       'gemini'
     );
@@ -3741,21 +3766,9 @@ app.get('/api/briefing', async (req, res) => {
     errors.push({ service: 'highlight', error: err.message });
   }
 
-  // Weekly goal achievement — current week's goals + prior week's with hit/miss.
-  // Surfaced on the Insights tab so the check-in shows up immediately after saving.
-  let weeklyGoals = null;
-  try {
-    const [currentInt, priorInt] = await Promise.all([
-      intentionsStore.currentIntention(),
-      intentionsStore.priorIntention(),
-    ]);
-    if (currentInt || priorInt) {
-      weeklyGoals = { current: currentInt ?? null, prior: priorInt ?? null };
-    }
-  } catch (err) {
-    console.error('[weeklyGoals] failed:', err.message);
-    errors.push({ service: 'weekly_goals', error: err.message });
-  }
+  // Weekly goal achievement (current + prior week with hit/miss) was fetched
+  // above, before the LLM call, so the chief brief could see open goals — the
+  // same `weeklyGoals` object is reused here for the response payload.
 
   // Latest weekly review (generated separately on a weekly cadence).
   let weeklyReview = null;
