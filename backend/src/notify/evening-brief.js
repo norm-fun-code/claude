@@ -26,7 +26,7 @@ const TONE_HEADLINE = {
 
 // ── deterministic fallback (also the LLM's scaffold) ─────────────────────────
 
-function composeFallback({ autonomic, load, openHabits, gratitude = [] }) {
+function composeFallback({ autonomic, load, openHabits, gratitude = [], training = null }) {
   const { hrv, hrvBaseline, rhr, rhrBaseline, tone, sampleThin } = autonomic;
 
   let readiness;
@@ -79,6 +79,15 @@ function composeFallback({ autonomic, load, openHabits, gratitude = [] }) {
     ? `Still open: ${openHabits.join(', ')} — quick wins before bed.`
     : '';
 
+  // Deterministic plan-vs-actual line so the day-close ledger survives an LLM
+  // outage. The nuanced version comes from the prose pass.
+  let plan = '';
+  if (training?.planned && String(training.planned).toLowerCase() !== 'rest') {
+    plan = training.completed
+      ? `Planned ${training.planned} — done${training.actual && String(training.actual).toLowerCase() !== String(training.planned).toLowerCase() ? ` (logged as ${training.actual})` : ''}.`
+      : `Planned ${training.planned} — not logged as done; the day's closed either way.`;
+  }
+
   // Presence beat — the mindfulness counterpart to the body read. The LLM pass
   // writes the nuanced version; this deterministic path keeps it graceful if the
   // model is down: a soft echo when there's a recent gratitude note, a gentle
@@ -92,6 +101,7 @@ function composeFallback({ autonomic, load, openHabits, gratitude = [] }) {
     headline: TONE_HEADLINE[tone] || TONE_HEADLINE.unknown,
     readiness,
     today,
+    plan,
     tomorrow,
     habits,
     reflection,
@@ -114,7 +124,7 @@ const SYSTEM =
   'Return ONLY valid JSON.';
 
 function buildPrompt(signals) {
-  const { autonomic: a, load: l, openHabits, gratitude = [] } = signals;
+  const { autonomic: a, load: l, openHabits, gratitude = [], morningPlan = null, training = null } = signals;
   const lines = [
     `Autonomic tone: ${a.tone}${a.sampleThin ? ' (thin data — soft-pedal)' : ''}`,
     a.hrv != null ? `Daytime HRV today: ${ms(a.hrv)}${a.hrvBaseline != null ? ` (your norm ${ms(a.hrvBaseline)})` : ''}` : 'Daytime HRV today: (none)',
@@ -122,6 +132,10 @@ function buildPrompt(signals) {
     l.steps != null ? `Steps today: ${commas(l.steps)}${l.stepsBaseline != null ? ` (norm ${commas(l.stepsBaseline)})` : ''}` : 'Steps today: (none)',
     l.activeEnergy != null ? `Active energy today: ${commas(l.activeEnergy)} kcal` : null,
     openHabits.length ? `Evening habits still open: ${openHabits.join(', ')}` : 'Evening habits: all logged',
+    training
+      ? `Planned session today: ${training.planned ?? '(none)'} — ${training.completed ? `DONE${training.actual ? ` (logged: ${training.actual})` : ''}` : 'not logged as done'}`
+      : null,
+    morningPlan?.action ? `This morning's brief asked: "${String(morningPlan.action).slice(0, 300)}"` : 'This morning\'s brief: (not available)',
     gratitude.length
       ? `Recent gratitude notes (most recent first — reflect the THEME back in your own words, do not quote verbatim or list): ${gratitude.map((g) => `"${String(g.text).slice(0, 200)}"`).join(' | ')}`
       : 'Recent gratitude notes: (none logged)',
@@ -135,6 +149,7 @@ Write the evening wind-down brief as JSON with EXACTLY these string fields:
   "headline": "≤6 words capturing tonight's read (e.g. 'Settled — wind down easy')",
   "readiness": "1-2 sentences on autonomic tone from the HRV/RHR vs the user's norm, and what it means for tonight. If data is thin, say so and defer to how they feel.",
   "today": "ONE sentence closing the loop on today's movement (steps/energy). Empty string if no data.",
+  "plan": "ONE sentence grading this morning's plan against what actually happened — the honest ledger, not a lecture. Use the planned-session line (done / not logged) and steps vs norm as evidence: if the ask happened, say so plainly (earned credit); if it didn't, name it without guilt and without re-issuing the instruction — the day is over. Empty string if there's no morning brief or no planned session to grade.",
   "tomorrow": "ONE sentence: the bedtime/wind-down lever that sets up tomorrow. Do not cite a recovery score.",
   "habits": "ONE short nudge listing the still-open evening habits, or empty string if none.",
   "reflection": "ONE sentence — the presence beat that closes the day, the mindfulness counterpart to the body read above. If recent gratitude notes are present, gently echo their theme in your own words (never quote verbatim, never list them like a report) so the reflection lands as something a person who was listening would say. If none are present, warmly invite one line of gratitude before bed. Keep it human and unforced; empty string only if anything here would feel hollow."
@@ -145,7 +160,7 @@ function validate(parsed) {
   if (!parsed || typeof parsed !== 'object') return null;
   const s = (k) => (typeof parsed[k] === 'string' ? parsed[k].trim() : '');
   if (!s('headline') || !s('readiness')) return null; // the two load-bearing fields
-  return { headline: s('headline'), readiness: s('readiness'), today: s('today'), tomorrow: s('tomorrow'), habits: s('habits'), reflection: s('reflection') };
+  return { headline: s('headline'), readiness: s('readiness'), today: s('today'), plan: s('plan'), tomorrow: s('tomorrow'), habits: s('habits'), reflection: s('reflection') };
 }
 
 function extractJson(text) {
@@ -195,6 +210,36 @@ async function runEveningHealthBrief(opts = {}) {
     console.error('[evening-brief] gratitude fetch failed:', err.message);
     signals.gratitude = [];
   }
+  // Day-close accountability: what did this morning's brief ask for, and did
+  // the planned session actually happen? Grading its own morning call is what
+  // separates a chief of staff from a daily fortune cookie.
+  try {
+    signals.morningPlan = await briefingsStore.todaysMorningBrief();
+  } catch { signals.morningPlan = null; }
+  try {
+    const { getTodayWorkout } = require('../services/workout');
+    const planned = getTodayWorkout();
+    const db = require('../db');
+    const [{ rows: exercised }, { rows: acts }] = await Promise.all([
+      db.query(
+        `SELECT 1 FROM metrics
+          WHERE domain = 'habits' AND metric = 'exercise' AND value >= 0.5
+            AND (ts AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
+          LIMIT 1`,
+        [tz]
+      ),
+      db.query(
+        `SELECT activity_type FROM activity_logs
+          WHERE log_date = (now() AT TIME ZONE $1)::date ORDER BY id DESC LIMIT 1`,
+        [tz]
+      ),
+    ]);
+    signals.training = {
+      planned: planned?.type ?? null,
+      completed: exercised.length > 0 || acts.length > 0,
+      actual: acts[0]?.activity_type ?? null,
+    };
+  } catch { signals.training = null; }
   const content = await composeEveningBrief(signals);
   content.day = day;
   content.builtAt = new Date().toISOString();

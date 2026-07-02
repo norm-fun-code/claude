@@ -19,8 +19,10 @@ const TONE_BAND: Record<EveningTone, keyof typeof bandGradient> = {
 
 // Same tinted mini-tile beat language as the morning BriefCard, so the two
 // hero briefs speak one design system on the same Today screen.
-const BLOCKS: { key: keyof Pick<EveningBrief, 'today' | 'tomorrow' | 'habits'>; label: string; emoji: string; tint: string }[] = [
+const BLOCKS: { key: keyof Pick<EveningBrief, 'today' | 'plan' | 'tomorrow' | 'habits'>; label: string; emoji: string; tint: string }[] = [
   { key: 'today', label: 'TODAY', emoji: '👣', tint: '#3B9EFF' },
+  // Day-close ledger — this morning's plan graded against what actually happened.
+  { key: 'plan', label: 'PLAN VS ACTUAL', emoji: '🎯', tint: '#5AE89A' },
   { key: 'tomorrow', label: 'SET UP TOMORROW', emoji: '🌙', tint: '#A78BFA' },
   { key: 'habits', label: 'STILL OPEN', emoji: '✅', tint: '#FFC44D' },
 ];

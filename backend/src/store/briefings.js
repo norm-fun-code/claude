@@ -55,4 +55,20 @@ async function recentDailyBriefOpeners(days = 3) {
   return [...byDay.values()].slice(0, days);
 }
 
-module.exports = { saveBriefing, latestBriefing, listBriefings, recentDailyBriefOpeners };
+/**
+ * TODAY's chief-of-staff brief (latest build this local day), or null before
+ * the morning build exists. Lets the evening brief grade the morning's plan —
+ * "this morning I asked for X; here's what actually happened."
+ */
+async function todaysMorningBrief() {
+  const rows = await listBriefings({ kind: 'daily', limit: 10 });
+  const tz = process.env.TZ || 'America/New_York';
+  const localDay = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: tz });
+  const todayLocal = localDay(new Date());
+  for (const r of rows) {
+    if (localDay(r.generated_at) === todayLocal) return r.content?.chiefBrief ?? null;
+  }
+  return null;
+}
+
+module.exports = { saveBriefing, latestBriefing, listBriefings, recentDailyBriefOpeners, todaysMorningBrief };

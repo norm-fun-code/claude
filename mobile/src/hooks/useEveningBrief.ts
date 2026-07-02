@@ -9,6 +9,7 @@ export interface EveningBrief {
   headline: string;
   readiness: string;
   today: string;
+  plan?: string;
   tomorrow: string;
   habits: string;
   reflection?: string;
