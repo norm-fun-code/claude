@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, useColorScheme, AppState } from 'react-native';
+import { View, Text, StyleSheet, Pressable, useColorScheme, AppState, Animated } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { API_BASE, HABITS_STREAKS_URL, HABITS_TODAY_URL, HABITS_HISTORY_URL, authHeaders, fetchWithTimeout, localDateStr } from '../config';
@@ -120,8 +121,22 @@ export function HabitsCard() {
     }
   }
 
+  // Completion moment: checking the 5th habit earns a soft success chord and a
+  // one-breath scale pulse on the card — a quiet ritual close, not confetti.
+  const pulse = useRef(new Animated.Value(1)).current;
+
   function toggle(key: Binary) {
     const next = { ...checked, [key]: !checked[key] };
+    const nextDone = Object.values(next).filter(Boolean).length;
+    if (nextDone === 5) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      Animated.sequence([
+        Animated.spring(pulse, { toValue: 1.02, useNativeDriver: true, damping: 9, stiffness: 300 }),
+        Animated.spring(pulse, { toValue: 1, useNativeDriver: true, damping: 14, stiffness: 260 }),
+      ]).start();
+    } else {
+      Haptics.selectionAsync();
+    }
     setChecked(next);
     const extra: Record<string, unknown> = {};
     if (key === 'exercise' && next.exercise) extra.exerciseCompletedAt = new Date().toISOString();
@@ -131,7 +146,7 @@ export function HabitsCard() {
   const doneCount = Object.values(checked).filter(Boolean).length;
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
+    <Animated.View style={[styles.card, { backgroundColor: c.card, transform: [{ scale: pulse }] }, shadow(isDark)]}>
       <SectionHeader emoji="🔁" title={saved ? 'Habits logged — nice' : 'Habit Stack'} />
 
       {HABITS.map(({ key, label }) => {
@@ -215,7 +230,7 @@ export function HabitsCard() {
       <View style={[styles.contextDivider, { borderTopColor: c.border }]}>
         <AnnotationsCard inline />
       </View>
-    </View>
+    </Animated.View>
   );
 }
 

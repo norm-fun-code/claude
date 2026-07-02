@@ -508,6 +508,12 @@ export default function App() {
           setTab(key);
         }}
         bottomInset={bottomInset}
+        healthDot={
+          liveRecovery.recovery?.band === 'green' ? c.green
+            : liveRecovery.recovery?.band === 'yellow' ? c.yellow
+            : liveRecovery.recovery?.band === 'red' ? c.red
+            : null
+        }
       />
 
       {/* Cold-open welcome overlay — covers the feed assembly, then slow-dissolves

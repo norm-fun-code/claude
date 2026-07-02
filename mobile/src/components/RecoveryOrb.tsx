@@ -27,6 +27,21 @@ export function RecoveryOrb({ score, grade, band, size = 100, label }: Props) {
 
   const scale = useRef(new Animated.Value(0.86)).current;
   const opacity = useRef(new Animated.Value(0)).current;
+  const breath = useRef(new Animated.Value(1)).current;
+
+  // Slow breathing — a barely-perceptible 4s in / 4s out oscillation that makes
+  // the orb read as alive rather than printed. Starts after the entrance spring
+  // settles; ±1.5% is deliberate (ambient presence, never a distraction).
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(breath, { toValue: 1.015, duration: 4000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(breath, { toValue: 1, duration: 4000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      ])
+    );
+    const t = setTimeout(() => loop.start(), 900);
+    return () => { clearTimeout(t); loop.stop(); };
+  }, [breath]);
 
   useEffect(() => {
     Animated.parallel([
@@ -52,7 +67,7 @@ export function RecoveryOrb({ score, grade, band, size = 100, label }: Props) {
   const r = size / 2;
   return (
     <Animated.View
-      style={[glow(colors[1], 0.42, 18), { width: size, height: size, borderRadius: r, transform: [{ scale }], opacity }]}
+      style={[glow(colors[1], 0.42, 18), { width: size, height: size, borderRadius: r, transform: [{ scale: Animated.multiply(scale, breath) }], opacity }]}
     >
       <LinearGradient
         colors={colors}

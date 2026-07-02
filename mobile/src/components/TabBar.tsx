@@ -27,15 +27,18 @@ interface Props {
   active: TabKey;
   onChange: (key: TabKey) => void;
   bottomInset?: number;
+  /** Recovery-band color for the ambient dot on the Health tab (null = hidden). */
+  healthDot?: string | null;
 }
 
 function TabItem({
-  t, on, onPress, c,
+  t, on, onPress, c, dot,
 }: {
   t: typeof TABS[number];
   on: boolean;
   onPress: () => void;
   c: ReturnType<typeof getColors>;
+  dot?: string | null;
 }) {
   const scale = useSharedValue(1);
   const animStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
@@ -58,6 +61,8 @@ function TabItem({
     >
       <Animated.View style={[styles.pill, on && { backgroundColor: c.accentSoft }, animStyle]}>
         <Ionicons name={on ? t.iconActive : t.icon} size={21} color={on ? c.accent : c.subtext} />
+        {/* Ambient state dot — today's recovery band, glanceable from any tab. */}
+        {dot ? <View style={[styles.dot, { backgroundColor: dot, borderColor: c.card }]} /> : null}
       </Animated.View>
       <Text style={[styles.label, { color: on ? c.accent : c.subtext }, on && styles.labelOn]}>
         {t.label}
@@ -66,7 +71,7 @@ function TabItem({
   );
 }
 
-export function TabBar({ active, onChange, bottomInset = 0 }: Props) {
+export function TabBar({ active, onChange, bottomInset = 0, healthDot }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -86,6 +91,7 @@ export function TabBar({ active, onChange, bottomInset = 0 }: Props) {
           on={t.key === active}
           onPress={() => handleChange(t.key)}
           c={c}
+          dot={t.key === 'health' ? healthDot : null}
         />
       ))}
     </View>
@@ -109,6 +115,15 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  dot: {
+    position: 'absolute',
+    top: 3,
+    right: 9,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    borderWidth: 1.5,
   },
   icon: {
     fontSize: 18,
