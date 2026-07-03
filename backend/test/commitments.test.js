@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { resolveReminderTime } = require('../src/store/commitments');
+const { resolveReminderTime, isReminderDue } = require('../src/store/commitments');
 const { selectReminderActions } = require('../src/notify/commitments');
 const { parseAction } = require('../src/chat/ask');
 
@@ -34,6 +34,40 @@ test('resolveReminderTime keeps a within-grace near-now time', () => {
   // 1 minute ago is inside the 2-minute grace — still schedulable (fires ~now).
   const { dueAt } = resolveReminderTime('2026-07-03T11:59', NOW);
   assert.ok(dueAt instanceof Date);
+});
+
+// ── isReminderDue (first reminder + persistent follow-ups) ───────────────────
+
+const NOW_MS = new Date('2026-07-03T15:00:00Z').getTime();
+const OPTS = { now: NOW_MS, reNudgeMs: 3 * 3600e3, maxReminders: 4, maxAgeMs: 24 * 3600e3 };
+const H = 3600e3;
+
+test('first reminder fires once due and never nudged', () => {
+  assert.equal(isReminderDue({ status: 'open', due_at: new Date(NOW_MS - 60e3), reminded_at: null, reminder_count: 0 }, OPTS), true);
+});
+
+test('not due yet → no reminder', () => {
+  assert.equal(isReminderDue({ status: 'open', due_at: new Date(NOW_MS + H), reminded_at: null, reminder_count: 0 }, OPTS), false);
+});
+
+test('follow-up waits for the re-nudge interval', () => {
+  // Nudged 1h ago (< 3h) → not yet.
+  assert.equal(isReminderDue({ status: 'open', due_at: new Date(NOW_MS - 2 * H), reminded_at: new Date(NOW_MS - H), reminder_count: 1 }, OPTS), false);
+  // Nudged 3.5h ago → re-nudge.
+  assert.equal(isReminderDue({ status: 'open', due_at: new Date(NOW_MS - 4 * H), reminded_at: new Date(NOW_MS - 3.5 * H), reminder_count: 1 }, OPTS), true);
+});
+
+test('stops after the per-commitment max reminders', () => {
+  assert.equal(isReminderDue({ status: 'open', due_at: new Date(NOW_MS - 10 * H), reminded_at: new Date(NOW_MS - 4 * H), reminder_count: 4 }, OPTS), false);
+});
+
+test('stops once the commitment is older than the max age', () => {
+  assert.equal(isReminderDue({ status: 'open', due_at: new Date(NOW_MS - 25 * H), reminded_at: new Date(NOW_MS - 4 * H), reminder_count: 1 }, OPTS), false);
+});
+
+test('done / skipped commitments never re-nudge', () => {
+  assert.equal(isReminderDue({ status: 'done', due_at: new Date(NOW_MS - H), reminded_at: null, reminder_count: 0 }, OPTS), false);
+  assert.equal(isReminderDue({ status: 'skipped', due_at: new Date(NOW_MS - H), reminded_at: new Date(NOW_MS - 4 * H), reminder_count: 1 }, OPTS), false);
 });
 
 // ── selectReminderActions (restraint logic) ──────────────────────────────────

@@ -15,7 +15,11 @@ const devicesStore = require('../store/devices');
 const { withinQuietHours } = require('../intelligence/nudges');
 const { sendPush } = require('./expo');
 
-const DEFAULT_MAX_PER_DAY = Number(process.env.COMMITMENT_MAX_PER_DAY) || 2;
+const DEFAULT_MAX_PER_DAY = Number(process.env.COMMITMENT_MAX_PER_DAY) || 4;
+// Re-nudge cadence for a commitment you haven't done or skipped yet.
+const RENUDGE_HOURS = Number(process.env.COMMITMENT_RENUDGE_HOURS) || 3;
+const MAX_REMINDERS = Number(process.env.COMMITMENT_MAX_REMINDERS) || 4;
+const STALE_HOURS = Number(process.env.COMMITMENT_STALE_HOURS) || 24;
 
 /**
  * Pure: decide what to do with the set of currently-due commitments.
@@ -74,9 +78,12 @@ async function runCommitmentReminders(opts = {}) {
   const maxPerDay = opts.maxPerDay ?? DEFAULT_MAX_PER_DAY;
 
   // Age out anything long overdue first, so it can't be nudged uselessly late.
-  const expired = await commitmentsStore.expireStale({ now }).catch(() => 0);
+  const expired = await commitmentsStore.expireStale({ now, staleHours: STALE_HOURS }).catch(() => 0);
 
-  const due = await commitmentsStore.dueForReminder({ now });
+  // Both first reminders AND follow-ups for still-open commitments.
+  const due = await commitmentsStore.dueForReminder({
+    now, reNudgeHours: RENUDGE_HOURS, maxReminders: MAX_REMINDERS, maxAgeHours: STALE_HOURS,
+  });
   if (!due.length) return { due: 0, sent: 0, autoCompleted: 0, expired };
 
   const [satisfiedIds, sentToday] = await Promise.all([
@@ -98,9 +105,12 @@ async function runCommitmentReminders(opts = {}) {
     for (const c of toFire) {
       if (tokens.length) {
         try {
+          // reminder_count reflects PRIOR nudges (incremented after this send),
+          // so >0 means this is a follow-up: prompt to close the loop.
+          const followUp = (c.reminder_count ?? 0) > 0;
           const r = await sendPush(tokens, {
-            title: 'You committed to this',
-            body: c.title,
+            title: followUp ? 'Still on your list' : 'You committed to this',
+            body: followUp ? `${c.title} — did you do it? Mark it done or skip.` : c.title,
             data: { type: 'commitment', id: c.id },
           });
           for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);

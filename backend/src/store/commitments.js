@@ -86,25 +86,44 @@ async function markSkipped(id) {
 }
 
 /**
- * Open commitments that have come due and haven't been reminded yet. Bounded by
- * a grace window so a commitment that came due hours ago (while the poller was
- * down, or that the user simply blew past) isn't nudged uselessly late — it just
- * ages out to the evening grade / expiry instead.
+ * Pure: is this commitment due for a (re)nudge right now? Handles both the FIRST
+ * reminder and follow-ups — a still-open commitment keeps getting nudged every
+ * `reNudgeMs` until it's done/skipped, capped by `maxReminders` total and a
+ * `maxAgeMs` cutoff so it eventually gives up instead of nagging forever.
  */
-async function dueForReminder({ now = new Date(), graceHours = 3 } = {}) {
-  const graceStart = new Date(now.getTime() - graceHours * 60 * 60 * 1000);
+function isReminderDue(c, { now, reNudgeMs, maxReminders, maxAgeMs }) {
+  if (!c || c.status !== 'open' || !c.due_at) return false;
+  const due = new Date(c.due_at).getTime();
+  if (Number.isNaN(due) || due > now) return false;         // not due yet
+  if (due <= now - maxAgeMs) return false;                  // too old — stop nudging
+  if ((c.reminder_count ?? 0) >= maxReminders) return false; // hit the per-commitment cap
+  if (c.reminded_at == null) return true;                   // never nudged → first reminder
+  return new Date(c.reminded_at).getTime() <= now - reNudgeMs; // enough time since last nudge
+}
+
+/**
+ * Open, due commitments that should be (re)nudged now. Fetches the small set of
+ * open+due rows and filters with the pure rule above, so both the first reminder
+ * and later follow-ups flow through one testable decision.
+ */
+async function dueForReminder({ now = new Date(), reNudgeHours = 3, maxReminders = 4, maxAgeHours = 24 } = {}) {
   const { rows } = await query(
     `SELECT * FROM commitments
-      WHERE status = 'open' AND reminded_at IS NULL
-        AND due_at IS NOT NULL AND due_at <= $1 AND due_at > $2
+      WHERE status = 'open' AND due_at IS NOT NULL AND due_at <= $1
       ORDER BY due_at ASC`,
-    [now, graceStart]
+    [now]
   );
-  return rows;
+  const opts = {
+    now: now.getTime(),
+    reNudgeMs: reNudgeHours * 60 * 60 * 1000,
+    maxReminders,
+    maxAgeMs: maxAgeHours * 60 * 60 * 1000,
+  };
+  return rows.filter((c) => isReminderDue(c, opts));
 }
 
 async function markReminded(id, { at = new Date() } = {}) {
-  await query(`UPDATE commitments SET reminded_at = $2 WHERE id = $1`, [id, at]);
+  await query(`UPDATE commitments SET reminded_at = $2, reminder_count = reminder_count + 1 WHERE id = $1`, [id, at]);
 }
 
 /** How many commitment reminders have fired today (tz) — for the daily cap. */
@@ -118,8 +137,10 @@ async function remindersSentToday(tz = 'America/New_York') {
   return rows[0]?.n ?? 0;
 }
 
-/** Expire open, timed commitments whose due time passed by more than `staleHours`. */
-async function expireStale({ now = new Date(), staleHours = 12 } = {}) {
+/** Expire open, timed commitments whose due time passed by more than `staleHours`.
+ *  24h by default so an afternoon commitment survives the overnight quiet window
+ *  and can still re-nudge the next morning before it's finally abandoned. */
+async function expireStale({ now = new Date(), staleHours = 24 } = {}) {
   const cutoff = new Date(now.getTime() - staleHours * 60 * 60 * 1000);
   const { rowCount } = await query(
     `UPDATE commitments SET status = 'expired'
@@ -131,6 +152,7 @@ async function expireStale({ now = new Date(), staleHours = 12 } = {}) {
 
 module.exports = {
   resolveReminderTime,
+  isReminderDue,
   create,
   listActive,
   todaySummary,
