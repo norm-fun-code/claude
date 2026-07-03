@@ -48,20 +48,19 @@ function pcmToWav(pcm, { sampleRate = 24000, channels = 1, bitsPerSample = 16 } 
  * language delivery instructions without reading them aloud).
  */
 // Default prebuilt voice. Gemini's voices each have a fixed character; the style
-// directive only nudges prosody, so the VOICE is the real lever. 'Charon' (the
-// old default) is Google's "Informative" = a newsreader. 'Sulafat' is "Warm" —
-// the right base for a chief of staff. Swap via NORMOS_VOICE. Other warm picks:
-// Achird (Friendly), Callirrhoe (Easy-going), Gacrux (Mature), Vindemiatrix (Gentle).
-const DEFAULT_VOICE = process.env.NORMOS_VOICE || 'Sulafat';
+// directive only nudges prosody, so the VOICE is the real lever. 'Puck' is
+// Google's "Upbeat" — a male, energetic, friendly voice (the requested vibe).
+// Swap via NORMOS_VOICE. Other upbeat/energetic male options if Puck isn't it:
+// Fenrir (Excitable), Sadachbia (Lively), Achird (Friendly), Zubenelgenubi (Casual).
+const DEFAULT_VOICE = process.env.NORMOS_VOICE || 'Puck';
 
 async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
   const trimmed = String(text || '').trim();
   if (!trimmed) throw new Error('nothing to synthesize');
   const directive = style || process.env.NORMOS_VOICE_STYLE ||
-    "You are the user's chief of staff reading this to them one-on-one — warm, sharp, and genuinely on their side. " +
-    'Deliver it like a trusted friend who happens to be brilliant with their data: an easy, unhurried conversational pace, ' +
-    'natural warmth, real emphasis on the words that matter, a beat of pause between thoughts, and a touch of dry wit when a line invites it. ' +
-    'Not a newsreader, not chirpy, not robotic — a calm, confident, present human who is glad to be talking to them';
+    "You are the user's chief of staff hyping them up for the day — upbeat, energetic, and genuinely friendly, like a great coach or a sharp friend who's fired up to help them win. " +
+    'Deliver it with real warmth and momentum: a lively, engaged pace, natural enthusiasm, strong emphasis on the wins and the key moves, and an easy friendliness throughout. ' +
+    'Confident and positive, never flat or robotic and never a newsreader — bring the energy of someone who is genuinely glad to be in their corner';
   const payload = {
     contents: [{ parts: [{ text: `${directive}:\n\n${trimmed.slice(0, 4000)}` }] }],
     generationConfig: {
