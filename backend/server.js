@@ -1876,13 +1876,15 @@ app.post('/api/chat', async (req, res) => {
 
     const result = await ask(question, { history: priorHistory });
 
-    // The chief of staff DOES things: if the answer emitted an inline action
-    // (natural language — "I switched to a walk", "log my cold shower"), execute
-    // it now. The prose already acknowledged it; this makes it real.
-    let executed = null;
-    if (result.action) {
-      executed = await executeAction(result.action);
+    // The chief of staff DOES things: if the answer emitted inline action(s)
+    // (natural language — "I switched to a walk", "log my cold shower", or a day
+    // recap that also gives tomorrow's context), execute them now. The prose
+    // already acknowledged them; this makes them real.
+    const executedList = [];
+    for (const a of (result.actions ?? (result.action ? [result.action] : []))) {
+      executedList.push(await executeAction(a));
     }
+    const executed = executedList.find(Boolean) ?? null;
 
     // Append this turn so the next question remembers it. Pre-resolve the active
     // thread once (the two saves run concurrently, so this avoids both racing to
@@ -1893,10 +1895,11 @@ app.post('/api/chat', async (req, res) => {
     chatStore.saveMessage({ role: 'assistant', content: result.answer, sources: result.sources ?? [], conversationId: convId })
       .catch((e) => console.error('[chat memory] save assistant failed:', e.message));
 
-    // Don't leak the raw embedding vector or the internal parsed action to the
-    // client; surface a simple executed-action summary instead.
-    const { questionEmbedding, action: _parsed, ...clientResult } = result;
-    res.json({ ...clientResult, action: executed });
+    // Don't leak the raw embedding vector or the internal parsed actions to the
+    // client; surface executed-action summaries instead. `action` stays for
+    // back-compat (the first executed); `actions` is the full list.
+    const { questionEmbedding, action: _parsed, actions: _parsedActions, ...clientResult } = result;
+    res.json({ ...clientResult, action: executed, actions: executedList.filter(Boolean) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2079,7 +2082,11 @@ app.post('/api/voice/ask', async (req, res) => {
       history: historyRows.map((m) => ({ role: m.role, content: m.content })),
       voice: true,
     });
-    const executed = result.action ? await executeAction(result.action) : null;
+    const executedList = [];
+    for (const a of (result.actions ?? (result.action ? [result.action] : []))) {
+      executedList.push(await executeAction(a));
+    }
+    const executed = executedList.find(Boolean) ?? null;
 
     // Persist to the shared thread (same as the typed /api/chat path).
     const convId = await chatStore.ensureActiveConversation();
@@ -2102,6 +2109,7 @@ app.post('/api/voice/ask', async (req, res) => {
       question,
       answer: result.answer,
       action: executed,
+      actions: executedList.filter(Boolean),
       audio: audioOut?.data ?? null,
       audioMime: audioOut?.mime ?? null,
     });

@@ -41,9 +41,10 @@ When your answer contains a specific behavior change the user should make in the
 <rec>One-line summary of the behavior change</rec>
 ONLY use this for changes the USER makes to their habits or lifestyle. NEVER use it for data queries, analysis steps, things to investigate, or anything the AI should do. Omit it entirely for idea/concept questions, financial data lookups, or any answer that doesn't include a concrete personal behavior change.
 
-TAKING ACTION — you are a chief of staff who DOES things, not just advises. When the user TELLS you they did something or want to change something in the app right now (a statement of fact or intent, not a question), actually do it: acknowledge it plainly at the START of your answer ("Done — I've swapped today's Push session to an easy Zone 2 walk.") and append exactly one action tag at the very end. Distinguish carefully: "should I walk instead?" is a QUESTION → advise only, no action. "I'm walking instead" / "I switched to a walk" / "log my cold shower" / "I did gratitude" is a STATEMENT → take the action.
+TAKING ACTION — you are a chief of staff who DOES things, not just advises. When the user TELLS you they did something or want to change something in the app right now (a statement of fact or intent, not a question), actually do it: acknowledge it plainly at the START of your answer ("Done — I've swapped today's Push session to an easy Zone 2 walk.") and append the action tag(s) at the very end. Distinguish carefully: "should I walk instead?" is a QUESTION → advise only, no action. "I'm walking instead" / "I switched to a walk" / "log my cold shower" / "I did gratitude" is a STATEMENT → take the action.
 <action>{"type":"swap_workout","workoutId":"zone2"}</action>
-Valid actions (emit AT MOST ONE, compact JSON, only for these concrete app changes — never for advice, analysis, or anything else):
+USUALLY exactly one action. Emit MULTIPLE tags (each on its own line) ONLY when the message genuinely contains more than one separable action. The key case: a day recap that ALSO looks ahead to tomorrow → one log_day_context for the day itself, PLUS one add_context capturing the forward-looking heads-up so tomorrow's brief has it. Example — "today was rough, poor sleep, and tomorrow I've got a big presentation at 10" → <action>{"type":"log_day_context","text":"Rough day, poor sleep."}</action> and <action>{"type":"add_context","text":"Big presentation at 10am tomorrow."}</action>. Never emit duplicate or contradictory tags.
+Valid actions (compact JSON, only for these concrete app changes — never for advice, analysis, or anything else):
 - {"type":"swap_workout","workoutId":"push|pull|zone2|mobility|intervals|rest"} — a walk / easy cardio / Zone 2 → "zone2"; a rest or off day → "rest". Use TODAY'S PLANNED WORKOUT (below) to acknowledge the swap accurately.
 - {"type":"log_habit","habit":"morningTM|afternoonTM|gratitude|coldShower|exercise"} — when they say they DID it.
 - {"type":"log_checkin","mood":1-5,"energy":1-5,"focus":1-5} — when they tell you their mood / energy / focus for today (1-5 scale). Include only the fields they actually gave; omit the rest. "my mood and energy were 5, focus was 4" → {"mood":5,"energy":5,"focus":4}. "my energy is a 3 today" → {"energy":3}.
@@ -124,7 +125,7 @@ function commandContext() {
  */
 async function answerCommand(question, { history = [] } = {}) {
   const system = SYSTEM + commandContext() +
-    '\n\nThe user gave a COMMAND, not a question. Reply in ONE short, warm spoken sentence that plainly confirms what you did (or, if you truly can\'t act, say so briefly). No markdown, no lists, no analysis. Still append the correct single <action> tag when one applies.';
+    '\n\nThe user gave a COMMAND, not a question. Reply in ONE short, warm spoken sentence that plainly confirms what you did (or, if you truly can\'t act, say so briefly). No markdown, no lists, no analysis. Append the correct <action> tag(s) — usually one, but if a day recap also mentions tomorrow, add a second add_context tag for the forward-looking part.';
   const historyText = history.length
     ? 'CONVERSATION SO FAR:\n' + history.map((h) => `${h.role === 'assistant' ? 'NormOS' : 'You'}: ${h.content}`).join('\n') + '\n\n'
     : '';
@@ -132,9 +133,9 @@ async function answerCommand(question, { history = [] } = {}) {
   // Most commands answer in a sentence, but a "today's context: …" recap echoes
   // the full narrative back inside the action tag, so leave room for that.
   let answer = await llm.generateText({ system, prompt, temperature: 0.2, maxTokens: 1100, fast: true });
-  const action = parseAction(answer);
-  answer = answer.replace(/<action>[\s\S]*?<\/action>/i, '').replace(/<rec>[\s\S]*?<\/rec>/i, '').trim();
-  return { answer, action, questionEmbedding: null, sources: [] };
+  const actions = parseActions(answer);
+  answer = answer.replace(/<action>[\s\S]*?<\/action>/gi, '').replace(/<rec>[\s\S]*?<\/rec>/i, '').trim();
+  return { answer, actions, action: actions[0] ?? null, questionEmbedding: null, sources: [] };
 }
 
 /**
@@ -565,12 +566,13 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
   // walk", "log my cold shower") changes real app state in the SAME turn that
   // answers, on both the text and voice paths. The caller executes it (it holds
   // the DB helpers); ask() only detects, validates, and strips the tag.
-  const action = parseAction(answer);
-  if (action) answer = answer.replace(/<action>[\s\S]*?<\/action>/i, '').trim();
+  const actions = parseActions(answer);
+  if (actions.length) answer = answer.replace(/<action>[\s\S]*?<\/action>/gi, '').trim();
 
   return {
     answer,
-    action, // validated { action, ... } for the caller to execute, or null
+    actions, // all validated actions for the caller to execute (may be 0, 1, or more)
+    action: actions[0] ?? null, // back-compat: the first (or null)
     questionEmbedding, // for the caller to persist on the user turn (long-term recall)
     sources: docs.map((d) => ({
       title: d.title,
@@ -584,14 +586,10 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
 const ACTION_WORKOUTS = new Set(['push', 'pull', 'zone2', 'mobility', 'intervals', 'rest']);
 const ACTION_HABITS = new Set(['morningTM', 'afternoonTM', 'gratitude', 'coldShower', 'exercise']);
 
-/** Parse + validate the model's <action> tag into the executor's shape, or null.
+/** Validate ONE parsed action object into the executor's shape, or null.
  *  Strict allowlist: an unknown type or a bad enum value yields null (no side
  *  effect), so a hallucinated tag can never touch app state. */
-function parseAction(text) {
-  const m = String(text || '').match(/<action>([\s\S]*?)<\/action>/i);
-  if (!m) return null;
-  let p;
-  try { p = JSON.parse(m[1].trim()); } catch { return null; }
+function validateAction(p) {
   if (!p || typeof p !== 'object') return null;
   const type = String(p.type || '').trim();
   if (type === 'swap_workout' && ACTION_WORKOUTS.has(p.workoutId)) return { action: 'swap_workout', workoutId: p.workoutId };
@@ -624,4 +622,36 @@ function parseAction(text) {
   return null;
 }
 
-module.exports = { ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot, parseAction, looksLikeCommand };
+/**
+ * Parse ALL <action> tags in a response into validated actions. One utterance can
+ * carry more than one distinct action — most importantly a day recap that ALSO
+ * gives tomorrow's context ("today was rough… and tomorrow I have a big
+ * presentation") → log_day_context (today's journal) + add_context (a heads-up
+ * that feeds tomorrow's brief). Exact duplicates are dropped and the list is
+ * capped, so a hallucinated barrage can't touch state repeatedly.
+ */
+function parseActions(text) {
+  const re = /<action>([\s\S]*?)<\/action>/gi;
+  const out = [];
+  const seen = new Set();
+  let m;
+  while ((m = re.exec(String(text || ''))) !== null) {
+    let p;
+    try { p = JSON.parse(m[1].trim()); } catch { continue; }
+    const a = validateAction(p);
+    if (!a) continue;
+    const key = JSON.stringify(a);
+    if (seen.has(key)) continue; // drop exact duplicate tags
+    seen.add(key);
+    out.push(a);
+    if (out.length >= 3) break; // never run a barrage
+  }
+  return out;
+}
+
+/** Back-compat single-action parse — the first valid action, or null. */
+function parseAction(text) {
+  return parseActions(text)[0] ?? null;
+}
+
+module.exports = { ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot, parseAction, parseActions, looksLikeCommand };

@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { resolveReminderTime, isReminderDue } = require('../src/store/commitments');
 const { selectReminderActions } = require('../src/notify/commitments');
-const { parseAction } = require('../src/chat/ask');
+const { parseAction, parseActions } = require('../src/chat/ask');
 
 // ── resolveReminderTime ──────────────────────────────────────────────────────
 
@@ -147,4 +147,34 @@ test('parseAction extracts a day-context recap', () => {
 
 test('parseAction rejects an empty day-context', () => {
   assert.equal(parseAction('<action>{"type":"log_day_context","text":""}</action>'), null);
+});
+
+// ── parseActions: multiple actions in one turn (day recap + tomorrow) ─────────
+
+test('parseActions captures a day recap AND a forward-looking note', () => {
+  const text = 'Got it — logged today and noted tomorrow. ' +
+    '<action>{"type":"log_day_context","text":"Rough day, poor sleep."}</action>\n' +
+    '<action>{"type":"add_context","text":"Big presentation at 10am tomorrow."}</action>';
+  const actions = parseActions(text);
+  assert.equal(actions.length, 2);
+  assert.deepEqual(actions[0], { action: 'log_day_context', text: 'Rough day, poor sleep.' });
+  assert.deepEqual(actions[1], { action: 'add_context', text: 'Big presentation at 10am tomorrow.' });
+});
+
+test('parseActions drops exact duplicate tags', () => {
+  const text = '<action>{"type":"log_habit","habit":"coldShower"}</action>' +
+    '<action>{"type":"log_habit","habit":"coldShower"}</action>';
+  assert.equal(parseActions(text).length, 1);
+});
+
+test('parseActions keeps two distinct habits', () => {
+  const text = '<action>{"type":"log_habit","habit":"coldShower"}</action>' +
+    '<action>{"type":"log_habit","habit":"gratitude"}</action>';
+  assert.equal(parseActions(text).length, 2);
+});
+
+test('parseAction still returns just the first (back-compat)', () => {
+  const text = '<action>{"type":"log_day_context","text":"x day"}</action>' +
+    '<action>{"type":"add_context","text":"y tomorrow"}</action>';
+  assert.deepEqual(parseAction(text), { action: 'log_day_context', text: 'x day' });
 });
