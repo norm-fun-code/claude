@@ -10,7 +10,7 @@ const { analyze } = require('./intelligence/analyze');
 const { consolidate } = require('./intelligence/consolidate');
 const { generateCrossContext } = require('./intelligence/crossContext');
 const { autoStartExperiment, proposeExperiments } = require('./intelligence/experiments');
-const { runNudges, runCheckinReminder, runCheckinEveningReminder, runHabitsReminder } = require('./notify/run');
+const { runNudges, runCheckinReminder, runCheckinEveningReminder, runHabitsReminder, runDayContextReminder } = require('./notify/run');
 const { runWatch } = require('./intelligence/watch');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./notify/morning');
 const { runEveningBriefing } = require('./notify/evening');
@@ -346,6 +346,14 @@ function start() {
   const habitsHour = Number(process.env.HABITS_REMINDER_HOUR) || 21; // 9pm
   const habitsMinute = Number(process.env.HABITS_REMINDER_MINUTE) || 0;
   scheduleDaily(habitsHour, habitsMinute, () => runHabitsReminder({}));
+
+  // "Tell me about your day" (9pm) — invites the free-text daily recap that feeds
+  // the Ask brain, evening brief, and self-model. Only fires if nothing was
+  // logged today (talk or type). Default :05 past the hour so it doesn't land in
+  // the same second as the check-in/habits nudges above.
+  const dayContextHour = Number(process.env.DAY_CONTEXT_REMINDER_HOUR) || 21; // 9pm
+  const dayContextMinute = Number(process.env.DAY_CONTEXT_REMINDER_MINUTE) || 5;
+  scheduleDaily(dayContextHour, dayContextMinute, () => runDayContextReminder({}));
 
   // PM / EOD briefing (6pm) — spend snapshot, portfolio performance, budget flags.
   const eveningBriefingHour = Number(process.env.EVENING_BRIEFING_HOUR) || 18; // 6pm

@@ -204,6 +204,10 @@ export default function App() {
     const type = typeof data.type === 'string' ? data.type : '';
     if (key.startsWith('habits:')) {
       setHabitsOpen(true);
+    } else if (key.startsWith('day_context')) {
+      // "Tell me about your day" → open Ask, prefilled so they can talk it
+      // through (hold the mic) or just keep typing.
+      quickAskRef.current?.openWith("Today's context: ");
     } else if (type === 'commitment') {
       // Tapping a commitment reminder lands on Today, where the card lives.
       setTab('today');

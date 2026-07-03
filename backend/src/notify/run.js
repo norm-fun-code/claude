@@ -172,6 +172,43 @@ async function runHabitsReminder(opts = {}) {
   return sendReminder(habitReminder(new Date()), { send });
 }
 
+/** Has the user logged any day-context journal entry today? Fail-safe: assume
+ *  yes on error so a DB hiccup never nags. */
+async function dayContextLoggedToday() {
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    const entries = await require('../store/dayJournal').forDay(today);
+    return entries.length > 0;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Evening "tell me about your day" nudge — invites the free-text daily recap
+ * that feeds the Ask brain, evening brief, and self-model. Only fires if nothing
+ * was logged today (talk OR type), keyed per-day so it fires at most once.
+ * @param {{ send?: boolean, force?: boolean }} [opts]
+ */
+async function runDayContextReminder(opts = {}) {
+  const send = opts.send !== false;
+  if (!opts.force && (await dayContextLoggedToday())) {
+    return { skipped: 'already_logged', sent: 0 };
+  }
+  const tz = process.env.TZ || 'America/New_York';
+  const day = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  return sendReminder({
+    key: `day_context:${day}`,
+    title: 'Tell me about your day 🌙',
+    body: 'Two minutes — what happened today? Tap to talk it through or jot it down.',
+    priority: 0.55,
+    basis: { type: 'day_context', day },
+  }, { send });
+}
+
+module.exports.runDayContextReminder = runDayContextReminder;
+
 // CLI entrypoint
 if (require.main === module) {
   const { pool } = require('../db');

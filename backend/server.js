@@ -2408,6 +2408,17 @@ app.post('/api/briefing/context', async (req, res) => {
       label: answer.trim().slice(0, 500),
       note: question ? `Q: ${question.slice(0, 300)}` : (signalKey ?? null),
     });
+    // Text parity with voice: free-form context typed into the "add context" box
+    // is the SAME signal as talking about your day, so also capture it in the day
+    // journal (→ Ask brain, evening brief, self-model). Skip the openQuestion
+    // path (short Q&A answers) and trivially short notes to keep the journal clean.
+    const isDayContext = (!signalKey || signalKey === 'manual_context') && answer.trim().length >= 6;
+    if (isDayContext) {
+      const tz = process.env.TZ || 'America/New_York';
+      const entryDate = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+      dayJournalStore.create({ text: answer.trim(), entryDate, source: 'brief' })
+        .catch((e) => console.error('[day journal] capture from brief context failed:', e.message));
+    }
     res.json({ ok: true, id });
   } catch (err) {
     console.error('[briefing/context] failed:', err.message);
