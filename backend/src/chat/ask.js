@@ -193,8 +193,20 @@ async function wealthContext() {
   }
 }
 
-function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [], snapshot = null, experiments = [], pastConversations = [], wealthInsights = null }) {
+function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [], snapshot = null, experiments = [], pastConversations = [], wealthInsights = null, voice = false }) {
   const parts = [];
+
+  // Voice replies are spoken aloud and the user is physically waiting on them —
+  // a shorter answer is both faster to generate and faster to synthesize, and
+  // reads better spoken than a chat-length answer would. Ask for brevity
+  // directly instead of truncating the finished answer mid-sentence afterward.
+  if (voice) {
+    parts.push(
+      'VOICE MODE: this answer will be read aloud, and the person is waiting on it in real time. ' +
+        'Answer in 1-3 short spoken sentences — the single most useful thing to say, not everything you could say. ' +
+        'No markdown, no lists, no headers. If the question truly needs more, give the short version and say there\'s more if they want it.'
+    );
+  }
 
   // Personal goals + metric trends first (only present for personal questions).
   if (snapshot) {
@@ -306,7 +318,7 @@ function mergeUnique(...lists) {
   return out;
 }
 
-async function ask(question, { history = [], k = 14 } = {}) {
+async function ask(question, { history = [], k = 14, voice = false } = {}) {
   if (!question || !question.trim()) throw new Error('question is required');
 
   // Hybrid retrieval: semantic search for themes + keyword search on author/title
@@ -333,70 +345,54 @@ async function ask(question, { history = [], k = 14 } = {}) {
     console.error('[chat] retrieval failed:', err.message);
   }
 
-  // Pull current findings + recent life context.
-  let findings = [];
-  let annotations = [];
-  try {
-    findings = await findingsStore.listFindings({ status: 'open' });
-  } catch {
-    /* findings optional */
+  // Pull current findings + recent life context. Each of these reads a
+  // different store and none depends on another's result, so they run
+  // concurrently instead of as a chain of round trips — this was the single
+  // biggest fixable latency cost in the ask path (~6 sequential DB calls
+  // before the LLM was even invoked), and it matters most for voice, where
+  // the user is physically waiting to hear a reply.
+  const personal = isPersonalQuestion(question);
+  const financial = isFinancialQuestion(question);
+  const [
+    findingsResult,
+    annotationsResult,
+    snapshotResult,
+    experimentsResult,
+    selfModelResult,
+    chaptersResult,
+    wealthResult,
+  ] = await Promise.allSettled([
+    findingsStore.listFindings({ status: 'open' }),
+    annotationsStore.listAnnotations({ from: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000), limit: 20 }),
+    personal ? personalSnapshot() : Promise.resolve(null),
+    experimentsStore.listExperiments(),
+    require('../store/selfModel').latestModelText(),
+    require('../store/lifeChapters').listActive(),
+    financial
+      ? Promise.all([wealthContext(), require('../services/financial-plan').buildPlanContext().catch(() => null)])
+      : Promise.resolve(null),
+  ]);
+
+  const findings = findingsResult.status === 'fulfilled' ? findingsResult.value : [];
+  const annotations = annotationsResult.status === 'fulfilled' ? annotationsResult.value : [];
+  if (personal && snapshotResult.status === 'rejected') {
+    console.error('[chat] snapshot failed:', snapshotResult.reason?.message);
   }
-  try {
-    const from = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
-    annotations = await annotationsStore.listAnnotations({ from, limit: 20 });
-  } catch {
-    /* annotations optional */
-  }
+  const snapshot = snapshotResult.status === 'fulfilled' ? snapshotResult.value : null;
+  // Keep completed (confirmed/refuted/inconclusive) and running; drop bare proposals
+  // that have no data yet since they'd just add noise to the context.
+  const experiments = experimentsResult.status === 'fulfilled'
+    ? experimentsResult.value.filter((e) => e.status === 'completed' || e.status === 'running')
+    : [];
+  const selfModelText = selfModelResult.status === 'fulfilled' ? (selfModelResult.value ?? '') : '';
+  const chaptersText = chaptersResult.status === 'fulfilled'
+    ? require('../intelligence/chapters').composeChapterContext(chaptersResult.value)
+    : '';
+  const wealthInsights = wealthResult.status === 'fulfilled' && wealthResult.value
+    ? wealthResult.value.filter(Boolean).join('\n\n') || null
+    : null;
 
-  // For personal/planning questions, ground the answer in real goals + metric
-  // trends. Idea/concept questions skip this so we don't shoehorn in numbers.
-  let snapshot = null;
-  if (isPersonalQuestion(question)) {
-    try {
-      snapshot = await personalSnapshot();
-    } catch (err) {
-      console.error('[chat] snapshot failed:', err.message);
-    }
-  }
-
-  // All experiments (completed verdicts + running) — always included so the chat
-  // can answer "did my experiment work?" regardless of question type.
-  let experiments = [];
-  try {
-    experiments = await experimentsStore.listExperiments();
-    // Keep completed (confirmed/refuted/inconclusive) and running; drop bare proposals
-    // that have no data yet since they'd just add noise to the context.
-    experiments = experiments.filter((e) => e.status === 'completed' || e.status === 'running');
-  } catch { /* optional */ }
-
-  // Self-model: prepend the nightly portrait so every chat already knows who
-  // this person is, rather than cold-starting from the retrieved context alone.
-  let selfModelText = '';
-  try {
-    selfModelText = (await require('../store/selfModel').latestModelText()) ?? '';
-  } catch { /* optional */ }
-
-  // Life chapters — standing long-arc facts (pregnancy week, countdowns) so the
-  // chat knows the user's life, not just their metrics.
-  let chaptersText = '';
-  try {
-    const chapters = await require('../store/lifeChapters').listActive();
-    chaptersText = require('../intelligence/chapters').composeChapterContext(chapters);
-  } catch { /* optional */ }
-
-  // Also inject the long-range financial plan (income projections, housing plan,
-  // kids + tuition, portfolio) so forward-looking questions can be answered.
-  let wealthInsights = null;
-  if (isFinancialQuestion(question)) {
-    const [wCtx, planCtx] = await Promise.all([
-      wealthContext(),
-      require('../services/financial-plan').buildPlanContext().catch(() => null),
-    ]);
-    const parts = [wCtx, planCtx].filter(Boolean);
-    wealthInsights = parts.length ? parts.join('\n\n') : null;
-  }
-
-  const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments, pastConversations, wealthInsights });
+  const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments, pastConversations, wealthInsights, voice });
   let system = selfModelText ? `${baseSystem}\n\n${selfModelText}` : baseSystem;
   if (chaptersText) system += `\n\nLIFE CHAPTERS (standing long-arc facts, auto-updated — never ask the user to re-confirm these):\n${chaptersText}`;
   // Today's planned session — so a swap_workout action can be acknowledged
@@ -420,13 +416,13 @@ async function ask(question, { history = [], k = 14 } = {}) {
       `current numbers — do not rely only on the snapshot above, which may be a day stale. Combine the ` +
       `live Monarch data with their goals and context to give a precise, grounded answer.`;
     try {
-      answer = await monarchMcp.answerWithMonarch({ system: monarchSystem, prompt, maxTokens: 1600 });
+      answer = await monarchMcp.answerWithMonarch({ system: monarchSystem, prompt, maxTokens: voice ? 400 : 1600 });
     } catch (err) {
       console.error('[chat] Monarch MCP path failed, falling back to local context:', err.message);
     }
   }
   if (answer == null) {
-    answer = await llm.generateText({ system, prompt, temperature: 0.3, maxTokens: 1600 });
+    answer = await llm.generateText({ system, prompt, temperature: 0.3, maxTokens: voice ? 400 : 1600 });
   }
 
   // Extract and record any recommendation the model flagged via <rec> tag.

@@ -94,6 +94,22 @@ function splitKey(key) {
 
 function clamp01(n) { return Math.max(0, Math.min(1, n)); }
 
+// Stable identity for a finding's basis — survives copy/wording changes to the
+// title (unlike normalizeRecTitle, which only survives NUMBER changes). Used
+// to dedupe the recommendation ledger by what the insight actually IS, not by
+// how it happens to be phrased today.
+function basisKey(basis) {
+  if (!basis || !basis.kind) return null;
+  const parts = [basis.kind];
+  if (basis.lever) parts.push(basis.lever);
+  if (basis.outcome) parts.push(basis.outcome);
+  if (basis.metric) parts.push(basis.metric);
+  if (basis.habit) parts.push(basis.habit);
+  if (basis.activity) parts.push(basis.activity);
+  if (basis.goalId != null) parts.push(String(basis.goalId));
+  return parts.join('|');
+}
+
 function round(n, d = 2) {
   const f = 10 ** d;
   return Math.round(n * f) / f;
@@ -384,8 +400,9 @@ function rankActions(findings = [], { goals = [], latestByKey = {}, max = 3, min
         actionConfidence: round(c.confidence),
         ease: round(c.ease),
         basis: c.basis,
+        dedupKey: basisKey(c.basis),
       },
     }));
 }
 
-module.exports = { rankActions, OUTCOMES, LEVERS };
+module.exports = { rankActions, OUTCOMES, LEVERS, basisKey };

@@ -2020,14 +2020,24 @@ app.post('/api/voice/ask', async (req, res) => {
     const { audio, mime } = req.body || {};
     if (!audio) return res.status(400).json({ error: 'audio (base64) is required' });
 
-    const question = await voiceService.transcribe(String(audio), mime || 'audio/wav');
+    const chatStore = require('./src/store/chat');
+    // History doesn't depend on the transcript, so fetch it in parallel with
+    // STT instead of after it — one fewer round trip on the critical path.
+    const [question, historyRows] = await Promise.all([
+      voiceService.transcribe(String(audio), mime || 'audio/wav'),
+      chatStore.recentMessages({ limit: 20 }).catch(() => []),
+    ]);
     if (!question) return res.status(422).json({ error: 'no_speech', message: "Couldn't hear anything in that." });
 
-    const chatStore = require('./src/store/chat');
-    const historyRows = await chatStore.recentMessages({ limit: 20 }).catch(() => []);
     // One brain call: ask() both answers AND decides any action inline (no
-    // separate routing round-trip — that was the main latency cost).
-    const result = await ask(question, { history: historyRows.map((m) => ({ role: m.role, content: m.content })) });
+    // separate routing round-trip — that was the main latency cost). voice:true
+    // asks the model for a short, spoken-style answer directly — faster to
+    // generate AND faster to synthesize than truncating a chat-length answer
+    // after the fact.
+    const result = await ask(question, {
+      history: historyRows.map((m) => ({ role: m.role, content: m.content })),
+      voice: true,
+    });
     const executed = result.action ? await executeAction(result.action) : null;
 
     // Persist to the shared thread (same as the typed /api/chat path).
@@ -2037,10 +2047,10 @@ app.post('/api/voice/ask', async (req, res) => {
     chatStore.saveMessage({ role: 'assistant', content: result.answer, sources: result.sources ?? [], conversationId: convId })
       .catch((e) => console.error('[voice chat] save assistant failed:', e.message));
 
-    // Speak the answer (trimmed for latency; full text still returned).
+    // Speak the answer (trimmed as a safety cap; full text still returned).
     let audioOut = null;
     try {
-      const spoken = voiceService.speakable(result.answer).slice(0, 1400);
+      const spoken = voiceService.speakable(result.answer).slice(0, 900);
       const t = await voiceService.synthesize(spoken);
       audioOut = { data: t.audio.toString('base64'), mime: t.mime };
     } catch (err) {
@@ -3685,20 +3695,28 @@ app.get('/api/briefing', async (req, res) => {
     leverageContext = parts.join('\n\n');
 
     // Log leverage actions to the recommendation ledger (fire-and-forget).
-    // Deduplicated over a 7-day window by NUMBER-NORMALIZED title, so minor
-    // percentage variations like "→ 13% better HRV" vs "→ 12% better HRV" (the
-    // number sits mid-title, where a prefix match missed it) collapse to one
-    // recommendation. A per-run guard also blocks two findings that normalize the
-    // same from both landing in a single briefing.
+    // Deduplicated over a 7-day window two ways: dedup_key (the finding's stable
+    // basis identity — kind + lever/outcome — survives the TITLE COPY being
+    // reworded later, e.g. "Best sleep nights → 13% better HRV" becoming
+    // "Best sleep nights lift your next-day HRV" should still count as the same
+    // insight) and NUMBER-NORMALIZED title (catches percentage-only variations
+    // and chat-surfaced recs that have no basis to key off of). A per-run guard
+    // also blocks two findings that collapse the same from both landing in one
+    // briefing.
     if (levFindings.length) {
-      recommendationsStore.recentTitles(7).then((recent) => {
+      Promise.all([recommendationsStore.recentTitles(7), recommendationsStore.recentDedupKeys(7)])
+        .then(([recent, recentKeys]) => {
         const recentNorm = new Set([...recent].map(recommendationsStore.normalizeRecTitle));
         const seenThisRun = new Set();
+        const seenKeysThisRun = new Set();
         for (const f of levFindings) {
+          const ev = f.evidence || {};
+          const dedupKey = ev.dedupKey ?? null;
           const normKey = recommendationsStore.normalizeRecTitle(f.title);
+          if (dedupKey && (recentKeys.has(dedupKey) || seenKeysThisRun.has(dedupKey))) continue;
           if (recentNorm.has(normKey) || seenThisRun.has(normKey)) continue;
           seenThisRun.add(normKey);
-          const ev = f.evidence || {};
+          if (dedupKey) seenKeysThisRun.add(dedupKey);
           recommendationsStore.recordRecommendation({
             type: 'leverage',
             findingId: f.id ?? null,
@@ -3709,6 +3727,7 @@ app.get('/api/briefing', async (req, res) => {
             expectedDirection: ev.basis?.r != null ? (ev.basis.r >= 0 ? 'up' : 'down') : null,
             score: ev.score ?? null,
             surfacedIn: 'briefing',
+            dedupKey,
           }).catch((e) => console.error('[recommendations] log failed:', e.message));
         }
       }).catch((e) => console.error('[recommendations] dedup check failed:', e.message));
@@ -4444,11 +4463,30 @@ runMigrations()
       ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} derived/estimate-metric finding(s)`); })
         .catch(() => {});
 
-      // Cleanup: collapse near-duplicate PENDING recommendations that differ only
-      // by the numbers in their title (e.g. "Best sleep nights → 13% better HRV"
-      // vs "→ 12%"). Keeps the newest; never touches rows the user has rated.
+      // Cleanup: collapse near-duplicate PENDING recommendations — same dedup_key
+      // (same finding basis) or, for older rows with no dedup_key, titles that
+      // differ only by the numbers (e.g. "Best sleep nights → 13% better HRV" vs
+      // "→ 12%"). Keeps the newest; never touches rows the user has rated.
       recommendationsStore.dedupePending()
         .then((n) => { if (n > 0) console.log(`[boot] collapsed ${n} duplicate recommendation(s)`); })
+        .catch(() => {});
+
+      // Cleanup: the sleep_impact finding's title was reworded from
+      // "Best sleep nights → NN% better X" to "Best sleep nights lift your
+      // next-day X" — same insight, different words, so dedup_key/title-based
+      // dedupePending above can't tell they're duplicates. Drop the old-worded
+      // row when a new-worded one for the same run already exists; never
+      // touches rated rows.
+      require('./src/db').query(
+        `DELETE FROM recommendations r
+          WHERE r.outcome_measured_at IS NULL
+            AND r.title ~* '^Best sleep nights? →'
+            AND EXISTS (
+              SELECT 1 FROM recommendations r2
+               WHERE r2.id <> r.id
+                 AND r2.title ILIKE 'Best sleep nights lift%'
+            )`
+      ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] collapsed ${rowCount} reworded sleep_impact duplicate(s)`); })
         .catch(() => {});
 
       // Cleanup: undo outcomes the old engine auto-measured after only ~3 days

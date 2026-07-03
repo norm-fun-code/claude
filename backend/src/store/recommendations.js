@@ -26,13 +26,14 @@ async function recordRecommendation({
   expectedDirection = null,
   score = null,
   surfacedIn = 'briefing',
+  dedupKey = null,
 }) {
   const { rows } = await query(
     `INSERT INTO recommendations
-       (type, finding_id, title, detail, lever, outcome_metric, expected_direction, score, surfaced_in)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       (type, finding_id, title, detail, lever, outcome_metric, expected_direction, score, surfaced_in, dedup_key)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING id`,
-    [type, findingId, title, detail, lever, outcomeMetric, expectedDirection, score != null ? +score.toFixed(4) : null, surfacedIn]
+    [type, findingId, title, detail, lever, outcomeMetric, expectedDirection, score != null ? +score.toFixed(4) : null, surfacedIn, dedupKey]
   );
   return rows[0]?.id;
 }
@@ -90,6 +91,23 @@ async function recentTitles(withinDays = 3) {
     [withinDays]
   );
   return new Set(rows.map((r) => r.title));
+}
+
+/**
+ * Returns the set of non-null dedup_keys surfaced in briefings within the last
+ * `withinDays` days. dedup_key identifies a finding's BASIS (kind + lever/
+ * outcome/metric/…), so it survives title copy changes — unlike normalizeRecTitle,
+ * which only survives number changes and misses a full rewording of the same insight.
+ */
+async function recentDedupKeys(withinDays = 7) {
+  const { rows } = await query(
+    `SELECT dedup_key FROM recommendations
+     WHERE surfaced_in = 'briefing'
+       AND dedup_key IS NOT NULL
+       AND created_at >= now() - ($1 || ' days')::interval`,
+    [withinDays]
+  );
+  return new Set(rows.map((r) => r.dedup_key));
 }
 
 /**
@@ -163,14 +181,16 @@ async function measureOutcomes(lookbackDays = 21) {
  */
 async function dedupePending() {
   const { rows } = await query(
-    `SELECT id, title FROM recommendations
+    `SELECT id, title, dedup_key FROM recommendations
       WHERE outcome_measured_at IS NULL
       ORDER BY created_at DESC, id DESC`
   );
   const seen = new Set();
   const toDelete = [];
   for (const r of rows) {
-    const key = normalizeRecTitle(r.title);
+    // Prefer dedup_key (survives title rewording); fall back to the fuzzy
+    // number-normalized title for older rows / chat recs that have none.
+    const key = r.dedup_key || `title:${normalizeRecTitle(r.title)}`;
     if (seen.has(key)) toDelete.push(r.id);
     else seen.add(key);
   }
@@ -201,4 +221,4 @@ async function clearPrematureAutoOutcomes() {
   return rowCount;
 }
 
-module.exports = { recordRecommendation, listRecommendations, setOutcome, recentTitles, recentTitlesAll, measureOutcomes, normalizeRecTitle, dedupePending, clearPrematureAutoOutcomes, mostRecentLeverageAction };
+module.exports = { recordRecommendation, listRecommendations, setOutcome, recentTitles, recentDedupKeys, recentTitlesAll, measureOutcomes, normalizeRecTitle, dedupePending, clearPrematureAutoOutcomes, mostRecentLeverageAction };
