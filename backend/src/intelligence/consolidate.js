@@ -162,11 +162,12 @@ async function gatherWealth(d30) {
   });
   // MTD = calendar month, not rolling 30d. Use UTC month boundary — dailyAggregate
   // groups by date_trunc('day', ts) which is UTC-based, so we match the same anchor.
-  // CC payments are already excluded by mapTransactions() in monarch.js before they
-  // reach the spending metric, so no further filtering is needed here.
+  // Use spending_DISCRETIONARY so rent/mortgage (fixed housing) is excluded — an
+  // MTD number that includes a $X,XXX rent line isn't an actionable "how am I
+  // pacing" figure, it's dominated by a bill that never changes.
   const now = new Date();
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const spending = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: monthStart, agg: 'sum', excludeSource: 'seed' });
+  const spending = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: monthStart, agg: 'sum', excludeSource: 'seed' });
   return {
     netWorth: nw ? Number(nw.value) : null,
     netWorthPrev: avg(nwPrev),
@@ -279,7 +280,7 @@ function buildModelText(data) {
       ? ` (${pct(wealth.netWorth, wealth.netWorthPrev) >= 0 ? '+' : ''}${pct(wealth.netWorth, wealth.netWorthPrev)}% vs 30d prior)`
       : '';
     const spendStr = wealth.spendingMtd != null
-      ? `, MTD spending $${Math.round(wealth.spendingMtd).toLocaleString()}`
+      ? `, MTD discretionary spending $${Math.round(wealth.spendingMtd).toLocaleString()} (excludes rent/mortgage)`
       : '';
     lines.push(`WEALTH: Net worth ${nwStr}${changeStr}${spendStr}`);
   }

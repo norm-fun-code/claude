@@ -3211,6 +3211,15 @@ app.get('/api/briefing', async (req, res) => {
     year: 'numeric',
   });
   const dayName = now.toLocaleDateString('en-US', { weekday: 'long' });
+  // Weekend / US-holiday awareness so a day off (e.g. Friday of the July 4th
+  // weekend) isn't framed as a packed workday with "meeting load" risk.
+  const dayOffContext = (() => {
+    try {
+      const tz = process.env.TZ || 'America/New_York';
+      const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+      return require('./src/util/dayContext').describeDayOff(todayStr);
+    } catch { return ''; }
+  })();
 
   // Refresh the DERIVED intelligence from the CURRENT metrics before building the
   // brief, so every surface reads the same live data. The brief pulls the stored
@@ -3447,8 +3456,16 @@ app.get('/api/briefing', async (req, res) => {
       const mult = (recentSpend / spendBaseline).toFixed(1);
       spendingContext = `Discretionary spending yesterday was $${Math.round(recentSpend)} vs a $${Math.round(spendBaseline)}/day average (${mult}× normal).`;
     }
+    // Tomorrow's work calendar — so a long / all-day block the next day (an OOO,
+    // a travel day, a wall of meetings) can prompt "what's going on there?" the
+    // day PRIOR, giving the user a chance to add context before that brief.
+    let tomorrowWorkBusy = [];
+    try {
+      const tmr = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      tomorrowWorkBusy = await require('./src/services/calendar').fetchWorkBusyBlocks({ date: tmr });
+    } catch { /* non-critical */ }
     const allSignals = preBriefSignals.buildSignals({
-      recovery, calendar, workBusy, spend: recentSpend, spendBaseline,
+      recovery, calendar, workBusy, spend: recentSpend, spendBaseline, tomorrowWorkBusy,
     });
     signals = preBriefSignals.selectQuestions(allSignals, 2);
   } catch (err) {
@@ -3472,7 +3489,7 @@ app.get('/api/briefing', async (req, res) => {
     // so genuine spending insights still flow. The full model keeps net worth for
     // other surfaces (Ask, wealth tab).
     selfModel = selfModel.replace(/^WEALTH:.*$/m, (line) => {
-      const spend = line.match(/MTD spending \$[\d,]+/);
+      const spend = line.match(/MTD[^$]*spending \$[\d,]+(?: \(excludes[^)]*\))?/);
       return spend ? `WEALTH: ${spend[0]}` : '';
     });
   } catch (err) {
@@ -3793,7 +3810,7 @@ app.get('/api/briefing', async (req, res) => {
     // The LLM call can be slow; bound it so a stalled model doesn't hang the
     // briefing (it degrades to the data-only sections).
     geminiResult = await withTimeout(
-      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext),
+      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext),
       Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000),
       'gemini'
     );

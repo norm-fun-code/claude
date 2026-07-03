@@ -28,7 +28,7 @@ const SYSTEM =
   '"9:00 AM–6:00 PM"). Never write 24-hour times like "09:00" or "18:00". ' +
   'Return ONLY a single valid JSON object — no markdown, no code fences, no commentary.';
 
-function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '') {
+function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '') {
   // Input size wasn't the timeout cause (the proven Apps Script sends 15K/email
   // and is fine) — OUTPUT length was. So allow a generous 15K/email like that
   // setup, with a total budget as a safety net against a huge unread pile.
@@ -82,13 +82,20 @@ function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, cale
   }
   if (cursor < toMin('18:00') - 29) openWindows.push(`${toTime(cursor)}–${toTime(toMin('18:00'))}`);
 
-  const workBusySection =
-    workBusyBlocks.length > 0
+  // An all-day / full-workday busy block from the free/busy feed is almost
+  // always an OUT-OF-OFFICE or all-day event (PTO, a holiday, a travel day) —
+  // NOT a schedule packed with back-to-back meetings. Detect it so the brief
+  // doesn't read a day off as "fully blocked with meetings, zero open windows."
+  const allDayBlock = busySorted.some((b) => toMin(b.start) <= toMin('08:00') && toMin(b.end) >= toMin('18:00'));
+
+  const workBusySection = allDayBlock
+    ? 'WORK CALENDAR: an ALL-DAY block covers today (out-of-office / PTO / holiday / travel — the free/busy feed has no titles). This is NOT a day packed with meetings; treat it as a day away from the desk. Do NOT say "zero open focus windows" or frame meeting load as a problem.'
+    : workBusyBlocks.length > 0
       ? `MEETINGS (busy — no titles): ${workBusyBlocks.map((b) => `${b.start}–${b.end}`).join(', ')}\nOPEN windows for focus work: ${openWindows.length ? openWindows.join(', ') : 'none'}`
       : 'No busy blocks visible (calendar may be clear or data unavailable).';
 
   return `${selfModel ? selfModel + '\n\n---\n\n' : ''}Today is ${currentDay}.
-
+${dayOffContext ? `\nDAY CONTEXT: ${dayOffContext}\n` : ''}
 Today's workout: ${workoutPlan.type}${workoutPlan.duration ? ` (${workoutPlan.duration})` : ''}
 ${recoveryContext ? `Recovery status: ${recoveryContext}` : ''}
 
@@ -132,6 +139,7 @@ Return ONLY valid JSON with EXACTLY these fields:
 }
 
 Rules:
+- DAY CONTEXT (when present): if today is a weekend or a holiday / day off, the whole brief shifts register — this is NOT a workday. Do NOT frame meeting load, a busy or all-day-blocked calendar, or "open focus windows" as a risk or a lever; an all-day calendar block on a day off is time away from the desk, not a packed schedule. Lead with recovery, rest, family/presence, and enjoying the day; the ACTION should be about protecting the day off (or a genuinely wanted light workout), not shipping work. On the day BEFORE a holiday, you may note the long weekend starting as a light framing, not a warning.
 - chiefBrief: this is the centerpiece — write it as a person who KNOWS them, not a report. Sharp, caring, blunt, numerate. The synthesis MUST span domains. Calendar rule: the MEETINGS lines are BUSY time (actual meetings — not focus blocks). The OPEN windows are the real uninterrupted focus stretches. Use meeting density to gauge the day's cognitive load. Never call a meeting time a "focus block" or "uninterrupted stretch." Draw the ACTION from the leverage engine when present, otherwise from the most consequential thing in their finances/habits/inbox/schedule. RISK from at-risk forecasts or a metric genuinely below its healthy range — NOT a metric that merely dipped while still strong (mood 4.3/5 that ticked down is "holding strong", not a risk). MOVE: the most consequential real change — NEVER net worth or a net-worth figure/percentage, and never tie a balance to their work. Surface wealth ONLY as a spending/cashflow insight and ONLY when genuinely notable; otherwise use a habit rate or the composite recovery score. Name actual numbers everywhere. Never invent a tie-in or number. Always generate all four fields. Anti-repetition: check YOUR LAST MORNING BRIEFS before writing — if you're about to open with the same topic in roughly the same words, that's a sign you're on autopilot. Either the data has genuinely moved (say what's different, e.g. a new number, a new cause, progress vs stuck) or it's a real streak (say so explicitly and change the register — escalate, question, or pivot the ask) — never just re-run the same sentence shape with updated numbers. If a genuinely different domain is more pressing today, lead with THAT instead of defaulting back to yesterday's topic out of habit. Calibration: if CALIBRATION CHECK is present and flags a miss, weave a brief, honest acknowledgment into whichever field touches recovery today (synthesis or risk, whichever fits) — a chief of staff who admits a wrong call is more credible than one who never mentions it, but don't force this in if recovery isn't otherwise part of today's brief.
 - LIFE CHAPTERS (when present): these are the long arcs the daily numbers live inside — a pregnancy advancing week by week, a date approaching. They inform TONE and PLANNING quietly: never re-announce a chapter as if it's news, never manufacture urgency from it, and never use it as filler. Surface a chapter explicitly only when it genuinely intersects today (a milestone week, a date now close enough to act on) — and at most once or twice a week, when the relevant domain is already the topic, you may point at ONE concrete preparation step it implies (e.g. a baby due date → 529 / insurance / cash-buffer prep as a wealth action). A chief of staff who knows a baby is coming plans differently — but says so sparingly.
 - THIS WEEK'S STATED GOALS (when present): these are the user's OWN commitments — a real chief of staff tracks them without being asked. From Wednesday onward, if a consequential goal (especially a work deliverable) is still [OPEN], surface exactly ONE: into THE ACTION if it's genuinely today's highest-leverage move, otherwise woven into the synthesis. Escalate as the week runs out ('two working days left and the valuation update is still open'). Use the work calendar's open windows to make it concrete ('the 2:30–6:00 stretch is enough to close it out'). Mon/Tue: stay quiet unless a goal is explicitly time-critical. Never list all goals, never nag about personal/relational goals in work-pressure terms (a goal like 'be present with family' gets a gentle nudge, not a deadline). If everything is checked off, one earned sentence at most.
@@ -166,11 +174,11 @@ const EMPTY = {
   morningFocus: '', chiefBrief: null, urgentEmails: [], quoteInsight: '', notionQuote: '', notionInsight: '',
 };
 
-async function generateBriefing(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '') {
+async function generateBriefing(emailData, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '') {
   // Apply the same hard filter as generateEmailBriefs so automated senders
   // never reach the main briefing LLM call either.
   const filteredEmails = filterActionableEmails(emailData);
-  const prompt = buildPrompt(filteredEmails, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusyBlocks, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext);
+  const prompt = buildPrompt(filteredEmails, notionText, quote, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusyBlocks, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext);
 
   let text = '';
   try {

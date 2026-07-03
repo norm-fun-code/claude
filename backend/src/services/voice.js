@@ -50,7 +50,11 @@ function pcmToWav(pcm, { sampleRate = 24000, channels = 1, bitsPerSample = 16 } 
 async function synthesize(text, { voice = process.env.NORMOS_VOICE || 'Charon', style } = {}) {
   const trimmed = String(text || '').trim();
   if (!trimmed) throw new Error('nothing to synthesize');
-  const directive = style || 'Speak in a warm, calm, confident voice at an easy conversational pace — a trusted chief of staff, not a newsreader';
+  const directive = style || process.env.NORMOS_VOICE_STYLE ||
+    "You are the user's chief of staff reading this to them one-on-one — warm, sharp, and genuinely on their side. " +
+    'Deliver it like a trusted friend who happens to be brilliant with their data: an easy, unhurried conversational pace, ' +
+    'natural warmth, real emphasis on the words that matter, a beat of pause between thoughts, and a touch of dry wit when a line invites it. ' +
+    'Not a newsreader, not chirpy, not robotic — a calm, confident, present human who is glad to be talking to them';
   const payload = {
     contents: [{ parts: [{ text: `${directive}:\n\n${trimmed.slice(0, 4000)}` }] }],
     generationConfig: {
@@ -111,12 +115,14 @@ function composeNarrationScript(content) {
   const cb = content?.chiefBrief;
   const parts = [];
   if (cb?.synthesis) parts.push(cb.synthesis);
-  if (cb?.action) parts.push(`The action: ${cb.action}`);
-  if (cb?.risk) parts.push(`The risk: ${cb.risk}`);
-  if (cb?.move) parts.push(`The move: ${cb.move}`);
+  // Natural spoken connective tissue instead of "The action:" labels — the same
+  // information, but it flows like a person talking, not headings read aloud.
+  if (cb?.action) parts.push(`So here's the move today. ${cb.action}`);
+  if (cb?.risk) parts.push(`One thing I'm keeping an eye on — ${cb.risk}`);
+  if (cb?.move) parts.push(`And the thing that actually changed: ${cb.move}`);
   if (!parts.length && content?.morningFocus) parts.push(content.morningFocus);
   if (!parts.length) return '';
-  return `Good morning. ${parts.join(' ')} That's the brief.`.slice(0, 3800);
+  return `Morning. Here's where you stand. ${parts.join(' ')} That's the picture — go have a good one.`.slice(0, 3800);
 }
 
 /** Strip markdown for speech: an answer written for reading, spoken cleanly. */

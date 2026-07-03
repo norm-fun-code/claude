@@ -25,8 +25,34 @@ function toMinutesSinceMidnight(t) {
   return h * 60 + Number(m[2]);
 }
 
-function buildSignals({ recovery, calendar = [], workBusy = [], spend, spendBaseline }) {
+function buildSignals({ recovery, calendar = [], workBusy = [], spend, spendBaseline, tomorrowWorkBusy = [] }) {
   const signals = [];
+
+  // A long / all-day block on TOMORROW's work calendar (an OOO, a travel day, a
+  // wall of meetings) — ask the day PRIOR so the user can add context that flows
+  // into tomorrow's brief instead of it guessing from a titleless busy block.
+  if (tomorrowWorkBusy.length > 0) {
+    let busyMin = 0;
+    let hasAllDay = false;
+    for (const b of tomorrowWorkBusy) {
+      const s = toMinutesSinceMidnight(b.start);
+      const e = toMinutesSinceMidnight(b.end);
+      if (s != null && e != null && e > s) {
+        busyMin += e - s;
+        if (s <= 8 * 60 && e >= 18 * 60) hasAllDay = true; // covers the whole workday
+      }
+    }
+    if (hasAllDay || busyMin >= 6 * 60) {
+      signals.push({
+        key: 'tomorrow_long_block',
+        question: hasAllDay
+          ? "There's an all-day block on your work calendar tomorrow — what's going on? (OOO, travel, an offsite?)"
+          : `Tomorrow's work calendar is heavily blocked (${(busyMin / 60).toFixed(1)}h) — anything specific driving it?`,
+        context: 'calendar note',
+        severity: 0.72,
+      });
+    }
+  }
 
   // Recovery outlier — score < 50 (red / lower-yellow band)
   if (recovery?.score != null && recovery.score < 50) {

@@ -70,16 +70,16 @@ async function fetchCalendarEvents() {
  * [{ start: '9:00 AM', end: '10:00 AM' }, ...]
  * Returns [] if the env var is not set or the call fails.
  */
-async function fetchWorkBusyBlocks() {
+async function fetchWorkBusyBlocks({ date } = {}) {
   const calId = process.env.GOOGLE_WORK_CALENDAR_ID;
   if (!calId) return [];
 
   const auth = getAuthClient();
   const calendar = google.calendar({ version: 'v3', auth });
 
-  const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+  const day = date instanceof Date ? date : new Date();
+  const startOfDay = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0);
+  const endOfDay = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59);
   const timeZone = process.env.TZ || 'America/New_York';
 
   const res = await calendar.freebusy.query({
