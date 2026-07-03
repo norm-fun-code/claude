@@ -418,7 +418,11 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
                       Answered from your own data, habits, and library — and it remembers what you've discussed.
                     </Text>
                     <View style={styles.suggestions}>
-                      {buildSuggestions(snapshot).map((s) => (
+                      {/* Prefer the context-aware starters seeded by whichever tab this
+                          was summoned from — they're the whole point of a per-screen
+                          mic. Only fall back to the generic snapshot-based list when
+                          none were passed in (e.g. opened plain from the Ask tab). */}
+                      {(starters.length > 0 ? starters : buildSuggestions(snapshot)).map((s) => (
                         <Pressable key={s} onPress={() => submit(s)} style={[styles.chip, { borderColor: c.border, backgroundColor: c.card }]}>
                           <Text style={[styles.chipText, { color: c.text }]} numberOfLines={2}>{s}</Text>
                           <Text style={[styles.chipArrow, { color: c.subtext }]}>›</Text>
@@ -541,9 +545,11 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
               )}
 
               <View style={[styles.inputWrap, { borderTopColor: c.border }]}>
-                {/* Context starters — one-tap questions seeded from the screen
-                    the user summoned quick-ask from ("FROM THIS SCREEN"). */}
-                {starters.length > 0 && (
+                {/* Context starters — one-tap questions seeded from the screen the
+                    user summoned quick-ask from ("FROM THIS SCREEN"). Only shown here
+                    once the empty-state already used them as the primary suggestions
+                    above and a conversation is under way — otherwise they'd just repeat. */}
+                {starters.length > 0 && !empty && (
                   <View style={styles.startersWrap}>
                     <Text style={[styles.startersLabel, { color: c.subtext }]}>FROM THIS SCREEN</Text>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.startersRow}>
@@ -611,16 +617,30 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
     <>
       {!hideFab && (
         <Pressable
+          // Tap: open the sheet to browse suggestions or type. Long-press:
+          // open the sheet AND start listening immediately — one gesture
+          // instead of tap-to-open, then press-and-hold the in-sheet mic.
+          // RN resolves these as mutually exclusive (onPress only fires if
+          // onLongPress didn't already), so both can live on one button.
           onPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             setView('chat');
             setStarters(contextStarters ?? []);
             setOpen(true);
           }}
+          onLongPress={() => {
+            setView('chat');
+            setStarters(contextStarters ?? []);
+            setOpen(true);
+            voicePressIn();
+          }}
           onPressIn={() => { fabScale.value = withSpring(0.91, { damping: 12, stiffness: 400 }); }}
-          onPressOut={() => { fabScale.value = withSpring(1, { damping: 10, stiffness: 300 }); }}
+          onPressOut={() => {
+            fabScale.value = withSpring(1, { damping: 10, stiffness: 300 });
+            voicePressOut(); // no-ops if the long-press never started a recording
+          }}
           style={[styles.fabWrap, { bottom: bottomInset + 70 }]}
-          accessibilityLabel="Ask NormOS"
+          accessibilityLabel="Ask NormOS — tap to open, hold to talk"
           accessibilityRole="button"
         >
           <Animated.View style={[styles.fab, { backgroundColor: c.accent }, shadow(isDark, 'bar'), fabAnimStyle]}>
