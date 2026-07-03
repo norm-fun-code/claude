@@ -16,7 +16,7 @@ interface Props {
 // Each block gets a mini emoji tile (same elevated-tile language as
 // SectionHeader) and its own tint so the three beats read as distinct at a
 // glance even before any text is parsed.
-const BLOCKS: { key: keyof Omit<ChiefBrief, 'synthesis'>; label: string; emoji: string; tint: string }[] = [
+const BLOCKS: { key: 'action' | 'risk' | 'move'; label: string; emoji: string; tint: string }[] = [
   { key: 'action', label: 'THE ACTION', emoji: '⚡️', tint: '#A89CFF' },
   { key: 'risk', label: 'THE RISK', emoji: '⚠️', tint: '#FFC44D' },
   { key: 'move', label: 'THE MOVE', emoji: '📈', tint: '#5AE89A' },
@@ -126,9 +126,33 @@ export function BriefCard({ brief, fallback }: Props) {
   const [noteSaved, setNoteSaved] = useState(false);
   const [noteFailed, setNoteFailed] = useState(false);
   const [noteSaving, setNoteSaving] = useState(false);
+  // The chief's one open question (when present) — answered inline; the answer
+  // becomes context for the next brief so it learns from the correction.
+  const openQ = brief?.openQuestion?.trim() || '';
+  const [qAnswer, setQAnswer] = useState('');
+  const [qState, setQState] = useState<'idle' | 'saving' | 'saved'>('idle');
   // Spoken narration — streamed from the server's pre-warmed neural TTS.
   const [audioState, setAudioState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
   useEffect(() => () => { stopPlayback(); }, []);
+
+  async function answerQuestion() {
+    const trimmed = qAnswer.trim();
+    if (!trimmed || qState === 'saving') return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setQState('saving');
+    try {
+      const res = await fetchWithTimeout(BRIEFING_CONTEXT_URL, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ question: openQ, answer: trimmed, signalKey: 'brief_open_question' }),
+      });
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      setQState('saved');
+    } catch {
+      setQState('idle');
+    }
+  }
 
   async function toggleListen() {
     if (audioState === 'playing') {
@@ -226,6 +250,45 @@ export function BriefCard({ brief, fallback }: Props) {
         </AnimatedEntry>
       )}
 
+      {/* The chief's one open question — only when the brief genuinely has one.
+          Answering it teaches the next brief and can correct today's read. */}
+      {brief && openQ ? (
+        <View style={styles.qWrap}>
+          <View style={styles.beat}>
+            <View style={[styles.beatTile, { backgroundColor: withAlpha('#A89CFF', 0.18), borderColor: withAlpha('#A89CFF', 0.32) }]}>
+              <Text style={styles.beatEmoji}>💬</Text>
+            </View>
+            <View style={styles.beatBody}>
+              <Text style={[styles.blockLabel, { color: '#A89CFF', marginBottom: 4 }]}>ONE QUESTION</Text>
+              <Text style={styles.qText}>{openQ}</Text>
+            </View>
+          </View>
+          {qState === 'saved' ? (
+            <Text style={styles.qThanks}>Got it — I'll factor that into tomorrow's brief.</Text>
+          ) : (
+            <View style={styles.contextRow}>
+              <TextInput
+                style={styles.contextInput}
+                placeholder="Your answer…"
+                placeholderTextColor="rgba(255,255,255,0.4)"
+                value={qAnswer}
+                onChangeText={setQAnswer}
+                returnKeyType="send"
+                onSubmitEditing={answerQuestion}
+                multiline={false}
+              />
+              <TouchableOpacity
+                onPress={answerQuestion}
+                disabled={!qAnswer.trim() || qState === 'saving'}
+                style={[styles.contextBtn, { opacity: qAnswer.trim() && qState !== 'saving' ? 1 : 0.4 }]}
+              >
+                <Text style={styles.contextBtnText}>→</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      ) : null}
+
       <View style={styles.separator} />
       <Text style={styles.blockLabel}>AFFIRMATIONS</Text>
       {AFFIRMATIONS.map((text, i) => (
@@ -278,6 +341,15 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     marginBottom: spacing.sm,
   },
+  qWrap: {
+    marginTop: spacing.xs,
+    marginBottom: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.12)',
+  },
+  qText: { ...typography.body, color: '#fff', fontSize: 15, lineHeight: 22, fontWeight: '600' },
+  qThanks: { ...typography.caption, color: '#A89CFF', fontSize: 13, marginTop: spacing.sm, fontStyle: 'italic' },
   kickerRow: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -48,11 +48,11 @@ function pcmToWav(pcm, { sampleRate = 24000, channels = 1, bitsPerSample = 16 } 
  * language delivery instructions without reading them aloud).
  */
 // Default prebuilt voice. Gemini's voices each have a fixed character; the style
-// directive only nudges prosody, so the VOICE is the real lever. 'Puck' is
-// Google's "Upbeat" — a male, energetic, friendly voice (the requested vibe).
-// Swap via NORMOS_VOICE. Other upbeat/energetic male options if Puck isn't it:
-// Fenrir (Excitable), Sadachbia (Lively), Achird (Friendly), Zubenelgenubi (Casual).
-const DEFAULT_VOICE = process.env.NORMOS_VOICE || 'Puck';
+// directive only nudges prosody, so the VOICE is the real lever. 'Achird' is
+// Google's "Friendly" male voice. Swap via NORMOS_VOICE. Other upbeat/energetic
+// male options: Puck (Upbeat), Fenrir (Excitable), Sadachbia (Lively),
+// Zubenelgenubi (Casual).
+const DEFAULT_VOICE = process.env.NORMOS_VOICE || 'Achird';
 
 async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
   const trimmed = String(text || '').trim();

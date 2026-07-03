@@ -210,6 +210,10 @@ export interface ChiefBrief {
   action: string;
   risk: string;
   move: string;
+  // The one thing the brief is genuinely unsure about today — usually empty
+  // (restraint); a specific inline question when present, answerable to correct
+  // the read and teach the next brief.
+  openQuestion?: string;
 }
 
 export interface TodayForecast {
