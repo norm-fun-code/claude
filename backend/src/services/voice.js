@@ -47,7 +47,14 @@ function pcmToWav(pcm, { sampleRate = 24000, channels = 1, bitsPerSample = 16 } 
  * The style directive rides inside the prompt (Gemini TTS follows natural-
  * language delivery instructions without reading them aloud).
  */
-async function synthesize(text, { voice = process.env.NORMOS_VOICE || 'Charon', style } = {}) {
+// Default prebuilt voice. Gemini's voices each have a fixed character; the style
+// directive only nudges prosody, so the VOICE is the real lever. 'Charon' (the
+// old default) is Google's "Informative" = a newsreader. 'Sulafat' is "Warm" —
+// the right base for a chief of staff. Swap via NORMOS_VOICE. Other warm picks:
+// Achird (Friendly), Callirrhoe (Easy-going), Gacrux (Mature), Vindemiatrix (Gentle).
+const DEFAULT_VOICE = process.env.NORMOS_VOICE || 'Sulafat';
+
+async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
   const trimmed = String(text || '').trim();
   if (!trimmed) throw new Error('nothing to synthesize');
   const directive = style || process.env.NORMOS_VOICE_STYLE ||
@@ -135,4 +142,4 @@ function speakable(text) {
     .trim();
 }
 
-module.exports = { synthesize, transcribe, composeNarrationScript, speakable, pcmToWav };
+module.exports = { synthesize, transcribe, composeNarrationScript, speakable, pcmToWav, DEFAULT_VOICE };

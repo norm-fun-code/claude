@@ -1907,7 +1907,9 @@ const voiceService = require('./src/services/voice');
 async function briefAudioFor(content, day) {
   const script = voiceService.composeNarrationScript(content);
   if (!script) return null;
-  const hash = crypto.createHash('sha1').update(script).digest('hex').slice(0, 10);
+  // Key on the voice too — changing NORMOS_VOICE (or the default) must
+  // regenerate, not serve audio narrated in the old voice.
+  const hash = crypto.createHash('sha1').update(`${voiceService.DEFAULT_VOICE}\n${script}`).digest('hex').slice(0, 10);
   const cacheKey = `brief:${day}:${hash}`;
   const { rows } = await db.query(`SELECT audio, mime FROM tts_audio WHERE cache_key = $1`, [cacheKey]);
   if (rows[0]) return { audio: rows[0].audio, mime: rows[0].mime };
