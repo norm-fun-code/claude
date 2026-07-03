@@ -103,3 +103,14 @@ test('parseAction rejects out-of-range and empty log_checkin', () => {
   assert.equal(parseAction('<action>{"type":"log_checkin","mood":9}</action>'), null);
   assert.equal(parseAction('<action>{"type":"log_checkin"}</action>'), null);
 });
+
+// ── parseAction: log_day_context ─────────────────────────────────────────────
+
+test('parseAction extracts a day-context recap', () => {
+  const a = parseAction('Got it. <action>{"type":"log_day_context","text":"Rough day — poor sleep, stressful launch, skipped lunch."}</action>');
+  assert.deepEqual(a, { action: 'log_day_context', text: 'Rough day — poor sleep, stressful launch, skipped lunch.' });
+});
+
+test('parseAction rejects an empty day-context', () => {
+  assert.equal(parseAction('<action>{"type":"log_day_context","text":""}</action>'), null);
+});

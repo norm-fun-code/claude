@@ -1169,6 +1169,7 @@ app.post('/api/intentions/results', async (req, res) => {
 // ("remember: Nancy is due January 6th").
 const lifeChaptersStore = require('./src/store/lifeChapters');
 const commitmentsStore = require('./src/store/commitments');
+const dayJournalStore = require('./src/store/dayJournal');
 
 app.get('/api/chapters', async (req, res) => {
   try {
@@ -2029,6 +2030,11 @@ async function executeAction(routed) {
         endTs: new Date(Date.now() + 24 * 3600 * 1000),
       });
       return { done: true, description: `Noted for the next brief: ${routed.text}` };
+    }
+    if (routed.action === 'log_day_context' && routed.text) {
+      const entryDate = new Date().toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD local
+      await dayJournalStore.create({ text: String(routed.text).slice(0, 4000), entryDate, source: 'voice' });
+      return { done: true, description: 'Logged today\'s context — I\'ll factor it into your briefs and remember it.' };
     }
     if (routed.action === 'set_reminder' && routed.text) {
       const { dueAt } = commitmentsStore.resolveReminderTime(routed.at, new Date());
@@ -4501,6 +4507,32 @@ app.post('/api/commitments/run', async (req, res) => {
     const { runCommitmentReminders } = require('./src/notify/commitments');
     const force = req.query.force === '1' || req.query.force === 'true';
     res.json(await runCommitmentReminders({ force }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Daily context journal ─────────────────────────────────────────────────────
+
+// Recent daily-context entries (their own words about their days).
+app.get('/api/day-context', async (req, res) => {
+  try {
+    const days = Math.min(Number(req.query.days) || 14, 90);
+    res.json({ entries: await dayJournalStore.recent({ days, limit: 30 }) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Add a daily-context entry (typed, not by voice). { text }
+app.post('/api/day-context', async (req, res) => {
+  try {
+    const { text } = req.body || {};
+    if (!text || !String(text).trim()) return res.status(400).json({ error: 'text required' });
+    const tz = process.env.TZ || 'America/New_York';
+    const entryDate = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    const row = await dayJournalStore.create({ text, entryDate, source: 'manual' });
+    res.json({ ok: true, entry: row });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -137,7 +137,7 @@ function commitmentsLine(commitments) {
 }
 
 function buildPrompt(signals) {
-  const { autonomic: a, load: l, openHabits, gratitude = [], morningPlan = null, training = null, commitments = null } = signals;
+  const { autonomic: a, load: l, openHabits, gratitude = [], morningPlan = null, training = null, commitments = null, dayContext = '' } = signals;
   const lines = [
     `Autonomic tone: ${a.tone}${a.sampleThin ? ' (thin data — soft-pedal)' : ''}`,
     a.hrv != null ? `Daytime HRV today: ${ms(a.hrv)}${a.hrvBaseline != null ? ` (your norm ${ms(a.hrvBaseline)})` : ''}` : 'Daytime HRV today: (none)',
@@ -150,6 +150,9 @@ function buildPrompt(signals) {
       : null,
     morningPlan?.action ? `This morning's brief asked: "${String(morningPlan.action).slice(0, 300)}"` : 'This morning\'s brief: (not available)',
     commitmentsLine(commitments),
+    dayContext && dayContext.trim()
+      ? `What the user told you about today (their own words — speak to THIS, not just the numbers): "${dayContext.slice(0, 600)}"`
+      : null,
     gratitude.length
       ? `Recent gratitude notes (most recent first — reflect the THEME back in your own words, do not quote verbatim or list): ${gratitude.map((g) => `"${String(g.text).slice(0, 200)}"`).join(' | ')}`
       : 'Recent gratitude notes: (none logged)',
@@ -259,6 +262,12 @@ async function runEveningHealthBrief(opts = {}) {
   try {
     signals.commitments = await require('../store/commitments').todaySummary(tz);
   } catch { signals.commitments = null; }
+  // Today's context the user narrated (if any) — so the wind-down speaks to the
+  // day they actually had, not just the numbers.
+  try {
+    const entries = await require('../store/dayJournal').forDay(day);
+    signals.dayContext = entries.map((e) => e.text).join(' ');
+  } catch { signals.dayContext = ''; }
   const content = await composeEveningBrief(signals);
   content.day = day;
   content.builtAt = new Date().toISOString();

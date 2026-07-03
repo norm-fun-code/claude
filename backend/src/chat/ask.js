@@ -48,6 +48,7 @@ Valid actions (emit AT MOST ONE, compact JSON, only for these concrete app chang
 - {"type":"log_habit","habit":"morningTM|afternoonTM|gratitude|coldShower|exercise"} — when they say they DID it.
 - {"type":"log_checkin","mood":1-5,"energy":1-5,"focus":1-5} — when they tell you their mood / energy / focus for today (1-5 scale). Include only the fields they actually gave; omit the rest. "my mood and energy were 5, focus was 4" → {"mood":5,"energy":5,"focus":4}. "my energy is a 3 today" → {"energy":3}.
 - {"type":"add_context","text":"<short note for tomorrow's brief, e.g. traveling today>"}
+- {"type":"log_day_context","text":"<the FULL recap, in the user's own words, lightly cleaned up>"} — when they give a narrative recap of their DAY ("today's context: …", "here's how my day went…", "let me tell you about today…"). This is the day journal: keep the whole substance (don't truncate to a note), preserve specifics (what happened, how they felt, why). Distinct from add_context (a short flag for tomorrow's brief) and log_checkin (just the 1-5 numbers). Acknowledge warmly in one line, like someone who was listening.
 - {"type":"add_chapter","kind":"pregnancy|countdown|note","label":"<short>","keyDate":"YYYY-MM-DD or null","keyDateLabel":"due|deadline|null"} — a standing life fact to remember long-term.
 - {"type":"set_reminder","text":"<what to do, imperative — e.g. 'book the doctor'>","at":"YYYY-MM-DDTHH:MM or null"} — when they ask to be reminded of something or commit to doing something at a time ("remind me to call mom at 6", "I'll wind down by 10:30 tonight"). Compute "at" as a LOCAL datetime from CURRENT LOCAL TIME below; it MUST be in the future. Use null for "at" only when there's genuinely no time ("remind me to book the doctor sometime"). This is for a SINGLE future action, not a recurring habit.
 Still give your normal useful answer around the acknowledgment (e.g. how the substitute stacks up against their goal) — the action tag is IN ADDITION to a real answer, not a replacement for one.`;
@@ -128,7 +129,9 @@ async function answerCommand(question, { history = [] } = {}) {
     ? 'CONVERSATION SO FAR:\n' + history.map((h) => `${h.role === 'assistant' ? 'NormOS' : 'You'}: ${h.content}`).join('\n') + '\n\n'
     : '';
   const prompt = `${historyText}COMMAND:\n${question}`;
-  let answer = await llm.generateText({ system, prompt, temperature: 0.2, maxTokens: 320, fast: true });
+  // Most commands answer in a sentence, but a "today's context: …" recap echoes
+  // the full narrative back inside the action tag, so leave room for that.
+  let answer = await llm.generateText({ system, prompt, temperature: 0.2, maxTokens: 1100, fast: true });
   const action = parseAction(answer);
   answer = answer.replace(/<action>[\s\S]*?<\/action>/i, '').replace(/<rec>[\s\S]*?<\/rec>/i, '').trim();
   return { answer, action, questionEmbedding: null, sources: [] };
@@ -257,7 +260,7 @@ async function wealthContext() {
   }
 }
 
-function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [], snapshot = null, experiments = [], pastConversations = [], wealthInsights = null, voice = false }) {
+function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [], snapshot = null, experiments = [], pastConversations = [], wealthInsights = null, dayContext = [], voice = false }) {
   const parts = [];
 
   // Voice replies are spoken aloud and the user is physically waiting on them —
@@ -279,6 +282,18 @@ function buildPrompt({ question, findings = [], docs = [], annotations = [], his
   }
 
   if (wealthInsights) parts.push(wealthInsights);
+
+  // Recent daily context — what the user told NormOS about their days, in their
+  // own words. The narrative behind the numbers; reference it when it explains a
+  // pattern ("you mentioned a stressful launch that day").
+  if (dayContext.length) {
+    parts.push(
+      "WHAT YOU'VE TOLD ME ABOUT YOUR RECENT DAYS (their own words — use to explain patterns and add continuity):\n" +
+        dayContext
+          .map((e) => `- [${e.entry_date}] ${snippet(e.text, 400)}`)
+          .join('\n')
+    );
+  }
 
   // Long-term memory: relevant things discussed in PAST conversations (beyond the
   // recent tail). Lets NormOS say "when you asked about this before, we landed on…"
@@ -433,6 +448,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     selfModelResult,
     chaptersResult,
     wealthResult,
+    dayContextResult,
   ] = await Promise.allSettled([
     findingsStore.listFindings({ status: 'open' }),
     annotationsStore.listAnnotations({ from: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000), limit: 20 }),
@@ -443,6 +459,10 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     financial
       ? Promise.all([wealthContext(), require('../services/financial-plan').buildPlanContext().catch(() => null)])
       : Promise.resolve(null),
+    // Recent daily context the user has talked to NormOS about — the narrative
+    // subjective signal that makes "why was I tired last week?" answerable with
+    // "you noted a stressful launch Wednesday", not just a chart.
+    require('../store/dayJournal').recent({ days: 7, limit: 12 }).catch(() => []),
   ]);
 
   const findings = findingsResult.status === 'fulfilled' ? findingsResult.value : [];
@@ -463,8 +483,9 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
   const wealthInsights = wealthResult.status === 'fulfilled' && wealthResult.value
     ? wealthResult.value.filter(Boolean).join('\n\n') || null
     : null;
+  const dayContext = dayContextResult.status === 'fulfilled' ? (dayContextResult.value || []) : [];
 
-  const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments, pastConversations, wealthInsights, voice });
+  const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments, pastConversations, wealthInsights, dayContext, voice });
   let system = selfModelText ? `${baseSystem}\n\n${selfModelText}` : baseSystem;
   if (chaptersText) system += `\n\nLIFE CHAPTERS (standing long-arc facts, auto-updated — never ask the user to re-confirm these):\n${chaptersText}`;
   // Today's planned session — so a swap_workout action can be acknowledged
@@ -582,6 +603,9 @@ function parseAction(text) {
     return { action: 'log_checkin', mood, energy, focus };
   }
   if (type === 'add_context' && p.text && String(p.text).trim()) return { action: 'add_context', text: String(p.text).slice(0, 200) };
+  if (type === 'log_day_context' && p.text && String(p.text).trim()) {
+    return { action: 'log_day_context', text: String(p.text).slice(0, 4000) };
+  }
   if (type === 'set_reminder' && p.text && String(p.text).trim()) {
     // `at` is a naive local ISO the model computes from the CURRENT LOCAL TIME
     // we give it; the executor resolves + validates it (past/garbage → untimed).

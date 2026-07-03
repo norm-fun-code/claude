@@ -213,7 +213,7 @@ async function gatherAnnotations() {
 // ---- Model builder ----
 
 function buildModelText(data) {
-  const { wellbeing, health, habits, wealth, goals, experiments, findings, annotations, intention, generatedAt } = data;
+  const { wellbeing, health, habits, wealth, goals, experiments, findings, annotations, intention, dayContext = [], generatedAt } = data;
   const lines = [];
 
   const dateStr = (generatedAt || new Date()).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
@@ -345,6 +345,18 @@ function buildModelText(data) {
     lines.push(`ACTIVE CONTEXT: ${annotations.map((a) => `${a.category}: ${a.label}`).join('; ')}`);
   }
 
+  // --- Recent daily context (the narrative the user has told NormOS) ---
+  // The self-model is where these compound: over time this is what lets NormOS
+  // notice "Mondays read stressful" or "you sleep worse after travel". Kept
+  // recent + trimmed so the model distills patterns rather than hoarding raw logs.
+  if (dayContext.length) {
+    const entries = dayContext
+      .slice(0, 10)
+      .map((e) => `  - [${e.entry_date}] ${String(e.text).slice(0, 300)}`)
+      .join('\n');
+    lines.push(`RECENT DAILY CONTEXT (their own words — infer standing patterns, don't just restate):\n${entries}`);
+  }
+
   return lines.join('\n');
 }
 
@@ -360,7 +372,7 @@ async function consolidate({ kind = 'nightly' } = {}) {
   const d30 = new Date(now - 30 * DAY);
   const d56 = new Date(now - 56 * DAY);
 
-  const [wellbeing, health, habits, wealth, goals, experiments, findings, annotations, intentionArr] =
+  const [wellbeing, health, habits, wealth, goals, experiments, findings, annotations, intentionArr, dayContext] =
     await Promise.all([
       gatherWellbeing(d7, d35),
       gatherHealth(d7, d35),
@@ -371,6 +383,7 @@ async function consolidate({ kind = 'nightly' } = {}) {
       gatherFindings(),
       gatherAnnotations(),
       intentionsStore.recentIntentions({ days: 14 }).catch(() => []),
+      require('../store/dayJournal').recent({ days: 14, limit: 14 }).catch(() => []),
     ]);
 
   const intention = intentionArr[0] ?? null;
@@ -386,7 +399,7 @@ async function consolidate({ kind = 'nightly' } = {}) {
     findings: findings.correlations.length,
     topFindings: findings.correlations.slice(0, 3).map((f) => ({ title: f.title })),
   };
-  const content = buildModelText({ wellbeing, health, habits, wealth, goals, experiments, findings, annotations, intention, generatedAt: now });
+  const content = buildModelText({ wellbeing, health, habits, wealth, goals, experiments, findings, annotations, intention, dayContext, generatedAt: now });
 
   await selfModelStore.saveModel({ content, snapshot, kind });
   return content;
