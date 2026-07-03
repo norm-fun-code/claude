@@ -654,60 +654,41 @@ app.get('/api/habits/streaks', async (req, res) => {
     const tz = process.env.TZ || 'America/New_York';
     const HABIT_METRICS = ['morning_tm', 'afternoon_tm', 'cold_shower', 'gratitude', 'exercise'];
     const { rows } = await db.query(
+      // to_char → a 'YYYY-MM-DD' STRING; a bare ::date came back as a JS Date
+      // whose String() ("Thu Jul 02 2026 …") never matched today/yesterday, so
+      // every streak silently computed to 0 and no badge ever showed.
       `SELECT
          metric,
-         date_trunc('day', ts AT TIME ZONE COALESCE($1, 'America/New_York'))::date AS day,
+         to_char(date_trunc('day', ts AT TIME ZONE COALESCE($1, 'America/New_York'))::date, 'YYYY-MM-DD') AS day,
          AVG(value) AS val
        FROM metrics
        WHERE domain = 'habits'
          AND metric = ANY($2)
          AND source != 'seed'
          AND ts >= NOW() - INTERVAL '90 days'
-       GROUP BY metric, day
+       GROUP BY metric, date_trunc('day', ts AT TIME ZONE COALESCE($1, 'America/New_York'))::date
        ORDER BY metric, day DESC`,
       [tz, HABIT_METRICS]
     );
 
-    // Group rows by metric.
+    // Group rows by metric (already newest-first from the ORDER BY).
     const byMetric = {};
     for (const r of rows) {
-      if (!byMetric[r.metric]) byMetric[r.metric] = [];
-      byMetric[r.metric].push({ day: String(r.day).slice(0, 10), val: Number(r.val) });
+      (byMetric[r.metric] ||= []).push({ day: r.day, val: Number(r.val) });
     }
 
-    // Today and yesterday in YYYY-MM-DD (server date; close enough for streaks).
-    const now = new Date();
-    const pad = (n) => String(n).padStart(2, '0');
-    const toDateStr = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-    const today = toDateStr(now);
-    const yesterday = toDateStr(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
-
-    function countStreak(dayRows) {
-      if (!dayRows || dayRows.length === 0) return 0;
-      // dayRows is sorted DESC. Streak is active if most recent day is today or yesterday.
-      const mostRecent = dayRows[0].day;
-      if (mostRecent !== today && mostRecent !== yesterday) return 0;
-      // Walk back expecting consecutive days.
-      let streak = 0;
-      let expected = mostRecent;
-      for (const { day, val } of dayRows) {
-        if (day !== expected || val < 0.5) break;
-        streak++;
-        // Next expected day is one day earlier.
-        const d = new Date(expected + 'T12:00:00Z');
-        d.setUTCDate(d.getUTCDate() - 1);
-        expected = toDateStr(new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-      }
-      return streak;
-    }
+    // Today / yesterday in the SAME tz as the SQL day, as 'YYYY-MM-DD'.
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    const yesterday = require('./src/util/streak').prevDay(today);
+    const { computeStreak } = require('./src/util/streak');
 
     res.json({
       streaks: {
-        morningTM:    countStreak(byMetric['morning_tm']),
-        afternoonTM:  countStreak(byMetric['afternoon_tm']),
-        coldShower:   countStreak(byMetric['cold_shower']),
-        gratitude:    countStreak(byMetric['gratitude']),
-        exercise:     countStreak(byMetric['exercise']),
+        morningTM:    computeStreak(byMetric['morning_tm'], { today, yesterday }),
+        afternoonTM:  computeStreak(byMetric['afternoon_tm'], { today, yesterday }),
+        coldShower:   computeStreak(byMetric['cold_shower'], { today, yesterday }),
+        gratitude:    computeStreak(byMetric['gratitude'], { today, yesterday }),
+        exercise:     computeStreak(byMetric['exercise'], { today, yesterday }),
       },
     });
   } catch (err) {
@@ -723,19 +704,22 @@ app.get('/api/habits/history', async (req, res) => {
     const days = Math.max(7, Math.min(Number(req.query.days) || 14, 60));
     const HABIT_METRICS = ['morning_tm', 'afternoon_tm', 'cold_shower', 'gratitude', 'exercise'];
     const { rows } = await db.query(
+      // to_char → a guaranteed 'YYYY-MM-DD' STRING. node-postgres parses a bare
+      // ::date into a JS Date, whose String() is "Thu Jul 02 2026 …" — slicing
+      // that never matched the YYYY-MM-DD day axis, so every day read as a miss
+      // and the adherence dots were always empty.
       `SELECT metric,
-              (ts AT TIME ZONE $1)::date AS day,
+              to_char((ts AT TIME ZONE $1)::date, 'YYYY-MM-DD') AS day,
               AVG(value) AS val
          FROM metrics
         WHERE domain = 'habits' AND metric = ANY($2) AND source != 'seed'
           AND (ts AT TIME ZONE $1)::date > (now() AT TIME ZONE $1)::date - $3::int
-        GROUP BY metric, day`,
+        GROUP BY metric, (ts AT TIME ZONE $1)::date`,
       [tz, HABIT_METRICS, days]
     );
     const done = {}; // metric -> Set(YYYY-MM-DD where val>=0.5)
     for (const r of rows) {
-      const key = String(r.day).slice(0, 10);
-      if (Number(r.val) >= 0.5) (done[r.metric] ||= new Set()).add(key);
+      if (Number(r.val) >= 0.5) (done[r.metric] ||= new Set()).add(r.day);
     }
     // Build the contiguous day axis (oldest→newest) in the configured tz.
     const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });
