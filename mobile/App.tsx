@@ -70,6 +70,43 @@ import { IndicesCard } from './src/components/IndicesCard';
 import { MarketsCard } from './src/components/MarketsCard';
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
 
+// Context-aware one-tap questions for the voice/quick-ask summon — grounded in
+// live numbers where we have them so the starters feel like they're actually
+// looking at the same screen you are, not a generic prompt. Shared by the
+// long-press-the-Ask-tab gesture and the mic FAB (both just open the same
+// summon sheet from a different entry point).
+function contextStartersFor(
+  tab: TabKey,
+  opts: { score?: number | null; band?: string | null; risk?: string | null }
+): string[] {
+  const { score, band, risk } = opts;
+  if (tab === 'health') {
+    return [
+      score != null ? `Why is my recovery ${score} (${band ?? 'unknown'}) today?` : 'Why is my recovery where it is today?',
+      "What's been moving my HRV lately?",
+      "Should I adjust today's workout given my recovery?",
+    ];
+  }
+  if (tab === 'wealth') {
+    return [
+      'How is my spending pacing this month?',
+      'What changed in my net worth recently?',
+      'Where am I overspending vs my usual?',
+    ];
+  }
+  if (tab === 'wisdom') {
+    return [
+      "Connect today's quote to what my data shows this week",
+      'What from my library should I revisit right now?',
+    ];
+  }
+  return [ // today
+    "What's the single most important thing right now?",
+    risk ? 'Go deeper on the risk in my brief' : "What am I missing in today's plan?",
+    'How are my weekly goals tracking?',
+  ];
+}
+
 export default function App() {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
@@ -516,10 +553,20 @@ export default function App() {
         visible={habitsOpen}
         onClose={() => { setHabitsOpen(false); dailyLog.refresh(); }}
       />
-      {/* Quick Ask — summoned by long-pressing the Ask tab; opens as a sheet
-          over whatever tab you're on (the FAB is hidden; the tab itself remains
-          the full-screen destination). */}
-      <AskOverlay ref={quickAskRef} hideFab bottomInset={bottomInset} />
+      {/* Quick Ask — summoned by long-pressing the Ask tab, or by the mic FAB
+          (shown on every tab except Ask itself, which already has the input
+          row front and center). Both open the same sheet, seeded with the
+          same context-aware starters. */}
+      <AskOverlay
+        ref={quickAskRef}
+        hideFab={tab === 'ask'}
+        contextStarters={contextStartersFor(tab, {
+          score: liveRecovery.recovery?.score,
+          band: liveRecovery.recovery?.band,
+          risk: d?.chiefBrief?.risk,
+        })}
+        bottomInset={bottomInset}
+      />
       <TabBar
         active={tab}
         onChange={(key) => {
@@ -536,31 +583,11 @@ export default function App() {
         onLongPress={(key) => {
           if (key === 'ask' && tab !== 'ask') {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-            // Context-aware summon: seed one-tap questions from the screen the
-            // user is looking at, grounded in live numbers where we have them.
-            const score = liveRecovery.recovery?.score;
-            const band = liveRecovery.recovery?.band;
-            const starters =
-              tab === 'health' ? [
-                score != null ? `Why is my recovery ${score} (${band ?? 'unknown'}) today?` : 'Why is my recovery where it is today?',
-                "What's been moving my HRV lately?",
-                "Should I adjust today's workout given my recovery?",
-              ]
-              : tab === 'wealth' ? [
-                'How is my spending pacing this month?',
-                'What changed in my net worth recently?',
-                'Where am I overspending vs my usual?',
-              ]
-              : tab === 'wisdom' ? [
-                "Connect today's quote to what my data shows this week",
-                'What from my library should I revisit right now?',
-              ]
-              : [ // today
-                "What's the single most important thing right now?",
-                d?.chiefBrief?.risk ? 'Go deeper on the risk in my brief' : "What am I missing in today's plan?",
-                'How are my weekly goals tracking?',
-              ];
-            quickAskRef.current?.openWith(undefined, starters);
+            quickAskRef.current?.openWith(undefined, contextStartersFor(tab, {
+              score: liveRecovery.recovery?.score,
+              band: liveRecovery.recovery?.band,
+              risk: d?.chiefBrief?.risk,
+            }));
           }
         }}
       />

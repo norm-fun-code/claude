@@ -44,6 +44,9 @@ interface Props {
   /** Modal mode without the floating launcher — summoned only via the ref
       (openWith), e.g. by long-pressing the Ask tab from anywhere in the app. */
   hideFab?: boolean;
+  /** One-tap starter questions to seed when the FAB is tapped — same
+      context-aware set the long-press-the-Ask-tab gesture uses. */
+  contextStarters?: string[];
 }
 
 const FALLBACK_SUGGESTIONS = [
@@ -156,7 +159,7 @@ function fmtDate(iso: string | null): string {
 // Global "Ask NormOS" command bar: a floating button on every tab that opens a
 // full conversation sheet. Save the current thread to the sidebar, browse saved
 // ones, resume, or delete — all backed by the persistent server history.
-export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverlay({ bottomInset = 0, embedded = false, initialQuestion, hideFab = false }, ref) {
+export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverlay({ bottomInset = 0, embedded = false, initialQuestion, hideFab = false, contextStarters }, ref) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [open, setOpen] = useState(false);
@@ -608,7 +611,12 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
     <>
       {!hideFab && (
         <Pressable
-          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setView('chat'); setOpen(true); }}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            setView('chat');
+            setStarters(contextStarters ?? []);
+            setOpen(true);
+          }}
           onPressIn={() => { fabScale.value = withSpring(0.91, { damping: 12, stiffness: 400 }); }}
           onPressOut={() => { fabScale.value = withSpring(1, { damping: 10, stiffness: 300 }); }}
           style={[styles.fabWrap, { bottom: bottomInset + 70 }]}
@@ -616,8 +624,7 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
           accessibilityRole="button"
         >
           <Animated.View style={[styles.fab, { backgroundColor: c.accent }, shadow(isDark, 'bar'), fabAnimStyle]}>
-            <Text style={styles.fabIcon}>✦</Text>
-            <Text style={styles.fabText}>Ask</Text>
+            <Ionicons name="mic" size={22} color="#fff" />
           </Animated.View>
         </Pressable>
       )}
@@ -653,15 +660,12 @@ const styles = StyleSheet.create({
     right: spacing.md,
   },
   fab: {
-    flexDirection: 'row',
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 12,
-    borderRadius: 28,
+    justifyContent: 'center',
   },
-  fabIcon: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  fabText: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 0.2 },
   sheet: { flex: 1 },
   header: {
     flexDirection: 'row',
