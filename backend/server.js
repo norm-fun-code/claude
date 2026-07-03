@@ -1992,6 +1992,21 @@ async function executeAction(routed) {
       await sourcesStore.markSync(HABITS_SOURCE);
       return { done: true, description: `Logged ${routed.habit} as done` };
     }
+    if (routed.action === 'log_checkin' && (routed.mood != null || routed.energy != null || routed.focus != null)) {
+      await sourcesStore.registerSource({ id: CHECKIN_SOURCE, domain: 'wellbeing', displayName: 'Daily Check-in' });
+      const body = {};
+      if (routed.mood != null) body.mood = routed.mood;
+      if (routed.energy != null) body.energy = routed.energy;
+      if (routed.focus != null) body.focus = routed.focus;
+      const { metrics } = mapCheckin(body, { tz });
+      await metricsStore.insertMetrics(metrics);
+      await sourcesStore.markSync(CHECKIN_SOURCE);
+      const parts = [];
+      if (routed.mood != null) parts.push(`mood ${routed.mood}`);
+      if (routed.energy != null) parts.push(`energy ${routed.energy}`);
+      if (routed.focus != null) parts.push(`focus ${routed.focus}`);
+      return { done: true, description: `Logged your check-in: ${parts.join(', ')}` };
+    }
     if (routed.action === 'add_chapter' && routed.label) {
       const { replaced } = await lifeChaptersStore.createOrReplace({
         kind: ['pregnancy', 'countdown', 'note'].includes(routed.kind) ? routed.kind : 'note',
@@ -2018,6 +2033,9 @@ async function executeAction(routed) {
     if (routed.action === 'set_reminder' && routed.text) {
       const { dueAt } = commitmentsStore.resolveReminderTime(routed.at, new Date());
       await commitmentsStore.create({ title: String(routed.text).slice(0, 200), source: 'voice', dueAt });
+      // Same process runs the scheduler, so arm a precise timer for near-term
+      // reminders — they land on the minute instead of waiting for the poll.
+      if (dueAt) require('./src/notify/commitments').armPreciseReminder(dueAt);
       const when = dueAt
         ? ` for ${dueAt.toLocaleString('en-US', { timeZone: tz, weekday: 'short', hour: 'numeric', minute: '2-digit' })}`
         : '';

@@ -86,3 +86,20 @@ test('parseAction rejects a set_reminder with no text', () => {
   const a = parseAction('<action>{"type":"set_reminder","at":"2026-07-03T18:00"}</action>');
   assert.equal(a, null);
 });
+
+// ── parseAction: log_checkin ─────────────────────────────────────────────────
+
+test('parseAction extracts a full log_checkin', () => {
+  const a = parseAction('Logged. <action>{"type":"log_checkin","mood":5,"energy":5,"focus":4}</action>');
+  assert.deepEqual(a, { action: 'log_checkin', mood: 5, energy: 5, focus: 4 });
+});
+
+test('parseAction allows a partial log_checkin (only fields given)', () => {
+  const a = parseAction('<action>{"type":"log_checkin","energy":3}</action>');
+  assert.deepEqual(a, { action: 'log_checkin', mood: null, energy: 3, focus: null });
+});
+
+test('parseAction rejects out-of-range and empty log_checkin', () => {
+  assert.equal(parseAction('<action>{"type":"log_checkin","mood":9}</action>'), null);
+  assert.equal(parseAction('<action>{"type":"log_checkin"}</action>'), null);
+});

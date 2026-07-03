@@ -46,6 +46,7 @@ TAKING ACTION — you are a chief of staff who DOES things, not just advises. Wh
 Valid actions (emit AT MOST ONE, compact JSON, only for these concrete app changes — never for advice, analysis, or anything else):
 - {"type":"swap_workout","workoutId":"push|pull|zone2|mobility|intervals|rest"} — a walk / easy cardio / Zone 2 → "zone2"; a rest or off day → "rest". Use TODAY'S PLANNED WORKOUT (below) to acknowledge the swap accurately.
 - {"type":"log_habit","habit":"morningTM|afternoonTM|gratitude|coldShower|exercise"} — when they say they DID it.
+- {"type":"log_checkin","mood":1-5,"energy":1-5,"focus":1-5} — when they tell you their mood / energy / focus for today (1-5 scale). Include only the fields they actually gave; omit the rest. "my mood and energy were 5, focus was 4" → {"mood":5,"energy":5,"focus":4}. "my energy is a 3 today" → {"energy":3}.
 - {"type":"add_context","text":"<short note for tomorrow's brief, e.g. traveling today>"}
 - {"type":"add_chapter","kind":"pregnancy|countdown|note","label":"<short>","keyDate":"YYYY-MM-DD or null","keyDateLabel":"due|deadline|null"} — a standing life fact to remember long-term.
 - {"type":"set_reminder","text":"<what to do, imperative — e.g. 'book the doctor'>","at":"YYYY-MM-DDTHH:MM or null"} — when they ask to be reminded of something or commit to doing something at a time ("remind me to call mom at 6", "I'll wind down by 10:30 tonight"). Compute "at" as a LOCAL datetime from CURRENT LOCAL TIME below; it MUST be in the future. Use null for "at" only when there's genuinely no time ("remind me to book the doctor sometime"). This is for a SINGLE future action, not a recurring habit.
@@ -69,6 +70,68 @@ const FINANCE_RE = /\b(spend|spent|spending|budget|transaction|transactions|merc
 
 function isFinancialQuestion(q) {
   return FINANCE_RE.test(q || '');
+}
+
+// Is this utterance a clear COMMAND (do a thing) rather than a QUESTION (reason
+// about something)? Commands — "log my cold shower", "swap my workout to a walk",
+// "remind me at 6", "my mood was 5", "today's context: …" — need a quick
+// acknowledgment + an action, not retrieval or extended thinking, so they take a
+// fast model path. The detector is deliberately CONSERVATIVE: anything
+// interrogative or ambiguous returns false and falls through to the full
+// reasoning path, so real questions never lose power.
+const CMD_START_RE = /^(log |swap |switch |remind |note |remember |mark |set (a |an )?reminder|today'?s context|context:)/i;
+const CMD_STATEMENT_RE = /\b(remind me|log (my|the|it|that|a)|swap my|switch my|i (did|had|finished|completed|took|already|just (did|had|finished|took))|my (mood|energy|focus)\b|mark (it|that|this) (as )?done|today'?s context)\b/i;
+const QUESTION_START_RE = /^(should|why|how|what|which|when|where|who|whom|is|are|am|was|were|do|does|did|can|could|would|will|shall|may|might|explain|tell me|help|give me|show me|walk me|compare|analy[sz]e|summari[sz]e|recommend|suggest|think|any|what's|whats)\b/i;
+
+function looksLikeCommand(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  if (/\?\s*$/.test(t)) return false;          // ends in "?" → a question
+  if (QUESTION_START_RE.test(t)) return false; // interrogative opener → a question
+  return CMD_START_RE.test(t) || CMD_STATEMENT_RE.test(t);
+}
+
+// The light context a command needs to be acknowledged accurately (today's
+// planned session for a swap, the current time for a reminder) — no retrieval,
+// snapshot, or self-model. Appended to SYSTEM on the fast path.
+function commandContext() {
+  let s = '';
+  try {
+    const w = require('../services/workout').getTodayWorkout();
+    if (w?.type) s += `\n\nTODAY'S PLANNED WORKOUT: ${w.type}${w.duration ? ` (${w.duration})` : ''}.`;
+  } catch { /* non-critical */ }
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const now = new Date();
+    const nowLocal = now.toLocaleString('en-US', {
+      timeZone: tz, weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit', hour12: true,
+    });
+    const nowDate = now.toLocaleDateString('en-CA', { timeZone: tz });
+    s += `\n\nCURRENT LOCAL TIME: ${nowLocal} (${tz}); today's date is ${nowDate}. ` +
+      `Use this to compute any set_reminder "at" (must be in the future). ` +
+      `ALWAYS tell the user clock times in 12-hour AM/PM (e.g. "6:08 PM"), never 24-hour. ` +
+      `(The set_reminder "at" field stays 24-hour ISO, machine-only.)`;
+  } catch { /* non-critical */ }
+  return s;
+}
+
+/**
+ * Fast path for commands: acknowledge + emit an action, using a quick model and
+ * no extended thinking. Same return shape as ask(). No retrieval/embedding —
+ * commands don't need the library or long-term recall.
+ */
+async function answerCommand(question, { history = [] } = {}) {
+  const system = SYSTEM + commandContext() +
+    '\n\nThe user gave a COMMAND, not a question. Reply in ONE short, warm spoken sentence that plainly confirms what you did (or, if you truly can\'t act, say so briefly). No markdown, no lists, no analysis. Still append the correct single <action> tag when one applies.';
+  const historyText = history.length
+    ? 'CONVERSATION SO FAR:\n' + history.map((h) => `${h.role === 'assistant' ? 'NormOS' : 'You'}: ${h.content}`).join('\n') + '\n\n'
+    : '';
+  const prompt = `${historyText}COMMAND:\n${question}`;
+  let answer = await llm.generateText({ system, prompt, temperature: 0.2, maxTokens: 320, fast: true });
+  const action = parseAction(answer);
+  answer = answer.replace(/<action>[\s\S]*?<\/action>/i, '').replace(/<rec>[\s\S]*?<\/rec>/i, '').trim();
+  return { answer, action, questionEmbedding: null, sources: [] };
 }
 
 /**
@@ -322,6 +385,14 @@ function mergeUnique(...lists) {
 async function ask(question, { history = [], k = 14, voice = false } = {}) {
   if (!question || !question.trim()) throw new Error('question is required');
 
+  // Clear commands ("log my cold shower", "swap my workout", "remind me at 6",
+  // "my mood was 5") take the fast acknowledgment path — quick model, no
+  // thinking, no retrieval. Questions fall through to the full reasoning path
+  // below with Sonnet + adaptive thinking, so nothing loses power.
+  if (looksLikeCommand(question)) {
+    return answerCommand(question, { history });
+  }
+
   // Hybrid retrieval: semantic search for themes + keyword search on author/title
   // for named entities (e.g. "Sahil Bloom") that embeddings alone miss. The query
   // embedding is reused for long-term conversation recall AND returned so the
@@ -504,6 +575,12 @@ function parseAction(text) {
   const type = String(p.type || '').trim();
   if (type === 'swap_workout' && ACTION_WORKOUTS.has(p.workoutId)) return { action: 'swap_workout', workoutId: p.workoutId };
   if (type === 'log_habit' && ACTION_HABITS.has(p.habit)) return { action: 'log_habit', habit: p.habit };
+  if (type === 'log_checkin') {
+    const clamp = (v) => { const n = Number(v); return Number.isInteger(n) && n >= 1 && n <= 5 ? n : null; };
+    const mood = clamp(p.mood), energy = clamp(p.energy), focus = clamp(p.focus);
+    if (mood == null && energy == null && focus == null) return null; // need at least one valid rating
+    return { action: 'log_checkin', mood, energy, focus };
+  }
   if (type === 'add_context' && p.text && String(p.text).trim()) return { action: 'add_context', text: String(p.text).slice(0, 200) };
   if (type === 'set_reminder' && p.text && String(p.text).trim()) {
     // `at` is a naive local ISO the model computes from the CURRENT LOCAL TIME
@@ -523,4 +600,4 @@ function parseAction(text) {
   return null;
 }
 
-module.exports = { ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot, parseAction };
+module.exports = { ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot, parseAction, looksLikeCommand };

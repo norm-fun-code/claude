@@ -2,10 +2,15 @@
 // Claude has no embeddings API, so embeddings come from the embed provider.
 const axios = require('axios');
 
-async function generateText({ system, prompt, maxTokens = 4096, timeoutMs = 110000 }) {
+async function generateText({ system, prompt, maxTokens = 4096, timeoutMs = 110000, fast = false, model: modelOverride }) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
-  const model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5';
+  // `fast` routes clear commands (log a habit, swap a workout, set a reminder)
+  // to a quicker model with NO extended thinking — those need an acknowledgment,
+  // not reasoning. Real questions keep the default reasoning model + adaptive
+  // thinking below, so nothing loses power. Override either with env vars.
+  const model = modelOverride
+    || (fast ? (process.env.ANTHROPIC_FAST_MODEL || 'claude-haiku-4-5') : (process.env.ANTHROPIC_MODEL || 'claude-sonnet-5'));
 
   // Always safe to mark the system prompt as a cache breakpoint, whether or
   // not it happens to repeat verbatim: a prefix that changes call to call
@@ -18,15 +23,19 @@ async function generateText({ system, prompt, maxTokens = 4096, timeoutMs = 1100
     ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
     : undefined;
 
+  const body = {
+    model,
+    max_tokens: maxTokens,
+    system: systemBlock,
+    messages: [{ role: 'user', content: prompt }],
+  };
+  // Extended thinking only on the reasoning path; the fast command path omits it
+  // entirely (biggest single latency saving for short acknowledgments).
+  if (!fast) body.thinking = { type: 'adaptive' };
+
   const { data } = await axios.post(
     'https://api.anthropic.com/v1/messages',
-    {
-      model,
-      max_tokens: maxTokens,
-      thinking: { type: 'adaptive' },
-      system: systemBlock,
-      messages: [{ role: 'user', content: prompt }],
-    },
+    body,
     {
       timeout: timeoutMs,
       headers: {

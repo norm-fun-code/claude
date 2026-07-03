@@ -116,7 +116,29 @@ async function runCommitmentReminders(opts = {}) {
   return { due: due.length, sent, autoCompleted: toAutoComplete.length, expired, suppressed: quiet && toFire.length === 0 && due.length > toAutoComplete.length };
 }
 
-module.exports = { runCommitmentReminders, selectReminderActions, DEFAULT_MAX_PER_DAY };
+/**
+ * Fire a precise one-shot reminder at `dueAt`, so a short-fuse commitment ("remind
+ * me in 2 minutes") lands on time instead of waiting for the next coarse poll.
+ * The API and scheduler share one process, so the create path can arm this
+ * directly. Only arms things due within `horizonH` (the poll + grace window is
+ * the backstop for anything further out or lost to a restart). Idempotent: the
+ * runner marks reminded, so a redundant poll won't double-send.
+ */
+function armPreciseReminder(dueAt, { horizonH = 3, send = true } = {}) {
+  if (!dueAt) return null;
+  const when = new Date(dueAt).getTime();
+  if (Number.isNaN(when)) return null;
+  const delay = when - Date.now();
+  if (delay <= 0 || delay > horizonH * 60 * 60 * 1000) return null;
+  // +1.5s so due_at <= now() is comfortably true when the runner queries.
+  const timer = setTimeout(() => {
+    runCommitmentReminders({ send }).catch((e) => console.error('[commitments] armed run failed:', e.message));
+  }, delay + 1500);
+  if (typeof timer.unref === 'function') timer.unref(); // don't keep the process alive just for this
+  return timer;
+}
+
+module.exports = { runCommitmentReminders, selectReminderActions, armPreciseReminder, DEFAULT_MAX_PER_DAY };
 
 // CLI: node src/notify/commitments.js [--force] [--dry-run]
 if (require.main === module) {

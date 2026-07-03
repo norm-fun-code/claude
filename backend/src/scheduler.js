@@ -357,14 +357,19 @@ function start() {
   // short interval and fire the moment one is due (quiet hours + daily cap are
   // enforced inside the runner). Every few minutes is plenty — a reminder landing
   // within ~5 min of its time reads as "on time".
-  const commitmentPollMin = Number(process.env.COMMITMENT_POLL_MIN) || 5;
-  setInterval(() => {
+  // Precise near-term reminders are armed on-create (same process); this poll is
+  // the backstop that catches anything armed before a restart, or set while the
+  // process was down. A tight 2-min cadence keeps worst-case lateness small.
+  const commitmentPollMin = Number(process.env.COMMITMENT_POLL_MIN) || 2;
+  const commitmentTick = () => {
     runCommitmentReminders({}).then((r) => {
       if (r.sent > 0 || r.autoCompleted > 0) {
         console.log(`[scheduler] commitments: sent=${r.sent} autoCompleted=${r.autoCompleted} expired=${r.expired}`);
       }
     }).catch((e) => console.error('[scheduler] commitment reminders:', e.message));
-  }, commitmentPollMin * 60 * 1000);
+  };
+  setInterval(commitmentTick, commitmentPollMin * 60 * 1000);
+  setTimeout(commitmentTick, 20 * 1000); // immediate catch-up shortly after boot
 
   const hm = (h, m) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   const nextIso = (h, m) => new Date(Date.now() + msUntil(h, m)).toISOString();
