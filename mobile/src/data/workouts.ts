@@ -278,6 +278,36 @@ export function getHRVZone(hrv: number): 'green' | 'yellow' | 'red' {
 }
 
 /**
+ * Recovery-band guidance, tailored per SESSION TYPE. HRV_ZONES.instruction
+ * ("Reduce load 20%. Drop to 2 sets. No PRs.") is strength-specific language —
+ * showing it on a rest day, a Zone 2 day, or a mobility day is nonsensical
+ * (there's no "load" or "sets" to drop). Only push/pull fall through to it.
+ */
+export function recoveryInstructionFor(sessionId: string, zone: 'green' | 'yellow' | 'red'): string {
+  if (sessionId === 'rest') {
+    return zone === 'green' ? 'Rest as planned.' : 'Rest as planned — exactly what today calls for.';
+  }
+  if (sessionId === 'mobility') {
+    return zone === 'green'
+      ? 'Full session as planned.'
+      : 'Full session as planned — mobility work supports recovery either way.';
+  }
+  if (sessionId === 'zone2') {
+    if (zone === 'green') return 'Full planned session at target intensity.';
+    if (zone === 'yellow') return 'Keep it easy — shorten to ~20 min, conversational pace.';
+    return 'Skip structured cardio today — a light walk only.';
+  }
+  if (sessionId === 'intervals') {
+    if (zone === 'green') return 'Full planned session at target intensity.';
+    // Mirrors the session's own note_yellow_hrv shown lower in the detail view.
+    if (zone === 'yellow') return 'Do 2 rounds only (Intervals 1–2 + recoveries). Still worth doing.';
+    return 'Skip intervals — Zone 2 walk only.';
+  }
+  // push / pull (strength) — the language HRV_ZONES was written for.
+  return HRV_ZONES[zone].instruction;
+}
+
+/**
  * Resolve the day's session and training zone. The zone drives auto-downgrades
  * (e.g. Pull → Zone 2 on a low day). `zoneOverride` lets the caller supply the
  * baseline-relative RECOVERY band (green/yellow/red) so training guidance matches

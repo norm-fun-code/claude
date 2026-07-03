@@ -28,7 +28,7 @@ const { runIngest } = require('./src/ingest/run');
 const monarch = require('./src/connectors/monarch');
 const { analyze } = require('./src/intelligence/analyze');
 const { embedPending } = require('./src/intelligence/embeddings');
-const { ask } = require('./src/chat/ask');
+const { ask, looksLikeCommand } = require('./src/chat/ask');
 const { discover, addToCart, history: shopHistory, ucpProbe } = require('./src/services/shop');
 const ucp = require('./src/services/ucp');
 const annotationsStore = require('./src/store/annotations');
@@ -2060,6 +2060,13 @@ async function executeAction(routed) {
 // Push-to-talk: audio in → transcript → (optional action) → Ask brain →
 // spoken answer out. Persists to the same chat thread as typed Ask.
 app.post('/api/voice/ask', async (req, res) => {
+  // Per-stage timing so a "this felt slow" report can be diagnosed from the
+  // logs instead of guessed at — the fast-command-model work only sped up the
+  // LLM stage; STT and TTS are each a separate full network round trip to
+  // Gemini and were never specifically profiled until now.
+  const t0 = Date.now();
+  const marks = {};
+  const mark = (label) => { marks[label] = Date.now() - t0; };
   try {
     const { audio, mime } = req.body || {};
     if (!audio) return res.status(400).json({ error: 'audio (base64) is required' });
@@ -2071,6 +2078,7 @@ app.post('/api/voice/ask', async (req, res) => {
       voiceService.transcribe(String(audio), mime || 'audio/wav'),
       chatStore.recentMessages({ limit: 20 }).catch(() => []),
     ]);
+    mark('sttMs');
     if (!question) return res.status(422).json({ error: 'no_speech', message: "Couldn't hear anything in that." });
 
     // One brain call: ask() both answers AND decides any action inline (no
@@ -2082,11 +2090,13 @@ app.post('/api/voice/ask', async (req, res) => {
       history: historyRows.map((m) => ({ role: m.role, content: m.content })),
       voice: true,
     });
+    mark('llmMs');
     const executedList = [];
     for (const a of (result.actions ?? (result.action ? [result.action] : []))) {
       executedList.push(await executeAction(a));
     }
     const executed = executedList.find(Boolean) ?? null;
+    mark('actionMs');
 
     // Persist to the shared thread (same as the typed /api/chat path).
     const convId = await chatStore.ensureActiveConversation();
@@ -2104,6 +2114,13 @@ app.post('/api/voice/ask', async (req, res) => {
     } catch (err) {
       console.error('[voice tts] failed (returning text only):', err.message);
     }
+    mark('ttsMs');
+
+    console.log(
+      `[voice/ask timing] total=${Date.now() - t0}ms stt=${marks.sttMs}ms ` +
+      `llm=${marks.llmMs - marks.sttMs}ms action=${marks.actionMs - marks.llmMs}ms ` +
+      `tts=${marks.ttsMs - marks.actionMs}ms (fast=${looksLikeCommand(question)})`
+    );
 
     res.json({
       question,

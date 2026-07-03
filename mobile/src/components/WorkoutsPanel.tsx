@@ -5,6 +5,7 @@ import { API_BASE, WORKOUT_LOG_URL, WORKOUT_OVERRIDE_URL, WORKOUT_OVERRIDES_URL,
 import {
   getTodaysWorkout,
   HRV_ZONES,
+  recoveryInstructionFor,
   WEEKLY_SCHEDULE,
   SESSION_A,
   SESSION_B,
@@ -245,6 +246,7 @@ function HRVHeaderCard({
   isDark,
   hrv,
   zone,
+  workoutId,
   workoutLabel,
   workoutDuration,
   override,
@@ -254,6 +256,7 @@ function HRVHeaderCard({
   isDark: boolean;
   hrv: number | null;
   zone: HRVZone;
+  workoutId: string;
   workoutLabel: string;
   workoutDuration?: string;
   override?: string;
@@ -298,7 +301,9 @@ function HRVHeaderCard({
       </View>
 
       {zoneConfig ? (
-        <Text style={[cardStyles.instruction, { color: c.subtext }]}>{zoneConfig.instruction}</Text>
+        <Text style={[cardStyles.instruction, { color: c.subtext }]}>
+          {recoveryInstructionFor(workoutId, zone as 'green' | 'yellow' | 'red')}
+        </Text>
       ) : (
         <Text style={[cardStyles.instruction, { color: c.subtext }]}>
           No HRV data — showing scheduled workout.
@@ -1869,6 +1874,7 @@ export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Prop
         isDark={isDark}
         hrv={hrv}
         zone={zone}
+        workoutId={workout.id}
         workoutLabel={workout.label}
         workoutDuration={duration}
         override={displayOverride}
