@@ -19,6 +19,7 @@ import Animated, {
   FadeInDown,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
+import { Ionicons } from '@expo/vector-icons';
 import Markdown from 'react-native-markdown-display';
 import { getColors, spacing, radius, typography, shadow, withAlpha } from '../theme';
 import { useChat } from '../hooks/useChat';
@@ -582,7 +583,11 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
                       {voiceState === 'thinking' ? (
                         <ActivityIndicator size="small" color={c.accent} />
                       ) : (
-                        <Text style={[styles.micIcon, voiceState === 'recording' && { color: '#fff' }]}>🎙</Text>
+                        <Ionicons
+                          name={voiceState === 'recording' ? 'mic' : 'mic-outline'}
+                          size={17}
+                          color={voiceState === 'recording' ? '#fff' : '#635BFF'}
+                        />
                       )}
                     </Pressable>
                   )}
@@ -726,7 +731,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 6,
   },
-  micIcon: { fontSize: 16 },
   send: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   sendText: { color: '#fff', fontWeight: '700', fontSize: 18, lineHeight: 20, marginTop: -1 },
   disclaimer: { fontSize: 11, textAlign: 'center', marginTop: 6, lineHeight: 15 },

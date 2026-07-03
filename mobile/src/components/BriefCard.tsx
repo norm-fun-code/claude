@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, useColorScheme, TextInput, TouchableOpacity, Pressable, LayoutAnimation, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
+import { Ionicons } from '@expo/vector-icons';
 import { getColors, spacing, radius, typography, shadow, glow, accentGradient, withAlpha, FONTS } from '../theme';
 import { AnimatedEntry } from './AnimatedEntry';
 import type { ChiefBrief } from '../hooks/useBriefing';
@@ -331,7 +332,11 @@ export function BriefCard({ brief, fallback }: Props) {
                   {qVoice === 'thinking' ? (
                     <ActivityIndicator size="small" color="#A89CFF" />
                   ) : (
-                    <Text style={[styles.qMicIcon, qVoice === 'recording' && { color: '#fff' }]}>🎙</Text>
+                    <Ionicons
+                      name={qVoice === 'recording' ? 'mic' : 'mic-outline'}
+                      size={15}
+                      color={qVoice === 'recording' ? '#fff' : '#A89CFF'}
+                    />
                   )}
                 </Pressable>
               )}
@@ -546,10 +551,6 @@ const styles = StyleSheet.create({
     backgroundColor: withAlpha('#A89CFF', 0.15),
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  qMicIcon: {
-    fontSize: 15,
-    color: '#A89CFF',
   },
   contextBtn: {
     borderWidth: 1,
