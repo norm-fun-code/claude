@@ -1,8 +1,11 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import { spacing, radius, typography, glow, bandGradient, withAlpha } from '../theme';
 import type { EveningBrief, EveningTone } from '../hooks/useEveningBrief';
+import { EVENING_BRIEF_AUDIO_URL, authHeaders, fetchWithTimeout } from '../config';
+import { voiceAvailable, playBase64, stopPlayback } from '../lib/voice';
 
 interface Props {
   brief: EveningBrief | null | undefined;
@@ -37,6 +40,30 @@ function Chip({ label, value }: { label: string; value: string }) {
 }
 
 export function EveningBriefCard({ brief }: Props) {
+  const [audioState, setAudioState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
+  useEffect(() => () => { stopPlayback(); }, []);
+
+  async function toggleListen() {
+    if (audioState === 'playing') {
+      await stopPlayback();
+      setAudioState('idle');
+      return;
+    }
+    Haptics.selectionAsync();
+    setAudioState('loading');
+    try {
+      const res = await fetchWithTimeout(EVENING_BRIEF_AUDIO_URL, { headers: authHeaders() }, 30000);
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+      const data = await res.json();
+      if (!data?.audio) throw new Error('no audio');
+      const ok = await playBase64(data.audio, data.mime || 'audio/wav', () => setAudioState('idle'));
+      setAudioState(ok ? 'playing' : 'idle');
+    } catch {
+      setAudioState('error');
+      setTimeout(() => setAudioState((s) => (s === 'error' ? 'idle' : s)), 3000);
+    }
+  }
+
   if (!brief || !brief.headline) return null;
   const band = TONE_BAND[brief.tone] || 'neutral';
   const [g1, g2] = bandGradient[band];
@@ -52,7 +79,20 @@ export function EveningBriefCard({ brief }: Props) {
       <LinearGradient colors={['#23232E', '#161619']} start={{ x: 0, y: 0 }} end={{ x: 0.7, y: 1 }} style={styles.gradient} />
       <LinearGradient colors={[g1, g2]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.accentBar} />
 
-      <Text style={styles.kicker}>EVENING · WIND DOWN</Text>
+      <View style={styles.kickerRow}>
+        <Text style={styles.kicker}>EVENING · WIND DOWN</Text>
+        {voiceAvailable && (
+          <Pressable onPress={toggleListen} hitSlop={8} style={styles.listenBtn}>
+            {audioState === 'loading' ? (
+              <ActivityIndicator size="small" color="#A78BFA" />
+            ) : (
+              <Text style={styles.listenText}>
+                {audioState === 'playing' ? '◼ Stop' : audioState === 'error' ? 'Unavailable' : '▶ Listen'}
+              </Text>
+            )}
+          </Pressable>
+        )}
+      </View>
 
       {/* No internal entrance animation: this card loads async and inserts at the
           top of the feed, so per-line springs cascading WHILE the layout shifts
@@ -112,7 +152,18 @@ const styles = StyleSheet.create({
   },
   gradient: { ...StyleSheet.absoluteFillObject },
   accentBar: { width: 44, height: 3, borderRadius: 2, marginBottom: spacing.sm },
-  kicker: { fontSize: 10, fontWeight: '700', letterSpacing: 1.4, color: 'rgba(255,255,255,0.55)', marginBottom: spacing.sm },
+  kickerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
+  kicker: { fontSize: 10, fontWeight: '700', letterSpacing: 1.4, color: 'rgba(255,255,255,0.55)' },
+  listenBtn: {
+    borderWidth: 1,
+    borderColor: 'rgba(167,139,250,0.4)',
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: 3,
+    minWidth: 64,
+    alignItems: 'center',
+  },
+  listenText: { color: '#A78BFA', fontSize: 11, fontWeight: '700', letterSpacing: 0.4 },
   headline: { fontSize: 20, fontWeight: '700', color: '#fff', letterSpacing: -0.3, marginBottom: spacing.sm, lineHeight: 27 },
   readiness: { fontSize: 15, fontWeight: '400', color: 'rgba(255,255,255,0.92)', lineHeight: 24, marginBottom: spacing.md },
   chipRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md, flexWrap: 'wrap' },

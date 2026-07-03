@@ -1,0 +1,40 @@
+// Shared spoken-narration cache for the morning AND evening briefs — one
+// cache_key scheme (kind:day:contentHash) so narration only regenerates when
+// the CONTENT or VOICE actually changes, not on every "Listen" tap.
+const crypto = require('crypto');
+const db = require('../db');
+const voiceService = require('./voice');
+
+function scriptFor(kind, content) {
+  return kind === 'evening'
+    ? voiceService.composeEveningNarrationScript(content)
+    : voiceService.composeNarrationScript(content);
+}
+
+/** Generate (or reuse) a brief's narration audio; returns { audio, mime } or null. */
+async function audioFor(kind, content, day) {
+  const script = scriptFor(kind, content);
+  if (!script) return null;
+  // Key on the voice too — changing NORMOS_VOICE (or the default) must
+  // regenerate, not serve audio narrated in the old voice.
+  const hash = crypto.createHash('sha1').update(`${voiceService.DEFAULT_VOICE}\n${script}`).digest('hex').slice(0, 10);
+  const cacheKey = `${kind}:${day}:${hash}`;
+  const { rows } = await db.query(`SELECT audio, mime FROM tts_audio WHERE cache_key = $1`, [cacheKey]);
+  if (rows[0]) return { audio: rows[0].audio, mime: rows[0].mime };
+  const { audio, mime } = await voiceService.synthesize(script);
+  await db.query(
+    `INSERT INTO tts_audio (cache_key, audio, mime) VALUES ($1, $2, $3)
+     ON CONFLICT (cache_key) DO NOTHING`,
+    [cacheKey, audio, mime]
+  );
+  // Prune stale narrations so the table never grows past a handful of rows.
+  db.query(`DELETE FROM tts_audio WHERE created_at < now() - interval '7 days'`).catch(() => {});
+  return { audio, mime };
+}
+
+/** Fire-and-forget pre-warm so the first "Listen" tap plays instantly. */
+async function prewarm(kind, content, day) {
+  await audioFor(kind, content, day);
+}
+
+module.exports = { audioFor, prewarm };

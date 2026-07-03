@@ -246,6 +246,11 @@ async function runEveningHealthBrief(opts = {}) {
 
   await briefingsStore.saveBriefing({ kind: 'evening', content });
 
+  // Pre-warm the spoken narration so the first tap of "Listen" plays instantly
+  // instead of waiting on synthesis. Fire-and-forget.
+  require('../services/brief-audio').prewarm('evening', content, day)
+    .catch((err) => console.error('[evening audio prewarm] failed:', err.message));
+
   if (!send) return { built: true, sent: 0, content };
 
   const dedupKey = `evening_health_brief:${day}`;

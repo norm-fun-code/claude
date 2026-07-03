@@ -177,6 +177,11 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
   const [starters, setStarters] = useState<string[]>([]);
   // Push-to-talk: hold the mic, speak, release → transcript + spoken answer.
   const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'thinking'>('idle');
+  // Once a voice turn has happened, the idle mic invites a follow-up instead of
+  // a cold "ask me anything" — the conversation is already warm, and you can
+  // hold the mic again the instant the reply starts playing (startRecording()
+  // interrupts playback), no need to wait it out.
+  const [hadVoiceTurn, setHadVoiceTurn] = useState(false);
 
   async function voicePressIn() {
     if (voiceState !== 'idle') return;
@@ -206,6 +211,7 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
       await loadHistory();
       if (data.action?.done) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       if (data.audio) playBase64(data.audio, data.audioMime || 'audio/wav').catch(() => {});
+      setHadVoiceTurn(true);
     } catch {
       // Silent fail — the thread simply doesn't gain a turn; mic returns to idle.
     } finally {
@@ -265,7 +271,7 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
     send(q);
   };
 
-  const clearChat = () => { setExpState(null); clear(); };
+  const clearChat = () => { setExpState(null); setHadVoiceTurn(false); clear(); };
   const saveChat = () => { setExpState(null); save(); };
 
   const extractExperiment = async () => {
@@ -549,7 +555,11 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
                   <TextInput
                     ref={inputRef}
                     style={[styles.input, { color: c.text }]}
-                    placeholder={voiceState === 'recording' ? 'Listening… release to send' : voiceState === 'thinking' ? 'Thinking…' : 'Ask about your life…'}
+                    placeholder={
+                      voiceState === 'recording' ? 'Listening… release to send' :
+                      voiceState === 'thinking' ? 'Thinking…' :
+                      hadVoiceTurn ? 'Hold the mic to continue…' : 'Ask about your life…'
+                    }
                     placeholderTextColor={voiceState === 'recording' ? '#FF6B6B' : c.subtext}
                     value={question}
                     onChangeText={setQuestion}
@@ -567,7 +577,7 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
                         backgroundColor: voiceState === 'recording' ? '#FF6B6B' : withAlpha('#635BFF', 0.15),
                         borderColor: voiceState === 'recording' ? '#FF6B6B' : withAlpha('#635BFF', 0.35),
                       }]}
-                      accessibilityLabel="Hold to speak"
+                      accessibilityLabel={hadVoiceTurn ? 'Hold to continue' : 'Hold to speak'}
                     >
                       {voiceState === 'thinking' ? (
                         <ActivityIndicator size="small" color={c.accent} />

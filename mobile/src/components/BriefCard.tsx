@@ -5,8 +5,8 @@ import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography, shadow, glow, accentGradient, withAlpha, FONTS } from '../theme';
 import { AnimatedEntry } from './AnimatedEntry';
 import type { ChiefBrief } from '../hooks/useBriefing';
-import { BRIEFING_CONTEXT_URL, BRIEFING_AUDIO_URL, authHeaders, fetchWithTimeout } from '../config';
-import { voiceAvailable, playBase64, stopPlayback } from '../lib/voice';
+import { BRIEFING_CONTEXT_URL, BRIEFING_AUDIO_URL, VOICE_TRANSCRIBE_URL, authHeaders, fetchWithTimeout } from '../config';
+import { voiceAvailable, playBase64, stopPlayback, ensureMicPermission, startRecording, stopRecording } from '../lib/voice';
 
 interface Props {
   brief: ChiefBrief | null | undefined;
@@ -131,12 +131,15 @@ export function BriefCard({ brief, fallback }: Props) {
   const openQ = brief?.openQuestion?.trim() || '';
   const [qAnswer, setQAnswer] = useState('');
   const [qState, setQState] = useState<'idle' | 'saving' | 'saved'>('idle');
+  // Voice input for the one question — hold, speak, release → transcribed and
+  // sent, same hold-to-talk pattern as the Ask overlay's push-to-talk.
+  const [qVoice, setQVoice] = useState<'idle' | 'recording' | 'thinking'>('idle');
   // Spoken narration — streamed from the server's pre-warmed neural TTS.
   const [audioState, setAudioState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
   useEffect(() => () => { stopPlayback(); }, []);
 
-  async function answerQuestion() {
-    const trimmed = qAnswer.trim();
+  async function answerQuestion(overrideText?: string) {
+    const trimmed = (overrideText ?? qAnswer).trim();
     if (!trimmed || qState === 'saving') return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setQState('saving');
@@ -151,6 +154,42 @@ export function BriefCard({ brief, fallback }: Props) {
       setQState('saved');
     } catch {
       setQState('idle');
+    }
+  }
+
+  async function qVoicePressIn() {
+    if (qVoice !== 'idle') return;
+    if (!(await ensureMicPermission())) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      await startRecording();
+      setQVoice('recording');
+    } catch { setQVoice('idle'); }
+  }
+
+  async function qVoicePressOut() {
+    if (qVoice !== 'recording') return;
+    setQVoice('thinking');
+    try {
+      const rec = await stopRecording();
+      if (!rec) { setQVoice('idle'); return; }
+      Haptics.selectionAsync();
+      const res = await fetchWithTimeout(VOICE_TRANSCRIBE_URL, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ audio: rec.base64, mime: rec.mime }),
+      }, 30000);
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+      const data = await res.json();
+      const text = String(data?.text || '').trim();
+      if (text) {
+        setQAnswer(text);
+        await answerQuestion(text);
+      }
+    } catch {
+      // Silent fail — same as the Ask overlay's push-to-talk: mic just returns to idle.
+    } finally {
+      setQVoice('idle');
     }
   }
 
@@ -268,19 +307,38 @@ export function BriefCard({ brief, fallback }: Props) {
           ) : (
             <View style={styles.contextRow}>
               <TextInput
-                style={styles.contextInput}
-                placeholder="Your answer…"
-                placeholderTextColor="rgba(255,255,255,0.4)"
+                style={[styles.contextInput, qVoice === 'recording' && styles.contextInputRecording]}
+                placeholder={qVoice === 'recording' ? 'Listening… release to send' : qVoice === 'thinking' ? 'Thinking…' : 'Your answer…'}
+                placeholderTextColor={qVoice === 'recording' ? '#FF6B6B' : 'rgba(255,255,255,0.4)'}
                 value={qAnswer}
                 onChangeText={setQAnswer}
                 returnKeyType="send"
-                onSubmitEditing={answerQuestion}
+                onSubmitEditing={() => answerQuestion()}
+                editable={qVoice === 'idle'}
                 multiline={false}
               />
+              {voiceAvailable && (
+                <Pressable
+                  onPressIn={qVoicePressIn}
+                  onPressOut={qVoicePressOut}
+                  disabled={qVoice === 'thinking'}
+                  style={[
+                    styles.qMicBtn,
+                    qVoice === 'recording' && { backgroundColor: '#FF6B6B', borderColor: '#FF6B6B' },
+                  ]}
+                  accessibilityLabel="Hold to answer by voice"
+                >
+                  {qVoice === 'thinking' ? (
+                    <ActivityIndicator size="small" color="#A89CFF" />
+                  ) : (
+                    <Text style={[styles.qMicIcon, qVoice === 'recording' && { color: '#fff' }]}>🎙</Text>
+                  )}
+                </Pressable>
+              )}
               <TouchableOpacity
-                onPress={answerQuestion}
-                disabled={!qAnswer.trim() || qState === 'saving'}
-                style={[styles.contextBtn, { opacity: qAnswer.trim() && qState !== 'saving' ? 1 : 0.4 }]}
+                onPress={() => answerQuestion()}
+                disabled={!qAnswer.trim() || qState === 'saving' || qVoice !== 'idle'}
+                style={[styles.contextBtn, { opacity: qAnswer.trim() && qState !== 'saving' && qVoice === 'idle' ? 1 : 0.4 }]}
               >
                 <Text style={styles.contextBtnText}>→</Text>
               </TouchableOpacity>
@@ -475,6 +533,23 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
+  },
+  contextInputRecording: {
+    borderColor: '#FF6B6B',
+  },
+  qMicBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: withAlpha('#A89CFF', 0.35),
+    backgroundColor: withAlpha('#A89CFF', 0.15),
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qMicIcon: {
+    fontSize: 15,
+    color: '#A89CFF',
   },
   contextBtn: {
     borderWidth: 1,

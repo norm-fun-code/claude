@@ -1902,26 +1902,11 @@ app.post('/api/chat', async (req, res) => {
 
 // ── Voice chief of staff ──────────────────────────────────────────────────────
 const voiceService = require('./src/services/voice');
+const briefAudio = require('./src/services/brief-audio');
 
 /** Generate (or reuse) today's brief narration audio; returns the cache row. */
 async function briefAudioFor(content, day) {
-  const script = voiceService.composeNarrationScript(content);
-  if (!script) return null;
-  // Key on the voice too — changing NORMOS_VOICE (or the default) must
-  // regenerate, not serve audio narrated in the old voice.
-  const hash = crypto.createHash('sha1').update(`${voiceService.DEFAULT_VOICE}\n${script}`).digest('hex').slice(0, 10);
-  const cacheKey = `brief:${day}:${hash}`;
-  const { rows } = await db.query(`SELECT audio, mime FROM tts_audio WHERE cache_key = $1`, [cacheKey]);
-  if (rows[0]) return { audio: rows[0].audio, mime: rows[0].mime };
-  const { audio, mime } = await voiceService.synthesize(script);
-  await db.query(
-    `INSERT INTO tts_audio (cache_key, audio, mime) VALUES ($1, $2, $3)
-     ON CONFLICT (cache_key) DO NOTHING`,
-    [cacheKey, audio, mime]
-  );
-  // Prune stale narrations so the table never grows past a handful of rows.
-  db.query(`DELETE FROM tts_audio WHERE created_at < now() - interval '7 days'`).catch(() => {});
-  return { audio, mime };
+  return briefAudio.audioFor('brief', content, day);
 }
 
 async function prewarmBriefAudio(content) {
@@ -1953,6 +1938,29 @@ app.get('/api/briefing/audio', async (req, res) => {
     // auth headers and plays from a local file — the same path the voice reply
     // uses and proven to work. Streaming the URL through expo-av dropped the
     // Authorization header on iOS and 401'd.
+    res.json({ audio: out.audio.toString('base64'), mime: out.mime });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Spoken narration of tonight's evening wind-down brief — same cache-per-content
+// approach as the morning brief (prewarmed right after the brief builds, in
+// src/notify/evening-brief.js).
+app.get('/api/evening-brief/audio', async (req, res) => {
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const day = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    const latest = await briefingsStore.latestBriefing('evening');
+    if (!latest?.content) return res.status(404).json({ error: 'no_brief', message: 'No wind-down brief to narrate yet.' });
+    let out;
+    try {
+      out = await briefAudio.audioFor('evening', latest.content, latest.content.day || day);
+    } catch (ttsErr) {
+      console.error('[evening audio] TTS failed:', ttsErr.message);
+      return res.status(502).json({ error: 'tts_failed', message: 'Narration is temporarily unavailable.' });
+    }
+    if (!out) return res.status(404).json({ error: 'nothing_to_narrate', message: 'This brief has nothing to read aloud.' });
     res.json({ audio: out.audio.toString('base64'), mime: out.mime });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2064,6 +2072,20 @@ app.post('/api/voice/ask', async (req, res) => {
       audio: audioOut?.data ?? null,
       audioMime: audioOut?.mime ?? null,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Speech-to-text only, no ask()/TTS round trip — for voice INPUT into an
+// existing text flow (e.g. answering the brief's one question by voice)
+// rather than a full voice conversation turn.
+app.post('/api/voice/transcribe', async (req, res) => {
+  try {
+    const { audio, mime } = req.body || {};
+    if (!audio) return res.status(400).json({ error: 'audio (base64) is required' });
+    const text = await voiceService.transcribe(String(audio), mime || 'audio/wav');
+    res.json({ text });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

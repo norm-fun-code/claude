@@ -131,6 +131,22 @@ function composeNarrationScript(content) {
   return `Morning. Here's where you stand. ${parts.join(' ')} That's the picture — go have a good one.`.slice(0, 3800);
 }
 
+/**
+ * Compose the spoken script for the evening wind-down brief — same "talk, don't
+ * read labels aloud" approach as the morning narration. Pure; safe on partial content.
+ */
+function composeEveningNarrationScript(content) {
+  const parts = [];
+  if (content?.readiness) parts.push(content.readiness);
+  if (content?.today) parts.push(content.today);
+  if (content?.plan) parts.push(`On this morning's plan — ${content.plan}`);
+  if (content?.tomorrow) parts.push(`For tonight: ${content.tomorrow}`);
+  if (content?.habits) parts.push(content.habits);
+  if (content?.reflection) parts.push(content.reflection);
+  if (!parts.length) return '';
+  return `Evening. ${parts.join(' ')} Rest well.`.slice(0, 3800);
+}
+
 /** Strip markdown for speech: an answer written for reading, spoken cleanly. */
 function speakable(text) {
   return String(text || '')
@@ -141,4 +157,6 @@ function speakable(text) {
     .trim();
 }
 
-module.exports = { synthesize, transcribe, composeNarrationScript, speakable, pcmToWav, DEFAULT_VOICE };
+module.exports = {
+  synthesize, transcribe, composeNarrationScript, composeEveningNarrationScript, speakable, pcmToWav, DEFAULT_VOICE,
+};
