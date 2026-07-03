@@ -123,8 +123,21 @@ const SYSTEM =
   'Daytime HRV is a noisy autonomic-tone signal, NOT a recovery score — never call it recovery. ' +
   'Return ONLY valid JSON.';
 
+function commitmentsLine(commitments) {
+  if (!commitments) return null;
+  const done = commitments.done || [];
+  const open = commitments.open || [];
+  const skipped = commitments.skipped || [];
+  if (!done.length && !open.length && !skipped.length) return null;
+  const parts = [];
+  if (done.length) parts.push(`kept: ${done.map((c) => `"${c.title}"`).join(', ')}`);
+  if (open.length) parts.push(`still open: ${open.map((c) => `"${c.title}"`).join(', ')}`);
+  if (skipped.length) parts.push(`skipped: ${skipped.map((c) => `"${c.title}"`).join(', ')}`);
+  return `Today's commitments — ${parts.join('; ')}`;
+}
+
 function buildPrompt(signals) {
-  const { autonomic: a, load: l, openHabits, gratitude = [], morningPlan = null, training = null } = signals;
+  const { autonomic: a, load: l, openHabits, gratitude = [], morningPlan = null, training = null, commitments = null } = signals;
   const lines = [
     `Autonomic tone: ${a.tone}${a.sampleThin ? ' (thin data — soft-pedal)' : ''}`,
     a.hrv != null ? `Daytime HRV today: ${ms(a.hrv)}${a.hrvBaseline != null ? ` (your norm ${ms(a.hrvBaseline)})` : ''}` : 'Daytime HRV today: (none)',
@@ -136,6 +149,7 @@ function buildPrompt(signals) {
       ? `Planned session today: ${training.planned ?? '(none)'} — ${training.completed ? `DONE${training.actual ? ` (logged: ${training.actual})` : ''}` : 'not logged as done'}`
       : null,
     morningPlan?.action ? `This morning's brief asked: "${String(morningPlan.action).slice(0, 300)}"` : 'This morning\'s brief: (not available)',
+    commitmentsLine(commitments),
     gratitude.length
       ? `Recent gratitude notes (most recent first — reflect the THEME back in your own words, do not quote verbatim or list): ${gratitude.map((g) => `"${String(g.text).slice(0, 200)}"`).join(' | ')}`
       : 'Recent gratitude notes: (none logged)',
@@ -149,7 +163,7 @@ Write the evening wind-down brief as JSON with EXACTLY these string fields:
   "headline": "≤6 words capturing tonight's read (e.g. 'Settled — wind down easy')",
   "readiness": "1-2 sentences on autonomic tone from the HRV/RHR vs the user's norm, and what it means for tonight. If data is thin, say so and defer to how they feel.",
   "today": "ONE sentence closing the loop on today's movement (steps/energy). Empty string if no data.",
-  "plan": "ONE sentence grading this morning's plan against what actually happened — the honest ledger, not a lecture. Use the planned-session line (done / not logged) and steps vs norm as evidence: if the ask happened, say so plainly (earned credit); if it didn't, name it without guilt and without re-issuing the instruction — the day is over. Empty string if there's no morning brief or no planned session to grade.",
+  "plan": "ONE sentence grading the day against what was asked of it — this morning's plan AND any commitments the user made today (see the commitments line). The honest ledger, not a lecture: credit what they kept (session done, commitments honored) plainly; name what slipped without guilt and without re-issuing the instruction — the day is over. Prefer concrete evidence (planned session done/not, commitments kept/open, steps vs norm). Empty string only if there's genuinely nothing to grade.",
   "tomorrow": "ONE sentence: the bedtime/wind-down lever that sets up tomorrow. Do not cite a recovery score.",
   "habits": "ONE short nudge listing the still-open evening habits, or empty string if none.",
   "reflection": "ONE sentence — the presence beat that closes the day, the mindfulness counterpart to the body read above. If recent gratitude notes are present, gently echo their theme in your own words (never quote verbatim, never list them like a report) so the reflection lands as something a person who was listening would say. If none are present, warmly invite one line of gratitude before bed. Keep it human and unforced; empty string only if anything here would feel hollow."
@@ -240,6 +254,11 @@ async function runEveningHealthBrief(opts = {}) {
       actual: acts[0]?.activity_type ?? null,
     };
   } catch { signals.training = null; }
+  // Today's commitments — so the day-close grades what the user actually said
+  // they'd do, not only the morning brief's asks.
+  try {
+    signals.commitments = await require('../store/commitments').todaySummary(tz);
+  } catch { signals.commitments = null; }
   const content = await composeEveningBrief(signals);
   content.day = day;
   content.builtAt = new Date().toISOString();

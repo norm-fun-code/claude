@@ -57,6 +57,7 @@ export const MARKETS_REFRESH_URL = `${API_BASE}/api/briefing/markets`;
 export const BRIEFING_CONTEXT_URL = `${API_BASE}/api/briefing/context`;
 export const EXPERIMENTS_URL = `${API_BASE}/api/experiments`;
 export const RECOMMENDATIONS_URL = `${API_BASE}/api/recommendations`;
+export const COMMITMENTS_URL = `${API_BASE}/api/commitments`;
 export const WEALTH_PLAN_URL = `${API_BASE}/api/wealth/plan`;
 export const WEALTH_ALLOCATION_URL = `${API_BASE}/api/wealth/allocation`;
 export const RECOVERY_SELF_REPORT_URL = `${API_BASE}/api/recovery/self-report`;

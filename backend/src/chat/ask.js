@@ -48,6 +48,7 @@ Valid actions (emit AT MOST ONE, compact JSON, only for these concrete app chang
 - {"type":"log_habit","habit":"morningTM|afternoonTM|gratitude|coldShower|exercise"} — when they say they DID it.
 - {"type":"add_context","text":"<short note for tomorrow's brief, e.g. traveling today>"}
 - {"type":"add_chapter","kind":"pregnancy|countdown|note","label":"<short>","keyDate":"YYYY-MM-DD or null","keyDateLabel":"due|deadline|null"} — a standing life fact to remember long-term.
+- {"type":"set_reminder","text":"<what to do, imperative — e.g. 'book the doctor'>","at":"YYYY-MM-DDTHH:MM or null"} — when they ask to be reminded of something or commit to doing something at a time ("remind me to call mom at 6", "I'll wind down by 10:30 tonight"). Compute "at" as a LOCAL datetime from CURRENT LOCAL TIME below; it MUST be in the future. Use null for "at" only when there's genuinely no time ("remind me to book the doctor sometime"). This is for a SINGLE future action, not a recurring habit.
 Still give your normal useful answer around the acknowledgment (e.g. how the substitute stacks up against their goal) — the action tag is IN ADDITION to a real answer, not a replacement for one.`;
 
 // Cheap intent check: does the question seem to be about the user's own life /
@@ -402,6 +403,16 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     const w = require('../services/workout').getTodayWorkout();
     if (w?.type) system += `\n\nTODAY'S PLANNED WORKOUT: ${w.type}${w.duration ? ` (${w.duration})` : ''}.`;
   } catch { /* non-critical */ }
+  // Current local time — so a set_reminder action can compute a correct future
+  // "at" (e.g. "remind me at 6" → today or tomorrow depending on now).
+  try {
+    const tz = process.env.TZ || 'America/New_York';
+    const nowLocal = new Date().toLocaleString('en-US', {
+      timeZone: tz, weekday: 'long', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    });
+    system += `\n\nCURRENT LOCAL TIME: ${nowLocal} (${tz}). Use this to compute any set_reminder "at" datetime — it must be in the future.`;
+  } catch { /* non-critical */ }
 
   // Financial questions: when Monarch MCP is configured, give Claude LIVE access
   // to the user's Monarch account so it can pull exact current transactions,
@@ -486,6 +497,12 @@ function parseAction(text) {
   if (type === 'swap_workout' && ACTION_WORKOUTS.has(p.workoutId)) return { action: 'swap_workout', workoutId: p.workoutId };
   if (type === 'log_habit' && ACTION_HABITS.has(p.habit)) return { action: 'log_habit', habit: p.habit };
   if (type === 'add_context' && p.text && String(p.text).trim()) return { action: 'add_context', text: String(p.text).slice(0, 200) };
+  if (type === 'set_reminder' && p.text && String(p.text).trim()) {
+    // `at` is a naive local ISO the model computes from the CURRENT LOCAL TIME
+    // we give it; the executor resolves + validates it (past/garbage → untimed).
+    const at = typeof p.at === 'string' && p.at.trim() ? p.at.trim() : null;
+    return { action: 'set_reminder', text: String(p.text).slice(0, 200), at };
+  }
   if (type === 'add_chapter' && p.label && String(p.label).trim()) {
     return {
       action: 'add_chapter',

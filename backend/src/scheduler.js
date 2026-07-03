@@ -15,6 +15,7 @@ const { runWatch } = require('./intelligence/watch');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./notify/morning');
 const { runEveningBriefing } = require('./notify/evening');
 const { runEveningHealthBrief } = require('./notify/evening-brief');
+const { runCommitmentReminders } = require('./notify/commitments');
 const { runWealthNudges } = require('./intelligence/wealth-nudges');
 const nudgesStore = require('./store/nudges');
 const { runIngest: _runIngest } = require('./ingest/run');
@@ -350,6 +351,20 @@ function start() {
   const eveningBriefingHour = Number(process.env.EVENING_BRIEFING_HOUR) || 18; // 6pm
   const eveningBriefingMinute = Number(process.env.EVENING_BRIEFING_MINUTE) || 0;
   scheduleDaily(eveningBriefingHour, eveningBriefingMinute, () => runEveningBriefing({}));
+
+  // Commitment follow-through — the time-aware nudge. Unlike the fixed-time jobs
+  // above, commitments come due at arbitrary user-chosen moments, so poll on a
+  // short interval and fire the moment one is due (quiet hours + daily cap are
+  // enforced inside the runner). Every few minutes is plenty — a reminder landing
+  // within ~5 min of its time reads as "on time".
+  const commitmentPollMin = Number(process.env.COMMITMENT_POLL_MIN) || 5;
+  setInterval(() => {
+    runCommitmentReminders({}).then((r) => {
+      if (r.sent > 0 || r.autoCompleted > 0) {
+        console.log(`[scheduler] commitments: sent=${r.sent} autoCompleted=${r.autoCompleted} expired=${r.expired}`);
+      }
+    }).catch((e) => console.error('[scheduler] commitment reminders:', e.message));
+  }, commitmentPollMin * 60 * 1000);
 
   const hm = (h, m) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   const nextIso = (h, m) => new Date(Date.now() + msUntil(h, m)).toISOString();

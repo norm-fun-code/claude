@@ -1168,6 +1168,7 @@ app.post('/api/intentions/results', async (req, res) => {
 // into weekly context. Creatable here or by telling the Ask chat / voice chief
 // ("remember: Nancy is due January 6th").
 const lifeChaptersStore = require('./src/store/lifeChapters');
+const commitmentsStore = require('./src/store/commitments');
 
 app.get('/api/chapters', async (req, res) => {
   try {
@@ -2013,6 +2014,14 @@ async function executeAction(routed) {
         endTs: new Date(Date.now() + 24 * 3600 * 1000),
       });
       return { done: true, description: `Noted for the next brief: ${routed.text}` };
+    }
+    if (routed.action === 'set_reminder' && routed.text) {
+      const { dueAt } = commitmentsStore.resolveReminderTime(routed.at, new Date());
+      await commitmentsStore.create({ title: String(routed.text).slice(0, 200), source: 'voice', dueAt });
+      const when = dueAt
+        ? ` for ${dueAt.toLocaleString('en-US', { timeZone: tz, weekday: 'short', hour: 'numeric', minute: '2-digit' })}`
+        : '';
+      return { done: true, description: `Reminder set${when}: ${routed.text}` };
     }
   } catch (err) {
     console.error('[voice action] failed:', err.message);
@@ -4419,6 +4428,61 @@ app.delete('/api/recommendations/:id', async (req, res) => {
     const { rowCount } = await dbQuery('DELETE FROM recommendations WHERE id = $1', [id]);
     if (!rowCount) return res.status(404).json({ error: 'not found' });
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Commitments (follow-through loop) ─────────────────────────────────────────
+
+// Open commitments for the Today card, soonest-due first.
+app.get('/api/commitments', async (req, res) => {
+  try {
+    res.json({ commitments: await commitmentsStore.listActive({ limit: 20 }) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manually add a commitment (typed, not by voice). { title, detail?, at? }
+app.post('/api/commitments', async (req, res) => {
+  try {
+    const { title, detail = null, at = null } = req.body || {};
+    if (!title || !String(title).trim()) return res.status(400).json({ error: 'title required' });
+    const { dueAt } = commitmentsStore.resolveReminderTime(at, new Date());
+    const row = await commitmentsStore.create({ title, detail, source: 'manual', dueAt });
+    res.json({ ok: true, commitment: row });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/commitments/:id/done', async (req, res) => {
+  try {
+    const row = await commitmentsStore.markDone(Number(req.params.id));
+    if (!row) return res.status(404).json({ error: 'not found or already done' });
+    res.json({ ok: true, commitment: row });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/commitments/:id/skip', async (req, res) => {
+  try {
+    const row = await commitmentsStore.markSkipped(Number(req.params.id));
+    if (!row) return res.status(404).json({ error: 'not found or not open' });
+    res.json({ ok: true, commitment: row });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Fire due commitment reminders on demand (mirrors the scheduler poll — for testing).
+app.post('/api/commitments/run', async (req, res) => {
+  try {
+    const { runCommitmentReminders } = require('./src/notify/commitments');
+    const force = req.query.force === '1' || req.query.force === 'true';
+    res.json(await runCommitmentReminders({ force }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

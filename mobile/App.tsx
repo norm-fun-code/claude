@@ -66,9 +66,11 @@ import { CheckinHistoryCard } from './src/components/CheckinHistoryCard';
 import { HabitsModal } from './src/components/HabitsModal';
 import { LibraryCard } from './src/components/LibraryCard';
 import { RecommendationLedgerCard } from './src/components/RecommendationLedgerCard';
+import { CommitmentsCard } from './src/components/CommitmentsCard';
 import { IndicesCard } from './src/components/IndicesCard';
 import { MarketsCard } from './src/components/MarketsCard';
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
+import { useCommitments } from './src/hooks/useCommitments';
 
 // Context-aware one-tap questions for the voice/quick-ask summon — grounded in
 // live numbers where we have them so the starters feel like they're actually
@@ -158,6 +160,7 @@ export default function App() {
   const [habitsOpen, setHabitsOpen] = useState(false);
   const [pendingAskQ, setPendingAskQ] = useState('');
   const dailyLog = useDailyLogStatus();
+  const commitments = useCommitments();
   // Health tab refresh only spins on health-local fetches; other tabs include
   // briefing loading AND any async rebuild in progress.
   const isRefreshing =
@@ -201,6 +204,10 @@ export default function App() {
     const type = typeof data.type === 'string' ? data.type : '';
     if (key.startsWith('habits:')) {
       setHabitsOpen(true);
+    } else if (type === 'commitment') {
+      // Tapping a commitment reminder lands on Today, where the card lives.
+      setTab('today');
+      commitments.refetch();
     } else if (type === 'evening_health_brief') {
       setTab('today');
       eveningBrief.refetch();
@@ -209,7 +216,7 @@ export default function App() {
       briefing.reload();
       health.refetch();
     }
-  }, [briefing, health, eveningBrief]);
+  }, [briefing, health, eveningBrief, commitments]);
 
   usePushRegistration(onNotificationTap);
 
@@ -362,6 +369,14 @@ export default function App() {
             ) : (
               <AnimatedEntry delay={0}>
                 <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} />
+              </AnimatedEntry>
+            )}
+            {/* 1.5 Commitments — what you said you'd do, still open. Sits right
+                under the brief because it's the most actionable, time-sensitive
+                thing on the screen. Self-hides when nothing is outstanding. */}
+            {commitments.commitments.length > 0 && (
+              <AnimatedEntry delay={5}>
+                <CommitmentsCard commitments={commitments.commitments} onResolve={commitments.resolve} />
               </AnimatedEntry>
             )}
             {/* 2. Recovery grade — "how am I TODAY" is the home-tab question */}
@@ -571,6 +586,9 @@ export default function App() {
         active={tab}
         onChange={(key) => {
           if (tab === 'ask' && key !== 'ask') setPendingAskQ('');
+          // Landing on Today: re-pull commitments so a reminder just set by
+          // voice (from the Ask tab) shows up without waiting for a foreground cycle.
+          if (key === 'today' && tab !== 'today') commitments.refetch();
           setTab(key);
         }}
         bottomInset={bottomInset}
