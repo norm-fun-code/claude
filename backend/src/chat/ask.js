@@ -83,11 +83,20 @@ function isFinancialQuestion(q) {
 // reasoning path, so real questions never lose power.
 const CMD_START_RE = /^(log |swap |switch |remind |note |remember |mark |set (a |an )?reminder|today'?s context|context:)/i;
 const CMD_STATEMENT_RE = /\b(remind me|log (my|the|it|that|a)|swap my|switch my|i (did|had|finished|completed|took|already|just (did|had|finished|took))|my (mood|energy|focus)\b|mark (it|that|this) (as )?done|today'?s context)\b/i;
-const QUESTION_START_RE = /^(should|why|how|what|which|when|where|who|whom|is|are|am|was|were|do|does|did|can|could|would|will|shall|may|might|explain|tell me|help|give me|show me|walk me|compare|analy[sz]e|summari[sz]e|recommend|suggest|think|any|what's|whats)\b/i;
+// Question openers, including common contraction spellings voice-to-text can
+// drop the apostrophe from ("hows" for "how's", not just "whats" for "what's").
+const QUESTION_START_RE = /^(should|why|how|how's|hows|what|which|when|when's|whens|where|where's|wheres|who|who's|whos|whom|is|are|am|was|were|do|does|did|can|could|would|will|shall|may|might|explain|tell me|help|give me|show me|walk me|compare|analy[sz]e|summari[sz]e|recommend|suggest|think|any|what's|whats)\b/i;
+// "remind me why/what/who/which/how …" is RECALL ("remind me what my last
+// reading was") — a question needing real context, not a request to schedule a
+// future nudge. Only "remind me to <do something>" / "remind me at <time>" is
+// actually the set_reminder command. Checked before the broader command match
+// so this narrow, more specific case wins.
+const REMIND_RECALL_RE = /\bremind me (why|what|who|which|how)\b/i;
 
 function looksLikeCommand(text) {
   const t = String(text || '').trim();
   if (!t) return false;
+  if (REMIND_RECALL_RE.test(t)) return false;
   if (/\?\s*$/.test(t)) return false;          // ends in "?" → a question
   if (QUESTION_START_RE.test(t)) return false; // interrogative opener → a question
   return CMD_START_RE.test(t) || CMD_STATEMENT_RE.test(t);
@@ -404,9 +413,16 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
   // Clear commands ("log my cold shower", "swap my workout", "remind me at 6",
   // "my mood was 5") take the fast acknowledgment path — quick model, no
   // thinking, no retrieval. Questions fall through to the full reasoning path
-  // below with Sonnet + adaptive thinking, so nothing loses power.
+  // below with Sonnet + adaptive thinking, so nothing loses power. If the fast
+  // path itself fails for any reason (bad model id, rate limit, transient
+  // provider error), fall through to the full path rather than losing the
+  // user's action entirely — worse latency once in a while beats a 500.
   if (looksLikeCommand(question)) {
-    return answerCommand(question, { history });
+    try {
+      return await answerCommand(question, { history });
+    } catch (err) {
+      console.error('[chat] fast command path failed, falling back to full reasoning path:', err.message);
+    }
   }
 
   // Hybrid retrieval: semantic search for themes + keyword search on author/title

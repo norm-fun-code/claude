@@ -10,7 +10,7 @@ async function generateText({ system, prompt, maxTokens = 4096, timeoutMs = 1100
   // not reasoning. Real questions keep the default reasoning model + adaptive
   // thinking below, so nothing loses power. Override either with env vars.
   const model = modelOverride
-    || (fast ? (process.env.ANTHROPIC_FAST_MODEL || 'claude-haiku-4-5') : (process.env.ANTHROPIC_MODEL || 'claude-sonnet-5'));
+    || (fast ? (process.env.ANTHROPIC_FAST_MODEL || 'claude-haiku-4-5-20251001') : (process.env.ANTHROPIC_MODEL || 'claude-sonnet-5'));
 
   // Always safe to mark the system prompt as a cache breakpoint, whether or
   // not it happens to repeat verbatim: a prefix that changes call to call

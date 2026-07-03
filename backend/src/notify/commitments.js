@@ -71,7 +71,7 @@ async function satisfiedCommitmentIds(due, tz) {
  * so a later poll won't repeat it).
  * @param {{ now?: Date, send?: boolean, force?: boolean, tz?: string, maxPerDay?: number }} [opts]
  */
-async function runCommitmentReminders(opts = {}) {
+async function runCommitmentRemindersImpl(opts = {}) {
   const now = opts.now ? new Date(opts.now) : new Date();
   const send = opts.send !== false;
   const tz = opts.tz || process.env.TZ || 'America/New_York';
@@ -100,39 +100,70 @@ async function runCommitmentReminders(opts = {}) {
   }
 
   let sent = 0;
+  let noDevices = 0;
   if (send && toFire.length) {
     const tokens = await devicesStore.listActiveTokens();
     for (const c of toFire) {
-      if (tokens.length) {
-        try {
-          // reminder_count reflects PRIOR nudges (incremented after this send),
-          // so >0 means this is a follow-up: prompt to close the loop.
-          const followUp = (c.reminder_count ?? 0) > 0;
-          const r = await sendPush(tokens, {
-            title: followUp ? 'Still on your list' : 'You committed to this',
-            body: followUp ? `${c.title} — did you do it? Mark it done or skip.` : c.title,
-            data: { type: 'commitment', id: c.id },
-          });
-          for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
-          sent += 1;
-        } catch (err) {
-          console.error('[commitments] push failed:', err.message);
-        }
+      if (!tokens.length) {
+        // No registered device at all — this is a delivery-infrastructure gap,
+        // not "the user was notified and ignored it". Do NOT mark reminded: that
+        // would silently burn the commitment's whole re-nudge budget (and let it
+        // expire) without ever actually reaching the user once push registration
+        // is restored. It stays due and gets picked up again next poll.
+        noDevices += 1;
+        continue;
+      }
+      try {
+        // reminder_count reflects PRIOR nudges (incremented after this send),
+        // so >0 means this is a follow-up: prompt to close the loop.
+        const followUp = (c.reminder_count ?? 0) > 0;
+        const r = await sendPush(tokens, {
+          title: followUp ? 'Still on your list' : 'You committed to this',
+          body: followUp ? `${c.title} — did you do it? Mark it done or skip.` : c.title,
+          data: { type: 'commitment', id: c.id },
+        });
+        for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
+        sent += 1;
+      } catch (err) {
+        console.error('[commitments] push failed:', err.message);
+        // A failed SEND ATTEMPT (network blip, Expo error) still counts as
+        // reminded — the 3h re-nudge cadence is the retry, not an immediate loop.
       }
       await commitmentsStore.markReminded(c.id, { at: now }).catch(() => {});
     }
   }
 
-  return { due: due.length, sent, autoCompleted: toAutoComplete.length, expired, suppressed: quiet && toFire.length === 0 && due.length > toAutoComplete.length };
+  return {
+    due: due.length, sent, autoCompleted: toAutoComplete.length, expired,
+    suppressed: quiet && toFire.length === 0 && due.length > toAutoComplete.length,
+    noDevices,
+  };
+}
+
+// Two triggers can call this close together — the precise per-commitment timer
+// (armed on create) and the scheduler's coarse poll — and both read the "due,
+// not yet reminded" set before either writes reminded_at. Without serializing,
+// that's a genuine double-send race. A single process-wide queue is enough:
+// this runs in one Node process (no horizontal scaling here), so chaining onto
+// the tail of the last call's promise makes overlapping runs execute one after
+// another instead of concurrently.
+let runQueue = Promise.resolve();
+function runCommitmentReminders(opts = {}) {
+  const next = runQueue.then(() => runCommitmentRemindersImpl(opts));
+  // Keep the chain alive even if this run throws, so one failure can't wedge
+  // every future call behind a permanently-rejected promise.
+  runQueue = next.catch(() => {});
+  return next;
 }
 
 /**
  * Fire a precise one-shot reminder at `dueAt`, so a short-fuse commitment ("remind
  * me in 2 minutes") lands on time instead of waiting for the next coarse poll.
  * The API and scheduler share one process, so the create path can arm this
- * directly. Only arms things due within `horizonH` (the poll + grace window is
- * the backstop for anything further out or lost to a restart). Idempotent: the
- * runner marks reminded, so a redundant poll won't double-send.
+ * directly. Only arms things due within `horizonH` (the coarse poller is the
+ * backstop for anything further out, or lost to a restart before it could be
+ * re-armed). Idempotent: the runner marks reminded, so a redundant poll won't
+ * double-send — and concurrent calls are serialized by the run queue below.
  */
 function armPreciseReminder(dueAt, { horizonH = 3, send = true } = {}) {
   if (!dueAt) return null;

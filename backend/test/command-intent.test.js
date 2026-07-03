@@ -30,6 +30,18 @@ const QUESTIONS = [
   'is my recovery good enough to train hard?',
   // has a command-ish clause but is ultimately a question (ends in ?)
   'I did my cold shower — how did my HRV look?',
+  // "remind me" + a wh-word is RECALL ("remind me what X was"), not scheduling —
+  // regression test for a real misclassification found in the day-1 audit.
+  'remind me why I started this experiment',
+  'remind me what my last HRV reading was',
+  'remind me who I talked to about the lease',
+  'can you remind me what my last experiment result was',
+  // voice-transcript contractions missing their apostrophe must still read as
+  // questions — regression test for the same audit.
+  'hows my energy been lately',
+  'whens my next experiment due',
+  'wheres my spending trending',
+  'whos been affecting my mood',
 ];
 
 test('commands are detected as commands', () => {
@@ -38,6 +50,11 @@ test('commands are detected as commands', () => {
 
 test('questions are NOT treated as commands', () => {
   for (const q of QUESTIONS) assert.equal(looksLikeCommand(q), false, `should be a question: "${q}"`);
+});
+
+test('"remind me to/at" scheduling requests are still commands', () => {
+  assert.equal(looksLikeCommand('remind me to call mom at 6'), true);
+  assert.equal(looksLikeCommand('remind me to stretch in 2 minutes'), true);
 });
 
 test('empty / whitespace is not a command', () => {
