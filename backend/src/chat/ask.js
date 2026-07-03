@@ -404,14 +404,22 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     if (w?.type) system += `\n\nTODAY'S PLANNED WORKOUT: ${w.type}${w.duration ? ` (${w.duration})` : ''}.`;
   } catch { /* non-critical */ }
   // Current local time — so a set_reminder action can compute a correct future
-  // "at" (e.g. "remind me at 6" → today or tomorrow depending on now).
+  // "at" (e.g. "remind me at 6" → today or tomorrow depending on now). Shown in
+  // 12-hour form so the model mirrors that when it speaks a time back; the
+  // machine-readable date is given separately for computing the ISO "at".
   try {
     const tz = process.env.TZ || 'America/New_York';
-    const nowLocal = new Date().toLocaleString('en-US', {
-      timeZone: tz, weekday: 'long', year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', hour12: false,
+    const now = new Date();
+    const nowLocal = now.toLocaleString('en-US', {
+      timeZone: tz, weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit', hour12: true,
     });
-    system += `\n\nCURRENT LOCAL TIME: ${nowLocal} (${tz}). Use this to compute any set_reminder "at" datetime — it must be in the future.`;
+    const nowDate = now.toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD
+    system +=
+      `\n\nCURRENT LOCAL TIME: ${nowLocal} (${tz}); today's date is ${nowDate}. ` +
+      `Use this to compute any set_reminder "at" datetime — it must be in the future. ` +
+      `ALWAYS tell the user clock times in 12-hour format with AM/PM (e.g. "6:08 PM"), never 24-hour. ` +
+      `(The set_reminder "at" field itself stays 24-hour ISO, YYYY-MM-DDTHH:MM — that's machine-only, not shown to the user.)`;
   } catch { /* non-critical */ }
 
   // Financial questions: when Monarch MCP is configured, give Claude LIVE access
