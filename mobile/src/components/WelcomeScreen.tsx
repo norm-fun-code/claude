@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, useColorScheme } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   useSharedValue, useAnimatedStyle, withTiming, withRepeat, withSequence, Easing, runOnJS,
@@ -24,6 +24,7 @@ interface Props {
 // you never see the cards mount or the evening brief insert; it's all hidden
 // behind this, and lifts only once everything's in place.
 export function WelcomeScreen({ ready, onDone }: Props) {
+  const isDark = useColorScheme() === 'dark';
   const greeting = getGreeting();
   const [len, setLen] = useState(0);            // typewriter progress
   const [minElapsed, setMinElapsed] = useState(false);
@@ -74,30 +75,63 @@ export function WelcomeScreen({ ready, onDone }: Props) {
 
   return (
     <Animated.View style={[StyleSheet.absoluteFill, styles.root, rootStyle]} pointerEvents={fading ? 'none' : 'auto'}>
-      {/* Light lavender → periwinkle, airy and premium (the reference palette). */}
-      <LinearGradient
-        colors={['#EFEDFC', '#E2E6F8', '#CFD9F2']}
-        locations={[0, 0.5, 1]}
-        start={{ x: 0.05, y: 0 }}
-        end={{ x: 0.95, y: 1 }}
-        style={StyleSheet.absoluteFill}
-      />
-      {/* soft white sheen up top for a lit, glassy highlight */}
-      <LinearGradient
-        colors={['rgba(255,255,255,0.45)', 'rgba(255,255,255,0)']}
-        start={{ x: 0.5, y: 0 }}
-        end={{ x: 0.5, y: 0.45 }}
-        style={StyleSheet.absoluteFill}
-      />
-      {/* a faint purple bloom from the lower edge, echoing the chart accent */}
-      <LinearGradient
-        colors={['rgba(108,99,255,0)', 'rgba(108,99,255,0.12)']}
-        start={{ x: 0.5, y: 0.55 }}
-        end={{ x: 0.5, y: 1 }}
-        style={StyleSheet.absoluteFill}
-      />
+      {isDark ? (
+        <>
+          {/* Night counterpart to the light gradient below: deep charcoal sliding
+              into an indigo-black, same premium/airy intent, tuned for dark mode
+              instead of just dimming the light palette. */}
+          <LinearGradient
+            colors={['#131319', '#17151F', '#1B1626']}
+            locations={[0, 0.5, 1]}
+            start={{ x: 0.05, y: 0 }}
+            end={{ x: 0.95, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+          {/* soft violet sheen up top — the dark-mode analog of the light version's
+              white glassy highlight (a white sheen would look like a lit patch here) */}
+          <LinearGradient
+            colors={['rgba(108,99,255,0.16)', 'rgba(108,99,255,0)']}
+            start={{ x: 0.5, y: 0 }}
+            end={{ x: 0.5, y: 0.45 }}
+            style={StyleSheet.absoluteFill}
+          />
+          {/* purple bloom from the lower edge — brighter than the light version since
+              it needs to read against a near-black base */}
+          <LinearGradient
+            colors={['rgba(108,99,255,0)', 'rgba(108,99,255,0.22)']}
+            start={{ x: 0.5, y: 0.55 }}
+            end={{ x: 0.5, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+        </>
+      ) : (
+        <>
+          {/* Light lavender → periwinkle, airy and premium (the reference palette). */}
+          <LinearGradient
+            colors={['#EFEDFC', '#E2E6F8', '#CFD9F2']}
+            locations={[0, 0.5, 1]}
+            start={{ x: 0.05, y: 0 }}
+            end={{ x: 0.95, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+          {/* soft white sheen up top for a lit, glassy highlight */}
+          <LinearGradient
+            colors={['rgba(255,255,255,0.45)', 'rgba(255,255,255,0)']}
+            start={{ x: 0.5, y: 0 }}
+            end={{ x: 0.5, y: 0.45 }}
+            style={StyleSheet.absoluteFill}
+          />
+          {/* a faint purple bloom from the lower edge, echoing the chart accent */}
+          <LinearGradient
+            colors={['rgba(108,99,255,0)', 'rgba(108,99,255,0.12)']}
+            start={{ x: 0.5, y: 0.55 }}
+            end={{ x: 0.5, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+        </>
+      )}
       <View style={styles.center}>
-        <Text style={styles.greeting}>
+        <Text style={[styles.greeting, { color: isDark ? '#F5F4FF' : '#1C2340' }]}>
           {greeting.slice(0, len)}
           <Animated.Text style={[styles.cursor, cursorStyle]}>|</Animated.Text>
         </Text>
@@ -113,7 +147,6 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.displayHeavy,
     fontSize: 34,
     fontWeight: '800',
-    color: '#1C2340', // deep navy on the light gradient (matches the reference numbers)
     letterSpacing: -0.6,
     textAlign: 'center',
   },
