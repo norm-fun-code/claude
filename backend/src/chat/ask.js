@@ -43,10 +43,11 @@ ONLY use this for changes the USER makes to their habits or lifestyle. NEVER use
 
 TAKING ACTION — you are a chief of staff who DOES things, not just advises. When the user TELLS you they did something or want to change something in the app right now (a statement of fact or intent, not a question), actually do it: acknowledge it plainly at the START of your answer ("Done — I've swapped today's Push session to an easy Zone 2 walk.") and append the action tag(s) at the very end. Distinguish carefully: "should I walk instead?" is a QUESTION → advise only, no action. "I'm walking instead" / "I switched to a walk" / "log my cold shower" / "I did gratitude" is a STATEMENT → take the action.
 <action>{"type":"swap_workout","workoutId":"zone2"}</action>
-USUALLY exactly one action. Emit MULTIPLE tags (each on its own line) ONLY when the message genuinely contains more than one separable action. The key case: a day recap that ALSO looks ahead to tomorrow → one log_day_context for the day itself, PLUS one add_context capturing the forward-looking heads-up so tomorrow's brief has it. Example — "today was rough, poor sleep, and tomorrow I've got a big presentation at 10" → <action>{"type":"log_day_context","text":"Rough day, poor sleep."}</action> and <action>{"type":"add_context","text":"Big presentation at 10am tomorrow."}</action>. Never emit duplicate or contradictory tags.
+USUALLY exactly one action. Emit MULTIPLE tags (each on its own line) ONLY when the message genuinely contains more than one separable action. Two key cases: (1) a day recap that ALSO looks ahead to tomorrow → one log_day_context for the day itself, PLUS one add_context capturing the forward-looking heads-up so tomorrow's brief has it. Example — "today was rough, poor sleep, and tomorrow I've got a big presentation at 10" → <action>{"type":"log_day_context","text":"Rough day, poor sleep."}</action> and <action>{"type":"add_context","text":"Big presentation at 10am tomorrow."}</action>. (2) More than one activity described for today → one log_activity tag PER activity. Example — "instead of Zone 2 I biked for 30 min and played basketball for an hour, wore my watch" → <action>{"type":"log_activity","activityType":"cycle","durationMin":30,"label":"30 min biking","noWatch":false}</action> and <action>{"type":"log_activity","activityType":"basketball","durationMin":60,"label":"1hr basketball","noWatch":false}</action>. Never emit duplicate or contradictory tags.
 Valid actions (compact JSON, only for these concrete app changes — never for advice, analysis, or anything else):
 - {"type":"swap_workout","workoutId":"push|pull|zone2|mobility|intervals|rest"} — a walk / easy cardio / Zone 2 → "zone2"; a rest or off day → "rest". Use TODAY'S PLANNED WORKOUT (below) to acknowledge the swap accurately.
 - {"type":"log_habit","habit":"morningTM|afternoonTM|gratitude|coldShower|exercise"} — when they say they DID it.
+- {"type":"log_activity","activityType":"walk|zone2|run|strength|intervals|mobility|basketball|soccer|tennis|pickleball|dance|hike|swim|cycle|yoga|golf|ski|box|rest|other","durationMin":<number or omit>,"label":"<short, e.g. '30 min biking'>","noWatch":true|false} — when they tell you a SPECIFIC alternate activity they actually did instead of (or in addition to) the planned session ("I biked for 30 min and played basketball for an hour instead of Zone 2"). This is DIFFERENT from log_habit's generic exercise toggle — it's the structured "what I actually did" record. Map to the closest activityType (biking/cycling→"cycle", not in the list→"other" with a descriptive label). If they describe MORE THAN ONE activity, emit ONE log_activity tag PER activity (this is exactly the multi-action case — see below). noWatch defaults to false (assume a tracked workout unless they say they didn't wear a watch/tracker).
 - {"type":"log_checkin","mood":1-5,"energy":1-5,"focus":1-5} — when they tell you their mood / energy / focus for today (1-5 scale). Include only the fields they actually gave; omit the rest. "my mood and energy were 5, focus was 4" → {"mood":5,"energy":5,"focus":4}. "my energy is a 3 today" → {"energy":3}.
 - {"type":"add_context","text":"<short note for tomorrow's brief, e.g. traveling today>"}
 - {"type":"log_day_context","text":"<the FULL recap, in the user's own words, lightly cleaned up>"} — when they give a narrative recap of their DAY ("today's context: …", "here's how my day went…", "let me tell you about today…"). This is the day journal: keep the whole substance (don't truncate to a note), preserve specifics (what happened, how they felt, why). Distinct from add_context (a short flag for tomorrow's brief) and log_checkin (just the 1-5 numbers). Acknowledge warmly in one line, like someone who was listening.
@@ -82,7 +83,7 @@ function isFinancialQuestion(q) {
 // interrogative or ambiguous returns false and falls through to the full
 // reasoning path, so real questions never lose power.
 const CMD_START_RE = /^(log |swap |switch |remind |note |remember |mark |set (a |an )?reminder|today'?s context|context:)/i;
-const CMD_STATEMENT_RE = /\b(remind me|log (my|the|it|that|a)|swap my|switch my|i (did|had|finished|completed|took|already|just (did|had|finished|took))|my (mood|energy|focus)\b|mark (it|that|this) (as )?done|today'?s context)\b/i;
+const CMD_STATEMENT_RE = /\b(remind me|log (my|the|it|that|a)|swap my|switch my|i (did|had|finished|completed|took|already|just (did|had|finished|took))|my (mood|energy|focus)\b|mark (it|that|this) (as )?done|today'?s context|my workout (today|this morning|this evening)?\s*(was|is|ended up being)\b|instead of (zone ?2|push|pull|rest|mobility|intervals)\b)/i;
 // Question openers, including common contraction spellings voice-to-text can
 // drop the apostrophe from ("hows" for "how's", not just "whats" for "what's").
 const QUESTION_START_RE = /^(should|why|how|how's|hows|what|which|when|when's|whens|where|where's|wheres|who|who's|whos|whom|is|are|am|was|were|do|does|did|can|could|would|will|shall|may|might|explain|tell me|help|give me|show me|walk me|compare|analy[sz]e|summari[sz]e|recommend|suggest|think|any|what's|whats)\b/i;
@@ -601,6 +602,13 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
 
 const ACTION_WORKOUTS = new Set(['push', 'pull', 'zone2', 'mobility', 'intervals', 'rest']);
 const ACTION_HABITS = new Set(['morningTM', 'afternoonTM', 'gratitude', 'coldShower', 'exercise']);
+// Mirrors mobile's ACTIVITY_TYPES (WorkoutsPanel.tsx) — the "Log a different
+// activity" picker's exact ids, so a voice-logged activity renders the same
+// way a manually-logged one does.
+const ACTION_ACTIVITIES = new Set([
+  'walk', 'zone2', 'run', 'strength', 'intervals', 'mobility', 'basketball', 'soccer',
+  'tennis', 'pickleball', 'dance', 'hike', 'swim', 'cycle', 'yoga', 'golf', 'ski', 'box', 'rest', 'other',
+]);
 
 /** Validate ONE parsed action object into the executor's shape, or null.
  *  Strict allowlist: an unknown type or a bad enum value yields null (no side
@@ -610,6 +618,18 @@ function validateAction(p) {
   const type = String(p.type || '').trim();
   if (type === 'swap_workout' && ACTION_WORKOUTS.has(p.workoutId)) return { action: 'swap_workout', workoutId: p.workoutId };
   if (type === 'log_habit' && ACTION_HABITS.has(p.habit)) return { action: 'log_habit', habit: p.habit };
+  if (type === 'log_activity' && p.activityType) {
+    const activityType = ACTION_ACTIVITIES.has(p.activityType) ? p.activityType : 'other'; // unknown category still logs, just uncategorized
+    const durationMin = Number.isFinite(Number(p.durationMin)) && Number(p.durationMin) > 0 && Number(p.durationMin) <= 600
+      ? Math.round(Number(p.durationMin)) : null;
+    return {
+      action: 'log_activity',
+      activityType,
+      durationMin,
+      label: p.label ? String(p.label).slice(0, 120) : null,
+      noWatch: p.noWatch === true,
+    };
+  }
   if (type === 'log_checkin') {
     const clamp = (v) => { const n = Number(v); return Number.isInteger(n) && n >= 1 && n <= 5 ? n : null; };
     const mood = clamp(p.mood), energy = clamp(p.energy), focus = clamp(p.focus);

@@ -16,6 +16,12 @@ const COMMANDS = [
   'note that I traveled today',
   'I did my gratitude journal',
   'I already finished my workout',
+  // Workout-substitution statements — regression test: this exact message
+  // fell through to the full reasoning path (28s) because no existing
+  // pattern covered "my workout was X instead of Y" phrasing.
+  'My workout today instead of zone 2 was 30 minutes of biking and an hour of playing basketball. I wore my Apple Watch.',
+  'instead of zone 2 I went for a hike',
+  'my workout today was rough',
 ];
 
 // Questions must fall through to the full reasoning path (power preserved).
@@ -42,6 +48,10 @@ const QUESTIONS = [
   'whens my next experiment due',
   'wheres my spending trending',
   'whos been affecting my mood',
+  // A workout question, not a substitution statement — must not be swept up
+  // by the new "instead of zone2" pattern.
+  'should I do something instead of zone 2 today?',
+  'what should I do instead of zone 2 if I am sore?',
 ];
 
 test('commands are detected as commands', () => {

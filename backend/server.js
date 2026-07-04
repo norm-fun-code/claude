@@ -1996,6 +1996,31 @@ async function executeAction(routed) {
       await sourcesStore.markSync(HABITS_SOURCE);
       return { done: true, description: `Logged ${routed.habit} as done` };
     }
+    if (routed.action === 'log_activity' && routed.activityType) {
+      // Same write the manual "Log a different activity" button makes
+      // (POST /api/activity), so a voice-logged activity shows up in "What I
+      // actually did" identically to a manually-logged one.
+      const plannedType = (() => {
+        try { return require('./src/services/workout').getTodayWorkout()?.type ?? null; } catch { return null; }
+      })();
+      await db.query(
+        `INSERT INTO activity_logs (log_date, activity_type, label, duration_min, note, planned_type, no_watch)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [today, routed.activityType, routed.label, routed.durationMin, null, plannedType, routed.noWatch]
+      );
+      await syncActivityMinutes(today);
+      // Mirrors mobile's addActivity(): logging a non-rest activity for today
+      // also marks the Exercise habit, so streaks/insights stay in sync.
+      if (routed.activityType !== 'rest') {
+        await sourcesStore.registerSource({ id: HABITS_SOURCE, domain: 'habits', displayName: 'Habit Stack' });
+        const { metrics } = mapHabits({ exercise: true }, { tz });
+        await metricsStore.insertMetrics(metrics);
+        await recomputeHabitScore(tz);
+        await sourcesStore.markSync(HABITS_SOURCE);
+      }
+      const durationStr = routed.durationMin ? `${routed.durationMin} min ` : '';
+      return { done: true, description: `Logged ${durationStr}${routed.label || routed.activityType}` };
+    }
     if (routed.action === 'log_checkin' && (routed.mood != null || routed.energy != null || routed.focus != null)) {
       await sourcesStore.registerSource({ id: CHECKIN_SOURCE, domain: 'wellbeing', displayName: 'Daily Check-in' });
       const body = {};

@@ -149,6 +149,38 @@ test('parseAction rejects an empty day-context', () => {
   assert.equal(parseAction('<action>{"type":"log_day_context","text":""}</action>'), null);
 });
 
+// ── parseAction: log_activity ────────────────────────────────────────────────
+
+test('parseAction extracts a full log_activity', () => {
+  const a = parseAction('<action>{"type":"log_activity","activityType":"cycle","durationMin":30,"label":"30 min biking","noWatch":false}</action>');
+  assert.deepEqual(a, { action: 'log_activity', activityType: 'cycle', durationMin: 30, label: '30 min biking', noWatch: false });
+});
+
+test('parseAction maps an unrecognized activity type to "other" rather than dropping it', () => {
+  const a = parseAction('<action>{"type":"log_activity","activityType":"kayaking","durationMin":45,"label":"45 min kayaking"}</action>');
+  assert.equal(a.action, 'log_activity');
+  assert.equal(a.activityType, 'other');
+  assert.equal(a.label, '45 min kayaking'); // the description survives even when uncategorized
+});
+
+test('parseAction clamps an out-of-range duration to null rather than storing garbage', () => {
+  const a = parseAction('<action>{"type":"log_activity","activityType":"run","durationMin":9999}</action>');
+  assert.equal(a.durationMin, null);
+});
+
+test('parseAction rejects log_activity with no activityType', () => {
+  assert.equal(parseAction('<action>{"type":"log_activity","durationMin":30}</action>'), null);
+});
+
+test('parseActions logs two distinct activities from one statement', () => {
+  const text = '<action>{"type":"log_activity","activityType":"cycle","durationMin":30,"label":"30 min biking","noWatch":false}</action>' +
+    '<action>{"type":"log_activity","activityType":"basketball","durationMin":60,"label":"1hr basketball","noWatch":false}</action>';
+  const actions = parseActions(text);
+  assert.equal(actions.length, 2);
+  assert.equal(actions[0].activityType, 'cycle');
+  assert.equal(actions[1].activityType, 'basketball');
+});
+
 // ── parseActions: multiple actions in one turn (day recap + tomorrow) ─────────
 
 test('parseActions captures a day recap AND a forward-looking note', () => {
