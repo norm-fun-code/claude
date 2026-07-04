@@ -153,17 +153,55 @@ function toDayKey(d) {
   return (d instanceof Date ? d.toISOString() : String(d)).slice(0, 10);
 }
 
+// Sleep/night-sourced metrics that go SILENT (no new rows at all, not zero)
+// when Eight Sleep isn't in use — as opposed to a metric that's simply low.
+// A trend built on these needs to know its "last Nd" window is still
+// receiving new nights, or it keeps re-reporting the exact same frozen
+// numbers as if it were a live, current pattern (e.g. "Deep sleep up +20%
+// vs your 28d norm (improving)" regenerating unchanged for a week because
+// no new deep_sleep_hours rows have landed to recompute from).
+const NIGHT_METRICS = new Set([
+  'health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score',
+  'health:deep_sleep_hours', 'health:rem_sleep_hours', 'health:respiratory_rate',
+]);
+
+/** Days between `todayKey` and a series' most recent data point, or null if empty. */
+function staleDays(series, todayKey) {
+  if (!series || !series.length) return null;
+  const latestKey = toDayKey(series[series.length - 1].day);
+  if (!latestKey) return null;
+  const latest = new Date(`${latestKey}T00:00:00Z`);
+  const today = new Date(`${todayKey}T00:00:00Z`);
+  if (Number.isNaN(latest.getTime()) || Number.isNaN(today.getTime())) return null;
+  return Math.round((today - latest) / 86400000);
+}
+
 function mean(arr) {
   return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
 }
+
+// A metric can go a day or two without a fresh reading from perfectly normal
+// ingestion lag — only treat it as genuinely stale (source likely not in use)
+// past this many days, so a routine sync delay doesn't suppress real trends.
+const TREND_STALE_DAYS = 2;
 
 /** Pure: per-metric recent-vs-prior trend findings. */
 function computeTrends(seriesByKey, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   const findings = [];
+  const todayKey = o.today || new Date().toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/New_York' });
 
   for (const [key, series] of Object.entries(seriesByKey)) {
     if (o.trendSkip && o.trendSkip.includes(key)) continue;
+    // trendStats slices the last N *values present*, not the last N *calendar
+    // days* — once a night-sourced metric stops getting new rows (Eight Sleep
+    // not in use), its "recent 7d" window silently becomes whatever nights
+    // were last available, and this would keep re-reporting that same frozen
+    // comparison as a current trend, unchanged, indefinitely. Skip instead.
+    if (NIGHT_METRICS.has(key)) {
+      const age = staleDays(series, todayKey);
+      if (age != null && age > TREND_STALE_DAYS) continue;
+    }
     const t = stats.trendStats(series, o.trendWindow, {
       baselineWindow: o.trendBaselineDays ?? o.trendWindow,
       minPriorN: o.trendBaselineMinN ?? 3,
@@ -212,17 +250,18 @@ function computeAnomalies(seriesByKey, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   const findings = [];
 
-  // Eight Sleep HRV/RHR are wake-dated, so a reading for last night carries
+  // Eight Sleep metrics are wake-dated, so a reading for last night carries
   // today's date. If the latest is older than today, there was no Pod session last
   // night — don't raise a "HRV below your usual" anomaly on a 1–2-night-old reading
   // (mirrors the recovery-card staleness guard; otherwise a stale value keeps
-  // flagging, mislabeled "yesterday", with stale life-context attached).
-  const NIGHT_LOCKED = new Set(['health:hrv', 'health:resting_hr']);
+  // flagging, mislabeled "yesterday", with stale life-context attached). Covers
+  // all night-sourced metrics (NIGHT_METRICS), not just HRV/RHR — deep sleep,
+  // sleep score, etc. go silent the same way when the Pod isn't in use.
   const todayKey = o.today || new Date().toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/New_York' });
 
   for (const [key, series] of Object.entries(seriesByKey)) {
     if (o.trendSkip && o.trendSkip.includes(key)) continue; // sparse flow metrics
-    if (NIGHT_LOCKED.has(key) && series.length) {
+    if (NIGHT_METRICS.has(key) && series.length) {
       const readingDayKey = toDayKey(series[series.length - 1].day);
       if (readingDayKey < todayKey) continue; // stale Pod reading — no anomaly
     }

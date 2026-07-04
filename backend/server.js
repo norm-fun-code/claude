@@ -3514,6 +3514,15 @@ app.get('/api/briefing', async (req, res) => {
       // rawHrv/rawRhr are actual measurements (ms / bpm), not the 0-100 score components.
       if (recovery.rawHrv != null) recoveryContext += `, HRV ${Math.round(recovery.rawHrv)}ms`;
       if (recovery.rawRhr != null) recoveryContext += `, RHR ${Math.round(recovery.rawRhr)}bpm`;
+      // A proxy score is self-reported (no Eight Sleep reading last night) — the
+      // UNAVAILABLE branch below only catches the no-data-at-all case, so a
+      // proxy score was slipping through with no caveat, narrated as
+      // confidently as a real overnight HRV reading. Flag it explicitly so the
+      // brief doesn't build a causal "pattern confirmed" story off a subjective
+      // 1-5 self-report.
+      if (recovery.proxy) {
+        recoveryContext += ' — SELF-REPORTED (no Eight Sleep reading last night; this is a subjective estimate, not a real HRV/RHR measurement). Do NOT narrate this with the same confidence as a real overnight reading, and do NOT claim it "confirms" or is the "cleanest proof yet" of any sleep/HRV pattern — at most note it\'s a rough read.';
+      }
     } else {
       // No fresh Eight Sleep data (device away or not worn). Explicitly flag this
       // so the LLM doesn't cite stale HRV/recovery numbers from trend findings or the self-model.

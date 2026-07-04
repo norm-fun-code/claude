@@ -270,3 +270,37 @@ test('computeTrends: a genuine sustained decline still fires against the 28d nor
   assert.ok(f, 'a real decline vs the personal norm must still surface');
   assert.match(f.title, /vs your 28d norm/);
 });
+
+test('computeTrends: a frozen night-sourced series (Eight Sleep not in use) does not keep reporting a stale trend', () => {
+  // 42 nights of deep sleep ending well in the past, with a genuine +20%-ish
+  // recent-vs-prior split — exactly the shape that would otherwise regenerate
+  // "Deep sleep up +20% vs your 28d norm (improving)" every run even though no
+  // new night has landed in a week.
+  const N = 42;
+  const deepSleep = mkSeries(N, (i) => (i >= 35 ? 1.8 : 1.2), '2026-05-01T12:00:00');
+  const stale = a.computeTrends({ 'health:deep_sleep_hours': deepSleep });
+  assert.equal(
+    stale.find((f) => f.evidence.metric === 'health:deep_sleep_hours'), undefined,
+    'a night metric frozen for days must not keep regenerating the same trend as current'
+  );
+  // Same series, "today" pinned to its own last night → genuinely fresh, fires normally.
+  const lastDay = deepSleep[deepSleep.length - 1].day;
+  const fresh = a.computeTrends({ 'health:deep_sleep_hours': deepSleep }, { today: lastDay });
+  assert.ok(
+    fresh.find((f) => f.evidence.metric === 'health:deep_sleep_hours'),
+    'the identical data, when actually current, should still surface a real trend'
+  );
+});
+
+test('computeAnomalies: stale-Pod suppression covers sleep metrics too, not just HRV/RHR', () => {
+  // Same shape as the existing HRV staleness test, but for a metric the old
+  // NIGHT_LOCKED set didn't cover — deep sleep should be suppressed the same way.
+  const deepSleep = mkSeries(20, (i) => (i === 19 ? 0.3 : 1.5 + ((i % 3) - 1) * 0.1), '2026-05-01T12:00:00');
+  const stale = a.computeAnomalies({ 'health:deep_sleep_hours': deepSleep });
+  assert.equal(
+    stale.find((f) => f.evidence.metric === 'health:deep_sleep_hours'), undefined,
+    'stale deep-sleep reading must not raise an anomaly'
+  );
+  const fresh = a.computeAnomalies({ 'health:deep_sleep_hours': deepSleep }, { today: '2026-05-20' });
+  assert.ok(fresh.find((f) => f.evidence.metric === 'health:deep_sleep_hours'), 'a same-day reading should still flag');
+});
