@@ -86,6 +86,90 @@ function predictCapacity(s = {}) {
 
 const WEEKDAY = (d) => d.toLocaleDateString('en-US', { weekday: 'long' });
 
+// ── Context-adjusted forecast ─────────────────────────────────────────────────
+// forecastTomorrow() only sees NUMBERS (recovery, training load, sleep debt) —
+// it has no way to know you mentioned a stressful launch today, that you're
+// traveling tomorrow, or that tomorrow's a planned rest day. Free-text day
+// context (voice/typed) carries exactly that. This layer reads it and can
+// ADD a cautionary note or push the lean down one band — never up: the body's
+// physiological signals are still the hard ceiling (same rule predictCapacity
+// already applies to "full send" days), context can only counsel caution, not
+// invent capacity the numbers don't show.
+
+const CONTEXT_ADJUST_SYSTEM =
+  'You are a careful sports-science assistant reviewing a recovery forecast. ' +
+  'You get the DETERMINISTIC forecast (already computed from HRV/sleep/training-load data) ' +
+  'plus free-text notes the person gave about today and tomorrow. ' +
+  'Decide ONLY whether the note changes anything the numbers could not already see — ' +
+  'travel, illness, a big stressful day, poor sleep they described, a planned easy/rest day, etc. ' +
+  'Return ONLY compact JSON, no prose: {"relevant":true|false,"downgrade":true|false,"note":"<=18 words or empty"}. ' +
+  'relevant=false (and downgrade=false, note="") for anything that is not clearly about tomorrow\'s ' +
+  'capacity or load — most notes ARE irrelevant here, so default to false. ' +
+  'downgrade=true ONLY when the note describes something that would plausibly hurt tomorrow further ' +
+  'than the numbers already project (added stress, illness, travel fatigue, a demanding day ahead). ' +
+  'NEVER set downgrade based on something positive (a rest day planned, good news) — describe it in ' +
+  'the note if worth mentioning, but do not change the lean upward; the physiological data is the ceiling.';
+
+function buildContextAdjustPrompt(tomorrow, contextLines) {
+  const prompt =
+    `DETERMINISTIC FORECAST: leaning ${tomorrow.band} (projected score ${tomorrow.projectedScore}/100). ${tomorrow.detail}\n\n` +
+    `NOTES:\n${contextLines.map((l) => `- ${l}`).join('\n')}`;
+  return { system: CONTEXT_ADJUST_SYSTEM, prompt };
+}
+
+/** Parse + validate the model's JSON reply. Strict: anything malformed → null
+ *  (caller keeps the untouched deterministic forecast). */
+function parseContextAdjustment(text) {
+  const m = String(text || '').match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  let p;
+  try { p = JSON.parse(m[0]); } catch { return null; }
+  if (!p || typeof p !== 'object') return null;
+  if (p.relevant !== true) return null; // false/missing/garbage → no adjustment
+  return {
+    downgrade: p.downgrade === true,
+    note: typeof p.note === 'string' ? p.note.trim().slice(0, 200) : '',
+  };
+}
+
+const BAND_ORDER = ['green', 'yellow', 'red'];
+
+/**
+ * Let free-text context adjust tomorrow's forecast. Skips the LLM call entirely
+ * when there's no context to consider (the common case — most days have none).
+ * On any failure, returns the deterministic forecast unchanged.
+ */
+async function applyContextToForecast(tomorrow, { dayContext = [], annotations = [] } = {}) {
+  if (!tomorrow) return tomorrow;
+  const contextLines = [
+    ...dayContext.map((e) => `About today: ${e.text}`),
+    ...annotations.map((a) => `Noted for today/tomorrow: ${a.label}${a.note ? ` (${a.note})` : ''}`),
+  ].filter(Boolean);
+  if (!contextLines.length) return tomorrow;
+
+  try {
+    const llm = require('../llm');
+    const { system, prompt } = buildContextAdjustPrompt(tomorrow, contextLines);
+    const raw = await llm.generateText({ system, prompt, temperature: 0.2, maxTokens: 200 });
+    const adj = parseContextAdjustment(raw);
+    if (!adj) return tomorrow;
+
+    let next = { ...tomorrow };
+    if (adj.note) next.contextNote = adj.note;
+    if (adj.downgrade) {
+      const idx = BAND_ORDER.indexOf(tomorrow.band);
+      if (idx >= 0 && idx < BAND_ORDER.length - 1) {
+        next.band = BAND_ORDER[idx + 1];
+        next.projectedScore = Math.max(0, tomorrow.projectedScore - 10);
+      }
+    }
+    return next;
+  } catch (err) {
+    console.error('[forecast] context adjustment failed, using deterministic forecast:', err.message);
+    return tomorrow;
+  }
+}
+
 /**
  * Tomorrow's recovery lean — a projection, not a promise. Anchors on today's
  * recovery and applies pressure from the things that carry overnight: training
@@ -228,14 +312,30 @@ async function computeTodayForecast({ recovery = null, asOf = new Date() } = {})
     }
   } catch { /* non-critical */ }
 
-  const tomorrow = forecastTomorrow({
+  let tomorrow = forecastTomorrow({
     recoveryScore: rec.score,
     acwrBand,
     sleepDebtHours,
     hardSessionToday,
   });
 
+  // Read whatever context the user gave for today/tomorrow (voice or typed) in
+  // case it says something the numbers can't see yet — a stressful day ahead,
+  // travel, illness, a planned rest day.
+  if (tomorrow) {
+    const tz = process.env.TZ || 'America/New_York';
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    const [dayContext, annotations] = await Promise.all([
+      require('../store/dayJournal').forDay(todayStr).catch(() => []),
+      require('../store/annotations').overlapping(asOf, asOf).catch(() => []),
+    ]);
+    tomorrow = await applyContextToForecast(tomorrow, { dayContext, annotations });
+  }
+
   return { capacity, sleepDebt: debt, tomorrow };
 }
 
-module.exports = { predictCapacity, sleepDebtTrajectory, forecastTomorrow, computeTodayForecast, fmtHM };
+module.exports = {
+  predictCapacity, sleepDebtTrajectory, forecastTomorrow, computeTodayForecast, fmtHM,
+  buildContextAdjustPrompt, parseContextAdjustment, applyContextToForecast,
+};

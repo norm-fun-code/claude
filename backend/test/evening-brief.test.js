@@ -58,3 +58,32 @@ test('reflection: recent gratitude → echo, none → invite', () => {
   assert.match(none.reflection, /grateful/i);
   assert.notEqual(withG.reflection, none.reflection);
 });
+
+// ── Rest day: lower steps + no exercise habit are expected, not a shortfall ──
+
+test('rest day: lower steps framed as expected, not "under norm"', () => {
+  const c = composeFallback({
+    ...sig({ tone: 'settled' }, { steps: 5392, stepsBaseline: 12731 }),
+    isRestDay: true,
+  });
+  assert.match(c.today, /5,392/);
+  assert.match(c.today, /rest day/i);
+  assert.doesNotMatch(c.today, /under your/i);
+});
+
+test('non-rest day still frames steps against the norm as before', () => {
+  const c = composeFallback({
+    ...sig({ tone: 'settled' }, { steps: 5392, stepsBaseline: 12731 }),
+    isRestDay: false,
+  });
+  assert.match(c.today, /under your 12,731 norm/);
+});
+
+test('rest day: the plan line does not grade the rest itself as a miss', () => {
+  const c = composeFallback({
+    ...sig({ tone: 'settled' }),
+    training: { planned: 'Rest', completed: false, actual: null },
+    isRestDay: true,
+  });
+  assert.equal(c.plan, ''); // nothing to grade — matches the pre-existing training.planned==='rest' guard
+});

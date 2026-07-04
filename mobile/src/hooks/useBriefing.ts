@@ -235,6 +235,9 @@ export interface TodayForecast {
     detail: string;
     lever: string;
     confidence: number;
+    // Set only when something you said about today/tomorrow (voice or typed)
+    // was relevant enough to add a caveat — most days this is absent.
+    contextNote?: string;
   } | null;
 }
 

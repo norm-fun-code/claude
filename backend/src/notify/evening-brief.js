@@ -26,7 +26,7 @@ const TONE_HEADLINE = {
 
 // ── deterministic fallback (also the LLM's scaffold) ─────────────────────────
 
-function composeFallback({ autonomic, load, openHabits, gratitude = [], training = null }) {
+function composeFallback({ autonomic, load, openHabits, gratitude = [], training = null, isRestDay = false }) {
   const { hrv, hrvBaseline, rhr, rhrBaseline, tone, sampleThin } = autonomic;
 
   let readiness;
@@ -61,13 +61,19 @@ function composeFallback({ autonomic, load, openHabits, gratitude = [], training
 
   let today = '';
   if (load.steps != null) {
-    const vs =
-      load.stepsBaseline != null
-        ? load.steps >= load.stepsBaseline
-          ? ` — at or above your ${commas(load.stepsBaseline)} norm`
-          : ` — under your ${commas(load.stepsBaseline)} norm`
-        : '';
-    today = `You logged ${commas(load.steps)} steps today${vs}.`;
+    if (isRestDay) {
+      // A rest day has no training-day norm to fall short of — lighter movement
+      // is the plan working, not a miss.
+      today = `You logged ${commas(load.steps)} steps today — a scheduled rest day, so lighter movement is expected.`;
+    } else {
+      const vs =
+        load.stepsBaseline != null
+          ? load.steps >= load.stepsBaseline
+            ? ` — at or above your ${commas(load.stepsBaseline)} norm`
+            : ` — under your ${commas(load.stepsBaseline)} norm`
+          : '';
+      today = `You logged ${commas(load.steps)} steps today${vs}.`;
+    }
   }
 
   const tomorrow =
@@ -137,13 +143,14 @@ function commitmentsLine(commitments) {
 }
 
 function buildPrompt(signals) {
-  const { autonomic: a, load: l, openHabits, gratitude = [], morningPlan = null, training = null, commitments = null, dayContext = '' } = signals;
+  const { autonomic: a, load: l, openHabits, gratitude = [], morningPlan = null, training = null, commitments = null, dayContext = '', isRestDay = false } = signals;
   const lines = [
     `Autonomic tone: ${a.tone}${a.sampleThin ? ' (thin data — soft-pedal)' : ''}`,
     a.hrv != null ? `Daytime HRV today: ${ms(a.hrv)}${a.hrvBaseline != null ? ` (your norm ${ms(a.hrvBaseline)})` : ''}` : 'Daytime HRV today: (none)',
     a.rhr != null ? `Resting HR today: ${bpm(a.rhr)}${a.rhrBaseline != null ? ` (your norm ${bpm(a.rhrBaseline)})` : ''}` : 'Resting HR today: (none)',
     l.steps != null ? `Steps today: ${commas(l.steps)}${l.stepsBaseline != null ? ` (norm ${commas(l.stepsBaseline)})` : ''}` : 'Steps today: (none)',
     l.activeEnergy != null ? `Active energy today: ${commas(l.activeEnergy)} kcal` : null,
+    isRestDay ? 'Today was a SCHEDULED REST DAY — lower steps/energy and no exercise are EXPECTED, not a shortfall. Do not compare against the training-day norm as if something was missed.' : null,
     openHabits.length ? `Evening habits still open: ${openHabits.join(', ')}` : 'Evening habits: all logged',
     training
       ? `Planned session today: ${training.planned ?? '(none)'} — ${training.completed ? `DONE${training.actual ? ` (logged: ${training.actual})` : ''}` : 'not logged as done'}`
@@ -165,8 +172,8 @@ Write the evening wind-down brief as JSON with EXACTLY these string fields:
 {
   "headline": "≤6 words capturing tonight's read (e.g. 'Settled — wind down easy')",
   "readiness": "1-2 sentences on autonomic tone from the HRV/RHR vs the user's norm, and what it means for tonight. If data is thin, say so and defer to how they feel.",
-  "today": "ONE sentence closing the loop on today's movement (steps/energy). Empty string if no data.",
-  "plan": "ONE sentence grading the day against what was asked of it — this morning's plan AND any commitments the user made today (see the commitments line). The honest ledger, not a lecture: credit what they kept (session done, commitments honored) plainly; name what slipped without guilt and without re-issuing the instruction — the day is over. Prefer concrete evidence (planned session done/not, commitments kept/open, steps vs norm). Empty string only if there's genuinely nothing to grade.",
+  "today": "ONE sentence closing the loop on today's movement (steps/energy). If today was a scheduled rest day, say so and frame lower activity as expected/fine — never as falling short of the training-day norm. Empty string if no data.",
+  "plan": "ONE sentence grading the day against what was asked of it — this morning's plan AND any commitments the user made today (see the commitments line). The honest ledger, not a lecture: credit what they kept (session done, commitments honored) plainly; name what slipped without guilt and without re-issuing the instruction — the day is over. On a rest day, there was no session to grade — do not treat the rest itself as a miss. Prefer concrete evidence (planned session done/not, commitments kept/open, steps vs norm). Empty string only if there's genuinely nothing to grade.",
   "tomorrow": "ONE sentence: the bedtime/wind-down lever that sets up tomorrow. Do not cite a recovery score.",
   "habits": "ONE short nudge listing the still-open evening habits, or empty string if none.",
   "reflection": "ONE sentence — the presence beat that closes the day, the mindfulness counterpart to the body read above. If recent gratitude notes are present, gently echo their theme in your own words (never quote verbatim, never list them like a report) so the reflection lands as something a person who was listening would say. If none are present, warmly invite one line of gratitude before bed. Keep it human and unforced; empty string only if anything here would feel hollow."
@@ -218,7 +225,36 @@ async function runEveningHealthBrief(opts = {}) {
   const tz = opts.tz || process.env.TZ || 'America/New_York';
   const day = new Date().toLocaleDateString('en-CA', { timeZone: tz });
 
-  const signals = await gatherEvening({ tz });
+  // Today's planned session — checked FIRST (before gatherEvening) so the rest-
+  // day flag can suppress the "Exercise" habit nag and let the LLM correctly
+  // frame lower steps as expected, not a shortfall. Reads the manual swap
+  // override (workout_overrides) first — getTodayWorkout() alone only knows the
+  // static weekly schedule, so a "swap today to rest" voice command would
+  // otherwise be invisible here even though it's exactly what the swap_workout
+  // action is for.
+  const OVERRIDE_LABELS = { push: 'Push', pull: 'Pull', zone2: 'Zone 2', mobility: 'Mobility', intervals: 'Intervals', rest: 'Rest' };
+  let plannedLabel = null;
+  let isRestDay = false;
+  try {
+    const { getTodayWorkout } = require('../services/workout');
+    const db = require('../db');
+    const { rows: overrideRows } = await db.query(
+      `SELECT workout_id FROM workout_overrides WHERE log_date = $1`,
+      [day]
+    );
+    const overrideId = overrideRows[0]?.workout_id ?? null;
+    if (overrideId) {
+      plannedLabel = OVERRIDE_LABELS[overrideId] ?? overrideId;
+      isRestDay = overrideId === 'rest';
+    } else {
+      const scheduled = getTodayWorkout();
+      plannedLabel = scheduled?.type ?? null;
+      isRestDay = scheduled?.type === 'Rest';
+    }
+  } catch { /* non-critical — defaults (null, false) are safe */ }
+
+  const signals = await gatherEvening({ tz, isRestDay });
+  signals.isRestDay = isRestDay;
   // Recent gratitude reflections feed the evening presence beat — what you wrote
   // in the habit stack gets reflected back instead of being write-only.
   try {
@@ -234,8 +270,6 @@ async function runEveningHealthBrief(opts = {}) {
     signals.morningPlan = await briefingsStore.todaysMorningBrief();
   } catch { signals.morningPlan = null; }
   try {
-    const { getTodayWorkout } = require('../services/workout');
-    const planned = getTodayWorkout();
     const db = require('../db');
     const [{ rows: exercised }, { rows: acts }] = await Promise.all([
       db.query(
@@ -252,7 +286,7 @@ async function runEveningHealthBrief(opts = {}) {
       ),
     ]);
     signals.training = {
-      planned: planned?.type ?? null,
+      planned: plannedLabel,
       completed: exercised.length > 0 || acts.length > 0,
       actual: acts[0]?.activity_type ?? null,
     };

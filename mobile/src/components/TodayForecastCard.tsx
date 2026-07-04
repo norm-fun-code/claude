@@ -59,6 +59,9 @@ export function TodayForecastCard({ forecast }: Props) {
             )}
           </View>
           <Text style={[styles.debtText, { color: c.subtext }]}>{tmr.detail} {tmr.lever}</Text>
+          {!!tmr.contextNote && (
+            <Text style={[styles.contextNote, { color: c.text }]}>💬 {tmr.contextNote}</Text>
+          )}
         </View>
       ) : null}
     </View>
@@ -84,4 +87,5 @@ const styles = StyleSheet.create({
   tmrHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
   tmrDot: { width: 8, height: 8, borderRadius: 4 },
   tmrConf: { fontSize: 10, marginLeft: 'auto', fontStyle: 'italic' },
+  contextNote: { fontSize: 13, lineHeight: 19, marginTop: 4, fontStyle: 'italic' },
 });

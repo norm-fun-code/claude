@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { predictCapacity, sleepDebtTrajectory } = require('../src/intelligence/predict');
+const { predictCapacity, sleepDebtTrajectory, parseContextAdjustment, applyContextToForecast } = require('../src/intelligence/predict');
 
 test('high recovery → A day, full send', () => {
   const r = predictCapacity({ recoveryScore: 80, hrvSubScore: 70 });
@@ -64,4 +64,36 @@ test('large debt switches from "by weekday" to "about N nights"', () => {
   const t = sleepDebtTrajectory({ debtHours: 6, needHours: 8 });
   assert.equal(t.nights, 6);
   assert.match(t.detail, /about 6 solid nights/i);
+});
+
+// ── Context-adjusted forecast ─────────────────────────────────────────────────
+
+test('parseContextAdjustment: relevant + downgrade extracts cleanly', () => {
+  const a = parseContextAdjustment('{"relevant":true,"downgrade":true,"note":"Big presentation tomorrow adds stress"}');
+  assert.deepEqual(a, { downgrade: true, note: 'Big presentation tomorrow adds stress' });
+});
+
+test('parseContextAdjustment: relevant but no downgrade (note only)', () => {
+  const a = parseContextAdjustment('{"relevant":true,"downgrade":false,"note":"Traveling tomorrow"}');
+  assert.deepEqual(a, { downgrade: false, note: 'Traveling tomorrow' });
+});
+
+test('parseContextAdjustment: not relevant → null (no adjustment)', () => {
+  assert.equal(parseContextAdjustment('{"relevant":false,"downgrade":false,"note":""}'), null);
+});
+
+test('parseContextAdjustment: malformed / missing / non-JSON → null', () => {
+  assert.equal(parseContextAdjustment(''), null);
+  assert.equal(parseContextAdjustment('not json'), null);
+  assert.equal(parseContextAdjustment('{"downgrade":true}'), null); // relevant missing
+});
+
+test('applyContextToForecast: no context at all → untouched, no LLM call', async () => {
+  const base = { band: 'yellow', projectedScore: 55, detail: 'x', lever: 'y', confidence: 60 };
+  const out = await applyContextToForecast(base, { dayContext: [], annotations: [] });
+  assert.equal(out, base); // same reference — proves it short-circuited before any LLM call
+});
+
+test('applyContextToForecast: null forecast passes through unchanged', async () => {
+  assert.equal(await applyContextToForecast(null, { dayContext: [{ text: 'x' }] }), null);
 });

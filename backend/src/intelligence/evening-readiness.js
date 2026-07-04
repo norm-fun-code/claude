@@ -123,8 +123,17 @@ const EVENING_HABITS = [
   { metric: 'exercise', label: 'Exercise' },
 ];
 
+/** Pure: the evening-coded habits actually worth nudging tonight. On a rest day,
+ *  "Exercise" isn't really open — there's no planned session to have done, so
+ *  nagging about it is the same class of bug as grading steps against a
+ *  training-day norm. Split out from openEveningHabits so this rule is
+ *  unit-testable without a DB. */
+function eveningHabitsToTrack(isRestDay) {
+  return isRestDay ? EVENING_HABITS.filter((h) => h.metric !== 'exercise') : EVENING_HABITS;
+}
+
 /** Which evening-coded habits are still unlogged today. */
-async function openEveningHabits({ tz = process.env.TZ || 'America/New_York' } = {}) {
+async function openEveningHabits({ tz = process.env.TZ || 'America/New_York', isRestDay = false } = {}) {
   const { rows } = await query(
     `SELECT metric, value FROM metrics
       WHERE domain = 'habits'
@@ -132,17 +141,17 @@ async function openEveningHabits({ tz = process.env.TZ || 'America/New_York' } =
     [tz]
   );
   const done = new Set(rows.filter((r) => Number(r.value) >= 0.5).map((r) => r.metric));
-  return EVENING_HABITS.filter((h) => !done.has(h.metric)).map((h) => h.label);
+  return eveningHabitsToTrack(isRestDay).filter((h) => !done.has(h.metric)).map((h) => h.label);
 }
 
 /** Gather everything the evening brief composer needs. */
-async function gatherEvening({ tz } = {}) {
+async function gatherEvening({ tz, isRestDay = false } = {}) {
   const [autonomic, load, openHabits] = await Promise.all([
     autonomicRead({ tz }),
     todayLoad({ tz }),
-    openEveningHabits({ tz }),
+    openEveningHabits({ tz, isRestDay }),
   ]);
   return { autonomic, load, openHabits };
 }
 
-module.exports = { autonomicRead, todayLoad, openEveningHabits, gatherEvening, dayWindow };
+module.exports = { autonomicRead, todayLoad, openEveningHabits, eveningHabitsToTrack, gatherEvening, dayWindow };
