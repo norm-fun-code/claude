@@ -9,8 +9,32 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export type ThemePref = 'system' | 'light' | 'dark';
 const KEY = 'normos.themePref';
 
+// React Native bug (confirmed in Appearance.js, RN 0.76): setColorScheme(x)
+// caches `x` directly as the app's "current scheme" WITHOUT re-querying native —
+// including when x is null (clearing back to "follow system"). useColorScheme()
+// reads that exact cache, so right after setColorScheme(null) every component
+// sees `null` (not the real OS scheme), until a genuine native appearance-change
+// event happens to fire later and self-heals it. Since loadThemePref() used to
+// call this unconditionally on EVERY cold start — even with nothing to clear —
+// "Auto" mode poisoned itself to "light" on every launch and stayed wrong all
+// evening, only correcting itself if the OS happened to flip while the app
+// stayed open (rare — most launches happen well after any sunset/sunrise
+// transition already passed).
+// Fix: only call setColorScheme(null) when THIS session actually set an
+// override that needs clearing. A fresh launch with pref='system' never
+// touches Appearance at all, so useColorScheme() stays live and correct.
+let hasActiveOverride = false;
+
 export function applyPref(pref: ThemePref) {
-  Appearance.setColorScheme(pref === 'system' ? null : pref);
+  if (pref === 'system') {
+    if (hasActiveOverride) {
+      Appearance.setColorScheme(null);
+      hasActiveOverride = false;
+    }
+  } else {
+    Appearance.setColorScheme(pref);
+    hasActiveOverride = true;
+  }
 }
 
 // Read the stored preference and apply it. Call once at startup.
