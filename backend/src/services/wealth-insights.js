@@ -29,9 +29,16 @@ async function buildWealthInsights() {
   // (income − spending) / income over the trailing 30 days. Only surfaced when
   // there's real income to divide by.
   try {
-    const from = new Date(Date.now() - 30 * 864e5);
+    // Same window as the Net Worth card's rolling-30-days figures (server.js) —
+    // truncated `from` AND an explicit `to: now` upper bound. Without the upper
+    // bound this used to sum in any stray post-dated/pending transaction row,
+    // producing a spending total (and savings rate) that silently disagreed
+    // with the Net Worth card computed in the same request.
+    const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    from.setUTCHours(0, 0, 0, 0);
+    const to = new Date();
     const sumOf = async (metric) => {
-      const rows = await metricsStore.dailyAggregate({ domain: 'wealth', metric, from, agg: 'sum', excludeSource: 'seed' });
+      const rows = await metricsStore.dailyAggregate({ domain: 'wealth', metric, from, to, agg: 'sum', excludeSource: 'seed' });
       return rows.reduce((a, r) => a + Number(r.value || 0), 0);
     };
     const [income, spending] = await Promise.all([sumOf('income'), sumOf('spending')]);

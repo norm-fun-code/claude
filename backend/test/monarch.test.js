@@ -163,6 +163,24 @@ test('mapBalances classifies assets/liabilities from per-account rows with types
   assert.equal(v('net_worth'), 115000);
 });
 
+test('mapTransactions skips pending/future-dated transactions', () => {
+  // Regression: this fallback path (used when Monarch MCP isn't configured)
+  // had no guard against a future-dated pending transaction, unlike the
+  // primary GraphQL sync path — a stray future row would sit in `metrics`
+  // and get summed by any unbounded query (e.g. the savings-rate insight),
+  // silently disagreeing with card totals that cap at "now".
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+  const records = [
+    { Date: today, Merchant: 'Coffee', Category: 'Dining', Account: 'Amex', Amount: '-5.00' },
+    { Date: tomorrow, Merchant: 'Pending charge', Category: 'Shopping', Account: 'Amex', Amount: '-500.00' },
+  ];
+  const { metrics, documents } = m.mapTransactions(records);
+  const spending = metrics.find((x) => x.metric === 'spending' && x.ts.toISOString().slice(0, 10) === today);
+  assert.equal(spending.value, 5); // the $500 future-dated charge must NOT be counted
+  assert.equal(documents.length, 1); // and shouldn't appear as a document yet either
+});
+
 test('dedupeMetrics sums flows and keeps last snapshot', () => {
   const ts = new Date('2026-05-01T00:00:00Z');
   const out = m.dedupeMetrics([

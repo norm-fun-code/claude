@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, useColorScheme, Animated, PanResponder,
+  View, Text, StyleSheet, TouchableOpacity, Pressable, useColorScheme, Animated, PanResponder, LayoutAnimation,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { SectionHeader } from './SectionHeader';
@@ -56,6 +56,14 @@ function SwipeableRow({
   const [deleting, setDeleting] = useState(false);
   const [localMeasuredAt, setLocalMeasuredAt] = useState<string | null | undefined>(undefined);
   const [localDelta, setLocalDelta] = useState<number | null | undefined>(undefined);
+  // Most titles are short and formulaic (the leverage engine's templates), but a
+  // freeform Ask-sourced one can run long — tap to unfold instead of silently
+  // losing the rest of the sentence behind an ellipsis with no way to read it.
+  const [expanded, setExpanded] = useState(false);
+  function toggleExpanded() {
+    LayoutAnimation.configureNext(LayoutAnimation.create(200, 'easeInEaseOut', 'opacity'));
+    setExpanded((v) => !v);
+  }
 
   const SWIPE_THRESHOLD = 80;
 
@@ -121,7 +129,9 @@ function SwipeableRow({
         {...panResponder.panHandlers}
       >
         <View style={styles.rowMain}>
-          <Text style={[styles.recTitle, { color: c.text }]} numberOfLines={2}>{rec.title}</Text>
+          <Pressable onPress={toggleExpanded} disabled={rec.title.length < 80}>
+            <Text style={[styles.recTitle, { color: c.text }]} numberOfLines={expanded ? undefined : 2}>{rec.title}</Text>
+          </Pressable>
           <Text style={[styles.recMeta, { color: c.subtext }]}>{relDays(rec.created_at)} · {source}</Text>
           {showThumbs && (
             <View style={styles.thumbsRow}>

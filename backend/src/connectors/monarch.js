@@ -204,11 +204,19 @@ function mapTransactions(records = []) {
   const discretionaryByDay = new Map(); // spend excluding fixed housing (rent/mortgage)
   const incomeByDay = new Map();
   const documents = [];
+  // Monarch can return pending/scheduled transactions dated today-or-later —
+  // the newer GraphQL-MCP sync path already guards against this
+  // (monarch-mcp-sync.js), but this fallback path didn't, so a stray future-
+  // dated row could sit in `metrics` and get summed by any query with no
+  // upper time bound (e.g. wealth-insights.js's rolling-30-day savings rate),
+  // silently disagreeing with card totals that DO cap at "now".
+  const today = new Date().toISOString().slice(0, 10);
 
   for (const rec of records) {
     const day = parseDay(field(rec, ['date']));
     const amount = parseAmount(field(rec, ['amount']));
     if (!day || !Number.isFinite(amount)) continue;
+    if (day > today) continue; // skip pending/future-dated transactions
 
     const merchant = field(rec, ['merchant', 'description', 'name']) || 'Transaction';
     const category = field(rec, ['category']);
