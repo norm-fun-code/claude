@@ -31,15 +31,20 @@ type Experiment = {
   paused_at: string | null;
 };
 
-function daysLeft(endDate: string | null): number | null {
+// `now` is the real clock, UNLESS the experiment is paused — pausing is
+// supposed to freeze the clock (the backend only extends end_date at RESUME,
+// by however long it was paused), so day-elapsed/days-left must freeze at
+// paused_at too. Computing straight off Date.now() while paused made the
+// display keep advancing every day even though nothing was actually running.
+function daysLeft(endDate: string | null, now: number): number | null {
   if (!endDate) return null;
-  const diff = new Date(endDate).getTime() - Date.now();
+  const diff = new Date(endDate).getTime() - now;
   return Math.max(0, Math.ceil(diff / 86400000));
 }
 
-function daysElapsed(startDate: string | null): number {
+function daysElapsed(startDate: string | null, now: number): number {
   if (!startDate) return 0;
-  return Math.max(0, Math.floor((Date.now() - new Date(startDate).getTime()) / 86400000));
+  return Math.max(0, Math.floor((now - new Date(startDate).getTime()) / 86400000));
 }
 
 function totalDays(startDate: string | null, endDate: string | null): number | null {
@@ -139,9 +144,10 @@ export function ExperimentsCard() {
       <SectionHeader emoji="🧪" title="Experiments" tint="violet" />
 
       {visible.map((exp) => {
-        const elapsed = daysElapsed(exp.start_date);
+        const effectiveNow = exp.status === 'paused' && exp.paused_at ? new Date(exp.paused_at).getTime() : Date.now();
+        const elapsed = daysElapsed(exp.start_date, effectiveNow);
         const total = totalDays(exp.start_date, exp.end_date);
-        const left = daysLeft(exp.end_date);
+        const left = daysLeft(exp.end_date, effectiveNow);
         const progress = total && total > 0 ? Math.min(1, elapsed / total) : 0;
         const isProposed = exp.status === 'proposed';
         const isRunning = exp.status === 'running';

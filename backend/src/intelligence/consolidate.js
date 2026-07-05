@@ -95,6 +95,15 @@ async function gatherHealth(d7, d35) {
     ['steps', 'avg', 'up'],
     ['active_energy', 'avg', 'up'],
   ];
+  // Same staleness bar as analyze.js's trend suppression: a night-sourced metric
+  // (Eight Sleep) that's stopped posting doesn't stop having rows in the "last 7
+  // days" window until those rows age out entirely — until then, this would keep
+  // averaging whatever nights were last available and reporting it as the
+  // current 7-day figure, letting the self-model (and everything it feeds — the
+  // brief, chat) narrate a stale reading as if it were live.
+  const { NIGHT_METRICS, staleDays, TREND_STALE_DAYS } = require('./analyze');
+  const todayKey = new Date().toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/New_York' });
+
   const out = {};
   for (const [m, agg, gw] of metrics) {
     const aggFn = PREFER_SOURCE.has(m)
@@ -104,7 +113,12 @@ async function gatherHealth(d7, d35) {
       aggFn({ domain: 'health', metric: m, from: d7 }),
       aggFn({ domain: 'health', metric: m, from: d35, to: d7 }),
     ]);
-    out[m] = { cur: round1(avg(cur)), prior: round1(medianOf(prior)), goodWhen: gw };
+    let curAvg = round1(avg(cur));
+    if (NIGHT_METRICS.has(`health:${m}`)) {
+      const age = staleDays(cur, todayKey);
+      if (age != null && age > TREND_STALE_DAYS) curAvg = null; // no fresh reading — suppress rather than report a frozen average
+    }
+    out[m] = { cur: curAvg, prior: round1(medianOf(prior)), goodWhen: gw };
   }
   return out;
 }

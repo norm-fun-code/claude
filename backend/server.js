@@ -3773,7 +3773,7 @@ app.get('/api/briefing', async (req, res) => {
     const sigs = candidates.map(curateLib.signature);
     const firstSeenBySig = await curateLib.recordAndLoadFirstSeen(sigs).catch(() => new Map());
     const now = Date.now();
-    const streaks = candidates
+    const topStreaks = candidates
       .map((f) => {
         const first = firstSeenBySig.get(curateLib.signature(f));
         const days = first ? Math.floor((now - new Date(first).getTime()) / 864e5) : 0;
@@ -3781,8 +3781,33 @@ app.get('/api/briefing', async (req, res) => {
       })
       .filter((x) => x.days >= 3)
       .sort((a, b) => b.days - a.days)
-      .slice(0, 4)
-      .map((x) => `- ${x.f.title} — open ${x.days} days running (this isn't new; if it's today's lead, name the streak and escalate rather than re-explaining it)`);
+      .slice(0, 4);
+    // A correlation/trend finding stays legitimately "open" for as long as the
+    // relationship keeps holding — but if its underlying metric is night-sourced
+    // (Eight Sleep) and hasn't posted in days, "open N days running" reads as
+    // "still actively measuring" when nothing has actually been measured lately.
+    // Flag it so the brief says "stalled," not "quietly measuring in the background."
+    const { NIGHT_METRICS, staleDays, TREND_STALE_DAYS } = require('./src/intelligence/analyze');
+    const todayKeyForStreaks = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    const streaks = await Promise.all(topStreaks.map(async (x) => {
+      const keys = x.f.evidence?.metric
+        ? [x.f.evidence.metric]
+        : [x.f.evidence?.a, x.f.evidence?.b].filter(Boolean);
+      const nightKeys = keys.filter((k) => NIGHT_METRICS.has(k));
+      let staleNote = '';
+      if (nightKeys.length) {
+        const ages = await Promise.all(nightKeys.map(async (k) => {
+          const [domain, metric] = k.split(':');
+          const series = await metricsStore.dailyAggregate({ domain, metric, from: new Date(Date.now() - 30 * 864e5) }).catch(() => []);
+          return staleDays(series, todayKeyForStreaks);
+        }));
+        const maxAge = ages.filter((a) => a != null).sort((a, b) => b - a)[0] ?? null;
+        if (maxAge != null && maxAge > TREND_STALE_DAYS) {
+          staleNote = ` — STALLED: no fresh reading in ${maxAge}d; describe this as stalled/paused, NOT as actively measuring or "still logging"`;
+        }
+      }
+      return `- ${x.f.title} — open ${x.days} days running${staleNote} (this isn't new; if it's today's lead, name the streak and escalate rather than re-explaining it)`;
+    }));
 
     const openers = await briefingsStore.recentDailyBriefOpeners(3).catch(() => []);
     const openerLines = openers.map((o) =>
