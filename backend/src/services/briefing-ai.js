@@ -98,6 +98,7 @@ function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, cale
 ${dayOffContext ? `\nDAY CONTEXT: ${dayOffContext}\n` : ''}
 Today's workout: ${workoutPlan.type}${workoutPlan.duration ? ` (${workoutPlan.duration})` : ''}
 ${recoveryContext ? `Recovery status: ${recoveryContext}` : ''}
+${experimentsContext ? `\nONGOING SELF-EXPERIMENTS (mention only when genuinely relevant to today's topic — never force it in, never claim more than what's stated, and never describe a flagged-stalled one as actively tracking):\n${experimentsContext}\n` : ''}
 
 Today's calendar (personal — usually light):
 ${calendarSection}

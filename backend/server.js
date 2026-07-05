@@ -3609,11 +3609,44 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[pre-brief-signals] failed:', err.message);
   }
 
-  // Experiments feature is paused — hidden from UI until the data quality is
-  // high enough to surface meaningful hypotheses. Backend logic is intact.
-  const experimentsContext = '';
-  const completedExps = [];
-  const runningExps = [];
+  // Ongoing experiments — running/paused hypotheses, so the brief can casually
+  // reference "still gathering data on X" instead of the topic going silent
+  // between proposal and verdict (fresh completed verdicts are already handled
+  // loudly by continuityContext above). Re-enabled after being paused for data-
+  // quality reasons: a RUNNING experiment is only described as actively
+  // tracking when its underlying metric genuinely has recent data — otherwise
+  // it's flagged as stalled so the brief never narrates a disconnected device
+  // (e.g. Eight Sleep) as "still logging."
+  let experimentsContext = '';
+  const EXPERIMENT_STALE_DAYS = 3;
+  try {
+    const allExps = await experimentsStore.listExperiments();
+    const runningExps = allExps.filter((e) => e.status === 'running').slice(0, 4);
+    const pausedExps = allExps.filter((e) => e.status === 'paused').slice(0, 3);
+
+    const lines = [];
+    for (const e of runningExps) {
+      const [domain, metric] = String(e.metric || '').split(':');
+      let note = '';
+      if (domain && metric) {
+        const last = await metricsStore.latest({ domain, metric }).catch(() => null);
+        const ageDays = last ? Math.floor((Date.now() - new Date(last.ts).getTime()) / 864e5) : null;
+        if (ageDays == null || ageDays > EXPERIMENT_STALE_DAYS) {
+          note = ` — NO FRESH DATA (${ageDays == null ? 'none ever' : `${ageDays}d old`}); do NOT say this is actively tracking or "still logging," at most note it's stalled`;
+        }
+      }
+      const daysLeft = e.end_date
+        ? Math.max(0, Math.ceil((new Date(e.end_date) - Date.now()) / 86400000))
+        : null;
+      lines.push(`⟳ Running: ${e.hypothesis}${daysLeft != null ? ` (${daysLeft}d left)` : ''}${note}`);
+    }
+    for (const e of pausedExps) {
+      lines.push(`⏸ Paused by the user: ${e.hypothesis} — do not reference as active, running, or logging`);
+    }
+    if (lines.length) experimentsContext = lines.join('\n');
+  } catch (err) {
+    console.error('[experiments context] failed:', err.message);
+  }
 
   // Self-model: nightly-consolidated portrait of the user — injected into the
   // briefing prompt so the chief-of-staff voice knows who it's talking to.
@@ -3842,17 +3875,33 @@ app.get('/api/briefing', async (req, res) => {
           if (recentNorm.has(normKey) || seenThisRun.has(normKey)) continue;
           seenThisRun.add(normKey);
           if (dedupKey) seenKeysThisRun.add(dedupKey);
+          const outcomeMetric = ev.basis?.outcome ?? null;
           recommendationsStore.recordRecommendation({
             type: 'leverage',
             findingId: f.id ?? null,
             title: f.title,
             detail: f.detail ?? null,
             lever: ev.basis?.lever ?? null,
-            outcomeMetric: ev.basis?.outcome ?? null,
+            outcomeMetric,
             expectedDirection: ev.basis?.r != null ? (ev.basis.r >= 0 ? 'up' : 'down') : null,
             score: ev.score ?? null,
             surfacedIn: 'briefing',
             dedupKey,
+          }).then((recId) => {
+            // No metric to auto-measure against (measureOutcomes only fires for
+            // recs WITH an outcome_metric) — close the loop with a commitment
+            // instead, so it still resolves to a done/skipped verdict rather than
+            // sitting "Pending" forever.
+            if (!outcomeMetric && recId) {
+              const due = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+              commitmentsStore.create({
+                title: f.title.slice(0, 200),
+                detail: f.detail ?? null,
+                source: 'brief',
+                dueAt: due,
+                recommendationId: recId,
+              }).catch((e) => console.error('[commitments] auto-create from rec failed:', e.message));
+            }
           }).catch((e) => console.error('[recommendations] log failed:', e.message));
         }
       }).catch((e) => console.error('[recommendations] dedup check failed:', e.message));

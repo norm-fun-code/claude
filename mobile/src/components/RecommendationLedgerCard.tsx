@@ -41,6 +41,14 @@ function outcomeChip(
       : { label: 'Pending', color: c.subtext, bg: c.border };
   }
   if (delta == null) return { label: 'No data', color: c.subtext, bg: c.border };
+  // No tracked metric → this was resolved by a linked commitment (done/skipped),
+  // not a measured data delta. "Worked/No effect" would misleadingly imply we
+  // checked the data; we only know whether you did it.
+  if (!rec.outcome_metric) {
+    return delta > 0
+      ? { label: 'Done ✓', color: '#2E7D32', bg: '#E8F5E9' }
+      : { label: 'Skipped', color: c.subtext, bg: c.border };
+  }
   const hit =
     rec.expected_direction === 'up' ? delta > 0 :
     rec.expected_direction === 'down' ? delta < 0 : false;
@@ -206,6 +214,8 @@ export function RecommendationLedgerCard() {
             <Text style={[styles.infoText, { color: c.text, marginTop: spacing.xs }]}>
               “Measuring…” means NormOS is watching the target metric and will auto-judge it once about a week of
               data is in (“Worked ↑” or “No effect”). “Pending” is waiting on your thumbs. Didn't try it? Just leave it.
+              For recs with no metric to track, NormOS follows up on Today instead — marking it done or skipped there
+              shows up here as “Done ✓” / “Skipped.”
             </Text>
           </View>
         ) : (

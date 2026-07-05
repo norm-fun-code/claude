@@ -567,13 +567,26 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
       // recommendation with a slightly different percentage doesn't double-log.
       const recentStore = require('../store/recommendations');
       const normKey = recentStore.normalizeRecTitle(recTitle);
+      // Chat-sourced recs never carry an outcome_metric, so they'd otherwise sit
+      // "Pending" forever — auto-create a linked commitment to close the loop
+      // (see the identical pattern in server.js's leverage-ledger block).
+      const linkCommitment = (recId) => {
+        if (!recId) return;
+        const commitmentsStore = require('../store/commitments');
+        commitmentsStore.create({
+          title: recTitle.slice(0, 200),
+          source: 'chat',
+          dueAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          recommendationId: recId,
+        }).catch((e) => console.error('[commitments] auto-create from chat rec failed:', e.message));
+      };
       recentStore.recentTitlesAll(7).then((recent) => {
         const alreadySeen = [...recent].some((t) => recentStore.normalizeRecTitle(t) === normKey);
         if (!alreadySeen) {
-          recordRecommendation({ type: 'leverage', title: recTitle, surfacedIn: 'chat' }).catch(() => {});
+          recordRecommendation({ type: 'leverage', title: recTitle, surfacedIn: 'chat' }).then(linkCommitment).catch(() => {});
         }
       }).catch(() => {
-        recordRecommendation({ type: 'leverage', title: recTitle, surfacedIn: 'chat' }).catch(() => {});
+        recordRecommendation({ type: 'leverage', title: recTitle, surfacedIn: 'chat' }).then(linkCommitment).catch(() => {});
       });
     }
   }

@@ -27,13 +27,13 @@ function resolveReminderTime(atStr, now = new Date()) {
   return { dueAt: parsed };
 }
 
-async function create({ title, detail = null, source = 'voice', dueAt = null, metricKey = null }) {
+async function create({ title, detail = null, source = 'voice', dueAt = null, metricKey = null, recommendationId = null }) {
   const t = String(title || '').trim();
   if (!t) throw new Error('commitment title required');
   const { rows } = await query(
-    `INSERT INTO commitments (title, detail, source, due_at, metric_key)
-     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-    [t.slice(0, 200), detail ? String(detail).slice(0, 500) : null, source, dueAt, metricKey]
+    `INSERT INTO commitments (title, detail, source, due_at, metric_key, recommendation_id)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+    [t.slice(0, 200), detail ? String(detail).slice(0, 500) : null, source, dueAt, metricKey, recommendationId]
   );
   return rows[0] ?? null;
 }
@@ -68,13 +68,29 @@ async function todaySummary(tz = 'America/New_York') {
   return summary;
 }
 
+/**
+ * If this commitment was auto-created from a metric-less recommendation
+ * (recommendation_id set), close the loop by writing an adherence outcome —
+ * the same ±1 delta convention the manual thumbs-up/down endpoint already
+ * uses for recs with no expected_direction. Never let this fail the caller's
+ * markDone/markSkipped.
+ */
+function recordAdherenceOutcome(row, delta) {
+  if (!row?.recommendation_id) return;
+  require('./recommendations')
+    .setOutcome(row.recommendation_id, { delta, measuredAt: row.completed_at ?? new Date() })
+    .catch((e) => console.error('[commitments] adherence outcome failed:', e.message));
+}
+
 async function markDone(id, { at = new Date() } = {}) {
   const { rows } = await query(
     `UPDATE commitments SET status = 'done', completed_at = $2
       WHERE id = $1 AND status <> 'done' RETURNING *`,
     [id, at]
   );
-  return rows[0] ?? null;
+  const row = rows[0] ?? null;
+  if (row) recordAdherenceOutcome(row, 1);
+  return row;
 }
 
 async function markSkipped(id) {
@@ -82,7 +98,9 @@ async function markSkipped(id) {
     `UPDATE commitments SET status = 'skipped' WHERE id = $1 AND status = 'open' RETURNING *`,
     [id]
   );
-  return rows[0] ?? null;
+  const row = rows[0] ?? null;
+  if (row) recordAdherenceOutcome(row, -1);
+  return row;
 }
 
 /**
