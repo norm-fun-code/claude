@@ -26,7 +26,10 @@ const TONE_HEADLINE = {
 
 // ── deterministic fallback (also the LLM's scaffold) ─────────────────────────
 
-function composeFallback({ autonomic, load, openHabits, gratitude = [], training = null, isRestDay = false }) {
+function composeFallback({
+  autonomic, load, openHabits, gratitude = [], training = null, isRestDay = false,
+  tomorrowFirstEvent = null, tomorrowIsDayOff = false, tomorrowHoliday = null,
+}) {
   const { hrv, hrvBaseline, rhr, rhrBaseline, tone, sampleThin } = autonomic;
 
   let readiness;
@@ -76,10 +79,15 @@ function composeFallback({ autonomic, load, openHabits, gratitude = [], training
     }
   }
 
-  const tomorrow =
+  let tomorrow =
     tone === 'settled'
       ? 'Hold your bedtime window and tomorrow opens from a good place.'
       : 'Lights down on time tonight is the single biggest lever on tomorrow — protect the bedtime window.';
+  if (tomorrowFirstEvent) {
+    tomorrow = `${tomorrowFirstEvent} tomorrow — get to bed on time so you're not running on empty for it.`;
+  } else if (tomorrowIsDayOff) {
+    tomorrow = 'Tomorrow' + (tomorrowHoliday ? ` is ${tomorrowHoliday}` : "'s a day off") + " — you've got more room tonight if you want it, but the wind-down still pays off.";
+  }
 
   const habits = openHabits.length
     ? `Still open: ${openHabits.join(', ')} — quick wins before bed.`
@@ -143,7 +151,11 @@ function commitmentsLine(commitments) {
 }
 
 function buildPrompt(signals) {
-  const { autonomic: a, load: l, openHabits, gratitude = [], morningPlan = null, training = null, commitments = null, dayContext = '', isRestDay = false } = signals;
+  const {
+    autonomic: a, load: l, openHabits, gratitude = [], morningPlan = null, training = null,
+    commitments = null, dayContext = '', isRestDay = false,
+    tomorrowFirstEvent = null, tomorrowIsDayOff = false, tomorrowHoliday = null,
+  } = signals;
   const lines = [
     `Autonomic tone: ${a.tone}${a.sampleThin ? ' (thin data — soft-pedal)' : ''}`,
     a.hrv != null ? `Daytime HRV today: ${ms(a.hrv)}${a.hrvBaseline != null ? ` (your norm ${ms(a.hrvBaseline)})` : ''}` : 'Daytime HRV today: (none)',
@@ -163,6 +175,11 @@ function buildPrompt(signals) {
     gratitude.length
       ? `Recent gratitude notes (most recent first — reflect the THEME back in your own words, do not quote verbatim or list): ${gratitude.map((g) => `"${String(g.text).slice(0, 200)}"`).join(' | ')}`
       : 'Recent gratitude notes: (none logged)',
+    tomorrowFirstEvent
+      ? `Tomorrow's first commitment: ${tomorrowFirstEvent} — this is EARLY, factor it into how firmly you push bedtime tonight.`
+      : tomorrowIsDayOff
+        ? `Tomorrow is a day off${tomorrowHoliday ? ` (${tomorrowHoliday})` : ''} — no early alarm to protect; there's more slack tonight if the user wants it.`
+        : 'Tomorrow: (no early commitment on record — a normal working day)',
   ].filter(Boolean);
 
   return `Tonight's signals:
@@ -174,7 +191,7 @@ Write the evening wind-down brief as JSON with EXACTLY these string fields:
   "readiness": "1-2 sentences on autonomic tone from the HRV/RHR vs the user's norm, and what it means for tonight. If data is thin, say so and defer to how they feel.",
   "today": "ONE sentence closing the loop on today's movement (steps/energy). If today was a scheduled rest day, say so and frame lower activity as expected/fine — never as falling short of the training-day norm. Empty string if no data.",
   "plan": "ONE sentence grading the day against what was asked of it — this morning's plan AND any commitments the user made today (see the commitments line). The honest ledger, not a lecture: credit what they kept (session done, commitments honored) plainly; name what slipped without guilt and without re-issuing the instruction — the day is over. On a rest day, there was no session to grade — do not treat the rest itself as a miss. Prefer concrete evidence (planned session done/not, commitments kept/open, steps vs norm). Empty string only if there's genuinely nothing to grade.",
-  "tomorrow": "ONE sentence: the bedtime/wind-down lever that sets up tomorrow. Do not cite a recovery score.",
+  "tomorrow": "ONE sentence: the bedtime/wind-down lever that sets up tomorrow. If tomorrow's first commitment is early, make the bedtime push concrete and specific to that (e.g. 'a 7:30 start tomorrow — get down by 10:30'), not generic. If tomorrow is a day off with no early commitment, say there's more room tonight while still valuing the wind-down. Do not cite a recovery score.",
   "habits": "ONE short nudge listing the still-open evening habits, or empty string if none.",
   "reflection": "ONE sentence — the presence beat that closes the day, the mindfulness counterpart to the body read above. If recent gratitude notes are present, gently echo their theme in your own words (never quote verbatim, never list them like a report) so the reflection lands as something a person who was listening would say. If none are present, warmly invite one line of gratitude before bed. Keep it human and unforced; empty string only if anything here would feel hollow."
 }`;
@@ -302,6 +319,50 @@ async function runEveningHealthBrief(opts = {}) {
     const entries = await require('../store/dayJournal').forDay(day);
     signals.dayContext = entries.map((e) => e.text).join(' ');
   } catch { signals.dayContext = ''; }
+  // Tomorrow's calendar — makes the bedtime lever concrete ("7:30 start
+  // tomorrow, get down by 10:30") instead of the same generic sleep-hygiene
+  // line every night. Best-effort: calendar creds may be absent.
+  try {
+    const tmr = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const tomorrowStr = tmr.toLocaleDateString('en-CA', { timeZone: tz });
+    const { dayOff, holiday } = require('../util/dayContext').isDayOff(tomorrowStr);
+    const calendarSvc = require('../services/calendar');
+    const [tomorrowEvents, tomorrowWorkBusy] = await Promise.all([
+      calendarSvc.fetchCalendarEvents({ date: tmr }).catch(() => []),
+      calendarSvc.fetchWorkBusyBlocks({ date: tmr }).catch(() => []),
+    ]);
+    const toMin = (t) => {
+      const m = String(t || '').match(/(\d{1,2}):(\d{2})\s*([AaPp][Mm])?/);
+      if (!m) return null;
+      let h = Number(m[1]);
+      const mer = m[3] ? m[3].toUpperCase() : null;
+      if (mer === 'PM' && h !== 12) h += 12;
+      if (mer === 'AM' && h === 12) h = 0;
+      return h * 60 + Number(m[2]);
+    };
+    const candidates = [];
+    for (const e of tomorrowEvents) {
+      if (!e.allDay && e.startTime) {
+        const min = toMin(e.startTime);
+        if (min != null) candidates.push({ min, label: `"${e.title}" at ${e.startTime}` });
+      }
+    }
+    for (const b of tomorrowWorkBusy) {
+      const min = toMin(b.start);
+      if (min != null) candidates.push({ min, label: `a meeting at ${b.start}` });
+    }
+    candidates.sort((x, y) => x.min - y.min);
+    const EARLY_CUTOFF_MIN = 8 * 60 + 30; // 8:30am — earlier than this tightens tonight's bedtime push
+    const earliest = candidates[0];
+    signals.tomorrowFirstEvent = earliest && earliest.min < EARLY_CUTOFF_MIN ? earliest.label : null;
+    signals.tomorrowIsDayOff = dayOff;
+    signals.tomorrowHoliday = holiday;
+  } catch (err) {
+    console.error('[evening-brief] tomorrow context failed:', err.message);
+    signals.tomorrowFirstEvent = null;
+    signals.tomorrowIsDayOff = false;
+    signals.tomorrowHoliday = null;
+  }
   const content = await composeEveningBrief(signals);
   content.day = day;
   content.builtAt = new Date().toISOString();

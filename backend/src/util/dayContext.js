@@ -82,4 +82,19 @@ function describeDayOff(dateStr) {
   return '';
 }
 
-module.exports = { usHolidayName, describeDayOff, nthWeekday, lastWeekday, observedShift, pad };
+/**
+ * Pure. True if the given YYYY-MM-DD is a non-workday (weekend or an observed
+ * US federal holiday), plus the holiday name if any. describeDayOff's copy is
+ * hardcoded to first-person "Today is..." — this is for callers describing a
+ * day OTHER than today (e.g. "is TOMORROW a day off?").
+ */
+function isDayOff(dateStr) {
+  const m = String(dateStr || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return { dayOff: false, holiday: null };
+  const [year, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const dow = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  const holiday = usHolidayName(year, month, day);
+  return { dayOff: Boolean(holiday) || dow === 0 || dow === 6, holiday };
+}
+
+module.exports = { usHolidayName, describeDayOff, isDayOff, nthWeekday, lastWeekday, observedShift, pad };

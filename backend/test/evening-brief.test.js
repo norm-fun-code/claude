@@ -87,3 +87,47 @@ test('rest day: the plan line does not grade the rest itself as a miss', () => {
   });
   assert.equal(c.plan, ''); // nothing to grade — matches the pre-existing training.planned==='rest' guard
 });
+
+// ── Tomorrow-awareness: the bedtime lever gets concrete when there's an early
+// commitment on record, or eases off when tomorrow is a day off ────────────
+
+test('an early first event tomorrow tightens the bedtime line with the specific commitment', () => {
+  const c = composeFallback({
+    ...sig({ tone: 'settled' }),
+    tomorrowFirstEvent: '"Client call" at 7:30 AM',
+  });
+  assert.match(c.tomorrow, /7:30 AM/);
+  assert.match(c.tomorrow, /bed on time/i);
+});
+
+test('tomorrow a day off (no early event) reads as more slack, not the generic bedtime line', () => {
+  const c = composeFallback({
+    ...sig({ tone: 'settled' }),
+    tomorrowIsDayOff: true,
+  });
+  assert.match(c.tomorrow, /day off/i);
+  assert.match(c.tomorrow, /more room/i);
+});
+
+test('day off tomorrow names the holiday when there is one', () => {
+  const c = composeFallback({
+    ...sig({ tone: 'settled' }),
+    tomorrowIsDayOff: true,
+    tomorrowHoliday: 'Independence Day',
+  });
+  assert.match(c.tomorrow, /Independence Day/);
+});
+
+test('an early event takes priority over a day-off flag if both are somehow set', () => {
+  const c = composeFallback({
+    ...sig({ tone: 'settled' }),
+    tomorrowFirstEvent: 'a meeting at 8:00 AM',
+    tomorrowIsDayOff: true,
+  });
+  assert.match(c.tomorrow, /8:00 AM/);
+});
+
+test('no tomorrow context (normal workday, nothing early) falls back to the generic bedtime line', () => {
+  const c = composeFallback(sig({ tone: 'settled' }));
+  assert.match(c.tomorrow, /bedtime window/i);
+});

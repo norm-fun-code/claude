@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { usHolidayName, describeDayOff } = require('../src/util/dayContext');
+const { usHolidayName, describeDayOff, isDayOff } = require('../src/util/dayContext');
 
 test('July 4 2026 falls on Saturday → observed Friday July 3', () => {
   assert.equal(usHolidayName(2026, 7, 4), null);        // actual date, not observed
@@ -48,4 +48,24 @@ test('describeDayOff: the day before a holiday gives a heads-up', () => {
 test('describeDayOff: bad input is safe', () => {
   assert.equal(describeDayOff(''), '');
   assert.equal(describeDayOff('nonsense'), '');
+});
+
+// ── isDayOff: same underlying rule, exposed as a plain boolean for callers
+// describing a day OTHER than today (e.g. the evening brief on TOMORROW) ────
+
+test('isDayOff: a plain weekday is not a day off', () => {
+  assert.deepEqual(isDayOff('2026-07-07'), { dayOff: false, holiday: null }); // Tuesday
+});
+
+test('isDayOff: a Saturday is a day off with no holiday name', () => {
+  assert.deepEqual(isDayOff('2026-07-11'), { dayOff: true, holiday: null });
+});
+
+test('isDayOff: an observed holiday is a day off and names it', () => {
+  assert.deepEqual(isDayOff('2026-07-03'), { dayOff: true, holiday: 'Independence Day' });
+});
+
+test('isDayOff: bad input is safe', () => {
+  assert.deepEqual(isDayOff(''), { dayOff: false, holiday: null });
+  assert.deepEqual(isDayOff('nonsense'), { dayOff: false, holiday: null });
 });

@@ -22,11 +22,11 @@ function formatTime(dateTimeStr, timeZone) {
   });
 }
 
-async function fetchCalendarEvents() {
+async function fetchCalendarEvents({ date } = {}) {
   const auth = getAuthClient();
   const calendar = google.calendar({ version: 'v3', auth });
 
-  const now = new Date();
+  const now = date instanceof Date ? date : new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
   const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
 
