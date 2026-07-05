@@ -58,15 +58,24 @@ async function recordRecommendation({
   return id;
 }
 
-/** Returns recommendations ordered newest-first. */
+/**
+ * Returns recommendations ordered newest-first, each carrying its linked
+ * commitment's status/due date if one was auto-created (see recordRecommendation)
+ * — so a caller (the ledger UI) can tell "this resolves itself when you finish
+ * the linked task on Today" apart from "this is waiting on your rating."
+ */
 async function listRecommendations({ limit = 50, since = null, outcomeMetric = null } = {}) {
   const params = [limit];
   const clauses = [];
-  if (since) clauses.push(`created_at >= $${params.push(since)}`);
-  if (outcomeMetric) clauses.push(`outcome_metric = $${params.push(outcomeMetric)}`);
+  if (since) clauses.push(`r.created_at >= $${params.push(since)}`);
+  if (outcomeMetric) clauses.push(`r.outcome_metric = $${params.push(outcomeMetric)}`);
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const { rows } = await query(
-    `SELECT * FROM recommendations ${where} ORDER BY created_at DESC LIMIT $1`,
+    `SELECT r.*, c.status AS commitment_status, c.due_at AS commitment_due_at
+       FROM recommendations r
+       LEFT JOIN commitments c ON c.recommendation_id = r.id
+       ${where}
+      ORDER BY r.created_at DESC LIMIT $1`,
     params
   );
   return rows;
