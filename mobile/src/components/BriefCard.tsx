@@ -317,6 +317,8 @@ export function BriefCard({ brief, fallback }: Props) {
                 onSubmitEditing={() => answerQuestion()}
                 editable={qVoice === 'idle'}
                 multiline={false}
+                autoCorrect
+                spellCheck
               />
               {voiceAvailable && (
                 <Pressable
@@ -373,6 +375,8 @@ export function BriefCard({ brief, fallback }: Props) {
           returnKeyType="send"
           onSubmitEditing={saveNote}
           multiline={false}
+          autoCorrect
+          spellCheck
         />
         <TouchableOpacity
           onPress={saveNote}

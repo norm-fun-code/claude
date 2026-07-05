@@ -132,6 +132,8 @@ export function AnnotationsCard({ inline = false }: AnnotationsProps = {}) {
               onChangeText={setLabel}
               placeholder="e.g. Work trip to NYC"
               placeholderTextColor={c.subtext}
+              autoCorrect
+              spellCheck
             />
             <Text style={[styles.durationLabel, { color: c.subtext }]}>Lasts through</Text>
             <View style={styles.durationRow}>

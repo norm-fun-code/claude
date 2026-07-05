@@ -102,6 +102,8 @@ export function GratitudeReflection({ onSaved }: Props) {
         multiline
         numberOfLines={2}
         textAlignVertical="top"
+        autoCorrect
+        spellCheck
       />
       <View style={styles.row}>
         <Pressable

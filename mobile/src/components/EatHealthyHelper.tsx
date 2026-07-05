@@ -109,6 +109,8 @@ export function EatHealthyHelper({ onApply }: Props) {
         multiline
         numberOfLines={3}
         textAlignVertical="top"
+        autoCorrect
+        spellCheck
       />
       <View style={styles.row}>
         <Pressable

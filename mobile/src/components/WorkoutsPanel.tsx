@@ -1391,6 +1391,8 @@ function ActivityLogModal({
                   onChangeText={setNote}
                   placeholder="e.g. incline walk"
                   placeholderTextColor={c.subtext}
+                  autoCorrect
+                  spellCheck
                 />
               </View>
             </View>

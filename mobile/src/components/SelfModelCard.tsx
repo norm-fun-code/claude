@@ -273,6 +273,8 @@ export function SelfModelCard() {
                 autoFocus
                 returnKeyType="done"
                 onSubmitEditing={saveGoal}
+                autoCorrect
+                spellCheck
               />
               <View style={styles.sheetBtns}>
                 <TouchableOpacity onPress={() => { setGoalModalVisible(false); setNewGoalText(''); }} style={[styles.sheetBtn, { borderColor: c.border }]}>

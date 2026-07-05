@@ -100,6 +100,8 @@ export function BriefSignalsCard({ signals }: Props) {
           returnKeyType="send"
           onSubmitEditing={submit}
           multiline={false}
+          autoCorrect
+          spellCheck
         />
         <TouchableOpacity
           onPress={submit}

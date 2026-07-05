@@ -382,6 +382,8 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
                             returnKeyType="done"
                             autoFocus
                             selectTextOnFocus
+                            autoCorrect
+                            spellCheck
                           />
                         ) : (
                           <Text style={[styles.convTitle, { color: c.text }]} numberOfLines={1}>
@@ -577,6 +579,8 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
                     returnKeyType="send"
                     multiline
                     editable={voiceState === 'idle'}
+                    autoCorrect
+                    spellCheck
                   />
                   {voiceAvailable && !question.trim() && (
                     <Pressable

@@ -208,6 +208,8 @@ export function CheckinModal({ visible, onClose }: Props) {
               multiline
               maxLength={500}
               autoFocus={!allDone}
+              autoCorrect
+              spellCheck
             />
             {/* Show all three scores so user can edit any */}
             <View style={styles.summaryRow}>

@@ -203,6 +203,21 @@ export function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}
         body: JSON.stringify({ context: context.trim(), goals: cleanGoals }),
       });
       if (!res.ok) throw new Error(`Server ${res.status}`);
+      const { intention } = await res.json();
+      // The summary view below renders `currentGoals`/`currentWeek`, NOT the
+      // editor's own `goals` state — those were only ever populated by the
+      // initial mount fetch, so without updating them here a successful edit
+      // still displayed the pre-edit text/checkboxes right after saving.
+      if (intention) {
+        const rawGoals = Array.isArray(intention.goals) ? intention.goals : [];
+        setCurrentGoals(
+          rawGoals.map((g: unknown) => {
+            const o = (g ?? {}) as { text?: unknown; achieved?: unknown };
+            return { text: String(o.text ?? ''), achieved: o.achieved === true };
+          }).filter((g: PriorGoal) => g.text)
+        );
+        if (typeof intention.week_start === 'string') setCurrentWeek(intention.week_start);
+      }
       setSaved(true);
       setEditing(false);
     } catch {
@@ -282,6 +297,8 @@ export function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}
             value={g}
             onChangeText={(v) => setGoal(i, v)}
             returnKeyType="done"
+            autoCorrect
+            spellCheck
           />
           {goals.length > 1 && (
             <TouchableOpacity onPress={() => removeGoal(i)} style={styles.removeBtn}>
@@ -304,6 +321,8 @@ export function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}
         value={context}
         onChangeText={setContext}
         multiline
+        autoCorrect
+        spellCheck
       />
 
       {failed && <Text style={styles.failed}>Couldn’t save — check your connection and try again.</Text>}
