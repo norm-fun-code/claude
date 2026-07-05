@@ -205,7 +205,28 @@ async function runReview({ asOf = new Date(), persist = true } = {}) {
     console.error('[review] outcome measurement failed:', err.message);
   }
 
-  const ctx = await gatherWeek(asOf);
+  // gatherWeek/composeReview touch several DB reads with no guard of their own —
+  // previously, any failure here (a bad query, a malformed finding) threw all
+  // the way out of runReview with NOTHING saved for the week: no fallback row,
+  // no signal in the DB, nothing for the client to show. The LLM-call failure
+  // below already degrades to a numbers-only placeholder; this does the same
+  // one level up, so the week's card is never silently empty.
+  let ctx;
+  try {
+    ctx = await gatherWeek(asOf);
+  } catch (err) {
+    console.error('[review] gatherWeek failed:', err.message);
+    const fallbackCtx = { periodStart: new Date(asOf.getTime() - 7 * DAY), periodEnd: new Date(asOf), metrics: [] };
+    const content = {
+      headline: 'Weekly review (unavailable)',
+      narrative: `Couldn't gather this week's data (${err.message}). Try again from the app, or check next week.`,
+      wins: [], watchouts: [], focus: [], metrics: [],
+    };
+    const saved = persist
+      ? await briefingsStore.saveBriefing({ kind: 'weekly', content, periodStart: fallbackCtx.periodStart, periodEnd: fallbackCtx.periodEnd })
+      : null;
+    return { ...content, id: saved?.id, generatedAt: saved?.generated_at };
+  }
   const { system: baseSystem, prompt } = composeReview(ctx);
 
   // Prepend the self-model so the review writer knows the full person, not just

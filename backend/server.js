@@ -2814,6 +2814,29 @@ app.post('/api/weekly/run', async (req, res) => {
   }
 });
 
+// External-cron trigger for the weekly review — the same CRON_SECRET pattern as
+// /api/cron/morning, for a host (e.g. cron-job.org) to hit on a Sunday-only
+// schedule. Exists because the in-process scheduler's setTimeout chain
+// (scheduler.js's scheduleWeekly) resets on every server restart/redeploy — a
+// restart landing near the scheduled time can silently drop that week's run
+// with no external trigger to fall back on.
+// Set CRON_SECRET in Railway env vars, then call:
+//   POST /api/cron/weekly?secret=<CRON_SECRET>
+app.post('/api/cron/weekly', async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return res.status(503).json({ error: 'CRON_SECRET not configured' });
+  const provided = req.query.secret || req.body?.secret;
+  if (provided !== secret) return res.status(401).json({ error: 'invalid secret' });
+  try {
+    const r = await runWeeklyReviewWithPush({});
+    console.log(`[cron] weekly review triggered externally: generated=${r.generated} sent=${r.sent}`);
+    res.json(r);
+  } catch (err) {
+    console.error('[cron] weekly review failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Weekly review — the reflective narrative.
 app.get('/api/review', async (req, res) => {
   try {
