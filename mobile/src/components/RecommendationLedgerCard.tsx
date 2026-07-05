@@ -186,7 +186,11 @@ function SwipeableRow({
   const isPrimaryAction = status.kind === 'needs-rating';
 
   return (
-    <View style={{ overflow: 'hidden' }}>
+    // marginTop lives HERE, not on the row below — the delete hint fills this
+    // wrapper's full box (top: 0 to bottom: 0). If the row had its own
+    // marginTop instead, its box would start lower than the wrapper's top,
+    // leaving an uncovered sliver of red visible above every row at rest.
+    <View style={styles.rowWrapper}>
       {/* Red delete background revealed on swipe */}
       <View style={[styles.deleteHint, { backgroundColor: '#FF3B30' }]}>
         <Text style={styles.deleteHintText}>Delete</Text>
@@ -365,10 +369,10 @@ const styles = StyleSheet.create({
     minWidth: 80,
   },
   deleteHintText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  rowWrapper: { overflow: 'hidden', marginTop: spacing.sm },
   row: {
     borderTopWidth: 1,
     paddingTop: spacing.md,
-    marginTop: spacing.sm,
     paddingBottom: 2,
   },
   content: { gap: 5 },
