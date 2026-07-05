@@ -1349,7 +1349,7 @@ async function analyze(opts = {}) {
   };
 }
 
-module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeHabitHealthSplits, computeSleepImpact, computeActivityImpact, computeDaytimeCardio, computeWellbeingGap, DEFAULTS };
+module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeHabitHealthSplits, computeSleepImpact, computeActivityImpact, computeDaytimeCardio, computeWellbeingGap, DEFAULTS, TREND_STALE_DAYS };
 
 // CLI entrypoint
 if (require.main === module) {

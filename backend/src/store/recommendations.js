@@ -16,6 +16,12 @@ function normalizeRecTitle(title) {
     .trim();
 }
 
+// A recommendation with no outcome_metric will never be auto-measured
+// (measureOutcomes only looks at rows WHERE outcome_metric IS NOT NULL), so
+// without this it would sit "Pending" forever with no way to close the loop.
+// The window a linked commitment stays open before it's due for a follow-up.
+const FOLLOWUP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
 async function recordRecommendation({
   type = 'leverage',
   findingId = null,
@@ -27,6 +33,7 @@ async function recordRecommendation({
   score = null,
   surfacedIn = 'briefing',
   dedupKey = null,
+  commitmentSource = 'brief',
 }) {
   const { rows } = await query(
     `INSERT INTO recommendations
@@ -35,7 +42,20 @@ async function recordRecommendation({
      RETURNING id`,
     [type, findingId, title, detail, lever, outcomeMetric, expectedDirection, score != null ? +score.toFixed(4) : null, surfacedIn, dedupKey]
   );
-  return rows[0]?.id;
+  const id = rows[0]?.id;
+  if (!outcomeMetric && id) {
+    // Auto-create a linked commitment so marking it done/skipped on Today
+    // resolves this recommendation via the same ±1 adherence convention as a
+    // manual thumbs-up/down, instead of it never getting a verdict.
+    require('./commitments').create({
+      title: String(title).slice(0, 200),
+      detail,
+      source: commitmentSource,
+      dueAt: new Date(Date.now() + FOLLOWUP_WINDOW_MS),
+      recommendationId: id,
+    }).catch((e) => console.error('[recommendations] auto-commit failed:', e.message));
+  }
+  return id;
 }
 
 /** Returns recommendations ordered newest-first. */
@@ -69,14 +89,20 @@ async function mostRecentLeverageAction(beforeDate) {
 }
 
 /**
- * Store the measured outcome for a recommendation.
+ * Store the measured outcome for a recommendation. First verdict wins: a
+ * recommendation can be resolved through more than one path (a manual
+ * thumbs-up/down, an auto-measured metric delta, or a linked commitment's
+ * done/skipped cascade) — once one has written an outcome, a later call is a
+ * no-op rather than silently overwriting it.
  * delta: actual change in outcome_metric over the 7 days following the recommendation.
  */
 async function setOutcome(id, { delta, measuredAt = new Date() }) {
-  await query(
-    `UPDATE recommendations SET outcome_delta = $2, outcome_measured_at = $3 WHERE id = $1`,
+  const { rowCount } = await query(
+    `UPDATE recommendations SET outcome_delta = $2, outcome_measured_at = $3
+      WHERE id = $1 AND outcome_measured_at IS NULL`,
     [id, delta != null ? +Number(delta).toFixed(4) : null, measuredAt]
   );
+  return rowCount > 0;
 }
 
 /**

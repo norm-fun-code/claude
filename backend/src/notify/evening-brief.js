@@ -331,15 +331,7 @@ async function runEveningHealthBrief(opts = {}) {
       calendarSvc.fetchCalendarEvents({ date: tmr }).catch(() => []),
       calendarSvc.fetchWorkBusyBlocks({ date: tmr }).catch(() => []),
     ]);
-    const toMin = (t) => {
-      const m = String(t || '').match(/(\d{1,2}):(\d{2})\s*([AaPp][Mm])?/);
-      if (!m) return null;
-      let h = Number(m[1]);
-      const mer = m[3] ? m[3].toUpperCase() : null;
-      if (mer === 'PM' && h !== 12) h += 12;
-      if (mer === 'AM' && h === 12) h = 0;
-      return h * 60 + Number(m[2]);
-    };
+    const toMin = require('../util/date').toMinutesSinceMidnight;
     const candidates = [];
     for (const e of tomorrowEvents) {
       if (!e.allDay && e.startTime) {

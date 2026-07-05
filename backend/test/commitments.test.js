@@ -210,3 +210,32 @@ test('parseAction still returns just the first (back-compat)', () => {
     '<action>{"type":"add_context","text":"y tomorrow"}</action>';
   assert.deepEqual(parseAction(text), { action: 'log_day_context', text: 'x day' });
 });
+
+// ── parseAction: log_weight ──────────────────────────────────────────────────
+
+test('parseAction extracts a log_weight and rounds to one decimal', () => {
+  const a = parseAction('<action>{"type":"log_weight","weightLb":172.34}</action>');
+  assert.deepEqual(a, { action: 'log_weight', weightLb: 172.3 });
+});
+
+test('parseAction rejects an out-of-range weight rather than storing garbage', () => {
+  assert.equal(parseAction('<action>{"type":"log_weight","weightLb":12}</action>'), null);
+  assert.equal(parseAction('<action>{"type":"log_weight","weightLb":900}</action>'), null);
+});
+
+test('parseAction rejects a non-numeric weight', () => {
+  assert.equal(parseAction('<action>{"type":"log_weight","weightLb":"a lot"}</action>'), null);
+  assert.equal(parseAction('<action>{"type":"log_weight"}</action>'), null);
+});
+
+// ── parseAction: log_gratitude_text ──────────────────────────────────────────
+
+test('parseAction extracts a log_gratitude_text', () => {
+  const a = parseAction('<action>{"type":"log_gratitude_text","text":"my health and my family"}</action>');
+  assert.deepEqual(a, { action: 'log_gratitude_text', text: 'my health and my family' });
+});
+
+test('parseAction rejects an empty log_gratitude_text', () => {
+  assert.equal(parseAction('<action>{"type":"log_gratitude_text","text":""}</action>'), null);
+  assert.equal(parseAction('<action>{"type":"log_gratitude_text"}</action>'), null);
+});

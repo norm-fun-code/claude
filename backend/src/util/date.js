@@ -55,4 +55,21 @@ function safeDate(value) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-module.exports = { formatDate, daysBetween, addDays, dayAnchorTs, safeDate };
+/**
+ * Parse a bare 12-hour clock string ("2:00 PM", "9:30") to minutes since
+ * midnight, or null if unparseable — `new Date(...)` can't parse a bare time,
+ * and callers (calendar/free-busy blocks) need to compare and sort these
+ * directly. Returns null (not 0) on no-match so callers can distinguish "no
+ * time" from midnight; guard with `!= null` before using the result.
+ */
+function toMinutesSinceMidnight(t) {
+  const m = String(t || '').match(/(\d{1,2}):(\d{2})\s*([AaPp][Mm])?/);
+  if (!m) return null;
+  let h = Number(m[1]);
+  const mer = m[3] ? m[3].toUpperCase() : null;
+  if (mer === 'PM' && h !== 12) h += 12;
+  if (mer === 'AM' && h === 12) h = 0;
+  return h * 60 + Number(m[2]);
+}
+
+module.exports = { formatDate, daysBetween, addDays, dayAnchorTs, safeDate, toMinutesSinceMidnight };

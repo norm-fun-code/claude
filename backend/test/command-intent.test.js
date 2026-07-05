@@ -22,6 +22,11 @@ const COMMANDS = [
   'My workout today instead of zone 2 was 30 minutes of biking and an hour of playing basketball. I wore my Apple Watch.',
   'instead of zone 2 I went for a hike',
   'my workout today was rough',
+  // Level 3: weight + gratitude-text statements.
+  'I weighed in at 172 today',
+  'my weight is 172 today',
+  "I'm grateful for my health and my family today",
+  'grateful that the surgery went well',
 ];
 
 // Questions must fall through to the full reasoning path (power preserved).
@@ -52,6 +57,9 @@ const QUESTIONS = [
   // by the new "instead of zone2" pattern.
   'should I do something instead of zone 2 today?',
   'what should I do instead of zone 2 if I am sore?',
+  // Weight/gratitude QUESTIONS must not be swept up by the new Level 3 patterns.
+  "how's my weight trending this month?",
+  'what am I most grateful for lately?',
 ];
 
 test('commands are detected as commands', () => {

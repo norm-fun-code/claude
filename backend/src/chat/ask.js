@@ -49,6 +49,8 @@ Valid actions (compact JSON, only for these concrete app changes — never for a
 - {"type":"log_habit","habit":"morningTM|afternoonTM|gratitude|coldShower|exercise"} — when they say they DID it.
 - {"type":"log_activity","activityType":"walk|zone2|run|strength|intervals|mobility|basketball|soccer|tennis|pickleball|dance|hike|swim|cycle|yoga|golf|ski|box|rest|other","durationMin":<number or omit>,"label":"<short, e.g. '30 min biking'>","noWatch":true|false} — when they tell you a SPECIFIC alternate activity they actually did instead of (or in addition to) the planned session ("I biked for 30 min and played basketball for an hour instead of Zone 2"). This is DIFFERENT from log_habit's generic exercise toggle — it's the structured "what I actually did" record. Map to the closest activityType (biking/cycling→"cycle", not in the list→"other" with a descriptive label). If they describe MORE THAN ONE activity, emit ONE log_activity tag PER activity (this is exactly the multi-action case — see below). noWatch defaults to false (assume a tracked workout unless they say they didn't wear a watch/tracker).
 - {"type":"log_checkin","mood":1-5,"energy":1-5,"focus":1-5} — when they tell you their mood / energy / focus for today (1-5 scale). Include only the fields they actually gave; omit the rest. "my mood and energy were 5, focus was 4" → {"mood":5,"energy":5,"focus":4}. "my energy is a 3 today" → {"energy":3}.
+- {"type":"log_weight","weightLb":<number>} — when they tell you their body weight today ("I weighed in at 172", "my weight is 172 today"). Always convert to POUNDS if they gave kg (kg × 2.20462) — the field is always weightLb regardless of what unit they spoke in.
+- {"type":"log_gratitude_text","text":"<what they said they're grateful for, lightly cleaned up>"} — when they actually SPEAK what they're grateful for today ("I'm grateful for my health and my family", "grateful that the surgery went well"). This is DIFFERENT from log_habit's gratitude toggle, which is only for a bare "I did my gratitude journal" with no content given — if they give you the actual content, use this instead (it also marks the gratitude habit done, so never emit both for the same statement).
 - {"type":"add_context","text":"<short note for tomorrow's brief, e.g. traveling today>"}
 - {"type":"log_day_context","text":"<the FULL recap, in the user's own words, lightly cleaned up>"} — when they give a narrative recap of their DAY ("today's context: …", "here's how my day went…", "let me tell you about today…"). This is the day journal: keep the whole substance (don't truncate to a note), preserve specifics (what happened, how they felt, why). Distinct from add_context (a short flag for tomorrow's brief) and log_checkin (just the 1-5 numbers). Acknowledge warmly in one line, like someone who was listening.
 - {"type":"add_chapter","kind":"pregnancy|countdown|note","label":"<short>","keyDate":"YYYY-MM-DD or null","keyDateLabel":"due|deadline|null"} — a standing life fact to remember long-term.
@@ -83,7 +85,7 @@ function isFinancialQuestion(q) {
 // interrogative or ambiguous returns false and falls through to the full
 // reasoning path, so real questions never lose power.
 const CMD_START_RE = /^(log |swap |switch |remind |note |remember |mark |set (a |an )?reminder|today'?s context|context:)/i;
-const CMD_STATEMENT_RE = /\b(remind me|log (my|the|it|that|a)|swap my|switch my|i (did|had|finished|completed|took|already|just (did|had|finished|took))|my (mood|energy|focus)\b|mark (it|that|this) (as )?done|today'?s context|my workout (today|this morning|this evening)?\s*(was|is|ended up being)\b|instead of (zone ?2|push|pull|rest|mobility|intervals)\b)/i;
+const CMD_STATEMENT_RE = /\b(remind me|log (my|the|it|that|a)|swap my|switch my|i (did|had|finished|completed|took|already|just (did|had|finished|took))|my (mood|energy|focus)\b|mark (it|that|this) (as )?done|today'?s context|my workout (today|this morning|this evening)?\s*(was|is|ended up being)\b|instead of (zone ?2|push|pull|rest|mobility|intervals)\b|i (weigh|weighed)\b|my weight (is|was)\b|weighed in at\b|i'?m (grateful|thankful) for\b|grateful (that|for)\b)/i;
 // Question openers, including common contraction spellings voice-to-text can
 // drop the apostrophe from ("hows" for "how's", not just "whats" for "what's").
 const QUESTION_START_RE = /^(should|why|how|how's|hows|what|which|when|when's|whens|where|where's|wheres|who|who's|whos|whom|is|are|am|was|were|do|does|did|can|could|would|will|shall|may|might|explain|tell me|help|give me|show me|walk me|compare|analy[sz]e|summari[sz]e|recommend|suggest|think|any|what's|whats)\b/i;
@@ -565,28 +567,17 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     if (recTitle && !DATA_QUERY_RE.test(recTitle)) {
       // Dedup by NUMBER-NORMALIZED title (matches the briefing path), so the same
       // recommendation with a slightly different percentage doesn't double-log.
+      // recordRecommendation auto-links a follow-up commitment itself, since a
+      // chat-sourced rec never carries an outcome_metric to auto-measure against.
       const recentStore = require('../store/recommendations');
       const normKey = recentStore.normalizeRecTitle(recTitle);
-      // Chat-sourced recs never carry an outcome_metric, so they'd otherwise sit
-      // "Pending" forever — auto-create a linked commitment to close the loop
-      // (see the identical pattern in server.js's leverage-ledger block).
-      const linkCommitment = (recId) => {
-        if (!recId) return;
-        const commitmentsStore = require('../store/commitments');
-        commitmentsStore.create({
-          title: recTitle.slice(0, 200),
-          source: 'chat',
-          dueAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-          recommendationId: recId,
-        }).catch((e) => console.error('[commitments] auto-create from chat rec failed:', e.message));
-      };
       recentStore.recentTitlesAll(7).then((recent) => {
         const alreadySeen = [...recent].some((t) => recentStore.normalizeRecTitle(t) === normKey);
         if (!alreadySeen) {
-          recordRecommendation({ type: 'leverage', title: recTitle, surfacedIn: 'chat' }).then(linkCommitment).catch(() => {});
+          recordRecommendation({ type: 'leverage', title: recTitle, surfacedIn: 'chat', commitmentSource: 'chat' }).catch(() => {});
         }
       }).catch(() => {
-        recordRecommendation({ type: 'leverage', title: recTitle, surfacedIn: 'chat' }).then(linkCommitment).catch(() => {});
+        recordRecommendation({ type: 'leverage', title: recTitle, surfacedIn: 'chat', commitmentSource: 'chat' }).catch(() => {});
       });
     }
   }
@@ -648,6 +639,17 @@ function validateAction(p) {
     const mood = clamp(p.mood), energy = clamp(p.energy), focus = clamp(p.focus);
     if (mood == null && energy == null && focus == null) return null; // need at least one valid rating
     return { action: 'log_checkin', mood, energy, focus };
+  }
+  if (type === 'log_weight') {
+    const weightLb = Number(p.weightLb);
+    // A single value with no other fields — reject outright rather than store
+    // garbage (unlike log_activity's durationMin, there's nothing else worth
+    // keeping if this is nonsense).
+    if (!Number.isFinite(weightLb) || weightLb < 50 || weightLb > 600) return null;
+    return { action: 'log_weight', weightLb: Math.round(weightLb * 10) / 10 };
+  }
+  if (type === 'log_gratitude_text' && p.text && String(p.text).trim()) {
+    return { action: 'log_gratitude_text', text: String(p.text).trim().slice(0, 1000) };
   }
   if (type === 'add_context' && p.text && String(p.text).trim()) return { action: 'add_context', text: String(p.text).slice(0, 200) };
   if (type === 'log_day_context' && p.text && String(p.text).trim()) {

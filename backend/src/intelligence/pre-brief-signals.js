@@ -8,22 +8,9 @@
 //   context  — label prefix used when the answer is stored as an annotation
 //   severity — 0–1, higher floats to top in selectQuestions()
 
-const fmt = (n) => '$' + Math.round(Math.abs(n)).toLocaleString('en-US');
+const { toMinutesSinceMidnight } = require('../util/date');
 
-// workBusy/calendar times arrive as bare 12-hour strings ("2:00 PM"), which
-// `new Date(...)` cannot parse (silently returns Invalid Date) — this used to
-// leave the packed-calendar signal permanently dead (meetingMin always 0, the
-// isNaN guard skipping every block without ever logging anything). Parse the
-// clock string directly instead of routing it through Date.
-function toMinutesSinceMidnight(t) {
-  const m = String(t).match(/(\d{1,2}):(\d{2})\s*([AaPp][Mm])?/);
-  if (!m) return null;
-  let h = Number(m[1]);
-  const mer = m[3] ? m[3].toUpperCase() : null;
-  if (mer === 'PM' && h !== 12) h += 12;
-  if (mer === 'AM' && h === 12) h = 0;
-  return h * 60 + Number(m[2]);
-}
+const fmt = (n) => '$' + Math.round(Math.abs(n)).toLocaleString('en-US');
 
 function buildSignals({ recovery, calendar = [], workBusy = [], spend, spendBaseline, tomorrowWorkBusy = [] }) {
   const signals = [];

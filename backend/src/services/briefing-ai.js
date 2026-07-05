@@ -58,6 +58,11 @@ function buildPrompt(emailData, notionText, quote, currentDay, workoutPlan, cale
   // Calendar/free-busy times arrive as 12-hour strings ("2:00 PM"); parse the
   // meridiem so afternoon meetings aren't mistaken for the morning, and re-emit
   // everything in 12-hour form so the brief never mixes clocks.
+  // NOTE: deliberately NOT src/util/date.js's toMinutesSinceMidnight — that one
+  // returns null on no-match; every use below does unguarded arithmetic on the
+  // result (sort comparators, cursor math), so swapping in null would need a
+  // guard at each call site. Don't copy this version elsewhere — reuse the
+  // shared util instead, which every OTHER caller in the repo already does.
   const toMin = (t) => {
     const m = String(t).match(/(\d{1,2}):(\d{2})\s*([AaPp][Mm])?/);
     if (!m) return 0;

@@ -26,7 +26,7 @@ const documentsStore = require('./src/store/documents');
 const llm = require('./src/llm');
 const { runIngest } = require('./src/ingest/run');
 const monarch = require('./src/connectors/monarch');
-const { analyze } = require('./src/intelligence/analyze');
+const { analyze, TREND_STALE_DAYS } = require('./src/intelligence/analyze');
 const { embedPending } = require('./src/intelligence/embeddings');
 const { ask, looksLikeCommand } = require('./src/chat/ask');
 const { discover, addToCart, history: shopHistory, ucpProbe } = require('./src/services/shop');
@@ -2036,6 +2036,27 @@ async function executeAction(routed) {
       if (routed.focus != null) parts.push(`focus ${routed.focus}`);
       return { done: true, description: `Logged your check-in: ${parts.join(', ')}` };
     }
+    if (routed.action === 'log_weight' && routed.weightLb != null) {
+      const WEIGHT_SOURCE = 'weight_log';
+      await sourcesStore.registerSource({ id: WEIGHT_SOURCE, domain: 'health', displayName: 'Weight Log' });
+      await metricsStore.insertMetrics([
+        { ts: new Date(), domain: 'health', metric: 'weight', value: routed.weightLb, unit: 'lbs', source: WEIGHT_SOURCE },
+      ]);
+      await sourcesStore.markSync(WEIGHT_SOURCE);
+      return { done: true, description: `Logged your weight: ${routed.weightLb} lbs` };
+    }
+    if (routed.action === 'log_gratitude_text' && routed.text) {
+      // Same write the manual gratitude-journal box makes (POST
+      // /api/habits/gratitude): save the reflection AND mark the habit done, so
+      // a voice-logged entry is indistinguishable from a manually-logged one.
+      await gratitudeLogsStore.upsert({ logDate: today, text: routed.text });
+      await sourcesStore.registerSource({ id: HABITS_SOURCE, domain: 'habits', displayName: 'Habit Stack' });
+      const { metrics } = mapHabits({ gratitude: true }, { tz });
+      await metricsStore.insertMetrics(metrics);
+      await recomputeHabitScore(tz);
+      await sourcesStore.markSync(HABITS_SOURCE);
+      return { done: true, description: 'Logged your gratitude reflection for today.' };
+    }
     if (routed.action === 'add_chapter' && routed.label) {
       const { replaced } = await lifeChaptersStore.createOrReplace({
         kind: ['pregnancy', 'countdown', 'note'].includes(routed.kind) ? routed.kind : 'note',
@@ -3618,18 +3639,28 @@ app.get('/api/briefing', async (req, res) => {
   // it's flagged as stalled so the brief never narrates a disconnected device
   // (e.g. Eight Sleep) as "still logging."
   let experimentsContext = '';
-  const EXPERIMENT_STALE_DAYS = 3;
+  // Same staleness bar as analyze.js's trend suppression (computeTrends) — one
+  // shared constant so the Health tab and the brief's own narration can't
+  // disagree about whether the same metric's data still counts as current.
+  const EXPERIMENT_STALE_DAYS = TREND_STALE_DAYS;
   try {
     const allExps = await experimentsStore.listExperiments();
     const runningExps = allExps.filter((e) => e.status === 'running').slice(0, 4);
     const pausedExps = allExps.filter((e) => e.status === 'paused').slice(0, 3);
 
+    // Each experiment's freshness check is an independent DB read — batch them
+    // instead of awaiting one at a time inside the loop.
+    const lasts = await Promise.all(runningExps.map((e) => {
+      const [domain, metric] = String(e.metric || '').split(':');
+      return domain && metric ? metricsStore.latest({ domain, metric }).catch(() => null) : null;
+    }));
+
     const lines = [];
-    for (const e of runningExps) {
+    runningExps.forEach((e, i) => {
       const [domain, metric] = String(e.metric || '').split(':');
       let note = '';
       if (domain && metric) {
-        const last = await metricsStore.latest({ domain, metric }).catch(() => null);
+        const last = lasts[i];
         const ageDays = last ? Math.floor((Date.now() - new Date(last.ts).getTime()) / 864e5) : null;
         if (ageDays == null || ageDays > EXPERIMENT_STALE_DAYS) {
           note = ` — NO FRESH DATA (${ageDays == null ? 'none ever' : `${ageDays}d old`}); do NOT say this is actively tracking or "still logging," at most note it's stalled`;
@@ -3639,7 +3670,7 @@ app.get('/api/briefing', async (req, res) => {
         ? Math.max(0, Math.ceil((new Date(e.end_date) - Date.now()) / 86400000))
         : null;
       lines.push(`⟳ Running: ${e.hypothesis}${daysLeft != null ? ` (${daysLeft}d left)` : ''}${note}`);
-    }
+    });
     for (const e of pausedExps) {
       lines.push(`⏸ Paused by the user: ${e.hypothesis} — do not reference as active, running, or logging`);
     }
@@ -3875,33 +3906,20 @@ app.get('/api/briefing', async (req, res) => {
           if (recentNorm.has(normKey) || seenThisRun.has(normKey)) continue;
           seenThisRun.add(normKey);
           if (dedupKey) seenKeysThisRun.add(dedupKey);
-          const outcomeMetric = ev.basis?.outcome ?? null;
+          // recordRecommendation auto-links a follow-up commitment itself when
+          // there's no outcomeMetric to auto-measure against.
           recommendationsStore.recordRecommendation({
             type: 'leverage',
             findingId: f.id ?? null,
             title: f.title,
             detail: f.detail ?? null,
             lever: ev.basis?.lever ?? null,
-            outcomeMetric,
+            outcomeMetric: ev.basis?.outcome ?? null,
             expectedDirection: ev.basis?.r != null ? (ev.basis.r >= 0 ? 'up' : 'down') : null,
             score: ev.score ?? null,
             surfacedIn: 'briefing',
             dedupKey,
-          }).then((recId) => {
-            // No metric to auto-measure against (measureOutcomes only fires for
-            // recs WITH an outcome_metric) — close the loop with a commitment
-            // instead, so it still resolves to a done/skipped verdict rather than
-            // sitting "Pending" forever.
-            if (!outcomeMetric && recId) {
-              const due = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-              commitmentsStore.create({
-                title: f.title.slice(0, 200),
-                detail: f.detail ?? null,
-                source: 'brief',
-                dueAt: due,
-                recommendationId: recId,
-              }).catch((e) => console.error('[commitments] auto-create from rec failed:', e.message));
-            }
+            commitmentSource: 'brief',
           }).catch((e) => console.error('[recommendations] log failed:', e.message));
         }
       }).catch((e) => console.error('[recommendations] dedup check failed:', e.message));
@@ -4557,8 +4575,10 @@ app.post('/api/recommendations/:id/outcome', async (req, res) => {
     const delta = thumbsUp
       ? (expected_direction === 'down' ? -1 : 1)
       : (expected_direction === 'down' ? 1 : -1);
-    await recommendationsStore.setOutcome(id, { delta, measuredAt: new Date() });
-    res.json({ ok: true, delta });
+    // First verdict wins — a rec resolved via a linked commitment's done/skipped
+    // cascade won't be silently overwritten by a later thumbs tap (or vice versa).
+    const applied = await recommendationsStore.setOutcome(id, { delta, measuredAt: new Date() });
+    res.json({ ok: true, delta, applied });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
