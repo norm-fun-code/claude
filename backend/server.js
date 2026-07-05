@@ -4115,6 +4115,35 @@ app.get('/api/briefing', async (req, res) => {
     }
   }
 
+  // Deterministic suppression for the "one question" — the prompt already says
+  // "never ask a question whose answer you already have," but a rebuild re-runs
+  // the LLM from scratch with no memory of what was just answered a minute ago,
+  // so the same (or near-identical) question can resurface verbatim right after
+  // being answered. Answering it writes a 'brief_context' annotation whose note
+  // is "Q: <question>" (see POST /api/briefing/context) — treat a fresh
+  // openQuestion that shares most of its significant words with one of those
+  // (within the last day, so a genuinely new occurrence tomorrow still surfaces)
+  // as already resolved and blank it out rather than trust the model to notice.
+  if (geminiResult?.chiefBrief?.openQuestion) {
+    try {
+      const norm = (s) => new Set(String(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter((w) => w.length > 3));
+      const qWords = norm(geminiResult.chiefBrief.openQuestion);
+      if (qWords.size) {
+        const recentAnswers = await annotationsStore.listAnnotations({ from: new Date(Date.now() - 24 * 60 * 60 * 1000), limit: 30 });
+        const alreadyAnswered = recentAnswers.some((a) => {
+          if (a.category !== 'brief_context' || !a.note?.startsWith('Q: ')) return false;
+          const priorWords = norm(a.note.slice(3));
+          if (!priorWords.size) return false;
+          const shared = [...qWords].filter((w) => priorWords.has(w)).length;
+          return shared / Math.min(qWords.size, priorWords.size) >= 0.6;
+        });
+        if (alreadyAnswered) geminiResult.chiefBrief.openQuestion = '';
+      }
+    } catch (err) {
+      console.error('[openQuestion dedup] failed:', err.message);
+    }
+  }
+
   // Surface the intelligence layer's current findings (from the last analysis).
   let insights = [];
   let crossContextInsights = [];
