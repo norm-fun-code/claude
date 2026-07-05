@@ -195,64 +195,68 @@ function SwipeableRow({
         style={[
           styles.row,
           { borderTopColor: c.border, backgroundColor: c.card, transform: [{ translateX }] },
-          resolved && styles.rowResolved,
         ]}
         {...panResponder.panHandlers}
       >
-        <View style={styles.rowTop}>
-          <Pressable style={styles.titleWrap} onPress={toggleExpanded} disabled={rec.title.length < 80}>
-            <Text
-              style={[styles.recTitle, { color: c.text }, resolved && { color: c.subtext }]}
-              numberOfLines={expanded ? undefined : 2}
-            >
-              {rec.title}
-            </Text>
-          </Pressable>
-          <View style={[styles.chip, { backgroundColor: status.chipBg }]}>
-            <Ionicons name={status.icon} size={12} color={status.chipColor} />
-            <Text style={[styles.chipText, { color: status.chipColor }]}>{status.chipLabel}</Text>
+        {/* Dimming lives on this inner wrapper, NOT the row above — the row's
+            backgroundColor must stay fully opaque or the swipe-to-delete hint
+            behind it bleeds through even when not swiping. */}
+        <View style={resolved ? styles.contentResolved : styles.content}>
+          <View style={styles.rowTop}>
+            <Pressable style={styles.titleWrap} onPress={toggleExpanded} disabled={rec.title.length < 80}>
+              <Text
+                style={[styles.recTitle, { color: c.text }, resolved && { color: c.subtext }]}
+                numberOfLines={expanded ? undefined : 2}
+              >
+                {rec.title}
+              </Text>
+            </Pressable>
+            <View style={[styles.chip, { backgroundColor: status.chipBg }]}>
+              <Ionicons name={status.icon} size={12} color={status.chipColor} />
+              <Text style={[styles.chipText, { color: status.chipColor }]}>{status.chipLabel}</Text>
+            </View>
           </View>
+
+          <Text style={[styles.caption, { color: c.subtext }, resolved && styles.captionResolved]}>
+            {status.caption}
+          </Text>
+          <Text style={[styles.recMeta, { color: c.subtext }]}>{relDays(rec.created_at)} · {source}</Text>
+
+          {!resolved && (
+            isPrimaryAction ? (
+              <View style={styles.actionsPrimary}>
+                <TouchableOpacity
+                  onPress={() => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); markOutcome(true); }}
+                  hitSlop={6}
+                  style={[styles.actionBtn, styles.actionBtnUp]}
+                  accessibilityLabel="It helped"
+                >
+                  <Ionicons name="thumbs-up" size={15} color="#fff" />
+                  <Text style={styles.actionBtnText}>Helped</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); markOutcome(false); }}
+                  hitSlop={6}
+                  style={[styles.actionBtn, { borderColor: c.border, borderWidth: 1 }]}
+                  accessibilityLabel="Didn't help"
+                >
+                  <Ionicons name="thumbs-down-outline" size={15} color={c.subtext} />
+                  <Text style={[styles.actionBtnText, { color: c.subtext }]}>Didn't help</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.actionsSecondary}>
+                <TouchableOpacity onPress={() => markOutcome(true)} hitSlop={8} style={styles.miniBtn}>
+                  <Ionicons name="thumbs-up-outline" size={13} color={c.subtext} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => markOutcome(false)} hitSlop={8} style={styles.miniBtn}>
+                  <Ionicons name="thumbs-down-outline" size={13} color={c.subtext} />
+                </TouchableOpacity>
+                <Text style={[styles.miniHint, { color: c.subtext }]}>already know? rate it</Text>
+              </View>
+            )
+          )}
         </View>
-
-        <Text style={[styles.caption, { color: c.subtext }, resolved && styles.captionResolved]}>
-          {status.caption}
-        </Text>
-        <Text style={[styles.recMeta, { color: c.subtext }]}>{relDays(rec.created_at)} · {source}</Text>
-
-        {!resolved && (
-          isPrimaryAction ? (
-            <View style={styles.actionsPrimary}>
-              <TouchableOpacity
-                onPress={() => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); markOutcome(true); }}
-                hitSlop={6}
-                style={[styles.actionBtn, styles.actionBtnUp]}
-                accessibilityLabel="It helped"
-              >
-                <Ionicons name="thumbs-up" size={15} color="#fff" />
-                <Text style={styles.actionBtnText}>Helped</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); markOutcome(false); }}
-                hitSlop={6}
-                style={[styles.actionBtn, { borderColor: c.border, borderWidth: 1 }]}
-                accessibilityLabel="Didn't help"
-              >
-                <Ionicons name="thumbs-down-outline" size={15} color={c.subtext} />
-                <Text style={[styles.actionBtnText, { color: c.subtext }]}>Didn't help</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.actionsSecondary}>
-              <TouchableOpacity onPress={() => markOutcome(true)} hitSlop={8} style={styles.miniBtn}>
-                <Ionicons name="thumbs-up-outline" size={13} color={c.subtext} />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => markOutcome(false)} hitSlop={8} style={styles.miniBtn}>
-                <Ionicons name="thumbs-down-outline" size={13} color={c.subtext} />
-              </TouchableOpacity>
-              <Text style={[styles.miniHint, { color: c.subtext }]}>already know? rate it</Text>
-            </View>
-          )
-        )}
       </Animated.View>
     </View>
   );
@@ -366,9 +370,9 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
     marginTop: spacing.sm,
     paddingBottom: 2,
-    gap: 5,
   },
-  rowResolved: { opacity: 0.6 },
+  content: { gap: 5 },
+  contentResolved: { gap: 5, opacity: 0.6 },
   rowTop: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
   titleWrap: { flex: 1 },
   recTitle: { fontSize: 14, fontWeight: '600', lineHeight: 19 },
