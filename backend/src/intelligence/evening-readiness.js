@@ -144,14 +144,30 @@ async function openEveningHabits({ tz = process.env.TZ || 'America/New_York', is
   return eveningHabitsToTrack(isRestDay).filter((h) => !done.has(h.metric)).map((h) => h.label);
 }
 
+/** Today's self-reported check-in (mood/energy/focus), if logged — the evening
+ *  brief otherwise only ever sees body metrics (HRV/RHR/steps), never how the
+ *  user actually said they were doing. dayAnchorTs keys one clean row per
+ *  metric per day, so a plain same-day average is exactly today's value. */
+async function todayCheckin({ tz } = {}) {
+  const { from, to } = dayWindow(tz);
+  const q = (metric) => metricsStore.dailyAggregate({ domain: 'wellbeing', metric, from, to, agg: 'avg' });
+  const [mood, energy, focus] = await Promise.all([q('mood'), q('energy'), q('focus')]);
+  return {
+    mood: mood.length ? round(mean(mood), 1) : null,
+    energy: energy.length ? round(mean(energy), 1) : null,
+    focus: focus.length ? round(mean(focus), 1) : null,
+  };
+}
+
 /** Gather everything the evening brief composer needs. */
 async function gatherEvening({ tz, isRestDay = false } = {}) {
-  const [autonomic, load, openHabits] = await Promise.all([
+  const [autonomic, load, openHabits, checkin] = await Promise.all([
     autonomicRead({ tz }),
     todayLoad({ tz }),
     openEveningHabits({ tz, isRestDay }),
+    todayCheckin({ tz }),
   ]);
-  return { autonomic, load, openHabits };
+  return { autonomic, load, openHabits, checkin };
 }
 
-module.exports = { autonomicRead, todayLoad, openEveningHabits, eveningHabitsToTrack, gatherEvening, dayWindow };
+module.exports = { autonomicRead, todayLoad, todayCheckin, openEveningHabits, eveningHabitsToTrack, gatherEvening, dayWindow };

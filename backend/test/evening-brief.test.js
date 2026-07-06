@@ -131,3 +131,30 @@ test('no tomorrow context (normal workday, nothing early) falls back to the gene
   const c = composeFallback(sig({ tone: 'settled' }));
   assert.match(c.tomorrow, /bedtime window/i);
 });
+
+// ── Today's check-in: the body can look settled while the day genuinely
+// wasn't — a low self-report should still surface, not just HRV/RHR ──────────
+
+test('a low self-reported check-in surfaces even when HRV/RHR read as settled', () => {
+  const c = composeFallback({
+    ...sig({ tone: 'settled', hrv: 44, hrvBaseline: 42 }),
+    checkin: { mood: 2, energy: 2, focus: 4 },
+  });
+  assert.match(c.readiness, /mood 2\/5/);
+  assert.match(c.readiness, /energy 2\/5/);
+  assert.doesNotMatch(c.readiness, /focus/); // only the low ones are called out
+});
+
+test('a normal/high check-in does not get tacked onto the readiness read', () => {
+  const c = composeFallback({
+    ...sig({ tone: 'settled' }),
+    checkin: { mood: 4, energy: 5, focus: 4 },
+  });
+  assert.doesNotMatch(c.readiness, /mood|energy|focus/i);
+});
+
+test('no check-in logged does not alter the readiness read', () => {
+  const withNull = composeFallback({ ...sig({ tone: 'settled' }), checkin: null });
+  const withoutKey = composeFallback(sig({ tone: 'settled' }));
+  assert.equal(withNull.readiness, withoutKey.readiness);
+});

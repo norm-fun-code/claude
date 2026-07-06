@@ -29,6 +29,7 @@ const TONE_HEADLINE = {
 function composeFallback({
   autonomic, load, openHabits, gratitude = [], training = null, isRestDay = false,
   tomorrowFirstEvent = null, tomorrowIsDayOff = false, tomorrowHoliday = null,
+  checkin = null,
 }) {
   const { hrv, hrvBaseline, rhr, rhrBaseline, tone, sampleThin } = autonomic;
 
@@ -60,6 +61,14 @@ function composeFallback({
         ? "mild sympathetic load — wind down for real tonight and it pays off by morning."
         : "your system looks settled — you've got room to relax or do something restorative.";
     readiness = lead ? `${lead.charAt(0).toUpperCase() + lead.slice(1)} — ${read}` : read;
+  }
+  // The body metrics can look fine while the day genuinely wasn't — surface a
+  // notably low self-reported check-in even when HRV/RHR read as settled.
+  if (checkin) {
+    const low = ['mood', 'energy', 'focus']
+      .filter((k) => checkin[k] != null && checkin[k] <= 2.5)
+      .map((k) => `${k} ${checkin[k]}/5`);
+    if (low.length) readiness += ` You also logged ${low.join(', ')} today — worth trusting how you actually felt over the numbers tonight.`;
   }
 
   let today = '';
@@ -155,11 +164,18 @@ function buildPrompt(signals) {
     autonomic: a, load: l, openHabits, gratitude = [], morningPlan = null, training = null,
     commitments = null, dayContext = '', isRestDay = false,
     tomorrowFirstEvent = null, tomorrowIsDayOff = false, tomorrowHoliday = null,
+    checkin = null,
   } = signals;
+  const checkinParts = checkin
+    ? ['mood', 'energy', 'focus'].filter((k) => checkin[k] != null).map((k) => `${k} ${checkin[k]}/5`)
+    : [];
   const lines = [
     `Autonomic tone: ${a.tone}${a.sampleThin ? ' (thin data — soft-pedal)' : ''}`,
     a.hrv != null ? `Daytime HRV today: ${ms(a.hrv)}${a.hrvBaseline != null ? ` (your norm ${ms(a.hrvBaseline)})` : ''}` : 'Daytime HRV today: (none)',
     a.rhr != null ? `Resting HR today: ${bpm(a.rhr)}${a.rhrBaseline != null ? ` (your norm ${bpm(a.rhrBaseline)})` : ''}` : 'Resting HR today: (none)',
+    checkinParts.length
+      ? `Today's self-reported check-in: ${checkinParts.join(', ')} — this is how they said they actually felt today; weave it into the read wherever it's genuinely relevant (it can reinforce or contradict the body metrics — a settled HRV with a low mood/energy check-in is still worth naming, not just the numbers)`
+      : `Today's self-reported check-in: (none logged)`,
     l.steps != null ? `Steps today: ${commas(l.steps)}${l.stepsBaseline != null ? ` (norm ${commas(l.stepsBaseline)})` : ''}` : 'Steps today: (none)',
     l.activeEnergy != null ? `Active energy today: ${commas(l.activeEnergy)} kcal` : null,
     isRestDay ? 'Today was a SCHEDULED REST DAY — lower steps/energy and no exercise are EXPECTED, not a shortfall. Do not compare against the training-day norm as if something was missed.' : null,
@@ -188,9 +204,9 @@ ${lines.join('\n')}
 Write the evening wind-down brief as JSON with EXACTLY these string fields:
 {
   "headline": "≤6 words capturing tonight's read (e.g. 'Settled — wind down easy')",
-  "readiness": "1-2 sentences on autonomic tone from the HRV/RHR vs the user's norm, and what it means for tonight. If data is thin, say so and defer to how they feel.",
+  "readiness": "1-2 sentences on autonomic tone from the HRV/RHR vs the user's norm, and what it means for tonight. If data is thin, say so and defer to how they feel. If today's self-reported check-in (mood/energy/focus) is present and notably low or notably high, fold it in — a settled HRV reading doesn't override a day that was actually hard or draining; when the body metrics and the self-report disagree, say so plainly rather than only reporting the numbers.",
   "today": "ONE sentence closing the loop on today's movement (steps/energy). If today was a scheduled rest day, say so and frame lower activity as expected/fine — never as falling short of the training-day norm. Empty string if no data.",
-  "plan": "ONE sentence grading the day against what was asked of it — this morning's plan AND any commitments the user made today (see the commitments line). The honest ledger, not a lecture: credit what they kept (session done, commitments honored) plainly; name what slipped without guilt and without re-issuing the instruction — the day is over. On a rest day, there was no session to grade — do not treat the rest itself as a miss. Prefer concrete evidence (planned session done/not, commitments kept/open, steps vs norm). Empty string only if there's genuinely nothing to grade.",
+  "plan": "ONE sentence grading the day against what was asked of it — this morning's plan AND any commitments the user made today (see the commitments line). The honest ledger, not a lecture: credit what they kept (session done, commitments honored) plainly; name what slipped without guilt and without re-issuing the instruction — the day is over. On a rest day, there was no session to grade — do not treat the rest itself as a miss. Prefer concrete evidence (planned session done/not, commitments kept/open, steps vs norm, today's check-in and what the user told you about their day). Empty string only if there's genuinely nothing to grade.",
   "tomorrow": "ONE sentence: the bedtime/wind-down lever that sets up tomorrow. If tomorrow's first commitment is early, make the bedtime push concrete and specific to that (e.g. 'a 7:30 start tomorrow — get down by 10:30'), not generic. If tomorrow is a day off with no early commitment, say there's more room tonight while still valuing the wind-down. Do not cite a recovery score.",
   "habits": "ONE short nudge listing the still-open evening habits, or empty string if none.",
   "reflection": "ONE sentence — the presence beat that closes the day, the mindfulness counterpart to the body read above. If recent gratitude notes are present, gently echo their theme in your own words (never quote verbatim, never list them like a report) so the reflection lands as something a person who was listening would say. If none are present, warmly invite one line of gratitude before bed. Keep it human and unforced; empty string only if anything here would feel hollow."
