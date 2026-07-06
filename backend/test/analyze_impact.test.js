@@ -304,3 +304,24 @@ test('computeAnomalies: stale-Pod suppression covers sleep metrics too, not just
   const fresh = a.computeAnomalies({ 'health:deep_sleep_hours': deepSleep }, { today: '2026-05-20' });
   assert.ok(fresh.find((f) => f.evidence.metric === 'health:deep_sleep_hours'), 'a same-day reading should still flag');
 });
+
+test('computeCorrelations: a frozen night-sourced metric (Eight Sleep not in use) stops pairing into new correlations', () => {
+  // A perfectly linear HRV/mood pair — clears every gate (n, |r|, confirmed,
+  // FDR) with room to spare — so if it's missing, staleness is what did it.
+  const N = 30;
+  const hrv = mkSeries(N, (i) => 40 + i);
+  const mood = mkSeries(N, (i) => 2 + i * 0.2);
+  const stale = a.computeCorrelations({ 'health:hrv': hrv, 'wellbeing:mood': mood });
+  assert.equal(
+    stale.find((f) => f.evidence.a === 'health:hrv' || f.evidence.b === 'health:hrv'), undefined,
+    'a stale night-sourced metric must not surface in a new correlation — otherwise leverage/PERSISTENT ISSUES ' +
+    'keep citing a frozen HRV pattern as if it were still being tracked'
+  );
+  // Same series, "today" pinned to the series' own last day → genuinely fresh.
+  const lastDay = hrv[hrv.length - 1].day;
+  const fresh = a.computeCorrelations({ 'health:hrv': hrv, 'wellbeing:mood': mood }, { today: lastDay });
+  assert.ok(
+    fresh.find((f) => f.evidence.a === 'health:hrv' || f.evidence.b === 'health:hrv'),
+    'the identical data, when actually current, should still surface the correlation'
+  );
+});

@@ -332,11 +332,26 @@ function computeCorrelations(seriesByKey, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   const keys = Object.keys(seriesByKey);
   const candidates = [];
+  const todayKey = o.today || new Date().toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/New_York' });
 
   const corrSkip = new Set(o.corrSkip || []);
   const corrSkipDomains = new Set(o.corrSkipDomains || []);
   const corrSkipPairs = o.corrSkipPairs || new Set();
-  const skipKey = (k) => corrSkip.has(k) || corrSkipDomains.has(k.split(':')[0]);
+  // A correlation is a historical relationship — it doesn't need to be
+  // recomputed against fresh data to remain true. But once a night-sourced
+  // metric (Eight Sleep) stops posting, this loop would keep "rediscovering"
+  // the exact same frozen pair every night from whatever data was last
+  // available, and every downstream consumer (leverage actions, PERSISTENT
+  // ISSUES streaks) has no way to tell that apart from a live, currently
+  // trackable pattern — leverage in particular would keep recommending it as
+  // today's action, "still quietly measuring in the background." Skip a pair
+  // once either side has gone stale, same threshold as computeTrends.
+  const staleNightKey = (k) => {
+    if (!NIGHT_METRICS.has(k)) return false;
+    const age = staleDays(seriesByKey[k], todayKey);
+    return age != null && age > TREND_STALE_DAYS;
+  };
+  const skipKey = (k) => corrSkip.has(k) || corrSkipDomains.has(k.split(':')[0]) || staleNightKey(k);
   const skipPair = (ka, kb) => corrSkipPairs.has([ka, kb].sort().join('|'));
   // Habit-to-habit correlations are structurally meaningless: habit_score is a
   // composite of all individual habits, so cold_shower ↔ habit_score or
