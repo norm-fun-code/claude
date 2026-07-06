@@ -325,3 +325,36 @@ test('computeCorrelations: a frozen night-sourced metric (Eight Sleep not in use
     'the identical data, when actually current, should still surface the correlation'
   );
 });
+
+// ── lifeContextRelevant: a life annotation must plausibly explain the SPECIFIC
+// metric it's attached to, not just have happened around the same time ───────
+
+test('lifeContextRelevant: a sleep/travel annotation explains body metrics regardless of wording', () => {
+  const ann = { label: "Didn't sleep home", note: null };
+  for (const metric of ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score', 'health:respiratory_rate']) {
+    assert.equal(a.lifeContextRelevant(metric, ann), true, `${metric} should accept broad life context`);
+  }
+});
+
+test('lifeContextRelevant: the same sleep/travel annotation does NOT explain mood without an emotional link', () => {
+  const ann = { label: "Didn't sleep home", note: null };
+  for (const metric of ['wellbeing:mood', 'wellbeing:energy', 'wellbeing:focus']) {
+    assert.equal(a.lifeContextRelevant(metric, ann), false, `${metric} should reject a non-emotional annotation`);
+  }
+});
+
+test('lifeContextRelevant: an emotionally significant annotation DOES explain a wellbeing dip', () => {
+  const ann = { label: 'Stressful launch at work, big deadline', note: null };
+  assert.equal(a.lifeContextRelevant('wellbeing:mood', ann), true);
+  assert.equal(a.lifeContextRelevant('wellbeing:energy', ann), true);
+  assert.equal(a.lifeContextRelevant('wellbeing:focus', ann), true);
+});
+
+test('lifeContextRelevant: no life context explains an unrelated metric like steps', () => {
+  assert.equal(a.lifeContextRelevant('health:steps', { label: 'Stressful day', note: null }), false);
+});
+
+test('lifeContextRelevant: checks the note field too, not just the label', () => {
+  const ann = { label: 'Q: how are you?', note: 'Answer: felt really anxious all day' };
+  assert.equal(a.lifeContextRelevant('wellbeing:mood', ann), true);
+});

@@ -165,6 +165,29 @@ const NIGHT_METRICS = new Set([
   'health:deep_sleep_hours', 'health:rem_sleep_hours', 'health:respiratory_rate',
 ]);
 
+// A life-context annotation (a late meal, a drink, travel, a rough night) can
+// plausibly explain a body-metric deviation — HRV, resting HR, sleep,
+// breathing rate — pretty much regardless of content: an environment/
+// routine change is a broadly plausible physiological driver on its own. A
+// WELLBEING dip (mood/energy/focus) needs a tighter bar: "didn't sleep home"
+// doesn't actually explain a mood drop without an emotional/psychological
+// link the annotation may not contain — attaching it anyway is context-by-
+// proximity, not real reasoning. Any other metric (steps, spending, …): no
+// life context plausibly explains it here.
+const SLEEP_BODY_METRICS = NIGHT_METRICS;
+const WELLBEING_METRICS = new Set(['wellbeing:mood', 'wellbeing:energy', 'wellbeing:focus']);
+const MOOD_KEYWORDS = /stress(ed|ful)?|anxi(ous|ety)|sad|upset|fight|argument|deadline|launch|presentation|worr(y|ied)|grief|loss|overwhelm|frustrat|angry|lonely|conflict|fired|lay ?off|break ?up|sick|ill\b|funeral|hospital/i;
+
+/**
+ * Pure: would a life-context annotation plausibly explain a deviation in
+ * this metric? See the rationale above SLEEP_BODY_METRICS/WELLBEING_METRICS.
+ */
+function lifeContextRelevant(metric, annotation) {
+  if (SLEEP_BODY_METRICS.has(metric)) return true;
+  if (WELLBEING_METRICS.has(metric)) return MOOD_KEYWORDS.test(`${annotation?.label || ''} ${annotation?.note || ''}`);
+  return false;
+}
+
 /** Days between `todayKey` and a series' most recent data point, or null if empty. */
 function staleDays(series, todayKey) {
   if (!series || !series.length) return null;
@@ -1278,23 +1301,18 @@ async function analyze(opts = {}) {
       if (cat.includes('spend') || cat.includes('wealth') || cat.includes('financ')) return false;
       return !SPEND_RE.test(`${a.label || ''} ${a.note || ''}`);
     });
-    // Life context (a late meal, a drink, a hot room, travel, a rough night) can
-    // plausibly explain a RECOVERY or WELLBEING deviation — HRV, resting HR, sleep,
-    // breathing rate, mood/energy/focus. It does NOT explain an ACTIVITY metric:
-    // "a heavy meal explains low steps" is nonsense. Only attach the context to
-    // anomalies it could actually account for.
-    const CONTEXTABLE = new Set([
-      'health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score',
-      'health:deep_sleep_hours', 'health:rem_sleep_hours', 'health:respiratory_rate',
-      'wellbeing:mood', 'wellbeing:energy', 'wellbeing:focus',
-    ]);
+    // Only attach the annotations that are actually relevant to THIS anomaly's
+    // metric — not every life annotation to every contextable deviation (see
+    // lifeContextRelevant above).
     if (lifeAnnotations.length) {
-      const ctx = lifeAnnotations.map((a) => {
-        const when = new Date(a.start_ts) >= startOfToday ? 'today' : 'yesterday';
-        return `${a.label || a.category} (${when})`;
-      }).slice(0, 3).join('; ');
       for (const a of anomalies) {
-        if (!CONTEXTABLE.has(a.evidence?.metric)) continue; // not a deviation this context explains
+        const metric = a.evidence?.metric;
+        const relevant = lifeAnnotations.filter((ann) => lifeContextRelevant(metric, ann));
+        if (!relevant.length) continue;
+        const ctx = relevant.map((ann) => {
+          const when = new Date(ann.start_ts) >= startOfToday ? 'today' : 'yesterday';
+          return `${ann.label || ann.category} (${when})`;
+        }).slice(0, 3).join('; ');
         a.detail += ` (Context: ${ctx} — may explain this deviation.)`;
       }
     }
@@ -1364,7 +1382,7 @@ async function analyze(opts = {}) {
   };
 }
 
-module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeHabitHealthSplits, computeSleepImpact, computeActivityImpact, computeDaytimeCardio, computeWellbeingGap, DEFAULTS, TREND_STALE_DAYS, NIGHT_METRICS, staleDays };
+module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeHabitHealthSplits, computeSleepImpact, computeActivityImpact, computeDaytimeCardio, computeWellbeingGap, DEFAULTS, TREND_STALE_DAYS, NIGHT_METRICS, staleDays, lifeContextRelevant };
 
 // CLI entrypoint
 if (require.main === module) {
