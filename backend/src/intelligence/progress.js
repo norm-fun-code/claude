@@ -37,7 +37,14 @@ const METRICS = [
   { key: 'health:sleep_hours', label: 'sleep',              unit: 'h',     good: 'up',   minRel: 0.04, decimals: 1, sources: NIGHT_SOURCES },
   // VO2 max only ever comes from Apple Health (no Eight Sleep/dupe risk), so
   // it uses the plain seed-excluding path like mood/energy/habits below.
-  { key: 'health:vo2_max',     label: 'VO₂ max',            unit: '',      good: 'up',   minAbs: 0.5,  decimals: 1, minN: 2 },
+  // useLatest: Apple Health only updates VO2 max sparsely (every several
+  // days/weeks) and it drifts gradually — a 28-day WINDOW AVERAGE smears in
+  // older, lower readings and lags behind a currently-improving trend, so it
+  // can read below the actual latest value shown elsewhere (e.g. the Health
+  // tab). Compare latest-to-latest instead, same treatment review.js's
+  // LATEST_METRICS already gives other slow-changing snapshots (net worth,
+  // weight).
+  { key: 'health:vo2_max',     label: 'VO₂ max',            unit: '',      good: 'up',   minAbs: 0.5,  decimals: 1, minN: 2, useLatest: true },
   { key: 'wellbeing:mood',     label: 'mood',               unit: '/5',    good: 'up',   minAbs: 0.3,  decimals: 1 },
   { key: 'wellbeing:energy',   label: 'energy',             unit: '/5',    good: 'up',   minAbs: 0.3,  decimals: 1 },
   { key: 'habits:morning_tm',  label: 'morning meditation', unit: '%days', good: 'up',   minAbs: 0.15, decimals: 0 },
@@ -122,7 +129,12 @@ async function windowStats(m, from, to) {
     : await metricsStore.dailyAggregate({ domain, metric, from, to, agg: 'avg', excludeSource: 'seed' });
   const vals = rows.map((r) => Number(r.value)).filter(Number.isFinite);
   if (!vals.length) return { avg: null, n: 0, vals: [] };
-  return { avg: vals.reduce((a, b) => a + b, 0) / vals.length, n: vals.length, vals };
+  // For a "latest" metric, `avg` (the field composeProgressNote actually
+  // compares/displays) is the most recent day's reading, not the window mean
+  // — `vals` still carries the full window so the significance test below
+  // stays a real two-sample comparison.
+  const avg = m.useLatest ? vals[vals.length - 1] : vals.reduce((a, b) => a + b, 0) / vals.length;
+  return { avg, n: vals.length, vals };
 }
 
 /**

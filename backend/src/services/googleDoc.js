@@ -30,6 +30,24 @@ function extractTextFromDoc(document) {
   return lines.join('\n');
 }
 
+/**
+ * Pure: filter raw doc lines down to ones that are actually quotable. Split
+ * out from fetchRandomQuote so this heuristic chain is unit-testable without
+ * a live Google Docs call.
+ */
+function filterQuoteLines(lines) {
+  return lines
+    .map((l) => l.trim())
+    .filter((l) => l.length > 30)
+    .filter((l) => !/^[★☆#]/.test(l))   // skip decorative heading markers
+    .filter((l) => !l.endsWith(':'))       // skip intro fragments like "Chapter 3:"
+    // Skip numbered section/chapter headings ("03   Adversity Is the Curriculum")
+    // — a leading number then a short Title Case phrase with no sentence-ending
+    // punctuation. These aren't quotes at all, so any "insight" written about one
+    // reads as disconnected commentary rather than actually engaging with a line.
+    .filter((l) => !/^\d{1,3}\s+[A-Z]/.test(l) || /[.!?"']$/.test(l));
+}
+
 async function fetchRandomQuote() {
   const auth = getAuthClient();
   const docs = google.docs({ version: 'v1', auth });
@@ -39,12 +57,7 @@ async function fetchRandomQuote() {
   });
 
   const fullText = extractTextFromDoc(res.data);
-  const lines = fullText
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.length > 30)
-    .filter((l) => !/^[★☆#]/.test(l))   // skip decorative heading markers
-    .filter((l) => !l.endsWith(':'));      // skip intro fragments like "Chapter 3:"
+  const lines = filterQuoteLines(fullText.split('\n'));
 
   if (lines.length === 0) {
     return { quote: 'No quotes available.' };
@@ -54,4 +67,4 @@ async function fetchRandomQuote() {
   return { quote: randomLine };
 }
 
-module.exports = { fetchRandomQuote };
+module.exports = { fetchRandomQuote, filterQuoteLines };
