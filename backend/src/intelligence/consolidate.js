@@ -15,6 +15,7 @@ const experimentsStore = require('../store/experiments');
 const intentionsStore = require('../store/intentions');
 const annotationsStore = require('../store/annotations');
 const selfModelStore = require('../store/selfModel');
+const cat = require('./catalog');
 const { query: dbQuery } = require('../db');
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -256,7 +257,7 @@ function buildModelText(data) {
   for (const [key, v] of Object.entries(habits)) {
     if (v.rate == null) continue;
     if (v.scale === 5) {
-      habitLines.push(`${v.label} ${v.rate}/5`);
+      habitLines.push(`${v.label} ${cat.wellbeingLevel(v.rate)}`);
     } else {
       const days = Math.round((v.rate / 100) * 7);
       const mark = v.rate >= 80 ? '✓' : v.rate < 50 ? '↓' : '';
@@ -269,21 +270,23 @@ function buildModelText(data) {
   const wb = wellbeing;
   const wbParts = [];
   const wbLabel = { mood: 'Mood', energy: 'Energy', focus: 'Focus' };
-  const wbLevel = (v) => v == null ? null : v >= 4 ? 'strong' : v >= 3 ? 'moderate' : 'low';
   // Mood/energy/focus are logged on a coarse 1–5 scale, so a small week-over-week
-  // dip while a metric is still in the 'strong' band (≥4) is noise, not a
+  // dip while a metric is still in the 'high' band (≥4) is noise, not a
   // downtrend. Suppress the down-arrow in that case so the brief doesn't escalate
   // a 4.6→4.3 wiggle into "mood is sliding". A real drop (≥0.5 pt) or a fall out
-  // of the strong band still shows ↓.
+  // of the high band still shows ↓.
   const wbArrow = (cur, prior) => {
     if (prior == null) return '';
     const a = dirArrow(cur, prior, 'up');
     if (a === ' ↓' && cur >= 4 && (prior - cur) < 0.5) return ' →';
     return a;
   };
+  // Qualitative only ("Mood high ↑") — never the raw "4.2/5". The self-model
+  // feeds every downstream surface (brief, chat, weekly review), so a raw
+  // number here is exactly what made those surfaces read clinical/cold.
   for (const [k, v] of Object.entries(wb)) {
     if (v.cur == null) continue;
-    wbParts.push(`${wbLabel[k]} ${v.cur}/5 (${wbLevel(v.cur)}${wbArrow(v.cur, v.prior)})`);
+    wbParts.push(`${wbLabel[k]} ${cat.wellbeingLevel(v.cur)}${wbArrow(v.cur, v.prior)}`);
   }
   if (wbParts.length) lines.push(`WELLBEING (last 7 days): ${wbParts.join(' · ')}`);
 

@@ -95,4 +95,15 @@ function aggFor(metric) {
   return SUM_METRICS.has(metric) ? 'sum' : 'avg';
 }
 
-module.exports = { CATALOG, key, label, goodWhen, isTracked, aggFor, titleCase };
+/**
+ * Qualitative label for a 1-5 self-rated value (mood/energy/focus, eating
+ * well) — "low" / "ok" / "high", never the raw number. Used everywhere these
+ * surface (self-model, briefs, chat) so a check-in reads as something a
+ * person said ("energy's been low") rather than a clinical "2.3/5".
+ */
+function wellbeingLevel(v) {
+  if (v == null) return null;
+  return v >= 4 ? 'high' : v >= 3 ? 'ok' : 'low';
+}
+
+module.exports = { CATALOG, key, label, goodWhen, isTracked, aggFor, titleCase, wellbeingLevel };

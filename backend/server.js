@@ -3530,10 +3530,12 @@ app.get('/api/briefing', async (req, res) => {
     if (eatAvg != null && eatAvg < 3) lagging.push(habitLabels.eat_healthy); // below ~3/5
     const parts = [];
     const themes = [];
-    const lowHL = (v) => (v <= 2.5 ? 'low' : v >= 4 ? 'strong' : 'moderate');
-    if (mood != null) { parts.push(`mood ${lowHL(mood)}`); if (mood <= 2.5) themes.push('contentment, perspective, equanimity'); }
-    if (energy != null) { parts.push(`energy ${lowHL(energy)}`); if (energy <= 2.5) themes.push('rest, restoration, sustainable effort'); }
-    if (focus != null) { parts.push(`focus ${lowHL(focus)}`); if (focus <= 2.5) themes.push('presence, deep work, single-tasking, attention'); }
+    // Shared wording (low/ok/high) with the self-model and every other surface
+    // that narrates these — never the raw "2.6/5" figure.
+    const { wellbeingLevel } = require('./src/intelligence/catalog');
+    if (mood != null) { parts.push(`mood ${wellbeingLevel(mood)}`); if (wellbeingLevel(mood) === 'low') themes.push('contentment, perspective, equanimity'); }
+    if (energy != null) { parts.push(`energy ${wellbeingLevel(energy)}`); if (wellbeingLevel(energy) === 'low') themes.push('rest, restoration, sustainable effort'); }
+    if (focus != null) { parts.push(`focus ${wellbeingLevel(focus)}`); if (wellbeingLevel(focus) === 'low') themes.push('presence, deep work, single-tasking, attention'); }
     // Lagging habits steer the theme toward their virtue.
     const habitThemes = { gratitude: 'gratitude, appreciation', 'morning meditation': 'stillness, mindfulness', 'afternoon meditation': 'stillness, mindfulness', exercise: 'discipline, vitality, the body', 'eating well': 'discipline, nourishment, moderation' };
     for (const l of lagging) if (habitThemes[l]) themes.push(habitThemes[l]);

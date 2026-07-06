@@ -135,13 +135,14 @@ test('no tomorrow context (normal workday, nothing early) falls back to the gene
 // ── Today's check-in: the body can look settled while the day genuinely
 // wasn't — a low self-report should still surface, not just HRV/RHR ──────────
 
-test('a low self-reported check-in surfaces even when HRV/RHR read as settled', () => {
+test('a low self-reported check-in surfaces even when HRV/RHR read as settled — in plain words, never a raw score', () => {
   const c = composeFallback({
     ...sig({ tone: 'settled', hrv: 44, hrvBaseline: 42 }),
     checkin: { mood: 2, energy: 2, focus: 4 },
   });
-  assert.match(c.readiness, /mood 2\/5/);
-  assert.match(c.readiness, /energy 2\/5/);
+  assert.match(c.readiness, /mood and energy/);
+  assert.match(c.readiness, /low/);
+  assert.doesNotMatch(c.readiness, /\d\/5/); // never a raw "2/5" style score
   assert.doesNotMatch(c.readiness, /focus/); // only the low ones are called out
 });
 

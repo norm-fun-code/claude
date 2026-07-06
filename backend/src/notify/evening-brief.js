@@ -8,6 +8,7 @@
 // deterministic fallback so the brief always lands even if the model is down.
 const llm = require('../llm');
 const { gatherEvening } = require('../intelligence/evening-readiness');
+const { wellbeingLevel } = require('../intelligence/catalog');
 const briefingsStore = require('../store/briefings');
 const devicesStore = require('../store/devices');
 const nudgesStore = require('../store/nudges');
@@ -64,11 +65,11 @@ function composeFallback({
   }
   // The body metrics can look fine while the day genuinely wasn't — surface a
   // notably low self-reported check-in even when HRV/RHR read as settled.
+  // Plain words only (low/ok/high), never the raw "2/5" — reads like someone
+  // who actually noticed, not a clinical readout.
   if (checkin) {
-    const low = ['mood', 'energy', 'focus']
-      .filter((k) => checkin[k] != null && checkin[k] <= 2.5)
-      .map((k) => `${k} ${checkin[k]}/5`);
-    if (low.length) readiness += ` You also logged ${low.join(', ')} today — worth trusting how you actually felt over the numbers tonight.`;
+    const low = ['mood', 'energy', 'focus'].filter((k) => wellbeingLevel(checkin[k]) === 'low');
+    if (low.length) readiness += ` Your ${low.join(' and ')} ${low.length > 1 ? 'were' : 'was'} low today too — worth trusting how you actually felt over the numbers tonight.`;
   }
 
   let today = '';
@@ -167,14 +168,14 @@ function buildPrompt(signals) {
     checkin = null,
   } = signals;
   const checkinParts = checkin
-    ? ['mood', 'energy', 'focus'].filter((k) => checkin[k] != null).map((k) => `${k} ${checkin[k]}/5`)
+    ? ['mood', 'energy', 'focus'].filter((k) => checkin[k] != null).map((k) => `${k} ${wellbeingLevel(checkin[k])}`)
     : [];
   const lines = [
     `Autonomic tone: ${a.tone}${a.sampleThin ? ' (thin data — soft-pedal)' : ''}`,
     a.hrv != null ? `Daytime HRV today: ${ms(a.hrv)}${a.hrvBaseline != null ? ` (your norm ${ms(a.hrvBaseline)})` : ''}` : 'Daytime HRV today: (none)',
     a.rhr != null ? `Resting HR today: ${bpm(a.rhr)}${a.rhrBaseline != null ? ` (your norm ${bpm(a.rhrBaseline)})` : ''}` : 'Resting HR today: (none)',
     checkinParts.length
-      ? `Today's self-reported check-in: ${checkinParts.join(', ')} — this is how they said they actually felt today; weave it into the read wherever it's genuinely relevant (it can reinforce or contradict the body metrics — a settled HRV with a low mood/energy check-in is still worth naming, not just the numbers)`
+      ? `Today's self-reported check-in: ${checkinParts.join(', ')} — this is how they said they actually felt today; weave it into the read wherever it's genuinely relevant (it can reinforce or contradict the body metrics — a settled HRV with a low mood/energy check-in is still worth naming, not just the numbers). Speak in these same plain words (low/ok/high) — never a raw score like "2/5".`
       : `Today's self-reported check-in: (none logged)`,
     l.steps != null ? `Steps today: ${commas(l.steps)}${l.stepsBaseline != null ? ` (norm ${commas(l.stepsBaseline)})` : ''}` : 'Steps today: (none)',
     l.activeEnergy != null ? `Active energy today: ${commas(l.activeEnergy)} kcal` : null,
