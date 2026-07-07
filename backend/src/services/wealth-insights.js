@@ -241,30 +241,9 @@ async function buildWealthInsights() {
           evidence: { kind: 'budget_pacing', category: l.category, budget: l.budget, actual: l.actual, pace: l.pace, overBudget: l.overBudget },
         });
       }
-
-      // Lump-sum categories: compare actual vs budget directly.
-      const lumpSumPaid = pacing.lines.filter((l) => LUMP_SUM.has(l.category) && l.actual > 0);
-      for (const l of lumpSumPaid) {
-        if (l.overBudget) {
-          insights.push({
-            type: 'over_budget',
-            tone: 'watch',
-            category: l.category,
-            title: `${l.category}: over budget (${fmt(l.actual)} of ${fmt(l.budget)})`,
-            detail: `${l.category}: paid ${fmt(l.actual)} vs ${fmt(l.budget)} budget — ${fmt(Math.abs(l.remaining))} over.`,
-            evidence: { kind: 'budget_pacing', category: l.category, budget: l.budget, actual: l.actual, lumpSum: true },
-          });
-        } else {
-          insights.push({
-            type: 'under_budget',
-            tone: 'win',
-            category: l.category,
-            title: `${l.category}: ${fmt(l.actual)} of ${fmt(l.budget)} budget — under by ${fmt(l.remaining)}`,
-            detail: `${l.category}: paid ${fmt(l.actual)} vs ${fmt(l.budget)} budget this month — ${fmt(l.remaining)} under budget.`,
-            evidence: { kind: 'budget_pacing', category: l.category, budget: l.budget, actual: l.actual, lumpSum: true },
-          });
-        }
-      }
+      // Lump-sum categories (rent, mortgage) are excluded entirely, not just from
+      // the run-rate projection above — a standard, expected fixed payment isn't
+      // insight-worthy on its own, whether it's framed as "vs usual" or "vs budget."
     }
   } catch (err) {
     console.error('[wealth-insights] budget pacing failed:', err.message);
