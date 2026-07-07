@@ -176,7 +176,11 @@ const NIGHT_METRICS = new Set([
 // life context plausibly explains it here.
 const SLEEP_BODY_METRICS = NIGHT_METRICS;
 const WELLBEING_METRICS = new Set(['wellbeing:mood', 'wellbeing:energy', 'wellbeing:focus']);
-const MOOD_KEYWORDS = /stress(ed|ful)?|anxi(ous|ety)|sad|upset|fight|argument|deadline|launch|presentation|worr(y|ied)|grief|loss|overwhelm|frustrat|angry|lonely|conflict|fired|lay ?off|break ?up|sick|ill\b|funeral|hospital/i;
+// Word-boundary anchors matter here: an un-anchored `ill` matches "chill",
+// "skill", "still", "will", "bill", "hill"; an un-anchored `loss` matches
+// "floss"/"gloss"; `sad` anchored for consistency. Leading \b only (not
+// trailing) so inflections still count — "illness", "sadness", "losses".
+const MOOD_KEYWORDS = /stress(ed|ful)?|anxi(ous|ety)|\bsad|upset|fight|argument|deadline|launch|presentation|worr(y|ied)|grief|\bloss|overwhelm|frustrat|angry|lonely|conflict|fired|lay ?off|break ?up|sick|\bill|funeral|hospital/i;
 
 /**
  * Pure: would a life-context annotation plausibly explain a deviation in

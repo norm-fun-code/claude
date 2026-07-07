@@ -358,3 +358,21 @@ test('lifeContextRelevant: checks the note field too, not just the label', () =>
   const ann = { label: 'Q: how are you?', note: 'Answer: felt really anxious all day' };
   assert.equal(a.lifeContextRelevant('wellbeing:mood', ann), true);
 });
+
+// Regression: the MOOD_KEYWORDS regex must not fire on common words that merely
+// CONTAIN an emotional root — "chill"/"skill"/"still"/"bill" (ill), "floss"/
+// "gloss" (loss). A casual "chill day" note is not an emotional explanation for
+// a mood dip; matching it re-introduces the exact proximity-not-reasoning bug
+// this whole function was written to kill.
+test('lifeContextRelevant: casual notes containing an emotional substring do NOT explain a wellbeing dip', () => {
+  for (const label of ['Chill day at home', 'Worked on a new skill', 'Paid the bill', 'Still catching up', 'Flossed and brushed', 'Went for a hill climb']) {
+    assert.equal(a.lifeContextRelevant('wellbeing:mood', { label, note: null }), false, `"${label}" must not count as emotional context`);
+  }
+});
+
+// ...but the standalone words and their inflections still must.
+test('lifeContextRelevant: standalone illness/loss/sadness still explain a wellbeing dip', () => {
+  for (const label of ['Felt ill all day', 'Battling an illness', 'Dealing with a loss', 'Overwhelmed and sad', 'Real sadness today']) {
+    assert.equal(a.lifeContextRelevant('wellbeing:mood', { label, note: null }), true, `"${label}" should count as emotional context`);
+  }
+});
