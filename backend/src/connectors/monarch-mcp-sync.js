@@ -248,18 +248,25 @@ async function syncViaMcp(ctx) {
     transferCategoryNames(),
     fixedCategoryNames(),
   ]);
-  let cashIncome = new Map();
-  let cashExpense = new Map();
-  let cashDiscretionary = new Map();
-  try {
-    [cashIncome, cashExpense, cashDiscretionary] = await Promise.all([
-      dailyCashflow(startDate, endDate, 'income', transferCats),
-      dailyCashflow(startDate, endDate, 'expense', transferCats),
-      dailyCashflow(startDate, endDate, 'expense', [...new Set([...transferCats, ...fixedCats])]),
-    ]);
-  } catch (err) {
-    console.error('[monarch_mcp_sync] GetCashFlow failed, using transaction-derived totals:', err.message);
-  }
+  // Settled independently (not Promise.all) — a transient failure on the expense
+  // or discretionary call must not blank out income too (and vice versa). With
+  // Promise.all, one rejected leg left ALL THREE at their empty-Map default,
+  // which then fed the "write 0 for every day with no data" loop below and
+  // could zero out real income across the whole lookback window from an
+  // unrelated hiccup.
+  const [cashIncomeRes, cashExpenseRes, cashDiscretionaryRes] = await Promise.allSettled([
+    dailyCashflow(startDate, endDate, 'income', transferCats),
+    dailyCashflow(startDate, endDate, 'expense', transferCats),
+    dailyCashflow(startDate, endDate, 'expense', [...new Set([...transferCats, ...fixedCats])]),
+  ]);
+  const settled = (r, label) => {
+    if (r.status === 'fulfilled') return r.value;
+    console.error(`[monarch_mcp_sync] GetCashFlow(${label}) failed, using transaction-derived totals:`, r.reason?.message);
+    return new Map();
+  };
+  const cashIncome = settled(cashIncomeRes, 'income');
+  const cashExpense = settled(cashExpenseRes, 'expense');
+  const cashDiscretionary = settled(cashDiscretionaryRes, 'discretionary');
 
   // Normalize a Monarch-signed cash-flow Map into a positive, YYYY-MM-DD-keyed
   // Map. Income/expense are made positive; keys are sliced to the day.
@@ -293,11 +300,23 @@ async function syncViaMcp(ctx) {
   // days left that stale per-day income in place, inflating the 30-day total
   // (~$30k vs Monarch's ~$19.5k). Writing 0 on the non-income days overwrites it.
   // Spending never had this bug — expense days are frequent and all get rewritten.
-  for (let day = startDate; day <= endDate; day = nextDay(day)) {
-    const income = incSrc.get(day) || 0;
-    const spend = expSrc.get(day) || 0;
-    metrics.push(m('income', income, day));
-    metrics.push(m('net_cashflow', income - spend, day));
+  //
+  // Guard: incSrc.size === 0 across a 35-45 day window with real transactions
+  // present is a signal that income detection FAILED this run (GetCashFlow down
+  // AND the category-type/name classification missed every paycheck), not that
+  // income was genuinely zero for over a month straight. Writing 0 for every day
+  // in that case would overwrite real stored income with a fabricated absence —
+  // skip the write instead and leave whatever's already stored alone.
+  const incomeDetectionFailed = incSrc.size === 0 && txns.length > 0;
+  if (incomeDetectionFailed) {
+    console.error(`[monarch_mcp_sync] no income detected across ${txns.length} transactions in ${startDate}..${endDate} — treating as a detection failure and skipping the income/net_cashflow write rather than zeroing real history`);
+  } else {
+    for (let day = startDate; day <= endDate; day = nextDay(day)) {
+      const income = incSrc.get(day) || 0;
+      const spend = expSrc.get(day) || 0;
+      metrics.push(m('income', income, day));
+      metrics.push(m('net_cashflow', income - spend, day));
+    }
   }
 
   // Reconcile the window against Monarch's current truth: prune stored docs it no
