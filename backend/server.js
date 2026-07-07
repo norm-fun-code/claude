@@ -2473,8 +2473,22 @@ app.post('/api/briefing/context', async (req, res) => {
     // caught by its own wording.
     const FINANCIAL_RE = /\b(spend|spent|spending|financ|wealth|budget|money|bill|bills|rent|rental|invoice|purchase|bought|payment|paid|expense|refund|salary|paycheck|mortgage|loan|vacation|flight|hotel|dollar|cost)\b|\$/i;
     const isSpending = FINANCIAL_RE.test(`${signalKey || ''} ${question || ''} ${answer}`);
+    // An answer to a question framed around "last night"/"yesterday" is
+    // explaining something already PAST (e.g. "No Eight Sleep reading last
+    // night — device issue, or skipped it?" -> "Didn't sleep home") — not a
+    // forward-looking note. createAnnotation's default window (start_ts=now,
+    // end_ts=end of TOMORROW) is built for the opposite case (a note entered
+    // now about today/tomorrow), so left at "now" this reads as active
+    // THROUGH tomorrow — exactly how a real answer about last night ended up
+    // being cited as a caveat on TOMORROW's forecast instead of explaining
+    // today's already-collected data. Backdate to yesterday so the default
+    // window (yesterday -> end of today) covers what it actually explains.
+    const PAST_REFERRING_RE = /\blast night\b|\byesterday\b|\bovernight\b/i;
+    const startTs = PAST_REFERRING_RE.test(question || '')
+      ? new Date(Date.now() - 24 * 60 * 60 * 1000)
+      : new Date();
     const id = await annotationsStore.createAnnotation({
-      startTs: new Date().toISOString(),
+      startTs: startTs.toISOString(),
       category: isSpending ? 'spending note' : 'brief_context',
       label: answer.trim().slice(0, 500),
       note: question ? `Q: ${question.slice(0, 300)}` : (signalKey ?? null),
@@ -2621,12 +2635,20 @@ app.patch('/api/experiments/:id', async (req, res) => {
         : 0;
       let newEndDate = exp.end_date ? new Date(exp.end_date) : null;
       if (newEndDate && daysPaused > 0) newEndDate.setDate(newEndDate.getDate() + daysPaused);
+      // start_date must shift by the same amount — otherwise "days elapsed"
+      // (computed as now - start_date on the client) counts the paused days
+      // as if the experiment had been running the whole time, so day-count
+      // jumps forward by daysPaused the instant you resume even though the
+      // clock was supposed to be frozen while paused.
+      let newStartDate = exp.start_date ? new Date(exp.start_date) : null;
+      if (newStartDate && daysPaused > 0) newStartDate.setDate(newStartDate.getDate() + daysPaused);
       await experimentsStore.updateExperiment(exp.id, {
         status: 'running',
         pausedAt: null,
         ...(newEndDate ? { endDate: newEndDate.toISOString().slice(0, 10) } : {}),
+        ...(newStartDate ? { startDate: newStartDate.toISOString().slice(0, 10) } : {}),
       });
-      return res.json({ ok: true, daysPaused, newEndDate: newEndDate?.toISOString().slice(0, 10) ?? null });
+      return res.json({ ok: true, daysPaused, newEndDate: newEndDate?.toISOString().slice(0, 10) ?? null, newStartDate: newStartDate?.toISOString().slice(0, 10) ?? null });
     }
 
     res.status(400).json({ error: 'action must be pause or resume' });
@@ -4131,9 +4153,14 @@ app.get('/api/briefing', async (req, res) => {
       const norm = (s) => new Set(String(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter((w) => w.length > 3));
       const qWords = norm(geminiResult.chiefBrief.openQuestion);
       if (qWords.size) {
-        const recentAnswers = await annotationsStore.listAnnotations({ from: new Date(Date.now() - 24 * 60 * 60 * 1000), limit: 30 });
+        // Query 'brief_context' directly rather than the top-30 across every
+        // category — a day with several other notes/gratitude/context entries
+        // could otherwise crowd the actual answer out of a shared top-30 window.
+        const recentAnswers = await annotationsStore.listAnnotations({
+          from: new Date(Date.now() - 24 * 60 * 60 * 1000), limit: 30, category: 'brief_context',
+        });
         const alreadyAnswered = recentAnswers.some((a) => {
-          if (a.category !== 'brief_context' || !a.note?.startsWith('Q: ')) return false;
+          if (!a.note?.startsWith('Q: ')) return false;
           const priorWords = norm(a.note.slice(3));
           if (!priorWords.size) return false;
           const shared = [...qWords].filter((w) => priorWords.has(w)).length;

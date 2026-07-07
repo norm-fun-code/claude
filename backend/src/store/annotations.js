@@ -29,14 +29,15 @@ async function createAnnotation(a) {
   return rows[0]?.id ?? null;
 }
 
-async function listAnnotations({ from = null, to = null, limit = 100 } = {}) {
+async function listAnnotations({ from = null, to = null, limit = 100, category = null } = {}) {
   const { rows } = await query(
     `SELECT * FROM annotations
       WHERE ($1::timestamptz IS NULL OR start_ts >= $1)
         AND ($2::timestamptz IS NULL OR start_ts <= $2)
+        AND ($4::text IS NULL OR category = $4)
       ORDER BY start_ts DESC
       LIMIT $3`,
-    [from, to, limit]
+    [from, to, limit, category]
   );
   return rows;
 }

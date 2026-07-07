@@ -325,10 +325,18 @@ async function computeTodayForecast({ recovery = null, asOf = new Date() } = {})
   if (tomorrow) {
     const tz = process.env.TZ || 'America/New_York';
     const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });
-    const [dayContext, annotations] = await Promise.all([
+    const startOfToday = new Date(`${todayStr}T00:00:00`);
+    const [dayContext, rawAnnotations] = await Promise.all([
       require('../store/dayJournal').forDay(todayStr).catch(() => []),
       require('../store/annotations').overlapping(asOf, asOf).catch(() => []),
     ]);
+    // A "one question" answer explaining something PAST (e.g. "No Eight Sleep
+    // reading last night" -> "Didn't sleep home") is backdated to yesterday by
+    // POST /api/briefing/context specifically so it reads as retrospective —
+    // exclude those here so a note about a night that's already over doesn't
+    // get framed as "noted for today/tomorrow" and adjust a FORWARD-looking
+    // forecast it was never meant to speak to.
+    const annotations = rawAnnotations.filter((a) => new Date(a.start_ts) >= startOfToday);
     tomorrow = await applyContextToForecast(tomorrow, { dayContext, annotations });
   }
 
