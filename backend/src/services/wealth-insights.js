@@ -14,6 +14,13 @@ const MIN_SPEND = 50;       // ignore trivially small categories
 const SPIKE_RATIO = 1.15;   // 15%+ over your usual is noteworthy
 const SPIKE_DOLLARS = 100;  // ...and at least $100 more, so it's material
 const OVER_BUDGET = 1.05;  // 5%+ over budget is noteworthy
+
+// Categories paid as a single monthly lump sum, not a recurring daily spend —
+// projecting "on pace for $X" from day-of-month elapsed is nonsensical for
+// these (a rent payment landing on the 1st isn't "trending 250% above usual,"
+// it's the whole month's rent). These get a direct actual-vs-budget read
+// instead (see the budget-pacing section below).
+const LUMP_SUM = new Set(['Rent', 'Mortgage', 'Rent & Utilities']);
 const fmt = (n) => '$' + Math.round(n).toLocaleString('en-US');
 const pct = (n) => Math.round(n) + '%';
 
@@ -103,6 +110,10 @@ async function buildWealthInsights() {
 
     const spikes = [];
     for (const [category, s] of byCat) {
+      // Lump-sum categories (rent, mortgage) get a direct budget comparison in
+      // the budget-pacing section below — a run-rate projection from a single
+      // early-month payment produces an absurd "on pace for $25k" figure.
+      if (LUMP_SUM.has(category)) continue;
       if (!s.priors.length) continue;
       const avg = s.priors.reduce((a, b) => a + b, 0) / s.priors.length;
       if (avg < MIN_SPEND) continue;
@@ -209,9 +220,6 @@ async function buildWealthInsights() {
   try {
     const pacing = await monarchWealth.getBudgetPacing();
     if (pacing && pacing.lines.length) {
-      // Categories paid as a single monthly lump sum — pace extrapolation doesn't apply.
-      const LUMP_SUM = new Set(['Rent', 'Mortgage', 'Rent & Utilities']);
-
       // Daily-spend categories: show ALL that are already over budget, then cap
       // "on pace to overspend" warnings at 2 so the list doesn't flood.
       const alreadyOver = pacing.lines.filter((l) => l.overBudget && !LUMP_SUM.has(l.category));
