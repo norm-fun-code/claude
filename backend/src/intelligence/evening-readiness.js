@@ -103,15 +103,43 @@ async function todayLoad({ tz } = {}) {
   const baseFrom = new Date(from.getTime() - 14 * DAY);
   // Steps/energy are stored as the day's running total (GREATEST upsert), so the
   // per-day max is the day total.
-  const [stepsToday, stepsBase, energyToday] = await Promise.all([
+  const [stepsToday, stepsBase, energyToday, energyBase] = await Promise.all([
     metricsStore.dailyAggregate({ domain: 'health', metric: 'steps', from, to, agg: 'max', excludeSource: 'seed' }),
     metricsStore.dailyAggregate({ domain: 'health', metric: 'steps', from: baseFrom, to: from, agg: 'max', excludeSource: 'seed' }),
     metricsStore.dailyAggregate({ domain: 'health', metric: 'active_energy', from, to, agg: 'max', excludeSource: 'seed' }),
+    metricsStore.dailyAggregate({ domain: 'health', metric: 'active_energy', from: baseFrom, to: from, agg: 'max', excludeSource: 'seed' }),
   ]);
   const steps = stepsToday.length ? round(lastVal(stepsToday)) : null;
   const stepsBaseline = stepsBase.length >= 3 ? round(mean(stepsBase)) : null;
   const activeEnergy = energyToday.length ? round(lastVal(energyToday)) : null;
-  return { steps, stepsBaseline, activeEnergy };
+  const activeEnergyBaseline = energyBase.length >= 3 ? round(mean(energyBase)) : null;
+  return { steps, stepsBaseline, activeEnergy, activeEnergyBaseline };
+}
+
+// A dead/unworn watch loses ALL sensors at once, so both steps and active
+// energy collapse together — a genuinely quiet day (sick, WFH, travel) still
+// racks up phone-tracked steps even with low deliberate exercise. Requiring
+// BOTH to collapse is what tells a device gap apart from a real quiet day.
+const DEVICE_GAP_RATIO = 0.25;
+
+/**
+ * Pure: flag when today's device-derived movement collapsed together far below
+ * the user's own baseline — most likely a dead/unworn Apple Watch, not a real
+ * behavior change. Skipped on a scheduled rest day (already explains low
+ * activity) and requires a real baseline on both metrics to compare against.
+ * Returns a short, human-phrased flag string, or null when nothing's off.
+ */
+function detectDeviceDataGap({ load, isRestDay }) {
+  if (isRestDay) return null;
+  const { steps, stepsBaseline, activeEnergy, activeEnergyBaseline } = load || {};
+  if (steps == null || stepsBaseline == null || !stepsBaseline) return null;
+  if (activeEnergy == null || activeEnergyBaseline == null || !activeEnergyBaseline) return null;
+  const stepsRatio = steps / stepsBaseline;
+  const energyRatio = activeEnergy / activeEnergyBaseline;
+  if (stepsRatio >= DEVICE_GAP_RATIO || energyRatio >= DEVICE_GAP_RATIO) return null;
+  return `Steps and active energy both came in far under your norm today ` +
+    `(${Math.round(steps)} vs ~${Math.round(stepsBaseline)} steps, ${Math.round(activeEnergy)} vs ~${Math.round(activeEnergyBaseline)} kcal active energy) ` +
+    `— looks like a Watch gap (dead/not worn) rather than a real change.`;
 }
 
 // Evening-coded habits — the ones it makes sense to nudge at night. Morning TM is
@@ -170,4 +198,7 @@ async function gatherEvening({ tz, isRestDay = false } = {}) {
   return { autonomic, load, openHabits, checkin };
 }
 
-module.exports = { autonomicRead, todayLoad, todayCheckin, openEveningHabits, eveningHabitsToTrack, gatherEvening, dayWindow };
+module.exports = {
+  autonomicRead, todayLoad, todayCheckin, openEveningHabits, eveningHabitsToTrack,
+  gatherEvening, dayWindow, detectDeviceDataGap,
+};

@@ -154,41 +154,60 @@ function scheduleWeekly(weekday, hour, minute, fn) {
   setTimeout(tick, msUntil(hour, minute, weekday));
 }
 
+// In-flight guard: morningRoutine is reachable from ~5 call sites (the daily
+// tick, the startup catch-up path, and 3 distinct Eight-Sleep watcher
+// backstops). The full routine (ingest + analyze + LLM narrative generation)
+// can take well over the watcher's poll interval, and markMorningRan() only
+// writes at the very end — so without this guard, a second tick can see
+// "not run yet" while the first run is still in progress and fire a
+// duplicate build + push. Same single-flight pattern as server.js's
+// _rebuildInFlight for /api/briefing/rebuild.
+let _morningRoutineInFlight = false;
+
 async function morningRoutine({ reason = 'scheduled' } = {}) {
-  console.log(`[scheduler] morning routine starting (trigger: ${reason})`);
-  // Refresh the data + intelligence first, so the briefing reflects today.
-  try { await runIngest(); } catch (e) { console.error('[scheduler] ingest:', e.message); }
-  try { await analyze(); } catch (e) { console.error('[scheduler] analyze:', e.message); }
-  // Anomaly watch on fresh overnight data — pushes "your HRV dropped" within the
-  // morning routine (runNudges has no anomaly builder). Deduped to one ping per
-  // metric per day, so a same-night HTTP ingest that already fired won't repeat.
-  try { await runWatch(); } catch (e) { console.error('[scheduler] watch:', e.message); }
-  // Synthesize the day's cross-domain relationships into plain-language insights.
-  try { await generateCrossContext(); } catch (e) { console.error('[scheduler] crossContext:', e.message); }
-  // Propose new experiments from fresh correlations, then auto-start one if the
-  // queue is empty — keeps the hypothesis loop self-sustaining.
+  if (_morningRoutineInFlight) {
+    console.log(`[scheduler] morning routine already in flight — skipping duplicate trigger (${reason})`);
+    return;
+  }
+  _morningRoutineInFlight = true;
   try {
-    const p = await proposeExperiments();
-    if (p.created) console.log(`[scheduler] proposed ${p.created} new experiment(s)`);
-    const started = await autoStartExperiment();
-    if (started) console.log(`[scheduler] auto-started experiment: "${started.hypothesis}"`);
-  } catch (e) { console.error('[scheduler] experiments:', e.message); }
-  // Check-in reminder is suppressed here — it has its own 3pm schedule.
-  try { await runNudges({ suppressCheckin: true }); } catch (e) { console.error('[scheduler] nudge:', e.message); }
-  // Wealth threshold alerts: over-budget categories, new recurring charges.
-  try {
-    const w = await runWealthNudges({});
-    if (w.sent > 0) console.log(`[scheduler] wealth nudges: sent=${w.sent}`);
-  } catch (e) { console.error('[scheduler] wealth nudges:', e.message); }
-  // Pre-build the briefing (warm the cache) and push "briefing ready", so the
-  // app opens instantly with today's briefing instead of waiting to build it.
-  try {
-    const r = await runMorningBriefing({});
-    console.log(`[scheduler] morning briefing: built=${r.built} pushed=${r.sent}`);
-  } catch (e) { console.error('[scheduler] morning briefing:', e.message); }
-  // Mark the day done so a post-8:30am restart's catch-up check skips it.
-  await markMorningRan();
-  console.log('[scheduler] morning routine done');
+    console.log(`[scheduler] morning routine starting (trigger: ${reason})`);
+    // Refresh the data + intelligence first, so the briefing reflects today.
+    try { await runIngest(); } catch (e) { console.error('[scheduler] ingest:', e.message); }
+    try { await analyze(); } catch (e) { console.error('[scheduler] analyze:', e.message); }
+    // Anomaly watch on fresh overnight data — pushes "your HRV dropped" within the
+    // morning routine (runNudges has no anomaly builder). Deduped to one ping per
+    // metric per day, so a same-night HTTP ingest that already fired won't repeat.
+    try { await runWatch(); } catch (e) { console.error('[scheduler] watch:', e.message); }
+    // Synthesize the day's cross-domain relationships into plain-language insights.
+    try { await generateCrossContext(); } catch (e) { console.error('[scheduler] crossContext:', e.message); }
+    // Propose new experiments from fresh correlations, then auto-start one if the
+    // queue is empty — keeps the hypothesis loop self-sustaining.
+    try {
+      const p = await proposeExperiments();
+      if (p.created) console.log(`[scheduler] proposed ${p.created} new experiment(s)`);
+      const started = await autoStartExperiment();
+      if (started) console.log(`[scheduler] auto-started experiment: "${started.hypothesis}"`);
+    } catch (e) { console.error('[scheduler] experiments:', e.message); }
+    // Check-in reminder is suppressed here — it has its own 3pm schedule.
+    try { await runNudges({ suppressCheckin: true }); } catch (e) { console.error('[scheduler] nudge:', e.message); }
+    // Wealth threshold alerts: over-budget categories, new recurring charges.
+    try {
+      const w = await runWealthNudges({});
+      if (w.sent > 0) console.log(`[scheduler] wealth nudges: sent=${w.sent}`);
+    } catch (e) { console.error('[scheduler] wealth nudges:', e.message); }
+    // Pre-build the briefing (warm the cache) and push "briefing ready", so the
+    // app opens instantly with today's briefing instead of waiting to build it.
+    try {
+      const r = await runMorningBriefing({});
+      console.log(`[scheduler] morning briefing: built=${r.built} pushed=${r.sent}`);
+    } catch (e) { console.error('[scheduler] morning briefing:', e.message); }
+    // Mark the day done so a post-8:30am restart's catch-up check skips it.
+    await markMorningRan();
+    console.log('[scheduler] morning routine done');
+  } finally {
+    _morningRoutineInFlight = false;
+  }
 }
 
 /**

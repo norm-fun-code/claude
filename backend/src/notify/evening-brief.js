@@ -7,11 +7,12 @@
 // Prose is LLM-written in the chief-of-staff voice, but every field has a
 // deterministic fallback so the brief always lands even if the model is down.
 const llm = require('../llm');
-const { gatherEvening } = require('../intelligence/evening-readiness');
+const { gatherEvening, detectDeviceDataGap } = require('../intelligence/evening-readiness');
 const { wellbeingLevel } = require('../intelligence/catalog');
 const briefingsStore = require('../store/briefings');
 const devicesStore = require('../store/devices');
 const nudgesStore = require('../store/nudges');
+const annotationsStore = require('../store/annotations');
 const { sendPush } = require('./expo');
 
 const ms = (n) => (n != null ? `${Math.round(n)} ms` : null);
@@ -30,7 +31,7 @@ const TONE_HEADLINE = {
 function composeFallback({
   autonomic, load, openHabits, gratitude = [], training = null, isRestDay = false,
   tomorrowFirstEvent = null, tomorrowIsDayOff = false, tomorrowHoliday = null,
-  checkin = null,
+  checkin = null, dataGap = null,
 }) {
   const { hrv, hrvBaseline, rhr, rhrBaseline, tone, sampleThin } = autonomic;
 
@@ -88,6 +89,7 @@ function composeFallback({
       today = `You logged ${commas(load.steps)} steps today${vs}.`;
     }
   }
+  if (dataGap) today = today ? `${today} ${dataGap}` : dataGap;
 
   let tomorrow =
     tone === 'settled'
@@ -132,7 +134,7 @@ function composeFallback({
     signals: {
       hrv, hrvBaseline, rhr, rhrBaseline,
       steps: load.steps, stepsBaseline: load.stepsBaseline, activeEnergy: load.activeEnergy,
-      openHabits,
+      openHabits, dataGap,
     },
   };
 }
@@ -165,7 +167,7 @@ function buildPrompt(signals) {
     autonomic: a, load: l, openHabits, gratitude = [], morningPlan = null, training = null,
     commitments = null, dayContext = '', isRestDay = false,
     tomorrowFirstEvent = null, tomorrowIsDayOff = false, tomorrowHoliday = null,
-    checkin = null,
+    checkin = null, dataGap = null,
   } = signals;
   const checkinParts = checkin
     ? ['mood', 'energy', 'focus'].filter((k) => checkin[k] != null).map((k) => `${k} ${wellbeingLevel(checkin[k])}`)
@@ -180,6 +182,9 @@ function buildPrompt(signals) {
     l.steps != null ? `Steps today: ${commas(l.steps)}${l.stepsBaseline != null ? ` (norm ${commas(l.stepsBaseline)})` : ''}` : 'Steps today: (none)',
     l.activeEnergy != null ? `Active energy today: ${commas(l.activeEnergy)} kcal` : null,
     isRestDay ? 'Today was a SCHEDULED REST DAY — lower steps/energy and no exercise are EXPECTED, not a shortfall. Do not compare against the training-day norm as if something was missed.' : null,
+    dataGap
+      ? `DATA QUALITY FLAG: ${dataGap} Say this plainly in "today" (or "readiness" if more natural) — don't grade the day against these numbers as if they're real, and don't invent a health explanation for the dip.`
+      : null,
     openHabits.length ? `Evening habits still open: ${openHabits.join(', ')}` : 'Evening habits: all logged',
     training
       ? `Planned session today: ${training.planned ?? '(none)'} — ${training.completed ? `DONE${training.actual ? ` (logged: ${training.actual})` : ''}` : 'not logged as done'}`
@@ -289,6 +294,25 @@ async function runEveningHealthBrief(opts = {}) {
 
   const signals = await gatherEvening({ tz, isRestDay });
   signals.isRestDay = isRestDay;
+  // Data-quality flag: steps + active energy collapsing together vs. their own
+  // baseline reads as a dead/unworn Watch, not a real behavior change. Surface
+  // it in tonight's brief AND record it as a life-context annotation for
+  // TODAY so tomorrow's trend/anomaly narration (which reads the SAME metrics)
+  // doesn't mistake the gap for a genuine dip — this is what makes the
+  // flagging actually useful the next day, not just tonight's footnote.
+  signals.dataGap = detectDeviceDataGap({ load: signals.load, isRestDay });
+  if (signals.dataGap) {
+    try {
+      await annotationsStore.createAnnotation({
+        startTs: new Date().toISOString(),
+        category: 'data_quality',
+        label: 'Watch data gap — active energy/steps look under-tracked, not a real dip',
+        note: signals.dataGap,
+      });
+    } catch (err) {
+      console.error('[evening-brief] data-gap annotation failed:', err.message);
+    }
+  }
   // Recent gratitude reflections feed the evening presence beat — what you wrote
   // in the habit stack gets reflected back instead of being write-only.
   try {

@@ -192,12 +192,23 @@ async function recordAndLoadFirstSeen(signatures, db) {
   if (sigs.length === 0) return new Map();
 
   // Upsert all current signatures: insert new ones at now(), bump last_seen on
-  // existing ones (first_seen is preserved by leaving it out of the UPDATE).
+  // existing ones. first_seen is normally preserved (that's what lets novelty
+  // decay over a genuinely persistent pattern) — EXCEPT when the signature went
+  // quiet for a stretch and just reappeared. Without this, a metric that dipped
+  // once 16 days ago, recovered, and dips again today would still report "open
+  // 16 days running" (first_seen is only ever set once, never reset), which
+  // reads as a continuous streak when the finding was actually absent most of
+  // those days. Treat a gap longer than a routine sync delay as a fresh episode.
   await query(
     `INSERT INTO finding_first_seen (signature)
        SELECT unnest($1::text[])
      ON CONFLICT (signature)
-       DO UPDATE SET last_seen = now()`,
+       DO UPDATE SET
+         first_seen = CASE
+           WHEN finding_first_seen.last_seen < now() - interval '2 days' THEN now()
+           ELSE finding_first_seen.first_seen
+         END,
+         last_seen = now()`,
     [sigs]
   );
   await query(`DELETE FROM finding_first_seen WHERE last_seen < now() - interval '90 days'`);
