@@ -48,6 +48,9 @@ export function AnnotationsCard({ inline = false }: AnnotationsProps = {}) {
   const [label, setLabel] = useState('');
   const [durationDays, setDurationDays] = useState(1); // default: through tomorrow
   const [saving, setSaving] = useState(false);
+  // Tapping an existing chip edits it in place (same sheet, prefilled) instead
+  // of creating a new one. null = the sheet is in "add" mode.
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -66,17 +69,44 @@ export function AnnotationsCard({ inline = false }: AnnotationsProps = {}) {
     if (!label.trim()) return;
     setSaving(true);
     try {
-      const res = await fetchWithTimeout(ANNOTATIONS_URL, {
-        method: 'POST', headers: authHeaders(),
-        body: JSON.stringify({
-          category,
-          label: label.trim(),
-          startTs: new Date().toISOString(),
-          endTs: endOfDay(durationDays).toISOString(),
-        }),
-      });
-      if (res.ok) { setModalVisible(false); setLabel(''); setDurationDays(1); load(); }
+      // Editing an existing chip PATCHes the same row (server does an UPDATE,
+      // not an INSERT) — every downstream reader (health-anomaly context,
+      // the briefing's annotationsContext, wealth-insights' spend filter)
+      // queries annotations live, so the correction is picked up on the very
+      // next build with no separate propagation step. Duration/start-time
+      // aren't editable here — those aren't what a text correction needs, and
+      // changing them touches the overlap window other findings key off of.
+      const res = editingId
+        ? await fetchWithTimeout(`${ANNOTATIONS_URL}/${editingId}`, {
+            method: 'PATCH', headers: authHeaders(),
+            body: JSON.stringify({ category, label: label.trim() }),
+          })
+        : await fetchWithTimeout(ANNOTATIONS_URL, {
+            method: 'POST', headers: authHeaders(),
+            body: JSON.stringify({
+              category,
+              label: label.trim(),
+              startTs: new Date().toISOString(),
+              endTs: endOfDay(durationDays).toISOString(),
+            }),
+          });
+      if (res.ok) { setModalVisible(false); setLabel(''); setDurationDays(1); setEditingId(null); load(); }
     } catch {} finally { setSaving(false); }
+  }
+
+  function openEdit(a: Annotation) {
+    setEditingId(a.id);
+    setLabel(a.label);
+    setCategory(CATEGORIES.includes(a.category) ? a.category : 'other');
+    setModalVisible(true);
+  }
+
+  function openAdd() {
+    setEditingId(null);
+    setLabel('');
+    setCategory('life');
+    setDurationDays(1);
+    setModalVisible(true);
   }
 
   const inner = (
@@ -85,16 +115,21 @@ export function AnnotationsCard({ inline = false }: AnnotationsProps = {}) {
       {annotations.length > 0 && (
         <View style={[styles.chips, inline && { marginTop: spacing.xs }]}>
           {annotations.slice(0, 5).map(a => (
-            <View key={a.id} style={[styles.chip, { backgroundColor: c.accentSoft, borderColor: c.border }]}>
+            <TouchableOpacity
+              key={a.id}
+              onPress={() => openEdit(a)}
+              style={[styles.chip, { backgroundColor: c.accentSoft, borderColor: c.border }]}
+              accessibilityLabel="Edit this context note"
+            >
               <Text style={[styles.chipText, { color: c.accent }]}>
                 {CATEGORY_LABELS[a.category] ? `${CATEGORY_LABELS[a.category]} · ` : ''}{a.label}
               </Text>
-            </View>
+            </TouchableOpacity>
           ))}
         </View>
       )}
       <TouchableOpacity
-        onPress={() => setModalVisible(true)}
+        onPress={openAdd}
         style={inline ? styles.inlineBtn : [styles.addBtn, { borderColor: c.border }]}
       >
         <Text style={[inline ? styles.inlineBtnText : styles.addBtnText, { color: c.subtext }]}>
@@ -108,11 +143,11 @@ export function AnnotationsCard({ inline = false }: AnnotationsProps = {}) {
     <View style={inline ? undefined : [styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       {inner}
 
-      <Modal visible={modalVisible} transparent animationType="slide" onRequestClose={() => setModalVisible(false)}>
+      <Modal visible={modalVisible} transparent animationType="slide" onRequestClose={() => { setModalVisible(false); setEditingId(null); }}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <View style={styles.overlay}>
           <View style={[styles.sheet, { backgroundColor: c.card, borderColor: c.border }]}>
-            <Text style={[styles.sheetTitle, { color: c.text }]}>What's going on?</Text>
+            <Text style={[styles.sheetTitle, { color: c.text }]}>{editingId ? 'Edit context' : "What's going on?"}</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.catScroll}>
               {CATEGORIES.map(cat => (
                 <TouchableOpacity
@@ -134,26 +169,34 @@ export function AnnotationsCard({ inline = false }: AnnotationsProps = {}) {
               placeholderTextColor={c.subtext}
               autoCorrect
               spellCheck
+              multiline
             />
-            <Text style={[styles.durationLabel, { color: c.subtext }]}>Lasts through</Text>
-            <View style={styles.durationRow}>
-              {DURATION_OPTS.map((opt) => (
-                <TouchableOpacity
-                  key={opt.days}
-                  onPress={() => setDurationDays(opt.days)}
-                  style={[styles.durationBtn, {
-                    borderColor: durationDays === opt.days ? c.accent : c.border,
-                    backgroundColor: durationDays === opt.days ? c.accentSoft : 'transparent',
-                  }]}
-                >
-                  <Text style={[styles.durationBtnTxt, { color: durationDays === opt.days ? c.accent : c.subtext }]}>
-                    {opt.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            {/* Duration/start-time aren't editable on an existing note — that's not
+                what a text correction needs, and changing them would shift the
+                overlap window other findings key off of. Only shown when adding new. */}
+            {!editingId && (
+              <>
+                <Text style={[styles.durationLabel, { color: c.subtext }]}>Lasts through</Text>
+                <View style={styles.durationRow}>
+                  {DURATION_OPTS.map((opt) => (
+                    <TouchableOpacity
+                      key={opt.days}
+                      onPress={() => setDurationDays(opt.days)}
+                      style={[styles.durationBtn, {
+                        borderColor: durationDays === opt.days ? c.accent : c.border,
+                        backgroundColor: durationDays === opt.days ? c.accentSoft : 'transparent',
+                      }]}
+                    >
+                      <Text style={[styles.durationBtnTxt, { color: durationDays === opt.days ? c.accent : c.subtext }]}>
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
             <View style={styles.sheetBtns}>
-              <TouchableOpacity onPress={() => setModalVisible(false)} style={[styles.sheetBtn, { borderColor: c.border }]}>
+              <TouchableOpacity onPress={() => { setModalVisible(false); setEditingId(null); }} style={[styles.sheetBtn, { borderColor: c.border }]}>
                 <Text style={[styles.sheetBtnTxt, { color: c.subtext }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={save} disabled={saving || !label.trim()} style={[styles.sheetBtn, { backgroundColor: c.accent, borderColor: c.accent }]}>

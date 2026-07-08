@@ -54,4 +54,31 @@ async function overlapping(windowStart, windowEnd) {
   return rows;
 }
 
-module.exports = { createAnnotation, listAnnotations, overlapping };
+/**
+ * Pure: build the `SET ... WHERE id = ...` clause + positional params for a
+ * partial annotation edit, from whichever of {label, category} were actually
+ * provided (undefined = "not sent, leave as-is" — distinct from an empty
+ * string, which is rejected by the caller as an attempt to blank the label).
+ * Split out so the SQL-building logic is unit-testable without a live DB.
+ */
+function buildAnnotationUpdate({ label, category, id }) {
+  const sets = [];
+  const params = [];
+  if (label != null) { params.push(label.trim()); sets.push(`label = $${params.length}`); }
+  if (category != null) { params.push(category); sets.push(`category = $${params.length}`); }
+  if (!sets.length) return null; // nothing to update
+  params.push(id);
+  return { sql: `UPDATE annotations SET ${sets.join(', ')} WHERE id = $${params.length}`, params };
+}
+
+/** Edit an existing annotation's label and/or category IN PLACE (same row —
+ *  every downstream reader queries annotations live, so a correction is
+ *  visible on the very next read). Returns false if there was nothing to update. */
+async function updateAnnotation(id, { label, category } = {}) {
+  const built = buildAnnotationUpdate({ label, category, id });
+  if (!built) return false;
+  await query(built.sql, built.params);
+  return true;
+}
+
+module.exports = { createAnnotation, listAnnotations, overlapping, buildAnnotationUpdate, updateAnnotation };

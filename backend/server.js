@@ -2464,14 +2464,20 @@ app.delete('/api/annotations/:id', async (req, res) => {
   }
 });
 
+// Edits the SAME row in place (not a new insert) — every downstream reader
+// (analyze.js's health-anomaly "Context: ..." labeling, the briefing's
+// annotationsContext, wealth-insights' spend-context filter) queries the
+// annotations table live on each build, so a correction here is picked up by
+// the very next read with no separate propagation step needed.
 app.patch('/api/annotations/:id', async (req, res) => {
   try {
     const id = req.params.id;
     if (!id || typeof id !== 'string' || id.length < 8) return res.status(400).json({ error: 'invalid id' });
-    const { label } = req.body || {};
-    if (!label || !label.trim()) return res.status(400).json({ error: 'label required' });
-    const { query } = require('./src/db');
-    await query('UPDATE annotations SET label = $1 WHERE id = $2', [label.trim(), id]);
+    const { label, category } = req.body || {};
+    if (label != null && !label.trim()) return res.status(400).json({ error: 'label cannot be blank' });
+    if (label == null && category == null) return res.status(400).json({ error: 'label or category required' });
+    const updated = await annotationsStore.updateAnnotation(id, { label, category });
+    if (!updated) return res.status(400).json({ error: 'nothing to update' });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
