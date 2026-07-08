@@ -3498,8 +3498,14 @@ app.get('/api/briefing', async (req, res) => {
   // consolidate() still runs after it resolves (below), preserving the original
   // analyze -> crossContext -> consolidate ordering; only crossContext's LLM call
   // itself moves off the critical path.
+  // Tracks success separately from the promise itself (rather than swallowing
+  // the error into a `null` return) so consolidate() below can replicate the
+  // ORIGINAL single-try/catch behavior exactly: skip consolidate() if EITHER
+  // analyze() or crossContext generation failed, not just analyze().
+  let crossContextOk = false;
   const crossContextPromise = analyzeOk
     ? require('./src/intelligence/crossContext').generateCrossContext()
+        .then((v) => { crossContextOk = true; return v; })
         .catch((err) => { console.error('[briefing build] crossContext regen failed:', err.message); return null; })
     : Promise.resolve(null);
 
@@ -3559,7 +3565,7 @@ app.get('/api/briefing', async (req, res) => {
   // concurrently with it) has actually finished before consolidate() reads its
   // findings — preserves the original analyze -> crossContext -> consolidate order.
   await crossContextPromise;
-  if (analyzeOk) {
+  if (analyzeOk && crossContextOk) {
     try {
       await require('./src/intelligence/consolidate').consolidate({ kind: 'briefing' });
     } catch (err) {
