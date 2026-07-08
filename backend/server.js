@@ -3208,6 +3208,34 @@ app.get('/api/debug/monarch-mcp', async (req, res) => {
   }
 });
 
+// Diagnostic: raw Monarch budget pacing side-by-side with the category-spend
+// strings the "trending X% above usual" cards actually key off of, so a
+// category-name mismatch between the two (same bug class as the income
+// detection issue) is visible directly instead of guessed at.
+app.get('/api/debug/wealth-budget', async (req, res) => {
+  try {
+    const monarchWealth = require('./src/services/monarch-wealth');
+    const documents = require('./src/store/documents');
+    if (!monarchWealth.isConfigured()) {
+      return res.json({ configured: false, hint: 'Monarch MCP not configured' });
+    }
+    const [pacing, categorySpend] = await Promise.all([
+      monarchWealth.getBudgetPacing(),
+      documents.monthlyCategorySpend({ months: 1 }),
+    ]);
+    res.json({
+      configured: true,
+      budgetLines: (pacing?.lines || []).map((l) => ({ category: l.category, budget: l.budget, actual: l.actual })),
+      spendCategoriesThisMonth: [...new Set(categorySpend.map((r) => r.category))],
+      hint: pacing?.lines?.length
+        ? 'Compare budgetLines[].category strings against spendCategoriesThisMonth — a mismatch (different casing/wording) means budget cards silently never match.'
+        : 'No budget lines returned from Monarch at all — you likely have no budgets configured in the Monarch app, or GetBudget is failing the same way GetTransactions/GetCategories was.',
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // TEMPORARY raw Monarch MCP JSON-RPC probe (NO LLM) — used to inspect tool output
 // shapes while building the wealth features. Remove once the mappers are built.
 // Mid-day partial refresh: markets + urgent-email scan + weather/calendar.
