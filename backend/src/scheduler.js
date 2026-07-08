@@ -80,6 +80,48 @@ async function eightSleepSessionInProgress() {
   }
 }
 
+/**
+ * Personal earliest-plausible-wake floor, in decimal hours since local midnight.
+ *
+ * Eight Sleep finalizes the night's interval when you enter the smart-alarm
+ * wake window or briefly leave the bed — which can be HOURS before you actually
+ * get up (sleep-in past the alarm, back to bed after a bathroom trip that the
+ * Pod never re-opens a session for). The `/intervals/present` check then reads
+ * "ended" for the rest of the morning, and a fixed 12-minute buffer happily
+ * fires a 6:5x brief at a user who sleeps until 9. A single unverifiable
+ * "session ended" bit is not evidence the user is UP — but their own trailing
+ * wake-time history is evidence of when they plausibly COULD be up.
+ *
+ * Floor = 25th percentile of the last 14 days of `health:wake_time` (the
+ * session-end clock time Eight Sleep itself reports, already ingested by the
+ * connector) minus a 30-minute margin — early enough that a genuinely early
+ * morning still lands on time, late enough that an alarm-window finalization
+ * hours before their real wake can't fire the brief. Falls back to
+ * EIGHT_SLEEP_MIN_WAKE_HOUR (default 7.5 = 7:30am) with thin history, and is
+ * clamped so it can never move before the poll start nor pin against the
+ * backstop. The backstop always overrides — a brief is never lost to this.
+ */
+async function personalWakeFloorHours({ pollStartH = 6.5, backstopH = 10 } = {}) {
+  const fallback = Number(process.env.EIGHT_SLEEP_MIN_WAKE_HOUR) || 7.5;
+  let floor = fallback;
+  try {
+    const { rows } = await query(
+      `SELECT value FROM metrics
+        WHERE domain = 'health' AND metric = 'wake_time' AND source = 'eight_sleep'
+          AND ts >= now() - interval '14 days'
+        ORDER BY value ASC`
+    );
+    const vals = rows.map((r) => Number(r.value)).filter(Number.isFinite);
+    if (vals.length >= 5) {
+      const p25 = vals[Math.floor(0.25 * (vals.length - 1))];
+      floor = p25 - 0.5; // 30-minute margin under their own early-side wake
+    }
+  } catch (e) {
+    console.error('[scheduler] wake-floor lookup failed (using fallback):', e.message);
+  }
+  return Math.min(Math.max(floor, pollStartH), backstopH - 0.75);
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Local (TZ-aware) YYYY-MM-DD — toISOString() would give UTC and roll the date
@@ -277,7 +319,20 @@ function startMorningWatcher() {
           // ended, so we don't fire in the gap before the smart alarm wakes them.
           if (sessionEndedSeenAt == null) sessionEndedSeenAt = Date.now();
           const sinceEnded = Date.now() - sessionEndedSeenAt;
-          if (sinceEnded >= wakeBufferMs || pastBackstop) {
+          // Personal wake floor: an "ended" reading long before the user's own
+          // typical wake is Eight Sleep finalizing at the alarm window / a bed
+          // exit — NOT the user being up. Don't fire on it; keep ticking. If the
+          // Pod re-opens a session (they're back asleep), the stillSleeping
+          // branch resets the buffer; otherwise the brief fires the moment the
+          // floor passes (buffer already satisfied). Backstop always overrides.
+          const floorH = await personalWakeFloorHours({
+            pollStartH: pollStartHour + pollStartMinute / 60,
+            backstopH: backstopHour + backstopMinute / 60,
+          });
+          const beforeFloor = mins < Math.round(floorH * 60);
+          if (beforeFloor && !pastBackstop) {
+            console.log(`[scheduler] Eight Sleep session reads ended ${Math.round(sinceEnded / 60000)}m ago, but it's before the personal wake floor (${floorH.toFixed(2)}h) — holding (alarm-window finalization protection)`);
+          } else if (sinceEnded >= wakeBufferMs || pastBackstop) {
             await morningRoutine({ reason: 'eight-sleep data arrived (post-wake buffer)' });
           } else {
             console.log(`[scheduler] Eight Sleep session ended ${Math.round(sinceEnded / 60000)}m ago — holding ${Math.round(wakeBufferMs / 60000)}m wake buffer before briefing`);
@@ -411,4 +466,7 @@ function start() {
   return true;
 }
 
-module.exports = { start, msUntil, morningRoutine, morningRanToday, markMorningRan, localDateKey };
+module.exports = {
+  start, msUntil, morningRoutine, morningRanToday, markMorningRan, localDateKey,
+  eightSleepConfigured, eightSleepSessionInProgress, personalWakeFloorHours,
+};

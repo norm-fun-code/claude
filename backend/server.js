@@ -2504,6 +2504,16 @@ app.post('/api/briefing/context', async (req, res) => {
       dayJournalStore.create({ text: answer.trim(), entryDate, source: 'brief' })
         .catch((e) => console.error('[day journal] capture from brief context failed:', e.message));
     }
+    // Answering the chief brief's one question retires it from today's CACHED
+    // builds too — the question lives in stored briefing JSON, so component
+    // state alone can't dismiss it: a tab switch remounts the card from cache
+    // and the already-answered question pops back up. Best-effort — the
+    // annotation above (the actual answer) is the critical write.
+    if (signalKey === 'brief_open_question') {
+      briefingsStore.blankTodaysOpenQuestion()
+        .then((n) => { if (n > 0) console.log(`[briefing/context] retired answered openQuestion from ${n} cached build(s)`); })
+        .catch((e) => console.error('[briefing/context] openQuestion retire failed:', e.message));
+    }
     res.json({ ok: true, id });
   } catch (err) {
     console.error('[briefing/context] failed:', err.message);
@@ -2793,7 +2803,39 @@ app.post('/api/cron/morning', async (req, res) => {
   const provided = req.query.secret || req.body?.secret;
   if (provided !== secret) return res.status(401).json({ error: 'invalid secret' });
   try {
-    const r = await runMorningBriefing({ send: true });
+    // An external cron fires at a FIXED clock time — but the whole product
+    // promise is a brief that lands when the user actually wakes. Apply the
+    // same gates the in-process watcher lives by, so a cron is a safe
+    // redundancy layer, never an alarm clock: skip if the morning already ran,
+    // and (before the backstop hour) skip while the Eight Sleep session is
+    // still in progress or the clock is before the user's own personal wake
+    // floor. ?force=1 bypasses every gate for manual testing.
+    const force = req.query.force === '1' || req.query.force === 'true';
+    const scheduler = require('./src/scheduler');
+    if (!force) {
+      if (await scheduler.morningRanToday()) {
+        console.log('[cron] morning skipped: routine already ran today');
+        return res.json({ built: false, sent: 0, skipped: 'already_ran_today' });
+      }
+      if (scheduler.eightSleepConfigured()) {
+        const cronTz = process.env.TZ || 'America/New_York';
+        const parts = new Date().toLocaleTimeString('en-GB', { timeZone: cronTz, hour: '2-digit', minute: '2-digit', hour12: false }).split(':');
+        const nowH = Number(parts[0]) + Number(parts[1]) / 60;
+        const backstopH = (Number(process.env.EIGHT_SLEEP_BACKSTOP_HOUR) || 10) + (Number(process.env.EIGHT_SLEEP_BACKSTOP_MINUTE) || 0) / 60;
+        if (nowH < backstopH) {
+          if (await scheduler.eightSleepSessionInProgress()) {
+            console.log('[cron] morning skipped: Eight Sleep session still in progress');
+            return res.json({ built: false, sent: 0, skipped: 'still_sleeping' });
+          }
+          const floorH = await scheduler.personalWakeFloorHours({ backstopH });
+          if (nowH < floorH) {
+            console.log(`[cron] morning skipped: before personal wake floor (${floorH.toFixed(2)}h)`);
+            return res.json({ built: false, sent: 0, skipped: 'before_wake_floor', floorHours: floorH });
+          }
+        }
+      }
+    }
+    const r = await runMorningBriefing({ send: true, force });
     console.log(`[cron] morning triggered externally: built=${r.built} sent=${r.sent}`);
     res.json(r);
   } catch (err) {

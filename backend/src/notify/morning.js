@@ -57,6 +57,14 @@ async function warmBriefing() {
   }
 }
 
+/** Local-day dedup key for the "Good morning" push — ONE brief-ready ping per
+ *  day, total, across every trigger (watcher, external cron, sleep check-in).
+ *  The content can rebuild as often as it likes; the push cannot repeat. */
+function morningPushKey(d = new Date()) {
+  const tz = process.env.TZ || 'America/New_York';
+  return `morning_brief_push:${d.toLocaleDateString('en-CA', { timeZone: tz })}`;
+}
+
 /** Build the briefing and push the "ready" notification. Shared by the morning
  *  routine AND the sleep check-in (which triggers it after you log). */
 async function warmAndNotify(opts = {}) {
@@ -71,6 +79,23 @@ async function warmAndNotify(opts = {}) {
   }
 
   if (!send) return { built, sent: 0 };
+
+  // Hard once-per-day gate on the push itself. Every earlier dedup lived on the
+  // trigger side (in-flight guard, 2-hour freshness window) and each new trigger
+  // path (external cron, sleep check-in, watcher) re-opened a permutation — a
+  // cron build at 6:50 plus a watcher run at 9:00 is over the 2h window and
+  // would ping twice. Deduping at the single point where the push leaves the
+  // building closes all of them at once, including ones not written yet.
+  const nudgesStore = require('../store/nudges');
+  try {
+    const recent = await nudgesStore.recentlySentKeys(1);
+    if (recent.has(morningPushKey())) {
+      console.log('[morning] brief-ready push already sent today — rebuilt content, skipping duplicate push');
+      return { built, sent: 0, skipped: 'already_pushed_today' };
+    }
+  } catch (e) {
+    console.error('[morning] push-dedup check failed (proceeding):', e.message);
+  }
 
   const tokens = await devicesStore.listActiveTokens();
   if (tokens.length === 0) return { built, sent: 0, reason: 'no_devices' };
@@ -90,6 +115,22 @@ async function warmAndNotify(opts = {}) {
       data: { type: 'morning_briefing' },
     });
     for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
+    // Record the once-per-day key only after the push actually went out, so a
+    // failed send doesn't burn the day's one allowed ping.
+    if (r.sent > 0) {
+      try {
+        const id = await nudgesStore.recordNudge({
+          dedupKey: morningPushKey(),
+          title: 'Good morning ☀️',
+          body,
+          basis: { type: 'morning_brief_push' },
+          status: 'pending',
+        });
+        if (id != null) await nudgesStore.markStatus(id, 'sent');
+      } catch (e) {
+        console.error('[morning] push-dedup record failed:', e.message);
+      }
+    }
     return { built, sent: r.sent };
   } catch (err) {
     console.error('[morning] push failed:', err.message);

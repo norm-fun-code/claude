@@ -10,6 +10,28 @@ async function saveBriefing({ kind = 'daily', content, periodStart = null, perio
   return rows[0] ?? null;
 }
 
+/**
+ * Blank the chief brief's openQuestion in ALL of today's cached daily builds.
+ * Called when the user answers it: the question was asked by a build that's
+ * now a stored cache, so component state alone can't retire it — a tab switch
+ * remounts the card from this cache and the already-answered question pops
+ * back up. Blanking at the source means every refetch/remount/app-restart
+ * agrees it's been dealt with. (Multiple builds per day each insert a row, so
+ * update every row from today, not just the newest.)
+ */
+async function blankTodaysOpenQuestion(tz = process.env.TZ || 'America/New_York') {
+  const { rowCount } = await query(
+    `UPDATE briefings
+        SET content = jsonb_set(content, '{chiefBrief,openQuestion}', '""'::jsonb)
+      WHERE kind = 'daily'
+        AND (generated_at AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
+        AND content ? 'chiefBrief'
+        AND COALESCE(content->'chiefBrief'->>'openQuestion', '') <> ''`,
+    [tz]
+  );
+  return rowCount;
+}
+
 async function latestBriefing(kind = 'weekly') {
   const { rows } = await query(
     `SELECT * FROM briefings WHERE kind = $1 ORDER BY generated_at DESC LIMIT 1`,
@@ -71,4 +93,4 @@ async function todaysMorningBrief() {
   return null;
 }
 
-module.exports = { saveBriefing, latestBriefing, listBriefings, recentDailyBriefOpeners, todaysMorningBrief };
+module.exports = { saveBriefing, latestBriefing, listBriefings, recentDailyBriefOpeners, todaysMorningBrief, blankTodaysOpenQuestion };

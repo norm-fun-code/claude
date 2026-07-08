@@ -120,6 +120,14 @@ function BeatRow({ label, emoji, tint, text }: { label: string; emoji: string; t
   );
 }
 
+// Questions answered THIS app session, remembered at module level. The tabs
+// share one ScrollView, so switching tabs unmounts this card and wipes its
+// 'saved ✓' state — while the App-level briefing data (which still carries the
+// question) survives. On remount the already-answered question would pop back
+// up. The server also retires it from the cached build (so refetch/app-restart
+// agree), but this set covers the in-memory window until that refetch.
+const answeredQuestions = new Set<string>();
+
 export function BriefCard({ brief, fallback }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
@@ -129,7 +137,13 @@ export function BriefCard({ brief, fallback }: Props) {
   const [noteSaving, setNoteSaving] = useState(false);
   // The chief's one open question (when present) — answered inline; the answer
   // becomes context for the next brief so it learns from the correction.
-  const openQ = brief?.openQuestion?.trim() || '';
+  // A question answered earlier this session stays retired across REMOUNTS —
+  // but the suppression is decided once, at mount, so the mount where the user
+  // just answered still shows its 'saved ✓' confirmation instead of the whole
+  // box vanishing mid-interaction.
+  const rawQ = brief?.openQuestion?.trim() || '';
+  const [suppressAnswered] = useState(() => rawQ !== '' && answeredQuestions.has(rawQ));
+  const openQ = suppressAnswered ? '' : rawQ;
   const [qAnswer, setQAnswer] = useState('');
   const [qState, setQState] = useState<'idle' | 'saving' | 'saved'>('idle');
   // Voice input for the one question — hold, speak, release → transcribed and
@@ -152,6 +166,10 @@ export function BriefCard({ brief, fallback }: Props) {
       });
       if (!res.ok) throw new Error(`Server ${res.status}`);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      // Retire the question for the rest of this app session — the card
+      // unmounts on tab switches and must not re-ask on remount. Keep qState
+      // 'saved' too so the current mount still shows the confirmation beat.
+      answeredQuestions.add(openQ);
       setQState('saved');
     } catch {
       setQState('idle');
