@@ -1614,6 +1614,27 @@ app.get('/api/shop/ucp-diagnose', async (req, res) => {
 // Diagnostic: time a raw Gemini call to see if the model/endpoint itself is slow
 // or erroring (separate from the full briefing pipeline). ?big=1 sends a large
 // prompt to mimic the briefing's load.
+// Voice transcription (src/services/voice.js) calls Gemini DIRECTLY, hardcoded,
+// regardless of LLM_PROVIDER — so /api/diag/gemini above (which goes through the
+// shared llm module and tests whatever the MAIN chat provider is, likely
+// Anthropic if ANTHROPIC_API_KEY is set) doesn't actually verify voice will
+// work. This checks the exact thing the open-question voice-answer flow needs.
+app.get('/api/diag/voice-transcribe', async (req, res) => {
+  const t0 = Date.now();
+  if (!process.env.GEMINI_API_KEY) {
+    return res.json({ ok: false, error: 'GEMINI_API_KEY not set — voice transcription (and TTS narration) are hard-dependent on Gemini regardless of your main LLM_PROVIDER.' });
+  }
+  try {
+    // A tiny valid (silent) WAV so this only tests reachability/auth, not audio quality.
+    const silentWavBase64 = 'UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+    const voiceService = require('./src/services/voice');
+    const text = await voiceService.transcribe(silentWavBase64, 'audio/wav');
+    res.json({ ok: true, ms: Date.now() - t0, transcript: text, note: 'empty transcript is expected for a silent test clip — the point is that the call succeeded' });
+  } catch (err) {
+    res.json({ ok: false, ms: Date.now() - t0, status: err.response?.status, error: (err.response?.data?.error?.message || err.message || '').slice(0, 300) });
+  }
+});
+
 app.get('/api/diag/gemini', async (req, res) => {
   const t0 = Date.now();
   try {
