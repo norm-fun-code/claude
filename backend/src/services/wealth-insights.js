@@ -68,6 +68,42 @@ async function buildWealthInsights() {
     console.error('[wealth-insights] savings rate failed:', err.message);
   }
 
+  // Budget pacing (per-category actual vs Monarch's planned amount) — fetched
+  // ONCE here and reused by both the "vs usual" spike cards (section 1, to add a
+  // budget read to each trend) and the dedicated budget-pacing cards (section 3).
+  // A spending trend the user can't map onto a budget is only half the story:
+  // "Taxi up 823% vs usual" lands very differently when it's still inside a
+  // generous budget vs blowing through it. null when Monarch MCP isn't set up.
+  let pacing = null;
+  try {
+    pacing = await monarchWealth.getBudgetPacing();
+  } catch (err) {
+    console.error('[wealth-insights] budget pacing failed:', err.message);
+  }
+  // category (lowercased) -> budget line, for O(1) lookup while building spikes.
+  const budgetByCat = new Map();
+  for (const l of pacing?.lines || []) {
+    if (l.category) budgetByCat.set(String(l.category).toLowerCase(), l);
+  }
+
+  // Given a category's budget line and its projected full-month spend, return a
+  // short clause tying the "vs usual" trend to the budget — or '' when there's no
+  // budget to compare against. `pace` (actual/expected-by-now) already encodes
+  // the full-month projection: projected ≈ pace × budget, so pace>1 ⇒ on track to
+  // finish over. Uses the budget line's OWN actual/budget figures so the sentence
+  // is internally consistent with Monarch's budget view.
+  const budgetClause = (category) => {
+    const l = budgetByCat.get(String(category).toLowerCase());
+    if (!l || !(l.budget > 0)) return '';
+    if (l.overBudget) {
+      return ` It's also already past your ${fmt(l.budget)} budget (${fmt(l.actual)} spent).`;
+    }
+    if (l.pace >= 1.05) {
+      return ` Against your ${fmt(l.budget)} budget, that's on pace to finish about ${pct((l.pace - 1) * 100)} over.`;
+    }
+    return ` Still, that's within your ${fmt(l.budget)} budget so far.`;
+  };
+
   // 1) Spend vs your usual, from stored transactions.
   let rows = [];
   try {
@@ -131,14 +167,18 @@ async function buildWealthInsights() {
       spikes.sort((a, b) => (b.projected - b.avg) - (a.projected - a.avg));
       const projected = currentIsThisMonth && projFactor > 1.05;
       for (const s of spikes.slice(0, 3)) {
+        const vsUsual = projected
+          ? `You've spent ${fmt(s.current)} on ${s.category} so far this month — on pace for about ${fmt(s.projected)}, roughly ${s.over} above your recent average of ${fmt(s.avg)}.`
+          : `You've spent ${fmt(s.current)} on ${s.category} this month — about ${s.over} more than your recent average of ${fmt(s.avg)}.`;
         insights.push({
           type: 'spending_pattern',
           tone: 'watch',
           category: s.category,
           title: `${s.category} trending ${s.over} above your usual`,
-          detail: projected
-            ? `You've spent ${fmt(s.current)} on ${s.category} so far this month — on pace for about ${fmt(s.projected)}, roughly ${s.over} above your recent average of ${fmt(s.avg)}.`
-            : `You've spent ${fmt(s.current)} on ${s.category} this month — about ${s.over} more than your recent average of ${fmt(s.avg)}.`,
+          // Trend vs the user's own history PLUS, when Monarch has a budget for
+          // the category, where that trend lands against the budget — the two
+          // reads the user actually cares about, on one card.
+          detail: vsUsual + budgetClause(s.category),
         });
       }
     }
@@ -217,8 +257,9 @@ async function buildWealthInsights() {
   }
 
   // 3) Budget pacing vs Monarch's planned amounts (live, no legacy token needed).
+  // Reuses `pacing` fetched once at the top (also feeds the spike cards' budget
+  // clause) so we don't hit GetBudget twice per insights build.
   try {
-    const pacing = await monarchWealth.getBudgetPacing();
     if (pacing && pacing.lines.length) {
       // Daily-spend categories: show ALL that are already over budget, then cap
       // "on pace to overspend" warnings at 2 so the list doesn't flood.

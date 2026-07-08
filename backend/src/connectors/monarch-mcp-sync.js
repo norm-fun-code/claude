@@ -199,7 +199,8 @@ async function syncViaMcp(ctx) {
 
   const expByDay = new Map();
   const discByDay = new Map();
-  const incByDay = new Map();
+  const incByDay = new Map();          // strict: category matches a Monarch income category
+  const incByDayHeuristic = new Map(); // lenient: any earned-looking positive inflow
   for (const t of txns) {
     if (!t || !t.date) continue;
     const amount = Number(t.amount);
@@ -230,6 +231,19 @@ async function syncViaMcp(ctx) {
         : (categoryType ? categoryType === 'income' : (!isExcludedIncome(category) && !isNonIncomePositive(category)));
       if (inIncomeCategory && !isExcludedIncome(category)) {
         incByDay.set(day, (incByDay.get(day) || 0) + amount);
+      }
+      // Lenient parallel tally — the same earned-income guards the CSV/recompute
+      // path uses. This is the last-resort net: when `incomeCats` is populated but
+      // the transaction's `category` string doesn't EXACTLY match a category name
+      // (Monarch sometimes reports a category id / group name / differently-cased
+      // label on the transaction than GetCategories returns), the strict match
+      // above silently drops every paycheck. Transfers are already excluded above;
+      // refunds/reimbursements/cashback and investment income are excluded here —
+      // so this catches real paychecks without re-introducing the inflation.
+      if (categoryType !== 'income' && (isExcludedIncome(category) || isNonIncomePositive(category))) {
+        // not earned income — skip from the heuristic tally
+      } else {
+        incByDayHeuristic.set(day, (incByDayHeuristic.get(day) || 0) + amount);
       }
     }
   }
@@ -285,9 +299,21 @@ async function syncViaMcp(ctx) {
 
   // Prefer Monarch's aggregation; fall back to transaction-derived maps when the
   // GetCashFlow call returned nothing (so finances still flow if it's down).
-  const incSrc = incCash.size ? incCash : incByDay;
+  // Income has THREE tiers: (1) GetCashFlow (matches Monarch's Reports exactly),
+  // (2) strict category-name match, (3) lenient earned-income heuristic — the last
+  // rescues the case where GetCashFlow('income') is empty AND the transaction
+  // `category` strings don't line up with GetCategories' names, which otherwise
+  // leaves income stuck at $0 indefinitely (the guard below only PRESERVES $0, it
+  // never repairs it). Spending/discretionary keep their single fallback.
+  const incSrc = incCash.size ? incCash : (incByDay.size ? incByDay : incByDayHeuristic);
   const expSrc = expCash.size ? expCash : expByDay;
   const discSrc = discCash.size ? discCash : discByDay;
+  // One-line visibility into which tier produced income this run — so a recurring
+  // $0 is diagnosable from logs instead of guesswork.
+  const incTier = incCash.size ? 'getcashflow' : (incByDay.size ? 'strict-category' : (incByDayHeuristic.size ? 'heuristic' : 'none'));
+  const incTotal = [...incSrc.values()].reduce((a, v) => a + v, 0);
+  console.log(`[monarch_mcp_sync] income source=${incTier} days=${incSrc.size} total=$${Math.round(incTotal)} ` +
+    `(getcashflow:${incCash.size}d strict:${incByDay.size}d heuristic:${incByDayHeuristic.size}d, incomeCats=${incomeCats.size})`);
 
   // Spending / discretionary: emit on the days Monarch reports them (unchanged).
   for (const day of new Set([...expSrc.keys(), ...discSrc.keys()])) {
