@@ -93,11 +93,32 @@ async function callTool(name, args = {}) {
   return parsed?.result;
 }
 
+// When Monarch's MCP is paused/unavailable on THEIR end, every tool call still
+// returns HTTP 200 with a normal-looking MCP text content block — but the text
+// is a plain-English outage notice instead of JSON. JSON.parse then fails, and
+// the old fallback silently returned that raw string as the "result" — every
+// caller's `r?.data || []`-style access on a string just defaults to empty,
+// so GetBudget/GetTransactions/GetCategories/etc. all looked like a genuinely
+// empty (but successful) response instead of a total outage. This is exactly
+// what masked the income/budget bugs diagnosed earlier as a live, reproduced
+// outage: {"rawGetBudget": "The Monarch MCP is temporarily paused while we
+// work through a data portability question..."}. Detecting it here, once,
+// closes the whole class of "outage looks like empty success" bugs across
+// EVERY MCP tool call, not just the ones with bespoke detection already added.
+const MCP_OUTAGE_RE = /monarch mcp is (temporarily )?paused|mcp connector/i;
+
 /** Pull the first text content block out of a tool result and JSON-parse it. */
 function extractJsonContent(result) {
   const block = (result?.content || []).find((b) => b.type === 'text');
   if (!block) return null;
-  try { return JSON.parse(block.text); } catch { return block.text; }
+  try {
+    return JSON.parse(block.text);
+  } catch {
+    if (MCP_OUTAGE_RE.test(block.text)) {
+      throw new Error(`Monarch MCP is unavailable (their side): ${String(block.text).slice(0, 300)}`);
+    }
+    return block.text;
+  }
 }
 
 /** Convenience: call a tool and return its parsed JSON payload. */

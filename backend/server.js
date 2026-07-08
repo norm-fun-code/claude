@@ -4584,9 +4584,21 @@ app.get('/api/briefing', async (req, res) => {
   // does the Mac sync fails silently, so surface "needs reconnecting" in the
   // briefing rather than letting net-worth quietly go stale. Threshold is
   // generous (40h) so a missed morning (Mac asleep) doesn't false-alarm.
+  //
+  // TWO separate sources are checked, not just 'monarch': the Mac-side CSV
+  // importer (id 'monarch', hit by POST /api/import/monarch) and the MCP
+  // auto-sync (id 'monarch_mcp_sync') are independent connectors with
+  // independent last_sync_at/status. Checking only 'monarch' meant that once
+  // the daily Mac sync started working again, its fresh last_sync_at made
+  // this alert go permanently quiet — even while monarch_mcp_sync sat broken,
+  // silently losing budget-pacing data (GetBudget has no Mac/CSV fallback the
+  // way transactions/income do, so an MCP-only outage is otherwise invisible).
   const alerts = [];
   try {
-    const monarchSrc = await sourcesStore.getSource('monarch');
+    const [monarchSrc, monarchMcpSrc] = await Promise.all([
+      sourcesStore.getSource('monarch'),
+      sourcesStore.getSource('monarch_mcp_sync'),
+    ]);
     if (monarchSrc) {
       const last = monarchSrc.last_sync_at ? new Date(monarchSrc.last_sync_at) : null;
       const ageH = last ? (Date.now() - last.getTime()) / 36e5 : Infinity;
@@ -4599,6 +4611,20 @@ app.get('/api/briefing', async (req, res) => {
             : `Monarch has never synced. Reconnect: cd ~/claude/backend && node scripts/monarch-reconnect.js`,
         });
       }
+    }
+    if (monarchMcpSrc?.status === 'error') {
+      alerts.push({
+        source: 'monarch_mcp_sync',
+        severity: 'warn',
+        // Surface the ACTUAL captured error (e.g. Monarch's own "MCP is
+        // temporarily paused" outage notice) when we have one, instead of a
+        // generic guess — this is a different failure mode from a stale/
+        // expired token and a different fix (nothing to reconnect; wait for
+        // Monarch), so don't tell the user to reconnect when that's not it.
+        message: monarchMcpSrc.last_error
+          ? `Monarch MCP sync is failing: ${String(monarchMcpSrc.last_error).slice(0, 200)} — budget-vs-spending comparisons are unavailable until this clears (transactions/income keep flowing via the backup sync).`
+          : 'Monarch MCP sync is failing — budget-vs-spending comparisons are unavailable until this clears (transactions/income keep flowing via the backup sync).',
+      });
     }
   } catch (err) {
     console.error('[alerts] failed:', err.message);
