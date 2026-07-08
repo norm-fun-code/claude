@@ -1291,8 +1291,20 @@ async function analyze(opts = {}) {
   // Thursday morning's low sleep/HRV just as much as a same-day annotation.
   try {
     const annotationsStore = require('../store/annotations');
-    const startOfYesterday = new Date(); startOfYesterday.setDate(startOfYesterday.getDate() - 1); startOfYesterday.setHours(0, 0, 0, 0);
-    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+    // "Today"/"yesterday" must be computed against the USER's calendar day
+    // (America/New_York), not the server process's own local timezone — a
+    // server running in UTC (the default on most cloud hosts) computes
+    // midnight several hours off from Eastern midnight, which was silently
+    // mislabeling same-day-morning annotations as "(yesterday)" once evening
+    // arrived. Every other date boundary in this file already anchors to this
+    // tz explicitly (see todayKey above); this was the one spot that didn't.
+    const annoTz = process.env.TZ || 'America/New_York';
+    const dayKey = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: annoTz });
+    const todayDayKey = dayKey(new Date());
+    // Query window: yesterday's Eastern midnight through now. Deliberately
+    // computed the same tz-aware way as todayDayKey above, not server-local time.
+    const yesterdayDayKey = dayKey(new Date(Date.now() - 24 * 60 * 60 * 1000));
+    const startOfYesterday = new Date(`${yesterdayDayKey}T00:00:00Z`);
     const active = await annotationsStore.overlapping(startOfYesterday, new Date());
     // Exclude spending/wealth annotations — those only belong in wealth insights,
     // not as context for health or habit anomaly findings. Check both the category
@@ -1314,8 +1326,17 @@ async function analyze(opts = {}) {
         const relevant = lifeAnnotations.filter((ann) => lifeContextRelevant(metric, ann));
         if (!relevant.length) continue;
         const ctx = relevant.map((ann) => {
-          const ts = new Date(ann.start_ts);
-          const when = ts >= startOfToday ? 'today' : ts >= startOfYesterday ? 'yesterday' : '2 days ago';
+          const annDayKey = dayKey(ann.start_ts);
+          let when;
+          if (annDayKey === todayDayKey) {
+            when = 'today';
+          } else {
+            // Day-diff via UTC-midnight parsing of the Y-M-D keys — safe and
+            // DST-agnostic since we're differencing calendar-date strings, not
+            // absolute instants.
+            const diffDays = Math.round((new Date(`${todayDayKey}T00:00:00Z`) - new Date(`${annDayKey}T00:00:00Z`)) / 86400000);
+            when = diffDays === 1 ? 'yesterday' : diffDays > 1 ? `${diffDays} days ago` : 'today';
+          }
           return `${ann.label || ann.category} (${when})`;
         }).slice(0, 3).join('; ');
         a.detail += ` (Context: ${ctx} — may explain this deviation.)`;
