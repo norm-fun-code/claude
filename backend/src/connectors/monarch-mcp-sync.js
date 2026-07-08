@@ -197,6 +197,25 @@ async function syncViaMcp(ctx) {
   // it matches Monarch's Income report instead of catching every positive inflow.
   const incomeCats = await incomeCategoryNames();
 
+  // Total-outage guard: GetCategories (static reference data — should basically
+  // NEVER be empty for a working, configured connection) AND GetTransactions
+  // (zero transactions across a 35-45 DAY window) both coming back empty at once
+  // is not "a quiet month" — it's Monarch's API rejecting/rate-limiting every
+  // call this run (expired MCP token, IP block, outage). Previously this
+  // silently wrote hollow zero-valued metrics and reported success, so the
+  // sources-staleness alert (which only fires on a thrown error or a stale
+  // last_sync_at) never caught it — `markSync` recorded a fresh "successful"
+  // sync every single run even though the data was empty, permanently masking
+  // the failure. Throwing here routes through runConnector's catch, which marks
+  // the source status='error' and lets the existing "Monarch hasn't synced —
+  // reconnect" alert actually fire.
+  if (incomeCats.size === 0 && txns.length === 0) {
+    throw new Error(
+      'Monarch MCP returned nothing (0 categories, 0 transactions in a ' +
+      `${lookbackDays}-day window) — treating as a total sync failure, not a genuinely empty month.`
+    );
+  }
+
   const expByDay = new Map();
   const discByDay = new Map();
   const incByDay = new Map();          // strict: category matches a Monarch income category
