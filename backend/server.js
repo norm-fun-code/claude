@@ -2500,7 +2500,12 @@ app.post('/api/briefing/context', async (req, res) => {
     const isDayContext = (!signalKey || signalKey === 'manual_context') && answer.trim().length >= 6;
     if (isDayContext) {
       const tz = process.env.TZ || 'America/New_York';
-      const entryDate = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+      // A past-referring question ("last night", "yesterday") is asking about the
+      // previous day — store the journal entry for that day so it shows up as
+      // context for the right date (not today's evening brief or tomorrow's morning).
+      const entryDate = PAST_REFERRING_RE.test(question || '')
+        ? new Date(Date.now() - 24 * 60 * 60 * 1000).toLocaleDateString('en-CA', { timeZone: tz })
+        : new Date().toLocaleDateString('en-CA', { timeZone: tz });
       dayJournalStore.create({ text: answer.trim(), entryDate, source: 'brief' })
         .catch((e) => console.error('[day journal] capture from brief context failed:', e.message));
     }

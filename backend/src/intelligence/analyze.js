@@ -1314,7 +1314,8 @@ async function analyze(opts = {}) {
         const relevant = lifeAnnotations.filter((ann) => lifeContextRelevant(metric, ann));
         if (!relevant.length) continue;
         const ctx = relevant.map((ann) => {
-          const when = new Date(ann.start_ts) >= startOfToday ? 'today' : 'yesterday';
+          const ts = new Date(ann.start_ts);
+          const when = ts >= startOfToday ? 'today' : ts >= startOfYesterday ? 'yesterday' : '2 days ago';
           return `${ann.label || ann.category} (${when})`;
         }).slice(0, 3).join('; ');
         a.detail += ` (Context: ${ctx} — may explain this deviation.)`;
