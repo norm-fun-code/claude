@@ -151,17 +151,33 @@ const EVENING_HABITS = [
   { metric: 'exercise', label: 'Exercise' },
 ];
 
+// A dayContext note like "not feeling well, getting sick" means cold shower and
+// exercise aren't quiet wins to nag about tonight — they're actively bad advice.
+// Careful with ambiguous roots: "chills" (symptom) vs "chill" (relaxed/cold-out),
+// "flu" must be a whole word (not "influence"/"fluffy"), "ill" only as its own
+// word (not "chill"/"skill"/"still") — same lesson as MOOD_KEYWORDS.
+const SICK_KEYWORDS = /\bnot feeling well\b|\bgetting sick\b|\bcoming down with\b|\bfeeling (?:sick|ill|unwell)\b|\bunwell\b|\bunder the weather\b|\bfever\b|\bnause|\bflu\b|\bchills\b|\bachy\b|sore throat|congest|\bill\b|illness/i;
+
+/** Pure: does today's context (the user's own words) read as a sick day? */
+function isSickDay(dayContext) {
+  return SICK_KEYWORDS.test(String(dayContext || ''));
+}
+
 /** Pure: the evening-coded habits actually worth nudging tonight. On a rest day,
  *  "Exercise" isn't really open — there's no planned session to have done, so
  *  nagging about it is the same class of bug as grading steps against a
- *  training-day norm. Split out from openEveningHabits so this rule is
- *  unit-testable without a DB. */
-function eveningHabitsToTrack(isRestDay) {
-  return isRestDay ? EVENING_HABITS.filter((h) => h.metric !== 'exercise') : EVENING_HABITS;
+ *  training-day norm. On a sick day, cold shower AND exercise get the same
+ *  treatment — neither is a "quick win before bed" while unwell. Split out
+ *  from openEveningHabits so this rule is unit-testable without a DB. */
+function eveningHabitsToTrack(isRestDay, isSick = false) {
+  const skip = new Set();
+  if (isRestDay) skip.add('exercise');
+  if (isSick) { skip.add('exercise'); skip.add('cold_shower'); }
+  return EVENING_HABITS.filter((h) => !skip.has(h.metric));
 }
 
 /** Which evening-coded habits are still unlogged today. */
-async function openEveningHabits({ tz = process.env.TZ || 'America/New_York', isRestDay = false } = {}) {
+async function openEveningHabits({ tz = process.env.TZ || 'America/New_York', isRestDay = false, isSick = false } = {}) {
   const { rows } = await query(
     `SELECT metric, value FROM metrics
       WHERE domain = 'habits'
@@ -169,7 +185,7 @@ async function openEveningHabits({ tz = process.env.TZ || 'America/New_York', is
     [tz]
   );
   const done = new Set(rows.filter((r) => Number(r.value) >= 0.5).map((r) => r.metric));
-  return eveningHabitsToTrack(isRestDay).filter((h) => !done.has(h.metric)).map((h) => h.label);
+  return eveningHabitsToTrack(isRestDay, isSick).filter((h) => !done.has(h.metric)).map((h) => h.label);
 }
 
 /** Today's self-reported check-in (mood/energy/focus), if logged — the evening
@@ -188,11 +204,11 @@ async function todayCheckin({ tz } = {}) {
 }
 
 /** Gather everything the evening brief composer needs. */
-async function gatherEvening({ tz, isRestDay = false } = {}) {
+async function gatherEvening({ tz, isRestDay = false, isSick = false } = {}) {
   const [autonomic, load, openHabits, checkin] = await Promise.all([
     autonomicRead({ tz }),
     todayLoad({ tz }),
-    openEveningHabits({ tz, isRestDay }),
+    openEveningHabits({ tz, isRestDay, isSick }),
     todayCheckin({ tz }),
   ]);
   return { autonomic, load, openHabits, checkin };
@@ -200,5 +216,5 @@ async function gatherEvening({ tz, isRestDay = false } = {}) {
 
 module.exports = {
   autonomicRead, todayLoad, todayCheckin, openEveningHabits, eveningHabitsToTrack,
-  gatherEvening, dayWindow, detectDeviceDataGap,
+  gatherEvening, dayWindow, detectDeviceDataGap, isSickDay,
 };

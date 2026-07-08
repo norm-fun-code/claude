@@ -7,7 +7,7 @@
 // Prose is LLM-written in the chief-of-staff voice, but every field has a
 // deterministic fallback so the brief always lands even if the model is down.
 const llm = require('../llm');
-const { gatherEvening, detectDeviceDataGap } = require('../intelligence/evening-readiness');
+const { gatherEvening, detectDeviceDataGap, isSickDay } = require('../intelligence/evening-readiness');
 const { wellbeingLevel } = require('../intelligence/catalog');
 const briefingsStore = require('../store/briefings');
 const devicesStore = require('../store/devices');
@@ -292,8 +292,22 @@ async function runEveningHealthBrief(opts = {}) {
     }
   } catch { /* non-critical — defaults (null, false) are safe */ }
 
-  const signals = await gatherEvening({ tz, isRestDay });
+  // Today's context the user narrated (if any) — fetched BEFORE gatherEvening
+  // so a sick-day note ("not feeling well, getting sick") can suppress the
+  // cold-shower/exercise nag the same way a scheduled rest day suppresses
+  // exercise. Fetching this after gatherEvening (as it used to be) meant the
+  // habit list was already locked in by the time the context existed to read.
+  let dayContext = '';
+  try {
+    const entries = await require('../store/dayJournal').forDay(day);
+    dayContext = entries.map((e) => e.text).join(' ');
+  } catch { /* non-critical — empty context is safe */ }
+  const isSick = isSickDay(dayContext);
+
+  const signals = await gatherEvening({ tz, isRestDay, isSick });
   signals.isRestDay = isRestDay;
+  signals.isSick = isSick;
+  signals.dayContext = dayContext;
   // Data-quality flag: steps + active energy collapsing together vs. their own
   // baseline reads as a dead/unworn Watch, not a real behavior change. Surface
   // it in tonight's brief AND record it as a life-context annotation for
@@ -354,12 +368,6 @@ async function runEveningHealthBrief(opts = {}) {
   try {
     signals.commitments = await require('../store/commitments').todaySummary(tz);
   } catch { signals.commitments = null; }
-  // Today's context the user narrated (if any) — so the wind-down speaks to the
-  // day they actually had, not just the numbers.
-  try {
-    const entries = await require('../store/dayJournal').forDay(day);
-    signals.dayContext = entries.map((e) => e.text).join(' ');
-  } catch { signals.dayContext = ''; }
   // Tomorrow's calendar — makes the bedtime lever concrete ("7:30 start
   // tomorrow, get down by 10:30") instead of the same generic sleep-hygiene
   // line every night. Best-effort: calendar creds may be absent.

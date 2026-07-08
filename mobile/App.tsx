@@ -14,6 +14,7 @@ import {
   SafeAreaView,
   Platform,
   useWindowDimensions,
+  AppState,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { AnimatedEntry } from './src/components/AnimatedEntry';
@@ -153,6 +154,20 @@ export default function App() {
   useEffect(() => {
     if (eveningMode === null && eveningBrief.fetched) setEveningMode(!!eveningBrief.brief);
   }, [eveningMode, eveningBrief.fetched, eveningBrief.brief]);
+  // A session that started before the evening brief existed (app opened during
+  // the day, never force-quit) would otherwise stay morning-shaped all night —
+  // the one-time latch above only ever fires once, so it locked in `false` and
+  // the "This morning's brief" card never collapsed even hours after 9:30pm.
+  // Re-check on each return to foreground (a natural "next open," which is what
+  // most users actually do instead of force-quitting) — but ONLY false→true,
+  // never the reverse, so this can only ever collapse the card, never yank it
+  // closed (and remount, wiping unsaved input) out from under someone mid-use.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && eveningMode === false && eveningBrief.brief) setEveningMode(true);
+    });
+    return () => sub.remove();
+  }, [eveningMode, eveningBrief.brief]);
   // Cold-open welcome: shown once per launch (App mount = cold start), it covers
   // the whole feed assembly so the jumpy mount/insert is never seen.
   const [showWelcome, setShowWelcome] = useState(true);
