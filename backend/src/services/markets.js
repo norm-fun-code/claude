@@ -87,6 +87,10 @@ async function generateBrief(stories) {
       prompt: `Today's market & finance stories:\n\n${list}\n\nWrite the brief.`,
       temperature: 0.3,
       maxTokens: 700,
+      // Summarization, not reasoning — routes to the fast model with no
+      // extended thinking (biggest single latency lever for a short call like
+      // this). No-op on providers that don't support the flag (e.g. Gemini).
+      fast: true,
     });
     return (text || '').trim() || null;
   } catch (err) {

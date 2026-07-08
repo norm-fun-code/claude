@@ -11,7 +11,7 @@ const { fetchRandomNotionPage, fetchNotionQuotes } = require('./src/services/not
 const { fetchRandomQuote } = require('./src/services/googleDoc');
 const { fetchWeather } = require('./src/services/weather');
 const { fetchMarkets } = require('./src/services/markets');
-const { generateBriefing, generateEmailBriefs } = require('./src/services/briefing-ai');
+const { generateBriefing, generateChiefBrief, generateWisdomInsights, generateEmailBriefs } = require('./src/services/briefing-ai');
 const { getTodayWorkout } = require('./src/services/workout');
 const { buildWealthInsights } = require('./src/services/wealth-insights');
 
@@ -3482,15 +3482,26 @@ app.get('/api/briefing', async (req, res) => {
     console.error('[briefing force] eight-sleep pull failed:', err.message);
   }
 
+  let analyzeOk = false;
   try {
     await analyze();
-    // Cross-context insights depend on fresh correlation findings — regenerate
-    // immediately so the brief reflects current data, not last night's pass.
-    await require('./src/intelligence/crossContext').generateCrossContext();
-    await require('./src/intelligence/consolidate').consolidate({ kind: 'briefing' });
+    analyzeOk = true;
   } catch (err) {
     console.error('[briefing build] intelligence refresh failed:', err.message);
   }
+
+  // Cross-context insights need the fresh correlation findings analyze() just
+  // wrote, but touch nothing else in the source fetch below (weather/calendar/
+  // notion/email/markets) — kick it off here and run it CONCURRENTLY with that
+  // fetch instead of serially before it, so its LLM call's latency is hidden
+  // behind the ~12s bounded fetch rather than adding to the critical path.
+  // consolidate() still runs after it resolves (below), preserving the original
+  // analyze -> crossContext -> consolidate ordering; only crossContext's LLM call
+  // itself moves off the critical path.
+  const crossContextPromise = analyzeOk
+    ? require('./src/intelligence/crossContext').generateCrossContext()
+        .catch((err) => { console.error('[briefing build] crossContext regen failed:', err.message); return null; })
+    : Promise.resolve(null);
 
   // Workout is synchronous — no failure path
   const workout = getTodayWorkout();
@@ -3544,6 +3555,18 @@ app.get('/api/briefing', async (req, res) => {
   const emails = unwrap(emailResult, 'gmail') ?? [];
   const markets = unwrap(marketsResult, 'markets');
 
+  // Now that the source fetch above is done, make sure crossContext (kicked off
+  // concurrently with it) has actually finished before consolidate() reads its
+  // findings — preserves the original analyze -> crossContext -> consolidate order.
+  await crossContextPromise;
+  if (analyzeOk) {
+    try {
+      await require('./src/intelligence/consolidate').consolidate({ kind: 'briefing' });
+    } catch (err) {
+      console.error('[briefing build] consolidate failed:', err.message);
+    }
+  }
+
   // Quote of the day from the Notion "Quotes" page (each bullet = one quote).
   // No-repeat for 30 days so it cycles through all your quotes.
   // Day-locked: skip the Notion API on same-day rebuilds — the quote is already
@@ -3581,21 +3604,26 @@ app.get('/api/briefing', async (req, res) => {
       const vals = r.map((x) => Number(x.value)).filter(Number.isFinite);
       return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
     };
-    const [mood, energy, focus] = await Promise.all([
-      avg('wellbeing', 'mood'), avg('wellbeing', 'energy'), avg('wellbeing', 'focus'),
-    ]);
     // Habits trailing completion (which ones are slipping). The five binary
     // habits are 0/1 (flag <60% adherence); eat_healthy is a 1–5 score, so it
     // needs its own threshold (flag when averaging below ~3/5) — checking it
     // against 0.6 like the binaries meant it could never flag.
     const binaryHabits = ['gratitude', 'morning_tm', 'afternoon_tm', 'cold_shower', 'exercise'];
     const habitLabels = { gratitude: 'gratitude', morning_tm: 'morning meditation', afternoon_tm: 'afternoon meditation', cold_shower: 'cold shower', exercise: 'exercise', eat_healthy: 'eating well' };
+    // All 9 lookups (mood/energy/focus + 5 binary habits + eat_healthy) are
+    // independent DB round-trips — batch them into one Promise.all instead of
+    // 3 parallel + 6 serial awaits.
+    const [mood, energy, focus, ...habitAvgs] = await Promise.all([
+      avg('wellbeing', 'mood'), avg('wellbeing', 'energy'), avg('wellbeing', 'focus'),
+      ...binaryHabits.map((m) => avg('habits', m)),
+      avg('habits', 'eat_healthy'),
+    ]);
     const lagging = [];
-    for (const m of binaryHabits) {
-      const a = await avg('habits', m);
+    binaryHabits.forEach((m, i) => {
+      const a = habitAvgs[i];
       if (a != null && a < 0.6) lagging.push(habitLabels[m]); // <60% adherence
-    }
-    const eatAvg = await avg('habits', 'eat_healthy');
+    });
+    const eatAvg = habitAvgs[binaryHabits.length];
     if (eatAvg != null && eatAvg < 3) lagging.push(habitLabels.eat_healthy); // below ~3/5
     const parts = [];
     const themes = [];
@@ -4136,39 +4164,73 @@ app.get('/api/briefing', async (req, res) => {
     errors.push({ service: 'weekly_goals', error: err.message });
   }
 
-  // Call the LLM with whatever data we have
+  // Call the two independent LLM sections in PARALLEL (chief-brief and the
+  // quote/Notion "wisdom" reflection used to be one combined call — splitting
+  // them means wall-clock is whichever is slower, not the sum of both).
+  //
+  // Wisdom is SKIPPED ENTIRELY once today's quote/Notion pair is already
+  // day-locked (see lockedQuotePair/lockedNotion further below, which discard
+  // ANY freshly-generated quoteInsight/notionQuote/notionInsight in favor of
+  // the first build's once priorIsToday && prior.quote/notionQuote exist) —
+  // regenerating it on a same-day "Rebuild" tap would be immediately thrown
+  // away, so skipping the call saves its full latency+cost every time.
+  const wisdomAlreadyLocked = Boolean(priorIsToday && prior?.content?.quote && prior?.content?.notionQuote);
+  const LLM_TIMEOUT = Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000);
+
   let geminiResult = null;
-  try {
-    // The LLM call can be slow; bound it so a stalled model doesn't hang the
-    // briefing (it degrades to the data-only sections).
-    geminiResult = await withTimeout(
-      generateBriefing(emails, notionTextForBrief, quoteData.quote, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext),
-      Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000),
-      'gemini'
-    );
-  } catch (err) {
-    console.error('[gemini] failed:', err.message);
-    errors.push({ service: 'gemini', error: err.message });
+  {
+    const [chiefSettled, wisdomSettled] = await Promise.allSettled([
+      withTimeout(
+        generateChiefBrief(emails, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext),
+        LLM_TIMEOUT,
+        'gemini_chief'
+      ),
+      wisdomAlreadyLocked
+        ? Promise.resolve(null)
+        : withTimeout(generateWisdomInsights(notionTextForBrief, quoteData.quote, wellbeingContext), LLM_TIMEOUT, 'gemini_wisdom'),
+    ]);
+
+    let chiefResult = null;
+    if (chiefSettled.status === 'fulfilled') {
+      chiefResult = chiefSettled.value;
+    } else {
+      console.error('[gemini_chief] failed:', chiefSettled.reason?.message);
+      errors.push({ service: 'gemini_chief', error: chiefSettled.reason?.message });
+      // Carry over urgentEmails from ANY prior build (not just today's) so a
+      // failed/timed-out call doesn't blank the inbox card — mirrors the
+      // chiefBrief/morningFocus carryover already built into the response
+      // object below (which reads prior?.content directly), for the one field
+      // that isn't covered there.
+      if (prior?.content?.urgentEmails?.length) chiefResult = { urgentEmails: prior.content.urgentEmails };
+    }
+
+    let wisdomResult = null;
+    if (wisdomAlreadyLocked) {
+      // Nothing to do — lockedQuotePair/lockedNotion below source quoteInsight/
+      // notionQuote/notionInsight straight from prior.content regardless.
+    } else if (wisdomSettled.status === 'fulfilled') {
+      wisdomResult = wisdomSettled.value;
+    } else {
+      console.error('[gemini_wisdom] failed:', wisdomSettled.reason?.message);
+      errors.push({ service: 'gemini_wisdom', error: wisdomSettled.reason?.message });
+      // Same carryover as the old combined fallback: quoteInsight/notionQuote/
+      // notionInsight aren't covered by a prior?.content fallback anywhere else
+      // (only the day-locked path reads prior.content for these).
+      if (prior?.content?.quoteInsight || prior?.content?.notionInsight) {
+        wisdomResult = {
+          quoteInsight: prior.content.quoteInsight ?? '',
+          notionQuote: prior.content.notionQuote ?? '',
+          notionInsight: prior.content.notionInsight ?? '',
+        };
+      }
+    }
+
+    geminiResult = (chiefResult || wisdomResult) ? { ...(chiefResult || {}), ...(wisdomResult || {}) } : null;
   }
 
-  // LLM fallback: if the AI call failed and there's a prior build today (or
-  // yesterday), carry over its email/wisdom sections so the briefing doesn't go blank.
-  // Must run BEFORE the dedup check below — otherwise a carried-forward notionQuote
-  // (which can be from any earlier day) would bypass the 30-day no-repeat memory
-  // entirely: skipped by the check (geminiResult was null at that point) and never
-  // recorded, so it could silently resurface weeks later on any LLM hiccup.
-  if (!geminiResult && prior?.content) {
-    const p = prior.content;
-    if (p.urgentEmails?.length || p.quoteInsight || p.notionInsight) {
-      geminiResult = {
-        urgentEmails: p.urgentEmails ?? [],
-        quoteInsight: p.quoteInsight ?? '',
-        notionQuote: p.notionQuote ?? '',
-        notionInsight: p.notionInsight ?? '',
-      };
-      errors.push({ service: 'gemini_fallback', error: 'LLM unavailable — showing prior build summaries' });
-    }
-  }
+  // (LLM-failure carryover for urgentEmails/quoteInsight/notionQuote/notionInsight
+  // now happens per-leg, right after each Promise.allSettled result above — this
+  // runs BEFORE the dedup check below either way, same as before the split.)
 
   // Dedup the wisdom quote DETERMINISTICALLY (the model often ignores the
   // avoid-list in the prompt, and the LLM-failure fallback above can carry an

@@ -201,4 +201,30 @@ async function getAccounts() {
   };
 }
 
-module.exports = { isConfigured, getRecurring, getBudgetPacing, getInvestments, getAccounts, normAccount };
+// Short-TTL memoization: a single briefing build calls getRecurring/getAccounts
+// directly (server.js) AND again moments later from inside buildWealthInsights()
+// (wealth-insights.js) — same RPC, same data, fetched twice in one build. This
+// also dedupes concurrent identical calls (both callers in-flight at once share
+// the same pending promise) and smooths a user rapid-tapping "Rebuild". Kept
+// short enough that a real same-day budget/recurring-stream edit still shows up
+// well within one browsing session. Only the parameterless (default-args) call
+// shape is cached — getBudgetPacing({now}) / getInvestments({start,end}) with
+// explicit args bypass the cache and hit Monarch directly.
+const CACHE_TTL_MS = Number(process.env.MONARCH_WEALTH_CACHE_MS || 3 * 60 * 1000);
+const cache = new Map(); // key -> { at, promise }
+function cached(key, fn) {
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.promise;
+  const promise = fn().catch((err) => { cache.delete(key); throw err; });
+  cache.set(key, { at: Date.now(), promise });
+  return promise;
+}
+
+module.exports = {
+  isConfigured,
+  getRecurring: () => cached('getRecurring', getRecurring),
+  getBudgetPacing: (opts) => (opts && opts.now ? getBudgetPacing(opts) : cached('getBudgetPacing', () => getBudgetPacing())),
+  getInvestments: (opts) => (opts && (opts.start || opts.end) ? getInvestments(opts) : cached('getInvestments', () => getInvestments())),
+  getAccounts: () => cached('getAccounts', getAccounts),
+  normAccount,
+};

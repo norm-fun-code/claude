@@ -1,6 +1,13 @@
 // Anthropic (Claude) provider — chat/reasoning quality for coaching & analysis.
 // Claude has no embeddings API, so embeddings come from the embed provider.
 const axios = require('axios');
+const https = require('https');
+
+// A briefing build makes several sequential/parallel calls to this same host;
+// without a keep-alive agent, axios opens a fresh TCP+TLS connection per call
+// (a real, avoidable ~0.3-1s of handshake latency each time). One shared agent
+// reuses the socket across calls for the lifetime of the process.
+const keepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 16 });
 
 async function generateText({ system, prompt, maxTokens = 4096, timeoutMs = 110000, fast = false, model: modelOverride }) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -38,6 +45,7 @@ async function generateText({ system, prompt, maxTokens = 4096, timeoutMs = 1100
     body,
     {
       timeout: timeoutMs,
+      httpsAgent: keepAliveAgent,
       headers: {
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
