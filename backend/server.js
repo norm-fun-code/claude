@@ -3223,14 +3223,28 @@ app.get('/api/debug/wealth-budget', async (req, res) => {
       monarchWealth.getBudgetPacing(),
       documents.monthlyCategorySpend({ months: 1 }),
     ]);
-    res.json({
+    const payload = {
       configured: true,
       budgetLines: (pacing?.lines || []).map((l) => ({ category: l.category, budget: l.budget, actual: l.actual })),
       spendCategoriesThisMonth: [...new Set(categorySpend.map((r) => r.category))],
       hint: pacing?.lines?.length
         ? 'Compare budgetLines[].category strings against spendCategoriesThisMonth — a mismatch (different casing/wording) means budget cards silently never match.'
-        : 'No budget lines returned from Monarch at all — you likely have no budgets configured in the Monarch app, or GetBudget is failing the same way GetTransactions/GetCategories was.',
-    });
+        : 'No budget lines returned from Monarch — pass ?raw=1 to see the UNFILTERED GetBudget response and tell whether Monarch returned nothing at all vs. a shape the filter logic silently rejected.',
+    };
+    // ?raw=1: bypass getBudgetPacing's category_type==='expense' / budget>0
+    // filtering entirely and call GetBudget directly, so a shape mismatch (e.g.
+    // a different field name or category_type value than the code expects) is
+    // visible instead of silently filtered down to an empty array.
+    if (req.query.raw === '1') {
+      const rpc = require('./src/services/monarch-mcp-rpc');
+      const now = new Date();
+      const y = now.getUTCFullYear(), mo = now.getUTCMonth();
+      const monthStart = `${y}-${String(mo + 1).padStart(2, '0')}-01`;
+      const lastDay = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate();
+      const monthEnd = `${y}-${String(mo + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+      payload.rawGetBudget = await rpc.callToolJson('GetBudget', { start_date: monthStart, end_date: monthEnd, include_actuals: true });
+    }
+    res.json(payload);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
