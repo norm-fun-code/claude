@@ -145,7 +145,7 @@ export function BriefCard({ brief, fallback }: Props) {
   const [suppressAnswered] = useState(() => rawQ !== '' && answeredQuestions.has(rawQ));
   const openQ = suppressAnswered ? '' : rawQ;
   const [qAnswer, setQAnswer] = useState('');
-  const [qState, setQState] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [qState, setQState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   // Voice input for the one question — hold, speak, release → transcribed and
   // sent, same hold-to-talk pattern as the Ask overlay's push-to-talk.
   const [qVoice, setQVoice] = useState<'idle' | 'recording' | 'thinking'>('idle');
@@ -172,7 +172,12 @@ export function BriefCard({ brief, fallback }: Props) {
       answeredQuestions.add(openQ);
       setQState('saved');
     } catch {
-      setQState('idle');
+      // Was silently resetting to 'idle' here — identical to "never submitted",
+      // so a network blip or server hiccup left no way to tell whether a
+      // spoken/typed answer registered. Now surfaces a visible error + haptic
+      // instead, and keeps the answer text so the user can just retry.
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      setQState('error');
     }
   }
 
@@ -204,9 +209,19 @@ export function BriefCard({ brief, fallback }: Props) {
       if (text) {
         setQAnswer(text);
         await answerQuestion(text);
+      } else {
+        // Transcription came back empty (mic caught nothing usable) — the Ask
+        // overlay's push-to-talk silently drops this case, but here the user is
+        // answering a rare, precious one-time question and needs to know their
+        // "yes" or "scaling back" didn't actually go anywhere.
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+        setQState('error');
       }
     } catch {
-      // Silent fail — same as the Ask overlay's push-to-talk: mic just returns to idle.
+      // Same reasoning as above: don't silently drop a failed transcription on
+      // THIS flow, even though the Ask overlay's push-to-talk does.
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      setQState('error');
     } finally {
       setQVoice('idle');
     }
@@ -368,6 +383,9 @@ export function BriefCard({ brief, fallback }: Props) {
                 <Text style={styles.contextBtnText}>→</Text>
               </TouchableOpacity>
             </View>
+          )}
+          {qState === 'error' && (
+            <Text style={styles.contextFailed}>Didn't go through — try again.</Text>
           )}
         </View>
       ) : null}
