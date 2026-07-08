@@ -188,7 +188,11 @@ export function BriefCard({ brief, fallback }: Props) {
     try {
       await startRecording();
       setQVoice('recording');
-    } catch { setQVoice('idle'); }
+    } catch {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      setQState('error');
+      setQVoice('idle');
+    }
   }
 
   async function qVoicePressOut() {
@@ -196,7 +200,16 @@ export function BriefCard({ brief, fallback }: Props) {
     setQVoice('thinking');
     try {
       const rec = await stopRecording();
-      if (!rec) { setQVoice('idle'); return; }
+      if (!rec) {
+        // stopRecording() returns null on a failed/too-short capture (no audio
+        // file produced, or under ~1/8s of audio) — this was the actual gap:
+        // the transcribe-call catch below already surfaces an error, but THIS
+        // early-return was still silent, exactly matching "said Listening…,
+        // released, nothing happened" with no indication anything went wrong.
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+        setQState('error');
+        return;
+      }
       Haptics.selectionAsync();
       const res = await fetchWithTimeout(VOICE_TRANSCRIBE_URL, {
         method: 'POST',
