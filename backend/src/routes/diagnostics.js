@@ -136,15 +136,24 @@ function createDiagnosticsRouter() {
 
   router.get('/diag/gemini', async (req, res) => {
     const t0 = Date.now();
+    // Reports whichever provider llm.generateText() actually dispatches to —
+    // NOT necessarily Gemini (this app's chat default is Anthropic; see the
+    // comment above /diag/voice-transcribe). The response used to hardcode
+    // `model: GEMINI_CHAT_MODEL` regardless of which provider ran, which
+    // silently mislabeled every result once Anthropic became the default.
+    const provider = llm.chatProviderName();
+    const model = provider === 'anthropic'
+      ? (process.env.ANTHROPIC_MODEL || 'claude-sonnet-5')
+      : (process.env.GEMINI_CHAT_MODEL || 'gemini-3.5-flash');
     try {
       const big = req.query.big === '1';
       const prompt = big
         ? 'Here is a long document:\n' + 'The market rose 2%. '.repeat(2000) + '\nReturn JSON {"summary":"<2 sentences>"}'
         : 'Reply with JSON {"ok":true,"msg":"hello"}';
       const out = await llm.generateText({ system: 'Return only JSON.', prompt, temperature: 0.2, maxTokens: 1024 });
-      res.json({ ok: true, ms: Date.now() - t0, model: process.env.GEMINI_CHAT_MODEL || 'gemini-3.5-flash', replyLen: out.length, sample: out.slice(0, 200) });
+      res.json({ ok: true, ms: Date.now() - t0, provider, model, replyLen: out.length, sample: out.slice(0, 200) });
     } catch (err) {
-      res.json({ ok: false, ms: Date.now() - t0, model: process.env.GEMINI_CHAT_MODEL || 'gemini-3.5-flash', status: err.response?.status, error: (err.response?.data?.error?.message || err.message || '').slice(0, 300) });
+      res.json({ ok: false, ms: Date.now() - t0, provider, model, status: err.response?.status, error: (err.response?.data?.error?.message || err.message || '').slice(0, 300) });
     }
   });
 
