@@ -15,6 +15,7 @@
     "embed": "node src/intelligence/embeddings.js",
     "nudge": "node src/notify/run.js",
     "review": "node src/intelligence/review.js",
+    "retention": "node src/db/retention.js",
     "test": "node --test test/*.test.js",
     "test:integration": "node --test test/integration/*.test.js"
   },
