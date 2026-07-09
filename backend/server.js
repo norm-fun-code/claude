@@ -1,5 +1,8 @@
 // NormOS backend.
 require('dotenv').config();
+const { validateBootConfig } = require('./src/config/checkEnv');
+validateBootConfig();
+
 const { createApp } = require('./src/app');
 const recommendationsStore = require('./src/store/recommendations');
 

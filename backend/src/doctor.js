@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const { pool } = require('./db');
 const llm = require('./llm');
+const { hasChatLLM } = require('./config/checkEnv');
 
 const GREEN = '\x1b[32m', RED = '\x1b[31m', YEL = '\x1b[33m', DIM = '\x1b[2m', RST = '\x1b[0m';
 const ok = (s) => `${GREEN}✓${RST} ${s}`;
@@ -54,8 +55,7 @@ async function main() {
   lines.push('\nAI MODELS');
   const chat = (() => { try { return llm.chatProviderName(); } catch { return 'none'; } })();
   const embed = (() => { try { return llm.embedProviderName(); } catch { return 'none'; } })();
-  const chatReady = (chat === 'anthropic' && has('ANTHROPIC_API_KEY')) ||
-    (chat === 'gemini' && has('GEMINI_API_KEY')) || chat === 'ollama';
+  const chatReady = hasChatLLM();
   const embedReady = (embed === 'gemini' && has('GEMINI_API_KEY')) || embed === 'ollama';
   lines.push('  ' + (chatReady ? ok(`chat/reasoning → ${chat}`) : no(`chat/reasoning → ${chat} (set the API key)`)));
   if (!chatReady) blocking++;
