@@ -310,12 +310,7 @@ export function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Pro
       {/* signature accent bar */}
       <LinearGradient colors={accentGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.accentBar} />
       <View style={styles.kickerRow}>
-        <View style={styles.kickerGroup}>
-          <Text style={styles.kicker}>CHIEF OF STAFF BRIEF</Text>
-          {stale && brief && (
-            <Text style={styles.staleNote}>Still yesterday's — tap ↻ to retry</Text>
-          )}
-        </View>
+        <Text style={styles.kicker}>CHIEF OF STAFF BRIEF</Text>
         <View style={styles.kickerActions}>
           {onRefresh && brief && (
             <Pressable
@@ -344,6 +339,9 @@ export function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Pro
           )}
         </View>
       </View>
+      {stale && brief && (
+        <Text style={styles.staleNote}>Still yesterday's — tap ↻ to retry</Text>
+      )}
 
       {brief ? (
         <>
@@ -499,12 +497,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: spacing.sm,
-  },
-  kickerGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexShrink: 1,
+    marginBottom: spacing.xs,
   },
   kicker: {
     fontSize: 10,
@@ -516,7 +509,7 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
     color: '#FFC44D',
-    marginLeft: spacing.sm,
+    marginBottom: spacing.sm,
   },
   kickerActions: {
     flexDirection: 'row',

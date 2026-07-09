@@ -16,9 +16,12 @@ const app = buildTestApp();
 const MARKER = `quick-rebuild prior marker ${Date.now()}`;
 const WEATHER_MARKER = { condition: `untouched-${Date.now()}` };
 
+const OLD_BUILT_AT = '2020-01-01T00:00:00.000Z';
+
 async function seedPriorBriefing() {
   const content = {
     day: new Date().toISOString().slice(0, 10),
+    builtAt: OLD_BUILT_AT,
     chiefBrief: { synthesis: MARKER, action: 'a', risk: 'r', move: 'm', openQuestion: '' },
     morningFocus: 'prior focus',
     weather: WEATHER_MARKER,
@@ -64,6 +67,7 @@ test('a successful scoped rebuild replaces chiefBrief/morningFocus and clears ch
   assert.equal(res.body.chiefBriefStale, false);
   assert.deepEqual(res.body.weather, WEATHER_MARKER, 'unrelated fields must be untouched');
   assert.deepEqual(res.body.leverageActions, [{ title: 'Sleep earlier', detail: 'HRV trends up on early nights' }]);
+  assert.notEqual(res.body.builtAt, OLD_BUILT_AT, 'builtAt must advance so the "Built X ago" label reflects this attempt');
 });
 
 test('a scoped rebuild that STILL fails after its retry keeps the existing card and flags chiefBriefStale, without erroring the request', async (t) => {
@@ -79,4 +83,8 @@ test('a scoped rebuild that STILL fails after its retry keeps the existing card 
   assert.equal(res.body.chiefBrief.synthesis, MARKER, 'keeps showing the last good brief rather than blanking it');
   assert.equal(res.body.chiefBriefStale, true);
   assert.ok(res.body.errors.some((e) => e.service === 'chiefBrief'));
+  assert.notEqual(
+    res.body.builtAt, OLD_BUILT_AT,
+    'builtAt must still advance even when the retry fails — otherwise a failed retry looks identical to the tap doing nothing at all'
+  );
 });

@@ -393,6 +393,14 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
     morningFocus: chiefResult.morningFocus || prior.content.morningFocus || '',
     chiefBriefStale,
     errors,
+    // Match the full builder: builtAt always advances to "now" whether or not
+    // chiefBrief itself refreshed — it means "when was this response
+    // produced," not "when did the content last change." Without this the
+    // card's "Built X ago" label kept showing the ORIGINAL build's timestamp
+    // after a failed retry, on top of an already-confusing silent failure —
+    // looking like the tap did nothing at all instead of a retry that ran and
+    // came back invalid again.
+    builtAt: new Date().toISOString(),
   };
   briefingsStore
     .saveBriefing({ kind: 'daily', content })

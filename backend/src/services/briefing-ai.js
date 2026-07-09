@@ -217,8 +217,13 @@ async function chiefBriefAttempt(prompt, attemptLabel) {
   try {
     // Chief-brief is the load-bearing call — several dense sections + urgent
     // emails + finance/goal bullets. Give it room: low temp for focus, and the
-    // caller (server.js) allows up to BRIEFING_LLM_TIMEOUT_MS overall.
-    text = await llm.generateText({ system: CHIEF_SYSTEM, prompt, temperature: 0.2, maxTokens: 4096 });
+    // caller (server.js) allows up to BRIEFING_LLM_TIMEOUT_MS overall. Raised
+    // from 4096: the schema is verbose (4 chiefBrief fields + morningFocus +
+    // a variable-length urgentEmails array) and a genuinely busy inbox day
+    // could plausibly push the real output past 4096 tokens, truncating the
+    // JSON mid-object — which fails validation with no sign it was a length
+    // problem rather than a formatting one. Cheap insurance either way.
+    text = await llm.generateText({ system: CHIEF_SYSTEM, prompt, temperature: 0.2, maxTokens: 8192 });
   } catch (err) {
     console.error(`[briefing-ai] chief-brief generation failed (${attemptLabel}):`, err.message);
     return null;
@@ -226,7 +231,13 @@ async function chiefBriefAttempt(prompt, attemptLabel) {
 
   const parsed = extractJson(text);
   if (!parsed) {
-    console.error(`[briefing-ai] chief-brief response was not valid JSON (${attemptLabel}).`);
+    // Log a preview so a recurrence is actually diagnosable (truncation,
+    // markdown fencing extractJson didn't strip, a refusal, an empty
+    // response) instead of just "wasn't valid JSON" with nothing to go on.
+    console.error(
+      `[briefing-ai] chief-brief response was not valid JSON (${attemptLabel}), length=${text.length}. ` +
+      `Preview: ${JSON.stringify(text.slice(0, 500))}`
+    );
     return null;
   }
 
@@ -238,11 +249,14 @@ async function chiefBriefAttempt(prompt, attemptLabel) {
     // This used to fail silently — the caller falls back to the PRIOR build's
     // chiefBrief (see briefing.js), so a bad shape here quietly shows a stale
     // brief with no error anywhere, and could recur build after build with no
-    // trace of why. Log exactly what's wrong so it's diagnosable instead.
+    // trace of why. Log exactly what's wrong AND a preview of what came back.
     const missing = !cb || typeof cb !== 'object'
       ? 'chiefBrief missing or not an object'
       : CHIEF_REQUIRED_FIELDS.filter((k) => !(typeof cb[k] === 'string' && cb[k].trim())).join(', ') + ' missing/empty';
-    console.error(`[briefing-ai] chief-brief shape invalid (${attemptLabel}): ${missing}.`);
+    console.error(
+      `[briefing-ai] chief-brief shape invalid (${attemptLabel}): ${missing}. ` +
+      `Parsed chiefBrief: ${JSON.stringify(cb).slice(0, 500)}`
+    );
     return null;
   }
 
