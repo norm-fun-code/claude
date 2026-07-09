@@ -41,6 +41,7 @@ const { runMorningBriefing, runWeeklyReviewWithPush } = require('./src/notify/mo
 const { createHealthRouter } = require('./src/routes/health');
 const { createAnnotationsRouter } = require('./src/routes/annotations');
 const { createGoalsRouter } = require('./src/routes/goals');
+const { createExperimentsRouter } = require('./src/routes/experiments');
 const surfacedStore = require('./src/store/surfaced');
 const briefingsStore = require('./src/store/briefings');
 const recommendationsStore = require('./src/store/recommendations');
@@ -2141,116 +2142,9 @@ app.use('/api', createAnnotationsRouter());
 // out of this file.
 app.use('/api', createGoalsRouter());
 
-// --- Experiments (the hypothesis loop) -----------------------------------
-
-app.get('/api/experiments', async (req, res) => {
-  try {
-    res.json({ experiments: await experimentsStore.listExperiments({ status: req.query.status }) });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Generate experiment proposals from unconfirmed correlations.
-app.post('/api/experiments/propose', async (req, res) => {
-  try {
-    res.json(await experiments.proposeExperiments());
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Create a custom experiment, or start a proposed one.
-app.post('/api/experiments', async (req, res) => {
-  try {
-    const id = await experimentsStore.createExperiment(req.body || {});
-    res.json({ id });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Start a proposed experiment (sets running + dates).
-app.post('/api/experiments/:id/start', async (req, res) => {
-  try {
-    const { testDays = 14 } = req.body || {};
-    const start = new Date();
-    const end = new Date();
-    end.setDate(end.getDate() + Number(testDays));
-    await experimentsStore.updateExperiment(req.params.id, {
-      status: 'running',
-      startDate: start.toISOString().slice(0, 10),
-      endDate: end.toISOString().slice(0, 10),
-    });
-    res.json({ ok: true, startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Evaluate a single experiment now.
-app.post('/api/experiments/:id/evaluate', async (req, res) => {
-  try {
-    const exp = await experimentsStore.getExperiment(req.params.id);
-    if (!exp) return res.status(404).json({ error: 'not found' });
-    res.json(await experiments.evaluateExperiment(exp));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.delete('/api/experiments/:id', async (req, res) => {
-  try {
-    await require('./src/db').query('DELETE FROM experiments WHERE id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// PATCH /api/experiments/:id — pause or resume an experiment.
-// pause: freezes the clock (status → 'paused', records paused_at)
-// resume: extends end_date by days paused so the experiment keeps its full duration
-app.patch('/api/experiments/:id', async (req, res) => {
-  try {
-    const { action } = req.body || {};
-    const exp = await experimentsStore.getExperiment(req.params.id);
-    if (!exp) return res.status(404).json({ error: 'not found' });
-
-    if (action === 'pause') {
-      if (exp.status !== 'running') return res.status(400).json({ error: 'only running experiments can be paused' });
-      await experimentsStore.updateExperiment(exp.id, { status: 'paused', pausedAt: new Date() });
-      return res.json({ ok: true });
-    }
-
-    if (action === 'resume') {
-      if (exp.status !== 'paused') return res.status(400).json({ error: 'only paused experiments can be resumed' });
-      const daysPaused = exp.paused_at
-        ? Math.round((Date.now() - new Date(exp.paused_at).getTime()) / 86400000)
-        : 0;
-      let newEndDate = exp.end_date ? new Date(exp.end_date) : null;
-      if (newEndDate && daysPaused > 0) newEndDate.setDate(newEndDate.getDate() + daysPaused);
-      // start_date must shift by the same amount — otherwise "days elapsed"
-      // (computed as now - start_date on the client) counts the paused days
-      // as if the experiment had been running the whole time, so day-count
-      // jumps forward by daysPaused the instant you resume even though the
-      // clock was supposed to be frozen while paused.
-      let newStartDate = exp.start_date ? new Date(exp.start_date) : null;
-      if (newStartDate && daysPaused > 0) newStartDate.setDate(newStartDate.getDate() + daysPaused);
-      await experimentsStore.updateExperiment(exp.id, {
-        status: 'running',
-        pausedAt: null,
-        ...(newEndDate ? { endDate: newEndDate.toISOString().slice(0, 10) } : {}),
-        ...(newStartDate ? { startDate: newStartDate.toISOString().slice(0, 10) } : {}),
-      });
-      return res.json({ ok: true, daysPaused, newEndDate: newEndDate?.toISOString().slice(0, 10) ?? null, newStartDate: newStartDate?.toISOString().slice(0, 10) ?? null });
-    }
-
-    res.status(400).json({ error: 'action must be pause or resume' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// Experiment routes live in src/routes/experiments.js — the fourth router
+// extraction out of this file.
+app.use('/api', createExperimentsRouter());
 
 // The ranked "highest leverage actions" — the core NormOS question.
 app.get('/api/actions', async (req, res) => {
