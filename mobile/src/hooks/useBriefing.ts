@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BRIEFING_URL, BRIEFING_REBUILD_URL, authHeaders, fetchWithTimeout } from '../config';
+import { BRIEFING_URL, BRIEFING_REBUILD_URL, CHIEF_BRIEF_REBUILD_URL, authHeaders, fetchWithTimeout } from '../config';
 
 const API_URL = BRIEFING_URL;
 const CACHE_KEY = 'normos.briefing.v1';
@@ -303,6 +303,8 @@ export interface BriefingState {
   reload: () => void;         // pull the (already-warm) server cache instantly
   refetchLive: () => void;    // mid-day partial: markets + email briefs only (fast)
   triggerRebuild: () => void; // non-blocking rebuild — responds in <1s, then polls
+  chiefBriefRefreshing: boolean;    // scoped chief-brief-only retry in progress
+  refreshChiefBrief: () => void;    // fast, scoped retry — seconds, not the full rebuild
 }
 
 type FetchMode = 'cache' | 'rebuild' | 'live';
@@ -483,6 +485,27 @@ export function useBriefing(): BriefingState {
     rebuildPollRef.current = setTimeout(poll, 12000);
   }, [rebuilding]);
 
+  const [chiefBriefRefreshing, setChiefBriefRefreshing] = useState(false);
+
+  // Fast, scoped retry for just the Chief-of-Staff card — POST responds
+  // directly in a few seconds (no polling needed, unlike triggerRebuild's
+  // 60-90s full build) since the server only recomputes that one section.
+  const refreshChiefBrief = useCallback(async () => {
+    if (chiefBriefRefreshing) return;
+    setChiefBriefRefreshing(true);
+    try {
+      const res = await fetchWithTimeout(CHIEF_BRIEF_REBUILD_URL, { method: 'POST', headers: authHeaders() }, 20000);
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+      const json: BriefingData = await res.json();
+      setData(json);
+      AsyncStorage.setItem(CACHE_KEY, JSON.stringify(json)).catch(() => {});
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Chief-brief refresh failed');
+    } finally {
+      setChiefBriefRefreshing(false);
+    }
+  }, [chiefBriefRefreshing]);
+
   return {
     data,
     loading,
@@ -492,5 +515,7 @@ export function useBriefing(): BriefingState {
     reload: () => fetchBriefing('cache'),     // serve the warm morning cache instantly
     refetchLive: () => fetchBriefing('live'), // markets + email briefs only
     triggerRebuild,                           // preferred: non-blocking rebuild with polling
+    chiefBriefRefreshing,
+    refreshChiefBrief,
   };
 }

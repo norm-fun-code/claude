@@ -382,12 +382,24 @@ export default function App() {
             {eveningMode ? (
               <AnimatedEntry delay={10}>
                 <CollapsibleSection title="This morning's brief">
-                  <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} stale={d?.chiefBriefStale} />
+                  <BriefCard
+                    brief={d?.chiefBrief}
+                    fallback={d?.morningFocus}
+                    stale={d?.chiefBriefStale}
+                    onRefresh={briefing.refreshChiefBrief}
+                    refreshing={briefing.chiefBriefRefreshing}
+                  />
                 </CollapsibleSection>
               </AnimatedEntry>
             ) : (
               <AnimatedEntry delay={0}>
-                <BriefCard brief={d?.chiefBrief} fallback={d?.morningFocus} stale={d?.chiefBriefStale} />
+                <BriefCard
+                  brief={d?.chiefBrief}
+                  fallback={d?.morningFocus}
+                  stale={d?.chiefBriefStale}
+                  onRefresh={briefing.refreshChiefBrief}
+                  refreshing={briefing.chiefBriefRefreshing}
+                />
               </AnimatedEntry>
             )}
             {/* 1.5 Commitments — what you said you'd do, still open. Sits right

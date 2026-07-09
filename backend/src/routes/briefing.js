@@ -41,6 +41,248 @@ const intentionsStore = require('../store/intentions');
 const lifeChaptersStore = require('../store/lifeChapters');
 const { asyncHandler } = require('../middleware/asyncHandler');
 
+// Fast, scoped context for POST /briefing/chief-brief/rebuild — recomputes
+// only the cheap, side-effect-free, DB-only inputs generateChiefBrief reads,
+// so a "just retry the brief text" tap takes seconds, not the full builder's
+// 60-90s. Deliberately narrower than the main /briefing builder's context
+// (see buildFullBriefingContext-equivalent block further down, which stays
+// untouched/verbatim):
+//  - calendar/workBusy/emails are reused from the last full build rather than
+//    refetched (no external API calls here at all) — they rarely change
+//    tap-to-tap, and a full "Rebuild briefing" still refreshes them.
+//  - leverageContext is DERIVED from the already-persisted
+//    prior.content.leverageActions/forecasts rather than re-querying findings
+//    and re-running the main builder's recommendation-ledger dedup/logging —
+//    that logging is a write with its own 7-day dedup semantics and must only
+//    run from a real full build, not every quick-retry tap.
+//  - continuityContext (has a similar write side effect, in curate.js's
+//    first-seen tracking) and cashflowContext/progressContext (both
+//    Monday-only anyway, and cashflow needs a live Monarch MCP round-trip)
+//    are skipped — empty string, same as any other day they don't apply.
+// Net effect: a slightly less rich prompt than the full builder's, in
+// exchange for being fast and free of write side effects. If this proves
+// valuable, the shared pieces are candidates to extract into one function
+// both routes call — noted here rather than done blind under time pressure.
+async function buildQuickChiefBriefContext(prior) {
+  const tz = process.env.TZ || 'America/New_York';
+  const dayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+  const workout = getTodayWorkout();
+  const calendar = prior.content?.calendar ?? [];
+  const workBusy = prior.content?.workBusy ?? [];
+
+  const [
+    wellbeingContext,
+    annotationsAndGapsContext,
+    recoveryContext,
+    experimentsContext,
+    selfModel,
+    strengthContext,
+    spendingContext,
+    weeklyGoalsContext,
+    chaptersContext,
+  ] = await Promise.all([
+    (async () => {
+      try {
+        const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        const avg = async (domain, metric) => {
+          const r = await metricsStore.dailyAggregate({ domain, metric, from: since, agg: 'avg' });
+          const vals = r.map((x) => Number(x.value)).filter(Number.isFinite);
+          return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+        };
+        const binaryHabits = ['gratitude', 'morning_tm', 'afternoon_tm', 'cold_shower', 'exercise'];
+        const habitLabels = { gratitude: 'gratitude', morning_tm: 'morning meditation', afternoon_tm: 'afternoon meditation', cold_shower: 'cold shower', exercise: 'exercise', eat_healthy: 'eating well' };
+        const [mood, energy, focus, ...habitAvgs] = await Promise.all([
+          avg('wellbeing', 'mood'), avg('wellbeing', 'energy'), avg('wellbeing', 'focus'),
+          ...binaryHabits.map((m) => avg('habits', m)),
+          avg('habits', 'eat_healthy'),
+        ]);
+        const lagging = [];
+        binaryHabits.forEach((m, i) => { if (habitAvgs[i] != null && habitAvgs[i] < 0.6) lagging.push(habitLabels[m]); });
+        const eatAvg = habitAvgs[binaryHabits.length];
+        if (eatAvg != null && eatAvg < 3) lagging.push(habitLabels.eat_healthy);
+        const { wellbeingLevel } = require('../intelligence/catalog');
+        const parts = [];
+        if (mood != null) parts.push(`mood ${wellbeingLevel(mood)}`);
+        if (energy != null) parts.push(`energy ${wellbeingLevel(energy)}`);
+        if (focus != null) parts.push(`focus ${wellbeingLevel(focus)}`);
+        if (lagging.length) parts.push(`slipping on ${lagging.slice(0, 3).join(', ')}`);
+        return parts.join('; ');
+      } catch (err) {
+        console.error('[quick chief-brief] wellbeing context failed:', err.message);
+        return '';
+      }
+    })(),
+    (async () => {
+      let ctx = '';
+      try {
+        const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+        const active = await annotationsStore.overlapping(startOfToday, new Date());
+        if (active.length) {
+          ctx = active
+            .map((a) => `${a.label}${a.note ? ` (${a.note})` : ''}`)
+            .slice(0, 5)
+            .join('; ');
+        }
+      } catch (err) {
+        console.error('[quick chief-brief] annotations context failed:', err.message);
+      }
+      try {
+        const STALE_THRESHOLDS_H = {
+          eight_sleep_api:  { hours: 26, label: 'recovery/sleep metrics' },
+          monarch_mcp_sync: { hours: 26, label: 'wealth/spending data' },
+          monarch:          { hours: 48, label: 'wealth data' },
+          health:           { hours: 6,  label: 'activity/steps' },
+        };
+        const allSources = await sourcesStore.listSources();
+        const gaps = [];
+        for (const s of allSources) {
+          const thresh = STALE_THRESHOLDS_H[s.id];
+          if (!thresh || !s.last_sync_at) continue;
+          const hoursAgo = (Date.now() - new Date(s.last_sync_at).getTime()) / 3_600_000;
+          if (hoursAgo > thresh.hours) gaps.push(`${s.display_name || s.id} (${thresh.label}, last synced ${Math.round(hoursAgo)}h ago)`);
+        }
+        if (gaps.length) {
+          const warning = `DATA GAPS — these sources have not synced recently: ${gaps.join('; ')}. Caveat any claims that rely on this data.`;
+          ctx = ctx ? `${ctx}; ${warning}` : warning;
+        }
+      } catch (err) {
+        console.error('[quick chief-brief] pipeline health failed:', err.message);
+      }
+      return ctx;
+    })(),
+    (async () => {
+      try {
+        const recovery = await require('../intelligence/recovery').liveRecovery();
+        if (recovery?.score == null) {
+          return 'UNAVAILABLE — Eight Sleep device not worn recently. Do NOT reference HRV, resting heart rate, or recovery score in today\'s brief.';
+        }
+        let ctx = `score ${recovery.score}/100 (${recovery.band ?? 'unknown'} band)`;
+        if (recovery.rawHrv != null) ctx += `, HRV ${Math.round(recovery.rawHrv)}ms`;
+        if (recovery.rawRhr != null) ctx += `, RHR ${Math.round(recovery.rawRhr)}bpm`;
+        if (recovery.proxy) ctx += ' — SELF-REPORTED (no Eight Sleep reading last night; this is a subjective estimate, not a real HRV/RHR measurement).';
+        return ctx;
+      } catch (err) {
+        console.error('[quick chief-brief] recovery context failed:', err.message);
+        return '';
+      }
+    })(),
+    (async () => {
+      try {
+        const allExps = await experimentsStore.listExperiments();
+        const lines = [];
+        for (const e of allExps.filter((e) => e.status === 'running').slice(0, 4)) lines.push(`⟳ Running: ${e.hypothesis}`);
+        for (const e of allExps.filter((e) => e.status === 'paused').slice(0, 3)) lines.push(`⏸ Paused by the user: ${e.hypothesis} — do not reference as active, running, or logging`);
+        return lines.join('\n');
+      } catch (err) {
+        console.error('[quick chief-brief] experiments context failed:', err.message);
+        return '';
+      }
+    })(),
+    (async () => {
+      try {
+        let text = (await require('../store/selfModel').latestModelText()) ?? '';
+        text = text.replace(/^WEALTH:.*$/m, (line) => {
+          const spend = line.match(/MTD[^$]*spending \$[\d,]+(?: \(excludes[^)]*\))?/);
+          return spend ? `WEALTH: ${spend[0]}` : '';
+        });
+        return text;
+      } catch (err) {
+        console.error('[quick chief-brief] selfModel failed:', err.message);
+        return '';
+      }
+    })(),
+    require('../intelligence/strength-progression').topProgressionNote({ days: 45, minSessions: 3 }).catch(() => ''),
+    (async () => {
+      try {
+        const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const yestDate = yesterday.toLocaleDateString('en-CA', { timeZone: tz });
+        const yestFrom = new Date(`${yestDate}T00:00:00Z`);
+        const yestTo = new Date(yestFrom.getTime() + 24 * 60 * 60 * 1000);
+        const baselineFrom = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
+        const [yestRows, baselineRows] = await Promise.all([
+          metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: yestFrom, to: yestTo, agg: 'sum', excludeSource: 'seed' }),
+          metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: baselineFrom, to: yestFrom, agg: 'sum', excludeSource: 'seed' }),
+        ]);
+        const yestTotal = yestRows.reduce((s, r) => s + Number(r.value || 0), 0);
+        const recentSpend = yestTotal > 0 ? yestTotal : null;
+        const spendBaseline = baselineRows.length >= 7
+          ? baselineRows.reduce((s, r) => s + Number(r.value || 0), 0) / baselineRows.length
+          : null;
+        if (recentSpend != null && spendBaseline != null && spendBaseline > 10 && recentSpend > spendBaseline * 1.8) {
+          const mult = (recentSpend / spendBaseline).toFixed(1);
+          return `Discretionary spending yesterday was $${Math.round(recentSpend)} vs a $${Math.round(spendBaseline)}/day average (${mult}× normal).`;
+        }
+        return '';
+      } catch (err) {
+        console.error('[quick chief-brief] spending context failed:', err.message);
+        return '';
+      }
+    })(),
+    (async () => {
+      try {
+        const [currentInt] = await Promise.all([intentionsStore.currentIntention()]);
+        const goals = currentInt?.goals ?? [];
+        if (!goals.length) return '';
+        const done = goals.filter((g) => g.achieved).map((g) => `[done] ${g.text}`);
+        const open = goals.filter((g) => !g.achieved).map((g) => `[OPEN] ${g.text}`);
+        return `${[...open, ...done].join(' · ')}` + (currentInt?.context ? ` (week context: "${String(currentInt.context).slice(0, 300)}")` : '');
+      } catch (err) {
+        console.error('[quick chief-brief] weeklyGoals context failed:', err.message);
+        return '';
+      }
+    })(),
+    (async () => {
+      try {
+        const chapters = await lifeChaptersStore.listActive();
+        return require('../intelligence/chapters').composeChapterContext(chapters);
+      } catch (err) {
+        console.error('[quick chief-brief] chapters context failed:', err.message);
+        return '';
+      }
+    })(),
+  ]);
+
+  // Derived from persisted output, not a fresh findings query — see the
+  // function header comment for why (avoids re-running the leverage
+  // engine's recommendation-ledger side effects on every quick-retry tap).
+  const lev = (prior.content?.leverageActions ?? []).map((f, i) => `${i + 1}. ${f.title}${f.detail ? ` — ${f.detail}` : ''}`);
+  const risks = (prior.content?.forecasts ?? [])
+    .filter((f) => f.status === 'off_track' || f.status === 'at_risk')
+    .slice(0, 2)
+    .map((f) => `- ${f.title}${f.detail ? ` — ${f.detail}` : ''}`);
+  const leverageParts = [];
+  if (lev.length) leverageParts.push(`HIGHEST-LEVERAGE ACTIONS (leverage engine):\n${lev.join('\n')}`);
+  if (risks.length) leverageParts.push(`TRENDING WRONG (at-risk forecasts):\n${risks.join('\n')}`);
+
+  let dayOffContext = '';
+  try {
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    dayOffContext = require('../util/dayContext').describeDayOff(todayStr);
+  } catch { /* non-critical */ }
+
+  return {
+    emails: [], // raw email list isn't persisted; urgentEmails is carried over as-is by the caller instead
+    dayName,
+    workout,
+    calendar,
+    workBusy,
+    wellbeingContext,
+    annotationsContext: annotationsAndGapsContext,
+    recoveryContext,
+    experimentsContext,
+    selfModel,
+    leverageContext: leverageParts.join('\n\n'),
+    strengthContext,
+    spendingContext,
+    continuityContext: '', // has write side effects in the full builder — skipped here, see header comment
+    cashflowContext: '', // Monday-only + a live Monarch round-trip — skipped for speed
+    progressContext: '', // Monday-only — skipped for speed
+    weeklyGoalsContext,
+    chaptersContext,
+    dayOffContext,
+  };
+}
+
 function createBriefingRouter({ port }) {
   const router = express.Router();
 
@@ -115,6 +357,48 @@ router.post('/briefing/markets', asyncHandler(async (req, res) => {
       .catch((err) => console.error('[briefing markets] save failed:', err.message));
 
     res.json({ markets });
+}));
+
+// Fast, scoped retry for JUST the Chief-of-Staff card — added after a live
+// silent-fallback bug (see briefing-ai.js's shape-validation logging and the
+// chiefBriefStale flag below) kept showing yesterday's brief with no way to
+// force a quick re-try short of the full 60-90s rebuild. Recomputes only the
+// context generateChiefBrief needs (see buildQuickChiefBriefContext above)
+// and touches ONLY chiefBrief/morningFocus/chiefBriefStale in the saved
+// content — every other field (weather, wealth, insights, etc.) is untouched.
+router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
+  const prior = await briefingsStore.latestBriefing('daily');
+  if (!prior?.content) {
+    return res.status(409).json({ error: 'no briefing built yet — load the briefing first' });
+  }
+
+  const ctx = await buildQuickChiefBriefContext(prior);
+  const chiefResult = await generateChiefBrief(
+    ctx.emails, ctx.dayName, ctx.workout, ctx.calendar, ctx.wellbeingContext, ctx.annotationsContext,
+    ctx.recoveryContext, ctx.experimentsContext, ctx.selfModel, ctx.leverageContext, ctx.workBusy,
+    ctx.strengthContext, ctx.spendingContext, ctx.continuityContext, ctx.cashflowContext,
+    ctx.progressContext, ctx.weeklyGoalsContext, ctx.chaptersContext, ctx.dayOffContext
+  );
+
+  const chiefBriefStale = chiefResult.chiefBrief == null;
+  const errors = Array.isArray(prior.content.errors) ? prior.content.errors.filter((e) => e.service !== 'chiefBrief') : [];
+  if (chiefBriefStale) {
+    console.error('[chief-brief rebuild] still invalid after the scoped retry — keeping the existing card.');
+    errors.push({ service: 'chiefBrief', error: 'invalid or missing shape from the LLM (after a retry); showing the previous build\'s brief' });
+  }
+
+  const content = {
+    ...prior.content,
+    chiefBrief: chiefResult.chiefBrief ?? prior.content.chiefBrief ?? null,
+    morningFocus: chiefResult.morningFocus || prior.content.morningFocus || '',
+    chiefBriefStale,
+    errors,
+  };
+  briefingsStore
+    .saveBriefing({ kind: 'daily', content })
+    .catch((err) => console.error('[chief-brief rebuild] save failed:', err.message));
+
+  res.json({ ...content, cached: false });
 }));
 
 let _rebuildInFlight = false;

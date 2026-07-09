@@ -11,6 +11,9 @@ export const API_TOKEN = process.env.EXPO_PUBLIC_API_TOKEN || '';
 
 export const BRIEFING_URL = `${API_BASE}/api/briefing`;
 export const BRIEFING_REBUILD_URL = `${API_BASE}/api/briefing/rebuild`;
+// Fast, scoped retry for just the Chief-of-Staff card (seconds, not the full
+// 60-90s rebuild) — see src/routes/briefing.js's chief-brief/rebuild route.
+export const CHIEF_BRIEF_REBUILD_URL = `${API_BASE}/api/briefing/chief-brief/rebuild`;
 export const BRIEFING_AUDIO_URL = `${API_BASE}/api/briefing/audio`;
 export const VOICE_ASK_URL = `${API_BASE}/api/voice/ask`;
 export const VOICE_TRANSCRIBE_URL = `${API_BASE}/api/voice/transcribe`;

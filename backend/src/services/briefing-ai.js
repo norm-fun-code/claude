@@ -209,13 +209,10 @@ function extractJson(text) {
 const EMPTY_CHIEF = { morningFocus: '', chiefBrief: null, urgentEmails: [] };
 const EMPTY_WISDOM = { quoteInsight: '', notionQuote: '', notionInsight: '' };
 
-/** Generate the chief-brief + morningFocus + urgentEmails section only. */
-async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '') {
-  // Apply the same hard filter as generateEmailBriefs so automated senders
-  // never reach the main briefing LLM call either.
-  const filteredEmails = filterActionableEmails(emailData);
-  const prompt = buildChiefBriefPrompt(filteredEmails, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusyBlocks, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext);
+const CHIEF_REQUIRED_FIELDS = ['synthesis', 'action', 'risk', 'move'];
 
+/** One LLM call + parse + shape-validate. Returns the result shape or null (retryable). */
+async function chiefBriefAttempt(prompt, attemptLabel) {
   let text = '';
   try {
     // Chief-brief is the load-bearing call — several dense sections + urgent
@@ -223,45 +220,61 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
     // caller (server.js) allows up to BRIEFING_LLM_TIMEOUT_MS overall.
     text = await llm.generateText({ system: CHIEF_SYSTEM, prompt, temperature: 0.2, maxTokens: 4096 });
   } catch (err) {
-    console.error('[briefing-ai] chief-brief generation failed:', err.message);
-    return { ...EMPTY_CHIEF };
+    console.error(`[briefing-ai] chief-brief generation failed (${attemptLabel}):`, err.message);
+    return null;
   }
 
   const parsed = extractJson(text);
   if (!parsed) {
-    console.error('[briefing-ai] chief-brief response was not valid JSON; returning empty.');
-    return { ...EMPTY_CHIEF };
+    console.error(`[briefing-ai] chief-brief response was not valid JSON (${attemptLabel}).`);
+    return null;
   }
 
   // Structured chief-of-staff brief: only keep it if all four blocks are present
   // strings, so the card can trust the shape (else null → card hides).
   const cb = parsed.chiefBrief;
-  const REQUIRED_FIELDS = ['synthesis', 'action', 'risk', 'move'];
-  const shapeOk = cb && typeof cb === 'object' && REQUIRED_FIELDS.every((k) => typeof cb[k] === 'string' && cb[k].trim());
+  const shapeOk = cb && typeof cb === 'object' && CHIEF_REQUIRED_FIELDS.every((k) => typeof cb[k] === 'string' && cb[k].trim());
   if (!shapeOk) {
     // This used to fail silently — the caller falls back to the PRIOR build's
     // chiefBrief (see briefing.js), so a bad shape here quietly shows a stale
-    // brief with no error anywhere, and can recur build after build with no
+    // brief with no error anywhere, and could recur build after build with no
     // trace of why. Log exactly what's wrong so it's diagnosable instead.
     const missing = !cb || typeof cb !== 'object'
       ? 'chiefBrief missing or not an object'
-      : REQUIRED_FIELDS.filter((k) => !(typeof cb[k] === 'string' && cb[k].trim())).join(', ') + ' missing/empty';
-    console.error(`[briefing-ai] chief-brief shape invalid (${missing}); falling back to prior build's brief.`);
+      : CHIEF_REQUIRED_FIELDS.filter((k) => !(typeof cb[k] === 'string' && cb[k].trim())).join(', ') + ' missing/empty';
+    console.error(`[briefing-ai] chief-brief shape invalid (${attemptLabel}): ${missing}.`);
+    return null;
   }
-  const chiefBrief = shapeOk
-    ? {
-        synthesis: cb.synthesis, action: cb.action, risk: cb.risk, move: cb.move,
-        // The one thing the brief is genuinely unsure about today — often empty
-        // (restraint), a real inline question when present. Trim + drop generic ones.
-        openQuestion: typeof cb.openQuestion === 'string' && cb.openQuestion.trim().length > 3 ? cb.openQuestion.trim() : '',
-      }
-    : null;
 
   return {
     morningFocus: typeof parsed.morningFocus === 'string' ? parsed.morningFocus : '',
-    chiefBrief,
+    chiefBrief: {
+      synthesis: cb.synthesis, action: cb.action, risk: cb.risk, move: cb.move,
+      // The one thing the brief is genuinely unsure about today — often empty
+      // (restraint), a real inline question when present. Trim + drop generic ones.
+      openQuestion: typeof cb.openQuestion === 'string' && cb.openQuestion.trim().length > 3 ? cb.openQuestion.trim() : '',
+    },
     urgentEmails: Array.isArray(parsed.urgentEmails) ? parsed.urgentEmails : [],
   };
+}
+
+/** Generate the chief-brief + morningFocus + urgentEmails section only. */
+async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '') {
+  // Apply the same hard filter as generateEmailBriefs so automated senders
+  // never reach the main briefing LLM call either.
+  const filteredEmails = filterActionableEmails(emailData);
+  const prompt = buildChiefBriefPrompt(filteredEmails, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusyBlocks, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext);
+
+  // One retry on a shape/parse failure — the model call is non-deterministic
+  // (temperature 0.2, not 0), and this exact class of failure (silently
+  // falling back to yesterday's brief, repeatedly) is what a live user hit.
+  // A second attempt with the identical prompt has a real chance of coming
+  // back valid; only give up and let the caller fall back after both fail.
+  const first = await chiefBriefAttempt(prompt, 'attempt 1/2');
+  if (first) return first;
+  const second = await chiefBriefAttempt(prompt, 'attempt 2/2 (retry)');
+  if (second) return second;
+  return { ...EMPTY_CHIEF };
 }
 
 /**

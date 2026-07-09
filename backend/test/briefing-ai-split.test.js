@@ -68,6 +68,34 @@ test('generateChiefBrief returns null chiefBrief when a required field is missin
   assert.equal(result.chiefBrief, null);
 });
 
+test('generateChiefBrief retries once and recovers if the second attempt is valid', async () => {
+  let call = 0;
+  llm.generateText = async ({ system }) => {
+    if (!system.includes('chief of staff and data scientist')) return WISDOM_JSON;
+    call++;
+    // First call: invalid (missing "move"). Second call (the retry): valid.
+    return call === 1
+      ? JSON.stringify({ chiefBrief: { synthesis: 'x', action: 'y', risk: 'z' }, morningFocus: 'f' })
+      : CHIEF_JSON;
+  };
+  const result = await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
+  assert.equal(call, 2, 'expected exactly one retry');
+  assert.ok(result.chiefBrief, 'the retry succeeded, so chiefBrief should be populated, not null');
+  assert.equal(result.chiefBrief.synthesis, 'Test synthesis.');
+});
+
+test('generateChiefBrief gives up (null) only after BOTH attempts fail', async () => {
+  let call = 0;
+  llm.generateText = async ({ system }) => {
+    if (!system.includes('chief of staff and data scientist')) return WISDOM_JSON;
+    call++;
+    return 'not json at all, both times';
+  };
+  const result = await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
+  assert.equal(call, 2, 'expected the retry to have been attempted before giving up');
+  assert.equal(result.chiefBrief, null);
+});
+
 // The caller (briefing.js) silently falls back to the PRIOR build's chiefBrief
 // whenever this comes back null — so an invalid shape here used to be
 // completely untraceable in production (the exact bug this test guards

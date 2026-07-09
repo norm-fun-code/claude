@@ -16,6 +16,10 @@ interface Props {
   // shown as a small note so a rebuild that didn't actually refresh this card
   // doesn't look like it silently did nothing (see server chiefBriefStale).
   stale?: boolean;
+  // Fast, scoped retry for just this card (seconds, not the full 60-90s
+  // "Rebuild briefing") — wired to POST /api/briefing/chief-brief/rebuild.
+  onRefresh?: () => void;
+  refreshing?: boolean;
 }
 
 // Each block gets a mini emoji tile (same elevated-tile language as
@@ -132,7 +136,7 @@ function BeatRow({ label, emoji, tint, text }: { label: string; emoji: string; t
 // agree), but this set covers the in-memory window until that refetch.
 const answeredQuestions = new Set<string>();
 
-export function BriefCard({ brief, fallback, stale }: Props) {
+export function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [note, setNote] = useState('');
@@ -309,20 +313,36 @@ export function BriefCard({ brief, fallback, stale }: Props) {
         <View style={styles.kickerGroup}>
           <Text style={styles.kicker}>CHIEF OF STAFF BRIEF</Text>
           {stale && brief && (
-            <Text style={styles.staleNote}>Still yesterday's — retrying</Text>
+            <Text style={styles.staleNote}>Still yesterday's — tap ↻ to retry</Text>
           )}
         </View>
-        {voiceAvailable && brief && (
-          <Pressable onPress={toggleListen} hitSlop={8} style={styles.listenBtn}>
-            {audioState === 'loading' ? (
-              <ActivityIndicator size="small" color="#A89CFF" />
-            ) : (
-              <Text style={styles.listenText}>
-                {audioState === 'playing' ? '◼ Stop' : audioState === 'error' ? 'Unavailable' : '▶ Listen'}
-              </Text>
-            )}
-          </Pressable>
-        )}
+        <View style={styles.kickerActions}>
+          {onRefresh && brief && (
+            <Pressable
+              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onRefresh(); }}
+              disabled={refreshing}
+              hitSlop={8}
+              style={styles.refreshBtn}
+            >
+              {refreshing ? (
+                <ActivityIndicator size="small" color="#A89CFF" />
+              ) : (
+                <Text style={styles.refreshText}>↻</Text>
+              )}
+            </Pressable>
+          )}
+          {voiceAvailable && brief && (
+            <Pressable onPress={toggleListen} hitSlop={8} style={styles.listenBtn}>
+              {audioState === 'loading' ? (
+                <ActivityIndicator size="small" color="#A89CFF" />
+              ) : (
+                <Text style={styles.listenText}>
+                  {audioState === 'playing' ? '◼ Stop' : audioState === 'error' ? 'Unavailable' : '▶ Listen'}
+                </Text>
+              )}
+            </Pressable>
+          )}
+        </View>
       </View>
 
       {brief ? (
@@ -498,6 +518,21 @@ const styles = StyleSheet.create({
     color: '#FFC44D',
     marginLeft: spacing.sm,
   },
+  kickerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  refreshBtn: {
+    borderWidth: 1,
+    borderColor: 'rgba(168,156,255,0.4)',
+    borderRadius: radius.pill,
+    width: 26,
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  refreshText: { color: '#A89CFF', fontSize: 14, fontWeight: '700' },
   listenBtn: {
     borderWidth: 1,
     borderColor: 'rgba(168,156,255,0.4)',
