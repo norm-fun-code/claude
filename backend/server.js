@@ -46,6 +46,7 @@ const { createCheckinRouter } = require('./src/routes/checkin');
 const { createHabitsRouter } = require('./src/routes/habits');
 const { createContextRouter } = require('./src/routes/context');
 const { createIntentionsRouter } = require('./src/routes/intentions');
+const { createChaptersRouter } = require('./src/routes/chapters');
 const { recomputeHabitScore } = require('./src/intelligence/habit-score');
 const gratitudeLogsStore = require('./src/store/gratitudeLogs');
 const surfacedStore = require('./src/store/surfaced');
@@ -141,40 +142,11 @@ const lifeChaptersStore = require('./src/store/lifeChapters');
 const commitmentsStore = require('./src/store/commitments');
 const dayJournalStore = require('./src/store/dayJournal');
 
-app.get('/api/chapters', async (req, res) => {
-  try {
-    const chapters = await lifeChaptersStore.listActive();
-    res.json({ chapters });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/chapters', async (req, res) => {
-  try {
-    const { kind, label, keyDate, keyDateLabel, notes } = req.body || {};
-    if (!label || !String(label).trim()) return res.status(400).json({ error: 'label is required' });
-    const chapter = await lifeChaptersStore.create({
-      kind: ['pregnancy', 'countdown', 'note'].includes(kind) ? kind : 'countdown',
-      label: String(label).trim().slice(0, 120),
-      keyDate: keyDate || null,
-      keyDateLabel: keyDateLabel ? String(keyDateLabel).slice(0, 40) : null,
-      notes: notes ? String(notes).slice(0, 500) : null,
-    });
-    res.json({ chapter });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.delete('/api/chapters/:id', async (req, res) => {
-  try {
-    const ok = await lifeChaptersStore.deactivate(req.params.id);
-    res.json({ ok });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// Chapters routes (GET/POST/DELETE) live in src/routes/chapters.js — the
+// twelfth router extraction out of this file. lifeChaptersStore stays
+// imported above too — the voice-command "remember: ..." path further down
+// calls it directly.
+app.use('/api', createChaptersRouter());
 
 // Standalone weather — so the Today card can show/refresh weather on its own,
 // fast, without waiting on the full LLM briefing. Cached briefly in-memory so
