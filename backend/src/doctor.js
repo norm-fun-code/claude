@@ -56,7 +56,7 @@ async function main() {
   const chat = (() => { try { return llm.chatProviderName(); } catch { return 'none'; } })();
   const embed = (() => { try { return llm.embedProviderName(); } catch { return 'none'; } })();
   const chatReady = hasChatLLM();
-  const embedReady = (embed === 'gemini' && has('GEMINI_API_KEY')) || embed === 'ollama';
+  const embedReady = embed === 'gemini' && has('GEMINI_API_KEY');
   lines.push('  ' + (chatReady ? ok(`chat/reasoning → ${chat}`) : no(`chat/reasoning → ${chat} (set the API key)`)));
   if (!chatReady) blocking++;
   lines.push('  ' + (embedReady ? ok(`embeddings → ${embed}`) : meh(`embeddings → ${embed} (needed for library search/chat)`)));

@@ -125,12 +125,9 @@ Three ingestion modes:
 rewrite:
 
 - **Chat/reasoning** (`LLM_PROVIDER`): `anthropic` (Claude — default when
-  `ANTHROPIC_API_KEY` is set), `gemini`, or `ollama` (fully local).
-- **Embeddings** (`EMBED_PROVIDER`): `gemini` (text-embedding-004) or `ollama`
-  (nomic-embed-text) — both 768-dim to match `documents.embedding`.
-
-Privacy: point both at `ollama` and your most sensitive analysis never leaves
-the machine.
+  `ANTHROPIC_API_KEY` is set) or `gemini`.
+- **Embeddings** (`EMBED_PROVIDER`): `gemini` (text-embedding-004, 768-dim to
+  match `documents.embedding`).
 
 ### Knowledge graph + life chat
 

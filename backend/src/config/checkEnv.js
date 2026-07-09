@@ -14,7 +14,6 @@ const has = (k) => Boolean(process.env[k] && process.env[k].trim());
 /** True if at least one chat/reasoning LLM is actually usable. */
 function hasChatLLM() {
   const provider = process.env.LLM_PROVIDER || (has('ANTHROPIC_API_KEY') ? 'anthropic' : 'gemini');
-  if (provider === 'ollama') return true; // local, no key needed
   if (provider === 'anthropic') return has('ANTHROPIC_API_KEY');
   return has('GEMINI_API_KEY');
 }
@@ -41,9 +40,9 @@ function validateBootConfig() {
 
   if (!hasChatLLM()) {
     console.warn(
-      '[boot] No usable chat LLM configured (no ANTHROPIC_API_KEY, no GEMINI_API_KEY, ' +
-      'LLM_PROVIDER is not "ollama") — chat, voice, and the daily briefing will not work ' +
-      'until one is set. The rest of the app (metrics, logging, wealth tracking) is unaffected.'
+      '[boot] No usable chat LLM configured (no ANTHROPIC_API_KEY, no GEMINI_API_KEY) — ' +
+      'chat, voice, and the daily briefing will not work until one is set. The rest of the ' +
+      'app (metrics, logging, wealth tracking) is unaffected.'
     );
   }
 

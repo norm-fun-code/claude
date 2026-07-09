@@ -1,15 +1,14 @@
 // Unified LLM interface. Chat and embeddings can use different providers:
-//   LLM_PROVIDER   chat/reasoning  — anthropic | gemini | ollama
-//   EMBED_PROVIDER embeddings      — gemini | ollama  (must be 768-dim)
+//   LLM_PROVIDER   chat/reasoning  — anthropic | gemini
+//   EMBED_PROVIDER embeddings      — gemini  (must be 768-dim)
 //
 // Defaults: Claude for chat if ANTHROPIC_API_KEY is set, else Gemini; Gemini for
 // embeddings (text-embedding-004 matches the documents.embedding vector(768)).
 const gemini = require('./providers/gemini');
 const anthropic = require('./providers/anthropic');
-const ollama = require('./providers/ollama');
 
-const CHAT = { gemini, anthropic, ollama };
-const EMBED = { gemini, ollama };
+const CHAT = { gemini, anthropic };
+const EMBED = { gemini };
 
 function chatProviderName() {
   if (process.env.LLM_PROVIDER) return process.env.LLM_PROVIDER;

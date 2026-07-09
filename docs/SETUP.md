@@ -100,10 +100,7 @@ launch.
 
 ## Privacy
 
-NormOS is self-hosted on purpose. For the most sensitive analysis you can run the
-**AI fully locally** with [Ollama](https://ollama.com): set `LLM_PROVIDER=ollama`
-and `EMBED_PROVIDER=ollama` in `backend/.env` (with `ollama serve` running). Then
-nothing — not your journal, not your finances — ever leaves your machine.
+NormOS is self-hosted on purpose.
 
 If you ever host the backend on a server, set `NORMOS_API_TOKEN` (and the matching
 `API_TOKEN` in `mobile/src/config.ts`) to require authentication.

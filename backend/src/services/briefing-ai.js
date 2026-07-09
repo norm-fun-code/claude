@@ -1,9 +1,9 @@
-// Briefing AI: summarizes newsletters, flags urgent email, and writes the
-// quote/Notion reflections for the daily briefing.
+// Briefing AI: writes the chief-of-staff brief and the quote/Notion
+// reflections for the daily briefing.
 //
 // Provider-agnostic — goes through the shared `llm` layer, so whichever model
-// you choose (Claude / Gemini / local Ollama) writes your briefing. Previously
-// this was hard-wired to Gemini regardless of LLM_PROVIDER.
+// you choose (Claude or Gemini) writes your briefing. Previously this was
+// hard-wired to Gemini regardless of LLM_PROVIDER.
 //
 // SPLIT INTO TWO INDEPENDENT LLM CALLS (chief-brief vs wisdom) instead of one
 // combined call. Two reasons:

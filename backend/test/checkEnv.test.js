@@ -25,11 +25,6 @@ test('hasChatLLM: true when GEMINI_API_KEY is set and no Anthropic key', () => {
   try { assert.equal(mod.hasChatLLM(), true); } finally { restore(); }
 });
 
-test('hasChatLLM: true when LLM_PROVIDER=ollama regardless of keys (local, no key needed)', () => {
-  const { mod, restore } = freshEnv({ LLM_PROVIDER: 'ollama' });
-  try { assert.equal(mod.hasChatLLM(), true); } finally { restore(); }
-});
-
 test('hasChatLLM: false when nothing is configured', () => {
   const { mod, restore } = freshEnv({});
   try { assert.equal(mod.hasChatLLM(), false); } finally { restore(); }
