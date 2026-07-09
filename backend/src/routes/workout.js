@@ -127,4 +127,4 @@ function createWorkoutRouter() {
   return router;
 }
 
-module.exports = { createWorkoutRouter };
+module.exports = { createWorkoutRouter, VALID_WORKOUT_IDS };

@@ -37,4 +37,11 @@ async function prewarm(kind, content, day) {
   await audioFor(kind, content, day);
 }
 
-module.exports = { audioFor, prewarm };
+/** Pre-warm today's morning-brief narration, resolving "today" from TZ. */
+async function prewarmDaily(content) {
+  const tz = process.env.TZ || 'America/New_York';
+  const day = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  await prewarm('brief', content, day);
+}
+
+module.exports = { audioFor, prewarm, prewarmDaily };
