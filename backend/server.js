@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { withTimeout } = require('./src/util/async');
 const express = require('express');
 const cors = require('cors');
+const { errorHandler } = require('./src/middleware/errorHandler');
 
 const { fetchGmailThreads } = require('./src/services/gmail');
 const { fetchCalendarEvents, fetchWorkBusyBlocks } = require('./src/services/calendar');
@@ -4992,6 +4993,14 @@ app.post('/api/day-context', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Central error handler — MUST be registered after every route/router above
+// (Express error middleware only catches errors from handlers registered
+// before it). Purely additive at this point: no existing route calls
+// next(err) yet (they all still handle their own errors via try/catch), so
+// this sits idle until routes are incrementally converted to asyncHandler as
+// part of the server.js decomposition. See src/middleware/errorHandler.js.
+app.use(errorHandler);
 
 const { runMigrations } = require('./src/db/migrate');
 runMigrations()
