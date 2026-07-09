@@ -1,35 +1,6 @@
 // NormOS backend.
 require('dotenv').config();
-const crypto = require('crypto');
-const express = require('express');
-const cors = require('cors');
-const { errorHandler } = require('./src/middleware/errorHandler');
-
-const { createHealthRouter } = require('./src/routes/health');
-const { createAnnotationsRouter } = require('./src/routes/annotations');
-const { createGoalsRouter } = require('./src/routes/goals');
-const { createExperimentsRouter } = require('./src/routes/experiments');
-const { createWorkoutRouter } = require('./src/routes/workout');
-const { createActivityRouter } = require('./src/routes/activity');
-const { createCheckinRouter } = require('./src/routes/checkin');
-const { createHabitsRouter } = require('./src/routes/habits');
-const { createContextRouter } = require('./src/routes/context');
-const { createIntentionsRouter } = require('./src/routes/intentions');
-const { createChaptersRouter } = require('./src/routes/chapters');
-const { createIngestAdminRouter } = require('./src/routes/ingest-admin');
-const { createSpineRouter } = require('./src/routes/spine');
-const { createDiagnosticsRouter } = require('./src/routes/diagnostics');
-const { createRecoveryRouter } = require('./src/routes/recovery');
-const { createChatRouter } = require('./src/routes/chat');
-const { createVoiceRouter } = require('./src/routes/voice');
-const { createAudioRouter } = require('./src/routes/audio');
-const { createEngagementRouter } = require('./src/routes/engagement');
-const { createSchedulingRouter } = require('./src/routes/scheduling');
-const { createEveningBriefRouter } = require('./src/routes/evening-brief');
-const { createWealthRouter } = require('./src/routes/wealth');
-const { createRecommendationsRouter } = require('./src/routes/recommendations');
-const { createCommitmentsRouter } = require('./src/routes/commitments');
-const { createBriefingRouter } = require('./src/routes/briefing');
+const { createApp } = require('./src/app');
 const recommendationsStore = require('./src/store/recommendations');
 
 // Last-resort safety net: log instead of crashing on an unhandled rejection /
@@ -43,175 +14,15 @@ process.on('uncaughtException', (err) => {
   console.error('[uncaughtException]', err?.stack || err);
 });
 
-const app = express();
 const PORT = process.env.PORT || 3001;
 const BOOT_TIME = new Date().toISOString(); // process start — confirms a fresh deploy restarted the server
-
-// CORS. The mobile app (React Native) isn't subject to CORS, so we only need to
-// allow browser origins we actually use. Lock to an allowlist in production
-// (set CORS_ORIGINS as a comma-separated list); default-open only in dev.
-const corsOrigins = (process.env.CORS_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
-app.use(cors(corsOrigins.length ? { origin: corsOrigins } : {}));
-app.use(express.json({ limit: '2mb' }));
-
-// Bearer-token auth on every /api route except the health check. Set
-// NORMOS_API_TOKEN to require `Authorization: Bearer <token>`. In production we
-// warn loudly if it's missing, since the same code is deployed to a public host.
-if (!process.env.NORMOS_API_TOKEN) {
-  const msg = '[auth] NORMOS_API_TOKEN is not set — the /api surface (including admin/reset and ingest) is UNAUTHENTICATED.';
-  if (process.env.NODE_ENV === 'production') console.error(`\n⚠️  ${msg} Set it now.\n`);
-  else console.warn(msg);
-}
-app.use('/api', (req, res, next) => {
-  const token = process.env.NORMOS_API_TOKEN;
-  if (!token || req.path === '/health') return next();
-  const auth = req.get('authorization') || '';
-  const expected = `Bearer ${token}`;
-  // Constant-time compare to avoid a timing side-channel on the token.
-  const a = Buffer.from(auth);
-  const b = Buffer.from(expected);
-  if (a.length === b.length && crypto.timingSafeEqual(a, b)) return next();
-  return res.status(401).json({ error: 'unauthorized' });
-});
-
-// Health-domain routes (server health check, Apple Health + Eight Sleep
-// ingest/readback) live in src/routes/health.js — the first router
-// extraction out of this file (see the engineering review's #1+#6
-// recommendation). Mounted at /api so its internal paths ('/health',
-// '/ingest/health', etc.) resolve to the exact same /api/... URLs as before.
-app.use('/api', createHealthRouter({ bootTime: BOOT_TIME }));
-
-// Check-in routes (log, history, today, weekly review history) live in
-// src/routes/checkin.js — the eighth router extraction out of this file.
-app.use('/api', createCheckinRouter());
-
-// Habits routes (log, today, eat-healthy, gratitude, streaks, history) live
-// in src/routes/habits.js — the ninth router extraction out of this file.
-// recomputeHabitScore moved to src/intelligence/habit-score.js since the
-// voice-command habit-logging paths below also call it.
-app.use('/api', createHabitsRouter());
-
-// Nightly context tags routes live in src/routes/context.js — the tenth
-// router extraction out of this file.
-app.use('/api', createContextRouter());
-
-// Workout routes (checks, overrides, progression, per-set logs) live in
-// src/routes/workout.js — the sixth router extraction out of this file.
-app.use('/api', createWorkoutRouter());
-
-// Activity-log routes live in src/routes/activity.js — the seventh router
-// extraction out of this file. syncActivityMinutes moved to
-// src/intelligence/activity-sync.js since the voice-command activity path
-// below also calls it.
-app.use('/api', createActivityRouter());
-
-// Weekly intentions routes live in src/routes/intentions.js — the eleventh
-// router extraction out of this file.
-app.use('/api', createIntentionsRouter());
-
-// Chapters routes (GET/POST/DELETE) live in src/routes/chapters.js — the
-// twelfth router extraction out of this file.
-app.use('/api', createChaptersRouter());
-
-// Weather, generic metric ingest, connector-trigger, admin (reset-demo /
-// recompute-wealth), and Monarch CSV upload routes live in
-// src/routes/ingest-admin.js — the sixteenth router extraction out of this
-// file.
-app.use('/api', createIngestAdminRouter());
-
-// Diagnostics routes (/api/diag/*, /api/debug/*) live in
-// src/routes/diagnostics.js — the fifteenth router extraction out of this
-// file, gathering routes from three separate locations in the original into
-// one cohesive file.
-app.use('/api', createDiagnosticsRouter());
-
-// "Querying the spine" routes (metrics, sources/freshness, findings,
-// highlights, analyze/consolidate/embed) live in src/routes/spine.js —
-// the thirteenth router extraction out of this file.
-app.use('/api', createSpineRouter());
-
-// Recovery routes (live score, history, self-report) live in
-// src/routes/recovery.js — the fourteenth router extraction out of this file.
-app.use('/api', createRecoveryRouter());
-
-// Chat routes (typed Ask thread + saved conversations) live in
-// src/routes/chat.js — the seventeenth router extraction out of this file.
-// executeAction (shared by chat and voice) moved to src/chat/executeAction.js.
-app.use('/api', createChatRouter());
-
-// Voice routes (push-to-talk ask, standalone transcribe) live in
-// src/routes/voice.js — the eighteenth router extraction out of this file.
-app.use('/api', createVoiceRouter());
-
-// Spoken brief-narration routes live in src/routes/audio.js — the
-// nineteenth router extraction out of this file.
-app.use('/api', createAudioRouter());
-
-// Life-context annotation routes (create/list/active/delete/edit +
-// pre-brief context answers) live in src/routes/annotations.js — the
-// second router extraction out of this file. Mounted at /api so its
-// internal paths resolve to the exact same /api/... URLs as before.
-app.use('/api', createAnnotationsRouter());
-
-// Goals routes live in src/routes/goals.js — the third router extraction
-// out of this file.
-app.use('/api', createGoalsRouter());
-
-// Experiment routes live in src/routes/experiments.js — the fourth router
-// extraction out of this file.
-app.use('/api', createExperimentsRouter());
-
-// Ranked leverage actions, forecasts, device registration, nudges, and
-// dismissed-insight management live in src/routes/engagement.js — the
-// twentieth router extraction out of this file.
-app.use('/api', createEngagementRouter());
-
-// Scheduling-trigger routes (watch/morning/checkin/habits/weekly runs +
-// external cron entry points + weekly review read) live in
-// src/routes/scheduling.js — the twenty-first router extraction out of
-// this file.
-app.use('/api', createSchedulingRouter());
-
-// Evening-brief routes live in src/routes/evening-brief.js — the
-// twenty-second router extraction out of this file.
-app.use('/api', createEveningBriefRouter());
-
-// Wealth snapshot/plan/allocation routes live in src/routes/wealth.js —
-// the twenty-third router extraction out of this file.
-app.use('/api', createWealthRouter());
-
-// /api/sources moved into src/routes/spine.js alongside
-// /api/sources/freshness.
-
-// The main briefing builder (/api/briefing, /api/briefing/live,
-// /api/briefing/markets, /api/briefing/rebuild) lives in
-// src/routes/briefing.js — the twenty-sixth and final router extraction
-// out of this file, moved verbatim (see the file's own header comment).
-app.use('/api', createBriefingRouter({ port: PORT }));
-
-// Pipeline-health and recommendation-ledger routes live in
-// src/routes/recommendations.js — the twenty-fourth router extraction out
-// of this file.
-app.use('/api', createRecommendationsRouter());
-
-// Commitments (follow-through loop) and daily-context journal routes live
-// in src/routes/commitments.js — the twenty-fifth router extraction out of
-// this file.
-app.use('/api', createCommitmentsRouter());
-
-// Central error handler — MUST be registered after every route/router above
-// (Express error middleware only catches errors from handlers registered
-// before it). Purely additive at this point: no existing route calls
-// next(err) yet (they all still handle their own errors via try/catch), so
-// this sits idle until routes are incrementally converted to asyncHandler as
-// part of the server.js decomposition. See src/middleware/errorHandler.js.
-app.use(errorHandler);
+const app = createApp({ bootTime: BOOT_TIME, port: PORT });
 
 const { runMigrations } = require('./src/db/migrate');
 runMigrations()
   .catch((err) => console.error('[migrate] failed, starting anyway:', err.message))
   .finally(() => {
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`NormOS backend running on http://localhost:${PORT}`);
       console.log(`Health check: http://localhost:${PORT}/api/health`);
       // Cleanup: delete recommendation ledger entries that are Monarch query steps
@@ -331,4 +142,13 @@ runMigrations()
         })();
       }
     });
+
+    // Global socket-inactivity cap: the longest legitimate request is a full
+    // briefing rebuild (source fetch + up to BRIEFING_LLM_TIMEOUT_MS ~90s of
+    // LLM calls), so this sits well above that — a request past this either
+    // has a stuck DB query (statement_timeout should catch that first) or a
+    // hung upstream call with no timeout of its own; either way, the socket
+    // gets torn down instead of holding a connection (and its DB pool slot)
+    // open indefinitely.
+    server.setTimeout(Number(process.env.SERVER_REQUEST_TIMEOUT_MS) || 150_000);
   });

@@ -14,9 +14,19 @@ const { fetchGmailThreads } = require('../services/gmail');
 const { generateBriefing } = require('../services/briefing-ai');
 const { withTimeout } = require('../util/async');
 const { asyncHandler } = require('../middleware/asyncHandler');
+const { requireAdminToken } = require('../middleware/adminAuth');
 
 function createDiagnosticsRouter() {
   const router = express.Router();
+
+  // Every route in this file is a troubleshooting probe or exposes internal
+  // system state — gate the whole router behind a separate admin token so
+  // holding the general app token doesn't also grant this. Scoped to
+  // /diag and /debug (this router's only prefixes) rather than a bare
+  // router.use(), which would run unconditionally for ANY /api/* request
+  // that reaches this router — including ones meant for a sibling router
+  // mounted at the same '/api' prefix. See src/middleware/adminAuth.js.
+  router.use(['/diag', '/debug'], requireAdminToken);
 
   // Diagnostic: show EXACTLY how 30-day income/spending are computed from Monarch
   // transactions, so a mismatch with Monarch's report can be debugged from the data

@@ -49,6 +49,10 @@ jobs:
         working-directory: backend
         run: npm run migrate
 
+      - name: Integration tests (route-level, real DB)
+        working-directory: backend
+        run: npm run test:integration
+
       - name: End-to-end smoke (seed → analyze)
         working-directory: backend
         run: |

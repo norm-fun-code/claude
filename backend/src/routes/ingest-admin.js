@@ -14,9 +14,17 @@ const { fetchWeather } = require('../services/weather');
 const { runIngest } = require('../ingest/run');
 const { analyze } = require('../intelligence/analyze');
 const { asyncHandler } = require('../middleware/asyncHandler');
+const { requireAdminToken } = require('../middleware/adminAuth');
 
 function createIngestAdminRouter() {
   const router = express.Router();
+
+  // /admin/reset-demo (deletes data), /admin/recompute-wealth, and /ingest/run
+  // are powerful enough to warrant a separate admin token from the general app
+  // token — /weather, /ingest/metrics, and /import/monarch stay on the normal
+  // gate since they're routine data flow, not admin actions. See
+  // src/middleware/adminAuth.js.
+  router.use(['/admin/reset-demo', '/admin/recompute-wealth', '/ingest/run'], requireAdminToken);
 
   // Standalone weather — so the Today card can show/refresh weather on its own,
   // fast, without waiting on the full LLM briefing. Cached briefly in-memory so
