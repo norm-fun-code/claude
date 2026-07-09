@@ -1628,16 +1628,18 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
       }
       setWorkoutLogs(grouped);
     } catch {}
-    for (const ex of exercises) {
+    // Each exercise's "last time" lookup is independent — fetch concurrently
+    // instead of one at a time.
+    await Promise.all(exercises.map(async (ex) => {
       try {
         const res = await fetchWithTimeout(`${WORKOUT_LOG_URL}/history?exercise=${encodeURIComponent(ex)}&limit=1`, { headers: authHeaders() });
-        if (!res.ok) continue;
+        if (!res.ok) return;
         const data = await res.json();
         if (data.history?.[0]?.sets) {
           setWorkoutHistory(prev => ({ ...prev, [ex]: data.history[0].sets }));
         }
       } catch {}
-    }
+    }));
   }
 
   useEffect(() => {
@@ -1646,8 +1648,12 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
     // so set-logging loads for a swapped-in Push/Pull session too.
     const effId = swapByDay[day] ?? getWeekDayWorkoutId(selectedDayIndex);
     setWorkoutLogs({});
+    setWorkoutHistory({});
     if (effId === 'push' || effId === 'pull') {
-      fetchLogsForDay(day, []);
+      // "Last time" history is only meaningful for the session's working sets
+      // (not warmup) — same exercise list WorkoutProgressionCard tracks.
+      const exercises = (effId === 'push' ? SESSION_A : SESSION_B).working.map((e) => e.name);
+      fetchLogsForDay(day, exercises);
     }
   }, [selectedDayIndex, swapByDay]);
 
