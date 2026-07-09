@@ -10,7 +10,7 @@ const findingsStore = require('../store/findings');
 const annotationsStore = require('../store/annotations');
 const intentionsStore = require('../store/intentions');
 const briefingsStore = require('../store/briefings');
-const { extractJson } = require('../services/briefing-ai');
+const { parseAndValidate } = require('../llm/parseJson');
 
 const DAY = 24 * 60 * 60 * 1000;
 const KEY_METRICS = [
@@ -240,7 +240,26 @@ async function runReview({ asOf = new Date(), persist = true } = {}) {
   let content;
   try {
     const text = await llm.generateText({ system, prompt, temperature: 0.4, maxTokens: 1500 });
-    content = extractJson(text) || { headline: 'Weekly review', narrative: text, wins: [], watchouts: [], focus: [] };
+    // Previously trusted whatever extractJson() returned with no shape check
+    // at all — a malformed-but-parseable response (e.g. wins/watchouts/focus
+    // as strings instead of arrays) would reach the client as-is. Now
+    // requires the two load-bearing fields (matches evening-brief.js's same
+    // pattern) and coerces the rest to arrays.
+    const validated = parseAndValidate(text, {
+      label: 'weekly-review',
+      validate: (parsed) => {
+        if (typeof parsed?.headline !== 'string' || !parsed.headline.trim()) return null;
+        if (typeof parsed?.narrative !== 'string' || !parsed.narrative.trim()) return null;
+        return {
+          headline: parsed.headline,
+          narrative: parsed.narrative,
+          wins: Array.isArray(parsed.wins) ? parsed.wins : [],
+          watchouts: Array.isArray(parsed.watchouts) ? parsed.watchouts : [],
+          focus: Array.isArray(parsed.focus) ? parsed.focus : [],
+        };
+      },
+    });
+    content = validated || { headline: 'Weekly review', narrative: text, wins: [], watchouts: [], focus: [] };
   } catch (err) {
     console.error('[review] generation failed:', err.message);
     content = {

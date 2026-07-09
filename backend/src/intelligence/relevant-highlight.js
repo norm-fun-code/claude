@@ -9,6 +9,7 @@ require('dotenv').config();
 const llm = require('../llm');
 const documentsStore = require('../store/documents');
 const surfacedStore = require('../store/surfaced');
+const { extractJson, parseAndValidate } = require('../llm/parseJson');
 
 function truncate(s, n) {
   s = String(s || '');
@@ -43,16 +44,6 @@ function buildPrompt(context, candidates) {
     `Use "low" when the best candidate is only a generic or loose fit; then leave reason empty. ` +
     `TIMING: situation entries are dated (today/yesterday) — use only the timing given, never phrases like "last night" for anything not dated today/yesterday, and never invent recency.`
   );
-}
-
-function extractJson(text) {
-  if (!text) return null;
-  const s = String(text).trim().replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
-  try { return JSON.parse(s); } catch { /* try to slice */ }
-  const i = s.indexOf('{');
-  const j = s.lastIndexOf('}');
-  if (i >= 0 && j > i) { try { return JSON.parse(s.slice(i, j + 1)); } catch { /* give up */ } }
-  return null;
 }
 
 /** Active goal titles + recent life-context annotations — the user's situation. */
@@ -116,13 +107,16 @@ async function buildRelevantHighlight({ themes = '', excludeAuthor = null } = {}
   let relevance = 'medium';
   try {
     const text = await llm.generateText({
-      system: SYSTEM, prompt: buildPrompt(query, candidates), temperature: 0.3, maxTokens: 200,
+      system: SYSTEM, prompt: buildPrompt(query, candidates), temperature: 0.3, maxTokens: 200, jsonMode: true,
     });
-    const parsed = extractJson(text);
-    if (parsed && Number.isInteger(parsed.index) && candidates[parsed.index]) {
-      pick = candidates[parsed.index];
-      relevance = ['high', 'medium', 'low'].includes(parsed.relevance) ? parsed.relevance : 'medium';
-      reason = relevance === 'low' ? '' : String(parsed.reason || '').trim().slice(0, 140);
+    const picked = parseAndValidate(text, {
+      label: 'relevant-highlight',
+      validate: (parsed) => (Number.isInteger(parsed?.index) && candidates[parsed.index] ? parsed : null),
+    });
+    if (picked) {
+      pick = candidates[picked.index];
+      relevance = ['high', 'medium', 'low'].includes(picked.relevance) ? picked.relevance : 'medium';
+      reason = relevance === 'low' ? '' : String(picked.reason || '').trim().slice(0, 140);
     }
   } catch { /* fall back to the top cosine hit with no reason → factual frame */ }
 

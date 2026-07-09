@@ -14,6 +14,7 @@ const { recomputeHabitScore } = require('../intelligence/habit-score');
 const mealLogsStore = require('../store/mealLogs');
 const gratitudeLogsStore = require('../store/gratitudeLogs');
 const { asyncHandler } = require('../middleware/asyncHandler');
+const { parseAndValidate } = require('../llm/parseJson');
 
 function mealLogDateStr(tz) {
   return new Date().toLocaleDateString('en-CA', { timeZone: tz });
@@ -101,19 +102,19 @@ Return ONLY valid JSON — no markdown, no explanation:
       system: 'You help someone honestly assess how healthy a day of eating was, from their own free-text log. Return only valid JSON.',
       prompt,
       maxTokens: 250,
+      jsonMode: true,
     });
 
-    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-    let result;
-    try {
-      result = JSON.parse(cleaned);
-    } catch {
-      return res.status(500).json({ error: 'parse failed', raw: cleaned.slice(0, 300) });
-    }
-
-    const score = Math.max(1, Math.min(5, Math.round(Number(result.score))));
-    const rationale = String(result.rationale || '').slice(0, 500);
-    if (!Number.isFinite(score)) return res.status(500).json({ error: 'invalid score from model' });
+    const validated = parseAndValidate(raw, {
+      label: 'eat-healthy-score',
+      validate: (result) => {
+        const score = Math.max(1, Math.min(5, Math.round(Number(result.score))));
+        if (!Number.isFinite(score)) return null;
+        return { score, rationale: String(result.rationale || '').slice(0, 500) };
+      },
+    });
+    if (!validated) return res.status(500).json({ error: 'invalid or unparseable response from model' });
+    const { score, rationale } = validated;
 
     const tz = process.env.TZ || 'America/New_York';
     await mealLogsStore.upsert({ logDate: mealLogDateStr(tz), text, score, rationale });

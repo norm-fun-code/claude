@@ -120,16 +120,16 @@ function buildContextAdjustPrompt(tomorrow, contextLines) {
 /** Parse + validate the model's JSON reply. Strict: anything malformed → null
  *  (caller keeps the untouched deterministic forecast). */
 function parseContextAdjustment(text) {
-  const m = String(text || '').match(/\{[\s\S]*\}/);
-  if (!m) return null;
-  let p;
-  try { p = JSON.parse(m[0]); } catch { return null; }
-  if (!p || typeof p !== 'object') return null;
-  if (p.relevant !== true) return null; // false/missing/garbage → no adjustment
-  return {
-    downgrade: p.downgrade === true,
-    note: typeof p.note === 'string' ? p.note.trim().slice(0, 200) : '',
-  };
+  return require('../llm/parseJson').parseAndValidate(text, {
+    label: 'context-adjust',
+    validate: (p) => {
+      if (p.relevant !== true) return null; // false/missing/garbage → no adjustment
+      return {
+        downgrade: p.downgrade === true,
+        note: typeof p.note === 'string' ? p.note.trim().slice(0, 200) : '',
+      };
+    },
+  });
 }
 
 const BAND_ORDER = ['green', 'yellow', 'red'];
@@ -150,7 +150,7 @@ async function applyContextToForecast(tomorrow, { dayContext = [], annotations =
   try {
     const llm = require('../llm');
     const { system, prompt } = buildContextAdjustPrompt(tomorrow, contextLines);
-    const raw = await llm.generateText({ system, prompt, temperature: 0.2, maxTokens: 200 });
+    const raw = await llm.generateText({ system, prompt, temperature: 0.2, maxTokens: 200, jsonMode: true });
     const adj = parseContextAdjustment(raw);
     if (!adj) return tomorrow;
 

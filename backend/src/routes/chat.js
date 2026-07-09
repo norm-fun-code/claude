@@ -9,6 +9,7 @@ const llm = require('../llm');
 const { ask } = require('../chat/ask');
 const { executeAction } = require('../chat/executeAction');
 const { asyncHandler } = require('../middleware/asyncHandler');
+const { parseAndValidate } = require('../llm/parseJson');
 
 function createChatRouter() {
   const router = express.Router();
@@ -132,23 +133,23 @@ Rules:
       system: 'You extract self-experiments from conversations. Return only valid JSON.',
       prompt,
       maxTokens: 400,
+      jsonMode: true,
     });
 
-    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-    let result;
-    try {
-      result = JSON.parse(cleaned);
-    } catch {
-      return res.status(500).json({ error: 'parse failed', raw: cleaned.slice(0, 300) });
-    }
-
-    if (!result.notActionable) {
-      const validKeys = METRICS.map((m) => m.key);
-      if (!validKeys.includes(result.metric)) result.metric = 'wellbeing:energy';
-      if (result.expected !== 'down') result.expected = 'up';
-      if (![14, 21, 28].includes(Number(result.testDays))) result.testDays = 14;
-      else result.testDays = Number(result.testDays);
-    }
+    const result = parseAndValidate(raw, {
+      label: 'extract-experiment',
+      validate: (parsed) => {
+        if (!parsed.notActionable) {
+          const validKeys = METRICS.map((m) => m.key);
+          if (!validKeys.includes(parsed.metric)) parsed.metric = 'wellbeing:energy';
+          if (parsed.expected !== 'down') parsed.expected = 'up';
+          if (![14, 21, 28].includes(Number(parsed.testDays))) parsed.testDays = 14;
+          else parsed.testDays = Number(parsed.testDays);
+        }
+        return parsed;
+      },
+    });
+    if (!result) return res.status(500).json({ error: 'parse failed' });
 
     res.json(result);
   }));

@@ -7,6 +7,7 @@
 // Prose is LLM-written in the chief-of-staff voice, but every field has a
 // deterministic fallback so the brief always lands even if the model is down.
 const llm = require('../llm');
+const { parseAndValidate } = require('../llm/parseJson');
 const { gatherEvening, detectDeviceDataGap, isSickDay } = require('../intelligence/evening-readiness');
 const { wellbeingLevel } = require('../intelligence/catalog');
 const briefingsStore = require('../store/briefings');
@@ -226,13 +227,6 @@ function validate(parsed) {
   return { headline: s('headline'), readiness: s('readiness'), today: s('today'), plan: s('plan'), tomorrow: s('tomorrow'), habits: s('habits'), reflection: s('reflection') };
 }
 
-function extractJson(text) {
-  if (!text) return null;
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) return null;
-  try { return JSON.parse(m[0]); } catch { return null; }
-}
-
 async function composeEveningBrief(signals) {
   const fallback = composeFallback(signals);
   try {
@@ -241,8 +235,9 @@ async function composeEveningBrief(signals) {
       prompt: buildPrompt(signals),
       temperature: 0.3,
       maxTokens: 700,
+      jsonMode: true,
     });
-    const v = validate(extractJson(text));
+    const v = parseAndValidate(text, { label: 'evening-brief', validate });
     if (!v) return fallback;
     // Keep the deterministic tone band + signals; take the model's prose.
     return { ...fallback, ...v };
