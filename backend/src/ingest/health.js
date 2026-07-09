@@ -81,8 +81,18 @@ function mapHealthPayload(body, { ts, tz = 'UTC' } = {}) {
           console.warn(`[health ingest] out-of-bounds value rejected: ${r.metric}=${value}`);
           return null;
         }
+        // Anchor a client-supplied per-row ts the same way `when` is anchored
+        // (noon UTC of ITS OWN local calendar day) instead of using the raw
+        // HealthKit sample timestamp verbatim — otherwise two refreshes for
+        // the same logical day land at different `ts` values, miss the
+        // (ts, domain, metric, source) upsert conflict target, and both
+        // persist as separate rows. This is the same duplication this app
+        // already hit once in production (see db/migrations/019's incident
+        // note) and shipped four repair migrations for; this closes the gap
+        // in the writer itself rather than repairing it after the fact.
+        const rowTs = safeDate(r.ts) ? dayAnchorTs(tz, safeDate(r.ts)) : when;
         return {
-          ts: safeDate(r.ts) || when,
+          ts: rowTs,
           domain: DOMAIN,
           metric: r.metric,
           value,
