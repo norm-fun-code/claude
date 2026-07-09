@@ -8,7 +8,7 @@ const { query } = require('../db');
 const findingsStore = require('../store/findings');
 const nudgesStore = require('../store/nudges');
 const devicesStore = require('../store/devices');
-const { buildNudges, withinQuietHours, checkinReminder, habitReminder } = require('../intelligence/nudges');
+const { buildNudges, withinQuietHours, checkinReminder } = require('../intelligence/nudges');
 const { sendPush } = require('./expo');
 
 /** Which of the given metrics are logged today (TZ-aware), as a Set. */
@@ -91,7 +91,7 @@ async function runNudges(opts = {}) {
   return { generated: candidates.length, sent: sentCount, devices: tokens.length, nudges: out };
 }
 
-module.exports = { runNudges, runCheckinReminder, runCheckinEveningReminder, runHabitsReminder };
+module.exports = { runNudges, runCheckinReminder, runEveningReminder };
 
 /** Is the habit stack FULLY logged today (all 5 binary habits + eat_healthy)?
  *  Fail-safe: assume yes on error. */
@@ -143,41 +143,6 @@ async function runCheckinReminder(opts = {}) {
   return sendReminder(checkinReminder(new Date()), { send });
 }
 
-/**
- * Second check-in reminder at 9pm — uses a different dedup key than the 3pm
- * one so it can fire even if the afternoon reminder already sent (the user may
- * have ignored it). Only fires if the check-in still hasn't been logged.
- * @param {{ send?: boolean, force?: boolean }} [opts]
- */
-async function runCheckinEveningReminder(opts = {}) {
-  const send = opts.send !== false;
-  if (!opts.force && (await checkinLoggedToday())) {
-    return { skipped: 'already_logged', sent: 0 };
-  }
-  const day = new Date().toISOString().slice(0, 10);
-  return sendReminder({
-    key: `checkin_evening:${day}`,
-    title: 'Quick evening check-in',
-    body: "Before you wind down — how was your mood, energy, and focus today?",
-    priority: 0.6,
-    basis: { type: 'checkin', day },
-  }, { send });
-}
-
-/**
- * Evening habits reminder: push "log your habit stack" ONLY if it hasn't been
- * logged today. Runs ~10pm (intentionally late — the day is done), so it does
- * NOT honor the default quiet-hours window.
- * @param {{ send?: boolean, force?: boolean }} [opts]
- */
-async function runHabitsReminder(opts = {}) {
-  const send = opts.send !== false;
-  if (!opts.force && (await habitsLoggedToday())) {
-    return { skipped: 'already_logged', sent: 0 };
-  }
-  return sendReminder(habitReminder(new Date()), { send });
-}
-
 /** Has the user logged any day-context journal entry today? Fail-safe: assume
  *  yes on error so a DB hiccup never nags. */
 async function dayContextLoggedToday() {
@@ -192,28 +157,48 @@ async function dayContextLoggedToday() {
 }
 
 /**
- * Evening "tell me about your day" nudge — invites the free-text daily recap
- * that feeds the Ask brain, evening brief, and self-model. Only fires if nothing
- * was logged today (talk OR type), keyed per-day so it fires at most once.
+ * Combined evening reminder (~9pm) — this used to be three separate pushes
+ * (check-in, habits, "tell me about your day") landing within 5 minutes of
+ * each other, all asking a version of "log something about today" (flagged in
+ * the notification-load review). Now it's one push naming whichever pieces
+ * are still open, firing once/day and only if at least one is outstanding.
+ * Intentionally does NOT honor quiet hours — this IS the end-of-day nudge,
+ * scheduled right at the quiet-hours boundary by design.
  * @param {{ send?: boolean, force?: boolean }} [opts]
  */
-async function runDayContextReminder(opts = {}) {
+async function runEveningReminder(opts = {}) {
   const send = opts.send !== false;
-  if (!opts.force && (await dayContextLoggedToday())) {
+  const [checkinDone, habitsDone, dayContextDone] = await Promise.all([
+    checkinLoggedToday(),
+    habitsLoggedToday(),
+    dayContextLoggedToday(),
+  ]);
+  if (!opts.force && checkinDone && habitsDone && dayContextDone) {
     return { skipped: 'already_logged', sent: 0 };
   }
+
+  const missing = [];
+  if (!checkinDone) missing.push('how your day went');
+  if (!habitsDone) missing.push("today's habits");
+  if (!dayContextDone) missing.push('a quick recap');
+  // force with everything already logged (manual test trigger) — still say something.
+  const open = missing.length ? missing : ['a quick recap'];
+  const body = open.length === 1
+    ? `Before you wind down — log ${open[0]}?`
+    : `Before you wind down — ${open.slice(0, -1).join(', ')} and ${open[open.length - 1]} are still open.`;
+
   const tz = process.env.TZ || 'America/New_York';
   const day = new Date().toLocaleDateString('en-CA', { timeZone: tz });
   return sendReminder({
-    key: `day_context:${day}`,
-    title: 'Tell me about your day 🌙',
-    body: 'Two minutes — what happened today? Tap to talk it through or jot it down.',
-    priority: 0.55,
-    basis: { type: 'day_context', day },
+    key: `evening_reminder:${day}`,
+    title: 'Quick evening check-in 🌙',
+    body,
+    priority: 0.6,
+    basis: { type: 'evening_reminder', day, missing },
   }, { send });
 }
 
-module.exports.runDayContextReminder = runDayContextReminder;
+module.exports.runEveningReminder = runEveningReminder;
 
 // CLI entrypoint
 if (require.main === module) {

@@ -1,12 +1,12 @@
 // Scheduling-trigger router: manual + external-cron entry points for the
-// anomaly watcher, morning routine, afternoon check-in reminder, evening
-// habits reminder, weekly review, and the weekly-review read endpoint.
+// anomaly watcher, morning routine, afternoon check-in reminder, combined
+// evening reminder, weekly review, and the weekly-review read endpoint.
 // Twenty-first router extraction out of server.js's monolith (see the
 // engineering review's #1+#6 recommendation) — a straight move, verified
 // line-by-line against the original before removing it from server.js.
 const express = require('express');
 const briefingsStore = require('../store/briefings');
-const { runCheckinReminder, runHabitsReminder } = require('../notify/run');
+const { runCheckinReminder, runEveningReminder } = require('../notify/run');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('../notify/morning');
 const { runReview } = require('../intelligence/review');
 const { asyncHandler } = require('../middleware/asyncHandler');
@@ -90,11 +90,12 @@ function createSchedulingRouter() {
     res.json(await runCheckinReminder({ force, send: !dryRun }));
   }));
 
-  // Manually trigger the evening habits reminder (the 10pm flow). Only pushes if
-  // habits aren't logged today; { force: true } sends regardless for testing.
-  router.post('/habits/remind', asyncHandler(async (req, res) => {
+  // Manually trigger the combined evening reminder (the 9pm flow — check-in,
+  // habits, day-context, merged into one push). Only pushes if at least one is
+  // still outstanding; { force: true } sends regardless for testing.
+  router.post('/evening/remind', asyncHandler(async (req, res) => {
     const { force = false, dryRun = false } = req.body || {};
-    res.json(await runHabitsReminder({ force, send: !dryRun }));
+    res.json(await runEveningReminder({ force, send: !dryRun }));
   }));
 
   // Manually trigger the weekly review generation + "review ready" push (the

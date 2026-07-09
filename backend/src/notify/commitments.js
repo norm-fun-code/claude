@@ -16,9 +16,12 @@ const { withinQuietHours } = require('../intelligence/nudges');
 const { sendPush } = require('./expo');
 
 const DEFAULT_MAX_PER_DAY = Number(process.env.COMMITMENT_MAX_PER_DAY) || 4;
-// Re-nudge cadence for a commitment you haven't done or skipped yet.
+// Re-nudge cadence for a commitment you haven't done or skipped yet. Was 4 —
+// with no in-app snooze/mute, 4 re-pings for one unacknowledged reminder was
+// too much (part of the notification-load review); 2 still follows through
+// without nagging.
 const RENUDGE_HOURS = Number(process.env.COMMITMENT_RENUDGE_HOURS) || 3;
-const MAX_REMINDERS = Number(process.env.COMMITMENT_MAX_REMINDERS) || 4;
+const MAX_REMINDERS = Number(process.env.COMMITMENT_MAX_REMINDERS) || 2;
 const STALE_HOURS = Number(process.env.COMMITMENT_STALE_HOURS) || 24;
 
 /**

@@ -10,7 +10,7 @@ const { analyze } = require('./intelligence/analyze');
 const { consolidate } = require('./intelligence/consolidate');
 const { generateCrossContext } = require('./intelligence/crossContext');
 const { autoStartExperiment, proposeExperiments } = require('./intelligence/experiments');
-const { runNudges, runCheckinReminder, runCheckinEveningReminder, runHabitsReminder, runDayContextReminder } = require('./notify/run');
+const { runNudges, runCheckinReminder, runEveningReminder } = require('./notify/run');
 const { runWatch } = require('./intelligence/watch');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./notify/morning');
 const { runEveningBriefing } = require('./notify/evening');
@@ -459,12 +459,6 @@ function startJobs() {
   const checkinHour = Number(process.env.CHECKIN_REMINDER_HOUR) || 15; // 3pm
   const checkinMinute = Number(process.env.CHECKIN_REMINDER_MINUTE) || 0;
   scheduleDaily(checkinHour, checkinMinute, () => runCheckinReminder({}));
-  // Evening check-in reminder (9pm) — second nudge with a different dedup key
-  // so it can fire even if the 3pm one sent (user may have ignored it).
-  const checkinEveningHour = Number(process.env.CHECKIN_EVENING_REMINDER_HOUR) || 21; // 9pm
-  const checkinEveningMinute = Number(process.env.CHECKIN_EVENING_REMINDER_MINUTE) || 0;
-  scheduleDaily(checkinEveningHour, checkinEveningMinute, () => runCheckinEveningReminder({}));
-
   // Evening analyze + consolidate (9:30pm) — captures the day's check-in and habits
   // data, then rebuilds the self-model so every voice surface starts tomorrow
   // fully informed about who this person is.
@@ -481,18 +475,13 @@ function startJobs() {
     } catch (e) { console.error('[scheduler] evening wind-down brief:', e.message); }
   });
 
-  // Evening habits reminder (9pm) — only pushes if you haven't logged habits yet.
-  const habitsHour = Number(process.env.HABITS_REMINDER_HOUR) || 21; // 9pm
-  const habitsMinute = Number(process.env.HABITS_REMINDER_MINUTE) || 0;
-  scheduleDaily(habitsHour, habitsMinute, () => runHabitsReminder({}));
-
-  // "Tell me about your day" (9pm) — invites the free-text daily recap that feeds
-  // the Ask brain, evening brief, and self-model. Only fires if nothing was
-  // logged today (talk or type). Default :05 past the hour so it doesn't land in
-  // the same second as the check-in/habits nudges above.
-  const dayContextHour = Number(process.env.DAY_CONTEXT_REMINDER_HOUR) || 21; // 9pm
-  const dayContextMinute = Number(process.env.DAY_CONTEXT_REMINDER_MINUTE) || 5;
-  scheduleDaily(dayContextHour, dayContextMinute, () => runDayContextReminder({}));
+  // Combined evening reminder (9pm) — used to be three separate pushes (evening
+  // check-in, habits, "tell me about your day") landing within 5 minutes of each
+  // other; merged into one that names whichever pieces are still open
+  // (notification-load review). Only pushes if at least one is outstanding.
+  const eveningReminderHour = Number(process.env.EVENING_REMINDER_HOUR) || 21; // 9pm
+  const eveningReminderMinute = Number(process.env.EVENING_REMINDER_MINUTE) || 0;
+  scheduleDaily(eveningReminderHour, eveningReminderMinute, () => runEveningReminder({}));
 
   // PM / EOD briefing (6pm) — spend snapshot, portfolio performance, budget flags.
   const eveningBriefingHour = Number(process.env.EVENING_BRIEFING_HOUR) || 18; // 6pm
