@@ -71,7 +71,15 @@ async function getTrends({ token, userId, from, to, tz = 'America/New_York' }) {
     throw err;
   }
   const json = await res.json();
-  return Array.isArray(json?.days) ? json.days : [];
+  // A 200 with a malformed body (missing/non-array "days") is a real failure,
+  // not "zero sessions this window" — collapsing it to [] silently read as
+  // "nothing new" instead of surfacing the outage, and never triggered the
+  // caller's 401-retry/re-login logic (which only fires on a thrown error).
+  // A legitimately empty range (real {days: []}) still passes through fine.
+  if (!Array.isArray(json?.days)) {
+    throw new Error(`Eight Sleep trends returned an unexpected shape: ${JSON.stringify(json).slice(0, 200)}`);
+  }
+  return json.days;
 }
 
 /** Check if the user currently has an active (in-progress) sleep interval.
@@ -88,7 +96,15 @@ async function getIntervalPresent(token, userId) {
     throw err;
   }
   const json = await res.json();
-  return json?.interval != null;
+  // A malformed/empty-object body (no "interval" key at all) is a real
+  // failure, not "no active session" — the legitimate no-session shape is
+  // {interval: null}, which still correctly returns false below. Throwing
+  // here lets scheduler.js's fail-safe catch (assume still sleeping) handle
+  // it, instead of silently reading garbage as "session ended."
+  if (json == null || typeof json !== 'object' || !('interval' in json)) {
+    throw new Error(`Eight Sleep present returned an unexpected shape: ${JSON.stringify(json).slice(0, 200)}`);
+  }
+  return json.interval != null;
 }
 
 module.exports = { login, resolveUserId, getTrends, getIntervalPresent };
