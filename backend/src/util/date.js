@@ -72,4 +72,25 @@ function toMinutesSinceMidnight(t) {
   return h * 60 + Number(m[2]);
 }
 
-module.exports = { formatDate, daysBetween, addDays, dayAnchorTs, safeDate, toMinutesSinceMidnight };
+/**
+ * Convert a naive datetime string (no Z / no offset) from a named timezone to
+ * UTC ISO. A mobile client sending "2026-06-17T00:00:00" means midnight in
+ * ITS timezone; PostgreSQL would otherwise treat that as UTC midnight, which
+ * is wrong for ET/PT/etc.
+ */
+function naiveToUtcIso(naiveStr, tz) {
+  if (!naiveStr || naiveStr.includes('Z') || naiveStr.match(/[+-]\d{2}:/)) return naiveStr;
+  // Trick: pretend the naive string is UTC, then measure how much local time in `tz`
+  // differs from UTC at that moment, and apply the inverse offset.
+  const asUtc = new Date(naiveStr + 'Z');
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(asUtc);
+  const get = (t) => parts.find((p) => p.type === t)?.value ?? '00';
+  const localStr = `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`;
+  const offsetMs = new Date(localStr + 'Z').getTime() - asUtc.getTime();
+  return new Date(asUtc.getTime() - offsetMs).toISOString();
+}
+
+module.exports = { formatDate, daysBetween, addDays, dayAnchorTs, safeDate, toMinutesSinceMidnight, naiveToUtcIso };
