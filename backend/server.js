@@ -48,6 +48,7 @@ const { createContextRouter } = require('./src/routes/context');
 const { createIntentionsRouter } = require('./src/routes/intentions');
 const { createChaptersRouter } = require('./src/routes/chapters');
 const { createSpineRouter } = require('./src/routes/spine');
+const { createRecoveryRouter } = require('./src/routes/recovery');
 const { recomputeHabitScore } = require('./src/intelligence/habit-score');
 const gratitudeLogsStore = require('./src/store/gratitudeLogs');
 const surfacedStore = require('./src/store/surfaced');
@@ -382,72 +383,9 @@ app.get('/api/diag/gemini', async (req, res) => {
   }
 });
 
-// Live recovery score — the same computation the briefing embeds, but
-// standalone and fast (a few aggregate queries, no LLM, no briefing build).
-// Lets the Health tab refresh the recovery card in under a second instead of
-// waiting out a full briefing rebuild.
-app.get('/api/recovery', async (req, res) => {
-  try {
-    // Debug: ?forceCheckIn=1 forces the sleep check-in card to show (so the
-    // no-Pod flow can be tested without an actual no-Pod night).
-    if (req.query.forceCheckIn === '1') {
-      return res.json({ recovery: null, needsSleepCheckIn: true });
-    }
-    const rec = require('./src/intelligence/recovery');
-    const recovery = await rec.liveRecovery();
-    // When there's no recovery (no Pod reading last night) AND no self-report yet,
-    // tell the client to prompt the sleep check-in.
-    const needsSleepCheckIn = recovery ? false : await rec.needsSleepCheckIn();
-    res.json({ recovery, needsSleepCheckIn });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Recovery-score trend: the last N days of composite recovery, computed with the
-// same scorer as the live card. Returns { rows:[{ts,value}] } like metrics/history.
-app.get('/api/recovery/history', async (req, res) => {
-  try {
-    const days = Math.max(7, Math.min(Number(req.query.days) || 30, 90));
-    const rec = require('./src/intelligence/recovery');
-    res.json({ rows: await rec.recoveryHistory({ days }) });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Self-reported sleep for nights without an Eight Sleep reading. Stores a 1–5
-// quality (and optional hours), then recomputes recovery as a subjective proxy
-// that drives the recovery card / forecast / brief for the day.
-app.post('/api/recovery/self-report', async (req, res) => {
-  try {
-    const quality = Number(req.body?.quality);
-    const hours = req.body?.hours != null && req.body.hours !== '' ? Number(req.body.hours) : null;
-    if (!Number.isFinite(quality) || quality < 1 || quality > 5) {
-      return res.status(400).json({ error: 'quality (1-5) required' });
-    }
-    await sourcesStore.registerSource({ id: 'self_report', domain: 'health', displayName: 'Self-reported sleep' });
-    // Anchor at noon UTC of today's LOCAL date so the day-slice matches how
-    // liveRecovery compares "today" (wake-date convention).
-    const tz = process.env.TZ || 'America/New_York';
-    const todayLocal = new Date().toLocaleDateString('en-CA', { timeZone: tz });
-    const ts = new Date(`${todayLocal}T12:00:00Z`);
-    const rows = [{ ts, domain: 'health', metric: 'sleep_quality', value: quality, unit: '', source: 'self_report' }];
-    if (Number.isFinite(hours) && hours > 0 && hours <= 24) {
-      rows.push({ ts, domain: 'health', metric: 'sleep_hours', value: hours, unit: 'hours', source: 'self_report' });
-    }
-    const written = await metricsStore.insertMetrics(rows);
-    const recovery = await require('./src/intelligence/recovery').liveRecovery();
-    // Return the new proxy recovery immediately. The mobile then fires its normal
-    // non-blocking briefing rebuild (triggerRebuild) which picks up this stored
-    // self-report — so the brief rebuilds with the recovery score AND the app
-    // actually refetches it (the old server-only background build never reached
-    // the client, so the briefing looked unchanged after submit).
-    res.json({ ok: true, written, recovery });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// Recovery routes (live score, history, self-report) live in
+// src/routes/recovery.js — the fourteenth router extraction out of this file.
+app.use('/api', createRecoveryRouter());
 
 // Scheduler health check — shows whether the scheduler is enabled and when
 // the morning routine will next fire (helps diagnose missing 8:30am briefings).
