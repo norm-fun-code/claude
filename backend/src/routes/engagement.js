@@ -10,6 +10,7 @@ const devicesStore = require('../store/devices');
 const nudgesStore = require('../store/nudges');
 const { runNudges } = require('../notify/run');
 const { asyncHandler } = require('../middleware/asyncHandler');
+const { requireFields } = require('../middleware/validate');
 
 function createEngagementRouter() {
   const router = express.Router();
@@ -43,7 +44,7 @@ function createEngagementRouter() {
   // Register a phone's Expo push token so NormOS can reach out proactively.
   router.post('/devices/register', asyncHandler(async (req, res) => {
     const { pushToken, platform, label } = req.body || {};
-    if (!pushToken) return res.status(400).json({ error: 'pushToken required' });
+    if (!requireFields(req.body, ['pushToken'], res)) return;
     const id = await devicesStore.registerDevice({ pushToken, platform, label });
     res.json({ ok: true, id });
   }));
@@ -64,7 +65,7 @@ function createEngagementRouter() {
   // rebuilds (e.g. a recurring car payment flagged for "review"). POST { key, title }.
   router.post('/insights/dismiss', asyncHandler(async (req, res) => {
     const { key, title = null } = req.body || {};
-    if (!key) return res.status(400).json({ error: 'key required' });
+    if (!requireFields(req.body, ['key'], res)) return;
     await require('../store/dismissedInsights').dismiss(key, title);
     res.json({ ok: true, dismissed: key });
   }));
@@ -72,7 +73,7 @@ function createEngagementRouter() {
   // Restore a dismissed insight. POST { key }.
   router.post('/insights/undismiss', asyncHandler(async (req, res) => {
     const { key } = req.body || {};
-    if (!key) return res.status(400).json({ error: 'key required' });
+    if (!requireFields(req.body, ['key'], res)) return;
     await require('../store/dismissedInsights').undismiss(key);
     res.json({ ok: true, restored: key });
   }));

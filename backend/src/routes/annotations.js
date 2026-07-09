@@ -13,15 +13,14 @@ const briefingsStore = require('../store/briefings');
 const dayJournalStore = require('../store/dayJournal');
 const { naiveToUtcIso } = require('../util/date');
 const { asyncHandler } = require('../middleware/asyncHandler');
+const { requireFields } = require('../middleware/validate');
 
 function createAnnotationsRouter() {
   const router = express.Router();
 
   router.post('/annotations', asyncHandler(async (req, res) => {
     const { startTs, endTs, category, label, note } = req.body || {};
-    if (!startTs || !category || !label) {
-      return res.status(400).json({ error: 'startTs, category, and label are required' });
-    }
+    if (!requireFields(req.body, ['startTs', 'category', 'label'], res)) return;
     const id = await annotationsStore.createAnnotation({ startTs, endTs, category, label, note });
     res.json({ id });
   }));

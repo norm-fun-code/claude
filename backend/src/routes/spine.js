@@ -15,6 +15,7 @@ const sourcesStore = require('../store/sources');
 const { analyze } = require('../intelligence/analyze');
 const { embedPending } = require('../intelligence/embeddings');
 const { asyncHandler } = require('../middleware/asyncHandler');
+const { requireFields } = require('../middleware/validate');
 
 function createSpineRouter() {
   const router = express.Router();
@@ -26,9 +27,7 @@ function createSpineRouter() {
   // GET /api/metrics?domain=health&metric=hrv&from=...&to=...&agg=avg
   router.get('/metrics', asyncHandler(async (req, res) => {
     const { domain, metric, from, to, agg } = req.query;
-    if (!domain || !metric) {
-      return res.status(400).json({ error: 'domain and metric are required' });
-    }
+    if (!requireFields(req.query, ['domain', 'metric'], res)) return;
     const series = agg
       ? await metricsStore.dailyAggregate({ domain, metric, from, to, agg })
       : await metricsStore.getSeries({ domain, metric, from, to });
@@ -59,7 +58,7 @@ function createSpineRouter() {
   // to newest. Used by charts that need the full time-series (not aggregated).
   router.get('/metrics/history', asyncHandler(async (req, res) => {
     const { metric, days, source } = req.query;
-    if (!metric) return res.status(400).json({ error: 'metric is required' });
+    if (!requireFields(req.query, ['metric'], res)) return;
     const numDays = Math.max(1, Number(days) || 60);
     const params = [metric, String(numDays)];
     let sourceClause = '';

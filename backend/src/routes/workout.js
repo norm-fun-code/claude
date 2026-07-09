@@ -7,6 +7,7 @@ const express = require('express');
 const db = require('../db');
 const workoutChecks = require('../store/workoutChecks');
 const { asyncHandler } = require('../middleware/asyncHandler');
+const { requireFields } = require('../middleware/validate');
 
 // Manual per-day workout swaps. GET returns a date→workoutId map across a range
 // (so the week strip can show swapped days); POST sets one day (empty/null
@@ -21,13 +22,13 @@ function createWorkoutRouter() {
   // owns the local date (?date=YYYY-MM-DD, ET) so it matches the workout strip.
   router.get('/workout/checks', asyncHandler(async (req, res) => {
     const date = req.query.date;
-    if (!date) return res.status(400).json({ error: 'date (YYYY-MM-DD) is required' });
+    if (!requireFields(req.query, ['date'], res)) return;
     res.json({ date, checks: await workoutChecks.getChecks(date) });
   }));
 
   router.post('/workout/checks', asyncHandler(async (req, res) => {
     const { date, itemKey, itemType, done } = req.body || {};
-    if (!date || !itemKey) return res.status(400).json({ error: 'date and itemKey are required' });
+    if (!requireFields(req.body, ['date', 'itemKey'], res)) return;
     await workoutChecks.setCheck({ date, itemKey, itemType, done: done !== false });
     res.json({ ok: true });
   }));
@@ -47,7 +48,7 @@ function createWorkoutRouter() {
 
   router.post('/workout/override', asyncHandler(async (req, res) => {
     const { date, workoutId } = req.body || {};
-    if (!date) return res.status(400).json({ error: 'date is required' });
+    if (!requireFields(req.body, ['date'], res)) return;
     if (!workoutId) {
       await db.query('DELETE FROM workout_overrides WHERE log_date = $1', [date]);
       return res.json({ ok: true, date, workoutId: null });
@@ -68,7 +69,7 @@ function createWorkoutRouter() {
   // card. Bodyweight-only exercises fall back to total reps as the trend metric.
   router.get('/workout/progression', asyncHandler(async (req, res) => {
     const { exercise, limit = 10 } = req.query;
-    if (!exercise) return res.status(400).json({ error: 'exercise required' });
+    if (!requireFields(req.query, ['exercise'], res)) return;
     const names = Array.isArray(exercise) ? exercise : [exercise];
     const lim = Math.min(Math.max(Number(limit) || 10, 2), 30);
     const { fetchProgression } = require('../intelligence/strength-progression');
@@ -92,7 +93,7 @@ function createWorkoutRouter() {
   // POST /api/workout/log — upsert a single set.
   router.post('/workout/log', asyncHandler(async (req, res) => {
     const { day, exercise, set_number, reps, weight_lbs, note = null } = req.body;
-    if (!day || !exercise || set_number == null) return res.status(400).json({ error: 'day, exercise, set_number required' });
+    if (!requireFields(req.body, ['day', 'exercise', 'set_number'], res)) return;
     await db.query(
       `INSERT INTO workout_logs (log_date, exercise, set_number, reps, weight_lbs, note, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, now())
@@ -108,7 +109,7 @@ function createWorkoutRouter() {
   // exercise, each with all its sets. Powers the "Last time: 3×12 @ 45 lbs" display.
   router.get('/workout/log/history', asyncHandler(async (req, res) => {
     const { exercise, limit = 5 } = req.query;
-    if (!exercise) return res.status(400).json({ error: 'exercise required' });
+    if (!requireFields(req.query, ['exercise'], res)) return;
     const { rows } = await db.query(
       `SELECT log_date, json_agg(
          json_build_object('set_number', set_number, 'reps', reps, 'weight_lbs', weight_lbs)

@@ -9,6 +9,7 @@ const voiceService = require('../services/voice');
 const { ask, looksLikeCommand } = require('../chat/ask');
 const { executeAction } = require('../chat/executeAction');
 const { asyncHandler } = require('../middleware/asyncHandler');
+const { requireFields } = require('../middleware/validate');
 
 function createVoiceRouter() {
   const router = express.Router();
@@ -24,7 +25,7 @@ function createVoiceRouter() {
     const marks = {};
     const mark = (label) => { marks[label] = Date.now() - t0; };
     const { audio, mime } = req.body || {};
-    if (!audio) return res.status(400).json({ error: 'audio (base64) is required' });
+    if (!requireFields(req.body, ['audio'], res)) return;
 
     const chatStore = require('../store/chat');
     // History doesn't depend on the transcript, so fetch it in parallel with
@@ -92,7 +93,7 @@ function createVoiceRouter() {
   // rather than a full voice conversation turn.
   router.post('/voice/transcribe', asyncHandler(async (req, res) => {
     const { audio, mime } = req.body || {};
-    if (!audio) return res.status(400).json({ error: 'audio (base64) is required' });
+    if (!requireFields(req.body, ['audio'], res)) return;
     const text = await voiceService.transcribe(String(audio), mime || 'audio/wav');
     res.json({ text });
   }));

@@ -9,6 +9,7 @@ const metricsStore = require('../store/metrics');
 const { estimateActivity } = require('../intelligence/activity-estimates');
 const { syncActivityMinutes } = require('../intelligence/activity-sync');
 const { asyncHandler } = require('../middleware/asyncHandler');
+const { requireFields } = require('../middleware/validate');
 
 function createActivityRouter() {
   const router = express.Router();
@@ -36,7 +37,7 @@ function createActivityRouter() {
   // duration_min?, note?, planned_type? }. Returns the inserted row.
   router.post('/activity', asyncHandler(async (req, res) => {
     const { date, activity_type, label = null, duration_min = null, note = null, planned_type = null, no_watch = false } = req.body || {};
-    if (!date || !activity_type) return res.status(400).json({ error: 'date and activity_type required' });
+    if (!requireFields(req.body, ['date', 'activity_type'], res)) return;
     const { rows } = await db.query(
       `INSERT INTO activity_logs (log_date, activity_type, label, duration_min, note, planned_type, no_watch)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
