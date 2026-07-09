@@ -34,7 +34,7 @@ interface Props {
   insights?: Insight[];
 }
 
-export function CheckinHistoryCard({ insights = [] }: Props) {
+function CheckinHistoryCard({ insights = [] }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [days, setDays] = useState<DayEntry[]>([]);
@@ -136,3 +136,6 @@ const styles = StyleSheet.create({
   insightTitle: { ...typography.subtitle, fontSize: 15, marginBottom: 2 },
   insightDetail: { ...typography.body, fontSize: 13 },
 });
+
+const CheckinHistoryCardMemo = React.memo(CheckinHistoryCard);
+export { CheckinHistoryCardMemo as CheckinHistoryCard };

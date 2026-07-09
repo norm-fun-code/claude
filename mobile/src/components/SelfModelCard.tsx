@@ -53,7 +53,7 @@ function streakLabel(streak: number): string {
   return `${streak} wks`;
 }
 
-export function SelfModelCard() {
+function SelfModelCard() {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [model, setModel] = useState<SelfModel | null>(null);
@@ -345,3 +345,6 @@ const styles = StyleSheet.create({
   sheetBtn: { flex: 1, borderRadius: 10, borderWidth: 1, paddingVertical: spacing.sm + 2, alignItems: 'center' },
   sheetBtnTxt: { fontSize: 15, fontWeight: '600' },
 });
+
+const SelfModelCardMemo = React.memo(SelfModelCard);
+export { SelfModelCardMemo as SelfModelCard };

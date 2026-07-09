@@ -11,7 +11,7 @@ interface Props {
 
 // Relevant-not-random: the one highlight from your Readwise + Notion library
 // that speaks to today's top priority (semantic match), not a random pick.
-export function LibraryCard({ highlight, wellbeingTheme }: Props) {
+function LibraryCard({ highlight, wellbeingTheme }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -91,3 +91,6 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
 });
+
+const LibraryCardMemo = React.memo(LibraryCard);
+export { LibraryCardMemo as LibraryCard };

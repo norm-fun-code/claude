@@ -11,7 +11,7 @@ interface Props {
 }
 
 // Claude-written daily market brief (3-5 bullets) from live finance feeds.
-export function MarketsCard({ markets: initialMarkets }: Props) {
+function MarketsCard({ markets: initialMarkets }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [markets, setMarkets] = useState(initialMarkets);
@@ -101,3 +101,6 @@ const styles = StyleSheet.create({
   refreshText: { fontSize: 12, fontWeight: '600' },
   refreshedAt: { ...typography.caption, marginBottom: spacing.xs, marginTop: -spacing.xs },
 });
+
+const MarketsCardMemo = React.memo(MarketsCard);
+export { MarketsCardMemo as MarketsCard };

@@ -311,7 +311,7 @@ const LEGEND: { icon: keyof typeof Ionicons.glyphMap; color: string; label: stri
   { icon: 'checkmark-circle', color: '#2E7D32', label: 'Resolved' },
 ];
 
-export function RecommendationLedgerCard() {
+function RecommendationLedgerCard() {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [recs, setRecs] = useState<Rec[]>([]);
@@ -453,3 +453,6 @@ const styles = StyleSheet.create({
   toggle: { marginTop: spacing.sm, alignItems: 'center' },
   toggleText: { fontSize: 13, fontWeight: '600' },
 });
+
+const RecommendationLedgerCardMemo = React.memo(RecommendationLedgerCard);
+export { RecommendationLedgerCardMemo as RecommendationLedgerCard };

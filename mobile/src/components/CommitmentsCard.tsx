@@ -67,7 +67,7 @@ function Row({ c: commitment, colors, onResolve }: { c: Commitment; colors: Retu
 
 // Live follow-through: what you said you'd do, still open. Self-hides when empty
 // (nothing outstanding is the good state, not an empty box).
-export function CommitmentsCard({ commitments, onResolve }: Props) {
+function CommitmentsCard({ commitments, onResolve }: Props) {
   const isDark = useColorScheme() === 'dark';
   const colors = getColors(isDark);
   if (!commitments || commitments.length === 0) return null;
@@ -119,3 +119,6 @@ const styles = StyleSheet.create({
   },
   doneBtn: { backgroundColor: '#34C759', borderColor: '#34C759' },
 });
+
+const CommitmentsCardMemo = React.memo(CommitmentsCard);
+export { CommitmentsCardMemo as CommitmentsCard };

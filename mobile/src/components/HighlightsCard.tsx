@@ -26,7 +26,7 @@ interface Highlight {
 // day (across devices and pull-to-refresh), like the Notion page and daily
 // quote. Tap "Next" to flip through them; "New set ↻" (or paging past the end)
 // asks the server for a fresh set via ?refresh=1.
-export function HighlightsCard() {
+function HighlightsCard() {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -197,3 +197,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
 });
+
+const HighlightsCardMemo = React.memo(HighlightsCard);
+export { HighlightsCardMemo as HighlightsCard };

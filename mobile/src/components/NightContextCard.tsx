@@ -25,7 +25,7 @@ const TAGS: { key: string; label: string; emoji: string }[] = [
 // Tag last night's context. Each tap auto-saves the full set; NormOS correlates
 // these against your HRV / sleep (and mood/focus) and surfaces "X nights → Y"
 // patterns in the insights once a few weeks of tags accumulate.
-export function NightContextCard() {
+function NightContextCard() {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [active, setActive] = useState<Record<string, boolean>>({});
@@ -204,3 +204,6 @@ const styles = StyleSheet.create({
   submitText: { color: '#FFFFFF', fontWeight: '700', fontSize: 15 },
   footer: { ...typography.caption, fontSize: 11, marginTop: spacing.sm, fontStyle: 'italic', textAlign: 'center' },
 });
+
+const NightContextCardMemo = React.memo(NightContextCard);
+export { NightContextCardMemo as NightContextCard };

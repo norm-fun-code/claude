@@ -26,7 +26,7 @@ type PlanData = {
   pctYearElapsed: number | null;
 } | null;
 
-export function WealthCard({ wealth }: Props) {
+function WealthCard({ wealth }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [hidden, setHidden] = useState(false);
@@ -190,3 +190,6 @@ const styles = StyleSheet.create({
   monthLabel: { ...typography.caption, fontSize: 12 },
   monthValue: { ...typography.subtitle, fontWeight: '600', fontSize: 15 },
 });
+
+const WealthCardMemo = React.memo(WealthCard);
+export { WealthCardMemo as WealthCard };

@@ -37,7 +37,7 @@ const TYPE_LABEL: Record<string, string> = {
 // shown as a clean list. Each is dismissible: some flags are nothing you're
 // concerned about (e.g. a recurring car payment shown as "review"), so a ×
 // removes it and it stays gone across rebuilds.
-export function InsightsCard({ insights }: Props) {
+function InsightsCard({ insights }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -98,3 +98,6 @@ const styles = StyleSheet.create({
   dismissBtn: { paddingLeft: spacing.sm, paddingTop: 2, marginTop: -2 },
   dismissX: { fontSize: 22, fontWeight: '400', lineHeight: 24 },
 });
+
+const InsightsCardMemo = React.memo(InsightsCard);
+export { InsightsCardMemo as InsightsCard };

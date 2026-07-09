@@ -65,7 +65,7 @@ function signed(n: number): string {
 }
 
 // S&P 500 + NASDAQ day performance — a compact scoreboard above the news.
-export function IndicesCard() {
+function IndicesCard() {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [indices, setIndices] = useState<Idx[]>([]);
@@ -134,3 +134,6 @@ const styles = StyleSheet.create({
   change: { fontSize: 13, fontWeight: '700' },
   changeAbs: { fontSize: 11 },
 });
+
+const IndicesCardMemo = React.memo(IndicesCard);
+export { IndicesCardMemo as IndicesCard };

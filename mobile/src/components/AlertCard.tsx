@@ -9,7 +9,7 @@ interface Props {
 
 // Surfaces source-health warnings (e.g. Monarch token expired so the daily
 // sync stopped). Amber for warnings, red for high severity. Hidden when empty.
-export function AlertCard({ alerts }: Props) {
+function AlertCard({ alerts }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -54,3 +54,6 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
 });
+
+const AlertCardMemo = React.memo(AlertCard);
+export { AlertCardMemo as AlertCard };

@@ -59,7 +59,7 @@ function formatBuiltAt(iso: string | undefined): string | null {
   return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
-export function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
+function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [selected, setSelected] = useState<MetricConfig | null>(null);
@@ -245,3 +245,6 @@ const styles = StyleSheet.create({
   flagTitle: { ...typography.body, fontWeight: '600', fontSize: 14 },
   flagDetail: { ...typography.caption, fontSize: 12, lineHeight: 17, marginTop: 1 },
 });
+
+const RecoveryCardMemo = React.memo(RecoveryCard);
+export { RecoveryCardMemo as RecoveryCard };

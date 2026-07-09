@@ -39,7 +39,7 @@ function Chip({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function EveningBriefCard({ brief }: Props) {
+function EveningBriefCard({ brief }: Props) {
   const [audioState, setAudioState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
   useEffect(() => () => { stopPlayback(); }, []);
 
@@ -199,3 +199,6 @@ const styles = StyleSheet.create({
   },
   reflectionText: { ...typography.body, color: 'rgba(255,255,255,0.9)', fontSize: 14, lineHeight: 22, fontStyle: 'italic' },
 });
+
+const EveningBriefCardMemo = React.memo(EveningBriefCard);
+export { EveningBriefCardMemo as EveningBriefCard };

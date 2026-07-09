@@ -57,7 +57,7 @@ function fmtDate(iso: string | null): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-export function ExperimentsCard() {
+function ExperimentsCard() {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [experiments, setExperiments] = useState<Experiment[]>([]);
@@ -272,3 +272,6 @@ const styles = StyleSheet.create({
   toggle: { marginTop: spacing.md, alignItems: 'center' },
   toggleText: { fontSize: 13, fontWeight: '600' },
 });
+
+const ExperimentsCardMemo = React.memo(ExperimentsCard);
+export { ExperimentsCardMemo as ExperimentsCard };

@@ -39,7 +39,7 @@ function isSunday(): boolean {
   return easternDayOfWeek() === 0;
 }
 
-export function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}) {
+function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -406,3 +406,6 @@ const styles = StyleSheet.create({
   editLinkText: { ...typography.body, fontWeight: '600' },
   staleNote: { ...typography.caption, fontSize: 12, marginTop: spacing.sm, fontStyle: 'italic' },
 });
+
+const WeeklyIntentionsCardMemo = React.memo(WeeklyIntentionsCard);
+export { WeeklyIntentionsCardMemo as WeeklyIntentionsCard };

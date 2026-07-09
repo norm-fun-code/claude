@@ -136,7 +136,7 @@ function BeatRow({ label, emoji, tint, text }: { label: string; emoji: string; t
 // agree), but this set covers the in-memory window until that refetch.
 const answeredQuestions = new Set<string>();
 
-export function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Props) {
+function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [note, setNote] = useState('');
@@ -672,3 +672,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
 });
+
+const BriefCardMemo = React.memo(BriefCard);
+export { BriefCardMemo as BriefCard };

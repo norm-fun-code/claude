@@ -25,7 +25,7 @@ function domainColor(domain: string): string {
   return DOMAIN_COLORS[key] ?? '#635BFF';
 }
 
-export function CrossContextCard({ insights }: Props) {
+function CrossContextCard({ insights }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -144,3 +144,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
   },
 });
+
+const CrossContextCardMemo = React.memo(CrossContextCard);
+export { CrossContextCardMemo as CrossContextCard };

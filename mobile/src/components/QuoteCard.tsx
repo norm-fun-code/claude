@@ -10,7 +10,7 @@ interface Props {
   emoji?: string;
 }
 
-export function QuoteCard({ quote, insight, title = 'Quote + Insight', emoji = '💡' }: Props) {
+function QuoteCard({ quote, insight, title = 'Quote + Insight', emoji = '💡' }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -56,3 +56,6 @@ const styles = StyleSheet.create({
     lineHeight: 23,
   },
 });
+
+const QuoteCardMemo = React.memo(QuoteCard);
+export { QuoteCardMemo as QuoteCard };

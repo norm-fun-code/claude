@@ -29,7 +29,7 @@ function statusStyle(status: string | null, probability: number | null) {
   }
 }
 
-export function ForecastCard({ forecasts }: Props) {
+function ForecastCard({ forecasts }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -109,3 +109,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
 });
+
+const ForecastCardMemo = React.memo(ForecastCard);
+export { ForecastCardMemo as ForecastCard };

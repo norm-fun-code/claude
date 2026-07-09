@@ -37,7 +37,7 @@ function pctLabel(frac: number) {
 // Asset Mix: how net worth is composed (allocation bar) + a single-name
 // concentration callout (e.g. a large pre-IPO stock position). A structural,
 // standing view — distinct from the daily spending/budget insights.
-export function AssetMixCard() {
+function AssetMixCard() {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [data, setData] = useState<AllocationView | null>(null);
@@ -178,3 +178,6 @@ const styles = StyleSheet.create({
   concTitle: { fontSize: 13, fontWeight: '700', marginBottom: 2 },
   concBody: { ...typography.caption, fontSize: 12, lineHeight: 17 },
 });
+
+const AssetMixCardMemo = React.memo(AssetMixCard);
+export { AssetMixCardMemo as AssetMixCard };

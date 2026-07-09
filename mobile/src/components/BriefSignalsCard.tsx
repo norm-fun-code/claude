@@ -29,7 +29,7 @@ function persistDismiss(key: string) {
 // they flow automatically into the next briefing build's annotationsContext.
 // Answered/skipped keys are persisted for 24h so the card doesn't reappear
 // on pull-to-refresh or app restart while the signal is still firing.
-export function BriefSignalsCard({ signals }: Props) {
+function BriefSignalsCard({ signals }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -181,3 +181,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
 });
+
+const BriefSignalsCardMemo = React.memo(BriefSignalsCard);
+export { BriefSignalsCardMemo as BriefSignalsCard };

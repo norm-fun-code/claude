@@ -123,7 +123,7 @@ const METRICS: Record<string, MetricConfig> = {
   },
 };
 
-export function HealthCard({ health }: Props) {
+function HealthCard({ health }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [selected, setSelected] = useState<MetricConfig | null>(null);
@@ -259,3 +259,6 @@ const styles = StyleSheet.create({
   vo2Badge: { borderRadius: radius.sm, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3 },
   vo2BadgeText: { fontSize: 11, fontWeight: '700' },
 });
+
+const HealthCardMemo = React.memo(HealthCard);
+export { HealthCardMemo as HealthCard };

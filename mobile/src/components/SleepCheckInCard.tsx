@@ -19,7 +19,7 @@ const HOURS_MAX = 12;
 
 // Subjective sleep check-in for nights without an Eight Sleep reading. A 1–5
 // quality + hours becomes a proxy recovery score that drives the rest of the day.
-export function SleepCheckInCard({ visible, onSubmitted }: Props) {
+function SleepCheckInCard({ visible, onSubmitted }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [quality, setQuality] = useState<number | null>(null);
@@ -127,3 +127,6 @@ const styles = StyleSheet.create({
   submit: { marginTop: spacing.md, borderRadius: radius.md, paddingVertical: spacing.sm + 2, alignItems: 'center' },
   submitText: { fontSize: 15, fontWeight: '700' },
 });
+
+const SleepCheckInCardMemo = React.memo(SleepCheckInCard);
+export { SleepCheckInCardMemo as SleepCheckInCard };

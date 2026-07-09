@@ -1496,7 +1496,7 @@ const actStyles = StyleSheet.create({
 });
 
 // Full day-by-day workout view (HRV-aware) — embedded in the Health tab.
-export function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
+function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
   const c = getColors(isDark);
   const todayDayIndex = getTodayDayIndex();
 
@@ -2060,3 +2060,6 @@ const swapStyles = StyleSheet.create({
   },
   chipTxt: { fontSize: 13, fontWeight: '600' },
 });
+
+const WorkoutsPanelMemo = React.memo(WorkoutsPanel);
+export { WorkoutsPanelMemo as WorkoutsPanel };

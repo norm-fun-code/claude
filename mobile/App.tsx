@@ -72,6 +72,13 @@ import { MarketsCard } from './src/components/MarketsCard';
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
 import { useCommitments } from './src/hooks/useCommitments';
 
+// A single stable empty-array reference for `d?.field ?? []`-style fallbacks
+// passed to memoized cards — `?? []` mints a NEW array every render, which
+// defeats React.memo on whatever card receives it (a fresh reference always
+// looks like a prop change). Safe to share across every such fallback since
+// none of these cards ever mutate the array they're given.
+const EMPTY_ARRAY: never[] = [];
+
 // Context-aware one-tap questions for the voice/quick-ask summon — grounded in
 // live numbers where we have them so the starters feel like they're actually
 // looking at the same screen you are, not a generic prompt. Shared by the
@@ -194,6 +201,14 @@ export default function App() {
 
   const d = briefing.data;
 
+  // Shared by both SleepCheckInCard instances (Health tab + Today tab) — a
+  // stable reference so the memoized card doesn't see a "new" callback prop
+  // on every render.
+  const onSleepLogged = useCallback(() => {
+    liveRecovery.refetch();
+    briefing.triggerRebuild();
+  }, [liveRecovery, briefing]);
+
   // Per-tab explicit refresh — each tab updates only its own content. Today is
   // handled separately in the title row (icon arrow + check-in button); the rest
   // keep a labeled button:
@@ -244,6 +259,30 @@ export default function App() {
 
   const tabTitle = TABS.find((t) => t.key === tab)?.label ?? '';
 
+  // Non-health/wellbeing-only findings (habit streaks + check-in trends) for
+  // CheckinHistoryCard — computed once per d?.insights change instead of a
+  // fresh .filter() (and fresh array reference) on every render, which would
+  // defeat the card's React.memo.
+  const checkinHistoryInsights = useMemo(() => {
+    return (d?.insights ?? EMPTY_ARRAY).filter((i) => {
+      if (i.type === 'habit_consistency') return true;
+      const nonHealth = new Set(['habits', 'wellbeing']);
+      return i.domains?.every((dom: string) => nonHealth.has(dom)) ?? false;
+    });
+  }, [d?.insights]);
+
+  // The quick-ask FAB reads this every render (it's a prop on AskOverlay) —
+  // memoize so it isn't a fresh array each time only the recovery score's
+  // digits are unchanged but something unrelated re-rendered App.
+  const askContextStarters = useMemo(
+    () => contextStartersFor(tab, {
+      score: liveRecovery.recovery?.score,
+      band: liveRecovery.recovery?.band,
+      risk: d?.chiefBrief?.risk,
+    }),
+    [tab, liveRecovery.recovery?.score, liveRecovery.recovery?.band, d?.chiefBrief?.risk]
+  );
+
   // Subtitle under the tab title — shows briefing age on non-Health tabs, and
   // last-refreshed time on Health so the user knows the refresh actually worked.
   const tabSubtitle = useMemo(() => {
@@ -270,10 +309,10 @@ export default function App() {
       case 'health':
         return (
           <>
-            <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={() => { liveRecovery.refetch(); briefing.triggerRebuild(); }} />
+            <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={onSleepLogged} />
             <RecoveryCard
               recovery={liveRecovery.fetched ? liveRecovery.recovery : (liveRecovery.recovery ?? d?.recovery)}
-              composites={d?.healthComposites ?? []}
+              composites={d?.healthComposites ?? EMPTY_ARRAY}
               builtAt={liveRecovery.fetched ? undefined : d?.builtAt}
             />
             <NightContextCard />
@@ -287,7 +326,7 @@ export default function App() {
               <EmptyNote c={c} text="Insights appear after a few days of health + habit data." />
             )}
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} recoveryScore={liveRecovery.recovery?.score ?? null} />
-            <ForecastCard forecasts={d?.forecasts ?? []} />
+            <ForecastCard forecasts={d?.forecasts ?? EMPTY_ARRAY} />
             <CollapsibleSection title="NormOS profile">
               <SelfModelCard />
             </CollapsibleSection>
@@ -310,7 +349,7 @@ export default function App() {
             <AssetMixCard />
             {/* "What the data shows" (personal finance insights) leads; the market
                 scoreboard + brief group together below it as market context. */}
-            <InsightsCard insights={d?.wealthInsights ?? []} />
+            <InsightsCard insights={d?.wealthInsights ?? EMPTY_ARRAY} />
             <IndicesCard />
             <MarketsCard markets={d?.markets ?? null} />
             {!d?.wealth && (
@@ -360,7 +399,7 @@ export default function App() {
 
             {/* 0. Sleep check-in — only when there's no Pod reading to fill the gap.
                 Leads when present so logging sleep is the first action. */}
-            <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={() => { liveRecovery.refetch(); briefing.triggerRebuild(); }} />
+            <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={onSleepLogged} />
             {/* 0.5 Evening wind-down brief — leads in the evening (self-hides during
                 the day and when no brief is built), so the home tab feels alive at
                 night instead of showing a stale morning memo. */}
@@ -443,15 +482,11 @@ export default function App() {
             )}
             {/* 8. Check-in trends + habit streaks — reference detail */}
             <AnimatedEntry delay={90}>
-              <CheckinHistoryCard insights={(d?.insights ?? []).filter((i) => {
-                if (i.type === 'habit_consistency') return true;
-                const nonHealth = new Set(['habits', 'wellbeing']);
-                return i.domains?.every((dom: string) => nonHealth.has(dom)) ?? false;
-              })} />
+              <CheckinHistoryCard insights={checkinHistoryInsights} />
             </AnimatedEntry>
             {/* 9. Weekly review + intentions */}
             <AnimatedEntry delay={110}>
-              <WeeklyIntentionsCard review={d?.weeklyReview ?? null} actions={d?.leverageActions ?? []} />
+              <WeeklyIntentionsCard review={d?.weeklyReview ?? null} actions={d?.leverageActions ?? EMPTY_ARRAY} />
             </AnimatedEntry>
             {/* 10. Recommendation ledger — what was recommended and did it work */}
             <AnimatedEntry delay={130}>
@@ -605,11 +640,7 @@ export default function App() {
       <AskOverlay
         ref={quickAskRef}
         hideFab={tab === 'ask'}
-        contextStarters={contextStartersFor(tab, {
-          score: liveRecovery.recovery?.score,
-          band: liveRecovery.recovery?.band,
-          risk: d?.chiefBrief?.risk,
-        })}
+        contextStarters={askContextStarters}
         bottomInset={bottomInset}
       />
       <TabBar

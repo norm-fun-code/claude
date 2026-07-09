@@ -10,7 +10,7 @@ interface Props {
   insight: string;
 }
 
-export function NotionCard({ pageTitle, notionText, quote, insight }: Props) {
+function NotionCard({ pageTitle, notionText, quote, insight }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -76,3 +76,6 @@ const styles = StyleSheet.create({
     lineHeight: 23,
   },
 });
+
+const NotionCardMemo = React.memo(NotionCard);
+export { NotionCardMemo as NotionCard };

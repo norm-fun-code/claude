@@ -12,7 +12,7 @@ interface Props {
 // Forward-looking companion to the Recovery card: today's GRADE (A/B/C day) and
 // how to play it, plus the sleep-debt trajectory. An A day is full send; a C day
 // isn't a write-off — the goal is anything that compounds above zero.
-export function TodayForecastCard({ forecast }: Props) {
+function TodayForecastCard({ forecast }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -89,3 +89,6 @@ const styles = StyleSheet.create({
   tmrConf: { fontSize: 10, marginLeft: 'auto', fontStyle: 'italic' },
   contextNote: { fontSize: 13, lineHeight: 19, marginTop: 4, fontStyle: 'italic' },
 });
+
+const TodayForecastCardMemo = React.memo(TodayForecastCard);
+export { TodayForecastCardMemo as TodayForecastCard };
