@@ -62,7 +62,6 @@ import { ExperimentsCard } from './src/components/ExperimentsCard';
 import { CrossContextCard } from './src/components/CrossContextCard';
 import { CollapsibleSection } from './src/components/CollapsibleSection';
 import { SelfModelCard } from './src/components/SelfModelCard';
-import { WeeklyStateCard } from './src/components/WeeklyStateCard';
 import { CheckinHistoryCard } from './src/components/CheckinHistoryCard';
 import { HabitsModal } from './src/components/HabitsModal';
 import { LibraryCard } from './src/components/LibraryCard';

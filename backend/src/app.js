@@ -20,7 +20,6 @@ const { createCheckinRouter } = require('./routes/checkin');
 const { createHabitsRouter } = require('./routes/habits');
 const { createContextRouter } = require('./routes/context');
 const { createIntentionsRouter } = require('./routes/intentions');
-const { createChaptersRouter } = require('./routes/chapters');
 const { createIngestAdminRouter } = require('./routes/ingest-admin');
 const { createSpineRouter } = require('./routes/spine');
 const { createDiagnosticsRouter } = require('./routes/diagnostics');
@@ -105,10 +104,6 @@ function createApp({ bootTime, port, quiet } = {}) {
   // Weekly intentions routes live in src/routes/intentions.js — the eleventh
   // router extraction out of this file.
   app.use('/api', createIntentionsRouter());
-
-  // Chapters routes (GET/POST/DELETE) live in src/routes/chapters.js — the
-  // twelfth router extraction out of this file.
-  app.use('/api', createChaptersRouter());
 
   // Weather, generic metric ingest, connector-trigger, admin (reset-demo /
   // recompute-wealth), and Monarch CSV upload routes live in

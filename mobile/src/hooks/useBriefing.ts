@@ -51,12 +51,6 @@ export interface WorkBusyBlock {
   end: string;
 }
 
-export interface UrgentEmail {
-  from: string;
-  subject: string;
-  action: string;
-}
-
 export interface Insight {
   type: string;
   title: string;
@@ -253,7 +247,6 @@ export interface BriefingData {
   workout: Workout;
   calendar: CalendarEvent[];
   workBusy?: WorkBusyBlock[];
-  urgentEmails: UrgentEmail[];
   financeSummary: string[];
   quoteInsight: string;
   notionInsight: string;
