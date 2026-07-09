@@ -47,6 +47,7 @@ const { createHabitsRouter } = require('./src/routes/habits');
 const { createContextRouter } = require('./src/routes/context');
 const { createIntentionsRouter } = require('./src/routes/intentions');
 const { createChaptersRouter } = require('./src/routes/chapters');
+const { createIngestAdminRouter } = require('./src/routes/ingest-admin');
 const { createSpineRouter } = require('./src/routes/spine');
 const { createDiagnosticsRouter } = require('./src/routes/diagnostics');
 const { createRecoveryRouter } = require('./src/routes/recovery');
@@ -101,7 +102,6 @@ app.use('/api', (req, res, next) => {
   return res.status(401).json({ error: 'unauthorized' });
 });
 
-
 // Health-domain routes (server health check, Apple Health + Eight Sleep
 // ingest/readback) live in src/routes/health.js — the first router
 // extraction out of this file (see the engineering review's #1+#6
@@ -151,111 +151,17 @@ const dayJournalStore = require('./src/store/dayJournal');
 // calls it directly.
 app.use('/api', createChaptersRouter());
 
-// Standalone weather — so the Today card can show/refresh weather on its own,
-// fast, without waiting on the full LLM briefing. Cached briefly in-memory so
-// repeated loads (and the briefing) don't hammer the provider; ?refresh=1
-// forces a fresh pull.
-let weatherCache = { at: 0, data: null };
-const WEATHER_TTL_MS = Number(process.env.WEATHER_CACHE_MS || 10 * 60 * 1000);
-app.get('/api/weather', async (req, res) => {
-  try {
-    const force = req.query.refresh === '1';
-    const fresh = Date.now() - weatherCache.at < WEATHER_TTL_MS;
-    if (!force && fresh && weatherCache.data) {
-      return res.json({ weather: weatherCache.data, cached: true });
-    }
-    const weather = await fetchWeather();
-    weatherCache = { at: Date.now(), data: weather };
-    res.json({ weather, cached: false });
-  } catch (err) {
-    // Fall back to a stale cached value rather than failing the card outright.
-    if (weatherCache.data) return res.json({ weather: weatherCache.data, cached: true, stale: true });
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Generic canonical metric ingestion for any future source.
-app.post('/api/ingest/metrics', async (req, res) => {
-  try {
-    const written = await metricsStore.insertMetrics(req.body);
-    res.json({ written });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// Weather, generic metric ingest, connector-trigger, admin (reset-demo /
+// recompute-wealth), and Monarch CSV upload routes live in
+// src/routes/ingest-admin.js — the sixteenth router extraction out of this
+// file.
+app.use('/api', createIngestAdminRouter());
 
 // Diagnostics routes (/api/diag/*, /api/debug/*) live in
 // src/routes/diagnostics.js — the fifteenth router extraction out of this
 // file, gathering routes from three separate locations in the original into
 // one cohesive file.
 app.use('/api', createDiagnosticsRouter());
-
-// Trigger all server-side connectors on demand. ?full=1 forces a complete
-// re-sync (ignores each source's last-sync timestamp).
-app.post('/api/ingest/run', async (req, res) => {
-  try {
-    const full = req.query.full === '1' || req.query.full === 'true';
-    const only = req.query.only || null;
-    res.json({ results: await runIngest({ full, only }) });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Retire the demo data once real sources are flowing — deletes exactly what the
-// seeder created (source='seed' metrics + seed-tagged goals) and re-analyzes.
-app.post('/api/admin/reset-demo', async (req, res) => {
-  try {
-    const m = await db.query(`DELETE FROM metrics WHERE source = 'seed'`);
-    const g = await db.query(`DELETE FROM goals WHERE metadata->>'seed' = 'true'`);
-    await db.query(`DELETE FROM sources WHERE id = 'seed'`);
-    const summary = await analyze();
-    res.json({ deletedMetrics: m.rowCount, deletedGoals: g.rowCount, analyzed: summary || null });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Rebuild the daily wealth flow metrics from stored Monarch transactions with
-// the current rules (excludes internal transfers / card payments). The sync
-// skips unchanged CSVs, so this is how historical spending gets corrected
-// without re-uploading. Re-runs analyze() so Insights reflect the new numbers.
-app.post('/api/admin/recompute-wealth', async (req, res) => {
-  try {
-    const { recomputeWealthFlows } = require('./src/services/recompute-wealth');
-    const result = await recomputeWealthFlows();
-    const analyzed = await analyze().catch((e) => ({ error: e.message }));
-    res.json({ ...result, analyzed: analyzed || null });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Monarch CSV upload: POST the raw CSV body (transactions OR balances export).
-// The cloud can't see files on your Mac, so this is how the monthly export
-// reaches it — `curl --data-binary @export.csv`. Idempotent: re-uploading the
-// same month overwrites the same daily metrics rather than double-counting.
-app.post('/api/import/monarch', express.text({ type: '*/*', limit: '25mb' }), async (req, res) => {
-  try {
-    const text = typeof req.body === 'string' ? req.body : '';
-    if (!text.trim()) return res.status(400).json({ error: 'send the CSV as the request body' });
-    const { kind, rows, metrics, documents } = monarch.importText(text);
-    if (kind === 'unknown') {
-      return res.status(422).json({ error: 'could not recognize this as a Monarch transactions or balances export', rows });
-    }
-    await sourcesStore.registerSource({ id: 'monarch', domain: 'wealth', displayName: 'Monarch (CSV import)' });
-    const written = await metricsStore.insertMetrics(metrics);
-    let docs = 0;
-    for (const doc of documents) {
-      if (await documentsStore.upsertDocument(doc)) docs++;
-    }
-    await sourcesStore.markSync('monarch');
-    const summary = await analyze();
-    res.json({ kind, rows, metrics: written, documents: docs, analyzed: summary || null });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // "Querying the spine" routes (metrics, sources/freshness, findings,
 // highlights, analyze/consolidate/embed) live in src/routes/spine.js —
