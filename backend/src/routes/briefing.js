@@ -785,9 +785,8 @@ async function buildFreshBriefing({ force = false } = {}) {
 
   // Leverage + risk context for the Chief-of-Staff brief. THE ACTION comes from
   // the leverage engine; THE RISK from the most at-risk forecast. Fetched before
-  // the LLM call so the brief can name them. (The same findings are re-read later
-  // for the card sections — a cheap duplicate read that avoids reordering the
-  // larger findings/recovery block below.)
+  // the LLM call so the brief can name them; reused later for the card sections
+  // (see openFindingsForBrief below) instead of a second identical round trip.
   const openFindingsForBrief = await findingsStore.listFindings({ status: 'open' }).catch(() => []);
 
   // Continuity context: without this, the chief-of-staff brief has zero memory
@@ -1229,7 +1228,9 @@ async function buildFreshBriefing({ force = false } = {}) {
   // the block below reuses it and only recomputes if that early call came back null.
   let healthComposites = [];
   try {
-    const open = await findingsStore.listFindings({ status: 'open' });
+    // Same query already run above (openFindingsForBrief) — nothing writes to
+    // findings in between, so reuse it instead of a second identical round trip.
+    const open = openFindingsForBrief;
     leverageActions = open
       .filter((f) => f.type === 'leverage')
       .sort((a, b) => (a.evidence?.rank ?? 99) - (b.evidence?.rank ?? 99))
