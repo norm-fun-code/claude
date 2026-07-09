@@ -51,12 +51,6 @@ export interface WorkBusyBlock {
   end: string;
 }
 
-export interface Newsletter {
-  name: string;
-  title: string;
-  summary: string;
-}
-
 export interface UrgentEmail {
   from: string;
   subject: string;
@@ -259,7 +253,6 @@ export interface BriefingData {
   workout: Workout;
   calendar: CalendarEvent[];
   workBusy?: WorkBusyBlock[];
-  newsletters: Newsletter[];
   urgentEmails: UrgentEmail[];
   financeSummary: string[];
   quoteInsight: string;

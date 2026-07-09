@@ -359,10 +359,6 @@ async function generateBriefing(emailData, notionText, quote, currentDay, workou
   return { ...chief, ...wisdom };
 }
 
-const EMAIL_SYSTEM =
-  'You summarize unread email for a personal briefing. Analyze the provided emails. ' +
-  'Return ONLY a single valid JSON object — no markdown, no code fences, no commentary.';
-
 // Sender patterns that are never urgent — automated systems that by definition
 // can't receive replies and whose emails are FYI/notifications, not action items.
 const AUTO_SENDER_RE = /no.?reply|noreply|do.not.reply|donotreply|notifications?@|alerts?@|automated@|mailer-daemon|postmaster|bounce@|support-noreply/i;
@@ -386,63 +382,7 @@ function filterActionableEmails(emails) {
   });
 }
 
-/**
- * Mid-day urgent-email scan: quickly identifies emails needing action today.
- * Much smaller output than the full briefing. Powers GET /api/briefing/live.
- */
-async function generateEmailBriefs(emailData) {
-  // Hard-filter automated senders before the LLM sees them.
-  const actionable = filterActionableEmails(emailData);
-  if (!actionable.length) return { urgentEmails: [] };
-
-  const PER_EMAIL = Number(process.env.EMAIL_PROMPT_CHARS || 15000);
-  const TOTAL_BUDGET = Number(process.env.EMAIL_PROMPT_TOTAL || 200000);
-  let used = 0;
-  const emailSection = actionable
-    .map((e, i) => {
-      if (used >= TOTAL_BUDGET) return null;
-      const body = String(e.body || '').slice(0, PER_EMAIL);
-      used += body.length;
-      return `--- Email ${i + 1} ---\nFrom: ${e.from}\nSubject: ${e.subject}\nSnippet: ${e.snippet}\nBody:\n${body}`;
-    })
-    .filter(Boolean)
-    .join('\n\n');
-
-  const prompt = `Unread emails (${actionable.length} threads — automated/no-reply already removed):
-${emailSection}
-
----
-
-Return ONLY valid JSON with EXACTLY these fields:
-
-{
-  "urgentEmails": [
-    { "from": "sender", "subject": "subject", "action": "1-2 sentences on what action is needed and why it's urgent" }
-  ]
-}
-
-Rules:
-- urgentEmails: only emails where YOU personally need to respond or take action today. A real human sent it and expects something back, or there is a deadline/decision requiring your input.
-- Exclude: FYI updates, read receipts, digests, newsletters, marketing, any email you could ignore without consequence.
-- When in doubt, leave it out. An empty array is correct if nothing truly requires action.`;
-
-  let text = '';
-  try {
-    text = await llm.generateText({ system: EMAIL_SYSTEM, prompt, temperature: 0.2, maxTokens: 2048 });
-  } catch (err) {
-    console.error('[briefing-ai] email-brief generation failed:', err.message);
-    return null;
-  }
-
-  return parseAndValidate(text, {
-    label: 'email-brief',
-    validate: (parsed) => ({
-      urgentEmails: Array.isArray(parsed.urgentEmails) ? parsed.urgentEmails : [],
-    }),
-  });
-}
-
 module.exports = {
   generateBriefing, generateChiefBrief, generateWisdomInsights,
-  generateEmailBriefs, buildChiefBriefPrompt, buildWisdomPrompt, extractJson,
+  buildChiefBriefPrompt, buildWisdomPrompt, extractJson,
 };

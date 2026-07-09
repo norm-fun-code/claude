@@ -14,13 +14,12 @@
 // the original block before removing it from server.js.
 const express = require('express');
 const { withTimeout } = require('../util/async');
-const { fetchGmailThreads } = require('../services/gmail');
 const { fetchCalendarEvents, fetchWorkBusyBlocks } = require('../services/calendar');
 const { fetchRandomNotionPage, fetchNotionQuotes } = require('../services/notion');
 const { fetchRandomQuote } = require('../services/googleDoc');
 const { fetchWeather } = require('../services/weather');
 const { fetchMarkets } = require('../services/markets');
-const { generateChiefBrief, generateWisdomInsights, generateEmailBriefs } = require('../services/briefing-ai');
+const { generateChiefBrief, generateWisdomInsights } = require('../services/briefing-ai');
 const { getTodayWorkout } = require('../services/workout');
 const { buildWealthInsights } = require('../services/wealth-insights');
 const metricsStore = require('../store/metrics');
@@ -282,30 +281,16 @@ router.get('/briefing/live', asyncHandler(async (req, res) => {
     }
 
     const EXT = Number(process.env.BRIEFING_SOURCE_TIMEOUT_MS || 12000);
-    const [emailResult, marketsResult, weatherResult, calendarResult, workBusyResult] = await Promise.allSettled([
-      withTimeout(fetchGmailThreads(), EXT, 'gmail'),
+    const [marketsResult, weatherResult, calendarResult, workBusyResult] = await Promise.allSettled([
       withTimeout(fetchMarkets(), EXT * 3, 'markets'), // includes its own small LLM brief
       withTimeout(fetchWeather(), EXT, 'weather'),
       withTimeout(fetchCalendarEvents(), EXT, 'calendar'),
       withTimeout(fetchWorkBusyBlocks(), EXT, 'workCalendar'),
     ]);
-    const emails = emailResult.status === 'fulfilled' ? (emailResult.value ?? []) : [];
     const markets = marketsResult.status === 'fulfilled' ? marketsResult.value : null;
     const weather = weatherResult.status === 'fulfilled' ? weatherResult.value : null;
     const calendar = calendarResult.status === 'fulfilled' ? calendarResult.value : null;
     const workBusy = workBusyResult.status === 'fulfilled' ? workBusyResult.value : null;
-
-    let emailBriefs = null;
-    if (emails.length) {
-      emailBriefs = await withTimeout(
-        generateEmailBriefs(emails),
-        Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000),
-        'email-briefs'
-      ).catch((err) => {
-        console.error('[briefing live] email briefs failed:', err.message);
-        return null;
-      });
-    }
 
     const content = {
       ...prior.content,
@@ -313,7 +298,6 @@ router.get('/briefing/live', asyncHandler(async (req, res) => {
       ...(weather ? { weather } : {}),
       ...(calendar ? { calendar } : {}),
       ...(workBusy ? { workBusy } : {}),
-      ...(emailBriefs ? { urgentEmails: emailBriefs.urgentEmails } : {}),
       liveRefreshedAt: new Date().toISOString(),
     };
 
@@ -608,15 +592,11 @@ router.get('/briefing', asyncHandler(async (req, res) => {
   const seenNotion = await surfacedStore.recentRefs('notion_page', 30).catch(() => new Set());
 
   // Fetch all independent data sources in parallel. Each is bounded by a hard
-  // timeout so one slow upstream (Gmail/Notion/etc.) can't hang the whole
+  // timeout so one slow upstream (Notion/etc.) can't hang the whole
   // briefing — allSettled waits for every promise, so without this a single
   // stall blocks the response. A timed-out source just shows as a soft error.
-  //
-  // Gmail is skipped on same-day rebuilds (priorIsToday) — urgent emails don't
-  // change frequently enough to re-scan on every intraday rebuild. The prior
-  // build's urgentEmails are carried over. /api/briefing/live handles mid-day email refresh.
   const EXT = Number(process.env.BRIEFING_SOURCE_TIMEOUT_MS || 12000);
-  const [weatherResult, calendarResult, workBusyResult, notionResult, quoteResult, emailResult, marketsResult] =
+  const [weatherResult, calendarResult, workBusyResult, notionResult, quoteResult, marketsResult] =
     await Promise.allSettled([
       withTimeout(fetchWeather(), EXT, 'weather'),
       withTimeout(fetchCalendarEvents(), EXT, 'calendar'),
@@ -627,7 +607,6 @@ router.get('/briefing', asyncHandler(async (req, res) => {
         ? Promise.resolve({ text: prior.content.notionText, pageTitle: prior.content.notionPageTitle ?? 'Notion' })
         : withTimeout(fetchRandomNotionPage({ exclude: [...seenNotion] }), EXT, 'notion'),
       withTimeout(fetchRandomQuote(), EXT, 'googleDoc'),
-      Promise.resolve([]), // email context removed — not cost-effective for daily briefing
       withTimeout(fetchMarkets(), EXT, 'markets'),
     ]);
 
@@ -650,7 +629,11 @@ router.get('/briefing', asyncHandler(async (req, res) => {
     surfacedStore.record('notion_page', notionData.pageTitle).catch(() => {});
   }
   const quoteData = unwrap(quoteResult, 'googleDoc') ?? { quote: '' };
-  const emails = unwrap(emailResult, 'gmail') ?? [];
+  // Gmail is no longer fetched (removed with the newsletter-summary feature);
+  // generateChiefBrief still accepts an emailData param and its urgentEmails
+  // schema field, so this always resolves to an empty array rather than
+  // threading a removed feature's absence through every call site.
+  const emails = [];
   const markets = unwrap(marketsResult, 'markets');
 
   // Now that the source fetch above is done, make sure crossContext (kicked off

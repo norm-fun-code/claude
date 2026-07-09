@@ -10,9 +10,6 @@ const documentsStore = require('../store/documents');
 const findingsStore = require('../store/findings');
 const llm = require('../llm');
 const { fetchWorkBusyBlocks } = require('../services/calendar');
-const { fetchGmailThreads } = require('../services/gmail');
-const { generateBriefing } = require('../services/briefing-ai');
-const { withTimeout } = require('../util/async');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { requireAdminToken } = require('../middleware/adminAuth');
 
@@ -274,29 +271,6 @@ function createDiagnosticsRouter() {
     for (const t of txns) byCategory[t.category] = Math.round(((byCategory[t.category] || 0) + t.amount) * 100) / 100;
     res.json({ days, count: txns.length, topTransactions: sorted, byCategory });
   }));
-
-  // Diagnostic: reproduce the EXACT briefing LLM call (real fetched emails, real
-  // prompt) and time it, so we can see where the 60s goes vs the trivial probe.
-  router.get('/diag/briefing-llm', async (req, res) => {
-    const t0 = Date.now();
-    try {
-      const emails = await withTimeout(fetchGmailThreads(), 15000, 'gmail').catch(() => []);
-      const promptChars = JSON.stringify(emails).length;
-      const tg = Date.now();
-      const result = await generateBriefing(emails, 'Sample notion wisdom text.', 'A sample quote.', 'Tuesday', { type: 'Rest' }, [], '');
-      res.json({
-        ok: true,
-        totalMs: Date.now() - t0,
-        gmailMs: tg - t0,
-        llmMs: Date.now() - tg,
-        emailCount: emails.length,
-        emailPayloadChars: promptChars,
-        urgentEmails: result.urgentEmails.length,
-      });
-    } catch (err) {
-      res.json({ ok: false, ms: Date.now() - t0, error: (err.message || '').slice(0, 300) });
-    }
-  });
 
   // Quick smoke-test for the work calendar free/busy integration.
   // Returns the raw busy blocks for today — useful for verifying GOOGLE_WORK_CALENDAR_ID is correct.
