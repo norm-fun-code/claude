@@ -17,7 +17,7 @@
     "review": "node src/intelligence/review.js",
     "retention": "node src/db/retention.js",
     "test": "node --test test/*.test.js",
-    "test:integration": "node --test test/integration/*.test.js"
+    "test:integration": "node --test --test-concurrency=1 test/integration/*.test.js"
   },
   "dependencies": {
     "@notionhq/client": "^2.2.15",
