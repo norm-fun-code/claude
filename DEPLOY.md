@@ -66,16 +66,6 @@ railway variables --service backend --set 'TZ=America/New_York'
 railway variables --service backend --set 'SCHEDULE_HOUR=8'
 ```
 
-**UCP (Shopify Global Catalog) — verify they're set; add if missing:**
-
-```bash
-railway variables --service backend --kv 2>/dev/null | grep UCP_
-# If missing (secret ends 2836):
-# railway variables --service backend --set 'UCP_CLIENT_ID=54bb23ee62c5f181dfdaf4f5c6d1a4ab'
-# railway variables --service backend --set 'UCP_CATALOG_ID=01kt0b6qer0n6gszm4r8r6xbpw'
-# railway variables --service backend --set 'UCP_CLIENT_SECRET=YOUR_SECRET'
-```
-
 **Optional (sensible defaults exist; only set to override):**
 
 - `CORS_ORIGINS` — comma-separated browser origins. Locks CORS in production.
@@ -110,21 +100,9 @@ curl -s "$B/api/highlights?limit=3" -H "Authorization: Bearer $NT" \
   | python3 -c "import sys,json;print('highlights:',len(json.load(sys.stdin)['highlights']))"
 curl -s "$B/api/workout/checks?date=2026-06-01" -H "Authorization: Bearer $NT"
 
-# UCP catalog working (expect pool ~24, an ALOHA seller, clean $38.99 prices):
-curl -s -X POST "$B/api/shop/discover" -H "Authorization: Bearer $NT" \
-  -H "Content-Type: application/json" -d '{"message":"aloha bars"}' \
-  | python3 -c "import sys,json;d=json.load(sys.stdin);print('pool:',len(d['results']),'pageSize:',d.get('pageSize'))"
-
 # Morning briefing build (dry run — builds the cache, no push):
 curl -s -X POST "$B/api/morning/run" -H "Authorization: Bearer $NT" \
   -H "Content-Type: application/json" -d '{"dryRun":true}'
-```
-
-If UCP returns only web rows (no ALOHA seller), the catalog isn't matching —
-use the diagnostic to see why:
-
-```bash
-curl -s "$B/api/shop/ucp-diagnose" -H "Authorization: Bearer $NT" | python3 -m json.tool
 ```
 
 ## 5. Build + ship the mobile app (TestFlight)
@@ -199,8 +177,6 @@ Push can't be verified from CI; it needs a real device + a linked EAS project.
 
 ## What's in this release
 
-- **Shopping:** UCP Shopify catalog (live), guaranteed UCP/web mix with Amazon
-  always on page 1, over-fetch + in-app "Show more" paging.
 - **Health:** Sleep score + Deep/REM breakdown, Recovery score (HRV/RHR/sleep,
   baseline-normalized), sleep debt, sleep consistency, training load (ACWR),
   unified HRV grading (50+/35-49/<35).
@@ -227,9 +203,6 @@ Push can't be verified from CI; it needs a real device + a linked EAS project.
 ## Handy diagnostics
 
 ```bash
-# UCP flow (config → token → search), surfaces the real error:
-curl -s "$B/api/shop/ucp-diagnose" -H "Authorization: Bearer $NT" | python3 -m json.tool
-
 # Trigger the morning routine on demand (build + push):
 curl -s -X POST "$B/api/morning/run" -H "Authorization: Bearer $NT" -H "Content-Type: application/json" -d '{}'
 

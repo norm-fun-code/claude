@@ -29,8 +29,6 @@ const monarch = require('./src/connectors/monarch');
 const { analyze, TREND_STALE_DAYS } = require('./src/intelligence/analyze');
 const { embedPending } = require('./src/intelligence/embeddings');
 const { ask, looksLikeCommand } = require('./src/chat/ask');
-const { discover, addToCart, history: shopHistory, ucpProbe } = require('./src/services/shop');
-const ucp = require('./src/services/ucp');
 const annotationsStore = require('./src/store/annotations');
 const experimentsStore = require('./src/store/experiments');
 const experiments = require('./src/intelligence/experiments');
@@ -116,12 +114,6 @@ async function recomputeHabitScore(tz) {
     console.error('[habit_score] recompute failed:', err.message);
   }
 }
-
-// Public UCP agent profile — Shopify's Global Catalog fetches this (no auth) to
-// negotiate capabilities. Lives outside /api so the bearer gate doesn't block it.
-app.get('/.well-known/ucp-agent', (req, res) => {
-  res.json(ucp.agentProfile());
-});
 
 // Health-domain routes (server health check, Apple Health + Eight Sleep
 // ingest/readback) live in src/routes/health.js — the first router
@@ -1295,55 +1287,6 @@ app.get('/api/consolidate', async (req, res) => {
 app.post('/api/embed', async (req, res) => {
   try {
     res.json(await embedPending());
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Shopping agent (UCP). Two-step, fully in-app: discover surfaces product
-// options ("white running sneakers under $100"); cart builds a checkout link for
-// the one you pick. Only the final checkout leaves the app. Never pays for you.
-app.post('/api/shop/discover', async (req, res) => {
-  try {
-    const { message, country } = req.body || {};
-    res.json(await discover(message, { country }));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/shop/cart', async (req, res) => {
-  try {
-    const { business, variantId, quantity, item } = req.body || {};
-    res.json(await addToCart({ business, variantId, quantity, item }));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Shop history for one-tap reorder.
-app.get('/api/shop/history', async (req, res) => {
-  try {
-    res.json({ orders: await shopHistory({ limit: 12 }) });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Diagnostic: see what the UCP CLI actually returns on this host.
-app.get('/api/shop/ucp-probe', async (req, res) => {
-  try {
-    res.json(await ucpProbe(req.query.q || 'protein bars'));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Diagnostic: walk the UCP HTTP flow (config → token → search) and surface the
-// REAL error at whichever stage fails, instead of discover's silent fallback.
-app.get('/api/shop/ucp-diagnose', async (req, res) => {
-  try {
-    res.json(await ucp.diagnose(req.query.q || 'aloha protein bars'));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
