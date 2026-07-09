@@ -40,6 +40,7 @@ const { runNudges, runCheckinReminder, runHabitsReminder } = require('./src/noti
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./src/notify/morning');
 const { createHealthRouter } = require('./src/routes/health');
 const { createAnnotationsRouter } = require('./src/routes/annotations');
+const { createGoalsRouter } = require('./src/routes/goals');
 const surfacedStore = require('./src/store/surfaced');
 const briefingsStore = require('./src/store/briefings');
 const recommendationsStore = require('./src/store/recommendations');
@@ -2136,40 +2137,9 @@ app.post('/api/chat/reindex', async (req, res) => {
 // internal paths resolve to the exact same /api/... URLs as before.
 app.use('/api', createAnnotationsRouter());
 
-// --- Goals ----------------------------------------------------------------
-
-const goalsStore = require('./src/store/goals');
-
-app.get('/api/goals', async (req, res) => {
-  try {
-    const status = req.query.status ?? 'active';
-    res.json({ goals: await goalsStore.listGoals({ status: status === 'all' ? null : status }) });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/api/goals', async (req, res) => {
-  try {
-    const { title, domain, metric, targetValue, unit, targetDate, baselineValue } = req.body ?? {};
-    if (!title?.trim()) return res.status(400).json({ error: 'title required' });
-    const goal = await goalsStore.createGoal({ title: title.trim(), domain, metric, targetValue, unit, targetDate, baselineValue });
-    res.json({ goal });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.patch('/api/goals/:id', async (req, res) => {
-  try {
-    const { status, title } = req.body ?? {};
-    await goalsStore.updateGoal(req.params.id, { status, title });
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.delete('/api/goals/:id', async (req, res) => {
-  try {
-    await goalsStore.deleteGoal(req.params.id);
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
+// Goals routes live in src/routes/goals.js — the third router extraction
+// out of this file.
+app.use('/api', createGoalsRouter());
 
 // --- Experiments (the hypothesis loop) -----------------------------------
 
