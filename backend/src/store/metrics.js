@@ -183,11 +183,28 @@ async function dailyAggregatePreferSource({ domain, metric, from, to, agg = 'avg
   return rows;
 }
 
-/** Distinct (domain, metric) pairs present in the spine. */
+// listMetricKeys() has no WHERE clause — a full-table DISTINCT scan that gets
+// slower forever as `metrics` grows, unlike every other query in this file
+// (all bounded by a `ts >=` range on the indexed column). What it returns —
+// the SET of distinct (domain, metric) pairs ever written — changes only
+// when a genuinely new metric type is first ingested, essentially never
+// during normal operation. Cache it for a few minutes rather than re-scanning
+// the whole table on every analyze() run and every chat/ask request.
+let _metricKeysCache = null;
+let _metricKeysCacheAt = 0;
+const METRIC_KEYS_CACHE_MS = Number(process.env.METRIC_KEYS_CACHE_MS) || 5 * 60 * 1000;
+
+/** Distinct (domain, metric) pairs present in the spine. Cached briefly (see
+ *  METRIC_KEYS_CACHE_MS) — safe because this set changes on the order of
+ *  "a new metric type shipped," not per-request. */
 async function listMetricKeys() {
+  const now = Date.now();
+  if (_metricKeysCache && now - _metricKeysCacheAt < METRIC_KEYS_CACHE_MS) return _metricKeysCache;
   const { rows } = await query(
     `SELECT DISTINCT domain, metric FROM metrics ORDER BY domain, metric`
   );
+  _metricKeysCache = rows;
+  _metricKeysCacheAt = now;
   return rows;
 }
 
