@@ -52,6 +52,8 @@ const { createEngagementRouter } = require('./src/routes/engagement');
 const { createSchedulingRouter } = require('./src/routes/scheduling');
 const { createEveningBriefRouter } = require('./src/routes/evening-brief');
 const { createWealthRouter } = require('./src/routes/wealth');
+const { createRecommendationsRouter } = require('./src/routes/recommendations');
+const { createCommitmentsRouter } = require('./src/routes/commitments');
 const surfacedStore = require('./src/store/surfaced');
 const briefingsStore = require('./src/store/briefings');
 const recommendationsStore = require('./src/store/recommendations');
@@ -140,8 +142,6 @@ app.use('/api', createIntentionsRouter());
 // into weekly context. Creatable here or by telling the Ask chat / voice chief
 // ("remember: Nancy is due January 6th").
 const lifeChaptersStore = require('./src/store/lifeChapters');
-const commitmentsStore = require('./src/store/commitments');
-const dayJournalStore = require('./src/store/dayJournal');
 
 // Chapters routes (GET/POST/DELETE) live in src/routes/chapters.js — the
 // twelfth router extraction out of this file. lifeChaptersStore stays
@@ -1735,203 +1735,15 @@ app.get('/api/briefing', async (req, res) => {
     .catch((err) => console.error('[ingest/analyze] failed:', err.message));
 });
 
-// Pipeline health — per-connector freshness + staleness status. The authoritative
-// version of the stale check that also runs silently inside the briefing build.
-// Useful for debugging "why is my briefing citing old numbers?"
-const PIPELINE_STALE_THRESHOLDS = {
-  eight_sleep_api:  { hours: 26, criticalFor: 'recovery/sleep' },
-  monarch_mcp_sync: { hours: 26, criticalFor: 'wealth/spending' },
-  monarch:          { hours: 48, criticalFor: 'wealth' },
-  health:           { hours: 6,  criticalFor: 'activity/steps' },
-  checkin:          { hours: 36, criticalFor: 'mood/energy/focus' },
-  habits:           { hours: 36, criticalFor: 'habits' },
-  readwise:         { hours: 72, criticalFor: 'highlights' },
-};
-const PIPELINE_DEFAULT_STALE_H = 72;
+// Pipeline-health and recommendation-ledger routes live in
+// src/routes/recommendations.js — the twenty-fourth router extraction out
+// of this file.
+app.use('/api', createRecommendationsRouter());
 
-app.get('/api/pipeline-health', async (req, res) => {
-  try {
-    const sources = await sourcesStore.listSources();
-    const now = Date.now();
-    const connectors = sources.map((s) => {
-      const thresh = PIPELINE_STALE_THRESHOLDS[s.id] ?? { hours: PIPELINE_DEFAULT_STALE_H, criticalFor: null };
-      const hoursAgo = s.last_sync_at
-        ? (now - new Date(s.last_sync_at).getTime()) / 3_600_000
-        : null;
-      const isStale = hoursAgo == null || hoursAgo > thresh.hours;
-      return {
-        id: s.id,
-        displayName: s.display_name,
-        domain: s.domain,
-        status: s.status ?? 'unknown',
-        lastSyncAt: s.last_sync_at ?? null,
-        lastError: s.last_error ?? null,
-        hoursAgo: hoursAgo != null ? Math.round(hoursAgo * 10) / 10 : null,
-        staleThresholdHours: thresh.hours,
-        isStale,
-        criticalFor: thresh.criticalFor,
-      };
-    });
-    const stale = connectors.filter((c) => c.isStale && PIPELINE_STALE_THRESHOLDS[c.id]);
-    res.json({
-      connectors,
-      anyStale: stale.length > 0,
-      staleSummary: stale.length
-        ? `${stale.length} source(s) stale: ${stale.map((c) => c.displayName || c.id).join(', ')}`
-        : 'All monitored sources are fresh.',
-      checkedAt: new Date().toISOString(),
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Recommendation ledger — what leverage actions have been surfaced + outcome data.
-// GET /api/recommendations?limit=50&since=YYYY-MM-DD&pending=1
-app.get('/api/recommendations', async (req, res) => {
-  try {
-    const limit = Math.min(Number(req.query.limit) || 50, 200);
-    const since = req.query.since ? new Date(req.query.since) : null;
-    const rows = await recommendationsStore.listRecommendations({ limit, since });
-    // Summary stats for the weekly review "What I Tried" view.
-    const measured = rows.filter((r) => r.outcome_measured_at != null);
-    const positive = measured.filter((r) => {
-      if (r.outcome_delta == null) return false;
-      return r.expected_direction === 'down'
-        ? Number(r.outcome_delta) < 0
-        : Number(r.outcome_delta) > 0;
-    });
-    res.json({
-      recommendations: rows,
-      stats: {
-        total: rows.length,
-        measured: measured.length,
-        positive: positive.length,
-        hitRate: measured.length ? Math.round((positive.length / measured.length) * 100) : null,
-      },
-    });
-    // Background: auto-measure outcomes for any pending recs with enough elapsed time.
-    recommendationsStore.measureOutcomes().catch(() => {});
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /api/recommendations/:id/outcome — explicit thumbs-up/down from the user.
-app.post('/api/recommendations/:id/outcome', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { thumbsUp } = req.body;
-    if (typeof thumbsUp !== 'boolean') return res.status(400).json({ error: 'thumbsUp required' });
-    const { query: dbQuery } = require('./src/db');
-    const { rows } = await dbQuery('SELECT expected_direction FROM recommendations WHERE id = $1', [id]);
-    if (!rows.length) return res.status(404).json({ error: 'not found' });
-    const { expected_direction } = rows[0];
-    // thumbsUp = true means "it worked as expected"; delta sign follows expected direction.
-    const delta = thumbsUp
-      ? (expected_direction === 'down' ? -1 : 1)
-      : (expected_direction === 'down' ? 1 : -1);
-    // First verdict wins — a rec resolved via a linked commitment's done/skipped
-    // cascade won't be silently overwritten by a later thumbs tap (or vice versa).
-    const applied = await recommendationsStore.setOutcome(id, { delta, measuredAt: new Date() });
-    res.json({ ok: true, delta, applied });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.delete('/api/recommendations/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { query: dbQuery } = require('./src/db');
-    const { rowCount } = await dbQuery('DELETE FROM recommendations WHERE id = $1', [id]);
-    if (!rowCount) return res.status(404).json({ error: 'not found' });
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ── Commitments (follow-through loop) ─────────────────────────────────────────
-
-// Open commitments for the Today card, soonest-due first.
-app.get('/api/commitments', async (req, res) => {
-  try {
-    res.json({ commitments: await commitmentsStore.listActive({ limit: 20 }) });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Manually add a commitment (typed, not by voice). { title, detail?, at? }
-app.post('/api/commitments', async (req, res) => {
-  try {
-    const { title, detail = null, at = null } = req.body || {};
-    if (!title || !String(title).trim()) return res.status(400).json({ error: 'title required' });
-    const { dueAt } = commitmentsStore.resolveReminderTime(at, new Date());
-    const row = await commitmentsStore.create({ title, detail, source: 'manual', dueAt });
-    res.json({ ok: true, commitment: row });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/commitments/:id/done', async (req, res) => {
-  try {
-    const row = await commitmentsStore.markDone(Number(req.params.id));
-    if (!row) return res.status(404).json({ error: 'not found or already done' });
-    res.json({ ok: true, commitment: row });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/commitments/:id/skip', async (req, res) => {
-  try {
-    const row = await commitmentsStore.markSkipped(Number(req.params.id));
-    if (!row) return res.status(404).json({ error: 'not found or not open' });
-    res.json({ ok: true, commitment: row });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Fire due commitment reminders on demand (mirrors the scheduler poll — for testing).
-app.post('/api/commitments/run', async (req, res) => {
-  try {
-    const { runCommitmentReminders } = require('./src/notify/commitments');
-    const force = req.query.force === '1' || req.query.force === 'true';
-    res.json(await runCommitmentReminders({ force }));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ── Daily context journal ─────────────────────────────────────────────────────
-
-// Recent daily-context entries (their own words about their days).
-app.get('/api/day-context', async (req, res) => {
-  try {
-    const days = Math.min(Number(req.query.days) || 14, 90);
-    res.json({ entries: await dayJournalStore.recent({ days, limit: 30 }) });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Add a daily-context entry (typed, not by voice). { text }
-app.post('/api/day-context', async (req, res) => {
-  try {
-    const { text } = req.body || {};
-    if (!text || !String(text).trim()) return res.status(400).json({ error: 'text required' });
-    const tz = process.env.TZ || 'America/New_York';
-    const entryDate = new Date().toLocaleDateString('en-CA', { timeZone: tz });
-    const row = await dayJournalStore.create({ text, entryDate, source: 'manual' });
-    res.json({ ok: true, entry: row });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// Commitments (follow-through loop) and daily-context journal routes live
+// in src/routes/commitments.js — the twenty-fifth router extraction out of
+// this file.
+app.use('/api', createCommitmentsRouter());
 
 // Central error handler — MUST be registered after every route/router above
 // (Express error middleware only catches errors from handlers registered
