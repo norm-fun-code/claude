@@ -48,19 +48,19 @@ function pcmToWav(pcm, { sampleRate = 24000, channels = 1, bitsPerSample = 16 } 
  * language delivery instructions without reading them aloud).
  */
 // Default prebuilt voice. Gemini's voices each have a fixed character; the style
-// directive only nudges prosody, so the VOICE is the real lever. 'Achird' is
-// Google's "Friendly" male voice. Swap via NORMOS_VOICE. Other upbeat/energetic
-// male options: Puck (Upbeat), Fenrir (Excitable), Sadachbia (Lively),
+// directive only nudges prosody, so the VOICE is the real lever. 'Orus' is
+// Google's "Firm" male voice. Swap via NORMOS_VOICE. Other options tried:
+// Achird (Friendly), Puck (Upbeat), Fenrir (Excitable), Sadachbia (Lively),
 // Zubenelgenubi (Casual).
-const DEFAULT_VOICE = process.env.NORMOS_VOICE || 'Achird';
+const DEFAULT_VOICE = process.env.NORMOS_VOICE || 'Orus';
 
 async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
   const trimmed = String(text || '').trim();
   if (!trimmed) throw new Error('nothing to synthesize');
   const directive = style || process.env.NORMOS_VOICE_STYLE ||
-    "You are the user's chief of staff hyping them up for the day — upbeat, energetic, and genuinely friendly, like a great coach or a sharp friend who's fired up to help them win. " +
-    'Deliver it with real warmth and momentum: a lively, engaged pace, natural enthusiasm, strong emphasis on the wins and the key moves, and an easy friendliness throughout. ' +
-    'Confident and positive, never flat or robotic and never a newsreader — bring the energy of someone who is genuinely glad to be in their corner';
+    'Speak naturally with a warm, calm, optimistic tone. Sound like a trusted friend who is genuinely excited to help. ' +
+    'Keep responses conversational and concise. Never sound robotic, overly enthusiastic, or like a customer support agent. ' +
+    'Use occasional humor and warmth. Pause naturally. Celebrate wins without exaggeration.';
   const payload = {
     contents: [{ parts: [{ text: `${directive}:\n\n${trimmed.slice(0, 4000)}` }] }],
     generationConfig: {
