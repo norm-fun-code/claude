@@ -6,7 +6,7 @@ function baseUrl() {
   return process.env.OLLAMA_URL || 'http://localhost:11434';
 }
 
-async function generateText({ system, prompt, temperature = 0.4 }) {
+async function generateText({ system, prompt, temperature = 0.4, jsonMode = false }) {
   const model = process.env.OLLAMA_MODEL || 'llama3.1';
   const { data } = await axios.post(`${baseUrl()}/api/generate`, {
     model,
@@ -14,6 +14,9 @@ async function generateText({ system, prompt, temperature = 0.4 }) {
     prompt,
     stream: false,
     options: { temperature },
+    // Constrains sampling to syntactically valid JSON — see gemini.js's
+    // equivalent responseMimeType for why this matters.
+    ...(jsonMode ? { format: 'json' } : {}),
   });
   return data.response ?? '';
 }

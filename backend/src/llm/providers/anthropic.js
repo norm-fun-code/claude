@@ -9,7 +9,7 @@ const https = require('https');
 // reuses the socket across calls for the lifetime of the process.
 const keepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 16 });
 
-async function generateText({ system, prompt, maxTokens = 4096, timeoutMs = 110000, fast = false, model: modelOverride }) {
+async function generateText({ system, prompt, maxTokens = 4096, timeoutMs = 110000, fast = false, model: modelOverride, jsonMode = false, jsonSchema = null }) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
   // `fast` routes clear commands (log a habit, swap a workout, set a reminder)
@@ -36,9 +36,34 @@ async function generateText({ system, prompt, maxTokens = 4096, timeoutMs = 1100
     system: systemBlock,
     messages: [{ role: 'user', content: prompt }],
   };
-  // Extended thinking only on the reasoning path; the fast command path omits it
-  // entirely (biggest single latency saving for short acknowledgments).
-  if (!fast) body.thinking = { type: 'adaptive' };
+
+  // jsonMode + a schema: force a single tool call whose input_schema IS the
+  // shape we want, instead of hoping the model follows a prose instruction to
+  // "return only valid JSON." Anthropic constrains generation to match the
+  // schema, so the tool_use block's `input` is guaranteed-parseable JSON —
+  // this is the real fix for a class of bug that plain prompting can't fully
+  // prevent (see the engineering review's #4). Claude has no prefill-based
+  // JSON mode on this model family (4.6+/5 dropped assistant prefill), so
+  // tool-use forcing is the only native guarantee available.
+  //
+  // Forced tool_choice is incompatible with extended thinking (the API
+  // rejects the combination), so this path always omits `thinking` — a
+  // reliability/depth tradeoff that's the right call for something whose
+  // failure mode is "silently shows yesterday's content."
+  const useForcedTool = jsonMode && jsonSchema;
+  if (useForcedTool) {
+    body.tools = [{
+      name: 'submit_result',
+      description: 'Submit the result in the required structure.',
+      input_schema: jsonSchema,
+    }];
+    body.tool_choice = { type: 'tool', name: 'submit_result' };
+  } else if (!fast) {
+    // Extended thinking only on the reasoning path; the fast command path
+    // omits it entirely (biggest single latency saving for short
+    // acknowledgments), and the forced-tool path above can't use it at all.
+    body.thinking = { type: 'adaptive' };
+  }
 
   const { data } = await axios.post(
     'https://api.anthropic.com/v1/messages',
@@ -55,6 +80,15 @@ async function generateText({ system, prompt, maxTokens = 4096, timeoutMs = 1100
   );
 
   logUsage(model, data.usage);
+
+  if (useForcedTool) {
+    const toolUse = (data.content || []).find((b) => b.type === 'tool_use' && b.name === 'submit_result');
+    // Re-stringify so every caller (via src/llm/parseJson.js) parses the
+    // same way regardless of provider/mode — `input` here is already a JS
+    // object, not text, since Anthropic parses the schema-constrained
+    // generation for us.
+    return toolUse ? JSON.stringify(toolUse.input) : '';
+  }
 
   // Thinking blocks have type 'thinking' — only join text blocks.
   return (data.content || []).filter((b) => b.type === 'text').map((b) => b.text || '').join('');

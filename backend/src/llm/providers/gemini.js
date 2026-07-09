@@ -9,14 +9,22 @@ function key() {
   return k;
 }
 
-async function generateText({ system, prompt, temperature = 0.4, maxTokens = 1024 }) {
+async function generateText({ system, prompt, temperature = 0.4, maxTokens = 1024, jsonMode = false }) {
   const model = process.env.GEMINI_CHAT_MODEL || 'gemini-3.5-flash';
+  const generationConfig = { temperature, maxOutputTokens: maxTokens };
+  // Constrains the model's token sampling to only ever produce syntactically
+  // valid JSON — used by every call site that parses the response as JSON
+  // (see src/llm/parseJson.js). This is a real guarantee from the API, not a
+  // prompt instruction the model can ignore; callers that were previously
+  // relying purely on "Return ONLY a single valid JSON object" in the prompt
+  // text now get that enforced server-side too.
+  if (jsonMode) generationConfig.responseMimeType = 'application/json';
   const { data } = await axios.post(
     `${BASE}/models/${model}:generateContent?key=${key()}`,
     {
       systemInstruction: system ? { parts: [{ text: system }] } : undefined,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature, maxOutputTokens: maxTokens },
+      generationConfig,
     },
     // Generous transport timeout: the full briefing generation legitimately
     // takes ~60s (4 newsletter summaries + urgent emails + insights = lots of

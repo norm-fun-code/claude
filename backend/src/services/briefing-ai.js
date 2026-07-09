@@ -17,6 +17,7 @@
 //     Splitting lets the caller skip generateWisdomInsights() entirely once
 //     today's quote/Notion pair is already locked.
 const llm = require('../llm');
+const { extractJson, parseAndValidate } = require('../llm/parseJson');
 
 // Static voice + output-schema + rules for the chief-brief call. This text is
 // BYTE-IDENTICAL on every build (no per-call dynamic content mixed in), so the
@@ -186,30 +187,46 @@ ${notionText}
 Recent wellbeing (last 7 days): ${wellbeingContext || 'no recent check-in data'}`;
 }
 
-/** Robustly pull a JSON object out of an LLM response (handles fences/prose). */
-function extractJson(text) {
-  if (!text) return null;
-  let s = String(text).trim()
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim();
-  try {
-    return JSON.parse(s);
-  } catch {
-    const i = s.indexOf('{');
-    const j = s.lastIndexOf('}');
-    if (i >= 0 && j > i) {
-      try { return JSON.parse(s.slice(i, j + 1)); } catch { /* fall through */ }
-    }
-    return null;
-  }
-}
-
 const EMPTY_CHIEF = { morningFocus: '', chiefBrief: null, urgentEmails: [] };
 const EMPTY_WISDOM = { quoteInsight: '', notionQuote: '', notionInsight: '' };
 
 const CHIEF_REQUIRED_FIELDS = ['synthesis', 'action', 'risk', 'move'];
+
+// Passed as jsonMode+jsonSchema so providers that support it (Gemini via
+// responseMimeType, Anthropic via a forced tool call) constrain generation
+// to this shape server-side instead of relying purely on CHIEF_SYSTEM's
+// prose instruction — see the engineering review's #4 and each provider's
+// generateText for how this is enforced.
+const CHIEF_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    chiefBrief: {
+      type: 'object',
+      properties: {
+        synthesis: { type: 'string' },
+        action: { type: 'string' },
+        risk: { type: 'string' },
+        move: { type: 'string' },
+        openQuestion: { type: 'string' },
+      },
+      required: ['synthesis', 'action', 'risk', 'move', 'openQuestion'],
+    },
+    morningFocus: { type: 'string' },
+    urgentEmails: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          from: { type: 'string' },
+          subject: { type: 'string' },
+          action: { type: 'string' },
+        },
+        required: ['from', 'subject', 'action'],
+      },
+    },
+  },
+  required: ['chiefBrief', 'morningFocus', 'urgentEmails'],
+};
 
 /** One LLM call + parse + shape-validate. Returns the result shape or null (retryable). */
 async function chiefBriefAttempt(prompt, attemptLabel) {
@@ -223,53 +240,46 @@ async function chiefBriefAttempt(prompt, attemptLabel) {
     // could plausibly push the real output past 4096 tokens, truncating the
     // JSON mid-object — which fails validation with no sign it was a length
     // problem rather than a formatting one. Cheap insurance either way.
-    text = await llm.generateText({ system: CHIEF_SYSTEM, prompt, temperature: 0.2, maxTokens: 8192 });
+    text = await llm.generateText({
+      system: CHIEF_SYSTEM, prompt, temperature: 0.2, maxTokens: 8192,
+      jsonMode: true, jsonSchema: CHIEF_JSON_SCHEMA,
+    });
   } catch (err) {
     console.error(`[briefing-ai] chief-brief generation failed (${attemptLabel}):`, err.message);
     return null;
   }
 
-  const parsed = extractJson(text);
-  if (!parsed) {
-    // Log a preview so a recurrence is actually diagnosable (truncation,
-    // markdown fencing extractJson didn't strip, a refusal, an empty
-    // response) instead of just "wasn't valid JSON" with nothing to go on.
-    console.error(
-      `[briefing-ai] chief-brief response was not valid JSON (${attemptLabel}), length=${text.length}. ` +
-      `Preview: ${JSON.stringify(text.slice(0, 500))}`
-    );
-    return null;
-  }
-
-  // Structured chief-of-staff brief: only keep it if all four blocks are present
-  // strings, so the card can trust the shape (else null → card hides).
-  const cb = parsed.chiefBrief;
-  const shapeOk = cb && typeof cb === 'object' && CHIEF_REQUIRED_FIELDS.every((k) => typeof cb[k] === 'string' && cb[k].trim());
-  if (!shapeOk) {
-    // This used to fail silently — the caller falls back to the PRIOR build's
-    // chiefBrief (see briefing.js), so a bad shape here quietly shows a stale
-    // brief with no error anywhere, and could recur build after build with no
-    // trace of why. Log exactly what's wrong AND a preview of what came back.
-    const missing = !cb || typeof cb !== 'object'
-      ? 'chiefBrief missing or not an object'
-      : CHIEF_REQUIRED_FIELDS.filter((k) => !(typeof cb[k] === 'string' && cb[k].trim())).join(', ') + ' missing/empty';
-    console.error(
-      `[briefing-ai] chief-brief shape invalid (${attemptLabel}): ${missing}. ` +
-      `Parsed chiefBrief: ${JSON.stringify(cb).slice(0, 500)}`
-    );
-    return null;
-  }
-
-  return {
-    morningFocus: typeof parsed.morningFocus === 'string' ? parsed.morningFocus : '',
-    chiefBrief: {
-      synthesis: cb.synthesis, action: cb.action, risk: cb.risk, move: cb.move,
-      // The one thing the brief is genuinely unsure about today — often empty
-      // (restraint), a real inline question when present. Trim + drop generic ones.
-      openQuestion: typeof cb.openQuestion === 'string' && cb.openQuestion.trim().length > 3 ? cb.openQuestion.trim() : '',
+  return parseAndValidate(text, {
+    label: `chief-brief (${attemptLabel})`,
+    validate: (parsed) => {
+      // Structured chief-of-staff brief: only keep it if all four blocks are
+      // present strings, so the card can trust the shape (else null → card
+      // hides, and the caller falls back to the PRIOR build's chiefBrief —
+      // see briefing.js). Log exactly which field(s) are missing on top of
+      // parseAndValidate's own generic log: this specific site has a history
+      // of silently recurring failures, and "move missing/empty" is a lot
+      // faster to act on than re-deriving it from a raw JSON dump each time.
+      const cb = parsed.chiefBrief;
+      const shapeOk = cb && typeof cb === 'object' && CHIEF_REQUIRED_FIELDS.every((k) => typeof cb[k] === 'string' && cb[k].trim());
+      if (!shapeOk) {
+        const missing = !cb || typeof cb !== 'object'
+          ? 'chiefBrief missing or not an object'
+          : CHIEF_REQUIRED_FIELDS.filter((k) => !(typeof cb[k] === 'string' && cb[k].trim())).join(', ') + ' missing/empty';
+        console.error(`[briefing-ai] chief-brief shape invalid (${attemptLabel}): ${missing}.`);
+        return null;
+      }
+      return {
+        morningFocus: typeof parsed.morningFocus === 'string' ? parsed.morningFocus : '',
+        chiefBrief: {
+          synthesis: cb.synthesis, action: cb.action, risk: cb.risk, move: cb.move,
+          // The one thing the brief is genuinely unsure about today — often empty
+          // (restraint), a real inline question when present. Trim + drop generic ones.
+          openQuestion: typeof cb.openQuestion === 'string' && cb.openQuestion.trim().length > 3 ? cb.openQuestion.trim() : '',
+        },
+        urgentEmails: Array.isArray(parsed.urgentEmails) ? parsed.urgentEmails : [],
+      };
     },
-    urgentEmails: Array.isArray(parsed.urgentEmails) ? parsed.urgentEmails : [],
-  };
+  });
 }
 
 /** Generate the chief-brief + morningFocus + urgentEmails section only. */
@@ -307,29 +317,31 @@ async function generateWisdomInsights(notionText, quote, wellbeingContext = '') 
     return { ...EMPTY_WISDOM };
   }
 
-  const parsed = extractJson(text);
-  if (!parsed) {
-    console.error('[briefing-ai] wisdom response was not valid JSON; returning empty.');
-    return { ...EMPTY_WISDOM };
-  }
-
-  // Reject notionQuote if it looks like a heading or organizational marker —
-  // a guardrail against the LLM picking [section: ...] labels, ★-prefixed
-  // chapter titles, or short fragments that aren't real sentences.
-  const rawNotionQuote = typeof parsed.notionQuote === 'string' ? parsed.notionQuote.trim() : '';
-  const looksLikeHeading = (s) =>
-    !s ||
-    /^\[section:/i.test(s) ||
-    /^[★☆#]/.test(s) ||
-    s.endsWith(':') ||
-    (s.length < 25 && !/[.!?,;]/.test(s));
-  const notionQuote = looksLikeHeading(rawNotionQuote) ? '' : rawNotionQuote;
-
-  return {
-    quoteInsight: typeof parsed.quoteInsight === 'string' ? parsed.quoteInsight : '',
-    notionQuote,
-    notionInsight: notionQuote ? (typeof parsed.notionInsight === 'string' ? parsed.notionInsight : '') : '',
-  };
+  const result = parseAndValidate(text, {
+    label: 'wisdom',
+    validate: (parsed) => {
+      // Reject notionQuote if it looks like a heading or organizational marker —
+      // a guardrail against the LLM picking [section: ...] labels, ★-prefixed
+      // chapter titles, or short fragments that aren't real sentences. There's
+      // no reject-the-whole-response case here (unlike chief-brief) — every
+      // field independently falls back to '' if missing/wrong type, so this
+      // always returns a usable object once JSON parsing itself succeeds.
+      const rawNotionQuote = typeof parsed.notionQuote === 'string' ? parsed.notionQuote.trim() : '';
+      const looksLikeHeading = (s) =>
+        !s ||
+        /^\[section:/i.test(s) ||
+        /^[★☆#]/.test(s) ||
+        s.endsWith(':') ||
+        (s.length < 25 && !/[.!?,;]/.test(s));
+      const notionQuote = looksLikeHeading(rawNotionQuote) ? '' : rawNotionQuote;
+      return {
+        quoteInsight: typeof parsed.quoteInsight === 'string' ? parsed.quoteInsight : '',
+        notionQuote,
+        notionInsight: notionQuote ? (typeof parsed.notionInsight === 'string' ? parsed.notionInsight : '') : '',
+      };
+    },
+  });
+  return result ?? { ...EMPTY_WISDOM };
 }
 
 /**
@@ -422,15 +434,12 @@ Rules:
     return null;
   }
 
-  const parsed = extractJson(text);
-  if (!parsed) {
-    console.error('[briefing-ai] email-brief response was not valid JSON.');
-    return null;
-  }
-
-  return {
-    urgentEmails: Array.isArray(parsed.urgentEmails) ? parsed.urgentEmails : [],
-  };
+  return parseAndValidate(text, {
+    label: 'email-brief',
+    validate: (parsed) => ({
+      urgentEmails: Array.isArray(parsed.urgentEmails) ? parsed.urgentEmails : [],
+    }),
+  });
 }
 
 module.exports = {

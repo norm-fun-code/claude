@@ -13,7 +13,7 @@ require('dotenv').config();
 const llm = require('../llm');
 const findingsStore = require('../store/findings');
 const selfModelStore = require('../store/selfModel');
-const { extractJson } = require('../services/briefing-ai');
+const { parseAndValidate } = require('../llm/parseJson');
 
 // Finding types that are inherently cross-domain, plus the generic correlation
 // flagged crossDomain by analyze(). These are the raw material.
@@ -108,21 +108,26 @@ async function generateCrossContext({ minRelationships = 2 } = {}) {
   let selfModelText = '';
   try { selfModelText = (await selfModelStore.latestModelText()) ?? ''; } catch { /* optional */ }
 
-  let parsed = null;
+  let text = '';
   try {
-    const text = await llm.generateText({
+    text = await llm.generateText({
       system: SYSTEM,
       prompt: buildPrompt(relationships, selfModelText),
       temperature: 0.5,
       maxTokens: 900,
     });
-    parsed = extractJson(text);
   } catch (err) {
     console.error('[crossContext] generation failed:', err.message);
     return { generated: 0, insights: [] };
   }
 
-  const insights = Array.isArray(parsed?.insights) ? parsed.insights.slice(0, 3) : [];
+  const validated = parseAndValidate(text, {
+    label: 'cross-context',
+    validate: (parsed) => (Array.isArray(parsed?.insights) ? parsed.insights : null),
+  });
+  // Each item still needs its own headline/insight before it's usable —
+  // Array.isArray(parsed.insights) alone doesn't guarantee well-formed items.
+  const insights = (validated ?? []).filter((ins) => ins?.headline && ins?.insight).slice(0, 3);
   if (!insights.length) {
     await findingsStore.supersedeAuto(['cross_context']).catch(() => {});
     return { generated: 0, insights: [] };
