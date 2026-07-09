@@ -14,6 +14,22 @@ import { RECOVERY_HISTORY_URL, SOURCES_FRESHNESS_URL, authHeaders, fetchWithTime
 
 interface StaleSource { source: string; label: string; ageDays: number }
 
+// Cached briefly — source freshness moves on the order of hours, and
+// RecoveryCard fully unmounts/remounts on every Health-tab visit.
+const SOURCES_FRESHNESS_CACHE_MS = 3 * 60 * 1000;
+let sourcesFreshnessCache: { at: number; promise: Promise<StaleSource[]> } | null = null;
+function fetchSourcesFreshness(): Promise<StaleSource[]> {
+  if (sourcesFreshnessCache && Date.now() - sourcesFreshnessCache.at < SOURCES_FRESHNESS_CACHE_MS) {
+    return sourcesFreshnessCache.promise;
+  }
+  const promise = fetchWithTimeout(SOURCES_FRESHNESS_URL, { headers: authHeaders() })
+    .then((res) => (res.ok ? res.json() : { sources: [] }))
+    .then((d) => d.sources ?? [])
+    .catch((err) => { sourcesFreshnessCache = null; throw err; });
+  sourcesFreshnessCache = { at: Date.now(), promise };
+  return promise;
+}
+
 interface Props {
   recovery: Recovery | null | undefined;
   composites?: HealthComposite[];
@@ -68,18 +84,16 @@ function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
 
   // Per-source freshness — stays silent when everything's current; only worth
   // a mention when a source has actually gone stale (2+ days), since that's
-  // the one time it affects whether this score can be trusted.
+  // the one time it affects whether this score can be trusted. RecoveryCard
+  // fully unmounts/remounts on every Health-tab visit, so this cache (source
+  // freshness moves on the order of hours, not seconds) avoids re-pulling
+  // the identical list on every quick tab revisit.
   const [staleSources, setStaleSources] = useState<StaleSource[]>([]);
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetchWithTimeout(SOURCES_FRESHNESS_URL, { headers: authHeaders() });
-        if (cancelled || !res.ok) return;
-        const { sources } = await res.json();
-        if (!cancelled) setStaleSources((sources ?? []).filter((s: StaleSource) => s.ageDays >= 2));
-      } catch { /* offline — stay silent rather than guess */ }
-    })();
+    fetchSourcesFreshness()
+      .then((sources) => { if (!cancelled) setStaleSources(sources.filter((s) => s.ageDays >= 2)); })
+      .catch(() => { /* offline — stay silent rather than guess */ });
     return () => { cancelled = true; };
   }, []);
 
