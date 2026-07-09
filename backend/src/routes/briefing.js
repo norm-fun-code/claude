@@ -1408,15 +1408,27 @@ router.get('/briefing', asyncHandler(async (req, res) => {
     console.error('[todayForecast] failed:', err.message);
   }
 
+  // Carry the prior build's brief when this build's LLM call failed or returned
+  // an invalid shape (no chiefBrief). Without this, a single bad rebuild blanks
+  // the whole Chief-of-Staff card. Fresh always wins when present — but the
+  // fallback used to be invisible: same-looking payload, no error anywhere, no
+  // sign the "fresh" rebuild the user just triggered didn't actually update
+  // this card. Track it so it shows up in `errors` and the response can flag it.
+  const chiefBriefStale = geminiResult?.chiefBrief == null && prior?.content?.chiefBrief != null;
+  if (chiefBriefStale) {
+    console.error('[briefing build] chiefBrief generation failed/invalid — carrying forward the prior build\'s brief.');
+    errors.push({ service: 'chiefBrief', error: 'invalid or missing shape from the LLM; showing the previous build\'s brief' });
+  }
+
   const response = {
     date: dateLabel,
     builtAt: new Date().toISOString(),
-    // Carry the prior build's brief when this build's LLM call failed or returned
-    // malformed JSON (no chiefBrief). Without this, a single bad rebuild blanks the
-    // whole Chief-of-Staff card. Fresh always wins when present.
     morningFocus: geminiResult?.morningFocus || prior?.content?.morningFocus || '',
     // Structured Chief-of-Staff brief (Beta): synthesis + ACTION/RISK/MOVE.
     chiefBrief: geminiResult?.chiefBrief ?? prior?.content?.chiefBrief ?? null,
+    // True when the card above is carried over from a prior build (this
+    // build's generation failed/invalid) rather than freshly generated.
+    chiefBriefStale,
     weather,
     workout,
     calendar,

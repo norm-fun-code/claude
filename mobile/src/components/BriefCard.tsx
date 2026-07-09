@@ -12,6 +12,10 @@ import { voiceAvailable, playBase64, stopPlayback, ensureMicPermission, startRec
 interface Props {
   brief: ChiefBrief | null | undefined;
   fallback?: string;
+  // True when `brief` is carried over from a prior build rather than fresh —
+  // shown as a small note so a rebuild that didn't actually refresh this card
+  // doesn't look like it silently did nothing (see server chiefBriefStale).
+  stale?: boolean;
 }
 
 // Each block gets a mini emoji tile (same elevated-tile language as
@@ -128,7 +132,7 @@ function BeatRow({ label, emoji, tint, text }: { label: string; emoji: string; t
 // agree), but this set covers the in-memory window until that refetch.
 const answeredQuestions = new Set<string>();
 
-export function BriefCard({ brief, fallback }: Props) {
+export function BriefCard({ brief, fallback, stale }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [note, setNote] = useState('');
@@ -302,7 +306,12 @@ export function BriefCard({ brief, fallback }: Props) {
       {/* signature accent bar */}
       <LinearGradient colors={accentGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.accentBar} />
       <View style={styles.kickerRow}>
-        <Text style={styles.kicker}>CHIEF OF STAFF BRIEF</Text>
+        <View style={styles.kickerGroup}>
+          <Text style={styles.kicker}>CHIEF OF STAFF BRIEF</Text>
+          {stale && brief && (
+            <Text style={styles.staleNote}>Still yesterday's — retrying</Text>
+          )}
+        </View>
         {voiceAvailable && brief && (
           <Pressable onPress={toggleListen} hitSlop={8} style={styles.listenBtn}>
             {audioState === 'loading' ? (
@@ -472,11 +481,22 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: spacing.sm,
   },
+  kickerGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 1,
+  },
   kicker: {
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 1.4,
     color: '#A89CFF',
+  },
+  staleNote: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#FFC44D',
+    marginLeft: spacing.sm,
   },
   listenBtn: {
     borderWidth: 1,

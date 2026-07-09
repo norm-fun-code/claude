@@ -68,6 +68,30 @@ test('generateChiefBrief returns null chiefBrief when a required field is missin
   assert.equal(result.chiefBrief, null);
 });
 
+// The caller (briefing.js) silently falls back to the PRIOR build's chiefBrief
+// whenever this comes back null — so an invalid shape here used to be
+// completely untraceable in production (the exact bug this test guards
+// against: a rebuild that silently keeps showing yesterday's brief). This
+// must log which field(s) were missing so a recurrence is diagnosable.
+test('generateChiefBrief logs which field was invalid so a silent stale-brief fallback is diagnosable', async () => {
+  stubLlm({
+    chief: JSON.stringify({ chiefBrief: { synthesis: 'x', action: 'y', risk: 'z' /* move missing */ }, morningFocus: 'f' }),
+    wisdom: WISDOM_JSON,
+  });
+  const originalError = console.error;
+  const logs = [];
+  console.error = (...args) => logs.push(args.join(' '));
+  try {
+    await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
+  } finally {
+    console.error = originalError;
+  }
+  assert.ok(
+    logs.some((l) => l.includes('shape invalid') && l.includes('move')),
+    `expected a log naming the missing field "move"; got: ${JSON.stringify(logs)}`
+  );
+});
+
 test('generateChiefBrief falls back to empty shape on malformed JSON', async () => {
   llm.generateText = async () => 'not json at all';
   const result = await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);

@@ -236,16 +236,26 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
   // Structured chief-of-staff brief: only keep it if all four blocks are present
   // strings, so the card can trust the shape (else null → card hides).
   const cb = parsed.chiefBrief;
-  const chiefBrief =
-    cb && typeof cb === 'object' &&
-    ['synthesis', 'action', 'risk', 'move'].every((k) => typeof cb[k] === 'string' && cb[k].trim())
-      ? {
-          synthesis: cb.synthesis, action: cb.action, risk: cb.risk, move: cb.move,
-          // The one thing the brief is genuinely unsure about today — often empty
-          // (restraint), a real inline question when present. Trim + drop generic ones.
-          openQuestion: typeof cb.openQuestion === 'string' && cb.openQuestion.trim().length > 3 ? cb.openQuestion.trim() : '',
-        }
-      : null;
+  const REQUIRED_FIELDS = ['synthesis', 'action', 'risk', 'move'];
+  const shapeOk = cb && typeof cb === 'object' && REQUIRED_FIELDS.every((k) => typeof cb[k] === 'string' && cb[k].trim());
+  if (!shapeOk) {
+    // This used to fail silently — the caller falls back to the PRIOR build's
+    // chiefBrief (see briefing.js), so a bad shape here quietly shows a stale
+    // brief with no error anywhere, and can recur build after build with no
+    // trace of why. Log exactly what's wrong so it's diagnosable instead.
+    const missing = !cb || typeof cb !== 'object'
+      ? 'chiefBrief missing or not an object'
+      : REQUIRED_FIELDS.filter((k) => !(typeof cb[k] === 'string' && cb[k].trim())).join(', ') + ' missing/empty';
+    console.error(`[briefing-ai] chief-brief shape invalid (${missing}); falling back to prior build's brief.`);
+  }
+  const chiefBrief = shapeOk
+    ? {
+        synthesis: cb.synthesis, action: cb.action, risk: cb.risk, move: cb.move,
+        // The one thing the brief is genuinely unsure about today — often empty
+        // (restraint), a real inline question when present. Trim + drop generic ones.
+        openQuestion: typeof cb.openQuestion === 'string' && cb.openQuestion.trim().length > 3 ? cb.openQuestion.trim() : '',
+      }
+    : null;
 
   return {
     morningFocus: typeof parsed.morningFocus === 'string' ? parsed.morningFocus : '',

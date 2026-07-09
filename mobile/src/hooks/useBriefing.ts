@@ -246,6 +246,11 @@ export interface BriefingData {
   builtAt?: string;
   morningFocus?: string;
   chiefBrief?: ChiefBrief | null;
+  // True when the chiefBrief above is carried over from a prior build (this
+  // build's generation failed or returned an invalid shape) rather than
+  // freshly generated — lets the card say so instead of silently looking
+  // like a successful rebuild that just didn't change anything.
+  chiefBriefStale?: boolean;
   experiments?: {
     completed: CompletedExperiment[];
     running: RunningExperiment[];
