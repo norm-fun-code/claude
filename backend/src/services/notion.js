@@ -54,8 +54,13 @@ async function fetchRandomNotionPage({ exclude = [] } = {}) {
   // Filter only child_page blocks
   const childPages = childrenRes.results.filter((block) => block.type === 'child_page');
 
+  // Empty text (not a fabricated sentence) — matches the shape briefing.js
+  // already falls back to on a genuine fetch failure (unwrap() ?? { text: '',
+  // pageTitle: 'Notion' }), so callers treat "no pages" and "fetch failed" the
+  // same way instead of feeding the literal string "No pages found." to the
+  // LLM as if it were real wisdom-page content to quote from.
   if (childPages.length === 0) {
-    return { text: 'No pages found.', pageTitle: 'Notion' };
+    return { text: '', pageTitle: 'Notion' };
   }
 
   // Prefer pages not shown in the last 30 days (by title); fall back to all if
