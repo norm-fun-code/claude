@@ -60,6 +60,7 @@ async function fetchGmailThreads() {
   const threads = listRes.data.threads || [];
   if (threads.length === 0) return [];
 
+  let failedCount = 0;
   const results = await Promise.all(
     threads.map(async (thread) => {
       try {
@@ -88,11 +89,22 @@ async function fetchGmailThreads() {
 
         return { from, subject, snippet, body };
       } catch (err) {
+        failedCount++;
         console.error(`Failed to fetch thread ${thread.id}:`, err.message);
         return null;
       }
     })
   );
+
+  // Every thread we tried to fetch threw — a real outage (rate limit, revoked
+  // token, transient Gmail-side error), not "all threads happened to be
+  // empty." A partial failure logs above and quietly reports fewer threads
+  // (same as one legitimately-empty thread); a TOTAL failure must be visible
+  // instead of silently reading as "zero unread email," which is exactly the
+  // 200-OK-read-as-success gap already fixed for Monarch/Calendar/Notion.
+  if (threads.length > 0 && failedCount === threads.length) {
+    throw new Error(`Gmail: all ${failedCount} unread thread(s) failed to fetch`);
+  }
 
   return results.filter(Boolean);
 }
