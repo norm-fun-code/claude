@@ -7,33 +7,20 @@ const express = require('express');
 const sourcesStore = require('../store/sources');
 const recommendationsStore = require('../store/recommendations');
 const { asyncHandler } = require('../middleware/asyncHandler');
-
-// Pipeline health — per-connector freshness + staleness status. The authoritative
-// version of the stale check that also runs silently inside the briefing build.
-// Useful for debugging "why is my briefing citing old numbers?"
-const PIPELINE_STALE_THRESHOLDS = {
-  eight_sleep_api:  { hours: 26, criticalFor: 'recovery/sleep' },
-  monarch_mcp_sync: { hours: 26, criticalFor: 'wealth/spending' },
-  monarch:          { hours: 48, criticalFor: 'wealth' },
-  health:           { hours: 6,  criticalFor: 'activity/steps' },
-  checkin:          { hours: 36, criticalFor: 'mood/energy/focus' },
-  habits:           { hours: 36, criticalFor: 'habits' },
-  readwise:         { hours: 72, criticalFor: 'highlights' },
-};
-const PIPELINE_DEFAULT_STALE_H = 72;
+const { STALE_THRESHOLDS_H, sourceStaleness, getMonarchHealth } = require('../intelligence/source-health');
 
 function createRecommendationsRouter() {
   const router = express.Router();
 
+  // Pipeline health — per-connector freshness + staleness status. The authoritative
+  // version of the stale check that also runs silently inside the briefing build
+  // (both now read the same src/intelligence/source-health.js config). Useful for
+  // debugging "why is my briefing citing old numbers?"
   router.get('/pipeline-health', asyncHandler(async (req, res) => {
     const sources = await sourcesStore.listSources();
     const now = Date.now();
     const connectors = sources.map((s) => {
-      const thresh = PIPELINE_STALE_THRESHOLDS[s.id] ?? { hours: PIPELINE_DEFAULT_STALE_H, criticalFor: null };
-      const hoursAgo = s.last_sync_at
-        ? (now - new Date(s.last_sync_at).getTime()) / 3_600_000
-        : null;
-      const isStale = hoursAgo == null || hoursAgo > thresh.hours;
+      const { hoursAgo, isStale, thresholdHours, label } = sourceStaleness(s, now);
       return {
         id: s.id,
         displayName: s.display_name,
@@ -42,12 +29,12 @@ function createRecommendationsRouter() {
         lastSyncAt: s.last_sync_at ?? null,
         lastError: s.last_error ?? null,
         hoursAgo: hoursAgo != null ? Math.round(hoursAgo * 10) / 10 : null,
-        staleThresholdHours: thresh.hours,
+        staleThresholdHours: thresholdHours,
         isStale,
-        criticalFor: thresh.criticalFor,
+        criticalFor: label,
       };
     });
-    const stale = connectors.filter((c) => c.isStale && PIPELINE_STALE_THRESHOLDS[c.id]);
+    const stale = connectors.filter((c) => c.isStale && STALE_THRESHOLDS_H[c.id]);
     res.json({
       connectors,
       anyStale: stale.length > 0,
@@ -55,6 +42,11 @@ function createRecommendationsRouter() {
         ? `${stale.length} source(s) stale: ${stale.map((c) => c.displayName || c.id).join(', ')}`
         : 'All monitored sources are fresh.',
       checkedAt: new Date().toISOString(),
+      // The single "is wealth data healthy" signal (review's #8) — wealth data
+      // can come from up to two independently-tracked connectors (monarch,
+      // monarch_mcp_sync), so neither row alone answers this; healthy if
+      // EITHER is fresh (mirrors the fallback relationship between them).
+      monarch: getMonarchHealth(sources, now),
     });
   }));
 

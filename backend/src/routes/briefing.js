@@ -127,20 +127,9 @@ async function buildQuickChiefBriefContext(prior) {
         console.error('[quick chief-brief] annotations context failed:', err.message);
       }
       try {
-        const STALE_THRESHOLDS_H = {
-          eight_sleep_api:  { hours: 26, label: 'recovery/sleep metrics' },
-          monarch_mcp_sync: { hours: 26, label: 'wealth/spending data' },
-          monarch:          { hours: 48, label: 'wealth data' },
-          health:           { hours: 6,  label: 'activity/steps' },
-        };
+        const { describeDataGaps } = require('../intelligence/source-health');
         const allSources = await sourcesStore.listSources();
-        const gaps = [];
-        for (const s of allSources) {
-          const thresh = STALE_THRESHOLDS_H[s.id];
-          if (!thresh || !s.last_sync_at) continue;
-          const hoursAgo = (Date.now() - new Date(s.last_sync_at).getTime()) / 3_600_000;
-          if (hoursAgo > thresh.hours) gaps.push(`${s.display_name || s.id} (${thresh.label}, last synced ${Math.round(hoursAgo)}h ago)`);
-        }
+        const gaps = describeDataGaps(allSources);
         if (gaps.length) {
           const warning = `DATA GAPS — these sources have not synced recently: ${gaps.join('; ')}. Caveat any claims that rely on this data.`;
           ctx = ctx ? `${ctx}; ${warning}` : warning;
@@ -931,23 +920,10 @@ router.get('/briefing', asyncHandler(async (req, res) => {
   // Pipeline health: inject a data-gap warning into annotationsContext when a
   // critical connector hasn't synced recently. The LLM sees this and caveats
   // stale-data claims; avoids confidently citing week-old numbers.
-  const STALE_THRESHOLDS_H = {
-    eight_sleep_api:  { hours: 26, label: 'recovery/sleep metrics' },
-    monarch_mcp_sync: { hours: 26, label: 'wealth/spending data' },
-    monarch:          { hours: 48, label: 'wealth data' },
-    health:           { hours: 6,  label: 'activity/steps' },
-  };
   try {
+    const { describeDataGaps } = require('../intelligence/source-health');
     const allSources = await sourcesStore.listSources();
-    const gaps = [];
-    for (const s of allSources) {
-      const thresh = STALE_THRESHOLDS_H[s.id];
-      if (!thresh || !s.last_sync_at) continue;
-      const hoursAgo = (Date.now() - new Date(s.last_sync_at).getTime()) / 3_600_000;
-      if (hoursAgo > thresh.hours) {
-        gaps.push(`${s.display_name || s.id} (${thresh.label}, last synced ${Math.round(hoursAgo)}h ago)`);
-      }
-    }
+    const gaps = describeDataGaps(allSources);
     if (gaps.length) {
       const warning = `DATA GAPS — these sources have not synced recently: ${gaps.join('; ')}. Caveat any claims that rely on this data.`;
       annotationsContext = annotationsContext ? `${annotationsContext}; ${warning}` : warning;
