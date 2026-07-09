@@ -102,12 +102,19 @@ async function latest({ domain, metric }) {
 
 /** Daily-bucketed aggregate for a metric (avg/min/max/sum), for trend math.
  *  excludeSource: skip rows from this source (e.g. 'seed') so demo data
- *  doesn't inflate real-data aggregates when both coexist. */
-async function dailyAggregate({ domain, metric, from, to, agg = 'avg', excludeSource = null }) {
+ *  doesn't inflate real-data aggregates when both coexist.
+ *  tz: bucket by LOCAL calendar day, not the session/UTC day — an evening
+ *  reading (e.g. 8pm ET = past midnight UTC) must land on the day it actually
+ *  happened, or it silently doubles into the wrong day's total (see
+ *  db/migrations/019's incident note: this exact gap once double-counted a
+ *  day's steps in production). `AT TIME ZONE tz` converts to a naive local
+ *  timestamp before truncating; node-postgres then hydrates that back as a
+ *  Date whose toISOString() reproduces the correct local YYYY-MM-DD, which is
+ *  exactly what every caller's day-key extraction already expects. */
+async function dailyAggregate({ domain, metric, from, to, agg = 'avg', excludeSource = null, tz = process.env.TZ || 'America/New_York' }) {
   const fn = ['avg', 'min', 'max', 'sum'].includes(agg) ? agg : 'avg';
-  // date_trunc keeps this portable (works with or without TimescaleDB).
   const { rows } = await query(
-    `SELECT date_trunc('day', ts) AS day, ${fn}(value) AS value
+    `SELECT date_trunc('day', ts AT TIME ZONE $6) AS day, ${fn}(value) AS value
        FROM metrics
       WHERE domain = $1 AND metric = $2
         AND ($3::timestamptz IS NULL OR ts >= $3)
@@ -115,7 +122,7 @@ async function dailyAggregate({ domain, metric, from, to, agg = 'avg', excludeSo
         AND ($5::text IS NULL OR source != $5)
       GROUP BY day
       ORDER BY day ASC`,
-    [domain, metric, from ?? null, to ?? null, excludeSource ?? null]
+    [domain, metric, from ?? null, to ?? null, excludeSource ?? null, tz]
   );
   return rows;
 }
@@ -133,16 +140,20 @@ async function dailyAggregate({ domain, metric, from, to, agg = 'avg', excludeSo
  *
  * For each day, only the highest-priority source's rows are aggregated.
  */
-async function dailyAggregatePreferSource({ domain, metric, from, to, agg = 'avg', sources = null }) {
+async function dailyAggregatePreferSource({ domain, metric, from, to, agg = 'avg', sources = null, tz = process.env.TZ || 'America/New_York' }) {
   const fn = ['avg', 'min', 'max', 'sum'].includes(agg) ? agg : 'avg';
   // Optional source allowlist: when provided, only these sources are considered.
   // Used by the recovery score to source-lock HRV/RHR to the manually-entered
   // Eight Sleep overnight numbers (+ seeded baseline), so daytime Apple Watch
   // readings never pollute the night-vs-night baseline comparison.
+  //
+  // Bucketed by LOCAL calendar day (AT TIME ZONE tz) — same reasoning as
+  // dailyAggregate above: an evening reading must land on the day it
+  // actually happened, not the UTC day.
   const { rows } = await query(
     `WITH per_day_source AS (
        SELECT
-         date_trunc('day', ts) AS day,
+         date_trunc('day', ts AT TIME ZONE $6) AS day,
          source,
          ${fn}(value) AS value,
          CASE source
@@ -167,7 +178,7 @@ async function dailyAggregatePreferSource({ domain, metric, from, to, agg = 'avg
      FROM per_day_source p
      JOIN best_per_day b ON p.day = b.day AND p.priority = b.best_priority
      ORDER BY p.day ASC`,
-    [domain, metric, from ?? null, to ?? null, sources ?? null]
+    [domain, metric, from ?? null, to ?? null, sources ?? null, tz]
   );
   return rows;
 }
