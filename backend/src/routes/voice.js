@@ -72,12 +72,26 @@ function createVoiceRouter() {
     }
     mark('ttsMs');
 
+    const timing = {
+      totalMs: Date.now() - t0,
+      sttMs: marks.sttMs,
+      llmMs: marks.llmMs - marks.sttMs,
+      actionMs: marks.actionMs - marks.llmMs,
+      ttsMs: marks.ttsMs - marks.actionMs,
+      fast: looksLikeCommand(question),
+    };
     console.log(
-      `[voice/ask timing] total=${Date.now() - t0}ms stt=${marks.sttMs}ms ` +
-      `llm=${marks.llmMs - marks.sttMs}ms action=${marks.actionMs - marks.llmMs}ms ` +
-      `tts=${marks.ttsMs - marks.actionMs}ms (fast=${looksLikeCommand(question)})`
+      `[voice/ask timing] total=${timing.totalMs}ms stt=${timing.sttMs}ms ` +
+      `llm=${timing.llmMs}ms action=${timing.actionMs}ms ` +
+      `tts=${timing.ttsMs}ms (fast=${timing.fast}${result.fastPathError ? ', fastPathError=' + result.fastPathError : ''})`
     );
 
+    // timing + fastPathError ride along on the response so a "this felt slow"
+    // or "this didn't work" report is diagnosable from the client alone — no
+    // server log access needed. fastPathError is only present when the quick
+    // command model threw and ask() silently fell back to the slower full
+    // reasoning path (see ask.js); it explains latency that timing.fast=true
+    // wouldn't otherwise account for.
     res.json({
       question,
       answer: result.answer,
@@ -85,6 +99,8 @@ function createVoiceRouter() {
       actions: executedList.filter(Boolean),
       audio: audioOut?.data ?? null,
       audioMime: audioOut?.mime ?? null,
+      timing,
+      ...(result.fastPathError ? { fastPathError: result.fastPathError } : {}),
     });
   }));
 

@@ -420,11 +420,16 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
   // path itself fails for any reason (bad model id, rate limit, transient
   // provider error), fall through to the full path rather than losing the
   // user's action entirely — worse latency once in a while beats a 500.
+  // fastPathError is surfaced on the eventual response (rather than only
+  // console.error'd) so a client-visible symptom like "this took 30s" is
+  // diagnosable from the response body alone, without server log access.
+  let fastPathError = null;
   if (looksLikeCommand(question)) {
     try {
       return await answerCommand(question, { history });
     } catch (err) {
       console.error('[chat] fast command path failed, falling back to full reasoning path:', err.message);
+      fastPathError = err.message;
     }
   }
 
@@ -601,6 +606,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
       url: d.url,
       similarity: d.similarity,
     })),
+    ...(fastPathError ? { fastPathError } : {}),
   };
 }
 
