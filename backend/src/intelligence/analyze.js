@@ -1197,14 +1197,15 @@ async function analyze(opts = {}) {
   const SOURCE_LOCK = { 'health:hrv': NIGHT_SOURCES, 'health:resting_hr': NIGHT_SOURCES };
   const CUMULATIVE = new Set(['steps', 'active_energy', 'exercise_minutes', 'mindful_minutes']);
 
-  const seriesByKey = {};
-  for (const { domain, metric } of keys) {
-    // Only analyze metrics we deliberately track. listMetricKeys() returns every
-    // distinct key in the table — including stale/retired ones (e.g. the old
-    // Readwise/Notion sync counts) whose historical rows still linger. Keying
-    // findings off whatever happens to be in the DB lets retired metrics keep
-    // generating bogus trends/anomalies, so gate on the catalog registry.
-    if (!cat.isTracked(domain, metric)) continue;
+  // Only analyze metrics we deliberately track. listMetricKeys() returns every
+  // distinct key in the table — including stale/retired ones (e.g. the old
+  // Readwise/Notion sync counts) whose historical rows still linger. Keying
+  // findings off whatever happens to be in the DB lets retired metrics keep
+  // generating bogus trends/anomalies, so gate on the catalog registry.
+  const trackedKeys = keys.filter(({ domain, metric }) => cat.isTracked(domain, metric));
+  // Each metric's fetch is independent — parallelize instead of one round trip
+  // at a time (this ran ~40 queries serially on every analyze() call).
+  const trackedResults = await Promise.all(trackedKeys.map(async ({ domain, metric }) => {
     const key = `${domain}:${metric}`;
     const lockSources = SOURCE_LOCK[key];
     let rows = lockSources
@@ -1231,48 +1232,48 @@ async function analyze(opts = {}) {
       const lastDayUtc = (lastDay instanceof Date ? lastDay : new Date(lastDay)).toISOString().slice(0, 10);
       if (lastDayUtc === todayUtc) rows = rows.slice(0, -1);
     }
+    return [key, rows];
+  }));
+  const seriesByKey = {};
+  for (const [key, rows] of trackedResults) {
     if (rows.length) seriesByKey[key] = rows;
   }
 
   // Load Eight Sleep's personalized sleep debt/need — used by computeHealthComposites
   // but NOT included in trends/anomalies/correlations (derived, not raw inputs).
-  for (const esKey of ['health:sleep_debt', 'health:sleep_need']) {
-    if (!seriesByKey[esKey]) {
-      const [dm, mt] = esKey.split(':');
-      try {
-        const rows = await metricsStore.dailyAggregatePreferSource({
-          domain: dm, metric: mt, from, agg: 'avg', sources: ['eight_sleep'],
-        });
-        if (rows.length) seriesByKey[esKey] = rows;
-      } catch { /* non-critical — composites fall back to generic computation */ }
-    }
-  }
+  // Depends on seriesByKey above (skips a key already loaded), so this group
+  // runs after it, but the two fetches within it are independent of each other.
+  await Promise.all(['health:sleep_debt', 'health:sleep_need'].map(async (esKey) => {
+    if (seriesByKey[esKey]) return;
+    const [dm, mt] = esKey.split(':');
+    try {
+      const rows = await metricsStore.dailyAggregatePreferSource({
+        domain: dm, metric: mt, from, agg: 'avg', sources: ['eight_sleep'],
+      });
+      if (rows.length) seriesByKey[esKey] = rows;
+    } catch { /* non-critical — composites fall back to generic computation */ }
+  }));
 
   // Load Apple Watch daytime HRV/RHR separately from the night-source-locked
   // series. These go into a private map consumed only by computeDaytimeCardio —
   // they never enter the general correlation/trend/anomaly engines, so there's
   // no risk of trivial hrv↔hrv_daytime findings or polluting the recovery signal.
+  // Eight Sleep wake time pairs naturally with daytime autonomic tone even though
+  // it's a nightly metric — loaded here rather than the night-locked series.
+  // All three fetches below are independent — parallelize.
   const daytimeMap = {};
-  for (const [vtKey, metric] of [['health:hrv_daytime', 'hrv'], ['health:rhr_daytime', 'resting_hr']]) {
-    try {
-      const rows = await metricsStore.dailyAggregatePreferSource({
-        domain: 'health', metric, from, agg: 'avg', sources: ['apple_health'],
-      });
-      if (rows.length) daytimeMap[vtKey] = rows;
-    } catch { /* non-critical */ }
-  }
+  const [hrvDaytime, rhrDaytime, wakeRows] = await Promise.all([
+    metricsStore.dailyAggregatePreferSource({ domain: 'health', metric: 'hrv', from, agg: 'avg', sources: ['apple_health'] }).catch(() => []),
+    metricsStore.dailyAggregatePreferSource({ domain: 'health', metric: 'resting_hr', from, agg: 'avg', sources: ['apple_health'] }).catch(() => []),
+    metricsStore.dailyAggregatePreferSource({ domain: 'health', metric: 'wake_time', from, agg: 'avg', sources: ['eight_sleep'] }).catch(() => []),
+  ]);
+  if (hrvDaytime.length) daytimeMap['health:hrv_daytime'] = hrvDaytime;
+  if (rhrDaytime.length) daytimeMap['health:rhr_daytime'] = rhrDaytime;
+  if (wakeRows.length) daytimeMap['health:wake_time'] = wakeRows;
   // Include the lifestyle inputs the daytime function needs.
   for (const k of ['habits:eat_healthy', 'wellbeing:mood', 'wellbeing:focus', 'context:tm_am', 'context:tm_pm']) {
     if (seriesByKey[k]) daytimeMap[k] = seriesByKey[k];
   }
-  // Eight Sleep wake time pairs naturally with daytime autonomic tone even though
-  // it's a nightly metric — load it here rather than the night-locked series.
-  try {
-    const wakeRows = await metricsStore.dailyAggregatePreferSource({
-      domain: 'health', metric: 'wake_time', from, agg: 'avg', sources: ['eight_sleep'],
-    });
-    if (wakeRows.length) daytimeMap['health:wake_time'] = wakeRows;
-  } catch { /* non-critical — Eight Sleep may not have timing data */ }
   // Environment metrics (temperature, humidity) enter daytimeMap so computeDaytimeCardio
   // can correlate them against Apple Watch daytime HRV/RHR. They are explicitly blocked
   // from the general computeCorrelations engine below (env data is NOT from Apple Watch).
