@@ -45,6 +45,7 @@ const { createActivityRouter } = require('./src/routes/activity');
 const { createCheckinRouter } = require('./src/routes/checkin');
 const { createHabitsRouter } = require('./src/routes/habits');
 const { createContextRouter } = require('./src/routes/context');
+const { createIntentionsRouter } = require('./src/routes/intentions');
 const { recomputeHabitScore } = require('./src/intelligence/habit-score');
 const gratitudeLogsStore = require('./src/store/gratitudeLogs');
 const surfacedStore = require('./src/store/surfaced');
@@ -128,42 +129,9 @@ app.use('/api', createWorkoutRouter());
 // below also calls it.
 app.use('/api', createActivityRouter());
 
-// Weekly intentions — the Sunday check-in (life context + focus goals). GET
-// returns the current week's entry (so the Today card can pre-fill / know if
-// it's been set); POST upserts it.
-app.get('/api/intentions/current', async (req, res) => {
-  try {
-    res.json({
-      weekStart: intentionsStore.weekStart(),
-      intention: await intentionsStore.currentIntention(),
-      // Last week's goals, so the Sunday card can show them with a checkbox to
-      // mark which were achieved.
-      prior: await intentionsStore.priorIntention(),
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/intentions', async (req, res) => {
-  try {
-    const { context, goals } = req.body || {};
-    res.json({ intention: await intentionsStore.saveIntention({ context, goals }) });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Record which of a (default: prior) week's goals were achieved. Body:
-// { weekStart?: 'YYYY-MM-DD', achieved: boolean[] } aligned to that week's goals.
-app.post('/api/intentions/results', async (req, res) => {
-  try {
-    const { weekStart, achieved } = req.body || {};
-    res.json({ intention: await intentionsStore.saveGoalResults({ weekStart, achieved }) });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// Weekly intentions routes live in src/routes/intentions.js — the eleventh
+// router extraction out of this file.
+app.use('/api', createIntentionsRouter());
 
 // Life chapters — persistent long-arc facts (a pregnancy + due date, a big
 // deadline) that auto-advance and inform every brief without being re-typed
