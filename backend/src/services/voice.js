@@ -95,22 +95,40 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
 /** Transcribe recorded speech (base64 audio). Returns the plain transcript. */
 async function transcribe(base64Audio, mime = 'audio/wav') {
   const model = process.env.GEMINI_CHAT_MODEL || 'gemini-3.5-flash';
-  const { data } = await axios.post(
-    `${BASE}/models/${model}:generateContent?key=${key()}`,
-    {
-      contents: [{
-        role: 'user',
-        parts: [
-          { inlineData: { mimeType: mime, data: base64Audio } },
-          { text: 'Transcribe this voice message verbatim. Return ONLY the transcript text — no quotes, no commentary. If there is no intelligible speech, return an empty string.' },
-        ],
-      }],
-      generationConfig: { temperature: 0, maxOutputTokens: 1024 },
-    },
-    { timeout: Number(process.env.GEMINI_STT_TIMEOUT_MS || 45000) }
-  );
-  const text = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('').trim();
-  return text;
+  const timeout = Number(process.env.GEMINI_STT_TIMEOUT_MS || 45000);
+
+  const attempt = async () => {
+    const { data } = await axios.post(
+      `${BASE}/models/${model}:generateContent?key=${key()}`,
+      {
+        contents: [{
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType: mime, data: base64Audio } },
+            { text: 'Transcribe this voice message verbatim. Return ONLY the transcript text — no quotes, no commentary. If there is no intelligible speech, return an empty string.' },
+          ],
+        }],
+        generationConfig: { temperature: 0, maxOutputTokens: 1024 },
+      },
+      { timeout }
+    );
+    return (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('').trim();
+  };
+
+  try {
+    return await attempt();
+  } catch (err) {
+    // Gemini occasionally 503s (overloaded) or blows the timeout under load —
+    // seen live as a voice turn that either silently never registered (STT
+    // threw before ask() ever ran) or took 30+ seconds. A single immediate
+    // retry recovers most transient failures instead of losing the turn
+    // outright; anything else (bad key, malformed audio) still throws.
+    const status = err.response?.status;
+    const transient = status === 503 || status === 429 || err.code === 'ECONNABORTED' || /timeout of/i.test(err.message || '');
+    if (!transient) throw err;
+    console.error('[voice stt] transient failure, retrying once:', err.message);
+    return await attempt();
+  }
 }
 
 /**

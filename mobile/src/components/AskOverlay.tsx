@@ -180,7 +180,7 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
   // Context-aware one-tap questions for the current summon (quick-ask only).
   const [starters, setStarters] = useState<string[]>([]);
   // Push-to-talk: hold the mic, speak, release → transcript + spoken answer.
-  const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'thinking'>('idle');
+  const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'thinking' | 'error'>('idle');
   // Once a voice turn has happened, the idle mic invites a follow-up instead of
   // a cold "ask me anything" — the conversation is already warm, and you can
   // hold the mic again the instant the reply starts playing (startRecording()
@@ -216,10 +216,16 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
       if (data.action?.done) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       if (data.audio) playBase64(data.audio, data.audioMime || 'audio/wav').catch(() => {});
       setHadVoiceTurn(true);
-    } catch {
-      // Silent fail — the thread simply doesn't gain a turn; mic returns to idle.
-    } finally {
       setVoiceState('idle');
+    } catch {
+      // Was a silent fail — the thread simply didn't gain a turn, indistinguishable
+      // from "nothing was said," which is exactly what a live user hit reporting
+      // a voice-logged action that "didn't even register at all." Same fix as
+      // BriefCard's voice answer path: a visible error + haptic instead, and the
+      // mic is immediately usable again to retry (auto-reverts after a beat).
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      setVoiceState('error');
+      setTimeout(() => setVoiceState((s) => (s === 'error' ? 'idle' : s)), 2500);
     }
   }
 
@@ -563,22 +569,23 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
                     </ScrollView>
                   </View>
                 )}
-                <View style={[styles.inputRow, { borderColor: voiceState === 'recording' ? '#FF6B6B' : c.border, backgroundColor: c.card }]}>
+                <View style={[styles.inputRow, { borderColor: voiceState === 'recording' || voiceState === 'error' ? '#FF6B6B' : c.border, backgroundColor: c.card }]}>
                   <TextInput
                     ref={inputRef}
                     style={[styles.input, { color: c.text }]}
                     placeholder={
                       voiceState === 'recording' ? 'Listening… release to send' :
                       voiceState === 'thinking' ? 'Thinking…' :
+                      voiceState === 'error' ? "Didn't catch that — try again" :
                       hadVoiceTurn ? 'Hold the mic to continue…' : 'Ask about your life…'
                     }
-                    placeholderTextColor={voiceState === 'recording' ? '#FF6B6B' : c.subtext}
+                    placeholderTextColor={voiceState === 'recording' || voiceState === 'error' ? '#FF6B6B' : c.subtext}
                     value={question}
                     onChangeText={setQuestion}
                     onSubmitEditing={() => submit(question)}
                     returnKeyType="send"
                     multiline
-                    editable={voiceState === 'idle'}
+                    editable={voiceState === 'idle' || voiceState === 'error'}
                     autoCorrect
                     spellCheck
                   />
