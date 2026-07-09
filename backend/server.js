@@ -5,6 +5,8 @@ validateBootConfig();
 
 const { createApp } = require('./src/app');
 const recommendationsStore = require('./src/store/recommendations');
+const db = require('./src/db');
+const { start: startScheduler } = require('./src/scheduler');
 
 // Last-resort safety net: log instead of crashing on an unhandled rejection /
 // uncaught exception, so one stray missed .catch() can't silently kill an
@@ -30,7 +32,7 @@ runMigrations()
       console.log(`Health check: http://localhost:${PORT}/api/health`);
       // Cleanup: delete recommendation ledger entries that are Monarch query steps
       // (the LLM was tagging "Pull Jan–Jun..." as <rec> recommendations).
-      require('./src/db').query(
+      db.query(
         `DELETE FROM recommendations WHERE title ~* '^(pull|export|fetch|get|check|look|query|run|import|download|analyze|review|compare) '`
       ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} bad query-step recommendation(s)`); })
         .catch(() => {});
@@ -40,7 +42,7 @@ runMigrations()
       // (Apple Watch daytime HRV/RHR) — not the general Pearson engine. Also remove
       // tautological findings (exercise habit → active energy) and the energy↔HRV
       // pair (energy is an output of HRV, not a lever for improving it).
-      require('./src/db').query(
+      db.query(
         `DELETE FROM findings
           WHERE evidence->>'kind' = 'correlation'
             AND (
@@ -61,7 +63,7 @@ runMigrations()
       // state (high-mood / high-energy / high-focus days). These invert causality —
       // mood/energy/focus are OUTPUTS of recovery, not levers that drive HRV/sleep.
       // No longer generated; this removes any already in the DB.
-      require('./src/db').query(
+      db.query(
         `DELETE FROM findings
           WHERE evidence->>'kind' = 'habit_split'
             AND evidence->>'habit' IN ('High-mood days','High-energy days','High-focus days')`
@@ -73,7 +75,7 @@ runMigrations()
       // leaked into the general trend/correlation engines before being excluded;
       // they're derived or near-flat estimate series, so patterns like
       // "higher VO₂ max → lower sleep need" are noise, not physiology.
-      require('./src/db').query(
+      db.query(
         `DELETE FROM findings
           WHERE (evidence->>'kind' = 'trend' AND evidence->>'metric' IN ('health:sleep_debt','health:sleep_need'))
              OR (evidence->>'kind' = 'correlation' AND (
@@ -96,7 +98,7 @@ runMigrations()
       // dedupePending above can't tell they're duplicates. Drop the old-worded
       // row when a new-worded one for the same run already exists; never
       // touches rated rows.
-      require('./src/db').query(
+      db.query(
         `DELETE FROM recommendations r
           WHERE r.outcome_measured_at IS NULL
             AND r.title ~* '^Best sleep nights? →'
@@ -118,7 +120,7 @@ runMigrations()
       // Cleanup: delete stale "High-energy days → HRV" ledger rows — a backwards-
       // causality recommendation from before that finding was removed (energy is an
       // output of HRV, not a lever). Only un-rated rows, so no feedback is lost.
-      require('./src/db').query(
+      db.query(
         `DELETE FROM recommendations
           WHERE outcome_measured_at IS NULL
             AND title ILIKE '%high-energy days%'`
@@ -126,7 +128,7 @@ runMigrations()
         .catch(() => {});
 
       // Optional self-running morning routine (cloud deploys; ENABLE_SCHEDULER=true).
-      require('./src/scheduler').start();
+      startScheduler();
 
       // One-setting demo data: set SEED_DEMO_ON_BOOT=true to populate realistic
       // sample data + findings so the app shows a full dashboard on first open.
