@@ -11,12 +11,17 @@ const findingsStore = require('../store/findings');
 const documentsStore = require('../store/documents');
 const surfacedStore = require('../store/surfaced');
 const dailyPicksStore = require('../store/dailyPicks');
+const sourcesStore = require('../store/sources');
 const { analyze } = require('../intelligence/analyze');
 const { embedPending } = require('../intelligence/embeddings');
 const { asyncHandler } = require('../middleware/asyncHandler');
 
 function createSpineRouter() {
   const router = express.Router();
+
+  router.get('/sources', asyncHandler(async (req, res) => {
+    res.json({ sources: await sourcesStore.listSources() });
+  }));
 
   // GET /api/metrics?domain=health&metric=hrv&from=...&to=...&agg=avg
   router.get('/metrics', asyncHandler(async (req, res) => {

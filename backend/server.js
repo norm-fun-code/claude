@@ -50,6 +50,8 @@ const { createVoiceRouter } = require('./src/routes/voice');
 const { createAudioRouter } = require('./src/routes/audio');
 const { createEngagementRouter } = require('./src/routes/engagement');
 const { createSchedulingRouter } = require('./src/routes/scheduling');
+const { createEveningBriefRouter } = require('./src/routes/evening-brief');
+const { createWealthRouter } = require('./src/routes/wealth');
 const surfacedStore = require('./src/store/surfaced');
 const briefingsStore = require('./src/store/briefings');
 const recommendationsStore = require('./src/store/recommendations');
@@ -206,140 +208,17 @@ app.use('/api', createEngagementRouter());
 // this file.
 app.use('/api', createSchedulingRouter());
 
-// Evening wind-down brief (Apple-Health daytime HRV/RHR → autonomic tone). Returns
-// today's brief if already built, else null so the card hides. ?refresh=1 builds
-// it on demand (no push) — used by the card if you open the app before 9:30pm.
-app.get('/api/evening-brief', async (req, res) => {
-  try {
-    const tz = process.env.TZ || 'America/New_York';
-    const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
-    const refresh = req.query.refresh === '1' || req.query.refresh === 'true';
-    let latest = await briefingsStore.latestBriefing('evening');
-    const isToday = latest && latest.content && latest.content.day === today;
-    if (!isToday && refresh) {
-      const { runEveningHealthBrief } = require('./src/notify/evening-brief');
-      const r = await runEveningHealthBrief({ send: false, tz });
-      return res.json({ ...r.content, generatedAt: new Date().toISOString(), fresh: true });
-    }
-    if (!isToday) return res.json(null);
-    res.json({ ...latest.content, generatedAt: latest.generated_at });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// Evening-brief routes live in src/routes/evening-brief.js — the
+// twenty-second router extraction out of this file.
+app.use('/api', createEveningBriefRouter());
 
-// Build + push the evening brief on demand (mirrors the 9:30pm scheduler job).
-app.post('/api/evening-brief/run', async (req, res) => {
-  try {
-    const { runEveningHealthBrief } = require('./src/notify/evening-brief');
-    const send = req.query.send !== '0' && req.query.send !== 'false';
-    res.json(await runEveningHealthBrief({ send }));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// Wealth snapshot/plan/allocation routes live in src/routes/wealth.js —
+// the twenty-third router extraction out of this file.
+app.use('/api', createWealthRouter());
 
-// Lightweight wealth snapshot for external integrations (e.g. a financial planner).
-// Returns the latest stored values for net worth and per-bucket totals.
-// 401k is NOT a separate metric — Monarch balance exports aggregate all accounts into
-// assets/liabilities/net_worth. To get a standalone 401k value, set MONARCH_401K_ACCOUNT
-// to the exact account name from your Monarch export (e.g. "Fidelity 401k") and
-// this endpoint will return it under `retirement`.
-app.get('/api/wealth/snapshot', async (req, res) => {
-  try {
-    const [nw, assets, liabilities] = await Promise.all([
-      metricsStore.latest({ domain: 'wealth', metric: 'net_worth' }),
-      metricsStore.latest({ domain: 'wealth', metric: 'assets' }),
-      metricsStore.latest({ domain: 'wealth', metric: 'liabilities' }),
-    ]);
+// /api/sources moved into src/routes/spine.js alongside
+// /api/sources/freshness.
 
-    // Optional: per-account 401k lookup if MONARCH_401K_ACCOUNT is set.
-    // Requires the balance export to have been imported with per-account rows.
-    const retirementMetric = process.env.MONARCH_401K_ACCOUNT
-      ? `account_${process.env.MONARCH_401K_ACCOUNT.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`
-      : null;
-    const retirement = retirementMetric
-      ? await metricsStore.latest({ domain: 'wealth', metric: retirementMetric }).catch(() => null)
-      : null;
-
-    res.json({
-      netWorth: nw ? { value: Math.round(Number(nw.value)), updatedAt: nw.ts } : null,
-      assets: assets ? { value: Math.round(Number(assets.value)), updatedAt: assets.ts } : null,
-      liabilities: liabilities ? { value: Math.round(Number(liabilities.value)), updatedAt: liabilities.ts } : null,
-      retirement: retirement ? { value: Math.round(Number(retirement.value)), updatedAt: retirement.ts } : null,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Plan baseline for "net worth vs. plan" comparison in the Wealth tab.
-// Returns the key starting-position figures from planner_state so the mobile
-// app can show actual NW vs. where the plan said you'd start.
-app.get('/api/wealth/plan', async (req, res) => {
-  try {
-    const { loadPlan } = require('./src/services/financial-plan');
-    const plan = await loadPlan(); // DB-first, falls back to financial-plan.json
-    if (!plan || !plan.P) return res.json({ available: false });
-    const P = plan.P;
-
-    // Compute how far through the plan year we are, then pro-rate the
-    // annual liquid growth to get today's expected liquid NW (the "pace").
-    // This mirrors the Cohen Financial Planner's "Live Snapshot" calculation.
-    const planYear = 2026;
-    const yearStart = new Date(`${planYear}-01-01T00:00:00`);
-    const yearEnd   = new Date(`${planYear + 1}-01-01T00:00:00`);
-    const now       = new Date();
-    const pctYear   = Math.min(1, Math.max(0,
-      (now - yearStart) / (yearEnd - yearStart)
-    ));
-    const startingLiquid = P.startingLiquid ?? null;
-    const growth2026     = P.planLiquidGrowth2026 ?? null;
-    const planLiquidAtPace = startingLiquid != null && growth2026 != null
-      ? Math.round(startingLiquid + growth2026 * pctYear)
-      : null;
-
-    res.json({
-      available: true,
-      startingLiquid,
-      k401Start: P.k401Start ?? null,
-      planLiquidGrowth2026: growth2026,
-      planLiquidAtPace,
-      pctYearElapsed: Math.round(pctYear * 100),
-      planYear,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Asset allocation + single-name concentration for the dedicated Asset Mix card.
-app.get('/api/wealth/allocation', async (req, res) => {
-  try {
-    const monarchWealth = require('./src/services/monarch-wealth');
-    const { computeAllocationView } = require('./src/intelligence/allocation');
-    const [accountsData, investments] = await Promise.all([
-      monarchWealth.getAccounts(),
-      monarchWealth.getInvestments().catch(() => null),
-    ]);
-    const view = computeAllocationView(accountsData, { holdings: investments?.holdings || null });
-    if (!view) return res.json({ available: false });
-    res.json({ available: true, ...view });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/sources', async (req, res) => {
-  try {
-    res.json({ sources: await sourcesStore.listSources() });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// TEMPORARY raw Monarch MCP JSON-RPC probe (NO LLM) — used to inspect tool output
-// shapes while building the wealth features. Remove once the mappers are built.
 // Mid-day partial refresh: markets + urgent-email scan + weather/calendar.
 // Everything else (wisdom, insights, recovery framing, weekly review) is
 // morning-built and day-locked. Merges into the cached briefing and re-saves.
