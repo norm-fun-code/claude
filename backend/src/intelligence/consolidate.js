@@ -68,15 +68,16 @@ function fmtPct(n) {
 
 async function gatherWellbeing(d7, d35) {
   const metrics = ['mood', 'energy', 'focus'];
-  const out = {};
-  for (const m of metrics) {
+  // Each metric's fetch is independent — parallelize across metrics too, not
+  // just within each metric's own cur/prior pair.
+  const results = await Promise.all(metrics.map(async (m) => {
     const [cur, prior] = await Promise.all([
       metricsStore.dailyAggregate({ domain: 'wellbeing', metric: m, from: d7, agg: 'avg', excludeSource: 'seed' }),
       metricsStore.dailyAggregate({ domain: 'wellbeing', metric: m, from: d35, to: d7, agg: 'avg', excludeSource: 'seed' }),
     ]);
-    out[m] = { cur: round1(avg(cur)), prior: round1(medianOf(prior)) };
-  }
-  return out;
+    return [m, { cur: round1(avg(cur)), prior: round1(medianOf(prior)) }];
+  }));
+  return Object.fromEntries(results);
 }
 
 async function gatherHealth(d7, d35) {
@@ -106,8 +107,9 @@ async function gatherHealth(d7, d35) {
   const { NIGHT_METRICS, staleDays, TREND_STALE_DAYS } = require('./analyze');
   const todayKey = new Date().toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/New_York' });
 
-  const out = {};
-  for (const [m, agg, gw] of metrics) {
+  // Each metric's fetch is independent — parallelize across metrics too, not
+  // just within each metric's own cur/prior pair.
+  const results = await Promise.all(metrics.map(async ([m, agg, gw]) => {
     const aggFn = PREFER_SOURCE.has(m)
       ? (opts) => metricsStore.dailyAggregatePreferSource({ ...opts, agg, sources: SOURCE_LOCK[m] ?? null })
       : (opts) => metricsStore.dailyAggregate({ ...opts, agg, excludeSource: 'seed' });
@@ -120,9 +122,9 @@ async function gatherHealth(d7, d35) {
       const age = staleDays(cur, todayKey);
       if (age != null && age > TREND_STALE_DAYS) curAvg = null; // no fresh reading — suppress rather than report a frozen average
     }
-    out[m] = { cur: curAvg, prior: round1(medianOf(prior)), goodWhen: gw };
-  }
-  return out;
+    return [m, { cur: curAvg, prior: round1(medianOf(prior)), goodWhen: gw }];
+  }));
+  return Object.fromEntries(results);
 }
 
 // How many consecutive weeks the user hit the habit threshold.
@@ -154,15 +156,19 @@ async function gatherHabits(d7, d56) {
     morning_tm: 'Morning TM', afternoon_tm: 'Afternoon TM', gratitude: 'Gratitude',
     cold_shower: 'Cold shower', exercise: 'Exercise', eat_healthy: 'Eating well',
   };
-  const out = {};
-  for (const m of BINARY) {
-    const rows = await metricsStore.dailyAggregate({ domain: 'habits', metric: m, from: d56, agg: 'avg', excludeSource: 'seed' });
-    const recent = rows.filter((r) => new Date(r.day) >= d7);
-    const rate = avg(recent);
-    const streak = computeStreak(rows, 0.71); // ≥5/7 days per week
-    out[m] = { rate: rate != null ? Math.round(rate * 100) : null, label: LABELS[m], streak };
-  }
-  const eatRows = await metricsStore.dailyAggregate({ domain: 'habits', metric: 'eat_healthy', from: d56, agg: 'avg', excludeSource: 'seed' });
+  // Each binary habit's fetch plus the eat_healthy fetch are all independent —
+  // parallelize instead of one round trip at a time.
+  const [binaryResults, eatRows] = await Promise.all([
+    Promise.all(BINARY.map(async (m) => {
+      const rows = await metricsStore.dailyAggregate({ domain: 'habits', metric: m, from: d56, agg: 'avg', excludeSource: 'seed' });
+      const recent = rows.filter((r) => new Date(r.day) >= d7);
+      const rate = avg(recent);
+      const streak = computeStreak(rows, 0.71); // ≥5/7 days per week
+      return [m, { rate: rate != null ? Math.round(rate * 100) : null, label: LABELS[m], streak }];
+    })),
+    metricsStore.dailyAggregate({ domain: 'habits', metric: 'eat_healthy', from: d56, agg: 'avg', excludeSource: 'seed' }),
+  ]);
+  const out = Object.fromEntries(binaryResults);
   const recentEat = eatRows.filter((r) => new Date(r.day) >= d7);
   const eatStreak = computeStreak(eatRows, 3.5); // ≥3.5/5 per week
   out.eat_healthy = { rate: round1(avg(recentEat)), label: LABELS.eat_healthy, scale: 5, streak: eatStreak };
@@ -170,20 +176,22 @@ async function gatherHabits(d7, d56) {
 }
 
 async function gatherWealth(d30) {
-  const nw = await metricsStore.latest({ domain: 'wealth', metric: 'net_worth' });
-  const nwPrev = await metricsStore.dailyAggregate({
-    domain: 'wealth', metric: 'net_worth',
-    from: new Date(Date.now() - 60 * DAY), to: new Date(Date.now() - 30 * DAY),
-    agg: 'avg', excludeSource: 'seed',
-  });
-  // MTD = calendar month, not rolling 30d. Use UTC month boundary — dailyAggregate
-  // groups by date_trunc('day', ts) which is UTC-based, so we match the same anchor.
+  // MTD = calendar month, not rolling 30d.
   // Use spending_DISCRETIONARY so rent/mortgage (fixed housing) is excluded — an
   // MTD number that includes a $X,XXX rent line isn't an actionable "how am I
   // pacing" figure, it's dominated by a bill that never changes.
   const now = new Date();
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const spending = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: monthStart, agg: 'sum', excludeSource: 'seed' });
+  // All three fetches below are independent — parallelize.
+  const [nw, nwPrev, spending] = await Promise.all([
+    metricsStore.latest({ domain: 'wealth', metric: 'net_worth' }),
+    metricsStore.dailyAggregate({
+      domain: 'wealth', metric: 'net_worth',
+      from: new Date(Date.now() - 60 * DAY), to: new Date(Date.now() - 30 * DAY),
+      agg: 'avg', excludeSource: 'seed',
+    }),
+    metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: monthStart, agg: 'sum', excludeSource: 'seed' }),
+  ]);
   return {
     netWorth: nw ? Number(nw.value) : null,
     netWorthPrev: avg(nwPrev),
@@ -423,7 +431,10 @@ async function consolidate({ kind = 'nightly' } = {}) {
   return content;
 }
 
-module.exports = { consolidate, buildModelText };
+module.exports = {
+  consolidate, buildModelText,
+  gatherWellbeing, gatherHealth, gatherHabits, gatherWealth,
+};
 
 if (require.main === module) {
   const { pool } = require('../db');
