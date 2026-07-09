@@ -68,7 +68,9 @@ async function fetchCalendarEvents({ date } = {}) {
  * Requires GOOGLE_WORK_CALENDAR_ID env var (typically the work email address).
  * Returns an array of { start, end } human-readable time strings, e.g.
  * [{ start: '9:00 AM', end: '10:00 AM' }, ...]
- * Returns [] if the env var is not set or the call fails.
+ * Returns [] if the env var is not set. Throws if the API call fails or
+ * reports a per-calendar error (see calResult.errors below) — callers should
+ * not treat a thrown error as "no meetings."
  */
 async function fetchWorkBusyBlocks({ date } = {}) {
   const calId = process.env.GOOGLE_WORK_CALENDAR_ID;
@@ -91,7 +93,16 @@ async function fetchWorkBusyBlocks({ date } = {}) {
     },
   });
 
-  const busy = res.data.calendars?.[calId]?.busy ?? [];
+  const calResult = res.data.calendars?.[calId];
+  // Google's freebusy.query returns HTTP 200 for the overall request even when
+  // THIS calendar failed (revoked share, transient Google-side error) — the
+  // failure is embedded in calendars[calId].errors, not a thrown error. Read
+  // it, or a real outage silently reads as "no meetings today."
+  if (calResult?.errors?.length) {
+    const reasons = calResult.errors.map((e) => e.reason || 'unknown').join(', ');
+    throw new Error(`Google freebusy query failed for ${calId}: ${reasons}`);
+  }
+  const busy = calResult?.busy ?? [];
   return busy.map((block) => ({
     start: formatTime(block.start, timeZone),
     end: formatTime(block.end, timeZone),
