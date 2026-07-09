@@ -1,4 +1,5 @@
 const { google } = require('googleapis');
+const { localDayBoundsUtc } = require('../util/date');
 
 function getAuthClient() {
   const oauth2Client = new google.auth.OAuth2(
@@ -27,8 +28,10 @@ async function fetchCalendarEvents({ date } = {}) {
   const calendar = google.calendar({ version: 'v3', auth });
 
   const now = date instanceof Date ? date : new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+  // Built from the configured TZ, not the server process's local time (Date
+  // getters honor the OS-level TZ env var, which may not match — an evening
+  // reading near UTC midnight would otherwise fetch tomorrow's window).
+  const { start: startOfDay, end: endOfDay } = localDayBoundsUtc(process.env.TZ || 'America/New_York', now);
 
   const res = await calendar.events.list({
     calendarId: 'primary',
@@ -80,9 +83,8 @@ async function fetchWorkBusyBlocks({ date } = {}) {
   const calendar = google.calendar({ version: 'v3', auth });
 
   const day = date instanceof Date ? date : new Date();
-  const startOfDay = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0);
-  const endOfDay = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59);
   const timeZone = process.env.TZ || 'America/New_York';
+  const { start: startOfDay, end: endOfDay } = localDayBoundsUtc(timeZone, day);
 
   const res = await calendar.freebusy.query({
     requestBody: {

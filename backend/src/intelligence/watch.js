@@ -20,6 +20,7 @@ const nudgesStore = require('../store/nudges');
 const devicesStore = require('../store/devices');
 const { withinQuietHours } = require('./nudges');
 const { sendPush } = require('../notify/expo');
+const { localDayBoundsUtc } = require('../util/date');
 
 // HRV/RHR are source-locked to the overnight Eight Sleep series (+ seeded
 // baseline), exactly as recovery/analyze do — daytime Apple Watch readings run
@@ -92,7 +93,7 @@ function isSpendingAnnotation(a) {
 async function contextNote() {
   try {
     const annotationsStore = require('../store/annotations');
-    const start = new Date(); start.setDate(start.getDate() - 1); start.setHours(0, 0, 0, 0);
+    const { start } = localDayBoundsUtc(process.env.TZ || 'America/New_York', new Date(Date.now() - 24 * 60 * 60 * 1000));
     const active = await annotationsStore.overlapping(start, new Date());
     const life = active.filter((a) => !isSpendingAnnotation(a));
     if (!life.length) return '';

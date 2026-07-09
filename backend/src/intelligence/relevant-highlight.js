@@ -10,6 +10,7 @@ const llm = require('../llm');
 const documentsStore = require('../store/documents');
 const surfacedStore = require('../store/surfaced');
 const { extractJson, parseAndValidate } = require('../llm/parseJson');
+const { localDayBoundsUtc } = require('../util/date');
 
 function truncate(s, n) {
   s = String(s || '');
@@ -61,14 +62,15 @@ async function gatherSituation() {
     // hot room) is stale after a night or two, and an undated week-old tag
     // reads as "last night" in the surfaced reason. Each entry carries its
     // actual recency so the model can't invent timing.
-    const start = new Date(); start.setDate(start.getDate() - 1); start.setHours(0, 0, 0, 0);
+    const tz = process.env.TZ || 'America/New_York';
+    const { start } = localDayBoundsUtc(tz, new Date(Date.now() - 24 * 60 * 60 * 1000));
     const active = await annotationsStore.overlapping(start, new Date());
-    const todayStr = new Date().toDateString();
+    const todayYmd = new Date().toLocaleDateString('en-CA', { timeZone: tz });
     out.lifeContext = active
       .map((a) => {
         const label = a.label || a.category;
         if (!label) return null;
-        const when = new Date(a.start_ts).toDateString() === todayStr ? 'today' : 'yesterday';
+        const when = new Date(a.start_ts).toLocaleDateString('en-CA', { timeZone: tz }) === todayYmd ? 'today' : 'yesterday';
         return `${label} (${when})`;
       })
       .filter(Boolean)

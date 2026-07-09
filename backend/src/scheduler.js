@@ -125,12 +125,13 @@ async function personalWakeFloorHours({ pollStartH = 6.5, backstopH = 10 } = {})
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Local (TZ-aware) YYYY-MM-DD — toISOString() would give UTC and roll the date
- *  over at the wrong hour for the morning marker. */
+ *  over at the wrong hour for the morning marker. Explicitly resolves via the
+ *  configured TZ (not d.getFullYear()/etc., which are correct only insofar as
+ *  the OS-level TZ env var happens to be set — an unenforced assumption that
+ *  silently breaks the morning-routine dedup boundary if it's ever unset). */
 function localDateKey(d = new Date()) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  const tz = process.env.TZ || 'America/New_York';
+  return d.toLocaleDateString('en-CA', { timeZone: tz });
 }
 
 /** Per-day dedup key so the morning routine runs at most once per calendar day,

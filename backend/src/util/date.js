@@ -93,4 +93,28 @@ function naiveToUtcIso(naiveStr, tz) {
   return new Date(asUtc.getTime() - offsetMs).toISOString();
 }
 
-module.exports = { formatDate, daysBetween, addDays, dayAnchorTs, safeDate, toMinutesSinceMidnight, naiveToUtcIso };
+/**
+ * UTC instants for the start/end of "today" in a given timezone — the
+ * canonical replacement for `new Date(now.getFullYear(), now.getMonth(),
+ * now.getDate(), 0,0,0)`, which builds the boundary from the server
+ * PROCESS's local time (Node's Date getters honor the OS-level TZ env var,
+ * not necessarily the user's actual timezone) rather than the timezone
+ * explicitly passed in. Used anywhere a "today's window" needs to be
+ * correct regardless of what TZ the server process happens to be running
+ * with — e.g. calendar/free-busy queries, annotation lookback windows.
+ */
+function localDayBoundsUtc(tz = 'UTC', now = new Date()) {
+  const ymd = now.toLocaleDateString('en-CA', { timeZone: tz });
+  // Anchor the whole second, then add .999ms after conversion —
+  // naiveToUtcIso's offset math loses sub-second precision when
+  // milliseconds are baked into the input string.
+  return {
+    start: new Date(naiveToUtcIso(`${ymd}T00:00:00`, tz)),
+    end: new Date(new Date(naiveToUtcIso(`${ymd}T23:59:59`, tz)).getTime() + 999),
+  };
+}
+
+module.exports = {
+  formatDate, daysBetween, addDays, dayAnchorTs, safeDate, toMinutesSinceMidnight,
+  naiveToUtcIso, localDayBoundsUtc,
+};

@@ -11,7 +11,7 @@ const express = require('express');
 const annotationsStore = require('../store/annotations');
 const briefingsStore = require('../store/briefings');
 const dayJournalStore = require('../store/dayJournal');
-const { naiveToUtcIso } = require('../util/date');
+const { naiveToUtcIso, localDayBoundsUtc } = require('../util/date');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { requireFields } = require('../middleware/validate');
 
@@ -37,7 +37,7 @@ function createAnnotationsRouter() {
   // briefing uses. Needed because multi-day events (travel) have start_ts in the
   // past, so they're invisible to the ?from=today list query in the ContextCard.
   router.get('/annotations/active', asyncHandler(async (req, res) => {
-    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+    const { start: startOfToday } = localDayBoundsUtc(process.env.TZ || 'America/New_York');
     const active = await annotationsStore.overlapping(startOfToday, new Date());
     res.json({ annotations: active });
   }));

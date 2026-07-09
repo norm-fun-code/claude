@@ -14,6 +14,7 @@
 // the original block before removing it from server.js.
 const express = require('express');
 const { withTimeout } = require('../util/async');
+const { localDayBoundsUtc } = require('../util/date');
 const { fetchCalendarEvents, fetchWorkBusyBlocks } = require('../services/calendar');
 const { fetchRandomNotionPage, fetchNotionQuotes } = require('../services/notion');
 const { fetchRandomQuote } = require('../services/googleDoc');
@@ -114,7 +115,7 @@ async function buildQuickChiefBriefContext(prior) {
     (async () => {
       let ctx = '';
       try {
-        const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+        const { start: startOfToday } = localDayBoundsUtc(process.env.TZ || 'America/New_York');
         const active = await annotationsStore.overlapping(startOfToday, new Date());
         if (active.length) {
           ctx = active
@@ -731,7 +732,7 @@ router.get('/briefing', asyncHandler(async (req, res) => {
   // context from prior days clears at midnight so it can't bleed into a new day.
   let annotationsContext = '';
   try {
-    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+    const { start: startOfToday } = localDayBoundsUtc(process.env.TZ || 'America/New_York');
     const active = await annotationsStore.overlapping(startOfToday, new Date());
     if (active.length) {
       annotationsContext = active

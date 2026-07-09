@@ -1,19 +1,26 @@
 // Life-context annotations: travel, illness, deadlines, etc. — so the
 // intelligence layer (and you) can explain anomalies instead of being misled.
 const { query } = require('../db');
+const { naiveToUtcIso } = require('../util/date');
 
 const ET_TZ = 'America/New_York';
 
-/** End-of-calendar-day (23:59:59) for TOMORROW in server local time
- *  (TZ=America/New_York on Railway). Annotations default to this so they're
- *  active all of today AND tomorrow morning — covering the next-day briefing
- *  that explains metrics affected by last night (e.g. low sleep after a late
- *  Knicks game). They're gone the day after that. */
+/** End-of-calendar-day (23:59:59.999) for TOMORROW in Eastern time. Annotations
+ *  default to this so they're active all of today AND tomorrow morning —
+ *  covering the next-day briefing that explains metrics affected by last
+ *  night (e.g. low sleep after a late Knicks game). They're gone the day
+ *  after that.
+ *  Resolved explicitly via ET_TZ (not d.setDate()/setHours(), which are
+ *  server-process-local and only correct if the OS-level TZ env var happens
+ *  to match) — and via UTC calendar arithmetic for the +1 day so this can't
+ *  land on the wrong date across a DST transition. */
 function endOfTomorrowET(d = new Date()) {
-  const eod = new Date(d);
-  eod.setDate(eod.getDate() + 1);
-  eod.setHours(23, 59, 59, 0);
-  return eod;
+  const [y, m, day] = d.toLocaleDateString('en-CA', { timeZone: ET_TZ }).split('-').map(Number);
+  const tomorrowYmd = new Date(Date.UTC(y, m - 1, day + 1)).toISOString().slice(0, 10);
+  // Anchor the whole second, then add .999ms after conversion — naiveToUtcIso's
+  // offset math loses sub-second precision when milliseconds are baked into
+  // the input string.
+  return new Date(new Date(naiveToUtcIso(`${tomorrowYmd}T23:59:59`, ET_TZ)).getTime() + 999);
 }
 
 async function createAnnotation(a) {
@@ -81,4 +88,4 @@ async function updateAnnotation(id, { label, category } = {}) {
   return true;
 }
 
-module.exports = { createAnnotation, listAnnotations, overlapping, buildAnnotationUpdate, updateAnnotation };
+module.exports = { createAnnotation, listAnnotations, overlapping, buildAnnotationUpdate, updateAnnotation, endOfTomorrowET };

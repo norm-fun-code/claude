@@ -17,6 +17,7 @@ const annotationsStore = require('../store/annotations');
 const selfModelStore = require('../store/selfModel');
 const cat = require('./catalog');
 const { query: dbQuery } = require('../db');
+const { localDayBoundsUtc } = require('../util/date');
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -220,7 +221,7 @@ async function gatherFindings() {
 
 async function gatherAnnotations() {
   try {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const { start: today } = localDayBoundsUtc(process.env.TZ || 'America/New_York');
     return await annotationsStore.overlapping(today, new Date());
   } catch { return []; }
 }
