@@ -30,7 +30,7 @@ const experimentsStore = require('./src/store/experiments');
 const experiments = require('./src/intelligence/experiments');
 const devicesStore = require('./src/store/devices');
 const nudgesStore = require('./src/store/nudges');
-const { runNudges, runCheckinReminder, runHabitsReminder } = require('./src/notify/run');
+const { runCheckinReminder, runHabitsReminder } = require('./src/notify/run');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./src/notify/morning');
 const { createHealthRouter } = require('./src/routes/health');
 const { createAnnotationsRouter } = require('./src/routes/annotations');
@@ -50,6 +50,7 @@ const { createRecoveryRouter } = require('./src/routes/recovery');
 const { createChatRouter } = require('./src/routes/chat');
 const { createVoiceRouter } = require('./src/routes/voice');
 const { createAudioRouter } = require('./src/routes/audio');
+const { createEngagementRouter } = require('./src/routes/engagement');
 const surfacedStore = require('./src/store/surfaced');
 const briefingsStore = require('./src/store/briefings');
 const recommendationsStore = require('./src/store/recommendations');
@@ -196,105 +197,10 @@ app.use('/api', createGoalsRouter());
 // extraction out of this file.
 app.use('/api', createExperimentsRouter());
 
-// The ranked "highest leverage actions" — the core NormOS question.
-app.get('/api/actions', async (req, res) => {
-  try {
-    const open = await findingsStore.listFindings({ status: 'open' });
-    const actions = open
-      .filter((f) => f.type === 'leverage')
-      .sort((a, b) => (a.evidence?.rank ?? 99) - (b.evidence?.rank ?? 99))
-      .map((f) => ({ title: f.title, detail: f.detail, score: f.evidence?.score, domains: f.domains }));
-    res.json({ actions });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Goal achievement-probability forecasts (latest analyze run).
-app.get('/api/forecasts', async (req, res) => {
-  try {
-    const open = await findingsStore.listFindings({ status: 'open' });
-    const forecasts = open
-      .filter((f) => f.type === 'forecast')
-      .map((f) => ({
-        title: f.title,
-        detail: f.detail,
-        probability: f.confidence,
-        domains: f.domains,
-        ...f.evidence,
-      }))
-      .sort((a, b) => (a.probability ?? 1) - (b.probability ?? 1)); // most at-risk first
-    res.json({ forecasts });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Register a phone's Expo push token so NormOS can reach out proactively.
-app.post('/api/devices/register', async (req, res) => {
-  try {
-    const { pushToken, platform, label } = req.body || {};
-    if (!pushToken) return res.status(400).json({ error: 'pushToken required' });
-    const id = await devicesStore.registerDevice({ pushToken, platform, label });
-    res.json({ ok: true, id });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Recent nudges (the proactive-message log).
-app.get('/api/nudges', async (req, res) => {
-  try {
-    res.json({ nudges: await nudgesStore.listNudges({ limit: Math.max(1, Math.min(Number(req.query.limit) || 50, 200)) }) });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Generate + (optionally) send today's nudges. Cron hits this each morning;
-// pass { force, dryRun } to override quiet hours or preview without sending.
-app.post('/api/nudges/run', async (req, res) => {
-  try {
-    const { force = false, dryRun = false } = req.body || {};
-    res.json(await runNudges({ force, send: !dryRun }));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Dismiss a "What The Data Shows" insight by its stable key — stays gone across
-// rebuilds (e.g. a recurring car payment flagged for "review"). POST { key, title }.
-app.post('/api/insights/dismiss', async (req, res) => {
-  try {
-    const { key, title = null } = req.body || {};
-    if (!key) return res.status(400).json({ error: 'key required' });
-    await require('./src/store/dismissedInsights').dismiss(key, title);
-    res.json({ ok: true, dismissed: key });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Restore a dismissed insight. POST { key }.
-app.post('/api/insights/undismiss', async (req, res) => {
-  try {
-    const { key } = req.body || {};
-    if (!key) return res.status(400).json({ error: 'key required' });
-    await require('./src/store/dismissedInsights').undismiss(key);
-    res.json({ ok: true, restored: key });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// List dismissed insights (for a future "manage dismissed" view).
-app.get('/api/insights/dismissed', async (req, res) => {
-  try {
-    res.json({ dismissed: await require('./src/store/dismissedInsights').listDismissed() });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// Ranked leverage actions, forecasts, device registration, nudges, and
+// dismissed-insight management live in src/routes/engagement.js — the
+// twentieth router extraction out of this file.
+app.use('/api', createEngagementRouter());
 
 // Manually trigger the anomaly watcher (event-driven "your HRV dropped" ping).
 // Pass { force: true } to bypass quiet hours, { dryRun: true } to scan without pushing.
