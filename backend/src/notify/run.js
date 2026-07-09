@@ -69,6 +69,9 @@ async function runNudges(opts = {}) {
   for (const n of candidates) {
     const status = send && tokens.length === 0 ? 'skipped' : 'pending';
     const id = await nudgesStore.recordNudge({ ...n, dedupKey: n.key, status });
+    // null means another concurrent caller already claimed this exact nudge
+    // (recordNudge's atomic dedup guard) — don't push a second time.
+    if (id == null) { out.push({ ...n, skipped: 'concurrent_duplicate' }); continue; }
 
     if (send && tokens.length > 0) {
       try {
@@ -109,6 +112,9 @@ async function sendReminder(n, { send }) {
   const tokens = send ? await devicesStore.listActiveTokens() : [];
   const status = send && tokens.length === 0 ? 'skipped' : 'pending';
   const id = await nudgesStore.recordNudge({ ...n, dedupKey: n.key, status });
+  // null means another concurrent caller already claimed this exact nudge
+  // (recordNudge's atomic dedup guard) — don't push a second time.
+  if (id == null) return { skipped: 'concurrent_duplicate', sent: 0 };
   if (send && tokens.length > 0) {
     try {
       const r = await sendPush(tokens, { title: n.title, body: n.body, data: { key: n.key } });

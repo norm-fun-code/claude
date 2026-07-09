@@ -424,6 +424,9 @@ async function runEveningHealthBrief(opts = {}) {
     basis: { type: 'evening_health_brief', day },
     status: 'pending',
   });
+  // null means another concurrent caller already claimed this exact nudge
+  // (recordNudge's atomic dedup guard) — don't push a second time.
+  if (id == null) return { built: true, sent: 0, skipped: 'concurrent_duplicate', content };
 
   const tokens = await devicesStore.listActiveTokens();
   if (tokens.length === 0) return { built: true, sent: 0, reason: 'no_devices', content };

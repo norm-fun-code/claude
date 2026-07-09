@@ -177,6 +177,9 @@ async function runWatch(opts = {}) {
   const tokens = send ? await devicesStore.listActiveTokens() : [];
   const status = send && tokens.length === 0 ? 'skipped' : 'pending';
   const id = await nudgesStore.recordNudge({ ...nudge, dedupKey: nudge.key, status });
+  // null means another concurrent caller already claimed this exact nudge
+  // (recordNudge's atomic dedup guard) — don't push a second time.
+  if (id == null) return { generated: 1, sent: 0, skipped: 'concurrent_duplicate', nudge };
 
   if (send && tokens.length > 0) {
     try {

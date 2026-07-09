@@ -84,6 +84,9 @@ async function runWealthNudges(opts = {}) {
   for (const n of toSend) {
     const status = send && tokens.length === 0 ? 'skipped' : 'pending';
     const id = await nudgesStore.recordNudge({ ...n, status });
+    // null means another concurrent caller already claimed this exact nudge
+    // (recordNudge's atomic dedup guard) — don't push a second time.
+    if (id == null) continue;
     if (send && tokens.length > 0) {
       try {
         const r = await sendPush(tokens, { title: n.title, body: n.body, data: { key: n.dedupKey } });

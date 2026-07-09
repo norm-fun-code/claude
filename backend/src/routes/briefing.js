@@ -1789,6 +1789,10 @@ router.get('/briefing', asyncHandler(async (req, res) => {
                   basis: { type: 'experiment_verdict', id: exp.id, verdict: exp.verdict },
                   status: 'pending',
                 });
+                // null means another concurrent caller already claimed this
+                // exact nudge (recordNudge's atomic dedup guard) — don't
+                // push a second time.
+                if (id == null) continue;
                 const tokens = await devicesStore.listActiveTokens();
                 if (tokens.length) {
                   const r = await sendPush(tokens, { title: `🧪 Experiment verdict: ${icon}`, body: `${exp.hypothesis}${pct}`, data: { type: 'experiment_verdict' } });

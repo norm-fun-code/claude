@@ -100,6 +100,9 @@ async function runEveningBriefing(opts = {}) {
     status: 'pending',
   };
   const id = await nudgesStore.recordNudge(n);
+  // null means another concurrent caller already claimed this exact nudge
+  // (recordNudge's atomic dedup guard) — don't push a second time.
+  if (id == null) return { built: true, sent: 0, reason: 'concurrent_duplicate' };
 
   if (!send) return { built: true, sent: 0 };
 
