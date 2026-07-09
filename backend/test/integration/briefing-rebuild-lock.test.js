@@ -15,6 +15,13 @@ const REBUILD_LOCK_ID = 727002;
 const app = buildTestApp();
 
 after(async () => {
+  // buildFreshBriefing's own promise settling (which releases the rebuild
+  // lock, polled for below) only means its trailing best-effort ingest/
+  // analyze/nudge chain has been KICKED OFF, not that it's finished — those
+  // are deliberately fire-and-forget, same as the original handler. Give
+  // them a moment to settle before closing the pool, so cleanup doesn't log
+  // spurious "pool already ended" noise from work still in flight.
+  await new Promise((r) => setTimeout(r, 1000));
   await closeDb();
 });
 
@@ -36,21 +43,31 @@ test('POST /briefing/rebuild reports alreadyRunning when another session already
   }
 });
 
-test('POST /briefing/rebuild starts (and the lock becomes free again once the attempt fails/completes) when uncontended', async () => {
+test('POST /briefing/rebuild starts (and the lock becomes free again once the build settles) when uncontended', async () => {
   const res = await request(app).post('/api/briefing/rebuild').set(authHeader());
   assert.equal(res.status, 200);
   assert.equal(res.body.started, true);
 
-  // The route's own loopback HTTP call will fail fast in this test environment
-  // (no real server bound to `port`), which releases the lock via its error
-  // handler — give that a moment, then confirm the lock is free again.
-  await new Promise((r) => setTimeout(r, 500));
-  const check = await db.pool.connect();
-  try {
-    const { rows } = await check.query('SELECT pg_try_advisory_lock($1) AS acquired', [REBUILD_LOCK_ID]);
-    assert.equal(rows[0].acquired, true, 'lock must be released after the rebuild attempt errors out');
-    await check.query('SELECT pg_advisory_unlock($1)', [REBUILD_LOCK_ID]);
-  } finally {
-    check.release();
+  // The route now calls buildFreshBriefing() directly (no more loopback HTTP)
+  // and releases the lock in a .finally() once that settles. In this test env
+  // every external source (Gemini/weather/calendar/Notion) fails fast but the
+  // build still runs its full best-effort sequence before returning, so poll
+  // for the lock instead of guessing a fixed delay.
+  const deadline = Date.now() + 10_000;
+  let acquired = false;
+  while (Date.now() < deadline) {
+    const check = await db.pool.connect();
+    try {
+      const { rows } = await check.query('SELECT pg_try_advisory_lock($1) AS acquired', [REBUILD_LOCK_ID]);
+      acquired = rows[0].acquired;
+      if (acquired) {
+        await check.query('SELECT pg_advisory_unlock($1)', [REBUILD_LOCK_ID]);
+        break;
+      }
+    } finally {
+      check.release();
+    }
+    await new Promise((r) => setTimeout(r, 200));
   }
+  assert.equal(acquired, true, 'lock must be released once the background build settles');
 });

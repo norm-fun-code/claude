@@ -272,177 +272,31 @@ async function buildQuickChiefBriefContext(prior) {
   };
 }
 
-function createBriefingRouter({ port }) {
-  const router = express.Router();
 
-router.get('/briefing/live', asyncHandler(async (req, res) => {
-    const prior = await briefingsStore.latestBriefing('daily');
-    if (!prior?.content) {
-      return res.status(409).json({ error: 'no briefing built yet — load the briefing first' });
-    }
-
-    const EXT = Number(process.env.BRIEFING_SOURCE_TIMEOUT_MS || 12000);
-    const [marketsResult, weatherResult, calendarResult, workBusyResult] = await Promise.allSettled([
-      withTimeout(fetchMarkets(), EXT * 3, 'markets'), // includes its own small LLM brief
-      withTimeout(fetchWeather(), EXT, 'weather'),
-      withTimeout(fetchCalendarEvents(), EXT, 'calendar'),
-      withTimeout(fetchWorkBusyBlocks(), EXT, 'workCalendar'),
-    ]);
-    const markets = marketsResult.status === 'fulfilled' ? marketsResult.value : null;
-    const weather = weatherResult.status === 'fulfilled' ? weatherResult.value : null;
-    const calendar = calendarResult.status === 'fulfilled' ? calendarResult.value : null;
-    const workBusy = workBusyResult.status === 'fulfilled' ? workBusyResult.value : null;
-
-    const content = {
-      ...prior.content,
-      ...(markets ? { markets } : {}),
-      ...(weather ? { weather } : {}),
-      ...(calendar ? { calendar } : {}),
-      ...(workBusy ? { workBusy } : {}),
-      liveRefreshedAt: new Date().toISOString(),
-    };
-
-    briefingsStore
-      .saveBriefing({ kind: 'daily', content })
-      .catch((err) => console.error('[briefing live] save failed:', err.message));
-
-    res.json({ ...content, cached: false });
-}));
-
-router.post('/briefing/markets', asyncHandler(async (req, res) => {
-    const prior = await briefingsStore.latestBriefing('daily');
-    if (!prior?.content) {
-      return res.status(409).json({ error: 'no briefing built yet — load the briefing first' });
-    }
-
-    const EXT = Number(process.env.BRIEFING_SOURCE_TIMEOUT_MS || 12000);
-    const markets = await withTimeout(fetchMarkets(), EXT * 3, 'markets').catch((err) => {
-      console.error('[briefing markets] fetch failed:', err.message);
-      return null;
-    });
-
-    if (!markets) {
-      return res.status(503).json({ error: 'markets fetch failed — check feeds or try again' });
-    }
-
-    const content = { ...prior.content, markets };
-    briefingsStore
-      .saveBriefing({ kind: 'daily', content })
-      .catch((err) => console.error('[briefing markets] save failed:', err.message));
-
-    res.json({ markets });
-}));
-
-// Fast, scoped retry for JUST the Chief-of-Staff card — added after a live
-// silent-fallback bug (see briefing-ai.js's shape-validation logging and the
-// chiefBriefStale flag below) kept showing yesterday's brief with no way to
-// force a quick re-try short of the full 60-90s rebuild. Recomputes only the
-// context generateChiefBrief needs (see buildQuickChiefBriefContext above)
-// and touches ONLY chiefBrief/morningFocus/chiefBriefStale in the saved
-// content — every other field (weather, wealth, insights, etc.) is untouched.
-router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
-  const prior = await briefingsStore.latestBriefing('daily');
-  if (!prior?.content) {
-    return res.status(409).json({ error: 'no briefing built yet — load the briefing first' });
-  }
-
-  const ctx = await buildQuickChiefBriefContext(prior);
-  const chiefResult = await generateChiefBrief(
-    ctx.emails, ctx.dayName, ctx.workout, ctx.calendar, ctx.wellbeingContext, ctx.annotationsContext,
-    ctx.recoveryContext, ctx.experimentsContext, ctx.selfModel, ctx.leverageContext, ctx.workBusy,
-    ctx.strengthContext, ctx.spendingContext, ctx.continuityContext, ctx.cashflowContext,
-    ctx.progressContext, ctx.weeklyGoalsContext, ctx.chaptersContext, ctx.dayOffContext
-  );
-
-  const chiefBriefStale = chiefResult.chiefBrief == null;
-  const errors = Array.isArray(prior.content.errors) ? prior.content.errors.filter((e) => e.service !== 'chiefBrief') : [];
-  if (chiefBriefStale) {
-    console.error('[chief-brief rebuild] still invalid after the scoped retry — keeping the existing card.');
-    errors.push({ service: 'chiefBrief', error: 'invalid or missing shape from the LLM (after a retry); showing the previous build\'s brief' });
-  }
-
-  const content = {
-    ...prior.content,
-    chiefBrief: chiefResult.chiefBrief ?? prior.content.chiefBrief ?? null,
-    morningFocus: chiefResult.morningFocus || prior.content.morningFocus || '',
-    chiefBriefStale,
-    errors,
-    // Match the full builder: builtAt always advances to "now" whether or not
-    // chiefBrief itself refreshed — it means "when was this response
-    // produced," not "when did the content last change." Without this the
-    // card's "Built X ago" label kept showing the ORIGINAL build's timestamp
-    // after a failed retry, on top of an already-confusing silent failure —
-    // looking like the tap did nothing at all instead of a retry that ran and
-    // came back invalid again.
-    builtAt: new Date().toISOString(),
-  };
-  briefingsStore
-    .saveBriefing({ kind: 'daily', content })
-    .catch((err) => console.error('[chief-brief rebuild] save failed:', err.message));
-
-  res.json({ ...content, cached: false });
-}));
-
-// Postgres advisory lock (not an in-memory boolean) so "is a rebuild already
-// running" is answered correctly across replicas, not just within this one
-// process — an in-memory flag is invisible to a sibling instance, so two
-// replicas could each start their own 60-90s rebuild concurrently. Arbitrary
-// lock id; just needs to not collide with another feature's (see
-// scheduler.js's LEADER_LOCK_ID = 727001).
-const REBUILD_LOCK_ID = 727002;
-router.post('/briefing/rebuild', asyncHandler(async (req, res) => {
-  const triggeredAt = new Date().toISOString();
-  const client = await require('../db').pool.connect();
-  const { rows } = await client.query('SELECT pg_try_advisory_lock($1) AS acquired', [REBUILD_LOCK_ID]);
-  if (!rows[0].acquired) {
-    client.release();
-    return res.json({ started: false, alreadyRunning: true, triggeredAt });
-  }
-  res.json({ started: true, triggeredAt });
-
-  const release = async () => {
-    try { await client.query('SELECT pg_advisory_unlock($1)', [REBUILD_LOCK_ID]); } catch { /* connection may already be gone */ }
-    try { client.release(); } catch { /* already released */ }
-  };
-
-  const http = require('http');
-  const token = process.env.NORMOS_API_TOKEN || '';
-  const r = http.request(
-    {
-      hostname: 'localhost',
-      port,
-      path: '/api/briefing?refresh=1',
-      method: 'GET',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    },
-    (resp) => {
-      resp.resume(); // drain response body to free the socket
-      resp.on('end', release);
-    }
-  );
-  r.on('error', (err) => {
-    console.error('[bg rebuild] loopback failed:', err.message);
-    release();
-  });
-  r.setTimeout(200000, () => { r.destroy(); release(); });
-  r.end();
-}));
-
-router.get('/briefing', asyncHandler(async (req, res) => {
+/**
+ * Build a fresh (or cache-served) daily briefing and return the response
+ * payload. Extracted so both GET /briefing AND the two internal "warm the
+ * cache" callers (POST /briefing/rebuild, notify/morning.js's warmBriefing)
+ * invoke the exact same logic directly instead of each doing a loopback HTTP
+ * round-trip to this same process's own /api/briefing?refresh=1 — the
+ * loopback pattern adds an unnecessary network hop and its own failure mode
+ * for what is, underneath, a same-process function call. force=true skips
+ * the cache and always rebuilds (mirrors ?refresh=1).
+ */
+async function buildFreshBriefing({ force = false } = {}) {
   const errors = [];
 
-  // Serve a cached briefing instantly unless ?refresh=1. Building fresh calls
+  // Serve a cached briefing instantly unless force. Building fresh calls
   // the LLM + weather/calendar/Notion/markets/embeddings (~60-90s), so we always
   // serve the last build immediately. The scheduler pre-builds at 8:30am so the
   // cache is warm. Pull-to-refresh serves cache instantly; the explicit per-tab
-  // "Rebuild" button sends ?refresh=1 to force a new build.
+  // "Rebuild" button forces a new build.
   //
   // We never auto-rebuild on non-forced requests — doing so caused a silent
   // failure loop: the 60-90s build exceeded the client's 45s timeout, the request
   // was aborted, and the app got stuck on yesterday's data with no visible error.
   const CACHE_TTL_MIN = Number(process.env.BRIEFING_CACHE_MIN || 180); // stale threshold
   const tz = process.env.TZ || 'America/New_York';
-  const force = req.query.refresh === '1' || req.query.refresh === 'true';
 
   // The most recent prior build, and whether it was built earlier *today* (in the
   // user's timezone). Used for the daily-lock: the "wisdom" content (library
@@ -530,7 +384,7 @@ router.get('/briefing', asyncHandler(async (req, res) => {
     }
     // Always serve the cache — never block the client on a 60-90s rebuild.
     // `stale: true` signals the app to show a "Rebuild briefing" button.
-    return res.json({ ...cachedContent, weeklyGoals, weeklyReview, cached: true, stale: isStale, cachedAgeMin: Math.round(ageMin) });
+    return { ...cachedContent, weeklyGoals, weeklyReview, cached: true, stale: isStale, cachedAgeMin: Math.round(ageMin) };
   }
 
   // Format today's date label
@@ -1731,8 +1585,6 @@ router.get('/briefing', asyncHandler(async (req, res) => {
     response.errors = errors;
   }
 
-  res.json(response);
-
   // Persist the briefing for history, and capture today's data into the spine.
   // Fire-and-forget: never let persistence failures affect the live response.
   briefingsStore.saveBriefing({ kind: 'daily', content: response })
@@ -1816,9 +1668,156 @@ router.get('/briefing', asyncHandler(async (req, res) => {
     .then(() => require('../notify/run').runNudges({ suppressCheckin: true })
       .catch((e) => console.error('[proactive nudge]', e.message)))
     .catch((err) => console.error('[ingest/analyze] failed:', err.message));
+
+  return response;
+}
+function createBriefingRouter({ port }) {
+  const router = express.Router();
+
+router.get('/briefing/live', asyncHandler(async (req, res) => {
+    const prior = await briefingsStore.latestBriefing('daily');
+    if (!prior?.content) {
+      return res.status(409).json({ error: 'no briefing built yet — load the briefing first' });
+    }
+
+    const EXT = Number(process.env.BRIEFING_SOURCE_TIMEOUT_MS || 12000);
+    const [marketsResult, weatherResult, calendarResult, workBusyResult] = await Promise.allSettled([
+      withTimeout(fetchMarkets(), EXT * 3, 'markets'), // includes its own small LLM brief
+      withTimeout(fetchWeather(), EXT, 'weather'),
+      withTimeout(fetchCalendarEvents(), EXT, 'calendar'),
+      withTimeout(fetchWorkBusyBlocks(), EXT, 'workCalendar'),
+    ]);
+    const markets = marketsResult.status === 'fulfilled' ? marketsResult.value : null;
+    const weather = weatherResult.status === 'fulfilled' ? weatherResult.value : null;
+    const calendar = calendarResult.status === 'fulfilled' ? calendarResult.value : null;
+    const workBusy = workBusyResult.status === 'fulfilled' ? workBusyResult.value : null;
+
+    const content = {
+      ...prior.content,
+      ...(markets ? { markets } : {}),
+      ...(weather ? { weather } : {}),
+      ...(calendar ? { calendar } : {}),
+      ...(workBusy ? { workBusy } : {}),
+      liveRefreshedAt: new Date().toISOString(),
+    };
+
+    briefingsStore
+      .saveBriefing({ kind: 'daily', content })
+      .catch((err) => console.error('[briefing live] save failed:', err.message));
+
+    res.json({ ...content, cached: false });
 }));
+
+router.post('/briefing/markets', asyncHandler(async (req, res) => {
+    const prior = await briefingsStore.latestBriefing('daily');
+    if (!prior?.content) {
+      return res.status(409).json({ error: 'no briefing built yet — load the briefing first' });
+    }
+
+    const EXT = Number(process.env.BRIEFING_SOURCE_TIMEOUT_MS || 12000);
+    const markets = await withTimeout(fetchMarkets(), EXT * 3, 'markets').catch((err) => {
+      console.error('[briefing markets] fetch failed:', err.message);
+      return null;
+    });
+
+    if (!markets) {
+      return res.status(503).json({ error: 'markets fetch failed — check feeds or try again' });
+    }
+
+    const content = { ...prior.content, markets };
+    briefingsStore
+      .saveBriefing({ kind: 'daily', content })
+      .catch((err) => console.error('[briefing markets] save failed:', err.message));
+
+    res.json({ markets });
+}));
+
+// Fast, scoped retry for JUST the Chief-of-Staff card — added after a live
+// silent-fallback bug (see briefing-ai.js's shape-validation logging and the
+// chiefBriefStale flag below) kept showing yesterday's brief with no way to
+// force a quick re-try short of the full 60-90s rebuild. Recomputes only the
+// context generateChiefBrief needs (see buildQuickChiefBriefContext above)
+// and touches ONLY chiefBrief/morningFocus/chiefBriefStale in the saved
+// content — every other field (weather, wealth, insights, etc.) is untouched.
+router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
+  const prior = await briefingsStore.latestBriefing('daily');
+  if (!prior?.content) {
+    return res.status(409).json({ error: 'no briefing built yet — load the briefing first' });
+  }
+
+  const ctx = await buildQuickChiefBriefContext(prior);
+  const chiefResult = await generateChiefBrief(
+    ctx.emails, ctx.dayName, ctx.workout, ctx.calendar, ctx.wellbeingContext, ctx.annotationsContext,
+    ctx.recoveryContext, ctx.experimentsContext, ctx.selfModel, ctx.leverageContext, ctx.workBusy,
+    ctx.strengthContext, ctx.spendingContext, ctx.continuityContext, ctx.cashflowContext,
+    ctx.progressContext, ctx.weeklyGoalsContext, ctx.chaptersContext, ctx.dayOffContext
+  );
+
+  const chiefBriefStale = chiefResult.chiefBrief == null;
+  const errors = Array.isArray(prior.content.errors) ? prior.content.errors.filter((e) => e.service !== 'chiefBrief') : [];
+  if (chiefBriefStale) {
+    console.error('[chief-brief rebuild] still invalid after the scoped retry — keeping the existing card.');
+    errors.push({ service: 'chiefBrief', error: 'invalid or missing shape from the LLM (after a retry); showing the previous build\'s brief' });
+  }
+
+  const content = {
+    ...prior.content,
+    chiefBrief: chiefResult.chiefBrief ?? prior.content.chiefBrief ?? null,
+    morningFocus: chiefResult.morningFocus || prior.content.morningFocus || '',
+    chiefBriefStale,
+    errors,
+    // Match the full builder: builtAt always advances to "now" whether or not
+    // chiefBrief itself refreshed — it means "when was this response
+    // produced," not "when did the content last change." Without this the
+    // card's "Built X ago" label kept showing the ORIGINAL build's timestamp
+    // after a failed retry, on top of an already-confusing silent failure —
+    // looking like the tap did nothing at all instead of a retry that ran and
+    // came back invalid again.
+    builtAt: new Date().toISOString(),
+  };
+  briefingsStore
+    .saveBriefing({ kind: 'daily', content })
+    .catch((err) => console.error('[chief-brief rebuild] save failed:', err.message));
+
+  res.json({ ...content, cached: false });
+}));
+
+// Postgres advisory lock (not an in-memory boolean) so "is a rebuild already
+// running" is answered correctly across replicas, not just within this one
+// process — an in-memory flag is invisible to a sibling instance, so two
+// replicas could each start their own 60-90s rebuild concurrently. Arbitrary
+// lock id; just needs to not collide with another feature's (see
+// scheduler.js's LEADER_LOCK_ID = 727001).
+const REBUILD_LOCK_ID = 727002;
+router.post('/briefing/rebuild', asyncHandler(async (req, res) => {
+  const triggeredAt = new Date().toISOString();
+  const client = await require('../db').pool.connect();
+  const { rows } = await client.query('SELECT pg_try_advisory_lock($1) AS acquired', [REBUILD_LOCK_ID]);
+  if (!rows[0].acquired) {
+    client.release();
+    return res.json({ started: false, alreadyRunning: true, triggeredAt });
+  }
+  res.json({ started: true, triggeredAt });
+
+  const release = async () => {
+    try { await client.query('SELECT pg_advisory_unlock($1)', [REBUILD_LOCK_ID]); } catch { /* connection may already be gone */ }
+    try { client.release(); } catch { /* already released */ }
+  };
+
+  // Direct call — same process, no reason to round-trip through our own HTTP
+  // server. buildFreshBriefing already saves the result itself (see its own
+  // briefingsStore.saveBriefing call), so nothing further is needed here.
+  buildFreshBriefing({ force: true })
+    .catch((err) => console.error('[bg rebuild] failed:', err.message))
+    .finally(release);
+}));
+
+  router.get('/briefing', asyncHandler(async (req, res) => {
+    const force = req.query.refresh === '1' || req.query.refresh === 'true';
+    res.json(await buildFreshBriefing({ force }));
+  }));
 
   return router;
 }
 
-module.exports = { createBriefingRouter };
+module.exports = { createBriefingRouter, buildFreshBriefing };

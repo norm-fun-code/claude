@@ -2,9 +2,11 @@
 // fresh briefing build so the cache is warm when you open the app (no 15-40s
 // wait), then sends a "Your morning briefing is ready!" push to your devices.
 //
-// We warm the cache by calling our own /api/briefing?refresh=1 over loopback —
-// the exact code path the app uses — so there's no duplicate briefing logic to
-// drift. The bearer token (if set) is included so the auth gate lets us through.
+// We warm the cache by calling buildFreshBriefing() directly — the exact same
+// function GET /api/briefing itself calls — so there's no duplicate briefing
+// logic to drift. This used to go over a loopback HTTP call to our own
+// /api/briefing?refresh=1, an unnecessary network hop (and failure mode) for
+// what is, underneath, a same-process function call.
 const devicesStore = require('../store/devices');
 const { sendPush } = require('./expo');
 
@@ -36,25 +38,10 @@ async function lastBriefingBuiltAt() {
   }
 }
 
-function selfBase() {
-  const port = process.env.PORT || 3001;
-  return `http://127.0.0.1:${port}`;
-}
-
 /** Force a fresh briefing build so the app opens to a ready briefing. */
 async function warmBriefing() {
-  const url = `${selfBase()}/api/briefing?refresh=1`;
-  const headers = {};
-  if (process.env.NORMOS_API_TOKEN) headers.Authorization = `Bearer ${process.env.NORMOS_API_TOKEN}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 150000); // LLM can take up to ~110s
-  try {
-    const res = await fetch(url, { headers, signal: controller.signal });
-    if (!res.ok) throw new Error(`briefing build returned ${res.status}`);
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
-  }
+  const { buildFreshBriefing } = require('../routes/briefing');
+  return buildFreshBriefing({ force: true });
 }
 
 /** Local-day dedup key for the "Good morning" push — ONE brief-ready ping per
