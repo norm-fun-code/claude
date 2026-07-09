@@ -53,6 +53,13 @@ type Status = {
   caption: string; // the per-row explainer — the actual fix for "how do I use this?"
 };
 
+// Pure predicate mirroring getStatus's own no-metric branch below (delta > 0
+// with no outcome_metric = the 'Done' chip) — used to filter out already-Done
+// items on load, without needing a color object just to check a label.
+function isDoneOutcome(rec: Rec): boolean {
+  return rec.outcome_measured_at != null && rec.outcome_delta != null && !rec.outcome_metric && rec.outcome_delta > 0;
+}
+
 function getStatus(
   rec: Rec,
   c: ReturnType<typeof getColors>,
@@ -115,12 +122,26 @@ function getStatus(
 }
 
 function SwipeableRow({
-  rec, c, onDelete,
-}: { rec: Rec; c: ReturnType<typeof getColors>; onDelete: (id: number) => void }) {
+  rec, c, onDelete, onResolvedDone,
+}: {
+  rec: Rec; c: ReturnType<typeof getColors>; onDelete: (id: number) => void;
+  // Fires after a "Done" outcome is confirmed and its brief on-screen pause has
+  // elapsed. Distinct from onDelete: this only clears it from THIS view — the
+  // recommendation and its outcome stay in the DB, so the ledger's stats
+  // ("4 made · 67% effective", computed server-side from all history on every
+  // fetch) are completely unaffected. onDelete, by contrast, hits DELETE and
+  // removes it from that history for good.
+  onResolvedDone: (id: number) => void;
+}) {
   const translateX = useRef(new Animated.Value(0)).current;
   const [deleting, setDeleting] = useState(false);
   const [localMeasuredAt, setLocalMeasuredAt] = useState<string | null | undefined>(undefined);
   const [localDelta, setLocalDelta] = useState<number | null | undefined>(undefined);
+  // Guards the delayed auto-dismiss below against firing on an unmounted row
+  // (e.g. the user navigates off Today, or the row is removed some other way,
+  // before the 900ms pause elapses).
+  const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (dismissTimer.current) clearTimeout(dismissTimer.current); }, []);
   // Most titles are short and formulaic (the leverage engine's templates), but a
   // freeform Ask-sourced one can run long — tap to unfold instead of silently
   // losing the rest of the sentence behind an ellipsis with no way to read it.
@@ -167,6 +188,23 @@ function SwipeableRow({
         body: JSON.stringify({ thumbsUp }),
       });
       Haptics.selectionAsync();
+      // A "Done" outcome (a no-metric, commitment-style rec confirmed complete)
+      // has served its purpose the moment it's confirmed — unlike Worked/No
+      // effect/Skipped, which stay visible as part of the effectiveness
+      // history. Let the checkmark render for a beat so the confirmation is
+      // actually seen, then slide it out the same way a swipe-delete does —
+      // but WITHOUT hitting DELETE, so the recommendation and its outcome
+      // stay in the DB and the ledger's stats stay accurate; this only clears
+      // it from this view.
+      const resolved = getStatus(rec, c, measuredAt, delta);
+      if (resolved.chipLabel === 'Done') {
+        dismissTimer.current = setTimeout(() => {
+          Animated.timing(translateX, { toValue: -400, duration: 200, useNativeDriver: true }).start(() => {
+            setDeleting(true);
+            onResolvedDone(rec.id);
+          });
+        }, 900);
+      }
     } catch {
       setLocalMeasuredAt(undefined);
       setLocalDelta(undefined);
@@ -287,13 +325,18 @@ export function RecommendationLedgerCard() {
         const res = await fetchWithTimeout(`${RECOMMENDATIONS_URL}?limit=20`, { headers: authHeaders() });
         if (!res.ok) return;
         const data = await res.json();
-        setRecs(data.recommendations ?? []);
+        // Already-Done items (marked done in a PAST session) shouldn't linger
+        // in the visible ledger either — only filtered from THIS list, not
+        // deleted, so `stats` (set from the same response, computed
+        // server-side over full history) is unaffected.
+        setRecs((data.recommendations ?? []).filter((r: Rec) => !isDoneOutcome(r)));
         setStats(data.stats ?? null);
       } catch {}
     })();
   }, []);
 
   const handleDelete = (id: number) => setRecs((prev) => prev.filter((r) => r.id !== id));
+  const handleResolvedDone = (id: number) => setRecs((prev) => prev.filter((r) => r.id !== id));
 
   if (recs.length === 0) return null;
 
@@ -335,7 +378,7 @@ export function RecommendationLedgerCard() {
       </View>
 
       {visible.map((rec) => (
-        <SwipeableRow key={rec.id} rec={rec} c={c} onDelete={handleDelete} />
+        <SwipeableRow key={rec.id} rec={rec} c={c} onDelete={handleDelete} onResolvedDone={handleResolvedDone} />
       ))}
 
       {recs.length > 5 && (
