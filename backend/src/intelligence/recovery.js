@@ -692,9 +692,8 @@ async function needsSleepCheckIn() {
  * briefing AND by GET /api/recovery so the Health tab can refresh the card
  * in under a second. Returns { score, band, parts, detail } or null.
  */
-async function liveRecovery() {
+async function liveRecoveryUncached() {
   const metricsStore = require('../store/metrics');
-  const seriesByKey = {};
   const from60 = new Date(Date.now() - 60 * 864e5);
   // HRV and RHR are the autonomic recovery signals the user enters manually each
   // morning from Eight Sleep (overnight). Source-lock them to eight_sleep (+ the
@@ -706,11 +705,19 @@ async function liveRecovery() {
     'health:hrv': NIGHT_SOURCES,
     'health:resting_hr': NIGHT_SOURCES,
   };
-  for (const key of ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score']) {
+  const KEYS = ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score'];
+  // Each key's fetch is independent — parallelize instead of one round trip at
+  // a time (this function is called from several unrelated request paths, so
+  // the round trips added up across a session even though there are only 4).
+  const results = await Promise.all(KEYS.map(async (key) => {
     const [dm, mt] = key.split(':');
     const rows = await metricsStore.dailyAggregatePreferSource({
       domain: dm, metric: mt, from: from60, agg: 'avg', sources: SOURCE_LOCK[key] ?? null,
     });
+    return [key, rows];
+  }));
+  const seriesByKey = {};
+  for (const [key, rows] of results) {
     if (rows.length) seriesByKey[key] = rows;
   }
 
@@ -776,6 +783,26 @@ async function liveRecovery() {
   } catch { /* non-critical */ }
 
   return { score: rec.score, band, parts: rec.parts, detail: guidance + workoutNote, rawHrv, rawRhr };
+}
+
+// liveRecovery() is called from several independent request paths in one
+// briefing build (the chief-brief prompt context, the composites/insights
+// section — already deduped against each other within a single build via the
+// `if (!recovery)` guard in briefing.js) AND across separate requests entirely
+// (every pull-to-refresh re-checks it on the cache-serve path; the scoped
+// chief-brief-only rebuild has its own copy). None of those need
+// millisecond-fresh data — recovery only changes when a new Eight Sleep
+// reading lands, at most once per night. Cache the PROMISE (not just the
+// resolved value) so truly concurrent callers share one in-flight
+// computation too, same pattern as services/monarch-wealth.js.
+const RECOVERY_CACHE_MS = Number(process.env.RECOVERY_CACHE_MS || 2 * 60 * 1000);
+let _recoveryCache = null; // { at, promise }
+async function liveRecovery() {
+  const hit = _recoveryCache;
+  if (hit && Date.now() - hit.at < RECOVERY_CACHE_MS) return hit.promise;
+  const promise = liveRecoveryUncached().catch((err) => { _recoveryCache = null; throw err; });
+  _recoveryCache = { at: Date.now(), promise };
+  return promise;
 }
 
 /**
