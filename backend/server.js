@@ -42,6 +42,7 @@ const { createGoalsRouter } = require('./src/routes/goals');
 const { createExperimentsRouter } = require('./src/routes/experiments');
 const { createWorkoutRouter } = require('./src/routes/workout');
 const { createActivityRouter } = require('./src/routes/activity');
+const { createCheckinRouter } = require('./src/routes/checkin');
 const surfacedStore = require('./src/store/surfaced');
 const briefingsStore = require('./src/store/briefings');
 const recommendationsStore = require('./src/store/recommendations');
@@ -123,103 +124,9 @@ async function recomputeHabitScore(tz) {
 // '/ingest/health', etc.) resolve to the exact same /api/... URLs as before.
 app.use('/api', createHealthRouter({ bootTime: BOOT_TIME }));
 
-// Daily subjective check-in (mood / energy / focus + optional journal note).
-app.post('/api/checkin', async (req, res) => {
-  try {
-    await sourcesStore.registerSource({
-      id: CHECKIN_SOURCE,
-      domain: 'wellbeing',
-      displayName: 'Daily Check-in',
-    });
-    const tz = process.env.TZ || 'America/New_York';
-    const { metrics, document } = mapCheckin(req.body, { ts: req.query.ts, tz });
-    const written = await metricsStore.insertMetrics(metrics);
-    if (document) await documentsStore.upsertDocument(document);
-    await sourcesStore.markSync(CHECKIN_SOURCE);
-    res.json({ written, journaled: Boolean(document) });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Last N days of check-in data (mood / energy / focus per day) for the
-// history card on the Insights tab. Returns days sorted oldest-first so
-// the mobile chart can render them left-to-right without reversing.
-app.get('/api/checkin/history', async (req, res) => {
-  try {
-    const tz = process.env.TZ || 'America/New_York';
-    const days = Math.min(Number(req.query.days) || 30, 90);
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-    const { rows } = await db.query(
-      `SELECT
-         (ts AT TIME ZONE $1)::date AS day,
-         metric,
-         AVG(value) AS value
-       FROM metrics
-       WHERE domain = 'wellbeing' AND source = 'checkin'
-         AND metric = ANY($2)
-         AND ts >= $3
-       GROUP BY (ts AT TIME ZONE $1)::date, metric
-       ORDER BY day ASC`,
-      [tz, ['mood', 'energy', 'focus'], from]
-    );
-    // Pivot: [{day, mood, energy, focus}]
-    const byDay = new Map();
-    for (const r of rows) {
-      const d = r.day.toISOString().slice(0, 10);
-      if (!byDay.has(d)) byDay.set(d, { date: d });
-      byDay.get(d)[r.metric] = Math.round(Number(r.value) * 10) / 10;
-    }
-    res.json({ days: [...byDay.values()] });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Last N weekly review briefings — for the history panel on the Insights tab.
-app.get('/api/briefings/history', async (req, res) => {
-  try {
-    const limit = Math.min(Number(req.query.limit) || 8, 20);
-    const kind = req.query.kind || 'weekly';
-    const rows = await briefingsStore.listBriefings({ kind, limit });
-    res.json({ reviews: rows.map((r) => ({ content: r.content, generatedAt: r.generated_at })) });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// What you've already checked in *today* (your timezone), so the card can
-// rehydrate after a tab switch / reopen and reset cleanly at midnight.
-app.get('/api/checkin/today', async (req, res) => {
-  try {
-    const tz = process.env.TZ || 'America/New_York';
-    const today = new Date().toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD
-    const [metricsResult, noteResult] = await Promise.all([
-      db.query(
-        `SELECT metric, value FROM metrics
-          WHERE domain = 'wellbeing' AND source = 'checkin'
-            AND (ts AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
-          ORDER BY ts ASC`,
-        [tz]
-      ),
-      db.query(
-        `SELECT content FROM documents WHERE source = 'checkin' AND external_id = $1 LIMIT 1`,
-        [`note:${today}`]
-      ),
-    ]);
-    const v = {};
-    for (const r of metricsResult.rows) v[r.metric] = Number(r.value);
-    res.json({
-      logged: metricsResult.rows.length > 0,
-      mood: Number.isFinite(v.mood) ? v.mood : null,
-      energy: Number.isFinite(v.energy) ? v.energy : null,
-      focus: Number.isFinite(v.focus) ? v.focus : null,
-      note: noteResult.rows[0]?.content ?? null,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// Check-in routes (log, history, today, weekly review history) live in
+// src/routes/checkin.js — the eighth router extraction out of this file.
+app.use('/api', createCheckinRouter());
 
 // End-of-day habit stack (5 binary habits + eat-healthy 1–5 → daily metrics).
 app.post('/api/habits', async (req, res) => {
