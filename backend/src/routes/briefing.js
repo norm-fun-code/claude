@@ -383,14 +383,27 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
   res.json({ ...content, cached: false });
 }));
 
-let _rebuildInFlight = false;
-router.post('/briefing/rebuild', (req, res) => {
+// Postgres advisory lock (not an in-memory boolean) so "is a rebuild already
+// running" is answered correctly across replicas, not just within this one
+// process — an in-memory flag is invisible to a sibling instance, so two
+// replicas could each start their own 60-90s rebuild concurrently. Arbitrary
+// lock id; just needs to not collide with another feature's (see
+// scheduler.js's LEADER_LOCK_ID = 727001).
+const REBUILD_LOCK_ID = 727002;
+router.post('/briefing/rebuild', asyncHandler(async (req, res) => {
   const triggeredAt = new Date().toISOString();
-  if (_rebuildInFlight) {
+  const client = await require('../db').pool.connect();
+  const { rows } = await client.query('SELECT pg_try_advisory_lock($1) AS acquired', [REBUILD_LOCK_ID]);
+  if (!rows[0].acquired) {
+    client.release();
     return res.json({ started: false, alreadyRunning: true, triggeredAt });
   }
-  _rebuildInFlight = true;
   res.json({ started: true, triggeredAt });
+
+  const release = async () => {
+    try { await client.query('SELECT pg_advisory_unlock($1)', [REBUILD_LOCK_ID]); } catch { /* connection may already be gone */ }
+    try { client.release(); } catch { /* already released */ }
+  };
 
   const http = require('http');
   const token = process.env.NORMOS_API_TOKEN || '';
@@ -404,16 +417,16 @@ router.post('/briefing/rebuild', (req, res) => {
     },
     (resp) => {
       resp.resume(); // drain response body to free the socket
-      resp.on('end', () => { _rebuildInFlight = false; });
+      resp.on('end', release);
     }
   );
   r.on('error', (err) => {
     console.error('[bg rebuild] loopback failed:', err.message);
-    _rebuildInFlight = false;
+    release();
   });
-  r.setTimeout(200000, () => { r.destroy(); _rebuildInFlight = false; });
+  r.setTimeout(200000, () => { r.destroy(); release(); });
   r.end();
-});
+}));
 
 router.get('/briefing', asyncHandler(async (req, res) => {
   const errors = [];

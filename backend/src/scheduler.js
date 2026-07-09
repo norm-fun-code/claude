@@ -19,7 +19,7 @@ const { runCommitmentReminders } = require('./notify/commitments');
 const { runWealthNudges } = require('./intelligence/wealth-nudges');
 const nudgesStore = require('./store/nudges');
 const { runIngest: _runIngest } = require('./ingest/run');
-const { query } = require('./db');
+const { query, pool } = require('./db');
 const { getSource, updateConfig } = require('./store/sources');
 const eightSleepApi = require('./services/eight-sleep-api');
 
@@ -356,11 +356,75 @@ function startMorningWatcher() {
   );
 }
 
+// Arbitrary constant identifying "the NormOS scheduler leader lock" in
+// Postgres's advisory-lock keyspace (any int works; just needs to not
+// collide with another feature's advisory lock, and none currently exist).
+const LEADER_LOCK_ID = 727001;
+let leaderClient = null;
+
+/**
+ * Postgres session-level advisory-lock leader election: only ONE process,
+ * across however many replicas are running, ever holds this lock — so only
+ * one instance's scheduler actually registers timers. Without this, N
+ * replicas each running their own in-process scheduler would N-way
+ * duplicate every scheduled job (morning routine, nudges, pushes, weekly
+ * review...) the moment this app scales past a single instance.
+ *
+ * pg_try_advisory_lock is tied to the SESSION (connection) that acquired
+ * it, so this deliberately bypasses the shared query() helper — that goes
+ * through the pool, which checks connections back in after every call,
+ * silently losing the lock's identity. A dedicated client is checked out
+ * and held open for the process's lifetime instead.
+ */
+async function tryBecomeLeader() {
+  try {
+    leaderClient = await pool.connect();
+    const { rows } = await leaderClient.query('SELECT pg_try_advisory_lock($1) AS acquired', [LEADER_LOCK_ID]);
+    if (rows[0]?.acquired) return true;
+    leaderClient.release();
+    leaderClient = null;
+    return false;
+  } catch (e) {
+    console.error('[scheduler] leader-election check failed — proceeding as leader (fail open):', e.message);
+    if (leaderClient) { leaderClient.release(); leaderClient = null; }
+    // Fail open: today's real deployment is a single instance, so a
+    // transient DB hiccup during boot must not silently disable the
+    // scheduler entirely. If this app ever does scale to 2+ replicas, a
+    // failure here is rare enough that the small residual duplication risk
+    // is far better than "the scheduler mysteriously stopped running."
+    return true;
+  }
+}
+
+/** Release the leader lock and close its dedicated connection, if held —
+ *  graceful-shutdown hygiene, and lets tests reset state between cases. */
+async function releaseLeaderLock() {
+  if (!leaderClient) return;
+  const c = leaderClient;
+  leaderClient = null;
+  try { await c.query('SELECT pg_advisory_unlock($1)', [LEADER_LOCK_ID]); } catch { /* connection may already be gone */ }
+  try { c.release(); } catch { /* already released */ }
+}
+
 function start() {
   if (process.env.ENABLE_SCHEDULER !== 'true') {
     console.log('[scheduler] disabled — set ENABLE_SCHEDULER=true to enable the morning routine');
     return false;
   }
+  // Leader election needs a DB round-trip, so it's deferred/async — start()
+  // itself still returns synchronously (unchanged contract for server.js's
+  // fire-and-forget call site).
+  tryBecomeLeader().then((isLeader) => {
+    if (!isLeader) {
+      console.log('[scheduler] another instance already holds the leader lock — not registering jobs here');
+      return;
+    }
+    startJobs();
+  });
+  return true;
+}
+
+function startJobs() {
   const hour = Number(process.env.SCHEDULE_HOUR) || 8;       // default 8am
   const minute = Number(process.env.SCHEDULE_MINUTE) || 30;  // default :30
 
@@ -470,4 +534,5 @@ function start() {
 module.exports = {
   start, msUntil, morningRoutine, morningRanToday, markMorningRan, localDateKey,
   eightSleepConfigured, eightSleepSessionInProgress, personalWakeFloorHours,
+  tryBecomeLeader, releaseLeaderLock,
 };
