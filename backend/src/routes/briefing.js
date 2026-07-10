@@ -1,9 +1,9 @@
 // Briefing router: the main /api/briefing builder (the core "chief of staff"
-// synthesis over health/wealth/wisdom/calendar/email/markets data — the
-// single largest and most complex route in the app), its mid-day live
-// partial-refresh, the markets-only refresh, and the non-blocking rebuild
-// trigger. Twenty-sixth (and final) router extraction out of server.js's
-// monolith (see the engineering review's #1+#6 recommendation).
+// synthesis over health/wealth/wisdom/calendar/email data — the single
+// largest and most complex route in the app), its mid-day live
+// partial-refresh, and the non-blocking rebuild trigger. Twenty-sixth (and
+// final) router extraction out of server.js's monolith (see the engineering
+// review's #1+#6 recommendation).
 //
 // This is moved VERBATIM — no internal restructuring. Only the outer
 // route-registration boilerplate changed (app.METHOD -> router.METHOD,
@@ -19,7 +19,6 @@ const { fetchCalendarEvents, fetchWorkBusyBlocks } = require('../services/calend
 const { fetchRandomNotionPage, fetchNotionQuotes } = require('../services/notion');
 const { fetchRandomQuote } = require('../services/googleDoc');
 const { fetchWeather } = require('../services/weather');
-const { fetchMarkets } = require('../services/markets');
 const { generateChiefBrief, generateWisdomInsights } = require('../services/briefing-ai');
 const { getTodayWorkout } = require('../services/workout');
 const { buildWealthInsights } = require('../services/wealth-insights');
@@ -287,7 +286,7 @@ async function buildFreshBriefing({ force = false } = {}) {
   const errors = [];
 
   // Serve a cached briefing instantly unless force. Building fresh calls
-  // the LLM + weather/calendar/Notion/markets/embeddings (~60-90s), so we always
+  // the LLM + weather/calendar/Notion/embeddings (~60-90s), so we always
   // serve the last build immediately. The scheduler pre-builds at 8:30am so the
   // cache is warm. Pull-to-refresh serves cache instantly; the explicit per-tab
   // "Rebuild" button forces a new build.
@@ -302,8 +301,8 @@ async function buildFreshBriefing({ force = false } = {}) {
   // user's timezone). Used for the daily-lock: the "wisdom" content (library
   // highlight, daily quote, Notion page + the Gemini insights on them) is chosen
   // on the first build of the day and then carried over on every later build so
-  // it stays static until midnight. Dynamic data (weather, markets, calendar,
-  // email, findings) still refreshes every build.
+  // it stays static until midnight. Dynamic data (weather, calendar, email,
+  // findings) still refreshes every build.
   let prior = null;
   let priorIsToday = false;
   try {
@@ -436,7 +435,7 @@ async function buildFreshBriefing({ force = false } = {}) {
 
   // Cross-context insights need the fresh correlation findings analyze() just
   // wrote, but touch nothing else in the source fetch below (weather/calendar/
-  // notion/email/markets) — kick it off here and run it CONCURRENTLY with that
+  // notion/email) — kick it off here and run it CONCURRENTLY with that
   // fetch instead of serially before it, so its LLM call's latency is hidden
   // behind the ~12s bounded fetch rather than adding to the critical path.
   // consolidate() still runs after it resolves (below), preserving the original
@@ -464,7 +463,7 @@ async function buildFreshBriefing({ force = false } = {}) {
   // briefing — allSettled waits for every promise, so without this a single
   // stall blocks the response. A timed-out source just shows as a soft error.
   const EXT = Number(process.env.BRIEFING_SOURCE_TIMEOUT_MS || 12000);
-  const [weatherResult, calendarResult, workBusyResult, notionResult, quoteResult, marketsResult] =
+  const [weatherResult, calendarResult, workBusyResult, notionResult, quoteResult] =
     await Promise.allSettled([
       withTimeout(fetchWeather(), EXT, 'weather'),
       withTimeout(fetchCalendarEvents(), EXT, 'calendar'),
@@ -475,7 +474,6 @@ async function buildFreshBriefing({ force = false } = {}) {
         ? Promise.resolve({ text: prior.content.notionText, pageTitle: prior.content.notionPageTitle ?? 'Notion' })
         : withTimeout(fetchRandomNotionPage({ exclude: [...seenNotion] }), EXT, 'notion'),
       withTimeout(fetchRandomQuote(), EXT, 'googleDoc'),
-      withTimeout(fetchMarkets(), EXT, 'markets'),
     ]);
 
   function unwrap(result, name) {
@@ -502,7 +500,6 @@ async function buildFreshBriefing({ force = false } = {}) {
   // schema field, so this always resolves to an empty array rather than
   // threading a removed feature's absence through every call site.
   const emails = [];
-  const markets = unwrap(marketsResult, 'markets');
 
   // Now that the source fetch above is done, make sure crossContext (kicked off
   // concurrently with it) has actually finished before consolidate() reads its
@@ -1575,7 +1572,6 @@ async function buildFreshBriefing({ force = false } = {}) {
     relevantHighlight: keep(p?.relevantHighlight, relevantHighlight),
     weeklyReview,
     wealth,
-    markets,
     wellbeingTheme: keep(p?.wellbeingTheme, wellbeingTheme || null),
     dailyQuote: keep(p?.dailyQuote, dailyQuote),
     alerts,
@@ -1682,20 +1678,17 @@ router.get('/briefing/live', asyncHandler(async (req, res) => {
     }
 
     const EXT = Number(process.env.BRIEFING_SOURCE_TIMEOUT_MS || 12000);
-    const [marketsResult, weatherResult, calendarResult, workBusyResult] = await Promise.allSettled([
-      withTimeout(fetchMarkets(), EXT * 3, 'markets'), // includes its own small LLM brief
+    const [weatherResult, calendarResult, workBusyResult] = await Promise.allSettled([
       withTimeout(fetchWeather(), EXT, 'weather'),
       withTimeout(fetchCalendarEvents(), EXT, 'calendar'),
       withTimeout(fetchWorkBusyBlocks(), EXT, 'workCalendar'),
     ]);
-    const markets = marketsResult.status === 'fulfilled' ? marketsResult.value : null;
     const weather = weatherResult.status === 'fulfilled' ? weatherResult.value : null;
     const calendar = calendarResult.status === 'fulfilled' ? calendarResult.value : null;
     const workBusy = workBusyResult.status === 'fulfilled' ? workBusyResult.value : null;
 
     const content = {
       ...prior.content,
-      ...(markets ? { markets } : {}),
       ...(weather ? { weather } : {}),
       ...(calendar ? { calendar } : {}),
       ...(workBusy ? { workBusy } : {}),
@@ -1707,30 +1700,6 @@ router.get('/briefing/live', asyncHandler(async (req, res) => {
       .catch((err) => console.error('[briefing live] save failed:', err.message));
 
     res.json({ ...content, cached: false });
-}));
-
-router.post('/briefing/markets', asyncHandler(async (req, res) => {
-    const prior = await briefingsStore.latestBriefing('daily');
-    if (!prior?.content) {
-      return res.status(409).json({ error: 'no briefing built yet — load the briefing first' });
-    }
-
-    const EXT = Number(process.env.BRIEFING_SOURCE_TIMEOUT_MS || 12000);
-    const markets = await withTimeout(fetchMarkets(), EXT * 3, 'markets').catch((err) => {
-      console.error('[briefing markets] fetch failed:', err.message);
-      return null;
-    });
-
-    if (!markets) {
-      return res.status(503).json({ error: 'markets fetch failed — check feeds or try again' });
-    }
-
-    const content = { ...prior.content, markets };
-    briefingsStore
-      .saveBriefing({ kind: 'daily', content })
-      .catch((err) => console.error('[briefing markets] save failed:', err.message));
-
-    res.json({ markets });
 }));
 
 // Fast, scoped retry for JUST the Chief-of-Staff card — added after a live

@@ -69,17 +69,6 @@ export interface MarketIndex {
   changePct: number;
 }
 
-export interface MarketHeadline {
-  title: string;
-  url: string | null;
-  source: string;
-}
-
-export interface Markets {
-  brief?: string | null;
-  sources?: MarketHeadline[];
-}
-
 export interface LeverageAction {
   title: string;
   detail: string | null;
@@ -268,7 +257,6 @@ export interface BriefingData {
   wellbeingTheme?: string | null;
   weeklyReview: WeeklyReview | null;
   wealth: Wealth | null;
-  markets?: Markets | null;
   dailyQuote?: string | null;
   alerts?: Alert[];
   signals?: BriefSignal[];

@@ -66,8 +66,6 @@ import { CheckinHistoryCard } from './src/components/CheckinHistoryCard';
 import { HabitsModal } from './src/components/HabitsModal';
 import { LibraryCard } from './src/components/LibraryCard';
 import { CommitmentsCard } from './src/components/CommitmentsCard';
-import { IndicesCard } from './src/components/IndicesCard';
-import { MarketsCard } from './src/components/MarketsCard';
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
 import { useCommitments } from './src/hooks/useCommitments';
 
@@ -346,11 +344,12 @@ export default function App() {
             {/* Asset Mix — structural allocation + single-name concentration,
                 sits right under net worth (a natural extension of it). */}
             <AssetMixCard />
-            {/* "What the data shows" (personal finance insights) leads; the market
-                scoreboard + brief group together below it as market context. */}
+            {/* "What the data shows" — personal finance insights. The generic
+                market-scoreboard + Claude-written market-brief cards were
+                removed (product review): unpersonalized general market
+                content, and the brief cost a real LLM call on every briefing
+                build for something with no connection to this user's data. */}
             <InsightsCard insights={d?.wealthInsights ?? EMPTY_ARRAY} />
-            <IndicesCard />
-            <MarketsCard markets={d?.markets ?? null} />
             {!d?.wealth && (
               <EmptyNote c={c} text="Connect Monarch to see net worth, spending, and cashflow." />
             )}

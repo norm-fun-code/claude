@@ -176,9 +176,9 @@ function createApp({ bootTime, port, quiet } = {}) {
   // /api/sources/freshness.
 
   // The main briefing builder (/api/briefing, /api/briefing/live,
-  // /api/briefing/markets, /api/briefing/rebuild) lives in
-  // src/routes/briefing.js — the twenty-sixth and final router extraction
-  // out of this file, moved verbatim (see the file's own header comment).
+  // /api/briefing/rebuild) lives in src/routes/briefing.js — the twenty-sixth
+  // and final router extraction out of this file, moved verbatim (see the
+  // file's own header comment).
   app.use('/api', createBriefingRouter({ port: PORT }));
 
   // Pipeline-health and recommendation-ledger routes live in

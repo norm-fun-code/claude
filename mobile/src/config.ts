@@ -52,7 +52,6 @@ export const WORKOUT_OVERRIDES_URL = `${API_BASE}/api/workout/overrides`;
 export const ACTIVITY_URL = `${API_BASE}/api/activity`;
 export const ANNOTATIONS_URL = `${API_BASE}/api/annotations`;
 export const CHECKIN_HISTORY_URL = `${API_BASE}/api/checkin/history`;
-export const MARKETS_REFRESH_URL = `${API_BASE}/api/briefing/markets`;
 export const BRIEFING_CONTEXT_URL = `${API_BASE}/api/briefing/context`;
 export const EXPERIMENTS_URL = `${API_BASE}/api/experiments`;
 export const COMMITMENTS_URL = `${API_BASE}/api/commitments`;
