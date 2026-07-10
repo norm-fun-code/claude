@@ -13,12 +13,14 @@ const assert = require('node:assert/strict');
 const { closeDb } = require('./helpers');
 const db = require('../../src/db');
 const findingsStore = require('../../src/store/findings');
-const { gatherFindings } = require('../../src/intelligence/consolidate');
+const experimentsStore = require('../../src/store/experiments');
+const { gatherFindings, gatherExperiments } = require('../../src/intelligence/consolidate');
 
 const TAG = `test-gather-findings-${Date.now()}`;
 
 async function cleanup() {
   await db.query(`DELETE FROM findings WHERE title LIKE $1`, [`%${TAG}%`]);
+  await db.query(`DELETE FROM experiments WHERE hypothesis LIKE $1`, [`%${TAG}%`]);
 }
 after(async () => { await cleanup(); await closeDb(); });
 
@@ -74,5 +76,50 @@ test('other finding types (trend, anomaly, forecast, leverage) do not count as c
 
   const { correlations } = await gatherFindings();
   const ours = correlations.filter((c) => c.title.includes(TAG));
+  assert.equal(ours.length, 0);
+});
+
+// Live bug found via the same screenshot review: pausing your only
+// experiment made the Profile stats read "0 running, 0 completed" even
+// though the experiment was still visibly shown on the same tab — paused,
+// not gone, with a Resume link. gatherExperiments()'s "running" count now
+// matches the mobile ExperimentsCard's own definition of "active"
+// (running OR paused), instead of a stricter definition that made an
+// on-hold experiment disappear from the stats entirely.
+test('gatherExperiments counts a paused experiment as active, not vanished', async () => {
+  await cleanup();
+  await experimentsStore.createExperiment({
+    hypothesis: `Paused but not gone ${TAG}`, metric: 'health:hrv',
+    status: 'paused', startDate: new Date(), endDate: new Date(Date.now() + 3 * 86400000),
+  });
+
+  const { running } = await gatherExperiments();
+  const ours = running.filter((e) => e.hypothesis.includes(TAG));
+  assert.equal(ours.length, 1, 'a paused experiment must still count as active');
+});
+
+test('gatherExperiments still counts a running experiment (unchanged behavior)', async () => {
+  await cleanup();
+  await experimentsStore.createExperiment({
+    hypothesis: `Actually running ${TAG}`, metric: 'health:hrv',
+    status: 'running', startDate: new Date(), endDate: new Date(Date.now() + 3 * 86400000),
+  });
+
+  const { running } = await gatherExperiments();
+  const ours = running.filter((e) => e.hypothesis.includes(TAG));
+  assert.equal(ours.length, 1);
+});
+
+test('gatherExperiments does not count a proposed (not yet started) or cancelled experiment as active', async () => {
+  await cleanup();
+  await experimentsStore.createExperiment({
+    hypothesis: `Just proposed ${TAG}`, metric: 'health:hrv', status: 'proposed',
+  });
+  await experimentsStore.createExperiment({
+    hypothesis: `Cancelled ${TAG}`, metric: 'health:hrv', status: 'cancelled',
+  });
+
+  const { running } = await gatherExperiments();
+  const ours = running.filter((e) => e.hypothesis.includes(TAG));
   assert.equal(ours.length, 0);
 });

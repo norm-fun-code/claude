@@ -213,7 +213,14 @@ async function gatherExperiments() {
   try {
     const all = await experimentsStore.listExperiments();
     const completed = all.filter((e) => e.status === 'completed' && e.verdict).slice(0, 5);
-    const running = all.filter((e) => e.status === 'running').slice(0, 3);
+    // Paused counts as active, not gone: the mobile ExperimentsCard already
+    // treats running+paused as one set (it shows a paused experiment with its
+    // frozen progress and a Resume link, not as absent). Previously this only
+    // counted 'running', so pausing your only experiment made the Profile's
+    // stats go to "0 running, 0 completed" even though a real experiment was
+    // sitting right there on the same tab, on hold — a live product review
+    // finding (a real experiment in a limbo state no counter acknowledged).
+    const running = all.filter((e) => e.status === 'running' || e.status === 'paused').slice(0, 3);
     return { completed, running };
   } catch { return { completed: [], running: [] }; }
 }
@@ -449,7 +456,7 @@ async function consolidate({ kind = 'nightly' } = {}) {
 
 module.exports = {
   consolidate, buildModelText,
-  gatherWellbeing, gatherHealth, gatherHabits, gatherWealth, gatherFindings,
+  gatherWellbeing, gatherHealth, gatherHabits, gatherWealth, gatherFindings, gatherExperiments,
 };
 
 if (require.main === module) {

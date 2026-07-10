@@ -150,7 +150,12 @@ function SelfModelCard() {
             <View style={[styles.stats, { borderColor: c.border }]}>
               <Stat label="CONFIRMED" value={String(confirmedCount)} sub="correlations" c={c} />
               <View style={[styles.statDivider, { backgroundColor: c.border }]} />
-              <Stat label="RUNNING" value={String(runningCount)} sub="experiments" c={c} />
+              {/* "Active" (not "Running") — the backend count includes paused
+                  experiments too, matching this card's own definition below
+                  (the "active" filter treats running+paused as one set). A
+                  paused-but-not-abandoned experiment previously vanished from
+                  this stat entirely while still visibly shown on the card. */}
+              <Stat label="ACTIVE" value={String(runningCount)} sub="experiments" c={c} />
               <View style={[styles.statDivider, { backgroundColor: c.border }]} />
               <Stat label="COMPLETED" value={String(completedCount)} sub="experiments" c={c} />
               <View style={[styles.statDivider, { backgroundColor: c.border }]} />
