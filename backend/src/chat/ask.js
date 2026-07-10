@@ -512,7 +512,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
 
   const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments, pastConversations, wealthInsights, dayContext, voice });
   let system = selfModelText ? `${baseSystem}\n\n${selfModelText}` : baseSystem;
-  if (chaptersText) system += `\n\nLIFE CHAPTERS (standing long-arc facts, auto-updated — never ask the user to re-confirm these):\n${chaptersText}`;
+  if (chaptersText) system += `\n\nLIFE CHAPTERS (standing long-arc facts, auto-updated — never ask the user to re-confirm these):\n${chaptersText}\nThis same fact is already shown elsewhere in the app (the brief, goals, forecasts) — don't just restate it here too. Use it as background that shapes tone and advice on a genuinely related question; if you reference it explicitly, relay something new (a next step, an implication for the actual question asked), not just the bare fact the user already knows.`;
   // Today's planned session — so a swap_workout action can be acknowledged
   // accurately ("swapped your Push session to…") and the answer can judge the
   // substitute against the plan.

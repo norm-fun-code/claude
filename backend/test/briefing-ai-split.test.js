@@ -200,6 +200,22 @@ test('CHIEF_SYSTEM instructs confidence calibration — hedge noisy small-base s
   assert.match(capturedSystem, /hedge it/i);
 });
 
+// "Relay, don't restate": a life-chapter fact (e.g. a pregnancy) is threaded
+// through multiple surfaces (the brief, goals, forecasts, Ask) by design —
+// the critique's fix wasn't fewer mentions, it's that each mention should
+// advance the thread instead of repeating the bare fact. Confirms the
+// CHIEF_SYSTEM prompt carries that instruction for the LIFE CHAPTERS block.
+test('CHIEF_SYSTEM instructs relaying life-chapter facts forward, not restating them', async () => {
+  let capturedSystem = null;
+  llm.generateText = async ({ system }) => {
+    if (system.includes('chief of staff and data scientist')) { capturedSystem = system; return CHIEF_JSON; }
+    return WISDOM_JSON;
+  };
+  await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
+  assert.ok(capturedSystem);
+  assert.match(capturedSystem, /RELAY, DON'T RESTATE/);
+});
+
 test('generateBriefing runs chief and wisdom calls concurrently, not serially', async () => {
   const order = [];
   llm.generateText = async ({ system }) => {
