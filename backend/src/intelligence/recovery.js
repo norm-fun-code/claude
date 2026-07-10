@@ -805,6 +805,18 @@ async function liveRecovery() {
   return promise;
 }
 
+// Callers that just wrote recovery-relevant metrics (a self-reported sleep
+// check-in, a fresh Eight Sleep sync) and immediately re-call liveRecovery()
+// expecting the new data reflected MUST invalidate first — otherwise a
+// same-process request from moments earlier (e.g. the Health tab's initial
+// load, which caches a "no data yet" null) silently serves that stale result
+// straight through the write. Hit this exact way: POST /api/recovery/self-report
+// wrote the check-in then re-read a stale cached null, so the recovery score
+// never appeared to have been created at all.
+function invalidateRecoveryCache() {
+  _recoveryCache = null;
+}
+
 /**
  * Recovery score for each of the last `days` days — replays recoveryScore() over
  * the source-locked overnight series truncated to each day, so the trend uses the
@@ -881,6 +893,7 @@ module.exports = {
   baselineScore,
   trendScore,
   liveRecovery,
+  invalidateRecoveryCache,
   recoveryHistory,
   selfReportRecovery,
   needsSleepCheckIn,

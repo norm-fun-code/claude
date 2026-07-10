@@ -58,7 +58,14 @@ function createRecoveryRouter() {
       rows.push({ ts, domain: 'health', metric: 'sleep_hours', value: hours, unit: 'hours', source: 'self_report' });
     }
     const written = await metricsStore.insertMetrics(rows);
-    const recovery = await require('../intelligence/recovery').liveRecovery();
+    const recoveryModule = require('../intelligence/recovery');
+    // Must invalidate before re-reading: an earlier request in this same
+    // process (e.g. the Health tab's initial load, before this check-in was
+    // submitted) can have cached a "no data yet" null that's still within its
+    // TTL — without this, that stale null gets served right back through the
+    // write and the recovery score never appears to have been created.
+    recoveryModule.invalidateRecoveryCache();
+    const recovery = await recoveryModule.liveRecovery();
     // Return the new proxy recovery immediately. The mobile then fires its normal
     // non-blocking briefing rebuild (triggerRebuild) which picks up this stored
     // self-report — so the brief rebuilds with the recovery score AND the app

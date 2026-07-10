@@ -147,6 +147,12 @@ function createHealthRouter({ bootTime }) {
       if (rows.length) { written += await metricsStore.insertMetrics(rows); } else { skipped++; }
     }
     res.json({ sessions: sessions.length, written, skipped });
+    // A fresh Eight Sleep sync invalidates the liveRecovery() cache — same
+    // staleness class as the self-report endpoint (see recovery.js): without
+    // this, a request from moments before this sync (which cached "no
+    // reading yet") would keep serving that stale result for up to
+    // RECOVERY_CACHE_MS after real data landed.
+    if (written > 0) require('../intelligence/recovery').invalidateRecoveryCache();
     // Fire-and-forget: ping if these overnight metrics deviate sharply from baseline.
     if (written > 0) require('../intelligence/watch').runWatch().catch((e) => console.error('[watch] eight-sleep ingest:', e.message));
   }));
@@ -207,6 +213,9 @@ function createHealthRouter({ bootTime }) {
 
     const written = await metricsStore.insertMetrics(metrics);
     res.json({ days: dayRows.length, metrics: written });
+    // Same staleness class as the self-report endpoint (see recovery.js) —
+    // a backfill can include today's reading.
+    if (written > 0) require('../intelligence/recovery').invalidateRecoveryCache();
     // Re-run analysis so the new history flows into findings and self-model.
     analyze().catch((e) => console.error('[eight-sleep backfill] analyze:', e.message));
   }));
@@ -253,6 +262,8 @@ function createHealthRouter({ bootTime }) {
     if (!rows.length) return res.status(400).json({ error: 'No valid metrics provided' });
     const written = await metricsStore.insertMetrics(rows);
     res.json({ written, metrics: rows.map((r) => r.metric) });
+    // Same staleness class as the self-report endpoint (see recovery.js).
+    require('../intelligence/recovery').invalidateRecoveryCache();
     // Fire-and-forget: ping if last night's overnight metrics deviate from baseline.
     require('../intelligence/watch').runWatch({ metrics: rows }).catch((e) => console.error('[watch] sleep ingest:', e.message));
   }));
