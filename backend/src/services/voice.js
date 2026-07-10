@@ -92,12 +92,37 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
   throw new Error(`TTS failed: ${lastErr?.response?.data?.error?.message || lastErr?.message}`);
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** STT model candidates: the configured model first, then a more stable
+ *  fallback. Gemini returns 503 "the model is overloaded" far more often for
+ *  new/preview models than mature ones, and retrying the SAME overloaded model
+ *  rarely helps — falling to a stable model is what actually recovers (per
+ *  Gemini's own troubleshooting guidance). Mirrors the TTS fallback chain. */
+function sttModels() {
+  const primary = process.env.GEMINI_CHAT_MODEL || 'gemini-3.5-flash';
+  const fallbacks = (process.env.GEMINI_STT_FALLBACK_MODELS || 'gemini-2.5-flash')
+    .split(',').map((m) => m.trim()).filter(Boolean);
+  return [primary, ...fallbacks.filter((m) => m !== primary)];
+}
+
+function isTransientSttError(err) {
+  const status = err.response?.status;
+  return status === 503 || status === 429 || status === 500
+    || err.code === 'ECONNABORTED' || /timeout of/i.test(err.message || '');
+}
+
 /** Transcribe recorded speech (base64 audio). Returns the plain transcript. */
 async function transcribe(base64Audio, mime = 'audio/wav') {
-  const model = process.env.GEMINI_CHAT_MODEL || 'gemini-3.5-flash';
-  const timeout = Number(process.env.GEMINI_STT_TIMEOUT_MS || 45000);
+  // A real transcription of a short clip comes back in 1-3s; the old 45s
+  // timeout just meant an overloaded/hung model burned 45s (twice, with the
+  // retry) — the 60-second spinner users hit. Fail each attempt fast (12s)
+  // and move on. Total worst case stays well under the mobile client's 90s.
+  const timeout = Number(process.env.GEMINI_STT_TIMEOUT_MS || 12000);
+  const backoff = Number(process.env.GEMINI_STT_BACKOFF_MS || 400);
+  const models = sttModels();
 
-  const attempt = async () => {
+  const attempt = async (model) => {
     const { data } = await axios.post(
       `${BASE}/models/${model}:generateContent?key=${key()}`,
       {
@@ -115,20 +140,27 @@ async function transcribe(base64Audio, mime = 'audio/wav') {
     return (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('').trim();
   };
 
-  try {
-    return await attempt();
-  } catch (err) {
-    // Gemini occasionally 503s (overloaded) or blows the timeout under load —
-    // seen live as a voice turn that either silently never registered (STT
-    // threw before ask() ever ran) or took 30+ seconds. A single immediate
-    // retry recovers most transient failures instead of losing the turn
-    // outright; anything else (bad key, malformed audio) still throws.
-    const status = err.response?.status;
-    const transient = status === 503 || status === 429 || err.code === 'ECONNABORTED' || /timeout of/i.test(err.message || '');
-    if (!transient) throw err;
-    console.error('[voice stt] transient failure, retrying once:', err.message);
-    return await attempt();
+  let lastErr = null;
+  for (const model of models) {
+    // Two quick tries per model with a short backoff (503 overload often
+    // clears within a second — Google recommends short backoff), then move to
+    // the next, more stable model rather than hammering an overloaded one.
+    for (let tryNum = 0; tryNum < 2; tryNum++) {
+      try {
+        return await attempt(model);
+      } catch (err) {
+        lastErr = err;
+        console.error(`[voice stt] ${model} failed (try ${tryNum + 1}/2): ${err.message}`);
+        // Non-transient (bad model id / malformed request) won't fix on retry —
+        // skip straight to the next candidate model.
+        if (!isTransientSttError(err)) break;
+        if (tryNum === 0 && backoff > 0) await sleep(backoff);
+      }
+    }
   }
+  throw new Error(
+    `STT failed after trying ${models.join(', ')}: ${lastErr?.response?.data?.error?.message || lastErr?.message}`
+  );
 }
 
 /**

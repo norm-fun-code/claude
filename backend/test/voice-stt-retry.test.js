@@ -1,14 +1,16 @@
-// Gemini STT (transcribe()) had no retry — a live user hit both symptoms this
-// causes: a 503 (overloaded) killed the whole /voice/ask request before ask()
-// ever ran ("didn't register at all"), and a slow-but-successful call took
-// 30+ seconds. Confirmed via Railway logs (503s and a 45000ms axios timeout
-// on this exact call). One immediate retry on transient failure recovers
-// most of these instead of losing the voice turn outright.
+// Gemini STT (transcribe()) resilience. Live users hit consistent 503 "model
+// overloaded" responses from the primary model (gemini-3.5-flash) — a
+// well-documented Gemini behavior for new/preview models under load, NOT a
+// reported outage. Retrying the SAME overloaded model (the old behavior)
+// doesn't help and doubled the latency into a 60s spinner. Now: fast per-attempt
+// timeout, a short backoff retry, then fall back to a more stable model — which
+// is what actually recovers. Mocks axios.post since this calls the raw HTTP API.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const axios = require('axios');
 
 process.env.GEMINI_API_KEY = 'test-key';
+process.env.GEMINI_STT_BACKOFF_MS = '0'; // don't slow the test suite
 const voice = require('../src/services/voice');
 
 const ORIGINAL_POST = axios.post;
@@ -17,55 +19,64 @@ test.afterEach(() => { axios.post = ORIGINAL_POST; });
 function okResponse(text) {
   return { data: { candidates: [{ content: { parts: [{ text }] } }] } };
 }
+function err503() {
+  const e = new Error('Request failed with status code 503');
+  e.response = { status: 503, data: { error: { message: 'The model is overloaded.' } } };
+  return e;
+}
+function modelOf(url) {
+  const m = String(url).match(/\/models\/([^:]+):/);
+  return m ? m[1] : null;
+}
 
-test('transcribe: retries once on a transient 503 and succeeds', async () => {
-  let calls = 0;
-  axios.post = async () => {
-    calls += 1;
-    if (calls === 1) {
-      const err = new Error('Request failed with status code 503');
-      err.response = { status: 503 };
-      throw err;
+test('transcribe: first attempt on the primary model succeeds — one call, no fallback', async () => {
+  const calls = [];
+  axios.post = async (url) => { calls.push(modelOf(url)); return okResponse('log my morning TM'); };
+  const text = await voice.transcribe('base64audio', 'audio/wav');
+  assert.equal(text, 'log my morning TM');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0], 'gemini-3.5-flash');
+});
+
+test('transcribe: a persistently 503-ing primary model falls back to the stable model, which succeeds', async () => {
+  const calls = [];
+  axios.post = async (url) => {
+    const model = modelOf(url);
+    calls.push(model);
+    if (model === 'gemini-3.5-flash') throw err503();
+    return okResponse('log my morning TM');
+  };
+  const text = await voice.transcribe('base64audio', 'audio/wav');
+  assert.equal(text, 'log my morning TM', 'should transcribe via the fallback model');
+  // primary tried twice (with backoff), then the fallback model succeeds.
+  assert.deepEqual(calls, ['gemini-3.5-flash', 'gemini-3.5-flash', 'gemini-2.5-flash']);
+});
+
+test('transcribe: when every candidate model 503s, it throws (naming the models tried)', async () => {
+  const calls = [];
+  axios.post = async (url) => { calls.push(modelOf(url)); throw err503(); };
+  await assert.rejects(
+    () => voice.transcribe('base64audio', 'audio/wav'),
+    (e) => /STT failed after trying gemini-3.5-flash, gemini-2.5-flash/.test(e.message)
+  );
+  // 2 models × 2 tries each.
+  assert.equal(calls.length, 4);
+});
+
+test('transcribe: a non-transient error (bad request) skips retries on that model and tries the next', async () => {
+  const calls = [];
+  axios.post = async (url) => {
+    const model = modelOf(url);
+    calls.push(model);
+    if (model === 'gemini-3.5-flash') {
+      const e = new Error('Request failed with status code 400');
+      e.response = { status: 400 };
+      throw e;
     }
-    return okResponse('log my afternoon TM');
+    return okResponse('log my morning TM');
   };
   const text = await voice.transcribe('base64audio', 'audio/wav');
-  assert.equal(text, 'log my afternoon TM');
-  assert.equal(calls, 2);
-});
-
-test('transcribe: retries once on an axios client timeout', async () => {
-  let calls = 0;
-  axios.post = async () => {
-    calls += 1;
-    if (calls === 1) throw new Error('timeout of 45000ms exceeded');
-    return okResponse('instead of push log a walk');
-  };
-  const text = await voice.transcribe('base64audio', 'audio/wav');
-  assert.equal(text, 'instead of push log a walk');
-  assert.equal(calls, 2);
-});
-
-test('transcribe: a second consecutive transient failure still throws (no infinite retry)', async () => {
-  let calls = 0;
-  axios.post = async () => {
-    calls += 1;
-    const err = new Error('Request failed with status code 503');
-    err.response = { status: 503 };
-    throw err;
-  };
-  await assert.rejects(() => voice.transcribe('base64audio', 'audio/wav'));
-  assert.equal(calls, 2);
-});
-
-test('transcribe: a non-transient error (e.g. bad request) throws immediately without retrying', async () => {
-  let calls = 0;
-  axios.post = async () => {
-    calls += 1;
-    const err = new Error('Request failed with status code 400');
-    err.response = { status: 400 };
-    throw err;
-  };
-  await assert.rejects(() => voice.transcribe('base64audio', 'audio/wav'));
-  assert.equal(calls, 1);
+  assert.equal(text, 'log my morning TM');
+  // primary tried ONCE (non-transient → no retry), then fell through to fallback.
+  assert.deepEqual(calls, ['gemini-3.5-flash', 'gemini-2.5-flash']);
 });
