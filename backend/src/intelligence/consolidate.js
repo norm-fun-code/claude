@@ -218,10 +218,26 @@ async function gatherExperiments() {
   } catch { return { completed: [], running: [] }; }
 }
 
+// Every finding TYPE that represents "X relates to Y in your data, confirmed":
+// the generic Pearson correlation engine (gated by its own confirmed flag,
+// requiring the pattern to hold across a split-half check) plus the more
+// specialized detectors — habit_split, daytime_cardio, sleep_impact,
+// activity_impact — which don't have a separate "confirmed" flag because
+// their own significance gate (Benjamini-Hochberg FDR control) IS the
+// confirmation bar; they don't fire at all otherwise. Previously this only
+// counted plain 'correlation' findings, so the Profile's "0 confirmed
+// correlations" stat disagreed with the 3+ correlational insights actually
+// visible on the Health tab (a live product review finding) — the stat's
+// definition of "correlation" was an internal implementation detail (which
+// detector produced it) leaking into a user-facing number.
+const CORRELATION_TYPES = new Set(['correlation', 'habit_split', 'daytime_cardio', 'sleep_impact', 'activity_impact']);
+
 async function gatherFindings() {
   try {
     const open = await findingsStore.listFindings({ status: 'open' });
-    const correlations = open.filter((f) => f.type === 'correlation' && f.evidence?.confirmed === true).slice(0, 5);
+    const correlations = open
+      .filter((f) => CORRELATION_TYPES.has(f.type) && (f.type !== 'correlation' || f.evidence?.confirmed === true))
+      .slice(0, 5);
     const leverage = open.filter((f) => f.type === 'leverage').slice(0, 3);
     return { correlations, leverage };
   } catch { return { correlations: [], leverage: [] }; }
@@ -433,7 +449,7 @@ async function consolidate({ kind = 'nightly' } = {}) {
 
 module.exports = {
   consolidate, buildModelText,
-  gatherWellbeing, gatherHealth, gatherHabits, gatherWealth,
+  gatherWellbeing, gatherHealth, gatherHabits, gatherWealth, gatherFindings,
 };
 
 if (require.main === module) {
