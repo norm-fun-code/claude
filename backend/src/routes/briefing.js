@@ -589,18 +589,46 @@ async function buildFreshBriefing({ force = false } = {}) {
     // All 9 lookups (mood/energy/focus + 5 binary habits + eat_healthy) are
     // independent DB round-trips — batch them into one Promise.all instead of
     // 3 parallel + 6 serial awaits.
+    // Recent annotations + day-journal notes over the SAME 7-day window as the
+    // habit averages above — so a documented reason ("skipped cold showers,
+    // still fighting off a cold") can suppress the raw statistical "slipping"
+    // flag for that one habit. Live bug found via a product review: the
+    // Wisdom card moralized a slipping cold-shower streak as "patience with
+    // discomfort wearing thin" — a real character judgment — while the SAME
+    // week's annotations/day-journal already explained it was illness, not a
+    // willpower lapse. This mirrors analyze.js's anomaly-vs-annotation
+    // reconciliation (see lifeContextRelevant there), scoped to this
+    // narrower "is a lagging habit actually explained" question. Best-effort:
+    // a failure here just means the raw statistical flag stands, same as before.
+    let explainedText = '';
+    try {
+      const [recentAnnotations, recentJournal] = await Promise.all([
+        annotationsStore.overlapping(since, new Date()),
+        require('../store/dayJournal').recent({ days: 7 }),
+      ]);
+      explainedText = [
+        ...recentAnnotations.map((a) => `${a.label || ''} ${a.note || ''}`),
+        ...recentJournal.map((j) => j.text || ''),
+      ].join(' ').toLowerCase();
+    } catch { /* non-critical — falls back to the unexplained (old) behavior */ }
+
     const [mood, energy, focus, ...habitAvgs] = await Promise.all([
       avg('wellbeing', 'mood'), avg('wellbeing', 'energy'), avg('wellbeing', 'focus'),
       ...binaryHabits.map((m) => avg('habits', m)),
       avg('habits', 'eat_healthy'),
     ]);
+    // A lagging habit already explained in the user's own recent words isn't
+    // a discipline lapse to narrate a "virtue" theme around — it's a
+    // documented, reasonable pause. Only suppress on a real mention of the
+    // habit's own label (not a bare word match on something unrelated).
+    const isExplained = (label) => explainedText.includes(label.toLowerCase());
     const lagging = [];
     binaryHabits.forEach((m, i) => {
       const a = habitAvgs[i];
-      if (a != null && a < 0.6) lagging.push(habitLabels[m]); // <60% adherence
+      if (a != null && a < 0.6 && !isExplained(habitLabels[m])) lagging.push(habitLabels[m]); // <60% adherence, not already explained
     });
     const eatAvg = habitAvgs[binaryHabits.length];
-    if (eatAvg != null && eatAvg < 3) lagging.push(habitLabels.eat_healthy); // below ~3/5
+    if (eatAvg != null && eatAvg < 3 && !isExplained(habitLabels.eat_healthy)) lagging.push(habitLabels.eat_healthy); // below ~3/5, not already explained
     const parts = [];
     const themes = [];
     // Shared wording (low/ok/high) with the self-model and every other surface
