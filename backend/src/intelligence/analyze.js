@@ -1363,6 +1363,16 @@ async function analyze(opts = {}) {
   } catch {
     // goals table optional / empty
   }
+  // Goal achievement-probability forecasts from the same loaded series.
+  // Computed BEFORE rankActions (below) so its trend-aware status can be fed
+  // into the leverage engine's own off-track goal check — see fromGoal's
+  // comment in leverage.js for the disagreement this prevents.
+  const forecasts = computeForecasts(goals, seriesByKey);
+  const forecastStatusByGoalId = {};
+  for (const f of forecasts) {
+    if (f.evidence?.goalId != null && f.evidence?.status) forecastStatusByGoalId[f.evidence.goalId] = f.evidence.status;
+  }
+
   // Feed ALL finding types into the leverage engine, not just trends + correlations.
   // habit_splits ("cold shower days: HRV 26% higher"), sleep_impact ("best nights →
   // focus 35% higher"), and activity_impact ("Zone 2 → next-day HRV 18% above avg")
@@ -1370,11 +1380,8 @@ async function analyze(opts = {}) {
   // reached the leverage engine. Now they're the PRIMARY source of leverage actions.
   const actions = rankActions(
     [...trends, ...correlations, ...habitHealthSplits, ...sleepImpact, ...activityImpact],
-    { goals, latestByKey },
+    { goals, latestByKey, forecastStatusByGoalId },
   );
-
-  // Goal achievement-probability forecasts from the same loaded series.
-  const forecasts = computeForecasts(goals, seriesByKey);
 
   const all = [...trends, ...correlations, ...anomalies, ...composites, ...actions, ...forecasts, ...habitConsistency, ...habitHealthSplits, ...sleepImpact, ...activityImpact, ...daytimeCardio, ...wellbeingGap];
   const windowStart = from;

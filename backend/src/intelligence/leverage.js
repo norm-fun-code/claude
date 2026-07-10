@@ -314,12 +314,23 @@ function fromActivityImpact(f) {
   };
 }
 
-// Off-track goal.
-function fromGoal(goal, latestByKey = {}) {
+// Off-track goal. `forecastStatusByGoalId` (optional) is the SAME goals'
+// trend-aware forecast status from forecast.js's computeForecasts — a
+// time-series fit + hit-probability, strictly more informed than this
+// function's own raw snapshot ratio. Live bug found via a product review:
+// a goal 90% of the way there and trending strongly toward the target got
+// `on_track` from the forecast model, while this function, going purely off
+// raw progress, still emitted "Close the gap ... This is off-track" for the
+// SAME goal in the SAME briefing. When the forecast already says on_track,
+// defer to it and suppress this less-informed nudge entirely — mirroring
+// the existing `progress >= 1` suppression just below, both are cases where
+// nagging the user would be actively wrong, not just redundant.
+function fromGoal(goal, latestByKey = {}, forecastStatusByGoalId = {}) {
   if (!goal.metric || goal.target_value == null) return null;
   const key = `${goal.domain}:${goal.metric}`;
   const current = latestByKey[key];
   if (current == null) return null;
+  if (forecastStatusByGoalId[goal.id] === 'on_track') return null;
 
   const baseline = goal.baseline_value ?? current;
   const denom = goal.target_value - baseline;
@@ -359,7 +370,7 @@ const GENERATORS = {
  * Drops any action whose score is below MIN_SCORE — low-signal advice is worse
  * than no advice.
  */
-function rankActions(findings = [], { goals = [], latestByKey = {}, max = 3, minScore = 0.05 } = {}) {
+function rankActions(findings = [], { goals = [], latestByKey = {}, forecastStatusByGoalId = {}, max = 3, minScore = 0.05 } = {}) {
   const candidates = [];
 
   for (const f of findings) {
@@ -369,7 +380,7 @@ function rankActions(findings = [], { goals = [], latestByKey = {}, max = 3, min
     if (action) candidates.push(action);
   }
   for (const g of goals) {
-    const action = fromGoal(g, latestByKey);
+    const action = fromGoal(g, latestByKey, forecastStatusByGoalId);
     if (action) candidates.push(action);
   }
 
