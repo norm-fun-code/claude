@@ -94,14 +94,16 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** STT model candidates: the configured model first, then a more stable
- *  fallback. Gemini returns 503 "the model is overloaded" far more often for
- *  new/preview models than mature ones, and retrying the SAME overloaded model
- *  rarely helps — falling to a stable model is what actually recovers (per
- *  Gemini's own troubleshooting guidance). Mirrors the TTS fallback chain. */
+/** STT model candidates, tried in order. Defaults to the mature, stable
+ *  gemini-2.5-flash FIRST — live logs showed gemini-3.5-flash (a newer/preview
+ *  model) returning a consistent 503 "the model is overloaded", so leading with
+ *  it wasted ~4s on two doomed attempts before every transcription fell back.
+ *  2.5-flash answers on the first try; 3.5-flash stays as a fallback in case
+ *  2.5 has a blip. Override the order with GEMINI_STT_MODEL /
+ *  GEMINI_STT_FALLBACK_MODELS. */
 function sttModels() {
-  const primary = process.env.GEMINI_CHAT_MODEL || 'gemini-3.5-flash';
-  const fallbacks = (process.env.GEMINI_STT_FALLBACK_MODELS || 'gemini-2.5-flash')
+  const primary = process.env.GEMINI_STT_MODEL || 'gemini-2.5-flash';
+  const fallbacks = (process.env.GEMINI_STT_FALLBACK_MODELS || 'gemini-3.5-flash')
     .split(',').map((m) => m.trim()).filter(Boolean);
   return [primary, ...fallbacks.filter((m) => m !== primary)];
 }
@@ -141,20 +143,24 @@ async function transcribe(base64Audio, mime = 'audio/wav') {
   };
 
   let lastErr = null;
-  for (const model of models) {
-    // Two quick tries per model with a short backoff (503 overload often
-    // clears within a second — Google recommends short backoff), then move to
-    // the next, more stable model rather than hammering an overloaded one.
-    for (let tryNum = 0; tryNum < 2; tryNum++) {
+  for (let i = 0; i < models.length; i++) {
+    const model = models[i];
+    const isLast = i === models.length - 1;
+    // Only the LAST model is worth a same-model retry — when there's still a
+    // fallback to try, falling to it immediately beats a backoff-then-retry on
+    // a model that just failed (an overloaded model usually 503s again). This
+    // is what keeps the happy path a single fast call.
+    const maxTries = isLast ? 2 : 1;
+    for (let tryNum = 0; tryNum < maxTries; tryNum++) {
       try {
         return await attempt(model);
       } catch (err) {
         lastErr = err;
-        console.error(`[voice stt] ${model} failed (try ${tryNum + 1}/2): ${err.message}`);
+        console.error(`[voice stt] ${model} failed (try ${tryNum + 1}/${maxTries}): ${err.message}`);
         // Non-transient (bad model id / malformed request) won't fix on retry —
         // skip straight to the next candidate model.
         if (!isTransientSttError(err)) break;
-        if (tryNum === 0 && backoff > 0) await sleep(backoff);
+        if (tryNum < maxTries - 1 && backoff > 0) await sleep(backoff);
       }
     }
   }

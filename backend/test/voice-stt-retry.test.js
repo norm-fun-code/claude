@@ -29,38 +29,38 @@ function modelOf(url) {
   return m ? m[1] : null;
 }
 
-test('transcribe: first attempt on the primary model succeeds — one call, no fallback', async () => {
+test('transcribe: the stable primary model succeeds on the first try — one call, no fallback', async () => {
   const calls = [];
   axios.post = async (url) => { calls.push(modelOf(url)); return okResponse('log my morning TM'); };
   const text = await voice.transcribe('base64audio', 'audio/wav');
   assert.equal(text, 'log my morning TM');
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0], 'gemini-3.5-flash');
+  assert.equal(calls.length, 1, 'the happy path must be a single fast call');
+  assert.equal(calls[0], 'gemini-2.5-flash');
 });
 
-test('transcribe: a persistently 503-ing primary model falls back to the stable model, which succeeds', async () => {
+test('transcribe: a 503 on the primary falls straight to the fallback (no wasted same-model retry)', async () => {
   const calls = [];
   axios.post = async (url) => {
     const model = modelOf(url);
     calls.push(model);
-    if (model === 'gemini-3.5-flash') throw err503();
+    if (model === 'gemini-2.5-flash') throw err503();
     return okResponse('log my morning TM');
   };
   const text = await voice.transcribe('base64audio', 'audio/wav');
   assert.equal(text, 'log my morning TM', 'should transcribe via the fallback model');
-  // primary tried twice (with backoff), then the fallback model succeeds.
-  assert.deepEqual(calls, ['gemini-3.5-flash', 'gemini-3.5-flash', 'gemini-2.5-flash']);
+  // Primary is NOT last → tried once, then straight to the fallback (no retry).
+  assert.deepEqual(calls, ['gemini-2.5-flash', 'gemini-3.5-flash']);
 });
 
-test('transcribe: when every candidate model 503s, it throws (naming the models tried)', async () => {
+test('transcribe: only the LAST model gets a same-model retry', async () => {
   const calls = [];
   axios.post = async (url) => { calls.push(modelOf(url)); throw err503(); };
   await assert.rejects(
     () => voice.transcribe('base64audio', 'audio/wav'),
-    (e) => /STT failed after trying gemini-3.5-flash, gemini-2.5-flash/.test(e.message)
+    (e) => /STT failed after trying gemini-2.5-flash, gemini-3.5-flash/.test(e.message)
   );
-  // 2 models × 2 tries each.
-  assert.equal(calls.length, 4);
+  // primary once (not last), fallback twice (last) = 3 calls total.
+  assert.deepEqual(calls, ['gemini-2.5-flash', 'gemini-3.5-flash', 'gemini-3.5-flash']);
 });
 
 test('transcribe: a non-transient error (bad request) skips retries on that model and tries the next', async () => {
@@ -68,7 +68,7 @@ test('transcribe: a non-transient error (bad request) skips retries on that mode
   axios.post = async (url) => {
     const model = modelOf(url);
     calls.push(model);
-    if (model === 'gemini-3.5-flash') {
+    if (model === 'gemini-2.5-flash') {
       const e = new Error('Request failed with status code 400');
       e.response = { status: 400 };
       throw e;
@@ -77,6 +77,5 @@ test('transcribe: a non-transient error (bad request) skips retries on that mode
   };
   const text = await voice.transcribe('base64audio', 'audio/wav');
   assert.equal(text, 'log my morning TM');
-  // primary tried ONCE (non-transient → no retry), then fell through to fallback.
-  assert.deepEqual(calls, ['gemini-3.5-flash', 'gemini-2.5-flash']);
+  assert.deepEqual(calls, ['gemini-2.5-flash', 'gemini-3.5-flash']);
 });
