@@ -127,29 +127,6 @@ async function gatherHealth(d7, d35) {
   return Object.fromEntries(results);
 }
 
-// How many consecutive weeks the user hit the habit threshold.
-// Weeks are Mon–Sun; the current (partial) week counts if already at target.
-function computeStreak(rows, threshold) {
-  const weekMap = new Map();
-  for (const row of rows) {
-    const d = new Date(row.day);
-    const dow = d.getDay(); // 0=Sun
-    const monday = new Date(d);
-    monday.setDate(d.getDate() - ((dow + 6) % 7));
-    const key = monday.toISOString().slice(0, 10);
-    if (!weekMap.has(key)) weekMap.set(key, []);
-    weekMap.get(key).push(Number(row.value));
-  }
-  const weeks = [...weekMap.entries()].sort((a, b) => b[0].localeCompare(a[0]));
-  let streak = 0;
-  for (const [, vals] of weeks) {
-    const weekAvg = vals.reduce((a, b) => a + b, 0) / vals.length;
-    if (weekAvg >= threshold) streak++;
-    else break;
-  }
-  return streak;
-}
-
 async function gatherHabits(d7, d56) {
   const BINARY = ['morning_tm', 'afternoon_tm', 'gratitude', 'cold_shower', 'exercise'];
   const LABELS = {
@@ -163,15 +140,13 @@ async function gatherHabits(d7, d56) {
       const rows = await metricsStore.dailyAggregate({ domain: 'habits', metric: m, from: d56, agg: 'avg', excludeSource: 'seed' });
       const recent = rows.filter((r) => new Date(r.day) >= d7);
       const rate = avg(recent);
-      const streak = computeStreak(rows, 0.71); // ≥5/7 days per week
-      return [m, { rate: rate != null ? Math.round(rate * 100) : null, label: LABELS[m], streak }];
+      return [m, { rate: rate != null ? Math.round(rate * 100) : null, label: LABELS[m] }];
     })),
     metricsStore.dailyAggregate({ domain: 'habits', metric: 'eat_healthy', from: d56, agg: 'avg', excludeSource: 'seed' }),
   ]);
   const out = Object.fromEntries(binaryResults);
   const recentEat = eatRows.filter((r) => new Date(r.day) >= d7);
-  const eatStreak = computeStreak(eatRows, 3.5); // ≥3.5/5 per week
-  out.eat_healthy = { rate: round1(avg(recentEat)), label: LABELS.eat_healthy, scale: 5, streak: eatStreak };
+  out.eat_healthy = { rate: round1(avg(recentEat)), label: LABELS.eat_healthy, scale: 5 };
   return out;
 }
 
