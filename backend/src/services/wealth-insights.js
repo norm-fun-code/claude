@@ -179,6 +179,13 @@ async function buildWealthInsights() {
           // the category, where that trend lands against the budget — the two
           // reads the user actually cares about, on one card.
           detail: vsUsual + budgetClause(s.category),
+          // impactDollars is the actual dollar overage (projected - avg), NOT the
+          // percentage — a $576/460% spike (small base, huge %) and a $527/47%
+          // one are comparably real dollar impacts, but ranking by raw percentage
+          // alone makes the small-base one look far more urgent than it is
+          // (product review finding). Callers should rank/select by this, not
+          // by re-parsing "over" out of the title string.
+          evidence: { kind: 'spending_pattern', category: s.category, current: Math.round(s.current), projected: Math.round(s.projected), avg: Math.round(s.avg), impactDollars: Math.round(s.projected - s.avg) },
         });
       }
     }
@@ -279,7 +286,9 @@ async function buildWealthInsights() {
             (l.overBudget
               ? `Already ${fmt(Math.abs(l.remaining))} over.`
               : `Spending ${pct((l.pace - 1) * 100)} faster than the month is elapsing.`),
-          evidence: { kind: 'budget_pacing', category: l.category, budget: l.budget, actual: l.actual, pace: l.pace, overBudget: l.overBudget },
+          // impactDollars mirrors spending_pattern's field so callers can rank
+          // both types by dollar impact with one consistent field name.
+          evidence: { kind: 'budget_pacing', category: l.category, budget: l.budget, actual: l.actual, pace: l.pace, overBudget: l.overBudget, impactDollars: Math.round(Math.abs(l.actual - l.budget)) },
         });
       }
       // Lump-sum categories (rent, mortgage) are excluded entirely, not just from

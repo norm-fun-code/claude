@@ -683,8 +683,50 @@ async function buildFreshBriefing({ force = false } = {}) {
   // automatically on the next build — no extra prompt plumbing needed.
   let signals = [];
   let spendingContext = ''; // a discretionary-spend anomaly the brief can call out
+
+  // Computed ONCE, here, and reused later for the Wealth tab's "What The Data
+  // Shows" card (see the `wealthInsights =` assignment further down, which
+  // now just reuses this instead of calling buildWealthInsights() a second
+  // time). Previously the chief-brief's spending narrative was driven by a
+  // SEPARATE, narrower check inline below (yesterday's total discretionary
+  // spend vs a 31-day daily average) — completely independent from this
+  // category-level MTD-pace detector. The two could — and, per a live product
+  // review, DID — disagree: the brief said "no unusual spike" (its own
+  // day-level check was quiet) while the Wealth tab flagged 3 category
+  // anomalies (Clothing, Taxi, Restaurants) from this detector, in the same
+  // build. One detector, read by both surfaces, closes that gap for good
+  // rather than just reconciling this one instance of it.
+  let wealthInsights = [];
+  try {
+    wealthInsights = await buildWealthInsights();
+  } catch (err) {
+    console.error('[wealthInsights] failed:', err.message);
+    errors.push({ service: 'wealth_insights', error: err.message });
+  }
+
   try {
     const preBriefSignals = require('../intelligence/pre-brief-signals');
+    // Anomaly callout for the brief narrative (distinct from the user-facing
+    // question below): surface the same category spending-pattern flags the
+    // Wealth tab shows, ranked by dollar impact (not raw percentage — a
+    // $576/460% spike and a $527/47% one are comparably real; percentage-of-
+    // a-small-base manufactures noise, a separate product review finding
+    // fixed here too).
+    const spendingAnomalies = wealthInsights
+      .filter((i) => i.type === 'spending_pattern' || i.type === 'over_budget')
+      .sort((a, b) => (b.evidence?.impactDollars ?? 0) - (a.evidence?.impactDollars ?? 0))
+      .slice(0, 3);
+    if (spendingAnomalies.length) {
+      spendingContext = `Spending patterns this month (ranked by dollar impact): ${spendingAnomalies.map((i) => i.title).join('; ')}.`;
+    }
+    // Yesterday's discretionary spend vs a 31-day daily average — a distinct,
+    // day-granularity signal feeding the proactive "anything to explain that
+    // spend?" question below (pre-brief-signals), separate from the
+    // month-granularity category trend narrative above. Kept independent on
+    // purpose: a single day's discretionary total spiking is a different
+    // fact from a category trending over its monthly usual/budget, and
+    // conflating them would just create a new disagreement in the other
+    // direction.
     let recentSpend = null;
     let spendBaseline = null;
     try {
@@ -706,12 +748,6 @@ async function buildFreshBriefing({ force = false } = {}) {
         spendBaseline = baselineRows.reduce((s, r) => s + Number(r.value || 0), 0) / baselineRows.length;
       }
     } catch { /* non-critical */ }
-    // Anomaly callout for the brief narrative (distinct from the user-facing
-    // question): flag yesterday's discretionary spend when it's well above normal.
-    if (recentSpend != null && spendBaseline != null && spendBaseline > 10 && recentSpend > spendBaseline * 1.8) {
-      const mult = (recentSpend / spendBaseline).toFixed(1);
-      spendingContext = `Discretionary spending yesterday was $${Math.round(recentSpend)} vs a $${Math.round(spendBaseline)}/day average (${mult}× normal).`;
-    }
     // Tomorrow's work calendar — so a long / all-day block the next day (an OOO,
     // a travel day, a wall of meetings) can prompt "what's going on there?" the
     // day PRIOR, giving the user a chance to add context before that brief.
@@ -1245,9 +1281,11 @@ async function buildFreshBriefing({ force = false } = {}) {
   }
 
   // Surface the intelligence layer's current findings (from the last analysis).
+  // (wealthInsights is declared earlier, near spendingContext — it's computed
+  // once, up there, and reused for both the chief-brief prompt and the
+  // Wealth tab; see that declaration's comment.)
   let insights = [];
   let crossContextInsights = [];
-  let wealthInsights = [];
   let healthInsights = [];
   let leverageActions = [];
   let forecasts = [];
@@ -1342,15 +1380,9 @@ async function buildFreshBriefing({ force = false } = {}) {
     // domain, so send a generous slice (12) to feed both without starving either.
     insights = rankedPool.slice(0, 12).map(slim);
 
-    // Wealth/spending insights for the Wealth tab — spending patterns (this
-    // month vs your usual) and over-budget categories (vs Monarch budgets).
-    // Computed live from transaction data; falls back to nothing on failure.
-    try {
-      wealthInsights = await buildWealthInsights();
-    } catch (err) {
-      console.error('[wealthInsights] failed:', err.message);
-      errors.push({ service: 'wealth_insights', error: err.message });
-    }
+    // wealthInsights for the Wealth tab was already computed earlier (see
+    // spendingContext's declaration) and reused for the chief-brief's own
+    // spending narrative — no second buildWealthInsights() call here.
 
     // Health (body/physiology) findings for the Health tab — anything that touches
     // the HEALTH domain: sleep/activity impact, habit↔health splits, sleep→focus
