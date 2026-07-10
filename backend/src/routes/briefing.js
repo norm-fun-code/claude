@@ -1776,9 +1776,19 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
     // came back invalid again.
     builtAt: new Date().toISOString(),
   };
-  briefingsStore
-    .saveBriefing({ kind: 'daily', content })
-    .catch((err) => console.error('[chief-brief rebuild] save failed:', err.message));
+  // Awaited (unlike /briefing/rebuild's background full rebuild, this is one
+  // fast scoped LLM call + a single-row save — nothing here justifies making
+  // it fire-and-forget). Un-awaited, the response could return before the
+  // write landed: a client that immediately re-fetches races the save and
+  // can see stale content. Confirmed as a real, timing-dependent flake in
+  // exactly this shape — the next test's own insert occasionally landed
+  // AFTER this save's still-in-flight one, so it read back THIS content
+  // instead of its own.
+  try {
+    await briefingsStore.saveBriefing({ kind: 'daily', content });
+  } catch (err) {
+    console.error('[chief-brief rebuild] save failed:', err.message);
+  }
 
   res.json({ ...content, cached: false });
 }));
