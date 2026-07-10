@@ -513,9 +513,8 @@ function startJobs() {
     `[scheduler] enabled (TZ=${process.env.TZ || 'system/UTC'}) — ` +
     `morning ${hm(hour, minute)} (next: ${nextIso(hour, minute)}), ` +
     `check-in ${hm(checkinHour, checkinMinute)}, ` +
-    `check-in evening ${hm(checkinEveningHour, checkinEveningMinute)}, ` +
-    `analyze evening ${hm(analyzeEveningHour, analyzeEveningMinute)}, ` +
-    `habits ${hm(habitsHour, habitsMinute)}`
+    `evening reminder ${hm(eveningReminderHour, eveningReminderMinute)}, ` +
+    `analyze evening ${hm(analyzeEveningHour, analyzeEveningMinute)}`
   );
   return true;
 }
