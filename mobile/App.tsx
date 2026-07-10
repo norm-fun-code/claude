@@ -65,7 +65,6 @@ import { SelfModelCard } from './src/components/SelfModelCard';
 import { CheckinHistoryCard } from './src/components/CheckinHistoryCard';
 import { HabitsModal } from './src/components/HabitsModal';
 import { LibraryCard } from './src/components/LibraryCard';
-import { RecommendationLedgerCard } from './src/components/RecommendationLedgerCard';
 import { CommitmentsCard } from './src/components/CommitmentsCard';
 import { IndicesCard } from './src/components/IndicesCard';
 import { MarketsCard } from './src/components/MarketsCard';
@@ -484,13 +483,12 @@ export default function App() {
             <AnimatedEntry delay={90}>
               <CheckinHistoryCard insights={checkinHistoryInsights} />
             </AnimatedEntry>
-            {/* 9. Weekly review + intentions */}
+            {/* 9. Weekly review + intentions. Leverage recommendations no longer
+                render here — every recommendation now surfaces as exactly one
+                thing, a Commitment (#1.5 above); the ledger card is gone too
+                (outcome measurement still runs, it's just not its own card). */}
             <AnimatedEntry delay={110}>
-              <WeeklyIntentionsCard review={d?.weeklyReview ?? null} actions={d?.leverageActions ?? EMPTY_ARRAY} />
-            </AnimatedEntry>
-            {/* 10. Recommendation ledger — what was recommended and did it work */}
-            <AnimatedEntry delay={130}>
-              <RecommendationLedgerCard />
+              <WeeklyIntentionsCard review={d?.weeklyReview ?? null} />
             </AnimatedEntry>
             {briefing.error && !d && (
               <AnimatedEntry delay={0}>

@@ -69,15 +69,29 @@ async function todaySummary(tz = 'America/New_York') {
 }
 
 /**
- * If this commitment was auto-created from a metric-less recommendation
- * (recommendation_id set), close the loop by writing an adherence outcome —
- * the same ±1 delta convention the manual thumbs-up/down endpoint already
- * uses for recs with no expected_direction. Never let this fail the caller's
- * markDone/markSkipped.
+ * If this commitment is linked to a recommendation (recommendation_id set),
+ * close the loop by writing an adherence outcome — the same ±1 delta
+ * convention the manual thumbs-up/down endpoint already uses for recs with no
+ * expected_direction. ONLY for metric-less recs: a metric-bearing rec's real
+ * verdict comes from the 7-day measured delta (measureOutcomes), and
+ * setOutcome is first-verdict-wins, so writing a synthetic adherence delta
+ * here would permanently lock out that real measurement. Every rec gets a
+ * linked commitment now (it's the one surface a rec shows up on), so this
+ * gate is what keeps a metric-bearing rec's commitment tap from being more
+ * than an acknowledgment. Never let this fail the caller's markDone/markSkipped.
  */
-function recordAdherenceOutcome(row, delta) {
+async function recordAdherenceOutcome(row, delta) {
   if (!row?.recommendation_id) return;
-  require('./recommendations')
+  const recommendations = require('./recommendations');
+  let rec;
+  try {
+    rec = await recommendations.getById(row.recommendation_id);
+  } catch (e) {
+    console.error('[commitments] adherence outcome lookup failed:', e.message);
+    return;
+  }
+  if (rec?.outcome_metric) return; // real measurement owns the verdict for these
+  recommendations
     .setOutcome(row.recommendation_id, { delta, measuredAt: row.completed_at ?? new Date() })
     .catch((e) => console.error('[commitments] adherence outcome failed:', e.message));
 }

@@ -16,10 +16,16 @@ function normalizeRecTitle(title) {
     .trim();
 }
 
-// A recommendation with no outcome_metric will never be auto-measured
-// (measureOutcomes only looks at rows WHERE outcome_metric IS NOT NULL), so
-// without this it would sit "Pending" forever with no way to close the loop.
-// The window a linked commitment stays open before it's due for a follow-up.
+// Every recommendation gets a linked commitment — it's the one surface a
+// recommendation shows up on (see the notification/insight-taxonomy review:
+// a single leverage rec used to spread across up to 5 places). For a
+// metric-less rec, the commitment IS the only way to close the loop
+// (measureOutcomes only looks at rows WHERE outcome_metric IS NOT NULL, so
+// without this it would sit "Pending" forever). For a metric-bearing rec, the
+// commitment is how the insight surfaces to the user at all now that there's
+// no separate ledger card — done/skipped just acknowledges it; the REAL
+// verdict still comes from the 7-day metric delta (see commitments.js's
+// recordAdherenceOutcome, which skips writing an adherence outcome for these).
 const FOLLOWUP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 async function recordRecommendation({
@@ -43,10 +49,7 @@ async function recordRecommendation({
     [type, findingId, title, detail, lever, outcomeMetric, expectedDirection, score != null ? +score.toFixed(4) : null, surfacedIn, dedupKey]
   );
   const id = rows[0]?.id;
-  if (!outcomeMetric && id) {
-    // Auto-create a linked commitment so marking it done/skipped on Today
-    // resolves this recommendation via the same ±1 adherence convention as a
-    // manual thumbs-up/down, instead of it never getting a verdict.
+  if (id) {
     require('./commitments').create({
       title: String(title).slice(0, 200),
       detail,
@@ -56,6 +59,15 @@ async function recordRecommendation({
     }).catch((e) => console.error('[recommendations] auto-commit failed:', e.message));
   }
   return id;
+}
+
+/** Minimal lookup for commitments.js's recordAdherenceOutcome — just enough
+ *  to decide whether a linked commitment's done/skip tap should write an
+ *  adherence outcome (only for metric-less recs; see FOLLOWUP_WINDOW_MS's
+ *  comment above). */
+async function getById(id) {
+  const { rows } = await query(`SELECT id, outcome_metric FROM recommendations WHERE id = $1`, [id]);
+  return rows[0] ?? null;
 }
 
 /**
@@ -256,4 +268,4 @@ async function clearPrematureAutoOutcomes() {
   return rowCount;
 }
 
-module.exports = { recordRecommendation, listRecommendations, setOutcome, recentTitles, recentDedupKeys, recentTitlesAll, measureOutcomes, normalizeRecTitle, dedupePending, clearPrematureAutoOutcomes, mostRecentLeverageAction };
+module.exports = { recordRecommendation, listRecommendations, setOutcome, recentTitles, recentDedupKeys, recentTitlesAll, measureOutcomes, normalizeRecTitle, dedupePending, clearPrematureAutoOutcomes, mostRecentLeverageAction, getById };

@@ -11,13 +11,12 @@ import {
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { INTENTIONS_URL, INTENTIONS_CURRENT_URL, INTENTIONS_RESULTS_URL, authHeaders, fetchWithTimeout, localTz } from '../config';
-import { WeeklyReview, LeverageAction } from '../hooks/useBriefing';
+import { WeeklyReview } from '../hooks/useBriefing';
 
 type PriorGoal = { text: string; achieved: boolean };
 
 interface Props {
   review?: WeeklyReview | null;
-  actions?: LeverageAction[];
 }
 
 // Sunday weekly check-in: the week's life context (free text) + up to 3 focus
@@ -39,7 +38,7 @@ function isSunday(): boolean {
   return easternDayOfWeek() === 0;
 }
 
-function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}) {
+function WeeklyIntentionsCard({ review = null }: Props = {}) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -173,25 +172,6 @@ function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}) {
     </View>
   ) : null;
 
-  // AI's highest-leverage actions for the week, shown under your own goals.
-  const leverageBlock =
-    actions.length > 0 ? (
-      <View style={styles.leverageBox}>
-        <Text style={[styles.label, { color: c.subtext }]}>Highest leverage this week</Text>
-        {actions.map((a, i) => (
-          <View key={i} style={styles.action}>
-            <View style={[styles.rank, { backgroundColor: c.accent }]}>
-              <Text style={styles.rankText}>{i + 1}</Text>
-            </View>
-            <View style={styles.actionBody}>
-              <Text style={[styles.actionTitle, { color: c.text }]}>{a.title}</Text>
-              {a.detail ? <Text style={[styles.actionDetail, { color: c.subtext }]}>{a.detail}</Text> : null}
-            </View>
-          </View>
-        ))}
-      </View>
-    ) : null;
-
   async function save() {
     setSaving(true);
     setFailed(false);
@@ -256,7 +236,6 @@ function WeeklyIntentionsCard({ review = null, actions = [] }: Props = {}) {
           <Text style={[styles.summaryGoal, { color: c.subtext }]}>No goals set this week.</Text>
         )}
         {context ? <Text style={[styles.summaryContext, { color: c.subtext }]} numberOfLines={4}>{context}</Text> : null}
-        {leverageBlock}
         {hasReview && (
           <>
             <TouchableOpacity onPress={() => setReviewOpen((v) => !v)} style={[styles.reviewToggle, { borderTopColor: c.border }]} activeOpacity={0.6}>
@@ -392,14 +371,6 @@ const styles = StyleSheet.create({
   bulletRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginBottom: spacing.xs },
   dot: { width: 6, height: 6, borderRadius: 3, marginTop: 7 },
   bulletText: { ...typography.body, fontSize: 14, flex: 1 },
-  // Highest-leverage actions block
-  leverageBox: { marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#8884' },
-  action: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm, alignItems: 'flex-start' },
-  rank: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
-  rankText: { fontSize: 13, fontWeight: '700', color: '#fff' },
-  actionBody: { flex: 1 },
-  actionTitle: { ...typography.subtitle, marginBottom: 2 },
-  actionDetail: { ...typography.body, fontSize: 13 },
   summaryGoal: { ...typography.body, fontWeight: '500', marginBottom: 2, flex: 1 },
   summaryContext: { ...typography.caption, fontSize: 13, marginTop: spacing.sm, lineHeight: 19 },
   editLink: { marginTop: spacing.sm },
