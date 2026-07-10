@@ -216,6 +216,24 @@ test('CHIEF_SYSTEM instructs relaying life-chapter facts forward, not restating 
   assert.match(capturedSystem, /RELAY, DON'T RESTATE/);
 });
 
+// Live bug found via a product review: the Affirmation said "I closed out
+// all three goals I set for myself this week, including finishing the
+// valuation work I was worried about" — the goal-completion is real, but
+// "which I was worried about" was fabricated; no data source stated the
+// user felt worried about it. Confirms CHIEF_SYSTEM explicitly forbids
+// decorating a real, grounded fact with an invented feeling/motive.
+test('CHIEF_SYSTEM forbids embellishing the affirmation with an invented feeling not present in the data', async () => {
+  let capturedSystem = null;
+  llm.generateText = async ({ system }) => {
+    if (system.includes('chief of staff and data scientist')) { capturedSystem = system; return CHIEF_JSON; }
+    return WISDOM_JSON;
+  };
+  await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
+  assert.ok(capturedSystem);
+  assert.match(capturedSystem, /do not embellish a real fact with an invented feeling/);
+  assert.match(capturedSystem, /which I was worried about/);
+});
+
 test('generateBriefing runs chief and wisdom calls concurrently, not serially', async () => {
   const order = [];
   llm.generateText = async ({ system }) => {
