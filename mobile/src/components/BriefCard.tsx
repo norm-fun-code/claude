@@ -258,7 +258,13 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Props) {
       // Fetch the narration as base64 JSON (auth headers sent reliably via
       // fetch), then play from a local file — the same path the voice reply
       // uses. Streaming the URL through expo-av dropped auth on iOS and 401'd.
-      const res = await fetchWithTimeout(BRIEFING_AUDIO_URL, { headers: authHeaders() }, 30000);
+      // 60s, not 30s: the backend's TTS call can itself take up to ~45s per
+      // model attempt (see voice.js's GEMINI_TTS_TIMEOUT_MS) before falling
+      // back to the next candidate model — a 30s client timeout used to abort
+      // and show "Unavailable" WHILE a slow-but-recoverable backend request
+      // was still running and about to succeed, so a second tap right after
+      // just read the now-warm cache and looked like a lucky retry.
+      const res = await fetchWithTimeout(BRIEFING_AUDIO_URL, { headers: authHeaders() }, 60000);
       if (!res.ok) throw new Error(`Server ${res.status}`);
       const data = await res.json();
       if (!data?.audio) throw new Error('no audio');

@@ -54,6 +54,14 @@ function pcmToWav(pcm, { sampleRate = 24000, channels = 1, bitsPerSample = 16 } 
 // Zubenelgenubi (Casual).
 const DEFAULT_VOICE = process.env.NORMOS_VOICE || 'Orus';
 
+// Same transient-failure test as isTransientSttError below — a timeout or an
+// overloaded-model status is worth a retry; a bad request/auth error is not.
+function isTransientTtsError(err) {
+  const status = err.response?.status;
+  return status === 503 || status === 429 || status === 500
+    || err.code === 'ECONNABORTED' || /timeout of/i.test(err.message || '');
+}
+
 async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
   const trimmed = String(text || '').trim();
   if (!trimmed) throw new Error('nothing to synthesize');
@@ -69,24 +77,45 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
     },
   };
 
+  // Live bug: a single timed-out (or otherwise transient) Gemini call used to
+  // `break` out of the model loop immediately — a temporary hiccup on the
+  // FIRST candidate model killed the whole synthesize() call with zero
+  // fallback attempted, surfacing to the user as "Listen" flashing
+  // "Unavailable" even though a retry (or even just the next model) would
+  // likely have succeeded. Mirrors transcribe()'s retry structure exactly:
+  // only the LAST model gets a same-model retry-with-backoff on a transient
+  // failure (an earlier model falling through to the NEXT candidate beats
+  // waiting on one that just failed); every model is tried regardless of
+  // error type — a non-transient error just skips that model's retry.
+  const timeoutMs = Number(process.env.GEMINI_TTS_TIMEOUT_MS || 45000);
+  const backoffMs = Number(process.env.GEMINI_TTS_BACKOFF_MS || 500);
+  const models = ttsModels();
+
+  const attempt = async (model) => {
+    const { data } = await axios.post(`${BASE}/models/${model}:generateContent?key=${key()}`, payload, { timeout: timeoutMs });
+    const part = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
+    if (!part) throw new Error('no audio in TTS response');
+    const pcm = Buffer.from(part.inlineData.data, 'base64');
+    // Mime like "audio/L16;codec=pcm;rate=24000" — pull the rate if present.
+    const rateMatch = String(part.inlineData.mimeType || '').match(/rate=(\d+)/);
+    const sampleRate = rateMatch ? Number(rateMatch[1]) : 24000;
+    return { audio: pcmToWav(pcm, { sampleRate }), mime: 'audio/wav' };
+  };
+
   let lastErr = null;
-  for (const model of ttsModels()) {
-    try {
-      const { data } = await axios.post(`${BASE}/models/${model}:generateContent?key=${key()}`, payload, {
-        timeout: Number(process.env.GEMINI_TTS_TIMEOUT_MS || 60000),
-      });
-      const part = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
-      if (!part) throw new Error('no audio in TTS response');
-      const pcm = Buffer.from(part.inlineData.data, 'base64');
-      // Mime like "audio/L16;codec=pcm;rate=24000" — pull the rate if present.
-      const rateMatch = String(part.inlineData.mimeType || '').match(/rate=(\d+)/);
-      const sampleRate = rateMatch ? Number(rateMatch[1]) : 24000;
-      return { audio: pcmToWav(pcm, { sampleRate }), mime: 'audio/wav' };
-    } catch (err) {
-      lastErr = err;
-      const status = err.response?.status;
-      // Try the next model only for "model doesn't exist" class failures.
-      if (status !== 404 && status !== 400) break;
+  for (let i = 0; i < models.length; i++) {
+    const model = models[i];
+    const isLast = i === models.length - 1;
+    const maxTries = isLast ? 2 : 1;
+    for (let tryNum = 0; tryNum < maxTries; tryNum++) {
+      try {
+        return await attempt(model);
+      } catch (err) {
+        lastErr = err;
+        console.error(`[voice tts] ${model} failed (try ${tryNum + 1}/${maxTries}): ${err.message}`);
+        if (!isTransientTtsError(err)) break;
+        if (tryNum < maxTries - 1 && backoffMs > 0) await sleep(backoffMs);
+      }
     }
   }
   throw new Error(`TTS failed: ${lastErr?.response?.data?.error?.message || lastErr?.message}`);

@@ -11,6 +11,17 @@ function scriptFor(kind, content) {
     : voiceService.composeNarrationScript(content);
 }
 
+// Live bug found via a product review: tapping "Listen" right after a
+// rebuild sometimes flashed "Unavailable" (timed out) then played fine on a
+// second tap. Root cause was partly here — audioFor() had no in-flight
+// dedup, so the post-rebuild prewarm() call and the user's own "Listen" tap
+// could both miss the not-yet-written cache row and each independently fire
+// a synthesize() call to Gemini for the exact same script, doubling TTS load
+// right when the system is already busiest. Same pattern as monarch-wealth's
+// `cached()` in-flight dedup: concurrent callers for the same cache key
+// share one pending promise instead of each starting their own.
+const inFlight = new Map(); // cacheKey -> Promise<{audio,mime}>
+
 /** Generate (or reuse) a brief's narration audio; returns { audio, mime } or null. */
 async function audioFor(kind, content, day) {
   const script = scriptFor(kind, content);
@@ -21,15 +32,27 @@ async function audioFor(kind, content, day) {
   const cacheKey = `${kind}:${day}:${hash}`;
   const { rows } = await db.query(`SELECT audio, mime FROM tts_audio WHERE cache_key = $1`, [cacheKey]);
   if (rows[0]) return { audio: rows[0].audio, mime: rows[0].mime };
-  const { audio, mime } = await voiceService.synthesize(script);
-  await db.query(
-    `INSERT INTO tts_audio (cache_key, audio, mime) VALUES ($1, $2, $3)
-     ON CONFLICT (cache_key) DO NOTHING`,
-    [cacheKey, audio, mime]
-  );
-  // Prune stale narrations so the table never grows past a handful of rows.
-  db.query(`DELETE FROM tts_audio WHERE created_at < now() - interval '7 days'`).catch(() => {});
-  return { audio, mime };
+
+  const pending = inFlight.get(cacheKey);
+  if (pending) return pending;
+
+  const promise = (async () => {
+    try {
+      const { audio, mime } = await voiceService.synthesize(script);
+      await db.query(
+        `INSERT INTO tts_audio (cache_key, audio, mime) VALUES ($1, $2, $3)
+         ON CONFLICT (cache_key) DO NOTHING`,
+        [cacheKey, audio, mime]
+      );
+      // Prune stale narrations so the table never grows past a handful of rows.
+      db.query(`DELETE FROM tts_audio WHERE created_at < now() - interval '7 days'`).catch(() => {});
+      return { audio, mime };
+    } finally {
+      inFlight.delete(cacheKey);
+    }
+  })();
+  inFlight.set(cacheKey, promise);
+  return promise;
 }
 
 /** Fire-and-forget pre-warm so the first "Listen" tap plays instantly. */
