@@ -41,12 +41,19 @@ function createHealthRouter({ bootTime }) {
       process.env.RENDER_GIT_COMMIT ||
       process.env.GIT_COMMIT_SHA ||
       'unknown';
+    // Scheduler state is surfaced here (publicly, but it's just booleans) so a
+    // "nothing fired" report can be diagnosed from outside the process — a
+    // leaderless scheduler (jobsStarted:false, awaitingLeadership:true) is
+    // otherwise invisible without server-log access.
+    let scheduler = null;
+    try { scheduler = require('../scheduler').schedulerState(); } catch { /* older build */ }
     res.json({
       status: 'ok',
       database,
       commit: commit === 'unknown' ? 'unknown' : commit.slice(0, 7),
       bootedAt: bootTime,
       timestamp: new Date().toISOString(),
+      scheduler,
     });
   }));
 

@@ -406,6 +406,13 @@ async function releaseLeaderLock() {
   try { c.release(); } catch { /* already released */ }
 }
 
+// How often a dormant follower re-attempts the leader election. Kept short
+// relative to the deploy overlap window so a promoted follower starts running
+// jobs within seconds of the old leader dying.
+const LEADER_RETRY_MS = Number(process.env.SCHEDULER_LEADER_RETRY_MS) || 30000;
+let leaderRetryTimer = null;
+let jobsStarted = false;
+
 function start() {
   if (process.env.ENABLE_SCHEDULER !== 'true') {
     console.log('[scheduler] disabled — set ENABLE_SCHEDULER=true to enable the morning routine');
@@ -414,14 +421,52 @@ function start() {
   // Leader election needs a DB round-trip, so it's deferred/async — start()
   // itself still returns synchronously (unchanged contract for server.js's
   // fire-and-forget call site).
-  tryBecomeLeader().then((isLeader) => {
-    if (!isLeader) {
-      console.log('[scheduler] another instance already holds the leader lock — not registering jobs here');
-      return;
-    }
-    startJobs();
-  });
+  electLeaderThenStart();
   return true;
+}
+
+// Single-shot election was the root cause of "the scheduler mysteriously
+// stopped running — nothing fired at all." During a deploy Railway briefly
+// runs the OLD and NEW containers at once; a freshly-booted instance can lose
+// the race for the advisory lock to the still-alive previous container, and
+// the old code gave up FOREVER at that point ("not registering jobs here").
+// Seconds later the old container is killed, its Postgres session ends, the
+// lock frees — and nobody is left running the scheduler until the next deploy.
+// A burst of deploys makes it near-certain to land in that leaderless state.
+// Retrying until the lock frees means a follower always promotes itself once
+// the old leader dies.
+function electLeaderThenStart() {
+  tryBecomeLeader()
+    .then((isLeader) => {
+      if (isLeader) {
+        if (leaderRetryTimer) { clearTimeout(leaderRetryTimer); leaderRetryTimer = null; }
+        startJobs();
+        jobsStarted = true;
+        return;
+      }
+      if (!leaderRetryTimer) {
+        console.log(`[scheduler] leader lock held by another instance — retrying every ${Math.round(LEADER_RETRY_MS / 1000)}s until it frees`);
+      }
+      leaderRetryTimer = setTimeout(electLeaderThenStart, LEADER_RETRY_MS);
+    })
+    .catch((e) => {
+      // tryBecomeLeader already fails open (returns true) on a DB error, so
+      // reaching here is unusual — retry rather than silently give up.
+      console.error('[scheduler] election attempt errored, will retry:', e.message);
+      leaderRetryTimer = setTimeout(electLeaderThenStart, LEADER_RETRY_MS);
+    });
+}
+
+/** Observable scheduler state for the health check / diagnostics — lets us
+ *  confirm from OUTSIDE the process whether jobs are actually registered,
+ *  instead of inferring it from the presence of a boot log line. */
+function schedulerState() {
+  return {
+    enabled: process.env.ENABLE_SCHEDULER === 'true',
+    isLeader: !!leaderClient,
+    jobsStarted,
+    awaitingLeadership: !!leaderRetryTimer,
+  };
 }
 
 function startJobs() {
@@ -522,5 +567,5 @@ function startJobs() {
 module.exports = {
   start, msUntil, morningRoutine, morningRanToday, markMorningRan, localDateKey,
   eightSleepConfigured, eightSleepSessionInProgress, personalWakeFloorHours,
-  tryBecomeLeader, releaseLeaderLock,
+  tryBecomeLeader, releaseLeaderLock, schedulerState,
 };
