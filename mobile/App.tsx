@@ -390,10 +390,12 @@ export default function App() {
           <>
             {/* TODAY-FIRST ordering: the home tab answers "what's the one thing,
                 how am I today, what's urgent, what am I running" before any
-                reflective/historical detail. The brief leads, recovery grade and
-                urgent flags sit right under it, then today's experiment and the
-                cross-domain insight; goal forecasts, trends, weekly review, and the
-                ledger drop below the fold. */}
+                reflective/historical detail. The brief leads, immediately followed
+                by the cross-domain insight (the differentiator — see the product
+                review's "what feels magical" notes, moved up from position 5 so
+                it reads as part of the brief's synthesis, not just another card),
+                then commitments, recovery grade, and urgent flags; goal forecasts,
+                trends, weekly review, and the ledger drop below the fold. */}
 
             {/* 0. Sleep check-in — only when there's no Pod reading to fill the gap.
                 Leads when present so logging sleep is the first action. */}
@@ -438,55 +440,62 @@ export default function App() {
                 />
               </AnimatedEntry>
             )}
-            {/* 1.5 Commitments — what you said you'd do, still open. Sits right
-                under the brief because it's the most actionable, time-sensitive
-                thing on the screen. Self-hides when nothing is outstanding. */}
-            {commitments.commitments.length > 0 && (
-              <AnimatedEntry delay={5}>
-                <CommitmentsCard commitments={commitments.commitments} onResolve={commitments.resolve} />
-              </AnimatedEntry>
-            )}
-            {/* 2. Recovery grade — "how am I TODAY" is the home-tab question */}
-            <AnimatedEntry delay={10}>
-              <TodayForecastCard forecast={d?.todayForecast} />
-            </AnimatedEntry>
-            {/* 3. Alerts / highest-leverage flags — anything urgent today */}
-            {d?.alerts && d.alerts.length > 0 && (
-              <AnimatedEntry delay={20}>
-                <AlertCard alerts={d.alerts} />
-              </AnimatedEntry>
-            )}
-            {/* 4. Experiments — what I'm actively running */}
-            <AnimatedEntry delay={30}>
-              <ExperimentsCard />
-            </AnimatedEntry>
-            {/* 5. Cross-domain patterns — the differentiating insight */}
+            {/* 2. Cross-domain patterns — the differentiating insight (per the
+                product review's "what feels magical" + taxonomy-collapse notes:
+                this is the moat, not just another card in the stack, so it sits
+                immediately under the brief instead of five positions down). */}
             {d?.crossContextInsights && d.crossContextInsights.length > 0 && (
-              <AnimatedEntry delay={45}>
+              <AnimatedEntry delay={5}>
                 <CrossContextCard insights={d.crossContextInsights} />
               </AnimatedEntry>
             )}
-            {/* 6. Goal forecasts — trajectory, not a daily action → below the fold */}
+            {/* 3. Commitments — what you said you'd do, still open. Self-hides
+                when nothing is outstanding. */}
+            {commitments.commitments.length > 0 && (
+              <AnimatedEntry delay={10}>
+                <CommitmentsCard commitments={commitments.commitments} onResolve={commitments.resolve} />
+              </AnimatedEntry>
+            )}
+            {/* 4. Recovery grade — "how am I TODAY" is the home-tab question */}
+            <AnimatedEntry delay={20}>
+              <TodayForecastCard forecast={d?.todayForecast} />
+            </AnimatedEntry>
+            {/* 5. Alerts — operational/source-health warnings, not a personal
+                insight (kept distinct from the taxonomy collapse for exactly
+                that reason — it needs to read as "something broke", not blend
+                into "the app noticed a pattern"). */}
+            {d?.alerts && d.alerts.length > 0 && (
+              <AnimatedEntry delay={30}>
+                <AlertCard alerts={d.alerts} />
+              </AnimatedEntry>
+            )}
+            {/* 6. Experiments — what I'm actively running */}
+            <AnimatedEntry delay={40}>
+              <ExperimentsCard />
+            </AnimatedEntry>
+            {/* 7. Goal forecasts — trajectory, not a daily action → below the fold */}
             {(d?.forecasts ?? []).length > 0 && (
-              <AnimatedEntry delay={60}>
+              <AnimatedEntry delay={55}>
                 <ForecastCard forecasts={d!.forecasts} />
               </AnimatedEntry>
             )}
-            {/* 7. Streak / trend signals (one-question prompts) */}
+            {/* 8. Streak / trend signals (one-question prompts) — kept as its own
+                card: it's an interactive question+answer input, not a passive
+                "noticed something" display, so it can't fold into a feed. */}
             {d?.signals && d.signals.length > 0 && (
-              <AnimatedEntry delay={75}>
+              <AnimatedEntry delay={70}>
                 <BriefSignalsCard signals={d.signals} />
               </AnimatedEntry>
             )}
-            {/* 8. Check-in trends + habit streaks — reference detail */}
-            <AnimatedEntry delay={90}>
+            {/* 9. Check-in trends + habit streaks — reference detail */}
+            <AnimatedEntry delay={85}>
               <CheckinHistoryCard insights={checkinHistoryInsights} />
             </AnimatedEntry>
-            {/* 9. Weekly review + intentions. Leverage recommendations no longer
+            {/* 10. Weekly review + intentions. Leverage recommendations no longer
                 render here — every recommendation now surfaces as exactly one
-                thing, a Commitment (#1.5 above); the ledger card is gone too
+                thing, a Commitment (#3 above); the ledger card is gone too
                 (outcome measurement still runs, it's just not its own card). */}
-            <AnimatedEntry delay={110}>
+            <AnimatedEntry delay={100}>
               <WeeklyIntentionsCard review={d?.weeklyReview ?? null} />
             </AnimatedEntry>
             {briefing.error && !d && (
