@@ -364,6 +364,36 @@ async function buildFreshBriefing({ force = false } = {}) {
       }
     } catch { /* non-critical — leave cached value on error */ }
 
+    // Freshen the fitness (VO2 max) insight's CURRENT reading on every cache
+    // serve — same reasoning as recovery/weeklyGoals/weeklyReview above. VO2
+    // samples are live device values (mobile pushes new HealthKit readings to
+    // the spine on every Health tab open), but this cached finding's
+    // title/detail were baked in by whenever analyze() last ran, which for
+    // nearly all requests (this IS the branch that serves them) can be hours
+    // stale. VO2 barely moves day to day, so the trend (per90) is fine staying
+    // batch-computed; it's specifically "current" that a live push can outrun,
+    // producing two different VO2 numbers on the same tab (caught via a
+    // product screenshot review). One cheap latest() query; leaves the cached
+    // value untouched on any error or if there's no fitness insight cached.
+    if (Array.isArray(cachedContent.healthInsights)) {
+      const fitnessIdx = cachedContent.healthInsights.findIndex((f) => f.type === 'fitness');
+      if (fitnessIdx !== -1) {
+        try {
+          const latestVo2 = await metricsStore.latest({ domain: 'health', metric: 'vo2_max' });
+          const current = latestVo2?.value != null ? Number(latestVo2.value) : null;
+          if (current != null) {
+            const { formatFitnessFinding } = require('../intelligence/recovery');
+            const per90 = cachedContent.healthInsights[fitnessIdx].evidence?.per90 ?? null;
+            const { title, detail } = formatFitnessFinding(current, per90);
+            cachedContent.healthInsights = [...cachedContent.healthInsights];
+            cachedContent.healthInsights[fitnessIdx] = { ...cachedContent.healthInsights[fitnessIdx], title, detail };
+          }
+        } catch (err) {
+          console.error('[briefing cache] fitness freshen failed:', err.message);
+        }
+      }
+    }
+
     // Re-fetch weekly review on every cache serve so the parsed/recovered version
     // always shows — the stored briefing may have the raw-JSON-as-narrative fallback.
     let weeklyReview = cachedContent.weeklyReview ?? null;
@@ -1332,6 +1362,13 @@ async function buildFreshBriefing({ force = false } = {}) {
       .filter((f) => Array.isArray(f.domains) && f.domains.includes('health'))
       .slice(0, 5)
       .map(slim);
+    // NOTE: no VO2 "current" freshening needed here — this is the fresh-build
+    // path, and analyze() (which just ran, see the ingest/analyze call above)
+    // already read the latest vo2_max metric fresh when it computed this
+    // finding. The freshening step lives in the CACHE-HIT branch instead (see
+    // buildFreshBriefing's `if (!force && prior?.content)` block above) — that's
+    // the path that actually serves nearly all traffic, since it returns the
+    // stored content from whenever analyze() last ran without recomputing it.
 
     // Card-level dismissals: drop any insight the user has explicitly dismissed
     // (e.g. a recurring car payment flagged for "review"), and stamp each survivor

@@ -407,6 +407,26 @@ function strainSynthesis(seriesByKey, { load = null } = {}) {
  * current estimate + multi-week trajectory + the lever that moves it. Returns one
  * 'fitness' finding or null.
  */
+/** Pure: render the fitness finding's title/detail from a current VO₂ value +
+ *  its quarterly trend. Shared by fitnessFinding() (the nightly analyze() path)
+ *  and briefing.js's live-freshen step (see the product review's "same metric,
+ *  two numbers on the same tab" finding — this is what keeps them in sync
+ *  without duplicating the prose template in two places). */
+function formatFitnessFinding(current, per90) {
+  const round1 = (n) => Math.round(n * 10) / 10;
+  const c = round1(current);
+  const moving = per90 != null && Math.abs(per90) >= 0.5;
+  const dir = moving ? (per90 > 0 ? 'rising' : 'declining') : 'steady';
+  const trajTitle = moving ? ` — ${dir} ~${Math.abs(round1(per90))} pts/quarter` : '';
+  const trajDetail = moving
+    ? `and ${dir} (~${Math.abs(round1(per90))} pts/quarter)`
+    : 'and holding steady';
+  return {
+    title: `VO₂ max ${c}${trajTitle}`,
+    detail: `VO₂ max — your cardiorespiratory fitness — is among the strongest predictors of long-term health and lifespan. Yours is ${c} ${trajDetail}. What moves it: a base of Zone 2 (conversational-pace) cardio for volume, plus one weekly dose of harder intervals to lift the ceiling.`,
+  };
+}
+
 function fitnessFinding(seriesByKey) {
   const vo2 = seriesByKey['health:vo2_max'];
   if (!vo2 || vo2.length < 2) return null;
@@ -418,18 +438,13 @@ function fitnessFinding(seriesByKey) {
   // ~0.5 pts — below that it's holding steady.
   const fit = stats.fitByDay(vo2);
   const per90 = fit && fit.slope != null ? fit.slope * 90 : null;
-  const moving = per90 != null && Math.abs(per90) >= 0.5;
-  const dir = moving ? (per90 > 0 ? 'rising' : 'declining') : 'steady';
-  const trajTitle = moving ? ` — ${dir} ~${Math.abs(round1(per90))} pts/quarter` : '';
-  const trajDetail = moving
-    ? `and ${dir} (~${Math.abs(round1(per90))} pts/quarter)`
-    : 'and holding steady';
+  const { title, detail } = formatFitnessFinding(current, per90);
 
   return {
     type: 'fitness',
     domains: ['health'],
-    title: `VO₂ max ${round1(current)}${trajTitle}`,
-    detail: `VO₂ max — your cardiorespiratory fitness — is among the strongest predictors of long-term health and lifespan. Yours is ${round1(current)} ${trajDetail}. What moves it: a base of Zone 2 (conversational-pace) cardio for volume, plus one weekly dose of harder intervals to lift the ceiling.`,
+    title,
+    detail,
     confidence: 0.8,
     evidence: { auto: true, kind: 'fitness', metric: 'health:vo2_max', current: round1(current), per90: per90 == null ? null : round1(per90), n: vo2.length },
   };
@@ -890,6 +905,7 @@ module.exports = {
   computeHealthComposites,
   strainSynthesis,
   fitnessFinding,
+  formatFitnessFinding,
   baselineScore,
   trendScore,
   liveRecovery,
