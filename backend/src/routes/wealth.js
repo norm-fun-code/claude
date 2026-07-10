@@ -1,8 +1,8 @@
-// Wealth router: lightweight net-worth snapshot (for external integrations),
-// the plan-baseline comparison, and asset-allocation/concentration view.
-// Twenty-third router extraction out of server.js's monolith (see the
-// engineering review's #1+#6 recommendation) — a straight move, verified
-// line-by-line against the original before removing it from server.js.
+// Wealth router: lightweight net-worth snapshot (for external integrations)
+// and the plan-baseline comparison. Twenty-third router extraction out of
+// server.js's monolith (see the engineering review's #1+#6 recommendation)
+// — a straight move, verified line-by-line against the original before
+// removing it from server.js.
 const express = require('express');
 const metricsStore = require('../store/metrics');
 const { asyncHandler } = require('../middleware/asyncHandler');
@@ -74,19 +74,6 @@ function createWealthRouter() {
       pctYearElapsed: Math.round(pctYear * 100),
       planYear,
     });
-  }));
-
-  // Asset allocation + single-name concentration for the dedicated Asset Mix card.
-  router.get('/wealth/allocation', asyncHandler(async (req, res) => {
-    const monarchWealth = require('../services/monarch-wealth');
-    const { computeAllocationView } = require('../intelligence/allocation');
-    const [accountsData, investments] = await Promise.all([
-      monarchWealth.getAccounts(),
-      monarchWealth.getInvestments().catch(() => null),
-    ]);
-    const view = computeAllocationView(accountsData, { holdings: investments?.holdings || null });
-    if (!view) return res.json({ available: false });
-    res.json({ available: true, ...view });
   }));
 
   return router;

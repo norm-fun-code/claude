@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { classifyAccount, assetAllocation, topConcentration, buildAllocationInsights, buildPositions, computeAllocationView } = require('../src/intelligence/allocation');
+const { classifyAccount, assetAllocation, topConcentration, buildAllocationInsights } = require('../src/intelligence/allocation');
 
 // A realistic account set: a large pre-IPO "Stripe" position, brokerage, 401k,
 // a home, and cash. Net worth ~$1.336M.
@@ -64,91 +64,3 @@ test('buildAllocationInsights stays quiet when nothing is concentrated', () => {
   assert.ok(!out.find((i) => i.type === 'concentration'), 'no single position >15% → no concentration flag');
 });
 
-test('computeAllocationView returns structured slices + concentration for the card', () => {
-  const { computeAllocationView } = require('../src/intelligence/allocation');
-  const view = computeAllocationView(accountsData);
-  assert.ok(view);
-  assert.equal(view.netWorth, 1336374);
-  // pct is a 0–1 fraction; slices sum to ~1.
-  const sum = view.slices.reduce((s, x) => s + x.pct, 0);
-  assert.ok(Math.abs(sum - 1) < 1e-9);
-  assert.ok(view.concentration && view.concentration.name === 'Stripe');
-  assert.ok(view.concentration.illiquid === true);
-  assert.ok(view.concentration.pct > 0.29 && view.concentration.pct < 0.31);
-});
-
-test('computeAllocationView returns null without accounts', () => {
-  const { computeAllocationView } = require('../src/intelligence/allocation');
-  assert.equal(computeAllocationView(null), null);
-  assert.equal(computeAllocationView({ accounts: [] }), null);
-});
-
-test('buildPositions: tickers + private accounts, excluding synced diversified accounts and cash', () => {
-  const positions = buildPositions(
-    [{ ticker: 'MU', value: 50000, securityType: 'equity' }, { ticker: 'SWEEP', value: 1000, securityType: 'cash' }],
-    [
-      { name: 'Stripe', type: 'other', balance: 5000, isAsset: true },
-      { name: 'Fidelity', type: 'brokerage', balance: 600000, isAsset: true, isManual: false }, // linked → its holdings represent it
-    ]
-  );
-  // MU (50k) > Stripe (5k); the linked Fidelity account and the cash sweep are excluded.
-  assert.deepEqual(positions.map((p) => p.name), ['MU', 'Stripe']);
-});
-
-test('buildPositions: a MANUAL investment account (private stock) surfaces as a position', () => {
-  const positions = buildPositions(
-    [{ ticker: 'FXAIX', value: 420000, securityType: 'mutual_fund' }, { ticker: 'MU', value: 100000, securityType: 'equity' }],
-    [
-      { name: 'Fidelity', type: 'brokerage', balance: 520000, isAsset: true, isManual: false }, // covered by the 2 holdings
-      { name: 'Stripe', type: 'brokerage', balance: 600000, isAsset: true, isManual: true },     // manual → single position
-    ]
-  );
-  const stripe = positions.find((p) => p.name === 'Stripe');
-  assert.ok(stripe, 'manual investment account should surface');
-  assert.equal(stripe.kind, 'private');
-  assert.equal(stripe.single, true);
-  assert.ok(!positions.find((p) => p.name === 'Fidelity'), 'the linked diversified account is not a position');
-});
-
-test('concentration skips diversified funds, flags the private stake instead', () => {
-  // FXAIX (index fund) is the biggest holding, but the manual Stripe stake is the
-  // real single-name concentration.
-  const accounts = [
-    { name: 'Fidelity', type: 'brokerage', balance: 520000, isAsset: true, isManual: false },
-    { name: 'Stripe', type: 'brokerage', balance: 600000, isAsset: true, isManual: true },
-  ];
-  const holdings = [
-    { ticker: 'FXAIX', value: 420000, securityType: 'mutual_fund' },
-    { ticker: 'MU', value: 100000, securityType: 'equity' },
-  ];
-  const view = computeAllocationView({ netWorth: 1120000, accounts }, { holdings });
-  assert.ok(view.concentration, 'expected a concentration flag');
-  assert.equal(view.concentration.name, 'Stripe');     // not FXAIX (a diversified fund)
-  assert.equal(view.concentration.illiquid, true);
-  // FXAIX still appears in the holdings list, just isn't the concentration.
-  assert.ok(view.positions.find((p) => p.name === 'FXAIX'));
-});
-
-test('computeAllocationView: concentration is the largest HOLDING, not a diversified account', () => {
-  const accounts = [
-    { name: 'Fidelity', type: 'brokerage', balance: 620063, isAsset: true },
-    { name: 'Chase Checking', type: 'depository', balance: 42862, isAsset: true },
-    { name: '401(k)', type: 'retirement', balance: 38904, isAsset: true },
-    { name: 'Stripe', type: 'other', balance: 5000, isAsset: true },
-  ];
-  const holdings = [
-    { ticker: 'NVDA', value: 220000, securityType: 'equity' },
-    { ticker: 'MSFT', value: 150000, securityType: 'equity' },
-    { ticker: 'AAPL', value: 120000, securityType: 'equity' },
-    { ticker: 'VTI', value: 130063, securityType: 'etf' },
-    { ticker: 'SWEEP', value: 0, securityType: 'cash' },
-  ];
-  const view = computeAllocationView({ netWorth: 706829, accounts }, { holdings });
-  assert.notEqual(view.concentration && view.concentration.name, 'Fidelity'); // not the whole account
-  assert.equal(view.concentration.name, 'NVDA');                              // largest single name
-  assert.ok(view.concentration.pct > 0.3);
-  assert.equal(view.positions[0].name, 'NVDA');                               // top holdings, largest first
-  assert.ok(view.positions.find((p) => p.name === 'MSFT'));
-  assert.ok(view.positions.find((p) => p.name === 'Stripe' && p.kind === 'private'));
-  assert.ok(!view.positions.find((p) => p.name === 'SWEEP'));                 // cash sweep excluded
-});

@@ -13,7 +13,6 @@ const { autoStartExperiment, proposeExperiments } = require('./intelligence/expe
 const { runNudges, runCheckinReminder, runEveningReminder } = require('./notify/run');
 const { runWatch } = require('./intelligence/watch');
 const { runMorningBriefing, runWeeklyReviewWithPush } = require('./notify/morning');
-const { runEveningBriefing } = require('./notify/evening');
 const { runEveningHealthBrief } = require('./notify/evening-brief');
 const { runCommitmentReminders } = require('./notify/commitments');
 const { runWealthNudges } = require('./intelligence/wealth-nudges');
@@ -527,11 +526,6 @@ function startJobs() {
   const eveningReminderHour = Number(process.env.EVENING_REMINDER_HOUR) || 21; // 9pm
   const eveningReminderMinute = Number(process.env.EVENING_REMINDER_MINUTE) || 0;
   scheduleDaily(eveningReminderHour, eveningReminderMinute, () => runEveningReminder({}));
-
-  // PM / EOD briefing (6pm) — spend snapshot, portfolio performance, budget flags.
-  const eveningBriefingHour = Number(process.env.EVENING_BRIEFING_HOUR) || 18; // 6pm
-  const eveningBriefingMinute = Number(process.env.EVENING_BRIEFING_MINUTE) || 0;
-  scheduleDaily(eveningBriefingHour, eveningBriefingMinute, () => runEveningBriefing({}));
 
   // Commitment follow-through — the time-aware nudge. Unlike the fixed-time jobs
   // above, commitments come due at arbitrary user-chosen moments, so poll on a

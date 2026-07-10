@@ -61,14 +61,6 @@ export interface Insight {
   dismissKey?: string;
 }
 
-export interface MarketIndex {
-  label: string;
-  symbol: string;
-  price: number;
-  change: number;
-  changePct: number;
-}
-
 export interface LeverageAction {
   title: string;
   detail: string | null;
@@ -273,15 +265,11 @@ export interface BriefingState {
   loading: boolean;
   error: string | null;
   rebuilding: boolean;        // async rebuild in progress (fire-and-forget + polling)
-  refetch: () => void;        // force a full fresh server rebuild (60-90s, blocks)
   reload: () => void;         // pull the (already-warm) server cache instantly
-  refetchLive: () => void;    // mid-day partial: markets + email briefs only (fast)
   triggerRebuild: () => void; // non-blocking rebuild — responds in <1s, then polls
   chiefBriefRefreshing: boolean;    // scoped chief-brief-only retry in progress
   refreshChiefBrief: () => void;    // fast, scoped retry — seconds, not the full rebuild
 }
-
-type FetchMode = 'cache' | 'rebuild' | 'live';
 
 export function useBriefing(): BriefingState {
   const [data, setData] = useState<BriefingData | null>(null);
@@ -301,10 +289,12 @@ export function useBriefing(): BriefingState {
   // Poll timer for async rebuild — cleared on unmount and on new rebuild start.
   const rebuildPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fetchBriefing = useCallback(async (mode: FetchMode | boolean = 'cache') => {
-    // Back-compat: earlier callers passed force booleans.
-    if (mode === true) mode = 'rebuild';
-    if (mode === false) mode = 'cache';
+  // Loads the warm server cache — instant, no LLM, no rebuild. The other two
+  // refresh mechanisms (triggerRebuild's full async rebuild, refreshChiefBrief's
+  // scoped retry below) have their own dedicated implementations; this one only
+  // ever does the cheap cache read (refresh-mechanism consolidation — see the
+  // product review's "five refresh concepts is four too many").
+  const fetchBriefing = useCallback(async () => {
     // Cancel any request already in flight; we only want the newest one.
     controllerRef.current?.abort();
     const controller = new AbortController();
@@ -315,29 +305,12 @@ export function useBriefing(): BriefingState {
     setError(null);
 
     try {
-      // 'cache' loads the warm server cache (instant). 'rebuild' forces the
-      // full 60-90s build. 'live' refreshes just markets + email briefs on the
-      // server and merges them into the cached briefing — the only sections
-      // that meaningfully change during the day.
-      const url =
-        mode === 'rebuild' ? `${API_URL}?refresh=1`
-        : mode === 'live' ? `${API_URL}/live`
-        : API_URL;
-      // Mode-specific timeouts: LLM rebuilds take 60-90s; cache hits are instant
-      // so a short timeout lets stalled requests fail fast.
-      const timeoutMs = mode === 'rebuild' ? 120000 : mode === 'cache' ? 15000 : 45000;
-      const response = await fetchWithTimeout(url, {
+      const response = await fetchWithTimeout(API_URL, {
         method: 'GET',
         headers: authHeaders(),
         signal: controller.signal,
-      }, timeoutMs);
+      }, 15000);
 
-      // 409 from /live means no briefing has been built yet today — fall back
-      // to a normal cached load (which builds one if none exists).
-      if (response.status === 409 && mode === 'live') {
-        if (myReqId === reqIdRef.current) fetchBriefing('cache');
-        return;
-      }
       if (!response.ok) {
         throw new Error(`Server returned ${response.status}`);
       }
@@ -373,7 +346,7 @@ export function useBriefing(): BriefingState {
         // ignore corrupt cache
       }
       // Refresh in the background; if we already showed cached data, don't flash a spinner.
-      if (!cancelled) fetchBriefing(false);
+      if (!cancelled) fetchBriefing();
     })();
     return () => {
       cancelled = true;
@@ -391,7 +364,7 @@ export function useBriefing(): BriefingState {
       // Skip only if we recently SUCCEEDED. If the last fetch was interrupted
       // (e.g. refreshed then locked the phone), lastOkRef is stale so we recover.
       if (Date.now() - lastOkRef.current < FOREGROUND_THROTTLE_MS) return;
-      fetchBriefing(false); // abort-and-replace handles any interrupted request
+      fetchBriefing(); // abort-and-replace handles any interrupted request
     });
     return () => sub.remove();
   }, [fetchBriefing]);
@@ -485,9 +458,7 @@ export function useBriefing(): BriefingState {
     loading,
     error,
     rebuilding,
-    refetch: () => fetchBriefing('rebuild'),  // force full rebuild (blocks ~60-90s, use triggerRebuild instead)
-    reload: () => fetchBriefing('cache'),     // serve the warm morning cache instantly
-    refetchLive: () => fetchBriefing('live'), // markets + email briefs only
+    reload: fetchBriefing, // serve the warm morning cache instantly
     triggerRebuild,                           // preferred: non-blocking rebuild with polling
     chiefBriefRefreshing,
     refreshChiefBrief,

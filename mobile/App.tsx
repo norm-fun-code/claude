@@ -36,7 +36,6 @@ import { Header } from './src/components/Header';
 import { TabBar, TabKey, TABS } from './src/components/TabBar';
 import { ForecastCard } from './src/components/ForecastCard';
 import { WealthCard } from './src/components/WealthCard';
-import { AssetMixCard } from './src/components/AssetMixCard';
 import { InsightsCard } from './src/components/InsightsCard';
 import { AskOverlay, type AskOverlayHandle } from './src/components/AskOverlay';
 import { CheckinModal } from './src/components/CheckinModal';
@@ -187,9 +186,9 @@ export default function App() {
       : briefing.loading || briefing.rebuilding || health.loading;
 
   // Pull-to-refresh is always CHEAP: device HealthKit (instant) + the warm
-  // server cache (instant) + the fast recovery endpoint on Health. Nothing
-  // here triggers an LLM or a briefing rebuild — that's what each tab's
-  // explicit refresh button is for, so you choose what to spend time updating.
+  // server cache (instant) + the fast recovery endpoint on Health. Nothing here
+  // triggers an LLM or a briefing rebuild — that's Wealth's "Rebuild briefing"
+  // button (see tabRefresh below) and BriefCard's own scoped ↻.
   const onRefresh = useCallback(() => {
     health.refetch();
     if (tab === 'health') liveRecovery.refetch();
@@ -206,20 +205,19 @@ export default function App() {
     briefing.triggerRebuild();
   }, [liveRecovery, briefing]);
 
-  // Per-tab explicit refresh — each tab updates only its own content. Today is
-  // handled separately in the title row (icon arrow + check-in button); the rest
-  // keep a labeled button:
-  //   Wealth → "Rebuild briefing" (non-blocking async rebuild, ~60-90s)
-  //   Health → HealthKit + live recovery score (sub-second)
-  //   Wisdom → day-locked by design; reloads the morning cache
+  // Refresh-mechanism consolidation (product review: "five refresh concepts is
+  // four too many"). Health's old "Refresh health data" button and Wisdom's old
+  // "Reload" button called the EXACT same functions pull-to-refresh already
+  // calls on those tabs — pure redundant UI, removed. What's left, deliberately:
+  //   - Pull-to-refresh (cheap, every tab): device HealthKit + warm server cache.
+  //   - Wealth's "Rebuild briefing" (the one full async rebuild, ~60-90s) — the
+  //     only tab that exposes it; Today's old duplicate icon was removed too.
+  //   - BriefCard's own inline ↻ (refreshChiefBrief, seconds not 60-90s) —
+  //     deliberately KEPT despite the "delete the rest" framing: it's the fix
+  //     for a real, previously-shipped bug (a silently-stale brief with no fast
+  //     retry short of a full rebuild). Removing it would reintroduce that bug.
   const tabRefresh: Partial<Record<TabKey, { label: string; busy: boolean; run: () => void }>> = {
     wealth: { label: 'Rebuild briefing', busy: briefing.rebuilding, run: briefing.triggerRebuild },
-    health: {
-      label: 'Refresh health data',
-      busy: health.loading || liveRecovery.loading,
-      run: () => { health.refetch(); liveRecovery.refetch(); },
-    },
-    wisdom: { label: 'Reload', busy: briefing.loading, run: briefing.reload },
   };
 
   // Tapping the morning "briefing ready" push should load the cache the server
@@ -341,14 +339,16 @@ export default function App() {
               style={styles.wealthAskBtn}
             />
             <WealthCard wealth={d?.wealth ?? null} />
-            {/* Asset Mix — structural allocation + single-name concentration,
-                sits right under net worth (a natural extension of it). */}
-            <AssetMixCard />
-            {/* "What the data shows" — personal finance insights. The generic
-                market-scoreboard + Claude-written market-brief cards were
-                removed (product review): unpersonalized general market
-                content, and the brief cost a real LLM call on every briefing
-                build for something with no connection to this user's data. */}
+            {/* Asset Mix (structural allocation bar + top holdings) was removed
+                (product review): "that's Monarch's job" — NormOS's edge is
+                synthesis, not re-rendering a source app with fewer features.
+                The allocation/concentration INSIGHT (a data-driven bullet, not
+                a mirror dashboard) still surfaces here via wealthInsights when
+                something's actually worth flagging (e.g. real concentration risk).
+                The generic market-scoreboard + Claude-written market-brief
+                cards were removed too: unpersonalized content, and the brief
+                cost a real LLM call on every briefing build for something with
+                no connection to this user's data. */}
             <InsightsCard insights={d?.wealthInsights ?? EMPTY_ARRAY} />
             {!d?.wealth && (
               <EmptyNote c={c} text="Connect Monarch to see net worth, spending, and cashflow." />
@@ -587,18 +587,6 @@ export default function App() {
                       <View style={[styles.badge, { backgroundColor: c.accent, borderColor: c.background }]} />
                     )}
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={briefing.triggerRebuild}
-                    disabled={briefing.rebuilding}
-                    style={[styles.iconBtn, { borderColor: c.border, backgroundColor: c.card }]}
-                    accessibilityLabel="Rebuild briefing"
-                  >
-                    {briefing.rebuilding ? (
-                      <ActivityIndicator size="small" color={c.subtext} />
-                    ) : (
-                      <Text style={[styles.iconBtnTxt, { color: c.accent }]}>↻</Text>
-                    )}
-                  </TouchableOpacity>
                 </View>
               ) : tabRefresh[tab] ? (
                 <TouchableOpacity
@@ -718,15 +706,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   tabRefreshTxt: { fontSize: 12, fontWeight: '600' },
-  iconBtn: {
-    borderWidth: 1,
-    borderRadius: 16,
-    width: 32,
-    height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconBtnTxt: { fontSize: 16, fontWeight: '700' },
   badge: {
     position: 'absolute',
     top: -3,

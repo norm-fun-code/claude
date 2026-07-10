@@ -59,23 +59,6 @@ function topConcentration(accounts, netWorth) {
   return { name: largest.name, balance: largest.balance, pct: largest.balance / netWorth, cls: classifyAccount(largest) };
 }
 
-// Broad diversified funds aren't single-NAME risk — a 31% position in an S&P 500
-// index fund is concentration in US large-cap, not in one company. These still
-// show in the holdings list, but are excluded from the single-name concentration
-// flag. Detect by security type, classic 5-char mutual-fund tickers (…X), or a
-// small set of common ETFs.
-const KNOWN_ETFS = new Set([
-  'VTI', 'VOO', 'SPY', 'QQQ', 'VEA', 'VWO', 'BND', 'VXUS', 'SCHB', 'ITOT', 'IVV',
-  'VUG', 'VTV', 'VIG', 'SCHD', 'VYM', 'VT', 'AGG', 'VNQ', 'VGT', 'VEU', 'DIA', 'IWM',
-]);
-function isFundLike(ticker, securityType) {
-  const st = String(securityType || '').toLowerCase();
-  if (/etf|mutual|index|fund/.test(st)) return true;
-  const t = String(ticker || '').toUpperCase();
-  if (/^[A-Z]{4}X$/.test(t)) return true; // 5-char mutual fund ending in X (FXAIX, VTSAX)
-  return KNOWN_ETFS.has(t);
-}
-
 // An account name that denotes a DIVERSIFIED brokerage or retirement account — a
 // "Norman's Fidelity" or "Schwab brokerage" holds many securities and is liquid,
 // so it is NOT single-name concentration and not illiquid pre-IPO stock, even when
@@ -84,65 +67,6 @@ function isFundLike(ticker, securityType) {
 const BROKERAGE_RE = /fidelity|schwab|vanguard|robinhood|e[\s*-]?trade|merrill|ameritrade|morgan stanley|wealthfront|betterment|interactive brokers|ibkr|webull|\bsofi\b|tastytrade|\bm1\b|ally invest|t\.?\s?rowe|brokerage|\b401\s?k?\b|\bira\b|\broth\b|\bhsa\b/i;
 function isBrokerageName(name) {
   return BROKERAGE_RE.test(String(name || ''));
-}
-
-/**
- * Flatten brokerage holdings (individual tickers) + manually-tracked single-asset
- * accounts (e.g. a private "Stripe" pre-IPO stake, an "other" alt) into positions,
- * largest first. A SYNCED diversified brokerage account is NOT a position — its
- * individual holdings are. A MANUAL investment account has no synced ticker
- * breakdown, so it IS a single position. Each position carries `single` (is it
- * single-COMPANY risk, vs a diversified fund) for the concentration flag.
- * `holdings` is getInvestments() holdings (may be null); `accounts` is
- * getAccounts().accounts.
- */
-function buildPositions(holdings, accounts) {
-  const positions = [];
-  let holdingsTotal = 0;
-  for (const h of holdings || []) {
-    if (!h || !(h.value > 0)) continue;
-    if (String(h.securityType || '').toLowerCase() === 'cash') continue; // sweep cash isn't a name
-    positions.push({
-      name: h.ticker || h.name || 'Holding',
-      value: h.value,
-      kind: 'holding',
-      single: !isFundLike(h.ticker, h.securityType),
-    });
-    holdingsTotal += h.value;
-  }
-
-  // Investment-class accounts: synced ones are already represented by the holdings
-  // above; a manually-tracked one is a genuine single position. Trust the account's
-  // manual flag when present, else infer from holdings coverage (largest synced
-  // accounts soak up the holdings total; whatever's left over is manual).
-  const inv = (accounts || [])
-    .filter((a) => a.isAsset && a.balance > 0 && classifyAccount(a) === 'investments')
-    .sort((x, y) => y.balance - x.balance);
-  let remaining = holdingsTotal;
-  for (const a of inv) {
-    let manual = a.isManual;
-    if (manual == null) {
-      if (remaining >= 0.5 * a.balance) { remaining = Math.max(0, remaining - a.balance); manual = false; }
-      else manual = true;
-    } else if (!manual) {
-      remaining = Math.max(0, remaining - a.balance);
-    }
-    if (manual) {
-      // A brokerage/retirement account is diversified + liquid even unsynced — not
-      // a single-name, not illiquid private stock.
-      const brokerage = isBrokerageName(a.name);
-      positions.push({ name: a.name, value: a.balance, kind: brokerage ? 'account' : 'private', single: !brokerage });
-    }
-  }
-
-  // 'other'/alt single-asset accounts never have a ticker breakdown.
-  for (const a of accounts || []) {
-    if (a.isAsset && a.balance > 0 && classifyAccount(a) === 'other') {
-      positions.push({ name: a.name, value: a.balance, kind: 'private', single: true });
-    }
-  }
-
-  return positions.sort((x, y) => y.value - x.value);
 }
 
 const fmt = (n) => '$' + Math.round(n).toLocaleString('en-US');
@@ -205,47 +129,4 @@ function buildAllocationInsights(accountsData, { concentrationPct = 0.15 } = {})
   return out;
 }
 
-/**
- * Structured allocation view for the dedicated Asset Mix card (visual bar + a
- * concentration callout). Returns { total, netWorth, slices:[{cls,label,value,
- * pct}], concentration } with pct as a 0–1 fraction, or null if no accounts.
- */
-function computeAllocationView(accountsData, { holdings = null, concentrationPct = 0.15, maxPositions = 8 } = {}) {
-  if (!accountsData || !Array.isArray(accountsData.accounts) || !accountsData.accounts.length) return null;
-  const alloc = assetAllocation(accountsData.accounts);
-  if (!alloc) return null;
-  const netWorth = accountsData.netWorth != null ? accountsData.netWorth : alloc.total;
-
-  // True single-name positions: brokerage tickers (from getInvestments) + private
-  // single-asset accounts. A diversified brokerage account is NOT a position.
-  const positions = buildPositions(holdings, accountsData.accounts);
-  const posTotal = positions.reduce((s, p) => s + p.value, 0);
-  const topPositions = positions.slice(0, maxPositions).map((p) => ({
-    name: p.name,
-    value: Math.round(p.value),
-    kind: p.kind,
-    pctNw: netWorth > 0 ? p.value / netWorth : null,
-    pctPort: posTotal > 0 ? p.value / posTotal : null,
-  }));
-
-  // Concentration = the largest single-COMPANY position as a share of net worth —
-  // an individual stock or a private position. Diversified funds/ETFs (single=false)
-  // are NOT single-name risk (a big S&P 500 index position is fine), and a whole
-  // brokerage account is never a position.
-  const top = positions.filter((p) => p.single).sort((a, b) => b.value - a.value)[0] || null;
-  const concentration =
-    top && netWorth > 0 && top.value / netWorth >= concentrationPct
-      ? { name: top.name, balance: Math.round(top.value), pct: top.value / netWorth, kind: top.kind, illiquid: top.kind === 'private' }
-      : null;
-
-  return {
-    total: Math.round(alloc.total),
-    netWorth: netWorth != null ? Math.round(netWorth) : null,
-    slices: alloc.slices.map((s) => ({ cls: s.cls, label: s.label, value: Math.round(s.value), pct: s.pct })),
-    positions: topPositions,
-    positionsTotal: Math.round(posTotal),
-    concentration,
-  };
-}
-
-module.exports = { classifyAccount, assetAllocation, topConcentration, buildPositions, buildAllocationInsights, computeAllocationView };
+module.exports = { classifyAccount, assetAllocation, topConcentration, buildAllocationInsights };

@@ -1671,37 +1671,6 @@ async function buildFreshBriefing({ force = false } = {}) {
 function createBriefingRouter({ port }) {
   const router = express.Router();
 
-router.get('/briefing/live', asyncHandler(async (req, res) => {
-    const prior = await briefingsStore.latestBriefing('daily');
-    if (!prior?.content) {
-      return res.status(409).json({ error: 'no briefing built yet — load the briefing first' });
-    }
-
-    const EXT = Number(process.env.BRIEFING_SOURCE_TIMEOUT_MS || 12000);
-    const [weatherResult, calendarResult, workBusyResult] = await Promise.allSettled([
-      withTimeout(fetchWeather(), EXT, 'weather'),
-      withTimeout(fetchCalendarEvents(), EXT, 'calendar'),
-      withTimeout(fetchWorkBusyBlocks(), EXT, 'workCalendar'),
-    ]);
-    const weather = weatherResult.status === 'fulfilled' ? weatherResult.value : null;
-    const calendar = calendarResult.status === 'fulfilled' ? calendarResult.value : null;
-    const workBusy = workBusyResult.status === 'fulfilled' ? workBusyResult.value : null;
-
-    const content = {
-      ...prior.content,
-      ...(weather ? { weather } : {}),
-      ...(calendar ? { calendar } : {}),
-      ...(workBusy ? { workBusy } : {}),
-      liveRefreshedAt: new Date().toISOString(),
-    };
-
-    briefingsStore
-      .saveBriefing({ kind: 'daily', content })
-      .catch((err) => console.error('[briefing live] save failed:', err.message));
-
-    res.json({ ...content, cached: false });
-}));
-
 // Fast, scoped retry for JUST the Chief-of-Staff card — added after a live
 // silent-fallback bug (see briefing-ai.js's shape-validation logging and the
 // chiefBriefStale flag below) kept showing yesterday's brief with no way to
