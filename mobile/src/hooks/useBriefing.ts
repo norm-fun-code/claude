@@ -183,6 +183,11 @@ export interface ChiefBrief {
   // (restraint); a specific inline question when present, answerable to correct
   // the read and teach the next brief.
   openQuestion?: string;
+  // A first-person line affirming something real and specific from today's
+  // data (a streak, a trend holding up, a win) — generated fresh each day,
+  // not the old static "I show up with joy and courage" filler. Optional so
+  // a briefing cached from before this field existed still renders.
+  affirmation?: string;
 }
 
 export interface TodayForecast {

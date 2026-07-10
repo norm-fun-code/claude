@@ -31,12 +31,6 @@ const BLOCKS: { key: 'action' | 'risk' | 'move'; label: string; emoji: string; t
   { key: 'move', label: 'THE MOVE', emoji: '📈', tint: '#5AE89A' },
 ];
 
-const AFFIRMATIONS = [
-  'I show up with joy, presence, and courage!',
-  'Everything always works out!',
-  'We will always live and love in abundance!',
-];
-
 // Editorial number highlighting: the synthesis is a headline, and the numbers
 // are its payload — set them in the accent so the eye catches "64", "29%",
 // "$7,497" before reading a word. Word-level match (not a global regex) so
@@ -152,6 +146,10 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Props) {
   const rawQ = brief?.openQuestion?.trim() || '';
   const [suppressAnswered] = useState(() => rawQ !== '' && answeredQuestions.has(rawQ));
   const openQ = suppressAnswered ? '' : rawQ;
+  // Data-grounded affirmation for today (a real streak/win/trend) — empty on
+  // a briefing cached from before this field existed, in which case the
+  // block just doesn't render rather than showing stale/missing text.
+  const affirmation = brief?.affirmation?.trim() || '';
   const [qAnswer, setQAnswer] = useState('');
   const [qState, setQState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   // Voice input for the one question — hold, speak, release → transcribed and
@@ -430,14 +428,16 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Props) {
         </View>
       ) : null}
 
-      <View style={styles.separator} />
-      <Text style={styles.blockLabel}>AFFIRMATIONS</Text>
-      {AFFIRMATIONS.map((text, i) => (
-        <View key={i} style={styles.affRow}>
-          <Text style={styles.affBullet}>✦</Text>
-          <Text style={styles.affText}>{text}</Text>
-        </View>
-      ))}
+      {affirmation ? (
+        <>
+          <View style={styles.separator} />
+          <Text style={styles.blockLabel}>AFFIRMATION</Text>
+          <View style={styles.affRow}>
+            <Text style={styles.affBullet}>✦</Text>
+            <Text style={styles.affText}>{affirmation}</Text>
+          </View>
+        </>
+      ) : null}
 
       <View style={styles.separator} />
       <Text style={styles.blockLabel}>ADD CONTEXT FOR NEXT BRIEF</Text>

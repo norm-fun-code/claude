@@ -59,6 +59,33 @@ test('generateWisdomInsights rejects a heading-like notionQuote', async () => {
   assert.equal(result.notionInsight, '', 'insight is dropped along with a rejected quote');
 });
 
+// Item #8 from the deep product critique: the mobile app's AFFIRMATIONS
+// block was 3 hardcoded generic lines ("I show up with joy, presence, and
+// courage!"), unrelated to any real data — the one part of the brief that
+// wasn't evidenced. Replaced with an LLM-generated, data-grounded field.
+test('generateChiefBrief passes through a data-grounded affirmation', async () => {
+  stubLlm({
+    chief: JSON.stringify({
+      chiefBrief: {
+        synthesis: 'Test synthesis.', action: 'Test action.', risk: 'Test risk.', move: 'Test move.', openQuestion: '',
+        affirmation: "I've shown up for cold showers 12 days straight.",
+      },
+      morningFocus: 'Test morning focus.',
+      urgentEmails: [],
+    }),
+    wisdom: WISDOM_JSON,
+  });
+  const result = await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
+  assert.equal(result.chiefBrief.affirmation, "I've shown up for cold showers 12 days straight.");
+});
+
+test('generateChiefBrief defaults affirmation to empty string when the LLM omits it (backward-compatible, not fatal)', async () => {
+  stubLlm({ chief: CHIEF_JSON, wisdom: WISDOM_JSON }); // CHIEF_JSON has no affirmation field
+  const result = await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
+  assert.equal(result.chiefBrief.affirmation, '');
+  assert.ok(result.chiefBrief, 'a missing affirmation must not null out the whole chiefBrief (unlike synthesis/action/risk/move)');
+});
+
 test('generateChiefBrief returns null chiefBrief when a required field is missing', async () => {
   stubLlm({
     chief: JSON.stringify({ chiefBrief: { synthesis: 'x', action: 'y', risk: 'z' /* move missing */ }, morningFocus: 'f' }),
