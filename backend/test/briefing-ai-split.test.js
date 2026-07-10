@@ -135,6 +135,44 @@ test('generateBriefing (combined, backward-compat) merges both calls into one ob
   assert.equal(result.notionQuote, 'A complete, self-contained sentence of real wisdom worth reading.');
 });
 
+// Live bug found via a product screenshot review: the Brief read "today's
+// calendar is heavy — 8.5 hours blocked including your Sabbath window from
+// 5 PM on." Blocking personal/observance time is protecting it, the
+// opposite of a demanding calendar — but the system prompt only ever told
+// the model to gauge load from the WORK calendar, never explicitly telling
+// it NOT to fold personal-calendar blocks into that load figure, so the
+// model drifted into summing them anyway. These assert the explicit
+// exclusion is present in the live system prompt.
+test('CHIEF_SYSTEM tells the model never to count a personal-calendar block (e.g. a Sabbath window) as calendar load', async () => {
+  let capturedSystem = null;
+  llm.generateText = async ({ system }) => {
+    if (system.includes('chief of staff and data scientist')) { capturedSystem = system; return CHIEF_JSON; }
+    return WISDOM_JSON;
+  };
+  await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
+  assert.ok(capturedSystem);
+  assert.match(capturedSystem, /NEVER count a personal-calendar event.*toward.*heavy/i);
+  assert.match(capturedSystem, /Sabbath/);
+  assert.match(capturedSystem, /protecting it, the opposite of a demanding calendar|is the user protecting time, never a source of load/i);
+});
+
+// Live bug: a noisy percentage-of-a-small-base spike (e.g. 400% off a $100
+// average) was stated with the same flat confidence as a durable multi-week
+// trend, manufacturing false urgency. The system prompt now instructs the
+// model to hedge language on noisy/small-sample signals and state plainly
+// only on durable ones.
+test('CHIEF_SYSTEM instructs confidence calibration — hedge noisy small-base signals, state durable trends plainly', async () => {
+  let capturedSystem = null;
+  llm.generateText = async ({ system }) => {
+    if (system.includes('chief of staff and data scientist')) { capturedSystem = system; return CHIEF_JSON; }
+    return WISDOM_JSON;
+  };
+  await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
+  assert.ok(capturedSystem);
+  assert.match(capturedSystem, /CONFIDENCE CALIBRATION/);
+  assert.match(capturedSystem, /hedge it/i);
+});
+
 test('generateBriefing runs chief and wisdom calls concurrently, not serially', async () => {
   const order = [];
   llm.generateText = async ({ system }) => {

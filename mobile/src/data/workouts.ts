@@ -237,7 +237,7 @@ export const MOBILITY: MobilitySession = {
 export const REST: RestSession = {
   id: 'rest',
   label: 'Rest Day',
-  note: 'No structured training. A gentle 10–20 min walk is fine and encouraged — it activates AMPK without adding recovery cost. This is where adaptation happens.',
+  note: 'No structured training. A gentle 10–20 min walk is fine and encouraged — it keeps you moving without adding recovery cost. This is where adaptation happens.',
 };
 
 export const WEEKLY_SCHEDULE: Record<number, string> = {
