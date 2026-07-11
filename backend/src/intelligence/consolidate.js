@@ -235,7 +235,7 @@ async function gatherAnnotations() {
 // ---- Model builder ----
 
 function buildModelText(data) {
-  const { wellbeing, health, habits, wealth, goals, experiments, findings, annotations, intention, dayContext = [], generatedAt } = data;
+  const { wellbeing, health, habits, wealth, goals, experiments, findings, annotations, intention, dayContext = [], beliefs = [], generatedAt } = data;
   const lines = [];
 
   const dateStr = (generatedAt || new Date()).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
@@ -344,6 +344,16 @@ function buildModelText(data) {
   }
   if (expLines.length) lines.push(`EXPERIMENTS:\n${expLines.map((l) => `  ${l}`).join('\n')}`);
 
+  // --- Durable beliefs (interaction-derived knowledge) ---
+  // Everything above is recomputed from raw data each night; this section is
+  // the knowledge that CAN'T be recomputed — things the user said, preference
+  // patterns from their feedback — promoted into the beliefs store so it
+  // survives past the 14-day context windows below. See intelligence/beliefs.js.
+  {
+    const beliefsSection = require('./beliefs').composeBeliefsSection(beliefs);
+    if (beliefsSection) lines.push(beliefsSection);
+  }
+
   // --- Confirmed relationships ---
   if (findings.correlations.length) {
     lines.push(`CONFIRMED RELATIONSHIPS: ${findings.correlations.map((f) => f.title).join(' · ')}`);
@@ -396,7 +406,17 @@ async function consolidate({ kind = 'nightly' } = {}) {
   const d30 = new Date(now - 30 * DAY);
   const d56 = new Date(now - 56 * DAY);
 
-  const [wellbeing, health, habits, wealth, goals, experiments, findings, annotations, intentionArr, dayContext] =
+  // Promote feedback signals into durable beliefs BEFORE gathering, so
+  // tonight's model reflects today's dismissals/statements. Fail-soft: the
+  // model still builds if promotion errors (it logs its own per-source errors).
+  try {
+    const promo = await require('./beliefs').promoteBeliefs();
+    if (promo.errors.length) console.error('[consolidate] belief promotion issues:', promo.errors.join('; '));
+  } catch (err) {
+    console.error('[consolidate] belief promotion failed:', err.message);
+  }
+
+  const [wellbeing, health, habits, wealth, goals, experiments, findings, annotations, intentionArr, dayContext, beliefs] =
     await Promise.all([
       gatherWellbeing(d7, d35),
       gatherHealth(d7, d35),
@@ -408,6 +428,7 @@ async function consolidate({ kind = 'nightly' } = {}) {
       gatherAnnotations(),
       intentionsStore.recentIntentions({ days: 14 }).catch(() => []),
       require('../store/dayJournal').recent({ days: 14, limit: 14 }).catch(() => []),
+      require('../store/beliefs').listActive(),
     ]);
 
   const intention = intentionArr[0] ?? null;
@@ -423,7 +444,7 @@ async function consolidate({ kind = 'nightly' } = {}) {
     findings: findings.correlations.length,
     topFindings: findings.correlations.slice(0, 3).map((f) => ({ title: f.title })),
   };
-  const content = buildModelText({ wellbeing, health, habits, wealth, goals, experiments, findings, annotations, intention, dayContext, generatedAt: now });
+  const content = buildModelText({ wellbeing, health, habits, wealth, goals, experiments, findings, annotations, intention, dayContext, beliefs, generatedAt: now });
 
   await selfModelStore.saveModel({ content, snapshot, kind });
   return content;
