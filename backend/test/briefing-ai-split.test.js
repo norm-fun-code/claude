@@ -234,6 +234,31 @@ test('CHIEF_SYSTEM forbids embellishing the affirmation with an invented feeling
   assert.match(capturedSystem, /which I was worried about/);
 });
 
+// Live bug found via a product review: THE ACTION said "you mentioned
+// sleeping hot and twisting last night" — traced to zero real data source.
+// The only genuine "last night" text anywhere in the pipeline is
+// recovery.js's proxy caveat ("self-reported sleep ... no Eight Sleep
+// reading last night"), which says nothing about heat or restlessness. The
+// model invented sensory detail to color in a vague fact — the same
+// fabrication class as the affirmation bug, but general to any field, not
+// just affirmation. Also covers a related case from the same review: a
+// goal's own stated text ("investor update kickoff") got silently shortened
+// to "investor kickoff" in the synthesis — quoting a named thing inexactly
+// is the same failure mode as inventing a feeling.
+test('CHIEF_SYSTEM forbids inventing sensory/emotional detail or altering a named thing\'s exact wording, globally (not just in affirmation)', async () => {
+  let capturedSystem = null;
+  llm.generateText = async ({ system }) => {
+    if (system.includes('chief of staff and data scientist')) { capturedSystem = system; return CHIEF_JSON; }
+    return WISDOM_JSON;
+  };
+  await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
+  assert.ok(capturedSystem);
+  assert.match(capturedSystem, /never invent a sensory or emotional detail/);
+  assert.match(capturedSystem, /slept hot.*tossing and turning/);
+  assert.match(capturedSystem, /do not shorten, rename, or paraphrase it/);
+  assert.match(capturedSystem, /investor update kickoff/);
+});
+
 test('generateBriefing runs chief and wisdom calls concurrently, not serially', async () => {
   const order = [];
   llm.generateText = async ({ system }) => {

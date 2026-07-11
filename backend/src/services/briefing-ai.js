@@ -40,6 +40,15 @@ const CHIEF_SYSTEM =
   'it has there (a "30-day change" is not an "ahead-of-plan" figure). If you are not ' +
   'certain a number is given, describe the direction qualitatively ("spending is ' +
   'trending down") with no figure rather than guess. ' +
+  'CRITICAL — same discipline for WORDS, not just numbers: never invent a sensory or ' +
+  'emotional detail to color in a vague fact. If the data says "self-reported, no ' +
+  'Eight Sleep reading" with nothing about WHY, do not add "slept hot" or "kept ' +
+  'tossing and turning" — those are invented, not reported, even if they sound ' +
+  'plausible. Only attribute a specific cause, feeling, or sensation to the user if it ' +
+  'is literally stated somewhere in the data above. Quote a goal, project, or named ' +
+  'thing exactly as given — do not shorten, rename, or paraphrase it (\'investor update ' +
+  'kickoff\' is not \'investor kickoff\'); a word dropped for brevity is still an invented ' +
+  'detail if it changes what the thing actually is. ' +
   'WRITING: complete, well-punctuated sentences. Never run two independent clauses ' +
   'together without a period, semicolon, or conjunction (no "a strong base for the week your ' +
   'stated focus is…" — close the first thought, then start the next). ' +
