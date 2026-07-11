@@ -1373,6 +1373,22 @@ async function analyze(opts = {}) {
     if (f.evidence?.goalId != null && f.evidence?.status) forecastStatusByGoalId[f.evidence.goalId] = f.evidence.status;
   }
 
+  // Learning-loop inputs for the leverage ranking (both fail-safe to empty —
+  // a ledger hiccup degrades to the old un-weighted behavior, never a crash):
+  // the recommendation ledger's measured outcomes per basis identity, and
+  // completed experiments' verdicts per lever|outcome pair. See rankActions'
+  // doc comment for why these exist.
+  const outcomeHistory = await require('../store/recommendations').outcomeHistoryByDedupKey();
+  const experimentVerdicts = {};
+  try {
+    const completed = await require('../store/experiments').listExperiments({ status: 'completed' });
+    for (const e of completed) {
+      if ((e.verdict === 'refuted' || e.verdict === 'confirmed') && e.lever && e.metric) {
+        experimentVerdicts[`${e.lever}|${e.metric}`] = e.verdict;
+      }
+    }
+  } catch { /* fail-open: no verdict gating this run */ }
+
   // Feed ALL finding types into the leverage engine, not just trends + correlations.
   // habit_splits ("cold shower days: HRV 26% higher"), sleep_impact ("best nights →
   // focus 35% higher"), and activity_impact ("Zone 2 → next-day HRV 18% above avg")
@@ -1380,7 +1396,7 @@ async function analyze(opts = {}) {
   // reached the leverage engine. Now they're the PRIMARY source of leverage actions.
   const actions = rankActions(
     [...trends, ...correlations, ...habitHealthSplits, ...sleepImpact, ...activityImpact],
-    { goals, latestByKey, forecastStatusByGoalId },
+    { goals, latestByKey, forecastStatusByGoalId, outcomeHistory, experimentVerdicts },
   );
 
   const all = [...trends, ...correlations, ...anomalies, ...composites, ...actions, ...forecasts, ...habitConsistency, ...habitHealthSplits, ...sleepImpact, ...activityImpact, ...daytimeCardio, ...wellbeingGap];

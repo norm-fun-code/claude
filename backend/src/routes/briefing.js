@@ -953,13 +953,14 @@ async function buildFreshBriefing({ force = false } = {}) {
         const daysAgo = Math.floor((Date.now() - new Date(lastAction.created_at).getTime()) / 864e5);
         if (daysAgo <= 7) {
           const thumbed = lastAction.outcome_measured_at != null && Math.abs(Number(lastAction.outcome_delta)) === 1;
-          const dir = lastAction.expected_direction;
-          const delta = lastAction.outcome_delta != null ? Number(lastAction.outcome_delta) : null;
-          const hit = delta != null && (dir === 'down' ? delta < 0 : delta > 0);
+          // Shared interpretation with the leverage engine's outcome-history
+          // weighting (see recommendationsStore.outcomeVerdict) — the narrative
+          // and the ranking must never disagree about what an outcome meant.
+          const verdict = recommendationsStore.outcomeVerdict(lastAction);
           const status = thumbed
-            ? (hit ? 'they gave it 👍 — marked it helped' : 'they gave it 👎 — marked it did not help')
+            ? (verdict === 'helped' ? 'they gave it 👍 — marked it helped' : 'they gave it 👎 — marked it did not help')
             : lastAction.outcome_measured_at != null
-              ? (delta == null ? 'no data to judge it yet' : hit ? "their data shows it worked" : 'their data shows no effect')
+              ? (verdict == null ? 'no data to judge it yet' : verdict === 'helped' ? "their data shows it worked" : 'their data shows no effect')
               : 'outcome still being measured automatically from their data (takes about a week) — the user owes NOTHING here; never ask for feedback or count days waiting';
           const whenStr = daysAgo === 0 ? 'earlier today' : daysAgo === 1 ? '1 day ago' : `${daysAgo} days ago`;
           lastActionLine = `LAST ACTION SUGGESTED (${whenStr}): "${lastAction.title}" — ${status}.`;
@@ -980,9 +981,27 @@ async function buildFreshBriefing({ force = false } = {}) {
       const fc = yesterday?.tomorrowForecast;
       if (fc && recovery?.score != null && recovery?.band) {
         const missed = fc.band !== recovery.band;
+        // Persist EVERY comparison (not just misses) into the calibration
+        // ledger — the running hit rate is what lets forecast confidence learn
+        // from its own track record (see predict.js's empirical cap) instead
+        // of each day's comparison evaporating after one prompt line.
+        const calibrationStore = require('../store/forecastCalibration');
+        const todayLocalStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+        await calibrationStore.record({
+          day: todayLocalStr,
+          predictedBand: fc.band, predictedScore: fc.projectedScore, confidence: fc.confidence,
+          actualBand: recovery.band, actualScore: recovery.score,
+        }).catch((e) => console.error('[calibration] record failed:', e.message));
         const lowConfHit = !missed && fc.confidence != null && fc.confidence < 60;
         if (missed || lowConfHit) {
           calibrationLine = `CALIBRATION CHECK: yesterday's forecast leaned ${fc.band} (~${fc.projectedScore}/100, ${fc.confidence}% confidence) for today; today actually came in ${recovery.band} at ${recovery.score}/100. ${missed ? 'That is a miss — if recovery is part of today\'s synthesis or risk, briefly own the earlier call rather than ignoring it (admitting a miss builds more trust than always sounding certain).' : 'The low-confidence call happened to hold — a brief, light callback is fine if relevant, not a big deal either way.'}`;
+          // Enough history to be meaningful → give the model the honest track
+          // record so "own the miss" can carry proportion ("3rd miss in 30
+          // days" reads very differently from "first miss in a month").
+          const track = await calibrationStore.hitRate({ days: 30 });
+          if (track.n >= 5) {
+            calibrationLine += ` Track record: ${track.hits}/${track.n} of the last ${track.n} daily forecasts landed in the right band.`;
+          }
         }
       }
     } catch (err) {

@@ -338,6 +338,21 @@ async function computeTodayForecast({ recovery = null, asOf = new Date() } = {})
     // forecast it was never meant to speak to.
     const annotations = rawAnnotations.filter((a) => new Date(a.start_ts) >= startOfToday);
     tomorrow = await applyContextToForecast(tomorrow, { dayContext, annotations });
+
+    // Empirical confidence cap: forecastTomorrow()'s 45-85% figure is a shape
+    // heuristic (distance from the band boundary), not a measured probability —
+    // and the calibration ledger now records how these calls actually land.
+    // With enough history, never CLAIM more confidence than the forecasts have
+    // empirically earned. Deliberately one-directional: a hot streak doesn't
+    // inflate a mid-band coin-flip call, it only reins in overconfidence.
+    try {
+      const track = await require('../store/forecastCalibration').hitRate({ days: 30 });
+      if (track.rate != null && track.n >= 10 && tomorrow?.confidence != null) {
+        const empirical = Math.round(track.rate * 100);
+        if (empirical < tomorrow.confidence) tomorrow = { ...tomorrow, confidence: empirical, confidenceCapped: true };
+        tomorrow.trackRecord = { n: track.n, hits: track.hits };
+      }
+    } catch { /* non-critical — uncapped heuristic confidence */ }
   }
 
   return { capacity, sleepDebt: debt, tomorrow };

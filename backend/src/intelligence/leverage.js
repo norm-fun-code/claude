@@ -364,13 +364,33 @@ const GENERATORS = {
   activity_impact: fromActivityImpact,
 };
 
+// The lever↔outcome pair an experiment verdict applies to, normalized from a
+// candidate's basis. Correlation bases carry the canonical lever key directly;
+// habit_split bases carry the habit's DISPLAY name, so map it back through
+// HABIT_KEY. Returns null for basis kinds experiments don't test.
+function experimentGateKey(basis) {
+  if (!basis) return null;
+  const lever = basis.lever || (basis.habit ? HABIT_KEY[basis.habit] : null);
+  if (!lever || !basis.outcome) return null;
+  return `${lever}|${basis.outcome}`;
+}
+
 /**
  * Pure: rank actions from findings (all types) + goals.
  * Returns up to `max` leverage finding objects, highest score first.
  * Drops any action whose score is below MIN_SCORE — low-signal advice is worse
  * than no advice.
+ *
+ * `outcomeHistory` ({dedupKey -> {helped, noEffect}}, from the recommendation
+ * ledger's measured 7-day deltas) and `experimentVerdicts`
+ * ({'lever|outcome' -> 'confirmed'|'refuted'}, from completed self-experiments)
+ * close the learning loop: for years this ranking was a pure function of
+ * current findings, structurally blind to whether its own past advice worked —
+ * a measured "no effect" was narrated to the user but never changed what got
+ * recommended, and a formally REFUTED hypothesis kept resurfacing as leverage
+ * whenever its (correlational) finding re-cleared the threshold.
  */
-function rankActions(findings = [], { goals = [], latestByKey = {}, forecastStatusByGoalId = {}, max = 3, minScore = 0.05 } = {}) {
+function rankActions(findings = [], { goals = [], latestByKey = {}, forecastStatusByGoalId = {}, outcomeHistory = {}, experimentVerdicts = {}, max = 3, minScore = 0.05 } = {}) {
   const candidates = [];
 
   for (const f of findings) {
@@ -387,7 +407,28 @@ function rankActions(findings = [], { goals = [], latestByKey = {}, forecastStat
   // Score and de-dupe by title (keep strongest per unique action).
   const byTitle = new Map();
   for (const c of candidates) {
+    // Experiment verdicts outrank correlation: a REFUTED lever→outcome pair
+    // was tested on the user's own data and showed nothing — re-suggesting it
+    // because the (weaker) correlational evidence still exists is exactly the
+    // "doesn't remember what it ruled out" failure. A CONFIRMED pair earned
+    // more confidence than any correlation alone can.
+    const gateKey = experimentGateKey(c.basis);
+    const verdict = gateKey ? experimentVerdicts[gateKey] : null;
+    if (verdict === 'refuted') continue;
+    if (verdict === 'confirmed') c.confidence = Math.min(0.95, c.confidence * 1.25);
+
     c.score = round(c.impact * c.confidence * c.ease, 4);
+
+    // Measured track record from the recommendation ledger. Suppression needs
+    // repeated evidence (metric deltas are noisy) — one flat week is not a
+    // verdict, three is a pattern. Mixed records leave the score untouched.
+    const hist = outcomeHistory[basisKey(c.basis)];
+    if (hist) {
+      if (hist.noEffect >= 3 && hist.helped === 0) continue;
+      if (hist.noEffect >= 2 && hist.helped === 0) c.score = round(c.score * 0.5, 4);
+      else if (hist.helped >= 2 && hist.noEffect === 0) c.score = round(c.score * 1.2, 4);
+    }
+
     const prev = byTitle.get(c.title);
     if (!prev || c.score > prev.score) byTitle.set(c.title, c);
   }

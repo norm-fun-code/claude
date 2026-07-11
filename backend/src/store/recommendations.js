@@ -110,6 +110,55 @@ async function mostRecentLeverageAction(beforeDate) {
 }
 
 /**
+ * Pure: interpret a recommendation row's measured outcome.
+ * Returns 'helped' | 'no_effect' | null (still pending / no data to judge).
+ * This is THE single interpretation of outcome_delta + expected_direction —
+ * the brief's "LAST ACTION SUGGESTED" line and the leverage engine's
+ * outcome-history weighting both read this one function, so the narrative
+ * ("their data shows it worked") and the ranking behavior can never disagree
+ * about what an outcome meant.
+ */
+function outcomeVerdict(row) {
+  if (!row || row.outcome_measured_at == null) return null;
+  const delta = row.outcome_delta != null ? Number(row.outcome_delta) : null;
+  if (delta == null || !Number.isFinite(delta)) return null;
+  const hit = row.expected_direction === 'down' ? delta < 0 : delta > 0;
+  return hit ? 'helped' : 'no_effect';
+}
+
+/**
+ * Aggregate measured outcomes per dedup_key (the finding-basis identity that
+ * survives title rewording): dedup_key -> { helped, noEffect }. Feeds
+ * rankActions' outcome-history weighting — the loop-closure that makes a
+ * measured "no effect" actually change what gets recommended, instead of
+ * only being narrated. Fail-safe: {} on error, so a ledger hiccup can never
+ * break an analyze() run.
+ */
+async function outcomeHistoryByDedupKey({ withinDays = 120 } = {}) {
+  try {
+    const { rows } = await query(
+      `SELECT dedup_key, outcome_delta, expected_direction, outcome_measured_at
+         FROM recommendations
+        WHERE dedup_key IS NOT NULL
+          AND outcome_measured_at IS NOT NULL
+          AND created_at >= now() - ($1 || ' days')::interval`,
+      [String(withinDays)]
+    );
+    const out = {};
+    for (const r of rows) {
+      const v = outcomeVerdict(r);
+      if (!v) continue;
+      const slot = (out[r.dedup_key] ||= { helped: 0, noEffect: 0 });
+      if (v === 'helped') slot.helped++;
+      else slot.noEffect++;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Store the measured outcome for a recommendation. First verdict wins: a
  * recommendation can be resolved through more than one path (a manual
  * thumbs-up/down, an auto-measured metric delta, or a linked commitment's
@@ -268,4 +317,4 @@ async function clearPrematureAutoOutcomes() {
   return rowCount;
 }
 
-module.exports = { recordRecommendation, listRecommendations, setOutcome, recentTitles, recentDedupKeys, recentTitlesAll, measureOutcomes, normalizeRecTitle, dedupePending, clearPrematureAutoOutcomes, mostRecentLeverageAction, getById };
+module.exports = { recordRecommendation, listRecommendations, setOutcome, recentTitles, recentDedupKeys, recentTitlesAll, measureOutcomes, normalizeRecTitle, dedupePending, clearPrematureAutoOutcomes, mostRecentLeverageAction, getById, outcomeVerdict, outcomeHistoryByDedupKey };
