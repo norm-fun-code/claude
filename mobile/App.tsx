@@ -228,6 +228,13 @@ export default function App() {
     const type = typeof data.type === 'string' ? data.type : '';
     if (key.startsWith('habits:')) {
       setHabitsOpen(true);
+    } else if (key.startsWith('checkin:')) {
+      // The 3pm "10-second check-in" push (nudges.js's checkinReminder, key
+      // "checkin:YYYY-MM-DD") had no matching case here, so it fell through to
+      // the generic else branch below — a silent briefing/health reload with
+      // no visible navigation, which read as the notification just not
+      // working. Open the actual check-in modal, same as the habits push.
+      setCheckinOpen(true);
     } else if (key.startsWith('day_context')) {
       // "Tell me about your day" → open Ask, prefilled so they can talk it
       // through (hold the mic) or just keep typing.
