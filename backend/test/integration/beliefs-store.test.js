@@ -76,7 +76,9 @@ test('promoteBeliefs turns >=3 real dismissals of one type into an active belief
   });
   for (const k of keys) await dismissedInsights.dismiss(k);
 
-  const result = await require('../../src/intelligence/beliefs').promoteBeliefs();
+  // extractStatements:false — this test pins the dismissal path; the LLM
+  // extraction path has its own tests with a stubbed model.
+  const result = await require('../../src/intelligence/beliefs').promoteBeliefs({ extractStatements: false });
   assert.deepEqual(result.errors, []);
 
   const promoted = (await beliefsStore.listActive()).find((b) => b.dedup_key === `dismissal:${TAG}_type`);

@@ -60,13 +60,88 @@ function dismissalPatterns(dismissedRows = [], { minCount = DISMISSAL_PATTERN_MI
   return out;
 }
 
+// ---- User-statement extraction (the one LLM step in the learning layer) ----
+
+const EXTRACT_SYSTEM =
+  'You extract DURABLE knowledge about a person from their own journal entries. ' +
+  'Durable means it will still be true months from now: a standing preference ("I skip cold showers when I\'m sick"), ' +
+  'a constraint ("Friday evenings are Sabbath — never schedule over them"), a correction of an assumption, a stable fact about their life or routine. ' +
+  'NOT durable (never extract): transient states (sick this week, tired today, busy day), one-off events, goals or plans, moods, metrics, anything already captured in the EXISTING list. ' +
+  'Most days contain nothing durable — an empty array is the normal, correct answer. ' +
+  'Return ONLY a JSON array (no markdown, no commentary). Each item: ' +
+  '{"slug": "short-stable-kebab-case-id", "statement": "one plain third-person sentence, e.g. \'They skip cold showers when sick — an explained pause, not a lapse.\'"}';
+
+function buildExtractPrompt(entries, existingStatements) {
+  const journal = entries.map((e) => `- [${e.entry_date}] ${String(e.text).slice(0, 500)}`).join('\n');
+  const existing = existingStatements.length
+    ? `EXISTING (already captured — do NOT repeat these or restate them differently):\n${existingStatements.map((s) => `- ${s}`).join('\n')}\n\n`
+    : '';
+  return `${existing}RECENT JOURNAL ENTRIES:\n${journal}`;
+}
+
+/** Pure: sanitize/validate the LLM's extraction output into belief specs. */
+function parseExtractedStatements(parsed) {
+  if (!Array.isArray(parsed)) return [];
+  const out = [];
+  for (const item of parsed.slice(0, 5)) {
+    const statement = typeof item?.statement === 'string' ? item.statement.trim() : '';
+    const rawSlug = typeof item?.slug === 'string' ? item.slug : '';
+    const slug = rawSlug.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+    if (!statement || statement.length < 10 || !slug) continue;
+    out.push({
+      kind: 'user_statement',
+      dedupKey: `stated:${slug}`,
+      statement: statement.slice(0, 400),
+      confidence: 0.85, // they said it themselves — high, but the LLM extracted it, so not 1.0
+      evidence: { source: 'day_journal_extraction' },
+    });
+  }
+  return out;
+}
+
+/**
+ * LLM pass over the last couple of days' journal entries: anything durable
+ * the user stated becomes a user_statement belief. Gated to only run when
+ * fresh entries exist (so a quiet day costs zero LLM calls), and the model
+ * sees existing statements so re-runs don't re-extract rephrased duplicates.
+ */
+async function extractStatementBeliefs() {
+  const dayJournal = require('../store/dayJournal');
+  const entries = await dayJournal.recent({ days: 2, limit: 10 });
+  if (!entries.length) return { extracted: 0, skipped: 'no_recent_entries' };
+
+  const existing = await beliefsStore.listActive({ kinds: ['user_statement'] });
+  const prompt = buildExtractPrompt(entries, existing.map((b) => b.statement));
+
+  const llm = require('../llm');
+  const { extractJson } = require('../llm/parseJson');
+  const text = await llm.generateText({ system: EXTRACT_SYSTEM, prompt, temperature: 0, maxTokens: 600 });
+  // extractJson returns null for text with no JSON in it — and JSON.parse(null)
+  // quietly parses the string "null" rather than throwing, so check both paths
+  // explicitly: anything that isn't an array is an unusable response.
+  let parsed;
+  try {
+    parsed = JSON.parse(extractJson(text));
+  } catch {
+    parsed = null;
+  }
+  if (!Array.isArray(parsed)) return { extracted: 0, skipped: 'unparseable_response' };
+
+  let extracted = 0;
+  for (const spec of parseExtractedStatements(parsed)) {
+    const id = await beliefsStore.upsertBelief(spec);
+    if (id != null) extracted++;
+  }
+  return { extracted };
+}
+
 /**
  * Nightly orchestrator: read feedback ledgers, upsert the inferred beliefs.
  * Additive-only by design — it never retires anything (retirement is a user
  * action or a future explicit pathway), and upsertBelief won't resurrect a
  * retired row. Fail-soft per source so one bad ledger can't sink consolidate.
  */
-async function promoteBeliefs() {
+async function promoteBeliefs({ extractStatements = true } = {}) {
   const results = { promoted: 0, errors: [] };
 
   try {
@@ -77,6 +152,17 @@ async function promoteBeliefs() {
     }
   } catch (err) {
     results.errors.push(`dismissals: ${err.message}`);
+  }
+
+  // The one LLM step — optional so ledger-only promotion stays cheap and
+  // deterministic for callers/tests that don't want a model call.
+  if (extractStatements) {
+    try {
+      const r = await extractStatementBeliefs();
+      results.promoted += r.extracted;
+    } catch (err) {
+      results.errors.push(`statements: ${err.message}`);
+    }
   }
 
   return results;
@@ -98,4 +184,7 @@ function composeBeliefsSection(beliefs = []) {
   );
 }
 
-module.exports = { dismissalPatterns, promoteBeliefs, composeBeliefsSection, DISMISSAL_PATTERN_MIN };
+module.exports = {
+  dismissalPatterns, promoteBeliefs, composeBeliefsSection, DISMISSAL_PATTERN_MIN,
+  extractStatementBeliefs, parseExtractedStatements, buildExtractPrompt,
+};

@@ -409,8 +409,12 @@ async function consolidate({ kind = 'nightly' } = {}) {
   // Promote feedback signals into durable beliefs BEFORE gathering, so
   // tonight's model reflects today's dismissals/statements. Fail-soft: the
   // model still builds if promotion errors (it logs its own per-source errors).
+  // The LLM statement-extraction step runs ONLY on the scheduled nightly (and
+  // manual CLI) consolidation — the kind:'briefing' call inside a briefing
+  // rebuild is documented as no-LLM and must stay fast, so it promotes from
+  // the ledgers only.
   try {
-    const promo = await require('./beliefs').promoteBeliefs();
+    const promo = await require('./beliefs').promoteBeliefs({ extractStatements: kind !== 'briefing' });
     if (promo.errors.length) console.error('[consolidate] belief promotion issues:', promo.errors.join('; '));
   } catch (err) {
     console.error('[consolidate] belief promotion failed:', err.message);
