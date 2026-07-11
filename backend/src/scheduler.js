@@ -519,6 +519,23 @@ function startJobs() {
     } catch (e) { console.error('[scheduler] evening wind-down brief:', e.message); }
   });
 
+  // Midday wealth watch (1pm + 5pm) — the temporal audit's scenario (b): a
+  // large transaction or a budget crossing at 2pm used to produce no reaction
+  // until tomorrow morning, because wealth nudges only ran in the morning
+  // routine. runWealthNudges reads Monarch's budget pacing/recurring streams
+  // LIVE (no stored-sync dependency) and dedupes each alert per billing
+  // period, so extra runs are cheap and can never re-fire an already-sent
+  // alert — these two checks purely narrow the notice-latency window.
+  const wealthWatchHours = String(process.env.WEALTH_WATCH_HOURS || '13,17')
+    .split(',').map((h) => Number(h.trim())).filter((h) => Number.isInteger(h) && h >= 0 && h <= 23);
+  for (const h of wealthWatchHours) {
+    scheduleDaily(h, 0, () => {
+      runWealthNudges({}).then((r) => {
+        if (r.sent > 0) console.log(`[scheduler] midday wealth watch: sent=${r.sent}`);
+      }).catch((e) => console.error('[scheduler] midday wealth watch:', e.message));
+    });
+  }
+
   // Combined evening reminder (9pm) — used to be three separate pushes (evening
   // check-in, habits, "tell me about your day") landing within 5 minutes of each
   // other; merged into one that names whichever pieces are still open

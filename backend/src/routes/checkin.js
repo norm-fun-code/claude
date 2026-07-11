@@ -29,6 +29,13 @@ function createCheckinRouter() {
     const written = await metricsStore.insertMetrics(metrics);
     if (document) await documentsStore.upsertDocument(document);
     await sourcesStore.markSync(CHECKIN_SOURCE);
+    // Same-day reaction to a rough check-in (fire-and-forget, mirrors the
+    // health-ingest -> runWatch pattern): a low mood/energy/focus rating gets
+    // a supportive downshift nudge within the minute, instead of the system
+    // sitting silent until tomorrow's brief.
+    require('../intelligence/watch')
+      .watchWellbeing({ mood: req.body?.mood, energy: req.body?.energy, focus: req.body?.focus })
+      .catch((e) => console.error('[checkin] wellbeing watch failed:', e.message));
     res.json({ written, journaled: Boolean(document) });
   }));
 

@@ -196,7 +196,62 @@ async function runWatch(opts = {}) {
   return { generated: 1, sent: 0, devices: tokens.length, nudge };
 }
 
-module.exports = { runWatch, qualifies, WATCHED, THRESHOLD };
+// ---- Wellbeing watcher — same-day reaction to a low check-in ----------------
+//
+// The temporal audit's scenario (d): the user logs a rough 3pm check-in and
+// the system does nothing until tomorrow's brief. Unlike the metric watcher
+// above, this needs no baseline statistics — on a 1-5 scale, a 2 IS the
+// signal. Same dedup ledger and quiet-hours discipline as runWatch; no
+// annotation is written because the check-in metrics themselves are already
+// the source of truth every brief reads (writing a second copy would be the
+// exact duplicated-fact pattern the reconciliation work removed).
+const LOW_CUTOFF = 2;
+
+async function watchWellbeing({ mood, energy, focus, asOf = new Date(), send = true, force = false } = {}) {
+  if (!force && withinQuietHours(asOf)) return { skipped: 'quiet_hours' };
+
+  const low = [];
+  if (Number(mood) >= 1 && Number(mood) <= LOW_CUTOFF) low.push('mood');
+  if (Number(energy) >= 1 && Number(energy) <= LOW_CUTOFF) low.push('energy');
+  if (Number(focus) >= 1 && Number(focus) <= LOW_CUTOFF) low.push('focus');
+  if (!low.length) return { generated: 0, sent: 0 };
+
+  const key = `watch:wellbeing:${dayKey(asOf)}`;
+  const recent = await nudgesStore.recentlySentKeys(1);
+  if (recent.has(key)) return { generated: 0, sent: 0, skipped: 'already_sent' };
+
+  const what = low.length === 1 ? low[0] : `${low.slice(0, -1).join(', ')} and ${low[low.length - 1]}`;
+  const nudge = {
+    key,
+    title: 'Rough one today',
+    body:
+      `Your check-in says ${what} ${low.length > 1 ? 'are' : 'is'} running low. ` +
+      `Downshift the rest of the day: one small win counts, skip anything heavy, and protect tonight's wind-down — tomorrow starts from tonight.`,
+    priority: 0.7,
+    basis: { type: 'watch_wellbeing', low, mood: mood ?? null, energy: energy ?? null, focus: focus ?? null },
+  };
+
+  const tokens = send ? await devicesStore.listActiveTokens() : [];
+  const status = send && tokens.length === 0 ? 'skipped' : 'pending';
+  const id = await nudgesStore.recordNudge({ ...nudge, dedupKey: nudge.key, status });
+  if (id == null) return { generated: 1, sent: 0, skipped: 'concurrent_duplicate', nudge };
+
+  if (send && tokens.length > 0) {
+    try {
+      const r = await sendPush(tokens, { title: nudge.title, body: nudge.body, data: { key: nudge.key } });
+      for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
+      await nudgesStore.markStatus(id, 'sent');
+      return { generated: 1, sent: 1, devices: tokens.length, nudge };
+    } catch (err) {
+      await nudgesStore.markStatus(id, 'failed');
+      return { generated: 1, sent: 0, error: err.message, nudge };
+    }
+  }
+
+  return { generated: 1, sent: 0, devices: tokens.length, nudge };
+}
+
+module.exports = { runWatch, watchWellbeing, qualifies, WATCHED, THRESHOLD, LOW_CUTOFF };
 
 // CLI: `node src/intelligence/watch.js [--force] [--dry-run]`
 if (require.main === module) {
