@@ -234,12 +234,32 @@ export class RealtimeVoiceSession {
    *  same conversational turn, just a text item instead of a mic utterance. */
   sendText(text: string) {
     if (!this.dc || this.dc.readyState !== 'open') return;
+    // A typed turn gets no `speech_started` event, so reset the per-turn state
+    // here — otherwise this turn's assistant text would concatenate onto the
+    // PREVIOUS turn's, and the stale `turnPersisted=true` from the last turn
+    // would suppress persisting this one entirely.
+    this.resetTurn();
     this.turnUserText = text;
+    this.turnUserFinal = true; // typed text is final immediately (no transcription round trip)
     this.dc.send(JSON.stringify({
       type: 'conversation.item.create',
       item: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
     }));
     this.dc.send(JSON.stringify({ type: 'response.create' }));
+  }
+
+  /** Reset all per-turn accumulators. Called at the start of BOTH a spoken
+   *  turn (speech_started) and a typed turn (sendText) so neither leaks state
+   *  from the previous exchange. */
+  private resetTurn() {
+    this.speechStoppedAt = null;
+    this.firstAudioLogged = false;
+    this.turnUserText = '';
+    this.turnAssistantText = '';
+    this.turnUserFinal = false;
+    this.turnAssistantFinal = false;
+    this.turnUsedDeepAsk = false;
+    this.turnPersisted = false;
   }
 
   /** Belt-and-suspenders manual interrupt — semantic VAD with
@@ -271,17 +291,19 @@ export class RealtimeVoiceSession {
     let evt: any;
     try { evt = JSON.parse(e.data); } catch { return; }
 
-    switch (evt.type) {
+    // The GA Realtime API renamed several beta `response.audio*` events to
+    // `response.output_audio*` (e.g. `response.output_audio_transcript.delta`),
+    // and different model versions / SDKs have shipped both spellings.
+    // Normalize to the shorter form so the assistant transcript renders
+    // regardless of which the server actually emits — this is the one part of
+    // the contract that can't be exercised by a stubbed test, so tolerate both
+    // rather than bet on a single string.
+    const type = String(evt.type || '').replace('response.output_audio_transcript.', 'response.audio_transcript.');
+
+    switch (type) {
       case 'input_audio_buffer.speech_started':
-        this.speechStoppedAt = null;
-        this.firstAudioLogged = false;
-        this.turnUserText = '';
-        this.turnAssistantText = '';
-        this.turnUserFinal = false;
-        this.turnAssistantFinal = false;
-        this.turnUsedDeepAsk = false;
-        this.turnPersisted = false;
         if (this.state === 'speaking' && this.sessionId) logMetric(this.sessionId, 'interruption', undefined, { auto: true });
+        this.resetTurn();
         this.setState('listening');
         break;
 

@@ -43,6 +43,14 @@ async function createEphemeralSession({ instructions, tools = [], voice = DEFAUL
       audio: {
         output: { voice },
         input: {
+          // Input transcription is OFF by default on the Realtime API — without
+          // it, the `conversation.item.input_audio_transcription.completed`
+          // event never fires, so the user's spoken words would never appear
+          // in the live transcript AND a spoken turn could never be persisted
+          // to the shared Ask thread (the client keys persistence off the user
+          // transcript). Model is env-overridable in case the default name
+          // changes. See mobile/src/lib/realtimeVoice.ts's transcript handling.
+          transcription: { model: process.env.REALTIME_TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe' },
           turn_detection: {
             type: 'semantic_vad',
             // Interrupt the model's own audio the instant the user starts

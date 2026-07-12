@@ -82,6 +82,9 @@ test('POST /voice/realtime/session mints a session and never leaks the permanent
   assert.equal(capturedBody.session.type, 'realtime');
   assert.ok(Array.isArray(capturedBody.session.tools) && capturedBody.session.tools.length >= 9);
   assert.equal(capturedBody.session.audio.input.turn_detection.type, 'semantic_vad');
+  // Input transcription MUST be enabled — without it the user's spoken words
+  // never transcribe, breaking both the live transcript and turn persistence.
+  assert.ok(capturedBody.session.audio.input.transcription?.model, 'input transcription must be configured');
 });
 
 test('POST /voice/realtime/session surfaces a mint failure as a fallback-eligible error, not a 500', async () => {
