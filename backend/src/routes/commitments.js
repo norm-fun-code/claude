@@ -6,6 +6,7 @@
 const express = require('express');
 const commitmentsStore = require('../store/commitments');
 const dayJournalStore = require('../store/dayJournal');
+const findingsStore = require('../store/findings');
 const { asyncHandler } = require('../middleware/asyncHandler');
 
 /** Fire-and-forget attention-ledger outcome stamp for a commitment the user
@@ -94,6 +95,20 @@ function createCommitmentsRouter() {
     require('../store/recommendations').acceptLatestBriefingAction({ startOfToday })
       .catch((e) => console.error('[action commit] acceptance stamp failed:', e.message));
     res.json({ ok: true, commitment: row });
+  }));
+
+  // Other candidate actions the leverage engine ranked but didn't surface as
+  // THE ACTION (rankActions() computes up to 3, rank 1 becomes brief.action —
+  // see briefing.js's leverageContext). Lets "Commit to something else" offer
+  // real alternates instead of forcing a freeform retype.
+  router.get('/briefing/action/alternates', asyncHandler(async (req, res) => {
+    const open = await findingsStore.listFindings({ status: 'open' }).catch(() => []);
+    const alternates = open
+      .filter((f) => f.type === 'leverage' && (f.evidence?.rank ?? 99) !== 1)
+      .sort((a, b) => (a.evidence?.rank ?? 99) - (b.evidence?.rank ?? 99))
+      .slice(0, 2)
+      .map((f) => ({ id: f.id, title: f.title, detail: f.detail || null }));
+    res.json({ alternates });
   }));
 
   // ── Daily context journal ─────────────────────────────────────────────────────

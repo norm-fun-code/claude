@@ -10,6 +10,7 @@ const assert = require('node:assert/strict');
 const request = require('supertest');
 const { buildTestApp, authHeader, closeDb } = require('./helpers');
 const db = require('../../src/db');
+const findingsStore = require('../../src/store/findings');
 
 const app = buildTestApp();
 const TAG = `action-commit-${Date.now()}`;
@@ -18,6 +19,7 @@ after(async () => {
   await db.query(`DELETE FROM commitments WHERE title LIKE $1`, [`%${TAG}%`]);
   await db.query(`DELETE FROM recommendations WHERE title LIKE $1`, [`%${TAG}%`]);
   await db.query(`DELETE FROM experiments WHERE hypothesis LIKE $1`, [`%${TAG}%`]);
+  await db.query(`DELETE FROM findings WHERE title LIKE $1`, [`%${TAG}%`]);
   await closeDb();
 });
 
@@ -54,6 +56,31 @@ test('committing THE ACTION creates a commitment due today and stamps acceptance
 test('commit without text is a 400', async () => {
   const res = await request(app).post('/api/briefing/action/commit').set(authHeader()).send({}).timeout(10000);
   assert.equal(res.status, 400);
+});
+
+// "Commit to something else" — the leverage engine ranks up to 3 candidates
+// but only rank 1 becomes THE ACTION; ranks 2/3 should be fetchable as
+// alternates rather than forcing a freeform retype.
+test('GET /briefing/action/alternates returns ranked leverage findings excluding rank 1', async () => {
+  await findingsStore.createFinding({
+    type: 'leverage', title: `Top pick ${TAG}`, evidence: { rank: 1 },
+  });
+  await findingsStore.createFinding({
+    type: 'leverage', title: `Second choice ${TAG}`, detail: 'because reasons', evidence: { rank: 2 },
+  });
+  await findingsStore.createFinding({
+    type: 'leverage', title: `Third choice ${TAG}`, evidence: { rank: 3 },
+  });
+  // A non-leverage finding must not leak into alternates.
+  await findingsStore.createFinding({ type: 'forecast', title: `Unrelated forecast ${TAG}`, evidence: {} });
+
+  const res = await request(app).get('/api/briefing/action/alternates').set(authHeader()).timeout(10000);
+  assert.equal(res.status, 200);
+  const mine = res.body.alternates.filter((a) => a.title.includes(TAG));
+  assert.equal(mine.length, 2, 'only ranks 2 and 3 for this run, not rank 1 or the unrelated forecast');
+  assert.equal(mine[0].title, `Second choice ${TAG}`, 'ordered by rank');
+  assert.equal(mine[0].detail, 'because reasons');
+  assert.equal(mine[1].title, `Third choice ${TAG}`);
 });
 
 test('experiment auto-start: OFF by default (consent flag unset -> null, regardless of proposals)', async (t) => {

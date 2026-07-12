@@ -6,7 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { getColors, spacing, radius, typography, shadow, glow, accentGradient, withAlpha, FONTS } from '../theme';
 import { AnimatedEntry } from './AnimatedEntry';
 import type { ChiefBrief } from '../hooks/useBriefing';
-import { BRIEFING_CONTEXT_URL, BRIEFING_AUDIO_URL, BRIEFING_ACTION_COMMIT_URL, VOICE_TRANSCRIBE_URL, authHeaders, fetchWithTimeout } from '../config';
+import { BRIEFING_CONTEXT_URL, BRIEFING_AUDIO_URL, BRIEFING_ACTION_COMMIT_URL, BRIEFING_ACTION_ALTERNATES_URL, VOICE_TRANSCRIBE_URL, authHeaders, fetchWithTimeout } from '../config';
 import { voiceAvailable, playBase64, stopPlayback, ensureMicPermission, startRecording, stopRecording } from '../lib/voice';
 
 interface Props {
@@ -155,20 +155,45 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Props) {
   // 'done' is terminal for this mount (the commitment now lives on the Today
   // card's commitments list).
   const [actionCommit, setActionCommit] = useState<'idle' | 'saving' | 'done' | 'error'>('idle');
-  async function commitAction() {
-    if (!brief?.action || actionCommit === 'saving' || actionCommit === 'done') return;
+  async function commitText(text: string) {
+    if (!text.trim() || actionCommit === 'saving' || actionCommit === 'done') return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setActionCommit('saving');
     try {
       const res = await fetchWithTimeout(BRIEFING_ACTION_COMMIT_URL, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ text: brief.action }),
+        body: JSON.stringify({ text: text.trim() }),
       });
       if (!res.ok) throw new Error(`Server ${res.status}`);
       setActionCommit('done');
+      setAltPicker('closed');
     } catch {
       setActionCommit('error'); // tap again to retry
+    }
+  }
+  const commitAction = () => brief?.action && commitText(brief.action);
+
+  // "Commit to something else" — the leverage engine ranks up to 3 candidate
+  // moves but only the top one becomes THE ACTION; this surfaces the other
+  // ranked ones (or a freeform box if none are available) so today's suggested
+  // action isn't the only option on the table.
+  const [altPicker, setAltPicker] = useState<'closed' | 'loading' | 'open' | 'error'>('closed');
+  const [alternates, setAlternates] = useState<{ id: number; title: string; detail: string | null }[]>([]);
+  const [altText, setAltText] = useState('');
+  async function openAltPicker() {
+    if (altPicker === 'loading' || actionCommit === 'saving' || actionCommit === 'done') return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setAltPicker('loading');
+    try {
+      const res = await fetchWithTimeout(BRIEFING_ACTION_ALTERNATES_URL, { headers: authHeaders() });
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+      const json = await res.json();
+      setAlternates(Array.isArray(json.alternates) ? json.alternates : []);
+      setAltPicker('open');
+    } catch {
+      setAlternates([]);
+      setAltPicker('open'); // still let them type a freeform one
     }
   }
   const [qAnswer, setQAnswer] = useState('');
@@ -398,6 +423,41 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Props) {
                           : '→ Commit to this'}
                   </Text>
                 </TouchableOpacity>
+              ) : null}
+              {key === 'action' && brief.action && actionCommit !== 'done' ? (
+                altPicker === 'closed' || altPicker === 'loading' ? (
+                  <TouchableOpacity onPress={openAltPicker} disabled={altPicker === 'loading'} hitSlop={6} style={styles.altLink}>
+                    <Text style={styles.altLinkText}>
+                      {altPicker === 'loading' ? 'Loading other options…' : 'Commit to something else'}
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.altPicker}>
+                    {alternates.map((a) => (
+                      <TouchableOpacity key={a.id} onPress={() => commitText(a.title)} disabled={actionCommit === 'saving'} style={styles.altRow}>
+                        <Text style={styles.altRowText}>{a.title}</Text>
+                        {a.detail ? <Text style={styles.altRowDetail}>{a.detail}</Text> : null}
+                      </TouchableOpacity>
+                    ))}
+                    <View style={styles.altFreeformRow}>
+                      <TextInput
+                        style={styles.altFreeformInput}
+                        placeholder="Or write your own…"
+                        placeholderTextColor={c.subtext}
+                        value={altText}
+                        onChangeText={setAltText}
+                        onSubmitEditing={() => commitText(altText)}
+                        returnKeyType="done"
+                      />
+                      <TouchableOpacity onPress={() => commitText(altText)} disabled={!altText.trim() || actionCommit === 'saving'} hitSlop={6}>
+                        <Text style={[styles.altLinkText, !altText.trim() && { opacity: 0.4 }]}>Commit</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <TouchableOpacity onPress={() => setAltPicker('closed')} hitSlop={6}>
+                      <Text style={styles.altCancelText}>Cancel</Text>
+                    </TouchableOpacity>
+                  </View>
+                )
               ) : null}
             </AnimatedEntry>
           ))}
@@ -669,6 +729,54 @@ const styles = StyleSheet.create({
     color: '#A89CFF',
     fontSize: 13,
     fontWeight: '600',
+  },
+  altLink: {
+    marginLeft: 44,
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  altLinkText: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  altPicker: {
+    marginLeft: 44,
+    marginTop: 4,
+    marginBottom: 6,
+    gap: 6,
+  },
+  altRow: {
+    paddingVertical: 6,
+  },
+  altRowText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  altRowDetail: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 12,
+    marginTop: 1,
+  },
+  altFreeformRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: 4,
+  },
+  altFreeformInput: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 13,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.2)',
+    paddingVertical: 4,
+  },
+  altCancelText: {
+    color: 'rgba(255,255,255,0.35)',
+    fontSize: 12,
+    marginTop: 6,
   },
   affBullet: {
     color: 'rgba(255,255,255,0.5)',
