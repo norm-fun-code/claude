@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { composeReview } = require('../src/intelligence/review');
+const llm = require('../src/llm');
+const { composeReview, reviewAttempt } = require('../src/intelligence/review');
 
 test('composeReview builds a JSON-shaped weekly-review prompt from context', () => {
   const ctx = {
@@ -37,4 +38,60 @@ test('composeReview tolerates an empty week', () => {
   assert.match(prompt, /not enough data/i);
   assert.match(prompt, /none confirmed/i);
   assert.match(prompt, /none set/i); // intentions section present even when empty
+});
+
+// Bug bash: runReview() used to make a single-shot LLM call with no jsonMode/
+// schema, no retry, and its validator silently dropped domainReads/crossDomain
+// even on success. Live production data showed the fallback sentinel
+// ('headline: "Weekly review"', suppressed from the mobile app entirely)
+// landing on roughly half of real scheduled runs. reviewAttempt() is the
+// extracted, directly-testable single-attempt unit — runReview() calls it
+// up to twice.
+test('reviewAttempt requests structured JSON output (jsonMode + schema)', async () => {
+  let seenOpts = null;
+  llm.generateText = async (opts) => { seenOpts = opts; return JSON.stringify({ headline: 'H', narrative: 'N', wins: [], watchouts: [], focus: [] }); };
+  await reviewAttempt('sys', 'prompt', 'test');
+  assert.equal(seenOpts.jsonMode, true);
+  assert.ok(seenOpts.jsonSchema, 'must pass a schema so providers that support it constrain generation server-side');
+});
+
+test('reviewAttempt returns null content (retryable) on unparseable output instead of throwing', async () => {
+  llm.generateText = async () => 'not json at all';
+  const { content } = await reviewAttempt('sys', 'prompt', 'test');
+  assert.equal(content, null);
+});
+
+test('reviewAttempt returns null content (retryable) when the model call itself throws, with empty rawText', async () => {
+  llm.generateText = async () => { throw new Error('rate limited'); };
+  const { content, rawText } = await reviewAttempt('sys', 'prompt', 'test');
+  assert.equal(content, null);
+  assert.equal(rawText, '');
+});
+
+test('reviewAttempt returns null content when headline/narrative are missing (matches evening-brief.js\'s shape-check pattern), but still surfaces rawText', async () => {
+  llm.generateText = async () => JSON.stringify({ wins: [], watchouts: [], focus: [] });
+  const { content, rawText } = await reviewAttempt('sys', 'prompt', 'test');
+  assert.equal(content, null);
+  assert.match(rawText, /wins/); // the caller's final fallback surfaces this as the narrative
+});
+
+test('reviewAttempt propagates domainReads and crossDomain on success (previously silently dropped)', async () => {
+  llm.generateText = async () => JSON.stringify({
+    headline: 'A good week',
+    narrative: 'Long story.',
+    domainReads: { health: 'Slept well.', wealth: 'Spent less.', focus: 'Sharp.' },
+    crossDomain: 'Better sleep tracked with lower spend.',
+    wins: ['Win 1'], watchouts: ['Watch 1'], focus: ['Focus 1'],
+  });
+  const { content } = await reviewAttempt('sys', 'prompt', 'test');
+  assert.deepEqual(content.domainReads, { health: 'Slept well.', wealth: 'Spent less.', focus: 'Sharp.' });
+  assert.equal(content.crossDomain, 'Better sleep tracked with lower spend.');
+  assert.deepEqual(content.wins, ['Win 1']);
+});
+
+test('reviewAttempt defaults crossDomain to empty string and omits domainReads when absent (backward-compatible)', async () => {
+  llm.generateText = async () => JSON.stringify({ headline: 'H', narrative: 'N', wins: [], watchouts: [], focus: [] });
+  const { content } = await reviewAttempt('sys', 'prompt', 'test');
+  assert.equal(content.crossDomain, '');
+  assert.equal(content.domainReads, undefined);
 });

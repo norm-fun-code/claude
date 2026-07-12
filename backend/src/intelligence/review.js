@@ -193,6 +193,78 @@ Write the weekly review as JSON with EXACTLY:
   return { system: SYSTEM, prompt };
 }
 
+// Passed as jsonMode+jsonSchema so providers that support it (Gemini via
+// responseMimeType, Anthropic via a forced tool call) constrain generation to
+// this shape server-side instead of relying purely on the prompt's prose
+// instruction — same mechanism briefing-ai.js uses for the chief brief.
+const WEEKLY_REVIEW_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    headline: { type: 'string' },
+    narrative: { type: 'string' },
+    domainReads: {
+      type: 'object',
+      properties: {
+        health: { type: 'string' },
+        wealth: { type: 'string' },
+        focus: { type: 'string' },
+      },
+    },
+    crossDomain: { type: 'string' },
+    wins: { type: 'array', items: { type: 'string' } },
+    watchouts: { type: 'array', items: { type: 'string' } },
+    focus: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['headline', 'narrative', 'wins', 'watchouts', 'focus'],
+};
+
+/**
+ * One LLM call + parse + shape-validate.
+ * Returns { content, rawText }: content is the validated shape or null
+ * (retryable); rawText is whatever the model actually returned (possibly ''
+ * on a hard call failure) — the caller's final fallback surfaces the LAST
+ * attempt's rawText as the narrative so a genuinely broken response is still
+ * visible/debuggable instead of silently blank.
+ */
+async function reviewAttempt(system, prompt, attemptLabel) {
+  let text = '';
+  try {
+    text = await llm.generateText({
+      system, prompt, temperature: 0.4, maxTokens: 1500,
+      jsonMode: true, jsonSchema: WEEKLY_REVIEW_JSON_SCHEMA,
+    });
+  } catch (err) {
+    console.error(`[review] generation failed (${attemptLabel}):`, err.message);
+    return { content: null, rawText: '' };
+  }
+  // Previously trusted whatever extractJson() returned with no shape check at
+  // all — a malformed-but-parseable response (e.g. wins/watchouts/focus as
+  // strings instead of arrays) would reach the client as-is. Requires the two
+  // load-bearing fields and coerces the rest to arrays.
+  const content = parseAndValidate(text, {
+    label: `weekly-review (${attemptLabel})`,
+    validate: (parsed) => {
+      if (typeof parsed?.headline !== 'string' || !parsed.headline.trim()) return null;
+      if (typeof parsed?.narrative !== 'string' || !parsed.narrative.trim()) return null;
+      const dr = parsed.domainReads;
+      return {
+        headline: parsed.headline,
+        narrative: parsed.narrative,
+        domainReads: dr && typeof dr === 'object' ? {
+          health: typeof dr.health === 'string' ? dr.health : '',
+          wealth: typeof dr.wealth === 'string' ? dr.wealth : '',
+          focus: typeof dr.focus === 'string' ? dr.focus : '',
+        } : undefined,
+        crossDomain: typeof parsed.crossDomain === 'string' ? parsed.crossDomain : '',
+        wins: Array.isArray(parsed.wins) ? parsed.wins : [],
+        watchouts: Array.isArray(parsed.watchouts) ? parsed.watchouts : [],
+        focus: Array.isArray(parsed.focus) ? parsed.focus : [],
+      };
+    },
+  });
+  return { content, rawText: text };
+}
+
 async function runReview({ asOf = new Date(), persist = true } = {}) {
   // Measure outcomes for recently-surfaced recommendations (measureOutcomes'
   // own default lookback window) before generating the review, so the "what I
@@ -237,36 +309,21 @@ async function runReview({ asOf = new Date(), persist = true } = {}) {
     if (selfModelText) system = `${baseSystem}\n\n${selfModelText}`;
   } catch { /* non-critical */ }
 
-  let content;
-  try {
-    const text = await llm.generateText({ system, prompt, temperature: 0.4, maxTokens: 1500 });
-    // Previously trusted whatever extractJson() returned with no shape check
-    // at all — a malformed-but-parseable response (e.g. wins/watchouts/focus
-    // as strings instead of arrays) would reach the client as-is. Now
-    // requires the two load-bearing fields (matches evening-brief.js's same
-    // pattern) and coerces the rest to arrays.
-    const validated = parseAndValidate(text, {
-      label: 'weekly-review',
-      validate: (parsed) => {
-        if (typeof parsed?.headline !== 'string' || !parsed.headline.trim()) return null;
-        if (typeof parsed?.narrative !== 'string' || !parsed.narrative.trim()) return null;
-        return {
-          headline: parsed.headline,
-          narrative: parsed.narrative,
-          wins: Array.isArray(parsed.wins) ? parsed.wins : [],
-          watchouts: Array.isArray(parsed.watchouts) ? parsed.watchouts : [],
-          focus: Array.isArray(parsed.focus) ? parsed.focus : [],
-        };
-      },
-    });
-    content = validated || { headline: 'Weekly review', narrative: text, wins: [], watchouts: [], focus: [] };
-  } catch (err) {
-    console.error('[review] generation failed:', err.message);
-    content = {
-      headline: 'Weekly review (numbers only)',
-      narrative: `Couldn't reach the model (${err.message}). Here are the week's numbers to review yourself.`,
-      wins: [], watchouts: [], focus: [],
-    };
+  let { content, rawText } = await reviewAttempt(system, prompt, 'attempt 1/2');
+  if (!content) {
+    // One retry on a shape/parse failure — the model call is non-deterministic
+    // (temperature 0.4), and this exact class of failure was silently landing
+    // as the bare 'Weekly review' fallback (briefing.js suppresses it from the
+    // mobile response, so the card just showed nothing) roughly every other
+    // real run. Mirrors briefing-ai.js's chief-brief retry, the same fix for
+    // the same failure mode.
+    ({ content, rawText } = await reviewAttempt(system, prompt, 'attempt 2/2 (retry)'));
+  }
+  if (!content) {
+    // Both attempts failed — fall back to the raw model text as the narrative
+    // (rather than dropping it) so a genuinely broken response is still
+    // visible/debuggable from the card instead of silently blank.
+    content = { headline: 'Weekly review', narrative: rawText || '', wins: [], watchouts: [], focus: [] };
   }
   content.metrics = ctx.metrics; // always attach the raw stats
 
@@ -279,7 +336,7 @@ async function runReview({ asOf = new Date(), persist = true } = {}) {
   return { ...content, id: saved?.id, generatedAt: saved?.generated_at };
 }
 
-module.exports = { runReview, gatherWeek, composeReview };
+module.exports = { runReview, gatherWeek, composeReview, reviewAttempt, WEEKLY_REVIEW_JSON_SCHEMA };
 
 if (require.main === module) {
   const { pool } = require('../db');
