@@ -89,8 +89,12 @@ function createIngestAdminRouter() {
       ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toLocaleDateString('en-CA', { timeZone: tz })
       : undefined;
     const result = await recomputeWealthFlows({ sinceDate });
-    const analyzed = await analyze().catch((e) => ({ error: e.message }));
-    res.json({ ...result, sinceDate: sinceDate || null, analyzed: analyzed || null });
+    // Fire-and-forget: analyze() scans across every domain (not scoped by
+    // `days`), so awaiting it here risked the SAME statement-timeout this
+    // `days` scoping was added to avoid. The response no longer waits on it —
+    // Insights picks up the refreshed numbers whenever it finishes.
+    analyze().catch((e) => console.error('[recompute-wealth] analyze() failed:', e.message));
+    res.json({ ...result, sinceDate: sinceDate || null, analyzed: 'started (async, not awaited)' });
   }));
 
   // Monarch CSV upload: POST the raw CSV body (transactions OR balances export).
