@@ -40,16 +40,44 @@ async function runConnector(c, { full = false } = {}) {
   }
 }
 
+// Post-ingest detectors: after a domain's data lands, run its same-day
+// detector so a reaction is EVENT-DRIVEN (like health's runWatch on health
+// ingest), not just polled on a fixed schedule. Fire-and-forget — the ingest
+// return value must not wait on (or be failed by) a detector — and every
+// candidate still routes through the Attention Policy's dispatch, which since
+// the atomic-delivery rework (migration 045) safely dedups a post-ingest
+// trigger racing the scheduled backstop, so this can't double-notify.
+//
+// NOTE (watcher architecture — PHASE ONE): this is a small per-connector map,
+// not yet the fully general post-ingest event bus + field TTL registry +
+// mid-day briefing addendum described in docs/watcher-architecture.md. Health
+// (routes/health.js) and wellbeing (routes/checkin.js) still wire their own
+// detectors inline at their write sites; wealth is wired here. Generalizing all
+// three onto one hook is the documented next step.
+const POST_INGEST_DETECTORS = {
+  // Monarch wrote fresh wealth data -> run the wealth watch immediately instead
+  // of waiting for the 1pm/5pm poll (which stays as a backstop in scheduler.js).
+  monarch_mcp_sync: (result) => {
+    if (result.error || !(result.metrics > 0)) return;
+    require('../intelligence/wealth-nudges').runWealthNudges({})
+      .then((r) => { if (r?.sent) console.log(`[ingest] post-monarch wealth watch: sent=${r.sent}`); })
+      .catch((e) => console.error('[ingest] post-monarch wealth watch failed:', e.message));
+  },
+};
+
 async function runIngest({ full = false, only = null } = {}) {
   const list = only ? connectors.filter((c) => c.id === only) : connectors;
   const results = [];
   for (const c of list) {
-    results.push(await runConnector(c, { full }));
+    const result = await runConnector(c, { full });
+    results.push(result);
+    const detector = POST_INGEST_DETECTORS[result.id];
+    if (detector) { try { detector(result); } catch (e) { console.error('[ingest] post-ingest detector error:', e.message); } }
   }
   return results;
 }
 
-module.exports = { runIngest, runConnector };
+module.exports = { runIngest, runConnector, POST_INGEST_DETECTORS };
 
 // CLI entrypoint
 if (require.main === module) {
