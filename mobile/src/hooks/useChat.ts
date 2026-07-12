@@ -49,8 +49,11 @@ export function useChat() {
     } catch { /* best-effort */ }
   }, []);
 
-  useEffect(() => { loadHistory(); }, [loadHistory]);
-
+  // Deliberately NOT auto-loaded here: this hook is shared by both the
+  // always-mounted quick-ask FAB (which should resume the live server thread)
+  // and the embedded Ask tab (which unmounts/remounts on every tab switch and
+  // should open fresh, not silently resume). Each caller loads explicitly —
+  // see AskOverlay.tsx's mount effect.
   const send = useCallback(async (q: string) => {
     if (!q.trim() || loading) return;
     setMessages((prev) => [...prev, { role: 'user', content: q }]);

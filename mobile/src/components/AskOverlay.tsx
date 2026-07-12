@@ -265,9 +265,17 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
   // Load snapshot + conversations when the overlay opens (or on mount if embedded).
   useEffect(() => {
     if (!open && !embedded) return;
-    // The quick-ask instance stays mounted between summons — re-sync the shared
-    // server thread on each open so it never shows a stale conversation.
-    if (!embedded) loadHistory();
+    if (!embedded) {
+      // The quick-ask instance stays mounted between summons — re-sync the shared
+      // server thread on each open so it never shows a stale conversation.
+      loadHistory();
+    } else {
+      // The embedded Ask tab unmounts/remounts on every tab switch — archive
+      // whatever's on the shared active thread (a safe no-op if it's already
+      // empty) and start fresh, rather than silently resuming an old
+      // conversation. History stays reachable via the Saved list.
+      save();
+    }
     loadConversations();
     (async () => {
       try {
