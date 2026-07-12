@@ -65,13 +65,22 @@ async function createEphemeralSession({ instructions, tools = [], voice = DEFAUL
     },
   };
 
-  const { data } = await axios.post(`${BASE}/realtime/client_secrets`, payload, {
-    headers: { Authorization: `Bearer ${key()}`, 'Content-Type': 'application/json' },
-    timeout: timeoutMs,
-  });
+  let data;
+  try {
+    ({ data } = await axios.post(`${BASE}/realtime/client_secrets`, payload, {
+      headers: { Authorization: `Bearer ${key()}`, 'Content-Type': 'application/json' },
+      timeout: timeoutMs,
+    }));
+  } catch (err) {
+    throw classifyError(err);
+  }
 
   const clientSecret = data?.value ?? data?.client_secret?.value ?? null;
-  if (!clientSecret) throw new Error('no client secret in OpenAI response');
+  if (!clientSecret) {
+    const e = new Error('no client secret in OpenAI response');
+    e.reason = 'session_mint_failed';
+    throw e;
+  }
   return {
     clientSecret,
     expiresAt: data?.expires_at ?? data?.client_secret?.expires_at ?? null,
@@ -80,4 +89,58 @@ async function createEphemeralSession({ instructions, tools = [], voice = DEFAUL
   };
 }
 
-module.exports = { createEphemeralSession, isConfigured, DEFAULT_MODEL, DEFAULT_VOICE };
+// OpenAI's own error messages for an auth failure commonly echo back a
+// MASKED fragment of the key that was actually sent (e.g. "Incorrect API
+// key provided: sk-proj-AbCd...XyZ9") — real key-prefix/suffix characters,
+// even if partially redacted by OpenAI itself. "Never expose the key" means
+// never propagating that fragment either, so every provider message is
+// scrubbed of anything key-shaped before it's kept anywhere (server logs,
+// the admin diagnostic endpoint) — not just before reaching the client.
+function redactKeyFragments(text) {
+  return String(text || '').replace(/\bsk-[A-Za-z0-9_-]{6,}\b/g, '[redacted]');
+}
+
+/**
+ * Turn an axios error from the OpenAI call into one of the documented reason
+ * codes, carrying ONLY safe diagnostic fields (HTTP status, provider error
+ * type/code, a message) — never the request/response body, never any header,
+ * never the key (or a masked fragment of it — see redactKeyFragments).
+ * Pure and exported for unit testing without a network call.
+ */
+function classifyError(err) {
+  const status = err.response?.status ?? null;
+  const body = err.response?.data?.error ?? {};
+  const providerCode = body.code ?? null;
+  const providerType = body.type ?? null;
+  const providerParam = body.param ?? null;
+  const providerMessage = redactKeyFragments(body.message ?? err.message ?? 'unknown error');
+
+  let reason;
+  if (!status) {
+    // No HTTP response at all — DNS failure, connection refused, or our own
+    // timeout (err.code === 'ECONNABORTED'). Never a provider-classified error.
+    reason = 'network_failure';
+  } else if (status === 401) {
+    reason = 'openai_auth_failed';
+  } else if (status === 403) {
+    reason = 'openai_access_denied';
+  } else if (
+    status === 404 ||
+    providerCode === 'model_not_found' ||
+    /model/i.test(String(providerParam || '')) ||
+    /model/i.test(String(providerCode || ''))
+  ) {
+    reason = 'invalid_realtime_model';
+  } else {
+    reason = 'session_mint_failed';
+  }
+
+  const classified = new Error(providerMessage);
+  classified.reason = reason;
+  classified.providerStatus = status;
+  classified.providerCode = providerCode;
+  classified.providerType = providerType;
+  return classified;
+}
+
+module.exports = { createEphemeralSession, isConfigured, classifyError, redactKeyFragments, DEFAULT_MODEL, DEFAULT_VOICE };

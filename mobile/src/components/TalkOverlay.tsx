@@ -34,6 +34,27 @@ const STATE_COPY: Record<RealtimeState, string> = {
   error: '',
 };
 
+// Every reason code the backend (routes/realtime.js) or the WebRTC session
+// itself (lib/realtimeVoice.ts) can report, mapped to a specific, useful
+// message — replaces the old behavior of collapsing every failure into one
+// generic "Live voice isn't available right now" with no way to tell what
+// actually went wrong or to retry. Pure lookup, easy to eyeball/extend.
+const ERROR_MESSAGES: Record<string, string> = {
+  realtime_disabled: 'Live voice is temporarily turned off.',
+  openai_not_configured: "Live voice isn't set up on the server yet.",
+  openai_auth_failed: "Live voice couldn't authenticate with its voice provider.",
+  openai_access_denied: 'Live voice access is restricted for this account.',
+  invalid_realtime_model: "Live voice's configuration needs attention.",
+  session_mint_failed: "Couldn't start live voice — try again in a moment.",
+  webrtc_handshake_failed: "Couldn't connect the voice link — try again.",
+  network_failure: 'No connection — check your network and try again.',
+};
+const DEFAULT_ERROR_MESSAGE = "Couldn't start live voice — try again in a moment.";
+
+function messageForErrorCode(code?: string): string {
+  return (code && ERROR_MESSAGES[code]) || DEFAULT_ERROR_MESSAGE;
+}
+
 // Calm, single-orb presence indicator — deliberately not a "busy call
 // screen." One breathing circle whose speed/scale reads the state at a
 // glance: slow & soft when listening, quicker when thinking/executing,
@@ -71,7 +92,6 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted }: Props) {
   const [state, setState] = useState<RealtimeState>('idle');
   const [lines, setLines] = useState<TranscriptLine[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [fallback, setFallback] = useState(false);
   const [muted, setMuted] = useState(false);
   const [textMode, setTextMode] = useState(false);
   const [textInput, setTextInput] = useState('');
@@ -99,7 +119,6 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted }: Props) {
     // track underneath the new one.
     sessionRef.current?.stop();
     setError(null);
-    setFallback(false);
     setLines([]);
     setToolLabel(null);
 
@@ -134,12 +153,12 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted }: Props) {
       await session.start();
     } catch (err: any) {
       setState('error');
-      if (err?.fallback) {
-        setFallback(true);
-        setError('Live voice isn\'t available right now.');
-      } else {
-        setError(err?.message || 'Connection failed.');
-      }
+      // A specific message for what actually went wrong, not one generic
+      // string for every failure mode. The old push-to-talk mic is a safe
+      // fallback for every one of these codes (see the banner below) —
+      // that's a fixed fact of this feature's design, not something that
+      // varies per error, so it isn't tracked as separate state.
+      setError(messageForErrorCode(err?.code));
     }
   }
 
@@ -208,12 +227,13 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted }: Props) {
 
         {error && (
           <View style={[styles.banner, { backgroundColor: withAlpha('#FF3B30', 0.1) }]}>
-            <Text style={[styles.bannerText, { color: '#FF3B30' }]}>{error}</Text>
-            {!fallback && (
-              <Pressable onPress={connect} hitSlop={8}>
-                <Text style={[styles.bannerRetry, { color: '#FF3B30' }]}>Retry</Text>
-              </Pressable>
-            )}
+            <View style={styles.bannerTextCol}>
+              <Text style={[styles.bannerText, { color: '#FF3B30' }]}>{error}</Text>
+              <Text style={[styles.bannerHint, { color: '#FF3B30' }]}>You can still use the regular mic in Ask.</Text>
+            </View>
+            <Pressable onPress={connect} hitSlop={8}>
+              <Text style={[styles.bannerRetry, { color: '#FF3B30' }]}>Retry</Text>
+            </Pressable>
           </View>
         )}
 
@@ -282,7 +302,9 @@ const styles = StyleSheet.create({
   hint: { fontSize: 14, textAlign: 'center', marginTop: spacing.xl },
   bubble: { borderRadius: radius.md, paddingHorizontal: spacing.sm, paddingVertical: 6, marginTop: spacing.sm, maxWidth: '92%' },
   banner: { marginHorizontal: spacing.md, borderRadius: radius.md, padding: spacing.sm, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  bannerText: { fontSize: 13, fontWeight: '600', flex: 1 },
+  bannerTextCol: { flex: 1, gap: 2 },
+  bannerText: { fontSize: 13, fontWeight: '600' },
+  bannerHint: { fontSize: 11, fontWeight: '400', opacity: 0.85 },
   bannerRetry: { fontSize: 13, fontWeight: '700', marginLeft: spacing.sm },
   presenceArea: { alignItems: 'center', paddingVertical: spacing.lg, gap: spacing.sm },
   orbWrap: { width: 96, height: 96, alignItems: 'center', justifyContent: 'center' },

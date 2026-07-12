@@ -8,7 +8,7 @@ const { after, afterEach } = test;
 const assert = require('node:assert/strict');
 const request = require('supertest');
 const axios = require('axios');
-const { buildTestApp, authHeader, closeDb } = require('./helpers');
+const { buildTestApp, authHeader, ADMIN_TOKEN, closeDb } = require('./helpers');
 const db = require('../../src/db');
 const llm = require('../../src/llm');
 
@@ -94,6 +94,71 @@ test('POST /voice/realtime/session surfaces a mint failure as a fallback-eligibl
   const res = await request(app).post('/api/voice/realtime/session').set(authHeader()).send({});
   assert.equal(res.status, 502);
   assert.equal(res.body.fallback, true);
+});
+
+// Bug bash finding: every mint failure used to collapse into the SAME
+// 'session_mint_failed' code regardless of cause, so an auth failure, an
+// access-denied account, and a bad model name were all indistinguishable
+// from the client's point of view. These lock in that the route surfaces
+// the SPECIFIC classified reason for each distinct OpenAI failure mode.
+test('POST /voice/realtime/session classifies an OpenAI 401 as openai_auth_failed', async () => {
+  process.env.OPENAI_API_KEY = 'sk-test-key';
+  process.env.VOICE_REALTIME_ENABLED = 'true';
+  axios.post = async () => {
+    const err = new Error('Incorrect API key provided');
+    err.response = { status: 401, data: { error: { message: 'Incorrect API key provided', type: 'invalid_request_error' } } };
+    throw err;
+  };
+  const res = await request(app).post('/api/voice/realtime/session').set(authHeader()).send({});
+  assert.equal(res.status, 502);
+  assert.equal(res.body.error, 'openai_auth_failed');
+  assert.equal(res.body.fallback, true);
+});
+
+test('POST /voice/realtime/session classifies an OpenAI 403 as openai_access_denied', async () => {
+  process.env.OPENAI_API_KEY = 'sk-test-key';
+  process.env.VOICE_REALTIME_ENABLED = 'true';
+  axios.post = async () => {
+    const err = new Error('access denied');
+    err.response = { status: 403, data: { error: { message: 'You do not have access to this model' } } };
+    throw err;
+  };
+  const res = await request(app).post('/api/voice/realtime/session').set(authHeader()).send({});
+  assert.equal(res.body.error, 'openai_access_denied');
+});
+
+test('POST /voice/realtime/session classifies an unknown-model response as invalid_realtime_model', async () => {
+  process.env.OPENAI_API_KEY = 'sk-test-key';
+  process.env.VOICE_REALTIME_ENABLED = 'true';
+  axios.post = async () => {
+    const err = new Error('model not found');
+    err.response = { status: 404, data: { error: { message: "The model 'gpt-realtime-2.1' does not exist", code: 'model_not_found' } } };
+    throw err;
+  };
+  const res = await request(app).post('/api/voice/realtime/session').set(authHeader()).send({});
+  assert.equal(res.body.error, 'invalid_realtime_model');
+});
+
+test('POST /voice/realtime/session classifies a network-level failure (no HTTP response at all) as network_failure', async () => {
+  process.env.OPENAI_API_KEY = 'sk-test-key';
+  process.env.VOICE_REALTIME_ENABLED = 'true';
+  axios.post = async () => { throw new Error('getaddrinfo ENOTFOUND api.openai.com'); }; // no .response — a real transport failure
+  const res = await request(app).post('/api/voice/realtime/session').set(authHeader()).send({});
+  assert.equal(res.body.error, 'network_failure');
+});
+
+test('the mint-failure response body never leaks the raw provider message or any request/response detail — only the stable reason code', async () => {
+  process.env.OPENAI_API_KEY = 'sk-super-secret-should-never-leak-anywhere';
+  process.env.VOICE_REALTIME_ENABLED = 'true';
+  axios.post = async () => {
+    const err = new Error('Incorrect API key provided: sk-super-secret-should-never-leak-anywhere');
+    err.response = { status: 401, data: { error: { message: 'Incorrect API key provided: sk-super-secret-should-never-leak-anywhere' } } };
+    throw err;
+  };
+  const res = await request(app).post('/api/voice/realtime/session').set(authHeader()).send({});
+  const bodyText = JSON.stringify(res.body);
+  assert.ok(!bodyText.includes('sk-super-secret-should-never-leak-anywhere'), 'the key/provider message text must never reach the client response');
+  assert.deepEqual(Object.keys(res.body).sort(), ['error', 'fallback']);
 });
 
 test('POST /voice/realtime/tool rejects a tool name the model was never given', async () => {

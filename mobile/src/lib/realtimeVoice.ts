@@ -135,7 +135,10 @@ export class RealtimeVoiceSession {
    *  the mint call itself failed) rather than showing a hard error. */
   async start(): Promise<void> {
     if (!realtimeVoiceAvailable) {
+      // Defensive only — the UI hides its entry point via this same flag, so
+      // this path shouldn't be reachable in practice.
       const err: any = new Error('react-native-webrtc not available in this build');
+      err.code = 'session_mint_failed';
       err.fallback = true;
       throw err;
     }
@@ -147,14 +150,23 @@ export class RealtimeVoiceSession {
       const res = await fetchWithTimeout(REALTIME_SESSION_URL, { method: 'POST', headers: authHeaders(), body: '{}' }, 15000);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
+        // The backend already classified WHY the mint failed (see routes/
+        // realtime.js) — carry that stable reason code through so the UI can
+        // show a specific, useful message instead of one generic string for
+        // every failure mode.
         const err: any = new Error(body.error || `Server ${res.status}`);
+        err.code = body.error || 'session_mint_failed';
         err.fallback = body.fallback !== false;
         throw err;
       }
       session = await res.json();
     } catch (err: any) {
       this.setState('error');
-      if (err.fallback === undefined) err.fallback = true; // network failure -> also fall back
+      // No `.code` at this point means fetch() itself threw before a response
+      // ever came back (timeout, DNS failure, offline) — a real network
+      // failure, distinct from the backend explicitly reporting a reason.
+      if (!err.code) err.code = 'network_failure';
+      if (err.fallback === undefined) err.fallback = true;
       throw err;
     }
     this.sessionId = session.sessionId;
@@ -199,6 +211,7 @@ export class RealtimeVoiceSession {
       });
       if (!sdpRes.ok) {
         const err: any = new Error(`OpenAI WebRTC handshake failed (${sdpRes.status})`);
+        err.code = 'webrtc_handshake_failed';
         err.fallback = true;
         throw err;
       }
@@ -208,12 +221,19 @@ export class RealtimeVoiceSession {
       // Remote (assistant) audio plays automatically once the track arrives —
       // react-native-webrtc routes an audio-only remote track through the
       // native audio session without needing a visible <RTCView>.
-    } catch (err) {
+    } catch (err: any) {
       // A partial connect (mic acquired, SDP exchange failed, etc.) must not
       // leak an open peer connection or a live mic track — tear down
       // whatever got created before rethrowing so the caller's retry starts
       // clean instead of stacking connections/mic handles on every attempt.
       this.teardownPeer();
+      this.setState('error');
+      // Anything reaching here without an explicit code (e.g. getUserMedia
+      // rejecting on a denied mic permission, an ICE failure) is bucketed as
+      // a handshake failure — the closest fit among the documented reasons
+      // for "something about setting up the live connection didn't work."
+      if (!err.code) err.code = 'webrtc_handshake_failed';
+      if (err.fallback === undefined) err.fallback = true;
       throw err;
     }
   }

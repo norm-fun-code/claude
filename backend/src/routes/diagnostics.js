@@ -10,6 +10,7 @@ const documentsStore = require('../store/documents');
 const findingsStore = require('../store/findings');
 const llm = require('../llm');
 const { fetchWorkBusyBlocks } = require('../services/calendar');
+const realtimeService = require('../services/realtime');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { requireAdminToken } = require('../middleware/adminAuth');
 
@@ -456,6 +457,56 @@ function createDiagnosticsRouter() {
       payload.rawGetBudget = await rpc.callToolJson('GetBudget', { start_date: monthStart, end_date: monthEnd, include_actuals: true });
     }
     res.json(payload);
+  }));
+
+  // Diagnostic for the "Live voice isn't available right now" production
+  // report: confirms — from the ACTUAL running process, not assumptions —
+  // whether OPENAI_API_KEY is present/well-formed and VOICE_REALTIME_ENABLED
+  // is on, then makes a REAL call to OpenAI's client_secrets endpoint and
+  // reports the sanitized outcome. Never returns the key, the ephemeral
+  // secret, or any raw request/response body — only presence/length/
+  // whitespace checks and the classified reason code + provider status.
+  router.get('/diag/realtime', asyncHandler(async (req, res) => {
+    const raw = process.env.OPENAI_API_KEY || '';
+    const payload = {
+      openaiKeyConfigured: raw.length > 0,
+      openaiKeyLength: raw.length || null,
+      // A key with leading/trailing whitespace (a common copy-paste-into-
+      // Railway mistake) still LOOKS "configured" but fails auth — this
+      // catches that without ever revealing the key itself.
+      openaiKeyHasSurroundingWhitespace: raw.length > 0 && raw.trim().length !== raw.length,
+      voiceRealtimeEnabled: process.env.VOICE_REALTIME_ENABLED !== 'false',
+      realtimeModel: realtimeService.DEFAULT_MODEL,
+      realtimeVoice: realtimeService.DEFAULT_VOICE,
+    };
+
+    if (!payload.openaiKeyConfigured) {
+      return res.json({ ...payload, liveProbe: { ok: false, reason: 'openai_not_configured' } });
+    }
+
+    try {
+      await realtimeService.createEphemeralSession({
+        instructions: 'diagnostic probe — this session is never used',
+        tools: [],
+      });
+      res.json({ ...payload, liveProbe: { ok: true } });
+    } catch (err) {
+      res.json({
+        ...payload,
+        liveProbe: {
+          ok: false,
+          reason: err.reason || 'session_mint_failed',
+          providerStatus: err.providerStatus ?? null,
+          providerCode: err.providerCode ?? null,
+          providerType: err.providerType ?? null,
+          // The provider's own message text — OpenAI error messages describe
+          // the problem generically ("Incorrect API key provided", "model
+          // does not exist") and never echo the key/request back, so this is
+          // safe to return verbatim; still capped defensively.
+          safeMessage: String(err.message || '').slice(0, 300),
+        },
+      });
+    }
   }));
 
   return router;

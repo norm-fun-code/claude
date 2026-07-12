@@ -74,8 +74,15 @@ function createRealtimeRouter() {
     try {
       session = await realtimeService.createEphemeralSession({ instructions, tools: TOOL_SCHEMAS });
     } catch (err) {
-      console.error('[realtime session] mint failed:', err.message);
-      return res.status(502).json({ error: 'session_mint_failed', message: err.message, fallback: true });
+      const reason = err.reason || 'session_mint_failed';
+      // Full diagnostic detail server-side only (stage, HTTP status from
+      // OpenAI, sanitized provider error) — the client only ever gets the
+      // stable reason CODE, never this detail, and never the key.
+      console.error(
+        `[realtime session] mint failed: reason=${reason} providerStatus=${err.providerStatus ?? 'n/a'} ` +
+        `providerCode=${err.providerCode ?? 'n/a'} providerType=${err.providerType ?? 'n/a'} message=${err.message}`
+      );
+      return res.status(502).json({ error: reason, fallback: true });
     }
 
     const sessionId = crypto.randomUUID();
