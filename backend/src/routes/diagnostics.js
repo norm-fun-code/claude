@@ -36,9 +36,12 @@ function createDiagnosticsRouter() {
     const sync = require('../connectors/monarch-mcp-sync');
     const monarchMcp = require('../services/monarch-mcp');
     const { isInternalTransfer, isExcludedIncome, isNonIncomePositive, isFixedCategory } = require('../connectors/monarch');
-    const { localMonthStartUtc } = require('../util/date');
+    const { localMonthStartUtc, naiveToUtcIso } = require('../util/date');
     const tz = process.env.TZ || 'America/New_York';
-    const ymd = (d) => new Date(d).toISOString().slice(0, 10);
+    // LOCAL calendar day, not UTC — new Date().toISOString().slice(0,10) is
+    // the UTC day, which is wrong for several hours around each local
+    // midnight (the same bug class fixed in monarch-mcp-sync.js's localToday).
+    const ymd = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: tz });
     const mtd = req.query.mtd === '1' || req.query.mtd === 'true';
     const days = Math.min(Number(req.query.days) || 30, 90);
     const start = mtd ? ymd(localMonthStartUtc(tz, new Date())) : ymd(new Date(Date.now() - days * 864e5));
@@ -52,13 +55,19 @@ function createDiagnosticsRouter() {
     // outage (their API being down/paused) must never also hide what's
     // already stored — if anything, that's the moment this section matters
     // most, since it may be the only reconciliation signal available.
+    // start/end are LOCAL calendar-date strings (from localMonthStartUtc /
+    // toISOString sliced) — must be converted through naiveToUtcIso (as local
+    // midnight) rather than suffixed with a bare "Z", or the query boundary
+    // silently reverts to UTC midnight and leaks a few hours of the prior
+    // local day into an "MTD" window (the same bug class this whole task is
+    // about, just recurring in the diagnostic itself).
     const { rows: storedRows } = await db.query(
       `SELECT (ts AT TIME ZONE $3)::date AS day, source, metric, value
          FROM metrics
         WHERE domain = 'wealth' AND metric IN ('spending', 'spending_discretionary')
           AND ts >= $1::timestamptz AND ts <= $2::timestamptz
         ORDER BY day, metric, source`,
-      [`${start}T00:00:00Z`, `${end}T23:59:59Z`, tz]
+      [naiveToUtcIso(`${start}T00:00:00`, tz), naiveToUtcIso(`${end}T23:59:59.999`, tz), tz]
     ).catch(() => ({ rows: [] }));
     const storedByMetric = { spending: [], spending_discretionary: [] };
     for (const r of storedRows) {

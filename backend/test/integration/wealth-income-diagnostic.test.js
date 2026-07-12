@@ -104,6 +104,27 @@ test('legacyExcludeCategoriesDiscretionary is reported for comparison but is not
   assert.ok(res.body.legacyExcludeCategoriesDiscretionary.note.includes('NOT used by the sync'));
 });
 
+// The diagnostic's own SQL boundary previously suffixed an already-local
+// calendar-date string with a bare "Z" (UTC midnight) instead of converting
+// it through the local timezone — leaking a few hours of the prior local day
+// into the "MTD" window. Same bug class as the rest of this task, recurring
+// in the diagnostic meant to investigate it.
+test('the MTD window boundary is the LOCAL month start, not UTC midnight', async () => {
+  monarchMcp.isConfigured = () => true;
+  const { localMonthStartUtc } = require('../../src/util/date');
+  const tz = process.env.TZ || 'America/New_York';
+  const monthStart = localMonthStartUtc(tz, new Date());
+  const justBeforeLocalMidnight = new Date(monthStart.getTime() - 2 * 60 * 60 * 1000);
+  await metricsStore.insertMetrics([
+    { ts: justBeforeLocalMidnight, domain: 'wealth', metric: 'spending', value: 999, source: TEST_SOURCE },
+  ]);
+  stubRpc([]);
+  const res = await request(app).get('/api/debug/wealth-income?mtd=1').set(authHeader(ADMIN_TOKEN));
+  assert.equal(res.status, 200);
+  const leaked = res.body.storedMetrics.spending.rows.find((r) => r.source === TEST_SOURCE);
+  assert.equal(leaked, undefined, 'a row from just before local midnight must not leak into the MTD window');
+});
+
 // A live Monarch-side outage (e.g. their API paused/down) must not suppress
 // storedMetrics — that's the one signal that's most valuable precisely when
 // the live API is unavailable. The endpoint must degrade to 200 + liveDataError
