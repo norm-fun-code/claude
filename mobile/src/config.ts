@@ -17,6 +17,24 @@ export const CHIEF_BRIEF_REBUILD_URL = `${API_BASE}/api/briefing/chief-brief/reb
 export const BRIEFING_AUDIO_URL = `${API_BASE}/api/briefing/audio`;
 export const VOICE_ASK_URL = `${API_BASE}/api/voice/ask`;
 export const VOICE_TRANSCRIBE_URL = `${API_BASE}/api/voice/transcribe`;
+// Talk to NormOS — live OpenAI Realtime voice mode. The mobile client
+// connects DIRECTLY to OpenAI over WebRTC (see REALTIME_CALLS_URL below);
+// these backend endpoints only mint the short-lived session secret, relay
+// tool calls, persist transcripts, and log latency (never audio).
+export const REALTIME_SESSION_URL = `${API_BASE}/api/voice/realtime/session`;
+export const REALTIME_TOOL_URL = `${API_BASE}/api/voice/realtime/tool`;
+export const REALTIME_TURN_URL = `${API_BASE}/api/voice/realtime/turn`;
+export const REALTIME_METRIC_URL = `${API_BASE}/api/voice/realtime/metric`;
+// OpenAI's own WebRTC SDP-exchange endpoint — the mobile client POSTs its SDP
+// offer here directly, authenticated with the ephemeral secret (never the
+// permanent key). Model is appended as a query param by the caller.
+export const REALTIME_CALLS_URL = 'https://api.openai.com/v1/realtime/calls';
+// Staged-rollout flag, independent of whether the native WebRTC module is
+// actually present in this binary (lib/realtimeVoice.ts's own
+// `realtimeVoiceAvailable` check) — lets a bad rollout be dialed back via an
+// EAS env change without a new build, same spirit as the backend's
+// VOICE_REALTIME_ENABLED kill switch.
+export const REALTIME_VOICE_ENABLED = process.env.EXPO_PUBLIC_REALTIME_VOICE_ENABLED !== 'false';
 export const EVENING_BRIEF_URL = `${API_BASE}/api/evening-brief`;
 export const EVENING_BRIEF_AUDIO_URL = `${API_BASE}/api/evening-brief/audio`;
 export const HEALTH_INGEST_URL = `${API_BASE}/api/ingest/health`;

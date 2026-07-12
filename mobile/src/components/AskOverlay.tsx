@@ -23,8 +23,10 @@ import { Ionicons } from '@expo/vector-icons';
 import Markdown from 'react-native-markdown-display';
 import { getColors, spacing, radius, typography, shadow, withAlpha } from '../theme';
 import { useChat } from '../hooks/useChat';
-import { API_BASE, CONSOLIDATE_URL, VOICE_ASK_URL, authHeaders, fetchWithTimeout } from '../config';
+import { API_BASE, CONSOLIDATE_URL, VOICE_ASK_URL, REALTIME_VOICE_ENABLED, authHeaders, fetchWithTimeout } from '../config';
 import { voiceAvailable, ensureMicPermission, startRecording, stopRecording, playBase64, stopPlayback } from '../lib/voice';
+import { realtimeVoiceAvailable } from '../lib/realtimeVoice';
+import { TalkOverlay } from './TalkOverlay';
 
 export interface AskOverlayHandle {
   /** Open the overlay, optionally pre-filling the input with a question.
@@ -186,6 +188,12 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
   // hold the mic again the instant the reply starts playing (startRecording()
   // interrupts playback), no need to wait it out.
   const [hadVoiceTurn, setHadVoiceTurn] = useState(false);
+  // Live conversation mode (OpenAI Realtime) — a separate full-screen modal,
+  // opened from a control next to the old push-to-talk mic. Old path stays
+  // the default entry point; this is additive, not a replacement, until the
+  // native module has been proven in a real build.
+  const [talkOpen, setTalkOpen] = useState(false);
+  const showLiveEntry = REALTIME_VOICE_ENABLED && realtimeVoiceAvailable;
 
   async function voicePressIn() {
     if (voiceState !== 'idle') return;
@@ -589,6 +597,15 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
                     autoCorrect
                     spellCheck
                   />
+                  {showLiveEntry && !question.trim() && (
+                    <Pressable
+                      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); setTalkOpen(true); }}
+                      style={[styles.mic, { backgroundColor: withAlpha('#635BFF', 0.15), borderColor: withAlpha('#635BFF', 0.35) }]}
+                      accessibilityLabel="Talk to NormOS — live conversation"
+                    >
+                      <Ionicons name="radio-outline" size={17} color="#635BFF" />
+                    </Pressable>
+                  )}
                   {voiceAvailable && !question.trim() && (
                     <Pressable
                       onPressIn={voicePressIn}
@@ -622,10 +639,19 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
         </View>
   );
 
-  if (embedded) return chatSheet;
+  const talkOverlay = (
+    <TalkOverlay
+      visible={talkOpen}
+      onClose={() => { setTalkOpen(false); loadHistory(); }}
+      onTurnCompleted={loadHistory}
+    />
+  );
+
+  if (embedded) return (<>{chatSheet}{talkOverlay}</>);
 
   return (
     <>
+      {talkOverlay}
       {!hideFab && (
         <Pressable
           // Tap: open the sheet to browse suggestions or type. Long-press:

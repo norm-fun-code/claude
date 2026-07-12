@@ -296,6 +296,80 @@ than silently recorded and forgotten.
 Env: `ATTENTION_DAILY_BUDGET` (default 4), `ATTENTION_CRITICAL_RESERVE`
 (default 1). Migration: `043_attention.sql` (auto-applied by `npm run migrate`).
 
+## Talk to NormOS (live voice, OpenAI Realtime)
+
+The original voice flow (`routes/voice.js`'s `POST /voice/ask`) is a voice-memo
+pipeline: record → upload → Gemini STT → `ask()` → Gemini TTS → download →
+play. It still exists, unchanged, as the fallback path. "Talk to NormOS" is a
+second, live mode: a persistent, interruptible, low-latency speech-to-speech
+conversation over WebRTC, using OpenAI's Realtime API (`gpt-realtime-2.1`).
+
+**Architecture — the mobile client connects to OpenAI directly.** The whole
+point of an ephemeral client secret is that the backend never proxies live
+audio: it mints a short-lived, scoped token; the phone negotiates its own
+WebRTC session straight to OpenAI. This has one real consequence for where
+code lives — **tool-call execution happens client-side**, because the
+function-call event arrives on the mobile client's own data channel, not the
+backend's. The mobile client relays it to our backend over a plain HTTP call,
+gets the result, and sends it back to OpenAI over that same data channel.
+
+- `services/realtime.js` — mints the ephemeral secret (`POST
+  /v1/realtime/client_secrets`), with the session's `instructions`, `tools`,
+  and semantic-VAD turn-detection (`interrupt_response: true`, the server-side
+  mechanism that makes barge-in work — the model's own audio is truncated the
+  instant the user starts talking over it) baked in at mint time. Model/voice
+  are env-overridable (`REALTIME_MODEL`, `REALTIME_VOICE`).
+- `chat/realtimeTools.js` — the tool layer: `get_today_context`,
+  `get_current_recovery`, `get_active_goals_and_commitments`,
+  `get_recent_findings`, `search_beliefs`, `query_metric`,
+  `search_personal_library`, `execute_normos_action`, `deep_ask`. Every tool
+  is a thin wrapper over an EXISTING store or brain — `execute_normos_action`
+  reuses `chat/ask.js`'s own `validateAction` allowlist verbatim (the exact
+  same actions typed/push-to-talk Ask already execute today, so this adds no
+  new mutation surface), and `deep_ask` calls the unmodified `ask()` engine
+  for anything needing real retrieval or cross-domain reasoning. `TOOL_NAMES`
+  is the hard allowlist `routes/realtime.js` checks BEFORE this file is even
+  consulted — a Realtime session can never reach an arbitrary backend function.
+- `routes/realtime.js` — four endpoints, all behind the same `/api` auth as
+  everything else: `POST /voice/realtime/session` (mint + compact personal
+  context + tool schemas), `POST /voice/realtime/tool` (the client's tool-call
+  relay point), `POST /voice/realtime/turn` (persists a completed turn to the
+  SAME shared Ask conversation `chat.js`/`voice.js` write to — skipped for a
+  `deep_ask` turn, which already persists itself), `POST /voice/realtime/metric`
+  (client-observed latency: connect time, speech-end-to-first-audio, barge-in
+  success, errors/reconnects — never raw audio).
+- `store/realtimeMetrics.js` + `migrations/044_realtime_voice.sql`
+  (`voice_realtime_events`) — the latency/usage ledger.
+- Session context is compact by design: self-model, today's chief-brief
+  synthesis/action, active life chapters, open commitments, this week's
+  intention, current recovery band — NOT the full Ask prompt. Anything beyond
+  that comes from a live tool call, so a stale session-start snapshot never
+  substitutes for a fresh lookup.
+
+**Mobile** (`mobile/src/lib/realtimeVoice.ts`, `mobile/src/components/
+TalkOverlay.tsx`) — a `RealtimeVoiceSession` class owns the `RTCPeerConnection`,
+the mic track, and the `"oai-events"` data channel: negotiates the SDP
+exchange with OpenAI's `/v1/realtime/calls`, streams transcript deltas back to
+the UI, relays tool calls to the backend and replies over the data channel,
+and reports latency events. `TalkOverlay` is a calm, single-orb presence
+indicator (listening/thinking/speaking/executing) with a live two-sided
+transcript, mute/end/text-input controls, and an entry point next to
+`AskOverlay`'s existing push-to-talk mic — the old path stays available
+unconditionally as a fallback.
+
+Guarded like every other native-module dependency in this codebase (mirrors
+`lib/voice.ts`'s `expo-av` guard): `react-native-webrtc` is a NEW native
+module the currently-shipped binary doesn't have. A top-level import would
+crash old binaries on an OTA update, so the import is wrapped in try/catch and
+`realtimeVoiceAvailable` gates the UI entry point — it stays hidden until the
+next native (EAS) build ships. `EXPO_PUBLIC_REALTIME_VOICE_ENABLED` is a
+second, independent staged-rollout flag on top of that.
+
+Env (backend): `OPENAI_API_KEY`, `REALTIME_MODEL` (default
+`gpt-realtime-2.1`), `REALTIME_VOICE` (default `cedar`), `VOICE_REALTIME_ENABLED`
+(kill switch — `false` forces every client back onto the old Gemini
+push-to-talk path with no redeploy). Migration: `044_realtime_voice.sql`.
+
 ## Roadmap
 
 - **Phase 0 — Foundation (this milestone).** DB + canonical schema + connector
@@ -328,6 +402,14 @@ Env: `ATTENTION_DAILY_BUDGET` (default 4), `ATTENTION_CRITICAL_RESERVE`
   from recorded outcomes; deferrals surface in the brief. ✅
   (`intelligence/attention.js`, `intelligence/events.js`, `notify/dispatch.js`,
   `store/attention.js`, `store/consent.js`, `migrations/043_attention.sql`.)
+- **Phase 8 — Talk to NormOS (live voice).** OpenAI Realtime + WebRTC
+  speech-to-speech replaces the record-upload-STT-ask-TTS-download voice-memo
+  flow with a persistent, interruptible conversation, hybridized with the
+  existing Ask engine (`deep_ask`) so nothing about Ask's retrieval/reasoning
+  quality is lost. ✅ (`services/realtime.js`, `chat/realtimeTools.js`,
+  `routes/realtime.js`, `mobile/src/lib/realtimeVoice.ts`,
+  `mobile/src/components/TalkOverlay.tsx`.) Old push-to-talk stays as a
+  fallback pending a proven native build.
 - **Future — Specialist agents.** Investment Analyst, Career Coach, etc. on the
   shared spine.
 

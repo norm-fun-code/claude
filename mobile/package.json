@@ -8,6 +8,7 @@
     "android": "expo run:android"
   },
   "dependencies": {
+    "@config-plugins/react-native-webrtc": "^10.0.0",
     "@expo-google-fonts/inter": "^0.4.2",
     "@expo-google-fonts/sora": "^0.4.2",
     "@react-native-async-storage/async-storage": "1.23.1",
@@ -27,7 +28,8 @@
     "react-native": "0.76.5",
     "react-native-health": "^1.19.0",
     "react-native-markdown-display": "^7.0.2",
-    "react-native-reanimated": "~3.16.1"
+    "react-native-reanimated": "~3.16.1",
+    "react-native-webrtc": "^118.0.7"
   },
   "devDependencies": {
     "@babel/core": "^7.24.0",

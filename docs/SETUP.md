@@ -37,6 +37,7 @@ don't need all of them — start with the AI, then add sources over time.
 | **Notes** | `NOTION_API_KEY` + `NOTION_PAGE_ID` | notion.so → Settings → Connections | for Wisdom |
 | **Calendar + email** | `GOOGLE_*` | run `npm --prefix backend run get-tokens` | for Today |
 | **Weather** | `OPENWEATHER_API_KEY` | openweathermap.org (free) | optional |
+| **Live voice ("Talk to NormOS")** | `OPENAI_API_KEY` | platform.openai.com → API keys | optional — old push-to-talk voice works without it |
 
 Embeddings (for library search/chat) use your Gemini key by default, or a fully
 local model — see "Privacy" below.
@@ -95,6 +96,15 @@ npx expo run:ios     # builds + installs on a connected iPhone
 In `mobile/src/config.ts`, set `API_BASE` to your Mac's local IP so the phone can
 reach the backend on your Wi-Fi. Approve HealthKit + notification prompts on first
 launch.
+
+**Live voice ("Talk to NormOS")** needs `react-native-webrtc`, a native module
+just added to `mobile/package.json` — it requires a **fresh native build**
+(`npx expo run:ios` again, or a new EAS `development`/`preview` build), not
+just a JS reload. Until that build ships, the app falls back to the existing
+push-to-talk voice automatically (the new mic-alternative control simply
+stays hidden). Set `OPENAI_API_KEY` on the backend (Railway or `.env`) to
+enable it server-side; the kill switch `VOICE_REALTIME_ENABLED=false` forces
+every client back onto the old path without a redeploy if something misbehaves.
 
 ---
 

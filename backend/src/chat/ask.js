@@ -711,4 +711,4 @@ function parseAction(text) {
   return parseActions(text)[0] ?? null;
 }
 
-module.exports = { ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot, parseAction, parseActions, looksLikeCommand };
+module.exports = { ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot, parseAction, parseActions, looksLikeCommand, validateAction };

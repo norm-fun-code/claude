@@ -35,7 +35,14 @@
           "isClinicalDataEnabled": false
         }
       ],
-      "expo-font"
+      "expo-font",
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "NormOS does not use the camera. This permission is required by the WebRTC library but is never triggered.",
+          "microphonePermission": "NormOS uses the microphone so you can talk to your chief of staff — ask questions, give voice commands, and have a live conversation in Talk to NormOS."
+        }
+      ]
     ],
     "assetBundlePatterns": [
       "**/*"

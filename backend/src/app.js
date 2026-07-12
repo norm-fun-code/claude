@@ -26,6 +26,7 @@ const { createDiagnosticsRouter } = require('./routes/diagnostics');
 const { createRecoveryRouter } = require('./routes/recovery');
 const { createChatRouter } = require('./routes/chat');
 const { createVoiceRouter } = require('./routes/voice');
+const { createRealtimeRouter } = require('./routes/realtime');
 const { createAudioRouter } = require('./routes/audio');
 const { createEngagementRouter } = require('./routes/engagement');
 const { createSchedulingRouter } = require('./routes/scheduling');
@@ -134,6 +135,10 @@ function createApp({ bootTime, port, quiet } = {}) {
   // Voice routes (push-to-talk ask, standalone transcribe) live in
   // src/routes/voice.js — the eighteenth router extraction out of this file.
   app.use('/api', createVoiceRouter());
+
+  // Talk to NormOS: OpenAI Realtime voice mode (session mint, tool relay,
+  // turn persistence, latency metrics) lives in src/routes/realtime.js.
+  app.use('/api', createRealtimeRouter());
 
   // Spoken brief-narration routes live in src/routes/audio.js — the
   // nineteenth router extraction out of this file.
