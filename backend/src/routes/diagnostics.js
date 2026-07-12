@@ -26,16 +26,22 @@ function createDiagnosticsRouter() {
   // mounted at the same '/api' prefix. See src/middleware/adminAuth.js.
   router.use(['/diag', '/debug'], requireAdminToken);
 
-  // Diagnostic: show EXACTLY how 30-day income/spending are computed from Monarch
-  // transactions, so a mismatch with Monarch's report can be debugged from the data
-  // (not screenshots). Mirrors the sync's classification. ?days=30 by default.
+  // Diagnostic: show EXACTLY how income/spending/discretionary are computed
+  // from Monarch transactions, so a mismatch with Monarch's Reports view can
+  // be debugged from the data (not screenshots). Mirrors the sync's
+  // classification. ?days=30 by default; ?mtd=1 scopes to the current LOCAL
+  // (America/New_York) calendar month instead — the same window the stored
+  // spending_discretionary metric and the Chief Brief's MTD figure use.
   router.get('/debug/wealth-income', asyncHandler(async (req, res) => {
     const sync = require('../connectors/monarch-mcp-sync');
     const monarchMcp = require('../services/monarch-mcp');
     const { isInternalTransfer, isExcludedIncome, isNonIncomePositive, isFixedCategory } = require('../connectors/monarch');
-    const days = Math.min(Number(req.query.days) || 30, 90);
+    const { localMonthStartUtc } = require('../util/date');
+    const tz = process.env.TZ || 'America/New_York';
     const ymd = (d) => new Date(d).toISOString().slice(0, 10);
-    const start = ymd(new Date(Date.now() - days * 864e5));
+    const mtd = req.query.mtd === '1' || req.query.mtd === 'true';
+    const days = Math.min(Number(req.query.days) || 30, 90);
+    const start = mtd ? ymd(localMonthStartUtc(tz, new Date())) : ymd(new Date(Date.now() - days * 864e5));
     const end = ymd(new Date());
     const today = end;
 
@@ -46,7 +52,7 @@ function createDiagnosticsRouter() {
       sync.fixedCategoryNames(),
     ]);
 
-    // Monarch's OWN aggregation (now the PRIMARY source for the stored metrics).
+    // Monarch's OWN aggregation (the PRIMARY source for the stored metrics).
     // These are the numbers that should match Monarch's Reports view to the dollar.
     const sumCash = (cf) => {
       let total = 0;
@@ -54,20 +60,31 @@ function createDiagnosticsRouter() {
         if (String(k).slice(0, 10) > today) continue;
         total += Math.abs(v);
       }
-      return Math.round(total);
+      return Math.round(total * 100) / 100;
     };
     let cashflow = null;
+    let legacyExcludeCategoriesDiscretionary = null;
     try {
-      const [ci, ce, cd] = await Promise.all([
+      const [ci, ce] = await Promise.all([
         sync.dailyCashflow(start, end, 'income', transferCats),
         sync.dailyCashflow(start, end, 'expense', transferCats),
-        sync.dailyCashflow(start, end, 'expense', [...new Set([...transferCats, ...fixedCats])]),
       ]);
       cashflow = {
         income: sumCash(ci),
         spending: sumCash(ce),
-        spending_discretionary: sumCash(cd),
-        note: 'GetCashFlow (Monarch Reports math) — PRIMARY source for stored metrics',
+        note: 'GetCashFlow (Monarch Reports math) — PRIMARY source for the stored spending/income metrics',
+      };
+      // Diagnostic-only: the OLD independently-filtered GetCashFlow call the
+      // sync used to also make for "discretionary" (exclude_categories:
+      // transferCats+fixedCats). No longer used by the actual sync (see
+      // connectors/monarch-mcp-sync.js) — kept here ONLY to reveal whether
+      // Monarch's exclude_categories filter would have diverged from the
+      // derived (total - fixed) figure below, i.e. to directly test whether
+      // that was ever part of the discrepancy.
+      const cd = await sync.dailyCashflow(start, end, 'expense', [...new Set([...transferCats, ...fixedCats])]);
+      legacyExcludeCategoriesDiscretionary = {
+        value: sumCash(cd),
+        note: 'NOT used by the sync anymore — comparison only, to check whether exclude_categories ever diverged from (total - fixed)',
       };
     } catch (err) {
       cashflow = { error: err.message };
@@ -75,15 +92,31 @@ function createDiagnosticsRouter() {
 
     let income = 0, spend = 0, transfersSkipped = 0;
     const incomeTxns = [], excludedPositives = [];
+    // Category-level breakdown of EXPENSE transactions in the window — the
+    // exact categories/dates a discrepancy investigation needs. fixed:true
+    // marks categories excluded from discretionary (isFixedCategory).
+    const byCategory = new Map(); // category -> { total, fixed, count, txns: [{date,merchant,amount}] }
+    let fixedTotal = 0;
     for (const t of txns || []) {
       if (!t || !t.date) continue;
       const amount = Number(t.amount);
       if (!Number.isFinite(amount) || amount === 0) continue;
-      const category = String(t.category || '');
+      const category = String(t.category || '(uncategorized)');
       const categoryType = String(t.category_type || t.categoryType || '').toLowerCase();
       if (categoryType === 'transfer' || isInternalTransfer(category)) { transfersSkipped++; continue; }
       if (String(t.date).slice(0, 10) > today) continue;
-      if (amount < 0) { spend += Math.abs(amount); continue; }
+      if (amount < 0) {
+        const abs = Math.abs(amount);
+        spend += abs;
+        const fixed = isFixedCategory(category);
+        if (fixed) fixedTotal += abs;
+        const slot = byCategory.get(category) || { total: 0, fixed, count: 0, txns: [] };
+        slot.total = Math.round((slot.total + abs) * 100) / 100;
+        slot.count += 1;
+        slot.txns.push({ date: String(t.date).slice(0, 10), merchant: t.merchant, amount: Math.round(abs * 100) / 100 });
+        byCategory.set(category, slot);
+        continue;
+      }
       const inIncomeCategory = incomeCats.size
         ? incomeCats.has(category.toLowerCase())
         : (categoryType ? categoryType === 'income' : (!isExcludedIncome(category) && !isNonIncomePositive(category)));
@@ -94,16 +127,56 @@ function createDiagnosticsRouter() {
     incomeTxns.sort((a, b) => b.amount - a.amount);
     excludedPositives.sort((a, b) => b.amount - a.amount);
 
+    const categoryBreakdown = [...byCategory.entries()]
+      .map(([category, s]) => ({ category, ...s, txns: s.txns.sort((a, b) => b.amount - a.amount).slice(0, 10) }))
+      .sort((a, b) => b.total - a.total);
+    const categoryTotalCheck = Math.round(categoryBreakdown.reduce((a, c) => a + c.total, 0) * 100) / 100;
+
+    // What's actually stored right now for this window, grouped by day + source
+    // + metric — the exact request the investigation asked for, and the
+    // fastest way to spot a stale row a live sync doesn't currently touch.
+    const { rows: storedRows } = await db.query(
+      `SELECT (ts AT TIME ZONE $3)::date AS day, source, metric, value
+         FROM metrics
+        WHERE domain = 'wealth' AND metric IN ('spending', 'spending_discretionary')
+          AND ts >= $1::timestamptz AND ts <= $2::timestamptz
+        ORDER BY day, metric, source`,
+      [`${start}T00:00:00Z`, `${end}T23:59:59Z`, tz]
+    ).catch(() => ({ rows: [] }));
+    const storedByMetric = { spending: [], spending_discretionary: [] };
+    for (const r of storedRows) {
+      const day = r.day instanceof Date ? r.day.toISOString().slice(0, 10) : String(r.day).slice(0, 10);
+      (storedByMetric[r.metric] || (storedByMetric[r.metric] = [])).push({ day, source: r.source, value: Number(r.value) });
+    }
+    const storedTotal = (metric) => Math.round(storedByMetric[metric].reduce((a, r) => a + r.value, 0) * 100) / 100;
+
     res.json({
-      window: { start, end, days },
+      window: { start, end, mtd, days: mtd ? undefined : days, tz },
       mcpConfigured: monarchMcp.isConfigured(),
-      cashflow,                                     // ⇐ PRIMARY: should match Monarch Reports
+      cashflow,                                       // ⇐ PRIMARY: should match Monarch Reports total spend/income
+      legacyExcludeCategoriesDiscretionary,           // comparison only — see note above
+      derivedDiscretionary: {
+        // The sync's ACTUAL current logic: total expense minus fixed-housing,
+        // from the SAME transaction set — this is what spending_discretionary
+        // is now computed from.
+        totalExpense: Math.round(spend * 100) / 100,
+        fixedHousing: Math.round(fixedTotal * 100) / 100,
+        discretionary: Math.round((spend - fixedTotal) * 100) / 100,
+      },
+      fixedCategoriesDetected: [...fixedCats],
+      categoryBreakdown,                              // every expense category, total, whether it's fixed, top txns
+      categoryTotalReconciles: categoryTotalCheck === Math.round(spend * 100) / 100,
+      categoryTotal: categoryTotalCheck,
+      storedMetrics: {
+        spending: { rows: storedByMetric.spending, total: storedTotal('spending') },
+        spending_discretionary: { rows: storedByMetric.spending_discretionary, total: storedTotal('spending_discretionary') },
+      },
       incomeCategoriesDetected: [...incomeCats],   // empty ⇒ GetCategories shape didn't parse → heuristic fallback
       transferCategoriesDetected: [...transferCats],
       txnCount: (txns || []).length,
       txnDerived: {                                 // FALLBACK math (only used if GetCashFlow is down)
-        income30d: Math.round(income),
-        spending30d: Math.round(spend),
+        income: Math.round(income * 100) / 100,
+        spending: Math.round(spend * 100) / 100,
         transfersSkipped,
       },
       topIncomeTxns: incomeTxns.slice(0, 20),       // what's COUNTED as income (fallback path)

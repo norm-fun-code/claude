@@ -23,6 +23,20 @@ const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 // --- pure helpers -------------------------------------------------------------
 
+// Bug bash finding: `today` drives every "is this transaction pending/future-
+// dated" decision in syncViaMcp (and matches Monarch's own Reports semantics,
+// which reason in the user's local day) — but ymd(new Date()) slices
+// toISOString(), which is always UTC. For ~4-5 hours every evening ET (after
+// UTC has already rolled to the next calendar day but it's still "today"
+// locally), a genuinely pending transaction dated exactly tomorrow would
+// compare EQUAL to (not greater than) a UTC-based `today` and slip past the
+// `day > today` filter instead of being excluded. `now` is an explicit param
+// (defaulting to the real clock) so this is directly testable without mocking
+// globals — same pattern as util/date.js's localMonthStartUtc.
+function localToday(tz = process.env.TZ || 'America/New_York', now = new Date()) {
+  return now.toLocaleDateString('en-CA', { timeZone: tz });
+}
+
 // Midpoint day (YYYY-MM-DD) between two inclusive dates, for adaptive chunking.
 function midDate(start, end) {
   const s = dayTs(start).getTime();
@@ -157,15 +171,20 @@ async function syncViaMcp(ctx) {
   // Make sure the shared 'monarch' source row exists (FK for metrics/docs).
   await registerSource({ id: SOURCE, domain: 'wealth', displayName: 'Monarch (CSV import)' });
 
+  // ctx.now is a test-only override (defaults to the real clock in
+  // production) — see localToday's comment for why "today" must be
+  // explicitly parameterizable to test the UTC-vs-local boundary directly.
+  const now = ctx.now ? new Date(ctx.now) : new Date();
+
   // Incremental window: 35-day lookback from last sync (45 on first run) so
   // late recategorizations in Monarch reach our stored docs/metrics.
   const lookbackDays = Number(process.env.MONARCH_LOOKBACK_DAYS) || 35;
   const since = ctx.lastSyncAt
     ? new Date(new Date(ctx.lastSyncAt).getTime() - lookbackDays * DAY)
-    : new Date(Date.now() - 45 * DAY);
+    : new Date(now.getTime() - 45 * DAY);
   const startDate = ymd(since);
-  const endDate = ymd(new Date());
-  const today = ymd(new Date());
+  const endDate = localToday(process.env.TZ || 'America/New_York', now);
+  const today = endDate;
 
   const metrics = [];
   const m = (metric, value, day) => ({
@@ -217,7 +236,18 @@ async function syncViaMcp(ctx) {
   }
 
   const expByDay = new Map();
-  const discByDay = new Map();
+  // Bug bash finding: this used to tally NON-fixed spend directly (discByDay,
+  // Monarch's "discretionary" concept computed independently). Now it tallies
+  // the FIXED-HOUSING subset instead — discretionary is DERIVED as
+  // total - fixed (see below), from the SAME transaction universe as total,
+  // so the subtraction relationship holds to the cent by construction. This
+  // also completely removes the separate GetCashFlow(exclude_categories:
+  // fixedCats) call that used to compute "discretionary" independently — if
+  // Monarch's exclude_categories filter doesn't behave as assumed (expects
+  // IDs not names, or doesn't match Reports' semantics), that call could
+  // silently diverge from total-minus-fixed. Deriving instead of
+  // independently querying removes that entire failure mode.
+  const fixedByDay = new Map();
   const incByDay = new Map();          // strict: category matches a Monarch income category
   const incByDayHeuristic = new Map(); // lenient: any earned-looking positive inflow
   for (const t of txns) {
@@ -234,8 +264,8 @@ async function syncViaMcp(ctx) {
     if (amount < 0) {
       const spend = Math.abs(amount);
       expByDay.set(day, (expByDay.get(day) || 0) + spend);
-      if (!isFixedCategory(category)) {
-        discByDay.set(day, (discByDay.get(day) || 0) + spend);
+      if (isFixedCategory(category)) {
+        fixedByDay.set(day, (fixedByDay.get(day) || 0) + spend);
       }
     } else {
       // Earned income only — count a positive amount ONLY when its category is one
@@ -273,24 +303,21 @@ async function syncViaMcp(ctx) {
   // transaction-level re-derivation above, which over-counted income (positive
   // deposits/reimbursements that Monarch's income report excludes) and missed
   // refund-netting on spending. The transaction loop is kept as a FALLBACK for
-  // when GetCashFlow is unavailable, and still backs spending_discretionary.
+  // when GetCashFlow is unavailable. Discretionary is NOT independently
+  // fetched at all (see fixedByDay above) — it's derived from whichever total
+  // wins below, so there is only ONE authoritative expense number per day,
+  // never two independently-filtered queries that could diverge.
   //
   // GetCashFlow is Monarch-signed: income rows positive, expense rows negative.
   // exclude_categories drops transfers / CC-payments so we never double-count.
-  const [transferCats, fixedCats] = await Promise.all([
+  const [transferCats] = await Promise.all([
     transferCategoryNames(),
-    fixedCategoryNames(),
   ]);
-  // Settled independently (not Promise.all) — a transient failure on the expense
-  // or discretionary call must not blank out income too (and vice versa). With
-  // Promise.all, one rejected leg left ALL THREE at their empty-Map default,
-  // which then fed the "write 0 for every day with no data" loop below and
-  // could zero out real income across the whole lookback window from an
-  // unrelated hiccup.
-  const [cashIncomeRes, cashExpenseRes, cashDiscretionaryRes] = await Promise.allSettled([
+  // Settled independently (not Promise.all) — a transient failure on the
+  // expense call must not blank out income too (and vice versa).
+  const [cashIncomeRes, cashExpenseRes] = await Promise.allSettled([
     dailyCashflow(startDate, endDate, 'income', transferCats),
     dailyCashflow(startDate, endDate, 'expense', transferCats),
-    dailyCashflow(startDate, endDate, 'expense', [...new Set([...transferCats, ...fixedCats])]),
   ]);
   const settled = (r, label) => {
     if (r.status === 'fulfilled') return r.value;
@@ -299,7 +326,6 @@ async function syncViaMcp(ctx) {
   };
   const cashIncome = settled(cashIncomeRes, 'income');
   const cashExpense = settled(cashExpenseRes, 'expense');
-  const cashDiscretionary = settled(cashDiscretionaryRes, 'discretionary');
 
   // Normalize a Monarch-signed cash-flow Map into a positive, YYYY-MM-DD-keyed
   // Map. Income/expense are made positive; keys are sliced to the day.
@@ -314,7 +340,6 @@ async function syncViaMcp(ctx) {
   };
   const incCash = normalize(cashIncome);
   const expCash = normalize(cashExpense);
-  const discCash = normalize(cashDiscretionary);
 
   // Prefer Monarch's aggregation; fall back to transaction-derived maps when the
   // GetCashFlow call returned nothing (so finances still flow if it's down).
@@ -323,10 +348,9 @@ async function syncViaMcp(ctx) {
   // rescues the case where GetCashFlow('income') is empty AND the transaction
   // `category` strings don't line up with GetCategories' names, which otherwise
   // leaves income stuck at $0 indefinitely (the guard below only PRESERVES $0, it
-  // never repairs it). Spending/discretionary keep their single fallback.
+  // never repairs it).
   const incSrc = incCash.size ? incCash : (incByDay.size ? incByDay : incByDayHeuristic);
   const expSrc = expCash.size ? expCash : expByDay;
-  const discSrc = discCash.size ? discCash : discByDay;
   // One-line visibility into which tier produced income this run — so a recurring
   // $0 is diagnosable from logs instead of guesswork.
   const incTier = incCash.size ? 'getcashflow' : (incByDay.size ? 'strict-category' : (incByDayHeuristic.size ? 'heuristic' : 'none'));
@@ -334,17 +358,55 @@ async function syncViaMcp(ctx) {
   console.log(`[monarch_mcp_sync] income source=${incTier} days=${incSrc.size} total=$${Math.round(incTotal)} ` +
     `(getcashflow:${incCash.size}d strict:${incByDay.size}d heuristic:${incByDayHeuristic.size}d, incomeCats=${incomeCats.size})`);
 
-  // Spending / discretionary: emit on the days Monarch reports them (unchanged).
-  for (const day of new Set([...expSrc.keys(), ...discSrc.keys()])) {
-    if (expSrc.has(day)) metrics.push(m('spending', expSrc.get(day) || 0, day));
-    if (discSrc.has(day)) metrics.push(m('spending_discretionary', discSrc.get(day) || 0, day));
+  // Discretionary = total expense minus fixed-housing, within the SAME day —
+  // derived, never independently queried, so "total - fixed = discretionary"
+  // holds to the cent by construction. fixedByDay always comes from the
+  // transaction loop (there's no independent GetCashFlow call for it to
+  // diverge from). Clamped at 0 defensively: if GetCashFlow's total for a day
+  // (refund-netted) ever comes in lower than the transaction-derived fixed
+  // amount for that same day, a negative "discretionary" would be nonsensical
+  // — clamp and log so a real mismatch is visible rather than silently wrong.
+  const discretionaryByDay = new Map();
+  for (const day of new Set([...expSrc.keys(), ...fixedByDay.keys()])) {
+    const total = expSrc.get(day) || 0;
+    const fixed = fixedByDay.get(day) || 0;
+    const disc = total - fixed;
+    if (disc < 0) {
+      console.error(`[monarch_mcp_sync] ${day}: fixed-housing ($${fixed.toFixed(2)}) exceeds total expense ($${total.toFixed(2)}) — clamping discretionary to 0; likely a refund-netting mismatch between GetCashFlow's total and the transaction-derived fixed amount`);
+    }
+    discretionaryByDay.set(day, Math.max(0, disc));
   }
+
+  // Bug bash root cause: this used to emit spending/spending_discretionary
+  // ONLY on days present in expSrc/discSrc — a day whose spend dropped to
+  // ZERO (every transaction that day deleted, refunded, or recategorized
+  // into a fixed category) was simply ABSENT from this run's maps, so its
+  // stale, previously-stored (higher) value was never overwritten and kept
+  // inflating every MTD sum indefinitely. Spending/discretionary now emit for
+  // EVERY day in the window (0 when none), exactly like income/net_cashflow
+  // already do below — a day that goes quiet gets an explicit 0 row that
+  // correctly replaces (not sums with, per insertMetrics' upsert semantics)
+  // whatever was stored before.
+  //
+  // Guard mirrors income's: expSrc.size === 0 while real transactions exist
+  // this window is an expense-DETECTION failure (GetCashFlow down and the
+  // transaction fallback also came up empty), not a genuinely expense-free
+  // month — skip the write rather than zeroing out real history.
+  const expenseDetectionFailed = expSrc.size === 0 && txns.length > 0;
+  if (expenseDetectionFailed) {
+    console.error(`[monarch_mcp_sync] no expenses detected across ${txns.length} transactions in ${startDate}..${endDate} — treating as a detection failure and skipping the spending/spending_discretionary write rather than zeroing real history`);
+  } else {
+    for (let day = startDate; day <= endDate; day = nextDay(day)) {
+      metrics.push(m('spending', expSrc.get(day) || 0, day));
+      metrics.push(m('spending_discretionary', discretionaryByDay.get(day) || 0, day));
+    }
+  }
+
   // Income / net_cashflow: emit for EVERY day in the window (0 when none). Income
   // lands on only ~10 paycheck days, but the OLD transaction-level sync counted
   // deposits/transfers as income across many more days. Emitting only on new-income
   // days left that stale per-day income in place, inflating the 30-day total
   // (~$30k vs Monarch's ~$19.5k). Writing 0 on the non-income days overwrites it.
-  // Spending never had this bug — expense days are frequent and all get rewritten.
   //
   // Guard: incSrc.size === 0 across a 35-45 day window with real transactions
   // present is a signal that income detection FAILED this run (GetCashFlow down
@@ -409,4 +471,5 @@ module.exports = {
   incomeCategoryNames,
   transferCategoryNames,
   fixedCategoryNames,
+  localToday,
 };

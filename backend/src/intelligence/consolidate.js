@@ -17,7 +17,7 @@ const annotationsStore = require('../store/annotations');
 const selfModelStore = require('../store/selfModel');
 const cat = require('./catalog');
 const { query: dbQuery } = require('../db');
-const { localDayBoundsUtc } = require('../util/date');
+const { localDayBoundsUtc, localMonthStartUtc } = require('../util/date');
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -151,12 +151,16 @@ async function gatherHabits(d7, d56) {
 }
 
 async function gatherWealth(d30) {
-  // MTD = calendar month, not rolling 30d.
+  // MTD = calendar month, not rolling 30d — and specifically the user's LOCAL
+  // (America/New_York) calendar month, not the UTC one. Bug bash finding:
+  // Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) used the UTC month,
+  // which silently disagrees with the local month for several hours around
+  // every month boundary (e.g. still July in ET while already August in UTC).
   // Use spending_DISCRETIONARY so rent/mortgage (fixed housing) is excluded — an
   // MTD number that includes a $X,XXX rent line isn't an actionable "how am I
   // pacing" figure, it's dominated by a bill that never changes.
   const now = new Date();
-  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const monthStart = localMonthStartUtc(process.env.TZ || 'America/New_York', now);
   // All three fetches below are independent — parallelize.
   const [nw, nwPrev, spending] = await Promise.all([
     metricsStore.latest({ domain: 'wealth', metric: 'net_worth' }),

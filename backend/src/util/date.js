@@ -114,7 +114,23 @@ function localDayBoundsUtc(tz = 'UTC', now = new Date()) {
   };
 }
 
+/**
+ * UTC instant for the START of the current calendar MONTH in a given
+ * timezone — the month analog of localDayBoundsUtc. Bug bash finding:
+ * consolidate.js's gatherWealth() used to compute "MTD" via
+ * `Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)`, which uses the
+ * UTC calendar month, not the user's LOCAL (America/New_York) one — near a
+ * month boundary (e.g. the first few hours of a new UTC day that are still
+ * the previous day in ET), this silently shifts which days count as
+ * "this month" by up to several hours' worth of transactions.
+ */
+function localMonthStartUtc(tz = 'UTC', now = new Date()) {
+  const ymd = now.toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD
+  const monthFirst = `${ymd.slice(0, 7)}-01`;
+  return new Date(naiveToUtcIso(`${monthFirst}T00:00:00`, tz));
+}
+
 module.exports = {
   formatDate, daysBetween, addDays, dayAnchorTs, safeDate, toMinutesSinceMidnight,
-  naiveToUtcIso, localDayBoundsUtc,
+  naiveToUtcIso, localDayBoundsUtc, localMonthStartUtc,
 };

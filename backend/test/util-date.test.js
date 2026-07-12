@@ -6,7 +6,7 @@
 // proper shared function.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { naiveToUtcIso, localDayBoundsUtc } = require('../src/util/date');
+const { naiveToUtcIso, localDayBoundsUtc, localMonthStartUtc } = require('../src/util/date');
 
 test('a naive datetime string in Eastern time converts to the correct UTC instant', () => {
   // Midnight Eastern on a summer date (EDT, UTC-4) = 4am UTC.
@@ -58,4 +58,31 @@ test('localDayBoundsUtc resolves the correct local day for an evening-ET instant
 test('localDayBoundsUtc is correct across a DST boundary (winter, EST = UTC-5)', () => {
   const { start } = localDayBoundsUtc('America/New_York', new Date('2026-01-15T12:00:00Z'));
   assert.equal(start.toISOString(), '2026-01-15T05:00:00.000Z');
+});
+
+// Bug bash finding: consolidate.js's gatherWealth() computed "MTD" via
+// Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) — the UTC calendar
+// month, not the user's LOCAL one. This silently shifts which days count as
+// "this month" for several hours around every month boundary.
+test('localMonthStartUtc resolves the LOCAL month start, not the UTC one, in the first hours of a new UTC month', () => {
+  // 8pm ET on July 31 is midnight UTC on August 1 — the UTC calendar has
+  // already rolled to August while it's still July in New York. A UTC-based
+  // month boundary would wrongly exclude the rest of July's MTD spending.
+  const now = new Date('2026-08-01T00:30:00Z'); // July 31, 8:30pm EDT
+  const monthStart = localMonthStartUtc('America/New_York', now);
+  assert.equal(monthStart.toISOString(), '2026-07-01T04:00:00.000Z'); // midnight ET, July 1 (EDT, UTC-4)
+  assert.ok(monthStart.getTime() < now.getTime(), 'the still-July instant must fall AFTER July\'s local month start');
+});
+
+test('localMonthStartUtc resolves the new LOCAL month promptly after it actually begins locally', () => {
+  // Midnight ET on August 1 is 4am UTC — still August 1 in UTC too here, no
+  // boundary ambiguity; this just pins down the ordinary case.
+  const now = new Date('2026-08-01T10:00:00Z'); // 6am EDT, August 1
+  const monthStart = localMonthStartUtc('America/New_York', now);
+  assert.equal(monthStart.toISOString(), '2026-08-01T04:00:00.000Z');
+});
+
+test('localMonthStartUtc is correct across a DST boundary (winter, EST = UTC-5)', () => {
+  const monthStart = localMonthStartUtc('America/New_York', new Date('2026-01-15T12:00:00Z'));
+  assert.equal(monthStart.toISOString(), '2026-01-01T05:00:00.000Z');
 });
