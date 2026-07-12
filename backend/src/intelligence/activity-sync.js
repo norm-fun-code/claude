@@ -13,11 +13,25 @@
 // by more than one caller shouldn't live inside a route file.
 const db = require('../db');
 const metricsStore = require('../store/metrics');
+const sourcesStore = require('../store/sources');
 const { estimateActivity } = require('./activity-estimates');
 
 async function syncActivityMinutes(date) {
   try {
     const ts = new Date(`${date}T12:00:00`);
+
+    // Bug bash finding: metrics.source has a hard FK to sources(id), but
+    // neither 'activity' nor 'activity_est' was ever registered — every call
+    // to insertMetrics() below has been throwing a foreign-key violation
+    // since this file was written, silently swallowed by the catch at the
+    // bottom. exercise_minutes never fed training-load/trends, and no-watch
+    // activity estimates never credited the day's steps/active-energy
+    // totals, for ANY logged activity, ever. registerSource is idempotent
+    // (upsert), so calling it here every time is cheap and self-healing.
+    await Promise.all([
+      sourcesStore.registerSource({ id: 'activity', domain: 'health', displayName: 'Logged Activity' }),
+      sourcesStore.registerSource({ id: 'activity_est', domain: 'health', displayName: 'Logged Activity (no-watch estimate)' }),
+    ]);
 
     const { rows } = await db.query(
       `SELECT activity_type, duration_min, no_watch FROM activity_logs

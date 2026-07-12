@@ -97,17 +97,42 @@ async function autonomicRead({ tz, baselineDays = 21 } = {}) {
   };
 }
 
+// Bug bash finding: watch/device-synced steps (source 'apple_health', etc.)
+// are stored as the day's running total (GREATEST upsert) — MAX is correct
+// WITHIN that source. But activity-sync.js's 'activity_est' source is a
+// DIFFERENT, DISJOINT contribution: an estimate for movement the watch never
+// saw at all (an activity logged with "I didn't wear my watch"). Taking a
+// single MAX() across every source silently picks whichever one happens to
+// be larger and drops the other entirely — on a day with real watch-tracked
+// steps AND a logged off-watch activity, the true total is neither number
+// alone, it's the SUM of both. (Caught via a live report: a 70-min no-watch
+// basketball session estimated at ~9,100 steps never moved the day's step
+// count at all, because the day also had ~4,279 watch-tracked steps and the
+// old query took MAX(4279, 9100) — losing the smaller contribution instead
+// of adding it.)
+async function combinedDailyTotal(metric, from, to, tz) {
+  const [watchRows, estRows] = await Promise.all([
+    metricsStore.dailyAggregate({ domain: 'health', metric, from, to, agg: 'max', excludeSource: ['seed', 'activity_est'], tz }),
+    metricsStore.dailyAggregate({ domain: 'health', metric, from, to, agg: 'sum', onlySource: 'activity_est', tz }),
+  ]);
+  const byDay = new Map();
+  for (const r of watchRows) byDay.set(String(r.day), Number(r.value) || 0);
+  for (const r of estRows) {
+    const key = String(r.day);
+    byDay.set(key, (byDay.get(key) || 0) + (Number(r.value) || 0));
+  }
+  return [...byDay.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([day, value]) => ({ day, value }));
+}
+
 /** Today's movement load (steps + active energy) vs a 14-day baseline. */
 async function todayLoad({ tz } = {}) {
   const { from, to } = dayWindow(tz);
   const baseFrom = new Date(from.getTime() - 14 * DAY);
-  // Steps/energy are stored as the day's running total (GREATEST upsert), so the
-  // per-day max is the day total.
   const [stepsToday, stepsBase, energyToday, energyBase] = await Promise.all([
-    metricsStore.dailyAggregate({ domain: 'health', metric: 'steps', from, to, agg: 'max', excludeSource: 'seed' }),
-    metricsStore.dailyAggregate({ domain: 'health', metric: 'steps', from: baseFrom, to: from, agg: 'max', excludeSource: 'seed' }),
-    metricsStore.dailyAggregate({ domain: 'health', metric: 'active_energy', from, to, agg: 'max', excludeSource: 'seed' }),
-    metricsStore.dailyAggregate({ domain: 'health', metric: 'active_energy', from: baseFrom, to: from, agg: 'max', excludeSource: 'seed' }),
+    combinedDailyTotal('steps', from, to, tz),
+    combinedDailyTotal('steps', baseFrom, from, tz),
+    combinedDailyTotal('active_energy', from, to, tz),
+    combinedDailyTotal('active_energy', baseFrom, from, tz),
   ]);
   const steps = stepsToday.length ? round(lastVal(stepsToday)) : null;
   const stepsBaseline = stepsBase.length >= 3 ? round(mean(stepsBase)) : null;
@@ -217,4 +242,10 @@ async function gatherEvening({ tz, isRestDay = false, isSick = false } = {}) {
 module.exports = {
   autonomicRead, todayLoad, todayCheckin, openEveningHabits, eveningHabitsToTrack,
   gatherEvening, dayWindow, detectDeviceDataGap, isSickDay,
+  // Exported for direct, date-parameterized regression testing — todayLoad()
+  // itself is hard-wired to literal wall-clock "today" (dayWindow() reads
+  // `new Date()`), so a test exercising it can't pick an isolated historical
+  // date and inevitably collides with any other test writing to the same
+  // real 'activity_est' source for the same real day.
+  combinedDailyTotal,
 };

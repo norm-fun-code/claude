@@ -111,18 +111,22 @@ async function latest({ domain, metric }) {
  *  timestamp before truncating; node-postgres then hydrates that back as a
  *  Date whose toISOString() reproduces the correct local YYYY-MM-DD, which is
  *  exactly what every caller's day-key extraction already expects. */
-async function dailyAggregate({ domain, metric, from, to, agg = 'avg', excludeSource = null, tz = process.env.TZ || 'America/New_York' }) {
+async function dailyAggregate({ domain, metric, from, to, agg = 'avg', excludeSource = null, onlySource = null, tz = process.env.TZ || 'America/New_York' }) {
   const fn = ['avg', 'min', 'max', 'sum'].includes(agg) ? agg : 'avg';
+  // excludeSource accepts a single source name (existing callers) or an array
+  // (e.g. excluding both 'seed' and an additive-estimate source at once).
+  const excludeArr = excludeSource == null ? null : Array.isArray(excludeSource) ? excludeSource : [excludeSource];
   const { rows } = await query(
-    `SELECT date_trunc('day', ts AT TIME ZONE $6) AS day, ${fn}(value) AS value
+    `SELECT date_trunc('day', ts AT TIME ZONE $7) AS day, ${fn}(value) AS value
        FROM metrics
       WHERE domain = $1 AND metric = $2
         AND ($3::timestamptz IS NULL OR ts >= $3)
         AND ($4::timestamptz IS NULL OR ts <= $4)
-        AND ($5::text IS NULL OR source != $5)
+        AND ($5::text[] IS NULL OR NOT (source = ANY($5)))
+        AND ($6::text IS NULL OR source = $6)
       GROUP BY day
       ORDER BY day ASC`,
-    [domain, metric, from ?? null, to ?? null, excludeSource ?? null, tz]
+    [domain, metric, from ?? null, to ?? null, excludeArr, onlySource ?? null, tz]
   );
   return rows;
 }
