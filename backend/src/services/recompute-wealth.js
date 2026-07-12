@@ -13,12 +13,27 @@ const { mapTransactions } = require('../connectors/monarch');
 
 const FLOW_METRICS = ['spending', 'spending_discretionary', 'income', 'net_cashflow'];
 
-async function recomputeWealthFlows() {
-  // 1) Pull every stored Monarch transaction (documents preserve full history).
+/**
+ * opts.sinceDate (YYYY-MM-DD, optional): scope both the document read and the
+ * metric delete to occurred_at/ts >= sinceDate. An unbounded read against a
+ * long-lived `documents` table can hit the DB's statement timeout — bound it
+ * to a recent window when only recent drift needs correcting. The delete MUST
+ * use the same bound as the read: deleting a wider range than what gets
+ * rebuilt would wipe older days' metrics with nothing to replace them.
+ */
+async function recomputeWealthFlows(opts = {}) {
+  const { sinceDate } = opts;
+  // 1) Pull stored Monarch transactions (documents preserve full history).
   const { rows } = await query(
-    `SELECT occurred_at, metadata
-       FROM documents
-      WHERE source = 'monarch' AND domain = 'wealth' AND metadata ? 'amount'`
+    sinceDate
+      ? `SELECT occurred_at, metadata
+           FROM documents
+          WHERE source = 'monarch' AND domain = 'wealth' AND metadata ? 'amount'
+            AND occurred_at >= $1::date`
+      : `SELECT occurred_at, metadata
+           FROM documents
+          WHERE source = 'monarch' AND domain = 'wealth' AND metadata ? 'amount'`,
+    sinceDate ? [sinceDate] : []
   );
 
   // 2) Reconstruct records mapTransactions understands (field() matches on
@@ -27,7 +42,9 @@ async function recomputeWealthFlows() {
   // there are no transaction documents, leave existing metrics untouched.
   if (rows.length === 0) return { transactions: 0, metricsWritten: 0, skipped: 'no transactions' };
 
-  const today = new Date().toISOString().slice(0, 10);
+  // LOCAL calendar day, not UTC — see localToday in monarch-mcp-sync.js.
+  const tz = process.env.TZ || 'America/New_York';
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
   const seen = new Set();
   const records = [];
   for (const r of rows) {
@@ -55,8 +72,10 @@ async function recomputeWealthFlows() {
   const metricsWritten = await withTransaction(async (client) => {
     const run = (text, params) => client.query(text, params);
     await run(
-      `DELETE FROM metrics WHERE source = 'monarch' AND domain = 'wealth' AND metric = ANY($1)`,
-      [FLOW_METRICS]
+      sinceDate
+        ? `DELETE FROM metrics WHERE source = 'monarch' AND domain = 'wealth' AND metric = ANY($1) AND ts >= $2::date`
+        : `DELETE FROM metrics WHERE source = 'monarch' AND domain = 'wealth' AND metric = ANY($1)`,
+      sinceDate ? [FLOW_METRICS, sinceDate] : [FLOW_METRICS]
     );
     return metricsStore.insertMetrics(metrics, run);
   });

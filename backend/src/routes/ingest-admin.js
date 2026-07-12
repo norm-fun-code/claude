@@ -77,11 +77,20 @@ function createIngestAdminRouter() {
   // the current rules (excludes internal transfers / card payments). The sync
   // skips unchanged CSVs, so this is how historical spending gets corrected
   // without re-uploading. Re-runs analyze() so Insights reflect the new numbers.
+  // ?days=N scopes the rebuild to the last N days (both the document read and
+  // the metric delete) instead of the full stored history — an unbounded scan
+  // of a long-lived documents table can exceed the DB's statement timeout;
+  // bound it when only recent drift needs correcting.
   router.post('/admin/recompute-wealth', asyncHandler(async (req, res) => {
     const { recomputeWealthFlows } = require('../services/recompute-wealth');
-    const result = await recomputeWealthFlows();
+    const days = req.query.days ? Math.min(Number(req.query.days) || 0, 3650) : null;
+    const tz = process.env.TZ || 'America/New_York';
+    const sinceDate = days
+      ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toLocaleDateString('en-CA', { timeZone: tz })
+      : undefined;
+    const result = await recomputeWealthFlows({ sinceDate });
     const analyzed = await analyze().catch((e) => ({ error: e.message }));
-    res.json({ ...result, analyzed: analyzed || null });
+    res.json({ ...result, sinceDate: sinceDate || null, analyzed: analyzed || null });
   }));
 
   // Monarch CSV upload: POST the raw CSV body (transactions OR balances export).
