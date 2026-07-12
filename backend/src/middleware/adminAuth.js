@@ -18,6 +18,7 @@ const ADMIN_PATHS = [
   '/debug',
   '/admin/reset-demo',
   '/admin/recompute-wealth',
+  '/admin/review-run',
   '/ingest/run',
 ];
 

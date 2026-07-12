@@ -19,12 +19,12 @@ const { requireAdminToken } = require('../middleware/adminAuth');
 function createIngestAdminRouter() {
   const router = express.Router();
 
-  // /admin/reset-demo (deletes data), /admin/recompute-wealth, and /ingest/run
-  // are powerful enough to warrant a separate admin token from the general app
-  // token — /weather, /ingest/metrics, and /import/monarch stay on the normal
-  // gate since they're routine data flow, not admin actions. See
+  // /admin/reset-demo (deletes data), /admin/recompute-wealth, /admin/review-run,
+  // and /ingest/run are powerful enough to warrant a separate admin token from
+  // the general app token — /weather, /ingest/metrics, and /import/monarch stay
+  // on the normal gate since they're routine data flow, not admin actions. See
   // src/middleware/adminAuth.js.
-  router.use(['/admin/reset-demo', '/admin/recompute-wealth', '/ingest/run'], requireAdminToken);
+  router.use(['/admin/reset-demo', '/admin/recompute-wealth', '/admin/review-run', '/ingest/run'], requireAdminToken);
 
   // Standalone weather — so the Today card can show/refresh weather on its own,
   // fast, without waiting on the full LLM briefing. Cached briefly in-memory so
@@ -95,6 +95,16 @@ function createIngestAdminRouter() {
     // Insights picks up the refreshed numbers whenever it finishes.
     analyze().catch((e) => console.error('[recompute-wealth] analyze() failed:', e.message));
     res.json({ ...result, sinceDate: sinceDate || null, analyzed: 'started (async, not awaited)' });
+  }));
+
+  // Admin-gated alias for the weekly review generator (the general-token
+  // POST /api/review/run already exists in routes/scheduling.js) — lets an
+  // admin-token holder regenerate this week's review on demand, e.g. to
+  // retry after a run landed on the parse-failure fallback, without needing
+  // the general app token.
+  router.post('/admin/review-run', asyncHandler(async (req, res) => {
+    const { runReview } = require('../intelligence/review');
+    res.json(await runReview());
   }));
 
   // Monarch CSV upload: POST the raw CSV body (transactions OR balances export).
