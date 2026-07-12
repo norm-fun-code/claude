@@ -3,7 +3,7 @@
 //
 // Times are in the server's local time; set the TZ env var (e.g. America/New_York)
 // on your host so "7am" means your 7am. Defaults: ingest+analyze+nudge daily at
-// 07:00, weekly review Monday 07:05. Every job is best-effort and isolated — one
+// 07:00, weekly review Sunday 07:10. Every job is best-effort and isolated — one
 // failing never stops the others or crashes the server.
 const { runIngest } = require('./ingest/run');
 const { analyze } = require('./intelligence/analyze');

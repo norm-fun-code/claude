@@ -574,6 +574,13 @@ export default function App() {
             contentContainerStyle={styles.content}
             refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={c.subtext} />}
             showsVerticalScrollIndicator={false}
+            // Cards embedded here (WeeklyIntentionsCard's goal/context inputs,
+            // BriefCard's alternate-action freeform box, etc.) sit at arbitrary
+            // scroll positions, not pinned to the bottom like AskOverlay/
+            // TalkOverlay's chat input — so a fixed bottom-padding trick doesn't
+            // bring a focused field into view, only a real "scroll to it" does.
+            // This RN 0.71+ prop does exactly that on iOS.
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
           >
             <Header date={d?.date ?? today} />
             <AnimatedEntry key={tab} delay={0} distance={6} style={styles.titleRow}>
