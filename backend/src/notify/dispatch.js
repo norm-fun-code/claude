@@ -9,7 +9,9 @@ const attentionStore = require('../store/attention');
 const consentStore = require('../store/consent');
 const devicesStore = require('../store/devices');
 const nudgesStore = require('../store/nudges');
-const { sendPush } = require('./expo');
+// Imported as a module object (not destructured) so tests can stub
+// expo.sendPush without the captured reference going stale.
+const expo = require('./expo');
 const { judge, eventKey } = require('../intelligence/attention');
 const { withinQuietHours } = require('../intelligence/nudges');
 
@@ -67,47 +69,77 @@ async function buildContext(overrides = {}) {
  *  existing consumers keep working unchanged during this incremental migration.
  */
 async function execute(event, decision, { send = true } = {}) {
-  const wantsPush = decision.deliver?.channel === 'push';
-  let delivered = false;
-  let deliveredChannel = decision.deliver?.channel ?? null;
+  const channel = decision.deliver?.channel ?? null;
+  const wantsPush = channel === 'push';
   const key = eventKey(event);
 
-  if (wantsPush) {
-    try {
-      // Mirrors the pre-policy watchers exactly: tokens are only fetched
-      // (and a real push only attempted) when `send` is true; a dry-run
-      // caller (send:false — tests, --dry-run CLI flags) still records the
-      // `nudges` row as 'pending', matching old watch.js/runNudges behavior,
-      // so callers inspecting that table after a dry run see what WOULD have
-      // gone out.
-      const tokens = send ? await devicesStore.listActiveTokens() : [];
-      const nudgeStatus = send && tokens.length === 0 ? 'skipped' : 'pending';
-      const nudgeId = await nudgesStore.recordNudge({
-        dedupKey: key, title: event.title, body: event.body,
-        priority: decision.scores?.value ?? 0.5,
-        basis: { type: event.type, source: event.source, domain: event.domain, subject: event.subject },
-        status: nudgeStatus,
-      });
-      if (send && tokens.length > 0) {
-        const r = await sendPush(tokens, { title: event.title, body: event.body, data: { key, source: event.source } });
-        for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
-        if (nudgeId != null) await nudgesStore.markStatus(nudgeId, 'sent');
-        delivered = true;
-      } else {
-        // Either a dry run, or no device registered (a delivery-
-        // infrastructure gap, not a policy decision) — nothing was actually
-        // sent, so this event's ledger slot is an audit fact, not a real
-        // interruption.
-        deliveredChannel = null;
-      }
-    } catch (err) {
-      console.error('[dispatch] push failed:', err.message);
-      deliveredChannel = null; // delivery failure -> not counted as delivered
-    }
+  // Non-push disposition (store_silently, update_belief, add_to_brief,
+  // ask_question, or a push disposition deferred to the brief/question channel
+  // by quiet hours). No delivery, no budget spend — just the audit row, tagged
+  // with the surfacing channel so brief/question entries still count toward the
+  // fact's cooldown (store_silently/update_belief pass null and don't).
+  if (!wantsPush) {
+    const id = await attentionStore.record({ event, decision, delivered: false, deliveredChannel: channel });
+    return { id, delivered: false, decision };
   }
 
-  const id = await attentionStore.record({ event, decision, delivered, deliveredChannel: delivered ? deliveredChannel : null });
-  return { id, delivered, decision };
+  const nudgeBasis = { type: event.type, source: event.source, domain: event.domain, subject: event.subject };
+  const nudgePriority = decision.scores?.value ?? 0.5;
+
+  // Dry run: NEVER reserve a slot or touch the budget. Preserve the legacy
+  // behavior of recording what WOULD have gone out (`nudges` row 'pending')
+  // plus a budget-neutral audit row (delivery_state 'stored', delivered=false),
+  // so a --dry-run caller inspecting either table sees the intended send.
+  if (!send) {
+    await nudgesStore.recordNudge({ dedupKey: key, title: event.title, body: event.body, priority: nudgePriority, basis: nudgeBasis, status: 'pending' });
+    const id = await attentionStore.record({ event, decision, delivered: false, deliveredChannel: null });
+    return { id, delivered: false, decision };
+  }
+
+  // Real push: reserve atomically (Phase 1), deliver OUTSIDE any DB txn, then
+  // finalize the reservation (Phase 2). This is the whole point of the change —
+  // the cooldown/budget/critical rechecks and the slot claim happen together
+  // under one cluster-wide lock, so concurrent dispatchers can't double-send or
+  // overshoot the budget.
+  const reservation = await attentionStore.reserveDelivery({ event, decision });
+  if (!reservation.proceed) {
+    // Lost a recheck (cooldown / daily budget / critical reserve / retry cap).
+    // Record a `nudges` row reflecting the non-delivery so GET /api/nudges stays
+    // consistent with the ledger.
+    await nudgesStore.recordNudge({ dedupKey: key, title: event.title, body: event.body, priority: nudgePriority, basis: nudgeBasis, status: 'skipped' });
+    return { id: reservation.id, delivered: false, decision, skippedReason: reservation.reason };
+  }
+
+  let delivered = false;
+  let nudgeId = null;
+  try {
+    const tokens = await devicesStore.listActiveTokens();
+    nudgeId = await nudgesStore.recordNudge({
+      dedupKey: key, title: event.title, body: event.body, priority: nudgePriority, basis: nudgeBasis,
+      status: tokens.length === 0 ? 'skipped' : 'pending',
+    });
+    if (tokens.length === 0) {
+      // No registered device — a delivery-infrastructure gap, not an
+      // interruption. Release the reservation as 'skipped' so the budget slot
+      // is freed (nothing actually reached the user) and the fact stays
+      // retry-eligible once a device registers.
+      await attentionStore.finalizeDelivery(reservation.id, 'skipped');
+      return { id: reservation.id, delivered: false, decision };
+    }
+    const r = await expo.sendPush(tokens, { title: event.title, body: event.body, data: { key, source: event.source } });
+    for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
+    if (nudgeId != null) await nudgesStore.markStatus(nudgeId, 'sent');
+    await attentionStore.finalizeDelivery(reservation.id, 'delivered', { deliveredChannel: 'push' });
+    delivered = true;
+  } catch (err) {
+    console.error('[dispatch] push failed:', err.message);
+    // Retry-eligible: 'failed' leaves delivered_channel null, so it does NOT
+    // start the cooldown — the next dispatch cycle re-emits and re-attempts,
+    // bounded by MAX_DELIVERY_ATTEMPTS. Not a permanent suppression.
+    if (nudgeId != null) await nudgesStore.markStatus(nudgeId, 'skipped');
+    await attentionStore.finalizeDelivery(reservation.id, 'failed');
+  }
+  return { id: reservation.id, delivered, decision };
 }
 
 /** Dispatch ONE event through the full policy: build context, judge, execute.

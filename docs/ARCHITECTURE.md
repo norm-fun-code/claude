@@ -251,12 +251,28 @@ notifiers that each think their signal is the important one.
 - `notify/dispatch.js` — the **orchestration** layer, and the ONLY place the
   policy touches a database or the network. `dispatchEvent`/`dispatchEvents`
   build a `PolicyContext` from live ledger reads (recent keys, today's budget,
-  consent grants, belief multipliers), call `judge()`, then execute: push
-  delivery + a dual ledger write. Batch dispatch tracks budget and event
-  identity in-memory across the run so two candidates describing the same fact
-  don't both surface.
-- `store/attention.js` + `migrations/043_attention.sql` — the `attention_log`
-  ledger: the policy's own decision/dedup/budget/audit trail, plus the
+  consent grants, belief multipliers), call `judge()`, then execute. Batch
+  dispatch tracks budget and event identity in-memory across the run so two
+  candidates describing the same fact don't both surface.
+- **Atomic delivery (reserve → push → finalize).** A push is a two-phase
+  commit, not read-judge-send-record. `reserveDelivery()` runs a single
+  serialized transaction — one cluster-wide advisory lock, held on the shared
+  Postgres server so it spans Railway replicas — that **rechecks** the cooldown,
+  daily budget, and critical reserve against committed state (counting in-flight
+  `reserved` rows) and claims a slot. The Expo push then happens OUTSIDE that
+  transaction; `finalizeDelivery()` marks the row `delivered` | `failed` |
+  `skipped`. This closes the race where two concurrent dispatchers (overlapping
+  scheduler tick, two replicas, a manual run vs. cron) both passed the same gate
+  and double-sent or overshot the budget. A partial unique index
+  (`attention_log_one_live_delivery`) is the backstop: at most one
+  reserved/delivered row per `event_key`. A **failed** push leaves
+  `delivered_channel` null so it does *not* start the cooldown — the next
+  dispatch cycle retries it, capped at `ATTENTION_MAX_DELIVERY_ATTEMPTS` per fact
+  per day so a persistently-failing push can't re-fire every run. Dry runs
+  (`send:false`) reserve nothing and consume no budget.
+- `store/attention.js` + `migrations/043_attention.sql` (+ `045_…_reservation.sql`)
+  — the `attention_log` ledger: the policy's own decision/dedup/budget/audit
+  trail, the `delivery_state`/`reserved_at` reservation columns, plus the
   outcome stamps (`dismissed`/`ignored`/`accepted`/`completed`) the beliefs
   layer learns from. The pre-existing `nudges` table is still written on every
   push so `GET /api/nudges` and other not-yet-migrated surfaces keep working.
