@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Modal, ScrollView, TextInput, useColorScheme, Keyboard } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Modal, ScrollView, TextInput, useColorScheme, Keyboard, KeyboardAvoidingView, Platform } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -195,7 +195,10 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted }: Props) {
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={endSession}>
-      <View style={[styles.sheet, { backgroundColor: c.background }]}>
+      <KeyboardAvoidingView
+        style={[styles.sheet, { backgroundColor: c.background }]}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
         <View style={[styles.header, { borderBottomColor: c.border }]}>
           <Text style={[styles.title, { color: c.text }]}>Talk to NormOS</Text>
           <Pressable onPress={endSession} hitSlop={8}>
@@ -278,7 +281,7 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted }: Props) {
             </View>
           )}
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
