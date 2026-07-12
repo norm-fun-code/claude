@@ -156,12 +156,52 @@ async function proposeExperiments() {
 }
 
 /**
- * Previously auto-started a proposed experiment without user approval.
- * Disabled: proposals are now surfaced in the Experiments card and must be
- * started explicitly by the user. This prevents state changes without consent.
+ * Auto-start the newest proposed experiment — OFF by default. Consent is the
+ * EXPERIMENTS_AUTO_START=true env flag (an explicit owner decision, not a
+ * silent default): with it unset, proposals surface in the Experiments card
+ * and must be started by hand, exactly as before. With it set, the hypothesis
+ * loop becomes self-sustaining: when nothing is running, the newest proposal
+ * starts itself for the standard test window and a push tells the user what
+ * began — pausing it in the app remains one tap, so consent stays visible and
+ * revocable per-experiment.
  */
 async function autoStartExperiment() {
-  return null;
+  if (String(process.env.EXPERIMENTS_AUTO_START).toLowerCase() !== 'true') return null;
+  const experimentsStore = require('../store/experiments');
+
+  const running = await experimentsStore.listExperiments({ status: 'running' });
+  if (running.length) return null; // one live experiment at a time — clean baselines
+  const proposed = await experimentsStore.listExperiments({ status: 'proposed' });
+  if (!proposed.length) return null;
+
+  const exp = proposed[0]; // newest proposal (listExperiments orders created_at DESC)
+  const start = new Date();
+  const end = new Date();
+  end.setDate(end.getDate() + DEFAULTS.testDays);
+  await experimentsStore.updateExperiment(exp.id, {
+    status: 'running',
+    startDate: start.toISOString().slice(0, 10),
+    endDate: end.toISOString().slice(0, 10),
+  });
+
+  // Tell the user what just started — auto-start without a notification would
+  // be a state change behind their back.
+  try {
+    const devicesStore = require('../store/devices');
+    const { sendPush } = require('../notify/expo');
+    const tokens = await devicesStore.listActiveTokens();
+    if (tokens.length) {
+      await sendPush(tokens, {
+        title: 'Experiment started',
+        body: `Auto-started a ${DEFAULTS.testDays}-day self-test: "${exp.hypothesis}". Pause it any time from the Experiments card.`,
+        data: { key: `experiment_autostart:${exp.id}` },
+      });
+    }
+  } catch (err) {
+    console.error('[experiments] auto-start push failed:', err.message);
+  }
+
+  return { id: exp.id, hypothesis: exp.hypothesis };
 }
 
 /** Evaluate one running experiment against its baseline + test windows. */

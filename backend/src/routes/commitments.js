@@ -46,6 +46,37 @@ function createCommitmentsRouter() {
     res.json(await runCommitmentReminders({ force }));
   }));
 
+  // One-tap "Commit" on the brief's ACTION (full-repo review, improvement #3:
+  // THE ACTION was pure narration — the leverage engine computed the single
+  // highest-leverage move each morning and rendered it read-only). This turns
+  // it into a real commitment with everything commitments already have: due
+  // reminders, escalating follow-ups, and auto-completion when metric
+  // evidence proves it happened. Also stamps accepted_at on today's ledger
+  // row so the recommendation ledger measures ACCEPTANCE rate, not just
+  // outcomes — feeding the learning layer.
+  router.post('/briefing/action/commit', asyncHandler(async (req, res) => {
+    const { text } = req.body || {};
+    if (!text || !String(text).trim()) return res.status(400).json({ error: 'text required' });
+    const tz = process.env.TZ || 'America/New_York';
+    // Due this evening (9pm local) — the day-close reads it as today's task —
+    // or in 3 hours when committed late in the evening, so it never lands
+    // already-overdue.
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    const ninePm = new Date(require('../util/date').naiveToUtcIso(`${todayStr}T21:00:00`, tz));
+    const dueAt = ninePm.getTime() > Date.now() + 60 * 1000 ? ninePm : new Date(Date.now() + 3 * 60 * 60 * 1000);
+    const row = await commitmentsStore.create({
+      title: String(text).trim().slice(0, 200),
+      source: 'brief_action',
+      dueAt,
+    });
+    // Acceptance stamp is best-effort — the commitment is the user-facing
+    // result; the ledger update is bookkeeping.
+    const startOfToday = new Date(require('../util/date').naiveToUtcIso(`${todayStr}T00:00:00`, tz));
+    require('../store/recommendations').acceptLatestBriefingAction({ startOfToday })
+      .catch((e) => console.error('[action commit] acceptance stamp failed:', e.message));
+    res.json({ ok: true, commitment: row });
+  }));
+
   // ── Daily context journal ─────────────────────────────────────────────────────
 
   // Recent daily-context entries (their own words about their days).

@@ -110,6 +110,28 @@ async function mostRecentLeverageAction(beforeDate) {
 }
 
 /**
+ * Stamp today's most recent briefing leverage recommendation as ACCEPTED —
+ * the user tapped "Commit" on THE ACTION. Idempotent (first tap wins) and
+ * scoped to today so a stray tap can never retroactively "accept" an old
+ * recommendation. Returns the accepted row or null if there was nothing to
+ * accept (no rec surfaced today, or already accepted).
+ */
+async function acceptLatestBriefingAction({ startOfToday }) {
+  const { rows } = await query(
+    `UPDATE recommendations SET accepted_at = now()
+      WHERE id = (
+        SELECT id FROM recommendations
+         WHERE type = 'leverage' AND surfaced_in = 'briefing'
+           AND created_at >= $1 AND accepted_at IS NULL
+         ORDER BY created_at DESC LIMIT 1
+      )
+      RETURNING *`,
+    [startOfToday]
+  );
+  return rows[0] ?? null;
+}
+
+/**
  * Pure: interpret a recommendation row's measured outcome.
  * Returns 'helped' | 'no_effect' | null (still pending / no data to judge).
  * This is THE single interpretation of outcome_delta + expected_direction —
@@ -317,4 +339,4 @@ async function clearPrematureAutoOutcomes() {
   return rowCount;
 }
 
-module.exports = { recordRecommendation, listRecommendations, setOutcome, recentTitles, recentDedupKeys, recentTitlesAll, measureOutcomes, normalizeRecTitle, dedupePending, clearPrematureAutoOutcomes, mostRecentLeverageAction, getById, outcomeVerdict, outcomeHistoryByDedupKey };
+module.exports = { recordRecommendation, listRecommendations, setOutcome, recentTitles, recentDedupKeys, recentTitlesAll, measureOutcomes, normalizeRecTitle, dedupePending, clearPrematureAutoOutcomes, mostRecentLeverageAction, getById, outcomeVerdict, outcomeHistoryByDedupKey, acceptLatestBriefingAction };

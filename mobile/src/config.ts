@@ -53,6 +53,7 @@ export const ACTIVITY_URL = `${API_BASE}/api/activity`;
 export const ANNOTATIONS_URL = `${API_BASE}/api/annotations`;
 export const CHECKIN_HISTORY_URL = `${API_BASE}/api/checkin/history`;
 export const BRIEFING_CONTEXT_URL = `${API_BASE}/api/briefing/context`;
+export const BRIEFING_ACTION_COMMIT_URL = `${API_BASE}/api/briefing/action/commit`;
 export const EXPERIMENTS_URL = `${API_BASE}/api/experiments`;
 export const COMMITMENTS_URL = `${API_BASE}/api/commitments`;
 export const WEALTH_PLAN_URL = `${API_BASE}/api/wealth/plan`;

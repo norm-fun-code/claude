@@ -6,7 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { getColors, spacing, radius, typography, shadow, glow, accentGradient, withAlpha, FONTS } from '../theme';
 import { AnimatedEntry } from './AnimatedEntry';
 import type { ChiefBrief } from '../hooks/useBriefing';
-import { BRIEFING_CONTEXT_URL, BRIEFING_AUDIO_URL, VOICE_TRANSCRIBE_URL, authHeaders, fetchWithTimeout } from '../config';
+import { BRIEFING_CONTEXT_URL, BRIEFING_AUDIO_URL, BRIEFING_ACTION_COMMIT_URL, VOICE_TRANSCRIBE_URL, authHeaders, fetchWithTimeout } from '../config';
 import { voiceAvailable, playBase64, stopPlayback, ensureMicPermission, startRecording, stopRecording } from '../lib/voice';
 
 interface Props {
@@ -150,6 +150,27 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Props) {
   // a briefing cached from before this field existed, in which case the
   // block just doesn't render rather than showing stale/missing text.
   const affirmation = brief?.affirmation?.trim() || '';
+
+  // One-tap commit state for THE ACTION. 'error' stays tappable as a retry;
+  // 'done' is terminal for this mount (the commitment now lives on the Today
+  // card's commitments list).
+  const [actionCommit, setActionCommit] = useState<'idle' | 'saving' | 'done' | 'error'>('idle');
+  async function commitAction() {
+    if (!brief?.action || actionCommit === 'saving' || actionCommit === 'done') return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setActionCommit('saving');
+    try {
+      const res = await fetchWithTimeout(BRIEFING_ACTION_COMMIT_URL, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ text: brief.action }),
+      });
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+      setActionCommit('done');
+    } catch {
+      setActionCommit('error'); // tap again to retry
+    }
+  }
   const [qAnswer, setQAnswer] = useState('');
   const [qState, setQState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   // Voice input for the one question — hold, speak, release → transcribed and
@@ -356,6 +377,28 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Props) {
           {BLOCKS.map(({ key, label, emoji, tint }, idx) => (
             <AnimatedEntry key={key} delay={130 + idx * 55} distance={8}>
               <BeatRow label={label} emoji={emoji} tint={tint} text={brief[key]} />
+              {/* One-tap commit on THE ACTION: turns the morning's highest-
+                  leverage move into a real commitment (due tonight, reminded,
+                  auto-verified from metrics where possible) instead of prose
+                  the user has to transcribe into their own system. */}
+              {key === 'action' && brief.action ? (
+                <TouchableOpacity
+                  onPress={commitAction}
+                  disabled={actionCommit !== 'idle'}
+                  style={styles.commitBtn}
+                  hitSlop={6}
+                >
+                  <Text style={[styles.commitBtnText, actionCommit === 'done' && { color: '#5AE89A' }]}>
+                    {actionCommit === 'done'
+                      ? '✓ Committed — on your list for today'
+                      : actionCommit === 'saving'
+                        ? 'Committing…'
+                        : actionCommit === 'error'
+                          ? "Didn't go through — tap to retry"
+                          : '→ Commit to this'}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
             </AnimatedEntry>
           ))}
         </>
@@ -615,6 +658,17 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: spacing.sm,
     marginTop: 5,
+  },
+  commitBtn: {
+    // Indented to align under the beat's text column (tile width + gap).
+    marginLeft: 44,
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  commitBtnText: {
+    color: '#A89CFF',
+    fontSize: 13,
+    fontWeight: '600',
   },
   affBullet: {
     color: 'rgba(255,255,255,0.5)',
