@@ -118,6 +118,49 @@ test('CSV transactions (no id) fall back to a content hash id', () => {
   assert.ok(doc.externalId && !doc.externalId.startsWith('monarch:'));
 });
 
+// Bug bash: this connector (the live GraphQL/scrape sync, used whenever the
+// primary MCP path is down) had the SAME stale-day-survival bug already fixed
+// in monarch-mcp-sync.js — flow metrics were only emitted for days present in
+// records, so a day whose spend dropped to zero kept its stale stored value
+// forever. Passing an explicit windowStart/windowEnd (as monarch-api.js now
+// does) makes it emit for every day in the window, 0 when none.
+test('with an explicit window, a day with no transactions gets an explicit 0 row, not omission', () => {
+  const records = [
+    { Date: '2026-07-01', Merchant: 'Whole Foods', Category: 'Groceries', Account: 'Amex', Amount: '-50.00' },
+  ];
+  const { metrics } = m.mapTransactions(records, { windowStart: '2026-07-01', windowEnd: '2026-07-03' });
+  const get = (metric, day) => metrics.find((x) => x.metric === metric && x.ts.toISOString().startsWith(day));
+  assert.equal(get('spending', '2026-07-02').value, 0, 'a zero-spend day inside the window must get an explicit 0 row');
+  assert.equal(get('spending', '2026-07-03').value, 0);
+  assert.equal(get('spending_discretionary', '2026-07-02').value, 0);
+  assert.equal(get('income', '2026-07-02').value, 0);
+  assert.equal(get('net_cashflow', '2026-07-02').value, 0);
+});
+
+test('without a window (CSV import / recompute), sparse-day behavior is unchanged', () => {
+  const records = [
+    { Date: '2026-07-01', Merchant: 'Whole Foods', Category: 'Groceries', Account: 'Amex', Amount: '-50.00' },
+  ];
+  const { metrics } = m.mapTransactions(records);
+  const day2 = metrics.find((x) => x.ts.toISOString().startsWith('2026-07-02'));
+  assert.equal(day2, undefined, 'no window means no forced full-range emission, preserving existing CSV/recompute behavior');
+});
+
+test('an entirely empty fetch (zero records) skips the full-window write rather than overwriting real history with zeros', () => {
+  const { metrics } = m.mapTransactions([], { windowStart: '2026-07-01', windowEnd: '2026-07-02' });
+  assert.equal(metrics.length, 0, 'a fetch that returned no records at all must not blast zeros across the window');
+});
+
+test('a real fetch where every transaction is a transfer legitimately zeroes out spend/income for that window', () => {
+  const records = [
+    { Date: '2026-07-01', Merchant: 'Internal move', Category: 'Transfer', Account: 'Checking', Amount: '-500.00' },
+  ];
+  const { metrics } = m.mapTransactions(records, { windowStart: '2026-07-01', windowEnd: '2026-07-01' });
+  const get = (metric) => metrics.find((x) => x.metric === metric)?.value;
+  assert.equal(get('spending'), 0, 'a transfer-only day is a legitimate zero-spend day, not a detection failure');
+  assert.equal(get('income'), 0);
+});
+
 test('transaction document ids are stable across re-import', () => {
   const rec = [{ Date: '2026-05-01', Merchant: 'X', Category: 'Y', Account: 'Z', Amount: '-1.00' }];
   const a = m.mapTransactions(rec).documents[0].externalId;

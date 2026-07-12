@@ -198,19 +198,26 @@ function detectKind(headers = []) {
  * Aggregate transaction records into daily spending/income/cashflow metrics and
  * one document per transaction. Aggregating per day (not per row) guarantees
  * unique (ts, metric) keys so the bulk metric insert can't conflict with itself.
+ *
+ * opts.windowStart/windowEnd (YYYY-MM-DD, LOCAL calendar dates): when given,
+ * flow metrics are emitted for EVERY day in that range (0 when a day has none)
+ * instead of only days present in `records` — see the stale-day-survival note
+ * below. Passed by the live Monarch API sync (monarch-api.js), which queries a
+ * known date window; omitted by the CSV importer and recompute-wealth.js,
+ * which have no such window and must keep their existing sparse-day behavior.
  */
-function mapTransactions(records = []) {
+function mapTransactions(records = [], opts = {}) {
+  const { windowStart, windowEnd } = opts;
   const spendByDay = new Map();
   const discretionaryByDay = new Map(); // spend excluding fixed housing (rent/mortgage)
   const incomeByDay = new Map();
   const documents = [];
-  // Monarch can return pending/scheduled transactions dated today-or-later —
-  // the newer GraphQL-MCP sync path already guards against this
-  // (monarch-mcp-sync.js), but this fallback path didn't, so a stray future-
-  // dated row could sit in `metrics` and get summed by any query with no
-  // upper time bound (e.g. wealth-insights.js's rolling-30-day savings rate),
-  // silently disagreeing with card totals that DO cap at "now".
-  const today = new Date().toISOString().slice(0, 10);
+  // Monarch can return pending/scheduled transactions dated today-or-later.
+  // LOCAL calendar day, not UTC — new Date().toISOString().slice(0,10) is the
+  // UTC day, wrong for several hours around each local midnight (same bug
+  // class fixed via localToday in monarch-mcp-sync.js).
+  const tz = process.env.TZ || 'America/New_York';
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
 
   for (const rec of records) {
     const day = parseDay(field(rec, ['date']));
@@ -271,14 +278,47 @@ function mapTransactions(records = []) {
   const m = (metric, value, day) => ({
     ts: dayTs(day), domain: 'wealth', metric, value: round2(value), unit: 'usd', source: SOURCE,
   });
-  const days = new Set([...spendByDay.keys(), ...incomeByDay.keys()]);
-  for (const day of days) {
-    const spend = spendByDay.get(day) || 0;
-    const income = incomeByDay.get(day) || 0;
-    if (spendByDay.has(day)) metrics.push(m('spending', spend, day));
-    if (discretionaryByDay.has(day)) metrics.push(m('spending_discretionary', discretionaryByDay.get(day), day));
-    if (incomeByDay.has(day)) metrics.push(m('income', income, day));
-    metrics.push(m('net_cashflow', income - spend, day));
+  const nextDay = (d) => new Date(dayTs(d).getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  if (windowStart && windowEnd) {
+    // Bug bash root cause (same class as monarch-mcp-sync.js): emitting flow
+    // metrics ONLY on days present in spendByDay/incomeByDay leaves a day
+    // whose spend dropped to zero (every transaction that day deleted,
+    // refunded, or recategorized into a fixed category) with its stale,
+    // previously-stored (higher) value never overwritten — inflating every
+    // MTD sum indefinitely. This path (the live GraphQL/scrape sync, used
+    // whenever the primary MCP path is unavailable) queries a KNOWN date
+    // window, so emit for every day in it, 0 when none — exactly like the
+    // MCP path already does.
+    //
+    // Guard: this only fires when Monarch's own fetch call has already
+    // resolved (a hard failure there throws before ever reaching this
+    // function, aborting the whole sync) — so an EMPTY records array here
+    // means the fetch succeeded but reported nothing at all, which is worth
+    // treating with suspicion rather than blasting zeros across the window.
+    // Unlike the primary MCP path, spendByDay/incomeByDay individually being
+    // empty is NOT ambiguous here: this connector has only one data source
+    // (the transaction records themselves, already fetched), so a real fetch
+    // with real records that simply has no income this window (or no
+    // discretionary spend, etc.) is a normal, legitimate state — write it.
+    if (records.length > 0) {
+      for (let day = windowStart; day <= windowEnd; day = nextDay(day)) {
+        metrics.push(m('spending', spendByDay.get(day) || 0, day));
+        metrics.push(m('spending_discretionary', discretionaryByDay.get(day) || 0, day));
+        metrics.push(m('income', incomeByDay.get(day) || 0, day));
+        metrics.push(m('net_cashflow', (incomeByDay.get(day) || 0) - (spendByDay.get(day) || 0), day));
+      }
+    }
+  } else {
+    const days = new Set([...spendByDay.keys(), ...incomeByDay.keys()]);
+    for (const day of days) {
+      const spend = spendByDay.get(day) || 0;
+      const income = incomeByDay.get(day) || 0;
+      if (spendByDay.has(day)) metrics.push(m('spending', spend, day));
+      if (discretionaryByDay.has(day)) metrics.push(m('spending_discretionary', discretionaryByDay.get(day), day));
+      if (incomeByDay.has(day)) metrics.push(m('income', income, day));
+      metrics.push(m('net_cashflow', income - spend, day));
+    }
   }
   return { metrics, documents };
 }

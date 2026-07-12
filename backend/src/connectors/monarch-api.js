@@ -8,7 +8,10 @@ const { mapTransactions, mapBalances, dedupeMetrics } = require('./monarch');
 const { registerSource } = require('../store/sources');
 
 const DAY = 24 * 60 * 60 * 1000;
-const ymd = (d) => new Date(d).toISOString().slice(0, 10);
+// LOCAL calendar day, not UTC — new Date().toISOString().slice(0,10) is the
+// UTC day, wrong for several hours around each local midnight (same bug class
+// fixed via localToday in monarch-mcp-sync.js).
+const ymd = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/New_York' });
 
 module.exports = {
   id: 'monarch_api',
@@ -102,7 +105,7 @@ module.exports = {
       Category: t.category?.name || '',
       Account: t.account?.displayName || '',
     }));
-    const txnMapped = mapTransactions(txnRecords);
+    const txnMapped = mapTransactions(txnRecords, { windowStart: startDate, windowEnd: endDate });
 
     // Accounts -> today's net worth (sum of current balances; exclusions applied
     // inside mapBalances). One snapshot point per day, appended to history.
