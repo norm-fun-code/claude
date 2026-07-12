@@ -12,7 +12,10 @@
 require('dotenv').config();
 const llm = require('../llm');
 const findingsStore = require('../store/findings');
-const selfModelStore = require('../store/selfModel');
+const goalsStore = require('../store/goals');
+const experimentsStore = require('../store/experiments');
+const beliefsStore = require('../store/beliefs');
+const { composeBeliefsSection } = require('./beliefs');
 const { parseAndValidate } = require('../llm/parseJson');
 
 // Finding types that are inherently cross-domain, plus the generic correlation
@@ -34,6 +37,66 @@ function selectCrossDomain(findings) {
     }
     return false;
   });
+}
+
+/**
+ * Bug bash finding: this used to prepend the ENTIRE self-model text (built by
+ * consolidate.js's buildModelText) into the Cross-Domain prompt — including
+ * its "RECENT DAILY CONTEXT" block of up to 10 dated day-journal entries and
+ * "ACTIVE CONTEXT" annotations. The LLM took a days-old dated entry ("slept
+ * hot, twisting and turning") and rewrote it as "your last night's context"
+ * inside what's supposed to be a DURABLE statistical-pattern insight — a
+ * true historical relationship stated with a false current-tense claim.
+ *
+ * Cross-Domain Patterns describe durable relationships, not live episodic
+ * state, so this builds a SEPARATE, purpose-built profile containing ONLY
+ * what's actually durable — stable beliefs, confirmed/ruled-out experiments,
+ * and long-term goals — gathered fresh from their own stores. Deliberately
+ * NOT a filtered/regex-stripped copy of the full self-model text: prose
+ * surgery on an already-composed narrative is exactly the kind of fragile,
+ * unpredictable manipulation that let episodic content slip through in the
+ * first place. day_journal itself is untouched — Ask, the brief, and
+ * date-aligned analysis still read the full, undiminished history.
+ */
+async function buildDurableProfile() {
+  const [goals, experiments, beliefs] = await Promise.all([
+    goalsStore.listGoals({ status: 'active' }).then((rows) => rows.slice(0, 8)).catch(() => []),
+    experimentsStore.listExperiments().catch(() => []),
+    beliefsStore.listActive().catch(() => []),
+  ]);
+
+  const lines = [];
+
+  if (goals.length) {
+    const goalLines = goals.map((g) => {
+      const tgt = g.target_value != null ? ` → target ${g.target_value}${g.unit ? ` ${g.unit}` : ''}` : '';
+      const by = g.target_date ? ` by ${new Date(g.target_date).toISOString().slice(0, 10)}` : '';
+      return `${g.title}${tgt}${by}`;
+    });
+    lines.push(`LONG-TERM GOALS: ${goalLines.join(' · ')}`);
+  }
+
+  const completed = experiments.filter((e) => e.status === 'completed' && e.verdict);
+  const proven = completed.filter((e) => e.verdict === 'confirmed');
+  const ruledOut = completed.filter((e) => e.verdict === 'refuted');
+  const expPct = (e) => (e.result?.pctChange != null ? ` (${e.result.pctChange > 0 ? '+' : ''}${Math.round(e.result.pctChange * 100)}% on ${e.metric})` : '');
+  if (proven.length) {
+    lines.push(
+      `PROVEN ON THEM (self-tested experiments CONFIRMED on their own data — cite as proof, not association):\n` +
+        proven.slice(0, 5).map((e) => `  ✓ "${e.hypothesis}"${expPct(e)}`).join('\n')
+    );
+  }
+  if (ruledOut.length) {
+    lines.push(
+      `RULED OUT (self-tested, showed no effect on THEM):\n` +
+        ruledOut.slice(0, 5).map((e) => `  ✗ "${e.hypothesis}"${expPct(e)}`).join('\n')
+    );
+  }
+
+  const beliefsSection = composeBeliefsSection(beliefs);
+  if (beliefsSection) lines.push(beliefsSection);
+
+  return lines.join('\n\n');
 }
 
 const SYSTEM = `You are NormOS — the user's chief of staff and personal data scientist.
@@ -59,15 +122,23 @@ FORMAT rules:
 - Phrase as "tends to / is associated with", never as causal fact
 - Always name the specific personal numbers (e.g. "3.9/5 vs 2.8/5", "58ms vs 46ms")
 - Be concrete about the lever ("on your TM days" not "when you meditate more")
+
+TEMPORAL GROUNDING — CRITICAL:
+Every relationship below is a STATISTICAL PATTERN aggregated across weeks of their data — it is NOT something that happened today, last night, or is happening again right now. Describe it as a standing tendency ("tends to", "on nights when", "historically"), never as a live, current-tense event.
+Never write "today," "last night," "currently," "right now," "again," or "playing out" — nothing in this context is a dated, moment-specific event, so any such phrase would be invented, not grounded. If a sentence you're about to write implies something is happening right now or happened recently, rewrite it as the general pattern instead.
 Return ONLY valid JSON.`;
 
-/** Pure: build the generation prompt from relationships + self-model. */
-function buildPrompt(relationships, selfModelText) {
+/** Pure: build the generation prompt from relationships + the durable profile
+ *  (stable beliefs, confirmed experiments, long-term goals — see
+ *  buildDurableProfile; deliberately NOT the full self-model, which carries
+ *  dated, episodic day-journal content that has no place in a durable-pattern
+ *  prompt). */
+function buildPrompt(relationships, durableProfileText) {
   const relBlock = relationships
     .map((f, i) => `${i + 1}. [${(f.domains || []).join('+') || f.type}] ${f.title}${f.detail ? ` — ${f.detail}` : ''}`)
     .join('\n');
 
-  return `${selfModelText ? selfModelText + '\n\n---\n\n' : ''}CROSS-DOMAIN RELATIONSHIPS FOUND IN THEIR DATA:
+  return `${durableProfileText ? durableProfileText + '\n\n---\n\n' : ''}CROSS-DOMAIN RELATIONSHIPS FOUND IN THEIR DATA:
 ${relBlock}
 
 Write the 1-3 most surprising, useful cross-context insights as JSON:
@@ -105,14 +176,14 @@ async function generateCrossContext({ minRelationships = 2 } = {}) {
     return { generated: 0, insights: [], reason: 'insufficient cross-domain data' };
   }
 
-  let selfModelText = '';
-  try { selfModelText = (await selfModelStore.latestModelText()) ?? ''; } catch { /* optional */ }
+  let durableProfileText = '';
+  try { durableProfileText = await buildDurableProfile(); } catch { /* optional */ }
 
   let text = '';
   try {
     text = await llm.generateText({
       system: SYSTEM,
-      prompt: buildPrompt(relationships, selfModelText),
+      prompt: buildPrompt(relationships, durableProfileText),
       temperature: 0.5,
       maxTokens: 900,
     });
@@ -166,7 +237,7 @@ async function generateCrossContext({ minRelationships = 2 } = {}) {
   return { generated: created, insights };
 }
 
-module.exports = { generateCrossContext, selectCrossDomain, buildPrompt };
+module.exports = { generateCrossContext, selectCrossDomain, buildPrompt, buildDurableProfile };
 
 if (require.main === module) {
   const { pool } = require('../db');
