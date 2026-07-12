@@ -22,35 +22,104 @@ const PERSONA = process.env.REALTIME_PERSONA_STYLE ||
   'Never claim you did something (logged a habit, set a reminder, swapped a workout) until the tool call actually returns success — if a tool fails, say so plainly. ' +
   'For a clear statement of fact or intent ("I did my cold shower", "swap me to a walk today"), restate what you\'re about to do in one short sentence, then call execute_normos_action. For a genuine question about their data, prefer the fast get_* tools first; only reach for deep_ask when the question needs real retrieval or cross-domain reasoning, and when you do, say something natural first ("let me look across your history…") so there\'s never dead silence.';
 
-/** Compact personal-context package — durable facts + today's snapshot only.
- *  Deliberately NOT the full Ask prompt: additional detail comes from tools,
- *  called live, so a stale session-start snapshot never substitutes for a
- *  fresh lookup. Every read is fail-soft — a missing piece just narrows
- *  context, never blocks the session from starting. */
-async function buildContextPackage() {
-  const [selfModel, briefing, chapters, commitments, intention, recovery] = await Promise.all([
-    require('../store/selfModel').latestModelText().catch(() => null),
-    require('../store/briefings').latestBriefing('daily').catch(() => null),
+/**
+ * Purpose-built Realtime context package, split into DURABLE (timeless facts
+ * about the person) and CURRENT (dated) sections. This deliberately replaces
+ * the old `selfModel.slice(0, 2000)` blob: the self-model text mixes durable
+ * facts with DATED journal entries and annotations, so an arbitrary 2,000-char
+ * cut under a "…RIGHT NOW" header let the model narrate something logged days
+ * ago as if it happened last night (the same class of error we fixed in
+ * Cross-Domain Patterns, but through live voice). Every episodic item here
+ * carries its own local calendar date, and nothing outside the CURRENT section
+ * may be spoken of as "today". Additional history stays reachable via the live
+ * get_ and deep_ask tools (Ask's historical access is unchanged) — this only
+ * governs what may be ASSERTED as current state at session start.
+ *
+ * Every read is fail-soft: a missing store just narrows the package, never
+ * blocks the session from minting.
+ *
+ * @returns {{ durable: string, current: string, today: string, yesterday: string }}
+ */
+async function buildContextPackage({ now = new Date() } = {}) {
+  const tz = process.env.TZ || 'America/New_York';
+  const today = now.toLocaleDateString('en-CA', { timeZone: tz });
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000).toLocaleDateString('en-CA', { timeZone: tz });
+
+  const [beliefs, goals, chapters, commitments, intention, briefing, recovery, recentJournal] = await Promise.all([
+    require('../store/beliefs').listActive({ limit: 12 }).catch(() => []),
+    require('../store/goals').listGoals({ status: 'active' }).catch(() => []),
     require('../store/lifeChapters').listActive().catch(() => []),
     require('../store/commitments').listActive({ limit: 5 }).catch(() => []),
     require('../store/intentions').currentIntention().catch(() => null),
+    require('../store/briefings').latestBriefing('daily').catch(() => null),
     require('../intelligence/recovery').liveRecovery().catch(() => null),
+    // Only the last ~2 days, and only surfaced with an explicit today/yesterday
+    // label below — never as undated "current" context.
+    require('../store/dayJournal').recent({ days: 2, limit: 4 }).catch(() => []),
   ]);
 
-  const parts = [];
-  if (selfModel) parts.push(selfModel.slice(0, 2000));
-  const cb = briefing?.content?.chiefBrief;
-  if (cb?.synthesis) parts.push(`TODAY: ${cb.synthesis}`);
-  if (cb?.action) parts.push(`Today's move: ${cb.action}`);
-  const chapterText = require('../intelligence/chapters').composeChapterContext(chapters);
-  if (chapterText) parts.push(`LIFE CHAPTERS:\n${chapterText}`);
-  if (intention?.context) parts.push(`This week's focus: ${String(intention.context).slice(0, 300)}`);
-  if (commitments.length) {
-    parts.push(`OPEN COMMITMENTS: ${commitments.map((c) => c.title).slice(0, 5).join('; ')}`);
+  // ── DURABLE — ongoing truths about the person. Safe to state naturally, but
+  //    never with a time word ("today"/"currently").
+  const durable = [];
+  if (beliefs.length) {
+    durable.push('DURABLE FACTS & PREFERENCES (ongoing — state these plainly, never as "today"):\n' +
+      beliefs.slice(0, 8).map((b) => {
+        const prov = b.evidence?.source || b.kind || null; // provenance
+        return `- ${b.statement}${prov ? ` [${prov}]` : ''}`;
+      }).join('\n'));
   }
-  if (recovery?.band) parts.push(`Current recovery: ${recovery.band}${recovery.score != null ? ` (${recovery.score})` : ''}`);
+  if (goals.length) {
+    durable.push('ACTIVE LONG-TERM GOALS:\n' + goals.slice(0, 6).map((g) => `- ${g.title}`).join('\n'));
+  }
+  const chapterText = require('../intelligence/chapters').composeChapterContext(chapters);
+  if (chapterText) durable.push(`ACTIVE LIFE CHAPTERS:\n${chapterText}`);
+  if (intention?.context) durable.push(`THIS WEEK'S STATED FOCUS: ${String(intention.context).slice(0, 300)}`);
+  if (commitments.length) {
+    durable.push(`OPEN COMMITMENTS (not yet done): ${commitments.map((c) => c.title).slice(0, 5).join('; ')}`);
+  }
 
-  return parts.join('\n\n');
+  // ── CURRENT — each item carries its own date/label. These are the ONLY
+  //    things that may be spoken of as today/yesterday.
+  const current = [];
+  // Today's briefing snapshot ONLY if it was actually generated today; a
+  // yesterday's brief is stale and must not be narrated as "this morning".
+  const briefDay = briefing?.generated_at
+    ? new Date(briefing.generated_at).toLocaleDateString('en-CA', { timeZone: tz })
+    : null;
+  const cb = briefing?.content?.chiefBrief;
+  if (cb && briefDay === today) {
+    if (cb.synthesis) current.push(`TODAY (${today}) — this morning's brief: ${cb.synthesis}`);
+    if (cb.action) current.push(`TODAY (${today}) — suggested move: ${cb.action}`);
+  }
+  // Recovery is recomputed live from the latest sleep data, so it's genuinely
+  // "today's" whenever present.
+  if (recovery?.band) {
+    current.push(`TODAY (${today}) — recovery: ${recovery.band}${recovery.score != null ? ` (${recovery.score})` : ''}`);
+  }
+  // Very recent journal notes — ONLY today's/yesterday's, each explicitly dated.
+  for (const e of recentJournal || []) {
+    const d = String(e.entry_date || e.entryDate || '').slice(0, 10);
+    if (d !== today && d !== yesterday) continue;
+    const label = d === today ? 'TODAY' : 'YESTERDAY';
+    current.push(`${label} (${d}) they noted: "${String(e.text || '').slice(0, 200)}"`);
+  }
+
+  return { durable: durable.join('\n\n'), current: current.join('\n'), today, yesterday };
+}
+
+/** Assemble the full system prompt from the persona + the temporal contract +
+ *  the durable/current sections. Extracted (and exported) so the temporal
+ *  contract is unit-testable without minting a live session. */
+function composeInstructions(pkg) {
+  const temporalRules =
+    `TODAY'S DATE is ${pkg.today}. The context below is in two kinds. DURABLE facts are ongoing truths about this person — say them naturally but NEVER attach a time word. ` +
+    `CURRENT items each carry their own date; only those may be spoken of as "today" or "yesterday". ` +
+    `Do NOT say "today", "last night", "this morning", "currently", "right now", "lately", or "again" about anything unless it appears in the CURRENT section dated today/yesterday, or a get_ tool you just called returned it. ` +
+    `If you're unsure whether something is current — their recovery, sleep, spending, a mood — call the matching get_ tool instead of guessing from durable context.`;
+  const sections = [PERSONA, temporalRules];
+  if (pkg.durable) sections.push(`WHAT IS DURABLY TRUE ABOUT THIS PERSON (timeless — never call this "today"):\n${pkg.durable}`);
+  if (pkg.current) sections.push(`CURRENT / DATED CONTEXT (the ONLY things you may call today/yesterday):\n${pkg.current}`);
+  return sections.join('\n\n');
 }
 
 function createRealtimeRouter() {
@@ -67,8 +136,8 @@ function createRealtimeRouter() {
       return res.status(503).json({ error: 'openai_not_configured', fallback: true });
     }
 
-    const context = await buildContextPackage();
-    const instructions = context ? `${PERSONA}\n\nWHAT YOU KNOW ABOUT THIS PERSON RIGHT NOW:\n${context}` : PERSONA;
+    const pkg = await buildContextPackage();
+    const instructions = composeInstructions(pkg);
 
     let session;
     try {
@@ -157,4 +226,4 @@ function createRealtimeRouter() {
   return router;
 }
 
-module.exports = { createRealtimeRouter, buildContextPackage, PERSONA };
+module.exports = { createRealtimeRouter, buildContextPackage, composeInstructions, PERSONA };
