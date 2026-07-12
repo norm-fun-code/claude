@@ -17,7 +17,7 @@ const annotationsStore = require('../store/annotations');
 const selfModelStore = require('../store/selfModel');
 const cat = require('./catalog');
 const { query: dbQuery } = require('../db');
-const { localDayBoundsUtc, localMonthStartUtc } = require('../util/date');
+const { localDayBoundsUtc, localMonthKeyStartUtc } = require('../util/date');
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -151,16 +151,19 @@ async function gatherHabits(d7, d56) {
 }
 
 async function gatherWealth(d30) {
-  // MTD = calendar month, not rolling 30d — and specifically the user's LOCAL
-  // (America/New_York) calendar month, not the UTC one. Bug bash finding:
-  // Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) used the UTC month,
-  // which silently disagrees with the local month for several hours around
-  // every month boundary (e.g. still July in ET while already August in UTC).
+  // MTD = the user's LOCAL calendar month. Wealth flow metrics are keyed to the
+  // local calendar DAY but stored at UTC-midnight of that day-string (see
+  // monarch.js dayTs: local July 1 -> 2026-07-01T00:00:00Z), so the correct
+  // month boundary is UTC-midnight of the local month-first-day string
+  // (localMonthKeyStartUtc). An earlier fix used localMonthStartUtc (TRUE local
+  // midnight = 04:00Z in EDT), which silently DROPPED the 1st-of-month's
+  // spending from every MTD sum — its 04:00Z lower bound sorts after the 1st's
+  // 00:00Z metric. Verified empirically against the stored ts.
   // Use spending_DISCRETIONARY so rent/mortgage (fixed housing) is excluded — an
   // MTD number that includes a $X,XXX rent line isn't an actionable "how am I
   // pacing" figure, it's dominated by a bill that never changes.
   const now = new Date();
-  const monthStart = localMonthStartUtc(process.env.TZ || 'America/New_York', now);
+  const monthStart = localMonthKeyStartUtc(process.env.TZ || 'America/New_York', now);
   // All three fetches below are independent — parallelize.
   const [nw, nwPrev, spending] = await Promise.all([
     metricsStore.latest({ domain: 'wealth', metric: 'net_worth' }),

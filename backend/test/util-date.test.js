@@ -6,7 +6,7 @@
 // proper shared function.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { naiveToUtcIso, localDayBoundsUtc, localMonthStartUtc } = require('../src/util/date');
+const { naiveToUtcIso, localDayBoundsUtc, localMonthStartUtc, localMonthKeyStartUtc } = require('../src/util/date');
 
 test('a naive datetime string in Eastern time converts to the correct UTC instant', () => {
   // Midnight Eastern on a summer date (EDT, UTC-4) = 4am UTC.
@@ -85,4 +85,23 @@ test('localMonthStartUtc resolves the new LOCAL month promptly after it actually
 test('localMonthStartUtc is correct across a DST boundary (winter, EST = UTC-5)', () => {
   const monthStart = localMonthStartUtc('America/New_York', new Date('2026-01-15T12:00:00Z'));
   assert.equal(monthStart.toISOString(), '2026-01-01T05:00:00.000Z');
+});
+
+// localMonthKeyStartUtc matches the WEALTH FLOW metric storage key: those are
+// stored at UTC-midnight of the local DAY STRING (monarch.js dayTs), so a local
+// July-1 metric is at 2026-07-01T00:00:00Z — NOT true local midnight (04:00Z).
+// The month boundary for selecting those metrics must therefore be 00:00:00Z of
+// the local month-first-day string, or the 1st-of-month's metric is excluded.
+test('localMonthKeyStartUtc returns UTC-midnight of the LOCAL month-first-day string (matches wealth metric keys)', () => {
+  // Still July locally at 8:30pm ET on the 31st (already Aug 1 in UTC): the LOCAL
+  // month is July, so the key start must be 2026-07-01T00:00:00Z.
+  const now = new Date('2026-08-01T00:30:00Z'); // July 31, 8:30pm EDT
+  assert.equal(localMonthKeyStartUtc('America/New_York', now).toISOString(), '2026-07-01T00:00:00.000Z');
+});
+
+test('localMonthKeyStartUtc includes the 1st-of-month wealth metric that localMonthStartUtc would drop', () => {
+  const now = new Date('2026-07-15T12:00:00Z');
+  const july1Metric = new Date('2026-07-01T00:00:00Z'); // how dayTs stores local July 1
+  assert.equal(july1Metric >= localMonthKeyStartUtc('America/New_York', now), true, 'included by the key-start');
+  assert.equal(july1Metric >= localMonthStartUtc('America/New_York', now), false, 'localMonthStartUtc (04:00Z) wrongly excludes it');
 });

@@ -145,7 +145,7 @@ Write the 1-3 most surprising, useful cross-context insights as JSON:
 {
   "insights": [
     {
-      "headline": "a short, punchy connection (max ~8 words), e.g. 'Short sleep quietly drives your spending'",
+      "headline": "a short, punchy connection (max ~8 words), e.g. 'Late nights tend to flatten your next-day focus' (non-financial and associative, per the rules above)",
       "insight": "2-3 sentences: the connection, the numbers behind it, and the one lever that moves it. Plain language.",
       "domains": ["the", "domains", "involved"]
     }

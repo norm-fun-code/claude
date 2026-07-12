@@ -130,7 +130,24 @@ function localMonthStartUtc(tz = 'UTC', now = new Date()) {
   return new Date(naiveToUtcIso(`${monthFirst}T00:00:00`, tz));
 }
 
+/**
+ * UTC-midnight of the first day of the current LOCAL calendar month — the
+ * boundary that matches how WEALTH FLOW METRICS are keyed. Those are stored at
+ * `new Date(`${localDayString}T00:00:00Z`)` (see monarch.js's `dayTs`): a metric
+ * for local July 1 lands at `2026-07-01T00:00:00Z`, NOT at true local midnight
+ * (`2026-07-01T04:00:00Z` in EDT). So to select "this local month" you need the
+ * UTC-midnight of the local month-first-day STRING — `localMonthStartUtc`
+ * (true local midnight, 04:00Z) would exclude the 1st-of-month's metric.
+ *
+ * Use this for the day-keyed wealth flow metrics; use `localMonthStartUtc` /
+ * `localDayBoundsUtc` for metrics stored at real wall-clock timestamps (health).
+ */
+function localMonthKeyStartUtc(tz = 'UTC', now = new Date()) {
+  const ymd = now.toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD (local)
+  return new Date(`${ymd.slice(0, 7)}-01T00:00:00Z`);
+}
+
 module.exports = {
   formatDate, daysBetween, addDays, dayAnchorTs, safeDate, toMinutesSinceMidnight,
-  naiveToUtcIso, localDayBoundsUtc, localMonthStartUtc,
+  naiveToUtcIso, localDayBoundsUtc, localMonthStartUtc, localMonthKeyStartUtc,
 };
