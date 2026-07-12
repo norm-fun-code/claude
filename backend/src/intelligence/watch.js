@@ -16,11 +16,12 @@
 require('dotenv').config();
 const { baselineAnomaly } = require('./stats');
 const metricsStore = require('../store/metrics');
-const nudgesStore = require('../store/nudges');
-const devicesStore = require('../store/devices');
-const { withinQuietHours } = require('./nudges');
-const { sendPush } = require('../notify/expo');
 const { localDayBoundsUtc } = require('../util/date');
+// nudgesStore/devicesStore/sendPush/withinQuietHours were used here directly
+// before the Attention Policy migration — delivery, dedup, and quiet-hours
+// are now decided by notify/dispatch.js's dispatchEvent(), required lazily
+// below (avoids a require cycle: dispatch -> beliefs -> attention store, and
+// watch.js is required very early by the scheduler).
 
 // HRV/RHR are source-locked to the overnight Eight Sleep series (+ seeded
 // baseline), exactly as recovery/analyze do — daytime Apple Watch readings run
@@ -115,18 +116,30 @@ async function contextNote() {
 async function runWatch(opts = {}) {
   const asOf = opts.asOf ? new Date(opts.asOf) : new Date();
   const send = opts.send !== false;
-  if (!opts.force && withinQuietHours(asOf)) return { skipped: 'quiet_hours' };
+  // Quiet hours are no longer checked here — the attention policy (dispatch)
+  // decides that now, and needs to actually SEE the event to evaluate a
+  // critical-override bypass. Detection still runs during quiet hours; a
+  // non-critical anomaly found then is simply deferred by the policy
+  // (add_to_brief), not silently skipped before it's even built.
 
   const onlyMetrics = opts.metrics ? new Set(opts.metrics.map((m) => m.metric)) : null;
   const from = new Date(Date.now() - 60 * 864e5);
-  const recent = await nudgesStore.recentlySentKeys(1); // one ping per metric per day
 
-  // Find the single strongest qualifying anomaly across all watched metrics.
+  // Find the single strongest qualifying anomaly across all watched metrics
+  // (unchanged: "one push per run" is a deliberate noise-control choice — a
+  // rough night trips HRV+RHR+sleep together, and three pushes for one cause
+  // is noise — independent of the policy's own cross-surface dedup, which is
+  // per-SUBJECT and wouldn't otherwise stop HRV and RHR both firing).
+  // NOTE (migration divergence from pre-policy behavior): per-metric
+  // "already sent today" used to be filtered OUT before picking the
+  // strongest, so a cooled-down top metric would yield to a runner-up. That
+  // cooldown now lives in the policy, which only sees the ONE candidate this
+  // function selects — so a cooled-down top metric now suppresses this run
+  // entirely rather than yielding. Low-risk given this fires on every health
+  // ingest: a genuine runner-up anomaly gets evaluated fresh on the next one.
   let best = null;
   for (const cfg of WATCHED) {
     if (onlyMetrics && !onlyMetrics.has(cfg.metric)) continue;
-    const key = `watch:${cfg.metric}:${dayKey(asOf)}`;
-    if (recent.has(key)) continue;
 
     let series;
     try {
@@ -150,12 +163,12 @@ async function runWatch(opts = {}) {
     if (!a) continue;
 
     if (!qualifies(cfg.bad, a.z)) continue;
-    if (!best || Math.abs(a.z) > Math.abs(best.a.z)) best = { cfg, a, key };
+    if (!best || Math.abs(a.z) > Math.abs(best.a.z)) best = { cfg, a };
   }
 
   if (!best) return { generated: 0, sent: 0 };
 
-  const { cfg, a, key } = best;
+  const { cfg, a } = best;
   const dir = a.z < 0 ? 'below' : 'above';
   const pctDiff = a.baselineMean !== 0
     ? Math.round(Math.abs((a.latest - a.baselineMean) / a.baselineMean) * 100)
@@ -166,34 +179,14 @@ async function runWatch(opts = {}) {
   const ctx = await contextNote();
   const body = `${cfg.label} is ${valStr} — ${pctClause}your 30-day norm (${baseStr}).${ctx} ${cfg.guidance}`;
 
-  const nudge = {
-    key,
-    title: cfg.title,
-    body,
-    priority: Math.min(0.95, 0.6 + (Math.abs(a.z) - THRESHOLD) * 0.1),
-    basis: { type: 'watch', metric: cfg.metric, z: Math.round(a.z * 100) / 100, latest: a.latest, baselineMean: a.baselineMean },
+  const event = require('./events').fromHealthAnomaly({ cfg, a, asOf, title: cfg.title, body });
+  const { dispatchEvent } = require('../notify/dispatch');
+  const result = await dispatchEvent(event, { asOf, send, force: opts.force });
+  return {
+    generated: 1, sent: result.delivered ? 1 : 0,
+    disposition: result.decision.disposition, reason: result.decision.reason,
+    nudge: { key: require('./attention').eventKey(event), title: event.title, body: event.body },
   };
-
-  const tokens = send ? await devicesStore.listActiveTokens() : [];
-  const status = send && tokens.length === 0 ? 'skipped' : 'pending';
-  const id = await nudgesStore.recordNudge({ ...nudge, dedupKey: nudge.key, status });
-  // null means another concurrent caller already claimed this exact nudge
-  // (recordNudge's atomic dedup guard) — don't push a second time.
-  if (id == null) return { generated: 1, sent: 0, skipped: 'concurrent_duplicate', nudge };
-
-  if (send && tokens.length > 0) {
-    try {
-      const r = await sendPush(tokens, { title: nudge.title, body: nudge.body, data: { key: nudge.key } });
-      for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
-      await nudgesStore.markStatus(id, 'sent');
-      return { generated: 1, sent: 1, devices: tokens.length, nudge };
-    } catch (err) {
-      await nudgesStore.markStatus(id, 'failed');
-      return { generated: 1, sent: 0, error: err.message, nudge };
-    }
-  }
-
-  return { generated: 1, sent: 0, devices: tokens.length, nudge };
 }
 
 // ---- Wellbeing watcher — same-day reaction to a low check-in ----------------
@@ -208,47 +201,31 @@ async function runWatch(opts = {}) {
 const LOW_CUTOFF = 2;
 
 async function watchWellbeing({ mood, energy, focus, asOf = new Date(), send = true, force = false } = {}) {
-  if (!force && withinQuietHours(asOf)) return { skipped: 'quiet_hours' };
-
+  // Quiet hours are decided by the policy now (see runWatch's comment above)
+  // — detection always runs so a genuinely critical case could in principle
+  // bypass quiet hours; a low check-in never matches the (health-only)
+  // CRITICAL_ALLOWLIST today, so in practice this still defers during quiet
+  // hours exactly as before, just via the policy instead of a local check.
   const low = [];
   if (Number(mood) >= 1 && Number(mood) <= LOW_CUTOFF) low.push('mood');
   if (Number(energy) >= 1 && Number(energy) <= LOW_CUTOFF) low.push('energy');
   if (Number(focus) >= 1 && Number(focus) <= LOW_CUTOFF) low.push('focus');
   if (!low.length) return { generated: 0, sent: 0 };
 
-  const key = `watch:wellbeing:${dayKey(asOf)}`;
-  const recent = await nudgesStore.recentlySentKeys(1);
-  if (recent.has(key)) return { generated: 0, sent: 0, skipped: 'already_sent' };
-
   const what = low.length === 1 ? low[0] : `${low.slice(0, -1).join(', ')} and ${low[low.length - 1]}`;
-  const nudge = {
-    key,
-    title: 'Rough one today',
-    body:
-      `Your check-in says ${what} ${low.length > 1 ? 'are' : 'is'} running low. ` +
-      `Downshift the rest of the day: one small win counts, skip anything heavy, and protect tonight's wind-down — tomorrow starts from tonight.`,
-    priority: 0.7,
-    basis: { type: 'watch_wellbeing', low, mood: mood ?? null, energy: energy ?? null, focus: focus ?? null },
+  const title = 'Rough one today';
+  const body =
+    `Your check-in says ${what} ${low.length > 1 ? 'are' : 'is'} running low. ` +
+    `Downshift the rest of the day: one small win counts, skip anything heavy, and protect tonight's wind-down — tomorrow starts from tonight.`;
+
+  const event = require('./events').fromLowCheckin({ low, mood, energy, focus, asOf, title, body });
+  const { dispatchEvent } = require('../notify/dispatch');
+  const result = await dispatchEvent(event, { asOf, send, force });
+  return {
+    generated: 1, sent: result.delivered ? 1 : 0,
+    disposition: result.decision.disposition, reason: result.decision.reason,
+    nudge: { key: require('./attention').eventKey(event), title, body },
   };
-
-  const tokens = send ? await devicesStore.listActiveTokens() : [];
-  const status = send && tokens.length === 0 ? 'skipped' : 'pending';
-  const id = await nudgesStore.recordNudge({ ...nudge, dedupKey: nudge.key, status });
-  if (id == null) return { generated: 1, sent: 0, skipped: 'concurrent_duplicate', nudge };
-
-  if (send && tokens.length > 0) {
-    try {
-      const r = await sendPush(tokens, { title: nudge.title, body: nudge.body, data: { key: nudge.key } });
-      for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
-      await nudgesStore.markStatus(id, 'sent');
-      return { generated: 1, sent: 1, devices: tokens.length, nudge };
-    } catch (err) {
-      await nudgesStore.markStatus(id, 'failed');
-      return { generated: 1, sent: 0, error: err.message, nudge };
-    }
-  }
-
-  return { generated: 1, sent: 0, devices: tokens.length, nudge };
 }
 
 module.exports = { runWatch, watchWellbeing, qualifies, WATCHED, THRESHOLD, LOW_CUTOFF };

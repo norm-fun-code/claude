@@ -219,6 +219,83 @@ of staff rather than a dashboard.
 The judgement (which insight, how urgent, dedup, quiet hours) is unit-tested in
 `backend/test/nudges.test.js`; only the network delivery needs a live device.
 
+> As of the Attention Policy milestone (below), the *delivery decision* for the
+> watchers, finding-driven nudges, wealth nudges, and check-in reminder is no
+> longer made inside each producer — they build a normalized event and hand it
+> to `notify/dispatch.js`, which runs the shared policy. `buildNudges` still
+> does its own candidate construction and ranking; the policy is the layer that
+> decides *whether and how* each candidate reaches the user.
+
+## Attention Policy (unified judgment layer)
+
+Every producer that used to decide *for itself* whether to interrupt the user
+— a health/wellbeing watcher, the morning finding-nudge builder, wealth nudges,
+the check-in reminder — now emits a **normalized event** and lets one shared
+policy make the call. This is what stops the app from becoming N independent
+notifiers that each think their signal is the important one.
+
+- `intelligence/events.js` — **pure** adapters. Each producer already computes
+  its own detection (a z-score, a budget-pace ratio, a finding rank); these
+  translate that output into one `AttentionEvent` shape
+  (`{source, domain, type, subject, signal:{magnitude,confidence,novelty},
+  urgencyHint, action, critical, dedupBucket, …}`) without re-deriving the math.
+- `intelligence/attention.js` — **pure** `judge(event, context)`. The single
+  place that answers "what should NormOS do about this right now?" and returns
+  exactly one of seven dispositions:
+  `store_silently | update_belief | ask_question | add_to_brief | notify_now |
+  offer_action | auto_act`. **Stage A** runs deterministic gates first
+  (malformed → belief-routing → authorization/consent → critical-override
+  validated against an allowlist → duplicate/cooldown); **Stage B** scores a
+  conservative ladder (value × urgency − interrupt-cost). No LLM, no DB — every
+  branch is a plain unit test (`test/attention-policy.test.js`).
+- `notify/dispatch.js` — the **orchestration** layer, and the ONLY place the
+  policy touches a database or the network. `dispatchEvent`/`dispatchEvents`
+  build a `PolicyContext` from live ledger reads (recent keys, today's budget,
+  consent grants, belief multipliers), call `judge()`, then execute: push
+  delivery + a dual ledger write. Batch dispatch tracks budget and event
+  identity in-memory across the run so two candidates describing the same fact
+  don't both surface.
+- `store/attention.js` + `migrations/043_attention.sql` — the `attention_log`
+  ledger: the policy's own decision/dedup/budget/audit trail, plus the
+  outcome stamps (`dismissed`/`ignored`/`accepted`/`completed`) the beliefs
+  layer learns from. The pre-existing `nudges` table is still written on every
+  push so `GET /api/nudges` and other not-yet-migrated surfaces keep working.
+- `store/consent.js` + `consent_grants` — explicit, per-capability
+  authorization. `auto_act` is only reachable for an **internal**, **reversible**
+  action with a matching grant; an **external** write is never auto-act-eligible
+  (offer_action at most), regardless of grants.
+
+**Identity & dedup.** `eventKey = domain:type:subject:bucket` (bucket =
+day/week/month per event). This is the mechanism that collapses two *different*
+producers describing the *same* fact onto one key — e.g. a wealth watcher and
+the finding pipeline both flagging the same over-budget category.
+
+**Cooldown vs. budget.** *Cooldown* suppresses the SAME fact (event_key) for N
+hours after it was surfaced (any user-facing disposition, not just a delivered
+push). *Budget* caps how many DIFFERENT facts may interrupt per day (only
+push-delivered notify/offer/auto count). A small separate **critical reserve**
+(`ATTENTION_CRITICAL_RESERVE`, default 1/day) is spendable only by events
+matching the allowlist (currently an extreme respiratory-rate / resting-HR
+anomaly); a reserve-exhausted critical event falls through to normal scoring
+rather than being dropped.
+
+**Learning loop.** Dismiss/ignore patterns from both the legacy wealth-insight
+dismissal ledger and the new `attention_log` outcome stamps get promoted into
+`dismissal_pattern` beliefs; `beliefs.beliefMultipliers()` then dampens (never
+below a 0.4 floor) the value score of a repeatedly-dismissed subject on its next
+appearance. Commitments feed this loop too — the commitments runner keeps its
+own delicate delivery cadence (it is **audited, not gated** by the policy), and
+the done/skip routes stamp the outcome so belief learning still sees it.
+
+**Deferrals pay out in the brief.** Events the policy judges `add_to_brief` /
+`ask_question` are surfaced to the next morning brief (via
+`store/attention.pendingForBrief()` → an extra context block in
+`generateChiefBrief`), so a deferred signal is folded into the narrative rather
+than silently recorded and forgotten.
+
+Env: `ATTENTION_DAILY_BUDGET` (default 4), `ATTENTION_CRITICAL_RESERVE`
+(default 1). Migration: `043_attention.sql` (auto-applied by `npm run migrate`).
+
 ## Roadmap
 
 - **Phase 0 — Foundation (this milestone).** DB + canonical schema + connector
@@ -245,6 +322,12 @@ The judgement (which insight, how urgent, dedup, quiet hours) is unit-tested in
   `notify/`, `npm run nudge`, mobile push registration). ✅
   Remaining ops (needs hardware/creds): EAS/dev build for the push entitlement,
   registering a device, and a morning cron schedule.
+- **Phase 7 — Judgment & Attention Policy.** One shared policy decides whether
+  and how any detected signal reaches the user; watchers, nudges, wealth, and
+  the check-in reminder route their delivery decision through it. Beliefs learn
+  from recorded outcomes; deferrals surface in the brief. ✅
+  (`intelligence/attention.js`, `intelligence/events.js`, `notify/dispatch.js`,
+  `store/attention.js`, `store/consent.js`, `migrations/043_attention.sql`.)
 - **Future — Specialist agents.** Investment Analyst, Career Coach, etc. on the
   shared spine.
 

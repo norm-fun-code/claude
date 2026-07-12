@@ -1209,6 +1209,23 @@ async function buildFreshBriefing({ force = false } = {}) {
     errors.push({ service: 'weekly_goals', error: err.message });
   }
 
+  // Deferred-attention context: things the attention policy noticed earlier
+  // today but judged as add_to_brief / ask_question rather than a real-time
+  // interruption. Surfacing them here is the "defer to the brief" arm of the
+  // policy actually paying out — otherwise those judgments would be recorded
+  // and never seen. Fail-soft: any error just yields no extra context.
+  let attentionContext = '';
+  try {
+    const pending = await require('../store/attention').pendingForBrief({ tz });
+    if (pending.length) {
+      attentionContext = pending
+        .map((p) => `- ${p.reason || `${p.domain} ${p.type}: ${p.subject}`}${p.disposition === 'ask_question' ? ' (worth asking about)' : ''}`)
+        .join('\n');
+    }
+  } catch (err) {
+    console.error('[briefing attentionContext] failed:', err.message);
+  }
+
   // Call the two independent LLM sections in PARALLEL (chief-brief and the
   // quote/Notion "wisdom" reflection used to be one combined call — splitting
   // them means wall-clock is whichever is slower, not the sum of both).
@@ -1226,7 +1243,7 @@ async function buildFreshBriefing({ force = false } = {}) {
   {
     const [chiefSettled, wisdomSettled] = await Promise.allSettled([
       withTimeout(
-        generateChiefBrief(emails, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext),
+        generateChiefBrief(emails, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext, attentionContext),
         LLM_TIMEOUT,
         'gemini_chief'
       ),

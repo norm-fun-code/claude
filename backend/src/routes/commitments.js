@@ -8,6 +8,19 @@ const commitmentsStore = require('../store/commitments');
 const dayJournalStore = require('../store/dayJournal');
 const { asyncHandler } = require('../middleware/asyncHandler');
 
+/** Fire-and-forget attention-ledger outcome stamp for a commitment the user
+ *  just resolved. Audit-only (the beliefs loop reads these) — never awaited by
+ *  the route, never throws into it. */
+function stampCommitmentOutcome(commitment, outcome) {
+  Promise.resolve()
+    .then(async () => {
+      const attentionStore = require('../store/attention');
+      const { fromCommitmentDue } = require('../intelligence/events');
+      await attentionStore.stampOutcome(fromCommitmentDue({ commitment, asOf: new Date() }), outcome);
+    })
+    .catch(() => {});
+}
+
 function createCommitmentsRouter() {
   const router = express.Router();
 
@@ -30,12 +43,18 @@ function createCommitmentsRouter() {
   router.post('/commitments/:id/done', asyncHandler(async (req, res) => {
     const row = await commitmentsStore.markDone(Number(req.params.id));
     if (!row) return res.status(404).json({ error: 'not found or already done' });
+    // Audit-only: stamp the attention ledger so the beliefs loop sees the user
+    // followed through on this commitment. Never blocks the response.
+    stampCommitmentOutcome(row, 'completed');
     res.json({ ok: true, commitment: row });
   }));
 
   router.post('/commitments/:id/skip', asyncHandler(async (req, res) => {
     const row = await commitmentsStore.markSkipped(Number(req.params.id));
     if (!row) return res.status(404).json({ error: 'not found or not open' });
+    // Audit-only: a user skip is an 'ignored' outcome — the strongest signal
+    // the dismissal-pattern belief promoter learns from. Never blocks.
+    stampCommitmentOutcome(row, 'ignored');
     res.json({ ok: true, commitment: row });
   }));
 

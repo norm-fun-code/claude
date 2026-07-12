@@ -48,6 +48,39 @@ function selectReminderActions(due = [], { satisfiedIds = new Set(), maxPerDay =
   return { toFire, toAutoComplete };
 }
 
+/** Audit-only ledger write: record that a commitment reminder fired as a
+ *  notify_now decision the runner made ITSELF (not judge()). Gives the outcome
+ *  loop a row to stamp against later. Best-effort — swallows all errors. */
+async function auditCommitmentFired(commitment, asOf, followUp) {
+  try {
+    const attentionStore = require('../store/attention');
+    const { fromCommitmentDue } = require('../intelligence/events');
+    const event = fromCommitmentDue({ commitment, asOf, followUp });
+    await attentionStore.record({
+      event,
+      decision: {
+        disposition: 'notify_now',
+        reason: 'commitment reminder (runner-owned delivery; audited for outcome learning)',
+        scores: { value: 0.6 },
+        gates: { audit_only: true },
+      },
+      delivered: true,
+      deliveredChannel: 'push',
+    });
+  } catch { /* audit is best-effort */ }
+}
+
+/** Audit-only outcome stamp for a commitment (completed / ignored). Matches the
+ *  most recent audited firing for this commitment id. Best-effort. */
+async function auditCommitmentOutcome(commitment, outcome, asOf) {
+  try {
+    const attentionStore = require('../store/attention');
+    const { fromCommitmentDue } = require('../intelligence/events');
+    const event = fromCommitmentDue({ commitment, asOf });
+    await attentionStore.stampOutcome(event, outcome);
+  } catch { /* audit is best-effort */ }
+}
+
 /** Which of these commitments have their outcome metric already logged today? */
 async function satisfiedCommitmentIds(due, tz) {
   const withMetric = due.filter((c) => c.metric_key && c.metric_key.includes(':'));
@@ -100,6 +133,10 @@ async function runCommitmentRemindersImpl(opts = {}) {
   for (const c of toAutoComplete) {
     await commitmentsStore.markDone(c.id, { at: now }).catch(() => {});
     await commitmentsStore.markReminded(c.id, { at: now }).catch(() => {});
+    // Audit-only: the user followed through (data proved it) — stamp a
+    // 'completed' outcome so the beliefs layer learns which commitment kinds
+    // stick. Never gates anything; failure is swallowed.
+    await auditCommitmentOutcome(c, 'completed', now).catch(() => {});
   }
 
   let sent = 0;
@@ -127,6 +164,12 @@ async function runCommitmentRemindersImpl(opts = {}) {
         });
         for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
         sent += 1;
+        // Audit-only: record that a commitment reminder fired, so the ledger
+        // has the decision to later stamp an outcome against (done vs ignored)
+        // for the beliefs loop. This does NOT go through judge() — the
+        // commitments runner owns its own delivery cadence/budget and is only
+        // observed here, never gated. Fire-and-forget, never breaks the send.
+        auditCommitmentFired(c, now, followUp).catch(() => {});
       } catch (err) {
         console.error('[commitments] push failed:', err.message);
         // A failed SEND ATTEMPT (network blip, Expo error) still counts as

@@ -60,6 +60,79 @@ function dismissalPatterns(dismissedRows = [], { minCount = DISMISSAL_PATTERN_MI
   return out;
 }
 
+// How many 'dismissed'/'ignored' outcomes on the SAME (domain,type,subject)
+// before the attention policy's own outcome ledger calls it a preference —
+// same bar as the legacy insight-dismissal pattern, same reasoning.
+const OUTCOME_PATTERN_MIN = 3;
+
+/**
+ * Pure: infer SUBJECT-level preference beliefs from the attention policy's
+ * outcome ledger (store/attention.js#outcomeCounts() rows:
+ * {domain,type,subject,outcome,n}). Unlike dismissalPatterns() above (which
+ * only sees wealth-insight dismissals, type-level), this reads outcomes for
+ * EVERY event the policy has judged — any domain, any surface — and keys
+ * per SUBJECT (e.g. "health:anomaly:hrv", not just "anomaly" in general), so
+ * "they keep dismissing HRV anomaly pings specifically" doesn't get
+ * flattened into a blanket "they don't want health anomalies" belief.
+ * A subject needs >=3 negative outcomes AND negatives outnumbering positives
+ * (accepted/completed) — mixed evidence produces no belief, same principle
+ * as the leverage-ranking outcome weighting in store/recommendations.js.
+ */
+function attentionOutcomePatterns(outcomeRows = [], { minCount = OUTCOME_PATTERN_MIN } = {}) {
+  const bySubject = new Map(); // "domain:type:subject" -> {negative, positive}
+  for (const r of outcomeRows) {
+    if (!r.domain || !r.type || !r.subject) continue;
+    const key = `${r.domain}:${r.type}:${r.subject}`;
+    const slot = bySubject.get(key) || { domain: r.domain, type: r.type, subject: r.subject, negative: 0, positive: 0 };
+    const n = Number(r.n) || 0;
+    if (r.outcome === 'dismissed' || r.outcome === 'ignored') slot.negative += n;
+    else if (r.outcome === 'accepted' || r.outcome === 'completed') slot.positive += n;
+    bySubject.set(key, slot);
+  }
+
+  const out = [];
+  for (const [key, s] of bySubject) {
+    if (s.negative < minCount || s.negative <= s.positive) continue;
+    out.push({
+      kind: 'dismissal_pattern',
+      dedupKey: `dismissal:attn:${key}`,
+      statement:
+        `They have dismissed or ignored "${s.type}" alerts about ${s.subject} ${s.negative} times (vs ${s.positive} acted on) — ` +
+        `this specific alert is not landing. Raise the bar before surfacing it again; a quieter mention in the brief beats another push.`,
+      confidence: Math.min(0.9, 0.4 + s.negative * 0.08),
+      evidence: { domain: s.domain, type: s.type, subject: s.subject, negative: s.negative, positive: s.positive },
+    });
+  }
+  return out;
+}
+
+/**
+ * Active dismissal_pattern beliefs, rendered as the multiplier map the
+ * attention policy's judge() applies to a candidate event's value (see
+ * attention.js's beliefMultiplierFor). Two lookup grains, both populated:
+ *   'type:<insightType>'      — the legacy wealth-insight-dismissal beliefs
+ *   '<eventType>:<subject>'   — the new, precise attention-outcome beliefs
+ * A belief that says "don't want this" LOWERS the multiplier (dampens
+ * scoring); confidence maps linearly to how much, floored at 0.4 so a
+ * dampened event still reaches add_to_brief rather than fully vanishing.
+ */
+async function beliefMultipliers() {
+  const map = new Map();
+  try {
+    const rows = await beliefsStore.listActive({ kinds: ['dismissal_pattern'] });
+    for (const b of rows) {
+      const multiplier = Math.max(0.4, 1 - (b.confidence ?? 0.5) * 0.65);
+      if (b.evidence?.type && b.evidence?.distinctDismissed != null) {
+        map.set(`type:${b.evidence.type}`, multiplier);
+      }
+      if (b.evidence?.type && b.evidence?.subject != null) {
+        map.set(`${b.evidence.type}:${b.evidence.subject}`, multiplier);
+      }
+    }
+  } catch { /* fail-open: no personalization this run, never fatal */ }
+  return map;
+}
+
 // ---- User-statement extraction (the one LLM step in the learning layer) ----
 
 const EXTRACT_SYSTEM =
@@ -154,6 +227,19 @@ async function promoteBeliefs({ extractStatements = true } = {}) {
     results.errors.push(`dismissals: ${err.message}`);
   }
 
+  // Same promotion, sourced from the attention policy's own outcome ledger —
+  // covers every domain the policy judges (health/wealth/wellbeing/…), not
+  // just wealth-insight cards, and keys per SUBJECT for precision.
+  try {
+    const outcomes = await require('../store/attention').outcomeCounts();
+    for (const spec of attentionOutcomePatterns(outcomes)) {
+      const id = await beliefsStore.upsertBelief(spec);
+      if (id != null) results.promoted++;
+    }
+  } catch (err) {
+    results.errors.push(`attention_outcomes: ${err.message}`);
+  }
+
   // The one LLM step — optional so ledger-only promotion stays cheap and
   // deterministic for callers/tests that don't want a model call.
   if (extractStatements) {
@@ -187,4 +273,5 @@ function composeBeliefsSection(beliefs = []) {
 module.exports = {
   dismissalPatterns, promoteBeliefs, composeBeliefsSection, DISMISSAL_PATTERN_MIN,
   extractStatementBeliefs, parseExtractedStatements, buildExtractPrompt,
+  attentionOutcomePatterns, beliefMultipliers, OUTCOME_PATTERN_MIN,
 };

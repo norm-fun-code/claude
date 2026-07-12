@@ -39,6 +39,14 @@ async function checkinLoggedToday() {
   }
 }
 
+/** Route one buildNudges() candidate to the right normalized-event adapter,
+ *  keyed off the same basis.type the pure candidate already carries. */
+function candidateToEvent(candidate, asOf) {
+  const events = require('../intelligence/events');
+  if (candidate.basis?.type === 'checkin') return events.fromCheckinMissing(candidate, { asOf });
+  return events.fromFindingCandidate(candidate, { asOf });
+}
+
 /**
  * @param {{ asOf?: Date, send?: boolean, force?: boolean, dedupDays?: number }} [opts]
  */
@@ -46,12 +54,17 @@ async function runNudges(opts = {}) {
   const asOf = opts.asOf ? new Date(opts.asOf) : new Date();
   const send = opts.send !== false;
   const dedupDays = opts.dedupDays ?? 2;
-
-  if (!opts.force && withinQuietHours(asOf)) {
-    return { skipped: 'quiet_hours', generated: 0, sent: 0 };
-  }
+  // Quiet hours are now decided by the attention policy per-candidate (see
+  // dispatchEvents below), not here — detection still runs during quiet
+  // hours so the policy can defer (add_to_brief) rather than the whole run
+  // being silently skipped before any candidate is even built.
 
   const findings = await findingsStore.listFindings({ status: 'open', limit: 200 });
+  // buildNudges' OWN candidate-level suppression stays wired to the legacy
+  // `nudges` (delivered-only) ledger — a harmless, slightly-weaker pre-filter
+  // that preserves buildNudges' existing tested contract unchanged; the
+  // attention policy's own cooldown (attention_log, which also counts
+  // deferred-not-delivered dispositions) is the authoritative gate below.
   const recentKeys = await nudgesStore.recentlySentKeys(dedupDays);
   // The check-in reminder has its own afternoon schedule (you can't rate your day
   // at 8am), so the morning routine suppresses it by reporting "already has one".
@@ -62,33 +75,18 @@ async function runNudges(opts = {}) {
     return { generated: 0, sent: 0, nudges: [] };
   }
 
-  const tokens = send ? await devicesStore.listActiveTokens() : [];
+  const { dispatchEvents } = require('./dispatch');
+  const events = candidates.map((c) => candidateToEvent(c, asOf));
+  const results = await dispatchEvents(events, { asOf, send, force: opts.force });
+
   let sentCount = 0;
-  const out = [];
+  const out = candidates.map((n, i) => {
+    const r = results[i];
+    if (r.delivered) sentCount += 1;
+    return { ...n, disposition: r.decision.disposition, reason: r.decision.reason };
+  });
 
-  for (const n of candidates) {
-    const status = send && tokens.length === 0 ? 'skipped' : 'pending';
-    const id = await nudgesStore.recordNudge({ ...n, dedupKey: n.key, status });
-    // null means another concurrent caller already claimed this exact nudge
-    // (recordNudge's atomic dedup guard) — don't push a second time.
-    if (id == null) { out.push({ ...n, skipped: 'concurrent_duplicate' }); continue; }
-
-    if (send && tokens.length > 0) {
-      try {
-        const r = await sendPush(tokens, { title: n.title, body: n.body, data: { key: n.key } });
-        for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
-        await nudgesStore.markStatus(id, 'sent');
-        sentCount += 1;
-      } catch (err) {
-        await nudgesStore.markStatus(id, 'failed');
-        out.push({ ...n, error: err.message });
-        continue;
-      }
-    }
-    out.push(n);
-  }
-
-  return { generated: candidates.length, sent: sentCount, devices: tokens.length, nudges: out };
+  return { generated: candidates.length, sent: sentCount, nudges: out };
 }
 
 module.exports = { runNudges, runCheckinReminder, runEveningReminder };
@@ -140,7 +138,12 @@ async function runCheckinReminder(opts = {}) {
   if (!opts.force && (await checkinLoggedToday())) {
     return { skipped: 'already_logged', sent: 0 };
   }
-  return sendReminder(checkinReminder(new Date()), { send });
+  const asOf = new Date();
+  const candidate = checkinReminder(asOf);
+  const event = candidateToEvent(candidate, asOf);
+  const { dispatchEvent } = require('./dispatch');
+  const result = await dispatchEvent(event, { asOf, send, force: opts.force });
+  return { sent: result.delivered ? 1 : 0, disposition: result.decision.disposition, reason: result.decision.reason };
 }
 
 /** Has the user logged any day-context journal entry today? Fail-safe: assume
