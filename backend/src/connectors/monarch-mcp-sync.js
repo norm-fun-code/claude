@@ -12,7 +12,7 @@
 const rpc = require('../services/monarch-mcp-rpc');
 const monarchMcp = require('../services/monarch-mcp');
 const monarchApi = require('./monarch-api');
-const { isFixedCategory, isInternalTransfer, isExcludedIncome, isNonIncomePositive } = require('./monarch');
+const { isFixedCategory, isInternalTransfer, reconcileWealthFlows } = require('./monarch');
 const { registerSource } = require('../store/sources');
 
 const SOURCE = 'monarch';
@@ -235,146 +235,58 @@ async function syncViaMcp(ctx) {
     );
   }
 
-  const expByDay = new Map();
-  // Bug bash finding: this used to tally NON-fixed spend directly (discByDay,
-  // Monarch's "discretionary" concept computed independently). Now it tallies
-  // the FIXED-HOUSING subset instead — discretionary is DERIVED as
-  // total - fixed (see below), from the SAME transaction universe as total,
-  // so the subtraction relationship holds to the cent by construction. This
-  // also completely removes the separate GetCashFlow(exclude_categories:
-  // fixedCats) call that used to compute "discretionary" independently — if
-  // Monarch's exclude_categories filter doesn't behave as assumed (expects
-  // IDs not names, or doesn't match Reports' semantics), that call could
-  // silently diverge from total-minus-fixed. Deriving instead of
-  // independently querying removes that entire failure mode.
-  const fixedByDay = new Map();
-  const incByDay = new Map();          // strict: category matches a Monarch income category
-  const incByDayHeuristic = new Map(); // lenient: any earned-looking positive inflow
-  for (const t of txns) {
-    if (!t || !t.date) continue;
-    const amount = Number(t.amount);
-    if (!Number.isFinite(amount) || amount === 0) continue;
-    const category = String(t.category || '');
-    const categoryType = String(t.category_type || t.categoryType || '').toLowerCase();
-    // Use Monarch's own category_type first (authoritative), then fall back to
-    // name-matching. Catches CC payments/transfers regardless of custom names.
-    if (categoryType === 'transfer' || isInternalTransfer(category)) continue;
-    const day = String(t.date).slice(0, 10);
-    if (day > today) continue; // skip pending/future-dated transactions
-    if (amount < 0) {
-      const spend = Math.abs(amount);
-      expByDay.set(day, (expByDay.get(day) || 0) + spend);
-      if (isFixedCategory(category)) {
-        fixedByDay.set(day, (fixedByDay.get(day) || 0) + spend);
-      }
-    } else {
-      // Earned income only — count a positive amount ONLY when its category is one
-      // Monarch classifies as INCOME (Paychecks, Other Income, …). This matches
-      // Monarch's Income report and excludes the transfers / deposits /
-      // reimbursements that inflated the figure (~$33k vs Monarch's ~$22k).
-      // Fallbacks (if GetCategories was unavailable): category_type==='income',
-      // else the name heuristic + non-income-positive guard. Investment income
-      // (dividends / capital gains / tax refunds) is still dropped.
-      const inIncomeCategory = incomeCats.size
-        ? incomeCats.has(category.toLowerCase())
-        : (categoryType ? categoryType === 'income' : (!isExcludedIncome(category) && !isNonIncomePositive(category)));
-      if (inIncomeCategory && !isExcludedIncome(category)) {
-        incByDay.set(day, (incByDay.get(day) || 0) + amount);
-      }
-      // Lenient parallel tally — the same earned-income guards the CSV/recompute
-      // path uses. This is the last-resort net: when `incomeCats` is populated but
-      // the transaction's `category` string doesn't EXACTLY match a category name
-      // (Monarch sometimes reports a category id / group name / differently-cased
-      // label on the transaction than GetCategories returns), the strict match
-      // above silently drops every paycheck. Transfers are already excluded above;
-      // refunds/reimbursements/cashback and investment income are excluded here —
-      // so this catches real paychecks without re-introducing the inflation.
-      if (categoryType !== 'income' && (isExcludedIncome(category) || isNonIncomePositive(category))) {
-        // not earned income — skip from the heuristic tally
-      } else {
-        incByDayHeuristic.set(day, (incByDayHeuristic.get(day) || 0) + amount);
-      }
-    }
-  }
+  // ── THE ONE authoritative flow calculation ─────────────────────────────
+  // Every writing path (this MCP sync, the GraphQL/CSV importer, the document
+  // recompute) funnels through reconcileWealthFlows so spending, discretionary,
+  // fixed housing, income, and net cashflow all come from ONE transaction
+  // universe with ONE refund-netting / transfer / income / fixed-housing rule
+  // set. Total expense and fixed housing are the SAME netted universe, so
+  // spending === fixed + discretionary to the cent — the previous path mixed a
+  // refund-netted GetCashFlow *total* with a raw-negative fixed-housing *subset*,
+  // which diverged on any fixed-category refund/credit. incomeCats (Monarch's
+  // own income category names) is the authoritative income signal; category_type
+  // and the name heuristic are the documented fallbacks (see monarch.js).
+  const normTxns = txns.map((t) => ({
+    date: t && t.date ? String(t.date).slice(0, 10) : null,
+    amount: Number(t?.amount),
+    category: t?.category,
+    categoryType: t?.category_type || t?.categoryType,
+  }));
+  const { byDay: flowsByDay, expenseTxns, incomeTxns } = reconcileWealthFlows(normTxns, {
+    incomeCategoryNames: incomeCats, today, tz: process.env.TZ || 'America/New_York',
+  });
+  const expSrc = new Map([...flowsByDay].map(([d, b]) => [d, b.spending]));
+  const discretionaryByDay = new Map([...flowsByDay].map(([d, b]) => [d, b.discretionary]));
+  const incSrc = new Map([...flowsByDay].map(([d, b]) => [d, b.income]));
 
-  // PRIMARY SOURCE for income & spending: Monarch's OWN GetCashFlow day
-  // aggregation (category_type income/expense). This is the exact math behind
-  // Monarch's Reports view, so the totals match to the dollar — unlike the
-  // transaction-level re-derivation above, which over-counted income (positive
-  // deposits/reimbursements that Monarch's income report excludes) and missed
-  // refund-netting on spending. The transaction loop is kept as a FALLBACK for
-  // when GetCashFlow is unavailable. Discretionary is NOT independently
-  // fetched at all (see fixedByDay above) — it's derived from whichever total
-  // wins below, so there is only ONE authoritative expense number per day,
-  // never two independently-filtered queries that could diverge.
-  //
-  // GetCashFlow is Monarch-signed: income rows positive, expense rows negative.
-  // exclude_categories drops transfers / CC-payments so we never double-count.
-  const [transferCats] = await Promise.all([
-    transferCategoryNames(),
-  ]);
-  // Settled independently (not Promise.all) — a transient failure on the
-  // expense call must not blank out income too (and vice versa).
-  const [cashIncomeRes, cashExpenseRes] = await Promise.allSettled([
-    dailyCashflow(startDate, endDate, 'income', transferCats),
-    dailyCashflow(startDate, endDate, 'expense', transferCats),
-  ]);
-  const settled = (r, label) => {
-    if (r.status === 'fulfilled') return r.value;
-    console.error(`[monarch_mcp_sync] GetCashFlow(${label}) failed, using transaction-derived totals:`, r.reason?.message);
-    return new Map();
-  };
-  const cashIncome = settled(cashIncomeRes, 'income');
-  const cashExpense = settled(cashExpenseRes, 'expense');
-
-  // Normalize a Monarch-signed cash-flow Map into a positive, YYYY-MM-DD-keyed
-  // Map. Income/expense are made positive; keys are sliced to the day.
-  const normalize = (cf) => {
-    const out = new Map();
-    for (const [k, v] of cf) {
-      const day = String(k).slice(0, 10);
-      if (day > today) continue; // skip future-dated buckets
-      out.set(day, (out.get(day) || 0) + Math.abs(v));
-    }
-    return out;
-  };
-  const incCash = normalize(cashIncome);
-  const expCash = normalize(cashExpense);
-
-  // Prefer Monarch's aggregation; fall back to transaction-derived maps when the
-  // GetCashFlow call returned nothing (so finances still flow if it's down).
-  // Income has THREE tiers: (1) GetCashFlow (matches Monarch's Reports exactly),
-  // (2) strict category-name match, (3) lenient earned-income heuristic — the last
-  // rescues the case where GetCashFlow('income') is empty AND the transaction
-  // `category` strings don't line up with GetCategories' names, which otherwise
-  // leaves income stuck at $0 indefinitely (the guard below only PRESERVES $0, it
-  // never repairs it).
-  const incSrc = incCash.size ? incCash : (incByDay.size ? incByDay : incByDayHeuristic);
-  const expSrc = expCash.size ? expCash : expByDay;
-  // One-line visibility into which tier produced income this run — so a recurring
-  // $0 is diagnosable from logs instead of guesswork.
-  const incTier = incCash.size ? 'getcashflow' : (incByDay.size ? 'strict-category' : (incByDayHeuristic.size ? 'heuristic' : 'none'));
-  const incTotal = [...incSrc.values()].reduce((a, v) => a + v, 0);
-  console.log(`[monarch_mcp_sync] income source=${incTier} days=${incSrc.size} total=$${Math.round(incTotal)} ` +
-    `(getcashflow:${incCash.size}d strict:${incByDay.size}d heuristic:${incByDayHeuristic.size}d, incomeCats=${incomeCats.size})`);
-
-  // Discretionary = total expense minus fixed-housing, within the SAME day —
-  // derived, never independently queried, so "total - fixed = discretionary"
-  // holds to the cent by construction. fixedByDay always comes from the
-  // transaction loop (there's no independent GetCashFlow call for it to
-  // diverge from). Clamped at 0 defensively: if GetCashFlow's total for a day
-  // (refund-netted) ever comes in lower than the transaction-derived fixed
-  // amount for that same day, a negative "discretionary" would be nonsensical
-  // — clamp and log so a real mismatch is visible rather than silently wrong.
-  const discretionaryByDay = new Map();
-  for (const day of new Set([...expSrc.keys(), ...fixedByDay.keys()])) {
-    const total = expSrc.get(day) || 0;
-    const fixed = fixedByDay.get(day) || 0;
-    const disc = total - fixed;
-    if (disc < 0) {
-      console.error(`[monarch_mcp_sync] ${day}: fixed-housing ($${fixed.toFixed(2)}) exceeds total expense ($${total.toFixed(2)}) — clamping discretionary to 0; likely a refund-netting mismatch between GetCashFlow's total and the transaction-derived fixed amount`);
-    }
-    discretionaryByDay.set(day, Math.max(0, disc));
+  // GetCashFlow cross-check — DIAGNOSTIC ONLY, never mixed into the written
+  // metrics. Monarch's Reports aggregation is the external reference; if the
+  // reconciler's window total drifts from it by more than a rounding cent, log
+  // it so a real data/rule mismatch is visible instead of silently blended in
+  // (the exact anti-pattern this rework removes). Best-effort, never blocks.
+  try {
+    const transferCats = await transferCategoryNames();
+    const [ci, ce] = await Promise.allSettled([
+      dailyCashflow(startDate, endDate, 'income', transferCats),
+      dailyCashflow(startDate, endDate, 'expense', transferCats),
+    ]);
+    const sumCash = (r) => {
+      if (r.status !== 'fulfilled') return null;
+      let s = 0;
+      for (const [k, v] of r.value) { if (String(k).slice(0, 10) > today) continue; s += Math.abs(v); }
+      return round2(s);
+    };
+    const reconSpend = round2([...flowsByDay.values()].reduce((a, b) => a + b.spending, 0));
+    const reconIncome = round2([...flowsByDay.values()].reduce((a, b) => a + b.income, 0));
+    const cashSpend = sumCash(ce);
+    const cashInc = sumCash(ci);
+    const drift = (recon, cash) => cash == null ? 'unavailable' : `$${cash}` + (Math.abs(round2(recon - cash)) > 0.01 ? ` DRIFT=$${round2(recon - cash)}` : ' (match)');
+    console.log(`[monarch_mcp_sync] flows source=transaction-reconciler days=${flowsByDay.size} ` +
+      `reconSpend=$${reconSpend} getCashFlowSpend=${drift(reconSpend, cashSpend)} ` +
+      `reconIncome=$${reconIncome} getCashFlowIncome=${drift(reconIncome, cashInc)} ` +
+      `(expenseTxns=${expenseTxns} incomeTxns=${incomeTxns} incomeCats=${incomeCats.size})`);
+  } catch (err) {
+    console.error('[monarch_mcp_sync] GetCashFlow cross-check failed (non-fatal):', err.message);
   }
 
   // Bug bash root cause: this used to emit spending/spending_discretionary
@@ -392,7 +304,7 @@ async function syncViaMcp(ctx) {
   // this window is an expense-DETECTION failure (GetCashFlow down and the
   // transaction fallback also came up empty), not a genuinely expense-free
   // month — skip the write rather than zeroing out real history.
-  const expenseDetectionFailed = expSrc.size === 0 && txns.length > 0;
+  const expenseDetectionFailed = expenseTxns === 0 && txns.length > 0;
   if (expenseDetectionFailed) {
     console.error(`[monarch_mcp_sync] no expenses detected across ${txns.length} transactions in ${startDate}..${endDate} — treating as a detection failure and skipping the spending/spending_discretionary write rather than zeroing real history`);
   } else {
@@ -414,7 +326,7 @@ async function syncViaMcp(ctx) {
   // income was genuinely zero for over a month straight. Writing 0 for every day
   // in that case would overwrite real stored income with a fabricated absence —
   // skip the write instead and leave whatever's already stored alone.
-  const incomeDetectionFailed = incSrc.size === 0 && txns.length > 0;
+  const incomeDetectionFailed = incomeTxns === 0 && txns.length > 0;
   if (incomeDetectionFailed) {
     console.error(`[monarch_mcp_sync] no income detected across ${txns.length} transactions in ${startDate}..${endDate} — treating as a detection failure and skipping the income/net_cashflow write rather than zeroing real history`);
   } else {

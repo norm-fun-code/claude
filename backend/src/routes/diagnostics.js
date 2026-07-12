@@ -36,7 +36,7 @@ function createDiagnosticsRouter() {
   router.get('/debug/wealth-income', asyncHandler(async (req, res) => {
     const sync = require('../connectors/monarch-mcp-sync');
     const monarchMcp = require('../services/monarch-mcp');
-    const { isInternalTransfer, isExcludedIncome, isNonIncomePositive, isFixedCategory } = require('../connectors/monarch');
+    const { isFixedCategory, classifyTransaction } = require('../connectors/monarch');
     const { localMonthStartUtc, naiveToUtcIso } = require('../util/date');
     const tz = process.env.TZ || 'America/New_York';
     // LOCAL calendar day, not UTC — new Date().toISOString().slice(0,10) is
@@ -136,38 +136,61 @@ function createDiagnosticsRouter() {
 
       let income = 0, spend = 0, transfersSkipped = 0;
       const incomeTxns = [], excludedPositives = [];
-      // Category-level breakdown of EXPENSE transactions in the window — the
-      // exact categories/dates a discrepancy investigation needs. fixed:true
-      // marks categories excluded from discretionary (isFixedCategory).
-      const byCategory = new Map(); // category -> { total, fixed, count, txns: [{date,merchant,amount}] }
+      // Category-level breakdown — the exact categories/dates a discrepancy
+      // investigation needs. Classification + signed netting come from the SAME
+      // shared logic the sync writes with (classifyTransaction), so a refund is
+      // netted into its category here exactly as it is in the stored metric.
+      const byCategory = new Map(); // category -> { total(net), fixed, count, txns }
       let fixedTotal = 0;
       for (const t of txns || []) {
         if (!t || !t.date) continue;
         const amount = Number(t.amount);
         if (!Number.isFinite(amount) || amount === 0) continue;
+        if (String(t.date).slice(0, 10) > today) continue;
         const category = String(t.category || '(uncategorized)');
         const categoryType = String(t.category_type || t.categoryType || '').toLowerCase();
-        if (categoryType === 'transfer' || isInternalTransfer(category)) { transfersSkipped++; continue; }
-        if (String(t.date).slice(0, 10) > today) continue;
-        if (amount < 0) {
-          const abs = Math.abs(amount);
-          spend += abs;
-          const fixed = isFixedCategory(category);
-          if (fixed) fixedTotal += abs;
-          const slot = byCategory.get(category) || { total: 0, fixed, count: 0, txns: [] };
-          slot.total = Math.round((slot.total + abs) * 100) / 100;
-          slot.count += 1;
-          slot.txns.push({ date: String(t.date).slice(0, 10), merchant: t.merchant, amount: Math.round(abs * 100) / 100 });
-          byCategory.set(category, slot);
+        const cls = classifyTransaction({ amount, category, categoryType, incomeCategoryNames: incomeCats });
+        if (cls === 'transfer') { transfersSkipped++; continue; }
+        if (cls === 'income') {
+          income += amount;
+          incomeTxns.push({ date: String(t.date).slice(0, 10), merchant: t.merchant, category, categoryType, amount: Math.round(amount) });
           continue;
         }
-        const inIncomeCategory = incomeCats.size
-          ? incomeCats.has(category.toLowerCase())
-          : (categoryType ? categoryType === 'income' : (!isExcludedIncome(category) && !isNonIncomePositive(category)));
-        const row = { date: String(t.date).slice(0, 10), merchant: t.merchant, category, categoryType, amount: Math.round(amount) };
-        if (inIncomeCategory && !isExcludedIncome(category)) { income += amount; incomeTxns.push(row); }
-        else excludedPositives.push(row);
+        if (cls === 'excluded') {
+          excludedPositives.push({ date: String(t.date).slice(0, 10), merchant: t.merchant, category, categoryType, amount: Math.round(amount) });
+          continue;
+        }
+        // expense — signed net spend (a positive refund nets its category down)
+        const netSpend = -amount;
+        spend += netSpend;
+        const fixed = isFixedCategory(category);
+        if (fixed) fixedTotal += netSpend;
+        const slot = byCategory.get(category) || { total: 0, fixed, count: 0, txns: [] };
+        slot.total = Math.round((slot.total + netSpend) * 100) / 100;
+        slot.count += 1;
+        slot.txns.push({ date: String(t.date).slice(0, 10), merchant: t.merchant, amount: Math.round(amount * 100) / 100 });
+        byCategory.set(category, slot);
       }
+      spend = Math.round(spend * 100) / 100;
+      fixedTotal = Math.round(fixedTotal * 100) / 100;
+      income = Math.round(income * 100) / 100;
+
+      // The AUTHORITATIVE flows — exactly what the sync writes for this window
+      // (reconcileWealthFlows, the one shared calculation). The category-level
+      // `spend`/`fixedTotal` above are computed the same way and must match.
+      const normForRecon = (txns || []).map((t) => ({
+        date: t && t.date ? String(t.date).slice(0, 10) : null,
+        amount: Number(t && t.amount), category: t && t.category, categoryType: t && (t.category_type || t.categoryType),
+      }));
+      const { byDay: reconByDay } = require('../connectors/monarch').reconcileWealthFlows(normForRecon, { incomeCategoryNames: incomeCats, today, tz });
+      const reconSum = (k) => Math.round([...reconByDay.values()].reduce((a, b) => a + b[k], 0) * 100) / 100;
+      const reconciled = {
+        note: 'AUTHORITATIVE — the exact flows the sync writes (reconcileWealthFlows); spending === fixed + discretionary by construction',
+        totalExpense: reconSum('spending'),
+        fixedHousing: reconSum('fixed'),
+        discretionary: reconSum('discretionary'),
+        income: reconSum('income'),
+      };
       incomeTxns.sort((a, b) => b.amount - a.amount);
       excludedPositives.sort((a, b) => b.amount - a.amount);
 
@@ -177,19 +200,19 @@ function createDiagnosticsRouter() {
       const categoryTotalCheck = Math.round(categoryBreakdown.reduce((a, c) => a + c.total, 0) * 100) / 100;
 
       live = {
-        cashflow,                                       // ⇐ PRIMARY: should match Monarch Reports total spend/income
+        cashflow,                                       // Monarch Reports cross-check (diagnostic only)
         legacyExcludeCategoriesDiscretionary,           // comparison only — see note above
+        reconciled,                                     // ⇐ AUTHORITATIVE — what the sync actually writes
         derivedDiscretionary: {
-          // The sync's ACTUAL current logic: total expense minus fixed-housing,
-          // from the SAME transaction set — this is what spending_discretionary
-          // is now computed from.
-          totalExpense: Math.round(spend * 100) / 100,
-          fixedHousing: Math.round(fixedTotal * 100) / 100,
+          // Category-level view, computed with the SAME shared classification +
+          // signed netting as `reconciled` above, so it matches it to the cent.
+          totalExpense: spend,
+          fixedHousing: fixedTotal,
           discretionary: Math.round((spend - fixedTotal) * 100) / 100,
         },
         fixedCategoriesDetected: [...fixedCats],
-        categoryBreakdown,                              // every expense category, total, whether it's fixed, top txns
-        categoryTotalReconciles: categoryTotalCheck === Math.round(spend * 100) / 100,
+        categoryBreakdown,                              // every expense category, NET total, whether it's fixed, top txns
+        categoryTotalReconciles: categoryTotalCheck === spend && spend === reconciled.totalExpense,
         categoryTotal: categoryTotalCheck,
         incomeCategoriesDetected: [...incomeCats],   // empty ⇒ GetCategories shape didn't parse → heuristic fallback
         transferCategoriesDetected: [...transferCats],

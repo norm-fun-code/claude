@@ -195,9 +195,105 @@ function detectKind(headers = []) {
 // --- mappers (pure) -----------------------------------------------------------
 
 /**
+ * Classify ONE transaction into exactly one wealth-flow bucket. This is the
+ * single decision every path uses, so an identical transaction is bucketed
+ * identically whether it arrives from the MCP sync, a GraphQL scrape, a CSV
+ * import, or the document recompute.
+ *
+ *   'transfer' — internal money movement / card payment: never a flow.
+ *   'excluded' — investment income, tax refunds, and standalone
+ *                reimbursement/cashback categories: neither earned income nor a
+ *                spend, and NOT attached to a real spend category, so they must
+ *                not net one down (Monarch's Income report excludes them too).
+ *   'income'   — an earned-income category (signed: a clawback reduces income).
+ *   'expense'  — everything else. Signed spend = -amount, so a positive refund
+ *                that Monarch keeps IN its original expense category nets that
+ *                category down — the same refund-netting Monarch Reports applies.
+ *
+ * Authoritative signals win: an explicit income-category NAME (from Monarch's
+ * GetCategories) first, then Monarch's category_type; the amount-sign name
+ * heuristic is used only as a last resort for the CSV/recompute path that
+ * carries neither.
+ */
+function classifyTransaction({ amount, category, categoryType, incomeCategoryNames }) {
+  const type = String(categoryType || '').toLowerCase();
+  if (type === 'transfer' || isInternalTransfer(category)) return 'transfer';
+  if (isExcludedIncome(category)) return 'excluded';
+  if (amount > 0 && isNonIncomePositive(category)) return 'excluded';
+  const isIncomeCat = (incomeCategoryNames && incomeCategoryNames.size)
+    ? incomeCategoryNames.has(String(category || '').toLowerCase())
+    : (type ? type === 'income' : amount > 0);
+  return isIncomeCat ? 'income' : 'expense';
+}
+
+/**
+ * THE single authoritative daily wealth-flow calculation. Every path that
+ * writes wealth:spending / spending_discretionary / income / net_cashflow —
+ * the MCP sync (monarch-mcp-sync.js), the GraphQL/CSV importer + the recompute
+ * (via mapTransactions below) — funnels through here, so all four metrics come
+ * from ONE transaction universe with ONE set of refund-netting / transfer /
+ * income / fixed-housing rules. Total expense and fixed housing are the SAME
+ * netted universe, so `spending === fixed + discretionary` and
+ * `discretionary === spending - fixed` hold to the cent BY CONSTRUCTION — never
+ * by coincidence of two independently-filtered queries.
+ *
+ * @param {Array} txns - normalized: { date:'YYYY-MM-DD', amount: signed number
+ *   (negative = money out, positive = money in), category, categoryType? }
+ * @param {object} opts
+ * @param {Set<string>} [opts.incomeCategoryNames] - lower-cased Monarch income
+ *   category names (authoritative when present).
+ * @param {string} [opts.today] - LOCAL YYYY-MM-DD; transactions dated AFTER this
+ *   (pending / future) are excluded. Defaults to local today in `tz`.
+ * @returns {{ byDay: Map<string,{spending,discretionary,fixed,income,netCashflow}>,
+ *             expenseTxns:number, incomeTxns:number }}
+ */
+function reconcileWealthFlows(txns = [], opts = {}) {
+  const tz = opts.tz || process.env.TZ || 'America/New_York';
+  const today = opts.today || new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  const incomeCategoryNames = opts.incomeCategoryNames || null;
+  const byDay = new Map();
+  const ensure = (day) => {
+    let b = byDay.get(day);
+    if (!b) { b = { spending: 0, discretionary: 0, fixed: 0, income: 0, netCashflow: 0 }; byDay.set(day, b); }
+    return b;
+  };
+  let expenseTxns = 0, incomeTxns = 0;
+  for (const t of txns) {
+    const day = t.date ? String(t.date).slice(0, 10) : null;
+    const amount = Number(t.amount);
+    if (!day || !Number.isFinite(amount) || amount === 0) continue;
+    if (day > today) continue; // pending / future-dated excluded (LOCAL boundary)
+    const cls = classifyTransaction({ amount, category: t.category, categoryType: t.categoryType, incomeCategoryNames });
+    if (cls === 'transfer' || cls === 'excluded') continue;
+    const b = ensure(day);
+    if (cls === 'income') {
+      b.income += amount; // signed — a reversal reduces income
+      incomeTxns += 1;
+    } else {
+      const spend = -amount; // signed — a positive refund nets its category down
+      if (isFixedCategory(t.category)) b.fixed += spend; else b.discretionary += spend;
+      expenseTxns += 1;
+    }
+  }
+  for (const b of byDay.values()) {
+    // Round the PARTS, then derive the total from them, so the invariant
+    // spending === fixed + discretionary survives float cleanup exactly.
+    b.fixed = round2(b.fixed);
+    b.discretionary = round2(b.discretionary);
+    b.spending = round2(b.fixed + b.discretionary);
+    b.income = round2(b.income);
+    b.netCashflow = round2(b.income - b.spending);
+  }
+  return { byDay, expenseTxns, incomeTxns };
+}
+
+/**
  * Aggregate transaction records into daily spending/income/cashflow metrics and
  * one document per transaction. Aggregating per day (not per row) guarantees
  * unique (ts, metric) keys so the bulk metric insert can't conflict with itself.
+ * The FLOW math is delegated to reconcileWealthFlows (the single authoritative
+ * calculation); this function only adds the document-per-transaction mapping and
+ * the metric-row emission (with optional full-window zero-fill).
  *
  * opts.windowStart/windowEnd (YYYY-MM-DD, LOCAL calendar dates): when given,
  * flow metrics are emitted for EVERY day in that range (0 when a day has none)
@@ -208,17 +304,20 @@ function detectKind(headers = []) {
  */
 function mapTransactions(records = [], opts = {}) {
   const { windowStart, windowEnd } = opts;
-  const spendByDay = new Map();
-  const discretionaryByDay = new Map(); // spend excluding fixed housing (rent/mortgage)
-  const incomeByDay = new Map();
   const documents = [];
   // Monarch can return pending/scheduled transactions dated today-or-later.
   // LOCAL calendar day, not UTC — new Date().toISOString().slice(0,10) is the
   // UTC day, wrong for several hours around each local midnight (same bug
-  // class fixed via localToday in monarch-mcp-sync.js).
+  // class fixed via localToday in monarch-mcp-sync.js). opts.today lets callers
+  // (and tests) pin it deterministically.
   const tz = process.env.TZ || 'America/New_York';
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  const today = opts.today || new Date().toLocaleDateString('en-CA', { timeZone: tz });
 
+  // Survivors of the account/date/parse filters, normalized for the shared
+  // flow reconciler. CSV/GraphQL/document records carry no category_type, so
+  // the reconciler falls back to its amount-sign name heuristic (unchanged
+  // behavior for these paths) — but through the SAME code the MCP sync uses.
+  const flowTxns = [];
   for (const rec of records) {
     const day = parseDay(field(rec, ['date']));
     const amount = parseAmount(field(rec, ['amount']));
@@ -232,25 +331,7 @@ function mapTransactions(records = [], opts = {}) {
     const tags = field(rec, ['tags']);
     const original = field(rec, ['original statement', 'originalstatement', 'notes']);
 
-    // Internal transfers / card payments are not spending or income — skip them
-    // from every flow metric (they still post as documents below for searchability).
-    const internal = isInternalTransfer(category);
-
-    // Monarch convention: negative = money out, positive = money in.
-    if (internal) {
-      // no-op: excluded from spend/discretionary/income/cashflow
-    } else if (amount < 0) {
-      spendByDay.set(day, (spendByDay.get(day) || 0) + -amount);
-      // Discretionary = everything except fixed housing, so rent/mortgage doesn't
-      // masquerade as a spending spike in the weekly review.
-      if (!isFixedCategory(category)) {
-        discretionaryByDay.set(day, (discretionaryByDay.get(day) || 0) + -amount);
-      }
-    } else if (amount > 0 && !isExcludedIncome(category) && !isNonIncomePositive(category)) {
-      // CSV path has no category_type, so guard against refunds/reimbursements/
-      // cashback being miscounted as income via the category name.
-      incomeByDay.set(day, (incomeByDay.get(day) || 0) + amount);
-    }
+    flowTxns.push({ date: day, amount, category, categoryType: field(rec, ['category type', 'categorytype']) });
 
     // Prefer Monarch's stable transaction id (from the API) as the document
     // identity: it survives edits to date/category/amount, so recategorizing or
@@ -273,6 +354,12 @@ function mapTransactions(records = [], opts = {}) {
       metadata: { amount, category, account, tags, merchant },
     });
   }
+
+  // ── Flow metrics: the ONE authoritative calculation (shared with the MCP sync).
+  const { byDay } = reconcileWealthFlows(flowTxns, { today, tz });
+  const spendByDay = new Map([...byDay].map(([d, b]) => [d, b.spending]));
+  const discretionaryByDay = new Map([...byDay].map(([d, b]) => [d, b.discretionary]));
+  const incomeByDay = new Map([...byDay].map(([d, b]) => [d, b.income]));
 
   const metrics = [];
   const m = (metric, value, day) => ({
@@ -310,14 +397,14 @@ function mapTransactions(records = [], opts = {}) {
       }
     }
   } else {
-    const days = new Set([...spendByDay.keys(), ...incomeByDay.keys()]);
-    for (const day of days) {
-      const spend = spendByDay.get(day) || 0;
-      const income = incomeByDay.get(day) || 0;
-      if (spendByDay.has(day)) metrics.push(m('spending', spend, day));
-      if (discretionaryByDay.has(day)) metrics.push(m('spending_discretionary', discretionaryByDay.get(day), day));
-      if (incomeByDay.has(day)) metrics.push(m('income', income, day));
-      metrics.push(m('net_cashflow', income - spend, day));
+    // Sparse (CSV import / recompute-without-window): emit only days that had
+    // any activity — but a complete four-metric row for each, straight from the
+    // reconciler, so spending === fixed + discretionary holds per day.
+    for (const [day, b] of byDay) {
+      metrics.push(m('spending', b.spending, day));
+      metrics.push(m('spending_discretionary', b.discretionary, day));
+      metrics.push(m('income', b.income, day));
+      metrics.push(m('net_cashflow', b.netCashflow, day));
     }
   }
   return { metrics, documents };
@@ -492,4 +579,7 @@ module.exports = {
   isFixedCategory,
   isExcludedIncome,
   isNonIncomePositive,
+  // the single authoritative wealth-flow calculation, shared by every path
+  reconcileWealthFlows,
+  classifyTransaction,
 };

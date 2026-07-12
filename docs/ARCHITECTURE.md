@@ -92,6 +92,22 @@ Three ingestion modes:
 | `google_calendar` | productivity | server | calendar_events, meetings + event documents |
 | `weather` | environment | server | temperature, humidity, uv_index (context for correlations) |
 
+**One authoritative wealth-flow calculation.** Every Monarch path that writes
+`spending` / `spending_discretionary` / `income` / `net_cashflow` — the MCP sync
+(`monarch-mcp-sync.js`), the GraphQL/CSV importer and the document recompute
+(both via `monarch.js`'s `mapTransactions`), and the `/debug/wealth-income`
+diagnostic — funnels through `monarch.js`'s **`reconcileWealthFlows`**. Total
+expense and fixed housing come from the SAME netted transaction universe (a
+positive refund nets its own category down, exactly as Monarch Reports does), so
+`spending === fixed + discretionary` and `discretionary === spending − net fixed`
+hold to the cent by construction — never by coincidence of two independently
+filtered queries. Classification prefers Monarch's income-category NAMES, then
+`category_type`, then a name heuristic (the CSV/recompute fallback). The MCP
+sync no longer *writes* from `GetCashFlow`; it keeps it only as a logged
+diagnostic cross-check (drift is surfaced, never silently blended in). This is
+why a maintenance recompute can never overwrite metrics with different semantics
+than the live sync — they are literally the same function.
+
 ## API surface
 
 | Endpoint | Purpose |
