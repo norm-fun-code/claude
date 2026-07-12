@@ -103,3 +103,26 @@ test('legacyExcludeCategoriesDiscretionary is reported for comparison but is not
   assert.ok('legacyExcludeCategoriesDiscretionary' in res.body);
   assert.ok(res.body.legacyExcludeCategoriesDiscretionary.note.includes('NOT used by the sync'));
 });
+
+// A live Monarch-side outage (e.g. their API paused/down) must not suppress
+// storedMetrics — that's the one signal that's most valuable precisely when
+// the live API is unavailable. The endpoint must degrade to 200 + liveDataError
+// rather than a bare 500.
+test('a live Monarch fetch failure still returns storedMetrics, degrading to a liveDataError field instead of a 500', async () => {
+  monarchMcp.isConfigured = () => true;
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  await metricsStore.insertMetrics([
+    { ts: today, domain: 'wealth', metric: 'spending', value: 250, source: TEST_SOURCE },
+  ]);
+  rpc.callToolJson = async () => {
+    throw new Error('The Monarch MCP is temporarily paused while we work through a data portability question raised by one of our partners.');
+  };
+  const res = await request(app).get('/api/debug/wealth-income?mtd=1').set(authHeader(ADMIN_TOKEN));
+  assert.equal(res.status, 200);
+  assert.ok(res.body.liveDataError, 'a live-Monarch failure must surface as liveDataError, not a 500');
+  assert.ok(res.body.liveDataError.includes('temporarily paused'));
+  const storedRow = res.body.storedMetrics.spending.rows.find((r) => r.source === TEST_SOURCE);
+  assert.ok(storedRow, 'storedMetrics must still be present and correct even when the live Monarch fetch fails');
+  assert.equal(storedRow.value, 250);
+});

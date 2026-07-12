@@ -45,96 +45,13 @@ function createDiagnosticsRouter() {
     const end = ymd(new Date());
     const today = end;
 
-    const [txns, incomeCats, transferCats, fixedCats] = await Promise.all([
-      sync.fetchTxnsInRange(start, end),
-      sync.incomeCategoryNames(),
-      sync.transferCategoryNames(),
-      sync.fixedCategoryNames(),
-    ]);
-
-    // Monarch's OWN aggregation (the PRIMARY source for the stored metrics).
-    // These are the numbers that should match Monarch's Reports view to the dollar.
-    const sumCash = (cf) => {
-      let total = 0;
-      for (const [k, v] of cf || new Map()) {
-        if (String(k).slice(0, 10) > today) continue;
-        total += Math.abs(v);
-      }
-      return Math.round(total * 100) / 100;
-    };
-    let cashflow = null;
-    let legacyExcludeCategoriesDiscretionary = null;
-    try {
-      const [ci, ce] = await Promise.all([
-        sync.dailyCashflow(start, end, 'income', transferCats),
-        sync.dailyCashflow(start, end, 'expense', transferCats),
-      ]);
-      cashflow = {
-        income: sumCash(ci),
-        spending: sumCash(ce),
-        note: 'GetCashFlow (Monarch Reports math) — PRIMARY source for the stored spending/income metrics',
-      };
-      // Diagnostic-only: the OLD independently-filtered GetCashFlow call the
-      // sync used to also make for "discretionary" (exclude_categories:
-      // transferCats+fixedCats). No longer used by the actual sync (see
-      // connectors/monarch-mcp-sync.js) — kept here ONLY to reveal whether
-      // Monarch's exclude_categories filter would have diverged from the
-      // derived (total - fixed) figure below, i.e. to directly test whether
-      // that was ever part of the discrepancy.
-      const cd = await sync.dailyCashflow(start, end, 'expense', [...new Set([...transferCats, ...fixedCats])]);
-      legacyExcludeCategoriesDiscretionary = {
-        value: sumCash(cd),
-        note: 'NOT used by the sync anymore — comparison only, to check whether exclude_categories ever diverged from (total - fixed)',
-      };
-    } catch (err) {
-      cashflow = { error: err.message };
-    }
-
-    let income = 0, spend = 0, transfersSkipped = 0;
-    const incomeTxns = [], excludedPositives = [];
-    // Category-level breakdown of EXPENSE transactions in the window — the
-    // exact categories/dates a discrepancy investigation needs. fixed:true
-    // marks categories excluded from discretionary (isFixedCategory).
-    const byCategory = new Map(); // category -> { total, fixed, count, txns: [{date,merchant,amount}] }
-    let fixedTotal = 0;
-    for (const t of txns || []) {
-      if (!t || !t.date) continue;
-      const amount = Number(t.amount);
-      if (!Number.isFinite(amount) || amount === 0) continue;
-      const category = String(t.category || '(uncategorized)');
-      const categoryType = String(t.category_type || t.categoryType || '').toLowerCase();
-      if (categoryType === 'transfer' || isInternalTransfer(category)) { transfersSkipped++; continue; }
-      if (String(t.date).slice(0, 10) > today) continue;
-      if (amount < 0) {
-        const abs = Math.abs(amount);
-        spend += abs;
-        const fixed = isFixedCategory(category);
-        if (fixed) fixedTotal += abs;
-        const slot = byCategory.get(category) || { total: 0, fixed, count: 0, txns: [] };
-        slot.total = Math.round((slot.total + abs) * 100) / 100;
-        slot.count += 1;
-        slot.txns.push({ date: String(t.date).slice(0, 10), merchant: t.merchant, amount: Math.round(abs * 100) / 100 });
-        byCategory.set(category, slot);
-        continue;
-      }
-      const inIncomeCategory = incomeCats.size
-        ? incomeCats.has(category.toLowerCase())
-        : (categoryType ? categoryType === 'income' : (!isExcludedIncome(category) && !isNonIncomePositive(category)));
-      const row = { date: String(t.date).slice(0, 10), merchant: t.merchant, category, categoryType, amount: Math.round(amount) };
-      if (inIncomeCategory && !isExcludedIncome(category)) { income += amount; incomeTxns.push(row); }
-      else excludedPositives.push(row);
-    }
-    incomeTxns.sort((a, b) => b.amount - a.amount);
-    excludedPositives.sort((a, b) => b.amount - a.amount);
-
-    const categoryBreakdown = [...byCategory.entries()]
-      .map(([category, s]) => ({ category, ...s, txns: s.txns.sort((a, b) => b.amount - a.amount).slice(0, 10) }))
-      .sort((a, b) => b.total - a.total);
-    const categoryTotalCheck = Math.round(categoryBreakdown.reduce((a, c) => a + c.total, 0) * 100) / 100;
-
     // What's actually stored right now for this window, grouped by day + source
     // + metric — the exact request the investigation asked for, and the
     // fastest way to spot a stale row a live sync doesn't currently touch.
+    // Deliberately NOT inside the live-Monarch try/catch below: a Monarch-side
+    // outage (their API being down/paused) must never also hide what's
+    // already stored — if anything, that's the moment this section matters
+    // most, since it may be the only reconciliation signal available.
     const { rows: storedRows } = await db.query(
       `SELECT (ts AT TIME ZONE $3)::date AS day, source, metric, value
          FROM metrics
@@ -149,39 +66,139 @@ function createDiagnosticsRouter() {
       (storedByMetric[r.metric] || (storedByMetric[r.metric] = [])).push({ day, source: r.source, value: Number(r.value) });
     }
     const storedTotal = (metric) => Math.round(storedByMetric[metric].reduce((a, r) => a + r.value, 0) * 100) / 100;
+    const storedMetrics = {
+      spending: { rows: storedByMetric.spending, total: storedTotal('spending') },
+      spending_discretionary: { rows: storedByMetric.spending_discretionary, total: storedTotal('spending_discretionary') },
+    };
 
-    res.json({
-      window: { start, end, mtd, days: mtd ? undefined : days, tz },
-      mcpConfigured: monarchMcp.isConfigured(),
-      cashflow,                                       // ⇐ PRIMARY: should match Monarch Reports total spend/income
-      legacyExcludeCategoriesDiscretionary,           // comparison only — see note above
-      derivedDiscretionary: {
-        // The sync's ACTUAL current logic: total expense minus fixed-housing,
-        // from the SAME transaction set — this is what spending_discretionary
-        // is now computed from.
-        totalExpense: Math.round(spend * 100) / 100,
-        fixedHousing: Math.round(fixedTotal * 100) / 100,
-        discretionary: Math.round((spend - fixedTotal) * 100) / 100,
-      },
-      fixedCategoriesDetected: [...fixedCats],
-      categoryBreakdown,                              // every expense category, total, whether it's fixed, top txns
-      categoryTotalReconciles: categoryTotalCheck === Math.round(spend * 100) / 100,
-      categoryTotal: categoryTotalCheck,
-      storedMetrics: {
-        spending: { rows: storedByMetric.spending, total: storedTotal('spending') },
-        spending_discretionary: { rows: storedByMetric.spending_discretionary, total: storedTotal('spending_discretionary') },
-      },
-      incomeCategoriesDetected: [...incomeCats],   // empty ⇒ GetCategories shape didn't parse → heuristic fallback
-      transferCategoriesDetected: [...transferCats],
-      txnCount: (txns || []).length,
-      txnDerived: {                                 // FALLBACK math (only used if GetCashFlow is down)
-        income: Math.round(income * 100) / 100,
-        spending: Math.round(spend * 100) / 100,
-        transfersSkipped,
-      },
-      topIncomeTxns: incomeTxns.slice(0, 20),       // what's COUNTED as income (fallback path)
-      topExcludedPositives: excludedPositives.slice(0, 20), // positives NOT counted (refunds/transfers)
-    });
+    const base = { window: { start, end, mtd, days: mtd ? undefined : days, tz }, mcpConfigured: monarchMcp.isConfigured(), storedMetrics };
+
+    // Everything below needs a LIVE Monarch call. Isolated in its own
+    // try/catch so a Monarch-side outage (their API down/paused — a real,
+    // observed case, unrelated to anything in this app) still returns the
+    // stored-metrics section above instead of a bare 500.
+    let live;
+    try {
+      const [txns, incomeCats, transferCats, fixedCats] = await Promise.all([
+        sync.fetchTxnsInRange(start, end),
+        sync.incomeCategoryNames(),
+        sync.transferCategoryNames(),
+        sync.fixedCategoryNames(),
+      ]);
+
+      // Monarch's OWN aggregation (the PRIMARY source for the stored metrics).
+      // These are the numbers that should match Monarch's Reports view to the dollar.
+      const sumCash = (cf) => {
+        let total = 0;
+        for (const [k, v] of cf || new Map()) {
+          if (String(k).slice(0, 10) > today) continue;
+          total += Math.abs(v);
+        }
+        return Math.round(total * 100) / 100;
+      };
+      let cashflow = null;
+      let legacyExcludeCategoriesDiscretionary = null;
+      try {
+        const [ci, ce] = await Promise.all([
+          sync.dailyCashflow(start, end, 'income', transferCats),
+          sync.dailyCashflow(start, end, 'expense', transferCats),
+        ]);
+        cashflow = {
+          income: sumCash(ci),
+          spending: sumCash(ce),
+          note: 'GetCashFlow (Monarch Reports math) — PRIMARY source for the stored spending/income metrics',
+        };
+        // Diagnostic-only: the OLD independently-filtered GetCashFlow call the
+        // sync used to also make for "discretionary" (exclude_categories:
+        // transferCats+fixedCats). No longer used by the actual sync (see
+        // connectors/monarch-mcp-sync.js) — kept here ONLY to reveal whether
+        // Monarch's exclude_categories filter would have diverged from the
+        // derived (total - fixed) figure below, i.e. to directly test whether
+        // that was ever part of the discrepancy.
+        const cd = await sync.dailyCashflow(start, end, 'expense', [...new Set([...transferCats, ...fixedCats])]);
+        legacyExcludeCategoriesDiscretionary = {
+          value: sumCash(cd),
+          note: 'NOT used by the sync anymore — comparison only, to check whether exclude_categories ever diverged from (total - fixed)',
+        };
+      } catch (err) {
+        cashflow = { error: err.message };
+      }
+
+      let income = 0, spend = 0, transfersSkipped = 0;
+      const incomeTxns = [], excludedPositives = [];
+      // Category-level breakdown of EXPENSE transactions in the window — the
+      // exact categories/dates a discrepancy investigation needs. fixed:true
+      // marks categories excluded from discretionary (isFixedCategory).
+      const byCategory = new Map(); // category -> { total, fixed, count, txns: [{date,merchant,amount}] }
+      let fixedTotal = 0;
+      for (const t of txns || []) {
+        if (!t || !t.date) continue;
+        const amount = Number(t.amount);
+        if (!Number.isFinite(amount) || amount === 0) continue;
+        const category = String(t.category || '(uncategorized)');
+        const categoryType = String(t.category_type || t.categoryType || '').toLowerCase();
+        if (categoryType === 'transfer' || isInternalTransfer(category)) { transfersSkipped++; continue; }
+        if (String(t.date).slice(0, 10) > today) continue;
+        if (amount < 0) {
+          const abs = Math.abs(amount);
+          spend += abs;
+          const fixed = isFixedCategory(category);
+          if (fixed) fixedTotal += abs;
+          const slot = byCategory.get(category) || { total: 0, fixed, count: 0, txns: [] };
+          slot.total = Math.round((slot.total + abs) * 100) / 100;
+          slot.count += 1;
+          slot.txns.push({ date: String(t.date).slice(0, 10), merchant: t.merchant, amount: Math.round(abs * 100) / 100 });
+          byCategory.set(category, slot);
+          continue;
+        }
+        const inIncomeCategory = incomeCats.size
+          ? incomeCats.has(category.toLowerCase())
+          : (categoryType ? categoryType === 'income' : (!isExcludedIncome(category) && !isNonIncomePositive(category)));
+        const row = { date: String(t.date).slice(0, 10), merchant: t.merchant, category, categoryType, amount: Math.round(amount) };
+        if (inIncomeCategory && !isExcludedIncome(category)) { income += amount; incomeTxns.push(row); }
+        else excludedPositives.push(row);
+      }
+      incomeTxns.sort((a, b) => b.amount - a.amount);
+      excludedPositives.sort((a, b) => b.amount - a.amount);
+
+      const categoryBreakdown = [...byCategory.entries()]
+        .map(([category, s]) => ({ category, ...s, txns: s.txns.sort((a, b) => b.amount - a.amount).slice(0, 10) }))
+        .sort((a, b) => b.total - a.total);
+      const categoryTotalCheck = Math.round(categoryBreakdown.reduce((a, c) => a + c.total, 0) * 100) / 100;
+
+      live = {
+        cashflow,                                       // ⇐ PRIMARY: should match Monarch Reports total spend/income
+        legacyExcludeCategoriesDiscretionary,           // comparison only — see note above
+        derivedDiscretionary: {
+          // The sync's ACTUAL current logic: total expense minus fixed-housing,
+          // from the SAME transaction set — this is what spending_discretionary
+          // is now computed from.
+          totalExpense: Math.round(spend * 100) / 100,
+          fixedHousing: Math.round(fixedTotal * 100) / 100,
+          discretionary: Math.round((spend - fixedTotal) * 100) / 100,
+        },
+        fixedCategoriesDetected: [...fixedCats],
+        categoryBreakdown,                              // every expense category, total, whether it's fixed, top txns
+        categoryTotalReconciles: categoryTotalCheck === Math.round(spend * 100) / 100,
+        categoryTotal: categoryTotalCheck,
+        incomeCategoriesDetected: [...incomeCats],   // empty ⇒ GetCategories shape didn't parse → heuristic fallback
+        transferCategoriesDetected: [...transferCats],
+        txnCount: (txns || []).length,
+        txnDerived: {                                 // FALLBACK math (only used if GetCashFlow is down)
+          income: Math.round(income * 100) / 100,
+          spending: Math.round(spend * 100) / 100,
+          transfersSkipped,
+        },
+        topIncomeTxns: incomeTxns.slice(0, 20),       // what's COUNTED as income (fallback path)
+        topExcludedPositives: excludedPositives.slice(0, 20), // positives NOT counted (refunds/transfers)
+      };
+    } catch (err) {
+      // A live Monarch-side failure (e.g. their API paused/down) — report it
+      // plainly rather than a bare 500, and still return storedMetrics above.
+      live = { liveDataError: err.message };
+    }
+
+    res.json({ ...base, ...live });
   }));
 
   // Diagnostic: time a raw Gemini call to see if the model/endpoint itself is slow
