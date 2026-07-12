@@ -8,6 +8,7 @@ const express = require('express');
 const db = require('../db');
 const documentsStore = require('../store/documents');
 const findingsStore = require('../store/findings');
+const briefingsStore = require('../store/briefings');
 const llm = require('../llm');
 const { fetchWorkBusyBlocks } = require('../services/calendar');
 const realtimeService = require('../services/realtime');
@@ -290,6 +291,26 @@ function createDiagnosticsRouter() {
         : 'Scheduler is active.',
     });
   });
+
+  // Diagnostic: recent stored 'weekly' briefings (scheduler.js runs this
+  // Sunday morning, ~10min after the daily morning-routine time — see
+  // scheduleWeekly(0, ...) — NOT Monday, despite an out-of-date comment at
+  // the top of scheduler.js). Shows whether the job has actually been firing
+  // and producing usable content, without needing the general app token.
+  router.get('/diag/weekly-review', asyncHandler(async (req, res) => {
+    const rows = await briefingsStore.listBriefings({ kind: 'weekly', limit: 8 });
+    res.json({
+      count: rows.length,
+      briefings: rows.map((r) => ({
+        id: r.id,
+        generatedAt: r.generated_at,
+        periodStart: r.period_start,
+        periodEnd: r.period_end,
+        headline: r.content?.headline ?? null,
+        isFallback: r.content?.headline === 'Weekly review', // extractJson-failure sentinel — briefing.js suppresses these from the mobile response
+      })),
+    });
+  }));
 
   // Diagnostic: dump the RAW metric rows for a metric over the last N days,
   // grouped by day + source. Reveals duplication that a daily SUM would inflate —
