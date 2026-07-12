@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Modal, ScrollView, TextInput, useColorScheme, Keyboard, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Modal, ScrollView, TextInput, useColorScheme, Keyboard, Platform } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -97,6 +97,11 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted }: Props) {
   const [textInput, setTextInput] = useState('');
   const [toolLabel, setToolLabel] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
+  // KeyboardAvoidingView doesn't reliably push content above the keyboard
+  // inside a pageSheet Modal on iOS (confirmed broken here) — AskOverlay hit
+  // the same issue and works around it by tracking the keyboard height
+  // manually and applying it as bottom padding instead. Mirrors that fix.
+  const [kbHeight, setKbHeight] = useState(0);
 
   useEffect(() => {
     if (!visible) return;
@@ -106,6 +111,15 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted }: Props) {
       sessionRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const showEv = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEv = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const show = Keyboard.addListener(showEv, (e) => setKbHeight(e.endCoordinates.height));
+    const hide = Keyboard.addListener(hideEv, () => setKbHeight(0));
+    return () => { show.remove(); hide.remove(); };
   }, [visible]);
 
   useEffect(() => {
@@ -195,10 +209,7 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted }: Props) {
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={endSession}>
-      <KeyboardAvoidingView
-        style={[styles.sheet, { backgroundColor: c.background }]}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <View style={[styles.sheet, { backgroundColor: c.background, paddingBottom: kbHeight }]}>
         <View style={[styles.header, { borderBottomColor: c.border }]}>
           <Text style={[styles.title, { color: c.text }]}>Talk to NormOS</Text>
           <Pressable onPress={endSession} hitSlop={8}>
@@ -281,7 +292,7 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted }: Props) {
             </View>
           )}
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 }
