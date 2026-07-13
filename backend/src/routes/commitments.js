@@ -9,6 +9,20 @@ const dayJournalStore = require('../store/dayJournal');
 const findingsStore = require('../store/findings');
 const { asyncHandler } = require('../middleware/asyncHandler');
 
+/** If a commitment's text reads as "I'm taking a rest day", write that through
+ *  to workout_overrides (the same table swap_workout writes to) so today's
+ *  plan is consistent everywhere it's read — the evening brief's plan-vs-
+ *  actual grading, TODAY'S PLANNED WORKOUT in Ask, etc. — not just on the
+ *  commitments list. Best-effort: never blocks or fails the commit itself. */
+async function applyRestDayCommitmentIfNeeded(title) {
+  try {
+    const { isRestDayCommitment, applyRestDayOverride } = require('../services/workout');
+    if (isRestDayCommitment(title)) await applyRestDayOverride();
+  } catch (e) {
+    console.error('[commitments] rest-day override failed:', e.message);
+  }
+}
+
 /** Fire-and-forget attention-ledger outcome stamp for a commitment the user
  *  just resolved. Audit-only (the beliefs loop reads these) — never awaited by
  *  the route, never throws into it. */
@@ -38,6 +52,7 @@ function createCommitmentsRouter() {
     if (!title || !String(title).trim()) return res.status(400).json({ error: 'title required' });
     const { dueAt } = commitmentsStore.resolveReminderTime(at, new Date());
     const row = await commitmentsStore.create({ title, detail, source: 'manual', dueAt });
+    await applyRestDayCommitmentIfNeeded(title);
     res.json({ ok: true, commitment: row });
   }));
 
@@ -89,6 +104,7 @@ function createCommitmentsRouter() {
       source: 'brief_action',
       dueAt,
     });
+    await applyRestDayCommitmentIfNeeded(text);
     // Acceptance stamp is best-effort — the commitment is the user-facing
     // result; the ledger update is bookkeeping.
     const startOfToday = new Date(require('../util/date').naiveToUtcIso(`${todayStr}T00:00:00`, tz));

@@ -62,8 +62,16 @@ test('7. the scheduler path (runCheckinReminder, unforced) produces notify_now f
   // No seedCheckin() — today's check-in is incomplete. send:false so no real
   // push infrastructure is needed; force is NOT set, matching exactly how
   // scheduler.js's scheduleDaily(checkinHour, checkinMinute, () =>
-  // runCheckinReminder({})) calls it in production.
-  const result = await runCheckinReminder({ send: false });
+  // runCheckinReminder({})) calls it in production — EXCEPT asOf is pinned to
+  // 3pm ET (the real production firing time) rather than the real wall clock.
+  // withinQuietHours' default window is 21:00-07:30, so an unpinned call here
+  // would spuriously fail (or spuriously pass) depending purely on what time
+  // this test happens to run, independent of whether the deterministic rule
+  // is correct — the same class of flake naiveToUtcIso exists to avoid.
+  const { naiveToUtcIso } = require('../../src/util/date');
+  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const asOf = new Date(naiveToUtcIso(`${todayStr}T15:00:00`, 'America/New_York'));
+  const result = await runCheckinReminder({ send: false, asOf });
   assert.equal(result.disposition, 'notify_now', 'the corrected deterministic rule fires end-to-end through the real scheduler entrypoint');
   assert.equal(result.skipped, undefined);
 

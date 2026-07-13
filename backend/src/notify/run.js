@@ -131,14 +131,14 @@ async function sendReminder(n, { send }) {
  * Afternoon check-in reminder: push "log your mood/energy/focus" ONLY if it
  * hasn't been logged today. Run on its own ~3pm schedule (you can't rate your
  * day at 8am). Keyed per-day so it fires at most once.
- * @param {{ send?: boolean, force?: boolean }} [opts]
+ * @param {{ asOf?: Date, send?: boolean, force?: boolean }} [opts]
  */
 async function runCheckinReminder(opts = {}) {
   const send = opts.send !== false;
   if (!opts.force && (await checkinLoggedToday())) {
     return { skipped: 'already_logged', sent: 0 };
   }
-  const asOf = new Date();
+  const asOf = opts.asOf ? new Date(opts.asOf) : new Date();
   const candidate = checkinReminder(asOf);
   const event = candidateToEvent(candidate, asOf);
   const { dispatchEvent } = require('./dispatch');
