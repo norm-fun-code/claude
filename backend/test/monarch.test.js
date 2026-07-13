@@ -212,8 +212,13 @@ test('mapTransactions skips pending/future-dated transactions', () => {
   // primary GraphQL sync path — a stray future row would sit in `metrics`
   // and get summed by any unbounded query (e.g. the savings-rate insight),
   // silently disagreeing with card totals that cap at "now".
-  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const today = new Date().toISOString().slice(0, 10);
+  // LOCAL calendar day, not UTC — mapTransactions' own default `today` (see
+  // its comment) is local ET, so a UTC-sliced fixture drifts from it for
+  // ~4-5 hours every evening ET, making the "future-dated" transaction
+  // compare as today's (or vice versa) purely from wall-clock timing.
+  const tz = process.env.TZ || 'America/New_York';
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  const tomorrow = new Date(new Date(`${today}T00:00:00Z`).getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const records = [
     { Date: today, Merchant: 'Coffee', Category: 'Dining', Account: 'Amex', Amount: '-5.00' },
     { Date: tomorrow, Merchant: 'Pending charge', Category: 'Shopping', Account: 'Amex', Amount: '-500.00' },

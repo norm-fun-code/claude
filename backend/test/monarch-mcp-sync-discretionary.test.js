@@ -63,9 +63,18 @@ function metricsByDay(metrics, metric) {
   return out;
 }
 
-const today = new Date().toISOString().slice(0, 10);
-const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
-const tomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
+// LOCAL calendar day, not UTC — syncViaMcp's own `today` (via localToday(),
+// see its comment above) is local, and ctx.now here defaults to the real
+// clock same as syncViaMcp's `now`. A UTC-sliced fixture drifts from that for
+// ~4-5 hours every evening ET (after UTC has already rolled to the next
+// calendar day but it's still "today" locally) — exactly the bug class this
+// file exists to regression-test, just left unfixed in the fixture itself:
+// a `today`-dated transaction would compare as tomorrow's (pending) date from
+// syncViaMcp's local perspective and get silently excluded.
+const TZ = process.env.TZ || 'America/New_York';
+const today = new Date().toLocaleDateString('en-CA', { timeZone: TZ });
+const yesterday = new Date(new Date(`${today}T00:00:00Z`).getTime() - 864e5).toISOString().slice(0, 10);
+const tomorrow = new Date(new Date(`${today}T00:00:00Z`).getTime() + 864e5).toISOString().slice(0, 10);
 
 // ---- 1. MTD discretionary equals MTD total minus fixed housing to the cent ----
 
@@ -147,7 +156,10 @@ test('every day in the sync window gets an explicit spending/spending_discretion
   // A day with no transactions at all must still be present with value 0 —
   // not simply absent from the metrics array — so a future re-sync with
   // still-zero data continues to correctly overwrite (not accumulate).
-  const twoDaysAgo = new Date(Date.now() - 2 * 864e5).toISOString().slice(0, 10);
+  // Derived from the same local-day `today` as yesterday/tomorrow above
+  // (not an independently UTC-sliced Date.now()), so it can't drift a day
+  // out of step with them during the UTC-ahead-of-ET window.
+  const twoDaysAgo = new Date(new Date(`${today}T00:00:00Z`).getTime() - 2 * 864e5).toISOString().slice(0, 10);
   assert.equal(spending.get(twoDaysAgo), 0);
   assert.equal(discretionary.get(twoDaysAgo), 0);
 });

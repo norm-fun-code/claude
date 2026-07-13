@@ -79,8 +79,16 @@ test('category breakdown reconciles exactly to the total spend, and derived disc
 
 test('storedMetrics groups the actual stored rows by day, source, and metric — surfacing a stale row a live sync would miss', async () => {
   monarchMcp.isConfigured = () => true;
-  const today = new Date();
-  today.setHours(12, 0, 0, 0);
+  // Anchored to noon LOCAL (ET) today via naiveToUtcIso — the SAME local-day
+  // basis the route computes `end`/`today` with (routes/diagnostics.js's
+  // ymd()). new Date().setHours() operates in the PROCESS's local time
+  // (UTC in CI, since TZ is unset there), which can land on a different
+  // *ET* calendar day than intended for ~4-5 hours each day — the exact bug
+  // class this diagnostic exists to catch, just recurring in the fixture.
+  const { naiveToUtcIso } = require('../../src/util/date');
+  const tz = process.env.TZ || 'America/New_York';
+  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  const today = new Date(naiveToUtcIso(`${todayStr}T12:00:00`, tz));
   await metricsStore.insertMetrics([
     { ts: today, domain: 'wealth', metric: 'spending', value: 500, source: TEST_SOURCE },
     { ts: today, domain: 'wealth', metric: 'spending_discretionary', value: 500, source: TEST_SOURCE },
@@ -131,8 +139,11 @@ test('the MTD window boundary is the LOCAL month start, not UTC midnight', async
 // rather than a bare 500.
 test('a live Monarch fetch failure still returns storedMetrics, degrading to a liveDataError field instead of a 500', async () => {
   monarchMcp.isConfigured = () => true;
-  const today = new Date();
-  today.setHours(12, 0, 0, 0);
+  // Same local-day anchoring as the storedMetrics test above — see its comment.
+  const { naiveToUtcIso } = require('../../src/util/date');
+  const tz = process.env.TZ || 'America/New_York';
+  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  const today = new Date(naiveToUtcIso(`${todayStr}T12:00:00`, tz));
   await metricsStore.insertMetrics([
     { ts: today, domain: 'wealth', metric: 'spending', value: 250, source: TEST_SOURCE },
   ]);
