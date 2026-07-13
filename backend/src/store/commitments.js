@@ -27,9 +27,26 @@ function resolveReminderTime(atStr, now = new Date()) {
   return { dueAt: parsed };
 }
 
+// Idempotency window for exact-title repeats: a voice/chat tool call that
+// genuinely double-fires (a realtime session re-processing the same audio
+// turn, a dropped-response client retry) produces the identical title text
+// seconds apart — not a fuzzy paraphrase, an exact repeat. Catching only the
+// exact-match case is zero-risk (it can never drop a legitimately different
+// commitment, including a quick correction like "actually make that 10:45"),
+// unlike a fuzzy-similarity guard would be.
+const DUPLICATE_WINDOW_MS = 5 * 60 * 1000;
+
 async function create({ title, detail = null, source = 'voice', dueAt = null, metricKey = null, recommendationId = null }) {
   const t = String(title || '').trim();
   if (!t) throw new Error('commitment title required');
+  const cutoff = new Date(Date.now() - DUPLICATE_WINDOW_MS);
+  const { rows: dupes } = await query(
+    `SELECT * FROM commitments
+      WHERE status = 'open' AND source = $1 AND lower(title) = lower($2) AND created_at >= $3
+      ORDER BY created_at DESC LIMIT 1`,
+    [source, t.slice(0, 200), cutoff]
+  );
+  if (dupes[0]) return dupes[0];
   const { rows } = await query(
     `INSERT INTO commitments (title, detail, source, due_at, metric_key, recommendation_id)
      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
