@@ -206,7 +206,18 @@ test('deep_ask routes through the existing ask() engine and persists both turns 
   const { rows: metricRows } = await db.query(`SELECT event_type FROM voice_realtime_events WHERE session_id = 'test-deepask'`);
   assert.equal(metricRows[0].event_type, 'deep_ask');
 
-  const history = await require('../../src/store/chat').recentMessages({ limit: 5 });
+  // deepAsk() persists both turns fire-and-forget off the response path (the
+  // same pattern voice.js/chat.js use — the answer is already computed, so
+  // the caller shouldn't wait on two more inserts before hearing it), so the
+  // write can still be in flight the instant this request resolves. Poll
+  // briefly rather than asserting synchronously right after the response.
+  const chatStore = require('../../src/store/chat');
+  let history = [];
+  for (let i = 0; i < 20; i++) {
+    history = await chatStore.recentMessages({ limit: 5 });
+    if (history.some((m) => m.role === 'user' && m.content.includes('What should I focus on this week?'))) break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
   assert.ok(history.some((m) => m.role === 'user' && m.content.includes('What should I focus on this week?')));
   assert.ok(history.some((m) => m.role === 'assistant' && m.content.includes('short spoken-style answer')));
 });
