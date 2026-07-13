@@ -13,10 +13,17 @@ const briefingsStore = require('../store/briefings');
 const { parseAndValidate } = require('../llm/parseJson');
 
 const DAY = 24 * 60 * 60 * 1000;
+// wealth:spending (the raw total, including rent/fixed costs) is
+// deliberately excluded — a week the rent happens NOT to land in produces a
+// huge week-over-week swing that has nothing to do with actual spending
+// behavior (a real report: "spend down 81%" the week after rent, purely from
+// timing). spending_discretionary (total minus fixed housing, see
+// connectors/monarch-mcp-sync.js) is the number that actually reflects
+// behavior change, so it's the only spending figure the review ever sees.
 const KEY_METRICS = [
   ['wellbeing', 'mood'], ['wellbeing', 'energy'], ['wellbeing', 'focus'],
   ['health', 'sleep_hours'], ['health', 'hrv'], ['health', 'steps'],
-  ['wealth', 'net_worth'], ['wealth', 'spending'], ['wealth', 'spending_discretionary'],
+  ['wealth', 'net_worth'], ['wealth', 'spending_discretionary'],
 ];
 
 function round(n, d = 2) {
