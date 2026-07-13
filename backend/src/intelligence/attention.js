@@ -238,6 +238,46 @@ function judge(event, context) {
     return decision('store_silently', `already surfaced within the ${cooldownHoursFor(event.type)}h cooldown for this fact`, { gates });
   }
 
+  // 5) Scheduled check-in reminder — DETERMINISTIC, bypasses Stage B entirely.
+  // checkin_missing's urgency default (0.3) times any achievable value (max
+  // ~1.0) tops out at 0.30, which the interrupt-cost FLOOR alone (0.40) already
+  // exceeds — so `interrupt = value*urgency - interruptCost` could never clear
+  // THRESHOLDS.NOTIFY (0.25) through the generic ladder, regardless of how
+  // urgencyHint is tuned. The scheduler ran correctly and the check-in was
+  // genuinely incomplete; the score formula was structurally incapable of
+  // saying so. This event type has exactly one real producer — notify/run.js's
+  // runCheckinReminder(), which only dispatches when today's mood/energy/focus
+  // are NOT all logged (see checkinLoggedToday()) — so reaching here already
+  // means "incomplete"; this gate only needs to decide whether it's safe to
+  // interrupt right now. Cooldown was already checked above (gate 4); "force"
+  // is preserved for free since dispatch.js's buildContext sets
+  // context.quiet = false whenever the caller passes force:true.
+  if (event.type === 'checkin_missing') {
+    gates.checkin_reminder_rule = true;
+    // A learned dismissal pattern for this type (the belief-multiplier floor
+    // is 0.4 — never fully silenced) still suppresses the interrupt, same as
+    // any other belief-demoted event — it defers to the brief, never drops to
+    // store_silently.
+    const beliefMultiplier = beliefMultiplierFor(event, context);
+    const dismissedByBelief = beliefMultiplier < 0.6;
+    if (dismissedByBelief) gates.checkin_reminder_dismissed_by_belief = true;
+    const quiet = !!context.quiet;
+    const overBudget = (context.budget?.usedToday ?? 0) >= (context.budget?.limit ?? Infinity);
+    if (!dismissedByBelief && !quiet && !overBudget) {
+      return decision('notify_now', 'scheduled check-in reminder: incomplete, off cooldown, outside quiet hours, budget has capacity', {
+        gates, scores: { value: round(beliefMultiplier) }, deliver: { channel: 'push', consumesBudget: true, bypassQuiet: false },
+      });
+    }
+    if (quiet) gates.checkin_reminder_deferred_quiet = true;
+    if (overBudget) gates.checkin_reminder_deferred_budget = true;
+    const reason = dismissedByBelief
+      ? 'check-in reminder demoted by a learned dismissal pattern for this type'
+      : quiet ? 'check-in reminder deferred to the brief: within quiet hours' : 'check-in reminder deferred to the brief: daily interruption budget exhausted';
+    return decision('add_to_brief', reason, {
+      gates, scores: { value: round(beliefMultiplier) }, deliver: { channel: 'brief', consumesBudget: false, bypassQuiet: false },
+    });
+  }
+
   // ---- Stage B: scoring ----
   const magnitude = clamp01(event.signal?.magnitude ?? 0.5);
   const confidence = clamp01(event.signal?.confidence ?? 0.5);

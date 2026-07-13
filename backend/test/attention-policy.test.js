@@ -296,6 +296,81 @@ test('belief multiplier floors at not-fully-silenced — a dampened but still-no
   assert.notEqual(d.disposition, 'store_silently', 'floor keeps a genuinely strong signal visible somewhere, never fully mutes it');
 });
 
+// ---- scheduled check-in reminder (deterministic rule) ----
+//
+// checkin_missing's urgency default (0.3) times any achievable value tops out
+// at ~0.30, which the interrupt-cost FLOOR (0.40) alone already exceeds — the
+// generic scored ladder could NEVER clear THRESHOLDS.NOTIFY for this type, so
+// the real ~3pm reminder silently landed on add_to_brief every time even when
+// the scheduler ran correctly and quiet hours/budget both had room. Fixed with
+// a deterministic Stage-A rule specific to this type, checked below.
+
+function checkinEvent(overrides = {}) {
+  return baseEvent({
+    source: 'finding', domain: 'wellbeing', type: 'checkin_missing', subject: 'day',
+    title: '10-second check-in', body: "How's your mood, energy, and focus today?",
+    signal: { magnitude: 0.5, confidence: 0.9, novelty: null },
+    urgencyHint: null, // exactly what events.js's fromCheckinMissing produces
+    ...overrides,
+  });
+}
+
+test('1. an incomplete 3pm check-in produces notify_now', () => {
+  const d = judge(checkinEvent(), baseContext());
+  assert.equal(d.disposition, 'notify_now');
+  assert.equal(d.deliver.channel, 'push');
+  assert.equal(d.deliver.consumesBudget, true);
+  assert.equal(d.gates.checkin_reminder_rule, true);
+});
+
+// 2. "a completed check-in produces no event" is a caller-level guarantee, not
+// a judge() concern — notify/run.js's runCheckinReminder() only builds/
+// dispatches an event when checkinLoggedToday() is false. Covered by the
+// integration test in test/integration/checkin-reminder.test.js.
+
+test('3. quiet hours defer it to the brief, never drop it silently', () => {
+  const d = judge(checkinEvent(), baseContext({ quiet: true }));
+  assert.equal(d.disposition, 'add_to_brief');
+  assert.equal(d.gates.checkin_reminder_deferred_quiet, true);
+});
+
+test('4. an exhausted daily budget defers it to the brief', () => {
+  const d = judge(checkinEvent(), baseContext({ budget: { limit: 2, usedToday: 2 } }));
+  assert.equal(d.disposition, 'add_to_brief');
+  assert.equal(d.gates.checkin_reminder_deferred_budget, true);
+});
+
+test('5. cooldown prevents a duplicate — the SAME fact already surfaced today is store_silently', () => {
+  const e = checkinEvent();
+  const key = eventKey(e);
+  const d = judge(e, baseContext({ recentKeys: new Set([key]) }));
+  assert.equal(d.disposition, 'store_silently');
+  assert.equal(d.gates.cooldown_active, true);
+  // The deterministic checkin rule is never even reached — cooldown short-circuits first.
+  assert.equal(d.gates.checkin_reminder_rule, undefined);
+});
+
+test('6. one earlier notification today does not incorrectly suppress it while budget remains', () => {
+  // usedToday=1 under a limit of 4: still real capacity. The OLD scored ladder
+  // grew interruptCost with usedToday and would have failed this even with a
+  // hand-tuned urgencyHint; the deterministic rule only checks usedToday vs limit.
+  const d = judge(checkinEvent(), baseContext({ budget: { limit: 4, usedToday: 1 } }));
+  assert.equal(d.disposition, 'notify_now');
+});
+
+test('a learned dismissal-belief pattern for check-in reminders demotes to add_to_brief, never store_silently', () => {
+  const d = judge(checkinEvent(), baseContext({ beliefMultipliers: new Map([['checkin_missing:day', 0.4]]) }));
+  assert.equal(d.disposition, 'add_to_brief');
+  assert.equal(d.gates.checkin_reminder_dismissed_by_belief, true);
+});
+
+test('force (context.quiet already resolved to false by the caller) still notifies during what would otherwise be quiet hours', () => {
+  // dispatch.js's buildContext sets quiet: overrides.force ? false : withinQuietHours(asOf) —
+  // judge() itself has no notion of "force", it just sees quiet:false either way.
+  const d = judge(checkinEvent(), baseContext({ quiet: false }));
+  assert.equal(d.disposition, 'notify_now');
+});
+
 // ---- goal relevance / context factors ----
 
 test('an event about an actively-tracked subject scores higher relevance than an untracked one', () => {
