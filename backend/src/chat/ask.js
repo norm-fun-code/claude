@@ -273,7 +273,25 @@ async function wealthContext() {
   }
 }
 
-function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [], snapshot = null, experiments = [], pastConversations = [], wealthInsights = null, dayContext = [], voice = false }) {
+// The Health tab and the realtime voice tool (get_current_recovery) both read
+// recovery straight from liveRecovery() — the canonical score. This text path
+// had no wiring to it at all (neither directly, nor via the self-model text),
+// so the LLM had to invent a plausible-sounding number from context, which
+// silently diverged from the real one. Mirrors wealthContext()'s pattern.
+async function recoveryContext() {
+  try {
+    const { liveRecovery } = require('../intelligence/recovery');
+    const r = await liveRecovery();
+    if (!r || r.score == null) return null;
+    return 'RECOVERY TODAY (live computed — use this exact number, it is current):\n' +
+      `- Score: ${Math.round(r.score)}/100 (${r.band})${r.detail ? ` — ${r.detail}` : ''}`;
+  } catch (err) {
+    console.error('[chat] recoveryContext failed:', err.message);
+    return null;
+  }
+}
+
+function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [], snapshot = null, experiments = [], pastConversations = [], wealthInsights = null, recoveryInsight = null, dayContext = [], voice = false }) {
   const parts = [];
 
   // Voice replies are spoken aloud and the user is physically waiting on them —
@@ -293,6 +311,8 @@ function buildPrompt({ question, findings = [], docs = [], annotations = [], his
     const block = renderSnapshot(snapshot);
     if (block) parts.push(block);
   }
+
+  if (recoveryInsight) parts.push(recoveryInsight);
 
   if (wealthInsights) parts.push(wealthInsights);
 
@@ -474,6 +494,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     chaptersResult,
     wealthResult,
     dayContextResult,
+    recoveryResult,
   ] = await Promise.allSettled([
     findingsStore.listFindings({ status: 'open' }),
     annotationsStore.listAnnotations({ from: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000), limit: 20 }),
@@ -488,6 +509,10 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     // subjective signal that makes "why was I tired last week?" answerable with
     // "you noted a stressful launch Wednesday", not just a chart.
     require('../store/dayJournal').recent({ days: 7, limit: 12 }).catch(() => []),
+    // The real, canonically-computed recovery score — same source as the Health
+    // tab and the voice tool's get_current_recovery — so a personal/health
+    // question cites the true number instead of the model inferring one.
+    personal ? recoveryContext() : Promise.resolve(null),
   ]);
 
   const findings = findingsResult.status === 'fulfilled' ? findingsResult.value : [];
@@ -509,8 +534,9 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     ? wealthResult.value.filter(Boolean).join('\n\n') || null
     : null;
   const dayContext = dayContextResult.status === 'fulfilled' ? (dayContextResult.value || []) : [];
+  const recoveryInsight = recoveryResult.status === 'fulfilled' ? recoveryResult.value : null;
 
-  const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments, pastConversations, wealthInsights, dayContext, voice });
+  const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments, pastConversations, wealthInsights, recoveryInsight, dayContext, voice });
   let system = selfModelText ? `${baseSystem}\n\n${selfModelText}` : baseSystem;
   if (chaptersText) system += `\n\nLIFE CHAPTERS (standing long-arc facts, auto-updated — never ask the user to re-confirm these):\n${chaptersText}\nThis same fact is already shown elsewhere in the app (the brief, goals, forecasts) — don't just restate it here too. Use it as background that shapes tone and advice on a genuinely related question; if you reference it explicitly, relay something new (a next step, an implication for the actual question asked), not just the bare fact the user already knows.`;
   // Today's planned session — so a swap_workout action can be acknowledged
@@ -711,4 +737,4 @@ function parseAction(text) {
   return parseActions(text)[0] ?? null;
 }
 
-module.exports = { ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot, parseAction, parseActions, looksLikeCommand, validateAction };
+module.exports = { ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot, recoveryContext, parseAction, parseActions, looksLikeCommand, validateAction };
