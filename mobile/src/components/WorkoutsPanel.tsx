@@ -24,6 +24,39 @@ import {
 } from '../data/workouts';
 import { WorkoutProgressionCard } from './WorkoutProgressionCard';
 
+/**
+ * fetchWithTimeout + a couple of retries on failure (network hiccup, timeout,
+ * non-2xx). A request that fires right as the app resumes from background/cold
+ * start can transiently fail once (network still reconnecting) — without a
+ * retry, the caller's catch left today's checks/logs/swap/activities state at
+ * its initial EMPTY value, which is visually indistinguishable from "genuinely
+ * nothing logged today" and reads to the user as their workout data vanishing,
+ * even though nothing was ever deleted server-side.
+ */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit = {},
+  retries = 2,
+  delayMs = 600,
+  // Shorter than fetchWithTimeout's own 20s default: these are small CRUD
+  // reads, and with 3 attempts a genuinely offline device shouldn't wait
+  // ~60s just to see the "couldn't load" banner.
+  attemptTimeoutMs = 8000
+): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetchWithTimeout(url, options, attemptTimeoutMs);
+      if (res.ok) return res;
+      lastErr = new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      lastErr = err;
+    }
+    if (attempt < retries) await new Promise((r) => setTimeout(r, delayMs * (attempt + 1)));
+  }
+  throw lastErr;
+}
+
 interface Props {
   hrv: number | null;
   isDark: boolean;
@@ -526,8 +559,16 @@ function ExerciseRow({
     ? exercise.sets.replace(/^3/, '2')
     : exercise.sets;
   const dimmed = isYellow && showSetsDimmed;
-  const numSets = parseInt(exercise.sets) || 0;
+  const baseSets = parseInt(exercise.sets) || 0;
   const [logModalSet, setLogModalSet] = useState<number | null>(null);
+  // "+ Set" lets the user log beyond the planned count (e.g. a 4th set of DB
+  // Curls). Once at least one extra set is actually SAVED, its set_number
+  // shows up in loggedSets on every future load — so nothing needs to persist
+  // this locally beyond the current session; it only needs to hold the button
+  // open long enough for the user to tap it and log the set.
+  const [extraSets, setExtraSets] = useState(0);
+  const loggedMax = loggedSets.length ? Math.max(...loggedSets.map(s => s.set_number)) : 0;
+  const numSets = Math.max(baseSets + extraSets, loggedMax);
 
   return (
     <View style={[exStyles.row, { borderColor: c.border }]}>
@@ -574,6 +615,16 @@ function ExerciseRow({
               </TouchableOpacity>
             );
           })}
+          <TouchableOpacity
+            onPress={() => {
+              const next = numSets + 1;
+              setExtraSets(n => n + 1);
+              setLogModalSet(next);
+            }}
+            style={[exStyles.setBtn, exStyles.addSetBtn, { borderColor: c.border }]}
+          >
+            <Text style={[exStyles.setBtnTxt, { color: c.subtext }]}>+ Set</Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -656,6 +707,7 @@ const exStyles = StyleSheet.create({
   setRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginTop: 4, paddingLeft: 30 },
   setBtn: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1 },
   setBtnTxt: { fontSize: 11, fontWeight: '600' },
+  addSetBtn: { borderStyle: 'dashed' },
 });
 
 function CollapsibleSection({
@@ -722,6 +774,8 @@ function StrengthContent({
   workoutHistory,
   onSetSaved,
   onAllSetsLogged,
+  customExerciseNames,
+  onAddCustomExercise,
 }: {
   session: StrengthSession;
   zone: HRVZone;
@@ -736,15 +790,29 @@ function StrengthContent({
   workoutHistory: Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>;
   onSetSaved: (exercise: string, setNum: number, reps: number | null, weight: number | null) => void;
   onAllSetsLogged: (exercise: string) => void;
+  customExerciseNames: string[];
+  onAddCustomExercise: (name: string) => void;
 }) {
   const isYellow = zone === 'yellow';
+  const [showAddExercise, setShowAddExercise] = useState(false);
+
+  // Exercises the user added ad hoc (e.g. "Chest Press" on a day the plan
+  // didn't call for it) — the union of names added this session
+  // (customExerciseNames) and any name already present in workoutLogs that
+  // isn't part of the static plan (so one already logged on a PRIOR visit
+  // reappears after a reopen with zero extra persistence: workout_logs is
+  // already the durable record of what was actually logged).
+  const plannedNames = new Set([...session.warmup, ...session.working].map((e) => e.name));
+  const loggedExtraNames = Object.keys(workoutLogs).filter((name) => !plannedNames.has(name));
+  const extraNames = Array.from(new Set([...loggedExtraNames, ...customExerciseNames]));
+  const extraExercises: Exercise[] = extraNames.map((name) => ({ name, sets: '3 × 8–12', rest: '60 sec' }));
 
   return (
     <View>
       <CollapsibleSection title="Warm-up" c={c} isDark={isDark}>
         {session.warmup.map((ex) => (
           <ExerciseRow
-            key={ex.name}
+            key={`${day}-${ex.name}`}
             exercise={ex}
             completed={completedExercises.has(ex.name)}
             cueOpen={expandedCues.has(ex.name)}
@@ -773,7 +841,7 @@ function StrengthContent({
           const dimThirdSet = isYellow && ex.sets.startsWith('3');
           return (
             <ExerciseRow
-              key={ex.name}
+              key={`${day}-${ex.name}`}
               exercise={ex}
               completed={completedExercises.has(ex.name)}
               cueOpen={expandedCues.has(ex.name)}
@@ -791,8 +859,89 @@ function StrengthContent({
             />
           );
         })}
+        {extraExercises.map((ex) => (
+          <ExerciseRow
+            key={`${day}-extra-${ex.name}`}
+            exercise={ex}
+            completed={completedExercises.has(ex.name)}
+            cueOpen={expandedCues.has(ex.name)}
+            onToggleComplete={() => onToggleComplete(ex.name)}
+            onToggleCue={() => onToggleCue(ex.name)}
+            isYellow={false}
+            showSetsDimmed={false}
+            c={c}
+            isDark={isDark}
+            day={day}
+            loggedSets={workoutLogs[ex.name] ?? []}
+            lastHistory={workoutHistory[ex.name] ?? []}
+            onSetSaved={onSetSaved}
+            onAllSetsLogged={onAllSetsLogged}
+          />
+        ))}
+        <TouchableOpacity onPress={() => setShowAddExercise(true)} style={strengthStyles.addExerciseBtn}>
+          <Text style={[strengthStyles.addExerciseTxt, { color: c.accent }]}>+ Add exercise</Text>
+        </TouchableOpacity>
       </CollapsibleSection>
+
+      <AddExerciseModal
+        visible={showAddExercise}
+        c={c}
+        isDark={isDark}
+        onClose={() => setShowAddExercise(false)}
+        onSave={(name) => { onAddCustomExercise(name); setShowAddExercise(false); }}
+      />
     </View>
+  );
+}
+
+function AddExerciseModal({
+  visible,
+  c,
+  isDark,
+  onClose,
+  onSave,
+}: {
+  visible: boolean;
+  c: ReturnType<typeof getColors>;
+  isDark: boolean;
+  onClose: () => void;
+  onSave: (name: string) => void;
+}) {
+  const [name, setName] = useState('');
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+        <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+          <View style={[logStyles.sheet, { backgroundColor: c.card, borderColor: c.border }]}>
+            <Text style={[logStyles.title, { color: c.text }]}>Add an exercise</Text>
+            <Text style={[logStyles.hint, { color: c.subtext }]}>
+              Not on today's plan? Add it here to log sets against it.
+            </Text>
+            <TextInput
+              style={[logStyles.input, { color: c.text, borderColor: c.border, backgroundColor: isDark ? '#1C1C1A' : '#F9F8F6', textAlign: 'left', marginBottom: spacing.md }]}
+              value={name}
+              onChangeText={setName}
+              placeholder="e.g. Chest Press"
+              placeholderTextColor={c.subtext}
+              autoFocus
+            />
+            <View style={logStyles.buttons}>
+              <TouchableOpacity onPress={() => { setName(''); onClose(); }} style={[logStyles.btn, { borderColor: c.border }]}>
+                <Text style={[logStyles.btnTxt, { color: c.subtext }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => { const trimmed = name.trim(); if (trimmed) { onSave(trimmed); setName(''); } }}
+                disabled={!name.trim()}
+                style={[logStyles.btn, logStyles.btnPrimary, { backgroundColor: c.accent, opacity: name.trim() ? 1 : 0.5 }]}
+              >
+                <Text style={[logStyles.btnTxt, { color: '#FFF' }]}>Add</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
   );
 }
 
@@ -805,6 +954,14 @@ const strengthStyles = StyleSheet.create({
   yellowBannerText: {
     color: '#BA7517',
     fontSize: 13,
+    fontWeight: '600',
+  },
+  addExerciseBtn: {
+    paddingVertical: spacing.sm,
+    paddingLeft: 30,
+  },
+  addExerciseTxt: {
+    fontSize: 14,
     fontWeight: '600',
   },
 });
@@ -1216,6 +1373,8 @@ function renderWorkoutContent(
   workoutHistory: Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>,
   onSetSaved: (exercise: string, setNum: number, reps: number | null, weight: number | null) => void,
   onAllSetsLogged: (exercise: string) => void,
+  customExerciseNames: string[],
+  onAddCustomExercise: (name: string) => void,
 ) {
   if (workout.id === 'push' || workout.id === 'pull') {
     return (
@@ -1233,6 +1392,8 @@ function renderWorkoutContent(
         workoutHistory={workoutHistory}
         onSetSaved={onSetSaved}
         onAllSetsLogged={onAllSetsLogged}
+        customExerciseNames={customExerciseNames}
+        onAddCustomExercise={onAddCustomExercise}
       />
     );
   }
@@ -1512,8 +1673,24 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
   });
   const [weeklyCompleted, setWeeklyCompleted] = useState<Record<string, boolean>>({});
   const [saveFailed, setSaveFailed] = useState(false);
+  // Independent per-source load-failure flags for today's rehydration fetches
+  // (checks, swaps, activities, logged sets) — surfaced as one banner with a
+  // manual retry, so a transient failure reads as "couldn't load, tap to
+  // retry" instead of silently rendering as an empty/reset day.
+  const [checksLoadError, setChecksLoadError] = useState(false);
+  const [overridesLoadError, setOverridesLoadError] = useState(false);
+  const [activitiesLoadError, setActivitiesLoadError] = useState(false);
+  const [logsLoadError, setLogsLoadError] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
+  const loadError = checksLoadError || overridesLoadError || activitiesLoadError || logsLoadError;
   const [workoutLogs, setWorkoutLogs] = useState<Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>>({});
   const [workoutHistory, setWorkoutHistory] = useState<Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>>({});
+  // Ad hoc exercises added to a day that the plan didn't call for (e.g. "Chest
+  // Press" on a Pull day) — keyed by dateKey so each day tracks its own list.
+  // No separate backend persistence needed: once at least one set is saved
+  // for a name here, it lives on in workout_logs and StrengthContent revives
+  // it from there on the next load even without this in-memory entry.
+  const [customWorking, setCustomWorking] = useState<Record<string, string[]>>({});
   const [activities, setActivities] = useState<Activity[]>([]);
   const [showActivityModal, setShowActivityModal] = useState(false);
   const [useScheduledWorkout, setUseScheduledWorkout] = useState(false);
@@ -1550,10 +1727,11 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetchWithTimeout(`${API_BASE}/api/workout/checks?date=${selectedKey}`, { headers: authHeaders() });
-        if (cancelled || !res.ok) return;
+        const res = await fetchWithRetry(`${API_BASE}/api/workout/checks?date=${selectedKey}`, { headers: authHeaders() });
+        if (cancelled) return;
         const { checks } = await res.json();
-        if (cancelled || !checks) return;
+        setChecksLoadError(false);
+        if (!checks) return;
         const ex = new Set<string>();
         const nn = { chinTucks: false, walk: false, noLateTraining: false };
         for (const key of Object.keys(checks)) {
@@ -1563,11 +1741,14 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
         setCompletedExercises(ex);
         setNonNegotiables(nn);
       } catch {
-        /* offline — keep whatever's shown */
+        // After retries genuinely exhausted — surface it rather than silently
+        // showing an empty/reset day with no way to distinguish that from
+        // "confirmed nothing logged yet".
+        if (!cancelled) setChecksLoadError(true);
       }
     })();
     return () => { cancelled = true; };
-  }, [selectedKey]);
+  }, [selectedKey, reloadTick]);
 
   // Load manual workout swaps for the visible week (Mon..Sun around today).
   useEffect(() => {
@@ -1575,14 +1756,17 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
     (async () => {
       try {
         const from = getDateKey(0), to = getDateKey(6);
-        const res = await fetchWithTimeout(`${WORKOUT_OVERRIDES_URL}?from=${from}&to=${to}`, { headers: authHeaders() });
-        if (cancelled || !res.ok) return;
+        const res = await fetchWithRetry(`${WORKOUT_OVERRIDES_URL}?from=${from}&to=${to}`, { headers: authHeaders() });
+        if (cancelled) return;
         const { overrides } = await res.json();
-        if (!cancelled) setSwapByDay(overrides ?? {});
-      } catch { /* offline — no swaps */ }
+        setOverridesLoadError(false);
+        setSwapByDay(overrides ?? {});
+      } catch {
+        if (!cancelled) setOverridesLoadError(true);
+      }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadTick]);
 
   // Swap (or revert) the selected day's workout. Empty id reverts to scheduled.
   async function swapWorkout(workoutId: string | null) {
@@ -1607,21 +1791,24 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetchWithTimeout(`${ACTIVITY_URL}?date=${selectedKey}`, { headers: authHeaders() });
-        if (cancelled || !res.ok) return;
+        const res = await fetchWithRetry(`${ACTIVITY_URL}?date=${selectedKey}`, { headers: authHeaders() });
+        if (cancelled) return;
         const { activities: rows } = await res.json();
-        if (!cancelled) setActivities(rows ?? []);
+        setActivitiesLoadError(false);
+        setActivities(rows ?? []);
       } catch {
-        if (!cancelled) setActivities([]);
+        // Retries exhausted — flag it, but do NOT clear whatever's already
+        // shown (a previous failure here used to reset to [], compounding
+        // a transient network blip into an apparent loss of logged activity).
+        if (!cancelled) setActivitiesLoadError(true);
       }
     })();
     return () => { cancelled = true; };
-  }, [selectedKey]);
+  }, [selectedKey, reloadTick]);
 
   async function fetchLogsForDay(day: string, exercises: string[]) {
     try {
-      const res = await fetchWithTimeout(`${WORKOUT_LOG_URL}?day=${day}`, { headers: authHeaders() });
-      if (!res.ok) return;
+      const res = await fetchWithRetry(`${WORKOUT_LOG_URL}?day=${day}`, { headers: authHeaders() });
       const data = await res.json();
       const grouped: Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>> = {};
       for (const row of data.logs ?? []) {
@@ -1629,9 +1816,15 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
         grouped[row.exercise].push(row);
       }
       setWorkoutLogs(grouped);
-    } catch {}
+      setLogsLoadError(false);
+    } catch {
+      // Retries exhausted — flag it rather than silently leaving the
+      // already-reset-to-{} state, which read as "nothing logged today".
+      setLogsLoadError(true);
+    }
     // Each exercise's "last time" lookup is independent — fetch concurrently
-    // instead of one at a time.
+    // instead of one at a time. Best-effort only (a "last time" hint, not core
+    // state) — no retry/error flag needed here.
     await Promise.all(exercises.map(async (ex) => {
       try {
         const res = await fetchWithTimeout(`${WORKOUT_LOG_URL}/history?exercise=${encodeURIComponent(ex)}&limit=1`, { headers: authHeaders() });
@@ -1656,8 +1849,10 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
       // (not warmup) — same exercise list WorkoutProgressionCard tracks.
       const exercises = (effId === 'push' ? SESSION_A : SESSION_B).working.map((e) => e.name);
       fetchLogsForDay(day, exercises);
+    } else {
+      setLogsLoadError(false);
     }
-  }, [selectedDayIndex, swapByDay]);
+  }, [selectedDayIndex, swapByDay, reloadTick]);
 
   // Persist a single check for the selected day. On failure we surface it and
   // roll the checkbox back, so the UI never claims something was saved when it
@@ -1754,6 +1949,14 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
     });
     const rollback = () => setCompletedExercises((cur) => { const s = new Set(cur); s.delete(name); return s; });
     saveCheck(name, 'exercise', true, rollback);
+  }
+
+  function addCustomExercise(name: string) {
+    setCustomWorking((prev) => {
+      const cur = prev[selectedKey] ?? [];
+      if (cur.includes(name)) return prev;
+      return { ...prev, [selectedKey]: [...cur, name] };
+    });
   }
 
   function toggleCue(name: string) {
@@ -1879,6 +2082,17 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
         swapByDay={swapByDay}
       />
 
+      {loadError && (
+        <View style={[loadErrorStyles.banner, { borderColor: '#C0392B' }]}>
+          <Text style={loadErrorStyles.text}>
+            Couldn't load today's saved progress — nothing was deleted, this is just a connection hiccup.
+          </Text>
+          <TouchableOpacity onPress={() => setReloadTick((t) => t + 1)} style={loadErrorStyles.retryBtn}>
+            <Text style={loadErrorStyles.retryTxt}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <HRVHeaderCard
         c={c}
         isDark={isDark}
@@ -1994,6 +2208,8 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
         workoutHistory,
         handleSetSaved,
         markExerciseComplete,
+        customWorking[selectedKey] ?? [],
+        addCustomExercise,
       )}
 
       {(workout.id === 'push' || workout.id === 'pull') && (
@@ -2025,6 +2241,36 @@ const markDoneStyles = StyleSheet.create({
     color: '#C0392B',
     textAlign: 'center',
     marginBottom: spacing.md,
+  },
+});
+
+const loadErrorStyles = StyleSheet.create({
+  banner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    margin: spacing.md,
+    backgroundColor: '#C0392B15',
+  },
+  text: {
+    flex: 1,
+    fontSize: 12,
+    color: '#C0392B',
+  },
+  retryBtn: {
+    borderWidth: 1,
+    borderColor: '#C0392B',
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+  },
+  retryTxt: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#C0392B',
   },
 });
 
