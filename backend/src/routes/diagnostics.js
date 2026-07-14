@@ -315,6 +315,33 @@ function createDiagnosticsRouter() {
     });
   });
 
+  // Diagnostic: WHY is this morning's brief being held (or not)? Runs the exact
+  // same authoritative sleep-readiness gate every automatic trigger uses and
+  // returns its sanitized decision — presence state, whether a finalized trend
+  // exists, telemetry/stability ages, the fingerprint-stability count, and the
+  // machine reason. Deliberately returns NO tokens, credentials, raw biometric
+  // telemetry, or API bodies: the fingerprint (a JSON of raw sleep values) is
+  // reduced to a boolean, and only decision-shaped numbers survive. Admin-gated.
+  //   GET /api/diag/sleep-readiness
+  router.get('/diag/sleep-readiness', asyncHandler(async (req, res) => {
+    const scheduler = require('../scheduler');
+    if (!scheduler.eightSleepConfigured()) {
+      return res.json({ configured: false, hint: 'EIGHT_SLEEP_EMAIL / EIGHT_SLEEP_PASSWORD not set — the readiness gate is inactive and the morning brief uses the fixed-time schedule.' });
+    }
+    const readiness = require('../intelligence/sleep-readiness');
+    const result = await readiness.getMorningSleepReadiness({ trigger: 'diagnostic' });
+    // Strip the raw-values fingerprint; keep only its presence.
+    const { fingerprint, ...safeEvidence } = result.evidence;
+    res.json({
+      configured: true,
+      ready: result.ready,
+      reason: result.reason,
+      logLine: readiness.readinessLogLine(result),
+      evidence: { ...safeEvidence, fingerprintPresent: fingerprint != null },
+      note: 'ready=false with reason=session_active/no_finalized_trend/insufficient_stability/telemetry_too_recent means the brief is correctly HELD until the night finalizes. A *_failed reason means an Eight Sleep API problem (failing closed — no early brief).',
+    });
+  }));
+
   // Diagnostic: recent stored 'weekly' briefings (scheduler.js runs this
   // Sunday morning, ~10min after the daily morning-routine time — see
   // scheduleWeekly(0, ...) — NOT Monday, despite an out-of-date comment at

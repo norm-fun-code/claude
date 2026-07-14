@@ -43,39 +43,17 @@ function createSchedulingRouter() {
     if (provided !== secret) return res.status(401).json({ error: 'invalid secret' });
     try {
       // An external cron fires at a FIXED clock time — but the whole product
-      // promise is a brief that lands when the user actually wakes. Apply the
-      // same gates the in-process watcher lives by, so a cron is a safe
-      // redundancy layer, never an alarm clock: skip if the morning already ran,
-      // and (before the backstop hour) skip while the Eight Sleep session is
-      // still in progress or the clock is before the user's own personal wake
-      // floor. ?force=1 bypasses every gate for manual testing.
+      // promise is a brief that lands only once the night's tracking is genuinely
+      // finalized. The cron is a polling/reliability mechanism, NOT permission to
+      // bypass sleep completion: it funnels through scheduler.morningRoutine,
+      // which applies the exact same sleep-readiness gate (final ingest +
+      // revalidate + build-once) that the in-process watcher uses. There is no
+      // separate, weaker cron check. ?force=1 bypasses the gate for deliberate
+      // authenticated manual testing only.
       const force = req.query.force === '1' || req.query.force === 'true';
       const scheduler = require('../scheduler');
-      if (!force) {
-        if (await scheduler.morningRanToday()) {
-          console.log('[cron] morning skipped: routine already ran today');
-          return res.json({ built: false, sent: 0, skipped: 'already_ran_today' });
-        }
-        if (scheduler.eightSleepConfigured()) {
-          const cronTz = process.env.TZ || 'America/New_York';
-          const parts = new Date().toLocaleTimeString('en-GB', { timeZone: cronTz, hour: '2-digit', minute: '2-digit', hour12: false }).split(':');
-          const nowH = Number(parts[0]) + Number(parts[1]) / 60;
-          const backstopH = (Number(process.env.EIGHT_SLEEP_BACKSTOP_HOUR) || 10) + (Number(process.env.EIGHT_SLEEP_BACKSTOP_MINUTE) || 0) / 60;
-          if (nowH < backstopH) {
-            if (await scheduler.eightSleepSessionInProgress()) {
-              console.log('[cron] morning skipped: Eight Sleep session still in progress');
-              return res.json({ built: false, sent: 0, skipped: 'still_sleeping' });
-            }
-            const floorH = await scheduler.personalWakeFloorHours({ backstopH });
-            if (nowH < floorH) {
-              console.log(`[cron] morning skipped: before personal wake floor (${floorH.toFixed(2)}h)`);
-              return res.json({ built: false, sent: 0, skipped: 'before_wake_floor', floorHours: floorH });
-            }
-          }
-        }
-      }
-      const r = await runMorningBriefing({ send: true, force });
-      console.log(`[cron] morning triggered externally: built=${r.built} sent=${r.sent}`);
+      const r = await scheduler.morningRoutine({ reason: 'cron', force });
+      console.log(`[cron] morning trigger: built=${r.built} sent=${r.sent ?? 0} skipped=${r.skipped ?? '-'} reason=${r.reason ?? '-'}`);
       res.json(r);
     } catch (err) {
       console.error('[cron] morning failed:', err.message);

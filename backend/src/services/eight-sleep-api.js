@@ -107,4 +107,36 @@ async function getIntervalPresent(token, userId) {
   return json.interval != null;
 }
 
-module.exports = { login, resolveUserId, getTrends, getIntervalPresent };
+/**
+ * Retrieve a valid Eight Sleep token from the cached source config, re-logging
+ * if expired. Returns null if credentials aren't configured. Lives here (the
+ * service layer) rather than in scheduler.js so BOTH the scheduler and the
+ * sleep-readiness gate can share one auth path without a circular require.
+ * Fails by THROWING on a login/network error — a caller that must "fail closed"
+ * (the readiness gate) needs to distinguish "not configured" (null) from
+ * "couldn't confirm" (throw), and silently swallowing the error here would
+ * collapse those two very different cases into one.
+ */
+async function getCreds() {
+  const email = process.env.EIGHT_SLEEP_EMAIL;
+  const password = process.env.EIGHT_SLEEP_PASSWORD;
+  if (!email || !password) return null;
+  const { getSource, updateConfig } = require('../store/sources');
+  const source = await getSource('eight_sleep_api');
+  const cfg = source?.config ?? {};
+  if (cfg.eightToken && cfg.eightUserId && cfg.eightTokenExpiresAt && Date.now() < cfg.eightTokenExpiresAt - 60_000) {
+    return { token: cfg.eightToken, userId: cfg.eightUserId };
+  }
+  const auth = await login(email, password);
+  let userId = auth.userId || cfg.eightUserId || null;
+  if (!userId) userId = await resolveUserId(auth.token);
+  await updateConfig('eight_sleep_api', {
+    ...cfg,
+    eightToken: auth.token,
+    eightUserId: userId,
+    eightTokenExpiresAt: auth.expiresAt,
+  });
+  return { token: auth.token, userId };
+}
+
+module.exports = { login, resolveUserId, getTrends, getIntervalPresent, getCreds };
