@@ -374,11 +374,17 @@ function buildModelText(data) {
   // --- Current intention ---
   if (intention) {
     const wk = intention.weekStart ? new Date(intention.weekStart).toISOString().slice(0, 10) : 'this week';
+    // Retain [OPEN]/[DONE] status per goal — this string feeds every downstream
+    // prompt that reads the self-model (including the chief brief). Dropping
+    // completion status here (bare goal text with no status) meant a goal's
+    // own achieved flag was invisible everywhere the self-model is the ONLY
+    // context reaching the model, letting it guess a still-open goal was done
+    // from a weaker signal (a calendar event, a prior brief's wording).
     const goalsStr = Array.isArray(intention.goals) && intention.goals.length
-      ? intention.goals.map((g) => g.text || g).join(', ')
+      ? intention.goals.map((g) => `${g.achieved ? '[DONE]' : '[OPEN]'} ${g.text || g}`).join(', ')
       : '';
     const ctx = intention.context ? ` Context: ${intention.context}` : '';
-    lines.push(`STATED FOCUS (week of ${wk}): ${goalsStr}${ctx}`);
+    lines.push(`STATED FOCUS (week of ${wk}) — [OPEN]/[DONE] reflects the user's own checkbox, the ONLY source of truth for completion: ${goalsStr}${ctx}`);
   }
 
   // --- Active life context ---

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { predictCapacity, sleepDebtTrajectory, parseContextAdjustment, applyContextToForecast } = require('../src/intelligence/predict');
+const { predictCapacity, sleepDebtTrajectory, parseContextAdjustment, applyContextToForecast, forecastTomorrow } = require('../src/intelligence/predict');
 
 test('high recovery → A day, full send', () => {
   const r = predictCapacity({ recoveryScore: 80, hrvSubScore: 70 });
@@ -96,4 +96,44 @@ test('applyContextToForecast: no context at all → untouched, no LLM call', asy
 
 test('applyContextToForecast: null forecast passes through unchanged', async () => {
   assert.equal(await applyContextToForecast(null, { dayContext: [{ text: 'x' }] }), null);
+});
+
+// ── forecastTomorrow: hardSessionStatus wording ─────────────────────────────
+// Bug: computeTodayForecast() used to infer "today's hard session" from
+// elevated active_energy without proving the row was actually today, and with
+// no notion of "planned but not yet completed" vs "explicitly done". These
+// tests pin forecastTomorrow's contract for the three states the fix produces.
+
+test('hardSessionStatus "none" (rest/recovery/zone2 day): no hard-session drag', () => {
+  const t = forecastTomorrow({ recoveryScore: 70, hardSessionStatus: 'none' });
+  assert.doesNotMatch(t.detail, /hard session/i);
+});
+
+test('hardSessionStatus "completed": drags with COMPLETED wording, not planned wording', () => {
+  const t = forecastTomorrow({ recoveryScore: 70, hardSessionStatus: 'completed' });
+  assert.match(t.detail, /today's hard session adds fatigue/i);
+  assert.doesNotMatch(t.detail, /planned hard session may add fatigue/i);
+});
+
+test('hardSessionStatus "planned": drags with PROVISIONAL wording, not asserted-fact wording', () => {
+  const t = forecastTomorrow({ recoveryScore: 70, hardSessionStatus: 'planned' });
+  assert.match(t.detail, /today's planned hard session may add fatigue/i);
+  assert.doesNotMatch(t.detail, /today's hard session adds fatigue\b/i);
+});
+
+test('an unspecified hardSessionStatus defaults to "none" (no drag)', () => {
+  const t = forecastTomorrow({ recoveryScore: 70 });
+  assert.doesNotMatch(t.detail, /hard session/i);
+});
+
+test('"planned" and "completed" apply the same numeric fatigue penalty', () => {
+  const planned = forecastTomorrow({ recoveryScore: 70, hardSessionStatus: 'planned' });
+  const completed = forecastTomorrow({ recoveryScore: 70, hardSessionStatus: 'completed' });
+  assert.equal(planned.projectedScore, completed.projectedScore);
+});
+
+test('a low-load easy day (hardSessionStatus none, no other drags) gets the easy-day bump', () => {
+  const t = forecastTomorrow({ recoveryScore: 70, hardSessionStatus: 'none', acwrBand: 'low', sleepDebtHours: 0 });
+  assert.equal(t.projectedScore, 74); // 70 + 4 easy bump, no drags
+  assert.doesNotMatch(t.detail, /hard session/i);
 });

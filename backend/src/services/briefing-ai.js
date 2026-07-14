@@ -88,6 +88,7 @@ const CHIEF_SYSTEM =
   '- chiefBrief: this is the centerpiece — write it as a person who KNOWS them, not a report. Sharp, caring, blunt, numerate. The synthesis MUST span domains. Calendar rule: the MEETINGS lines are BUSY time (actual meetings — not focus blocks). The OPEN windows are the real uninterrupted focus stretches. Use meeting density (WORK calendar only) to gauge the day\'s cognitive load. Never call a meeting time a "focus block" or "uninterrupted stretch." The PERSONAL calendar is a different category entirely: a block there (family time, an observance/religious window, a personal appointment) is the user protecting time, never a source of load — do not add its hours to the work calendar\'s busy time, do not call the day "heavy" or "blocked" because of it, and do not let its mere presence override an otherwise light day\'s framing. A MEETINGS block explicitly annotated as matching a personal-calendar event is the SAME commitment showing up twice under different labels, not two separate things — subtract it from any hour count you cite, the same as you would the personal-calendar entry itself. Draw the ACTION from the leverage engine when present, otherwise from the most consequential thing in their finances/habits/inbox/schedule. RISK from at-risk forecasts or a metric genuinely below its healthy range — NOT a metric that merely dipped while still running high (a mood that\'s still high but ticked down slightly is "holding strong", not a risk; when citing mood/energy/focus, always in plain words — low/ok/high — never a raw number like "4.3/5"). MOVE: the most consequential real change — NEVER net worth or a net-worth figure/percentage, and never tie a balance to their work. Surface wealth ONLY as a spending/cashflow insight and ONLY when genuinely notable; otherwise use a habit rate or the composite recovery score. Name actual numbers everywhere. Never invent a tie-in or number. Always generate all four fields. Anti-repetition: check YOUR LAST MORNING BRIEFS before writing — if you\'re about to open with the same topic in roughly the same words, that\'s a sign you\'re on autopilot. Either the data has genuinely moved (say what\'s different, e.g. a new number, a new cause, progress vs stuck) or it\'s a real streak (say so explicitly and change the register — escalate, question, or pivot the ask) — never just re-run the same sentence shape with updated numbers. If a genuinely different domain is more pressing today, lead with THAT instead of defaulting back to yesterday\'s topic out of habit. Calibration: if CALIBRATION CHECK is present and flags a miss, weave a brief, honest acknowledgment into whichever field touches recovery today (synthesis or risk, whichever fits) — a chief of staff who admits a wrong call is more credible than one who never mentions it, but don\'t force this in if recovery isn\'t otherwise part of today\'s brief.\n' +
   '- LIFE CHAPTERS (when present): these are the long arcs the daily numbers live inside — a pregnancy advancing week by week, a date approaching. They inform TONE and PLANNING quietly: never re-announce a chapter as if it\'s news, never manufacture urgency from it, and never use it as filler. Surface a chapter explicitly only when it genuinely intersects today (a milestone week, a date now close enough to act on) — and at most once or twice a week, when the relevant domain is already the topic, you may point at ONE concrete preparation step it implies (e.g. a baby due date → 529 / insurance / cash-buffer prep as a wealth action). A chief of staff who knows a baby is coming plans differently — but says so sparingly. RELAY, DON\'T RESTATE: this same fact is also shown verbatim elsewhere in the app (goals, forecasts, Ask) — your job here is never to just repeat "she\'s pregnant" or "week 14," it\'s to advance the thread with something only TODAY\'s data makes true. Bad: "sending you strength as Nancy enters her second trimester." Good: "second trimester starts this week — that transition has historically dented sleep, worth protecting this week specifically." If you have nothing to add beyond the bare fact, don\'t mention the chapter at all this time.\n' +
   '- THIS WEEK\'S STATED GOALS (when present): these are the user\'s OWN commitments — a real chief of staff tracks them without being asked. From Wednesday onward, if a consequential goal (especially a work deliverable) is still [OPEN], surface exactly ONE: into THE ACTION if it\'s genuinely today\'s highest-leverage move, otherwise woven into the synthesis. Escalate as the week runs out (\'two working days left and the valuation update is still open\'). Use the work calendar\'s open windows to make it concrete (\'the 2:30–6:00 stretch is enough to close it out\'). Mon/Tue: stay quiet unless a goal is explicitly time-critical. Never list all goals, never nag about personal/relational goals in work-pressure terms (a goal like \'be present with family\' gets a gentle nudge, not a deadline). If everything is checked off, one earned sentence at most.\n' +
+  '- CRITICAL — goal completion: AUTHORITATIVE LIVE GOAL STATE (when present) is the ONLY source of truth for whether a weekly goal is done. NEVER describe a goal marked OPEN there as done, completed, finished, closed, delivered, or wrapped up — not because a calendar event for it happened today, not because a prior brief implied it, not because similar wording appears elsewhere in this prompt, and not from your own assumption that it probably got done. A meeting or deadline PASSING is not the same as the user checking the goal off. If you are unsure whether a goal is done, treat it as OPEN and say so plainly (e.g. "still open") rather than guessing it\'s finished.\n' +
   '- YOU VS PAST YOU (when present — Monday\'s zoom-out): weave the single strongest shift into synthesis or morningFocus as perspective the daily numbers hide ("resting HR averaged 57 three months ago — it\'s 54 now"). An improvement is earned and gets named plainly — this is the payoff of the daily work, not flattery. A regression gets named just as honestly, framed as this week\'s quiet project, not a crisis. Use at most ONE shift; never let it displace something genuinely urgent today; never manufacture a longitudinal claim when this block is absent.\n' +
   '- CONFIDENCE CALIBRATION: match your language\'s certainty to the underlying signal\'s strength, not just its size. A single-day or single-week percentage swing off a small base (e.g. a spending category "trending 400% above usual" off a $100 average, or a one-day metric blip) is genuinely noisy — hedge it ("worth a glance," "if it continues," "early to call") rather than stating it as established fact. A multi-week trend, a confirmed correlation, a sustained streak, or a YOU VS PAST YOU shift backed by real duration is durable — state it plainly, with no hedging. Don\'t flatten these into one flat-confident voice; the reader should be able to tell from your tone alone which claims are solid and which are still-forming.\n' +
   '- morningFocus: draw primarily from the SELF-MODEL (7-day sleep avg, habit adherence rates, recovery trend, confirmed correlations). Use the recovery SCORE (0–100) and BAND (green/yellow/red) as the health anchor. If you cite HRV ms, use the value from Recovery status (today\'s actual overnight reading) — NOT the 7-day average in the self-model (they will differ). Name habit rates and sleep hours from the self-model. If the recovery trend is slipping, name the score trajectory. This should feel like the one sentence a trusted advisor who knows your week would say before you start your day. Never mention finances, calendar events, or emails here. Always generate something — the self-model always has enough context.\n' +
@@ -109,7 +110,7 @@ const WISDOM_SYSTEM =
   '- notionQuote: pick a self-contained, meaningful line — never a title, never an intro that trails off (e.g. "Rather than trying to find someone who will:"). If the best idea spans a sentence, quote the whole sentence.\n' +
   '- quoteInsight / notionInsight: first sentence draws out the core idea as lived wisdom. Second sentence makes the connection to their actual data explicit — name the specific state or pattern that makes this quote land right now (e.g. "energy running low this week makes this idea about sustainable effort particularly timely" or "with recovery in the yellow band and cold shower adherence slipping this week, this hits differently"). If wellbeing data shows "no recent check-in data", return empty string for BOTH quoteInsight and notionInsight — a quote with no data connection is not shown. Connect through their wellbeing/health state (mood/energy/focus, recovery band, habits) — speak in plain human terms (low/ok/high, settled/slipping), like a friend who noticed, NEVER a raw number or "X/5" — that reads clinical, not like someone who actually knows them. Do NOT reference their calendar, specific tasks, schedule, "today", or their job/profession. Do NOT cite any dollar amount, net-worth figure, or financial percentage here — even if the quote is about money, make the connection qualitative (e.g. "the optionality you\'re building"), never with a computed number.';
 
-function buildChiefBriefPrompt(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '', attentionContext = '') {
+function buildChiefBriefPrompt(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '', attentionContext = '', openGoals = []) {
   // Input size wasn't the timeout cause (the proven Apps Script sends 15K/email
   // and is fine) — OUTPUT length was. So allow a generous 15K/email like that
   // setup, with a total budget as a safety net against a huge unread pile.
@@ -192,6 +193,19 @@ function buildChiefBriefPrompt(emailData, currentDay, workoutPlan, calendarEvent
     return hit ? ` (matches your personal calendar's "${hit.title}" — not a real meeting, do not count toward meeting load)` : '';
   };
 
+  // AUTHORITATIVE LIVE GOAL STATE — structured, not just the prose
+  // weeklyGoalsContext string, so completion state can be enforced
+  // programmatically after generation (see findFalseGoalCompletions below).
+  // weekly_intentions.goals[].achieved is the SOLE source of truth: a
+  // calendar event having happened, a prior brief's wording, similar phrasing
+  // elsewhere in this prompt, or the model's own assumption NEVER mark a goal
+  // done — only the user's own achieved checkbox does.
+  const openGoalsBlock = openGoals.length
+    ? `AUTHORITATIVE LIVE GOAL STATE (this OVERRIDES any stale or ambiguous reference to these same goals in the self-model, prior briefs, calendar, or continuity context above — a calendar event having occurred, a prior day's brief, or similar wording elsewhere is NOT evidence of completion):\n` +
+      openGoals.map((g) => `- ${g.achieved ? 'DONE' : 'OPEN'}: "${g.text}"`).join('\n') +
+      `\nDo NOT describe an OPEN goal above as done, completed, finished, closed, delivered, or wrapped up under any circumstance — only the achieved flag shown here decides completion.\n\n`
+    : '';
+
   const workBusySection = allDayBlock
     ? 'WORK CALENDAR: an ALL-DAY block covers today (out-of-office / PTO / holiday / travel — the free/busy feed has no titles). This is NOT a day packed with meetings; treat it as a day away from the desk. Do NOT say "zero open focus windows" or frame meeting load as a problem.'
     : workBusyBlocks.length > 0
@@ -214,7 +228,7 @@ Recent wellbeing (last 7 days): ${wellbeingContext || 'no recent check-in data'}
 
 Active life context: ${annotationsContext || 'none'}
 
-${attentionContext ? `FLAGGED EARLIER TODAY (the attention policy noticed these but judged them not worth a real-time interruption — fold whichever are genuinely relevant into the brief; skip the rest, and never invent detail beyond what's stated):\n${attentionContext}\n\n` : ''}${chaptersContext ? `LIFE CHAPTERS (standing long-arc facts about the user's life right now — auto-updated, always true, the user never needs to repeat them):\n${chaptersContext}\n\n` : ''}${continuityContext ? `${continuityContext}\n\n` : ''}${weeklyGoalsContext ? `THIS WEEK'S STATED GOALS (the user wrote these themselves at the Sunday check-in — [OPEN] = not yet checked off): ${weeklyGoalsContext}\n\n` : ''}${progressContext ? `YOU VS PAST YOU (longitudinal zoom-out — trailing 4-week averages vs the same measures ~3 months ago; only shifts big enough to be real are listed): ${progressContext}\n\n` : ''}${cashflowContext ? `UPCOMING BILLS WARNING (forward-looking — this hasn't happened yet, don't describe it in the past tense): ${cashflowContext}\n\n` : ''}${spendingContext ? `Spending signal: ${spendingContext}\n\n` : ''}${strengthContext ? `Strength progression (logged lifts): ${strengthContext}\n\n` : ''}${leverageContext ? `${leverageContext}\n\n` : ''}Unread emails (${emailData.length} threads):
+${attentionContext ? `FLAGGED EARLIER TODAY (the attention policy noticed these but judged them not worth a real-time interruption — fold whichever are genuinely relevant into the brief; skip the rest, and never invent detail beyond what's stated):\n${attentionContext}\n\n` : ''}${chaptersContext ? `LIFE CHAPTERS (standing long-arc facts about the user's life right now — auto-updated, always true, the user never needs to repeat them):\n${chaptersContext}\n\n` : ''}${continuityContext ? `${continuityContext}\n\n` : ''}${openGoalsBlock}${weeklyGoalsContext ? `THIS WEEK'S STATED GOALS (the user wrote these themselves at the Sunday check-in — [OPEN] = not yet checked off): ${weeklyGoalsContext}\n\n` : ''}${progressContext ?`YOU VS PAST YOU (longitudinal zoom-out — trailing 4-week averages vs the same measures ~3 months ago; only shifts big enough to be real are listed): ${progressContext}\n\n` : ''}${cashflowContext ? `UPCOMING BILLS WARNING (forward-looking — this hasn't happened yet, don't describe it in the past tense): ${cashflowContext}\n\n` : ''}${spendingContext ? `Spending signal: ${spendingContext}\n\n` : ''}${strengthContext ? `Strength progression (logged lifts): ${strengthContext}\n\n` : ''}${leverageContext ? `${leverageContext}\n\n` : ''}Unread emails (${emailData.length} threads):
 ${emailSection}`;
 }
 
@@ -328,12 +342,142 @@ async function chiefBriefAttempt(prompt, attemptLabel) {
   });
 }
 
-/** Generate the chief-brief + morningFocus + urgentEmails section only. */
-async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '', attentionContext = '') {
+// ── Goal-completion semantic guard ──────────────────────────────────────────
+// Bug: a still-OPEN weekly goal ("Valuation presentation to Steffan") got
+// described as "is done" in the chief brief even though its `achieved`
+// checkbox was never checked — the model inferred completion from something
+// else (a calendar event having happened, a prior brief's wording, similar
+// phrasing elsewhere in the prompt). weekly_intentions.goals[].achieved is
+// the SOLE authority for completion. Shape validation (chiefBriefAttempt)
+// only checks that fields are non-empty strings — it has no notion of
+// whether their CONTENT contradicts known state. This runs AFTER shape
+// validation succeeds and catches any field describing an OPEN goal as
+// done/completed/finished/closed/delivered, including a loose paraphrase
+// (matched by word-overlap against the goal's own text, not just its exact
+// title), so "the valuation presentation is finished" is caught even though
+// it doesn't repeat the goal's exact wording.
+const COMPLETION_VERB_RE =
+  /\b(?:is|are|was|were|has been|have been)\s+(?:done|complete|completed|finished|closed(?:\s+out)?|delivered|wrapped(?:\s+up)?|shipped)\b|\bchecked (?:it |that |this )?off\b|\bcrossed (?:it |that |this )?off\b|\bclosed (?:it|that|this) out\b/i;
+
+const GOAL_STOPWORDS = new Set([
+  'the', 'a', 'an', 'to', 'of', 'for', 'and', 'is', 'are', 'was', 'were', 'with',
+  'on', 'in', 'at', 'that', 'this', 'it', 'be', 'has', 'have', 'been', 'your', 'my',
+]);
+
+function normalizeGoalWords(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !GOAL_STOPWORDS.has(w));
+}
+
+// Fraction of the GOAL's own meaningful words that also appear in the
+// sentence. The denominator is deliberately the goal (not the sentence, and
+// not the smaller of the two) — a long sentence sharing a couple of
+// incidental words with a long goal can't trip this; only a sentence that is
+// substantially ABOUT the goal can, which is exactly what "unrelated use of
+// a completion verb" (regression test) needs to stay silent on.
+function goalOverlapRatio(sentence, goalText) {
+  const goalWords = new Set(normalizeGoalWords(goalText));
+  if (!goalWords.size) return 0;
+  const sentenceWords = new Set(normalizeGoalWords(sentence));
+  let common = 0;
+  for (const w of goalWords) if (sentenceWords.has(w)) common++;
+  return common / goalWords.size;
+}
+
+function splitIntoSentences(text) {
+  return String(text || '').split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+}
+
+const GOAL_OVERLAP_THRESHOLD = 0.6;
+
+/**
+ * Pure: scan every generated field for a sentence that both (a) uses
+ * completion language and (b) is substantially about a goal that is still
+ * OPEN. `openGoals` is the live, structured list ({ text, achieved }) — only
+ * entries with achieved !== true are checked (an achieved:true goal can be
+ * freely described as done). Returns an array of
+ * { field, sentence, goalText } violations (empty when clean).
+ */
+function findFalseGoalCompletions({ chiefBrief, morningFocus } = {}, openGoals = []) {
+  const open = (openGoals || []).filter((g) => g && g.text && !g.achieved);
+  if (!open.length) return [];
+  const fields = [
+    ['synthesis', chiefBrief?.synthesis],
+    ['action', chiefBrief?.action],
+    ['risk', chiefBrief?.risk],
+    ['move', chiefBrief?.move],
+    ['affirmation', chiefBrief?.affirmation],
+    ['morningFocus', morningFocus],
+  ];
+  const violations = [];
+  for (const [field, text] of fields) {
+    if (!text) continue;
+    for (const sentence of splitIntoSentences(text)) {
+      if (!COMPLETION_VERB_RE.test(sentence)) continue;
+      for (const goal of open) {
+        if (goalOverlapRatio(sentence, goal.text) >= GOAL_OVERLAP_THRESHOLD) {
+          violations.push({ field, sentence, goalText: goal.text });
+        }
+      }
+    }
+  }
+  return violations;
+}
+
+/**
+ * Deterministic, safe correction: replace exactly the offending sentence(s)
+ * with a plain, factual statement of the TRUE (open) state. Never leaves a
+ * required field empty (which would fail shape validation and force a
+ * fallback to a stale prior brief) and never touches any OTHER sentence in
+ * the field.
+ */
+function rewriteFalseGoalCompletions(result, violations) {
+  if (!violations.length) return result;
+  const byField = new Map();
+  for (const v of violations) {
+    if (!byField.has(v.field)) byField.set(v.field, []);
+    byField.get(v.field).push(v);
+  }
+  const rewriteText = (text, fieldViolations) => {
+    let out = text;
+    for (const v of fieldViolations) {
+      out = out.split(v.sentence).join(`${v.goalText} is still open.`);
+    }
+    return out.replace(/\s+/g, ' ').trim();
+  };
+  const chiefBrief = { ...result.chiefBrief };
+  for (const field of ['synthesis', 'action', 'risk', 'move', 'affirmation']) {
+    if (byField.has(field)) chiefBrief[field] = rewriteText(chiefBrief[field], byField.get(field));
+  }
+  const morningFocus = byField.has('morningFocus')
+    ? rewriteText(result.morningFocus, byField.get('morningFocus'))
+    : result.morningFocus;
+  return { ...result, chiefBrief, morningFocus };
+}
+
+/** Append a targeted correction describing the exact contradiction(s) found,
+ *  for the one-shot semantic-retry call. */
+function buildGoalCorrectionPrompt(prompt, violations) {
+  const lines = violations.map(
+    (v) => `- In "${v.field}" you wrote: "${v.sentence}" — but the goal "${v.goalText}" is STILL OPEN (not checked off). Do not describe it as done, completed, finished, closed, delivered, or wrapped up.`
+  );
+  return `${prompt}\n\nCORRECTION REQUIRED — your previous attempt contained a factual error about goal completion:\n${lines.join('\n')}\nRegenerate the FULL JSON response with this corrected. Every other fact must remain exactly as accurate as before; do not introduce any new error while fixing this one.`;
+}
+
+/** Generate the chief-brief + morningFocus + urgentEmails section only.
+ *  `openGoals` is the live, structured weekly-goal state ({ text, achieved }[])
+ *  — the sole authority the goal-completion guard checks generated text
+ *  against (see findFalseGoalCompletions above). Both the full builder and
+ *  the scoped chief-brief rebuild call this same function, so the guard
+ *  applies identically to each — no separate, weaker path. */
+async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '', attentionContext = '', openGoals = []) {
   // Apply the same hard filter as generateEmailBriefs so automated senders
   // never reach the main briefing LLM call either.
   const filteredEmails = filterActionableEmails(emailData);
-  const prompt = buildChiefBriefPrompt(filteredEmails, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusyBlocks, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext, attentionContext);
+  const prompt = buildChiefBriefPrompt(filteredEmails, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusyBlocks, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext, attentionContext, openGoals);
 
   // One retry on a shape/parse failure — the model call is non-deterministic
   // (temperature 0.2, not 0), and this exact class of failure (silently
@@ -341,10 +485,30 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
   // A second attempt with the identical prompt has a real chance of coming
   // back valid; only give up and let the caller fall back after both fail.
   const first = await chiefBriefAttempt(prompt, 'attempt 1/2');
-  if (first) return first;
-  const second = await chiefBriefAttempt(prompt, 'attempt 2/2 (retry)');
-  if (second) return second;
-  return { ...EMPTY_CHIEF };
+  let result = first || await chiefBriefAttempt(prompt, 'attempt 2/2 (retry)');
+  if (!result) return { ...EMPTY_CHIEF };
+
+  // Semantic guard: weekly_intentions.goals[].achieved is the SOLE authority
+  // for completion — a shape-valid response can still be factually wrong
+  // about it. Runs on the result from whichever shape attempt succeeded.
+  const violations = findFalseGoalCompletions(result, openGoals);
+  if (!violations.length) return result;
+
+  console.error(`[briefing-ai] chief-brief claimed an OPEN goal was done (${violations.length} instance(s)) — retrying with a targeted correction.`);
+  const correctionPrompt = buildGoalCorrectionPrompt(prompt, violations);
+  const retry = await chiefBriefAttempt(correctionPrompt, 'attempt 3/3 (goal-completion correction)');
+  if (retry) {
+    const retryViolations = findFalseGoalCompletions(retry, openGoals);
+    if (!retryViolations.length) return retry;
+    console.error('[briefing-ai] goal-completion correction retry still contradicted state — rewriting the offending sentence(s) deterministically.');
+    return rewriteFalseGoalCompletions(retry, retryViolations);
+  }
+  // The correction retry failed shape validation entirely — fall back to
+  // deterministically rewriting the FIRST valid result rather than losing it
+  // (returning EMPTY_CHIEF here would make the caller reuse a POTENTIALLY
+  // CONTAMINATED prior brief, which is exactly what this guard exists to avoid).
+  console.error('[briefing-ai] goal-completion correction retry failed shape validation — rewriting the original result deterministically instead.');
+  return rewriteFalseGoalCompletions(result, violations);
 }
 
 /**
@@ -431,4 +595,5 @@ function filterActionableEmails(emails) {
 module.exports = {
   generateBriefing, generateChiefBrief, generateWisdomInsights,
   buildChiefBriefPrompt, buildWisdomPrompt, extractJson,
+  findFalseGoalCompletions, rewriteFalseGoalCompletions,
 };

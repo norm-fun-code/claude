@@ -108,11 +108,14 @@ function looksLikeCommand(text) {
 // The light context a command needs to be acknowledged accurately (today's
 // planned session for a swap, the current time for a reminder) — no retrieval,
 // snapshot, or self-model. Appended to SYSTEM on the fast path.
-function commandContext() {
+async function commandContext() {
   let s = '';
   try {
-    const w = require('../services/workout').getTodayWorkout();
-    if (w?.type) s += `\n\nTODAY'S PLANNED WORKOUT: ${w.type}${w.duration ? ` (${w.duration})` : ''}.`;
+    // getEffectiveWorkout checks workout_overrides (a swap_workout day-swap)
+    // first, then falls back to the scheduled plan — getTodayWorkout() alone
+    // only knows the static schedule and would miss an already-applied swap.
+    const w = await require('../services/workout').getEffectiveWorkout();
+    if (w?.label) s += `\n\nTODAY'S PLANNED WORKOUT: ${w.label}${w.duration ? ` (${w.duration})` : ''}.`;
   } catch { /* non-critical */ }
   try {
     const tz = process.env.TZ || 'America/New_York';
@@ -136,7 +139,7 @@ function commandContext() {
  * commands don't need the library or long-term recall.
  */
 async function answerCommand(question, { history = [] } = {}) {
-  const system = SYSTEM + commandContext() +
+  const system = SYSTEM + (await commandContext()) +
     '\n\nThe user gave a COMMAND, not a question. Reply in ONE short, warm spoken sentence that plainly confirms what you did (or, if you truly can\'t act, say so briefly). No markdown, no lists, no analysis. Append the correct <action> tag(s) — usually one, but if a day recap also mentions tomorrow, add a second add_context tag for the forward-looking part.';
   const historyText = history.length
     ? 'CONVERSATION SO FAR:\n' + history.map((h) => `${h.role === 'assistant' ? 'NormOS' : 'You'}: ${h.content}`).join('\n') + '\n\n'
@@ -543,8 +546,8 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
   // accurately ("swapped your Push session to…") and the answer can judge the
   // substitute against the plan.
   try {
-    const w = require('../services/workout').getTodayWorkout();
-    if (w?.type) system += `\n\nTODAY'S PLANNED WORKOUT: ${w.type}${w.duration ? ` (${w.duration})` : ''}.`;
+    const w = await require('../services/workout').getEffectiveWorkout();
+    if (w?.label) system += `\n\nTODAY'S PLANNED WORKOUT: ${w.label}${w.duration ? ` (${w.duration})` : ''}.`;
   } catch { /* non-critical */ }
   // Current local time — so a set_reminder action can compute a correct future
   // "at" (e.g. "remind me at 6" → today or tomorrow depending on now). Shown in

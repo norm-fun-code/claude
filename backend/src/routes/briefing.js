@@ -20,7 +20,24 @@ const { fetchRandomNotionPage, fetchNotionQuotes } = require('../services/notion
 const { fetchRandomQuote } = require('../services/googleDoc');
 const { fetchWeather } = require('../services/weather');
 const { generateChiefBrief, generateWisdomInsights } = require('../services/briefing-ai');
-const { getTodayWorkout } = require('../services/workout');
+const { getEffectiveWorkout } = require('../services/workout');
+
+/** Today's plan for the chief-brief prompt, shaped like getWorkout()'s
+ *  { type, duration, hrTarget, protein, hrvNote } — but resolved through
+ *  getEffectiveWorkout so a manual day-swap (workout_overrides) is reflected
+ *  here too, not just the static weekly schedule. getTodayWorkout() alone
+ *  used to feed this prompt, so "today's authoritative plan" the brief stated
+ *  could silently diverge from a swap the user had already made. */
+async function resolveWorkoutForPrompt(tz) {
+  const eff = await getEffectiveWorkout({ tz });
+  return {
+    type: eff.label,
+    duration: eff.duration ?? null,
+    hrTarget: eff.hrTarget ?? null,
+    protein: eff.protein ?? null,
+    hrvNote: 'Green=train as planned | Yellow=downgrade intensity | Red=mobility/walk only',
+  };
+}
 const { buildWealthInsights } = require('../services/wealth-insights');
 const metricsStore = require('../store/metrics');
 const findingsStore = require('../store/findings');
@@ -76,7 +93,7 @@ const REBUILD_LOCK_ID = 727002;
 async function buildQuickChiefBriefContext(prior) {
   const tz = process.env.TZ || 'America/New_York';
   const dayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
-  const workout = getTodayWorkout();
+  const workout = await resolveWorkoutForPrompt(tz);
   const calendar = prior.content?.calendar ?? [];
   const workBusy = prior.content?.workBusy ?? [];
 
@@ -90,6 +107,7 @@ async function buildQuickChiefBriefContext(prior) {
     spendingContext,
     weeklyGoalsContext,
     chaptersContext,
+    liveGoals,
   ] = await Promise.all([
     (async () => {
       try {
@@ -239,6 +257,19 @@ async function buildQuickChiefBriefContext(prior) {
         return '';
       }
     })(),
+    // Structured live goal state for the goal-completion guard (see the
+    // weeklyGoalsContext IIFE above, which builds the prose version of the
+    // SAME query) — the scoped rebuild must enforce the exact same
+    // never-claim-an-OPEN-goal-is-done invariant as the full builder.
+    (async () => {
+      try {
+        const currentInt = await intentionsStore.currentIntention();
+        return (currentInt?.goals ?? []).map((g) => ({ text: g.text, achieved: !!g.achieved }));
+      } catch (err) {
+        console.error('[quick chief-brief] liveGoals failed:', err.message);
+        return [];
+      }
+    })(),
   ]);
 
   // Derived from persisted output, not a fresh findings query — see the
@@ -279,6 +310,7 @@ async function buildQuickChiefBriefContext(prior) {
     weeklyGoalsContext,
     chaptersContext,
     dayOffContext,
+    liveGoals,
   };
 }
 
@@ -493,8 +525,7 @@ async function buildFreshBriefing({ force = false } = {}) {
         .catch((err) => { console.error('[briefing build] crossContext regen failed:', err.message); return null; })
     : Promise.resolve(null);
 
-  // Workout is synchronous — no failure path
-  const workout = getTodayWorkout();
+  const workout = await resolveWorkoutForPrompt(tz);
 
   // Notion wisdom page: avoid repeating one shown in the last 30 days.
   const seenNotion = await surfacedStore.recentRefs('notion_page', 30).catch(() => new Set());
@@ -1233,6 +1264,11 @@ async function buildFreshBriefing({ force = false } = {}) {
   // silent checklist on the Insights tab. Reused for the response payload.
   let weeklyGoals = null;
   let weeklyGoalsContext = '';
+  // Structured live state ({ text, achieved }[]) passed separately from the
+  // prose weeklyGoalsContext string above — briefing-ai.js's goal-completion
+  // guard validates generated text against THIS, not the prose, so it works
+  // even if the model paraphrases rather than repeating the goal verbatim.
+  let liveGoals = [];
   try {
     const [currentInt, priorInt] = await Promise.all([
       intentionsStore.currentIntention(),
@@ -1240,6 +1276,7 @@ async function buildFreshBriefing({ force = false } = {}) {
     ]);
     if (currentInt || priorInt) weeklyGoals = { current: currentInt ?? null, prior: priorInt ?? null };
     const goals = currentInt?.goals ?? [];
+    liveGoals = goals.map((g) => ({ text: g.text, achieved: !!g.achieved }));
     if (goals.length) {
       const done = goals.filter((g) => g.achieved).map((g) => `[done] ${g.text}`);
       const open = goals.filter((g) => !g.achieved).map((g) => `[OPEN] ${g.text}`);
@@ -1286,7 +1323,7 @@ async function buildFreshBriefing({ force = false } = {}) {
   {
     const [chiefSettled, wisdomSettled] = await Promise.allSettled([
       withTimeout(
-        generateChiefBrief(emails, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext, attentionContext),
+        generateChiefBrief(emails, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext, attentionContext, liveGoals),
         LLM_TIMEOUT,
         'gemini_chief'
       ),
@@ -1865,7 +1902,8 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
     ctx.emails, ctx.dayName, ctx.workout, ctx.calendar, ctx.wellbeingContext, ctx.annotationsContext,
     ctx.recoveryContext, ctx.experimentsContext, ctx.selfModel, ctx.leverageContext, ctx.workBusy,
     ctx.strengthContext, ctx.spendingContext, ctx.continuityContext, ctx.cashflowContext,
-    ctx.progressContext, ctx.weeklyGoalsContext, ctx.chaptersContext, ctx.dayOffContext
+    ctx.progressContext, ctx.weeklyGoalsContext, ctx.chaptersContext, ctx.dayOffContext,
+    /* attentionContext */ '', ctx.liveGoals
   );
 
   const chiefBriefStale = chiefResult.chiefBrief == null;

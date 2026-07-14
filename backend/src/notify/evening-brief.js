@@ -262,29 +262,18 @@ async function runEveningHealthBrief(opts = {}) {
   // Today's planned session — checked FIRST (before gatherEvening) so the rest-
   // day flag can suppress the "Exercise" habit nag and let the LLM correctly
   // frame lower steps as expected, not a shortfall. Reads the manual swap
-  // override (workout_overrides) first — getTodayWorkout() alone only knows the
+  // override (workout_overrides) first via the shared getEffectiveWorkout
+  // resolver (services/workout.js) — getTodayWorkout() alone only knows the
   // static weekly schedule, so a "swap today to rest" voice command would
   // otherwise be invisible here even though it's exactly what the swap_workout
   // action is for.
-  const OVERRIDE_LABELS = { push: 'Push', pull: 'Pull', zone2: 'Zone 2', mobility: 'Mobility', intervals: 'Intervals', rest: 'Rest' };
   let plannedLabel = null;
   let isRestDay = false;
   try {
-    const { getTodayWorkout } = require('../services/workout');
-    const db = require('../db');
-    const { rows: overrideRows } = await db.query(
-      `SELECT workout_id FROM workout_overrides WHERE log_date = $1`,
-      [day]
-    );
-    const overrideId = overrideRows[0]?.workout_id ?? null;
-    if (overrideId) {
-      plannedLabel = OVERRIDE_LABELS[overrideId] ?? overrideId;
-      isRestDay = overrideId === 'rest';
-    } else {
-      const scheduled = getTodayWorkout();
-      plannedLabel = scheduled?.type ?? null;
-      isRestDay = scheduled?.type === 'Rest';
-    }
+    const { getEffectiveWorkout } = require('../services/workout');
+    const effective = await getEffectiveWorkout({ tz });
+    plannedLabel = effective?.label ?? null;
+    isRestDay = effective?.workoutId === 'rest';
   } catch { /* non-critical — defaults (null, false) are safe */ }
 
   // Today's context the user narrated (if any) — fetched BEFORE gatherEvening

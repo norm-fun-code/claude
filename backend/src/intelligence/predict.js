@@ -178,14 +178,22 @@ async function applyContextToForecast(tomorrow, { dayContext = [], annotations =
  * names that as the controllable. Returns { band, projectedScore, detail, lever,
  * confidence } or null.
  */
-function forecastTomorrow({ recoveryScore, acwrBand, sleepDebtHours, hardSessionToday = false } = {}) {
+function forecastTomorrow({ recoveryScore, acwrBand, sleepDebtHours, hardSessionStatus = 'none' } = {}) {
   if (recoveryScore == null || !Number.isFinite(recoveryScore)) return null;
   let proj = recoveryScore;
   const drags = [];
   if (acwrBand === 'high') { proj -= 8; drags.push('training load is spiking'); }
-  if (hardSessionToday)    { proj -= 6; drags.push("today's hard session adds fatigue"); }
+  // 'completed' = explicit same-local-day evidence a hard workout actually
+  // happened (activity log / exercise habit). 'planned' = the effective plan
+  // (workout_overrides first, else the scheduled split) calls for a hard
+  // session today but there's no completion evidence yet — still a plausible
+  // drag on tomorrow, but worded as provisional, not asserted fact. 'none'
+  // (rest, Recovery + Mobility, Zone 2, or an explicit rest override) never
+  // drags, regardless of unrelated activity like elevated active energy.
+  if (hardSessionStatus === 'completed') { proj -= 6; drags.push("today's hard session adds fatigue"); }
+  else if (hardSessionStatus === 'planned') { proj -= 6; drags.push("today's planned hard session may add fatigue"); }
   if (sleepDebtHours != null && sleepDebtHours >= 2) { proj -= 6; drags.push(`${fmtHM(sleepDebtHours)} of sleep debt`); }
-  const easy = (acwrBand === 'low' || acwrBand == null) && (sleepDebtHours == null || sleepDebtHours < 1) && !hardSessionToday;
+  const easy = (acwrBand === 'low' || acwrBand == null) && (sleepDebtHours == null || sleepDebtHours < 1) && hardSessionStatus === 'none';
   if (easy) proj += 4;
 
   proj = Math.max(0, Math.min(100, proj));
@@ -238,7 +246,7 @@ async function computeTodayForecast({ recovery = null, asOf = new Date() } = {})
   const rec = recovery || (await require('./recovery').liveRecovery());
   if (!rec || rec.score == null) return { capacity: null, sleepDebt: null };
 
-  const from = new Date(Date.now() - 60 * 864e5);
+  const from = new Date(asOf.getTime() - 60 * 864e5);
   const latestOf = async (metric, sources) => {
     try {
       const rows = await metricsStore.dailyAggregatePreferSource({ domain: 'health', metric, from, agg: 'avg', sources });
@@ -257,7 +265,7 @@ async function computeTodayForecast({ recovery = null, asOf = new Date() } = {})
   // paired nights); 0 on a surplus week; positive hours on a real deficit.
   let sleepDebtHours = null;
   try {
-    const seriesFrom = new Date(Date.now() - 14 * 864e5); // enough history for 7 paired nights
+    const seriesFrom = new Date(asOf.getTime() - 14 * 864e5); // enough history for 7 paired nights
     const [sleepSeries, sleepNeedSeries] = await Promise.all([
       metricsStore.dailyAggregatePreferSource({ domain: 'health', metric: 'sleep_hours', from: seriesFrom, agg: 'avg', sources: ['eight_sleep'] }),
       metricsStore.dailyAggregatePreferSource({ domain: 'health', metric: 'sleep_need', from: seriesFrom, agg: 'avg', sources: ['eight_sleep'] }),
@@ -299,32 +307,62 @@ async function computeTodayForecast({ recovery = null, asOf = new Date() } = {})
 
   const debt = sleepDebtTrajectory({ debtHours: sleepDebtHours, needHours: sleepNeed, asOf });
 
-  // Did today already include a hard session? Elevated active energy vs the
-  // 30-day norm is a decent proxy without needing the workout plan here.
-  let hardSessionToday = false;
+  // Did today already include (or call for) a hard session? Used to be
+  // inferred from active_energy > 1.3x the 30-day mean, taking whatever row
+  // happened to be LAST in the window without ever proving that row was
+  // actually today in the configured timezone — a Monday hard session could
+  // get misread as "today's" fatigue on a Tuesday Recovery + Mobility day,
+  // and active energy is nonspecific anyway (ordinary movement moves it too).
+  // Replaced with the authoritative data model: the effective plan
+  // (workout_overrides first, else the scheduled split — see
+  // services/workout.js's getEffectiveWorkout) tells us whether today is
+  // SUPPOSED to be hard; explicit same-local-day completion evidence (a
+  // logged activity, or the exercise habit checked) tells us whether a hard
+  // session actually HAPPENED. Active energy is no longer consulted at all.
+  const tz = process.env.TZ || 'America/New_York';
+  const todayStr = asOf.toLocaleDateString('en-CA', { timeZone: tz });
+  let hardSessionStatus = 'none'; // 'none' | 'planned' | 'completed'
   try {
-    const rows = await metricsStore.dailyAggregate({ domain: 'health', metric: 'active_energy', from, agg: 'sum', excludeSource: 'seed' });
-    if (rows.length >= 8) {
-      const today = Number(rows[rows.length - 1].value);
-      const prior = rows.slice(0, -1).map((r) => Number(r.value)).filter(Number.isFinite);
-      const mean = prior.reduce((a, b) => a + b, 0) / prior.length;
-      if (mean > 0 && today > mean * 1.3) hardSessionToday = true;
-    }
-  } catch { /* non-critical */ }
+    const workoutSvc = require('../services/workout');
+    const db = require('../db');
+    const [effective, { rows: exercised }, { rows: acts }] = await Promise.all([
+      workoutSvc.getEffectiveWorkout({ asOf, tz }),
+      db.query(
+        `SELECT 1 FROM metrics
+          WHERE domain = 'habits' AND metric = 'exercise' AND value >= 0.5
+            AND (ts AT TIME ZONE $1)::date = $2::date
+          LIMIT 1`,
+        [tz, todayStr]
+      ),
+      db.query(
+        `SELECT activity_type FROM activity_logs WHERE log_date = $1`,
+        [todayStr]
+      ),
+    ]);
+    // The exercise habit alone doesn't say WHAT was done, so it only confirms
+    // completion if the effective plan itself is hard; a logged activity_type
+    // that matches the hard vocabulary (push/pull/intervals) is self-evident
+    // regardless of the plan (an unplanned hard session still counts).
+    const completedHard =
+      acts.some((a) => workoutSvc.isHardWorkoutId(a.activity_type)) ||
+      (exercised.length > 0 && effective.isHard);
+    if (completedHard) hardSessionStatus = 'completed';
+    else if (effective.isHard) hardSessionStatus = 'planned';
+  } catch { /* non-critical — no drag when we can't determine it */ }
 
   let tomorrow = forecastTomorrow({
     recoveryScore: rec.score,
     acwrBand,
     sleepDebtHours,
-    hardSessionToday,
+    hardSessionStatus,
   });
 
   // Read whatever context the user gave for today/tomorrow (voice or typed) in
   // case it says something the numbers can't see yet — a stressful day ahead,
   // travel, illness, a planned rest day.
   if (tomorrow) {
-    const tz = process.env.TZ || 'America/New_York';
-    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    // Reuse the same tz/todayStr computed above (from `asOf`, not `new Date()`)
+    // — this whole function must stay deterministic under an injected asOf.
     const startOfToday = new Date(`${todayStr}T00:00:00`);
     const [dayContext, rawAnnotations] = await Promise.all([
       require('../store/dayJournal').forDay(todayStr).catch(() => []),
