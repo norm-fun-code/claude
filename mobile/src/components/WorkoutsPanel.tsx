@@ -786,6 +786,8 @@ function StrengthContent({
               day={day}
               loggedSets={workoutLogs[ex.name] ?? []}
               lastHistory={workoutHistory[ex.name] ?? []}
+              onSetSaved={onSetSaved}
+              onAllSetsLogged={onAllSetsLogged}
             />
           );
         })}
