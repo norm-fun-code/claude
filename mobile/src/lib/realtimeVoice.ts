@@ -24,6 +24,25 @@ try {
 
 export const realtimeVoiceAvailable: boolean = !!(WebRTC?.RTCPeerConnection && WebRTC?.mediaDevices);
 
+// Bug: assistant audio played back very quietly even at full device volume.
+// react-native-webrtc configures iOS's AVAudioSession as category
+// `playAndRecord` / mode `voiceChat` by default — the mode built for a private
+// phone call, which iOS routes to the EARPIECE receiver (quiet, held-to-ear
+// volume), not the loud bottom-firing speaker. Talk to NormOS is a hands-free
+// conversation, not a phone call, so it needs the speaker explicitly forced
+// on. react-native-incall-manager (maintained by the same org as
+// react-native-webrtc — the standard companion for exactly this) does that.
+// Same guarded-import pattern as WebRTC above: a NEW native module the JS
+// bundle may run against a binary that doesn't have it yet, so a missing
+// module degrades to today's (quiet) behavior instead of crashing.
+let InCallManager: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  InCallManager = require('react-native-incall-manager').default;
+} catch {
+  InCallManager = null;
+}
+
 import {
   REALTIME_SESSION_URL,
   REALTIME_TOOL_URL,
@@ -173,6 +192,15 @@ export class RealtimeVoiceSession {
     this.model = session.model;
 
     try {
+      // Force loud-speaker routing before any audio track exists — must run
+      // before getUserMedia/peer setup, since webrtc's own audio-session
+      // config (defaulting to the quiet earpiece route) activates as soon as
+      // the mic track and connection come up.
+      try {
+        InCallManager?.start({ media: 'audio' });
+        InCallManager?.setForceSpeakerphoneOn(true);
+      } catch { /* module present but native call failed — keep going, worst case stays quiet */ }
+
       const { RTCPeerConnection, mediaDevices } = WebRTC;
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       this.pc = pc;
@@ -245,6 +273,7 @@ export class RealtimeVoiceSession {
     try { this.dc?.close(); } catch { /* noop */ }
     try { this.localStream?.getTracks().forEach((t: any) => t.stop()); } catch { /* noop */ }
     try { this.pc?.close(); } catch { /* noop */ }
+    try { InCallManager?.stop(); } catch { /* noop */ }
     this.dc = null;
     this.pc = null;
     this.localStream = null;
