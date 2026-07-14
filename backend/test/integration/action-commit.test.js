@@ -53,6 +53,25 @@ test('committing THE ACTION creates a commitment due today and stamps acceptance
   assert.ok(acceptedAt, "today's briefing leverage recommendation is stamped accepted");
 });
 
+// Bug: committing a long, real-world-length brief action (chief brief's
+// "action" field is documented as "1-2 sentences") stored the WHOLE
+// paragraph as title, silently sliced to 200 chars with no detail at all —
+// the tail of the action was simply gone, unreadable anywhere on the card.
+test('committing a long brief action stays fully readable through title + detail, not silently truncated', async () => {
+  const longAction = `Do the Zone 2 incline walk at an easy pace today ${TAG}. It offsets yesterday's late Push session and keeps this week's training load on track, since your HRV dipped 12% after two high-intensity days in a row and your own data shows sleep quality suffers when back-to-back hard sessions stack without a lighter day between them.`;
+  assert.ok(longAction.length > 200, 'sanity: this fixture is longer than the old title truncation limit');
+
+  const res = await request(app)
+    .post('/api/briefing/action/commit')
+    .set(authHeader())
+    .send({ text: longAction })
+    .timeout(10000);
+  assert.equal(res.status, 200);
+  assert.ok(res.body.commitment.title.length < longAction.length, 'title is a concise derivation, not the full paragraph');
+  assert.equal(res.body.commitment.detail, longAction, 'the complete original action is preserved verbatim in detail — nothing lost');
+  assert.ok(longAction.includes(res.body.commitment.title.replace(/…$/, '')), 'the concise title is drawn from the actual action text, not fabricated');
+});
+
 test('commit without text is a 400', async () => {
   const res = await request(app).post('/api/briefing/action/commit').set(authHeader()).send({}).timeout(10000);
   assert.equal(res.status, 400);

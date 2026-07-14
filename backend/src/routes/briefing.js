@@ -40,6 +40,17 @@ const intentionsStore = require('../store/intentions');
 const lifeChaptersStore = require('../store/lifeChapters');
 const { asyncHandler } = require('../middleware/asyncHandler');
 
+// Postgres advisory lock (not an in-memory boolean) so "is a rebuild already
+// running" is answered correctly across replicas, not just within this one
+// process — an in-memory flag is invisible to a sibling instance, so two
+// replicas could each start their own 60-90s rebuild concurrently. Arbitrary
+// lock id; just needs to not collide with another feature's (see
+// scheduler.js's LEADER_LOCK_ID = 727001). Module-level (not just local to
+// createBriefingRouter) so notify/morning.js's automatic-trigger guard can
+// share the exact same lock — a manual rebuild in flight and an automatic
+// trigger firing at the same moment must not both proceed.
+const REBUILD_LOCK_ID = 727002;
+
 // Fast, scoped context for POST /briefing/chief-brief/rebuild — recomputes
 // only the cheap, side-effect-free, DB-only inputs generateChiefBrief reads,
 // so a "just retry the brief text" tap takes seconds, not the full builder's
@@ -1025,6 +1036,38 @@ async function buildFreshBriefing({ force = false } = {}) {
 
     const parts = [];
     if (streaks.length) parts.push(`PERSISTENT ISSUES (from the novelty ledger):\n${streaks.join('\n')}`);
+    // Factual recency for nightly context tags (Alcohol, Late meal, …) — real,
+    // computed "logged on K of the last N days" ground truth, so the brief
+    // never has to invent a frequency/streak claim from freeform notes. A real
+    // incident narrated a single alcohol log after two clean nights as "third
+    // straight day" and "550% above usual" — this block gives the model the
+    // ACTUAL count instead. Separate from PERSISTENT ISSUES: that block's
+    // "open N days" is how long a FINDING has been flagged, not how many
+    // consecutive days a behavior occurred — never the same thing.
+    try {
+      const { computeContextRecency } = require('../intelligence/analyze');
+      const contextFrom = new Date(Date.now() - 4 * 864e5);
+      const { rows: contextRows } = await require('../db').query(
+        `SELECT metric, (ts AT TIME ZONE $2)::date AS day, avg(value) AS value
+           FROM metrics WHERE domain = 'context' AND ts >= $1
+           GROUP BY metric, day`,
+        [contextFrom, tz]
+      );
+      const contextSeriesByKey = {};
+      for (const r of contextRows) {
+        const key = `context:${r.metric}`;
+        (contextSeriesByKey[key] || (contextSeriesByKey[key] = [])).push({ day: r.day, value: Number(r.value) });
+      }
+      const recency = computeContextRecency(contextSeriesByKey, { today: todayKeyForStreaks });
+      if (recency.length) {
+        parts.push(
+          `RECENT CONTEXT TAGS (factual — cite these exact counts; NEVER convert them into a percentage-above-baseline or a different streak length):\n` +
+            recency.map((r) => `- ${r.summary}`).join('\n')
+        );
+      }
+    } catch (err) {
+      console.error('[context recency] failed:', err.message);
+    }
     if (lastActionLine) parts.push(lastActionLine);
     if (calibrationLine) parts.push(calibrationLine);
     // Fresh experiment verdicts — the payoff of a multi-week self-test lands
@@ -1864,13 +1907,6 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
   res.json({ ...content, cached: false });
 }));
 
-// Postgres advisory lock (not an in-memory boolean) so "is a rebuild already
-// running" is answered correctly across replicas, not just within this one
-// process — an in-memory flag is invisible to a sibling instance, so two
-// replicas could each start their own 60-90s rebuild concurrently. Arbitrary
-// lock id; just needs to not collide with another feature's (see
-// scheduler.js's LEADER_LOCK_ID = 727001).
-const REBUILD_LOCK_ID = 727002;
 router.post('/briefing/rebuild', asyncHandler(async (req, res) => {
   const triggeredAt = new Date().toISOString();
   const client = await require('../db').pool.connect();
@@ -1896,10 +1932,26 @@ router.post('/briefing/rebuild', asyncHandler(async (req, res) => {
 
   router.get('/briefing', asyncHandler(async (req, res) => {
     const force = req.query.refresh === '1' || req.query.refresh === 'true';
-    res.json(await buildFreshBriefing({ force }));
+    if (!force) return res.json(await buildFreshBriefing({ force: false }));
+    // Same advisory lock as POST /briefing/rebuild and the automatic morning
+    // trigger (notify/morning.js) — a forced rebuild here must not race a
+    // rebuild already in progress elsewhere. If one is running, degrade to
+    // serving cache rather than starting a second concurrent rebuild.
+    const client = await require('../db').pool.connect();
+    const { rows } = await client.query('SELECT pg_try_advisory_lock($1) AS acquired', [REBUILD_LOCK_ID]);
+    if (!rows[0].acquired) {
+      client.release();
+      return res.json(await buildFreshBriefing({ force: false }));
+    }
+    try {
+      res.json(await buildFreshBriefing({ force: true }));
+    } finally {
+      try { await client.query('SELECT pg_advisory_unlock($1)', [REBUILD_LOCK_ID]); } catch { /* connection may already be gone */ }
+      try { client.release(); } catch { /* already released */ }
+    }
   }));
 
   return router;
 }
 
-module.exports = { createBriefingRouter, buildFreshBriefing };
+module.exports = { createBriefingRouter, buildFreshBriefing, REBUILD_LOCK_ID };

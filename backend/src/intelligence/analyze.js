@@ -11,6 +11,9 @@ const cat = require('./catalog');
 const { rankActions } = require('./leverage');
 const { computeForecasts } = require('./forecast');
 const { computeHealthComposites } = require('./recovery');
+const { CONTEXT_TAGS } = require('./context-tags');
+
+const CONTEXT_TAG_KEYS = CONTEXT_TAGS.map((t) => `context:${t.key}`);
 
 const DEFAULTS = {
   loadDays: 60, // history window pulled from the spine
@@ -72,6 +75,18 @@ const DEFAULTS = {
     // meaning. Balance-sheet structure belongs to wealth insights / the plan
     // check, not a short-window trend alarm.
     'wealth:liabilities',
+    // Bug: nightly context tags (Alcohol, Late meal, Magnesium, …) are the SAME
+    // class of noise as the binary habits above (0/1 daily, sparsely logged) —
+    // a real incident had "context:alcohol" logged once after two clean nights
+    // produce a trend/anomaly finding narrated as "550% above usual", which is
+    // meaningless for a sparse binary event (any single occurrence after a
+    // near-zero baseline mean produces an enormous, nonsensical percentage).
+    // These tags already have the correct analysis surface —
+    // computeHabitHealthSplits' on/off outcome comparison ("on the nights you
+    // logged alcohol, HRV averaged X vs Y") — so they're excluded here from
+    // both the trend AND anomaly engines (both gate on trendSkip), exactly
+    // like habits:* above.
+    ...CONTEXT_TAG_KEYS,
   ],
   // Per-key correlation exclusions. Derived intermediates (sleep need/debt) aren't
   // independent inputs; VO₂ max is an Apple Watch FITNESS ESTIMATE that barely
@@ -606,6 +621,71 @@ function computeHabitConsistency(seriesByKey, opts = {}) {
 }
 
 /**
+ * Pure: a factual recency summary for nightly context tags (Alcohol, Late
+ * meal, …) — "logged on K of the last N days" — deliberately NOT a percentage
+ * (context tags are excluded from computeTrends/computeAnomalies for exactly
+ * that reason, see trendSkip) and NOT a findings-ledger "open N days running"
+ * age (that describes how long a FINDING has been flagged, not how many
+ * consecutive days the underlying behavior occurred). "Consecutive days"
+ * language is only produced when the tag was logged on EVERY day of the
+ * window in one unbroken run ending today — a single logged day, or logged
+ * days separated by a gap, always falls back to the "K of the last N" framing.
+ * @param {Record<string, {day: string|Date, value: any}[]>} seriesByKey
+ * @param {{ contextRecencyWindow?: number, today?: string }} [opts]
+ * @returns {{ tag: string, label: string, windowDays: number, loggedDays: number, streakDays: number, isConsecutiveStreak: boolean, summary: string }[]}
+ */
+function computeContextRecency(seriesByKey, opts = {}) {
+  const windowDays = opts.contextRecencyWindow ?? 3;
+  const todayKey = opts.today || new Date().toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/New_York' });
+  const results = [];
+
+  for (const t of CONTEXT_TAGS) {
+    const key = `context:${t.key}`;
+    const series = seriesByKey[key];
+    if (!series || !series.length) continue;
+
+    const byDay = new Map();
+    for (const r of series) byDay.set(toDayKey(r.day), Number(r.value));
+
+    // The last `windowDays` local-calendar days ending today (inclusive),
+    // oldest first — UTC date-string math avoids DST drift (matches
+    // computeHabitHealthSplits' shiftDay helper).
+    const days = [];
+    for (let i = windowDays - 1; i >= 0; i--) {
+      days.push(new Date(new Date(`${todayKey}T00:00:00Z`).getTime() - i * 86400000).toISOString().slice(0, 10));
+    }
+    const logged = days.map((d) => (byDay.get(d) ?? 0) >= 0.5);
+    const loggedDays = logged.filter(Boolean).length;
+    if (loggedDays === 0) continue; // nothing recent to report
+
+    // Trailing run length, counting back from today until the first gap.
+    let streakDays = 0;
+    for (let i = logged.length - 1; i >= 0; i--) {
+      if (logged[i]) streakDays++;
+      else break;
+    }
+    // A genuine streak requires every logged occurrence in the window to be
+    // part of that single trailing run (no earlier, separate occurrence) AND
+    // at least 2 days — one logged day is "logged today", not a "streak".
+    const isConsecutiveStreak = streakDays >= 2 && streakDays === loggedDays;
+
+    results.push({
+      tag: t.key,
+      label: t.label,
+      windowDays,
+      loggedDays,
+      streakDays,
+      isConsecutiveStreak,
+      summary: isConsecutiveStreak
+        ? `${t.label}: ${streakDays} consecutive days (through today)`
+        : `${t.label}: logged on ${loggedDays} of the last ${windowDays} days`,
+    });
+  }
+
+  return results;
+}
+
+/**
  * Pure: habit-vs-outcome split analysis. Splits each day as "habit on" or
  * "habit off" and computes the mean outcome value on each side — physiology
  * (HRV, sleep) AND how you actually felt (mood, energy). Far more actionable
@@ -626,7 +706,7 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
   };
   // Nightly context tags (Magnesium, Alcohol, …) correlate against the same
   // outcomes — bidirectionally, so "alcohol nights → lower HRV" surfaces too.
-  for (const t of require('./context-tags').CONTEXT_TAGS) {
+  for (const t of CONTEXT_TAGS) {
     HABITS[`context:${t.key}`] = t.label;
   }
 
@@ -1028,7 +1108,7 @@ function computeSleepImpact(seriesByKey) {
         detail:
           `After your best-slept nights, ${info.label} averages ${fmt(gm, info.unit)} — ` +
           `${Math.abs(Math.round(pct * 100))}% ${dir} than after your worst-slept nights (${fmt(pm, info.unit)}), ` +
-          `across ${goodVals.length}+${poorVals.length} days. ` +
+          `across ${goodVals.length + poorVals.length} comparison days: ${goodVals.length} best-sleep nights vs ${poorVals.length} worst-sleep nights. ` +
           (better
             ? `Sleep is one of your strongest levers for ${info.label}.`
             : `Association, not proof of cause — other factors may contribute.`),
@@ -1432,7 +1512,7 @@ async function analyze(opts = {}) {
   };
 }
 
-module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeHabitHealthSplits, computeSleepImpact, computeActivityImpact, computeDaytimeCardio, computeWellbeingGap, DEFAULTS, TREND_STALE_DAYS, NIGHT_METRICS, staleDays, lifeContextRelevant };
+module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeContextRecency, computeHabitHealthSplits, computeSleepImpact, computeActivityImpact, computeDaytimeCardio, computeWellbeingGap, DEFAULTS, TREND_STALE_DAYS, NIGHT_METRICS, staleDays, lifeContextRelevant };
 
 // CLI entrypoint
 if (require.main === module) {

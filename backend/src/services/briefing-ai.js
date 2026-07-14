@@ -49,6 +49,17 @@ const CHIEF_SYSTEM =
   'thing exactly as given — do not shorten, rename, or paraphrase it (\'investor update ' +
   'kickoff\' is not \'investor kickoff\'); a word dropped for brevity is still an invented ' +
   'detail if it changes what the thing actually is. ' +
+  'CRITICAL — streaks and consecutive-day language: PERSISTENT ISSUES\' "open N days" ' +
+  'describes how long a FINDING has been flagged (a trend/anomaly still holding), NOT how ' +
+  'many consecutive days a behavior occurred — never translate finding-age into "N ' +
+  'straight days" or "N consecutive days" of something the user did. Only use ' +
+  '"consecutive"/"straight days" language when the evidence explicitly states an ' +
+  'unbroken run of local-calendar days (e.g. RECENT CONTEXT TAGS literally says "N ' +
+  'consecutive days"). For a nightly context tag (alcohol, late meal, magnesium, etc.), ' +
+  'use ONLY the exact phrasing given in RECENT CONTEXT TAGS ("logged on K of the last N ' +
+  'days", or "N consecutive days" only when it says that) — never compute or invent a ' +
+  'percentage-above-baseline for one of these, and never state a streak length that ' +
+  'isn\'t the literal number given there. ' +
   'WRITING: complete, well-punctuated sentences. Never run two independent clauses ' +
   'together without a period, semicolon, or conjunction (no "a strong base for the week your ' +
   'stated focus is…" — close the first thought, then start the next). ' +

@@ -8,30 +8,48 @@
 // /api/briefing?refresh=1, an unnecessary network hop (and failure mode) for
 // what is, underneath, a same-process function call.
 const devicesStore = require('../store/devices');
-const { sendPush } = require('./expo');
+// Call through the module object (not a destructured `const { sendPush }`) so
+// a caller that stubs expo.sendPush (tests) — or a future hot-reload — is
+// picked up; a destructured reference would stay bound to whatever sendPush
+// was AT REQUIRE TIME. Same lesson already applied in notify/dispatch.js.
+const expo = require('./expo');
 
-// Default: don't auto-rebuild + push if the user already built a brief within
-// the last 2 hours (opened the app / hit Rebuild this morning). Overridable via
-// BRIEFING_FRESH_SKIP_MS (0 disables the guard entirely).
-const FRESH_SKIP_MS = Number(process.env.BRIEFING_FRESH_SKIP_MS ?? 2 * 60 * 60 * 1000);
+// Bug: BRIEFING_FRESH_SKIP_MS's rolling window (default 2h) meant an 8:03am
+// manual build stopped suppressing the automatic trigger by 10:03am — an
+// 11:33am scheduler/cron/watcher/Eight-Sleep-triggered run would rebuild AND
+// re-announce "Good morning" a second time the SAME day. Replaced with local-
+// calendar-day semantics: any VALID daily briefing already built today (in
+// the user's timezone), by ANY trigger (manual or automatic), suppresses
+// every later automatic trigger for the rest of that day — no rolling window
+// to age out of. "Valid" excludes a failed/incomplete build (no chiefBrief at
+// all, fresh or carried-forward) so a broken manual attempt doesn't block the
+// scheduled build from ever happening.
 
-/**
- * Pure: was a briefing built recently enough that an automatic rebuild + "ready"
- * push would be redundant? `lastGeneratedAt` is the newest daily briefing's
- * timestamp (or null/undefined if none).
- */
-function isRecentlyBuilt(lastGeneratedAt, { now = Date.now(), windowMs = FRESH_SKIP_MS } = {}) {
-  if (!lastGeneratedAt || windowMs <= 0) return false;
-  const t = new Date(lastGeneratedAt).getTime();
-  if (!Number.isFinite(t)) return false;
-  return now - t < windowMs;
+/** Local calendar-day string (YYYY-MM-DD) in the given timezone. */
+function localDay(d, tz = process.env.TZ || 'America/New_York') {
+  return d.toLocaleDateString('en-CA', { timeZone: tz });
 }
 
-/** The newest daily briefing's build time, or null. */
-async function lastBriefingBuiltAt() {
+/**
+ * Pure: does `latest` (a { generated_at, content } row from briefings) already
+ * satisfy today — same local calendar day AND a real chiefBrief present (not
+ * a totally failed/empty build)?
+ * @param {{ generated_at: string|Date, content?: { chiefBrief?: any } }|null} latest
+ * @param {{ now?: Date, tz?: string }} [opts]
+ */
+function builtToday(latest, { now = new Date(), tz = process.env.TZ || 'America/New_York' } = {}) {
+  if (!latest?.generated_at) return false;
+  const t = new Date(latest.generated_at);
+  if (Number.isNaN(t.getTime())) return false;
+  if (localDay(t, tz) !== localDay(now, tz)) return false;
+  return latest.content?.chiefBrief != null;
+}
+
+/** The newest daily briefing row ({ generated_at, content, ... }), or null. */
+async function latestDailyBriefing() {
   try {
     const rows = await require('../store/briefings').listBriefings({ kind: 'daily', limit: 1 });
-    return rows[0]?.generated_at ?? null;
+    return rows[0] ?? null;
   } catch (e) {
     console.error('[morning] freshness lookup failed (proceeding):', e.message);
     return null; // on error, don't suppress — better a rare dup than a missed brief
@@ -96,7 +114,7 @@ async function warmAndNotify(opts = {}) {
   } catch { /* keep default */ }
 
   try {
-    const r = await sendPush(tokens, {
+    const r = await expo.sendPush(tokens, {
       title: 'Good morning ☀️',
       body,
       data: { type: 'morning_briefing' },
@@ -131,7 +149,7 @@ async function pushSleepCheckIn(opts = {}) {
   const tokens = await devicesStore.listActiveTokens();
   if (tokens.length === 0) return { built: false, sleepCheckIn: true, sent: 0, reason: 'no_devices' };
   try {
-    const r = await sendPush(tokens, {
+    const r = await expo.sendPush(tokens, {
       title: 'How did you sleep? 🛌',
       body: 'No Eight Sleep reading last night — log your sleep and I’ll build your brief with a recovery score.',
       data: { type: 'sleep_checkin' },
@@ -149,21 +167,55 @@ async function pushSleepCheckIn(opts = {}) {
  * empty recovery — push the sleep check-in instead, and the brief builds itself
  * when the user logs (POST /api/recovery/self-report → warmAndNotify). Otherwise
  * pre-build the briefing and push "ready".
- * @param {{ send?: boolean }} [opts]
+ *
+ * Race-safe against a concurrent manual build: shares routes/briefing.js's
+ * REBUILD_LOCK_ID Postgres advisory lock with POST /briefing/rebuild (the
+ * app's "Rebuild" button) and GET /api/briefing?refresh=1. Whichever caller
+ * wins the lock proceeds; the other sees it held and skips cleanly instead of
+ * racing to a second concurrent build/push. The lock only guards the DECISION
+ * + build window, not background ingestion, which still runs and updates
+ * fields silently as it always has.
+ * @param {{ send?: boolean, force?: boolean }} [opts]
  */
 async function runMorningBriefing(opts = {}) {
-  // Skip the automatic morning rebuild + push (brief-ready OR sleep check-in) if
-  // the user already built a briefing themselves within the freshness window —
-  // otherwise the scheduled run overwrites their fresh brief and pings a
-  // redundant "ready" notification. Explicit test triggers pass { force: true }.
-  if (opts.force !== true) {
-    const builtAt = await lastBriefingBuiltAt();
-    if (isRecentlyBuilt(builtAt)) {
-      const ageMin = Math.round((Date.now() - new Date(builtAt).getTime()) / 60000);
-      console.log(`[morning] briefing built ${ageMin}m ago — skipping automatic rebuild + push`);
-      return { built: false, sent: 0, skipped: 'recently_built', ageMinutes: ageMin };
-    }
+  if (opts.force === true) return runMorningRoutineUnguarded(opts);
+
+  // Fast pre-check with no DB connection held — covers the common case (a
+  // brief already visibly exists for today) without any locking overhead.
+  const latest = await latestDailyBriefing();
+  if (builtToday(latest)) {
+    console.log(`[morning] a valid briefing was already built today (${latest.generated_at}) — skipping automatic rebuild + push`);
+    return { built: false, sent: 0, skipped: 'already_built_today' };
   }
+
+  const REBUILD_LOCK_ID = require('../routes/briefing').REBUILD_LOCK_ID;
+  const client = await require('../db').pool.connect();
+  let acquired = false;
+  try {
+    const { rows } = await client.query('SELECT pg_try_advisory_lock($1) AS acquired', [REBUILD_LOCK_ID]);
+    acquired = rows[0].acquired;
+    if (!acquired) {
+      console.log('[morning] a rebuild is already in progress (manual or automatic) — skipping this automatic trigger');
+      return { built: false, sent: 0, skipped: 'rebuild_in_progress' };
+    }
+    // Re-check now that we hold the lock: a manual build may have landed
+    // between the pre-check above and acquiring the lock, or we may have
+    // just waited out a build that finished satisfying today's brief.
+    const latest2 = await latestDailyBriefing();
+    if (builtToday(latest2)) {
+      return { built: false, sent: 0, skipped: 'already_built_today' };
+    }
+    return await runMorningRoutineUnguarded(opts);
+  } finally {
+    if (acquired) {
+      try { await client.query('SELECT pg_advisory_unlock($1)', [REBUILD_LOCK_ID]); } catch { /* connection may already be gone */ }
+    }
+    try { client.release(); } catch { /* already released */ }
+  }
+}
+
+/** The actual sleep-check-in-or-build decision, once the freshness/lock guard has cleared. */
+async function runMorningRoutineUnguarded(opts) {
   try {
     const needs = await require('../intelligence/recovery').needsSleepCheckIn();
     if (needs) return await pushSleepCheckIn(opts);
@@ -202,7 +254,7 @@ async function runWeeklyReviewWithPush(opts = {}) {
     : 'Your weekly review is ready — see how the week went and what to focus on.';
 
   try {
-    const r = await sendPush(tokens, {
+    const r = await expo.sendPush(tokens, {
       title: 'Your weekly review is ready 📊',
       body,
       data: { type: 'weekly_review' },
@@ -215,4 +267,4 @@ async function runWeeklyReviewWithPush(opts = {}) {
   }
 }
 
-module.exports = { runMorningBriefing, warmBriefing, warmAndNotify, pushSleepCheckIn, runWeeklyReviewWithPush, isRecentlyBuilt };
+module.exports = { runMorningBriefing, warmBriefing, warmAndNotify, pushSleepCheckIn, runWeeklyReviewWithPush, builtToday, latestDailyBriefing };

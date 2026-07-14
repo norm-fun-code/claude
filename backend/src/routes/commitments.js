@@ -100,7 +100,12 @@ function createCommitmentsRouter() {
     const ninePm = new Date(require('../util/date').naiveToUtcIso(`${todayStr}T21:00:00`, tz));
     const dueAt = ninePm.getTime() > Date.now() + 60 * 1000 ? ninePm : new Date(Date.now() + 3 * 60 * 60 * 1000);
     const row = await commitmentsStore.create({
-      title: String(text).trim().slice(0, 200),
+      // A concise, deterministic title (usually just the first sentence) so
+      // the Today card shows something readable at a glance, while the full
+      // original 1-2 sentence action is preserved in detail — not silently
+      // lost to the old title.slice(0, 200) truncation. No LLM call.
+      title: commitmentsStore.deriveActionTitle(text),
+      detail: String(text).trim(),
       source: 'brief_action',
       dueAt,
     });

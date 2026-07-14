@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { resolveReminderTime, isReminderDue } = require('../src/store/commitments');
+const { resolveReminderTime, isReminderDue, deriveActionTitle } = require('../src/store/commitments');
 const { selectReminderActions } = require('../src/notify/commitments');
 const { parseAction, parseActions } = require('../src/chat/ask');
 
@@ -34,6 +34,41 @@ test('resolveReminderTime keeps a within-grace near-now time', () => {
   // 1 minute ago is inside the 2-minute grace — still schedulable (fires ~now).
   const { dueAt } = resolveReminderTime('2026-07-03T11:59', NOW);
   assert.ok(dueAt instanceof Date);
+});
+
+// ── deriveActionTitle ─────────────────────────────────────────────────────────
+// Bug: POST /briefing/action/commit stored the FULL brief action paragraph as
+// the commitment's title, silently truncated at 200 chars with no detail at
+// all — the tail of a long action was just gone, not readable anywhere.
+
+test('deriveActionTitle returns short text unchanged', () => {
+  assert.equal(deriveActionTitle('Do the Zone 2 incline walk at an easy pace.'), 'Do the Zone 2 incline walk at an easy pace.');
+});
+
+test('deriveActionTitle prefers the first sentence when it is short enough', () => {
+  const text = 'Do the Zone 2 walk today. It offsets yesterday\'s late Push session and keeps this week\'s training load on track without adding more volume than you can recover from.';
+  const title = deriveActionTitle(text);
+  assert.equal(title, 'Do the Zone 2 walk today.');
+  assert.ok(title.length <= 100);
+});
+
+test('deriveActionTitle falls back to word-boundary truncation for a single long run-on sentence', () => {
+  const text = 'Do the Zone 2 incline walk at an easy pace today since your last two Push sessions ran high and recovery is still catching up from the week';
+  const title = deriveActionTitle(text);
+  assert.ok(title.length <= 101, 'truncated title (plus ellipsis) stays near the cap'); // 100 + '…'
+  assert.ok(title.endsWith('…'), 'a truncated title is marked with an ellipsis');
+  assert.ok(!title.endsWith(' …'), 'truncation lands on a whole word, not mid-word with a trailing space');
+});
+
+test('deriveActionTitle handles empty/null input safely', () => {
+  assert.equal(deriveActionTitle(''), '');
+  assert.equal(deriveActionTitle(null), '');
+  assert.equal(deriveActionTitle(undefined), '');
+});
+
+test('deriveActionTitle is deterministic — same input always produces the same title (no LLM call)', () => {
+  const text = 'Protect two uninterrupted morning hours today and push reactive tasks to the afternoon, since focus has been trending down for the last week and a half.';
+  assert.equal(deriveActionTitle(text), deriveActionTitle(text));
 });
 
 // ── isReminderDue (first reminder + persistent follow-ups) ───────────────────

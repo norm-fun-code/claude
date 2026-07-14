@@ -263,7 +263,7 @@ function fromSleepImpact(f) {
 
   return {
     title: `Best sleep nights lift your next-day ${outcomeLabel}`,
-    detail: `After your best-slept nights, ${outcomeLabel} runs ${fmtVal(goodFmt)} vs ${fmtVal(poorFmt)} after poor ones — across ${ev.goodN}+${ev.poorN} days. Sleep quality is one of your strongest personal levers. Protect tomorrow's bedtime window.`,
+    detail: `After your best-slept nights, ${outcomeLabel} runs ${fmtVal(goodFmt)} vs ${fmtVal(poorFmt)} after poor ones — across ${(ev.goodN ?? 0) + (ev.poorN ?? 0)} comparison days: ${ev.goodN} best-sleep nights vs ${ev.poorN} worst-sleep nights. Sleep quality is one of your strongest personal levers. Protect tomorrow's bedtime window.`,
     domains: [domain, 'health'],
     impact,
     confidence,

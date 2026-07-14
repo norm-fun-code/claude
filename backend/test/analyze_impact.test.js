@@ -30,6 +30,28 @@ test('computeSleepImpact: surfaces best-vs-worst-night outcome splits', () => {
   assert.ok(hrvF.evidence.goodN >= 5 && hrvF.evidence.poorN >= 5);
 });
 
+// Bug: the detail text used developer shorthand like "across 15+15 days",
+// unreadable to a user (looks like a typo/arithmetic, not two named cohorts).
+// Must read as clear cohort language with a genuinely COMPUTED total, not a
+// hard-coded one.
+test('computeSleepImpact: detail uses clear cohort language, not "N+N days" shorthand', () => {
+  const N = 42;
+  const sleepScore = mkSeries(N, (i) => 60 + (i % 7) * 5);
+  const hrv = mkSeries(N, (i) => 45 + (i % 7) * 3);
+  const findings = a.computeSleepImpact({
+    'health:sleep_score': sleepScore,
+    'health:hrv': hrv,
+  });
+  const hrvF = findings.find((f) => f.evidence.outcome === 'health:hrv');
+  assert.ok(hrvF);
+  assert.doesNotMatch(hrvF.detail, /\d+\+\d+\s*days/, 'must not use the "N+N days" developer shorthand');
+  const { goodN, poorN } = hrvF.evidence;
+  const total = goodN + poorN;
+  assert.match(hrvF.detail, new RegExp(`across ${total} comparison days`), 'total must be the actual computed sum, not a hard-coded number');
+  assert.match(hrvF.detail, new RegExp(`${goodN} best-sleep nights`));
+  assert.match(hrvF.detail, new RegExp(`${poorN} worst-sleep nights`));
+});
+
 test('computeSleepImpact: returns nothing without enough nights', () => {
   const short = mkSeries(6, () => 70);
   assert.deepEqual(a.computeSleepImpact({ 'health:sleep_score': short, 'health:hrv': short }), []);

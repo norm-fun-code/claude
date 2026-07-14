@@ -27,6 +27,36 @@ function resolveReminderTime(atStr, now = new Date()) {
   return { dueAt: parsed };
 }
 
+const TITLE_MAX = 100;
+
+/**
+ * A concise, deterministic title for a commitment derived from a longer
+ * source action (THE ACTION card's full 1-2 sentence paragraph from the
+ * morning brief) — no LLM call. Prefers the first sentence, since the
+ * actionable instruction is almost always stated first ("Do the Zone 2 walk
+ * today. It offsets yesterday's late Push session." → "Do the Zone 2 walk
+ * today."); falls back to a word-boundary truncation when the first sentence
+ * itself is still too long, or there's no sentence break at all. Pure and
+ * exported so it's directly testable — the full original text is preserved
+ * separately, in `detail`, never dropped.
+ * @param {string} text
+ * @param {number} [maxLen]
+ * @returns {string}
+ */
+function deriveActionTitle(text, maxLen = TITLE_MAX) {
+  const t = String(text || '').trim();
+  if (!t) return '';
+  if (t.length <= maxLen) return t;
+  const sentenceMatch = t.match(/^[^.!?]*[.!?]/);
+  const firstSentence = sentenceMatch ? sentenceMatch[0].trim() : null;
+  if (firstSentence && firstSentence.length <= maxLen) return firstSentence;
+  const candidate = firstSentence || t;
+  const cut = candidate.slice(0, maxLen);
+  const lastSpace = cut.lastIndexOf(' ');
+  const trimmed = lastSpace > maxLen * 0.6 ? cut.slice(0, lastSpace) : cut;
+  return `${trimmed.trim()}…`;
+}
+
 // Idempotency window for exact-title repeats: a voice/chat tool call that
 // genuinely double-fires (a realtime session re-processing the same audio
 // turn, a dropped-response client retry) produces the identical title text
@@ -201,6 +231,7 @@ async function expireStale({ now = new Date(), staleHours = 24 } = {}) {
 
 module.exports = {
   resolveReminderTime,
+  deriveActionTitle,
   isReminderDue,
   create,
   listActive,

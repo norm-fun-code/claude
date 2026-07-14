@@ -1,10 +1,20 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, useColorScheme } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, useColorScheme, type NativeSyntheticEvent, type TextLayoutEventData } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { SectionHeader } from './SectionHeader';
 import { getColors, spacing, radius, typography, shadow, withAlpha } from '../theme';
 import type { Commitment } from '../hooks/useCommitments';
+
+const COLLAPSED_LINES = 2;
+
+// Pure: does this commitment have anything a "More" tap would actually reveal?
+// Exported so the decision is unit-testable without rendering — a long detail
+// always qualifies; a short one-line title with no detail never does (there'd
+// be nothing to expand into, so no affordance should show at all).
+export function canExpandCommitment(commitment: Pick<Commitment, 'detail'>, titleTruncated: boolean): boolean {
+  return titleTruncated || !!commitment.detail?.trim();
+}
 
 interface Props {
   commitments: Commitment[];
@@ -32,10 +42,44 @@ function dueLabel(due: string | null): { text: string; overdue: boolean } | null
 
 function Row({ c: commitment, colors, onResolve }: { c: Commitment; colors: ReturnType<typeof getColors>; onResolve: Props['onResolve'] }) {
   const due = dueLabel(commitment.due_at);
+  const [expanded, setExpanded] = useState(false);
+  // Whether the title actually overflows COLLAPSED_LINES when collapsed —
+  // onTextLayout reports the FULL wrapped line count independent of
+  // numberOfLines' visual truncation, so this reflects the true content, not
+  // a string-length guess (which line-wrapping at a given width can't predict).
+  const [titleTruncated, setTitleTruncated] = useState(false);
+  const canExpand = canExpandCommitment(commitment, titleTruncated);
+
+  const handleTitleLayout = (e: NativeSyntheticEvent<TextLayoutEventData>) => {
+    if (!expanded && e.nativeEvent.lines.length > COLLAPSED_LINES) setTitleTruncated(true);
+  };
+
   return (
     <View style={styles.row}>
       <View style={styles.rowBody}>
-        <Text style={[styles.title, { color: colors.text }]} numberOfLines={2}>{commitment.title}</Text>
+        <TouchableOpacity
+          activeOpacity={canExpand ? 0.6 : 1}
+          onPress={() => { if (canExpand) setExpanded((v) => !v); }}
+          disabled={!canExpand}
+          accessibilityRole={canExpand ? 'button' : undefined}
+          accessibilityLabel={canExpand ? `Commitment: ${commitment.title}` : undefined}
+          accessibilityHint={canExpand ? (expanded ? 'Double tap to collapse' : 'Double tap to expand') : undefined}
+          accessibilityState={canExpand ? { expanded } : undefined}
+        >
+          <Text
+            style={[styles.title, { color: colors.text }]}
+            numberOfLines={expanded ? undefined : COLLAPSED_LINES}
+            onTextLayout={handleTitleLayout}
+          >
+            {commitment.title}
+          </Text>
+          {expanded && !!commitment.detail?.trim() && (
+            <Text style={[styles.detail, { color: colors.subtext }]}>{commitment.detail}</Text>
+          )}
+          {canExpand && (
+            <Text style={[styles.moreLess, { color: colors.accent }]}>{expanded ? 'Less' : 'More'}</Text>
+          )}
+        </TouchableOpacity>
         {due && (
           <View style={[styles.dueChip, { backgroundColor: due.overdue ? withAlpha('#FF6B6B', 0.16) : withAlpha(colors.accent, 0.12) }]}>
             <Ionicons name="time-outline" size={11} color={due.overdue ? '#FF6B6B' : colors.accent} />
@@ -95,9 +139,14 @@ const styles = StyleSheet.create({
   },
   list: { marginTop: spacing.sm },
   divider: { height: 1, marginVertical: spacing.sm },
-  row: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  // flex-start (not center) so the Done/Skip buttons stay pinned to the top
+  // of the row instead of drifting to the vertical middle once an expanded
+  // title + detail makes the body much taller than the two action buttons.
+  row: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
   rowBody: { flex: 1, gap: 5 },
   title: { ...typography.body, fontSize: 15, lineHeight: 21 },
+  detail: { ...typography.body, fontSize: 13, lineHeight: 18, marginTop: 2 },
+  moreLess: { fontSize: 12, fontWeight: '700', marginTop: 2 },
   dueChip: {
     flexDirection: 'row',
     alignItems: 'center',

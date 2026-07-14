@@ -53,6 +53,21 @@ test('dedupKey is stable across a sleep_impact title rewording', () => {
   assert.equal(acts[0].evidence.dedupKey, 'sleep_impact|health:hrv');
 });
 
+// Bug: fromSleepImpact's detail used "across 18+22 days" — developer
+// shorthand, not readable cohort language — and the same defect as
+// analyze.js's computeSleepImpact (the two sleep_impact copy sites).
+test('fromSleepImpact detail uses clear cohort language, not "N+N days" shorthand', () => {
+  const acts = rankActions([{
+    type: 'sleep_impact',
+    evidence: { kind: 'sleep_impact', outcome: 'health:hrv', pct: 0.13, goodMean: 42.7, poorMean: 37.6, goodN: 18, poorN: 22 },
+  }]);
+  assert.equal(acts.length, 1);
+  assert.doesNotMatch(acts[0].detail, /\d+\+\d+\s*days/, 'must not use the "N+N days" developer shorthand');
+  assert.match(acts[0].detail, /across 40 comparison days/, 'total (18+22) must be computed, not hard-coded');
+  assert.match(acts[0].detail, /18 best-sleep nights/);
+  assert.match(acts[0].detail, /22 worst-sleep nights/);
+});
+
 test('dedupKey distinguishes different outcomes for the same finding kind', () => {
   const hrv = rankActions([{ type: 'sleep_impact', evidence: { kind: 'sleep_impact', outcome: 'health:hrv', pct: 0.13, goodMean: 42.7, poorMean: 37.6, goodN: 18, poorN: 22 } }]);
   const focus = rankActions([{ type: 'sleep_impact', evidence: { kind: 'sleep_impact', outcome: 'wellbeing:focus', pct: 0.15, goodMean: 4.2, poorMean: 3.5, goodN: 18, poorN: 22 } }]);
