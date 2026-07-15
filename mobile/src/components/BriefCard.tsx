@@ -448,6 +448,8 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Props) {
                         onChangeText={setAltText}
                         onSubmitEditing={() => commitText(altText)}
                         returnKeyType="done"
+                        autoCorrect
+                        spellCheck
                       />
                       <TouchableOpacity onPress={() => commitText(altText)} disabled={!altText.trim() || actionCommit === 'saving'} hitSlop={6}>
                         <Text style={[styles.altLinkText, !altText.trim() && { opacity: 0.4 }]}>Commit</Text>

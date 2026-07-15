@@ -270,6 +270,8 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted }: Props) {
                 onSubmitEditing={submitText}
                 returnKeyType="send"
                 autoFocus
+                autoCorrect
+                spellCheck
               />
               <Pressable onPress={submitText} style={[styles.sendBtn, { backgroundColor: textInput.trim() ? c.accent : c.border }]} disabled={!textInput.trim()}>
                 <Text style={styles.sendBtnText}>↑</Text>

@@ -925,6 +925,8 @@ function AddExerciseModal({
               placeholder="e.g. Chest Press"
               placeholderTextColor={c.subtext}
               autoFocus
+              autoCorrect
+              spellCheck
             />
             <View style={logStyles.buttons}>
               <TouchableOpacity onPress={() => { setName(''); onClose(); }} style={[logStyles.btn, { borderColor: c.border }]}>
