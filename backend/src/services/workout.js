@@ -82,6 +82,30 @@ function isHardWorkoutType(type) {
   return id != null && isHardWorkoutId(id);
 }
 
+// Generic duration text for an auto-downgraded session — the scheduled day's
+// OWN plan entry doesn't apply (e.g. Thursday's plan IS "Push"; there's no
+// "what would Mobility look like on a Thursday" entry), so this mirrors the
+// mobile client's dedicated MOBILITY/ZONE2 session objects (data/workouts.ts)
+// closely enough for the brief's "Today's workout: X (duration)" line.
+const AUTO_DOWNGRADE_DURATIONS = { mobility: '20–30 min + an easy walk', zone2: '30–45 min' };
+
+/**
+ * Pure: does last night's recovery call for easing off TODAY'S scheduled
+ * session, absent any manual override? Mirrors the mobile client's
+ * getTodaysWorkout() zone logic (mobile/src/data/workouts.ts) bit-for-bit —
+ * same precedence (manual override > this auto-downgrade > static schedule),
+ * same rule (red always drops to Mobility regardless of what was scheduled;
+ * yellow only downgrades a scheduled Pull to Zone 2; everything else is
+ * unchanged) — so the brief, the forecast, and the Health tab always describe
+ * the SAME effective session instead of two independently-computed answers.
+ * Returns the downgraded workoutId, or null when nothing changes.
+ */
+function autoDowngradeFor(scheduledWorkoutId, band) {
+  if (band === 'red') return 'mobility';
+  if (band === 'yellow' && scheduledWorkoutId === 'pull') return 'zone2';
+  return null;
+}
+
 function getWorkout(dayName) {
   const workout = plan[dayName];
   if (!workout) {
@@ -106,20 +130,31 @@ function getTodayWorkout() {
 }
 
 /**
- * THE authoritative "what's today's effective workout" resolver — checks
- * workout_overrides first (a manual day-swap, e.g. a voice "swap today to
- * rest"), falls back to the scheduled weekly plan. Every caller that needs to
- * know today's plan (predict.js's forecast, evening-brief.js's plan-vs-actual
- * grading, chat/ask.js's command context) should call this instead of
- * duplicating the override SQL or reading getTodayWorkout() alone — the
- * latter only knows the static schedule and silently misses a swap.
+ * THE authoritative "what's today's effective workout" resolver. Precedence,
+ * highest first: (1) a manual day-swap in workout_overrides (e.g. a voice
+ * "swap today to rest"), (2) an automatic recovery-based downgrade when
+ * last night's recovery band is red (or yellow on a scheduled Pull day) —
+ * see autoDowngradeFor — (3) the scheduled weekly plan unchanged. Every
+ * caller that needs to know today's plan (predict.js's forecast,
+ * evening-brief.js's plan-vs-actual grading, chat/ask.js's command context,
+ * the chief-brief prompt) should call this instead of duplicating the
+ * override SQL or reading getTodayWorkout() alone — the latter only knows
+ * the static schedule and silently misses BOTH a manual swap and an
+ * automatic one, which is exactly how a brief ended up telling the user to
+ * "scale back today's Push" hours after red recovery had already swapped it
+ * to Mobility on their Health tab.
  *
- * @param {{ asOf?: Date, tz?: string }} [opts]
- * @returns {Promise<{ source: 'override'|'scheduled', workoutId: string|null,
+ * @param {{ asOf?: Date, tz?: string, band?: 'green'|'yellow'|'red'|null }} [opts]
+ *   `band` is the recovery band for the day; pass it when the caller already
+ *   has it (avoids a redundant lookup) — omit it to have this fetch it itself
+ *   via the cached liveRecovery() (cheap: same TTL-cached promise every other
+ *   recovery-aware caller in a request already shares).
+ * @returns {Promise<{ source: 'override'|'auto_downgrade'|'scheduled', workoutId: string|null,
  *   label: string, duration?: string|null, hrTarget?: string|null,
- *   protein?: string|null, isHard: boolean }>}
+ *   protein?: string|null, isHard: boolean, scheduledWorkoutId?: string|null,
+ *   scheduledLabel?: string, recoveryBand?: string|null }>}
  */
-async function getEffectiveWorkout({ asOf = new Date(), tz = process.env.TZ || 'America/New_York' } = {}) {
+async function getEffectiveWorkout({ asOf = new Date(), tz = process.env.TZ || 'America/New_York', band } = {}) {
   const day = asOf.toLocaleDateString('en-CA', { timeZone: tz });
   let overrideId = null;
   try {
@@ -142,9 +177,32 @@ async function getEffectiveWorkout({ asOf = new Date(), tz = process.env.TZ || '
 
   const dayName = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'long' }).format(asOf);
   const scheduled = getWorkout(dayName);
+  const scheduledId = workoutIdForPlanType(scheduled.type);
+
+  let resolvedBand = band;
+  if (resolvedBand === undefined) {
+    try {
+      const rec = await require('../intelligence/recovery').liveRecovery();
+      resolvedBand = rec?.band ?? null;
+    } catch { resolvedBand = null; }
+  }
+  const downgradeId = autoDowngradeFor(scheduledId, resolvedBand);
+  if (downgradeId) {
+    return {
+      source: 'auto_downgrade',
+      workoutId: downgradeId,
+      label: OVERRIDE_LABELS[downgradeId] ?? downgradeId,
+      duration: AUTO_DOWNGRADE_DURATIONS[downgradeId] ?? null,
+      isHard: isHardWorkoutId(downgradeId),
+      scheduledWorkoutId: scheduledId,
+      scheduledLabel: scheduled.type,
+      recoveryBand: resolvedBand,
+    };
+  }
+
   return {
     source: 'scheduled',
-    workoutId: workoutIdForPlanType(scheduled.type),
+    workoutId: scheduledId,
     label: scheduled.type,
     duration: scheduled.duration,
     hrTarget: scheduled.hrTarget,
@@ -205,4 +263,5 @@ async function applyRestDayOverride(tz = process.env.TZ || 'America/New_York') {
 module.exports = {
   getWorkout, getTodayWorkout, getUpcomingWorkouts, isRestDayCommitment, applyRestDayOverride,
   getEffectiveWorkout, isHardWorkoutId, isHardWorkoutType, workoutIdForPlanType, OVERRIDE_LABELS,
+  autoDowngradeFor,
 };

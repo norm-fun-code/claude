@@ -132,3 +132,54 @@ test('timezone boundary: 12:02 AM ET Wednesday resolves to Wednesday\'s (hard) p
   const { tomorrow } = await computeTodayForecast({ recovery: REC, asOf: justAfterMidnight });
   assert.match(tomorrow.detail, /today's planned hard session may add fatigue/i);
 });
+
+// ── recovery-based auto-downgrade ────────────────────────────────────────────
+// Bug: red recovery auto-swapped today's Health-tab session to Mobility, but
+// the chief brief (and this forecast) still treated the ORIGINAL scheduled
+// session as today's plan. getEffectiveWorkout() now applies the same
+// recovery-based downgrade the mobile client's getTodaysWorkout() applies, so
+// a red-recovery day's "planned" session is correctly Mobility (not hard) —
+// even when the raw schedule called for something hard.
+
+test('red recovery auto-downgrades a scheduled hard day (Wednesday/Intervals) to Mobility => no hard-session drag', async () => {
+  const RED = { score: 20, band: 'red', parts: { hrv: 20 } };
+  const { tomorrow } = await computeTodayForecast({ recovery: RED, asOf: WED_NOON });
+  assert.doesNotMatch(tomorrow.detail, /hard session/i, 'the effective plan is Mobility on a red day, not the scheduled Intervals');
+});
+
+test('red recovery auto-downgrades a scheduled Push day to Mobility => no hard-session drag (the exact production report)', async () => {
+  // Thursday is the scheduled Push day.
+  const THU_NOON = new Date('2026-07-16T16:00:00.000Z'); // 12:00 PM EDT, Thursday
+  const RED = { score: 27, band: 'red', parts: { hrv: 27 } };
+  const { tomorrow } = await computeTodayForecast({ recovery: RED, asOf: THU_NOON });
+  assert.doesNotMatch(tomorrow.detail, /hard session/i);
+});
+
+test('a manual override still wins over the automatic recovery downgrade', async () => {
+  // Wednesday is scheduled Intervals; manually overridden to Push (still hard) —
+  // the manual choice must take precedence over the automatic red-day downgrade.
+  await db.query(`INSERT INTO workout_overrides (log_date, workout_id) VALUES ($1, 'push')`, [WED_DATE]);
+  const RED = { score: 15, band: 'red', parts: { hrv: 15 } };
+  const { tomorrow } = await computeTodayForecast({ recovery: RED, asOf: WED_NOON });
+  assert.match(tomorrow.detail, /today's planned hard session may add fatigue/i, 'the manual override (Push) must still be treated as hard, not silently downgraded');
+});
+
+test('yellow recovery downgrades a scheduled Pull to Zone 2 => no hard-session drag', async () => {
+  const SUN_NOON = new Date('2026-07-19T16:00:00.000Z'); // 12:00 PM EDT, Sunday (Pull day)
+  const YELLOW = { score: 50, band: 'yellow', parts: { hrv: 40 } };
+  const { tomorrow } = await computeTodayForecast({ recovery: YELLOW, asOf: SUN_NOON });
+  assert.doesNotMatch(tomorrow.detail, /hard session/i);
+});
+
+test('yellow recovery does NOT downgrade a scheduled Push (only Pull gets the yellow downgrade)', async () => {
+  const THU_NOON = new Date('2026-07-16T16:00:00.000Z');
+  const YELLOW = { score: 50, band: 'yellow', parts: { hrv: 40 } };
+  const { tomorrow } = await computeTodayForecast({ recovery: YELLOW, asOf: THU_NOON });
+  assert.match(tomorrow.detail, /today's planned hard session may add fatigue/i);
+});
+
+test('green recovery never downgrades — a scheduled hard day stays hard', async () => {
+  const GREEN = { score: 80, band: 'green', parts: { hrv: 70 } };
+  const { tomorrow } = await computeTodayForecast({ recovery: GREEN, asOf: WED_NOON });
+  assert.match(tomorrow.detail, /today's planned hard session may add fatigue/i);
+});

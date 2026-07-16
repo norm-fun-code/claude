@@ -7,7 +7,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  isHardWorkoutId, isHardWorkoutType, workoutIdForPlanType, getWorkout,
+  isHardWorkoutId, isHardWorkoutType, workoutIdForPlanType, getWorkout, autoDowngradeFor,
 } = require('../src/services/workout');
 
 test('Rest and Recovery + Mobility are never hard', () => {
@@ -57,4 +57,38 @@ test('the full weekly plan classifies exactly the days the bug report cares abou
   assert.equal(isHardWorkoutType(getWorkout('Wednesday').type), true);
   assert.equal(isHardWorkoutType(getWorkout('Thursday').type), true);
   assert.equal(isHardWorkoutType(getWorkout('Sunday').type), true);
+});
+
+// ── autoDowngradeFor: the recovery-based auto-swap ───────────────────────────
+// Bug: red recovery auto-swapped today's Health-tab session to Mobility (same
+// as the mobile client's getTodaysWorkout() zone logic), but the chief brief
+// still described the ORIGINAL scheduled session ("scale back today's Push")
+// with no idea a swap had already happened. autoDowngradeFor is the pure rule
+// getEffectiveWorkout() now applies server-side, mirroring the mobile logic
+// bit-for-bit so both surfaces agree.
+
+test('red recovery always downgrades to Mobility, regardless of what was scheduled', () => {
+  for (const scheduled of ['push', 'pull', 'zone2', 'mobility', 'rest', 'intervals']) {
+    assert.equal(autoDowngradeFor(scheduled, 'red'), 'mobility', `${scheduled} + red should downgrade to mobility`);
+  }
+});
+
+test('yellow recovery downgrades a scheduled Pull to Zone 2, and nothing else', () => {
+  assert.equal(autoDowngradeFor('pull', 'yellow'), 'zone2');
+  for (const scheduled of ['push', 'zone2', 'mobility', 'rest', 'intervals']) {
+    assert.equal(autoDowngradeFor(scheduled, 'yellow'), null, `${scheduled} + yellow should NOT downgrade`);
+  }
+});
+
+test('green, unknown, or missing band never downgrades anything', () => {
+  for (const scheduled of ['push', 'pull', 'zone2', 'mobility', 'rest', 'intervals']) {
+    assert.equal(autoDowngradeFor(scheduled, 'green'), null);
+    assert.equal(autoDowngradeFor(scheduled, 'unknown'), null);
+    assert.equal(autoDowngradeFor(scheduled, null), null);
+    assert.equal(autoDowngradeFor(scheduled, undefined), null);
+  }
+});
+
+test('the exact reproduction: a scheduled Push on a red-recovery day downgrades to Mobility', () => {
+  assert.equal(autoDowngradeFor('push', 'red'), 'mobility');
 });

@@ -326,7 +326,12 @@ async function computeTodayForecast({ recovery = null, asOf = new Date() } = {})
     const workoutSvc = require('../services/workout');
     const db = require('../db');
     const [effective, { rows: exercised }, { rows: acts }] = await Promise.all([
-      workoutSvc.getEffectiveWorkout({ asOf, tz }),
+      // Pass the band we already have (rec.band) — the effective plan may
+      // itself be an automatic recovery-based downgrade (e.g. red recovery
+      // swaps a scheduled Push to Mobility), which is exactly the case this
+      // whole function exists to get right: a downgraded, non-hard session
+      // must not carry a "hard session" drag into tomorrow's forecast.
+      workoutSvc.getEffectiveWorkout({ asOf, tz, band: rec.band ?? null }),
       db.query(
         `SELECT 1 FROM metrics
           WHERE domain = 'habits' AND metric = 'exercise' AND value >= 0.5

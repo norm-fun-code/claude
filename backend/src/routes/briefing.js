@@ -24,18 +24,31 @@ const { getEffectiveWorkout } = require('../services/workout');
 
 /** Today's plan for the chief-brief prompt, shaped like getWorkout()'s
  *  { type, duration, hrTarget, protein, hrvNote } — but resolved through
- *  getEffectiveWorkout so a manual day-swap (workout_overrides) is reflected
- *  here too, not just the static weekly schedule. getTodayWorkout() alone
- *  used to feed this prompt, so "today's authoritative plan" the brief stated
- *  could silently diverge from a swap the user had already made. */
+ *  getEffectiveWorkout so BOTH a manual day-swap (workout_overrides) AND an
+ *  automatic recovery-based downgrade (red recovery band swaps a scheduled
+ *  hard session to Mobility, same as the Health tab shows) are reflected
+ *  here, not just the static weekly schedule. getTodayWorkout() alone used
+ *  to feed this prompt, so "today's authoritative plan" the brief stated
+ *  could silently diverge from a swap the user had already made or seen —
+ *  a real production case: red recovery auto-swapped a Push session to
+ *  Mobility on the Health tab, but the brief still said "scale back today's
+ *  Push", never mentioning it had already been swapped for exactly that
+ *  reason. `autoSwapNote` carries an explicit, LLM-facing explanation of an
+ *  automatic swap so the brief narrates it as already-done and correct
+ *  instead of either ignoring it or silently treating Mobility as if it had
+ *  always been the static plan. */
 async function resolveWorkoutForPrompt(tz) {
   const eff = await getEffectiveWorkout({ tz });
+  const autoSwapNote = eff.source === 'auto_downgrade'
+    ? `NOTE: today's session was AUTOMATICALLY swapped from the scheduled ${eff.scheduledLabel} to ${eff.label} because last night's recovery came in ${eff.recoveryBand}. This already happened — it is not a suggestion — and it was the correct, protective call. If training comes up, acknowledge the swap plainly (e.g. "already eased off to ${eff.label} given ${eff.recoveryBand} recovery — right call") and do NOT tell the user to scale back, modify, or go easier on the ORIGINAL ${eff.scheduledLabel} session, since that is no longer today's plan.`
+    : null;
   return {
     type: eff.label,
     duration: eff.duration ?? null,
     hrTarget: eff.hrTarget ?? null,
     protein: eff.protein ?? null,
     hrvNote: 'Green=train as planned | Yellow=downgrade intensity | Red=mobility/walk only',
+    autoSwapNote,
   };
 }
 const { buildWealthInsights } = require('../services/wealth-insights');
