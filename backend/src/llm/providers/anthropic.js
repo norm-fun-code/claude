@@ -9,7 +9,32 @@ const https = require('https');
 // reuses the socket across calls for the lifetime of the process.
 const keepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 16 });
 
-async function generateText({ system, prompt, maxTokens = 4096, timeoutMs = 110000, fast = false, model: modelOverride, jsonMode = false, jsonSchema = null }) {
+// Thrown when the API declines to answer (HTTP 200, stop_reason: 'refusal').
+// A distinct class so callers can retry/log this differently from a genuine
+// network/HTTP failure instead of it falling through to empty/parsed-as-JSON
+// content — see the stop_reason check below.
+class AnthropicRefusalError extends Error {
+  constructor(category) {
+    super(`Anthropic declined to respond${category ? ` (category: ${category})` : ''}`);
+    this.name = 'AnthropicRefusalError';
+    this.category = category || null;
+  }
+}
+
+// Thrown when the response hit max_tokens before finishing — the caller must
+// not hand a truncated body to a JSON parser and treat a parse failure (or,
+// worse, a partial-but-valid-looking prefix) as a real result.
+class AnthropicMaxTokensError extends Error {
+  constructor() {
+    super('Anthropic response was truncated at max_tokens before completion');
+    this.name = 'AnthropicMaxTokensError';
+  }
+}
+
+async function generateText({
+  system, prompt, maxTokens = 4096, timeoutMs = 110000, fast = false, model: modelOverride,
+  jsonMode = false, jsonSchema = null, outputSchema = null, effort = null,
+}) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
   // `fast` routes clear commands (log a habit, swap a workout, set a reminder)
@@ -39,17 +64,18 @@ async function generateText({ system, prompt, maxTokens = 4096, timeoutMs = 1100
 
   // jsonMode + a schema: force a single tool call whose input_schema IS the
   // shape we want, instead of hoping the model follows a prose instruction to
-  // "return only valid JSON." Anthropic constrains generation to match the
-  // schema, so the tool_use block's `input` is guaranteed-parseable JSON —
-  // this is the real fix for a class of bug that plain prompting can't fully
-  // prevent (see the engineering review's #4). Claude has no prefill-based
-  // JSON mode on this model family (4.6+/5 dropped assistant prefill), so
-  // tool-use forcing is the only native guarantee available.
+  // "return only valid JSON." This is the OLDER guarantee mechanism, kept for
+  // existing callers that use it (e.g. the weekly-review call) — it remains
+  // incompatible with extended thinking (the API rejects the combination), so
+  // this path always omits `thinking`.
   //
-  // Forced tool_choice is incompatible with extended thinking (the API
-  // rejects the combination), so this path always omits `thinking` — a
-  // reliability/depth tradeoff that's the right call for something whose
-  // failure mode is "silently shows yesterday's content."
+  // outputSchema (native Structured Outputs, output_config.format) is the
+  // NEWER, preferred guarantee mechanism for callers that also want extended
+  // thinking: it constrains the ordinary text response to the schema
+  // server-side — no forced tool_choice, no tool call, no prefill — so it
+  // composes with `thinking` instead of conflicting with it. Pass a caller
+  // via `outputSchema`/`effort` rather than `jsonMode`/`jsonSchema` to get
+  // this path (see briefing-ai.js's chief-brief call).
   const useForcedTool = jsonMode && jsonSchema;
   if (useForcedTool) {
     body.tools = [{
@@ -58,11 +84,16 @@ async function generateText({ system, prompt, maxTokens = 4096, timeoutMs = 1100
       input_schema: jsonSchema,
     }];
     body.tool_choice = { type: 'tool', name: 'submit_result' };
-  } else if (!fast) {
+  } else {
     // Extended thinking only on the reasoning path; the fast command path
     // omits it entirely (biggest single latency saving for short
     // acknowledgments), and the forced-tool path above can't use it at all.
-    body.thinking = { type: 'adaptive' };
+    if (!fast) body.thinking = { type: 'adaptive' };
+    if (outputSchema || effort) {
+      body.output_config = {};
+      if (effort) body.output_config.effort = effort;
+      if (outputSchema) body.output_config.format = { type: 'json_schema', schema: outputSchema };
+    }
   }
 
   const { data } = await axios.post(
@@ -80,6 +111,19 @@ async function generateText({ system, prompt, maxTokens = 4096, timeoutMs = 1100
   );
 
   logUsage(model, data.usage);
+
+  // Guard BEFORE touching data.content — a refusal returns an empty (or, on
+  // a mid-stream decline, partial) content array, and a max_tokens stop means
+  // whatever text came back is truncated mid-object. Handing either straight
+  // to a JSON parser produces a misleading "malformed JSON" failure that
+  // hides the real cause; surface the real cause instead so callers can
+  // retry/log it as what it actually is instead of a shape/parse bug.
+  if (data.stop_reason === 'refusal') {
+    throw new AnthropicRefusalError(data.stop_details?.category);
+  }
+  if (data.stop_reason === 'max_tokens') {
+    throw new AnthropicMaxTokensError();
+  }
 
   if (useForcedTool) {
     const toolUse = (data.content || []).find((b) => b.type === 'tool_use' && b.name === 'submit_result');
@@ -106,4 +150,4 @@ function logUsage(model, usage) {
   );
 }
 
-module.exports = { generateText };
+module.exports = { generateText, AnthropicRefusalError, AnthropicMaxTokensError };

@@ -18,6 +18,7 @@
 //     today's quote/Notion pair is already locked.
 const llm = require('../llm');
 const { extractJson, parseAndValidate } = require('../llm/parseJson');
+const { AnthropicRefusalError, AnthropicMaxTokensError } = llm;
 
 // Static voice + output-schema + rules for the chief-brief call. This text is
 // BYTE-IDENTICAL on every build (no per-call dynamic content mixed in), so the
@@ -257,6 +258,87 @@ const CHIEF_REQUIRED_FIELDS = ['synthesis', 'action', 'risk', 'move'];
 // can be dialed without touching the shared default.
 const CHIEF_MODEL = process.env.ANTHROPIC_CHIEF_MODEL || 'claude-opus-4-8';
 
+// Reasoning depth for the chief-brief call (output_config.effort). 'high' is
+// the strongest setting worth defaulting to for a call this infrequent (once
+// or twice a day) — independently overridable without touching CHIEF_MODEL.
+const CHIEF_EFFORT = process.env.ANTHROPIC_CHIEF_EFFORT || 'high';
+
+// Native Structured Outputs schema (output_config.format) for the chief-brief
+// call. This is the guaranteed-shape mechanism that composes with extended
+// thinking — unlike the OLDER forced-tool-call approach (jsonMode+jsonSchema
+// on the anthropic provider), which the API refuses to combine with
+// `thinking`. `additionalProperties: false` is required on every object node
+// for Anthropic's Structured Outputs; no numeric/string-length constraints or
+// recursive refs are used, so the schema needs no further simplification to
+// fit the documented complexity limits.
+const CHIEF_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    chiefBrief: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        synthesis: { type: 'string' },
+        action: { type: 'string' },
+        risk: { type: 'string' },
+        move: { type: 'string' },
+        openQuestion: { type: 'string' },
+        affirmation: { type: 'string' },
+      },
+      required: ['synthesis', 'action', 'risk', 'move', 'openQuestion', 'affirmation'],
+    },
+    morningFocus: { type: 'string' },
+    urgentEmails: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          from: { type: 'string' },
+          subject: { type: 'string' },
+          action: { type: 'string' },
+        },
+        required: ['from', 'subject', 'action'],
+      },
+    },
+  },
+  required: ['chiefBrief', 'morningFocus', 'urgentEmails'],
+};
+
+// Business-logic shape check + transform, run on the parsed structured-output
+// object. Schema validity (types, required keys) is already guaranteed by
+// output_config.format — this layer only enforces the stricter internal
+// contract the rest of the app relies on (non-empty required strings, the
+// openQuestion length floor, urgentEmails as an array), the same contract the
+// old forced-tool/prose-JSON path enforced. Returns null (retryable) if the
+// four core fields aren't all present non-empty strings.
+function validateChiefBriefShape(parsed, attemptLabel) {
+  const cb = parsed.chiefBrief;
+  const shapeOk = cb && typeof cb === 'object' && CHIEF_REQUIRED_FIELDS.every((k) => typeof cb[k] === 'string' && cb[k].trim());
+  if (!shapeOk) {
+    const missing = !cb || typeof cb !== 'object'
+      ? 'chiefBrief missing or not an object'
+      : CHIEF_REQUIRED_FIELDS.filter((k) => !(typeof cb[k] === 'string' && cb[k].trim())).join(', ') + ' missing/empty';
+    console.error(`[briefing-ai] chief-brief shape invalid (${attemptLabel}): ${missing}.`);
+    return null;
+  }
+  return {
+    morningFocus: typeof parsed.morningFocus === 'string' ? parsed.morningFocus : '',
+    chiefBrief: {
+      synthesis: cb.synthesis, action: cb.action, risk: cb.risk, move: cb.move,
+      // The one thing the brief is genuinely unsure about today — often empty
+      // (restraint), a real inline question when present. Trim + drop generic ones.
+      openQuestion: typeof cb.openQuestion === 'string' && cb.openQuestion.trim().length > 3 ? cb.openQuestion.trim() : '',
+      // A data-grounded affirmation (a real streak/win/trend), not the old
+      // static "I show up with joy and courage" filler — see the field's
+      // prompt instructions above for the grounding requirement.
+      affirmation: typeof cb.affirmation === 'string' ? cb.affirmation.trim() : '',
+    },
+    urgentEmails: Array.isArray(parsed.urgentEmails) ? parsed.urgentEmails : [],
+  };
+}
+
 /** One LLM call + parse + shape-validate. Returns the result shape or null (retryable). */
 async function chiefBriefAttempt(prompt, attemptLabel) {
   let text = '';
@@ -264,14 +346,14 @@ async function chiefBriefAttempt(prompt, attemptLabel) {
     // Chief-brief is the load-bearing call — several dense sections + urgent
     // emails + finance/goal bullets, genuinely cross-domain reasoning, not
     // extraction. It used to force a tool call (jsonMode+jsonSchema) for
-    // guaranteed shape — but Anthropic's API refuses to combine forced
-    // tool-choice with extended thinking, so the ONE call that most needs to
-    // actually reason ran with thinking silently off. Dropped in favor of
-    // CHIEF_SYSTEM's own prose JSON instruction (it already says "Return ONLY
-    // a single valid JSON object" with the exact schema spelled out) plus the
-    // parseAndValidate/extractJson path already used successfully by the
-    // wisdom call below — same shape-validation + 2-attempt retry safety net,
-    // now with adaptive thinking actually engaged.
+    // guaranteed shape, which the API refuses to combine with extended
+    // thinking — so the ONE call that most needs to actually reason ran with
+    // thinking silently off. It then briefly went through a free-form-prose
+    // "ask nicely in the system prompt, repair/parse whatever comes back"
+    // approach, which traded the thinking bug for a schema guarantee. Native
+    // Structured Outputs (output_config.format below) removes that tradeoff
+    // entirely: the response is schema-constrained server-side AND thinking
+    // stays on — no forced tool, no tool_choice, no prefill.
     // maxTokens raised well past the old 8192: thinking tokens now share the
     // same budget as the final JSON, and truncating mid-object fails
     // validation with no sign it was a length problem rather than a
@@ -279,47 +361,41 @@ async function chiefBriefAttempt(prompt, attemptLabel) {
     // actually used, not this ceiling.
     text = await llm.generateText({
       system: CHIEF_SYSTEM, prompt, temperature: 0.2, maxTokens: 16384, model: CHIEF_MODEL,
+      outputSchema: CHIEF_JSON_SCHEMA, effort: CHIEF_EFFORT,
     });
   } catch (err) {
-    console.error(`[briefing-ai] chief-brief generation failed (${attemptLabel}):`, err.message);
+    if (err instanceof AnthropicRefusalError) {
+      console.error(`[briefing-ai] chief-brief refused (${attemptLabel}): ${err.category || 'unspecified category'}`);
+    } else if (err instanceof AnthropicMaxTokensError) {
+      console.error(`[briefing-ai] chief-brief truncated at max_tokens (${attemptLabel}) — thinking + output shared the maxTokens budget.`);
+    } else {
+      console.error(`[briefing-ai] chief-brief generation failed (${attemptLabel}):`, err.message);
+    }
     return null;
   }
 
-  return parseAndValidate(text, {
-    label: `chief-brief (${attemptLabel})`,
-    validate: (parsed) => {
-      // Structured chief-of-staff brief: only keep it if all four blocks are
-      // present strings, so the card can trust the shape (else null → card
-      // hides, and the caller falls back to the PRIOR build's chiefBrief —
-      // see briefing.js). Log exactly which field(s) are missing on top of
-      // parseAndValidate's own generic log: this specific site has a history
-      // of silently recurring failures, and "move missing/empty" is a lot
-      // faster to act on than re-deriving it from a raw JSON dump each time.
-      const cb = parsed.chiefBrief;
-      const shapeOk = cb && typeof cb === 'object' && CHIEF_REQUIRED_FIELDS.every((k) => typeof cb[k] === 'string' && cb[k].trim());
-      if (!shapeOk) {
-        const missing = !cb || typeof cb !== 'object'
-          ? 'chiefBrief missing or not an object'
-          : CHIEF_REQUIRED_FIELDS.filter((k) => !(typeof cb[k] === 'string' && cb[k].trim())).join(', ') + ' missing/empty';
-        console.error(`[briefing-ai] chief-brief shape invalid (${attemptLabel}): ${missing}.`);
-        return null;
-      }
-      return {
-        morningFocus: typeof parsed.morningFocus === 'string' ? parsed.morningFocus : '',
-        chiefBrief: {
-          synthesis: cb.synthesis, action: cb.action, risk: cb.risk, move: cb.move,
-          // The one thing the brief is genuinely unsure about today — often empty
-          // (restraint), a real inline question when present. Trim + drop generic ones.
-          openQuestion: typeof cb.openQuestion === 'string' && cb.openQuestion.trim().length > 3 ? cb.openQuestion.trim() : '',
-          // A data-grounded affirmation (a real streak/win/trend), not the old
-          // static "I show up with joy and courage" filler — see the field's
-          // prompt instructions above for the grounding requirement.
-          affirmation: typeof cb.affirmation === 'string' ? cb.affirmation.trim() : '',
-        },
-        urgentEmails: Array.isArray(parsed.urgentEmails) ? parsed.urgentEmails : [],
-      };
-    },
-  });
+  // Structured Outputs guarantees schema-valid JSON here (refusal and
+  // max_tokens — the two documented ways that guarantee can fail — are both
+  // already handled above, as thrown errors, before this line runs). So this
+  // is a direct JSON.parse, NOT the prose-JSON repair path (extractJson's
+  // code-fence stripping / brace-slicing / control-character patching) that
+  // parseAndValidate uses for the wisdom call below — that repair machinery
+  // existed to rescue free-form prose that was never schema-constrained to
+  // begin with, which no longer describes this call. A parse failure here
+  // means the API contract broke, not that the model wrote slightly-off
+  // prose, and should fail loudly rather than be silently patched.
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    console.error(
+      `[briefing-ai] chief-brief (${attemptLabel}): structured-output response was not valid JSON — ${err.message}. ` +
+      `Preview: ${JSON.stringify(String(text || '').slice(0, 500))}`
+    );
+    return null;
+  }
+
+  return validateChiefBriefShape(parsed, attemptLabel);
 }
 
 // ── Goal-completion semantic guard ──────────────────────────────────────────

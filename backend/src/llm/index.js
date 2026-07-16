@@ -41,4 +41,13 @@ async function embed(texts) {
   return getEmbedProvider().embed(texts);
 }
 
-module.exports = { generateText, embed, chatProviderName, embedProviderName };
+// Re-exported so callers that specifically target the Anthropic provider
+// (e.g. briefing-ai.js's chief-brief call) can distinguish a refusal or a
+// max_tokens truncation from a generic failure without reaching into
+// './providers/anthropic' directly.
+const { AnthropicRefusalError, AnthropicMaxTokensError } = anthropic;
+
+module.exports = {
+  generateText, embed, chatProviderName, embedProviderName,
+  AnthropicRefusalError, AnthropicMaxTokensError,
+};
