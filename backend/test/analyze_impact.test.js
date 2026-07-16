@@ -351,11 +351,34 @@ test('computeCorrelations: a frozen night-sourced metric (Eight Sleep not in use
 // ── lifeContextRelevant: a life annotation must plausibly explain the SPECIFIC
 // metric it's attached to, not just have happened around the same time ───────
 
-test('lifeContextRelevant: a sleep/travel annotation explains body metrics regardless of wording', () => {
-  const ann = { label: "Didn't sleep home", note: null };
+// Bug fix (production context-relevance/retraction bug): this used to accept
+// EVERY annotation for a body metric "regardless of wording" — which is
+// exactly what let an explicit retraction ("I didn't end up going... please
+// forget that context") get narrated as a possible cause of an elevated
+// resting-HR anomaly. lifeContextRelevant now requires an annotation that
+// plausibly names a real causal event (see context-semantics.js's
+// isPlausibleHealthCause) — content alone, no wording, is no longer enough.
+test('lifeContextRelevant: a plausible, named causal event explains body metrics', () => {
+  const ann = { label: 'Had a few drinks with friends, got home late', note: null };
   for (const metric of ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score', 'health:respiratory_rate']) {
-    assert.equal(a.lifeContextRelevant(metric, ann), true, `${metric} should accept broad life context`);
+    assert.equal(a.lifeContextRelevant(metric, ann), true, `${metric} should accept a plausible causal event`);
   }
+});
+
+test('lifeContextRelevant: a plain negation does NOT explain body metrics, even on a body-metric-adjacent topic', () => {
+  const ann = { label: "Didn't sleep home", note: null };
+  for (const metric of ['health:hrv', 'health:resting_hr', 'health:sleep_hours']) {
+    assert.equal(a.lifeContextRelevant(metric, ann), false, `${metric} should reject a plain negation`);
+  }
+});
+
+test('lifeContextRelevant: an annotation with no plausible causal content does NOT explain body metrics', () => {
+  assert.equal(a.lifeContextRelevant('health:hrv', { label: 'Bought a new phone case', note: null }), false);
+});
+
+test('lifeContextRelevant: an explicit retraction never explains body metrics, even worded like a real event', () => {
+  const ann = { label: "I didnt end up going for drinks with friends tonight. Please forget that context.", note: null };
+  assert.equal(a.lifeContextRelevant('health:resting_hr', ann), false);
 });
 
 test('lifeContextRelevant: the same sleep/travel annotation does NOT explain mood without an emotional link', () => {

@@ -6,6 +6,7 @@ const llm = require('../llm');
 const documents = require('../store/documents');
 const findingsStore = require('../store/findings');
 const annotationsStore = require('../store/annotations');
+const { filterEligible } = require('../intelligence/context-semantics');
 const experimentsStore = require('../store/experiments');
 const metricsStore = require('../store/metrics');
 const intentionsStore = require('../store/intentions');
@@ -519,7 +520,13 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
   ]);
 
   const findings = findingsResult.status === 'fulfilled' ? findingsResult.value : [];
-  const annotations = annotationsResult.status === 'fulfilled' ? annotationsResult.value : [];
+  // 'general' purpose (see context-semantics.js) — listAnnotations() (unlike
+  // annotationsStore.overlapping()) doesn't filter retired rows itself, and
+  // Ask's LIFE CONTEXT block must never surface a retraction ("forget that
+  // context") or a superseded annotation as if it were live context.
+  const annotations = annotationsResult.status === 'fulfilled'
+    ? filterEligible(annotationsResult.value, { purpose: 'general' })
+    : [];
   if (personal && snapshotResult.status === 'rejected') {
     console.error('[chat] snapshot failed:', snapshotResult.reason?.message);
   }

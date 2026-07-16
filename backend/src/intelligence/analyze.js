@@ -12,6 +12,8 @@ const { rankActions } = require('./leverage');
 const { computeForecasts } = require('./forecast');
 const { computeHealthComposites } = require('./recovery');
 const { CONTEXT_TAGS } = require('./context-tags');
+const contextSemantics = require('./context-semantics');
+const { naiveToUtcIso, localDayBoundsUtc } = require('../util/date');
 
 const CONTEXT_TAG_KEYS = CONTEXT_TAGS.map((t) => `context:${t.key}`);
 
@@ -182,29 +184,107 @@ const NIGHT_METRICS = new Set([
 
 // A life-context annotation (a late meal, a drink, travel, a rough night) can
 // plausibly explain a body-metric deviation — HRV, resting HR, sleep,
-// breathing rate — pretty much regardless of content: an environment/
-// routine change is a broadly plausible physiological driver on its own. A
-// WELLBEING dip (mood/energy/focus) needs a tighter bar: "didn't sleep home"
-// doesn't actually explain a mood drop without an emotional/psychological
-// link the annotation may not contain — attaching it anyway is context-by-
-// proximity, not real reasoning. Any other metric (steps, spending, …): no
-// life context plausibly explains it here.
+// breathing rate — but NOT regardless of content: the annotation must
+// describe a plausible, ACTUALLY-OCCURRED (or genuinely ongoing) causal
+// event, not a future plan, a plain negation of one, or a retraction. See
+// context-semantics.js for the full classification — this used to accept
+// every SLEEP_BODY_METRICS annotation unconditionally, which is the exact
+// bug that let an explicit "I didn't end up going... please forget that
+// context" retraction get narrated as a possible cause of an elevated
+// resting-HR anomaly. A WELLBEING dip (mood/energy/focus) needs a tighter
+// topical bar too: "didn't sleep home" doesn't actually explain a mood drop
+// without an emotional/psychological link the annotation may not contain —
+// attaching it anyway is context-by-proximity, not real reasoning. Any
+// other metric (steps, spending, …): no life context plausibly explains it.
 const SLEEP_BODY_METRICS = NIGHT_METRICS;
 const WELLBEING_METRICS = new Set(['wellbeing:mood', 'wellbeing:energy', 'wellbeing:focus']);
-// Word-boundary anchors matter here: an un-anchored `ill` matches "chill",
-// "skill", "still", "will", "bill", "hill"; an un-anchored `loss` matches
-// "floss"/"gloss"; `sad` anchored for consistency. Leading \b only (not
-// trailing) so inflections still count — "illness", "sadness", "losses".
-const MOOD_KEYWORDS = /stress(ed|ful)?|anxi(ous|ety)|\bsad|upset|fight|argument|deadline|launch|presentation|worr(y|ied)|grief|\bloss|overwhelm|frustrat|angry|lonely|conflict|fired|lay ?off|break ?up|sick|\bill|funeral|hospital/i;
 
 /**
  * Pure: would a life-context annotation plausibly explain a deviation in
- * this metric? See the rationale above SLEEP_BODY_METRICS/WELLBEING_METRICS.
+ * this metric? Delegates the actual classification (occurred vs planned vs
+ * negated vs retraction vs ongoing, topical plausibility, and — when a
+ * `window` is supplied — temporal alignment with the metric's own
+ * observation window) to the shared context-semantics module so every
+ * annotation consumer in the app applies the identical rule. `opts.window`
+ * is optional: omit it for a content-only check (e.g. plain unit tests);
+ * the real anomaly-annotation pipeline below always supplies it.
  */
-function lifeContextRelevant(metric, annotation) {
-  if (SLEEP_BODY_METRICS.has(metric)) return true;
-  if (WELLBEING_METRICS.has(metric)) return MOOD_KEYWORDS.test(`${annotation?.label || ''} ${annotation?.note || ''}`);
+function lifeContextRelevant(metric, annotation, opts = {}) {
+  if (SLEEP_BODY_METRICS.has(metric)) {
+    return contextSemantics.isEligibleContext(annotation, { purpose: 'health', window: opts.window }).eligible;
+  }
+  if (WELLBEING_METRICS.has(metric)) {
+    return contextSemantics.isEligibleContext(annotation, { purpose: 'wellbeing' }).eligible;
+  }
   return false;
+}
+
+// Fallback wake hour (decimal hours since local midnight) when no
+// health:wake_time reading exists for the day in question — generous enough
+// to still catch a same-morning "last night" report on a normal schedule.
+const DEFAULT_WAKE_HOUR_FALLBACK = 11;
+// "The evening before" — the start of the previous-evening-to-wake fallback
+// window when no actual sleep-session start is available.
+const DEFAULT_EVENING_START_HOUR = 18;
+
+/**
+ * Pure: the observation window for TODAY's (`dayKey`'s) overnight/wake-dated
+ * health metrics — previous evening through wake time. Prefers the actual
+ * measured wake time (health:wake_time, decimal hours since local midnight)
+ * for `dayKey` when available — the closest thing to a real sleep-session
+ * boundary this app persists; otherwise falls back to a generous default
+ * wake hour. Uses naiveToUtcIso (the existing timezone helper) for the
+ * local-to-UTC conversion rather than constructing `T00:00:00Z` boundaries
+ * by hand, so this is correct across DST transitions.
+ */
+function resolveNightWindow(dayKey, wakeTimeSeries, tz) {
+  // Previous calendar day's Y-M-D, via UTC date-string arithmetic on the key
+  // itself (DST-agnostic — matches computeHabitHealthSplits' shiftDay).
+  const prevDayKey = new Date(new Date(`${dayKey}T00:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10);
+  const start = new Date(naiveToUtcIso(`${prevDayKey}T${String(DEFAULT_EVENING_START_HOUR).padStart(2, '0')}:00:00`, tz));
+
+  let wakeHour = DEFAULT_WAKE_HOUR_FALLBACK;
+  if (wakeTimeSeries && wakeTimeSeries.length) {
+    const row = wakeTimeSeries.find((r) => toDayKey(r.day) === dayKey);
+    if (row && Number.isFinite(Number(row.value))) wakeHour = Number(row.value);
+  }
+  const wh = Math.max(0, Math.min(23, Math.floor(wakeHour)));
+  const wm = Math.round((wakeHour - Math.floor(wakeHour)) * 60);
+  const end = new Date(naiveToUtcIso(`${dayKey}T${String(wh).padStart(2, '0')}:${String(wm).padStart(2, '0')}:00`, tz));
+
+  return { start, end };
+}
+
+/**
+ * Pure: attach eligible life-context annotations to anomaly findings as
+ * "(Possible contributor: ...)" — only when isEligibleContext returns high
+ * confidence (see requirement: never assert "may explain" merely because an
+ * annotation exists; omit entirely when relevance is anything less than
+ * clear). Mutates and returns `anomalies`.
+ */
+function annotateAnomaliesWithContext(anomalies, annotations, { todayDayKey, tz, wakeTimeSeries } = {}) {
+  if (!anomalies || !anomalies.length || !annotations || !annotations.length) return anomalies;
+  const nightWindow = resolveNightWindow(todayDayKey, wakeTimeSeries, tz);
+  const dayKeyOf = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: tz });
+
+  for (const a of anomalies) {
+    const metric = a.evidence?.metric;
+    const relevant = annotations.filter((ann) => lifeContextRelevant(metric, ann, { window: nightWindow }));
+    if (!relevant.length) continue;
+    const ctx = relevant.map((ann) => {
+      const annDayKey = dayKeyOf(ann.start_ts);
+      let when;
+      if (annDayKey === todayDayKey) {
+        when = 'today';
+      } else {
+        const diffDays = Math.round((new Date(`${todayDayKey}T00:00:00Z`) - new Date(`${annDayKey}T00:00:00Z`)) / 86400000);
+        when = diffDays === 1 ? 'yesterday' : diffDays > 1 ? `${diffDays} days ago` : 'today';
+      }
+      return `${ann.label || ann.category} (${when})`;
+    }).slice(0, 3).join('; ');
+    a.detail += ` (Possible contributor: ${ctx}.)`;
+  }
+  return anomalies;
 }
 
 /** Days between `todayKey` and a series' most recent data point, or null if empty. */
@@ -1367,62 +1447,29 @@ async function analyze(opts = {}) {
   const anomalies = computeAnomalies(seriesByKey, o);
   const composites = computeHealthComposites(seriesByKey, o);
 
-  // Annotate anomaly findings with life-context annotations. Look back to
-  // yesterday too — a "Knicks game last night" entered Wednesday explains
-  // Thursday morning's low sleep/HRV just as much as a same-day annotation.
+  // Annotate anomaly findings with life-context annotations — see
+  // annotateAnomaliesWithContext above for the actual eligibility logic
+  // (event-kind classification, topical plausibility, temporal alignment
+  // with the metric's real observation window). Look back to yesterday too —
+  // a "Knicks game last night" entered Wednesday explains Thursday morning's
+  // low sleep/HRV just as much as a same-day annotation; the temporal-
+  // alignment check inside annotateAnomaliesWithContext is what actually
+  // decides whether a given annotation is close enough, not this query window.
   try {
     const annotationsStore = require('../store/annotations');
-    // "Today"/"yesterday" must be computed against the USER's calendar day
-    // (America/New_York), not the server process's own local timezone — a
-    // server running in UTC (the default on most cloud hosts) computes
-    // midnight several hours off from Eastern midnight, which was silently
-    // mislabeling same-day-morning annotations as "(yesterday)" once evening
-    // arrived. Every other date boundary in this file already anchors to this
-    // tz explicitly (see todayKey above); this was the one spot that didn't.
+    // "Today" must be computed against the USER's calendar day (America/
+    // New_York), not the server process's own local timezone — a server
+    // running in UTC (the default on most cloud hosts) computes midnight
+    // several hours off from Eastern midnight. Uses the shared
+    // localDayBoundsUtc/naiveToUtcIso helpers (not hand-built `T00:00:00Z`
+    // strings) so this is correct across DST transitions too.
     const annoTz = process.env.TZ || 'America/New_York';
-    const dayKey = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: annoTz });
-    const todayDayKey = dayKey(new Date());
-    // Query window: yesterday's Eastern midnight through now. Deliberately
-    // computed the same tz-aware way as todayDayKey above, not server-local time.
-    const yesterdayDayKey = dayKey(new Date(Date.now() - 24 * 60 * 60 * 1000));
-    const startOfYesterday = new Date(`${yesterdayDayKey}T00:00:00Z`);
+    const todayDayKey = new Date().toLocaleDateString('en-CA', { timeZone: annoTz });
+    const { start: startOfYesterday } = localDayBoundsUtc(annoTz, new Date(Date.now() - 24 * 60 * 60 * 1000));
     const active = await annotationsStore.overlapping(startOfYesterday, new Date());
-    // Exclude spending/wealth annotations — those only belong in wealth insights,
-    // not as context for health or habit anomaly findings. Check both the category
-    // AND the stored question/label: a spending-spike answer ("vacation bills") may
-    // have been saved under the generic brief_context category, but its question
-    // ("You spent $665...") still identifies it as financial, not a health driver.
-    const SPEND_RE = /spend|wealth|financ|budget|\$\d|money|bill/i;
-    const lifeAnnotations = active.filter((a) => {
-      const cat = String(a.category || '').toLowerCase();
-      if (cat.includes('spend') || cat.includes('wealth') || cat.includes('financ')) return false;
-      return !SPEND_RE.test(`${a.label || ''} ${a.note || ''}`);
+    annotateAnomaliesWithContext(anomalies, active, {
+      todayDayKey, tz: annoTz, wakeTimeSeries: seriesByKey['health:wake_time'],
     });
-    // Only attach the annotations that are actually relevant to THIS anomaly's
-    // metric — not every life annotation to every contextable deviation (see
-    // lifeContextRelevant above).
-    if (lifeAnnotations.length) {
-      for (const a of anomalies) {
-        const metric = a.evidence?.metric;
-        const relevant = lifeAnnotations.filter((ann) => lifeContextRelevant(metric, ann));
-        if (!relevant.length) continue;
-        const ctx = relevant.map((ann) => {
-          const annDayKey = dayKey(ann.start_ts);
-          let when;
-          if (annDayKey === todayDayKey) {
-            when = 'today';
-          } else {
-            // Day-diff via UTC-midnight parsing of the Y-M-D keys — safe and
-            // DST-agnostic since we're differencing calendar-date strings, not
-            // absolute instants.
-            const diffDays = Math.round((new Date(`${todayDayKey}T00:00:00Z`) - new Date(`${annDayKey}T00:00:00Z`)) / 86400000);
-            when = diffDays === 1 ? 'yesterday' : diffDays > 1 ? `${diffDays} days ago` : 'today';
-          }
-          return `${ann.label || ann.category} (${when})`;
-        }).slice(0, 3).join('; ');
-        a.detail += ` (Context: ${ctx} — may explain this deviation.)`;
-      }
-    }
   } catch { /* non-critical — don't break the analysis */ }
   const habitConsistency = computeHabitConsistency(seriesByKey, o);
   const habitHealthSplits = computeHabitHealthSplits(seriesByKey, o);
@@ -1512,7 +1559,12 @@ async function analyze(opts = {}) {
   };
 }
 
-module.exports = { analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeContextRecency, computeHabitHealthSplits, computeSleepImpact, computeActivityImpact, computeDaytimeCardio, computeWellbeingGap, DEFAULTS, TREND_STALE_DAYS, NIGHT_METRICS, staleDays, lifeContextRelevant };
+module.exports = {
+  analyze, computeTrends, computeCorrelations, computeAnomalies, computeHabitConsistency, computeContextRecency,
+  computeHabitHealthSplits, computeSleepImpact, computeActivityImpact, computeDaytimeCardio, computeWellbeingGap,
+  DEFAULTS, TREND_STALE_DAYS, NIGHT_METRICS, staleDays, lifeContextRelevant,
+  resolveNightWindow, annotateAnomaliesWithContext,
+};
 
 // CLI entrypoint
 if (require.main === module) {

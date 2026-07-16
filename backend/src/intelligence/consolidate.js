@@ -14,6 +14,7 @@ const findingsStore = require('../store/findings');
 const experimentsStore = require('../store/experiments');
 const intentionsStore = require('../store/intentions');
 const annotationsStore = require('../store/annotations');
+const { filterEligible } = require('./context-semantics');
 const selfModelStore = require('../store/selfModel');
 const cat = require('./catalog');
 const { query: dbQuery } = require('../db');
@@ -235,7 +236,11 @@ async function gatherFindings() {
 async function gatherAnnotations() {
   try {
     const { start: today } = localDayBoundsUtc(process.env.TZ || 'America/New_York');
-    return await annotationsStore.overlapping(today, new Date());
+    const active = await annotationsStore.overlapping(today, new Date());
+    // 'general' purpose — the self-model's "ACTIVE CONTEXT" line feeds every
+    // voice surface (chat, brief, weekly review); a retraction/retired
+    // annotation must never show up there as if it were live context.
+    return filterEligible(active, { purpose: 'general' });
   } catch { return []; }
 }
 

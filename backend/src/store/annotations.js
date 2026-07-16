@@ -2,6 +2,7 @@
 // intelligence layer (and you) can explain anomalies instead of being misled.
 const { query } = require('../db');
 const { naiveToUtcIso } = require('../util/date');
+const { classifyEventKind, EVENT_KIND, findRetractionTarget } = require('../intelligence/context-semantics');
 
 const ET_TZ = 'America/New_York';
 
@@ -23,6 +24,23 @@ function endOfTomorrowET(d = new Date()) {
   return new Date(new Date(naiveToUtcIso(`${tomorrowYmd}T23:59:59`, ET_TZ)).getTime() + 999);
 }
 
+/**
+ * Create an annotation. When the text classifies as a RETRACTION (see
+ * context-semantics.js — "forget that context", "ignore that", "didn't end
+ * up going", etc.), this conservatively looks back a few days for the ONE
+ * specific prior annotation it's unambiguously walking back and retires it
+ * (retired_at set, row kept for audit — never deleted, see overlapping()
+ * below for the exclusion side). The retraction row itself is always
+ * inserted (for history), and is separately excluded from every consumer by
+ * its own event-kind classification — retirement here is a best-effort
+ * belt-and-suspenders step for the ORIGINAL claim, not what makes the
+ * retraction itself non-causal.
+ *
+ * Returns `{ id, eventKind, retiredAnnotationId }` — `eventKind` lets
+ * callers (e.g. the POST /briefing/context route) decide whether this
+ * answer should also be copied into the day journal/beliefs pipeline as
+ * ordinary life context (a retraction should not be).
+ */
 async function createAnnotation(a) {
   const { startTs, endTs = null, category, label, note = null } = a;
   // Default end_ts to end-of-day ET so annotations expire automatically.
@@ -33,7 +51,54 @@ async function createAnnotation(a) {
      VALUES ($1, $2, $3, $4, $5) RETURNING id`,
     [startTs, resolvedEndTs, category, label, note]
   );
-  return rows[0]?.id ?? null;
+  const id = rows[0]?.id ?? null;
+
+  const text = `${label || ''} ${note || ''}`;
+  const eventKind = classifyEventKind(text, { category });
+
+  let retiredAnnotationId = null;
+  if (id && eventKind === EVENT_KIND.RETRACTION) {
+    try {
+      // Search from the ACTUAL current time, not `startTs` — a retraction
+      // answered to a "last night"/"yesterday"-phrased question has its own
+      // start_ts backdated by the caller (see routes/annotations.js's
+      // PAST_REFERRING_RE handling) so it's active over the right window for
+      // OTHER purposes, but that backdating is unrelated to how far back a
+      // retraction should search for what it's walking back — using it here
+      // would make the lookback silently miss a same-day plan created after
+      // the backdated timestamp.
+      const now = new Date();
+      const since = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+      const { rows: recent } = await query(
+        `SELECT * FROM annotations
+          WHERE id != $1 AND retired_at IS NULL
+            AND start_ts >= $2 AND start_ts <= $3
+          ORDER BY start_ts DESC
+          LIMIT 20`,
+        [id, since, now]
+      );
+      const target = findRetractionTarget(text, recent);
+      if (target) {
+        await retireAnnotation(target.id, 'superseded by a later retraction');
+        retiredAnnotationId = target.id;
+      }
+    } catch (err) {
+      console.error('[annotations] retraction target lookup failed:', err.message);
+    }
+  }
+
+  return { id, eventKind, retiredAnnotationId };
+}
+
+/** Mark an annotation retired — excluded from every intelligence consumer
+ *  (see overlapping() below) but never deleted, so history/audit views can
+ *  still show it. Idempotent: a no-op if already retired. */
+async function retireAnnotation(id, reason = null) {
+  const { rowCount } = await query(
+    `UPDATE annotations SET retired_at = now(), retired_reason = $2 WHERE id = $1 AND retired_at IS NULL`,
+    [id, reason]
+  );
+  return rowCount > 0;
 }
 
 async function listAnnotations({ from = null, to = null, limit = 100, category = null } = {}) {
@@ -49,12 +114,18 @@ async function listAnnotations({ from = null, to = null, limit = 100, category =
   return rows;
 }
 
-/** Annotations overlapping a window — used to contextualize findings. */
+/** Annotations overlapping a window — used to contextualize findings.
+ *  Excludes retired/superseded annotations (see retireAnnotation above) —
+ *  this is the single choke point that keeps a retracted or superseded
+ *  annotation out of every intelligence consumer that calls this function
+ *  (analyze.js, the briefing builders, watch.js, consolidate.js's
+ *  self-model, relevant-highlight.js) without each having to re-check it. */
 async function overlapping(windowStart, windowEnd) {
   const { rows } = await query(
     `SELECT * FROM annotations
       WHERE start_ts <= $2
         AND COALESCE(end_ts, start_ts) >= $1
+        AND retired_at IS NULL
       ORDER BY start_ts DESC`,
     [windowStart, windowEnd]
   );
@@ -88,4 +159,7 @@ async function updateAnnotation(id, { label, category } = {}) {
   return true;
 }
 
-module.exports = { createAnnotation, listAnnotations, overlapping, buildAnnotationUpdate, updateAnnotation, endOfTomorrowET };
+module.exports = {
+  createAnnotation, listAnnotations, overlapping, buildAnnotationUpdate, updateAnnotation,
+  retireAnnotation, endOfTomorrowET,
+};

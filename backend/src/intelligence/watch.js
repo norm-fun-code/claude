@@ -80,23 +80,18 @@ function fmtValue(v, cfg) {
   return String(Math.round(v));
 }
 
-// Spending/financial annotations are never a driver of a HEALTH anomaly — a
-// "Vacation bills" note explains your wallet, not your HRV. Same filter the
-// analyze anomaly path uses, so the two stay consistent.
-const SPEND_RE = /spend|wealth|financ|budget|\$\d|money|bill/i;
-function isSpendingAnnotation(a) {
-  const cat = String(a.category || '').toLowerCase();
-  if (cat.includes('spend') || cat.includes('wealth') || cat.includes('financ')) return true;
-  return SPEND_RE.test(`${a.label || ''} ${a.note || ''}`);
-}
-
-/** Active life-context labels overlapping yesterday→now, e.g. "travel", "late night". */
+/** Active life-context labels overlapping yesterday→now, e.g. "travel", "late night".
+ *  'general' purpose (see context-semantics.js) — excludes financial notes
+ *  (a "Vacation bills" note explains your wallet, not your HRV) AND
+ *  retractions/retired annotations, so a "forget that context" correction
+ *  never shows up in the same-day nudge either. */
 async function contextNote() {
   try {
     const annotationsStore = require('../store/annotations');
+    const { filterEligible } = require('./context-semantics');
     const { start } = localDayBoundsUtc(process.env.TZ || 'America/New_York', new Date(Date.now() - 24 * 60 * 60 * 1000));
     const active = await annotationsStore.overlapping(start, new Date());
-    const life = active.filter((a) => !isSpendingAnnotation(a));
+    const life = filterEligible(active, { purpose: 'general' });
     if (!life.length) return '';
     const labels = life.slice(0, 2).map((a) => a.label || a.category).filter(Boolean);
     return labels.length ? ` You logged: ${labels.join(', ')}.` : '';

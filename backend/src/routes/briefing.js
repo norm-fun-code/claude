@@ -57,6 +57,7 @@ const findingsStore = require('../store/findings');
 const sourcesStore = require('../store/sources');
 const { runIngest } = require('../ingest/run');
 const { analyze, TREND_STALE_DAYS } = require('../intelligence/analyze');
+const { filterEligible } = require('../intelligence/context-semantics');
 const { embedPending } = require('../intelligence/embeddings');
 const annotationsStore = require('../store/annotations');
 const experimentsStore = require('../store/experiments');
@@ -158,8 +159,12 @@ async function buildQuickChiefBriefContext(prior) {
       try {
         const { start: startOfToday } = localDayBoundsUtc(process.env.TZ || 'America/New_York');
         const active = await annotationsStore.overlapping(startOfToday, new Date());
-        if (active.length) {
-          ctx = active
+        // 'general' purpose — excludes retractions/retired/financial (see
+        // context-semantics.js) but keeps planned/occurred/negated, all of
+        // which are legitimate acknowledged context for a quick brief.
+        const eligible = filterEligible(active, { purpose: 'general' });
+        if (eligible.length) {
+          ctx = eligible
             .map((a) => `${a.label}${a.note ? ` (${a.note})` : ''}`)
             .slice(0, 5)
             .join('; ');
@@ -661,8 +666,13 @@ async function buildFreshBriefing({ force = false } = {}) {
         annotationsStore.overlapping(since, new Date()),
         require('../store/dayJournal').recent({ days: 7 }),
       ]);
+      // 'general' purpose — a retracted/superseded annotation ("forget that
+      // illness note") must not suppress the raw statistical "slipping" flag
+      // either; day-journal entries already exclude retractions at the
+      // write site (POST /briefing/context never journals one).
+      const eligibleAnnotations = filterEligible(recentAnnotations, { purpose: 'general' });
       explainedText = [
-        ...recentAnnotations.map((a) => `${a.label || ''} ${a.note || ''}`),
+        ...eligibleAnnotations.map((a) => `${a.label || ''} ${a.note || ''}`),
         ...recentJournal.map((j) => j.text || ''),
       ].join(' ').toLowerCase();
     } catch { /* non-critical — falls back to the unexplained (old) behavior */ }
@@ -711,8 +721,12 @@ async function buildFreshBriefing({ force = false } = {}) {
   try {
     const { start: startOfToday } = localDayBoundsUtc(process.env.TZ || 'America/New_York');
     const active = await annotationsStore.overlapping(startOfToday, new Date());
-    if (active.length) {
-      annotationsContext = active
+    // 'general' purpose — excludes retractions/retired/financial but keeps
+    // planned/occurred/negated, all legitimate for the chief brief to
+    // acknowledge (see context-semantics.js).
+    const eligible = filterEligible(active, { purpose: 'general' });
+    if (eligible.length) {
+      annotationsContext = eligible
         .map((a) => {
           // Include the submission date so the AI can resolve relative terms like
           // "tomorrow" or "today" in notes entered the night before.

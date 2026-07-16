@@ -11,6 +11,7 @@ const documentsStore = require('../store/documents');
 const surfacedStore = require('../store/surfaced');
 const { extractJson, parseAndValidate } = require('../llm/parseJson');
 const { localDayBoundsUtc } = require('../util/date');
+const { filterEligible } = require('./context-semantics');
 
 function truncate(s, n) {
   s = String(s || '');
@@ -66,7 +67,9 @@ async function gatherSituation() {
     const { start } = localDayBoundsUtc(tz, new Date(Date.now() - 24 * 60 * 60 * 1000));
     const active = await annotationsStore.overlapping(start, new Date());
     const todayYmd = new Date().toLocaleDateString('en-CA', { timeZone: tz });
-    out.lifeContext = active
+    // 'general' purpose — a retraction/retired annotation must not seed the
+    // "why this speaks to you right now" reasoning either.
+    out.lifeContext = filterEligible(active, { purpose: 'general' })
       .map((a) => {
         const label = a.label || a.category;
         if (!label) return null;

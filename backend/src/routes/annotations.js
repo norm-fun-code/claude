@@ -14,6 +14,7 @@ const dayJournalStore = require('../store/dayJournal');
 const { naiveToUtcIso, localDayBoundsUtc } = require('../util/date');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { requireFields } = require('../middleware/validate');
+const { EVENT_KIND } = require('../intelligence/context-semantics');
 
 function createAnnotationsRouter() {
   const router = express.Router();
@@ -21,7 +22,7 @@ function createAnnotationsRouter() {
   router.post('/annotations', asyncHandler(async (req, res) => {
     const { startTs, endTs, category, label, note } = req.body || {};
     if (!requireFields(req.body, ['startTs', 'category', 'label'], res)) return;
-    const id = await annotationsStore.createAnnotation({ startTs, endTs, category, label, note });
+    const { id } = await annotationsStore.createAnnotation({ startTs, endTs, category, label, note });
     res.json({ id });
   }));
 
@@ -95,17 +96,26 @@ function createAnnotationsRouter() {
     const startTs = PAST_REFERRING_RE.test(question || '')
       ? new Date(Date.now() - 24 * 60 * 60 * 1000)
       : new Date();
-    const id = await annotationsStore.createAnnotation({
+    const { id, eventKind, retiredAnnotationId } = await annotationsStore.createAnnotation({
       startTs: startTs.toISOString(),
       category: isSpending ? 'spending note' : 'brief_context',
       label: answer.trim().slice(0, 500),
       note: question ? `Q: ${question.slice(0, 300)}` : (signalKey ?? null),
     });
+    if (retiredAnnotationId) {
+      console.log(`[briefing/context] retraction retired prior annotation ${retiredAnnotationId}`);
+    }
     // Text parity with voice: free-form context typed into the "add context" box
     // is the SAME signal as talking about your day, so also capture it in the day
     // journal (→ Ask brain, evening brief, self-model). Skip the openQuestion
-    // path (short Q&A answers) and trivially short notes to keep the journal clean.
-    const isDayContext = (!signalKey || signalKey === 'manual_context') && answer.trim().length >= 6;
+    // path (short Q&A answers), trivially short notes, and — critically — an
+    // explicit RETRACTION ("please forget that context", "ignore that", "I
+    // didn't end up going...") so a correction never gets journaled as if it
+    // were ordinary life context and re-surfaces through the beliefs pipeline
+    // or a future prompt. The annotation row above is still saved (audit), but
+    // day_journal/beliefs never see it.
+    const isDayContext = (!signalKey || signalKey === 'manual_context') && answer.trim().length >= 6
+      && eventKind !== EVENT_KIND.RETRACTION;
     if (isDayContext) {
       const tz = process.env.TZ || 'America/New_York';
       // A past-referring question ("last night", "yesterday") is asking about the
