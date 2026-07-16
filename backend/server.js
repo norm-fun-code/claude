@@ -149,11 +149,11 @@ runMigrations()
     });
 
     // Global socket-inactivity cap: the longest legitimate request is a full
-    // briefing rebuild (source fetch + up to BRIEFING_LLM_TIMEOUT_MS ~90s of
+    // briefing rebuild (source fetch + up to BRIEFING_LLM_TIMEOUT_MS ~130s of
     // LLM calls), so this sits well above that — a request past this either
     // has a stuck DB query (statement_timeout should catch that first) or a
     // hung upstream call with no timeout of its own; either way, the socket
     // gets torn down instead of holding a connection (and its DB pool slot)
     // open indefinitely.
-    server.setTimeout(Number(process.env.SERVER_REQUEST_TIMEOUT_MS) || 150_000);
+    server.setTimeout(Number(process.env.SERVER_REQUEST_TIMEOUT_MS) || 180_000);
   });

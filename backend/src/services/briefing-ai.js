@@ -247,58 +247,38 @@ const EMPTY_WISDOM = { quoteInsight: '', notionQuote: '', notionInsight: '' };
 
 const CHIEF_REQUIRED_FIELDS = ['synthesis', 'action', 'risk', 'move'];
 
-// Passed as jsonMode+jsonSchema so providers that support it (Gemini via
-// responseMimeType, Anthropic via a forced tool call) constrain generation
-// to this shape server-side instead of relying purely on CHIEF_SYSTEM's
-// prose instruction — see the engineering review's #4 and each provider's
-// generateText for how this is enforced.
-const CHIEF_JSON_SCHEMA = {
-  type: 'object',
-  properties: {
-    chiefBrief: {
-      type: 'object',
-      properties: {
-        synthesis: { type: 'string' },
-        action: { type: 'string' },
-        risk: { type: 'string' },
-        move: { type: 'string' },
-        openQuestion: { type: 'string' },
-        affirmation: { type: 'string' },
-      },
-      required: ['synthesis', 'action', 'risk', 'move', 'openQuestion', 'affirmation'],
-    },
-    morningFocus: { type: 'string' },
-    urgentEmails: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          from: { type: 'string' },
-          subject: { type: 'string' },
-          action: { type: 'string' },
-        },
-        required: ['from', 'subject', 'action'],
-      },
-    },
-  },
-  required: ['chiefBrief', 'morningFocus', 'urgentEmails'],
-};
+// Model for the chief-brief call specifically — the one that has to actually
+// REASON across body/money/focus/calendar/inbox, not just extract or classify.
+// Deliberately NOT the shared ANTHROPIC_MODEL default (Sonnet 5, used for
+// every lighter call — wisdom reflections, context adjustment, habit
+// parsing): at this call volume (once or twice a day) the price difference
+// between tiers is cents, so there's no reason not to spend it on the one
+// call that most benefits from it. Independently env-overridable so this
+// can be dialed without touching the shared default.
+const CHIEF_MODEL = process.env.ANTHROPIC_CHIEF_MODEL || 'claude-opus-4-8';
 
 /** One LLM call + parse + shape-validate. Returns the result shape or null (retryable). */
 async function chiefBriefAttempt(prompt, attemptLabel) {
   let text = '';
   try {
     // Chief-brief is the load-bearing call — several dense sections + urgent
-    // emails + finance/goal bullets. Give it room: low temp for focus, and the
-    // caller (server.js) allows up to BRIEFING_LLM_TIMEOUT_MS overall. Raised
-    // from 4096: the schema is verbose (4 chiefBrief fields + morningFocus +
-    // a variable-length urgentEmails array) and a genuinely busy inbox day
-    // could plausibly push the real output past 4096 tokens, truncating the
-    // JSON mid-object — which fails validation with no sign it was a length
-    // problem rather than a formatting one. Cheap insurance either way.
+    // emails + finance/goal bullets, genuinely cross-domain reasoning, not
+    // extraction. It used to force a tool call (jsonMode+jsonSchema) for
+    // guaranteed shape — but Anthropic's API refuses to combine forced
+    // tool-choice with extended thinking, so the ONE call that most needs to
+    // actually reason ran with thinking silently off. Dropped in favor of
+    // CHIEF_SYSTEM's own prose JSON instruction (it already says "Return ONLY
+    // a single valid JSON object" with the exact schema spelled out) plus the
+    // parseAndValidate/extractJson path already used successfully by the
+    // wisdom call below — same shape-validation + 2-attempt retry safety net,
+    // now with adaptive thinking actually engaged.
+    // maxTokens raised well past the old 8192: thinking tokens now share the
+    // same budget as the final JSON, and truncating mid-object fails
+    // validation with no sign it was a length problem rather than a
+    // formatting one. Generous headroom costs nothing — billing is by tokens
+    // actually used, not this ceiling.
     text = await llm.generateText({
-      system: CHIEF_SYSTEM, prompt, temperature: 0.2, maxTokens: 8192,
-      jsonMode: true, jsonSchema: CHIEF_JSON_SCHEMA,
+      system: CHIEF_SYSTEM, prompt, temperature: 0.2, maxTokens: 16384, model: CHIEF_MODEL,
     });
   } catch (err) {
     console.error(`[briefing-ai] chief-brief generation failed (${attemptLabel}):`, err.message);
