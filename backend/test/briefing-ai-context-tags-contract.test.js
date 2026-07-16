@@ -16,11 +16,17 @@ function captureChiefSystem(t) {
   t.after(() => { llm.generateText = original; });
   llm.generateText = async ({ system }) => {
     capturedSystem = system;
-    return JSON.stringify({
-      chiefBrief: { synthesis: 's', action: 'a', risk: 'r', move: 'm', openQuestion: '' },
-      morningFocus: 'f',
-      urgentEmails: [],
-    });
+    // The chief-brief call requests returnMeta:true (safe-to-log metadata
+    // alongside the text — see briefing-ai.js), so this must return
+    // {text, stopReason, requestId, model}, not a bare string.
+    return {
+      text: JSON.stringify({
+        chiefBrief: { synthesis: 's', action: 'a', risk: 'r', move: 'm', openQuestion: '' },
+        morningFocus: 'f',
+        urgentEmails: [],
+      }),
+      stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
+    };
   };
   return () => capturedSystem;
 }

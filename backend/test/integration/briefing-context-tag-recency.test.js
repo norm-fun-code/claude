@@ -46,11 +46,17 @@ function captureChiefPrompt(t) {
   llm.generateText = async ({ system, prompt }) => {
     if (system.includes('chief of staff and data scientist')) {
       capturedPrompt = prompt;
-      return JSON.stringify({
-        chiefBrief: { synthesis: 's', action: 'a', risk: 'r', move: 'm', openQuestion: '' },
-        morningFocus: 'f',
-        urgentEmails: [],
-      });
+      // The chief-brief call requests returnMeta:true (safe-to-log metadata
+      // alongside the text — see briefing-ai.js) — a bare string here would
+      // break chiefBriefAttempt's destructuring.
+      return {
+        text: JSON.stringify({
+          chiefBrief: { synthesis: 's', action: 'a', risk: 'r', move: 'm', openQuestion: '' },
+          morningFocus: 'f',
+          urgentEmails: [],
+        }),
+        stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
+      };
     }
     return JSON.stringify({ quoteInsight: '', notionQuote: '', notionInsight: '' });
   };

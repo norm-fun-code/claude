@@ -47,7 +47,13 @@ test('a rebuild whose LLM call returns an invalid chiefBrief shape falls back to
   t.after(() => { llm.generateText = original; });
   llm.generateText = async ({ system }) => {
     if (system.includes('chief of staff and data scientist')) {
-      return JSON.stringify({ chiefBrief: { synthesis: 'fresh but incomplete', action: 'a', risk: 'r' /* move missing */ }, morningFocus: 'fresh focus' });
+      // The chief-brief call requests returnMeta:true (safe-to-log metadata
+      // alongside the text — see briefing-ai.js) — a bare string here would
+      // break chiefBriefAttempt's destructuring.
+      return {
+        text: JSON.stringify({ chiefBrief: { synthesis: 'fresh but incomplete', action: 'a', risk: 'r' /* move missing */ }, morningFocus: 'fresh focus' }),
+        stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
+      };
     }
     return JSON.stringify({ quoteInsight: '', notionQuote: '', notionInsight: '' });
   };
@@ -71,10 +77,13 @@ test('a rebuild whose LLM call returns a valid chiefBrief shape is NOT flagged s
   t.after(() => { llm.generateText = original; });
   llm.generateText = async ({ system }) => {
     if (system.includes('chief of staff and data scientist')) {
-      return JSON.stringify({
-        chiefBrief: { synthesis: FRESH_MARKER, action: 'a', risk: 'r', move: 'm', openQuestion: '' },
-        morningFocus: 'fresh focus',
-      });
+      return {
+        text: JSON.stringify({
+          chiefBrief: { synthesis: FRESH_MARKER, action: 'a', risk: 'r', move: 'm', openQuestion: '' },
+          morningFocus: 'fresh focus',
+        }),
+        stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
+      };
     }
     return JSON.stringify({ quoteInsight: '', notionQuote: '', notionInsight: '' });
   };

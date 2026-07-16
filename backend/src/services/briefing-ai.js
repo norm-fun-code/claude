@@ -16,6 +16,7 @@
 //     was paying for a wisdom-section LLM call whose output was thrown away.
 //     Splitting lets the caller skip generateWisdomInsights() entirely once
 //     today's quote/Notion pair is already locked.
+const crypto = require('crypto');
 const llm = require('../llm');
 const { extractJson, parseAndValidate } = require('../llm/parseJson');
 const { AnthropicRefusalError, AnthropicMaxTokensError } = llm;
@@ -261,7 +262,35 @@ const CHIEF_MODEL = process.env.ANTHROPIC_CHIEF_MODEL || 'claude-opus-4-8';
 // Reasoning depth for the chief-brief call (output_config.effort). 'high' is
 // the strongest setting worth defaulting to for a call this infrequent (once
 // or twice a day) — independently overridable without touching CHIEF_MODEL.
+// Validated against Anthropic's actual accepted values at require time (i.e.
+// at server boot, since this module is required from routes/briefing.js at
+// startup) rather than left to surface as a 400 on the first real request —
+// an invalid value would otherwise fail identically on both attempts of
+// every single brief build, burning two paid calls for nothing.
+const VALID_CHIEF_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 const CHIEF_EFFORT = process.env.ANTHROPIC_CHIEF_EFFORT || 'high';
+if (!VALID_CHIEF_EFFORTS.has(CHIEF_EFFORT)) {
+  throw new Error(
+    `Invalid ANTHROPIC_CHIEF_EFFORT "${CHIEF_EFFORT}" — must be one of: ${[...VALID_CHIEF_EFFORTS].join(', ')}.`
+  );
+}
+
+// maxTokens for the chief-brief call. Thinking tokens share this budget with
+// the final JSON, so the right ceiling depends on effort: xhigh/max produce
+// substantially more thinking output on Opus 4.8, and Anthropic recommends
+// at least 65536 max_tokens at those levels so a genuinely complete response
+// isn't truncated by a cap sized for a lower tier. low/medium/high start at
+// a smaller, still-generous ceiling and only pay for more on an actual
+// max_tokens truncation (see the error-specific retry policy below).
+const CHIEF_MAX_TOKENS_BASE = 16384;
+const CHIEF_MAX_TOKENS_XHIGH_MIN = 65536;
+const CHIEF_MAX_TOKENS_CEILING = 128000; // Opus 4.8's max output tokens
+function chiefInitialMaxTokens() {
+  return CHIEF_EFFORT === 'xhigh' || CHIEF_EFFORT === 'max' ? CHIEF_MAX_TOKENS_XHIGH_MIN : CHIEF_MAX_TOKENS_BASE;
+}
+function chiefBumpedMaxTokens(initial) {
+  return Math.min(initial * 2, CHIEF_MAX_TOKENS_CEILING);
+}
 
 // Native Structured Outputs schema (output_config.format) for the chief-brief
 // call. This is the guaranteed-shape mechanism that composes with extended
@@ -313,14 +342,16 @@ const CHIEF_JSON_SCHEMA = {
 // openQuestion length floor, urgentEmails as an array), the same contract the
 // old forced-tool/prose-JSON path enforced. Returns null (retryable) if the
 // four core fields aren't all present non-empty strings.
-function validateChiefBriefShape(parsed, attemptLabel) {
+function validateChiefBriefShape(parsed, attemptLabel, correlationId) {
   const cb = parsed.chiefBrief;
   const shapeOk = cb && typeof cb === 'object' && CHIEF_REQUIRED_FIELDS.every((k) => typeof cb[k] === 'string' && cb[k].trim());
   if (!shapeOk) {
+    // Field NAMES only (e.g. "risk missing/empty") — never the field values,
+    // which is where the sensitive health/finance/goal content actually is.
     const missing = !cb || typeof cb !== 'object'
       ? 'chiefBrief missing or not an object'
       : CHIEF_REQUIRED_FIELDS.filter((k) => !(typeof cb[k] === 'string' && cb[k].trim())).join(', ') + ' missing/empty';
-    console.error(`[briefing-ai] chief-brief shape invalid (${attemptLabel}): ${missing}.`);
+    console.error(`[briefing-ai] chief-brief shape invalid (${attemptLabel}) [correlationId=${correlationId}]: ${missing}.`);
     return null;
   }
   return {
@@ -339,9 +370,20 @@ function validateChiefBriefShape(parsed, attemptLabel) {
   };
 }
 
-/** One LLM call + parse + shape-validate. Returns the result shape or null (retryable). */
-async function chiefBriefAttempt(prompt, attemptLabel) {
-  let text = '';
+/**
+ * One LLM call + parse + shape-validate.
+ *
+ * Returns `{ result, failureType }`: `result` is the validated brief shape or
+ * null; `failureType` is null on success or one of 'refusal' | 'max_tokens' |
+ * 'network' | 'parse' | 'shape' — the caller (generateChiefBrief) branches on
+ * this to decide whether/how to retry (see the retry policy there). Never
+ * logs response content — chief briefs carry health, finance, email, and
+ * goal data, so every log line here is restricted to safe metadata: model,
+ * response length, stop reason, attempt label, and the request/correlation
+ * IDs needed to trace one failure across log lines.
+ */
+async function chiefBriefAttempt(prompt, attemptLabel, { maxTokens, correlationId }) {
+  let text, stopReason, requestId;
   try {
     // Chief-brief is the load-bearing call — several dense sections + urgent
     // emails + finance/goal bullets, genuinely cross-domain reasoning, not
@@ -354,24 +396,43 @@ async function chiefBriefAttempt(prompt, attemptLabel) {
     // Structured Outputs (output_config.format below) removes that tradeoff
     // entirely: the response is schema-constrained server-side AND thinking
     // stays on — no forced tool, no tool_choice, no prefill.
-    // maxTokens raised well past the old 8192: thinking tokens now share the
-    // same budget as the final JSON, and truncating mid-object fails
-    // validation with no sign it was a length problem rather than a
-    // formatting one. Generous headroom costs nothing — billing is by tokens
-    // actually used, not this ceiling.
-    text = await llm.generateText({
-      system: CHIEF_SYSTEM, prompt, temperature: 0.2, maxTokens: 16384, model: CHIEF_MODEL,
+    //
+    // No `temperature` here: the Anthropic provider never forwards it (Opus
+    // 4.6+/5 reject non-default sampling parameters with a 400), so passing
+    // one is dead weight. Response variability across attempts comes from
+    // the model's own adaptive-thinking sampling, not a temperature knob.
+    //
+    // `provider: 'anthropic'` pins this call to the Anthropic provider
+    // regardless of the globally configured LLM_PROVIDER — CHIEF_MODEL is
+    // always an Anthropic model ID, and Structured Outputs + adaptive
+    // thinking are Anthropic-specific, so routing through whatever provider
+    // happens to be globally configured (e.g. LLM_PROVIDER=gemini) would
+    // silently mishandle or reject these options. Going through the `llm`
+    // module's provider override (rather than requiring
+    // '../llm/providers/anthropic' directly here) keeps provider resolution
+    // in one place.
+    ({ text, stopReason, requestId } = await llm.generateText({
+      system: CHIEF_SYSTEM, prompt, maxTokens, model: CHIEF_MODEL,
       outputSchema: CHIEF_JSON_SCHEMA, effort: CHIEF_EFFORT,
-    });
+      provider: 'anthropic', returnMeta: true,
+    }));
   } catch (err) {
     if (err instanceof AnthropicRefusalError) {
-      console.error(`[briefing-ai] chief-brief refused (${attemptLabel}): ${err.category || 'unspecified category'}`);
-    } else if (err instanceof AnthropicMaxTokensError) {
-      console.error(`[briefing-ai] chief-brief truncated at max_tokens (${attemptLabel}) — thinking + output shared the maxTokens budget.`);
-    } else {
-      console.error(`[briefing-ai] chief-brief generation failed (${attemptLabel}):`, err.message);
+      console.error(
+        `[briefing-ai] chief-brief refused (${attemptLabel}) [correlationId=${correlationId}] ` +
+        `model=${CHIEF_MODEL} category=${err.category || 'unspecified'} requestId=${err.requestId || 'n/a'}`
+      );
+      return { result: null, failureType: 'refusal' };
     }
-    return null;
+    if (err instanceof AnthropicMaxTokensError) {
+      console.error(
+        `[briefing-ai] chief-brief truncated at max_tokens (${attemptLabel}) [correlationId=${correlationId}] ` +
+        `model=${CHIEF_MODEL} maxTokens=${maxTokens} responseLength=${err.responseLength ?? 'n/a'} requestId=${err.requestId || 'n/a'}`
+      );
+      return { result: null, failureType: 'max_tokens' };
+    }
+    console.error(`[briefing-ai] chief-brief generation failed (${attemptLabel}) [correlationId=${correlationId}]:`, err.message);
+    return { result: null, failureType: 'network' };
   }
 
   // Structured Outputs guarantees schema-valid JSON here (refusal and
@@ -383,19 +444,23 @@ async function chiefBriefAttempt(prompt, attemptLabel) {
   // existed to rescue free-form prose that was never schema-constrained to
   // begin with, which no longer describes this call. A parse failure here
   // means the API contract broke, not that the model wrote slightly-off
-  // prose, and should fail loudly rather than be silently patched.
+  // prose, and should fail loudly rather than be silently patched — but
+  // still WITHOUT logging the actual (potentially sensitive) response text;
+  // only its length and the parser's own error message.
   let parsed;
   try {
     parsed = JSON.parse(text);
   } catch (err) {
     console.error(
-      `[briefing-ai] chief-brief (${attemptLabel}): structured-output response was not valid JSON — ${err.message}. ` +
-      `Preview: ${JSON.stringify(String(text || '').slice(0, 500))}`
+      `[briefing-ai] chief-brief (${attemptLabel}) [correlationId=${correlationId}]: structured-output response was ` +
+      `not valid JSON — model=${CHIEF_MODEL} responseLength=${text.length} stopReason=${stopReason || 'unknown'} ` +
+      `requestId=${requestId || 'n/a'} parseError=${err.message}`
     );
-    return null;
+    return { result: null, failureType: 'parse' };
   }
 
-  return validateChiefBriefShape(parsed, attemptLabel);
+  const result = validateChiefBriefShape(parsed, attemptLabel, correlationId);
+  return { result, failureType: result ? null : 'shape' };
 }
 
 // ── Goal-completion semantic guard ──────────────────────────────────────────
@@ -535,13 +600,41 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
   const filteredEmails = filterActionableEmails(emailData);
   const prompt = buildChiefBriefPrompt(filteredEmails, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusyBlocks, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext, attentionContext, openGoals);
 
-  // One retry on a shape/parse failure — the model call is non-deterministic
-  // (temperature 0.2, not 0), and this exact class of failure (silently
-  // falling back to yesterday's brief, repeatedly) is what a live user hit.
-  // A second attempt with the identical prompt has a real chance of coming
-  // back valid; only give up and let the caller fall back after both fail.
-  const first = await chiefBriefAttempt(prompt, 'attempt 1/2');
-  let result = first || await chiefBriefAttempt(prompt, 'attempt 2/2 (retry)');
+  // One correlation ID per build, threaded through every attempt's log lines
+  // so a failure can be traced across attempts without ever logging content.
+  const correlationId = crypto.randomUUID();
+
+  // Error-specific retry policy — one retry budget, spent differently
+  // depending on WHY attempt 1 failed:
+  //   - refusal: do NOT retry. Repeating the identical request against a
+  //     safety decline wastes a paid call for a result that won't change,
+  //     and generating/reusing anything from a declined response would be
+  //     unvalidated content. Fail safely straight to the empty fallback.
+  //   - max_tokens: retry once, but with a LARGER maxTokens — a same-size
+  //     retry would just truncate again.
+  //   - network / parse / shape: retry once with identical params — the
+  //     model call is non-deterministic (adaptive thinking's own sampling,
+  //     not a temperature knob — Opus 4.6+/5 don't accept one), and this
+  //     exact class of failure (silently falling back to yesterday's brief,
+  //     repeatedly) is what a live user hit. A second identical attempt has
+  //     a real chance of coming back valid.
+  const initialMaxTokens = chiefInitialMaxTokens();
+  const { result: firstResult, failureType: firstFailure } =
+    await chiefBriefAttempt(prompt, 'attempt 1/2', { maxTokens: initialMaxTokens, correlationId });
+
+  let result = firstResult;
+  let successMaxTokens = initialMaxTokens;
+  if (!result) {
+    if (firstFailure === 'refusal') {
+      console.error(`[briefing-ai] chief-brief refused — not retrying the identical request. [correlationId=${correlationId}]`);
+      return { ...EMPTY_CHIEF };
+    }
+    const retryMaxTokens = firstFailure === 'max_tokens' ? chiefBumpedMaxTokens(initialMaxTokens) : initialMaxTokens;
+    const { result: secondResult } =
+      await chiefBriefAttempt(prompt, 'attempt 2/2 (retry)', { maxTokens: retryMaxTokens, correlationId });
+    result = secondResult;
+    successMaxTokens = retryMaxTokens;
+  }
   if (!result) return { ...EMPTY_CHIEF };
 
   // Semantic guard: weekly_intentions.goals[].achieved is the SOLE authority
@@ -550,20 +643,22 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
   const violations = findFalseGoalCompletions(result, openGoals);
   if (!violations.length) return result;
 
-  console.error(`[briefing-ai] chief-brief claimed an OPEN goal was done (${violations.length} instance(s)) — retrying with a targeted correction.`);
+  console.error(`[briefing-ai] chief-brief claimed an OPEN goal was done (${violations.length} instance(s)) — retrying with a targeted correction. [correlationId=${correlationId}]`);
   const correctionPrompt = buildGoalCorrectionPrompt(prompt, violations);
-  const retry = await chiefBriefAttempt(correctionPrompt, 'attempt 3/3 (goal-completion correction)');
+  const { result: retry } = await chiefBriefAttempt(
+    correctionPrompt, 'attempt 3/3 (goal-completion correction)', { maxTokens: successMaxTokens, correlationId }
+  );
   if (retry) {
     const retryViolations = findFalseGoalCompletions(retry, openGoals);
     if (!retryViolations.length) return retry;
-    console.error('[briefing-ai] goal-completion correction retry still contradicted state — rewriting the offending sentence(s) deterministically.');
+    console.error(`[briefing-ai] goal-completion correction retry still contradicted state — rewriting the offending sentence(s) deterministically. [correlationId=${correlationId}]`);
     return rewriteFalseGoalCompletions(retry, retryViolations);
   }
-  // The correction retry failed shape validation entirely — fall back to
-  // deterministically rewriting the FIRST valid result rather than losing it
-  // (returning EMPTY_CHIEF here would make the caller reuse a POTENTIALLY
-  // CONTAMINATED prior brief, which is exactly what this guard exists to avoid).
-  console.error('[briefing-ai] goal-completion correction retry failed shape validation — rewriting the original result deterministically instead.');
+  // The correction retry failed entirely — fall back to deterministically
+  // rewriting the FIRST valid result rather than losing it (returning
+  // EMPTY_CHIEF here would make the caller reuse a POTENTIALLY CONTAMINATED
+  // prior brief, which is exactly what this guard exists to avoid).
+  console.error(`[briefing-ai] goal-completion correction retry failed — rewriting the original result deterministically instead. [correlationId=${correlationId}]`);
   return rewriteFalseGoalCompletions(result, violations);
 }
 

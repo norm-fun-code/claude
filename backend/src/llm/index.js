@@ -20,9 +20,10 @@ function embedProviderName() {
   return process.env.EMBED_PROVIDER || 'gemini';
 }
 
-function getChatProvider() {
-  const p = CHAT[chatProviderName()];
-  if (!p) throw new Error(`Unknown LLM_PROVIDER: ${chatProviderName()}`);
+function getChatProvider(name) {
+  const providerName = name || chatProviderName();
+  const p = CHAT[providerName];
+  if (!p) throw new Error(`Unknown LLM_PROVIDER: ${providerName}`);
   return p;
 }
 
@@ -32,8 +33,16 @@ function getEmbedProvider() {
   return p;
 }
 
-async function generateText(opts) {
-  return getChatProvider().generateText(opts);
+// `opts.provider` pins a single call to a specific provider regardless of the
+// global LLM_PROVIDER — for a call that depends on a feature only one
+// provider has (e.g. briefing-ai.js's chief-brief call needs Anthropic's
+// Structured Outputs + adaptive thinking), routing through whichever
+// provider happens to be globally configured would silently break or
+// misbehave. Callers pass the provider by name (e.g. `provider: 'anthropic'`)
+// instead of importing a provider module directly, so this remains the one
+// place that resolves provider names to implementations.
+async function generateText({ provider, ...opts } = {}) {
+  return getChatProvider(provider).generateText(opts);
 }
 
 async function embed(texts) {

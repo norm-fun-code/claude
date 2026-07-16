@@ -25,6 +25,13 @@ function chiefJson(overrides = {}) {
   });
 }
 
+// The chief-brief call requests returnMeta:true (safe-to-log metadata
+// alongside the text — see briefing-ai.js), so the stub must return
+// {text, stopReason, requestId, model}, not a bare string.
+function chiefMeta(text) {
+  return { text, stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8' };
+}
+
 async function seedPriorDailyBriefing() {
   await briefingsStore.saveBriefing({
     kind: 'daily',
@@ -42,7 +49,7 @@ after(async () => { await closeDb(); });
 test('POST /briefing/chief-brief/rebuild rejects a claim that an OPEN goal is done', async () => {
   await intentionsStore.saveIntention({ goals: [{ text: 'Valuation presentation to Steffan', achieved: false }] });
   await seedPriorDailyBriefing();
-  llm.generateText = async () => chiefJson({ synthesis: 'Valuation presentation to Steffan is done.' });
+  llm.generateText = async () => chiefMeta(chiefJson({ synthesis: 'Valuation presentation to Steffan is done.' }));
 
   const res = await request(app).post('/api/briefing/chief-brief/rebuild').set(authHeader()).send({});
   assert.equal(res.status, 200);
@@ -53,7 +60,7 @@ test('POST /briefing/chief-brief/rebuild rejects a claim that an OPEN goal is do
 test('POST /briefing/chief-brief/rebuild allows completion language for a goal marked achieved', async () => {
   await intentionsStore.saveIntention({ goals: [{ text: 'Finish the Q3 board deck', achieved: true }] });
   await seedPriorDailyBriefing();
-  llm.generateText = async () => chiefJson({ synthesis: 'The Q3 board deck is done — nice work.' });
+  llm.generateText = async () => chiefMeta(chiefJson({ synthesis: 'The Q3 board deck is done — nice work.' }));
 
   const res = await request(app).post('/api/briefing/chief-brief/rebuild').set(authHeader()).send({});
   assert.equal(res.status, 200);

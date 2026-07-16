@@ -39,10 +39,16 @@ function captureWisdomPrompt(t) {
   t.after(() => { llm.generateText = original; });
   llm.generateText = async ({ system, prompt }) => {
     if (system.includes('chief of staff and data scientist')) {
-      return JSON.stringify({
-        chiefBrief: { synthesis: 's', action: 'a', risk: 'r', move: 'm', openQuestion: '', affirmation: '' },
-        morningFocus: 'f',
-      });
+      // The chief-brief call requests returnMeta:true (safe-to-log metadata
+      // alongside the text — see briefing-ai.js) — a bare string here would
+      // break chiefBriefAttempt's destructuring.
+      return {
+        text: JSON.stringify({
+          chiefBrief: { synthesis: 's', action: 'a', risk: 'r', move: 'm', openQuestion: '', affirmation: '' },
+          morningFocus: 'f',
+        }),
+        stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
+      };
     }
     if (system.includes('reflective "wisdom" section')) {
       capturedPrompt = prompt;

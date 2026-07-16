@@ -54,9 +54,15 @@ test('a successful scoped rebuild replaces chiefBrief/morningFocus and clears ch
 
   const original = llm.generateText;
   t.after(() => { llm.generateText = original; });
-  llm.generateText = async () => JSON.stringify({
-    chiefBrief: { synthesis: FRESH, action: 'a2', risk: 'r2', move: 'm2', openQuestion: '' },
-    morningFocus: 'fresh focus',
+  // The chief-brief call requests returnMeta:true (safe-to-log metadata
+  // alongside the text — see briefing-ai.js) — a bare string here would
+  // break chiefBriefAttempt's destructuring.
+  llm.generateText = async () => ({
+    text: JSON.stringify({
+      chiefBrief: { synthesis: FRESH, action: 'a2', risk: 'r2', move: 'm2', openQuestion: '' },
+      morningFocus: 'fresh focus',
+    }),
+    stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
   });
 
   const res = await request(app).post('/api/briefing/chief-brief/rebuild').set(authHeader()).timeout(15000);
@@ -75,7 +81,7 @@ test('a scoped rebuild that STILL fails after its retry keeps the existing card 
 
   const original = llm.generateText;
   t.after(() => { llm.generateText = original; });
-  llm.generateText = async () => 'not valid json, still broken';
+  llm.generateText = async () => ({ text: 'not valid json, still broken', stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8' });
 
   const res = await request(app).post('/api/briefing/chief-brief/rebuild').set(authHeader()).timeout(15000);
 

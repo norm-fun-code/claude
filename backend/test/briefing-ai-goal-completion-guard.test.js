@@ -105,13 +105,20 @@ function chiefJson(overrides) {
   });
 }
 
+// The chief-brief call requests returnMeta:true (safe-to-log metadata
+// alongside the text — see briefing-ai.js), so the stub must return
+// {text, stopReason, requestId, model}, not a bare string.
+function chiefMeta(text) {
+  return { text, stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8' };
+}
+
 test('generateChiefBrief: a false "is done" claim about an OPEN goal never ships — the retry/rewrite corrects it', async () => {
   let call = 0;
   llm.generateText = async () => {
     call += 1;
     // Every attempt (including the correction retry) keeps making the same
     // mistake — proves the deterministic rewrite backstop actually engages.
-    return chiefJson({ synthesis: 'Valuation presentation to Steffan is done.' });
+    return chiefMeta(chiefJson({ synthesis: 'Valuation presentation to Steffan is done.' }));
   };
   const result = await generateChiefBrief(
     [], 'Tuesday', { type: 'Rest' }, [], '', '', '', '', '', '', [], '', '', '', '', '', '', '', '', '', [OPEN_GOAL]
@@ -123,7 +130,7 @@ test('generateChiefBrief: a false "is done" claim about an OPEN goal never ships
 });
 
 test('generateChiefBrief: a paraphrased false-completion claim triggers the same correction path', async () => {
-  llm.generateText = async () => chiefJson({ action: 'The valuation presentation is finished — great work.' });
+  llm.generateText = async () => chiefMeta(chiefJson({ action: 'The valuation presentation is finished — great work.' }));
   const result = await generateChiefBrief(
     [], 'Tuesday', { type: 'Rest' }, [], '', '', '', '', '', '', [], '', '', '', '', '', '', '', '', '', [OPEN_GOAL]
   );
@@ -131,7 +138,7 @@ test('generateChiefBrief: a paraphrased false-completion claim triggers the same
 });
 
 test('generateChiefBrief: the SAME goal with achieved:true allows completion language through untouched', async () => {
-  llm.generateText = async () => chiefJson({ synthesis: 'Nice work — the Q3 board deck is done.' });
+  llm.generateText = async () => chiefMeta(chiefJson({ synthesis: 'Nice work — the Q3 board deck is done.' }));
   const result = await generateChiefBrief(
     [], 'Tuesday', { type: 'Rest' }, [], '', '', '', '', '', '', [], '', '', '', '', '', '', '', '', '', [DONE_GOAL]
   );
@@ -139,7 +146,7 @@ test('generateChiefBrief: the SAME goal with achieved:true allows completion lan
 });
 
 test('generateChiefBrief: unrelated use of "done" ships unchanged (no false-positive rewrite)', async () => {
-  llm.generateText = async () => chiefJson({ synthesis: 'Your cold-shower streak is done for the week.' });
+  llm.generateText = async () => chiefMeta(chiefJson({ synthesis: 'Your cold-shower streak is done for the week.' }));
   const result = await generateChiefBrief(
     [], 'Tuesday', { type: 'Rest' }, [], '', '', '', '', '', '', [], '', '', '', '', '', '', '', '', '', [OPEN_GOAL]
   );
@@ -150,9 +157,9 @@ test('generateChiefBrief: a failed correction retry (bad shape) still returns a 
   let call = 0;
   llm.generateText = async () => {
     call += 1;
-    if (call <= 2) return chiefJson({ synthesis: 'Valuation presentation to Steffan is done.' });
+    if (call <= 2) return chiefMeta(chiefJson({ synthesis: 'Valuation presentation to Steffan is done.' }));
     // The correction retry (3rd call) comes back malformed — no chiefBrief at all.
-    return JSON.stringify({ notChiefBrief: true });
+    return chiefMeta(JSON.stringify({ notChiefBrief: true }));
   };
   const result = await generateChiefBrief(
     [], 'Tuesday', { type: 'Rest' }, [], '', '', '', '', '', '', [], '', '', '', '', '', '', '', '', '', [OPEN_GOAL]

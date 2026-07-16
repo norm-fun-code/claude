@@ -12,28 +12,36 @@ const keepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 16 });
 // Thrown when the API declines to answer (HTTP 200, stop_reason: 'refusal').
 // A distinct class so callers can retry/log this differently from a genuine
 // network/HTTP failure instead of it falling through to empty/parsed-as-JSON
-// content — see the stop_reason check below.
+// content — see the stop_reason check below. Carries only safe metadata
+// (never response content) so callers can log without a content leak.
 class AnthropicRefusalError extends Error {
-  constructor(category) {
+  constructor(category, meta = {}) {
     super(`Anthropic declined to respond${category ? ` (category: ${category})` : ''}`);
     this.name = 'AnthropicRefusalError';
     this.category = category || null;
+    this.requestId = meta.requestId || null;
+    this.model = meta.model || null;
   }
 }
 
 // Thrown when the response hit max_tokens before finishing — the caller must
 // not hand a truncated body to a JSON parser and treat a parse failure (or,
-// worse, a partial-but-valid-looking prefix) as a real result.
+// worse, a partial-but-valid-looking prefix) as a real result. `responseLength`
+// is a count, never the truncated content itself.
 class AnthropicMaxTokensError extends Error {
-  constructor() {
+  constructor(meta = {}) {
     super('Anthropic response was truncated at max_tokens before completion');
     this.name = 'AnthropicMaxTokensError';
+    this.requestId = meta.requestId || null;
+    this.model = meta.model || null;
+    this.maxTokens = meta.maxTokens ?? null;
+    this.responseLength = meta.responseLength ?? null;
   }
 }
 
 async function generateText({
   system, prompt, maxTokens = 4096, timeoutMs = 110000, fast = false, model: modelOverride,
-  jsonMode = false, jsonSchema = null, outputSchema = null, effort = null,
+  jsonMode = false, jsonSchema = null, outputSchema = null, effort = null, returnMeta = false,
 }) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
@@ -112,30 +120,45 @@ async function generateText({
 
   logUsage(model, data.usage);
 
+  // The message ID (msg_...) doubles as a safe correlation ID for logging —
+  // it identifies the specific API call without exposing anything about its
+  // content, so callers can log it instead of a content preview.
+  const requestId = data.id || null;
+  const stopReason = data.stop_reason || null;
+
   // Guard BEFORE touching data.content — a refusal returns an empty (or, on
   // a mid-stream decline, partial) content array, and a max_tokens stop means
   // whatever text came back is truncated mid-object. Handing either straight
   // to a JSON parser produces a misleading "malformed JSON" failure that
   // hides the real cause; surface the real cause instead so callers can
-  // retry/log it as what it actually is instead of a shape/parse bug.
-  if (data.stop_reason === 'refusal') {
-    throw new AnthropicRefusalError(data.stop_details?.category);
+  // retry/log it as what it actually is instead of a shape/parse bug. Both
+  // errors carry only safe metadata (IDs, counts) — never response content.
+  if (stopReason === 'refusal') {
+    throw new AnthropicRefusalError(data.stop_details?.category, { requestId, model });
   }
-  if (data.stop_reason === 'max_tokens') {
-    throw new AnthropicMaxTokensError();
+  if (stopReason === 'max_tokens') {
+    const truncatedLength = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text || '').join('').length;
+    throw new AnthropicMaxTokensError({ requestId, model, maxTokens, responseLength: truncatedLength });
   }
 
+  let text;
   if (useForcedTool) {
     const toolUse = (data.content || []).find((b) => b.type === 'tool_use' && b.name === 'submit_result');
     // Re-stringify so every caller (via src/llm/parseJson.js) parses the
     // same way regardless of provider/mode — `input` here is already a JS
     // object, not text, since Anthropic parses the schema-constrained
     // generation for us.
-    return toolUse ? JSON.stringify(toolUse.input) : '';
+    text = toolUse ? JSON.stringify(toolUse.input) : '';
+  } else {
+    // Thinking blocks have type 'thinking' — only join text blocks.
+    text = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text || '').join('');
   }
 
-  // Thinking blocks have type 'thinking' — only join text blocks.
-  return (data.content || []).filter((b) => b.type === 'text').map((b) => b.text || '').join('');
+  // Bare-string return is the default (every existing caller expects a
+  // string). returnMeta is opt-in for callers that want safe-to-log metadata
+  // alongside it (model, stop reason, request ID) without a breaking change
+  // to the shared interface.
+  return returnMeta ? { text, stopReason, requestId, model } : text;
 }
 
 // Visibility into cost/caching — previously `usage` was discarded entirely,

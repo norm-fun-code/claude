@@ -173,3 +173,68 @@ test('normal end_turn responses are unaffected by the refusal/max_tokens guard',
     delete require.cache[require.resolve('../src/llm/providers/anthropic')];
   }
 });
+
+test('returnMeta: true returns {text, stopReason, requestId, model} instead of a bare string; default stays a bare string', async () => {
+  const ORIGINAL_ENV = { ...process.env };
+  process.env.ANTHROPIC_API_KEY = 'test-key';
+  const axios = require('axios');
+  const originalPost = axios.post;
+  axios.post = async () => ({
+    data: { id: 'msg_01abc', content: [{ type: 'text', text: 'hello back' }], stop_reason: 'end_turn', usage: {} },
+  });
+  try {
+    const anthropic = freshProvider();
+    const withMeta = await anthropic.generateText({ system: 'sys', prompt: 'hi', model: 'claude-opus-4-8', returnMeta: true });
+    assert.deepEqual(withMeta, { text: 'hello back', stopReason: 'end_turn', requestId: 'msg_01abc', model: 'claude-opus-4-8' });
+
+    const bare = await anthropic.generateText({ system: 'sys', prompt: 'hi', model: 'claude-opus-4-8' });
+    assert.equal(bare, 'hello back', 'without returnMeta, the return value is still a bare string (backward compatible)');
+  } finally {
+    axios.post = originalPost;
+    process.env = ORIGINAL_ENV;
+    delete require.cache[require.resolve('../src/llm/providers/anthropic')];
+  }
+});
+
+test('AnthropicRefusalError and AnthropicMaxTokensError carry only safe metadata (requestId, model, counts) — never content', async () => {
+  const ORIGINAL_ENV = { ...process.env };
+  process.env.ANTHROPIC_API_KEY = 'test-key';
+  const axios = require('axios');
+  const originalPost = axios.post;
+  try {
+    const anthropic = freshProvider();
+
+    axios.post = async () => ({
+      data: { id: 'msg_refused1', content: [], stop_reason: 'refusal', stop_details: { category: 'cyber' }, usage: {} },
+    });
+    await assert.rejects(
+      () => anthropic.generateText({ system: 'sys', prompt: 'hello', model: 'claude-opus-4-8' }),
+      (err) => {
+        assert.equal(err.requestId, 'msg_refused1');
+        assert.equal(err.model, 'claude-opus-4-8');
+        return true;
+      }
+    );
+
+    axios.post = async () => ({
+      data: { id: 'msg_trunc1', content: [{ type: 'text', text: 'a very sensitive secret partial answer' }], stop_reason: 'max_tokens', usage: {} },
+    });
+    await assert.rejects(
+      () => anthropic.generateText({ system: 'sys', prompt: 'hello', model: 'claude-opus-4-8', maxTokens: 4096 }),
+      (err) => {
+        assert.equal(err.requestId, 'msg_trunc1');
+        assert.equal(err.model, 'claude-opus-4-8');
+        assert.equal(err.maxTokens, 4096);
+        assert.equal(err.responseLength, 'a very sensitive secret partial answer'.length);
+        // The error's own message/fields must never contain the truncated text itself.
+        assert.ok(!err.message.includes('sensitive secret'));
+        assert.ok(!JSON.stringify(err).includes('sensitive secret'));
+        return true;
+      }
+    );
+  } finally {
+    axios.post = originalPost;
+    process.env = ORIGINAL_ENV;
+    delete require.cache[require.resolve('../src/llm/providers/anthropic')];
+  }
+});

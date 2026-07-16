@@ -20,11 +20,19 @@ const WISDOM_JSON = JSON.stringify({
   notionInsight: 'Test notion insight.',
 });
 
+// The chief-brief call requests returnMeta:true (it needs safe-to-log
+// metadata alongside the text — see briefing-ai.js), so it gets
+// {text, stopReason, requestId, model} back, not a bare string. The wisdom
+// call doesn't request returnMeta and still expects a bare string.
+function chiefMeta(text) {
+  return { text, stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8' };
+}
+
 function stubLlm(responses) {
   // responses: array of strings returned in call order (chief first in generateBriefing's
   // Promise.all ordering doesn't matter since we key off the SYSTEM prompt instead).
   llm.generateText = async ({ system }) => {
-    if (system.includes('chief of staff and data scientist')) return responses.chief;
+    if (system.includes('chief of staff and data scientist')) return chiefMeta(responses.chief);
     if (system.includes('reflective "wisdom" section')) return responses.wisdom;
     throw new Error('unexpected system prompt in stub');
   };
@@ -101,9 +109,9 @@ test('generateChiefBrief retries once and recovers if the second attempt is vali
     if (!system.includes('chief of staff and data scientist')) return WISDOM_JSON;
     call++;
     // First call: invalid (missing "move"). Second call (the retry): valid.
-    return call === 1
+    return chiefMeta(call === 1
       ? JSON.stringify({ chiefBrief: { synthesis: 'x', action: 'y', risk: 'z' }, morningFocus: 'f' })
-      : CHIEF_JSON;
+      : CHIEF_JSON);
   };
   const result = await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
   assert.equal(call, 2, 'expected exactly one retry');
@@ -116,7 +124,7 @@ test('generateChiefBrief gives up (null) only after BOTH attempts fail', async (
   llm.generateText = async ({ system }) => {
     if (!system.includes('chief of staff and data scientist')) return WISDOM_JSON;
     call++;
-    return 'not json at all, both times';
+    return chiefMeta('not json at all, both times');
   };
   const result = await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
   assert.equal(call, 2, 'expected the retry to have been attempted before giving up');
@@ -148,7 +156,7 @@ test('generateChiefBrief logs which field was invalid so a silent stale-brief fa
 });
 
 test('generateChiefBrief falls back to empty shape on malformed JSON', async () => {
-  llm.generateText = async () => 'not json at all';
+  llm.generateText = async () => chiefMeta('not json at all');
   const result = await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
   assert.deepEqual(result, { morningFocus: '', chiefBrief: null, urgentEmails: [] });
 });
@@ -173,7 +181,7 @@ test('generateBriefing (combined, backward-compat) merges both calls into one ob
 test('CHIEF_SYSTEM tells the model never to count a personal-calendar block (e.g. a Sabbath window) as calendar load', async () => {
   let capturedSystem = null;
   llm.generateText = async ({ system }) => {
-    if (system.includes('chief of staff and data scientist')) { capturedSystem = system; return CHIEF_JSON; }
+    if (system.includes('chief of staff and data scientist')) { capturedSystem = system; return chiefMeta(CHIEF_JSON); }
     return WISDOM_JSON;
   };
   await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
@@ -191,7 +199,7 @@ test('CHIEF_SYSTEM tells the model never to count a personal-calendar block (e.g
 test('CHIEF_SYSTEM instructs confidence calibration — hedge noisy small-base signals, state durable trends plainly', async () => {
   let capturedSystem = null;
   llm.generateText = async ({ system }) => {
-    if (system.includes('chief of staff and data scientist')) { capturedSystem = system; return CHIEF_JSON; }
+    if (system.includes('chief of staff and data scientist')) { capturedSystem = system; return chiefMeta(CHIEF_JSON); }
     return WISDOM_JSON;
   };
   await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
@@ -208,7 +216,7 @@ test('CHIEF_SYSTEM instructs confidence calibration — hedge noisy small-base s
 test('CHIEF_SYSTEM instructs relaying life-chapter facts forward, not restating them', async () => {
   let capturedSystem = null;
   llm.generateText = async ({ system }) => {
-    if (system.includes('chief of staff and data scientist')) { capturedSystem = system; return CHIEF_JSON; }
+    if (system.includes('chief of staff and data scientist')) { capturedSystem = system; return chiefMeta(CHIEF_JSON); }
     return WISDOM_JSON;
   };
   await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
@@ -225,7 +233,7 @@ test('CHIEF_SYSTEM instructs relaying life-chapter facts forward, not restating 
 test('CHIEF_SYSTEM forbids embellishing the affirmation with an invented feeling not present in the data', async () => {
   let capturedSystem = null;
   llm.generateText = async ({ system }) => {
-    if (system.includes('chief of staff and data scientist')) { capturedSystem = system; return CHIEF_JSON; }
+    if (system.includes('chief of staff and data scientist')) { capturedSystem = system; return chiefMeta(CHIEF_JSON); }
     return WISDOM_JSON;
   };
   await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
@@ -248,7 +256,7 @@ test('CHIEF_SYSTEM forbids embellishing the affirmation with an invented feeling
 test('CHIEF_SYSTEM forbids inventing sensory/emotional detail or altering a named thing\'s exact wording, globally (not just in affirmation)', async () => {
   let capturedSystem = null;
   llm.generateText = async ({ system }) => {
-    if (system.includes('chief of staff and data scientist')) { capturedSystem = system; return CHIEF_JSON; }
+    if (system.includes('chief of staff and data scientist')) { capturedSystem = system; return chiefMeta(CHIEF_JSON); }
     return WISDOM_JSON;
   };
   await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
@@ -266,7 +274,7 @@ test('generateBriefing runs chief and wisdom calls concurrently, not serially', 
     order.push(`${label}:start`);
     await new Promise((r) => setTimeout(r, 20));
     order.push(`${label}:end`);
-    return label === 'chief' ? CHIEF_JSON : WISDOM_JSON;
+    return label === 'chief' ? chiefMeta(CHIEF_JSON) : WISDOM_JSON;
   };
   await generateBriefing([], 'notion text', 'a quote', 'Tuesday', { type: 'Rest' }, []);
   // Both starts happen before either end — proof they overlapped rather than
