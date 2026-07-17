@@ -149,3 +149,57 @@ test('neutralizeClaimViolations strips the offending sentence, keeping the rest'
   // Original is not mutated.
   assert.match(result.chiefBrief.synthesis, /green/);
 });
+
+// ── Recovery causation (Bug 2: bind context to the night it describes) ──────
+const FACTS_WITH_DRIVER = { ...FACTS, recoveryDrivers: ['Drank wine'] };
+const FACTS_NO_DRIVER = { ...FACTS, recoveryDrivers: [] };
+
+test('general context cannot become a recovery cause: no eligible driver, but the brief guesses one anyway', () => {
+  const { violations, hasHighSeverity } = validateChiefBriefClaims(
+    brief({ synthesis: 'Recovery dipped to 41 because of the big presentation you have today.' }),
+    FACTS_NO_DRIVER
+  );
+  assert.ok(violations.some((v) => v.check === 'recovery_cause'));
+  assert.ok(hasHighSeverity);
+});
+
+test('a genuinely eligible recovery driver may explain recovery without being flagged', () => {
+  const { violations } = validateChiefBriefClaims(
+    brief({ synthesis: 'Recovery dipped to 41 because of the wine last night — HRV took the hit.' }),
+    FACTS_WITH_DRIVER
+  );
+  assert.ok(!violations.some((v) => v.check === 'recovery_cause'));
+});
+
+test('an eligible driver exists, but the brief cites something else entirely — still flagged', () => {
+  const { violations } = validateChiefBriefClaims(
+    brief({ risk: 'Your recovery is down today, likely driven by the stressful week at work.' }),
+    FACTS_WITH_DRIVER
+  );
+  assert.ok(violations.some((v) => v.check === 'recovery_cause'));
+});
+
+test('a non-causal recovery sentence (no cause asserted) is never flagged', () => {
+  const { violations } = validateChiefBriefClaims(
+    brief({ synthesis: 'Recovery is 41/100 today, in the red band.' }),
+    FACTS_NO_DRIVER
+  );
+  assert.ok(!violations.some((v) => v.check === 'recovery_cause'));
+});
+
+test('neutralizing a recovery_cause violation removes the fabricated cause, not the whole field', () => {
+  const { neutralizeClaimViolations } = require('../src/brain/claimValidator');
+  const result = brief({ synthesis: 'Recovery is 41 today. Recovery dipped because of the big presentation today.' });
+  const { violations } = validateChiefBriefClaims(result, FACTS_NO_DRIVER);
+  const cleaned = neutralizeClaimViolations(result, violations, FACTS_NO_DRIVER);
+  assert.match(cleaned.chiefBrief.synthesis, /Recovery is 41 today/);
+  assert.doesNotMatch(cleaned.chiefBrief.synthesis, /big presentation/);
+});
+
+test('absent facts.recoveryDrivers (older/partial facts object) never triggers recovery_cause', () => {
+  const { violations } = validateChiefBriefClaims(
+    brief({ synthesis: 'Recovery dipped because of a rough week.' }),
+    FACTS // no recoveryDrivers key at all
+  );
+  assert.ok(!violations.some((v) => v.check === 'recovery_cause'));
+});

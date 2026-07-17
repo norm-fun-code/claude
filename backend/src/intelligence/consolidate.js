@@ -226,7 +226,14 @@ async function gatherFindings() {
   try {
     const open = await findingsStore.listFindings({ status: 'open' });
     const correlations = open
-      .filter((f) => CORRELATION_TYPES.has(f.type) && (f.type !== 'correlation' || f.evidence?.confirmed === true))
+      .filter((f) =>
+        CORRELATION_TYPES.has(f.type) &&
+        (f.type !== 'correlation' || f.evidence?.confirmed === true) &&
+        // Defense-in-depth: analyze.js no longer generates lag>=2 findings at
+        // all, but a persisted finding from before that fix (not yet
+        // superseded) must not reach the self-model / chief-brief prompt.
+        (f.evidence?.lag ?? 0) < 2
+      )
       .slice(0, 5);
     const leverage = open.filter((f) => f.type === 'leverage').slice(0, 3);
     return { correlations, leverage };
@@ -366,9 +373,14 @@ function buildModelText(data) {
     if (beliefsSection) lines.push(beliefsSection);
   }
 
-  // --- Confirmed relationships ---
+  // --- Observed relationships ---
+  // Deliberately NOT labeled "confirmed" — these are statistically significant
+  // (FDR-corrected, and for split-based types now also holdout-stable for any
+  // lagged one) associations in the user's OWN data, not causally proven
+  // effects. Only a completed self-experiment earns causal framing (see
+  // buildDurableProfile's separate PROVEN ON THEM section in crossContext.js).
   if (findings.correlations.length) {
-    lines.push(`CONFIRMED RELATIONSHIPS: ${findings.correlations.map((f) => f.title).join(' · ')}`);
+    lines.push(`OBSERVED PATTERNS (statistical associations in your data, not proven causes): ${findings.correlations.map((f) => f.title).join(' · ')}`);
   }
 
   // --- Highest leverage ---

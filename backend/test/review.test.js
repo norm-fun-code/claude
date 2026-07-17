@@ -36,7 +36,7 @@ test('composeReview tolerates an empty week', () => {
     metrics: [], correlations: [], forecasts: [], leverage: [], annotations: [], intentions: [],
   });
   assert.match(prompt, /not enough data/i);
-  assert.match(prompt, /none confirmed/i);
+  assert.match(prompt, /none identified this week/i);
   assert.match(prompt, /none set/i); // intentions section present even when empty
 });
 

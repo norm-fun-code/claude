@@ -107,6 +107,45 @@ function checkRecoveryScore(result, facts) {
   return violations;
 }
 
+// ── Recovery causation ───────────────────────────────────────────────────────
+// A causal recovery sentence ("recovery dipped because of the wine last
+// night") must name a driver present in facts.recoveryDrivers — annotations
+// that are BOTH topically health-plausible AND fall inside the EXACT
+// overnight window that produced today's reading (see
+// intelligence/recovery-drivers.js). General life context (a same-day
+// meeting, a habit trend, an invented guess) never qualifies, no matter how
+// health-plausible it sounds — and when no eligible driver exists at all,
+// asserting ANY cause is a violation: the brief should say the cause is
+// unknown, not guess.
+const CAUSAL_RE = /\b(because|due to|thanks to|caused by|driven by|driving|drove|drives|explains?|behind (?:the|this|today'?s)|from (?:the|last night'?s|yesterday'?s))\b/i;
+const CAUSE_OVERLAP_THRESHOLD = 0.3;
+function checkRecoveryCause(result, facts) {
+  // Only meaningful once the caller has actually computed eligible drivers —
+  // absent facts.recoveryDrivers (an older/partial facts object), stay silent
+  // rather than false-positive on every causal recovery sentence.
+  if (!facts || !Array.isArray(facts.recoveryDrivers)) return [];
+  const drivers = facts.recoveryDrivers;
+  const violations = [];
+  for (const [field, text] of briefFields(result)) {
+    for (const sentence of splitIntoSentences(text)) {
+      if (!RECOVERY_CONTEXT_RE.test(sentence)) continue;
+      if (!CAUSAL_RE.test(sentence)) continue;
+      const groundedInDriver = drivers.some((d) => overlapRatio(sentence, d) >= CAUSE_OVERLAP_THRESHOLD);
+      if (!groundedInDriver) {
+        violations.push({
+          check: 'recovery_cause', field, sentence, severity: 'high',
+          expected: drivers.length ? drivers.join('; ') : 'unknown — no eligible recovery driver',
+          actual: 'an unsupported cause',
+          message: drivers.length
+            ? `attributes a cause to recovery that isn't among the eligible recovery drivers (${drivers.join('; ')})`
+            : 'attributes a cause to recovery with no eligible recovery driver available — should say the cause is unknown instead of guessing',
+        });
+      }
+    }
+  }
+  return violations;
+}
+
 // ── Effective workout ────────────────────────────────────────────────────────
 // The production bug this whole layer chases: the brief prescribing the ORIGINAL
 // scheduled hard session ("scale back today's Push", "crush your Pull") when
@@ -320,6 +359,7 @@ function validateChiefBriefClaims(result, facts) {
   const violations = [
     ...checkRecoveryBand(result, facts),
     ...checkRecoveryScore(result, facts),
+    ...checkRecoveryCause(result, facts),
     ...checkEffectiveWorkout(result, facts),
     ...checkCompletion(result, facts),
     ...checkExperiments(result, facts),
@@ -441,6 +481,6 @@ module.exports = {
   validateChiefBriefClaims, buildClaimCorrectionPrompt, neutralizeClaimViolations,
   REQUIRED_BRIEF_FIELDS, groundedFallbackSentence, ensureRequiredFieldsPresent,
   // Exposed for focused unit tests:
-  checkRecoveryBand, checkRecoveryScore, checkEffectiveWorkout,
+  checkRecoveryBand, checkRecoveryScore, checkRecoveryCause, checkEffectiveWorkout,
   checkCompletion, checkExperiments, checkSpending, checkForecast, checkCurrentDate, briefFields,
 };

@@ -27,8 +27,16 @@ function persistDismiss(key: string) {
 // One question at a time — show the first unanswered signal, answer it, then
 // the card slides to the next (or disappears). Answers POST as annotations so
 // they flow automatically into the next briefing build's annotationsContext.
-// Answered/skipped keys are persisted for 24h so the card doesn't reappear
-// on pull-to-refresh or app restart while the signal is still firing.
+//
+// The AsyncStorage ledger below is an OPTIMISTIC UI CACHE ONLY, scoped to
+// this device/session — it hides a just-answered question instantly so it
+// doesn't flash back before the next server refetch. It is NOT the source of
+// truth: durable subject-keyed signals (e.g. `calendar_load:<date>`) are
+// deduplicated server-side (store/signalAnswers.js) — the server simply
+// omits an already-answered day's question from `signals` on the next build,
+// regardless of what this cache remembers. A fresh install, a second device,
+// or a cleared cache all still see the correct (already-answered) state.
+
 function BriefSignalsCard({ signals }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
@@ -65,7 +73,12 @@ function BriefSignalsCard({ signals }: Props) {
       const res = await fetchWithTimeout(BRIEFING_CONTEXT_URL, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ question: current.question, answer: trimmed, signalKey: current.key }),
+        body: JSON.stringify({
+          question: current.question,
+          answer: trimmed,
+          signalKey: current.key,
+          fingerprint: current.fingerprint,
+        }),
       });
       if (!res.ok) throw new Error(`Server ${res.status}`);
       setAnswered((prev) => new Set([...prev, current.key]));

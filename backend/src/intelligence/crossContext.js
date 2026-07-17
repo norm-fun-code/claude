@@ -25,9 +25,15 @@ const CROSS_TYPES = new Set(['habit_split', 'sleep_impact', 'activity_impact']);
 /** Pull the cross-domain relationships worth synthesizing from open findings.
  *  Excludes all wealth-domain correlations — they are lifestyle confounds
  *  (people who sleep well / exercise tend to earn more, but the causal arrow
- *  doesn't run from your habits to your bank account in any actionable way). */
+ *  doesn't run from your habits to your bank account in any actionable way).
+ *  Also excludes any lag>=2 finding — analyze.js no longer generates these
+ *  (a two-night-delayed effect is scientifically weak to claim from daily
+ *  observational data), but this filter is a defense-in-depth backstop for
+ *  any older persisted finding that predates that fix and hasn't been
+ *  superseded yet. */
 function selectCrossDomain(findings) {
   return findings.filter((f) => {
+    if ((f.evidence?.lag ?? 0) >= 2) return false;
     if (CROSS_TYPES.has(f.type)) return true;
     if (f.type === 'correlation' && f.evidence?.crossDomain === true) {
       const { a, b } = f.evidence || {};
@@ -37,6 +43,24 @@ function selectCrossDomain(findings) {
     }
     return false;
   });
+}
+
+/** Confidence for a generated cross-context insight, DERIVED from the source
+ *  findings it's synthesized from — never a fixed constant. Averages each
+ *  source finding's own confidence (already a real statistical quantity —
+ *  effect size × significance for a correlation, effect size for a split),
+ *  so a synthesis built from strong, well-confirmed relationships reads more
+ *  confident than one built from thin, borderline ones. Falls back to a
+ *  conservative 0.5 (not the old flat 0.7) when no source confidence is
+ *  available at all. */
+function deriveConfidence(relationships) {
+  const vals = (relationships || [])
+    .map((f) => f.confidence)
+    .filter((c) => c != null && Number.isFinite(Number(c)))
+    .map(Number);
+  if (!vals.length) return 0.5;
+  const avg = vals.reduce((sum, v) => sum + v, 0) / vals.length;
+  return Math.round(Math.min(0.95, Math.max(0.1, avg)) * 1000) / 1000;
 }
 
 /**
@@ -214,16 +238,27 @@ async function generateCrossContext({ minRelationships = 2 } = {}) {
       ? ins.domains
       : [...new Set(relationships.flatMap((f) => f.domains || []))];
     try {
+      const basisRelationships = relationships.slice(0, 8);
       await findingsStore.createFinding({
         type: 'cross_context',
         domains,
         title: String(ins.headline).slice(0, 140),
         detail: String(ins.insight).slice(0, 600),
-        confidence: 0.7,
+        confidence: deriveConfidence(basisRelationships),
         evidence: {
           auto: true,
           kind: 'cross_context',
-          basis: relationships.slice(0, 8).map((f) => f.title),
+          // Structured, not just title strings — preserves each source
+          // finding's actual lag/confidence through this layer so a
+          // downstream consumer (leverage.js, an audit, a future dashboard)
+          // can tell a same-day synthesis from a next-day one instead of
+          // losing that distinction the moment it becomes prose.
+          basis: basisRelationships.map((f) => ({
+            title: f.title,
+            type: f.type,
+            lag: f.evidence?.lag ?? 0,
+            confidence: Number.isFinite(Number(f.confidence)) ? Number(f.confidence) : null,
+          })),
           generatedAt: new Date().toISOString(),
         },
       });
@@ -237,7 +272,7 @@ async function generateCrossContext({ minRelationships = 2 } = {}) {
   return { generated: created, insights };
 }
 
-module.exports = { generateCrossContext, selectCrossDomain, buildPrompt, buildDurableProfile };
+module.exports = { generateCrossContext, selectCrossDomain, buildPrompt, buildDurableProfile, deriveConfidence };
 
 if (require.main === module) {
   const { pool } = require('../db');

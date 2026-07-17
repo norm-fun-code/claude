@@ -239,6 +239,100 @@ test('computeAnomalies: stale Pod HRV/RHR (not from today) is suppressed', () =>
   assert.ok(fresh.find((f) => f.evidence.metric === 'health:hrv'), 'a same-day reading should still flag');
 });
 
+// ── Bug 3 (remove scientifically weak delayed-effect claims) ────────────────
+
+test('computeHabitHealthSplits: FDR correction runs across the COMPLETE tested family, not just candidates that already look significant', () => {
+  const stats = require('../src/intelligence/stats');
+  const originalBH = stats.benjaminiHochberg;
+  const capturedLengths = [];
+  stats.benjaminiHochberg = (pvalues, q) => {
+    capturedLengths.push(pvalues.length);
+    return originalBH(pvalues, q);
+  };
+  try {
+    const N = 42;
+    // 5 core habits, each structurally testable (>=5 per group).
+    const habits = {
+      'habits:cold_shower':  mkSeries(N, (i) => (i % 2 === 0 ? 1 : 0)),
+      // morning_tm and afternoon_tm deliberately OVERLAP on i%6===0 (7 of the
+      // 42 days) so the "both meditations" combo below also has >=MIN_N in
+      // each group — otherwise it silently contributes 0 candidates instead
+      // of the 8 this test counts on.
+      'habits:morning_tm':   mkSeries(N, (i) => (i % 2 === 0 ? 1 : 0)),
+      'habits:afternoon_tm': mkSeries(N, (i) => (i % 3 === 0 ? 1 : 0)),
+      'habits:gratitude':    mkSeries(N, (i) => (i % 4 === 0 ? 1 : 0)),
+      'habits:exercise':     mkSeries(N, (i) => (i % 4 === 1 ? 1 : 0)),
+    };
+    // Exactly ONE real, clean signal: cold showers -> clearly higher HRV.
+    const realOutcome = { 'health:hrv': mkSeries(N, (i) => (i % 2 === 0 ? 62 : 44) + (i % 5) * 0.1) };
+    // Every OTHER outcome is a perfectly flat, zero-variance series — no habit
+    // can show a real effect against it (pct=0, p=1), but it's still a fully
+    // valid, testable hypothesis (plenty of N in both groups). Under the OLD
+    // (buggy) code these never entered `candidates` at all — pre-filtered out
+    // by p>ALPHA/pct<MIN_PCT BEFORE Benjamini-Hochberg ran — so the correction
+    // silently ran over a tiny, cherry-picked family instead of everything
+    // actually tested.
+    const flatOutcomes = {
+      'health:resting_hr':       mkSeries(N, () => 55),
+      'health:sleep_score':      mkSeries(N, () => 80),
+      'health:sleep_hours':      mkSeries(N, () => 7),
+      'health:rem_sleep_hours':  mkSeries(N, () => 1.5),
+      'health:deep_sleep_hours': mkSeries(N, () => 1.2),
+      'wellbeing:mood':          mkSeries(N, () => 4),
+      'wellbeing:energy':        mkSeries(N, () => 4),
+    };
+    a.computeHabitHealthSplits({ ...habits, ...realOutcome, ...flatOutcomes });
+
+    // 5 habits x 8 outcomes (same-day) + "both meditations" x 8 outcomes = 48
+    // structurally-valid tests. Every single one — including the 7 flat,
+    // never-individually-significant outcomes — must reach the FDR call.
+    assert.ok(capturedLengths.length >= 1, 'benjaminiHochberg must have been called');
+    assert.equal(capturedLengths[0], 48,
+      `FDR must run over the full tested family (48 structurally-valid habit x outcome tests), got ${capturedLengths[0]}`);
+  } finally {
+    stats.benjaminiHochberg = originalBH;
+  }
+});
+
+test('computeHabitHealthSplits: never generates a lag>=2 finding (removed at the source, not just hidden downstream)', () => {
+  const N = 60;
+  // A context tag with a genuine-looking 2-day-delayed pattern — if lag=2
+  // were still computed, this would very likely surface it.
+  const alcohol = mkSeries(N, (i) => (i % 3 === 0 ? 1 : 0));
+  const hrv = mkSeries(N, (i) => (((i - 2 + N) % 3) === 0 ? 40 : 55));
+  const findings = a.computeHabitHealthSplits({ 'context:alcohol': alcohol, 'health:hrv': hrv });
+  for (const f of findings) {
+    assert.ok((f.evidence.lag ?? 0) < 2, `no finding may carry lag>=2, got lag=${f.evidence.lag}`);
+  }
+});
+
+test('observational split/correlation findings never use causal wording ("drives"/"costs"/"boosts"/"effect") or arrows implying causality', () => {
+  const N = 42;
+  const FORBIDDEN = /\bdrives?\b|\bcosts?\b|\bboosts?\b|\beffect\b|→|↔/i;
+
+  const tm = mkSeries(N, (i) => (i % 2 === 0 ? 1 : 0));
+  const hrv = mkSeries(N, (i) => (i % 2 === 0 ? 60 : 45) + (i % 5) * 0.1);
+  const habitFindings = a.computeHabitHealthSplits({ 'habits:cold_shower': tm, 'health:hrv': hrv });
+  assert.ok(habitFindings.length > 0, 'sanity: expected at least one habit_split finding');
+
+  const eat = mkSeries(N, (i) => (i % 2 === 0 ? 4 : 1));
+  const hrvDay = mkSeries(N, (i) => (i % 2 === 0 ? 50 : 38));
+  const cardioFindings = a.computeDaytimeCardio({ 'health:hrv_daytime': hrvDay, 'habits:eat_healthy': eat });
+  assert.ok(cardioFindings.length > 0, 'sanity: expected at least one daytime_cardio finding');
+
+  const sleepScore = mkSeries(N, (i) => 60 + (i % 7) * 5);
+  const hrvSleep = mkSeries(N, (i) => 45 + (i % 7) * 3);
+  const sleepFindings = a.computeSleepImpact({ 'health:sleep_score': sleepScore, 'health:hrv': hrvSleep });
+  assert.ok(sleepFindings.length > 0, 'sanity: expected at least one sleep_impact finding');
+
+  const corrFindings = a.computeCorrelations({ 'health:hrv': mkSeries(N, (i) => 40 + i), 'wellbeing:mood': mkSeries(N, (i) => 2 + i * 0.2) });
+
+  for (const f of [...habitFindings, ...cardioFindings, ...sleepFindings, ...corrFindings]) {
+    assert.doesNotMatch(f.title, FORBIDDEN, `title uses forbidden causal wording: "${f.title}"`);
+    assert.doesNotMatch(f.detail, FORBIDDEN, `detail uses forbidden causal wording: "${f.detail}"`);
+  }
+});
+
 test('computeHabitHealthSplits: mood is a first-class outcome of habits', () => {
   const N = 42;
   // Meditation on even days; mood clearly (and consistently) higher those days.

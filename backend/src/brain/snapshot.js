@@ -320,13 +320,20 @@ function realtimeTodayContext(snapshot, briefing, opts = {}) {
  *  ONE fact-shaping function: both canonicalFacts(snapshot) and the briefing
  *  hot path (which already has these parts in scope) call THIS, so a brief is
  *  always validated against the identical fact shape the snapshot exposes. */
-function canonicalFactsFrom({ recovery, effectiveWorkout, forecast, goals, commitments, experiments, wealth, localDate } = {}) {
+function canonicalFactsFrom({ recovery, effectiveWorkout, forecast, goals, commitments, experiments, wealth, localDate, recoveryDrivers } = {}) {
   const r = recovery, w = effectiveWorkout, f = forecast;
   return {
     localDate: localDate ?? null,
     recoveryScore: r?.score ?? null,
     recoveryBand: r?.band ?? null,
     recoveryProxy: r?.proxy ?? false,
+    // The ONLY annotations eligible to explain TODAY's recovery number —
+    // purpose:'health', temporally aligned to the exact overnight window
+    // that produced the reading (see routes/briefing.js's recoveryDriversContext
+    // block). Empty means no eligible driver exists: checkRecoveryCause (below,
+    // via brain/claimValidator.js) neutralizes any causal recovery sentence
+    // when this is empty, rather than let the model's own guess ship.
+    recoveryDrivers: (recoveryDrivers || []).filter(Boolean),
     effectiveWorkoutLabel: w?.label ?? null,
     effectiveWorkoutId: w?.workoutId ?? null,
     effectiveWorkoutSource: w?.source ?? null,       // override | auto_downgrade | scheduled

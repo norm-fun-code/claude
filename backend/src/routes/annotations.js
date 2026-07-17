@@ -11,7 +11,8 @@ const express = require('express');
 const annotationsStore = require('../store/annotations');
 const briefingsStore = require('../store/briefings');
 const dayJournalStore = require('../store/dayJournal');
-const { naiveToUtcIso, localDayBoundsUtc } = require('../util/date');
+const signalAnswersStore = require('../store/signalAnswers');
+const { naiveToUtcIso, localDayBoundsUtc, localDateStr } = require('../util/date');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { requireFields } = require('../middleware/validate');
 const { EVENT_KIND } = require('../intelligence/context-semantics');
@@ -70,9 +71,26 @@ function createAnnotationsRouter() {
   // Pre-brief context answers — user responds to a signal question; store as
   // annotation so it flows into annotationsContext on the next briefing build.
   router.post('/briefing/context', asyncHandler(async (req, res) => {
-    const { question, answer, signalKey } = req.body || {};
+    const { question, answer, signalKey, fingerprint } = req.body || {};
     if (!answer || typeof answer !== 'string' || !answer.trim()) {
       return res.status(400).json({ error: 'answer required' });
+    }
+    // Durable, server-side dedup for calendar_load signals (see
+    // intelligence/pre-brief-signals.js and store/signalAnswers.js): a
+    // signalKey of the form `calendar_load:<local-date>` is a STABLE subject
+    // key shared by both "tomorrow's calendar is heavily blocked" (asked the
+    // day before) and "you have N.Nh of meetings today" (asked same-day) —
+    // recording the answer here is what lets either one suppress the other
+    // on a later build, regardless of which build asked first. The mobile
+    // client's AsyncStorage cache is only an optimistic UI layer in front of
+    // this; a fresh install / second device / cache eviction must still not
+    // re-ask a question already answered here.
+    const CALENDAR_LOAD_KEY_RE = /^calendar_load:(\d{4}-\d{2}-\d{2})$/;
+    const calendarLoadMatch = CALENDAR_LOAD_KEY_RE.exec(String(signalKey || ''));
+    if (calendarLoadMatch) {
+      signalAnswersStore
+        .recordAnswer({ subjectKey: 'calendar_load', localDate: calendarLoadMatch[1], fingerprint, answer: answer.trim() })
+        .catch((e) => console.error('[briefing/context] signal answer record failed:', e.message));
     }
     // Tag spending-related answers so they're excluded from health/recovery anomaly
     // context (a "$665 on vacation" answer must never explain a low-HRV deviation).
@@ -82,22 +100,49 @@ function createAnnotationsRouter() {
     // caught by its own wording.
     const FINANCIAL_RE = /\b(spend|spent|spending|financ|wealth|budget|money|bill|bills|rent|rental|invoice|purchase|bought|payment|paid|expense|refund|salary|paycheck|mortgage|loan|vacation|flight|hotel|dollar|cost)\b|\$/i;
     const isSpending = FINANCIAL_RE.test(`${signalKey || ''} ${question || ''} ${answer}`);
-    // An answer to a question framed around "last night"/"yesterday" is
-    // explaining something already PAST (e.g. "No Eight Sleep reading last
-    // night — device issue, or skipped it?" -> "Didn't sleep home") — not a
-    // forward-looking note. createAnnotation's default window (start_ts=now,
-    // end_ts=end of TOMORROW) is built for the opposite case (a note entered
-    // now about today/tomorrow), so left at "now" this reads as active
-    // THROUGH tomorrow — exactly how a real answer about last night ended up
-    // being cited as a caveat on TOMORROW's forecast instead of explaining
-    // today's already-collected data. Backdate to yesterday so the default
-    // window (yesterday -> end of today) covers what it actually explains.
+    // An answer explaining something already PAST ("No Eight Sleep reading
+    // last night — device issue, or skipped it?" -> "Didn't sleep home", or
+    // a question with no such phrasing answered "overnight guest") is not a
+    // forward-looking note — bind its EFFECTIVE window to the actual night it
+    // describes, not to createAnnotation's default (start_ts=now, end_ts=end
+    // of TOMORROW), which reads a last-night answer as active through
+    // tomorrow night too and lets it get cited as a caveat on TOMORROW's
+    // forecast instead of explaining last night's already-collected data.
+    // Scan question AND answer together (matches FINANCIAL_RE's approach
+    // above) — a free-text answer to a question with no such phrasing still
+    // needs to be recognized ("Woke up at 3am" answering a generic prompt).
     const PAST_REFERRING_RE = /\blast night\b|\byesterday\b|\bovernight\b/i;
-    const startTs = PAST_REFERRING_RE.test(question || '')
-      ? new Date(Date.now() - 24 * 60 * 60 * 1000)
-      : new Date();
+    const isPastReferring = PAST_REFERRING_RE.test(`${question || ''} ${answer}`);
+    // The user's timezone (matches GET /annotations above) — a night window
+    // computed in the wrong tz can land on the wrong calendar date entirely.
+    const tz = req.headers['x-time-zone'] || process.env.TZ || 'America/New_York';
+    const nowTs = new Date();
+    let startTs = nowTs;
+    let effectiveEndTs; // undefined = let createAnnotation apply its normal default
+    if (isPastReferring) {
+      // Reuse the SAME previous-evening -> wake-window projection the health-
+      // anomaly pipeline uses to decide what "last night" actually spans
+      // (analyze.js's resolveNightWindow) — one canonical definition of "last
+      // night," not a second, looser one reinvented here. `created_at` (set
+      // by the DB default below) is untouched by any of this; only the
+      // annotation's effective start_ts/end_ts move.
+      const { resolveNightWindow } = require('../intelligence/analyze');
+      const metricsStore = require('../store/metrics');
+      const todayKey = localDateStr(tz, nowTs);
+      let wakeTimeSeries = [];
+      try {
+        const from = new Date(nowTs.getTime() - 3 * 24 * 60 * 60 * 1000);
+        wakeTimeSeries = await metricsStore.dailyAggregatePreferSource({
+          domain: 'health', metric: 'wake_time', from, agg: 'avg', sources: ['eight_sleep'],
+        });
+      } catch { /* resolveNightWindow falls back to a default wake hour */ }
+      const nightWindow = resolveNightWindow(todayKey, wakeTimeSeries, tz);
+      startTs = nightWindow.start;
+      effectiveEndTs = nightWindow.end;
+    }
     const { id, eventKind, retiredAnnotationId } = await annotationsStore.createAnnotation({
       startTs: startTs.toISOString(),
+      endTs: effectiveEndTs ? effectiveEndTs.toISOString() : undefined,
       category: isSpending ? 'spending note' : 'brief_context',
       label: answer.trim().slice(0, 500),
       note: question ? `Q: ${question.slice(0, 300)}` : (signalKey ?? null),
@@ -117,13 +162,11 @@ function createAnnotationsRouter() {
     const isDayContext = (!signalKey || signalKey === 'manual_context') && answer.trim().length >= 6
       && eventKind !== EVENT_KIND.RETRACTION;
     if (isDayContext) {
-      const tz = process.env.TZ || 'America/New_York';
-      // A past-referring question ("last night", "yesterday") is asking about the
-      // previous day — store the journal entry for that day so it shows up as
-      // context for the right date (not today's evening brief or tomorrow's morning).
-      const entryDate = PAST_REFERRING_RE.test(question || '')
-        ? new Date(Date.now() - 24 * 60 * 60 * 1000).toLocaleDateString('en-CA', { timeZone: tz })
-        : new Date().toLocaleDateString('en-CA', { timeZone: tz });
+      // A past-referring answer ("last night", "yesterday") is describing the
+      // previous evening — store the journal entry against THAT date (the
+      // same effective start_ts computed above) so it shows up as context for
+      // the right date, not today's evening brief or tomorrow's morning.
+      const entryDate = isPastReferring ? localDateStr(tz, startTs) : localDateStr(tz, nowTs);
       // Awaited (not fire-and-forget): a caller reading dayJournalStore right
       // after this response resolves — the mobile app's own optimistic UI,
       // Ask, the evening brief — must see the entry. This used to be a bare

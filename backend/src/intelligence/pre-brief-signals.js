@@ -3,38 +3,75 @@
 // annotations, which flow into annotationsContext automatically next build.
 //
 // Each signal: { key, question, context, severity }
-//   key      — stable ID for dedup / dismissal
+//   key      — stable ID for dedup / dismissal. For calendar-load signals
+//              this is `calendar_load:<local-date>` — a DURABLE subject key
+//              shared across whichever build asks about that date (see
+//              calendarLoadAnswers below), not a per-call literal.
 //   question — the string shown to the user
 //   context  — label prefix used when the answer is stored as an annotation
 //   severity — 0–1, higher floats to top in selectQuestions()
 
-const { toMinutesSinceMidnight } = require('../util/date');
+const { toMinutesSinceMidnight, localDateStr, addDays } = require('../util/date');
+const { computeCalendarLoad } = require('./calendar-load');
 
 const fmt = (n) => '$' + Math.round(Math.abs(n)).toLocaleString('en-US');
 
-function buildSignals({ recovery, calendar = [], workBusy = [], spend, spendBaseline, tomorrowWorkBusy = [] }) {
+// How much a calendar-load fingerprint (meeting-hours, or 'allday') has to
+// move before a previously-answered day's question is allowed to resurface —
+// a genuinely rescheduled day, not the same schedule read a few minutes
+// apart by two different signals (today's packed-calendar vs yesterday's
+// tomorrow-look-ahead computing the same underlying day).
+const CALENDAR_LOAD_CHANGE_THRESHOLD_HOURS = 1;
+
+function calendarLoadFingerprint(load) {
+  return load.isAllDayBlocked ? 'allday' : load.meetingHours.toFixed(2);
+}
+
+/** True if `load`'s current fingerprint differs materially from the one
+ *  stored when the day's question was last answered. */
+function calendarLoadMateriallyChanged(storedFingerprint, load) {
+  if (storedFingerprint == null) return true;
+  const current = calendarLoadFingerprint(load);
+  if (storedFingerprint === 'allday' || current === 'allday') return storedFingerprint !== current;
+  return Math.abs(Number(storedFingerprint) - Number(current)) >= CALENDAR_LOAD_CHANGE_THRESHOLD_HOURS;
+}
+
+function buildSignals({
+  recovery, calendar = [], workBusy = [], spend, spendBaseline, tomorrowWorkBusy = [],
+  tz = process.env.TZ || 'America/New_York', now = new Date(),
+  // Map<localDate, {fingerprint, answer}> from store/signalAnswers.js's
+  // answersFor('calendar_load', ...) — the server-side authority for
+  // whether a calendar_load question for a given date has already been
+  // answered. Callers that don't pass this (e.g. unit tests exercising
+  // other signals) get no suppression, matching the old unconditional
+  // behavior.
+  calendarLoadAnswers = new Map(),
+} = {}) {
   const signals = [];
+  const todayKey = localDateStr(tz, now);
+  const tomorrowKey = localDateStr(tz, addDays(now, 1));
 
   // A long / all-day block on TOMORROW's work calendar (an OOO, a travel day, a
   // wall of meetings) — ask the day PRIOR so the user can add context that flows
   // into tomorrow's brief instead of it guessing from a titleless busy block.
-  if (tomorrowWorkBusy.length > 0) {
-    let busyMin = 0;
-    let hasAllDay = false;
-    for (const b of tomorrowWorkBusy) {
-      const s = toMinutesSinceMidnight(b.start);
-      const e = toMinutesSinceMidnight(b.end);
-      if (s != null && e != null && e > s) {
-        busyMin += e - s;
-        if (s <= 8 * 60 && e >= 18 * 60) hasAllDay = true; // covers the whole workday
-      }
-    }
-    if (hasAllDay || busyMin >= 6 * 60) {
+  // Uses the SAME canonical projection (and the SAME durable subject key,
+  // calendar_load:<the date being described>) as the packed-calendar signal
+  // below — this is literally the same underlying day's schedule read from
+  // one day earlier, so an answer to either suppresses both.
+  {
+    const tomorrowLoad = computeCalendarLoad({ workBusy: tomorrowWorkBusy, calendar: [] });
+    const stored = calendarLoadAnswers.get(tomorrowKey);
+    const suppressed = stored && !calendarLoadMateriallyChanged(stored.fingerprint, tomorrowLoad);
+    if (!suppressed && (tomorrowLoad.isAllDayBlocked || tomorrowLoad.meetingHours >= 6)) {
       signals.push({
-        key: 'tomorrow_long_block',
-        question: hasAllDay
+        key: `calendar_load:${tomorrowKey}`,
+        // Echoed back by the client on answer so the server can record
+        // "what the schedule looked like when this was answered" without
+        // re-fetching calendar data inside the annotation route.
+        fingerprint: calendarLoadFingerprint(tomorrowLoad),
+        question: tomorrowLoad.isAllDayBlocked
           ? "There's an all-day block on your work calendar tomorrow — what's going on? (OOO, travel, an offsite?)"
-          : `Tomorrow's work calendar is heavily blocked (${(busyMin / 60).toFixed(1)}h) — anything specific driving it?`,
+          : `Tomorrow's work calendar is heavily blocked (${tomorrowLoad.meetingHours.toFixed(1)}h) — anything specific driving it?`,
         context: 'calendar note',
         severity: 0.72,
       });
@@ -52,28 +89,22 @@ function buildSignals({ recovery, calendar = [], workBusy = [], spend, spendBase
     });
   }
 
-  // Packed calendar — count all meeting time today
+  // Packed calendar — canonical union-of-work-busy meeting load for TODAY,
+  // net of any overlap with named personal-calendar events (so a Sabbath
+  // block mirrored onto the work free/busy feed is never double-counted) and
+  // never counting personal-calendar time as meetings. Same durable subject
+  // key as the tomorrow-look-ahead signal above.
   if (workBusy.length > 0 || calendar.length > 0) {
-    let meetingMin = 0;
-    for (const b of workBusy) {
-      const s = toMinutesSinceMidnight(b.start);
-      const e = toMinutesSinceMidnight(b.end);
-      if (s != null && e != null && e > s) meetingMin += e - s;
-    }
-    for (const ev of calendar) {
-      if (!ev.allDay && ev.startTime && ev.endTime) {
-        const s = toMinutesSinceMidnight(ev.startTime);
-        const e = toMinutesSinceMidnight(ev.endTime);
-        if (s != null && e != null && e > s) meetingMin += e - s;
-      }
-    }
-    const meetingH = meetingMin / 60;
-    if (meetingH >= 4) {
+    const todayLoad = computeCalendarLoad({ workBusy, calendar });
+    const stored = calendarLoadAnswers.get(todayKey);
+    const suppressed = stored && !calendarLoadMateriallyChanged(stored.fingerprint, todayLoad);
+    if (!suppressed && !todayLoad.isAllDayBlocked && todayLoad.meetingHours >= 4) {
       signals.push({
-        key: 'packed_calendar',
-        question: `You have ${meetingH.toFixed(1)}h of meetings today — anything specific driving that, or just a heavy week?`,
+        key: `calendar_load:${todayKey}`,
+        fingerprint: calendarLoadFingerprint(todayLoad),
+        question: `You have ${todayLoad.meetingHours.toFixed(1)}h of meetings today — anything specific driving that, or just a heavy week?`,
         context: 'calendar note',
-        severity: Math.min(0.75, 0.4 + (meetingH - 4) * 0.06),
+        severity: Math.min(0.75, 0.4 + (todayLoad.meetingHours - 4) * 0.06),
       });
     }
   }

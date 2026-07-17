@@ -98,7 +98,12 @@ async function gatherWeek(asOf = new Date()) {
     .topProgressionNote({ days: 30, minSessions: 2 }).catch(() => null);
   return {
     periodStart, periodEnd, metrics, strength,
-    correlations: open.filter((f) => f.type === 'correlation').slice(0, 8),
+    // Only genuinely confirmed (split-half-holdout) correlations, and never a
+    // lag>=2 finding — a weekly review is exactly the kind of "prompt" surface
+    // a scientifically weak delayed-effect claim must not reach.
+    correlations: open
+      .filter((f) => f.type === 'correlation' && f.evidence?.confirmed === true && (f.evidence?.lag ?? 0) < 2)
+      .slice(0, 8),
     forecasts: open.filter((f) => f.type === 'forecast'),
     leverage: open
       .filter((f) => f.type === 'leverage')
@@ -145,7 +150,7 @@ function composeReview(ctx) {
   const others = ctx.metrics.filter((m) => !known.has(m.domain));
   if (others.length) sections.push(`OTHER:\n${others.map(fmtMetric).join('\n')}`);
   const metricsBlock = sections.join('\n\n') || '- (not enough data this week)';
-  const corr = ctx.correlations.map((f) => `- ${f.title}`).join('\n') || '- none confirmed';
+  const corr = ctx.correlations.map((f) => `- ${f.title}`).join('\n') || '- none identified this week';
   const fc = ctx.forecasts.map((f) => `- ${f.title}`).join('\n') || '- none';
   const lev = ctx.leverage.map((f, i) => `${i + 1}. ${f.title}`).join('\n') || '- none';
   const ann = ctx.annotations.length

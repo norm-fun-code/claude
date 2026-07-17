@@ -135,6 +135,10 @@ export interface BriefSignal {
   question: string;
   context: string;
   severity: number;
+  // Present on durable subject-keyed signals (e.g. calendar_load:<date>) —
+  // echoed back on answer so the server can record what the underlying
+  // signal looked like without re-fetching source data in the answer route.
+  fingerprint?: string;
 }
 
 export interface Recovery {

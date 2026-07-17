@@ -14,7 +14,7 @@
 // the original block before removing it from server.js.
 const express = require('express');
 const { withTimeout } = require('../util/async');
-const { localDayBoundsUtc } = require('../util/date');
+const { localDayBoundsUtc, localDateStr } = require('../util/date');
 const { fetchCalendarEvents, fetchWorkBusyBlocks } = require('../services/calendar');
 const { fetchRandomNotionPage, fetchNotionQuotes } = require('../services/notion');
 const { fetchRandomQuote } = require('../services/googleDoc');
@@ -204,6 +204,7 @@ async function buildQuickChiefBriefContext(prior) {
     weeklyGoalsContext,
     chaptersContext,
     liveGoals,
+    recoveryDrivers,
   ] = await Promise.all([
     (async () => {
       try {
@@ -370,6 +371,8 @@ async function buildQuickChiefBriefContext(prior) {
         return [];
       }
     })(),
+    require('../intelligence/recovery-drivers').computeRecoveryDrivers({ tz })
+      .catch((err) => { console.error('[quick chief-brief] recovery drivers failed:', err.message); return { context: '', labels: [] }; }),
   ]);
 
   // Derived from persisted output, not a fresh findings query — see the
@@ -411,6 +414,8 @@ async function buildQuickChiefBriefContext(prior) {
     chaptersContext,
     dayOffContext,
     liveGoals,
+    recoveryDriversContext: recoveryDrivers.context,
+    recoveryDriverLabels: recoveryDrivers.labels,
   };
 }
 
@@ -890,13 +895,29 @@ async function buildFreshBriefing({ force = false } = {}) {
   // Active life-context annotations (travel, illness, deadline, etc.) so the
   // AI can acknowledge them in the briefing. Only today's annotations — stale
   // context from prior days clears at midnight so it can't bleed into a new day.
+  //
+  // TWO deliberately separate blocks (product-review finding): a general
+  // annotation ("big presentation today", "guests this weekend") is real,
+  // acknowledgeable life context, but it is NOT evidence for what's driving
+  // TODAY's recovery number — only an annotation that is (a) topically
+  // health-plausible AND (b) falls inside the EXACT overnight window that
+  // produced today's HRV/RHR reading may be cited as a recovery cause.
+  // Conflating the two let the brief explain a recovery dip with a same-day
+  // scheduling note, or with a real "drank last night" annotation from the
+  // WRONG night. Only recoveryDriversContext below may explain recovery —
+  // annotationsContext may be acknowledged but never used causally.
   let annotationsContext = '';
+  let recoveryDriversContext = '';
+  // Raw labels (not the rendered prompt string) for the claim validator —
+  // see canonicalFactsFrom's `recoveryDrivers` below, which checkRecoveryCause
+  // uses to verify a causal recovery sentence actually names an eligible driver.
+  let recoveryDriverLabels = [];
   try {
     const { start: startOfToday } = localDayBoundsUtc(process.env.TZ || 'America/New_York');
     const active = await annotationsStore.overlapping(startOfToday, new Date());
     // 'general' purpose — excludes retractions/retired/financial but keeps
     // planned/occurred/negated, all legitimate for the chief brief to
-    // acknowledge (see context-semantics.js).
+    // acknowledge (see context-semantics.js). NEVER used to explain recovery.
     const eligible = filterEligible(active, { purpose: 'general' });
     if (eligible.length) {
       annotationsContext = eligible
@@ -914,6 +935,14 @@ async function buildFreshBriefing({ force = false } = {}) {
     }
   } catch (err) {
     console.error('[annotations] failed:', err.message);
+  }
+
+  try {
+    const drivers = await require('../intelligence/recovery-drivers').computeRecoveryDrivers({});
+    recoveryDriversContext = drivers.context;
+    recoveryDriverLabels = drivers.labels;
+  } catch (err) {
+    console.error('[recovery drivers] failed:', err.message);
   }
 
   // Recovery context for the briefing prompt — computed early so the chief-of-staff
@@ -1086,8 +1115,21 @@ async function buildFreshBriefing({ force = false } = {}) {
       const tmr = new Date(Date.now() + 24 * 60 * 60 * 1000);
       tomorrowWorkBusy = await require('../services/calendar').fetchWorkBusyBlocks({ date: tmr });
     } catch { /* non-critical */ }
+    // Durable, server-side suppression for the calendar_load subject —
+    // covers yesterday..tomorrow's local dates so both the "tomorrow is
+    // heavily blocked" question (asked about tomorrow) and today's "packed
+    // calendar" question (asked about today) can see whichever of the two
+    // was already answered, even though they run on different days' builds.
+    const signalAnswersStore = require('../store/signalAnswers');
+    const nowForSignals = new Date();
+    const signalsTz = process.env.TZ || 'America/New_York';
+    const calendarLoadAnswers = await signalAnswersStore.answersFor('calendar_load', {
+      fromDate: localDateStr(signalsTz, new Date(nowForSignals.getTime() - 24 * 60 * 60 * 1000)),
+      toDate: localDateStr(signalsTz, new Date(nowForSignals.getTime() + 24 * 60 * 60 * 1000)),
+    }).catch(() => new Map());
     const allSignals = preBriefSignals.buildSignals({
       recovery, calendar, workBusy, spend: recentSpend, spendBaseline, tomorrowWorkBusy,
+      tz: signalsTz, now: nowForSignals, calendarLoadAnswers,
     });
     signals = preBriefSignals.selectQuestions(allSignals, 2);
   } catch (err) {
@@ -1603,6 +1645,7 @@ async function buildFreshBriefing({ force = false } = {}) {
         experiments: brainSnapshot.experiments.value,
         wealth: brainSnapshot.wealth.value,
         localDate: brainSnapshot.localDate,
+        recoveryDrivers: recoveryDriverLabels,
       });
     } catch (e) { console.error('[briefing build] chiefFacts assembly failed:', e.message); }
   }
@@ -1611,7 +1654,7 @@ async function buildFreshBriefing({ force = false } = {}) {
   {
     const [chiefSettled, wisdomSettled] = await Promise.allSettled([
       withTimeout(
-        generateChiefBrief(emails, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext, attentionContext, liveGoals, chiefFacts),
+        generateChiefBrief(emails, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext, attentionContext, liveGoals, chiefFacts, recoveryDriversContext),
         LLM_TIMEOUT,
         'gemini_chief'
       ),
@@ -2270,6 +2313,7 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
       experiments: experimentsForFacts,
       wealth: { spendingMtd },
       localDate: new Date().toLocaleDateString('en-CA', { timeZone: factsTz }),
+      recoveryDrivers: ctx.recoveryDriverLabels,
     });
   } catch (e) { console.error('[chief-brief rebuild] chiefFacts assembly failed:', e.message); }
 
@@ -2278,7 +2322,7 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
     ctx.recoveryContext, ctx.experimentsContext, ctx.selfModel, ctx.leverageContext, ctx.workBusy,
     ctx.strengthContext, ctx.spendingContext, ctx.continuityContext, ctx.cashflowContext,
     ctx.progressContext, ctx.weeklyGoalsContext, ctx.chaptersContext, ctx.dayOffContext,
-    /* attentionContext */ '', ctx.liveGoals, chiefFacts
+    /* attentionContext */ '', ctx.liveGoals, chiefFacts, ctx.recoveryDriversContext
   );
 
   const chiefBriefStale = chiefResult.chiefBrief == null;

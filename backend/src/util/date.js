@@ -147,7 +147,19 @@ function localMonthKeyStartUtc(tz = 'UTC', now = new Date()) {
   return new Date(`${ymd.slice(0, 7)}-01T00:00:00Z`);
 }
 
+/**
+ * The local calendar-date string (YYYY-MM-DD) for `now` in `tz` — the
+ * canonical way to turn a moment into "which local day is this," used as the
+ * date component of durable per-day subject keys (e.g. `calendar_load:
+ * 2026-07-17`) and journal entry dates. Centralizes the `toLocaleDateString
+ * ('en-CA', {timeZone})` idiom that was previously copy-pasted at each call
+ * site.
+ */
+function localDateStr(tz = 'UTC', now = new Date()) {
+  return now.toLocaleDateString('en-CA', { timeZone: tz });
+}
+
 module.exports = {
   formatDate, daysBetween, addDays, dayAnchorTs, safeDate, toMinutesSinceMidnight,
-  naiveToUtcIso, localDayBoundsUtc, localMonthStartUtc, localMonthKeyStartUtc,
+  naiveToUtcIso, localDayBoundsUtc, localMonthStartUtc, localMonthKeyStartUtc, localDateStr,
 };

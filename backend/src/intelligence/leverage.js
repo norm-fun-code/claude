@@ -155,8 +155,10 @@ function fromTrend(f) {
   };
 }
 
-// Confirmed lever↔outcome correlation. Only fires on confirmed correlations —
-// unconfirmed ones become experiment proposals instead.
+// Confirmed (split-half stable) lever/outcome correlation. Only fires on
+// confirmed correlations — unconfirmed ones become experiment proposals
+// instead. "Confirmed" here means statistically robust (held up across an
+// early/late holdout split of the aligned series), not causally proven.
 function fromCorrelation(f) {
   const ev = f.evidence || {};
   if (ev.kind !== 'correlation' || ev.r == null) return null;
@@ -178,7 +180,7 @@ function fromCorrelation(f) {
   const positive = ev.r >= 0;
   const direction = (positive === wantOutcomeUp) ? 'more' : 'less';
   const phrase = LEVERS[lever][direction];
-  const lag = ev.lag ? ` — effect appears ~${ev.lag}d later` : '';
+  const lagNote = ev.lag ? ` — shows up ~${ev.lag}d later, not the same day` : '';
   const rStr = `r=${round(Math.abs(ev.r), 2)}`;
 
   const impact = clamp01(Math.abs(ev.r)) * (DOMAIN_WEIGHT[ov.domain] ?? 0.5);
@@ -186,8 +188,8 @@ function fromCorrelation(f) {
   const ease = LEVERS[lever].ease;
 
   return {
-    title: `${leverLabel} → ${outcomeLabel}: ${phrase}`,
-    detail: `Confirmed in your data (${rStr}${lag}): ${leverLabel} and ${outcomeLabel} move together. ${phrase.charAt(0).toUpperCase() + phrase.slice(1)} to move the needle. This survived the holdout test — not just a coincidence.`,
+    title: `${leverLabel} and ${outcomeLabel}: ${phrase}`,
+    detail: `Confirmed in your data (${rStr}${lagNote}): ${leverLabel} and ${outcomeLabel} move together. ${phrase.charAt(0).toUpperCase() + phrase.slice(1)} to move the needle. This held up in both an earlier and a more recent stretch of your data — not just a one-off.`,
     domains: [...new Set([lv.domain, ov.domain])],
     impact,
     confidence,
@@ -202,6 +204,13 @@ function fromCorrelation(f) {
 function fromHabitSplit(f) {
   const ev = f.evidence || {};
   if (ev.kind !== 'habit_split') return null;
+  // A lagged (next-day) split is an observational pattern, not a confirmed
+  // effect — the leverage engine only turns a SAME-DAY split into "do this"
+  // advice. Without this gate, a two-mornings-later HRV split (already the
+  // scientifically weaker claim) would generate the identical imperative
+  // "streak it this week" framing as a same-day one, implying a certainty
+  // the underlying observational data doesn't support.
+  if (ev.lag) return null;
   const pct = ev.pct;
   if (pct == null || Math.abs(pct) < 0.07) return null; // require 7%+ difference
 
@@ -227,7 +236,7 @@ function fromHabitSplit(f) {
 
   return {
     title: `${habit}: stronger ${outcomeLabel} on the days you do it`,
-    detail: `Your own data (${ev.onN} days on vs ${ev.offN} off): ${habit} days → ${outcomeLabel} ${fmtVal(onFmt)} vs ${fmtVal(offFmt)} otherwise. Streak it this week.`,
+    detail: `Your own data (${ev.onN} days on vs ${ev.offN} off): on ${habit} days, ${outcomeLabel} averaged ${fmtVal(onFmt)} vs ${fmtVal(offFmt)} otherwise. Streak it this week.`,
     domains: [domain, 'habits'],
     impact,
     confidence,
@@ -272,46 +281,18 @@ function fromSleepImpact(f) {
   };
 }
 
-// Activity_impact finding — workout type → next-day recovery effect.
-// "Day after Zone 2 your HRV is 18% above your average" is scheduling intelligence.
-function fromActivityImpact(f) {
-  const ev = f.evidence || {};
-  if (ev.kind !== 'activity_impact') return null;
-  const pct = ev.pct;
-  if (pct == null || Math.abs(pct) < 0.08) return null; // require 8%+ effect
-
-  const outcome = ev.outcome;
-  if (!outcome) return null;
-  const { domain, metric } = splitKey(outcome);
-  const good = cat.goodWhen(domain, metric);
-  const improved = (good === 'up' && pct > 0) || (good === 'down' && pct < 0);
-
-  const outcomeLabel = cat.label(domain, metric);
-  const activity = ev.activity || 'that workout';
-  const typeFmt = ev.typeMean != null ? round(ev.typeMean, 1) : '?';
-  const overallFmt = ev.overallMean != null ? round(ev.overallMean, 1) : '?';
-  const unit = metric === 'hrv' ? 'ms' : metric === 'resting_hr' ? 'bpm' : '';
-  const fmtVal = (v) => unit ? `${v}${unit}` : String(v);
-
-  const impact = clamp01(Math.abs(pct) * 1.5) * (DOMAIN_WEIGHT[domain] ?? 0.7);
-  const confidence = Math.min(0.80, 0.3 + Math.abs(pct) * 2);
-  const ease = 0.6;
-
-  const actionStr = improved
-    ? `Schedule ${activity} before high-stakes days — your recovery holds up.`
-    : `Plan a lighter day after ${activity} — your recovery data says you'll need it.`;
-
-  return {
-    title: improved
-      ? `${activity} days → stronger next-day ${outcomeLabel}`
-      : `${activity} → softer next-day ${outcomeLabel} — plan recovery`,
-    detail: `Across ${ev.n} post-${activity} days, ${outcomeLabel} averaged ${fmtVal(typeFmt)} vs ${fmtVal(overallFmt)} overall. ${actionStr}`,
-    domains: ['health'],
-    impact,
-    confidence,
-    ease,
-    basis: { kind: 'activity_impact', activity, outcome },
-  };
+// Activity_impact finding — workout type vs next-day recovery.
+// This is ALWAYS a next-day (lag=1) observational split by construction (the
+// outcome is definitionally the morning after the logged activity) — same
+// rule as fromHabitSplit's lag gate: the leverage engine does not turn an
+// observational lagged split alone into "do this" advice ("schedule X before
+// high-stakes days", "plan a lighter day after Y") without a completed
+// experiment behind it. No experiment tracks activity-type-vs-next-day-
+// recovery today, so this never becomes an actionable leverage item; the
+// pattern itself still surfaces to the user via computeActivityImpact's own
+// finding (Health tab / self-model), just not as a prescriptive action here.
+function fromActivityImpact() {
+  return null;
 }
 
 // Off-track goal. `forecastStatusByGoalId` (optional) is the SAME goals'
