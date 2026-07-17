@@ -21,6 +21,10 @@ interface Props {
   // "Rebuild briefing") — wired to POST /api/briefing/chief-brief/rebuild.
   onRefresh?: () => void;
   refreshing?: boolean;
+  // Binds "Listen" to the EXACT build on screen (BriefingData.snapshotId) —
+  // audit fix, item 4: never lets a stale mobile cache narrate a different
+  // build than what's actually displayed.
+  snapshotId?: string | null;
 }
 
 // Each block gets a mini emoji tile (same elevated-tile language as
@@ -138,7 +142,7 @@ function BeatRow({ label, emoji, tint, text }: { label: string; emoji: string; t
 // UI until the next server-truth refetch.
 const answeredQuestions = new Set<string>();
 
-function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Props) {
+function BriefCard({ brief, fallback, stale, onRefresh, refreshing, snapshotId }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [note, setNote] = useState('');
@@ -215,7 +219,7 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Props) {
   // to the next candidate model — a shorter client timeout used to abort and
   // show "Unavailable" WHILE a slow-but-recoverable backend request was
   // still running and about to succeed.
-  const { state: audioState, toggle: toggleListen } = useBriefAudio(BRIEFING_AUDIO_URL, 60000);
+  const { state: audioState, toggle: toggleListen } = useBriefAudio(BRIEFING_AUDIO_URL, 60000, snapshotId);
 
   async function answerQuestion(overrideText?: string) {
     const trimmed = (overrideText ?? qAnswer).trim();

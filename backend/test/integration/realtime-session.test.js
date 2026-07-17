@@ -27,6 +27,13 @@ afterEach(async () => {
   llm.generateText = ORIGINAL_GENERATE_TEXT;
   llm.embed = ORIGINAL_EMBED;
   await db.query(`DELETE FROM voice_realtime_events WHERE session_id LIKE 'test-%'`);
+  // The add_context tool test below writes a REAL annotation (+ day_journal
+  // mirror) via the same production path routes/annotations.js uses — never
+  // cleaned up before, so it silently accumulated across every CI run and
+  // crowded out other suites' own recent-annotations queries (e.g. any test
+  // asserting on annotationsStore.listAnnotations()'s top-N result).
+  await db.query(`DELETE FROM annotations WHERE label = 'Realtime tool test note'`);
+  await db.query(`DELETE FROM day_journal WHERE text = 'Realtime tool test note'`);
 });
 
 after(async () => {

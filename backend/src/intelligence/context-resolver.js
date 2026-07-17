@@ -429,19 +429,89 @@ function getRelevantContext(resolved, surfacePurpose = 'general') {
   });
 }
 
+// ── Temporal eligibility (audit fix, item 1) ───────────────────────────────
+// summarizeResolvedContext used to include EVERY non-retired assertion,
+// reduced to an undated line ("- drank wine.") — a health event from three
+// days ago read exactly like one from last night, because nothing in the
+// text projection carried (or checked) WHEN it applied. This is the fix:
+// episodic assertions (something that happened/applied at a specific,
+// already-elapsed time) drop out of the projection once their own stored
+// effective window has ended, and the ones still eligible carry an explicit
+// date anchor so the model can never mistake "recent" for "current".
+//
+// Deliberately compares against the assertion's OWN persisted
+// `effectiveEnd` timestamp (set once, at compile time, by
+// context-compiler.js's resolveTemporalWindow — see that function's night-
+// window resolution for temporalRef 'last_night'/'this_morning') rather
+// than re-deriving anything from `temporalRef` or "now" at read time — a
+// stored instant can never silently slide forward as time passes the way a
+// string like "last_night" reinterpreted fresh each read could.
+
+/** A standing/durable statement never gets excluded by the passage of time —
+ *  currently just preferences (the compiler's own definition: "a durable
+ *  'I prefer/don't want' statement"), which by design have no natural
+ *  expiry. Everything else with an effectiveEnd is episodic and DOES
+ *  expire; an assertion with no effectiveEnd at all (temporalRef
+ *  'unspecified'/'future', or a plan) is left untouched by this filter —
+ *  it was never a dated claim to begin with, so there is no "window" to
+ *  have ended. */
+function isDurableAssertion(a) {
+  return a.assertionType === 'preference';
+}
+
+/** True if `a` should still be shown as CURRENT context at `asOf`. An
+ *  episodic assertion stays eligible through the END of the LOCAL calendar
+ *  day its `effectiveEnd` falls on — not just until that exact instant.
+ *  This matters concretely: "I drank last night" resolves effectiveEnd to
+ *  roughly wake time (~7am, see context-compiler.js's resolveTemporalWindow
+ *  night-window resolution), but the drinking is still the right context
+ *  for a Chief Brief explaining THAT DAY's recovery reading built at 9am,
+ *  1pm, or 9pm — a cutoff at the bare wake-time instant would make the
+ *  event vanish from its own day's context. It correctly stops applying
+ *  once the FOLLOWING day starts (the next night is a different night).
+ *  `tz` must be the same timezone the assertion's dates were resolved in
+ *  (resolved.tz) — a UTC day boundary would shift the cutoff by hours in
+ *  either direction depending on the user's actual offset.
+ *  Historical callers (an explicit "what did I say last week" surface) pass
+ *  `includeHistorical: true` to see everything regardless of age. */
+function isTemporallyEligible(a, { asOf = new Date(), tz = 'UTC', includeHistorical = false } = {}) {
+  if (includeHistorical) return true;
+  if (isDurableAssertion(a)) return true;
+  if (!a.effectiveEnd) return true;
+  const { localDayBoundsUtc } = require('../util/date');
+  const eligibleThrough = localDayBoundsUtc(tz, new Date(a.effectiveEnd)).end;
+  return eligibleThrough.getTime() >= new Date(asOf).getTime();
+}
+
+/** Compact "applied to <date>" / "applied to the night ending <date>"
+ *  suffix for an episodic assertion still inside its window — omitted
+ *  entirely for durable statements or assertions with no bound to anchor
+ *  to. `tz` is the SAME resolver-local timezone carried on `resolved.tz`
+ *  (buildResolvedContext), so "July 16" always means July 16 in the user's
+ *  own zone, never a UTC-shifted date. */
+function temporalAnchorSuffix(a, tz) {
+  if (isDurableAssertion(a) || !a.effectiveEnd) return '';
+  const { formatMonthDay } = require('../util/date');
+  const endLabel = formatMonthDay(a.effectiveEnd, tz);
+  if (!endLabel) return '';
+  return (a.temporalRef === 'last_night' || a.temporalRef === 'this_morning')
+    ? ` — applied to the night ending ${endLabel}.`
+    : ` — applied to ${endLabel}.`;
+}
+
 /** One compact line describing a single assertion for a prompt — never the
  *  full row, never raw provenance noise. Prefers the structured
  *  predicate/objectValue (what the compiler actually extracted) over
  *  rawText, since that's the point of compiling at all; falls back to a
  *  truncated rawText when predicate/objectValue are both empty (an
  *  assertion type the compiler couldn't structure further). */
-function summarizeAssertionLine(a) {
+function summarizeAssertionLine(a, tz) {
   const body = a.predicate
     ? `${a.predicate}${a.objectValue ? ` ${a.objectValue}` : ''}`.trim()
     : String(a.rawText || '').trim().slice(0, 140);
   if (!body) return null;
   const status = ['negated', 'retracted'].includes(a.eventStatus) ? ` [${a.eventStatus}]` : '';
-  return `- ${body}${status}`;
+  return `- ${body}${status}${temporalAnchorSuffix(a, tz)}`;
 }
 
 /**
@@ -453,18 +523,75 @@ function summarizeAssertionLine(a) {
  * SAME compact shape, instead of each independently reinterpreting raw
  * text and risking disagreement.
  *
+ * `asOf` defaults to the moment this ResolvedContext was resolved
+ * (`resolved.generatedAt`) — NOT a fresh `new Date()` — so a snapshot built
+ * once and read multiple times (see brain/snapshot.js) gives the same
+ * temporal answer every time it's read, instead of "yesterday's event" only
+ * fading out mid-read depending on when exactly the text was generated.
+ * `includeHistorical: true` disables the window filter entirely, for a
+ * surface that explicitly wants past context (none does today).
+ *
  * Returns '' when there's nothing relevant — callers should treat an empty
  * string as "fall back to raw annotations/day-journal text," never as
  * "the user has no context" (see each call site's own raw-text fallback).
  */
-function summarizeResolvedContext(resolved, { purpose = 'general', maxItems = 8 } = {}) {
+function summarizeResolvedContext(resolved, { purpose = 'general', maxItems = 8, asOf, includeHistorical = false } = {}) {
   if (!resolved) return '';
+  const effectiveAsOf = asOf ?? (resolved.generatedAt ? new Date(resolved.generatedAt) : new Date());
   const relevant = getRelevantContext(resolved, purpose)
+    .filter((a) => isTemporallyEligible(a, { asOf: effectiveAsOf, tz: resolved.tz, includeHistorical }))
     .slice()
     .sort((a, b) => new Date(b.recordedAt || b.createdAt || 0) - new Date(a.recordedAt || a.createdAt || 0))
     .slice(0, maxItems);
-  const lines = relevant.map(summarizeAssertionLine).filter(Boolean);
+  const lines = relevant.map((a) => summarizeAssertionLine(a, resolved.tz)).filter(Boolean);
   return lines.join('\n');
+}
+
+// ── Raw context as a REAL fallback (audit fix, item 2) ─────────────────────
+// Chief Brief and Ask used to hand the model resolvedContext's compiled
+// summary AND then unconditionally the same ground covered again as raw
+// annotations/day-journal text — "prefer the compiled version" left as a
+// suggestion in the prompt rather than enforced, so a stale or since-
+// corrected raw note could still read as live, contradicting or reviving
+// exactly what the compiled correction fixed. partitionRawContext splits a
+// caller's raw item list into `matched` (already represented by a compiled
+// assertion — drop these) and `unmatched` (genuinely new/unstructured
+// content the compiler didn't capture — keep these, never silently lose
+// real journal context the model has nowhere else to see).
+const RAW_CONTEXT_MATCH_THRESHOLD = 0.34;
+
+/**
+ * @param resolved ResolvedContext (or null/undefined — everything reads as
+ *   unmatched when there's nothing compiled to match against).
+ * @param rawItems caller's raw rows (annotations, day-journal entries, ...).
+ * @param getId extracts a stable id from a raw item, if it has one — checked
+ *   first against every compiled assertion's `sourceAnnotationId` (the
+ *   annotation IS the compilation's source, so an id match is exact, never
+ *   ambiguous). Return null/undefined when the item has no such id (e.g. a
+ *   day-journal row, which mirrors an annotation's TEXT but carries no link
+ *   back to it) to fall through to text matching.
+ * @param getText extracts the comparable text for the conservative-overlap
+ *   fallback (context-semantics.js's overlapScore, the SAME primitive used
+ *   throughout this module for ambiguity-aware matching elsewhere).
+ * @returns {{matched: Array, unmatched: Array}}
+ */
+function partitionRawContext(resolved, rawItems, { getId = (x) => x?.id ?? null, getText = (x) => x?.label ?? x?.text ?? '' } = {}) {
+  const assertions = resolved?.assertions || [];
+  if (!rawItems?.length || !assertions.length) return { matched: [], unmatched: rawItems ? rawItems.slice() : [] };
+  const { overlapScore } = require('./context-semantics');
+  const matchedAnnotationIds = new Set(
+    assertions.filter((a) => a.sourceAnnotationId != null).map((a) => String(a.sourceAnnotationId))
+  );
+  const matched = [];
+  const unmatched = [];
+  for (const item of rawItems) {
+    const id = getId(item);
+    if (id != null && matchedAnnotationIds.has(String(id))) { matched.push(item); continue; }
+    const text = String(getText(item) || '').trim();
+    const textMatched = text && assertions.some((a) => overlapScore(text, a.rawText || '') >= RAW_CONTEXT_MATCH_THRESHOLD);
+    (textMatched ? matched : unmatched).push(item);
+  }
+  return { matched, unmatched };
 }
 
 module.exports = {
@@ -475,4 +602,5 @@ module.exports = {
   getRelevantContext, summarizeResolvedContext,
   // Exposed for focused unit tests:
   scoreRelation, EVIDENCE_WEIGHT, describeAssertion, targetKey, extractClockTimeRange,
+  isTemporallyEligible, isDurableAssertion, temporalAnchorSuffix, partitionRawContext,
 };

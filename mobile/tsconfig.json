@@ -5,6 +5,14 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"]
-    }
+    },
+    // tsc here only ever runs as --noEmit (Metro/Babel does the real
+    // transpilation for the app bundle) — this project's *.test.ts files
+    // run directly under Node's native TS type-stripping
+    // (`node --experimental-strip-types --test`, see package.json's "test"
+    // script), which is real ESM and needs an explicit, resolvable
+    // extension on relative imports. Safe to allow: it only affects how
+    // tsc type-checks an import specifier, never what Metro bundles.
+    "allowImportingTsExtensions": true
   }
 }

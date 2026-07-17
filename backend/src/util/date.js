@@ -20,6 +20,22 @@ function formatDate(value) {
   });
 }
 
+/**
+ * Render a date as a short "month day" label ("July 16") in a GIVEN local
+ * timezone — unlike formatDate (always UTC, includes year), this is for
+ * inline anchors like "applied to the night ending July 16" where the
+ * caller needs the user's OWN local calendar day, not a UTC-shifted one
+ * (an evening instant near UTC midnight must show the night it actually
+ * was for the user, not the next UTC day). Returns null for empty/invalid
+ * input so callers can omit the clause entirely.
+ */
+function formatMonthDay(value, tz = 'UTC') {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: tz || 'UTC' });
+}
+
 /** Whole days between two dates (b - a), rounded toward zero. */
 function daysBetween(a, b) {
   const ms = (b instanceof Date ? b : new Date(b)) - (a instanceof Date ? a : new Date(a));
@@ -160,6 +176,6 @@ function localDateStr(tz = 'UTC', now = new Date()) {
 }
 
 module.exports = {
-  formatDate, daysBetween, addDays, dayAnchorTs, safeDate, toMinutesSinceMidnight,
+  formatDate, formatMonthDay, daysBetween, addDays, dayAnchorTs, safeDate, toMinutesSinceMidnight,
   naiveToUtcIso, localDayBoundsUtc, localMonthStartUtc, localMonthKeyStartUtc, localDateStr,
 };

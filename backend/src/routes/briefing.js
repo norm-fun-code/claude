@@ -197,7 +197,7 @@ async function buildQuickChiefBriefContext(prior) {
 
   const [
     wellbeingContext,
-    annotationsAndGapsContext,
+    annotationsAndGaps,
     recoveryContext,
     experimentsContext,
     selfModel,
@@ -241,6 +241,7 @@ async function buildQuickChiefBriefContext(prior) {
     })(),
     (async () => {
       let ctx = '';
+      let rows = [];
       try {
         const { start: startOfToday } = localDayBoundsUtc(process.env.TZ || 'America/New_York');
         const active = await annotationsStore.overlapping(startOfToday, new Date());
@@ -248,6 +249,7 @@ async function buildQuickChiefBriefContext(prior) {
         // context-semantics.js) but keeps planned/occurred/negated, all of
         // which are legitimate acknowledged context for a quick brief.
         const eligible = filterEligible(active, { purpose: 'general' });
+        rows = eligible;
         if (eligible.length) {
           ctx = eligible
             .map((a) => `${a.label}${a.note ? ` (${a.note})` : ''}`)
@@ -268,7 +270,11 @@ async function buildQuickChiefBriefContext(prior) {
       } catch (err) {
         console.error('[quick chief-brief] pipeline health failed:', err.message);
       }
-      return ctx;
+      // Raw rows kept alongside the rendered text (not just the string) so
+      // the caller can partition them against a compiled resolvedContext —
+      // see intelligence/context-resolver.js's partitionRawContext (audit
+      // fix, item 2) — and re-append only the genuinely unmatched subset.
+      return { text: ctx, rows };
     })(),
     (async () => {
       try {
@@ -402,7 +408,8 @@ async function buildQuickChiefBriefContext(prior) {
     calendar,
     workBusy,
     wellbeingContext,
-    annotationsContext: annotationsAndGapsContext,
+    annotationsContext: annotationsAndGaps.text,
+    annotationsRows: annotationsAndGaps.rows,
     recoveryContext,
     experimentsContext,
     selfModel,
@@ -914,6 +921,25 @@ async function buildFreshBriefing({ force = false } = {}) {
   // see canonicalFactsFrom's `recoveryDrivers` below, which checkRecoveryCause
   // uses to verify a causal recovery sentence actually names an eligible driver.
   let recoveryDriverLabels = [];
+  // Kept alongside the rendered `annotationsContext` string (not just the
+  // string itself) so the resolved-context merge below can compute which of
+  // these specific rows are ALREADY represented by a compiled assertion —
+  // see intelligence/context-resolver.js's partitionRawContext (audit fix,
+  // item 2) — and re-render only the genuinely unmatched subset, instead of
+  // handing the model the compiled version AND every one of these again.
+  let eligibleAnnotationRows = [];
+  const formatAnnotationRows = (rows) => rows
+    .map((a) => {
+      // Include the submission date so the AI can resolve relative terms like
+      // "tomorrow" or "today" in notes entered the night before.
+      const submitted = a.start_ts
+        ? new Date(a.start_ts).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/New_York' })
+        : null;
+      const dateTag = submitted ? `[${submitted}] ` : '';
+      return `${dateTag}${a.label}${a.note ? ` (${a.note})` : ''}`;
+    })
+    .slice(0, 5)
+    .join('; ');
   try {
     const { start: startOfToday } = localDayBoundsUtc(process.env.TZ || 'America/New_York');
     const active = await annotationsStore.overlapping(startOfToday, new Date());
@@ -921,19 +947,9 @@ async function buildFreshBriefing({ force = false } = {}) {
     // planned/occurred/negated, all legitimate for the chief brief to
     // acknowledge (see context-semantics.js). NEVER used to explain recovery.
     const eligible = filterEligible(active, { purpose: 'general' });
+    eligibleAnnotationRows = eligible;
     if (eligible.length) {
-      annotationsContext = eligible
-        .map((a) => {
-          // Include the submission date so the AI can resolve relative terms like
-          // "tomorrow" or "today" in notes entered the night before.
-          const submitted = a.start_ts
-            ? new Date(a.start_ts).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/New_York' })
-            : null;
-          const dateTag = submitted ? `[${submitted}] ` : '';
-          return `${dateTag}${a.label}${a.note ? ` (${a.note})` : ''}`;
-        })
-        .slice(0, 5)
-        .join('; ');
+      annotationsContext = formatAnnotationRows(eligible);
     }
   } catch (err) {
     console.error('[annotations] failed:', err.message);
@@ -1677,17 +1693,28 @@ async function buildFreshBriefing({ force = false } = {}) {
   // Context Understanding Layer: prefer the compiled/resolved projection
   // over raw annotation reinterpretation when available (harden pass, item
   // 2) — reuses the SAME brainSnapshot.resolvedContext cut used for
-  // chiefFacts below, so this costs nothing extra. The raw annotationsContext
-  // computed earlier (from annotationsStore.overlapping()) is retained AFTER
-  // it, as provenance/fallback for whatever the compiler didn't structure —
-  // never replaced outright, since compileUserContext can degrade to zero
-  // assertions on a compiler failure.
+  // chiefFacts below, so this costs nothing extra.
+  //
+  // Audit fix (item 2): raw annotationsContext used to be appended in FULL
+  // after the compiled summary, every time — the model got both the
+  // corrected version AND the raw text it corrected, "prefer the compiled
+  // one" left as an unenforced suggestion. Now only the SUBSET of raw rows
+  // partitionRawContext can't match to a compiled assertion (by
+  // sourceAnnotationId, then by conservative text overlap) is appended —
+  // real, not-yet-structured journal content is never silently dropped, but
+  // a row the compiler already turned into a canonical assertion (and
+  // possibly corrected) is never handed over a second time as competing raw
+  // truth. If compilation produced nothing at all (`compiled` is falsy —
+  // compiler failure or zero assertions), annotationsContext is left
+  // completely untouched: the original, full raw fallback.
   if (brainSnapshot?.resolvedContext?.value) {
     try {
-      const { summarizeResolvedContext } = require('../intelligence/context-resolver');
+      const { summarizeResolvedContext, partitionRawContext } = require('../intelligence/context-resolver');
       const compiled = summarizeResolvedContext(brainSnapshot.resolvedContext.value, { purpose: 'general' });
       if (compiled) {
-        annotationsContext = annotationsContext ? `${compiled}\n(raw notes, for reference): ${annotationsContext}` : compiled;
+        const { unmatched } = partitionRawContext(brainSnapshot.resolvedContext.value, eligibleAnnotationRows);
+        const unmatchedRaw = unmatched.length ? formatAnnotationRows(unmatched) : '';
+        annotationsContext = unmatchedRaw ? `${compiled}\n(raw notes, for reference): ${unmatchedRaw}` : compiled;
       }
     } catch (e) { console.error('[briefing build] resolved-context summary failed:', e.message); }
   }
@@ -2415,14 +2442,21 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
     ]);
     // Context Understanding Layer: same compiled-over-raw preference as the
     // full build (see that call site) — reuses resolvedContextForFacts just
-    // fetched above for chiefFacts, no extra read. ctx.annotationsContext
-    // (from buildQuickChiefBriefContext) is retained AFTER it as fallback.
+    // fetched above for chiefFacts, no extra read. Audit fix (item 2): only
+    // the subset of ctx.annotationsRows partitionRawContext can't match to a
+    // compiled assertion is re-appended as raw fallback — same rule as the
+    // full build, so the scoped rebuild can't hand the model a compiled
+    // correction AND the raw text it corrected either.
     if (resolvedContextForFacts) {
       try {
-        const { summarizeResolvedContext } = require('../intelligence/context-resolver');
+        const { summarizeResolvedContext, partitionRawContext } = require('../intelligence/context-resolver');
         const compiled = summarizeResolvedContext(resolvedContextForFacts, { purpose: 'general' });
         if (compiled) {
-          ctx.annotationsContext = ctx.annotationsContext ? `${compiled}\n(raw notes, for reference): ${ctx.annotationsContext}` : compiled;
+          const { unmatched } = partitionRawContext(resolvedContextForFacts, ctx.annotationsRows || []);
+          const unmatchedRaw = unmatched.length
+            ? unmatched.map((a) => `${a.label}${a.note ? ` (${a.note})` : ''}`).slice(0, 5).join('; ')
+            : '';
+          ctx.annotationsContext = unmatchedRaw ? `${compiled}\n(raw notes, for reference): ${unmatchedRaw}` : compiled;
         }
       } catch (e) { console.error('[chief-brief rebuild] resolved-context summary failed:', e.message); }
     }

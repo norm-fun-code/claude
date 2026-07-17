@@ -381,6 +381,7 @@ export default function App() {
               hasContent={Boolean(
                 (d?.quote && d?.quoteInsight) || (d?.notionQuote && d?.notionInsight) || d?.relevantHighlight?.content
               )}
+              snapshotId={d?.snapshotId}
             />
             {d?.quote && d?.quoteInsight && <QuoteCard quote={d.quote} insight={d.quoteInsight} />}
             {d?.notionText && d?.notionInsight && (
@@ -447,6 +448,7 @@ export default function App() {
                     stale={d?.chiefBriefStale}
                     onRefresh={briefing.refreshChiefBrief}
                     refreshing={briefing.chiefBriefRefreshing}
+                    snapshotId={d?.snapshotId}
                   />
                 </CollapsibleSection>
               </AnimatedEntry>
@@ -458,6 +460,7 @@ export default function App() {
                   stale={d?.chiefBriefStale}
                   onRefresh={briefing.refreshChiefBrief}
                   refreshing={briefing.chiefBriefRefreshing}
+                  snapshotId={d?.snapshotId}
                 />
               </AnimatedEntry>
             )}

@@ -57,8 +57,24 @@ async function seedDaily(content = {}) {
 async function seedEvening(content = {}) {
   return briefingsStore.saveBriefing({
     kind: 'evening',
-    content: { __test_marker: 'audio-routes-test', readiness: 'Test readiness note.', today: 'Test today recap.', ...content },
+    // day defaults to TODAY — matches real production content (see
+    // notify/evening-brief.js, which always stamps content.day) and is
+    // required by the audit-fix day check in routes/audio.js's evening
+    // route. Explicit override lets the "prior night" tests below simulate
+    // the real gap: a row whose OWN content.day genuinely isn't today.
+    content: { __test_marker: 'audio-routes-test', day: today, readiness: 'Test readiness note.', today: 'Test today recap.', ...content },
   });
+}
+
+/** Insert a daily/evening briefing row with an explicit `generated_at` —
+ *  saveBriefing() always defaults to now(), so a genuinely YESTERDAY-dated
+ *  row (for the "no previous-day fallback" tests below) needs a raw insert. */
+async function seedBackdated({ kind, content, generatedAt }) {
+  const { rows } = await db.query(
+    `INSERT INTO briefings (kind, content, generated_at) VALUES ($1, $2, $3) RETURNING id, generated_at`,
+    [kind, JSON.stringify(content), generatedAt]
+  );
+  return rows[0];
 }
 
 test('GET /api/briefing/audio returns the base64+mime contract for today\'s chief brief', async () => {
@@ -132,4 +148,80 @@ test('GET /api/wisdom/audio never exposes the raw TTS provider error to the clie
 test('an authenticated request without a valid token is rejected before reaching any audio logic', async () => {
   const res = await request(app).get('/api/wisdom/audio').set({ Authorization: 'Bearer wrong-token' });
   assert.equal(res.status, 401);
+});
+
+// ── Audit fix, item 4: never narrate the wrong day ────────────────────────
+
+test('GET /api/briefing/audio returns a clean 404 (never falls back to yesterday) when only a YESTERDAY brief exists', async () => {
+  stubSynthesize();
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  await seedBackdated({
+    kind: 'daily',
+    content: { __test_marker: 'audio-routes-test', chiefBrief: { synthesis: "YESTERDAY's synthesis — must never be narrated as today's.", action: 'a', risk: 'r' } },
+    generatedAt: yesterday,
+  });
+  const res = await request(app).get('/api/briefing/audio').set(authHeader());
+  assert.equal(res.status, 404, 'an endpoint labeled "today\'s brief" must never silently narrate the most recent OLDER brief instead');
+  assert.equal(res.body.error, 'no_brief');
+});
+
+test('GET /api/wisdom/audio returns a clean 404 (never falls back to yesterday) when only a YESTERDAY brief exists', async () => {
+  stubSynthesize();
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  await seedBackdated({
+    kind: 'daily',
+    content: {
+      __test_marker: 'audio-routes-test', quote: "Yesterday's quote.", quoteInsight: 'Yesterday insight.',
+    },
+    generatedAt: yesterday,
+  });
+  const res = await request(app).get('/api/wisdom/audio').set(authHeader());
+  assert.equal(res.status, 404);
+  assert.equal(res.body.error, 'no_brief');
+});
+
+test('GET /api/evening-brief/audio returns a clean 404 (never falls back to a prior night) when today\'s evening brief has not built yet', async () => {
+  stubSynthesize();
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const yesterdayLocal = yesterday.toLocaleDateString('en-CA', { timeZone: tz });
+  await seedBackdated({
+    kind: 'evening',
+    content: { __test_marker: 'audio-routes-test', day: yesterdayLocal, readiness: "Last night's readiness — must never be narrated as tonight's." },
+    generatedAt: yesterday,
+  });
+  const res = await request(app).get('/api/evening-brief/audio').set(authHeader());
+  assert.equal(res.status, 404, 'the most recent evening row being from a PRIOR day must never be narrated as "tonight\'s" brief');
+  assert.equal(res.body.error, 'no_brief');
+});
+
+test('GET /api/briefing/audio with an unknown snapshotId returns 404 rather than silently substituting a different build', async () => {
+  stubSynthesize();
+  await seedDaily({ snapshotId: 'real-snapshot-abc' });
+  const res = await request(app).get('/api/briefing/audio').query({ snapshotId: 'stale-cached-snapshot-xyz' }).set(authHeader());
+  assert.equal(res.status, 404);
+  assert.equal(res.body.error, 'no_brief');
+});
+
+test('GET /api/briefing/audio with a matching snapshotId narrates the EXACT build requested, even when a newer one exists', async () => {
+  // A dedicated inline stub (not the shared stubSynthesize helper) that
+  // echoes back the FULL narration text, so the assertion below can
+  // distinguish which build was actually narrated — composeNarrationScript
+  // shares a fixed opening ("Morning. Here's where you stand. ...") across
+  // every build, so comparing just the first ~20 chars (stubSynthesize's
+  // default) can't tell two builds apart.
+  voiceService.synthesize = async (text) => ({ audio: Buffer.from(text), mime: 'audio/wav' });
+  await seedDaily({ snapshotId: 'snap-1', chiefBrief: { synthesis: 'First build synthesis marker.', action: 'a', risk: 'r' } });
+  await seedDaily({ snapshotId: 'snap-2', chiefBrief: { synthesis: 'Second newer build synthesis marker.', action: 'a', risk: 'r' } });
+  const res = await request(app).get('/api/briefing/audio').query({ snapshotId: 'snap-1' }).set(authHeader());
+  assert.equal(res.status, 200);
+  const decoded = Buffer.from(res.body.audio, 'base64').toString('utf8');
+  assert.match(decoded, /First build synthesis marker/, 'must narrate the EXACT build the snapshotId requested');
+  assert.doesNotMatch(decoded, /Second newer build synthesis marker/, 'must NOT silently substitute a newer build');
+});
+
+test('GET /api/briefing/audio with NO snapshotId still works (older mobile client compatibility) — takes today\'s build', async () => {
+  stubSynthesize();
+  await seedDaily();
+  const res = await request(app).get('/api/briefing/audio').set(authHeader());
+  assert.equal(res.status, 200);
 });

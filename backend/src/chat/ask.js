@@ -570,13 +570,31 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
   const wealthInsights = wealthResult.status === 'fulfilled' && wealthResult.value
     ? wealthResult.value.filter(Boolean).join('\n\n') || null
     : null;
-  const dayContext = dayContextResult.status === 'fulfilled' ? (dayContextResult.value || []) : [];
+  let dayContext = dayContextResult.status === 'fulfilled' ? (dayContextResult.value || []) : [];
   const recoveryInsight = recoveryResult.status === 'fulfilled' ? recoveryResult.value : null;
-  const resolvedContextSummary = resolvedContextResult.status === 'fulfilled' && resolvedContextResult.value
-    ? require('../intelligence/context-resolver').summarizeResolvedContext(resolvedContextResult.value, { purpose: 'general' })
+  const resolvedContext = resolvedContextResult.status === 'fulfilled' ? resolvedContextResult.value : null;
+  const resolvedContextSummary = resolvedContext
+    ? require('../intelligence/context-resolver').summarizeResolvedContext(resolvedContext, { purpose: 'general' })
     : '';
 
-  const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments, pastConversations, wealthInsights, recoveryInsight, dayContext, resolvedContextSummary, voice });
+  // Audit fix (item 2): raw context is now a REAL fallback, not something
+  // always handed over alongside the compiled version. Only whichever
+  // LIFE CONTEXT annotations / day-journal entries partitionRawContext
+  // can't match to a compiled assertion (by sourceAnnotationId, then by
+  // conservative text overlap) reach the prompt — a row the compiler
+  // already turned into (and possibly corrected as) a canonical assertion
+  // is never handed over a second time as competing raw truth. Genuinely
+  // unmatched journal content — the compiler didn't structure it, or
+  // compilation produced nothing at all (resolvedContextSummary empty) —
+  // is never dropped.
+  let annotationsForPrompt = annotations;
+  if (resolvedContextSummary && resolvedContext) {
+    const { partitionRawContext } = require('../intelligence/context-resolver');
+    annotationsForPrompt = partitionRawContext(resolvedContext, annotations, { getId: (a) => a.id, getText: (a) => a.label }).unmatched;
+    dayContext = partitionRawContext(resolvedContext, dayContext, { getId: () => null, getText: (e) => e.text }).unmatched;
+  }
+
+  const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations: annotationsForPrompt, history, snapshot, experiments, pastConversations, wealthInsights, recoveryInsight, dayContext, resolvedContextSummary, voice });
   let system = selfModelText ? `${baseSystem}\n\n${selfModelText}` : baseSystem;
   if (chaptersText) system += `\n\nLIFE CHAPTERS (standing long-arc facts, auto-updated — never ask the user to re-confirm these):\n${chaptersText}\nThis same fact is already shown elsewhere in the app (the brief, goals, forecasts) — don't just restate it here too. Use it as background that shapes tone and advice on a genuinely related question; if you reference it explicitly, relay something new (a next step, an implication for the actual question asked), not just the bare fact the user already knows.`;
   // Today's planned session — so a swap_workout action can be acknowledged

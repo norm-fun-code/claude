@@ -13,6 +13,10 @@ interface Props {
   // insight, relevant highlight), so this can never show "Listen" for
   // content the server would just 404 on with nothing_to_narrate.
   hasContent: boolean;
+  // Binds "Listen" to the EXACT build on screen (BriefingData.snapshotId) —
+  // audit fix, item 4: never lets a stale mobile cache narrate a different
+  // build than what's actually displayed.
+  snapshotId?: string | null;
 }
 
 const GOLD = '#FF9F0A';
@@ -23,10 +27,10 @@ const GOLD = '#FF9F0A';
  *  once") as Chief Brief and Evening Brief's own Listen buttons. Hides
  *  entirely when there's nothing narratable yet, or when voice playback
  *  isn't available on this build. */
-function WisdomListenCard({ hasContent }: Props) {
+function WisdomListenCard({ hasContent, snapshotId }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
-  const { state: audioState, toggle: toggleListen } = useBriefAudio(WISDOM_AUDIO_URL);
+  const { state: audioState, toggle: toggleListen } = useBriefAudio(WISDOM_AUDIO_URL, 60000, snapshotId);
 
   if (!voiceAvailable || !hasContent) return null;
 

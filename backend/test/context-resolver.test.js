@@ -9,6 +9,7 @@ const {
   buildResolvedContext, getDriversFor, getConstraintsFor, getPreferencesFor, getCompletionState,
   getCalendarClassification, matchCalendarClassifications, extractClockTimeRange, matchCompletionCorrections,
   getResolvedUncertainties, getUnresolvedUncertainties, getRelevantContext, summarizeResolvedContext,
+  isTemporallyEligible, isDurableAssertion, temporalAnchorSuffix,
   scoreRelation,
 } = require('../src/intelligence/context-resolver');
 
@@ -367,4 +368,128 @@ test('matchCompletionCorrections: wrong targetType never matches (a "goal" corre
 test('matchCompletionCorrections: no completion relations at all -> empty map, no crash', () => {
   const resolved = buildResolvedContext({ assertions: [], relations: [], tz: 'America/New_York', now: NOW });
   assert.equal(matchCompletionCorrections(resolved, { items: [{ id: 'c1', title: 'x' }], targetType: 'commitment' }).size, 0);
+});
+
+// ── Temporal eligibility (audit fix, item 1) ──────────────────────────────
+// summarizeResolvedContext used to include EVERY non-retired assertion,
+// reduced to an undated line — an event from days ago read exactly like one
+// from last night. isTemporallyEligible/temporalAnchorSuffix are the fix:
+// episodic assertions drop out once their OWN persisted effective window's
+// calendar day has passed, durable statements (preferences) never expire,
+// and eligible episodic lines carry an explicit date anchor.
+
+const NIGHT_START = '2026-07-17T02:00:00Z'; // ~10pm ET July 16
+const NIGHT_END = '2026-07-17T11:00:00Z'; // ~7am ET July 17 (wake)
+
+function drankLastNight(overrides = {}) {
+  return assertion({
+    id: 'a-drink', predicate: 'drank', objectValue: 'wine', rawText: 'I drank last night',
+    assertionType: 'event', temporalRef: 'last_night',
+    effectiveStart: NIGHT_START, effectiveEnd: NIGHT_END,
+    recordedAt: NIGHT_END, createdAt: NIGHT_END,
+    ...overrides,
+  });
+}
+
+test('temporal: "I drank last night" is eligible for the SAME day\'s recovery window (asOf later the same morning)', () => {
+  const resolved = buildResolvedContext({ assertions: [drankLastNight()], relations: [], tz: 'America/New_York', now: NOW });
+  assert.equal(isTemporallyEligible(resolved.assertions[0], { asOf: NOW, tz: 'America/New_York' }), true);
+  const summary = summarizeResolvedContext(resolved, { purpose: 'general', asOf: NOW });
+  assert.match(summary, /drank wine/);
+  assert.match(summary, /applied to the night ending July 17\./, `expected a night anchor, got: ${summary}`);
+});
+
+test('temporal: the SAME assertion does NOT apply to the following night (asOf 24h later)', () => {
+  const resolved = buildResolvedContext({ assertions: [drankLastNight()], relations: [], tz: 'America/New_York', now: NOW });
+  const nextNightAsOf = new Date('2026-07-18T15:00:00Z'); // 11am ET the following day
+  assert.equal(isTemporallyEligible(resolved.assertions[0], { asOf: nextNightAsOf, tz: 'America/New_York' }), false);
+  const summary = summarizeResolvedContext(resolved, { purpose: 'general', asOf: nextNightAsOf });
+  assert.doesNotMatch(summary, /drank wine/, 'a prior night\'s drinking must not silently apply to a later night');
+});
+
+test('temporal: context ENTERED the next morning but describing the prior night is anchored to the night, not the entry time', () => {
+  // recordedAt/createdAt deliberately differ from effectiveStart/effectiveEnd
+  // (the user typed this later in the morning) — eligibility and the anchor
+  // must both be driven by effectiveEnd, never by when it was recorded.
+  const a = drankLastNight({ recordedAt: '2026-07-17T13:30:00Z', createdAt: '2026-07-17T13:30:00Z' });
+  const resolved = buildResolvedContext({ assertions: [a], relations: [], tz: 'America/New_York', now: NOW });
+  assert.equal(isTemporallyEligible(resolved.assertions[0], { asOf: NOW, tz: 'America/New_York' }), true);
+  const summary = summarizeResolvedContext(resolved, { purpose: 'general', asOf: NOW });
+  assert.match(summary, /applied to the night ending July 17\./);
+});
+
+test('temporal: an expired episodic event disappears from the summary while a durable preference remains', () => {
+  const expiredEvent = assertion({
+    id: 'a-old', predicate: 'felt', objectValue: 'jet lagged', assertionType: 'event', temporalRef: 'explicit_date',
+    effectiveStart: '2026-07-10T00:00:00Z', effectiveEnd: '2026-07-10T11:00:00Z',
+    recordedAt: '2026-07-10T11:00:00Z', createdAt: '2026-07-10T11:00:00Z',
+  });
+  const durablePref = assertion({
+    id: 'a-pref', predicate: 'prefers', objectValue: 'morning workouts', assertionType: 'preference',
+    domains: ['wellbeing'], effectiveStart: null, effectiveEnd: null,
+    recordedAt: '2026-07-01T09:00:00Z', createdAt: '2026-07-01T09:00:00Z',
+  });
+  assert.equal(isDurableAssertion(durablePref), true);
+  assert.equal(isDurableAssertion(expiredEvent), false);
+  const resolved = buildResolvedContext({ assertions: [expiredEvent, durablePref], relations: [], tz: 'America/New_York', now: NOW });
+  const summary = summarizeResolvedContext(resolved, { purpose: 'general', asOf: NOW });
+  assert.doesNotMatch(summary, /jet lagged/, 'an expired episodic event must drop out of the projection');
+  assert.match(summary, /morning workouts/, 'a durable preference must never be excluded by the passage of time');
+});
+
+test('temporal: includeHistorical:true bypasses the window filter for a surface that explicitly wants past context', () => {
+  const expiredEvent = assertion({
+    id: 'a-old2', predicate: 'felt', objectValue: 'jet lagged', assertionType: 'event',
+    effectiveStart: '2026-07-10T00:00:00Z', effectiveEnd: '2026-07-10T11:00:00Z',
+  });
+  const resolved = buildResolvedContext({ assertions: [expiredEvent], relations: [], tz: 'America/New_York', now: NOW });
+  assert.doesNotMatch(summarizeResolvedContext(resolved, { asOf: NOW }), /jet lagged/);
+  assert.match(summarizeResolvedContext(resolved, { asOf: NOW, includeHistorical: true }), /jet lagged/);
+});
+
+test('temporal: a negated event, even if temporally eligible and visible in the general summary, never becomes an active driver', () => {
+  const negated = assertion({
+    id: 'a-neg', predicate: 'drank', objectValue: 'wine', assertionType: 'event', eventStatus: 'negated',
+    temporalRef: 'last_night', effectiveStart: NIGHT_START, effectiveEnd: NIGHT_END,
+  });
+  // No 'contributes_to' relation at all — matches real compiler behavior
+  // (context-compiler.js's deriveRelations never derives a metric relation
+  // for a negated/retracted event), which is WHY it can't become a driver;
+  // temporal eligibility alone must never be mistaken for driver eligibility.
+  const resolved = buildResolvedContext({ assertions: [negated], relations: [], tz: 'America/New_York', now: NOW });
+  assert.equal(isTemporallyEligible(resolved.assertions[0], { asOf: NOW, tz: 'America/New_York' }), true);
+  assert.match(summarizeResolvedContext(resolved, { purpose: 'general', asOf: NOW }), /drank wine \[negated\]/);
+  const driver = getDriversFor(resolved, 'health:recovery_autonomic', { now: NOW });
+  assert.equal(driver.driver, null, 'a negated event must never surface as an active driver, regardless of temporal eligibility');
+});
+
+test('temporal: eligibility and the date anchor are genuinely timezone-sensitive, not just "runs twice"', () => {
+  // The SAME UTC instant falls on a DIFFERENT calendar day in each zone:
+  // 10pm ET July 16 is already 11am JST July 17.
+  const boundaryEnd = '2026-07-17T02:00:00Z';
+  const a = () => assertion({ id: 'a-tz', predicate: 'felt', objectValue: 'off', assertionType: 'event', effectiveStart: boundaryEnd, effectiveEnd: boundaryEnd });
+  const asOfBetween = new Date('2026-07-17T10:00:00Z');
+
+  const resolvedNy = buildResolvedContext({ assertions: [a()], relations: [], tz: 'America/New_York', now: NOW });
+  const resolvedTokyo = buildResolvedContext({ assertions: [a()], relations: [], tz: 'Asia/Tokyo', now: NOW });
+
+  assert.equal(isTemporallyEligible(resolvedNy.assertions[0], { asOf: asOfBetween, tz: 'America/New_York' }), false,
+    'in ET the event\'s own calendar day (July 16) has already ended by the asOf instant');
+  assert.equal(isTemporallyEligible(resolvedTokyo.assertions[0], { asOf: asOfBetween, tz: 'Asia/Tokyo' }), true,
+    'in JST the SAME instant falls on July 17, whose day has not ended yet at the asOf instant');
+
+  assert.equal(temporalAnchorSuffix(resolvedNy.assertions[0], 'America/New_York'), ' — applied to July 16.');
+  assert.equal(temporalAnchorSuffix(resolvedTokyo.assertions[0], 'Asia/Tokyo'), ' — applied to July 17.');
+
+  // Determinism: repeated calls with identical inputs give identical output.
+  const run1 = summarizeResolvedContext(resolvedTokyo, { asOf: asOfBetween });
+  const run2 = summarizeResolvedContext(resolvedTokyo, { asOf: asOfBetween });
+  assert.equal(run1, run2);
+});
+
+test('temporal: summarizeResolvedContext defaults asOf to resolved.generatedAt, not a fresh Date.now() each read', () => {
+  const a = assertion({ id: 'a-fixed', predicate: 'felt', objectValue: 'off', assertionType: 'event', effectiveStart: NIGHT_START, effectiveEnd: NIGHT_END });
+  const resolved = buildResolvedContext({ assertions: [a], relations: [], tz: 'America/New_York', now: NOW });
+  // No asOf passed — must use resolved.generatedAt (NOW), not the real current time.
+  assert.match(summarizeResolvedContext(resolved, { purpose: 'general' }), /felt off/);
 });

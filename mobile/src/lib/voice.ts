@@ -4,6 +4,8 @@
 // crash the whole app on OTA update, so everything loads via try/catch and
 // callers hide voice UI when `voiceAvailable` is false. The next native build
 // includes the modules and the UI lights up with no further JS change.
+import { createOwnershipRegistry } from './playbackOwnership';
+
 let AV: any = null;
 let FS: any = null;
 try {
@@ -20,37 +22,53 @@ export const voiceAvailable: boolean = !!(AV?.Audio && FS?.cacheDirectory);
 
 let sound: any = null;
 
-// The currently-"active" narration player's own reset-to-idle callback (see
-// useBriefAudio.ts). `sound` above already enforces "only one narration
-// actually plays at once" (playRemote always stops whatever's loaded first),
-// but that's a silent audio-engine effect — the CARD that was playing never
-// found out, so switching tabs mid-narration used to leave a stale "◼ Stop"
-// button on a screen that had actually gone silent. Registering/clearing
-// this alongside `sound` closes that gap: whoever's about to start playing
-// preempts both the audio AND the previous player's own UI state.
-let activeStopNotifier: (() => void) | null = null;
+// Explicit playback ownership (audit fix, item 3). `sound` above already
+// enforces "only one narration actually plays at once" (playRemote always
+// stops whatever's loaded first), but that's a silent audio-engine effect —
+// the CARD that was playing never found out, so switching tabs mid-narration
+// used to leave a stale "◼ Stop" button on a screen that had actually gone
+// silent. The ownership registry (pure logic, unit-tested in
+// playbackOwnership.test.ts) closes that gap AND makes ownership checkable:
+// only the hook instance holding ownership may stop playback via
+// releaseIfOwner (used for both explicit "tap to stop" and unmount cleanup)
+// — a card that was pre-empted by another card, or never started playing at
+// all, can never stop someone else's audio.
+const ownership = createOwnershipRegistry();
 
-/** Called by the currently-playing card right after it starts, so a LATER
- *  play elsewhere can reset this card's UI instead of leaving it stuck on
- *  "Stop" for audio that already stopped. Pass `null` to unregister
- *  (e.g. on the card's own explicit stop) without notifying. */
-export function setActiveStopNotifier(fn: (() => void) | null): void {
-  activeStopNotifier = fn;
+/** Register `ownerId` as the current playback owner, notifying (and
+ *  implicitly evicting) whichever DIFFERENT owner was registered before —
+ *  its own UI resets via its own notifier. Call this AFTER the new sound
+ *  has actually started (playRemote/playBase64 resolved true) — it only
+ *  updates ownership bookkeeping, it never touches the audio engine itself,
+ *  so it can't race with playRemote's own stop-old/load-new sequence. */
+export function claimOwnership(ownerId: symbol, resetSelf: () => void): void {
+  ownership.claim(ownerId, resetSelf);
 }
 
-/** Stop + unload whatever is currently playing. Safe to call anytime. Fires
- *  (and clears) the active player's own stop-notifier, if one is registered,
- *  so its UI never reads "playing" for audio that's no longer playing. */
+/** Stop playback ONLY IF `ownerId` is still the current owner — the
+ *  explicit-ownership guarantee the audit requires: a card's own cleanup
+ *  (unmount) or its own "tap to stop" must never stop audio it doesn't
+ *  actually own (e.g. it was already pre-empted by a different card
+ *  starting a new narration first). A no-op when `ownerId` isn't current. */
+export async function releaseIfOwner(ownerId: symbol): Promise<void> {
+  if (ownership.isOwner(ownerId)) await stopPlayback();
+}
+
+/** Stop + unload whatever is currently playing AND clear/notify ownership
+ *  unconditionally — the "kill everything, no one owns anything now"
+ *  primitive. Used internally by playRemote (a new sound always fully
+ *  supersedes whatever came before, regardless of who owned it — e.g. a
+ *  fire-and-forget caller like AskOverlay's spoken replies, which never
+ *  claims ownership itself) and by releaseIfOwner once ownership is
+ *  confirmed. Safe to call anytime. */
 export async function stopPlayback(): Promise<void> {
-  const notify = activeStopNotifier;
-  activeStopNotifier = null;
   try {
     if (sound) {
       await sound.unloadAsync();
       sound = null;
     }
   } catch { sound = null; }
-  notify?.();
+  ownership.clear();
 }
 
 /**

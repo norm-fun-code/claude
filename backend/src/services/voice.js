@@ -62,6 +62,20 @@ function isTransientTtsError(err) {
     || err.code === 'ECONNABORTED' || /timeout of/i.test(err.message || '');
 }
 
+// Audit fix, item 4/7: the per-attempt timeout below (45s) is a PER-CALL
+// budget, not a total one — with 3 candidate models and the last one getting
+// a same-model retry, the worst case was up to 3*45s + backoff ≈ 135s+ of
+// real wall-clock time, while every mobile Listen caller (useBriefAudio.ts)
+// times out its OWN fetch at 60s. That mismatch meant the server could keep
+// synthesizing (and burning Gemini quota) for over a minute after the
+// client had already shown "Unavailable" and moved on — no one would ever
+// see the eventual result. OVERALL_TIMEOUT_MS is the ONE bounded end-to-end
+// deadline for the whole retry loop, deliberately kept comfortably under
+// the client's 60s so the server can still return a clean 502 (see
+// routes/audio.js) BEFORE the client's own AbortController fires in the
+// common case, rather than racing it.
+const OVERALL_TIMEOUT_MS = Number(process.env.GEMINI_TTS_OVERALL_TIMEOUT_MS || 50000);
+
 async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
   const trimmed = String(text || '').trim();
   if (!trimmed) throw new Error('nothing to synthesize');
@@ -90,9 +104,15 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
   const timeoutMs = Number(process.env.GEMINI_TTS_TIMEOUT_MS || 45000);
   const backoffMs = Number(process.env.GEMINI_TTS_BACKOFF_MS || 500);
   const models = ttsModels();
+  const deadline = Date.now() + OVERALL_TIMEOUT_MS;
 
   const attempt = async (model) => {
-    const { data } = await axios.post(`${BASE}/models/${model}:generateContent?key=${key()}`, payload, { timeout: timeoutMs });
+    // Each individual attempt is capped at whichever is SMALLER: its own
+    // per-call budget, or whatever's actually left of the overall deadline
+    // — so a slow first attempt can't single-handedly blow through the
+    // total budget before the loop even gets a chance to check it again.
+    const remaining = deadline - Date.now();
+    const { data } = await axios.post(`${BASE}/models/${model}:generateContent?key=${key()}`, payload, { timeout: Math.max(1000, Math.min(timeoutMs, remaining)) });
     const part = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
     if (!part) throw new Error('no audio in TTS response');
     const pcm = Buffer.from(part.inlineData.data, 'base64');
@@ -103,22 +123,27 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
   };
 
   let lastErr = null;
+  outer:
   for (let i = 0; i < models.length; i++) {
     const model = models[i];
     const isLast = i === models.length - 1;
     const maxTries = isLast ? 2 : 1;
     for (let tryNum = 0; tryNum < maxTries; tryNum++) {
+      if (Date.now() >= deadline) {
+        console.error(`[voice tts] overall ${OVERALL_TIMEOUT_MS}ms deadline exceeded before trying ${model} (try ${tryNum + 1}/${maxTries})`);
+        break outer;
+      }
       try {
         return await attempt(model);
       } catch (err) {
         lastErr = err;
         console.error(`[voice tts] ${model} failed (try ${tryNum + 1}/${maxTries}): ${err.message}`);
         if (!isTransientTtsError(err)) break;
-        if (tryNum < maxTries - 1 && backoffMs > 0) await sleep(backoffMs);
+        if (tryNum < maxTries - 1 && backoffMs > 0 && Date.now() + backoffMs < deadline) await sleep(backoffMs);
       }
     }
   }
-  throw new Error(`TTS failed: ${lastErr?.response?.data?.error?.message || lastErr?.message}`);
+  throw new Error(`TTS failed: ${lastErr?.response?.data?.error?.message || lastErr?.message || 'overall timeout budget exceeded'}`);
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

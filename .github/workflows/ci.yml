@@ -72,3 +72,6 @@ jobs:
       - name: Typecheck
         working-directory: mobile
         run: npx tsc --noEmit
+      - name: Unit tests (pure logic modules, Node's native TS stripping)
+        working-directory: mobile
+        run: npm test
