@@ -124,8 +124,16 @@ function createAnnotationsRouter() {
       const entryDate = PAST_REFERRING_RE.test(question || '')
         ? new Date(Date.now() - 24 * 60 * 60 * 1000).toLocaleDateString('en-CA', { timeZone: tz })
         : new Date().toLocaleDateString('en-CA', { timeZone: tz });
-      dayJournalStore.create({ text: answer.trim(), entryDate, source: 'brief' })
-        .catch((e) => console.error('[day journal] capture from brief context failed:', e.message));
+      // Awaited (not fire-and-forget): a caller reading dayJournalStore right
+      // after this response resolves — the mobile app's own optimistic UI,
+      // Ask, the evening brief — must see the entry. This used to be a bare
+      // .catch() with no await, a latent race that got reliably exposed once
+      // createAnnotation() above started doing more concurrent work per call
+      // (the invalidation bus's durable version write-through) and lost the
+      // race against res.json() below more often.
+      try {
+        await dayJournalStore.create({ text: answer.trim(), entryDate, source: 'brief' });
+      } catch (e) { console.error('[day journal] capture from brief context failed:', e.message); }
     }
     // Answering the chief brief's one question retires it from today's CACHED
     // builds too — the question lives in stored briefing JSON, so component
