@@ -123,3 +123,55 @@ test('genuinely confirmed experiment-based recommendations ARE preserved (causal
   assert.equal(rows.length, 1);
   assert.match(rows[0].title, /magnesium/i);
 });
+
+test('a confirmed magnesium->SLEEP experiment does NOT license a causal claim about mood, energy, or recovery', async () => {
+  await cleanup();
+  await seedRelationships();
+  // Structured facts: lever="habits:magnesium", metric="health:sleep_hours" —
+  // the experiment is specifically about sleep, not mood/energy/recovery.
+  const expId = await experimentsStore.createExperiment({
+    hypothesis: 'TEST: Magnesium before bed improves sleep duration',
+    lever: 'habits:magnesium',
+    metric: 'health:sleep_hours',
+    status: 'completed',
+  });
+  await experimentsStore.updateExperiment(expId, { verdict: 'confirmed', result: { pctChange: 0.15 } });
+
+  llm.generateText = async () => JSON.stringify({
+    insights: [{
+      headline: 'Magnesium boosts your mood and energy',
+      insight: 'Magnesium boosts your mood and energy every night — keep taking it to improve recovery too.',
+      domains: ['health', 'habits'],
+    }],
+  });
+
+  const result = await generateCrossContext();
+  assert.equal(result.generated, 0, 'a confirmed sleep experiment must not authorize causal claims about mood/energy/recovery');
+  const { rows } = await db.query(
+    `SELECT id FROM findings WHERE type = 'cross_context' AND status = 'open' AND (title ILIKE '%magnesium%' OR detail ILIKE '%magnesium%')`
+  );
+  assert.equal(rows.length, 0, 'no unconfirmed-outcome claim may ride along on a confirmed sleep experiment');
+});
+
+test('a sentence bundling the CONFIRMED outcome with an UNCONFIRMED one in the same sentence still fails as a whole', async () => {
+  await cleanup();
+  await seedRelationships();
+  const expId = await experimentsStore.createExperiment({
+    hypothesis: 'TEST: Magnesium before bed improves sleep duration',
+    lever: 'habits:magnesium',
+    metric: 'health:sleep_hours',
+    status: 'completed',
+  });
+  await experimentsStore.updateExperiment(expId, { verdict: 'confirmed', result: { pctChange: 0.15 } });
+
+  llm.generateText = async () => JSON.stringify({
+    insights: [{
+      headline: 'Magnesium improves sleep and mood',
+      insight: 'Magnesium improves sleep and mood — this was CONFIRMED in your own completed self-experiment.',
+      domains: ['health', 'habits'],
+    }],
+  });
+
+  const result = await generateCrossContext();
+  assert.equal(result.generated, 0, 'bundling a confirmed outcome (sleep) with an unconfirmed one (mood) in one sentence must reject the whole sentence');
+});

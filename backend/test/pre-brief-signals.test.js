@@ -201,3 +201,38 @@ test('full sequence: answering yesterday\'s Sabbath-netted look-ahead suppresses
   assert.equal(todaySignals.find((s) => s.key === TODAY_KEY), undefined,
     'today\'s identical-load question must be suppressed by yesterday\'s answer');
 });
+
+// Audit3 fix 4: a failed personal-calendar fetch used to be indistinguishable
+// from "no personal events" (both -> calendar: []), which can recreate the
+// mirrored-Sabbath double-counting bug — a mirrored block has nothing to net
+// against, so a degraded personal-calendar fetch could inflate today's
+// meeting-load claim even though the WORK free/busy fetch succeeded fine.
+test('personal-calendar fetch rejected but work free/busy succeeds: no packed-calendar question, even with heavy work-busy hours', () => {
+  const workBusy = [{ start: '9:00 AM', end: '4:00 PM' }]; // 7h, well over threshold
+  const signals = buildSignals({
+    recovery: null, workBusy, calendar: [], now: NOW, tz: TZ,
+    workBusyAvailable: true, calendarAvailable: false,
+  });
+  assert.equal(signals.find((s) => s.key === TODAY_KEY), undefined,
+    'a degraded/unavailable personal-calendar source must suppress the question rather than assert a possibly-false meeting-load claim');
+});
+
+test('both sources available with the same heavy load DOES still fire (sanity: the suppression is specific to unavailability, not to heavy load)', () => {
+  const workBusy = [{ start: '9:00 AM', end: '4:00 PM' }];
+  const signals = buildSignals({
+    recovery: null, workBusy, calendar: [], now: NOW, tz: TZ,
+    workBusyAvailable: true, calendarAvailable: true,
+  });
+  assert.ok(signals.find((s) => s.key === TODAY_KEY), 'with both sources available, the genuine 7h load must still trip the question');
+});
+
+test('tomorrow look-ahead: personal-calendar fetch rejected but work free/busy succeeds suppresses the look-ahead question too', () => {
+  const dayBefore = new Date('2026-07-16T15:00:00Z');
+  const tomorrowWorkBusy = [{ start: '9:00 AM', end: '5:00 PM' }]; // 8h, over the 6h look-ahead threshold
+  const signals = buildSignals({
+    recovery: null, workBusy: [], calendar: [], tomorrowWorkBusy, tomorrowCalendar: [], now: dayBefore, tz: TZ,
+    tomorrowWorkBusyAvailable: true, tomorrowCalendarAvailable: false,
+  });
+  assert.equal(signals.find((s) => s.key === TODAY_KEY), undefined,
+    'an unavailable personal calendar for tomorrow must suppress the look-ahead question, same failure mode as today\'s');
+});

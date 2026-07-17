@@ -84,25 +84,50 @@ const sumMinutes = (intervals) => intervals.reduce((acc, [s, e]) => acc + (e - s
 /**
  * @param {Array<{start:string,end:string}>} workBusy - work-calendar free/busy blocks
  * @param {Array<{title:string,startTime:string,endTime:string,allDay:boolean}>} calendar - personal-calendar events
+ * @param {{workBusy?: boolean, calendar?: boolean}} [sourcesAvailable] - did each
+ *   source's fetch actually SUCCEED? Defaults to both true (an empty array
+ *   from a caller that doesn't track availability is trusted as a genuinely
+ *   empty calendar, matching every existing caller's prior behavior). Pass
+ *   `false` explicitly when a fetch failed/threw — an empty array alone is
+ *   indistinguishable from "genuinely no events", and treating a FAILED
+ *   personal-calendar fetch as "no events" reproduces the exact
+ *   mirrored-Sabbath double-counting bug this module exists to prevent
+ *   (nothing left to net a mirrored work-busy block against).
  * @returns {{
- *   meetingMinutes: number, meetingHours: number, isAllDayBlocked: boolean,
+ *   meetingMinutes: number|null, meetingHours: number|null, isAllDayBlocked: boolean,
  *   busyIntervals: number[][], openWindows: string[],
  *   overlapTitleFor: (block: {start:string,end:string}) => string|null,
+ *   degraded: boolean, degradedReason: string|null,
  * }}
+ *   `meetingMinutes`/`meetingHours` are `null` (never `0` — a false "zero
+ *   meetings" claim is just as wrong as a false nonzero one) whenever
+ *   `degraded` is true. Callers MUST check `degraded` and suppress any
+ *   question or claim built from the numeric fields when it's true.
  */
-function computeCalendarLoad({ workBusy = [], calendar = [] } = {}) {
-  const rawIntervals = workBusy.map((b) => toInterval(b, 'start', 'end')).filter(Boolean);
+function computeCalendarLoad({ workBusy = [], calendar = [], sourcesAvailable = {} } = {}) {
+  const workBusyAvailable = sourcesAvailable.workBusy !== false;
+  const calendarAvailable = sourcesAvailable.calendar !== false;
 
-  const isAllDayBlocked = rawIntervals.some(
+  const rawIntervals = workBusyAvailable
+    ? workBusy.map((b) => toInterval(b, 'start', 'end')).filter(Boolean)
+    : [];
+
+  // isAllDayBlocked never depends on the personal calendar, so it's still
+  // safe to report whenever workBusy itself is available — even if the
+  // personal-calendar fetch failed.
+  const isAllDayBlocked = workBusyAvailable && rawIntervals.some(
     ([s, e]) => s <= ALL_DAY_START_MIN && e >= ALL_DAY_END_MIN
   );
 
-  const namedEvents = calendar
-    .filter((e) => !e.allDay && e.startTime && e.endTime)
-    .map((e) => ({ title: e.title, interval: toInterval(e, 'startTime', 'endTime') }))
-    .filter((e) => e.interval);
+  const namedEvents = calendarAvailable
+    ? calendar
+        .filter((e) => !e.allDay && e.startTime && e.endTime)
+        .map((e) => ({ title: e.title, interval: toInterval(e, 'startTime', 'endTime') }))
+        .filter((e) => e.interval)
+    : [];
 
   const overlapTitleFor = (block) => {
+    if (!calendarAvailable) return null;
     const iv = toInterval(block, 'start', 'end');
     if (!iv) return null;
     const hit = namedEvents.find(
@@ -110,6 +135,24 @@ function computeCalendarLoad({ workBusy = [], calendar = [] } = {}) {
     );
     return hit ? hit.title : null;
   };
+
+  // A required source failed — fail closed. Whichever side failed, ANY
+  // numeric meeting-load figure computed from what's left risks presenting
+  // a false claim (work-busy alone can't be deduped against a mirrored
+  // personal event; a personal calendar alone has no busy blocks to sum in
+  // the first place). Report degraded instead of guessing.
+  if (!workBusyAvailable || !calendarAvailable) {
+    return {
+      meetingMinutes: null,
+      meetingHours: null,
+      isAllDayBlocked,
+      busyIntervals: [],
+      openWindows: [],
+      overlapTitleFor,
+      degraded: true,
+      degradedReason: !workBusyAvailable ? 'workBusy_unavailable' : 'calendar_unavailable',
+    };
+  }
 
   if (isAllDayBlocked) {
     return {
@@ -119,6 +162,8 @@ function computeCalendarLoad({ workBusy = [], calendar = [] } = {}) {
       busyIntervals: [],
       openWindows: [],
       overlapTitleFor,
+      degraded: false,
+      degradedReason: null,
     };
   }
 
@@ -148,6 +193,8 @@ function computeCalendarLoad({ workBusy = [], calendar = [] } = {}) {
     busyIntervals: merged,
     openWindows,
     overlapTitleFor,
+    degraded: false,
+    degradedReason: null,
   };
 }
 

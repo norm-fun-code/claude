@@ -180,57 +180,219 @@ Write the 1-3 most surprising, useful cross-context insights as JSON:
 Only include insights you can ground in the relationships above. If nothing is genuinely cross-context, return {"insights": []}.`;
 }
 
-// ── Deterministic causal-language guard ──────────────────────────────────
-// The prompt asks for strictly observational framing, but an LLM can still
-// slip into a causal claim ("Magnesium causes higher energy") or an
-// actionable imperative ("keep taking it to boost energy") the underlying
-// observational data cannot support. This is the DETERMINISTIC backstop —
-// every generated insight is scanned before it is ever persisted, not just
-// asked-for-nicely in the prompt.
-const CAUSAL_VERB_RE = /\b(causes?|drives?|boosts?|leads? to|results? in)\b|→/i;
-// An imperative recommendation framed as advice ("keep taking it to boost
-// energy", "do X to improve Y") — distinct from a plain observational
-// statement ("tends to go with", "associated with", "worth testing").
-const IMPERATIVE_RECOMMENDATION_RE =
-  /\b(keep|start|try|do|take|use|add|increase|reduce|cut|avoid|stop)\b[^.!?]{0,40}\bto\s+(boost|improve|increase|reduce|fix|help|raise|lower|maximize|optimize)\b/i;
+// ── Deterministic causal / prescriptive-language classification ─────────
+// A maintainable, normalized-PREDICATE classifier instead of an ever-growing
+// list of exact phrases. Three closed, principled checks, not a reactive
+// regex patched every time a new synonym shows up:
+//
+//   1. CAUSAL WORDS — a small lemma vocabulary (cause/drive/boost/improve/
+//      worsen/effect/impact/...) matched against EVERY common inflection
+//      (boosts/boosted/boosting) via one generated alternation. Adding a new
+//      synonym is a one-line vocabulary addition, not a new pattern to get
+//      right, and it's caught in every tense automatically.
+//   2. STRUCTURE — two English constructions a single-word scan can't
+//      express: the causative "make X ADJ" resultative ("makes your energy
+//      higher") and multi-word causal connectives ("leads to", "due to").
+//   3. PRESCRIPTION — an imperative paired with a STATED PURPOSE ("keep
+//      taking it TO BOOST energy") — a purpose-free instruction ("log your
+//      sleep tonight") makes no causal claim and is left alone.
+//
+// Every match is checked against its immediately preceding text for an
+// explicit negation/hedge ("not a proven effect", "no meaningful boost",
+// "doesn't clearly improve") — the same words that ASSERT causation are
+// exactly the words a proper hedge uses to DISCLAIM it, so bare word
+// presence is not enough; only an UNHEDGED assertion counts. This is what
+// lets "an association worth testing, not a proven effect" keep passing
+// while "has a positive effect on energy" is rejected — both contain
+// "effect", only one asserts it.
+const CAUSAL_LEMMAS = [
+  'cause', 'drive', 'trigger', 'produce', 'generate',
+  'boost', 'improve', 'worsen', 'impair', 'hinder', 'enhance', 'strengthen', 'weaken', 'suppress', 'harm', 'hurt', 'help',
+  'affect', 'influence', 'effect', 'impact',
+];
+function inflections(lemma) {
+  const forms = new Set([lemma, `${lemma}s`, `${lemma}ed`, `${lemma}ing`]);
+  if (lemma.endsWith('e')) {
+    forms.add(`${lemma}d`);
+    forms.add(`${lemma.slice(0, -1)}ing`);
+  }
+  return [...forms];
+}
+const CAUSAL_WORD_RE = new RegExp(
+  `\\b(${CAUSAL_LEMMAS.flatMap(inflections).sort((a, b) => b.length - a.length).join('|')})\\b`, 'gi'
+);
+const CAUSAL_PHRASE_RE = /\b(leads? to|results? in|due to|because of|thanks to|on account of)\b|→|↔/gi;
+// "makes/made/making X higher/lower/better/..." — the causative resultative
+// construction. "make" alone is far too common ("make dinner", "make a
+// decision") to flag on its own; this only fires paired with a degree/
+// comparative adjective in the same clause.
+const CAUSATIVE_MAKE_RE =
+  /\bmak(?:es|e|ing)\b[^.!?]{0,40}\b(higher|lower|better|worse|stronger|weaker|easier|harder|greater|smaller|more|less)\b/gi;
+// An imperative PAIRED WITH A STATED PURPOSE — a bare instruction with no
+// purpose clause makes no causal claim and is intentionally left alone.
+const PRESCRIPTIVE_PURPOSE_RE =
+  /\b(keep|start|try|do|take|use|add|increase|reduce|cut|avoid|stop)\b[^.!?]{0,40}\bto\s+(boost|improve|increase|reduce|fix|help|raise|lower|maximize|optimize|strengthen|worsen|decrease)\b/gi;
+
+const NEGATION_WINDOW_RE =
+  /\b(not|no|never|without|isn'?t|doesn'?t|didn'?t|hasn'?t|wasn'?t|aren'?t|won'?t|can'?t|cannot|unproven|unclear|inconclusive)\b[\w\s]{0,15}$/i;
+
+/** Is the match at `matchIndex` inside an explicit negation/hedge? Looks at
+ *  the ~30 characters immediately before the match for a negation word
+ *  followed only by a short run of words up to the match itself. */
+function isNegatedContext(text, matchIndex) {
+  const windowStart = Math.max(0, matchIndex - 30);
+  return NEGATION_WINDOW_RE.test(text.slice(windowStart, matchIndex));
+}
+
+/** Does `re` (a global regex) match `text` at least once OUTSIDE a negated
+ *  context? Consumes/resets `re.lastIndex` — always pass a regex literal
+ *  with the 'g' flag dedicated to this call. */
+function hasUnhedgedMatch(text, re) {
+  re.lastIndex = 0;
+  let m;
+  while ((m = re.exec(text))) {
+    if (!isNegatedContext(text, m.index)) return true;
+    if (m.index === re.lastIndex) re.lastIndex += 1; // guard a zero-width match from looping forever
+  }
+  return false;
+}
+
+/** Pure: does `text` assert a causal mechanism or issue a purpose-driven
+ *  prescriptive instruction? Classification only — whether that's actually
+ *  UNSUPPORTED (vs. backed by a completed experiment) is a separate check,
+ *  see sentenceAuthorizedByExperiments below. */
+function classifyCausalLanguage(text) {
+  const s = String(text || '');
+  if (!s.trim()) return false;
+  return (
+    hasUnhedgedMatch(s, CAUSAL_WORD_RE) ||
+    hasUnhedgedMatch(s, CAUSAL_PHRASE_RE) ||
+    hasUnhedgedMatch(s, CAUSATIVE_MAKE_RE) ||
+    hasUnhedgedMatch(s, PRESCRIPTIVE_PURPOSE_RE)
+  );
+}
+
+function splitSentences(text) {
+  return String(text || '').split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+}
 
 function sigWordsForMatch(s) {
   return new Set(String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w.length > 3));
 }
-/** Pure: do `a` and `b` plausibly describe the SAME underlying relationship
- *  (used to check a causal claim against a completed experiment's hypothesis)? */
-function sharesSubject(a, b) {
-  const wa = sigWordsForMatch(a);
-  const wb = sigWordsForMatch(b);
-  if (!wa.size || !wb.size) return false;
-  let common = 0;
-  for (const w of wa) if (wb.has(w)) common++;
-  return common / Math.min(wa.size, wb.size) >= 0.34;
+
+// ── Outcome-concept vocabulary for confirmed-experiment authorization ────
+// Maps outcome words that can appear in generated text to a canonical
+// OUTCOME TAG, and maps an experiment's structured `metric` field
+// ('domain:metric', e.g. 'wellbeing:energy') to that same tag. Deliberately
+// narrow — the handful of outcome domains this app actually tracks, not a
+// general NLU system — but it's what lets authorization require the
+// claim's SPECIFIC outcome to match the experiment's SPECIFIC measured
+// outcome, rather than any shared vocabulary at all.
+const OUTCOME_CONCEPTS = [
+  { tag: 'sleep', words: ['sleep', 'slept', 'sleeping'], metricSubstrings: ['sleep'] },
+  { tag: 'energy', words: ['energy', 'energetic'], metricSubstrings: ['energy'] },
+  { tag: 'mood', words: ['mood', 'happiness', 'happier'], metricSubstrings: ['mood'] },
+  { tag: 'focus', words: ['focus', 'focused', 'concentration'], metricSubstrings: ['focus'] },
+  { tag: 'recovery', words: ['recovery', 'recovered', 'recovering'], metricSubstrings: ['recovery'] },
+  { tag: 'hrv', words: ['hrv', 'heart rate variability'], metricSubstrings: ['hrv'] },
+  { tag: 'resting_hr', words: ['resting heart rate', 'resting hr', 'rhr'], metricSubstrings: ['resting_hr', 'rhr'] },
+  { tag: 'steps', words: ['steps', 'walking'], metricSubstrings: ['steps'] },
+  { tag: 'weight', words: ['weight'], metricSubstrings: ['weight'] },
+];
+function outcomeTagsIn(text) {
+  const t = String(text || '').toLowerCase();
+  return OUTCOME_CONCEPTS.filter((c) => c.words.some((w) => t.includes(w))).map((c) => c.tag);
+}
+function outcomeTagForMetric(metricKey) {
+  const m = String(metricKey || '').toLowerCase();
+  const hit = OUTCOME_CONCEPTS.find((c) => c.metricSubstrings.some((sub) => m.includes(sub)));
+  return hit ? hit.tag : null;
+}
+
+/** The INTERVENTION/exposure words for a confirmed experiment — from its
+ *  structured `lever` field when set (canonical 'domain:metric'-shaped key,
+ *  e.g. 'habits:magnesium'), otherwise from the hypothesis's own leading
+ *  clause (the words before its first causal/outcome word, which is almost
+ *  always the intervention: "Magnesium before bed improves sleep duration"
+ *  -> "Magnesium before bed"). */
+function interventionWordsFor(experiment) {
+  if (experiment.lever) {
+    const seg = String(experiment.lever).split(':').pop().replace(/_/g, ' ');
+    return sigWordsForMatch(seg);
+  }
+  const hyp = String(experiment.hypothesis || '');
+  const m = hyp.match(new RegExp(CAUSAL_WORD_RE.source, 'i'));
+  const leading = m ? hyp.slice(0, m.index) : hyp;
+  return sigWordsForMatch(leading);
 }
 
 /**
- * Pure: does `text` cross into a causal claim or an unsupported "do this"
- * recommendation? `confirmedHypotheses` (completed, CONFIRMED self-
- * experiments — the ONLY thing allowed to license that language) are checked
- * for a shared subject before the text is let through.
+ * Pure: is `sentence` (a single causal-language-bearing sentence from a
+ * generated insight) authorized by ANY confirmed experiment in
+ * `confirmedExperiments` ({hypothesis, lever, metric}[])? Authorization
+ * requires the sentence to name BOTH the experiment's specific
+ * INTERVENTION and its specific measured OUTCOME — matching on structured
+ * experiment facts (lever/metric) rather than loose whole-text overlap,
+ * which previously let a confirmed magnesium→sleep experiment authorize an
+ * unrelated claim about mood or energy just because "magnesium" appeared
+ * somewhere in a long combined blob.
+ *
+ * Every recognized outcome tag the sentence mentions must be covered — a
+ * sentence bundling a confirmed outcome with an ADDITIONAL, unconfirmed one
+ * ("Magnesium improves sleep and mood") fails as a whole: the confirmed
+ * "sleep" claim does not license the unconfirmed "mood" claim riding along
+ * in the same sentence. Fails closed whenever the relationship can't be
+ * matched with confidence (no intervention named, no structured metric, or
+ * the sentence names no recognized outcome at all).
  */
-function hasUnsupportedCausalLanguage(text, confirmedHypotheses = []) {
-  const flagged = CAUSAL_VERB_RE.test(text) || IMPERATIVE_RECOMMENDATION_RE.test(text);
-  if (!flagged) return false;
-  return !confirmedHypotheses.some((h) => sharesSubject(text, h));
+function sentenceAuthorizedByExperiments(sentence, confirmedExperiments) {
+  const sentenceOutcomeTags = outcomeTagsIn(sentence);
+  if (!sentenceOutcomeTags.length) return false; // can't confirm what the claim is even about
+  const sentenceSigWords = sigWordsForMatch(sentence);
+
+  const relevantExperiments = confirmedExperiments.filter((e) => {
+    const interventionWords = interventionWordsFor(e);
+    if (!interventionWords.size) return false;
+    for (const w of interventionWords) if (sentenceSigWords.has(w)) return true;
+    return false;
+  });
+  if (!relevantExperiments.length) return false; // no intervention named -> fail closed
+
+  const confirmedOutcomeTags = new Set(
+    relevantExperiments.map((e) => outcomeTagForMetric(e.metric)).filter(Boolean)
+  );
+  if (!confirmedOutcomeTags.size) return false; // structured metric unavailable/unrecognized -> fail closed
+
+  // Every outcome the sentence names must be covered — one confirmed outcome
+  // never licenses an additional, unconfirmed one bundled into the sentence.
+  return sentenceOutcomeTags.every((tag) => confirmedOutcomeTags.has(tag));
 }
 
-/** The hypotheses of completed, CONFIRMED self-experiments — the only thing
- *  allowed to license causal language or a "do this" recommendation in a
- *  generated cross-context insight. Fail-safe: empty on error (fails toward
- *  REJECTING causal language, never toward permitting it). */
-async function fetchConfirmedHypotheses() {
+/**
+ * Pure: does `text` (a generated insight's headline + body) contain ANY
+ * sentence with unsupported causal/prescriptive language? Checked PER
+ * SENTENCE, not as one combined blob — see sentenceAuthorizedByExperiments
+ * for why: bundling a confirmed outcome with an unconfirmed one in the same
+ * sentence must still fail, which a whole-text check can't distinguish.
+ */
+function hasUnsupportedCausalLanguage(text, confirmedExperiments = []) {
+  return splitSentences(text).some((sentence) => {
+    if (!classifyCausalLanguage(sentence)) return false;
+    return !sentenceAuthorizedByExperiments(sentence, confirmedExperiments);
+  });
+}
+
+/** Completed, CONFIRMED self-experiments with their STRUCTURED facts
+ *  (hypothesis/lever/metric) — the only thing allowed to license causal
+ *  language or a "do this" recommendation in a generated cross-context
+ *  insight. Fail-safe: empty on error (fails toward REJECTING causal
+ *  language, never toward permitting it). */
+async function fetchConfirmedExperiments() {
   try {
     const experiments = await experimentsStore.listExperiments();
     return experiments
-      .filter((e) => e.status === 'completed' && e.verdict === 'confirmed')
-      .map((e) => e.hypothesis)
-      .filter(Boolean);
+      .filter((e) => e.status === 'completed' && e.verdict === 'confirmed' && e.hypothesis)
+      .map((e) => ({ hypothesis: e.hypothesis, lever: e.lever ?? null, metric: e.metric ?? null }));
   } catch {
     return [];
   }
@@ -285,11 +447,17 @@ async function generateCrossContext({ minRelationships = 2 } = {}) {
   // Deterministic causal-language guard — reject (never rewrite; a wholesale
   // LLM-authored blurb is not safe to auto-edit) any insight that crosses
   // into a causal claim or a "do this" imperative unless a completed,
-  // CONFIRMED self-experiment actually backs it (see PROVEN ON THEM above).
-  const confirmedHypotheses = await fetchConfirmedHypotheses();
+  // CONFIRMED self-experiment actually backs it (see PROVEN ON THEM above),
+  // checked with structured intervention+outcome matching, not loose
+  // whole-text overlap (see sentenceAuthorizedByExperiments).
+  const confirmedExperiments = await fetchConfirmedExperiments();
   const insights = shapedInsights.filter((ins) => {
-    const combined = `${ins.headline} ${ins.insight}`;
-    if (hasUnsupportedCausalLanguage(combined, confirmedHypotheses)) {
+    // Force a sentence boundary between headline and body — the headline
+    // usually carries no terminal punctuation, and the per-sentence
+    // authorization check below depends on sentences being split correctly.
+    const headline = String(ins.headline).trim();
+    const combined = /[.!?]\s*$/.test(headline) ? `${headline} ${ins.insight}` : `${headline}. ${ins.insight}`;
+    if (hasUnsupportedCausalLanguage(combined, confirmedExperiments)) {
       console.error(`[crossContext] rejected an insight with unsupported causal language: "${ins.headline}"`);
       return false;
     }
@@ -347,7 +515,7 @@ async function generateCrossContext({ minRelationships = 2 } = {}) {
 
 module.exports = {
   generateCrossContext, selectCrossDomain, buildPrompt, buildDurableProfile, deriveConfidence,
-  hasUnsupportedCausalLanguage,
+  hasUnsupportedCausalLanguage, classifyCausalLanguage, sentenceAuthorizedByExperiments,
 };
 
 if (require.main === module) {

@@ -1119,6 +1119,8 @@ async function buildFreshBriefing({ force = false } = {}) {
     // net against.
     let tomorrowWorkBusy = [];
     let tomorrowCalendar = [];
+    let tomorrowWorkBusyAvailable = false;
+    let tomorrowCalendarAvailable = false;
     {
       const tmr = new Date(Date.now() + 24 * 60 * 60 * 1000);
       const calendarSvc = require('../services/calendar');
@@ -1128,8 +1130,10 @@ async function buildFreshBriefing({ force = false } = {}) {
         calendarSvc.fetchWorkBusyBlocks({ date: tmr }),
         calendarSvc.fetchCalendarEvents({ date: tmr }),
       ]);
-      if (wb.status === 'fulfilled') tomorrowWorkBusy = wb.value;
-      if (cal.status === 'fulfilled') tomorrowCalendar = cal.value;
+      if (wb.status === 'fulfilled') { tomorrowWorkBusy = wb.value; tomorrowWorkBusyAvailable = true; }
+      else console.error('[pre-brief-signals] tomorrow workBusy fetch failed:', wb.reason?.message || wb.reason);
+      if (cal.status === 'fulfilled') { tomorrowCalendar = cal.value; tomorrowCalendarAvailable = true; }
+      else console.error('[pre-brief-signals] tomorrow calendar fetch failed:', cal.reason?.message || cal.reason);
     }
     // Durable, server-side suppression for the calendar_load subject —
     // covers yesterday..tomorrow's local dates so both the "tomorrow is
@@ -1143,9 +1147,18 @@ async function buildFreshBriefing({ force = false } = {}) {
       fromDate: localDateStr(signalsTz, new Date(nowForSignals.getTime() - 24 * 60 * 60 * 1000)),
       toDate: localDateStr(signalsTz, new Date(nowForSignals.getTime() + 24 * 60 * 60 * 1000)),
     }).catch(() => new Map());
+    // TODAY's own calendar/workBusy availability — calendarResult/workBusyResult
+    // are the same Promise.allSettled results `calendar`/`workBusy` were
+    // unwrapped from above; a rejection there already collapsed to `[]`
+    // (unwrap(...) ?? []), which is exactly the ambiguity this module exists
+    // to remove — so track fulfilled/rejected here rather than re-deriving it
+    // from the now-indistinguishable empty array.
     const allSignals = preBriefSignals.buildSignals({
       recovery, calendar, workBusy, spend: recentSpend, spendBaseline, tomorrowWorkBusy, tomorrowCalendar,
       tz: signalsTz, now: nowForSignals, calendarLoadAnswers,
+      workBusyAvailable: workBusyResult.status === 'fulfilled',
+      calendarAvailable: calendarResult.status === 'fulfilled',
+      tomorrowWorkBusyAvailable, tomorrowCalendarAvailable,
     });
     signals = preBriefSignals.selectQuestions(allSignals, 2);
   } catch (err) {
@@ -1670,7 +1683,13 @@ async function buildFreshBriefing({ force = false } = {}) {
   {
     const [chiefSettled, wisdomSettled] = await Promise.allSettled([
       withTimeout(
-        generateChiefBrief(emails, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext, attentionContext, liveGoals, chiefFacts, recoveryDriversContext),
+        generateChiefBrief(emails, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext, attentionContext, liveGoals, chiefFacts, recoveryDriversContext,
+          // Whether TODAY's own calendar/workBusy fetches actually succeeded
+          // (see calendarResult/workBusyResult above) — a rejection there
+          // already collapsed to `[]` via unwrap(...) ?? [], indistinguishable
+          // from "genuinely empty" by the time `calendar`/`workBusy` reach
+          // here, so this is tracked separately rather than re-derived.
+          { workBusy: workBusyResult.status === 'fulfilled', calendar: calendarResult.status === 'fulfilled' }),
         LLM_TIMEOUT,
         'gemini_chief'
       ),

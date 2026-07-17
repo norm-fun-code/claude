@@ -238,6 +238,42 @@ test('a claim citing the same cause concept in different words (still matching t
   assert.ok(!violations.some((v) => v.check === 'recovery_cause'));
 });
 
+// ── Audit3 fix 3: recognized-but-conflicting cause concepts must NOT be
+// rescued by lexical fallback. "a stressful deadline at work" (stress) and
+// "an intense training session at work" (hard_training) share the word
+// "work" — the old lexical-overlap fallback (which ran whenever tag matching
+// merely FAILED, not only when the claim had zero tags) could let that
+// shared vocabulary paper over two genuinely different, both-recognized
+// cause concepts. ────────────────────────────────────────────────────────
+
+test('a recognized stress driver does NOT ground a recognized hard-training claim, even sharing the word "work"', () => {
+  const facts = { ...FACTS, recoveryDrivers: ['a stressful deadline at work'] };
+  const { violations } = validateChiefBriefClaims(
+    brief({ synthesis: 'Recovery dipped because of an intense training session at work.' }),
+    facts
+  );
+  assert.ok(violations.some((v) => v.check === 'recovery_cause'),
+    'stress and hard_training are both recognized concepts and do not overlap — must be rejected deterministically, not rescued by shared incidental vocabulary ("work")');
+});
+
+test('a recognized hard-training driver does NOT ground a recognized stress claim, even sharing incidental words', () => {
+  const facts = { ...FACTS, recoveryDrivers: ['an unusual training session at the office'] };
+  const { violations } = validateChiefBriefClaims(
+    brief({ synthesis: 'Recovery dipped because of a stressful deadline at the office.' }),
+    facts
+  );
+  assert.ok(violations.some((v) => v.check === 'recovery_cause'));
+});
+
+test('the wine-versus-late-meal protection still holds (both recognized, non-overlapping concepts)', () => {
+  const facts = { ...FACTS, recoveryDrivers: ['drank wine last night'] };
+  const { violations } = validateChiefBriefClaims(
+    brief({ synthesis: 'Recovery dipped because of a late meal last night.' }),
+    facts
+  );
+  assert.ok(violations.some((v) => v.check === 'recovery_cause'));
+});
+
 test('two different eligible drivers: a claim naming EITHER concept is grounded, a third concept is not', () => {
   const facts = { ...FACTS, recoveryDrivers: ['drank wine last night', 'stressful argument before bed'] };
   const stressClaim = brief({ synthesis: 'Recovery dipped because of the argument last night.' });

@@ -8,10 +8,16 @@ const { query } = require('../db');
 /** Upsert the answer for (subjectKey, localDate). `fingerprint` is a stable,
  *  caller-defined snapshot of "what the underlying signal looked like" at
  *  answer time (e.g. meeting-hours) — the next read compares against it to
- *  decide whether the schedule has materially changed since. */
-async function recordAnswer({ subjectKey, localDate, fingerprint, answer }) {
+ *  decide whether the schedule has materially changed since.
+ *
+ *  `db` defaults to the pooled `query` but accepts an injected transaction
+ *  client (see db/index.js's withTransaction) — POST /briefing/context
+ *  writes this row and its explanatory annotation atomically so a durable
+ *  "answered, don't ask again" suppression state can never exist without
+ *  the context that explains it (see routes/annotations.js). */
+async function recordAnswer({ subjectKey, localDate, fingerprint, answer }, db = query) {
   if (!subjectKey || !localDate) return;
-  await query(
+  await db(
     `INSERT INTO signal_answers (subject_key, local_date, fingerprint, answer)
        VALUES ($1, $2, $3, $4)
      ON CONFLICT (subject_key, local_date)

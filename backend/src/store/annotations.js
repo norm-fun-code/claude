@@ -40,13 +40,20 @@ function endOfTomorrowET(d = new Date()) {
  * callers (e.g. the POST /briefing/context route) decide whether this
  * answer should also be copied into the day journal/beliefs pipeline as
  * ordinary life context (a retraction should not be).
+ *
+ * `db` defaults to the pooled `query` but accepts an injected transaction
+ * client (see db/index.js's withTransaction) — a caller that needs this
+ * write to succeed-or-fail ATOMICALLY together with another table's write
+ * (e.g. POST /briefing/context's calendar_load signal_answers row — see
+ * that route) passes the shared client through here instead of letting each
+ * write commit independently.
  */
-async function createAnnotation(a) {
+async function createAnnotation(a, db = query) {
   const { startTs, endTs = null, category, label, note = null } = a;
   // Default end_ts to end-of-day ET so annotations expire automatically.
   // Callers can pass an explicit endTs for multi-day events (e.g. travel).
   const resolvedEndTs = endTs ?? endOfTomorrowET(new Date(startTs));
-  const { rows } = await query(
+  const { rows } = await db(
     `INSERT INTO annotations (start_ts, end_ts, category, label, note)
      VALUES ($1, $2, $3, $4, $5) RETURNING id`,
     [startTs, resolvedEndTs, category, label, note]
@@ -69,7 +76,7 @@ async function createAnnotation(a) {
       // the backdated timestamp.
       const now = new Date();
       const since = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
-      const { rows: recent } = await query(
+      const { rows: recent } = await db(
         `SELECT * FROM annotations
           WHERE id != $1 AND retired_at IS NULL
             AND start_ts >= $2 AND start_ts <= $3
@@ -79,7 +86,7 @@ async function createAnnotation(a) {
       );
       const target = findRetractionTarget(text, recent);
       if (target) {
-        await retireAnnotation(target.id, 'superseded by a later retraction');
+        await retireAnnotation(target.id, 'superseded by a later retraction', db);
         retiredAnnotationId = target.id;
       }
     } catch (err) {
@@ -100,9 +107,10 @@ function invalidateContext() {
 
 /** Mark an annotation retired — excluded from every intelligence consumer
  *  (see overlapping() below) but never deleted, so history/audit views can
- *  still show it. Idempotent: a no-op if already retired. */
-async function retireAnnotation(id, reason = null) {
-  const { rowCount } = await query(
+ *  still show it. Idempotent: a no-op if already retired. `db` accepts an
+ *  injected transaction client, same as createAnnotation above. */
+async function retireAnnotation(id, reason = null, db = query) {
+  const { rowCount } = await db(
     `UPDATE annotations SET retired_at = now(), retired_reason = $2 WHERE id = $1 AND retired_at IS NULL`,
     [id, reason]
   );

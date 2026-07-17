@@ -46,6 +46,12 @@ function buildSignals({
   // other signals) get no suppression, matching the old unconditional
   // behavior.
   calendarLoadAnswers = new Map(),
+  // Did each calendar source's fetch actually SUCCEED (not just come back
+  // empty)? Defaults to true for every existing caller that doesn't track
+  // this — see calendar-load.js's computeCalendarLoad for why an omitted
+  // fetch failure must never silently read as "genuinely no events."
+  workBusyAvailable = true, calendarAvailable = true,
+  tomorrowWorkBusyAvailable = true, tomorrowCalendarAvailable = true,
 } = {}) {
   const signals = [];
   const todayKey = localDateStr(tz, now);
@@ -63,22 +69,32 @@ function buildSignals({
   // event (e.g. a Sabbath block also mirrored onto the work free/busy feed)
   // to net against, reproducing the exact double-counting bug one day early.
   {
-    const tomorrowLoad = computeCalendarLoad({ workBusy: tomorrowWorkBusy, calendar: tomorrowCalendar });
-    const stored = calendarLoadAnswers.get(tomorrowKey);
-    const suppressed = stored && !calendarLoadMateriallyChanged(stored.fingerprint, tomorrowLoad);
-    if (!suppressed && (tomorrowLoad.isAllDayBlocked || tomorrowLoad.meetingHours >= 6)) {
-      signals.push({
-        key: `calendar_load:${tomorrowKey}`,
-        // Echoed back by the client on answer so the server can record
-        // "what the schedule looked like when this was answered" without
-        // re-fetching calendar data inside the annotation route.
-        fingerprint: calendarLoadFingerprint(tomorrowLoad),
-        question: tomorrowLoad.isAllDayBlocked
-          ? "There's an all-day block on your work calendar tomorrow — what's going on? (OOO, travel, an offsite?)"
-          : `Tomorrow's work calendar is heavily blocked (${tomorrowLoad.meetingHours.toFixed(1)}h) — anything specific driving it?`,
-        context: 'calendar note',
-        severity: 0.72,
-      });
+    const tomorrowLoad = computeCalendarLoad({
+      workBusy: tomorrowWorkBusy, calendar: tomorrowCalendar,
+      sourcesAvailable: { workBusy: tomorrowWorkBusyAvailable, calendar: tomorrowCalendarAvailable },
+    });
+    if (tomorrowLoad.degraded) {
+      // A source needed to rule out double-counting is unavailable — never
+      // ask a question built from a meeting-load number that might be
+      // wrong. Suppress and log degraded provenance instead of guessing.
+      console.error(`[pre-brief-signals] tomorrow calendar_load degraded (${tomorrowLoad.degradedReason}) — suppressing the look-ahead question`);
+    } else {
+      const stored = calendarLoadAnswers.get(tomorrowKey);
+      const suppressed = stored && !calendarLoadMateriallyChanged(stored.fingerprint, tomorrowLoad);
+      if (!suppressed && (tomorrowLoad.isAllDayBlocked || tomorrowLoad.meetingHours >= 6)) {
+        signals.push({
+          key: `calendar_load:${tomorrowKey}`,
+          // Echoed back by the client on answer so the server can record
+          // "what the schedule looked like when this was answered" without
+          // re-fetching calendar data inside the annotation route.
+          fingerprint: calendarLoadFingerprint(tomorrowLoad),
+          question: tomorrowLoad.isAllDayBlocked
+            ? "There's an all-day block on your work calendar tomorrow — what's going on? (OOO, travel, an offsite?)"
+            : `Tomorrow's work calendar is heavily blocked (${tomorrowLoad.meetingHours.toFixed(1)}h) — anything specific driving it?`,
+          context: 'calendar note',
+          severity: 0.72,
+        });
+      }
     }
   }
 
@@ -98,18 +114,25 @@ function buildSignals({
   // block mirrored onto the work free/busy feed is never double-counted) and
   // never counting personal-calendar time as meetings. Same durable subject
   // key as the tomorrow-look-ahead signal above.
-  if (workBusy.length > 0 || calendar.length > 0) {
-    const todayLoad = computeCalendarLoad({ workBusy, calendar });
-    const stored = calendarLoadAnswers.get(todayKey);
-    const suppressed = stored && !calendarLoadMateriallyChanged(stored.fingerprint, todayLoad);
-    if (!suppressed && !todayLoad.isAllDayBlocked && todayLoad.meetingHours >= 4) {
-      signals.push({
-        key: `calendar_load:${todayKey}`,
-        fingerprint: calendarLoadFingerprint(todayLoad),
-        question: `You have ${todayLoad.meetingHours.toFixed(1)}h of meetings today — anything specific driving that, or just a heavy week?`,
-        context: 'calendar note',
-        severity: Math.min(0.75, 0.4 + (todayLoad.meetingHours - 4) * 0.06),
-      });
+  if (workBusy.length > 0 || calendar.length > 0 || !workBusyAvailable || !calendarAvailable) {
+    const todayLoad = computeCalendarLoad({
+      workBusy, calendar,
+      sourcesAvailable: { workBusy: workBusyAvailable, calendar: calendarAvailable },
+    });
+    if (todayLoad.degraded) {
+      console.error(`[pre-brief-signals] today calendar_load degraded (${todayLoad.degradedReason}) — suppressing the packed-calendar question`);
+    } else {
+      const stored = calendarLoadAnswers.get(todayKey);
+      const suppressed = stored && !calendarLoadMateriallyChanged(stored.fingerprint, todayLoad);
+      if (!suppressed && !todayLoad.isAllDayBlocked && todayLoad.meetingHours >= 4) {
+        signals.push({
+          key: `calendar_load:${todayKey}`,
+          fingerprint: calendarLoadFingerprint(todayLoad),
+          question: `You have ${todayLoad.meetingHours.toFixed(1)}h of meetings today — anything specific driving that, or just a heavy week?`,
+          context: 'calendar note',
+          severity: Math.min(0.75, 0.4 + (todayLoad.meetingHours - 4) * 0.06),
+        });
+      }
     }
   }
 

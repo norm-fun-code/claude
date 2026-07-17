@@ -12,6 +12,7 @@ const db = require('../../src/db');
 const { localDateStr } = require('../../src/util/date');
 const { computeRecoveryDrivers } = require('../../src/intelligence/recovery-drivers');
 const signalAnswersStore = require('../../src/store/signalAnswers');
+const annotationsStore = require('../../src/store/annotations');
 
 const app = buildTestApp();
 const TZ = process.env.TZ || 'America/New_York';
@@ -156,5 +157,40 @@ test('a signal-answer write failure surfaces as an error response, not a false {
     assert.equal(rows.length, 0, 'no annotation should be created when the durable answer write fails first');
   } finally {
     signalAnswersStore.recordAnswer = original;
+  }
+});
+
+test('an annotation-creation failure AFTER the signal-answer write rolls back the signal_answers row too (atomic write)', async () => {
+  // Fix 5 regression: recordAnswer used to commit independently and FIRST,
+  // so a subsequent createAnnotation failure left the question durably
+  // suppressed with no explanatory annotation to justify it. Both writes now
+  // run inside one transaction (see routes/annotations.js) — force the
+  // SECOND write to fail and assert the FIRST one is not left behind either.
+  const original = annotationsStore.createAnnotation;
+  annotationsStore.createAnnotation = async () => { throw new Error('simulated annotation failure'); };
+  try {
+    const today = localDateStr(TZ, new Date());
+    const res = await request(app)
+      .post('/api/briefing/context')
+      .set(authHeader())
+      .send({
+        question: 'You have 5.0h of meetings today',
+        answer: 'should not be durably suppressed',
+        signalKey: `calendar_load:${today}`,
+        fingerprint: 'test-atomic-fail',
+      });
+    assert.notEqual(res.status, 200, 'an annotation-write failure must not report success');
+
+    const map = await signalAnswersStore.answersFor('calendar_load', { fromDate: today, toDate: today });
+    const stored = map.get(today);
+    assert.ok(
+      !stored || stored.fingerprint !== 'test-atomic-fail',
+      'the signal_answers row must be rolled back, not left as an orphaned durable suppression with no annotation to explain it'
+    );
+
+    const { rows } = await db.query(`SELECT id FROM annotations WHERE label = $1`, ['should not be durably suppressed']);
+    assert.equal(rows.length, 0, 'no annotation should exist either, since it never committed');
+  } finally {
+    annotationsStore.createAnnotation = original;
   }
 });

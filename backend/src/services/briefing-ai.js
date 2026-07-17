@@ -115,7 +115,7 @@ const WISDOM_SYSTEM =
   '- notionQuote: pick a self-contained, meaningful line — never a title, never an intro that trails off (e.g. "Rather than trying to find someone who will:"). If the best idea spans a sentence, quote the whole sentence.\n' +
   '- quoteInsight / notionInsight: first sentence draws out the core idea as lived wisdom. Second sentence makes the connection to their actual data explicit — name the specific state or pattern that makes this quote land right now (e.g. "energy running low this week makes this idea about sustainable effort particularly timely" or "with recovery in the yellow band and cold shower adherence slipping this week, this hits differently"). If wellbeing data shows "no recent check-in data", return empty string for BOTH quoteInsight and notionInsight — a quote with no data connection is not shown. Connect through their wellbeing/health state (mood/energy/focus, recovery band, habits) — speak in plain human terms (low/ok/high, settled/slipping), like a friend who noticed, NEVER a raw number or "X/5" — that reads clinical, not like someone who actually knows them. Do NOT reference their calendar, specific tasks, schedule, "today", or their job/profession. Do NOT cite any dollar amount, net-worth figure, or financial percentage here — even if the quote is about money, make the connection qualitative (e.g. "the optionality you\'re building"), never with a computed number.';
 
-function buildChiefBriefPrompt(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '', attentionContext = '', openGoals = [], recoveryDriversContext = '') {
+function buildChiefBriefPrompt(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '', attentionContext = '', openGoals = [], recoveryDriversContext = '', calendarSourcesAvailable = { workBusy: true, calendar: true }) {
   // Input size wasn't the timeout cause (the proven Apps Script sends 15K/email
   // and is fine) — OUTPUT length was. So allow a generous 15K/email like that
   // setup, with a total budget as a safety net against a huge unread pile.
@@ -148,7 +148,9 @@ function buildChiefBriefPrompt(emailData, currentDay, workoutPlan, calendarEvent
   // mirrored onto the work calendar's titleless free/busy feed as a separate
   // anonymous chunk — without this the model summed it into "8.5h of
   // meetings" on top of the personal-calendar entry for the same commitment).
-  const calendarLoad = computeCalendarLoad({ workBusy: workBusyBlocks, calendar: calendarEvents });
+  const calendarLoad = computeCalendarLoad({
+    workBusy: workBusyBlocks, calendar: calendarEvents, sourcesAvailable: calendarSourcesAvailable,
+  });
   const allDayBlock = calendarLoad.isAllDayBlocked;
   const openWindows = calendarLoad.openWindows;
   const overlapLabel = (block) => {
@@ -175,12 +177,22 @@ function buildChiefBriefPrompt(emailData, currentDay, workoutPlan, calendarEvent
   // never double-count a mirrored Sabbath/family-time/appointment block. The
   // model should CITE this figure rather than re-derive one from the raw
   // block list below.
-  const workBusySection = allDayBlock
-    ? 'WORK CALENDAR: an ALL-DAY block covers today (out-of-office / PTO / holiday / travel — the free/busy feed has no titles). This is NOT a day packed with meetings; treat it as a day away from the desk. Do NOT say "zero open focus windows" or frame meeting load as a problem.'
-    : workBusyBlocks.length > 0
-      ? `TOTAL MEETING LOAD TODAY (authoritative — already net of any personal-calendar overlap; cite this figure, do not re-sum the block list below): ${calendarLoad.meetingHours.toFixed(1)}h\n` +
-        `MEETINGS (busy — no titles): ${workBusyBlocks.map((b) => `${b.start}–${b.end}${overlapLabel(b)}`).join(', ')}\nOPEN windows for focus work: ${openWindows.length ? openWindows.join(', ') : 'none'}`
-      : 'No busy blocks visible (calendar may be clear or data unavailable).';
+  //
+  // calendarLoad.degraded (a required source's fetch failed — see
+  // calendar-load.js) takes priority over every other branch: workBusyBlocks
+  // can be non-empty (the work free/busy feed succeeded) while the personal
+  // calendar fetch failed, which is exactly the state that reproduces the
+  // mirrored-Sabbath double-count if a number gets cited anyway. Never sum
+  // or cite meetingHours in that state — tell the model the figure is
+  // unavailable and to avoid asserting a meeting-load claim at all.
+  const workBusySection = calendarLoad.degraded
+    ? `WORK CALENDAR: meeting-load data is INCOMPLETE right now (${calendarLoad.degradedReason === 'calendar_unavailable' ? 'the personal calendar' : 'the work calendar'} failed to load), so no reliable meeting-hours total or busy/free breakdown is available. Do NOT state a number of meeting hours, do NOT say the day is "packed" or "light," and do NOT list specific busy blocks or open windows — acknowledge the data gap in passing if relevant, otherwise omit calendar load from today's brief entirely.`
+    : allDayBlock
+      ? 'WORK CALENDAR: an ALL-DAY block covers today (out-of-office / PTO / holiday / travel — the free/busy feed has no titles). This is NOT a day packed with meetings; treat it as a day away from the desk. Do NOT say "zero open focus windows" or frame meeting load as a problem.'
+      : workBusyBlocks.length > 0
+        ? `TOTAL MEETING LOAD TODAY (authoritative — already net of any personal-calendar overlap; cite this figure, do not re-sum the block list below): ${calendarLoad.meetingHours.toFixed(1)}h\n` +
+          `MEETINGS (busy — no titles): ${workBusyBlocks.map((b) => `${b.start}–${b.end}${overlapLabel(b)}`).join(', ')}\nOPEN windows for focus work: ${openWindows.length ? openWindows.join(', ') : 'none'}`
+        : 'No busy blocks visible (calendar may be clear or data unavailable).';
 
   return `${selfModel ? selfModel + '\n\n---\n\n' : ''}Today is ${currentDay}.
 ${dayOffContext ? `\nDAY CONTEXT: ${dayOffContext}\n` : ''}
@@ -564,11 +576,11 @@ function buildGoalCorrectionPrompt(prompt, violations) {
  *  against (see findFalseGoalCompletions above). Both the full builder and
  *  the scoped chief-brief rebuild call this same function, so the guard
  *  applies identically to each — no separate, weaker path. */
-async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '', attentionContext = '', openGoals = [], snapshotFacts = null, recoveryDriversContext = '') {
+async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '', attentionContext = '', openGoals = [], snapshotFacts = null, recoveryDriversContext = '', calendarSourcesAvailable = { workBusy: true, calendar: true }) {
   // Apply the same hard filter as generateEmailBriefs so automated senders
   // never reach the main briefing LLM call either.
   const filteredEmails = filterActionableEmails(emailData);
-  const prompt = buildChiefBriefPrompt(filteredEmails, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusyBlocks, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext, attentionContext, openGoals, recoveryDriversContext);
+  const prompt = buildChiefBriefPrompt(filteredEmails, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusyBlocks, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext, attentionContext, openGoals, recoveryDriversContext, calendarSourcesAvailable);
 
   // One correlation ID per build, threaded through every attempt's log lines
   // so a failure can be traced across attempts without ever logging content.

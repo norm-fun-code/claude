@@ -16,6 +16,7 @@ const { naiveToUtcIso, localDayBoundsUtc, localDateStr } = require('../util/date
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { requireFields } = require('../middleware/validate');
 const { EVENT_KIND, describesCompletedNight } = require('../intelligence/context-semantics');
+const { withTransaction } = require('../db');
 
 function createAnnotationsRouter() {
   const router = express.Router();
@@ -87,21 +88,6 @@ function createAnnotationsRouter() {
     // re-ask a question already answered here.
     const CALENDAR_LOAD_KEY_RE = /^calendar_load:(\d{4}-\d{2}-\d{2})$/;
     const calendarLoadMatch = CALENDAR_LOAD_KEY_RE.exec(String(signalKey || ''));
-    if (calendarLoadMatch) {
-      // AWAITED, not fire-and-forget, and deliberately BEFORE createAnnotation
-      // below: this row is what future buildSignals() calls check to decide
-      // whether to suppress the question again (see store/signalAnswers.js) —
-      // a caller re-fetching signals immediately after this response resolves
-      // (the mobile app's own optimistic UI, or the very next scheduled brief
-      // build) must see it. Doing this first and letting a failure propagate
-      // (asyncHandler forwards the rejection to the error middleware — no
-      // .catch() swallowing it here) means the response can never claim
-      // success while the durable answer doesn't exist, and nothing else gets
-      // written on top of a failed durable write.
-      await signalAnswersStore.recordAnswer({
-        subjectKey: 'calendar_load', localDate: calendarLoadMatch[1], fingerprint, answer: answer.trim(),
-      });
-    }
     // Tag spending-related answers so they're excluded from health/recovery anomaly
     // context (a "$665 on vacation" answer must never explain a low-HRV deviation).
     // The 'spend' substring is what the anomaly filter in analyze.js keys off.
@@ -152,13 +138,36 @@ function createAnnotationsRouter() {
       startTs = nightWindow.start;
       effectiveEndTs = nightWindow.end;
     }
-    const { id, eventKind, retiredAnnotationId } = await annotationsStore.createAnnotation({
+    const annotationPayload = {
       startTs: startTs.toISOString(),
       endTs: effectiveEndTs ? effectiveEndTs.toISOString() : undefined,
       category: isSpending ? 'spending note' : 'brief_context',
       label: answer.trim().slice(0, 500),
       note: question ? `Q: ${question.slice(0, 300)}` : (signalKey ?? null),
-    });
+    };
+    let id, eventKind, retiredAnnotationId;
+    if (calendarLoadMatch) {
+      // Atomic: the durable "answered, don't ask again" row (signal_answers —
+      // see store/signalAnswers.js) and the annotation that explains WHY
+      // (this table) must commit or fail together. Previously these were two
+      // independent writes with recordAnswer landing first; if createAnnotation
+      // then failed, the question became durably suppressed with its
+      // explanatory context permanently lost. Both stores accept an injectable
+      // `db` (see store/annotations.js, store/signalAnswers.js) so a single
+      // transaction client drives both writes here — asyncHandler forwards a
+      // rejection (including a failed COMMIT) to the error middleware with no
+      // swallowing, so the response can never claim success unless BOTH writes
+      // landed, and a failure leaves neither behind.
+      ({ id, eventKind, retiredAnnotationId } = await withTransaction(async (client) => {
+        const db = (text, params) => client.query(text, params);
+        await signalAnswersStore.recordAnswer({
+          subjectKey: 'calendar_load', localDate: calendarLoadMatch[1], fingerprint, answer: answer.trim(),
+        }, db);
+        return annotationsStore.createAnnotation(annotationPayload, db);
+      }));
+    } else {
+      ({ id, eventKind, retiredAnnotationId } = await annotationsStore.createAnnotation(annotationPayload));
+    }
     if (retiredAnnotationId) {
       console.log(`[briefing/context] retraction retired prior annotation ${retiredAnnotationId}`);
     }

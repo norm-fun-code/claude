@@ -165,15 +165,27 @@ function checkRecoveryCause(result, facts) {
     for (const sentence of splitIntoSentences(text)) {
       if (!RECOVERY_CONTEXT_RE.test(sentence)) continue;
       if (!CAUSAL_RE.test(sentence)) continue;
-      // Grounded if the claim names a RECOGNIZED cause concept that's among
-      // the eligible drivers' own concepts (primary check — precise, immune
-      // to shared temporal wording), OR — for a driver/claim phrasing the
-      // fixed concept list doesn't cover — the claim's non-temporal,
-      // non-generic vocabulary substantially overlaps a specific driver's.
+      // Grounded if the claim names a RECOGNIZED cause concept — compared
+      // concept-to-concept ONLY, never overridden by lexical overlap. Every
+      // eligible driver already has >=1 recognized tag (guaranteed by
+      // isPlausibleHealthCause), so whenever the CLAIM also names a
+      // recognized concept, both sides have real concept representations:
+      // a mismatch between them is a confident, deterministic conflict, and
+      // falling back to lexical overlap here was the bug — an eligible
+      // "stressful day at work" driver (tag: stress) could wrongly ground an
+      // unrelated "hard training work session" claim (tag: hard_training)
+      // just because both happen to mention "work".
+      //
+      // Lexical fallback is reserved for when the CLAIM's cause wording maps
+      // to NO recognized concept at all (a paraphrase the fixed list doesn't
+      // cover) — concept representation is genuinely unavailable for that
+      // side, so a fuzzy vocabulary-overlap check against each driver is the
+      // best available signal, not a bypass of a concept check that already
+      // ran and disagreed.
       const claimedTags = causeConceptTags(sentence);
-      const tagGrounded = claimedTags.length > 0 && claimedTags.some((t) => eligibleTags.has(t));
-      const lexicallyGrounded = !tagGrounded && drivers.some((d) => causalOverlapRatio(sentence, d) >= CAUSE_OVERLAP_THRESHOLD);
-      const groundedInDriver = tagGrounded || lexicallyGrounded;
+      const groundedInDriver = claimedTags.length > 0
+        ? claimedTags.some((t) => eligibleTags.has(t))
+        : drivers.some((d) => causalOverlapRatio(sentence, d) >= CAUSE_OVERLAP_THRESHOLD);
       if (!groundedInDriver) {
         violations.push({
           check: 'recovery_cause', field, sentence, severity: 'high',
