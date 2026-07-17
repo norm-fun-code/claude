@@ -293,8 +293,13 @@ export default function App() {
       return `Refreshed at ${health.lastFetched.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
     }
     if (briefing.rebuilding) return 'Rebuilding... usually 60–90s';
-    if (!d?.builtAt) return d?.stale ? 'Briefing is stale' : null;
-    const ageMs = Date.now() - new Date(d.builtAt).getTime();
+    // Age the tab off snapshotAt (when the STATE was cut), not builtAt (which
+    // advances on a text-only Chief Brief rebuild too) — otherwise a scoped
+    // rebuild would reset every tab to "Built just now" though its data is
+    // unchanged. Fall back to builtAt for briefs saved before snapshotAt existed.
+    const stateAt = d?.snapshotAt ?? d?.builtAt;
+    if (!stateAt) return d?.stale ? 'Briefing is stale' : null;
+    const ageMs = Date.now() - new Date(stateAt).getTime();
     const ageMin = Math.floor(ageMs / 60000);
     let label: string;
     if (ageMin < 2) label = 'Built just now';
@@ -304,7 +309,7 @@ export default function App() {
       label = ageH < 24 ? `Built ${ageH}h ago` : `Built ${Math.floor(ageH / 24)}d ago`;
     }
     return label;
-  }, [tab, health.lastFetched, d?.builtAt, d?.stale, briefing.rebuilding]);
+  }, [tab, health.lastFetched, d?.snapshotAt, d?.builtAt, d?.stale, briefing.rebuilding]);
 
   const renderTab = () => {
     switch (tab) {
@@ -315,7 +320,10 @@ export default function App() {
             <RecoveryCard
               recovery={liveRecovery.fetched ? liveRecovery.recovery : (liveRecovery.recovery ?? d?.recovery)}
               composites={d?.healthComposites ?? EMPTY_ARRAY}
-              builtAt={liveRecovery.fetched ? undefined : d?.builtAt}
+              // Show WHEN recovery was actually derived: its own field time
+              // (advanced by the cache-hit recovery refresh, NOT by a scoped
+              // chief-brief rebuild), falling back to the snapshot cut time.
+              builtAt={liveRecovery.fetched ? undefined : (d?.fieldsBuiltAt?.recovery ?? d?.snapshotAt ?? d?.builtAt)}
             />
             <NightContextCard />
             <HealthCard health={health} />

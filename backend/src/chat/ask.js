@@ -12,7 +12,6 @@ const metricsStore = require('../store/metrics');
 const intentionsStore = require('../store/intentions');
 const cat = require('../intelligence/catalog');
 const monarchMcp = require('../services/monarch-mcp');
-const { query: dbQuery } = require('../db');
 const { recordRecommendation } = require('../store/recommendations');
 
 const SYSTEM = `You are NormOS — the user's personal chief of staff, executive coach, and data scientist.
@@ -162,13 +161,20 @@ async function answerCommand(question, { history = [] } = {}) {
 async function personalSnapshot() {
   const lines = { goals: [], metrics: [], intentions: [] };
 
-  // Active goals (what the user is steering toward).
+  // Active goals (what the user is steering toward) — via the canonical store
+  // selector (store/goals.listGoals), NOT an ad-hoc SQL query, so Ask can't drift
+  // from the goal set every other surface reads.
   try {
-    const { rows } = await dbQuery(
-      `SELECT domain, title, metric, target_value, unit, target_date, status
-         FROM goals WHERE status = 'active' ORDER BY target_date NULLS LAST LIMIT 12`
-    );
-    lines.goals = rows;
+    const goals = await require('../store/goals').listGoals({ status: 'active' });
+    lines.goals = (goals || [])
+      .slice()
+      .sort((a, b) => {
+        // target_date ascending, NULLs last — matches the prior ORDER BY.
+        const ad = a.target_date ? new Date(a.target_date).getTime() : Infinity;
+        const bd = b.target_date ? new Date(b.target_date).getTime() : Infinity;
+        return ad - bd;
+      })
+      .slice(0, 12);
   } catch {
     /* goals optional */
   }

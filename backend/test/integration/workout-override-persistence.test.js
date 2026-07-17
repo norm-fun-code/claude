@@ -12,6 +12,7 @@ const { buildTestApp, authHeader, closeDb } = require('./helpers');
 const db = require('../../src/db');
 const { getEffectiveWorkout } = require('../../src/services/workout');
 const { canonicalFactsFrom } = require('../../src/brain/snapshot');
+const invalidation = require('../../src/brain/invalidation');
 
 const app = buildTestApp();
 const TZ = 'America/New_York';
@@ -32,12 +33,20 @@ test('persisting a workout override makes getEffectiveWorkout return source=over
 
   // "Use scheduled workout anyway" persists the scheduled id as an override.
   // Use an unambiguous id ('rest') so we can assert on it deterministically.
+  const effWorkoutVerBefore = invalidation.versionOf('effectiveWorkout');
+  const forecastVerBefore = invalidation.versionOf('todayForecast');
   const post = await request(app)
     .post('/api/workout/override')
     .set(authHeader())
     .send({ date: DATE, workoutId: 'rest' });
   assert.equal(post.status, 200);
   assert.equal(post.body.workoutId, 'rest');
+
+  // The mutation drove the registry-declared invalidation at RUNTIME (not just
+  // in a unit test): a workout override bumps effectiveWorkout AND the forecast
+  // that assumes it.
+  assert.ok(invalidation.versionOf('effectiveWorkout') > effWorkoutVerBefore);
+  assert.ok(invalidation.versionOf('todayForecast') > forecastVerBefore);
 
   // The GET the mobile client reads on load reflects it.
   const get = await request(app)

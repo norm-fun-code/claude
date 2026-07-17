@@ -59,12 +59,15 @@ function createRecoveryRouter() {
     }
     const written = await metricsStore.insertMetrics(rows);
     const recoveryModule = require('../intelligence/recovery');
-    // Must invalidate before re-reading: an earlier request in this same
+    // A recovery change: drive the registry-declared invalidation (recovery →
+    // effectiveWorkout → todayForecast → recoveryComposite) through the ONE bus,
+    // which also clears the liveRecovery compute cache via its registered
+    // listener. Must happen before re-reading: an earlier request in this same
     // process (e.g. the Health tab's initial load, before this check-in was
     // submitted) can have cached a "no data yet" null that's still within its
-    // TTL — without this, that stale null gets served right back through the
-    // write and the recovery score never appears to have been created.
-    recoveryModule.invalidateRecoveryCache();
+    // TTL — without invalidation that stale null gets served right back through
+    // the write and the recovery score never appears to have been created.
+    require('../brain/invalidation').bump('recovery_change');
     const recovery = await recoveryModule.liveRecovery();
     // Return the new proxy recovery immediately. The mobile then fires its normal
     // non-blocking briefing rebuild (triggerRebuild) which picks up this stored

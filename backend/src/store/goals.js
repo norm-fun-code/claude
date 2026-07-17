@@ -1,5 +1,12 @@
 const { query } = require('../db');
 
+// A goal create/update/delete changes what the brief's completion + weekly-intention
+// language may claim — route through the ONE invalidation bus (registry: GOAL_CHANGE
+// invalidates goals + weeklyIntention).
+function invalidateGoals() {
+  try { require('../brain/invalidation').bump('goal_change'); } catch { /* bus not loaded */ }
+}
+
 async function listGoals({ status = 'active' } = {}) {
   const { rows } = await query(
     `SELECT id, title, domain, metric, target_value, unit, target_date, baseline_value, status, created_at
@@ -18,6 +25,7 @@ async function createGoal({ title, domain = null, metric = null, targetValue = n
      RETURNING *`,
     [title, domain, metric, targetValue ?? null, unit, targetDate ?? null, baselineValue ?? null]
   );
+  if (rows[0]) invalidateGoals();
   return rows[0] ?? null;
 }
 
@@ -28,10 +36,12 @@ async function updateGoal(id, { status, title } = {}) {
   if (title !== undefined)  { vals.push(title);  fields.push(`title = $${vals.length}`); }
   if (!fields.length) return;
   await query(`UPDATE goals SET ${fields.join(', ')} WHERE id = $1`, vals);
+  invalidateGoals();
 }
 
 async function deleteGoal(id) {
   await query('DELETE FROM goals WHERE id = $1', [id]);
+  invalidateGoals();
 }
 
 module.exports = { listGoals, createGoal, updateGoal, deleteGoal };

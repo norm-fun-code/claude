@@ -200,10 +200,15 @@ function checkExperiments(result, facts) {
 
 // ── Spending total ───────────────────────────────────────────────────────────
 const SPEND_CONTEXT_RE = /\bspen[dt]|\bspending\b|\bthis month\b|\bmonth-to-date\b|\bmtd\b|\bbudget\b/i;
-const SPEND_TOLERANCE_FRAC = 0.2;
+// An explicit month-to-date total must AGREE with the canonical rounded value —
+// not merely land within a loose band. Allow only display rounding (2%, min $10);
+// the old 20% tolerance would wave through a "$2,900" when the truth was $2,450.
+const SPEND_TOLERANCE_FRAC = 0.02;
+const SPEND_TOLERANCE_ABS = 10;
 function checkSpending(result, facts) {
   const total = facts.spendingTotalMonth;
   if (total == null || !Number.isFinite(total) || total <= 0) return [];
+  const allowed = Math.max(SPEND_TOLERANCE_ABS, total * SPEND_TOLERANCE_FRAC);
   const violations = [];
   for (const [field, text] of briefFields(result)) {
     for (const sentence of splitIntoSentences(text)) {
@@ -215,11 +220,88 @@ function checkSpending(result, facts) {
       // Only flag a "total"/"spent" figure, not an arbitrary dollar amount
       // (a $12 coffee mention isn't a claim about the monthly total).
       if (!/\btotal|\bspen[dt]|\bmonth\b|\bmtd\b/i.test(sentence)) continue;
-      if (Math.abs(cited - total) / total > SPEND_TOLERANCE_FRAC) {
+      if (Math.abs(cited - total) > allowed) {
         violations.push({
-          check: 'spending_total', field, sentence, severity: 'low',
+          check: 'spending_total', field, sentence, severity: 'high',
           expected: Math.round(total), actual: cited,
           message: `cites $${cited} spending but the canonical month-to-date total is $${Math.round(total)}`,
+        });
+      }
+    }
+  }
+  return violations;
+}
+
+// ── Forecast grade / band ────────────────────────────────────────────────────
+// The brief may not invent a different day-grade or tomorrow-lean than the
+// forecast authority computed. Fires only when the brief states a grade/band in
+// a forecast context that contradicts the canonical value.
+const FORECAST_CONTEXT_RE = /\bforecast|\btoday'?s? (?:a |an )?(?:grade|[abcdf][+-]? day)|\btomorrow\b|\bday ahead\b|\bcapacity\b/i;
+const GRADE_CLAIM_RE = /\b(?:grade\s+)?([ABCDF])[+-]?\s+day\b|\btoday'?s?\s+(?:an?\s+)?([ABCDF])[+-]?\b/i;
+const BAND_WORD = { green: /\bgreen\b/i, yellow: /\byellow\b/i, red: /\bred\b/i };
+function checkForecast(result, facts) {
+  const grade = facts.forecastGrade;    // e.g. 'B-'
+  const tomorrowBand = facts.tomorrowBand;
+  if (!grade && !tomorrowBand) return [];
+  const gradeLetter = grade ? String(grade).trim().charAt(0).toUpperCase() : null;
+  const violations = [];
+  for (const [field, text] of briefFields(result)) {
+    for (const sentence of splitIntoSentences(text)) {
+      if (!FORECAST_CONTEXT_RE.test(sentence)) continue;
+      // Day-grade contradiction.
+      if (gradeLetter) {
+        const gm = sentence.match(GRADE_CLAIM_RE);
+        const cited = gm ? (gm[1] || gm[2] || '').toUpperCase() : null;
+        if (cited && cited !== gradeLetter) {
+          violations.push({
+            check: 'forecast_grade', field, sentence, severity: 'high',
+            expected: grade, actual: cited,
+            message: `calls today a "${cited}" day but the forecast grade is ${grade}`,
+          });
+        }
+      }
+      // Tomorrow-lean contradiction (only when the sentence is about tomorrow).
+      if (tomorrowBand && /\btomorrow\b/i.test(sentence)) {
+        for (const [band, re] of Object.entries(BAND_WORD)) {
+          if (band !== tomorrowBand && re.test(sentence)) {
+            violations.push({
+              check: 'forecast_tomorrow', field, sentence, severity: 'high',
+              expected: tomorrowBand, actual: band,
+              message: `says tomorrow looks "${band}" but the forecast leans ${tomorrowBand}`,
+            });
+          }
+        }
+      }
+    }
+  }
+  return violations;
+}
+
+// ── Current date / weekday ───────────────────────────────────────────────────
+// A brief must not assert the wrong day. Narrow by design: only an explicit
+// "today is <Weekday>" / "happy <Weekday>" / "it's <Weekday> morning" that
+// contradicts the snapshot's local date is flagged — never an incidental "by
+// Friday" reference to another day.
+const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const TODAY_IS_RE = /\b(?:today is|it'?s|happy|this)\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i;
+function checkCurrentDate(result, facts) {
+  if (!facts.localDate) return [];
+  // Canonical weekday of the snapshot's local date (parse as a plain date; noon
+  // UTC avoids any tz rollover on the YYYY-MM-DD string).
+  const d = new Date(`${facts.localDate}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return [];
+  const canonical = WEEKDAYS[d.getUTCDay()];
+  const violations = [];
+  for (const [field, text] of briefFields(result)) {
+    for (const sentence of splitIntoSentences(text)) {
+      const m = sentence.match(TODAY_IS_RE);
+      if (!m) continue;
+      const cited = m[1].toLowerCase();
+      if (cited !== canonical) {
+        violations.push({
+          check: 'current_date', field, sentence, severity: 'high',
+          expected: canonical, actual: cited,
+          message: `says it's ${cited} but today (${facts.localDate}) is ${canonical}`,
         });
       }
     }
@@ -242,8 +324,41 @@ function validateChiefBriefClaims(result, facts) {
     ...checkCompletion(result, facts),
     ...checkExperiments(result, facts),
     ...checkSpending(result, facts),
+    ...checkForecast(result, facts),
+    ...checkCurrentDate(result, facts),
   ];
   return { violations, hasHighSeverity: violations.some((v) => v.severity === 'high') };
+}
+
+/**
+ * Deterministic last resort: when a correction retry STILL contradicts canonical
+ * state, we must not ship the contradiction. Strip each offending sentence out of
+ * the field it appears in (the safe neutralization — removing a false claim never
+ * introduces a new one). Returns a NEW result; never mutates the input. Goal
+ * completions are handled by the existing rewriteFalseGoalCompletions instead
+ * (which rephrases rather than deletes), so this is only used for the other
+ * claim classes.
+ */
+function neutralizeClaimViolations(result, violations) {
+  if (!violations.length) return result;
+  const cb = { ...(result?.chiefBrief || {}) };
+  const out = { ...result, chiefBrief: cb };
+  // Group offending sentences by field.
+  const bySentenceField = new Map();
+  for (const v of violations) {
+    if (!v.field || !v.sentence) continue;
+    if (!bySentenceField.has(v.field)) bySentenceField.set(v.field, new Set());
+    bySentenceField.get(v.field).add(v.sentence.trim());
+  }
+  for (const [field, sentences] of bySentenceField) {
+    const src = field === 'morningFocus' ? out.morningFocus : cb[field];
+    if (typeof src !== 'string' || !src.trim()) continue;
+    const kept = splitIntoSentences(src).filter((s) => !sentences.has(s.trim()));
+    const rebuilt = kept.join(' ').trim();
+    if (field === 'morningFocus') out.morningFocus = rebuilt;
+    else cb[field] = rebuilt;
+  }
+  return out;
 }
 
 /** Build a targeted correction prompt describing the contradictions found, for
@@ -256,8 +371,8 @@ function buildClaimCorrectionPrompt(basePrompt, violations) {
 }
 
 module.exports = {
-  validateChiefBriefClaims, buildClaimCorrectionPrompt,
+  validateChiefBriefClaims, buildClaimCorrectionPrompt, neutralizeClaimViolations,
   // Exposed for focused unit tests:
   checkRecoveryBand, checkRecoveryScore, checkEffectiveWorkout,
-  checkCompletion, checkExperiments, checkSpending, briefFields,
+  checkCompletion, checkExperiments, checkSpending, checkForecast, checkCurrentDate, briefFields,
 };

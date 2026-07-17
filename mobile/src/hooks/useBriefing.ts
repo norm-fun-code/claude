@@ -217,7 +217,20 @@ export interface TodayForecast {
 
 export interface BriefingData {
   date: string;
+  // builtAt = when this RESPONSE was produced (the rebuild-finished poll signal).
+  // It advances on EVERY build, including a scoped Chief Brief rebuild that recut
+  // nothing else — so it must NOT be used to label when a tab's data was derived
+  // (that would make every card say "Built just now" after a text-only rebuild).
   builtAt?: string;
+  // snapshotAt = when the underlying STATE snapshot was cut. Advances only on a
+  // full build; a scoped rebuild carries it forward. Use THIS for a tab/card's
+  // "as of" label.
+  snapshotAt?: string;
+  // fieldsBuiltAt[field] = when that specific field was last actually derived, so
+  // a card can show the derivation time relevant to the data IT renders.
+  fieldsBuiltAt?: Record<string, string>;
+  snapshotId?: string;
+  snapshotVersion?: number;
   morningFocus?: string;
   chiefBrief?: ChiefBrief | null;
   // True when the chiefBrief above is carried over from a prior build (this

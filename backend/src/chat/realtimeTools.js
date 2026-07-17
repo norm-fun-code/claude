@@ -27,7 +27,15 @@ function snippet(text, n = 240) {
 async function getTodayContext() {
   const { buildBrainSnapshot, realtimeTodayContext } = require('../brain/snapshot');
   const [snapshot, briefing] = await Promise.all([
-    buildBrainSnapshot().catch(() => null),
+    // Lean projection: get_today_context only needs recovery + effective workout
+    // (+ the brief, fetched separately). Skip the heavy sections — wealth
+    // insights, findings, experiments, goals, commitments, context, source
+    // health — so a voice turn isn't paying to compute the whole dashboard.
+    buildBrainSnapshot({ include: {
+      forecast: false, goals: false, weeklyIntention: false, commitments: false,
+      wealth: false, findings: false, experiments: false, eligibleContext: false,
+      sourceHealth: false,
+    } }).catch(() => null),
     require('../store/briefings').latestBriefing('daily').catch(() => null),
   ]);
   if (!snapshot) return { synthesis: null, action: null, risk: null, workout: null, recovery: null, briefIsCurrent: false };

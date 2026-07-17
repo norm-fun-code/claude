@@ -88,3 +88,64 @@ test('null facts is a no-op (backward compatible)', () => {
   assert.deepEqual(violations, []);
   assert.equal(hasHighSeverity, false);
 });
+
+// ── Added checks (audit follow-up) ───────────────────────────────────────────
+
+test('catches a forecast day-grade contradiction (calls it an A day when grade is B-)', () => {
+  const { violations } = validateChiefBriefClaims(
+    brief({ synthesis: "Today's an A day per the forecast — capitalize on it." }),
+    { ...FACTS, forecastGrade: 'B-' });
+  assert.ok(violations.some((v) => v.check === 'forecast_grade'));
+});
+
+test('catches a tomorrow-lean contradiction (says tomorrow looks red when forecast leans green)', () => {
+  const { violations } = validateChiefBriefClaims(
+    brief({ risk: 'The forecast says tomorrow looks red, so bank rest tonight.' }),
+    { ...FACTS, tomorrowBand: 'green' });
+  assert.ok(violations.some((v) => v.check === 'forecast_tomorrow'));
+});
+
+test('catches an explicit wrong-weekday claim (2026-06-11 is Thursday)', () => {
+  const { violations } = validateChiefBriefClaims(
+    brief({ synthesis: 'Happy Monday — big week ahead.' }), FACTS);
+  assert.ok(violations.some((v) => v.check === 'current_date'));
+});
+
+test('does NOT flag an incidental reference to another day ("by Friday")', () => {
+  const { violations } = validateChiefBriefClaims(
+    brief({ action: 'Aim to close the reconciler by Friday.' }), FACTS);
+  assert.ok(!violations.some((v) => v.check === 'current_date'));
+});
+
+test('flags a spend total off by ~18% (old 20% tolerance would have waved it through)', () => {
+  const { violations } = validateChiefBriefClaims(
+    brief({ synthesis: 'You have spent $2,900 total this month.' }), FACTS); // truth 2450, +18%
+  assert.ok(violations.some((v) => v.check === 'spending_total'));
+});
+
+test('tolerates display rounding within 2% ($2,450 → "$2,460")', () => {
+  const { violations } = validateChiefBriefClaims(
+    brief({ synthesis: 'You have spent about $2,460 total this month.' }), FACTS);
+  assert.ok(!violations.some((v) => v.check === 'spending_total'));
+});
+
+test('catches prescribing the scheduled session after a MANUAL override (scheduled baseline present)', () => {
+  const overrideFacts = {
+    ...FACTS,
+    effectiveWorkoutLabel: 'Rest', effectiveWorkoutSource: 'override', scheduledWorkoutLabel: 'Push',
+  };
+  const { violations } = validateChiefBriefClaims(
+    brief({ action: 'Crush your Push session today.' }), overrideFacts);
+  assert.ok(violations.some((v) => v.check === 'effective_workout'));
+});
+
+test('neutralizeClaimViolations strips the offending sentence, keeping the rest', () => {
+  const { neutralizeClaimViolations } = require('../src/brain/claimValidator');
+  const result = brief({ synthesis: 'Recovery is red at 41. Your recovery is green today.' });
+  const { violations } = validateChiefBriefClaims(result, FACTS);
+  const cleaned = neutralizeClaimViolations(result, violations);
+  assert.match(cleaned.chiefBrief.synthesis, /Recovery is red at 41/);
+  assert.doesNotMatch(cleaned.chiefBrief.synthesis, /green/);
+  // Original is not mutated.
+  assert.match(result.chiefBrief.synthesis, /green/);
+});

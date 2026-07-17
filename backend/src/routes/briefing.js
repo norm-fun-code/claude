@@ -133,6 +133,21 @@ const FULL_BUILD_FIELDS = [
   'forecasts', 'weeklyGoals', 'weeklyReview', 'leverageActions', 'urgentEmails',
 ];
 
+// Registry field key → briefing response field name. The cache-hit atomic
+// refresh derives WHICH fields a recovery change touches from the registry's
+// invalidation graph (not a hand-copied list), so a future recovery-derived
+// field added to the registry is refreshed here automatically.
+const REGISTRY_TO_BRIEF_FIELD = {
+  recovery: 'recovery', effectiveWorkout: 'workout',
+  todayForecast: 'todayForecast', recoveryComposite: 'recoveryComposite',
+};
+/** Briefing response field names a trigger invalidates, per the registry. */
+function briefFieldsForTrigger(trigger) {
+  return require('../brain/registry').invalidationSet(trigger)
+    .map((f) => REGISTRY_TO_BRIEF_FIELD[f])
+    .filter(Boolean);
+}
+
 // Fast, scoped context for POST /briefing/chief-brief/rebuild — recomputes
 // only the cheap, side-effect-free, DB-only inputs generateChiefBrief reads,
 // so a "just retry the brief text" tap takes seconds, not the full builder's
@@ -480,7 +495,9 @@ async function buildFreshBriefing({ force = false } = {}) {
         if (Array.isArray(cachedContent.healthComposites)) {
           cachedContent.healthComposites = cachedContent.healthComposites.filter((c) => c?.type !== 'recovery');
         }
-        cachedContent.fieldsBuiltAt = stampFields(cachedContent.fieldsBuiltAt, ['recovery', 'todayForecast', 'recoveryComposite']);
+        // Registry-driven, minus 'workout' (not re-derived in this device-away branch).
+        cachedContent.fieldsBuiltAt = stampFields(cachedContent.fieldsBuiltAt,
+          briefFieldsForTrigger('recovery_change').filter((f) => f !== 'workout'));
       } else if (recoveryMateriallyChanged(priorRecovery, freshRecovery)) {
         // Recovery is present AND changed vs what the cached derived fields were
         // built from → atomically recompute the whole recovery_change set so no
@@ -511,9 +528,9 @@ async function buildFreshBriefing({ force = false } = {}) {
           }
         }
         // Honest field timestamps: only the recovery-dependent fields were
-        // re-derived just now — record that, without touching the top-level
-        // snapshotAt/builtAt (the underlying full-build state wasn't recut).
-        cachedContent.fieldsBuiltAt = stampFields(cachedContent.fieldsBuiltAt, ['recovery', 'todayForecast', 'workout', 'recoveryComposite']);
+        // re-derived just now — record that (the exact registry invalidation set
+        // for a recovery change), without touching the top-level snapshotAt/builtAt.
+        cachedContent.fieldsBuiltAt = stampFields(cachedContent.fieldsBuiltAt, briefFieldsForTrigger('recovery_change'));
       }
     } catch { /* non-critical — leave cached value on error */ }
 
@@ -885,6 +902,17 @@ async function buildFreshBriefing({ force = false } = {}) {
   // anomalies (Clothing, Taxi, Restaurants) from this detector, in the same
   // build. One detector, read by both surfaces, closes that gap for good
   // rather than just reconciling this one instance of it.
+  // Lifecycle: recompute wealth flow metrics BEFORE reading them into the brief
+  // (wealth insights + the snapshot's canonical spendingMtd), so the cut reflects
+  // recategorizations from the last transaction sync — and so this state-changing
+  // step happens BEFORE the snapshot, never after the brief is persisted. (The
+  // post-persist chain no longer recomputes wealth, closing the build-store →
+  // recompute-newer → serve-older window.)
+  try {
+    const r = await require('../services/recompute-wealth').recomputeWealthFlows();
+    if (r?.metricsWritten) console.log(`[recompute-wealth pre-cut] ${r.transactions} txns → ${r.metricsWritten} flow rows`);
+  } catch (e) { console.error('[recompute-wealth pre-cut] failed:', e.message); }
+
   let wealthInsights = [];
   try {
     wealthInsights = await buildWealthInsights();
@@ -1444,24 +1472,35 @@ async function buildFreshBriefing({ force = false } = {}) {
   // commitment completion is checked against the exact live values, never the
   // LLM's own recalculation. Best-effort: on any failure the validator falls
   // back to just its goal-completion checks (facts=null → no extra checks).
+  // ── Cut ONE real BrainSnapshot for this build ────────────────────────────
+  // This is THE authoritative state cut the brief is derived from. Its facts feed
+  // the LLM claim validator (chiefFacts — now including forecast + experiments,
+  // not just recovery/workout/goals), its forecast becomes the response's
+  // todayForecast (so the effective workout resolves ONCE inside the snapshot,
+  // never again downstream), and its snapshotId/asOf/version stamp the response
+  // (and, via it, the morning push) so the in-app brief and the notification
+  // reference the SAME cut. Reuses the recovery already fetched above.
+  const factsTz = process.env.TZ || 'America/New_York';
+  const snapAsOf = new Date();
+  let brainSnapshot = null;
   let chiefFacts = null;
   try {
-    const factsTz = process.env.TZ || 'America/New_York';
-    const { canonicalFactsFrom, canonicalSpendingMtd } = require('../brain/snapshot');
-    const [effForFacts, commitmentsForFacts, spendingMtd] = await Promise.all([
-      getEffectiveWorkout({ tz: factsTz, band: recovery?.band ?? null }).catch(() => null),
-      require('../store/commitments').listActive({ limit: 20 }).catch(() => []),
-      canonicalSpendingMtd(new Date(), factsTz).catch(() => null),
-    ]);
+    const { buildBrainSnapshot, canonicalFactsFrom } = require('../brain/snapshot');
+    brainSnapshot = await buildBrainSnapshot({ asOf: snapAsOf, tz: factsTz, recovery });
     chiefFacts = canonicalFactsFrom({
-      recovery,
-      effectiveWorkout: effForFacts,
+      recovery: brainSnapshot.recovery.value,
+      effectiveWorkout: brainSnapshot.effectiveWorkout.value,
+      forecast: brainSnapshot.forecast.value,
+      // Goal-completion is validated against the WEEKLY-INTENTION goals (the ones
+      // the brief actually discusses, carrying the authoritative `achieved` flag)
+      // — a distinct set from the snapshot's long-term goals table.
       goals: liveGoals,
-      commitments: commitmentsForFacts,
-      wealth: { spendingMtd },
-      localDate: new Date().toLocaleDateString('en-CA', { timeZone: factsTz }),
+      commitments: brainSnapshot.commitments.value,
+      experiments: brainSnapshot.experiments.value,
+      wealth: brainSnapshot.wealth.value,
+      localDate: brainSnapshot.localDate,
     });
-  } catch (e) { console.error('[briefing build] chiefFacts assembly failed:', e.message); }
+  } catch (e) { console.error('[briefing build] snapshot/chiefFacts assembly failed:', e.message); }
 
   let geminiResult = null;
   {
@@ -1873,13 +1912,18 @@ async function buildFreshBriefing({ force = false } = {}) {
   const freshNotion = { notionQuote: geminiResult?.notionQuote ?? '', notionInsight: geminiResult?.notionInsight ?? '', notionText: notionData.text, notionPageTitle: notionData.pageTitle };
   const notionGroup = lockedNotion || freshNotion;
 
-  // Daily forecast: today's grade (A/B/C day) + sleep-debt trajectory. Forward-
-  // looking companion to the recovery card; reuses the already-computed recovery.
-  let todayForecast = null;
-  try {
-    todayForecast = await require('../intelligence/predict').computeTodayForecast({ recovery });
-  } catch (err) {
-    console.error('[todayForecast] failed:', err.message);
+  // Daily forecast: today's grade (A/B/C day) + sleep-debt trajectory. Comes from
+  // the ONE snapshot cut above — the snapshot already resolved the effective
+  // workout and fed it to computeTodayForecast, so we neither recompute the
+  // forecast nor re-resolve the workout here. Fall back to a direct compute only
+  // if the snapshot itself failed to build.
+  let todayForecast = brainSnapshot?.forecast?.value ?? null;
+  if (!brainSnapshot) {
+    try {
+      todayForecast = await require('../intelligence/predict').computeTodayForecast({ recovery });
+    } catch (err) {
+      console.error('[todayForecast] failed:', err.message);
+    }
   }
 
   // Carry the prior build's brief when this build's LLM call failed or returned
@@ -1895,21 +1939,27 @@ async function buildFreshBriefing({ force = false } = {}) {
   }
 
   const nowIso = new Date().toISOString();
+  // The state-cut time + identity come from the ONE real snapshot (snapAsOf),
+  // NOT an independently-minted id — so the saved brief and the morning push
+  // provably reference the same cut. builtAt stays the response PRODUCTION time
+  // (the client's "rebuild finished" poll signal); fieldsBuiltAt records that
+  // every top-level field was derived at the snapshot cut.
+  const snapshotAtIso = brainSnapshot?.asOf ?? snapAsOf.toISOString();
   const response = {
     date: dateLabel,
     // Response production time (also the "rebuild finished" poll signal). See
     // the timestamp-semantics note near stampFields().
     builtAt: nowIso,
-    // A FULL build cuts a new state snapshot: snapshotAt advances and every
-    // top-level field's derivation time is stamped together.
-    snapshotAt: nowIso,
-    snapshotVersion: require('../brain/snapshot').SNAPSHOT_VERSION,
-    // Stable id for THIS cut of state. The morning push carries the same id so an
-    // in-app view and its notification can be proven to reference one snapshot,
-    // not two independently-built versions of "this morning."
-    snapshotId: `snap_${new Date().toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/New_York' })}_${nowIso.slice(11, 19).replace(/:/g, '')}`,
-    fieldsBuiltAt: stampFields({}, FULL_BUILD_FIELDS, nowIso),
-    localDate: new Date().toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/New_York' }),
+    // A FULL build cuts a new state snapshot: snapshotAt is the snapshot's cut
+    // time and every top-level field's derivation time is stamped to it.
+    snapshotAt: snapshotAtIso,
+    snapshotVersion: brainSnapshot?.version ?? require('../brain/snapshot').SNAPSHOT_VERSION,
+    // The ACTUAL snapshot's id (not a route-minted one). The morning push carries
+    // this same id so an in-app view and its notification can be proven to
+    // reference one snapshot, not two independently-built versions of "this morning."
+    snapshotId: brainSnapshot?.snapshotId ?? null,
+    fieldsBuiltAt: stampFields({}, FULL_BUILD_FIELDS, snapshotAtIso),
+    localDate: brainSnapshot?.localDate ?? new Date().toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/New_York' }),
     timezone: process.env.TZ || 'America/New_York',
     morningFocus: geminiResult?.morningFocus || prior?.content?.morningFocus || '',
     // Structured Chief-of-Staff brief (Beta): synthesis + ACTION/RISK/MOVE.
@@ -1973,13 +2023,10 @@ async function buildFreshBriefing({ force = false } = {}) {
         console.error('[embed] failed:', e.message);
       });
     })
-    // Rebuild wealth flow metrics from the just-synced transactions, so Monarch
-    // recategorizations (e.g. income -> transfer) are reflected automatically —
-    // including days whose only contributor was recategorized away, which a
-    // plain upsert can't zero out.
-    .then(() => require('../services/recompute-wealth').recomputeWealthFlows()
-      .then((r) => { if (r?.metricsWritten) console.log(`[recompute-wealth] ${r.transactions} txns -> ${r.metricsWritten} flow rows`); })
-      .catch((e) => console.error('[recompute-wealth] failed:', e.message)))
+    // NOTE: wealth recompute now runs BEFORE the snapshot cut (see the pre-cut
+    // recompute above), NOT here — so a just-persisted brief can never be
+    // immediately invalidated by a post-persist wealth recompute. This post-save
+    // pass primes the raw spine + findings for the NEXT build only.
     .then(() => analyze())
     .then((s) => {
       if (s) console.log(`[analyze] ${s.trends} trends, ${s.correlations} correlations, ${s.actions} actions`);
@@ -2064,17 +2111,24 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
   try {
     const factsTz = process.env.TZ || 'America/New_York';
     const { canonicalFactsFrom, canonicalSpendingMtd } = require('../brain/snapshot');
-    const [recForFacts, effForFacts, commitmentsForFacts, spendingMtd] = await Promise.all([
+    const [recForFacts, effForFacts, commitmentsForFacts, spendingMtd, experimentsForFacts] = await Promise.all([
       require('../intelligence/recovery').liveRecovery().catch(() => null),
       getEffectiveWorkout({ tz: factsTz }).catch(() => null),
       require('../store/commitments').listActive({ limit: 20 }).catch(() => []),
       canonicalSpendingMtd(new Date(), factsTz).catch(() => null),
+      require('../store/experiments').listExperiments().catch(() => []),
     ]);
     chiefFacts = canonicalFactsFrom({
       recovery: recForFacts,
       effectiveWorkout: effForFacts,
+      // The scoped rebuild only re-words the brief; it validates against the
+      // SAME forecast + experiments the shown brief already reflects (carried
+      // from the prior full build), so a re-worded sentence can't contradict the
+      // forecast lean or an experiment verdict either.
+      forecast: prior.content?.todayForecast ?? null,
       goals: ctx.liveGoals,
       commitments: commitmentsForFacts,
+      experiments: experimentsForFacts,
       wealth: { spendingMtd },
       localDate: new Date().toLocaleDateString('en-CA', { timeZone: factsTz }),
     });

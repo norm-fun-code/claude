@@ -29,33 +29,34 @@ const SNAPSHOT_VERSION = 1;
 /** Wrap a value with provenance metadata. `source` is the authoritative
  *  selector (from the registry); `freshness` is 'fresh' | 'stale' |
  *  'unavailable'; `confidence` is included only when meaningful. */
-function fact(value, { source, asOf, freshness, confidence = null } = {}) {
+function fact(value, meta = {}) {
+  const { source = null, asOf = null, freshness, ...rest } = meta;
   const present = value !== null && value !== undefined
     && !(Array.isArray(value) && value.length === 0);
   return {
     value: value ?? null,
-    source: source ?? null,
-    asOf: asOf ?? null,
+    source,
+    asOf,
     freshness: freshness ?? (present ? 'fresh' : 'unavailable'),
-    ...(confidence != null ? { confidence } : {}),
+    // Carry through any extra provenance the caller computed (confidence,
+    // degraded, error, reason) so a failure is never flattened into a bare value.
+    ...rest,
   };
-}
-
-/** Run a lazy authority call, degrading to `fallback` (default null) on any
- *  error so one failing domain never sinks the whole snapshot. */
-async function safe(fn, fallback = null) {
-  try { return await fn(); } catch { return fallback; }
 }
 
 /** The canonical month-to-date discretionary spend: sum of the
  *  spending_discretionary metric from the LOCAL month start, excluding seeded
- *  baseline rows. This is the SAME rule consolidate.js's `spendingMtd` uses —
- *  named once here so the claim validator and every surface reference an
- *  identical number, not a figure re-scraped from an insight card. Returns null
- *  when there's no discretionary spend recorded yet this month. */
+ *  baseline rows. This is the SAME rule consolidate.js's `spendingMtd` uses.
+ *
+ *  Boundary MUST be `localMonthKeyStartUtc`, NOT `localMonthStartUtc`: wealth
+ *  flow metrics are day-keyed at UTC midnight of the local day string (monarch.js
+ *  `dayTs` stores local July 1 at `2026-07-01T00:00:00Z`, not true local midnight
+ *  `…T04:00:00Z` in EDT). `localMonthStartUtc` returns 04:00Z and would silently
+ *  drop the entire first day of the month — the regression this fixes. Returns
+ *  null when there's no discretionary spend recorded yet this month. */
 async function canonicalSpendingMtd(asOf, tz) {
-  const { localMonthStartUtc } = require('../util/date');
-  const monthStart = localMonthStartUtc(tz, asOf);
+  const { localMonthKeyStartUtc } = require('../util/date');
+  const monthStart = localMonthKeyStartUtc(tz, asOf);
   const rows = await require('../store/metrics').dailyAggregate({
     domain: 'wealth', metric: 'spending_discretionary',
     from: monthStart, to: asOf, agg: 'sum', excludeSource: 'seed', tz,
@@ -85,75 +86,112 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
   const localDate = asOf.toLocaleDateString('en-CA', { timeZone: tz });
   const snapshotId = `snap_${localDate}_${crypto.randomUUID().slice(0, 8)}`;
 
-  // ── Recovery (authority: liveRecovery) — the anchor most other facts depend on.
-  const recoveryVal = recovery !== undefined
-    ? recovery
-    : await safe(() => require('../intelligence/recovery').liveRecovery());
+  // `include` selects which NON-core sections to compose. The core dependency
+  // chain (recovery → effectiveWorkout → forecast) is always built — it's cheap
+  // and every current-state consumer needs it. Heavy/independent sections are
+  // opt-OUT (default on) so a lean caller — the realtime voice `get_today_context`
+  // tool — can skip wealth insights, findings, experiments, goals, etc. it never
+  // reads, instead of paying for them just to answer "what's my recovery?".
+  const want = {
+    forecast: include.forecast !== false,
+    goals: include.goals !== false,
+    weeklyIntention: include.weeklyIntention !== false,
+    commitments: include.commitments !== false,
+    wealth: include.wealth !== false,
+    findings: include.findings !== false,
+    experiments: include.experiments !== false,
+    eligibleContext: include.eligibleContext !== false,
+    calendar: include.calendar === true, // network — default OFF
+    sourceHealth: include.sourceHealth !== false,
+  };
 
-  // ── Effective workout (authority: getEffectiveWorkout) — pass the band we
-  // already have so it doesn't re-fetch recovery; this is what makes the
-  // realtime tool, the brief, and the Health tab describe the SAME session.
-  const effectiveWorkout = await safe(() =>
-    require('../services/workout').getEffectiveWorkout({ asOf, tz, band: recoveryVal?.band ?? null })
-  );
+  // A section that wasn't requested — distinct from one that failed. Its
+  // provenance says 'unavailable' with reason 'not-included', never a fake empty.
+  const skip = (value = null) => ({ value, ok: true, skipped: true, error: null });
 
-  // ── Today forecast (authority: computeTodayForecast) — recovery + effective
-  // workout + eligible context, all deterministic under asOf.
-  const forecast = await safe(() =>
-    require('../intelligence/predict').computeTodayForecast({ recovery: recoveryVal, asOf })
-  );
+  const failures = [];
+  // read(): run an authority, capturing ok/error so a FAILURE is represented in
+  // provenance (freshness 'unavailable', degraded:true) and LOGGED — never
+  // silently turned into apparently-valid empty data (the honest-provenance rule).
+  async function read(field, fn, fallback = null) {
+    try {
+      return { field, value: await fn(), ok: true, skipped: false, error: null };
+    } catch (err) {
+      const msg = err?.message || String(err);
+      failures.push({ field, error: msg });
+      console.error(`[brain/snapshot] authority '${field}' failed: ${msg}`);
+      return { field, value: fallback, ok: false, skipped: false, error: msg };
+    }
+  }
 
-  // ── Goals & weekly intention (completion authority for the claim validator).
-  const goals = await safe(() => require('../store/goals').listGoals({ status: 'active' }), []);
-  const weeklyIntention = await safe(() => require('../store/intentions').currentIntention());
+  // Recovery is the anchor: effectiveWorkout reads its band, forecast reads both.
+  const recoveryRead = recovery !== undefined
+    ? { field: 'recovery', value: recovery, ok: true, skipped: false, error: null }
+    : await read('recovery', () => require('../intelligence/recovery').liveRecovery());
+  const recoveryVal = recoveryRead.value;
 
-  // ── Commitments (open + completion state).
-  const commitments = await safe(() => require('../store/commitments').listActive({ limit: 20 }), []);
+  // effectiveWorkout depends on recovery.band; fan out ALL independent sections
+  // concurrently alongside it (voice-latency: independent authority reads run in
+  // parallel, not one-at-a-time).
+  const [
+    workoutRead, goalsRead, intentionRead, commitmentsRead,
+    wealthInsightsRead, spendingRead, findingsRead, experimentsRead,
+    contextRead, calendarRead, sourceHealthRead,
+  ] = await Promise.all([
+    read('effectiveWorkout', () => require('../services/workout').getEffectiveWorkout({ asOf, tz, band: recoveryVal?.band ?? null })),
+    want.goals ? read('goals', () => require('../store/goals').listGoals({ status: 'active' }), []) : skip([]),
+    want.weeklyIntention ? read('weeklyIntention', () => require('../store/intentions').currentIntention()) : skip(null),
+    want.commitments ? read('commitments', () => require('../store/commitments').listActive({ limit: 20 }), []) : skip([]),
+    want.wealth ? read('wealth', () => require('../services/wealth-insights').buildWealthInsights(), []) : skip([]),
+    want.wealth ? read('spendingMtd', () => canonicalSpendingMtd(asOf, tz), null) : skip(null),
+    want.findings ? read('findings', () => require('../store/findings').listFindings({ status: 'open', limit: 40 }), []) : skip([]),
+    want.experiments ? read('experiments', () => require('../store/experiments').listExperiments(), []) : skip([]),
+    want.eligibleContext ? read('eligibleContext', async () => {
+      const { localDayBoundsUtc } = require('../util/date');
+      const { filterEligible } = require('../intelligence/context-semantics');
+      const { start } = localDayBoundsUtc(tz, asOf);
+      const active = await require('../store/annotations').overlapping(start, asOf);
+      return filterEligible(active, { purpose: 'general' });
+    }, []) : skip([]),
+    want.calendar ? read('calendarAvailability', () => require('../services/calendar').fetchWorkBusyBlocks(), null) : skip(null),
+    want.sourceHealth ? read('sourceHealth', async () => {
+      const { describeDataGaps } = require('../intelligence/source-health');
+      const sources = await require('../store/sources').listSources();
+      return describeDataGaps(sources);
+    }, []) : skip([]),
+  ]);
 
-  // ── Wealth / spending. `insights` are the display cards (buildWealthInsights);
-  // `spendingMtd` is the canonical month-to-date discretionary total, computed
-  // from the SAME authoritative rule consolidate.js uses (sum of the
-  // spending_discretionary metric from the local month start) — NOT scraped out
-  // of an insight card's prose, so the claim validator has a real number to
-  // check a generated "$X spent this month" against.
-  const wealthInsights = await safe(() => require('../services/wealth-insights').buildWealthInsights(), []);
-  const spendingMtd = await safe(() => canonicalSpendingMtd(asOf, tz), null);
-  const wealth = { insights: wealthInsights, spendingMtd };
+  // forecast depends on recovery + the ALREADY-RESOLVED effective workout — pass
+  // it in so computeTodayForecast does NOT re-resolve the override/band a second
+  // time. One authority read per snapshot.
+  const forecastRead = want.forecast
+    ? await read('forecast', () => require('../intelligence/predict').computeTodayForecast({
+      recovery: recoveryVal, asOf, effectiveWorkout: workoutRead.value,
+    }))
+    : skip(null);
 
-  // ── Findings / trends (authority: listFindings).
-  const findings = await safe(() => require('../store/findings').listFindings({ status: 'open', limit: 40 }), []);
+  const wealth = { insights: wealthInsightsRead.value || [], spendingMtd: spendingRead.value ?? null };
 
-  // ── Experiments.
-  const experiments = await safe(() => require('../store/experiments').listExperiments(), []);
+  // Freshness: 'fresh' when the authority succeeded AND returned real content;
+  // 'unavailable' when it was skipped, failed, or returned empty. `degraded` is
+  // set only on an actual FAILURE (vs a genuine empty), so a consumer can tell
+  // "we couldn't reach this" from "there's nothing here right now".
+  const isEmpty = (v) => v == null || (Array.isArray(v) && v.length === 0);
+  const provenance = (rd, { present, confidence = null } = {}) => {
+    const hasContent = present !== undefined ? present : !isEmpty(rd.value);
+    const freshness = (rd.ok && hasContent) ? 'fresh' : 'unavailable';
+    return {
+      source: authorityFor(rd.field) || rd.field,
+      asOf: snapshotAt,
+      freshness,
+      ...(confidence != null ? { confidence } : {}),
+      ...(rd.skipped ? { reason: 'not-included' } : {}),
+      ...(!rd.ok ? { degraded: true, error: rd.error } : {}),
+    };
+  };
 
-  // ── Eligible current context — annotations routed through the SHARED
-  // eligibility layer so a retracted/retired/financial note never enters any
-  // projection. 'general' purpose: keeps planned/occurred/negated, drops the
-  // rest.
-  const eligibleContext = await safe(async () => {
-    const { localDayBoundsUtc } = require('../util/date');
-    const { filterEligible } = require('../intelligence/context-semantics');
-    const { start } = localDayBoundsUtc(tz, asOf);
-    const active = await require('../store/annotations').overlapping(start, asOf);
-    return filterEligible(active, { purpose: 'general' });
-  }, []);
-
-  // ── Calendar availability (best-effort, network — skipped unless requested).
-  const calendarAvailability = include.calendar
-    ? await safe(() => require('../services/calendar').fetchWorkBusyBlocks(), null)
-    : null;
-
-  // ── Source / data health.
-  const sourceHealth = await safe(async () => {
-    const { describeDataGaps } = require('../intelligence/source-health');
-    const sources = await require('../store/sources').listSources();
-    return describeDataGaps(sources);
-  }, []);
-
-  // Recovery freshness: a `proxy` (self-reported, no Pod data) score is real
-  // state but lower-confidence; an absent score is unavailable.
-  const recoveryFreshness = recoveryVal?.score != null ? 'fresh' : 'unavailable';
   const recoveryConfidence = recoveryVal?.score == null ? null : (recoveryVal.proxy ? 'low' : 'high');
+  const forecastVal = forecastRead.value;
 
   return {
     snapshotId,
@@ -161,36 +199,36 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
     asOf: snapshotAt,
     localDate,
     timezone: tz,
+    // Authorities that failed to read this cut — logged above AND surfaced here
+    // so a consumer/test can see the snapshot was degraded rather than empty.
+    degraded: failures,
 
-    recovery: fact(recoveryVal, {
-      source: authorityFor('recovery'), asOf: snapshotAt,
-      freshness: recoveryFreshness, confidence: recoveryConfidence,
-    }),
-    effectiveWorkout: fact(effectiveWorkout, {
-      source: authorityFor('effectiveWorkout'), asOf: snapshotAt,
-      // Provenance the whole layer exists for: WHY today's plan is what it is.
-      confidence: effectiveWorkout ? 'high' : null,
-    }),
-    forecast: fact(forecast?.capacity ? forecast : (forecast ?? null), {
-      source: authorityFor('todayForecast'), asOf: snapshotAt,
-      confidence: forecast?.capacity?.proxy ? 'low' : (forecast?.capacity ? 'high' : null),
-    }),
-    goals: fact(goals, { source: authorityFor('goals'), asOf: snapshotAt }),
-    weeklyIntention: fact(weeklyIntention, { source: authorityFor('weeklyIntention'), asOf: snapshotAt }),
-    commitments: fact(commitments, { source: authorityFor('commitments'), asOf: snapshotAt }),
+    recovery: fact(recoveryVal, provenance(recoveryRead, {
+      present: recoveryVal?.score != null, confidence: recoveryConfidence,
+    })),
+    effectiveWorkout: fact(workoutRead.value, provenance(workoutRead, {
+      confidence: workoutRead.value ? 'high' : null,
+    })),
+    forecast: fact(forecastVal?.capacity ? forecastVal : (forecastVal ?? null), provenance(forecastRead, {
+      present: forecastVal?.capacity != null,
+      confidence: forecastVal?.capacity?.proxy ? 'low' : (forecastVal?.capacity ? 'high' : null),
+    })),
+    goals: fact(goalsRead.value, provenance(goalsRead)),
+    weeklyIntention: fact(intentionRead.value, provenance(intentionRead)),
+    commitments: fact(commitmentsRead.value, provenance(commitmentsRead)),
     wealth: fact(wealth, {
-      source: authorityFor('wealth'), asOf: snapshotAt,
-      // The composite object is always non-null; base freshness on real content.
-      freshness: (wealthInsights?.length || wealth.spendingMtd != null) ? 'fresh' : 'unavailable',
+      ...provenance(wealthInsightsRead, {
+        present: (wealth.insights?.length || wealth.spendingMtd != null),
+      }),
+      source: authorityFor('wealth'),
+      // The MTD-spend read can fail independently of the insight cards — reflect it.
+      ...(!spendingRead.ok ? { degraded: true, error: spendingRead.error } : {}),
     }),
-    findings: fact(findings, { source: authorityFor('findings'), asOf: snapshotAt }),
-    experiments: fact(experiments, { source: authorityFor('experiments'), asOf: snapshotAt }),
-    eligibleContext: fact(eligibleContext, { source: authorityFor('eligibleContext'), asOf: snapshotAt }),
-    calendarAvailability: fact(calendarAvailability, {
-      source: authorityFor('calendarAvailability'), asOf: snapshotAt,
-      freshness: include.calendar ? undefined : 'unavailable',
-    }),
-    sourceHealth: fact(sourceHealth, { source: authorityFor('sourceHealth'), asOf: snapshotAt }),
+    findings: fact(findingsRead.value, provenance(findingsRead)),
+    experiments: fact(experimentsRead.value, provenance(experimentsRead)),
+    eligibleContext: fact(contextRead.value, provenance(contextRead)),
+    calendarAvailability: fact(calendarRead.value, provenance(calendarRead)),
+    sourceHealth: fact(sourceHealthRead.value, provenance(sourceHealthRead)),
   };
 }
 

@@ -80,6 +80,12 @@ async function recomputeWealthFlows(opts = {}) {
     return metricsStore.insertMetrics(metrics, run);
   });
 
+  // New transaction-derived flow metrics landed → the canonical wealth totals
+  // (spendingMtd) changed. Invalidate through the ONE bus (TRANSACTION_SYNC).
+  if (metricsWritten > 0) {
+    try { require('../brain/invalidation').bump('transaction_sync'); } catch { /* bus not loaded */ }
+  }
+
   return { transactions: records.length, metricsWritten };
 }
 

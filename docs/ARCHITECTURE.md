@@ -83,16 +83,35 @@ stale derived value beside a fresh input. This makes "recovery changed →
 todayForecast is now stale" a **checked invariant**, not a comment someone has
 to remember.
 
-**`brain/snapshot.js` — `buildBrainSnapshot({asOf, tz})`** composes a versioned
-`BrainSnapshot`: it calls each authority ONCE, tz-safe and deterministic under
-an injected `asOf` (never `new Date()` for a boundary), and returns one
-structured object. Every fact is wrapped with **provenance** (`value`,
-authoritative `source` selector, `asOf`, `freshness` fresh|stale|unavailable,
-`confidence`). Thin projections (`realtimeTodayContext`, `canonicalFacts`) shape
-that one snapshot for each consumer — they never re-derive. `canonicalFactsFrom`
-is the single fact-shaping function both the snapshot and the briefing hot path
-call, so a brief is always validated against the identical fact shape the
-snapshot exposes.
+**`brain/invalidation.js`** is the runtime bus that makes that graph *act*: on a
+mutation the write path calls `bump(TRIGGER)`, which walks `invalidationSet`,
+increments each affected field's version + a global state version, and fires
+registered side-effect listeners (e.g. clearing the `liveRecovery` compute
+cache). It is wired into the real mutation sites — the recovery self-report
+route, the workout-override route + `applyRestDayOverride`, `recomputeWealthFlows`,
+and the goals/commitments/annotations stores — so a change anywhere drives the
+same declared invalidation instead of a hand-copied "also refresh X" list (the
+briefing cache-hit refresh now derives its recovery-dependent field set from
+`invalidationSet('recovery_change')` directly).
+
+**`brain/snapshot.js` — `buildBrainSnapshot({asOf, tz, include})`** composes a
+versioned `BrainSnapshot`: it calls each authority ONCE (independent reads run
+concurrently; the forecast consumes the already-resolved effective workout so it
+is never resolved twice per cut), tz-safe and deterministic under an injected
+`asOf` (never `new Date()` for a boundary), and returns one structured object.
+Every fact is wrapped with **provenance** (`value`, authoritative `source`
+selector, `asOf`, `freshness` fresh|stale|unavailable, `confidence`); an authority
+*failure* is logged and marked `degraded`, never silently flattened into an
+apparently-valid empty. `include` selects which non-core sections to compose, so
+the realtime voice tool gets a lean cut (recovery + effective workout) without
+paying for wealth/findings/experiments it won't read. The **full daily briefing**
+cuts one real snapshot and derives its `todayForecast`, its LLM claim facts, and
+its `snapshotId`/`snapshotAt`/`snapshotVersion` from it — the morning push forwards
+that same id, so an in-app view and its notification are provably one cut of state.
+Thin projections (`realtimeTodayContext`, `canonicalFacts`) shape that one snapshot
+for each consumer — they never re-derive. `canonicalFactsFrom` is the single
+fact-shaping function both the snapshot and the briefing hot path call, so a brief
+is always validated against the identical fact shape the snapshot exposes.
 
 **`brain/claimValidator.js`** is the generalization of the goal-completion guard:
 the LLM may choose emphasis and wording, but it may not create or recalculate

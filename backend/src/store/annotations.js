@@ -87,7 +87,15 @@ async function createAnnotation(a) {
     }
   }
 
+  if (id) invalidateContext();
   return { id, eventKind, retiredAnnotationId };
+}
+
+// An annotation added/retired/updated changes which context is eligible, which
+// the registry declares also invalidates every context projection (and the
+// forecast that reads it) — route through the ONE bus (ANNOTATION_RETIREMENT).
+function invalidateContext() {
+  try { require('../brain/invalidation').bump('annotation_retirement'); } catch { /* bus not loaded */ }
 }
 
 /** Mark an annotation retired — excluded from every intelligence consumer
@@ -98,6 +106,7 @@ async function retireAnnotation(id, reason = null) {
     `UPDATE annotations SET retired_at = now(), retired_reason = $2 WHERE id = $1 AND retired_at IS NULL`,
     [id, reason]
   );
+  if (rowCount > 0) invalidateContext();
   return rowCount > 0;
 }
 
@@ -156,6 +165,7 @@ async function updateAnnotation(id, { label, category } = {}) {
   const built = buildAnnotationUpdate({ label, category, id });
   if (!built) return false;
   await query(built.sql, built.params);
+  invalidateContext();
   return true;
 }
 

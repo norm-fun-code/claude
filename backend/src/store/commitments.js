@@ -82,7 +82,14 @@ async function create({ title, detail = null, source = 'voice', dueAt = null, me
      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
     [t.slice(0, 200), detail ? String(detail).slice(0, 500) : null, source, dueAt, metricKey, recommendationId]
   );
+  if (rows[0]) invalidateCommitments();
   return rows[0] ?? null;
+}
+
+// A commitment create/complete/skip changes what the brief's completion language
+// may claim — route it through the ONE invalidation bus (registry: COMMITMENT_CHANGE).
+function invalidateCommitments() {
+  try { require('../brain/invalidation').bump('commitment_change'); } catch { /* bus not loaded */ }
 }
 
 /** Open commitments, soonest-due first (untimed last), newest tie-break. For the card. */
@@ -150,7 +157,7 @@ async function markDone(id, { at = new Date() } = {}) {
     [id, at]
   );
   const row = rows[0] ?? null;
-  if (row) recordAdherenceOutcome(row, 1);
+  if (row) { recordAdherenceOutcome(row, 1); invalidateCommitments(); }
   return row;
 }
 
@@ -160,7 +167,7 @@ async function markSkipped(id) {
     [id]
   );
   const row = rows[0] ?? null;
-  if (row) recordAdherenceOutcome(row, -1);
+  if (row) { recordAdherenceOutcome(row, -1); invalidateCommitments(); }
   return row;
 }
 

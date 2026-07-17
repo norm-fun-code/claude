@@ -238,10 +238,15 @@ function sleepDebtTrajectory({ debtHours, needHours, asOf = new Date(), creditPe
 
 /**
  * Gather today's signals from the spine and build the forecast. `recovery` is the
- * liveRecovery() result (passed in to avoid a redundant call). Returns
- * { capacity, sleepDebt } — either field may be null.
+ * liveRecovery() result (passed in to avoid a redundant call). `effectiveWorkout`
+ * is the already-resolved getEffectiveWorkout() result — pass it (as the
+ * BrainSnapshot does) so a single snapshot resolves the effective workout ONCE
+ * instead of this function re-resolving it (a second override lookup + a second
+ * recovery-band read). Omit it and this falls back to resolving it itself, so
+ * standalone callers still work. Returns { capacity, sleepDebt } — either field
+ * may be null.
  */
-async function computeTodayForecast({ recovery = null, asOf = new Date() } = {}) {
+async function computeTodayForecast({ recovery = null, asOf = new Date(), effectiveWorkout = undefined } = {}) {
   const metricsStore = require('../store/metrics');
   const rec = recovery || (await require('./recovery').liveRecovery());
   if (!rec || rec.score == null) return { capacity: null, sleepDebt: null };
@@ -325,13 +330,18 @@ async function computeTodayForecast({ recovery = null, asOf = new Date() } = {})
   try {
     const workoutSvc = require('../services/workout');
     const db = require('../db');
+    // Use the snapshot's already-resolved effective workout when provided —
+    // this is the ONE authority read per snapshot. Only resolve it here when a
+    // standalone caller didn't supply it. The effective plan may itself be an
+    // automatic recovery-based downgrade (e.g. red recovery swaps a scheduled
+    // Push to Mobility), which is exactly the case this function exists to get
+    // right: a downgraded, non-hard session must not carry a "hard session"
+    // drag into tomorrow's forecast.
+    const resolveEffective = effectiveWorkout !== undefined
+      ? Promise.resolve(effectiveWorkout)
+      : workoutSvc.getEffectiveWorkout({ asOf, tz, band: rec.band ?? null });
     const [effective, { rows: exercised }, { rows: acts }] = await Promise.all([
-      // Pass the band we already have (rec.band) — the effective plan may
-      // itself be an automatic recovery-based downgrade (e.g. red recovery
-      // swaps a scheduled Push to Mobility), which is exactly the case this
-      // whole function exists to get right: a downgraded, non-hard session
-      // must not carry a "hard session" drag into tomorrow's forecast.
-      workoutSvc.getEffectiveWorkout({ asOf, tz, band: rec.band ?? null }),
+      resolveEffective,
       db.query(
         `SELECT 1 FROM metrics
           WHERE domain = 'habits' AND metric = 'exercise' AND value >= 0.5
@@ -350,9 +360,9 @@ async function computeTodayForecast({ recovery = null, asOf = new Date() } = {})
     // regardless of the plan (an unplanned hard session still counts).
     const completedHard =
       acts.some((a) => workoutSvc.isHardWorkoutId(a.activity_type)) ||
-      (exercised.length > 0 && effective.isHard);
+      (exercised.length > 0 && !!effective?.isHard);
     if (completedHard) hardSessionStatus = 'completed';
-    else if (effective.isHard) hardSessionStatus = 'planned';
+    else if (effective?.isHard) hardSessionStatus = 'planned';
   } catch { /* non-critical — no drag when we can't determine it */ }
 
   let tomorrow = forecastTomorrow({

@@ -49,8 +49,13 @@ function createWorkoutRouter() {
   router.post('/workout/override', asyncHandler(async (req, res) => {
     const { date, workoutId } = req.body || {};
     if (!requireFields(req.body, ['date'], res)) return;
+    // A workout override changes the effective plan, which the registry declares
+    // also invalidates the forecast's hard-session assumption — bump the ONE bus
+    // so every consumer of the effective workout / forecast recomputes.
+    const invalidate = () => require('../brain/invalidation').bump('workout_override', { date });
     if (!workoutId) {
       await db.query('DELETE FROM workout_overrides WHERE log_date = $1', [date]);
+      invalidate();
       return res.json({ ok: true, date, workoutId: null });
     }
     if (!VALID_WORKOUT_IDS.has(workoutId)) return res.status(400).json({ error: 'invalid workoutId' });
@@ -59,6 +64,7 @@ function createWorkoutRouter() {
        ON CONFLICT (log_date) DO UPDATE SET workout_id = EXCLUDED.workout_id, created_at = now()`,
       [date, workoutId]
     );
+    invalidate();
     res.json({ ok: true, date, workoutId });
   }));
 

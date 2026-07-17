@@ -166,18 +166,24 @@ async function getEffectiveWorkout({ asOf = new Date(), tz = process.env.TZ || '
     overrideId = rows[0]?.workout_id ?? null;
   } catch { /* fall through to the scheduled plan */ }
 
+  const dayName = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'long' }).format(asOf);
+  const scheduled = getWorkout(dayName);
+  const scheduledId = workoutIdForPlanType(scheduled.type);
+
   if (overrideId) {
     return {
       source: 'override',
       workoutId: overrideId,
       label: OVERRIDE_LABELS[overrideId] ?? overrideId,
       isHard: isHardWorkoutId(overrideId),
+      // Always carry the scheduled baseline the override REPLACED, even for a
+      // manual override — otherwise the claim validator can't tell that a brief
+      // prescribing the original scheduled session contradicts an override that
+      // swapped it away (the override branch used to omit these).
+      scheduledWorkoutId: scheduledId,
+      scheduledLabel: scheduled.type,
     };
   }
-
-  const dayName = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'long' }).format(asOf);
-  const scheduled = getWorkout(dayName);
-  const scheduledId = workoutIdForPlanType(scheduled.type);
 
   let resolvedBand = band;
   if (resolvedBand === undefined) {
@@ -258,6 +264,9 @@ async function applyRestDayOverride(tz = process.env.TZ || 'America/New_York') {
      ON CONFLICT (log_date) DO UPDATE SET workout_id = EXCLUDED.workout_id, created_at = now()`,
     [day]
   );
+  // Same effective-plan change as the manual override route — invalidate through
+  // the ONE bus so the forecast/brief don't keep the pre-rest-day session.
+  try { require('../brain/invalidation').bump('workout_override', { date: day }); } catch { /* bus not loaded */ }
 }
 
 module.exports = {
