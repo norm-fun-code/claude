@@ -117,7 +117,15 @@ async function warmAndNotify(opts = {}) {
     const r = await expo.sendPush(tokens, {
       title: 'Good morning ☀️',
       body,
-      data: { type: 'morning_briefing' },
+      // Carry the SAME snapshot reference the in-app brief was built with, so a
+      // push and the brief the user opens can be proven to describe one cut of
+      // state — not two independently-derived versions of "this morning."
+      data: {
+        type: 'morning_briefing',
+        snapshotId: briefing?.snapshotId ?? null,
+        snapshotAt: briefing?.snapshotAt ?? briefing?.builtAt ?? null,
+        snapshotVersion: briefing?.snapshotVersion ?? null,
+      },
     });
     for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
     // Record the once-per-day key only after the push actually went out, so a

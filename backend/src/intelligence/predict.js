@@ -368,18 +368,30 @@ async function computeTodayForecast({ recovery = null, asOf = new Date() } = {})
   if (tomorrow) {
     // Reuse the same tz/todayStr computed above (from `asOf`, not `new Date()`)
     // — this whole function must stay deterministic under an injected asOf.
-    const startOfToday = new Date(`${todayStr}T00:00:00`);
+    // The day boundary MUST be timezone-safe: `new Date(\`${todayStr}T00:00:00\`)`
+    // parses in the SERVER process's local zone (util/date.js's whole reason to
+    // exist), which is wrong whenever the server isn't running in `tz`.
+    // localDayBoundsUtc(tz, asOf) gives the correct UTC instant for local
+    // midnight, deterministic under the injected asOf.
+    const { localDayBoundsUtc } = require('../util/date');
+    const { start: startOfToday } = localDayBoundsUtc(tz, asOf);
     const [dayContext, rawAnnotations] = await Promise.all([
       require('../store/dayJournal').forDay(todayStr).catch(() => []),
       require('../store/annotations').overlapping(asOf, asOf).catch(() => []),
     ]);
-    // A "one question" answer explaining something PAST (e.g. "No Eight Sleep
-    // reading last night" -> "Didn't sleep home") is backdated to yesterday by
-    // POST /api/briefing/context specifically so it reads as retrospective —
-    // exclude those here so a note about a night that's already over doesn't
-    // get framed as "noted for today/tomorrow" and adjust a FORWARD-looking
-    // forecast it was never meant to speak to.
-    const annotations = rawAnnotations.filter((a) => new Date(a.start_ts) >= startOfToday);
+    // Route life-context through the SHARED eligibility layer instead of an
+    // ad-hoc filter — a retracted, retired, negated, or financial annotation
+    // must not be able to move a forward-looking forecast (see
+    // context-semantics.js's 'forecast' purpose). Then keep only notes about
+    // today/forward: a "one question" answer explaining something PAST (e.g.
+    // "No Eight Sleep reading last night" -> "Didn't sleep home") is backdated
+    // to yesterday by POST /api/briefing/context specifically so it reads as
+    // retrospective — a note about a night that's already over must not get
+    // framed as "noted for today/tomorrow" and adjust a forecast it was never
+    // meant to speak to.
+    const { filterEligible } = require('./context-semantics');
+    const annotations = filterEligible(rawAnnotations, { purpose: 'forecast' })
+      .filter((a) => new Date(a.start_ts) >= startOfToday);
     tomorrow = await applyContextToForecast(tomorrow, { dayContext, annotations });
 
     // Empirical confidence cap: forecastTomorrow()'s 45-85% figure is a shape

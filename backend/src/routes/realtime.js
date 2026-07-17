@@ -59,6 +59,14 @@ async function buildContextPackage({ now = new Date() } = {}) {
     require('../store/dayJournal').recent({ days: 2, limit: 4 }).catch(() => []),
   ]);
 
+  // The canonical effective workout — the SAME selector the Health tab, the
+  // brief, and the live get_today_context tool read, so session-start context
+  // can never narrate a plan the rest of the app has already downgraded or
+  // overridden. Passed the band we already have so it doesn't re-fetch recovery.
+  const effectiveWorkout = await require('../services/workout')
+    .getEffectiveWorkout({ asOf: now, tz, band: recovery?.band ?? null })
+    .catch(() => null);
+
   // ── DURABLE — ongoing truths about the person. Safe to state naturally, but
   //    never with a time word ("today"/"currently").
   const durable = [];
@@ -96,6 +104,14 @@ async function buildContextPackage({ now = new Date() } = {}) {
   // "today's" whenever present.
   if (recovery?.band) {
     current.push(`TODAY (${today}) — recovery: ${recovery.band}${recovery.score != null ? ` (${recovery.score})` : ''}`);
+  }
+  // The effective workout is inherently today's plan (override > auto-downgrade
+  // > scheduled), resolved by the canonical selector — not the raw schedule.
+  if (effectiveWorkout?.label) {
+    const adj = effectiveWorkout.source === 'auto_downgrade'
+      ? ' (auto-adjusted down for recovery)'
+      : (effectiveWorkout.source === 'override' ? ' (manually chosen)' : '');
+    current.push(`TODAY (${today}) — today's workout: ${effectiveWorkout.label}${adj}`);
   }
   // Very recent journal notes — ONLY today's/yesterday's, each explicitly dated.
   for (const e of recentJournal || []) {

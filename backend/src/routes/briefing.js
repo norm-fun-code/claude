@@ -82,6 +82,57 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 // trigger firing at the same moment must not both proceed.
 const REBUILD_LOCK_ID = 727002;
 
+/** Pure: did live recovery change enough since the cached derived fields were
+ *  built that those fields (todayForecast, effective workout, recovery
+ *  composite) are now inconsistent with it? A band change always matters; a
+ *  small score wobble within the same band doesn't move the grade or the
+ *  workout, so ignore it (avoids recomputing on every cache serve). A
+ *  present→absent or absent→present transition also counts. Used by the
+ *  cache-hit path to decide whether to run the recovery_change invalidation. */
+function recoveryMateriallyChanged(prior, fresh) {
+  const pScore = prior?.score ?? null, fScore = fresh?.score ?? null;
+  const pBand = prior?.band ?? null, fBand = fresh?.band ?? null;
+  if ((pScore == null) !== (fScore == null)) return true;
+  if (pBand !== fBand) return true;
+  if (pScore != null && fScore != null && Math.abs(pScore - fScore) >= 3) return true;
+  // A proxy↔real transition changes how the forecast tempers the grade.
+  if (Boolean(prior?.proxy) !== Boolean(fresh?.proxy)) return true;
+  return false;
+}
+
+// ── Honest timestamps ────────────────────────────────────────────────────────
+// The briefing payload distinguishes three timestamps, so a consumer can tell
+// "this whole response was produced now" from "this specific card was actually
+// re-derived now":
+//   - builtAt      : response PRODUCTION / delivery time. Always advances on
+//                    any build or scoped rebuild — the client polls on it as
+//                    the "a rebuild finished" signal (mobile useBriefing), so
+//                    its meaning and compatibility are preserved exactly.
+//   - snapshotAt   : when the underlying FULL-BUILD state snapshot was cut.
+//                    Advances only on a full build — NOT on a scoped
+//                    chief-brief rebuild (which recut no other field) and NOT
+//                    on a cache serve.
+//   - fieldsBuiltAt: { field -> ISO } map of when each field was last actually
+//                    derived. A scoped chief-brief rebuild advances only
+//                    fieldsBuiltAt.chiefBrief; the cache-hit recovery refresh
+//                    advances only the recovery-dependent fields. This is what
+//                    makes an untouched card no longer masquerade as freshly
+//                    rebuilt just because the global builtAt moved.
+/** Return a new fieldsBuiltAt map with `fields` stamped to `at` (default now). */
+function stampFields(prevMap, fields, at = new Date().toISOString()) {
+  const next = { ...(prevMap || {}) };
+  for (const f of fields) next[f] = at;
+  return next;
+}
+
+// The full set of top-level fields a FULL build derives — stamped together at
+// the full build's snapshot time.
+const FULL_BUILD_FIELDS = [
+  'chiefBrief', 'morningFocus', 'recovery', 'todayForecast', 'workout', 'recoveryComposite',
+  'wealth', 'wealthInsights', 'healthInsights', 'insights', 'crossContextInsights',
+  'forecasts', 'weeklyGoals', 'weeklyReview', 'leverageActions', 'urgentEmails',
+];
+
 // Fast, scoped context for POST /briefing/chief-brief/rebuild — recomputes
 // only the cheap, side-effect-free, DB-only inputs generateChiefBrief reads,
 // so a "just retry the brief text" tap takes seconds, not the full builder's
@@ -407,21 +458,62 @@ async function buildFreshBriefing({ force = false } = {}) {
     } catch (err) {
       console.error('[briefing cache] dismissals failed:', err.message);
     }
-    // Re-check live recovery on every cache serve. If Eight Sleep data is stale
-    // (device away), clear recovery-derived fields so neither the Health tab's
-    // RecoveryCard nor the Today tab's TodayForecastCard show stale green data.
+    // Re-check live recovery on every cache serve, and — this is the fix for
+    // the "Health shows current recovery but Today shows a forecast built from
+    // the OLD score" bug — recompute the recovery-DEPENDENT fields atomically
+    // whenever the live score/band actually changed, not just when recovery
+    // data disappeared. The set of fields to recompute is exactly the
+    // registry's invalidation set for a recovery change
+    // (brain/registry.js: recovery_change → recovery, effectiveWorkout,
+    // todayForecast, recoveryComposite), so this coupling is a declared,
+    // checked contract rather than an ad-hoc "also refresh X" that the next
+    // recovery-derived field will silently miss.
     try {
+      const priorRecovery = cachedContent.recovery; // the value baked into the cached derived fields
       const freshRecovery = await require('../intelligence/recovery').liveRecovery();
       cachedContent.recovery = freshRecovery ?? null;
       if (!freshRecovery) {
-        // todayForecast capacity is recovery-driven; without fresh data it should be null.
-        // healthComposites may include a stale recovery composite — suppress them too.
+        // No fresh data (device away) — todayForecast capacity is recovery-driven,
+        // so null it; drop the stale recovery composite so neither the Health
+        // RecoveryCard nor the Today TodayForecastCard show stale green data.
         cachedContent.todayForecast = { capacity: null, sleepDebt: cachedContent.todayForecast?.sleepDebt ?? null };
         if (Array.isArray(cachedContent.healthComposites)) {
-          cachedContent.healthComposites = cachedContent.healthComposites.filter(
-            (c) => c?.type !== 'recovery'
-          );
+          cachedContent.healthComposites = cachedContent.healthComposites.filter((c) => c?.type !== 'recovery');
         }
+        cachedContent.fieldsBuiltAt = stampFields(cachedContent.fieldsBuiltAt, ['recovery', 'todayForecast', 'recoveryComposite']);
+      } else if (recoveryMateriallyChanged(priorRecovery, freshRecovery)) {
+        // Recovery is present AND changed vs what the cached derived fields were
+        // built from → atomically recompute the whole recovery_change set so no
+        // consumer sees a fresh score beside a forecast/workout built from the
+        // old one. Only pays this cost when recovery actually moved (the common
+        // cache-hit case, unchanged recovery, stays a single cheap live read).
+        const tz = process.env.TZ || 'America/New_York';
+        try {
+          cachedContent.todayForecast = await require('../intelligence/predict')
+            .computeTodayForecast({ recovery: freshRecovery });
+        } catch (e) { console.error('[briefing cache] todayForecast recompute failed:', e.message); }
+        try {
+          cachedContent.workout = await resolveWorkoutForPrompt(tz); // effectiveWorkout (may auto-downgrade on the new band)
+        } catch (e) { console.error('[briefing cache] workout recompute failed:', e.message); }
+        // recoveryComposite: keep its score/band consistent with the fresh
+        // recovery in place (the visible inconsistency was score/band).
+        if (Array.isArray(cachedContent.healthComposites) && freshRecovery.score != null) {
+          const idx = cachedContent.healthComposites.findIndex((c) => c?.type === 'recovery');
+          if (idx !== -1) {
+            const { band } = require('../intelligence/recovery').recoveryBand(freshRecovery.score);
+            const c = cachedContent.healthComposites[idx];
+            cachedContent.healthComposites = [...cachedContent.healthComposites];
+            cachedContent.healthComposites[idx] = {
+              ...c,
+              title: `Recovery ${freshRecovery.score}/100 — ${band}`,
+              evidence: { ...(c.evidence || {}), score: freshRecovery.score, band, parts: freshRecovery.parts ?? c.evidence?.parts },
+            };
+          }
+        }
+        // Honest field timestamps: only the recovery-dependent fields were
+        // re-derived just now — record that, without touching the top-level
+        // snapshotAt/builtAt (the underlying full-build state wasn't recut).
+        cachedContent.fieldsBuiltAt = stampFields(cachedContent.fieldsBuiltAt, ['recovery', 'todayForecast', 'workout', 'recoveryComposite']);
       }
     } catch { /* non-critical — leave cached value on error */ }
 
@@ -1346,11 +1438,36 @@ async function buildFreshBriefing({ force = false } = {}) {
   const wisdomAlreadyLocked = Boolean(priorIsToday && prior?.content?.quote && prior?.content?.notionQuote);
   const LLM_TIMEOUT = Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000);
 
+  // Canonical facts for the chief-brief claim validator (brain/claimValidator),
+  // built from the SAME authorities the Health tab / forecast use — so a
+  // generated claim about recovery band/score, the EFFECTIVE workout, or goal/
+  // commitment completion is checked against the exact live values, never the
+  // LLM's own recalculation. Best-effort: on any failure the validator falls
+  // back to just its goal-completion checks (facts=null → no extra checks).
+  let chiefFacts = null;
+  try {
+    const factsTz = process.env.TZ || 'America/New_York';
+    const { canonicalFactsFrom, canonicalSpendingMtd } = require('../brain/snapshot');
+    const [effForFacts, commitmentsForFacts, spendingMtd] = await Promise.all([
+      getEffectiveWorkout({ tz: factsTz, band: recovery?.band ?? null }).catch(() => null),
+      require('../store/commitments').listActive({ limit: 20 }).catch(() => []),
+      canonicalSpendingMtd(new Date(), factsTz).catch(() => null),
+    ]);
+    chiefFacts = canonicalFactsFrom({
+      recovery,
+      effectiveWorkout: effForFacts,
+      goals: liveGoals,
+      commitments: commitmentsForFacts,
+      wealth: { spendingMtd },
+      localDate: new Date().toLocaleDateString('en-CA', { timeZone: factsTz }),
+    });
+  } catch (e) { console.error('[briefing build] chiefFacts assembly failed:', e.message); }
+
   let geminiResult = null;
   {
     const [chiefSettled, wisdomSettled] = await Promise.allSettled([
       withTimeout(
-        generateChiefBrief(emails, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext, attentionContext, liveGoals),
+        generateChiefBrief(emails, dayName, workout, calendar, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusy, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext, attentionContext, liveGoals, chiefFacts),
         LLM_TIMEOUT,
         'gemini_chief'
       ),
@@ -1777,9 +1894,23 @@ async function buildFreshBriefing({ force = false } = {}) {
     errors.push({ service: 'chiefBrief', error: 'invalid or missing shape from the LLM; showing the previous build\'s brief' });
   }
 
+  const nowIso = new Date().toISOString();
   const response = {
     date: dateLabel,
-    builtAt: new Date().toISOString(),
+    // Response production time (also the "rebuild finished" poll signal). See
+    // the timestamp-semantics note near stampFields().
+    builtAt: nowIso,
+    // A FULL build cuts a new state snapshot: snapshotAt advances and every
+    // top-level field's derivation time is stamped together.
+    snapshotAt: nowIso,
+    snapshotVersion: require('../brain/snapshot').SNAPSHOT_VERSION,
+    // Stable id for THIS cut of state. The morning push carries the same id so an
+    // in-app view and its notification can be proven to reference one snapshot,
+    // not two independently-built versions of "this morning."
+    snapshotId: `snap_${new Date().toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/New_York' })}_${nowIso.slice(11, 19).replace(/:/g, '')}`,
+    fieldsBuiltAt: stampFields({}, FULL_BUILD_FIELDS, nowIso),
+    localDate: new Date().toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/New_York' }),
+    timezone: process.env.TZ || 'America/New_York',
     morningFocus: geminiResult?.morningFocus || prior?.content?.morningFocus || '',
     // Structured Chief-of-Staff brief (Beta): synthesis + ACTION/RISK/MOVE.
     chiefBrief: geminiResult?.chiefBrief ?? prior?.content?.chiefBrief ?? null,
@@ -1925,12 +2056,36 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
   }
 
   const ctx = await buildQuickChiefBriefContext(prior);
+
+  // Canonical facts for the claim validator — same authorities as the full
+  // build (see that call site), so the scoped rebuild enforces the identical
+  // recovery/workout/completion invariants. Best-effort.
+  let chiefFacts = null;
+  try {
+    const factsTz = process.env.TZ || 'America/New_York';
+    const { canonicalFactsFrom, canonicalSpendingMtd } = require('../brain/snapshot');
+    const [recForFacts, effForFacts, commitmentsForFacts, spendingMtd] = await Promise.all([
+      require('../intelligence/recovery').liveRecovery().catch(() => null),
+      getEffectiveWorkout({ tz: factsTz }).catch(() => null),
+      require('../store/commitments').listActive({ limit: 20 }).catch(() => []),
+      canonicalSpendingMtd(new Date(), factsTz).catch(() => null),
+    ]);
+    chiefFacts = canonicalFactsFrom({
+      recovery: recForFacts,
+      effectiveWorkout: effForFacts,
+      goals: ctx.liveGoals,
+      commitments: commitmentsForFacts,
+      wealth: { spendingMtd },
+      localDate: new Date().toLocaleDateString('en-CA', { timeZone: factsTz }),
+    });
+  } catch (e) { console.error('[chief-brief rebuild] chiefFacts assembly failed:', e.message); }
+
   const chiefResult = await generateChiefBrief(
     ctx.emails, ctx.dayName, ctx.workout, ctx.calendar, ctx.wellbeingContext, ctx.annotationsContext,
     ctx.recoveryContext, ctx.experimentsContext, ctx.selfModel, ctx.leverageContext, ctx.workBusy,
     ctx.strengthContext, ctx.spendingContext, ctx.continuityContext, ctx.cashflowContext,
     ctx.progressContext, ctx.weeklyGoalsContext, ctx.chaptersContext, ctx.dayOffContext,
-    /* attentionContext */ '', ctx.liveGoals
+    /* attentionContext */ '', ctx.liveGoals, chiefFacts
   );
 
   const chiefBriefStale = chiefResult.chiefBrief == null;
@@ -1940,20 +2095,29 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
     errors.push({ service: 'chiefBrief', error: 'invalid or missing shape from the LLM (after a retry); showing the previous build\'s brief' });
   }
 
+  const rebuildNow = new Date().toISOString();
   const content = {
     ...prior.content,
     chiefBrief: chiefResult.chiefBrief ?? prior.content.chiefBrief ?? null,
     morningFocus: chiefResult.morningFocus || prior.content.morningFocus || '',
     chiefBriefStale,
     errors,
-    // Match the full builder: builtAt always advances to "now" whether or not
-    // chiefBrief itself refreshed — it means "when was this response
-    // produced," not "when did the content last change." Without this the
-    // card's "Built X ago" label kept showing the ORIGINAL build's timestamp
-    // after a failed retry, on top of an already-confusing silent failure —
-    // looking like the tap did nothing at all instead of a retry that ran and
-    // came back invalid again.
-    builtAt: new Date().toISOString(),
+    // builtAt = response PRODUCTION time, and stays the client's "rebuild
+    // finished" poll signal (mobile useBriefing polls until builtAt advances),
+    // so it always moves — its meaning and compatibility are preserved.
+    builtAt: rebuildNow,
+    // snapshotAt is deliberately NOT advanced: this scoped rebuild recut ONLY
+    // the chief brief; the underlying state snapshot (recovery, workout,
+    // wealth, forecast, …) was not re-derived, so it must keep the prior
+    // build's snapshot time. This is the honest-timestamp fix — a scoped
+    // rebuild no longer makes every untouched card look freshly derived.
+    snapshotAt: prior.content.snapshotAt ?? prior.content.builtAt ?? null,
+    snapshotVersion: prior.content.snapshotVersion ?? require('../brain/snapshot').SNAPSHOT_VERSION,
+    // Same reasoning as snapshotAt: the snapshot IDENTITY is unchanged by a
+    // scoped rebuild, so the id is carried forward (not regenerated).
+    snapshotId: prior.content.snapshotId ?? null,
+    // Only the chief brief + morningFocus were actually re-derived now.
+    fieldsBuiltAt: stampFields(prior.content.fieldsBuiltAt, ['chiefBrief', 'morningFocus'], rebuildNow),
   };
   // Awaited (unlike /briefing/rebuild's background full rebuild, this is one
   // fast scoped LLM call + a single-row save — nothing here justifies making
@@ -2019,4 +2183,8 @@ router.post('/briefing/rebuild', asyncHandler(async (req, res) => {
   return router;
 }
 
-module.exports = { createBriefingRouter, buildFreshBriefing, REBUILD_LOCK_ID };
+module.exports = {
+  createBriefingRouter, buildFreshBriefing, REBUILD_LOCK_ID,
+  // Exported for the timestamp-semantics + recovery-materiality regression tests.
+  stampFields, recoveryMateriallyChanged, FULL_BUILD_FIELDS,
+};

@@ -184,7 +184,7 @@ function isTemporallyAligned(annotation, window, kind) {
  * @param {object} annotation - a row from the annotations table (label,
  *   note, category, start_ts, end_ts, retired_at).
  * @param {object} [opts]
- * @param {'health'|'wellbeing'|'general'} [opts.purpose='general']
+ * @param {'health'|'wellbeing'|'forecast'|'general'} [opts.purpose='general']
  * @param {{start: Date, end: Date}} [opts.window] - the metric's actual
  *   observation window; only enforced for purpose 'health'. Omit to skip
  *   temporal-alignment checking (content-only).
@@ -220,6 +220,22 @@ function isEligibleContext(annotation, opts = {}) {
     if (kind === EVENT_KIND.NEGATED) return { eligible: false, reason: 'negated', kind, confidence: 'low' };
     if (!isPlausibleWellbeingCause(text)) return { eligible: false, reason: 'not-plausible-cause', kind, confidence: 'low' };
     return { eligible: true, reason: 'plausible-cause', kind, confidence: 'high' };
+  }
+
+  // 'forecast' — forward-looking recovery/capacity prediction (predict.js).
+  // A PLANNED event ("stressful launch tomorrow", "traveling tomorrow",
+  // "planned rest day") IS relevant and may adjust the lean; an OCCURRED or
+  // ONGOING event (drinks last night, an active illness) can carry into
+  // tomorrow too. But a NEGATED event ("I didn't drink") must never worsen a
+  // forecast, and financial notes are irrelevant to recovery capacity —
+  // exclude both, plus retraction/retired (already handled above). This is
+  // deliberately stricter than 'general' (which keeps negated) because the
+  // forecast's whole failure mode is a note that shouldn't move the number
+  // moving it.
+  if (purpose === 'forecast') {
+    if (isFinancialAnnotation(annotation)) return { eligible: false, reason: 'financial', kind, confidence: 'low' };
+    if (kind === EVENT_KIND.NEGATED) return { eligible: false, reason: 'negated', kind, confidence: 'low' };
+    return { eligible: true, reason: 'forecast-context', kind, confidence: 'low' };
   }
 
   // 'general' — broad context surfaces (Ask, quick chief-brief, the

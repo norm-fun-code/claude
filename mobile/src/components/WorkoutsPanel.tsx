@@ -1695,7 +1695,6 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
   const [customWorking, setCustomWorking] = useState<Record<string, string[]>>({});
   const [activities, setActivities] = useState<Activity[]>([]);
   const [showActivityModal, setShowActivityModal] = useState(false);
-  const [useScheduledWorkout, setUseScheduledWorkout] = useState(false);
   // Manual per-day workout swaps (dateKey → workoutId), loaded for the visible week.
   const [swapByDay, setSwapByDay] = useState<Record<string, string>>({});
   const [showSwap, setShowSwap] = useState(false);
@@ -1770,22 +1769,37 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
     return () => { cancelled = true; };
   }, [reloadTick]);
 
-  // Swap (or revert) the selected day's workout. Empty id reverts to scheduled.
+  // Swap (or revert) the selected day's workout — the ONE path that persists an
+  // effective-plan choice to the backend (workout_overrides), so every backend
+  // consumer (getEffectiveWorkout → brief, forecast, realtime voice, evening
+  // review) sees the same effective session the user is looking at. Empty id
+  // reverts to scheduled (auto-downgrade reapplies). Optimistic, and on failure
+  // it rolls the local state BACK to what the server still has — otherwise the
+  // UI would keep claiming a swap that never persisted, and the next reload
+  // (which reads the server) would silently revert it.
   async function swapWorkout(workoutId: string | null) {
+    const prevSwaps = swapByDay;
+    const prevChecks = completedExercises;
     const next = { ...swapByDay };
     if (workoutId) next[selectedKey] = workoutId; else delete next[selectedKey];
     setSwapByDay(next);
     setShowSwap(false);
+    setSaveFailed(false);
     // Swapping to a different session invalidates any exercise-name completion
     // state from the day's previous session — otherwise an exercise that happens
     // to share a name across sessions would show as already checked off.
     setCompletedExercises(new Set());
     try {
-      await fetchWithTimeout(WORKOUT_OVERRIDE_URL, {
+      const res = await fetchWithTimeout(WORKOUT_OVERRIDE_URL, {
         method: 'POST', headers: authHeaders(),
         body: JSON.stringify({ date: selectedKey, workoutId }),
       });
-    } catch { setSaveFailed(true); }
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+    } catch {
+      setSwapByDay(prevSwaps);
+      setCompletedExercises(prevChecks);
+      setSaveFailed(true);
+    }
   }
 
   // Load logged alternate activities for the selected day.
@@ -1885,26 +1899,27 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
     isViewingToday ? recoveryBand ?? null : null,
   );
 
-  // Reset the scheduled-workout override whenever the user navigates to a different day.
-  useEffect(() => { setUseScheduledWorkout(false); }, [selectedDayIndex]);
-
-  // When recovery has auto-downgraded today's session, the user can tap a button to
-  // restore the scheduled workout. We look up the original session directly so we
-  // don't have to re-invoke getTodaysWorkout with artificial inputs.
+  // When recovery has auto-downgraded today's session, the user can tap a button
+  // to restore the scheduled workout. That choice is NOT held in local state —
+  // it persists as an explicit override (workout_id = the scheduled id) through
+  // swapWorkout, so the backend's getEffectiveWorkout returns source:'override'
+  // and every consumer (brief, forecast, voice, evening review) agrees with what
+  // the screen shows. We look up the original session directly so we don't have
+  // to re-invoke getTodaysWorkout with artificial inputs.
   const SESSION_MAP: Record<string, AnySession> = {
     zone2: ZONE2, mobility: MOBILITY, push: SESSION_A, pull: SESSION_B, rest: REST, intervals: INTERVALS,
   };
   const scheduledId = WEEKLY_SCHEDULE[selectedJsDay] ?? 'rest';
-  // A manual swap wins over everything (the scheduled split AND any recovery
-  // auto-downgrade) — the user deliberately chose this day's session.
+  // A persisted override wins over everything (the scheduled split AND any
+  // recovery auto-downgrade) — the user deliberately chose this day's session,
+  // whether via the swap menu or "Use scheduled workout anyway" (which persists
+  // an override equal to the scheduled id).
   const swappedId = swapByDay[selectedKey];
   const workout = swappedId
     ? SESSION_MAP[swappedId] ?? REST
-    : useScheduledWorkout && !!override && isViewingToday
-      ? SESSION_MAP[scheduledId] ?? REST
-      : _autoWorkout;
-  // Hide the recovery-downgrade note when a manual swap is in effect.
-  const displayOverride = swappedId || (useScheduledWorkout && !!override && isViewingToday) ? undefined : override;
+    : _autoWorkout;
+  // Hide the recovery-downgrade note when a persisted override is in effect.
+  const displayOverride = swappedId ? undefined : override;
 
   function handleDayPress(dayIndex: number) {
     setSelectedDayIndex(dayIndex);
@@ -2149,18 +2164,15 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
 
       {isViewingToday && !!override && !swappedId && (
         <TouchableOpacity
-          onPress={() => setUseScheduledWorkout((v) => !v)}
+          onPress={() => swapWorkout(scheduledId)}
           style={[
             schedOverrideStyles.btn,
-            {
-              borderColor: useScheduledWorkout ? '#1D9E75' : '#BA7517',
-              backgroundColor: useScheduledWorkout ? '#1D9E7515' : 'transparent',
-            },
+            { borderColor: '#BA7517', backgroundColor: 'transparent' },
           ]}
           activeOpacity={0.7}
         >
-          <Text style={[schedOverrideStyles.txt, { color: useScheduledWorkout ? '#1D9E75' : '#BA7517' }]}>
-            {useScheduledWorkout ? '✓ Showing scheduled workout' : 'Use scheduled workout anyway'}
+          <Text style={[schedOverrideStyles.txt, { color: '#BA7517' }]}>
+            Use scheduled workout anyway
           </Text>
         </TouchableOpacity>
       )}

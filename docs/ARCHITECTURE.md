@@ -45,6 +45,74 @@ cross-domain correlation is a *query*, not a new integration each time. Text-bea
 content (books, highlights, notes, newsletters, calendar items) lands in
 `documents` with vector embeddings for semantic search and the knowledge graph.
 
+### Central state layer — one versioned brain above the domain authorities
+
+Every surface (Today, Health, Wealth, Ask, realtime voice, the daily briefing +
+scoped Chief Brief rebuild, forecasts, the evening review, watcher/notification
+payloads) reasons about the *same* underlying facts: today's recovery, the
+effective workout, open goals and commitments, month-to-date spend, the day's
+forecast, eligible current context. When each surface independently re-derived
+those facts from raw stores, they drifted — the Health tab showed a fresh
+recovery score while Today rendered a forecast built from the old one; realtime
+voice narrated a static workout the Health tab had already downgraded; a
+retracted note still moved tomorrow's forecast. The **central state layer**
+(`backend/src/brain/`) exists to make that drift structurally impossible.
+
+**Domain authorities own computation.** Each canonical fact has exactly ONE
+authoritative selector — the only place allowed to compute it:
+
+| Fact | Authority (selector) |
+|---|---|
+| recovery (score/band/proxy) | `intelligence/recovery.liveRecovery` |
+| effective workout | `services/workout.getEffectiveWorkout` (override > auto-downgrade > schedule) |
+| today's forecast | `intelligence/predict.computeTodayForecast` |
+| goals / weekly intention | `store/goals.listGoals` · `store/intentions.currentIntention` |
+| open commitments | `store/commitments.listActive` |
+| wealth / MTD discretionary spend | `services/wealth-insights.buildWealthInsights` · `brain/snapshot.canonicalSpendingMtd` |
+| findings / trends | `store/findings.listFindings` |
+| experiments | `store/experiments.listExperiments` |
+| eligible current context | `store/annotations.overlapping` + `intelligence/context-semantics.filterEligible` |
+
+**`brain/registry.js`** is the declarative field-authority + dependency graph:
+for every fact it records its authority, what it `dependsOn`, which change
+`TRIGGER`s invalidate it, its TTL, and whether it's live-refreshable.
+`invalidationSet(trigger)` returns the transitive closure a change must
+recompute — e.g. a recovery change invalidates `effectiveWorkout`,
+`todayForecast`, and `recoveryComposite` *together*, so no surface can serve a
+stale derived value beside a fresh input. This makes "recovery changed →
+todayForecast is now stale" a **checked invariant**, not a comment someone has
+to remember.
+
+**`brain/snapshot.js` — `buildBrainSnapshot({asOf, tz})`** composes a versioned
+`BrainSnapshot`: it calls each authority ONCE, tz-safe and deterministic under
+an injected `asOf` (never `new Date()` for a boundary), and returns one
+structured object. Every fact is wrapped with **provenance** (`value`,
+authoritative `source` selector, `asOf`, `freshness` fresh|stale|unavailable,
+`confidence`). Thin projections (`realtimeTodayContext`, `canonicalFacts`) shape
+that one snapshot for each consumer — they never re-derive. `canonicalFactsFrom`
+is the single fact-shaping function both the snapshot and the briefing hot path
+call, so a brief is always validated against the identical fact shape the
+snapshot exposes.
+
+**`brain/claimValidator.js`** is the generalization of the goal-completion guard:
+the LLM may choose emphasis and wording, but it may not create or recalculate
+canonical facts. `validateChiefBriefClaims(result, facts)` deterministically
+scans generated Chief Brief text for statements that *contradict* the snapshot's
+values (recovery band/score, effective vs scheduled workout, goal/commitment
+completion, experiment verdicts, spend totals) and drives a correction retry.
+
+**Rule for new code:** a surface MUST NOT read a raw store (or re-run an
+aggregation/resolution algorithm) to answer "what is the current value of X"
+when an authoritative selector for X exists — call the selector, or read the
+BrainSnapshot / a thin projection of it. Adding a competing derivation (a second
+7-day trend, a duplicate recovery-resolution, a hand-rolled month-to-date sum)
+is the regression this layer exists to prevent. If a genuinely new canonical
+fact is introduced, give it ONE authority and register it in
+`brain/registry.js` with its dependencies — do not scatter the computation
+across call sites. Briefs, pushes, and addenda carry `snapshotId` /
+`snapshotVersion` so an in-app view and its notification can be proven to
+reference one cut of state.
+
 ## Storage
 
 Self-hosted **Postgres + TimescaleDB + pgvector** — one database, three jobs:

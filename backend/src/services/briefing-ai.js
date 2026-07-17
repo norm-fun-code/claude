@@ -20,6 +20,7 @@ const crypto = require('crypto');
 const llm = require('../llm');
 const { extractJson, parseAndValidate } = require('../llm/parseJson');
 const { AnthropicRefusalError, AnthropicMaxTokensError } = llm;
+const { validateChiefBriefClaims } = require('../brain/claimValidator');
 
 // Static voice + output-schema + rules for the chief-brief call. This text is
 // BYTE-IDENTICAL on every build (no per-call dynamic content mixed in), so the
@@ -594,7 +595,7 @@ function buildGoalCorrectionPrompt(prompt, violations) {
  *  against (see findFalseGoalCompletions above). Both the full builder and
  *  the scoped chief-brief rebuild call this same function, so the guard
  *  applies identically to each — no separate, weaker path. */
-async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '', attentionContext = '', openGoals = []) {
+async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '', attentionContext = '', openGoals = [], snapshotFacts = null) {
   // Apply the same hard filter as generateEmailBriefs so automated senders
   // never reach the main briefing LLM call either.
   const filteredEmails = filterActionableEmails(emailData);
@@ -637,29 +638,68 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
   }
   if (!result) return { ...EMPTY_CHIEF };
 
-  // Semantic guard: weekly_intentions.goals[].achieved is the SOLE authority
-  // for completion — a shape-valid response can still be factually wrong
-  // about it. Runs on the result from whichever shape attempt succeeded.
-  const violations = findFalseGoalCompletions(result, openGoals);
-  if (!violations.length) return result;
+  // ── Semantic guards ────────────────────────────────────────────────────
+  // (1) Goal completion: weekly_intentions.goals[].achieved is the SOLE
+  //     authority — a shape-valid response can still describe an OPEN goal as
+  //     done. This guard has a deterministic rewrite backstop, so a violation
+  //     here is ALWAYS scrubbed before shipping.
+  // (2) Broader claim validation (brain/claimValidator): when the caller
+  //     supplies canonical facts from the BrainSnapshot, also catch statements
+  //     that contradict the authoritative recovery band/score, the EFFECTIVE
+  //     (not scheduled) workout, commitment completion, experiment verdicts, or
+  //     spending totals — the LLM may choose wording, never recalculate facts.
+  //     High-severity contradictions (recovery/workout/completion) trigger the
+  //     same one-shot correction retry as goal violations; low-severity ones
+  //     (experiment/spending) are logged. Absent facts, this is a no-op, so
+  //     every existing caller keeps working unchanged.
+  const goalViolations = findFalseGoalCompletions(result, openGoals);
+  const { violations: claimViolations, hasHighSeverity: claimsHigh } = validateChiefBriefClaims(result, snapshotFacts);
+  if (claimViolations.length) {
+    console.error(`[briefing-ai] chief-brief contradicted canonical state (${claimViolations.length} claim violation(s): ${claimViolations.map((v) => v.check).join(', ')}) [correlationId=${correlationId}]`);
+  }
+  if (!goalViolations.length && !claimViolations.length) return result;
 
-  console.error(`[briefing-ai] chief-brief claimed an OPEN goal was done (${violations.length} instance(s)) — retrying with a targeted correction. [correlationId=${correlationId}]`);
-  const correctionPrompt = buildGoalCorrectionPrompt(prompt, violations);
+  // Retry only when there's something a retry can safely fix: goal violations
+  // (always) or high-severity claim contradictions. Low-severity-only claim
+  // violations are logged above but don't force a paid retry.
+  const shouldRetry = goalViolations.length > 0 || claimsHigh;
+  if (!shouldRetry) return result;
+
+  if (goalViolations.length) {
+    console.error(`[briefing-ai] chief-brief claimed an OPEN goal was done (${goalViolations.length} instance(s)) — retrying with a targeted correction. [correlationId=${correlationId}]`);
+  }
+  // Layer whichever corrections apply onto the base prompt (goal first, then
+  // claim contradictions) — either or both may be present.
+  let correctionPrompt = prompt;
+  if (goalViolations.length) correctionPrompt = buildGoalCorrectionPrompt(correctionPrompt, goalViolations);
+  const highClaimViolations = claimViolations.filter((v) => v.severity === 'high');
+  if (highClaimViolations.length) {
+    const { buildClaimCorrectionPrompt } = require('../brain/claimValidator');
+    correctionPrompt = buildClaimCorrectionPrompt(correctionPrompt, highClaimViolations);
+  }
+
   const { result: retry } = await chiefBriefAttempt(
-    correctionPrompt, 'attempt 3/3 (goal-completion correction)', { maxTokens: successMaxTokens, correlationId }
+    correctionPrompt, 'attempt 3/3 (semantic correction)', { maxTokens: successMaxTokens, correlationId }
   );
   if (retry) {
-    const retryViolations = findFalseGoalCompletions(retry, openGoals);
-    if (!retryViolations.length) return retry;
+    const retryGoalViolations = findFalseGoalCompletions(retry, openGoals);
+    const { violations: retryClaimViolations } = validateChiefBriefClaims(retry, snapshotFacts);
+    if (retryClaimViolations.length) {
+      // Claim contradictions can't be deterministically rewritten the way a
+      // goal-completion sentence can (you can't safely invent the correct
+      // recovery narration) — the retry is our best shot; log any that survive.
+      console.error(`[briefing-ai] semantic correction retry STILL contradicted canonical state (${retryClaimViolations.map((v) => v.check).join(', ')}) — shipping the retried version. [correlationId=${correlationId}]`);
+    }
+    if (!retryGoalViolations.length) return retry;
     console.error(`[briefing-ai] goal-completion correction retry still contradicted state — rewriting the offending sentence(s) deterministically. [correlationId=${correlationId}]`);
-    return rewriteFalseGoalCompletions(retry, retryViolations);
+    return rewriteFalseGoalCompletions(retry, retryGoalViolations);
   }
   // The correction retry failed entirely — fall back to deterministically
-  // rewriting the FIRST valid result rather than losing it (returning
-  // EMPTY_CHIEF here would make the caller reuse a POTENTIALLY CONTAMINATED
-  // prior brief, which is exactly what this guard exists to avoid).
-  console.error(`[briefing-ai] goal-completion correction retry failed — rewriting the original result deterministically instead. [correlationId=${correlationId}]`);
-  return rewriteFalseGoalCompletions(result, violations);
+  // rewriting the FIRST valid result's goal violations rather than losing it
+  // (returning EMPTY_CHIEF here would make the caller reuse a POTENTIALLY
+  // CONTAMINATED prior brief, which is exactly what this guard exists to avoid).
+  console.error(`[briefing-ai] semantic correction retry failed — rewriting the original result deterministically instead. [correlationId=${correlationId}]`);
+  return goalViolations.length ? rewriteFalseGoalCompletions(result, goalViolations) : result;
 }
 
 /**

@@ -9,8 +9,6 @@
 // is the ONLY dispatcher — routes/realtime.js's POST /voice/realtime/tool
 // rejects any name not in TOOL_SCHEMAS before this file is even consulted, so
 // a Realtime session can never reach an arbitrary backend function.
-const { query: dbQuery } = require('../db');
-
 function snippet(text, n = 240) {
   if (!text) return '';
   const s = String(text);
@@ -18,20 +16,22 @@ function snippet(text, n = 240) {
 }
 
 // ---- get_today_context --------------------------------------------------
+// Projected from the central BrainSnapshot so voice narrates the SAME facts
+// every other surface shows: the CANONICAL effective workout (getEffectiveWorkout
+// — applies a manual swap AND a recovery-based downgrade), live recovery, and
+// the morning brief ONLY when it was generated on the current local date. The
+// old version read getTodayWorkout() (the static schedule — silently missed both
+// a swap and a downgrade) and returned the latest brief with no date check, so
+// voice could describe a Push the Health tab had downgraded to Mobility, or read
+// yesterday's brief as "this morning's."
 async function getTodayContext() {
-  const [briefing, workout, recovery] = await Promise.all([
+  const { buildBrainSnapshot, realtimeTodayContext } = require('../brain/snapshot');
+  const [snapshot, briefing] = await Promise.all([
+    buildBrainSnapshot().catch(() => null),
     require('../store/briefings').latestBriefing('daily').catch(() => null),
-    Promise.resolve().then(() => { try { return require('../services/workout').getTodayWorkout(); } catch { return null; } }),
-    require('../intelligence/recovery').liveRecovery().catch(() => null),
   ]);
-  const cb = briefing?.content?.chiefBrief;
-  return {
-    synthesis: cb?.synthesis ?? null,
-    action: cb?.action ?? null,
-    risk: cb?.risk ?? null,
-    workout: workout?.type ? { type: workout.type, duration: workout.duration ?? null } : null,
-    recovery: recovery ? { score: recovery.score ?? null, band: recovery.band ?? null } : null,
-  };
+  if (!snapshot) return { synthesis: null, action: null, risk: null, workout: null, recovery: null, briefIsCurrent: false };
+  return realtimeTodayContext(snapshot, briefing);
 }
 
 // ---- get_current_recovery -----------------------------------------------
@@ -43,13 +43,16 @@ async function getCurrentRecovery() {
 
 // ---- get_active_goals_and_commitments ------------------------------------
 async function getActiveGoalsAndCommitments() {
-  const [goalsRes, commitments, intention] = await Promise.all([
-    dbQuery(`SELECT domain, title, metric, target_value, unit, target_date FROM goals WHERE status = 'active' ORDER BY target_date NULLS LAST LIMIT 8`).catch(() => ({ rows: [] })),
+  // Read goals through the store selector (store/goals.listGoals) — the same
+  // authority every other surface uses — not ad-hoc inline SQL, so voice can't
+  // drift from what the app shows.
+  const [goals, commitments, intention] = await Promise.all([
+    require('../store/goals').listGoals({ status: 'active' }).catch(() => []),
     require('../store/commitments').listActive({ limit: 8 }).catch(() => []),
     require('../store/intentions').currentIntention().catch(() => null),
   ]);
   return {
-    goals: goalsRes.rows.map((g) => ({
+    goals: goals.slice(0, 8).map((g) => ({
       domain: g.domain, title: g.title,
       target: g.target_value != null ? `${g.target_value}${g.unit ? ' ' + g.unit : ''}` : null,
       by: g.target_date ? new Date(g.target_date).toISOString().slice(0, 10) : null,
@@ -80,10 +83,19 @@ const METRIC_DAYS_MAX = 90;
 async function queryMetric({ domain, metric, days = 7 } = {}) {
   if (!domain || !metric) return { error: 'domain and metric are required' };
   const metricsStore = require('../store/metrics');
+  const cat = require('../intelligence/catalog');
   const clampedDays = Math.max(1, Math.min(METRIC_DAYS_MAX, Number(days) || 7));
+  // Use the CANONICAL source-preference aggregation (dailyAggregatePreferSource)
+  // and the catalog's per-metric aggregation, not a plain average over every
+  // row. A metric recorded by multiple sources (e.g. HRV coming in via both
+  // Eight Sleep and Apple Health/HealthKit) would otherwise be double-counted
+  // by a raw mean — this dedups per local day by source preference, exactly as
+  // the recovery score and the analysis engine do, so voice reports the same
+  // number the rest of the app computes.
+  const agg = cat.aggFor ? cat.aggFor(metric) : 'avg';
   const [latest, series] = await Promise.all([
     metricsStore.latest({ domain, metric }).catch(() => null),
-    metricsStore.dailyAggregate({ domain, metric, from: new Date(Date.now() - clampedDays * 864e5), agg: 'avg' }).catch(() => []),
+    metricsStore.dailyAggregatePreferSource({ domain, metric, from: new Date(Date.now() - clampedDays * 864e5), agg }).catch(() => []),
   ]);
   const values = series.map((r) => Number(r.value)).filter(Number.isFinite);
   const avg = values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;

@@ -180,7 +180,14 @@ async function personalSnapshot() {
     /* intentions optional */
   }
 
-  // Recent trend per tracked metric: last 7d avg vs the prior 7d.
+  // Recent trend per tracked metric: last 7d avg vs the prior 7d. Uses the SAME
+  // canonical aggregation the realtime voice tool and the rest of the app use —
+  // catalog aggFor() for the per-metric agg function, and dailyAggregatePreferSource
+  // for per-day source priority (so a metric double-recorded by Eight Sleep and
+  // Apple Health isn't counted twice). Previously this called dailyAggregate with
+  // a bare excludeSource:'seed', which could report a different number for the
+  // same metric than the voice tool did — the exact class of "two surfaces, one
+  // fact, two answers" divergence the state layer exists to eliminate.
   try {
     const keys = await metricsStore.listMetricKeys();
     const now = Date.now();
@@ -193,8 +200,8 @@ async function personalSnapshot() {
     for (const { domain, metric } of keys.filter(({ domain, metric }) => cat.isTracked(domain, metric)).slice(0, 25)) {
       const agg = cat.aggFor(metric);
       const [recent, prior] = await Promise.all([
-        metricsStore.dailyAggregate({ domain, metric, from: d7, agg, excludeSource: 'seed' }),
-        metricsStore.dailyAggregate({ domain, metric, from: d14, to: d7, agg, excludeSource: 'seed' }),
+        metricsStore.dailyAggregatePreferSource({ domain, metric, from: d7, agg }),
+        metricsStore.dailyAggregatePreferSource({ domain, metric, from: d14, to: d7, agg }),
       ]);
       const r = avg(recent);
       const p = avg(prior);
