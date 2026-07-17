@@ -18,9 +18,16 @@ async function saveBriefing({ kind = 'daily', content, periodStart = null, perio
  * back up. Blanking at the source means every refetch/remount/app-restart
  * agrees it's been dealt with. (Multiple builds per day each insert a row, so
  * update every row from today, not just the newest.)
+ *
+ * `db` defaults to the pooled `query` but accepts an injected transaction
+ * client (see db/index.js's withTransaction) — POST /briefing/context runs
+ * this in the SAME transaction as the answered-question ledger write and its
+ * explanatory annotation, so a failure here rolls back the whole answer
+ * instead of leaving the question durably suppressed while a stale cached
+ * build still shows it (or vice versa).
  */
-async function blankTodaysOpenQuestion(tz = process.env.TZ || 'America/New_York') {
-  const { rowCount } = await query(
+async function blankTodaysOpenQuestion(tz = process.env.TZ || 'America/New_York', db = query) {
+  const { rowCount } = await db(
     `UPDATE briefings
         SET content = jsonb_set(content, '{chiefBrief,openQuestion}', '""'::jsonb)
       WHERE kind = 'daily'

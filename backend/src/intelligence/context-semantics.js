@@ -375,4 +375,6 @@ module.exports = {
   findRetractionTarget,
   describesCompletedNight,
   causeConceptTags,
+  significantWords,
+  overlapScore,
 };

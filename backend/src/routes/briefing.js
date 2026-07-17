@@ -21,6 +21,8 @@ const { fetchRandomQuote } = require('../services/googleDoc');
 const { fetchWeather } = require('../services/weather');
 const { generateChiefBrief, generateWisdomInsights } = require('../services/briefing-ai');
 const { getEffectiveWorkout } = require('../services/workout');
+const { suppressAnsweredOpenQuestion, formatAnsweredQuestionsContext } = require('../intelligence/open-question-policy');
+const openQuestionsStore = require('../store/openQuestions');
 
 /** Today's plan for the chief-brief prompt, shaped like getWorkout()'s
  *  { type, duration, hrTarget, protein, hrvNote } — but resolved through
@@ -1679,6 +1681,21 @@ async function buildFreshBriefing({ force = false } = {}) {
     } catch (e) { console.error('[briefing build] chiefFacts assembly failed:', e.message); }
   }
 
+  // Today's already-answered open questions — fed into the prompt so the
+  // model has a head start on not re-asking them (see
+  // intelligence/open-question-policy.js). This is best-effort context, NOT
+  // the enforcement: the deterministic suppressAnsweredOpenQuestion call
+  // right after generation (below) is what actually guarantees a repeat
+  // never ships, regardless of whether the model honors this block.
+  let answeredQuestionsContext = '';
+  try {
+    const openQuestionsTz = process.env.TZ || 'America/New_York';
+    const answeredToday = await openQuestionsStore.answeredOn(localDateStr(openQuestionsTz, new Date()));
+    answeredQuestionsContext = formatAnsweredQuestionsContext(answeredToday);
+  } catch (err) {
+    console.error('[openQuestion context] failed:', err.message);
+  }
+
   let geminiResult = null;
   {
     const [chiefSettled, wisdomSettled] = await Promise.allSettled([
@@ -1689,7 +1706,8 @@ async function buildFreshBriefing({ force = false } = {}) {
           // already collapsed to `[]` via unwrap(...) ?? [], indistinguishable
           // from "genuinely empty" by the time `calendar`/`workBusy` reach
           // here, so this is tracked separately rather than re-derived.
-          { workBusy: workBusyResult.status === 'fulfilled', calendar: calendarResult.status === 'fulfilled' }),
+          { workBusy: workBusyResult.status === 'fulfilled', calendar: calendarResult.status === 'fulfilled' },
+          answeredQuestionsContext),
         LLM_TIMEOUT,
         'gemini_chief'
       ),
@@ -1760,31 +1778,19 @@ async function buildFreshBriefing({ force = false } = {}) {
   // "never ask a question whose answer you already have," but a rebuild re-runs
   // the LLM from scratch with no memory of what was just answered a minute ago,
   // so the same (or near-identical) question can resurface verbatim right after
-  // being answered. Answering it writes a 'brief_context' annotation whose note
-  // is "Q: <question>" (see POST /api/briefing/context) — treat a fresh
-  // openQuestion that shares most of its significant words with one of those
-  // (within the last day, so a genuinely new occurrence tomorrow still surfaces)
-  // as already resolved and blank it out rather than trust the model to notice.
+  // being answered. Centralized in intelligence/open-question-policy.js — every
+  // path that can produce/replace chiefBrief (this full build, the scoped
+  // chief-brief-only rebuild, and any retry) runs the SAME check against the
+  // durable answered_open_questions ledger (store/openQuestions.js), not an
+  // ad-hoc scan of 'brief_context' annotations (an unreliable substitute: it
+  // shares a table — and its top-N window — with every other kind of life-
+  // context note, and previously only this one build path ran it at all).
   if (geminiResult?.chiefBrief?.openQuestion) {
     try {
-      const norm = (s) => new Set(String(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter((w) => w.length > 3));
-      const qWords = norm(geminiResult.chiefBrief.openQuestion);
-      if (qWords.size) {
-        // Query 'brief_context' directly rather than the top-30 across every
-        // category — a day with several other notes/gratitude/context entries
-        // could otherwise crowd the actual answer out of a shared top-30 window.
-        const recentAnswers = await annotationsStore.listAnnotations({
-          from: new Date(Date.now() - 24 * 60 * 60 * 1000), limit: 30, category: 'brief_context',
-        });
-        const alreadyAnswered = recentAnswers.some((a) => {
-          if (!a.note?.startsWith('Q: ')) return false;
-          const priorWords = norm(a.note.slice(3));
-          if (!priorWords.size) return false;
-          const shared = [...qWords].filter((w) => priorWords.has(w)).length;
-          return shared / Math.min(qWords.size, priorWords.size) >= 0.6;
-        });
-        if (alreadyAnswered) geminiResult.chiefBrief.openQuestion = '';
-      }
+      const openQuestionsTz = process.env.TZ || 'America/New_York';
+      geminiResult.chiefBrief = await suppressAnsweredOpenQuestion(geminiResult.chiefBrief, {
+        localDate: localDateStr(openQuestionsTz, new Date()),
+      });
     } catch (err) {
       console.error('[openQuestion dedup] failed:', err.message);
     }
@@ -2120,6 +2126,24 @@ async function buildFreshBriefing({ force = false } = {}) {
     console.error('[briefing build] chiefBrief generation failed/invalid — carrying forward the prior build\'s brief.');
     errors.push({ service: 'chiefBrief', error: 'invalid or missing shape from the LLM; showing the previous build\'s brief' });
   }
+  // The carried-forward fallback needs its own suppression pass: `prior` was
+  // fetched at the START of this (potentially 60-90s) build, so if the user
+  // answered the open question WHILE this build was still running, this
+  // in-memory object predates that answer even though the DB row (and every
+  // OTHER cached build) was already updated by POST /briefing/context's
+  // atomic retirement. geminiResult.chiefBrief (the fresh path) was already
+  // suppression-checked above right after generation.
+  let finalChiefBrief = geminiResult?.chiefBrief ?? prior?.content?.chiefBrief ?? null;
+  if (geminiResult?.chiefBrief == null && finalChiefBrief?.openQuestion) {
+    try {
+      const openQuestionsTz = process.env.TZ || 'America/New_York';
+      finalChiefBrief = await suppressAnsweredOpenQuestion(finalChiefBrief, {
+        localDate: localDateStr(openQuestionsTz, new Date()),
+      });
+    } catch (err) {
+      console.error('[openQuestion dedup] failed (carried-forward brief):', err.message);
+    }
+  }
 
   const nowIso = new Date().toISOString();
   // The state-cut time + identity come from the ONE real snapshot (snapAsOf),
@@ -2153,7 +2177,7 @@ async function buildFreshBriefing({ force = false } = {}) {
     timezone: process.env.TZ || 'America/New_York',
     morningFocus: geminiResult?.morningFocus || prior?.content?.morningFocus || '',
     // Structured Chief-of-Staff brief (Beta): synthesis + ACTION/RISK/MOVE.
-    chiefBrief: geminiResult?.chiefBrief ?? prior?.content?.chiefBrief ?? null,
+    chiefBrief: finalChiefBrief,
     // True when the card above is carried over from a prior build (this
     // build's generation failed/invalid) rather than freshly generated.
     chiefBriefStale,
@@ -2352,13 +2376,43 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
     });
   } catch (e) { console.error('[chief-brief rebuild] chiefFacts assembly failed:', e.message); }
 
+  // Same best-effort prompt context the full build feeds in (see that call
+  // site) — the deterministic suppression below is the actual enforcement.
+  let answeredQuestionsContext = '';
+  try {
+    const openQuestionsTz = process.env.TZ || 'America/New_York';
+    const answeredToday = await openQuestionsStore.answeredOn(localDateStr(openQuestionsTz, new Date()));
+    answeredQuestionsContext = formatAnsweredQuestionsContext(answeredToday);
+  } catch (err) {
+    console.error('[chief-brief rebuild][openQuestion context] failed:', err.message);
+  }
+
   const chiefResult = await generateChiefBrief(
     ctx.emails, ctx.dayName, ctx.workout, ctx.calendar, ctx.wellbeingContext, ctx.annotationsContext,
     ctx.recoveryContext, ctx.experimentsContext, ctx.selfModel, ctx.leverageContext, ctx.workBusy,
     ctx.strengthContext, ctx.spendingContext, ctx.continuityContext, ctx.cashflowContext,
     ctx.progressContext, ctx.weeklyGoalsContext, ctx.chaptersContext, ctx.dayOffContext,
-    /* attentionContext */ '', ctx.liveGoals, chiefFacts, ctx.recoveryDriversContext
+    /* attentionContext */ '', ctx.liveGoals, chiefFacts, ctx.recoveryDriversContext,
+    /* calendarSourcesAvailable */ { workBusy: true, calendar: true }, answeredQuestionsContext
   );
+
+  // Same deterministic "one question" suppression the full build runs (see
+  // intelligence/open-question-policy.js) — this scoped rebuild re-runs the
+  // LLM from scratch with no memory of what was just answered a minute ago,
+  // which is exactly the bug this route used to have: the full build applied
+  // this check but the scoped rebuild never did, so answering the question
+  // and immediately tapping the Chief Brief ↻ rebuild could bring it right
+  // back.
+  if (chiefResult.chiefBrief?.openQuestion) {
+    try {
+      const openQuestionsTz = process.env.TZ || 'America/New_York';
+      chiefResult.chiefBrief = await suppressAnsweredOpenQuestion(chiefResult.chiefBrief, {
+        localDate: localDateStr(openQuestionsTz, new Date()),
+      });
+    } catch (err) {
+      console.error('[chief-brief rebuild][openQuestion dedup] failed:', err.message);
+    }
+  }
 
   const chiefBriefStale = chiefResult.chiefBrief == null;
   const errors = Array.isArray(prior.content.errors) ? prior.content.errors.filter((e) => e.service !== 'chiefBrief') : [];
@@ -2366,11 +2420,28 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
     console.error('[chief-brief rebuild] still invalid after the scoped retry — keeping the existing card.');
     errors.push({ service: 'chiefBrief', error: 'invalid or missing shape from the LLM (after a retry); showing the previous build\'s brief' });
   }
+  // Same carried-forward-fallback race as the full build: `prior` was read
+  // at the top of this handler, before the LLM call above — if the user
+  // answered the question WHILE that call was in flight, this in-memory
+  // object can predate the answer even though the DB row was already
+  // updated. chiefResult.chiefBrief (the fresh path) was already
+  // suppression-checked above right after generation.
+  let finalChiefBrief = chiefResult.chiefBrief ?? prior.content.chiefBrief ?? null;
+  if (chiefResult.chiefBrief == null && finalChiefBrief?.openQuestion) {
+    try {
+      const openQuestionsTz = process.env.TZ || 'America/New_York';
+      finalChiefBrief = await suppressAnsweredOpenQuestion(finalChiefBrief, {
+        localDate: localDateStr(openQuestionsTz, new Date()),
+      });
+    } catch (err) {
+      console.error('[chief-brief rebuild][openQuestion dedup] failed (carried-forward brief):', err.message);
+    }
+  }
 
   const rebuildNow = new Date().toISOString();
   const content = {
     ...prior.content,
-    chiefBrief: chiefResult.chiefBrief ?? prior.content.chiefBrief ?? null,
+    chiefBrief: finalChiefBrief,
     morningFocus: chiefResult.morningFocus || prior.content.morningFocus || '',
     chiefBriefStale,
     errors,

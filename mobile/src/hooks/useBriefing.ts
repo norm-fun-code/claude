@@ -187,6 +187,14 @@ export interface ChiefBrief {
   // (restraint); a specific inline question when present, answerable to correct
   // the read and teach the next brief.
   openQuestion?: string;
+  // Server-computed identity for openQuestion (see backend's
+  // intelligence/open-question-policy.js) — echo this back verbatim in
+  // POST /briefing/context's `fingerprint` field when answering. The
+  // server's own answered_open_questions ledger (keyed off the question
+  // TEXT, not this value) is what actually prevents a repeat; this is a
+  // correctness aid for the durable record, not required for suppression
+  // to work correctly.
+  openQuestionFingerprint?: string | null;
   // A first-person line affirming something real and specific from today's
   // data (a streak, a trend holding up, a win) — generated fresh each day,
   // not the old static "I show up with joy and courage" filler. Optional so

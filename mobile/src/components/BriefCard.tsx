@@ -126,8 +126,15 @@ function BeatRow({ label, emoji, tint, text }: { label: string; emoji: string; t
 // share one ScrollView, so switching tabs unmounts this card and wipes its
 // 'saved ✓' state — while the App-level briefing data (which still carries the
 // question) survives. On remount the already-answered question would pop back
-// up. The server also retires it from the cached build (so refetch/app-restart
-// agree), but this set covers the in-memory window until that refetch.
+// up before the next refetch lands.
+//
+// This is an OPTIMISTIC UI AID ONLY — not the source of truth. The server's
+// answered_open_questions ledger (see backend's
+// intelligence/open-question-policy.js) is what actually prevents a repeat,
+// across every generation path (full build, scoped rebuild, a fresh install,
+// a second device, or this Set simply being empty after an app restart). Do
+// not rely on this Set for correctness; it only smooths the current mount's
+// UI until the next server-truth refetch.
 const answeredQuestions = new Set<string>();
 
 function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Props) {
@@ -214,7 +221,18 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Props) {
       const res = await fetchWithTimeout(BRIEFING_CONTEXT_URL, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ question: openQ, answer: trimmed, signalKey: 'brief_open_question' }),
+        body: JSON.stringify({
+          question: openQ,
+          answer: trimmed,
+          signalKey: 'brief_open_question',
+          // Server-computed identity for this exact question (see
+          // useBriefing's ChiefBrief.openQuestionFingerprint) — echoed back
+          // so the durable ledger record carries it. The server still keys
+          // suppression off the question TEXT itself, so an older client
+          // that omits this (or a briefing cached before the field existed)
+          // keeps working unchanged.
+          fingerprint: brief?.openQuestionFingerprint ?? undefined,
+        }),
       });
       if (!res.ok) throw new Error(`Server ${res.status}`);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});

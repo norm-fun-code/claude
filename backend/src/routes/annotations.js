@@ -12,10 +12,12 @@ const annotationsStore = require('../store/annotations');
 const briefingsStore = require('../store/briefings');
 const dayJournalStore = require('../store/dayJournal');
 const signalAnswersStore = require('../store/signalAnswers');
+const openQuestionsStore = require('../store/openQuestions');
 const { naiveToUtcIso, localDayBoundsUtc, localDateStr } = require('../util/date');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { requireFields } = require('../middleware/validate');
 const { EVENT_KIND, describesCompletedNight } = require('../intelligence/context-semantics');
+const { openQuestionFingerprint, openQuestionTopicKey } = require('../intelligence/open-question-policy');
 const { withTransaction } = require('../db');
 
 function createAnnotationsRouter() {
@@ -88,6 +90,13 @@ function createAnnotationsRouter() {
     // re-ask a question already answered here.
     const CALENDAR_LOAD_KEY_RE = /^calendar_load:(\d{4}-\d{2}-\d{2})$/;
     const calendarLoadMatch = CALENDAR_LOAD_KEY_RE.exec(String(signalKey || ''));
+    // The chief brief's "one open question" — see
+    // intelligence/open-question-policy.js for the full rationale. Answering
+    // it must durably retire it (this ledger row + the cached-brief blank
+    // below) atomically with the explanatory annotation, so a partial
+    // failure can never leave the question durably suppressed with its
+    // answer lost, or vice versa.
+    const isOpenQuestionAnswer = signalKey === 'brief_open_question' && !!String(question || '').trim();
     // Tag spending-related answers so they're excluded from health/recovery anomaly
     // context (a "$665 on vacation" answer must never explain a low-HRV deviation).
     // The 'spend' substring is what the anomaly filter in analyze.js keys off.
@@ -146,24 +155,44 @@ function createAnnotationsRouter() {
       note: question ? `Q: ${question.slice(0, 300)}` : (signalKey ?? null),
     };
     let id, eventKind, retiredAnnotationId;
-    if (calendarLoadMatch) {
-      // Atomic: the durable "answered, don't ask again" row (signal_answers —
-      // see store/signalAnswers.js) and the annotation that explains WHY
-      // (this table) must commit or fail together. Previously these were two
-      // independent writes with recordAnswer landing first; if createAnnotation
-      // then failed, the question became durably suppressed with its
-      // explanatory context permanently lost. Both stores accept an injectable
-      // `db` (see store/annotations.js, store/signalAnswers.js) so a single
-      // transaction client drives both writes here — asyncHandler forwards a
-      // rejection (including a failed COMMIT) to the error middleware with no
-      // swallowing, so the response can never claim success unless BOTH writes
-      // landed, and a failure leaves neither behind.
+    if (calendarLoadMatch || isOpenQuestionAnswer) {
+      // Atomic: any durable "answered, don't ask again" ledger row
+      // (signal_answers for calendar_load — store/signalAnswers.js;
+      // answered_open_questions for the chief brief's one question —
+      // store/openQuestions.js) and the annotation that explains WHY (this
+      // table) must commit or fail together. For the open-question case,
+      // the cached-build retirement (briefingsStore.blankTodaysOpenQuestion)
+      // is folded into the SAME transaction too — previously it ran as a
+      // fire-and-forget call after the response could already be in flight,
+      // so answering and immediately triggering a rebuild could race the
+      // retirement write, and a failure there left the ledger row answered
+      // but a stale cached build still showing the question. Every store
+      // here accepts an injectable `db` (see store/annotations.js,
+      // store/signalAnswers.js, store/openQuestions.js, store/briefings.js)
+      // so one transaction client drives every write — asyncHandler forwards
+      // a rejection (including a failed COMMIT) to the error middleware with
+      // no swallowing, so the response can never claim success unless EVERY
+      // write landed, and a failure leaves none of them behind.
       ({ id, eventKind, retiredAnnotationId } = await withTransaction(async (client) => {
         const db = (text, params) => client.query(text, params);
-        await signalAnswersStore.recordAnswer({
-          subjectKey: 'calendar_load', localDate: calendarLoadMatch[1], fingerprint, answer: answer.trim(),
-        }, db);
-        return annotationsStore.createAnnotation(annotationPayload, db);
+        if (calendarLoadMatch) {
+          await signalAnswersStore.recordAnswer({
+            subjectKey: 'calendar_load', localDate: calendarLoadMatch[1], fingerprint, answer: answer.trim(),
+          }, db);
+        }
+        const result = await annotationsStore.createAnnotation(annotationPayload, db);
+        if (isOpenQuestionAnswer) {
+          await openQuestionsStore.recordAnswered({
+            localDate: localDateStr(tz, nowTs),
+            questionText: question,
+            fingerprint: openQuestionFingerprint(question),
+            topicKey: openQuestionTopicKey(question),
+            answer: answer.trim(),
+          }, db);
+          const n = await briefingsStore.blankTodaysOpenQuestion(tz, db);
+          if (n > 0) console.log(`[briefing/context] retired answered openQuestion from ${n} cached build(s)`);
+        }
+        return result;
       }));
     } else {
       ({ id, eventKind, retiredAnnotationId } = await annotationsStore.createAnnotation(annotationPayload));
@@ -198,16 +227,6 @@ function createAnnotationsRouter() {
       try {
         await dayJournalStore.create({ text: answer.trim(), entryDate, source: 'brief' });
       } catch (e) { console.error('[day journal] capture from brief context failed:', e.message); }
-    }
-    // Answering the chief brief's one question retires it from today's CACHED
-    // builds too — the question lives in stored briefing JSON, so component
-    // state alone can't dismiss it: a tab switch remounts the card from cache
-    // and the already-answered question pops back up. Best-effort — the
-    // annotation above (the actual answer) is the critical write.
-    if (signalKey === 'brief_open_question') {
-      briefingsStore.blankTodaysOpenQuestion()
-        .then((n) => { if (n > 0) console.log(`[briefing/context] retired answered openQuestion from ${n} cached build(s)`); })
-        .catch((e) => console.error('[briefing/context] openQuestion retire failed:', e.message));
     }
     res.json({ ok: true, id });
   }));

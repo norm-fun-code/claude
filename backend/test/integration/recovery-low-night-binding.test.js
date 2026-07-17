@@ -20,6 +20,11 @@ const MARKER_PREFIX = 'recovery-night-binding-marker';
 
 afterEach(async () => {
   await db.query(`DELETE FROM annotations WHERE label ILIKE $1`, [`%${MARKER_PREFIX}%`]);
+  // The 'not-backdated' test below sends no signalKey, which routes/annotations.js
+  // treats as ordinary day context (isDayContext) and also journals — leftover
+  // rows here previously polluted metrics-daily-aggregate-tz.test.js's day
+  // (unrelated day_journal reads by other suites scan by content, not source).
+  await db.query(`DELETE FROM day_journal WHERE text ILIKE $1`, [`%${MARKER_PREFIX}%`]);
 });
 after(async () => { await closeDb(); });
 
