@@ -2264,6 +2264,17 @@ async function buildFreshBriefing({ force = false } = {}) {
   // Pre-warm the spoken narration so the first tap of "Listen" plays instantly
   // instead of waiting on synthesis. Fire-and-forget.
   require('../services/brief-audio').prewarmDaily(response).catch((err) => console.error('[brief audio prewarm] failed:', err.message));
+  // Same for the Wisdom tab's narration — uses this SAME final `response`
+  // object (never an intermediate snapshot: this is the exact object just
+  // persisted above via saveBriefing), and a distinct 'wisdom' kind so it
+  // can never collide with or duplicate the chief-brief prewarm's TTS call
+  // even though both fire from this same build.
+  {
+    const tz = process.env.TZ || 'America/New_York';
+    const wisdomDay = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    require('../services/brief-audio').prewarm('wisdom', response, wisdomDay)
+      .catch((err) => console.error('[wisdom audio prewarm] failed:', err.message));
+  }
 
   // Deliberately OUTSIDE this build's lifecycle (see primeNextBuildCycle's own
   // header comment): scheduled via setImmediate so it starts only after this

@@ -37,6 +37,7 @@ export const REALTIME_CALLS_URL = 'https://api.openai.com/v1/realtime/calls';
 export const REALTIME_VOICE_ENABLED = process.env.EXPO_PUBLIC_REALTIME_VOICE_ENABLED !== 'false';
 export const EVENING_BRIEF_URL = `${API_BASE}/api/evening-brief`;
 export const EVENING_BRIEF_AUDIO_URL = `${API_BASE}/api/evening-brief/audio`;
+export const WISDOM_AUDIO_URL = `${API_BASE}/api/wisdom/audio`;
 export const HEALTH_INGEST_URL = `${API_BASE}/api/ingest/health`;
 export const CHECKIN_URL = `${API_BASE}/api/checkin`;
 export const CHECKIN_TODAY_URL = `${API_BASE}/api/checkin/today`;

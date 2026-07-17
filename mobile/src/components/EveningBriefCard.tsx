@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as Haptics from 'expo-haptics';
 import { spacing, radius, typography, glow, bandGradient, withAlpha } from '../theme';
 import type { EveningBrief, EveningTone } from '../hooks/useEveningBrief';
-import { EVENING_BRIEF_AUDIO_URL, authHeaders, fetchWithTimeout } from '../config';
-import { voiceAvailable, playBase64, stopPlayback } from '../lib/voice';
+import { EVENING_BRIEF_AUDIO_URL } from '../config';
+import { voiceAvailable } from '../lib/voice';
+import { useBriefAudio } from '../hooks/useBriefAudio';
 
 interface Props {
   brief: EveningBrief | null | undefined;
@@ -40,29 +40,11 @@ function Chip({ label, value }: { label: string; value: string }) {
 }
 
 function EveningBriefCard({ brief }: Props) {
-  const [audioState, setAudioState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
-  useEffect(() => () => { stopPlayback(); }, []);
-
-  async function toggleListen() {
-    if (audioState === 'playing') {
-      await stopPlayback();
-      setAudioState('idle');
-      return;
-    }
-    Haptics.selectionAsync();
-    setAudioState('loading');
-    try {
-      const res = await fetchWithTimeout(EVENING_BRIEF_AUDIO_URL, { headers: authHeaders() }, 30000);
-      if (!res.ok) throw new Error(`Server ${res.status}`);
-      const data = await res.json();
-      if (!data?.audio) throw new Error('no audio');
-      const ok = await playBase64(data.audio, data.mime || 'audio/wav', () => setAudioState('idle'));
-      setAudioState(ok ? 'playing' : 'idle');
-    } catch {
-      setAudioState('error');
-      setTimeout(() => setAudioState((s) => (s === 'error' ? 'idle' : s)), 3000);
-    }
-  }
+  // 60s (matches BriefCard's shared default — see useBriefAudio's doc
+  // comment) rather than the previous 30s: the backend TTS call itself can
+  // take up to ~45s per model attempt before falling back, so a 30s client
+  // timeout could abort a request that was about to succeed.
+  const { state: audioState, toggle: toggleListen } = useBriefAudio(EVENING_BRIEF_AUDIO_URL);
 
   if (!brief || !brief.headline) return null;
   const band = TONE_BAND[brief.tone] || 'neutral';
@@ -82,7 +64,14 @@ function EveningBriefCard({ brief }: Props) {
       <View style={styles.kickerRow}>
         <Text style={styles.kicker}>EVENING · WIND DOWN</Text>
         {voiceAvailable && (
-          <Pressable onPress={toggleListen} hitSlop={8} style={styles.listenBtn}>
+          <Pressable
+            onPress={toggleListen}
+            hitSlop={8}
+            style={styles.listenBtn}
+            accessibilityRole="button"
+            accessibilityLabel={audioState === 'playing' ? 'Stop narration' : 'Listen to tonight\'s wind-down brief'}
+            accessibilityState={{ busy: audioState === 'loading', disabled: audioState === 'loading' }}
+          >
             {audioState === 'loading' ? (
               <ActivityIndicator size="small" color="#A78BFA" />
             ) : (

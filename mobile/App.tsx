@@ -49,6 +49,7 @@ import { GradientButton } from './src/components/GradientButton';
 import { WorkoutsPanel } from './src/components/WorkoutsPanel';
 import { QuoteCard } from './src/components/QuoteCard';
 import { NotionCard } from './src/components/NotionCard';
+import { WisdomListenCard } from './src/components/WisdomListenCard';
 import { AlertCard } from './src/components/AlertCard';
 import { HighlightsCard } from './src/components/HighlightsCard';
 import { BriefCard } from './src/components/BriefCard';
@@ -376,6 +377,11 @@ export default function App() {
         }
         return (
           <>
+            <WisdomListenCard
+              hasContent={Boolean(
+                (d?.quote && d?.quoteInsight) || (d?.notionQuote && d?.notionInsight) || d?.relevantHighlight?.content
+              )}
+            />
             {d?.quote && d?.quoteInsight && <QuoteCard quote={d.quote} insight={d.quoteInsight} />}
             {d?.notionText && d?.notionInsight && (
               <NotionCard pageTitle={d?.notionPageTitle ?? ''} notionText={d.notionText} quote={d?.notionQuote} insight={d.notionInsight} />

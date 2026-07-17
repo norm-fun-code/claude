@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, useColorScheme, TextInput, TouchableOpacity, Pressable, LayoutAnimation, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
@@ -7,7 +7,8 @@ import { getColors, spacing, radius, typography, shadow, glow, accentGradient, w
 import { AnimatedEntry } from './AnimatedEntry';
 import type { ChiefBrief } from '../hooks/useBriefing';
 import { BRIEFING_CONTEXT_URL, BRIEFING_AUDIO_URL, BRIEFING_ACTION_COMMIT_URL, BRIEFING_ACTION_ALTERNATES_URL, VOICE_TRANSCRIBE_URL, authHeaders, fetchWithTimeout } from '../config';
-import { voiceAvailable, playBase64, stopPlayback, ensureMicPermission, startRecording, stopRecording } from '../lib/voice';
+import { voiceAvailable, ensureMicPermission, startRecording, stopRecording } from '../lib/voice';
+import { useBriefAudio } from '../hooks/useBriefAudio';
 
 interface Props {
   brief: ChiefBrief | null | undefined;
@@ -209,8 +210,12 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Props) {
   // sent, same hold-to-talk pattern as the Ask overlay's push-to-talk.
   const [qVoice, setQVoice] = useState<'idle' | 'recording' | 'thinking'>('idle');
   // Spoken narration — streamed from the server's pre-warmed neural TTS.
-  const [audioState, setAudioState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
-  useEffect(() => () => { stopPlayback(); }, []);
+  // 60s (not 30s): the backend's TTS call can itself take up to ~45s per
+  // model attempt (see voice.js's GEMINI_TTS_TIMEOUT_MS) before falling back
+  // to the next candidate model — a shorter client timeout used to abort and
+  // show "Unavailable" WHILE a slow-but-recoverable backend request was
+  // still running and about to succeed.
+  const { state: audioState, toggle: toggleListen } = useBriefAudio(BRIEFING_AUDIO_URL, 60000);
 
   async function answerQuestion(overrideText?: string) {
     const trimmed = (overrideText ?? qAnswer).trim();
@@ -310,38 +315,6 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Props) {
     }
   }
 
-  async function toggleListen() {
-    if (audioState === 'playing') {
-      await stopPlayback();
-      setAudioState('idle');
-      return;
-    }
-    Haptics.selectionAsync();
-    setAudioState('loading');
-    try {
-      // Fetch the narration as base64 JSON (auth headers sent reliably via
-      // fetch), then play from a local file — the same path the voice reply
-      // uses. Streaming the URL through expo-av dropped auth on iOS and 401'd.
-      // 60s, not 30s: the backend's TTS call can itself take up to ~45s per
-      // model attempt (see voice.js's GEMINI_TTS_TIMEOUT_MS) before falling
-      // back to the next candidate model — a 30s client timeout used to abort
-      // and show "Unavailable" WHILE a slow-but-recoverable backend request
-      // was still running and about to succeed, so a second tap right after
-      // just read the now-warm cache and looked like a lucky retry.
-      const res = await fetchWithTimeout(BRIEFING_AUDIO_URL, { headers: authHeaders() }, 60000);
-      if (!res.ok) throw new Error(`Server ${res.status}`);
-      const data = await res.json();
-      if (!data?.audio) throw new Error('no audio');
-      const ok = await playBase64(data.audio, data.mime || 'audio/wav', () => setAudioState('idle'));
-      setAudioState(ok ? 'playing' : 'idle');
-    } catch {
-      // No brief / TTS unavailable / playback failed — surface it briefly
-      // instead of silently doing nothing.
-      setAudioState('error');
-      setTimeout(() => setAudioState((s) => (s === 'error' ? 'idle' : s)), 3000);
-    }
-  }
-
   async function saveNote() {
     const trimmed = note.trim();
     if (!trimmed || noteSaving) return;
@@ -395,7 +368,14 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing }: Props) {
             </Pressable>
           )}
           {voiceAvailable && brief && (
-            <Pressable onPress={toggleListen} hitSlop={8} style={styles.listenBtn}>
+            <Pressable
+              onPress={toggleListen}
+              hitSlop={8}
+              style={styles.listenBtn}
+              accessibilityRole="button"
+              accessibilityLabel={audioState === 'playing' ? 'Stop narration' : 'Listen to this morning\'s brief'}
+              accessibilityState={{ busy: audioState === 'loading', disabled: audioState === 'loading' }}
+            >
               {audioState === 'loading' ? (
                 <ActivityIndicator size="small" color="#A89CFF" />
               ) : (

@@ -232,6 +232,39 @@ function composeEveningNarrationScript(content) {
   return `Evening. ${parts.join(' ')} Rest well.`.slice(0, 3800);
 }
 
+/**
+ * Compose the spoken script for the Wisdom tab's daily reflection — the
+ * quote, the selected Notion passage, and (when present) a relevant library
+ * highlight, each with its personalized insight, in that order. Pure; safe
+ * on partial content. Deliberately narrow: never reads the full raw Notion
+ * page (`content.notionText`), a URL, or the tab's separate generic
+ * highlight list (`HighlightsCard`, unrelated to `relevantHighlight`) —
+ * only the three already-curated, already-short fields a person would
+ * actually want read aloud. Capped well below the other composers' 3800
+ * chars: Wisdom's own target is a 60-90s briefing, not a full brief.
+ */
+function composeWisdomNarrationScript(content) {
+  const parts = [];
+  if (content?.quote && content?.quoteInsight) {
+    parts.push(`Today's quote: "${content.quote}" ${content.quoteInsight}`);
+  }
+  if (content?.notionQuote && content?.notionInsight) {
+    parts.push(`From your reading — "${content.notionQuote}" ${content.notionInsight}`);
+  }
+  const h = content?.relevantHighlight;
+  if (h?.content) {
+    const attribution = h.title ? `${h.title}${h.author ? `, by ${h.author}` : ''}` : (h.author || 'your library');
+    const excerpt = String(h.content).trim().slice(0, 220);
+    parts.push(
+      h.reason
+        ? `One more thing worth revisiting, from ${attribution}: "${excerpt}" ${h.reason}`
+        : `One more thing worth revisiting, from ${attribution}: "${excerpt}"`
+    );
+  }
+  if (!parts.length) return '';
+  return `Here's today's wisdom. ${parts.join(' ')}`.slice(0, 1400);
+}
+
 /** Strip markdown for speech: an answer written for reading, spoken cleanly. */
 function speakable(text) {
   return String(text || '')
@@ -243,5 +276,6 @@ function speakable(text) {
 }
 
 module.exports = {
-  synthesize, transcribe, composeNarrationScript, composeEveningNarrationScript, speakable, pcmToWav, DEFAULT_VOICE,
+  synthesize, transcribe, composeNarrationScript, composeEveningNarrationScript, composeWisdomNarrationScript,
+  speakable, pcmToWav, DEFAULT_VOICE,
 };

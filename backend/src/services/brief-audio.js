@@ -1,14 +1,14 @@
-// Shared spoken-narration cache for the morning AND evening briefs — one
-// cache_key scheme (kind:day:contentHash) so narration only regenerates when
-// the CONTENT or VOICE actually changes, not on every "Listen" tap.
+// Shared spoken-narration cache for the morning, evening, AND Wisdom briefs —
+// one cache_key scheme (kind:day:contentHash) so narration only regenerates
+// when the CONTENT or VOICE actually changes, not on every "Listen" tap.
 const crypto = require('crypto');
 const db = require('../db');
 const voiceService = require('./voice');
 
 function scriptFor(kind, content) {
-  return kind === 'evening'
-    ? voiceService.composeEveningNarrationScript(content)
-    : voiceService.composeNarrationScript(content);
+  if (kind === 'evening') return voiceService.composeEveningNarrationScript(content);
+  if (kind === 'wisdom') return voiceService.composeWisdomNarrationScript(content);
+  return voiceService.composeNarrationScript(content);
 }
 
 // Live bug found via a product review: tapping "Listen" right after a

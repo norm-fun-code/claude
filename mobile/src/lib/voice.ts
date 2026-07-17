@@ -20,14 +20,37 @@ export const voiceAvailable: boolean = !!(AV?.Audio && FS?.cacheDirectory);
 
 let sound: any = null;
 
-/** Stop + unload whatever is currently playing. Safe to call anytime. */
+// The currently-"active" narration player's own reset-to-idle callback (see
+// useBriefAudio.ts). `sound` above already enforces "only one narration
+// actually plays at once" (playRemote always stops whatever's loaded first),
+// but that's a silent audio-engine effect — the CARD that was playing never
+// found out, so switching tabs mid-narration used to leave a stale "◼ Stop"
+// button on a screen that had actually gone silent. Registering/clearing
+// this alongside `sound` closes that gap: whoever's about to start playing
+// preempts both the audio AND the previous player's own UI state.
+let activeStopNotifier: (() => void) | null = null;
+
+/** Called by the currently-playing card right after it starts, so a LATER
+ *  play elsewhere can reset this card's UI instead of leaving it stuck on
+ *  "Stop" for audio that already stopped. Pass `null` to unregister
+ *  (e.g. on the card's own explicit stop) without notifying. */
+export function setActiveStopNotifier(fn: (() => void) | null): void {
+  activeStopNotifier = fn;
+}
+
+/** Stop + unload whatever is currently playing. Safe to call anytime. Fires
+ *  (and clears) the active player's own stop-notifier, if one is registered,
+ *  so its UI never reads "playing" for audio that's no longer playing. */
 export async function stopPlayback(): Promise<void> {
+  const notify = activeStopNotifier;
+  activeStopNotifier = null;
   try {
     if (sound) {
       await sound.unloadAsync();
       sound = null;
     }
   } catch { sound = null; }
+  notify?.();
 }
 
 /**
