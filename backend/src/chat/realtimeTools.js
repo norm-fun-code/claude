@@ -26,6 +26,7 @@ function snippet(text, n = 240) {
 // yesterday's brief as "this morning's."
 async function getTodayContext() {
   const { buildBrainSnapshot, realtimeTodayContext } = require('../brain/snapshot');
+  const invalidation = require('../brain/invalidation');
   const [snapshot, briefing] = await Promise.all([
     // Lean projection: get_today_context only needs recovery + effective workout
     // (+ the brief, fetched separately). Skip the heavy sections — wealth
@@ -37,9 +38,22 @@ async function getTodayContext() {
       sourceHealth: false,
     } }).catch(() => null),
     require('../store/briefings').latestBriefing('daily').catch(() => null),
+    // Pull the authoritative (cross-instance) invalidation versions so a
+    // SAME-CALENDAR-DAY brief that's nonetheless gone stale (recovery moved,
+    // a workout was overridden, an annotation retired — all AFTER the brief
+    // was built) is caught even though its date still matches today. A pure
+    // date check alone can't see this: two events on the same day, one
+    // narrating the other as current, is exactly the "combines a fresh
+    // snapshot with an outdated same-day brief" bug this guards against.
+    invalidation.refresh().catch(() => null),
   ]);
   if (!snapshot) return { synthesis: null, action: null, risk: null, workout: null, recovery: null, briefIsCurrent: false };
-  return realtimeTodayContext(snapshot, briefing);
+  const currentVersions = {
+    recovery: invalidation.versionOf('recovery'),
+    effectiveWorkout: invalidation.versionOf('effectiveWorkout'),
+    todayForecast: invalidation.versionOf('todayForecast'),
+  };
+  return realtimeTodayContext(snapshot, briefing, { currentVersions });
 }
 
 // ---- get_current_recovery -----------------------------------------------

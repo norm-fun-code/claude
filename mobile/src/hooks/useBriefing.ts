@@ -229,6 +229,13 @@ export interface BriefingData {
   // fieldsBuiltAt[field] = when that specific field was last actually derived, so
   // a card can show the derivation time relevant to the data IT renders.
   fieldsBuiltAt?: Record<string, string>;
+  // fieldVersions[field] = the backend invalidation bus's version for that
+  // field AT THE TIME this content was derived (see backend brain/invalidation.js).
+  // Not currently read by the client — present so the type accurately reflects
+  // the API contract; a future cache-aware client could use it the same way
+  // the backend's own cache-hit path does (compare against a live version to
+  // detect drift since this payload was produced).
+  fieldVersions?: Record<string, number>;
   snapshotId?: string;
   snapshotVersion?: number;
   morningFocus?: string;

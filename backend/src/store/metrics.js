@@ -69,6 +69,33 @@ async function insertMetrics(rows) {
     );
     written += chunk.length;
   }
+
+  // This is the SINGLE write funnel every connector (Eight Sleep, Apple
+  // Health, self-report, admin backfill) goes through — so it's the right
+  // place to detect "a write just landed that can move the recovery score"
+  // and drive the runtime invalidation bus from it, rather than only from the
+  // POST /api/recovery/self-report route (which left the REAL ingestion path —
+  // a normal overnight Eight Sleep sync — never bumping recovery_change at
+  // all). Gated to the exact metric keys liveRecovery() reads, so an
+  // unrelated write (wealth, wellbeing, a bulk historical backfill of some
+  // other domain) doesn't pay for a recovery recompute it can't affect.
+  try {
+    const recoveryMod = require('../intelligence/recovery');
+    const touchesRecovery = clean.some(
+      (r) => r.domain === recoveryMod.RECOVERY_INPUT_DOMAIN && recoveryMod.RECOVERY_INPUT_METRICS.has(r.metric)
+    );
+    if (touchesRecovery) {
+      const priorRecovery = await recoveryMod.liveRecovery().catch(() => null);
+      recoveryMod.invalidateRecoveryCache();
+      const freshRecovery = await recoveryMod.liveRecovery().catch(() => null);
+      if (recoveryMod.recoveryMateriallyChanged(priorRecovery, freshRecovery)) {
+        require('../brain/invalidation').bump('recovery_change', { source: 'ingest' });
+      }
+    }
+  } catch (err) {
+    console.error('[metrics] recovery invalidation check failed:', err.message);
+  }
+
   return written;
 }
 

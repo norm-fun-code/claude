@@ -7,6 +7,15 @@
 // stored plain strings are normalized on read, so nothing breaks.
 const { query } = require('../db');
 
+// A weekly-intention write changes what the brief's "this week's focus"
+// language and goal-completion claims may say — the registry declares
+// GOAL_CHANGE invalidates both `goals` and `weeklyIntention`, so route every
+// mutation here through the ONE bus rather than leaving a cached briefing's
+// weeklyGoals card unaware a new intention/achievement was just recorded.
+function invalidateIntentions() {
+  try { require('../brain/invalidation').bump('goal_change'); } catch { /* bus not loaded */ }
+}
+
 /** The Sunday (local) that starts the week containing `date`. YYYY-MM-DD. */
 function weekStart(date = new Date(), tz = process.env.TZ || 'America/New_York') {
   // Get the local Y-M-D and weekday, then back up to Sunday.
@@ -53,6 +62,7 @@ async function saveIntention({ weekStart: ws, context = null, goals = [] } = {})
     [week, context ? String(context).trim() : null, JSON.stringify(clean)]
   );
   const r = rows[0];
+  if (r) invalidateIntentions();
   return r ? { ...r, goals: normalizeGoals(r.goals) } : null;
 }
 
@@ -81,6 +91,7 @@ async function saveGoalResults({ weekStart: ws, achieved = [] } = {}) {
     [week, JSON.stringify(goals)]
   );
   const r = out[0];
+  if (r) invalidateIntentions();
   return r ? { weekStart: r.week_start, context: r.context, goals: normalizeGoals(r.goals) } : null;
 }
 

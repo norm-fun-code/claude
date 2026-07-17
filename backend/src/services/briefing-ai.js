@@ -655,7 +655,7 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
   //     every other class has its offending sentence deterministically stripped
   //     (neutralizeClaimViolations). Absent facts, this is a no-op, so every
   //     existing caller keeps working unchanged.
-  const { neutralizeClaimViolations } = require('../brain/claimValidator');
+  const { neutralizeClaimViolations, ensureRequiredFieldsPresent } = require('../brain/claimValidator');
   const goalViolations = findFalseGoalCompletions(result, openGoals);
   const { violations: claimViolations } = validateChiefBriefClaims(result, snapshotFacts);
   if (claimViolations.length) {
@@ -678,14 +678,33 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
   }
 
   // Deterministically FINALIZE a result so nothing contradicting ever ships:
-  // rephrase goal-completion sentences, strip any other surviving contradiction.
+  // rephrase goal-completion sentences, strip any other surviving contradiction,
+  // then rerun BOTH checks and apply a grounded backstop:
+  //   1. Shape: every REQUIRED field (synthesis/action/risk/move) must still be
+  //      a non-empty string after neutralization — stripping every sentence in
+  //      a field that was ENTIRELY the false claim would otherwise ship a blank
+  //      card, which is a worse failure than the contradiction it replaced.
+  //   2. Claims: re-validate the finalized text — neutralization only strips
+  //      the SPECIFIC flagged sentences, so this is a correctness check that
+  //      nothing else in the field still contradicts state (logged if so; the
+  //      shape guarantee above always holds regardless).
   const finalizeSafe = (r) => {
     const gv = findFalseGoalCompletions(r, openGoals);
     let out = gv.length ? rewriteFalseGoalCompletions(r, gv) : r;
     const { violations: cv } = validateChiefBriefClaims(out, snapshotFacts);
     if (cv.length) {
       console.error(`[briefing-ai] neutralizing ${cv.length} surviving claim contradiction(s) deterministically (${cv.map((v) => v.check).join(', ')}) [correlationId=${correlationId}]`);
-      out = neutralizeClaimViolations(out, cv);
+      out = neutralizeClaimViolations(out, cv, snapshotFacts);
+    }
+    // Backstop: guarantee no required field shipped blank, independent of
+    // WHY it might be (neutralization stripped every sentence, the model
+    // itself returned an empty string, a malformed retry shape).
+    out = ensureRequiredFieldsPresent(out, snapshotFacts);
+    // Rerun claim validation once more on the FINAL text — this only logs; the
+    // shape guarantee above is unconditional and doesn't depend on this passing.
+    const { violations: finalViolations } = validateChiefBriefClaims(out, snapshotFacts);
+    if (finalViolations.length) {
+      console.error(`[briefing-ai] ${finalViolations.length} claim violation(s) still present after finalization (${finalViolations.map((v) => v.check).join(', ')}) — shipping anyway, no required field is blank. [correlationId=${correlationId}]`);
     }
     return out;
   };

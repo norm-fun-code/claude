@@ -18,7 +18,7 @@
 // tell fresh from stale from unavailable.
 'use strict';
 
-const { authorityFor } = require('./registry');
+const { authorityFor, FIELDS } = require('./registry');
 
 const DEFAULT_TZ = process.env.TZ || 'America/New_York';
 // Bump when the snapshot's SHAPE changes in a way consumers must notice. Pushes
@@ -172,18 +172,44 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
 
   const wealth = { insights: wealthInsightsRead.value || [], spendingMtd: spendingRead.value ?? null };
 
-  // Freshness: 'fresh' when the authority succeeded AND returned real content;
-  // 'unavailable' when it was skipped, failed, or returned empty. `degraded` is
-  // set only on an actual FAILURE (vs a genuine empty), so a consumer can tell
-  // "we couldn't reach this" from "there's nothing here right now".
+  // ── Truthful provenance: a 5-state freshness model ────────────────────────
+  // 'unavailable' used to mean two very different things at once — "the
+  // authority succeeded and correctly reports zero of these" (no open
+  // commitments right now IS the true, current state) and "we don't actually
+  // know" (recovery is null because there's no HRV reading) — collapsing them
+  // made every legitimately-empty collection look like a data gap. And every
+  // present value was called 'fresh' regardless of how old the underlying read
+  // actually was, even for fields the registry itself declares a TTL for
+  // (recovery's RECOVERY_CACHE_MS). Five distinct states:
+  //   'failed'      — the authority THREW. Always logged (see read() above)
+  //                   and carries `error`; never silently downgraded to an
+  //                   empty value.
+  //   'unavailable' — skipped by `include`, OR a scalar/singular fact with no
+  //                   value where absence means "we don't know" (recovery,
+  //                   effectiveWorkout, forecast) — a real data gap.
+  //   'valid-empty' — the authority succeeded and an EMPTY result is itself a
+  //                   normal, correct answer (no open commitments, no running
+  //                   experiments, no weekly intention set yet).
+  //   'stale'       — present, successful, but read from a cache/computation
+  //                   older than the registry's declared TTL for that field
+  //                   (only meaningful for fields with both a real
+  //                   computed-at timestamp AND a non-null ttlMs — currently
+  //                   just `recovery`, via its liveRecovery() promise cache).
+  //   'fresh'       — present, successful, and (when a TTL applies) within it.
   const isEmpty = (v) => v == null || (Array.isArray(v) && v.length === 0);
-  const provenance = (rd, { present, confidence = null } = {}) => {
-    const hasContent = present !== undefined ? present : !isEmpty(rd.value);
-    const freshness = (rd.ok && hasContent) ? 'fresh' : 'unavailable';
+  function classifyFreshness(rd, { emptyIsValid = false, computedAt = null, ttlMs = null } = {}) {
+    if (rd.skipped) return 'unavailable';
+    if (!rd.ok) return 'failed';
+    if (isEmpty(rd.value)) return emptyIsValid ? 'valid-empty' : 'unavailable';
+    if (computedAt != null && ttlMs != null && (Date.now() - computedAt) > ttlMs) return 'stale';
+    return 'fresh';
+  }
+  const provenance = (rd, opts = {}) => {
+    const { confidence = null, ...classifyOpts } = opts;
     return {
       source: authorityFor(rd.field) || rd.field,
       asOf: snapshotAt,
-      freshness,
+      freshness: classifyFreshness(rd, classifyOpts),
       ...(confidence != null ? { confidence } : {}),
       ...(rd.skipped ? { reason: 'not-included' } : {}),
       ...(!rd.ok ? { degraded: true, error: rd.error } : {}),
@@ -192,6 +218,15 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
 
   const recoveryConfidence = recoveryVal?.score == null ? null : (recoveryVal.proxy ? 'low' : 'high');
   const forecastVal = forecastRead.value;
+  // Recovery's REAL staleness signal: when the value came from
+  // liveRecovery()'s own promise cache, how old is that cache — not
+  // "asOf minus now" (asOf/snapshotAt is always "when this snapshot was cut",
+  // which tells you nothing about whether the recovery VALUE inside it is a
+  // 90-second-old cache hit or a fresh compute).
+  const recoveryComputedAt = recovery !== undefined
+    ? null // an injected `recovery` has no cache timestamp we can inspect — treat as fresh (caller's responsibility)
+    : require('../intelligence/recovery').recoveryComputedAt();
+  const recoveryTtlMs = FIELDS.recovery?.ttlMs ?? null;
 
   return {
     snapshotId,
@@ -204,31 +239,28 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
     degraded: failures,
 
     recovery: fact(recoveryVal, provenance(recoveryRead, {
-      present: recoveryVal?.score != null, confidence: recoveryConfidence,
+      confidence: recoveryConfidence, computedAt: recoveryComputedAt, ttlMs: recoveryTtlMs,
     })),
     effectiveWorkout: fact(workoutRead.value, provenance(workoutRead, {
       confidence: workoutRead.value ? 'high' : null,
     })),
     forecast: fact(forecastVal?.capacity ? forecastVal : (forecastVal ?? null), provenance(forecastRead, {
-      present: forecastVal?.capacity != null,
       confidence: forecastVal?.capacity?.proxy ? 'low' : (forecastVal?.capacity ? 'high' : null),
     })),
-    goals: fact(goalsRead.value, provenance(goalsRead)),
-    weeklyIntention: fact(intentionRead.value, provenance(intentionRead)),
-    commitments: fact(commitmentsRead.value, provenance(commitmentsRead)),
+    goals: fact(goalsRead.value, provenance(goalsRead, { emptyIsValid: true })),
+    weeklyIntention: fact(intentionRead.value, provenance(intentionRead, { emptyIsValid: true })),
+    commitments: fact(commitmentsRead.value, provenance(commitmentsRead, { emptyIsValid: true })),
     wealth: fact(wealth, {
-      ...provenance(wealthInsightsRead, {
-        present: (wealth.insights?.length || wealth.spendingMtd != null),
-      }),
+      ...provenance(wealthInsightsRead, { emptyIsValid: true }),
       source: authorityFor('wealth'),
       // The MTD-spend read can fail independently of the insight cards — reflect it.
       ...(!spendingRead.ok ? { degraded: true, error: spendingRead.error } : {}),
     }),
-    findings: fact(findingsRead.value, provenance(findingsRead)),
-    experiments: fact(experimentsRead.value, provenance(experimentsRead)),
-    eligibleContext: fact(contextRead.value, provenance(contextRead)),
-    calendarAvailability: fact(calendarRead.value, provenance(calendarRead)),
-    sourceHealth: fact(sourceHealthRead.value, provenance(sourceHealthRead)),
+    findings: fact(findingsRead.value, provenance(findingsRead, { emptyIsValid: true })),
+    experiments: fact(experimentsRead.value, provenance(experimentsRead, { emptyIsValid: true })),
+    eligibleContext: fact(contextRead.value, provenance(contextRead, { emptyIsValid: true })),
+    calendarAvailability: fact(calendarRead.value, provenance(calendarRead, { emptyIsValid: true })),
+    sourceHealth: fact(sourceHealthRead.value, provenance(sourceHealthRead, { emptyIsValid: true })),
   };
 }
 
@@ -238,13 +270,38 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
 // surface agrees.
 
 /** Realtime `get_today_context` projection: the morning brief's
- *  synthesis/action/risk (only if the brief is from the snapshot's local date),
- *  the canonical effective workout, and the current recovery band. */
-function realtimeTodayContext(snapshot, briefing) {
+ *  synthesis/action/risk (only if the brief is from the snapshot's local date
+ *  AND hasn't gone stale relative to the invalidation bus since), the
+ *  canonical effective workout, and the current recovery band.
+ *
+ *  A same-calendar-day brief is NOT automatically "current": recovery can
+ *  change, a workout can be overridden, or context can be retracted AFTER the
+ *  brief was built but on the SAME day — a pure date check can't see that. So
+ *  when `opts.currentVersions` is supplied (the invalidation bus's
+ *  versionOf() per field, refreshed by the caller so it's authoritative
+ *  across instances — see chat/realtimeTools.js), it's compared against the
+ *  brief's OWN `content.fieldVersions` (stamped at the brief's build time —
+ *  see routes/briefing.js) for recovery/effectiveWorkout/todayForecast; any
+ *  mismatch means the bus has moved past what the brief reflects, so its
+ *  synthesis/action/risk are treated as stale even though the date matches.
+ *  Older briefs with no stored fieldVersions, or a caller that doesn't pass
+ *  currentVersions, fall back to the pure date check (unchanged behavior). */
+function realtimeTodayContext(snapshot, briefing, opts = {}) {
   const briefLocalDate = briefing?.generated_at
     ? new Date(briefing.generated_at).toLocaleDateString('en-CA', { timeZone: snapshot.timezone })
     : (briefing?.content?.localDate ?? null);
-  const briefIsToday = briefLocalDate === snapshot.localDate;
+  const sameCalendarDay = briefLocalDate === snapshot.localDate;
+
+  const briefVersions = briefing?.content?.fieldVersions || null;
+  const currentVersions = opts.currentVersions || null;
+  let versionCurrent = true; // no version info to compare → don't invent staleness
+  if (briefVersions && currentVersions) {
+    for (const field of ['recovery', 'effectiveWorkout', 'todayForecast']) {
+      if ((currentVersions[field] ?? 0) !== (briefVersions[field] ?? 0)) { versionCurrent = false; break; }
+    }
+  }
+
+  const briefIsToday = sameCalendarDay && versionCurrent;
   const cb = briefIsToday ? briefing?.content?.chiefBrief : null;
   const w = snapshot.effectiveWorkout.value;
   const r = snapshot.recovery.value;

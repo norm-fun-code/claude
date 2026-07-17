@@ -832,6 +832,47 @@ function invalidateRecoveryCache() {
   _recoveryCache = null;
 }
 
+/** When the currently-cached liveRecovery() promise was COMPUTED (not when it
+ *  was last read) — null if nothing is cached right now. Lets a caller (the
+ *  BrainSnapshot's provenance, the cache-hit staleness check) tell a truly
+ *  fresh compute from a value served out of the RECOVERY_CACHE_MS window,
+ *  instead of treating "present" and "fresh" as the same thing. */
+function recoveryComputedAt() {
+  return _recoveryCache?.at ?? null;
+}
+
+/** The registry's declared TTL for the recovery field (ms) — recomputed here
+ *  so recovery.js doesn't need to import brain/registry.js (which documents
+ *  this value, not owns it) just to answer "is my cached copy past its TTL?" */
+const RECOVERY_TTL_MS = RECOVERY_CACHE_MS;
+
+// The metrics.js metric keys a write to which can move the recovery score —
+// the exact set liveRecoveryUncached() reads. Exported so store/metrics.js
+// can gate its post-write "did recovery change?" check to ONLY these writes,
+// instead of running a recovery recompute after every metric of any kind.
+const RECOVERY_INPUT_METRICS = Object.freeze(new Set(['hrv', 'resting_hr', 'sleep_hours', 'sleep_score']));
+const RECOVERY_INPUT_DOMAIN = 'health';
+
+/** Pure: did live recovery change enough since a previously-derived value that
+ *  a dependent field (todayForecast, effective workout, recovery composite)
+ *  is now inconsistent with it? A band change always matters; a small score
+ *  wobble within the same band doesn't move the grade or the workout, so
+ *  ignore it (avoids invalidating on every trivial sensor jitter). A
+ *  present→absent or absent→present transition also counts. Used both by the
+ *  ingestion path (decides whether a new metric write is worth a
+ *  recovery_change bump) and the briefing cache-hit path (decides whether to
+ *  recompute the recovery-dependent cached fields). */
+function recoveryMateriallyChanged(prior, fresh) {
+  const pScore = prior?.score ?? null, fScore = fresh?.score ?? null;
+  const pBand = prior?.band ?? null, fBand = fresh?.band ?? null;
+  if ((pScore == null) !== (fScore == null)) return true;
+  if (pBand !== fBand) return true;
+  if (pScore != null && fScore != null && Math.abs(pScore - fScore) >= 3) return true;
+  // A proxy↔real transition changes how the forecast tempers the grade.
+  if (Boolean(prior?.proxy) !== Boolean(fresh?.proxy)) return true;
+  return false;
+}
+
 /**
  * Recovery score for each of the last `days` days — replays recoveryScore() over
  * the source-locked overnight series truncated to each day, so the trend uses the
@@ -910,6 +951,11 @@ module.exports = {
   trendScore,
   liveRecovery,
   invalidateRecoveryCache,
+  recoveryComputedAt,
+  recoveryMateriallyChanged,
+  RECOVERY_TTL_MS,
+  RECOVERY_INPUT_METRICS,
+  RECOVERY_INPUT_DOMAIN,
   recoveryHistory,
   selfReportRecovery,
   needsSleepCheckIn,

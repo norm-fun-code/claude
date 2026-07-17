@@ -339,7 +339,46 @@ function validateChiefBriefClaims(result, facts) {
  * (which rephrases rather than deletes), so this is only used for the other
  * claim classes.
  */
-function neutralizeClaimViolations(result, violations) {
+// Fields the Chief Brief card cannot render meaningfully without — shipping a
+// blank string here is a worse user-facing failure than the false claim
+// neutralization exists to remove (an empty card reads as broken, not just
+// unhelpful). morningFocus/affirmation/openQuestion may legitimately end up
+// empty (the UI already handles an absent optional field).
+const REQUIRED_BRIEF_FIELDS = new Set(['synthesis', 'action', 'risk', 'move']);
+
+/** A minimal, always-true, GROUNDED sentence for `field`, built ONLY from
+ *  canonical facts (never invents anything they don't support). Last resort
+ *  for neutralizeClaimViolations when stripping every offending sentence
+ *  would otherwise leave a REQUIRED field blank. Deliberately plain — the
+ *  goal is "never wrong", not "still compelling copy". */
+function groundedFallbackSentence(field, facts) {
+  const band = facts?.recoveryBand;
+  const score = facts?.recoveryScore;
+  const workout = facts?.effectiveWorkoutLabel;
+  switch (field) {
+    case 'synthesis':
+      if (band) return `Recovery is ${band}${score != null ? ` at ${score}/100` : ''} today.`;
+      return "Today's numbers are in — check the Health tab for the full picture.";
+    case 'action':
+      if (workout) return `Today's plan: ${workout}.`;
+      return "Follow today's plan as scheduled.";
+    case 'risk':
+      return 'No specific risk flagged right now — stay attentive to how you feel today.';
+    case 'move':
+      return 'Keep it simple: work the plan and check back this evening.';
+    default:
+      return '';
+  }
+}
+
+/**
+ * Deterministically strip the exact offending sentence(s) out of each
+ * violated field, so a false claim is removed without touching anything else
+ * in that field. `facts` (canonical facts, same shape checks are run
+ * against) is optional but required for the blank-field fallback below to
+ * produce anything more than an empty string — pass it whenever available.
+ */
+function neutralizeClaimViolations(result, violations, facts = null) {
   if (!violations.length) return result;
   const cb = { ...(result?.chiefBrief || {}) };
   const out = { ...result, chiefBrief: cb };
@@ -354,11 +393,39 @@ function neutralizeClaimViolations(result, violations) {
     const src = field === 'morningFocus' ? out.morningFocus : cb[field];
     if (typeof src !== 'string' || !src.trim()) continue;
     const kept = splitIntoSentences(src).filter((s) => !sentences.has(s.trim()));
-    const rebuilt = kept.join(' ').trim();
+    let rebuilt = kept.join(' ').trim();
+    // Stripping every sentence in a REQUIRED field would ship a blank card —
+    // strictly worse than the false claim it replaced (a broken-looking UI
+    // instead of a wrong-but-plausible one). Fall back to a grounded,
+    // deterministic, always-true statement instead of an empty string.
+    if (!rebuilt && REQUIRED_BRIEF_FIELDS.has(field)) {
+      rebuilt = groundedFallbackSentence(field, facts);
+    }
     if (field === 'morningFocus') out.morningFocus = rebuilt;
     else cb[field] = rebuilt;
   }
   return out;
+}
+
+/**
+ * Final backstop: guarantee every REQUIRED_BRIEF_FIELDS entry is a non-empty
+ * string, no matter what upstream correction/neutralization did. Called after
+ * finalizeSafe() so a blank field can never reach the client regardless of
+ * WHY it went blank (every sentence violated, the LLM itself returned an
+ * empty string, a malformed retry, etc.) — this is deliberately unconditional,
+ * not keyed to a specific violation, since "is this field populated" is a
+ * shape check, not a claim check.
+ */
+function ensureRequiredFieldsPresent(result, facts = null) {
+  const cb = { ...(result?.chiefBrief || {}) };
+  let changed = false;
+  for (const field of REQUIRED_BRIEF_FIELDS) {
+    if (typeof cb[field] !== 'string' || !cb[field].trim()) {
+      cb[field] = groundedFallbackSentence(field, facts);
+      changed = true;
+    }
+  }
+  return changed ? { ...result, chiefBrief: cb } : result;
 }
 
 /** Build a targeted correction prompt describing the contradictions found, for
@@ -372,6 +439,7 @@ function buildClaimCorrectionPrompt(basePrompt, violations) {
 
 module.exports = {
   validateChiefBriefClaims, buildClaimCorrectionPrompt, neutralizeClaimViolations,
+  REQUIRED_BRIEF_FIELDS, groundedFallbackSentence, ensureRequiredFieldsPresent,
   // Exposed for focused unit tests:
   checkRecoveryBand, checkRecoveryScore, checkEffectiveWorkout,
   checkCompletion, checkExperiments, checkSpending, checkForecast, checkCurrentDate, briefFields,

@@ -37,8 +37,12 @@ const { getEffectiveWorkout } = require('../services/workout');
  *  automatic swap so the brief narrates it as already-done and correct
  *  instead of either ignoring it or silently treating Mobility as if it had
  *  always been the static plan. */
-async function resolveWorkoutForPrompt(tz) {
-  const eff = await getEffectiveWorkout({ tz });
+/** Pure: getEffectiveWorkout()'s result -> the prompt-facing shape. No I/O — so
+ *  every caller that has ALREADY resolved the effective workout once (the full
+ *  build's single BrainSnapshot, the cache-hit refresh) can reuse that ONE
+ *  read instead of calling getEffectiveWorkout a second time just to get this
+ *  shape. */
+function workoutPromptShape(eff) {
   const autoSwapNote = eff.source === 'auto_downgrade'
     ? `NOTE: today's session was AUTOMATICALLY swapped from the scheduled ${eff.scheduledLabel} to ${eff.label} because last night's recovery came in ${eff.recoveryBand}. This already happened — it is not a suggestion — and it was the correct, protective call. If training comes up, acknowledge the swap plainly (e.g. "already eased off to ${eff.label} given ${eff.recoveryBand} recovery — right call") and do NOT tell the user to scale back, modify, or go easier on the ORIGINAL ${eff.scheduledLabel} session, since that is no longer today's plan.`
     : null;
@@ -50,6 +54,16 @@ async function resolveWorkoutForPrompt(tz) {
     hrvNote: 'Green=train as planned | Yellow=downgrade intensity | Red=mobility/walk only',
     autoSwapNote,
   };
+}
+
+/** Used only by callers that do NOT already have a resolved effective workout
+ *  in hand (the scoped chief-brief-only rebuild, which deliberately skips a
+ *  full BrainSnapshot for speed — see buildQuickChiefBriefContext). The full
+ *  build must NOT call this — it derives the prompt shape from its ONE
+ *  BrainSnapshot via workoutPromptShape() directly instead. */
+async function resolveWorkoutForPrompt(tz) {
+  const eff = await getEffectiveWorkout({ tz });
+  return workoutPromptShape(eff);
 }
 const { buildWealthInsights } = require('../services/wealth-insights');
 const metricsStore = require('../store/metrics');
@@ -82,23 +96,12 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 // trigger firing at the same moment must not both proceed.
 const REBUILD_LOCK_ID = 727002;
 
-/** Pure: did live recovery change enough since the cached derived fields were
- *  built that those fields (todayForecast, effective workout, recovery
- *  composite) are now inconsistent with it? A band change always matters; a
- *  small score wobble within the same band doesn't move the grade or the
- *  workout, so ignore it (avoids recomputing on every cache serve). A
- *  present→absent or absent→present transition also counts. Used by the
- *  cache-hit path to decide whether to run the recovery_change invalidation. */
-function recoveryMateriallyChanged(prior, fresh) {
-  const pScore = prior?.score ?? null, fScore = fresh?.score ?? null;
-  const pBand = prior?.band ?? null, fBand = fresh?.band ?? null;
-  if ((pScore == null) !== (fScore == null)) return true;
-  if (pBand !== fBand) return true;
-  if (pScore != null && fScore != null && Math.abs(pScore - fScore) >= 3) return true;
-  // A proxy↔real transition changes how the forecast tempers the grade.
-  if (Boolean(prior?.proxy) !== Boolean(fresh?.proxy)) return true;
-  return false;
-}
+// recoveryMateriallyChanged now lives in intelligence/recovery.js (it's used
+// there too, by the ingestion path — see store/metrics.js's insertMetrics —
+// to decide whether a newly-written HRV/RHR/sleep row is worth a
+// recovery_change bump, not just by this route's cache-hit path). Re-exported
+// below for existing callers/tests that import it from this module.
+const { recoveryMateriallyChanged } = require('../intelligence/recovery');
 
 // ── Honest timestamps ────────────────────────────────────────────────────────
 // The briefing payload distinguishes three timestamps, so a consumer can tell
@@ -137,16 +140,29 @@ const FULL_BUILD_FIELDS = [
 // refresh derives WHICH fields a recovery change touches from the registry's
 // invalidation graph (not a hand-copied list), so a future recovery-derived
 // field added to the registry is refreshed here automatically.
+// Registry field key → briefing response field name. NOTE: the registry's
+// `wealth` field is the buildWealthInsights()/canonicalSpendingMtd authority,
+// which surfaces in the response as `wealthInsights` (the display-card array)
+// — NOT the separate, unrelated top-level `wealth` object further down in
+// this file (a rolling net-worth/weekly-spend snapshot built from raw metric
+// aggregation, outside the registry's canonical-fact scope, same as how
+// evening-brief/Ask read historical time-series directly). Mapping the
+// registry key to the WRONG response field here would silently refresh
+// nothing on a transaction_sync.
 const REGISTRY_TO_BRIEF_FIELD = {
   recovery: 'recovery', effectiveWorkout: 'workout',
   todayForecast: 'todayForecast', recoveryComposite: 'recoveryComposite',
+  wealth: 'wealthInsights',
 };
-/** Briefing response field names a trigger invalidates, per the registry. */
-function briefFieldsForTrigger(trigger) {
-  return require('../brain/registry').invalidationSet(trigger)
-    .map((f) => REGISTRY_TO_BRIEF_FIELD[f])
-    .filter(Boolean);
-}
+
+// Registry field keys the briefing's CACHED content tracks a version for.
+// goals/weeklyIntention/commitments/eligibleContext are deliberately excluded:
+// weeklyGoals is refreshed unconditionally on every cache serve already (cheap,
+// no version-gating needed), commitments has no cached representation in this
+// payload at all (the Commitments UI reads a separate endpoint), and
+// eligibleContext's only visible effect here is through todayForecast (already
+// covered — annotation_retirement invalidates todayForecast directly too).
+const TRACKED_CACHE_FIELDS = ['recovery', 'effectiveWorkout', 'todayForecast', 'recoveryComposite', 'wealth'];
 
 // Fast, scoped context for POST /briefing/chief-brief/rebuild — recomputes
 // only the cheap, side-effect-free, DB-only inputs generateChiefBrief reads,
@@ -473,48 +489,71 @@ async function buildFreshBriefing({ force = false } = {}) {
     } catch (err) {
       console.error('[briefing cache] dismissals failed:', err.message);
     }
-    // Re-check live recovery on every cache serve, and — this is the fix for
-    // the "Health shows current recovery but Today shows a forecast built from
-    // the OLD score" bug — recompute the recovery-DEPENDENT fields atomically
-    // whenever the live score/band actually changed, not just when recovery
-    // data disappeared. The set of fields to recompute is exactly the
-    // registry's invalidation set for a recovery change
-    // (brain/registry.js: recovery_change → recovery, effectiveWorkout,
-    // todayForecast, recoveryComposite), so this coupling is a declared,
-    // checked contract rather than an ad-hoc "also refresh X" that the next
-    // recovery-derived field will silently miss.
+    // ── Version-gated staleness check ───────────────────────────────────────
+    // Pull the authoritative (DB-backed, cross-instance) versions before
+    // deciding what's stale. A mutation this cache-hit path must react to — a
+    // belated Eight Sleep sync, a workout override with recovery UNCHANGED, a
+    // Monarch transaction sync, an annotation retirement — may have been
+    // applied by ANOTHER request, another server instance, or by THIS
+    // process's own post-response ingestion priming after an earlier build
+    // (see buildFreshBriefing's post-persist section) — refresh() is what
+    // keeps this decision from depending on process-local memory alone (see
+    // brain/invalidation.js's header for the multi-instance contract).
+    const inv = require('../brain/invalidation');
+    await inv.refresh().catch(() => {});
+    const cachedVersions = cachedContent.fieldVersions || {};
+    const versionStale = (field) => inv.versionOf(field) !== (cachedVersions[field] ?? 0);
+
     try {
       const priorRecovery = cachedContent.recovery; // the value baked into the cached derived fields
       const freshRecovery = await require('../intelligence/recovery').liveRecovery();
       cachedContent.recovery = freshRecovery ?? null;
+      const tz = process.env.TZ || 'America/New_York';
+      const recoveryValueChanged = recoveryMateriallyChanged(priorRecovery, freshRecovery);
+
+      // Workout staleness is checked and refreshed INDEPENDENTLY of whether
+      // recovery data happens to be present. An override lands on
+      // workout_overrides regardless of last night's HRV — gating this behind
+      // "recovery is present" (the old shape: workout only ever refreshed
+      // inside the recovery-present branch) meant a workout override on a day
+      // with NO recovery reading never reached a cache-hit response at all,
+      // even though the bus correctly flagged effectiveWorkout as stale.
+      const workoutStale = recoveryValueChanged || versionStale('effectiveWorkout');
+      let freshEff = null;
+      if (workoutStale) {
+        try {
+          // ONE getEffectiveWorkout call, band passed explicitly from the
+          // recovery we just re-read (possibly null) — not a second
+          // self-fetching call via the old resolveWorkoutForPrompt(tz).
+          freshEff = await getEffectiveWorkout({ tz, band: freshRecovery?.band ?? null });
+          cachedContent.workout = workoutPromptShape(freshEff);
+          cachedContent.fieldsBuiltAt = stampFields(cachedContent.fieldsBuiltAt, ['workout']);
+        } catch (e) { console.error('[briefing cache] workout recompute failed:', e.message); }
+      }
+
       if (!freshRecovery) {
-        // No fresh data (device away) — todayForecast capacity is recovery-driven,
-        // so null it; drop the stale recovery composite so neither the Health
-        // RecoveryCard nor the Today TodayForecastCard show stale green data.
+        // No fresh recovery data (device away) — todayForecast capacity is
+        // recovery-driven, so null it; drop the stale recovery composite so
+        // neither the Health RecoveryCard nor the Today TodayForecastCard show
+        // stale green data. (Workout, above, is refreshed independently of this.)
         cachedContent.todayForecast = { capacity: null, sleepDebt: cachedContent.todayForecast?.sleepDebt ?? null };
         if (Array.isArray(cachedContent.healthComposites)) {
           cachedContent.healthComposites = cachedContent.healthComposites.filter((c) => c?.type !== 'recovery');
         }
-        // Registry-driven, minus 'workout' (not re-derived in this device-away branch).
-        cachedContent.fieldsBuiltAt = stampFields(cachedContent.fieldsBuiltAt,
-          briefFieldsForTrigger('recovery_change').filter((f) => f !== 'workout'));
-      } else if (recoveryMateriallyChanged(priorRecovery, freshRecovery)) {
-        // Recovery is present AND changed vs what the cached derived fields were
-        // built from → atomically recompute the whole recovery_change set so no
-        // consumer sees a fresh score beside a forecast/workout built from the
-        // old one. Only pays this cost when recovery actually moved (the common
-        // cache-hit case, unchanged recovery, stays a single cheap live read).
-        const tz = process.env.TZ || 'America/New_York';
-        try {
-          cachedContent.todayForecast = await require('../intelligence/predict')
-            .computeTodayForecast({ recovery: freshRecovery });
-        } catch (e) { console.error('[briefing cache] todayForecast recompute failed:', e.message); }
-        try {
-          cachedContent.workout = await resolveWorkoutForPrompt(tz); // effectiveWorkout (may auto-downgrade on the new band)
-        } catch (e) { console.error('[briefing cache] workout recompute failed:', e.message); }
+        cachedContent.fieldsBuiltAt = stampFields(cachedContent.fieldsBuiltAt, ['recovery', 'todayForecast', 'recoveryComposite']);
+      } else {
+        const forecastStale = recoveryValueChanged || workoutStale || versionStale('todayForecast');
+        if (forecastStale) {
+          try {
+            cachedContent.todayForecast = await require('../intelligence/predict')
+              .computeTodayForecast({ recovery: freshRecovery, effectiveWorkout: freshEff ?? undefined });
+            cachedContent.fieldsBuiltAt = stampFields(cachedContent.fieldsBuiltAt, ['todayForecast']);
+          } catch (e) { console.error('[briefing cache] todayForecast recompute failed:', e.message); }
+        }
         // recoveryComposite: keep its score/band consistent with the fresh
         // recovery in place (the visible inconsistency was score/band).
-        if (Array.isArray(cachedContent.healthComposites) && freshRecovery.score != null) {
+        const compositeStale = recoveryValueChanged || versionStale('recoveryComposite');
+        if (compositeStale && Array.isArray(cachedContent.healthComposites) && freshRecovery.score != null) {
           const idx = cachedContent.healthComposites.findIndex((c) => c?.type === 'recovery');
           if (idx !== -1) {
             const { band } = require('../intelligence/recovery').recoveryBand(freshRecovery.score);
@@ -525,14 +564,35 @@ async function buildFreshBriefing({ force = false } = {}) {
               title: `Recovery ${freshRecovery.score}/100 — ${band}`,
               evidence: { ...(c.evidence || {}), score: freshRecovery.score, band, parts: freshRecovery.parts ?? c.evidence?.parts },
             };
+            cachedContent.fieldsBuiltAt = stampFields(cachedContent.fieldsBuiltAt, ['recoveryComposite']);
           }
         }
-        // Honest field timestamps: only the recovery-dependent fields were
-        // re-derived just now — record that (the exact registry invalidation set
-        // for a recovery change), without touching the top-level snapshotAt/builtAt.
-        cachedContent.fieldsBuiltAt = stampFields(cachedContent.fieldsBuiltAt, briefFieldsForTrigger('recovery_change'));
+        if (recoveryValueChanged) {
+          cachedContent.fieldsBuiltAt = stampFields(cachedContent.fieldsBuiltAt, ['recovery']);
+        }
       }
     } catch { /* non-critical — leave cached value on error */ }
+
+    // Wealth: version-gated only — unlike recovery there's no cheap "did the
+    // value move" signal to check first, so a transaction_sync bump is the
+    // ONLY trigger. Recomputes through the SAME authorities the snapshot
+    // itself uses (buildWealthInsights + canonicalSpendingMtd), so a cache-hit
+    // refresh can never disagree with what a full build would have produced.
+    if (versionStale('wealth')) {
+      try {
+        const wtz = process.env.TZ || 'America/New_York';
+        const { canonicalSpendingMtd } = require('../brain/snapshot');
+        const [insights] = await Promise.all([buildWealthInsights(), canonicalSpendingMtd(new Date(), wtz)]);
+        cachedContent.wealthInsights = insights;
+        cachedContent.fieldsBuiltAt = stampFields(cachedContent.fieldsBuiltAt, ['wealthInsights']);
+      } catch (e) { console.error('[briefing cache] wealth recompute failed:', e.message); }
+    }
+
+    // Sync fieldVersions to the CURRENT bus state so the NEXT cache-hit
+    // compares against an up-to-date baseline — every tracked field's version
+    // now matches what this response actually reflects, whether or not it
+    // needed a refresh this time (an untouched field's version already matched).
+    cachedContent.fieldVersions = Object.fromEntries(TRACKED_CACHE_FIELDS.map((f) => [f, inv.versionOf(f)]));
 
     // Freshen the fitness (VO2 max) insight's CURRENT reading on every cache
     // serve — same reasoning as recovery/weeklyGoals/weeklyReview above. VO2
@@ -652,7 +712,11 @@ async function buildFreshBriefing({ force = false } = {}) {
         .catch((err) => { console.error('[briefing build] crossContext regen failed:', err.message); return null; })
     : Promise.resolve(null);
 
-  const workout = await resolveWorkoutForPrompt(tz);
+  // `workout` (the prompt-facing shape) is derived further down, from the ONE
+  // BrainSnapshot this build cuts (see "Cut ONE real BrainSnapshot" below) —
+  // not resolved here, which used to mean the full build called
+  // getEffectiveWorkout TWICE (once here with no band — self-fetching its own
+  // recovery — and once again inside the snapshot).
 
   // Notion wisdom page: avoid repeating one shown in the last 30 days.
   const seenNotion = await surfacedStore.recentRefs('notion_page', 30).catch(() => new Set());
@@ -913,12 +977,61 @@ async function buildFreshBriefing({ force = false } = {}) {
     if (r?.metricsWritten) console.log(`[recompute-wealth pre-cut] ${r.transactions} txns → ${r.metricsWritten} flow rows`);
   } catch (e) { console.error('[recompute-wealth pre-cut] failed:', e.message); }
 
-  let wealthInsights = [];
+  // ── Cut ONE real BrainSnapshot for this build ────────────────────────────
+  // THE authoritative state cut every downstream part of this build reads
+  // from: the LLM prompt's `workout`/spending narrative, the claim validator's
+  // facts, the response's todayForecast, the response cards (workout, wealth,
+  // wealthInsights), and the persisted brief all project from this SAME
+  // object — none of them re-resolve the effective workout or re-query wealth
+  // insights independently. Reuses the `recovery` already fetched above (one
+  // authority read, not two) and the wealth flows just recomputed pre-cut.
+  const factsTz = process.env.TZ || 'America/New_York';
+  const snapAsOf = new Date();
+  let brainSnapshot = null;
   try {
-    wealthInsights = await buildWealthInsights();
-  } catch (err) {
-    console.error('[wealthInsights] failed:', err.message);
-    errors.push({ service: 'wealth_insights', error: err.message });
+    const { buildBrainSnapshot } = require('../brain/snapshot');
+    brainSnapshot = await buildBrainSnapshot({ asOf: snapAsOf, tz: factsTz, recovery });
+  } catch (e) { console.error('[briefing build] snapshot assembly failed:', e.message); }
+
+  // Snapshot the invalidation bus's CURRENT per-field versions right here, at
+  // cut time — before the ~60-90s LLM call and everything after it, so this
+  // build's stamped fieldVersions describe what THIS snapshot actually
+  // reflects, not whatever the bus happens to read as by the time the
+  // response is assembled. The cache-hit path (below, on a LATER request)
+  // compares a cached brief's fieldVersions against the bus's then-current
+  // versions to know precisely which fields a mutation since this cut has
+  // made stale — this is what proves "no post-cut mutation silently leaves
+  // the served brief wrong": the version recorded here freezes the instant
+  // read; the very next check against it will disagree the moment something
+  // relevant changes, whether that's a workout override two minutes from now
+  // or this exact build's own post-response ingest priming.
+  const snapshotFieldVersions = (() => {
+    const inv = require('../brain/invalidation');
+    const out = {};
+    for (const f of TRACKED_CACHE_FIELDS) out[f] = inv.versionOf(f);
+    return out;
+  })();
+
+  // `workout` (prompt shape) and `wealthInsights` (display cards) are PURE
+  // projections of the snapshot's already-resolved effectiveWorkout/wealth —
+  // no second getEffectiveWorkout()/buildWealthInsights() call. Fall back to a
+  // direct (single) resolve only if the snapshot itself failed to build, so a
+  // snapshot failure degrades gracefully instead of blanking the whole brief.
+  let workout;
+  let wealthInsights = [];
+  if (brainSnapshot) {
+    workout = brainSnapshot.effectiveWorkout.value
+      ? workoutPromptShape(brainSnapshot.effectiveWorkout.value)
+      : workoutPromptShape({ label: 'Rest', source: 'scheduled', isHard: false });
+    wealthInsights = brainSnapshot.wealth.value?.insights ?? [];
+  } else {
+    try { workout = await resolveWorkoutForPrompt(factsTz); } catch { workout = workoutPromptShape({ label: 'Rest', source: 'scheduled', isHard: false }); }
+    try {
+      wealthInsights = await buildWealthInsights();
+    } catch (err) {
+      console.error('[wealthInsights] failed:', err.message);
+      errors.push({ service: 'wealth_insights', error: err.message });
+    }
   }
 
   try {
@@ -1467,40 +1580,32 @@ async function buildFreshBriefing({ force = false } = {}) {
   const LLM_TIMEOUT = Number(process.env.BRIEFING_LLM_TIMEOUT_MS || 90000);
 
   // Canonical facts for the chief-brief claim validator (brain/claimValidator),
-  // built from the SAME authorities the Health tab / forecast use — so a
-  // generated claim about recovery band/score, the EFFECTIVE workout, or goal/
-  // commitment completion is checked against the exact live values, never the
-  // LLM's own recalculation. Best-effort: on any failure the validator falls
-  // back to just its goal-completion checks (facts=null → no extra checks).
-  // ── Cut ONE real BrainSnapshot for this build ────────────────────────────
-  // This is THE authoritative state cut the brief is derived from. Its facts feed
-  // the LLM claim validator (chiefFacts — now including forecast + experiments,
-  // not just recovery/workout/goals), its forecast becomes the response's
-  // todayForecast (so the effective workout resolves ONCE inside the snapshot,
-  // never again downstream), and its snapshotId/asOf/version stamp the response
-  // (and, via it, the morning push) so the in-app brief and the notification
-  // reference the SAME cut. Reuses the recovery already fetched above.
-  const factsTz = process.env.TZ || 'America/New_York';
-  const snapAsOf = new Date();
-  let brainSnapshot = null;
+  // projected from the SAME single `brainSnapshot` cut earlier in this build
+  // (see "Cut ONE real BrainSnapshot" above) — NOT a second snapshot, and NOT
+  // a fresh getEffectiveWorkout()/buildWealthInsights() call. So a generated
+  // claim about recovery band/score, the EFFECTIVE workout, or goal/commitment
+  // completion is checked against the exact same values the prompt and the
+  // response cards already reflect. Best-effort: on any failure the validator
+  // falls back to just its goal-completion checks (facts=null → no extra checks).
   let chiefFacts = null;
-  try {
-    const { buildBrainSnapshot, canonicalFactsFrom } = require('../brain/snapshot');
-    brainSnapshot = await buildBrainSnapshot({ asOf: snapAsOf, tz: factsTz, recovery });
-    chiefFacts = canonicalFactsFrom({
-      recovery: brainSnapshot.recovery.value,
-      effectiveWorkout: brainSnapshot.effectiveWorkout.value,
-      forecast: brainSnapshot.forecast.value,
-      // Goal-completion is validated against the WEEKLY-INTENTION goals (the ones
-      // the brief actually discusses, carrying the authoritative `achieved` flag)
-      // — a distinct set from the snapshot's long-term goals table.
-      goals: liveGoals,
-      commitments: brainSnapshot.commitments.value,
-      experiments: brainSnapshot.experiments.value,
-      wealth: brainSnapshot.wealth.value,
-      localDate: brainSnapshot.localDate,
-    });
-  } catch (e) { console.error('[briefing build] snapshot/chiefFacts assembly failed:', e.message); }
+  if (brainSnapshot) {
+    try {
+      const { canonicalFactsFrom } = require('../brain/snapshot');
+      chiefFacts = canonicalFactsFrom({
+        recovery: brainSnapshot.recovery.value,
+        effectiveWorkout: brainSnapshot.effectiveWorkout.value,
+        forecast: brainSnapshot.forecast.value,
+        // Goal-completion is validated against the WEEKLY-INTENTION goals (the ones
+        // the brief actually discusses, carrying the authoritative `achieved` flag)
+        // — a distinct set from the snapshot's long-term goals table.
+        goals: liveGoals,
+        commitments: brainSnapshot.commitments.value,
+        experiments: brainSnapshot.experiments.value,
+        wealth: brainSnapshot.wealth.value,
+        localDate: brainSnapshot.localDate,
+      });
+    } catch (e) { console.error('[briefing build] chiefFacts assembly failed:', e.message); }
+  }
 
   let geminiResult = null;
   {
@@ -1959,6 +2064,13 @@ async function buildFreshBriefing({ force = false } = {}) {
     // reference one snapshot, not two independently-built versions of "this morning."
     snapshotId: brainSnapshot?.snapshotId ?? null,
     fieldsBuiltAt: stampFields({}, FULL_BUILD_FIELDS, snapshotAtIso),
+    // The brain/invalidation bus's per-field version AT THE MOMENT this
+    // snapshot was cut. The cache-hit path (this same function, above) reads
+    // this back on a later request and compares it against the bus's
+    // then-current versionOf() to decide precisely which cached fields a
+    // mutation since this build has made stale — the version-driven
+    // staleness check that replaces "always re-fetch and value-diff".
+    fieldVersions: snapshotFieldVersions,
     localDate: brainSnapshot?.localDate ?? new Date().toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/New_York' }),
     timezone: process.env.TZ || 'America/New_York',
     morningFocus: geminiResult?.morningFocus || prior?.content?.morningFocus || '',
@@ -2012,79 +2124,106 @@ async function buildFreshBriefing({ force = false } = {}) {
   // instead of waiting on synthesis. Fire-and-forget.
   require('../services/brief-audio').prewarmDaily(response).catch((err) => console.error('[brief audio prewarm] failed:', err.message));
 
-  runIngest()
-    .then((results) => {
-      const summary = results
-        .map((r) => (r.error ? `${r.id}:err` : `${r.id}:${r.metrics}m/${r.documents}d`))
-        .join(' ');
-      console.log(`[ingest] ${summary}`);
-      // Embed new documents (best-effort), then refresh findings.
-      return embedPending({ maxBatches: 4 }).catch((e) => {
-        console.error('[embed] failed:', e.message);
-      });
-    })
-    // NOTE: wealth recompute now runs BEFORE the snapshot cut (see the pre-cut
-    // recompute above), NOT here — so a just-persisted brief can never be
-    // immediately invalidated by a post-persist wealth recompute. This post-save
-    // pass primes the raw spine + findings for the NEXT build only.
-    .then(() => analyze())
-    .then((s) => {
-      if (s) console.log(`[analyze] ${s.trends} trends, ${s.correlations} correlations, ${s.actions} actions`);
-      // Propose experiments from unconfirmed correlations; evaluate due ones.
-      return Promise.all([
-        experiments.proposeExperiments().catch((e) => console.error('[propose]', e.message)),
-        experiments.evaluateDue()
-          .then(async (evaluated) => {
-            // A verdict is the payoff of a multi-week self-test — push it to the
-            // phone the moment it lands instead of letting it sit silently.
-            for (const exp of evaluated || []) {
-              if (!exp?.verdict) continue;
-              const icon = exp.verdict === 'confirmed' ? '✓ Confirmed' : exp.verdict === 'refuted' ? '✗ Refuted' : '~ Inconclusive';
-              const pct = exp.result?.pctChange != null ? ` (${exp.result.pctChange > 0 ? '+' : ''}${Math.round(exp.result.pctChange * 100)}%)` : '';
-              try {
-                const nudgesStore = require('../store/nudges');
-                const devicesStore = require('../store/devices');
-                const { sendPush } = require('../notify/expo');
-                const dedupKey = `experiment_verdict:${exp.id}`;
-                const recent = await nudgesStore.recentlySentKeys(7);
-                if (recent.has(dedupKey)) continue;
-                const id = await nudgesStore.recordNudge({
-                  dedupKey,
-                  title: `🧪 Experiment verdict: ${icon}`,
-                  body: `${exp.hypothesis}${pct}`,
-                  priority: 0.8,
-                  basis: { type: 'experiment_verdict', id: exp.id, verdict: exp.verdict },
-                  status: 'pending',
-                });
-                // null means another concurrent caller already claimed this
-                // exact nudge (recordNudge's atomic dedup guard) — don't
-                // push a second time.
-                if (id == null) continue;
-                const tokens = await devicesStore.listActiveTokens();
-                if (tokens.length) {
-                  const r = await sendPush(tokens, { title: `🧪 Experiment verdict: ${icon}`, body: `${exp.hypothesis}${pct}`, data: { type: 'experiment_verdict' } });
-                  for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
-                  await nudgesStore.markStatus(id, 'sent');
-                }
-              } catch (e) {
-                console.error('[verdict push] failed:', e.message);
-              }
-            }
-            return evaluated;
-          })
-          .catch((e) => console.error('[evaluate]', e.message)),
-      ]);
-    })
-    // Synthesize cross-domain relationships into plain-language insights, then run
-    // a proactive push so a strong NEW connection reaches the phone unprompted
-    // (deduped + quiet-hours aware inside runNudges).
-    .then(() => require('../intelligence/crossContext').generateCrossContext()
-      .catch((e) => console.error('[crossContext]', e.message)))
-    .then(() => require('../notify/run').runNudges({ suppressCheckin: true })
-      .catch((e) => console.error('[proactive nudge]', e.message)))
-    .catch((err) => console.error('[ingest/analyze] failed:', err.message));
+  // Deliberately OUTSIDE this build's lifecycle (see primeNextBuildCycle's own
+  // header comment): scheduled via setImmediate so it starts only after this
+  // function has already returned `response` and the caller has it in hand —
+  // nothing this build serves waits on it, and nothing it does can retroactively
+  // change the brief object that was just constructed and persisted above.
+  setImmediate(() => {
+    primeNextBuildCycle().catch((err) => console.error('[prime next build] failed:', err.message));
+  });
 
   return response;
+}
+
+/**
+ * Background housekeeping that runs AFTER a full build has already cut its
+ * snapshot, assembled its response, and persisted it — a full ingest (every
+ * connector, not just the pre-cut eight_sleep_api pull), analyze(), experiment
+ * evaluation, cross-context regeneration, and proactive nudges. This is
+ * intentionally NOT part of buildFreshBriefing's return path (see the
+ * setImmediate call site): it exists to prime the metrics spine and findings
+ * for the NEXT build/request, not to feed back into the brief that was just
+ * served. It does NOT recompute wealth (that runs pre-cut, before every full
+ * build — see the "Lifecycle" comment above) and it must never mutate an
+ * already-persisted `briefings` row.
+ *
+ * If something in here writes a recovery-relevant metric (e.g. this full
+ * ingest pulls a belated Eight Sleep reading the pre-cut eight_sleep_api-only
+ * pull missed), that write goes through store/metrics.js's insertMetrics,
+ * which independently bumps the recovery_change trigger on the invalidation
+ * bus when the score materially moved (see store/metrics.js). The brief this
+ * function ran after does NOT retroactively change — but the very next
+ * request (cache-hit path, above) compares its stamped fieldVersions against
+ * the bus and self-heals precisely the fields that moved, rather than
+ * silently continuing to serve them. Exported for tests.
+ */
+async function primeNextBuildCycle() {
+  const results = await runIngest();
+  const summary = results
+    .map((r) => (r.error ? `${r.id}:err` : `${r.id}:${r.metrics}m/${r.documents}d`))
+    .join(' ');
+  console.log(`[ingest] ${summary}`);
+  // Embed new documents (best-effort), then refresh findings.
+  await embedPending({ maxBatches: 4 }).catch((e) => {
+    console.error('[embed] failed:', e.message);
+  });
+
+  const s = await analyze();
+  if (s) console.log(`[analyze] ${s.trends} trends, ${s.correlations} correlations, ${s.actions} actions`);
+
+  // Propose experiments from unconfirmed correlations; evaluate due ones.
+  await Promise.all([
+    experiments.proposeExperiments().catch((e) => console.error('[propose]', e.message)),
+    experiments.evaluateDue()
+      .then(async (evaluated) => {
+        // A verdict is the payoff of a multi-week self-test — push it to the
+        // phone the moment it lands instead of letting it sit silently.
+        for (const exp of evaluated || []) {
+          if (!exp?.verdict) continue;
+          const icon = exp.verdict === 'confirmed' ? '✓ Confirmed' : exp.verdict === 'refuted' ? '✗ Refuted' : '~ Inconclusive';
+          const pct = exp.result?.pctChange != null ? ` (${exp.result.pctChange > 0 ? '+' : ''}${Math.round(exp.result.pctChange * 100)}%)` : '';
+          try {
+            const nudgesStore = require('../store/nudges');
+            const devicesStore = require('../store/devices');
+            const { sendPush } = require('../notify/expo');
+            const dedupKey = `experiment_verdict:${exp.id}`;
+            const recent = await nudgesStore.recentlySentKeys(7);
+            if (recent.has(dedupKey)) continue;
+            const id = await nudgesStore.recordNudge({
+              dedupKey,
+              title: `🧪 Experiment verdict: ${icon}`,
+              body: `${exp.hypothesis}${pct}`,
+              priority: 0.8,
+              basis: { type: 'experiment_verdict', id: exp.id, verdict: exp.verdict },
+              status: 'pending',
+            });
+            // null means another concurrent caller already claimed this
+            // exact nudge (recordNudge's atomic dedup guard) — don't
+            // push a second time.
+            if (id == null) continue;
+            const tokens = await devicesStore.listActiveTokens();
+            if (tokens.length) {
+              const r = await sendPush(tokens, { title: `🧪 Experiment verdict: ${icon}`, body: `${exp.hypothesis}${pct}`, data: { type: 'experiment_verdict' } });
+              for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
+              await nudgesStore.markStatus(id, 'sent');
+            }
+          } catch (e) {
+            console.error('[verdict push] failed:', e.message);
+          }
+        }
+        return evaluated;
+      })
+      .catch((e) => console.error('[evaluate]', e.message)),
+  ]);
+
+  // Synthesize cross-domain relationships into plain-language insights, then run
+  // a proactive push so a strong NEW connection reaches the phone unprompted
+  // (deduped + quiet-hours aware inside runNudges).
+  await require('../intelligence/crossContext').generateCrossContext()
+    .catch((e) => console.error('[crossContext]', e.message));
+  await require('../notify/run').runNudges({ suppressCheckin: true })
+    .catch((e) => console.error('[proactive nudge]', e.message));
 }
 function createBriefingRouter({ port }) {
   const router = express.Router();
@@ -2241,4 +2380,9 @@ module.exports = {
   createBriefingRouter, buildFreshBriefing, REBUILD_LOCK_ID,
   // Exported for the timestamp-semantics + recovery-materiality regression tests.
   stampFields, recoveryMateriallyChanged, FULL_BUILD_FIELDS,
+  // Exported so tests can prove primeNextBuildCycle runs standalone, AFTER
+  // buildFreshBriefing has already returned/persisted, and never mutates an
+  // already-persisted brief.
+  primeNextBuildCycle,
+  workoutPromptShape, TRACKED_CACHE_FIELDS, REGISTRY_TO_BRIEF_FIELD,
 };

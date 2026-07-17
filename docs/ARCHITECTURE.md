@@ -87,31 +87,73 @@ to remember.
 mutation the write path calls `bump(TRIGGER)`, which walks `invalidationSet`,
 increments each affected field's version + a global state version, and fires
 registered side-effect listeners (e.g. clearing the `liveRecovery` compute
-cache). It is wired into the real mutation sites — the recovery self-report
-route, the workout-override route + `applyRestDayOverride`, `recomputeWealthFlows`,
-and the goals/commitments/annotations stores — so a change anywhere drives the
-same declared invalidation instead of a hand-copied "also refresh X" list (the
-briefing cache-hit refresh now derives its recovery-dependent field set from
-`invalidationSet('recovery_change')` directly).
+cache). Versions are **durably persisted** to the `brain_state_version` table
+(fire-and-forget write-through from `bump()`, best-effort — a missing/unreachable
+DB degrades to in-process-only, same as before the table existed) so this is
+NOT silently process-local: `await refresh()` pulls the authoritative row set
+and merges it into the in-process cache by `max()`, which is what lets a second
+instance (or this same process after a restart) converge on a bump another
+process made. It is wired into the real mutation sites — `store/metrics.js`'s
+`insertMetrics` (the ONE write funnel every connector goes through: a normal
+Eight Sleep sync now bumps `recovery_change` whenever the score materially
+moves, not just the manual self-report route), the workout-override route +
+`applyRestDayOverride`, `recomputeWealthFlows`, and the
+goals/commitments/annotations/weekly-intention stores — so a change anywhere
+drives the same declared invalidation instead of a hand-copied "also refresh X"
+list. The briefing's cache-hit path is the canonical CONSUMER: it stamps
+`fieldVersions` into every full-build response and, on the next cache serve,
+calls `refresh()` then compares each tracked field's current bus version
+against what was baked into the cache — refreshing precisely (and only) the
+fields that moved, whether that movement came from recovery's own value
+changing OR from an unrelated trigger (a workout override on a day with no
+recovery reading, a transaction sync) that a pure value-diff could never see.
 
 **`brain/snapshot.js` — `buildBrainSnapshot({asOf, tz, include})`** composes a
 versioned `BrainSnapshot`: it calls each authority ONCE (independent reads run
 concurrently; the forecast consumes the already-resolved effective workout so it
 is never resolved twice per cut), tz-safe and deterministic under an injected
 `asOf` (never `new Date()` for a boundary), and returns one structured object.
-Every fact is wrapped with **provenance** (`value`, authoritative `source`
-selector, `asOf`, `freshness` fresh|stale|unavailable, `confidence`); an authority
-*failure* is logged and marked `degraded`, never silently flattened into an
-apparently-valid empty. `include` selects which non-core sections to compose, so
-the realtime voice tool gets a lean cut (recovery + effective workout) without
-paying for wealth/findings/experiments it won't read. The **full daily briefing**
-cuts one real snapshot and derives its `todayForecast`, its LLM claim facts, and
-its `snapshotId`/`snapshotAt`/`snapshotVersion` from it — the morning push forwards
-that same id, so an in-app view and its notification are provably one cut of state.
-Thin projections (`realtimeTodayContext`, `canonicalFacts`) shape that one snapshot
-for each consumer — they never re-derive. `canonicalFactsFrom` is the single
-fact-shaping function both the snapshot and the briefing hot path call, so a brief
-is always validated against the identical fact shape the snapshot exposes.
+Every fact is wrapped with **provenance** — a 5-state `freshness`: `'fresh'`
+(present, successful, within any declared TTL), `'stale'` (present but read from
+a cache/computation older than the registry's TTL — currently meaningful for
+`recovery`, checked against `liveRecovery`'s own cache timestamp, not the
+snapshot's own cut time), `'valid-empty'` (the authority succeeded and an EMPTY
+result is itself the correct, current answer — zero open commitments, no
+running experiments), `'unavailable'` (skipped by `include`, or a
+scalar/singular fact with genuinely no value — no HRV reading), and `'failed'`
+(the authority THREW; always logged, carries `error`, never silently flattened
+into an empty). `include` selects which non-core sections to compose, so the
+realtime voice tool gets a lean cut (recovery + effective workout) without
+paying for wealth/findings/experiments it won't read. The **full daily
+briefing** cuts exactly ONE real snapshot — before it, `resolveWorkoutForPrompt`
+and a standalone `buildWealthInsights()` call each independently re-resolved
+the effective workout / wealth; now `workout` (the prompt-facing shape) and
+`wealthInsights` are pure projections of the snapshot's already-resolved
+`effectiveWorkout`/`wealth` — and derives its `todayForecast`, its LLM claim
+facts, and its `snapshotId`/`snapshotAt`/`snapshotVersion` from that one cut —
+the morning push forwards that same id, so an in-app view and its notification
+are provably one cut of state. Thin projections (`realtimeTodayContext`,
+`canonicalFacts`) shape that one snapshot for each consumer — they never
+re-derive. `canonicalFactsFrom` is the single fact-shaping function both the
+snapshot and the briefing hot path call. `realtimeTodayContext(snapshot,
+briefing, {currentVersions})` additionally refuses to narrate a same-calendar-day
+brief as current if its stored `fieldVersions` predate `currentVersions` (an
+authoritative, `refresh()`-pulled read from the invalidation bus) — a date match
+alone isn't enough; the brief must not have gone stale SINCE it was built,
+even on the same day.
+
+**Build lifecycle — nothing mutates canonical state after the cut.**
+`recomputeWealthFlows()` runs BEFORE the snapshot is built (never after), and
+the full build's remaining background work — a full multi-connector ingest,
+`analyze()`, experiment evaluation, cross-context regeneration, proactive
+nudges — is extracted into `primeNextBuildCycle()`, scheduled via
+`setImmediate` strictly AFTER the response is built and the brief persisted, and
+documented as priming the NEXT build/request, never feeding back into the one
+just served. If that background ingest writes a recovery-relevant metric, it
+goes through the same `insertMetrics` invalidation wiring above — so the
+already-persisted brief is never rewritten, but the very next cache-hit read
+detects the drift via `fieldVersions` and self-heals instead of silently
+serving what's now wrong.
 
 **`brain/claimValidator.js`** is the generalization of the goal-completion guard:
 the LLM may choose emphasis and wording, but it may not create or recalculate
@@ -119,6 +161,14 @@ canonical facts. `validateChiefBriefClaims(result, facts)` deterministically
 scans generated Chief Brief text for statements that *contradict* the snapshot's
 values (recovery band/score, effective vs scheduled workout, goal/commitment
 completion, experiment verdicts, spend totals) and drives a correction retry.
+`neutralizeClaimViolations(result, violations, facts)` strips exactly the
+offending sentence(s); `ensureRequiredFieldsPresent(result, facts)` is an
+unconditional final backstop guaranteeing `synthesis`/`action`/`risk`/`move`
+are never blank — if stripping every sentence in a field would leave it empty
+(the field WAS the false claim, wholesale), a minimal, grounded, always-true
+fallback sentence (built only from the facts the claim would have been checked
+against) replaces it. A blank Chief Brief card is a worse failure than the
+contradiction it replaces.
 
 **Rule for new code:** a surface MUST NOT read a raw store (or re-run an
 aggregation/resolution algorithm) to answer "what is the current value of X"
