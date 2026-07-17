@@ -18,6 +18,8 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { requireFields } = require('../middleware/validate');
 const { EVENT_KIND, describesCompletedNight } = require('../intelligence/context-semantics');
 const { openQuestionFingerprint, openQuestionTopicKey } = require('../intelligence/open-question-policy');
+const contextAssertionsStore = require('../store/contextAssertions');
+const { compileUserContext, persistCompiledContext } = require('../intelligence/context-compiler');
 const { withTransaction } = require('../db');
 
 function createAnnotationsRouter() {
@@ -154,49 +156,68 @@ function createAnnotationsRouter() {
       label: answer.trim().slice(0, 500),
       note: question ? `Q: ${question.slice(0, 300)}` : (signalKey ?? null),
     };
-    let id, eventKind, retiredAnnotationId;
-    if (calendarLoadMatch || isOpenQuestionAnswer) {
-      // Atomic: any durable "answered, don't ask again" ledger row
-      // (signal_answers for calendar_load — store/signalAnswers.js;
-      // answered_open_questions for the chief brief's one question —
-      // store/openQuestions.js) and the annotation that explains WHY (this
-      // table) must commit or fail together. For the open-question case,
-      // the cached-build retirement (briefingsStore.blankTodaysOpenQuestion)
-      // is folded into the SAME transaction too — previously it ran as a
-      // fire-and-forget call after the response could already be in flight,
-      // so answering and immediately triggering a rebuild could race the
-      // retirement write, and a failure there left the ledger row answered
-      // but a stale cached build still showing the question. Every store
-      // here accepts an injectable `db` (see store/annotations.js,
-      // store/signalAnswers.js, store/openQuestions.js, store/briefings.js)
-      // so one transaction client drives every write — asyncHandler forwards
-      // a rejection (including a failed COMMIT) to the error middleware with
-      // no swallowing, so the response can never claim success unless EVERY
-      // write landed, and a failure leaves none of them behind.
-      ({ id, eventKind, retiredAnnotationId } = await withTransaction(async (client) => {
-        const db = (text, params) => client.query(text, params);
-        if (calendarLoadMatch) {
-          await signalAnswersStore.recordAnswer({
-            subjectKey: 'calendar_load', localDate: calendarLoadMatch[1], fingerprint, answer: answer.trim(),
-          }, db);
-        }
-        const result = await annotationsStore.createAnnotation(annotationPayload, db);
-        if (isOpenQuestionAnswer) {
-          await openQuestionsStore.recordAnswered({
-            localDate: localDateStr(tz, nowTs),
-            questionText: question,
-            fingerprint: openQuestionFingerprint(question),
-            topicKey: openQuestionTopicKey(question),
-            answer: answer.trim(),
-          }, db);
-          const n = await briefingsStore.blankTodaysOpenQuestion(tz, db);
-          if (n > 0) console.log(`[briefing/context] retired answered openQuestion from ${n} cached build(s)`);
-        }
-        return result;
-      }));
-    } else {
-      ({ id, eventKind, retiredAnnotationId } = await annotationsStore.createAnnotation(annotationPayload));
+    // Context Understanding Layer: compile this answer into structured
+    // ContextAssertions/ContextRelations BEFORE opening the transaction (the
+    // LLM call must not hold a DB transaction open — see
+    // intelligence/context-compiler.js). recentActiveAssertions is a short
+    // lookback (7 days, this endpoint's own answers/notes only need recent
+    // history to match a correction against) so a temporal/classification/
+    // completion correction can find what it's superseding. A compiler
+    // failure (refusal/timeout/malformed response) degrades to zero
+    // assertions — compileUserContext never throws — so it can never block
+    // the underlying annotation write below.
+    const compiled = await compileUserContext({
+      rawText: answer.trim(), source: 'briefing_context', question: question || null, tz, now: nowTs,
+      recentActiveAssertions: await contextAssertionsStore.getActive({ recordedFrom: new Date(nowTs.getTime() - 7 * 24 * 60 * 60 * 1000) }).catch(() => []),
+    });
+    if (compiled.failed) {
+      console.error(`[briefing/context] context compilation failed (${compiled.failureType}) — annotation still saved, no structured assertions this time.`);
     }
+
+    let id, eventKind, retiredAnnotationId;
+    // Atomic: any durable "answered, don't ask again" ledger row
+    // (signal_answers for calendar_load — store/signalAnswers.js;
+    // answered_open_questions for the chief brief's one question —
+    // store/openQuestions.js), the annotation that explains WHY, and any
+    // compiled ContextAssertions/ContextRelations must all commit or fail
+    // together. For the open-question case, the cached-build retirement
+    // (briefingsStore.blankTodaysOpenQuestion) is folded into the SAME
+    // transaction too — previously it ran as a fire-and-forget call after
+    // the response could already be in flight, so answering and immediately
+    // triggering a rebuild could race the retirement write, and a failure
+    // there left the ledger row answered but a stale cached build still
+    // showing the question. Every store here accepts an injectable `db`
+    // (see store/annotations.js, store/signalAnswers.js,
+    // store/openQuestions.js, store/briefings.js, store/contextAssertions.js,
+    // store/contextRelations.js) so one transaction client drives every
+    // write — asyncHandler forwards a rejection (including a failed COMMIT)
+    // to the error middleware with no swallowing, so the response can never
+    // claim success unless EVERY write landed, and a failure leaves none of
+    // them behind.
+    ({ id, eventKind, retiredAnnotationId } = await withTransaction(async (client) => {
+      const db = (text, params) => client.query(text, params);
+      if (calendarLoadMatch) {
+        await signalAnswersStore.recordAnswer({
+          subjectKey: 'calendar_load', localDate: calendarLoadMatch[1], fingerprint, answer: answer.trim(),
+        }, db);
+      }
+      const result = await annotationsStore.createAnnotation(annotationPayload, db);
+      if (compiled.assertions.length) {
+        await persistCompiledContext(compiled, { sourceAnnotationId: result.id, db });
+      }
+      if (isOpenQuestionAnswer) {
+        await openQuestionsStore.recordAnswered({
+          localDate: localDateStr(tz, nowTs),
+          questionText: question,
+          fingerprint: openQuestionFingerprint(question),
+          topicKey: openQuestionTopicKey(question),
+          answer: answer.trim(),
+        }, db);
+        const n = await briefingsStore.blankTodaysOpenQuestion(tz, db);
+        if (n > 0) console.log(`[briefing/context] retired answered openQuestion from ${n} cached build(s)`);
+      }
+      return result;
+    }));
     if (retiredAnnotationId) {
       console.log(`[briefing/context] retraction retired prior annotation ${retiredAnnotationId}`);
     }

@@ -1612,6 +1612,16 @@ async function analyze(opts = {}) {
     }
   } catch { /* fail-open: no verdict gating this run */ }
 
+  // Durable user preferences (see intelligence/context-resolver.js) — e.g.
+  // "don't recommend evening workouts" — filter which candidate actions are
+  // even eligible to rank. Fail-safe: a resolver hiccup degrades to the old
+  // unfiltered behavior, never a crash.
+  let leveragePreferences = [];
+  try {
+    const { resolveContext } = require('./context-resolver');
+    leveragePreferences = (await resolveContext({ tz: annoTz })).preferences;
+  } catch { /* fail-open: no preference filtering this run */ }
+
   // Feed ALL finding types into the leverage engine, not just trends + correlations.
   // habit_splits ("cold shower days: HRV 26% higher"), sleep_impact ("best nights →
   // focus 35% higher"), and activity_impact ("Zone 2 → next-day HRV 18% above avg")
@@ -1619,7 +1629,7 @@ async function analyze(opts = {}) {
   // reached the leverage engine. Now they're the PRIMARY source of leverage actions.
   const actions = rankActions(
     [...trends, ...correlations, ...habitHealthSplits, ...sleepImpact, ...activityImpact],
-    { goals, latestByKey, forecastStatusByGoalId, outcomeHistory, experimentVerdicts },
+    { goals, latestByKey, forecastStatusByGoalId, outcomeHistory, experimentVerdicts, preferences: leveragePreferences },
   );
 
   const all = [...trends, ...correlations, ...anomalies, ...composites, ...actions, ...forecasts, ...habitConsistency, ...habitHealthSplits, ...sleepImpact, ...activityImpact, ...daytimeCardio, ...wellbeingGap];

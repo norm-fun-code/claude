@@ -1677,6 +1677,13 @@ async function buildFreshBriefing({ force = false } = {}) {
         wealth: brainSnapshot.wealth.value,
         localDate: brainSnapshot.localDate,
         recoveryDrivers: recoveryDriverLabels,
+        // Context Understanding Layer's canonical projection — already cut
+        // as part of THIS SAME brainSnapshot (see registry.js's
+        // resolvedContext field), so this is zero extra reads, not a second
+        // resolver call. Lets claimValidator.checkResolvedContextConflicts
+        // catch negated/retracted events, resolver-corrected completion
+        // states, driver conflicts, and calendar reclassifications.
+        resolvedContext: brainSnapshot.resolvedContext?.value ?? null,
       });
     } catch (e) { console.error('[briefing build] chiefFacts assembly failed:', e.message); }
   }
@@ -2352,12 +2359,16 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
   try {
     const factsTz = process.env.TZ || 'America/New_York';
     const { canonicalFactsFrom, canonicalSpendingMtd } = require('../brain/snapshot');
-    const [recForFacts, effForFacts, commitmentsForFacts, spendingMtd, experimentsForFacts] = await Promise.all([
+    const [recForFacts, effForFacts, commitmentsForFacts, spendingMtd, experimentsForFacts, resolvedContextForFacts] = await Promise.all([
       require('../intelligence/recovery').liveRecovery().catch(() => null),
       getEffectiveWorkout({ tz: factsTz }).catch(() => null),
       require('../store/commitments').listActive({ limit: 20 }).catch(() => []),
       canonicalSpendingMtd(new Date(), factsTz).catch(() => null),
       require('../store/experiments').listExperiments().catch(() => []),
+      // Same resolver the full build reads off its BrainSnapshot cut — the
+      // scoped rebuild doesn't build a full snapshot, so this is its own
+      // (cheap, DB-only) resolveContext() call.
+      require('../intelligence/context-resolver').resolveContext({ tz: factsTz }).catch(() => null),
     ]);
     chiefFacts = canonicalFactsFrom({
       recovery: recForFacts,
@@ -2373,6 +2384,7 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
       wealth: { spendingMtd },
       localDate: new Date().toLocaleDateString('en-CA', { timeZone: factsTz }),
       recoveryDrivers: ctx.recoveryDriverLabels,
+      resolvedContext: resolvedContextForFacts,
     });
   } catch (e) { console.error('[chief-brief rebuild] chiefFacts assembly failed:', e.message); }
 

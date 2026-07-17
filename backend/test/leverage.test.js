@@ -116,3 +116,28 @@ test('fromCorrelation: never uses "move the needle" or unhedged "confirmed" caus
   assert.ok(!/\bconfirmed in your data\b/.test(detail), `detail must not claim causal "confirmed" status: ${detail}`);
   assert.match(detail, /observed association|not a proven cause|worth (deliberately )?testing/, 'must use tentative, observational framing');
 });
+
+// Context Understanding Layer, scenario 6: a durable user preference
+// ("don't recommend evening workouts") excludes a matching candidate action
+// from the ranked list — see intelligence/context-resolver.js's
+// 'action_type'/'changes_priority' relations and analyze.js's rankActions call.
+test('a durable preference excludes a matching candidate action', () => {
+  const withoutPref = rankActions([corr('health:sleep_hours', 'wellbeing:focus', 0.6)]);
+  assert.ok(withoutPref.length >= 1, 'sanity: the candidate exists without a preference');
+  const matchingTitleWords = withoutPref[0].title.toLowerCase();
+
+  const preferences = [{ targetId: matchingTitleWords.split(/\s+/).slice(0, 3).join('_'), relationship: 'changes_priority' }];
+  const withPref = rankActions([corr('health:sleep_hours', 'wellbeing:focus', 0.6)], { preferences });
+  assert.equal(withPref.length, 0, 'the preference-conflicting candidate must be excluded, not merely deprioritized');
+});
+
+test('a preference that does not match any candidate leaves the ranking untouched', () => {
+  const preferences = [{ targetId: 'evening_workouts', relationship: 'changes_priority' }];
+  const acts = rankActions([corr('health:sleep_hours', 'wellbeing:focus', 0.6)], { preferences });
+  assert.ok(acts.length >= 1, 'an unrelated preference must not suppress an unrelated candidate');
+});
+
+test('no preferences at all (default []) behaves exactly as before — backward compatible', () => {
+  const acts = rankActions([corr('health:sleep_hours', 'wellbeing:focus', 0.6)]);
+  assert.ok(acts.length >= 1);
+});

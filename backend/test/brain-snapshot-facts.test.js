@@ -27,6 +27,15 @@ const EXPERIMENTS = [{ hypothesis: 'Magnesium improves deep sleep', status: 'run
 // discretionary spend the snapshot computes separately from the metric spine.
 const WEALTH_INSIGHTS = [{ type: 'spending_pattern', title: 'Dining up 20%' }];
 const SPENDING_MTD = 2450; // sum of stubbed spending_discretionary rows
+// A fixed, deterministic ResolvedContext (see intelligence/context-resolver.js)
+// — stubbed like every other authority below so this file keeps its "runs
+// WITHOUT a database" guarantee; resolveContext's real implementation calls
+// store/contextAssertions + store/contextRelations, both real DB reads.
+const RESOLVED_CONTEXT = {
+  generatedAt: ASOF.toISOString(), tz: TZ, assertions: [], assertionById: new Map(),
+  relations: [], relationsByTarget: new Map(), preferences: [],
+  unresolvedUncertainties: [], resolvedUncertainties: [], resolvedCorrections: [],
+};
 
 // Stub each authority on its module singleton (buildBrainSnapshot require()s
 // these lazily, so mutating the cached exports is enough). Save + restore.
@@ -51,6 +60,7 @@ test.before(() => {
   stub('../src/store/annotations', 'overlapping', async () => []);
   stub('../src/store/sources', 'listSources', async () => []);
   stub('../src/intelligence/source-health', 'describeDataGaps', async () => []);
+  stub('../src/intelligence/context-resolver', 'resolveContext', async () => RESOLVED_CONTEXT);
 });
 test.after(() => { for (const [mod, name, orig] of stubs) mod[name] = orig; });
 
@@ -71,6 +81,7 @@ test('a single snapshot yields identical recovery/workout/goal/commitment/spendi
     goals: GOALS, commitments: COMMITMENTS, experiments: EXPERIMENTS,
     wealth: { insights: WEALTH_INSIGHTS, spendingMtd: SPENDING_MTD },
     localDate: snap.localDate,
+    resolvedContext: RESOLVED_CONTEXT,
   });
   const fromSnap = canonicalFacts(snap);
   assert.deepEqual(fromSnap, fromParts);

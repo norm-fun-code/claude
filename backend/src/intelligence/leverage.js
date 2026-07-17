@@ -377,7 +377,7 @@ function experimentGateKey(basis) {
  * recommended, and a formally REFUTED hypothesis kept resurfacing as leverage
  * whenever its (correlational) finding re-cleared the threshold.
  */
-function rankActions(findings = [], { goals = [], latestByKey = {}, forecastStatusByGoalId = {}, outcomeHistory = {}, experimentVerdicts = {}, max = 3, minScore = 0.05 } = {}) {
+function rankActions(findings = [], { goals = [], latestByKey = {}, forecastStatusByGoalId = {}, outcomeHistory = {}, experimentVerdicts = {}, preferences = [], max = 3, minScore = 0.05 } = {}) {
   const candidates = [];
 
   for (const f of findings) {
@@ -389,6 +389,29 @@ function rankActions(findings = [], { goals = [], latestByKey = {}, forecastStat
   for (const g of goals) {
     const action = fromGoal(g, latestByKey, forecastStatusByGoalId);
     if (action) candidates.push(action);
+  }
+
+  // Durable user preferences (see intelligence/context-resolver.js's
+  // 'action_type'/'changes_priority' relations, e.g. "don't recommend
+  // evening workouts") — drop any candidate whose title/detail plainly
+  // matches a preference the user stated. Word-overlap against the
+  // preference's own target words (its normalized targetId, de-underscored)
+  // — the same primitive used everywhere else in this codebase for matching
+  // generated text against stored context, so "evening workout" and
+  // "workouts in the evening" both match without a rigid action taxonomy.
+  if (preferences.length) {
+    const { overlapScore } = require('./context-semantics');
+    const PREF_MATCH_THRESHOLD = 0.4;
+    const before = candidates.length;
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      const c = candidates[i];
+      const text = `${c.title} ${c.detail || ''}`;
+      const conflicts = preferences.some((p) => overlapScore(text, p.targetId.replace(/_/g, ' ')) >= PREF_MATCH_THRESHOLD);
+      if (conflicts) candidates.splice(i, 1);
+    }
+    if (candidates.length < before) {
+      console.log(`[leverage] ${before - candidates.length} candidate action(s) excluded by a durable user preference`);
+    }
   }
 
   // Score and de-dupe by title (keep strongest per unique action).

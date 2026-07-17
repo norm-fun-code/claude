@@ -338,7 +338,7 @@ function realtimeTodayContext(snapshot, briefing, opts = {}) {
  *  ONE fact-shaping function: both canonicalFacts(snapshot) and the briefing
  *  hot path (which already has these parts in scope) call THIS, so a brief is
  *  always validated against the identical fact shape the snapshot exposes. */
-function canonicalFactsFrom({ recovery, effectiveWorkout, forecast, goals, commitments, experiments, wealth, localDate, recoveryDrivers } = {}) {
+function canonicalFactsFrom({ recovery, effectiveWorkout, forecast, goals, commitments, experiments, wealth, localDate, recoveryDrivers, resolvedContext } = {}) {
   const r = recovery, w = effectiveWorkout, f = forecast;
   return {
     localDate: localDate ?? null,
@@ -368,6 +368,14 @@ function canonicalFactsFrom({ recovery, effectiveWorkout, forecast, goals, commi
     // uses); the legacy shapes are accepted so a caller that already has a
     // structured wealth object still lines up.
     spendingTotalMonth: wealth?.spendingMtd ?? wealth?.monthToDate?.total ?? wealth?.spendMTD ?? null,
+    // The Context Understanding Layer's canonical projection (see
+    // intelligence/context-resolver.js) — passed through verbatim (not
+    // flattened) so brain/claimValidator.js's checkResolvedContextConflicts
+    // can use its selectors directly. `null` (the default) is the
+    // backward-compatible "resolver not available to this caller" state —
+    // every check gated on it simply stays silent, same as `facts` itself
+    // being null.
+    resolvedContext: resolvedContext ?? null,
   };
 }
 
@@ -382,6 +390,7 @@ function canonicalFacts(snapshot) {
     experiments: snapshot.experiments.value,
     wealth: snapshot.wealth.value,
     localDate: snapshot.localDate,
+    resolvedContext: snapshot.resolvedContext?.value ?? null,
   });
 }
 

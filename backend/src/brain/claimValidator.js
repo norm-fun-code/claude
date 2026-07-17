@@ -267,6 +267,122 @@ function checkCompletion(result, facts) {
   return violations;
 }
 
+// ── Context Understanding Layer: ResolvedContext conflicts ──────────────────
+// A single consolidated check, gated entirely on `facts.resolvedContext`
+// being present (see brain/snapshot.js's canonicalFactsFrom) — absent means
+// skip, same backward-compatible pattern as every other check here. Covers
+// the general classes of ResolvedContext contradiction the design brief
+// requires: negated/retracted events cited as if they happened, a
+// completion state the user explicitly corrected, and a causal recovery
+// claim naming a driver OTHER than the one the resolver's driver engine
+// actually ranks (or asserting one at all when the resolver says unknown).
+// Deliberately does NOT replace checkCompletion/checkRecoveryCause above —
+// both keep running unconditionally on the legacy store-backed facts, so a
+// caller with no resolvedContext (rollout fallback) keeps today's coverage
+// unchanged; this check ADDS the resolver's stronger, corrected view on top.
+const MEETING_LOAD_RE = /\bmeetings?\b|\bpacked\b|\bbusy\b|\bback-to-back\b/i;
+
+function checkResolvedContextConflicts(result, facts) {
+  const resolved = facts?.resolvedContext;
+  if (!resolved || !Array.isArray(resolved.assertions)) return [];
+  const { getCompletionState, getDriversFor, getCalendarClassification } = require('../intelligence/context-resolver');
+  const violations = [];
+
+  // 1. Negated/retracted events cited as if they occurred — the resolver's
+  // own record of what the user explicitly said did NOT happen or was
+  // withdrawn, independent of (and stronger than) any lexical driver check.
+  const negated = resolved.assertions.filter((a) => ['negated', 'retracted'].includes(a.eventStatus));
+  for (const [field, text] of briefFields(result)) {
+    for (const sentence of splitIntoSentences(text)) {
+      for (const a of negated) {
+        const probe = a.predicate ? `${a.predicate} ${a.objectValue || ''}`.trim() : a.rawText;
+        if (!probe || overlapRatio(sentence, probe) < 0.6) continue;
+        violations.push({
+          check: 'negated_event_cited', field, sentence, severity: 'high',
+          expected: `${a.eventStatus} — did not occur`, actual: 'cited as if it happened',
+          message: `cites "${probe}" as if it happened, but the user explicitly said this was ${a.eventStatus}`,
+        });
+      }
+    }
+  }
+
+  // 2. Completion state the user explicitly corrected — a stronger, general
+  // version of checkCompletion's store-only check: the resolver's most
+  // recent user correction wins even when the underlying goal/commitment
+  // store hasn't caught up yet (e.g. a correction just given seconds ago).
+  const completionTargets = [
+    ...(facts.goals || []).map((g) => ({ kind: 'goal', text: g.text })),
+    ...(facts.commitments || []).map((c) => ({ kind: 'commitment', text: c.title })),
+  ];
+  if (completionTargets.length) {
+    const { normalizeTargetId } = require('../intelligence/context-compiler');
+    for (const t of completionTargets) {
+      const state = getCompletionState(resolved, t.kind === 'goal' ? 'goal' : 'commitment', normalizeTargetId(t.text));
+      if (!state || state.completed !== false) continue; // only an explicit "not completed" correction matters here
+      for (const [field, text] of briefFields(result)) {
+        for (const sentence of splitIntoSentences(text)) {
+          if (!COMPLETION_VERB_RE.test(sentence)) continue;
+          if (overlapRatio(sentence, t.text) < COMPLETION_OVERLAP_THRESHOLD) continue;
+          violations.push({
+            check: 'completion_state_resolved', field, sentence, severity: 'high',
+            expected: 'not completed (user correction)', actual: 'described as done', goalText: t.text,
+            message: `describes "${t.text}" as completed, but the user explicitly said they did not complete it`,
+          });
+        }
+      }
+    }
+  }
+
+  // 3. Causal recovery claim naming a driver the resolver does NOT rank as
+  // the top candidate — including the "resolver says unknown" case (a
+  // driver claim with zero resolver-tracked candidates for
+  // health:recovery_autonomic is unsupported, same principle as
+  // checkRecoveryCause's empty-drivers branch, but sourced from the
+  // resolver's evidence-tiered ranking rather than raw eligible annotations).
+  const driverResult = getDriversFor(resolved, 'health:recovery_autonomic');
+  for (const [field, text] of briefFields(result)) {
+    for (const sentence of splitIntoSentences(text)) {
+      if (!RECOVERY_CONTEXT_RE.test(sentence) || !CAUSAL_RE.test(sentence)) continue;
+      const claimedTags = causeConceptTags(sentence);
+      if (!claimedTags.length) continue; // no recognized concept to compare — leave to checkRecoveryCause's lexical fallback
+      const driverTags = driverResult.driver ? causeConceptTags(driverResult.driver) : [];
+      const matchesTopDriver = driverTags.length > 0 && claimedTags.some((t) => driverTags.includes(t));
+      if (matchesTopDriver) continue;
+      violations.push({
+        check: 'resolved_driver_conflict', field, sentence, severity: 'high',
+        expected: driverResult.driver ? `${driverResult.driver} (${driverResult.evidenceBasis})` : 'unknown — no eligible driver in the resolver',
+        actual: 'a different or unsupported cause',
+        message: driverResult.driver
+          ? `attributes recovery to a cause the resolver does not rank as the top driver (resolver: "${driverResult.driver}", ${driverResult.evidenceBasis})`
+          : 'attributes a cause to recovery but the resolver has no eligible driver — should say the cause is unknown instead of guessing',
+      });
+    }
+  }
+
+  // 4. Calendar classification the user corrected — a block reclassified as
+  // NOT a meeting (e.g. a Sabbath observance) still described in
+  // meeting-load language.
+  for (const a of resolved.assertions.filter((x) => x.assertionType === 'classification')) {
+    const cls = getCalendarClassification(resolved, a.subject || a.objectValue);
+    if (!cls || !cls.classification) continue;
+    const saysNotMeeting = /not meetings?|isn'?t a meeting|not a meeting/i.test(cls.classification);
+    if (!saysNotMeeting) continue;
+    for (const [field, text] of briefFields(result)) {
+      for (const sentence of splitIntoSentences(text)) {
+        if (!MEETING_LOAD_RE.test(sentence)) continue;
+        if (overlapRatio(sentence, a.subject || a.objectValue || '') < 0.4) continue;
+        violations.push({
+          check: 'calendar_classification', field, sentence, severity: 'high',
+          expected: cls.classification, actual: 'described as meeting load',
+          message: `describes "${a.subject || a.objectValue}" as meeting load, but the user reclassified it: "${cls.classification}"`,
+        });
+      }
+    }
+  }
+
+  return violations;
+}
+
 // ── Experiment verdict ───────────────────────────────────────────────────────
 const CONFIRM_VERB_RE = /\b(?:confirm(?:ed|s)?|prov(?:ed|en|es)|validated|worked|is working|paid off)\b/i;
 function checkExperiments(result, facts) {
@@ -421,6 +537,7 @@ function validateChiefBriefClaims(result, facts) {
     ...checkSpending(result, facts),
     ...checkForecast(result, facts),
     ...checkCurrentDate(result, facts),
+    ...checkResolvedContextConflicts(result, facts),
   ];
   return { violations, hasHighSeverity: violations.some((v) => v.severity === 'high') };
 }
@@ -538,4 +655,5 @@ module.exports = {
   // Exposed for focused unit tests:
   checkRecoveryBand, checkRecoveryScore, checkRecoveryCause, checkEffectiveWorkout,
   checkCompletion, checkExperiments, checkSpending, checkForecast, checkCurrentDate, briefFields,
+  checkResolvedContextConflicts,
 };
