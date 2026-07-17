@@ -25,6 +25,7 @@ const TRIGGER = Object.freeze({
   GOAL_CHANGE: 'goal_change',               // a goal added/edited/achieved
   COMMITMENT_CHANGE: 'commitment_change',   // a commitment created/completed
   ANNOTATION_RETIREMENT: 'annotation_retirement', // an annotation retired/retracted/added
+  CONTEXT_ASSERTION_CHANGE: 'context_assertion_change', // a ContextAssertion/ContextRelation created, retired, or resolved
 });
 
 // The canonical fields. `key` is stable — surfaces reference these, not raw
@@ -129,6 +130,35 @@ const FIELDS = Object.freeze({
     authority: 'intelligence/source-health.describeDataGaps',
     dependsOn: [],
     invalidatedBy: [],
+    ttlMs: null,
+    liveRefreshable: true,
+  },
+  contextAssertions: {
+    // The Context Understanding Layer's raw compiled assertions — see
+    // intelligence/context-compiler.js (extraction) and
+    // store/contextAssertions.js (persistence). Every other surface should
+    // read `resolvedContext` below, not this raw list directly.
+    authority: 'store/contextAssertions.getActive',
+    dependsOn: [],
+    invalidatedBy: [TRIGGER.CONTEXT_ASSERTION_CHANGE],
+    ttlMs: null,
+    liveRefreshable: true,
+  },
+  contextRelations: {
+    authority: 'store/contextRelations.getActive',
+    dependsOn: [],
+    invalidatedBy: [TRIGGER.CONTEXT_ASSERTION_CHANGE],
+    ttlMs: null,
+    liveRefreshable: true,
+  },
+  resolvedContext: {
+    // The canonical projection (drivers/constraints/preferences/
+    // classifications/uncertainties) — see intelligence/context-resolver.js.
+    // Depends on the raw assertions/relations it's built from so either one
+    // changing invalidates this too.
+    authority: 'intelligence/context-resolver.resolveContext',
+    dependsOn: ['contextAssertions', 'contextRelations'],
+    invalidatedBy: [TRIGGER.CONTEXT_ASSERTION_CHANGE],
     ttlMs: null,
     liveRefreshable: true,
   },

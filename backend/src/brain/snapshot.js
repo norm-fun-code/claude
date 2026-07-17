@@ -103,6 +103,7 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
     eligibleContext: include.eligibleContext !== false,
     calendar: include.calendar === true, // network — default OFF
     sourceHealth: include.sourceHealth !== false,
+    resolvedContext: include.resolvedContext !== false,
   };
 
   // A section that wasn't requested — distinct from one that failed. Its
@@ -136,7 +137,7 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
   const [
     workoutRead, goalsRead, intentionRead, commitmentsRead,
     wealthInsightsRead, spendingRead, findingsRead, experimentsRead,
-    contextRead, calendarRead, sourceHealthRead,
+    contextRead, calendarRead, sourceHealthRead, resolvedContextRead,
   ] = await Promise.all([
     read('effectiveWorkout', () => require('../services/workout').getEffectiveWorkout({ asOf, tz, band: recoveryVal?.band ?? null })),
     want.goals ? read('goals', () => require('../store/goals').listGoals({ status: 'active' }), []) : skip([]),
@@ -159,6 +160,12 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
       const sources = await require('../store/sources').listSources();
       return describeDataGaps(sources);
     }, []) : skip([]),
+    // Context Understanding Layer's canonical projection — see
+    // intelligence/context-resolver.js. One read fetches both the raw
+    // assertions/relations AND resolves them; contextAssertions/
+    // contextRelations below are cheap derived views of THIS read's result,
+    // not separate DB round trips.
+    want.resolvedContext ? read('resolvedContext', () => require('../intelligence/context-resolver').resolveContext({ tz, now: asOf }), null) : skip(null),
   ]);
 
   // forecast depends on recovery + the ALREADY-RESOLVED effective workout — pass
@@ -261,6 +268,17 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
     eligibleContext: fact(contextRead.value, provenance(contextRead, { emptyIsValid: true })),
     calendarAvailability: fact(calendarRead.value, provenance(calendarRead, { emptyIsValid: true })),
     sourceHealth: fact(sourceHealthRead.value, provenance(sourceHealthRead, { emptyIsValid: true })),
+    // Context Understanding Layer — see intelligence/context-resolver.js.
+    // contextAssertions/contextRelations are derived views of the SAME
+    // resolvedContextRead (no extra authority read of their own), so their
+    // freshness/degraded state always agrees with resolvedContext's.
+    contextAssertions: fact(resolvedContextRead.value?.assertions ?? [], {
+      ...provenance(resolvedContextRead, { emptyIsValid: true }), source: authorityFor('contextAssertions'),
+    }),
+    contextRelations: fact(resolvedContextRead.value?.relations ?? [], {
+      ...provenance(resolvedContextRead, { emptyIsValid: true }), source: authorityFor('contextRelations'),
+    }),
+    resolvedContext: fact(resolvedContextRead.value, provenance(resolvedContextRead, { emptyIsValid: false })),
   };
 }
 

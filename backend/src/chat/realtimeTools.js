@@ -35,7 +35,7 @@ async function getTodayContext() {
     buildBrainSnapshot({ include: {
       forecast: false, goals: false, weeklyIntention: false, commitments: false,
       wealth: false, findings: false, experiments: false, eligibleContext: false,
-      sourceHealth: false,
+      sourceHealth: false, resolvedContext: false,
     } }).catch(() => null),
     require('../store/briefings').latestBriefing('daily').catch(() => null),
     // Pull the authoritative (cross-instance) invalidation versions so a
