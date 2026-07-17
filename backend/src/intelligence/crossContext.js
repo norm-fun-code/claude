@@ -129,23 +129,25 @@ Your edge is that you see EVERY domain of their life at once: health, sleep, hab
 You are given statistical RELATIONSHIPS found in their own data. Write the 1-3 most useful cross-context insights — ones grounded in their personal numbers that show the MAGNITUDE of a real pattern. Apply these rules:
 
 INCLUDE (all worth surfacing when the numbers are personal and specific):
-- Sleep quality → next-day energy, mood, or focus: THIS IS VALUABLE. Show the user exactly how much (e.g. "38% higher energy after best nights"). The personal magnitude is the insight, not the general principle.
-- Habit → health/recovery connections: cold shower days vs others, TM days vs others, with real numbers
-- Heavy meeting days → missed exercise, lower mood, worse next-day recovery (calendar is an input the world imposes; show how it hits you)
-- Eating habits → mood or energy trajectory
+- Sleep quality and next-day energy, mood, or focus tending to move together: THIS IS VALUABLE. Show the user exactly how much (e.g. "38% higher energy after best nights"). The personal magnitude is the insight, not the general principle.
+- Habit and health/recovery connections: cold shower days vs others, TM days vs others, with real numbers
+- Heavy meeting days tending to go with missed exercise, lower mood, or worse next-day recovery (calendar is an input the world imposes; show how it tracks with you — never the other way around)
+- Eating habits and mood or energy trajectory moving together
 - Any cross-domain finding where the numbers tell a clear personal story
 
 EXCLUDE — filter these out:
-- More sleep → better sleep score (definitional, within-health tautology)
-- ANY connection involving money, spending, net worth, income, or financial metrics — all wealth correlations are lifestyle confounds with no actionable causal arrow
+- More sleep and better sleep score (definitional, within-health tautology)
+- ANY connection involving money, spending, net worth, income, or financial metrics — all wealth correlations are lifestyle confounds, never framed as actionable
 - Generic statements without personal numbers ("you feel better when you sleep more" without data)
 - Anything that doesn't cross at least two of these domains: health, wellbeing, habits, productivity
-- Any pattern where YOUR HABITS appear to predict meeting load / calendar density — the calendar is set by external forces (colleagues, clients, work schedules), not driven by whether you exercised. Only show meeting load as a DRIVER of health/habit/mood outcomes, never as an OUTCOME of them.
+- Any pattern where YOUR HABITS appear to predict meeting load / calendar density — the calendar is set by external forces (colleagues, clients, work schedules), not by whether you exercised. Meeting load may be described as something health/habit/mood outcomes are associated with — never the reverse.
 
-FORMAT rules:
-- Phrase as "tends to / is associated with", never as causal fact
+FORMAT rules — STRICTLY OBSERVATIONAL, NEVER CAUSAL:
+- Every relationship here is an OBSERVATIONAL statistical pattern, not a proven effect. Phrase every insight as "associated with", "tends to track with", "goes with", or "worth testing" — never as established cause and effect.
+- NEVER use the words "causes", "drives" (or "driver"), "boosts", "effect", "leads to", or "results in" for anything below, and never use a causal arrow (→) — these words claim a proven mechanism the data alone cannot establish.
+- NEVER phrase the insight as an imperative recommendation ("keep taking X to boost Y", "do X to improve Y") unless the SAME relationship appears verbatim under PROVEN ON THEM above (a completed, CONFIRMED self-experiment) — an observational pattern alone earns "worth testing" or "worth watching", never a "do this" instruction. If nothing above is proven, describe the pattern and, at most, suggest it might be worth running as a self-experiment — never issue the instruction directly.
 - Always name the specific personal numbers (e.g. "3.9/5 vs 2.8/5", "58ms vs 46ms")
-- Be concrete about the lever ("on your TM days" not "when you meditate more")
+- Be concrete about which side of the pattern is which ("on your TM days" not "when you meditate more") without implying causation
 
 TEMPORAL GROUNDING — CRITICAL:
 Every relationship below is a STATISTICAL PATTERN aggregated across weeks of their data — it is NOT something that happened today, last night, or is happening again right now. Describe it as a standing tendency ("tends to", "on nights when", "historically"), never as a live, current-tense event.
@@ -170,12 +172,68 @@ Write the 1-3 most surprising, useful cross-context insights as JSON:
   "insights": [
     {
       "headline": "a short, punchy connection (max ~8 words), e.g. 'Late nights tend to flatten your next-day focus' (non-financial and associative, per the rules above)",
-      "insight": "2-3 sentences: the connection, the numbers behind it, and the one lever that moves it. Plain language.",
+      "insight": "2-3 sentences: the connection, the numbers behind it, and what it's worth watching or testing. Plain, observational language — never a causal claim or a 'do this' instruction unless PROVEN ON THEM already confirms it.",
       "domains": ["the", "domains", "involved"]
     }
   ]
 }
 Only include insights you can ground in the relationships above. If nothing is genuinely cross-context, return {"insights": []}.`;
+}
+
+// ── Deterministic causal-language guard ──────────────────────────────────
+// The prompt asks for strictly observational framing, but an LLM can still
+// slip into a causal claim ("Magnesium causes higher energy") or an
+// actionable imperative ("keep taking it to boost energy") the underlying
+// observational data cannot support. This is the DETERMINISTIC backstop —
+// every generated insight is scanned before it is ever persisted, not just
+// asked-for-nicely in the prompt.
+const CAUSAL_VERB_RE = /\b(causes?|drives?|boosts?|leads? to|results? in)\b|→/i;
+// An imperative recommendation framed as advice ("keep taking it to boost
+// energy", "do X to improve Y") — distinct from a plain observational
+// statement ("tends to go with", "associated with", "worth testing").
+const IMPERATIVE_RECOMMENDATION_RE =
+  /\b(keep|start|try|do|take|use|add|increase|reduce|cut|avoid|stop)\b[^.!?]{0,40}\bto\s+(boost|improve|increase|reduce|fix|help|raise|lower|maximize|optimize)\b/i;
+
+function sigWordsForMatch(s) {
+  return new Set(String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w.length > 3));
+}
+/** Pure: do `a` and `b` plausibly describe the SAME underlying relationship
+ *  (used to check a causal claim against a completed experiment's hypothesis)? */
+function sharesSubject(a, b) {
+  const wa = sigWordsForMatch(a);
+  const wb = sigWordsForMatch(b);
+  if (!wa.size || !wb.size) return false;
+  let common = 0;
+  for (const w of wa) if (wb.has(w)) common++;
+  return common / Math.min(wa.size, wb.size) >= 0.34;
+}
+
+/**
+ * Pure: does `text` cross into a causal claim or an unsupported "do this"
+ * recommendation? `confirmedHypotheses` (completed, CONFIRMED self-
+ * experiments — the ONLY thing allowed to license that language) are checked
+ * for a shared subject before the text is let through.
+ */
+function hasUnsupportedCausalLanguage(text, confirmedHypotheses = []) {
+  const flagged = CAUSAL_VERB_RE.test(text) || IMPERATIVE_RECOMMENDATION_RE.test(text);
+  if (!flagged) return false;
+  return !confirmedHypotheses.some((h) => sharesSubject(text, h));
+}
+
+/** The hypotheses of completed, CONFIRMED self-experiments — the only thing
+ *  allowed to license causal language or a "do this" recommendation in a
+ *  generated cross-context insight. Fail-safe: empty on error (fails toward
+ *  REJECTING causal language, never toward permitting it). */
+async function fetchConfirmedHypotheses() {
+  try {
+    const experiments = await experimentsStore.listExperiments();
+    return experiments
+      .filter((e) => e.status === 'completed' && e.verdict === 'confirmed')
+      .map((e) => e.hypothesis)
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -222,7 +280,22 @@ async function generateCrossContext({ minRelationships = 2 } = {}) {
   });
   // Each item still needs its own headline/insight before it's usable —
   // Array.isArray(parsed.insights) alone doesn't guarantee well-formed items.
-  const insights = (validated ?? []).filter((ins) => ins?.headline && ins?.insight).slice(0, 3);
+  const shapedInsights = (validated ?? []).filter((ins) => ins?.headline && ins?.insight).slice(0, 3);
+
+  // Deterministic causal-language guard — reject (never rewrite; a wholesale
+  // LLM-authored blurb is not safe to auto-edit) any insight that crosses
+  // into a causal claim or a "do this" imperative unless a completed,
+  // CONFIRMED self-experiment actually backs it (see PROVEN ON THEM above).
+  const confirmedHypotheses = await fetchConfirmedHypotheses();
+  const insights = shapedInsights.filter((ins) => {
+    const combined = `${ins.headline} ${ins.insight}`;
+    if (hasUnsupportedCausalLanguage(combined, confirmedHypotheses)) {
+      console.error(`[crossContext] rejected an insight with unsupported causal language: "${ins.headline}"`);
+      return false;
+    }
+    return true;
+  });
+
   if (!insights.length) {
     await findingsStore.supersedeAuto(['cross_context']).catch(() => {});
     return { generated: 0, insights: [] };
@@ -272,7 +345,10 @@ async function generateCrossContext({ minRelationships = 2 } = {}) {
   return { generated: created, insights };
 }
 
-module.exports = { generateCrossContext, selectCrossDomain, buildPrompt, buildDurableProfile, deriveConfidence };
+module.exports = {
+  generateCrossContext, selectCrossDomain, buildPrompt, buildDurableProfile, deriveConfidence,
+  hasUnsupportedCausalLanguage,
+};
 
 if (require.main === module) {
   const { pool } = require('../db');

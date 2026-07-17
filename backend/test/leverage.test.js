@@ -104,3 +104,15 @@ test('forecastStatusByGoalId is keyed by goal id — a different goal\'s on_trac
   const acts = rankActions([], { goals: [goal], latestByKey, forecastStatusByGoalId: { 'some-other-goal': 'on_track' } });
   assert.equal(acts.length, 1, 'must not suppress based on an unrelated goal\'s forecast status');
 });
+
+// Audit fix: a statistically CONFIRMED correlation (split-half stable) is
+// still an OBSERVATIONAL pattern, not a proven cause — fromCorrelation must
+// never phrase it as an imperative "do X to move the needle" recommendation.
+test('fromCorrelation: never uses "move the needle" or unhedged "confirmed" causal-recommendation framing', () => {
+  const acts = rankActions([corr('habits:morning_tm', 'wellbeing:mood', 0.55)]);
+  assert.ok(acts.length >= 1, 'sanity: expected a leverage action from a confirmed correlation');
+  const detail = acts[0].detail.toLowerCase();
+  assert.ok(!detail.includes('move the needle'), `detail must not use imperative "move the needle" framing: ${detail}`);
+  assert.ok(!/\bconfirmed in your data\b/.test(detail), `detail must not claim causal "confirmed" status: ${detail}`);
+  assert.match(detail, /observed association|not a proven cause|worth (deliberately )?testing/, 'must use tentative, observational framing');
+});

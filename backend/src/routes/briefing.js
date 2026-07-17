@@ -1107,14 +1107,30 @@ async function buildFreshBriefing({ force = false } = {}) {
         spendBaseline = baselineRows.reduce((s, r) => s + Number(r.value || 0), 0) / baselineRows.length;
       }
     } catch { /* non-critical */ }
-    // Tomorrow's work calendar — so a long / all-day block the next day (an OOO,
-    // a travel day, a wall of meetings) can prompt "what's going on there?" the
-    // day PRIOR, giving the user a chance to add context before that brief.
+    // Tomorrow's work AND personal calendar — so a long / all-day block the
+    // next day (an OOO, a travel day, a wall of meetings) can prompt "what's
+    // going on there?" the day PRIOR, giving the user a chance to add context
+    // before that brief. Personal events are required (not optional) so the
+    // canonical calendar-load projection below can subtract a mirrored
+    // personal event (e.g. a Sabbath block also mirrored onto the work
+    // free/busy feed) from tomorrow's load exactly as it already does for
+    // today — fetching only workBusy here reproduced the double-counting bug
+    // one day early, since computeCalendarLoad({calendar: []}) has nothing to
+    // net against.
     let tomorrowWorkBusy = [];
-    try {
+    let tomorrowCalendar = [];
+    {
       const tmr = new Date(Date.now() + 24 * 60 * 60 * 1000);
-      tomorrowWorkBusy = await require('../services/calendar').fetchWorkBusyBlocks({ date: tmr });
-    } catch { /* non-critical */ }
+      const calendarSvc = require('../services/calendar');
+      // allSettled (not all) — a failure fetching one of the two must not also
+      // blank out the other, matching today's fetch pattern above.
+      const [wb, cal] = await Promise.allSettled([
+        calendarSvc.fetchWorkBusyBlocks({ date: tmr }),
+        calendarSvc.fetchCalendarEvents({ date: tmr }),
+      ]);
+      if (wb.status === 'fulfilled') tomorrowWorkBusy = wb.value;
+      if (cal.status === 'fulfilled') tomorrowCalendar = cal.value;
+    }
     // Durable, server-side suppression for the calendar_load subject —
     // covers yesterday..tomorrow's local dates so both the "tomorrow is
     // heavily blocked" question (asked about tomorrow) and today's "packed
@@ -1128,7 +1144,7 @@ async function buildFreshBriefing({ force = false } = {}) {
       toDate: localDateStr(signalsTz, new Date(nowForSignals.getTime() + 24 * 60 * 60 * 1000)),
     }).catch(() => new Map());
     const allSignals = preBriefSignals.buildSignals({
-      recovery, calendar, workBusy, spend: recentSpend, spendBaseline, tomorrowWorkBusy,
+      recovery, calendar, workBusy, spend: recentSpend, spendBaseline, tomorrowWorkBusy, tomorrowCalendar,
       tz: signalsTz, now: nowForSignals, calendarLoadAnswers,
     });
     signals = preBriefSignals.selectQuestions(allSignals, 2);

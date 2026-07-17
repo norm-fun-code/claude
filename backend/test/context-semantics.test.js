@@ -291,6 +291,43 @@ test('findRetractionTarget: never matches an empty candidate list', () => {
   assert.equal(cs.findRetractionTarget('please forget that context', []), null);
 });
 
+// ── describesCompletedNight (audit fix: centralized temporal parsing) ─────
+
+test('describesCompletedNight: recovery_low binds regardless of wording — no date phrase at all', () => {
+  assert.equal(
+    cs.describesCompletedNight({ signalKey: 'recovery_low', question: 'Your recovery score is 42 today — what do you think is really driving it?', answer: 'I had a drink and late meal' }),
+    true
+  );
+});
+
+test('describesCompletedNight: recovery_low binds even for a totally generic answer', () => {
+  assert.equal(cs.describesCompletedNight({ signalKey: 'recovery_low', answer: 'stressful week' }), true);
+});
+
+test('describesCompletedNight: a non-recovery signal with no past wording does NOT bind', () => {
+  assert.equal(
+    cs.describesCompletedNight({ signalKey: 'manual_context', question: 'Anything to flag?', answer: 'Bought a new phone case' }),
+    false
+  );
+});
+
+for (const phrase of ['last night', 'yesterday', 'overnight', 'last evening', 'the night before', 'previous night']) {
+  test(`describesCompletedNight: recognizes "${phrase}" with no signalKey at all`, () => {
+    assert.equal(cs.describesCompletedNight({ answer: `Woke up a lot ${phrase}` }), true);
+  });
+}
+
+test('describesCompletedNight: wording in the QUESTION alone still binds (not just the answer)', () => {
+  assert.equal(
+    cs.describesCompletedNight({ question: 'No Eight Sleep reading last night — device issue, or skipped it?', answer: 'Skipped it' }),
+    true
+  );
+});
+
+test('describesCompletedNight: a future-tense manual note is not bound', () => {
+  assert.equal(cs.describesCompletedNight({ signalKey: 'manual_context', answer: 'Big presentation tomorrow' }), false);
+});
+
 // ── Timezone / DST boundaries ─────────────────────────────────────────────
 
 test('isTemporallyAligned handles a spring-forward DST night correctly', () => {

@@ -37,7 +37,7 @@ function calendarLoadMateriallyChanged(storedFingerprint, load) {
 }
 
 function buildSignals({
-  recovery, calendar = [], workBusy = [], spend, spendBaseline, tomorrowWorkBusy = [],
+  recovery, calendar = [], workBusy = [], spend, spendBaseline, tomorrowWorkBusy = [], tomorrowCalendar = [],
   tz = process.env.TZ || 'America/New_York', now = new Date(),
   // Map<localDate, {fingerprint, answer}> from store/signalAnswers.js's
   // answersFor('calendar_load', ...) — the server-side authority for
@@ -57,9 +57,13 @@ function buildSignals({
   // Uses the SAME canonical projection (and the SAME durable subject key,
   // calendar_load:<the date being described>) as the packed-calendar signal
   // below — this is literally the same underlying day's schedule read from
-  // one day earlier, so an answer to either suppresses both.
+  // one day earlier, so an answer to either suppresses both. Passing
+  // tomorrowCalendar (not calendar: []) is required, not cosmetic — without
+  // it there is nothing for a work-busy block that mirrors a NAMED personal
+  // event (e.g. a Sabbath block also mirrored onto the work free/busy feed)
+  // to net against, reproducing the exact double-counting bug one day early.
   {
-    const tomorrowLoad = computeCalendarLoad({ workBusy: tomorrowWorkBusy, calendar: [] });
+    const tomorrowLoad = computeCalendarLoad({ workBusy: tomorrowWorkBusy, calendar: tomorrowCalendar });
     const stored = calendarLoadAnswers.get(tomorrowKey);
     const suppressed = stored && !calendarLoadMateriallyChanged(stored.fingerprint, tomorrowLoad);
     if (!suppressed && (tomorrowLoad.isAllDayBlocked || tomorrowLoad.meetingHours >= 6)) {

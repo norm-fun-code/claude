@@ -15,7 +15,7 @@ const signalAnswersStore = require('../store/signalAnswers');
 const { naiveToUtcIso, localDayBoundsUtc, localDateStr } = require('../util/date');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { requireFields } = require('../middleware/validate');
-const { EVENT_KIND } = require('../intelligence/context-semantics');
+const { EVENT_KIND, describesCompletedNight } = require('../intelligence/context-semantics');
 
 function createAnnotationsRouter() {
   const router = express.Router();
@@ -88,9 +88,19 @@ function createAnnotationsRouter() {
     const CALENDAR_LOAD_KEY_RE = /^calendar_load:(\d{4}-\d{2}-\d{2})$/;
     const calendarLoadMatch = CALENDAR_LOAD_KEY_RE.exec(String(signalKey || ''));
     if (calendarLoadMatch) {
-      signalAnswersStore
-        .recordAnswer({ subjectKey: 'calendar_load', localDate: calendarLoadMatch[1], fingerprint, answer: answer.trim() })
-        .catch((e) => console.error('[briefing/context] signal answer record failed:', e.message));
+      // AWAITED, not fire-and-forget, and deliberately BEFORE createAnnotation
+      // below: this row is what future buildSignals() calls check to decide
+      // whether to suppress the question again (see store/signalAnswers.js) —
+      // a caller re-fetching signals immediately after this response resolves
+      // (the mobile app's own optimistic UI, or the very next scheduled brief
+      // build) must see it. Doing this first and letting a failure propagate
+      // (asyncHandler forwards the rejection to the error middleware — no
+      // .catch() swallowing it here) means the response can never claim
+      // success while the durable answer doesn't exist, and nothing else gets
+      // written on top of a failed durable write.
+      await signalAnswersStore.recordAnswer({
+        subjectKey: 'calendar_load', localDate: calendarLoadMatch[1], fingerprint, answer: answer.trim(),
+      });
     }
     // Tag spending-related answers so they're excluded from health/recovery anomaly
     // context (a "$665 on vacation" answer must never explain a low-HRV deviation).
@@ -108,11 +118,13 @@ function createAnnotationsRouter() {
     // of TOMORROW), which reads a last-night answer as active through
     // tomorrow night too and lets it get cited as a caveat on TOMORROW's
     // forecast instead of explaining last night's already-collected data.
-    // Scan question AND answer together (matches FINANCIAL_RE's approach
-    // above) — a free-text answer to a question with no such phrasing still
-    // needs to be recognized ("Woke up at 3am" answering a generic prompt).
-    const PAST_REFERRING_RE = /\blast night\b|\byesterday\b|\bovernight\b/i;
-    const isPastReferring = PAST_REFERRING_RE.test(`${question || ''} ${answer}`);
+    // Centralized in context-semantics.js's describesCompletedNight — it
+    // binds on the SIGNAL itself (recovery_low's answer is inherently about
+    // last night, wording or not: "I had a drink and late meal" carries no
+    // date phrase at all) as well as on expanded wording ("last evening",
+    // "the night before", "previous night", not just the original narrow
+    // "last night"/"yesterday"/"overnight").
+    const isPastReferring = describesCompletedNight({ signalKey, question, answer });
     // The user's timezone (matches GET /annotations above) — a night window
     // computed in the wrong tz can land on the wrong calendar date entirely.
     const tz = req.headers['x-time-zone'] || process.env.TZ || 'America/New_York';

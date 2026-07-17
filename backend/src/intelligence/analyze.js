@@ -538,51 +538,66 @@ function computeCorrelations(seriesByKey, opts = {}) {
       const a = seriesByKey[keys[i]];
       const b = seriesByKey[keys[j]];
 
-      // Pick the lag with the strongest valid correlation.
-      let best = null;
+      // Every structurally valid (pair, lag) combination is its OWN
+      // hypothesis test and must reach the FDR family below — picking only
+      // the strongest lag per pair BEFORE correction (the old code) silently
+      // dropped the other lag's p-value from the family entirely, so a pair
+      // tested at both lag 0 and lag 1 only ever "cost" one slot in the
+      // correction instead of two, under-counting how many comparisons were
+      // actually run and making the correction weaker than it should be.
       for (const lag of o.corrLags) {
         const { xs, ys, n } = stats.alignByDay(a, b, lag);
         if (n < o.corrMinN) continue;
         const r = stats.pearson(xs, ys);
         if (r == null) continue;
-        if (!best || Math.abs(r) > Math.abs(best.r)) best = { r, n, lag, xs, ys };
+
+        // Confirmation gate: split the aligned series in half; the
+        // relationship must hold (same sign, |r| >= gate) on BOTH halves to
+        // be "confirmed". Guards against spurious one-off correlations.
+        const mid = Math.floor(xs.length / 2);
+        const r1 = stats.pearson(xs.slice(0, mid), ys.slice(0, mid));
+        const r2 = stats.pearson(xs.slice(mid), ys.slice(mid));
+        const confirmed =
+          r1 != null &&
+          r2 != null &&
+          Math.sign(r1) === Math.sign(r2) &&
+          Math.min(Math.abs(r1), Math.abs(r2)) >= o.corrGateAbsR;
+
+        candidates.push({
+          keyA: keys[i],
+          keyB: keys[j],
+          r,
+          n,
+          lag,
+          p: stats.pearsonPValue(r, n),
+          confirmed,
+        });
       }
-      if (!best) continue; // structural — no lag produced a usable correlation at all
-
-      // Confirmation gate: split the aligned series in half; the relationship
-      // must hold (same sign, |r| >= gate) on BOTH halves to be "confirmed".
-      // Guards against spurious one-off correlations (multiple-comparisons trap).
-      const mid = Math.floor(best.xs.length / 2);
-      const r1 = stats.pearson(best.xs.slice(0, mid), best.ys.slice(0, mid));
-      const r2 = stats.pearson(best.xs.slice(mid), best.ys.slice(mid));
-      const confirmed =
-        r1 != null &&
-        r2 != null &&
-        Math.sign(r1) === Math.sign(r2) &&
-        Math.min(Math.abs(r1), Math.abs(r2)) >= o.corrGateAbsR;
-
-      candidates.push({
-        keyA: keys[i],
-        keyB: keys[j],
-        r: best.r,
-        n: best.n,
-        lag: best.lag,
-        p: stats.pearsonPValue(best.r, best.n),
-        confirmed,
-      });
     }
   }
 
   // Multiple-comparisons correction: an all-pairs × lag search runs hundreds of
   // tests, so ~5% would clear |r|≥0.5 by chance. Benjamini-Hochberg FDR control
-  // runs across the FULL candidate set tested above (every pair with enough
-  // aligned days for at least one lag) — NOT just the ones that already
-  // cleared the |r|≥corrMinAbsR effect-size bar, which would shrink the
-  // "family" the correction is supposed to protect. The effect-size floor is
-  // applied AFTER correction, to decide what's worth reporting among the
-  // statistically-significant pairs.
+  // runs across the FULL candidate set tested above — every (pair, lag)
+  // combination with enough aligned days, NOT just the strongest lag per pair
+  // and NOT just the ones that already cleared the |r|≥corrMinAbsR
+  // effect-size bar, either of which would shrink the "family" the
+  // correction is supposed to protect. The effect-size floor is applied
+  // AFTER correction, to decide what's worth reporting among the
+  // statistically-significant (pair, lag) tests.
   const keep = stats.benjaminiHochberg(candidates.map((c) => c.p), o.corrFdrQ);
-  const significant = candidates.filter((c, i) => keep[i] && Math.abs(c.r) >= o.corrMinAbsR);
+  const passedFdr = candidates.filter((c, i) => keep[i] && Math.abs(c.r) >= o.corrMinAbsR);
+
+  // A pair may have BOTH its lag-0 and lag-1 tests survive FDR + the effect-
+  // size floor — report only the stronger lag per pair, selected AFTER
+  // correction (not before, which is the bug this whole restructure fixes).
+  const bestByPair = new Map();
+  for (const c of passedFdr) {
+    const pairKey = [c.keyA, c.keyB].sort().join('|');
+    const prev = bestByPair.get(pairKey);
+    if (!prev || Math.abs(c.r) > Math.abs(prev.r)) bestByPair.set(pairKey, c);
+  }
+  const significant = [...bestByPair.values()];
 
   significant.sort((x, y) => Math.abs(y.r) - Math.abs(x.r));
 

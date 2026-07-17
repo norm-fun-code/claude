@@ -120,7 +120,7 @@ test('general (non-health) context can never become a recovery driver, even when
     'a logistics note is not a plausible health cause, regardless of its temporal binding');
 });
 
-test('POST /briefing/context with a calendar_load signalKey persists a durable, server-side answer', async () => {
+test('POST /briefing/context with a calendar_load signalKey persists a durable, server-side answer BEFORE the response returns', async () => {
   const today = localDateStr(TZ, new Date());
   const signalKey = `calendar_load:${today}`;
   const res = await request(app)
@@ -129,15 +129,32 @@ test('POST /briefing/context with a calendar_load signalKey persists a durable, 
     .send({ question: 'You have 5.0h of meetings today', answer: 'Sprint planning ran long', signalKey, fingerprint: 'test-5.00' });
   assert.equal(res.status, 200);
 
-  // Poll briefly — recordAnswer is fire-and-forget from the route's perspective.
-  const deadline = Date.now() + 2000;
-  let stored = null;
-  while (Date.now() < deadline) {
-    const map = await signalAnswersStore.answersFor('calendar_load', { fromDate: today, toDate: today });
-    if (map.has(today)) { stored = map.get(today); break; }
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  assert.ok(stored, 'the calendar_load answer must be durably recorded server-side');
+  // NO polling — recordAnswer is now awaited inside the route (see
+  // routes/annotations.js) before it responds, so the durable answer must be
+  // immediately readable the instant this request resolves, not "eventually."
+  const map = await signalAnswersStore.answersFor('calendar_load', { fromDate: today, toDate: today });
+  const stored = map.get(today);
+  assert.ok(stored, 'the calendar_load answer must be durably recorded server-side by the time the response returns');
   assert.equal(stored.fingerprint, 'test-5.00');
   assert.equal(stored.answer, 'Sprint planning ran long');
+});
+
+test('a signal-answer write failure surfaces as an error response, not a false {ok:true}', async () => {
+  // Force recordAnswer to reject, simulating a DB hiccup on the durable write.
+  const original = signalAnswersStore.recordAnswer;
+  signalAnswersStore.recordAnswer = async () => { throw new Error('simulated write failure'); };
+  try {
+    const today = localDateStr(TZ, new Date());
+    const res = await request(app)
+      .post('/api/briefing/context')
+      .set(authHeader())
+      .send({ question: 'You have 5.0h of meetings today', answer: 'should not be saved', signalKey: `calendar_load:${today}`, fingerprint: 'test-fail' });
+    assert.notEqual(res.status, 200, 'a failed durable write must not report success');
+    // And no partial state: the annotation must not have been created either
+    // (recordAnswer is awaited BEFORE createAnnotation runs).
+    const { rows } = await db.query(`SELECT id FROM annotations WHERE label = $1`, ['should not be saved']);
+    assert.equal(rows.length, 0, 'no annotation should be created when the durable answer write fails first');
+  } finally {
+    signalAnswersStore.recordAnswer = original;
+  }
 });

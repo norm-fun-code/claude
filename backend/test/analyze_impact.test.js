@@ -294,6 +294,43 @@ test('computeHabitHealthSplits: FDR correction runs across the COMPLETE tested f
   }
 });
 
+// Audit fix: computeCorrelations used to pick the strongest lag PER PAIR
+// before ever computing Benjamini-Hochberg — so a pair tested at both lag 0
+// and lag 1 only ever contributed ONE p-value to the correction family,
+// silently discarding the other lag's test instead of counting it as a
+// separate hypothesis. Both lags must reach the FDR call.
+test('computeCorrelations: both lag-0 and lag-1 p-values for the SAME pair reach the FDR family (not just the stronger lag)', () => {
+  const stats = require('../src/intelligence/stats');
+  const originalBH = stats.benjaminiHochberg;
+  let capturedCandidateCount = null;
+  stats.benjaminiHochberg = (pvalues, q) => {
+    capturedCandidateCount = pvalues.length;
+    return originalBH(pvalues, q);
+  };
+  try {
+    const N = 40;
+    // Two independent, non-flat daily series — both lag 0 (same-day) and lag
+    // 1 (next-day) alignments have >= corrMinN (20) valid pairs, so BOTH are
+    // structurally valid, distinct hypotheses for this one pair.
+    const hrv = mkSeries(N, (i) => 45 + (i % 6));
+    const mood = mkSeries(N, (i) => 3 + ((i + 2) % 6) * 0.2);
+    // health:hrv is a night-sourced (NIGHT_METRICS) key, staleness-gated
+    // against "today" — pin "today" to the series' own last day (same
+    // pattern as the existing staleness test below) so it isn't skipped
+    // entirely regardless of when this test actually runs.
+    const lastDay = hrv[hrv.length - 1].day;
+    a.computeCorrelations({ 'health:hrv': hrv, 'wellbeing:mood': mood }, { today: lastDay });
+    assert.ok(capturedCandidateCount != null, 'benjaminiHochberg must have been called');
+    // Exactly one pair (hrv, mood) x 2 lags (corrLags default [0,1]) = 2
+    // structurally-valid candidates. If only the winning lag reached the
+    // family (the bug), this would be 1.
+    assert.equal(capturedCandidateCount, 2,
+      `both lag-0 and lag-1 tests for the pair must reach the FDR family, got ${capturedCandidateCount} candidate(s)`);
+  } finally {
+    stats.benjaminiHochberg = originalBH;
+  }
+});
+
 test('computeHabitHealthSplits: never generates a lag>=2 finding (removed at the source, not just hidden downstream)', () => {
   const N = 60;
   // A context tag with a genuine-looking 2-day-delayed pattern — if lag=2

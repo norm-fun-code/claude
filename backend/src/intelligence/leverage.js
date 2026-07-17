@@ -187,9 +187,15 @@ function fromCorrelation(f) {
   const confidence = clamp01(Math.abs(ev.r));
   const ease = LEVERS[lever].ease;
 
+  // Deliberately tentative, not an imperative "do X to move the needle" —
+  // this is a statistically robust OBSERVATIONAL correlation (held up across
+  // an early/late holdout split), not a proven cause. A causal "do this"
+  // recommendation is reserved for a completed, CONFIRMED self-experiment;
+  // absent one, the most this can honestly say is that the pattern is
+  // consistent enough to be worth testing deliberately.
   return {
     title: `${leverLabel} and ${outcomeLabel}: ${phrase}`,
-    detail: `Confirmed in your data (${rStr}${lagNote}): ${leverLabel} and ${outcomeLabel} move together. ${phrase.charAt(0).toUpperCase() + phrase.slice(1)} to move the needle. This held up in both an earlier and a more recent stretch of your data — not just a one-off.`,
+    detail: `Your data shows a consistent pattern (${rStr}${lagNote}): ${leverLabel} and ${outcomeLabel} move together, holding up in both an earlier and a more recent stretch of your data — not just a one-off. Worth deliberately testing whether ${phrase} moves it, e.g. as a self-experiment; this is an observed association, not a proven cause.`,
     domains: [...new Set([lv.domain, ov.domain])],
     impact,
     confidence,

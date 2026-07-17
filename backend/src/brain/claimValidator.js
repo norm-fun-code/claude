@@ -17,6 +17,8 @@
 // good output), so when in doubt it stays silent.
 'use strict';
 
+const { causeConceptTags } = require('../intelligence/context-semantics');
+
 function splitIntoSentences(text) {
   return String(text || '').split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
 }
@@ -118,19 +120,60 @@ function checkRecoveryScore(result, facts) {
 // asserting ANY cause is a violation: the brief should say the cause is
 // unknown, not guess.
 const CAUSAL_RE = /\b(because|due to|thanks to|caused by|driven by|driving|drove|drives|explains?|behind (?:the|this|today'?s)|from (?:the|last night'?s|yesterday'?s))\b/i;
+
+// Generic time-anchoring words that appear in almost EVERY causal recovery
+// sentence regardless of what the actual cause is ("last night", "the night
+// before", "this morning"...). The bug this fixes: the old lexical-overlap
+// check counted these as shared vocabulary between an eligible driver
+// ("drank wine last night") and an UNRELATED generated claim ("a late meal
+// last night") — "last"/"night" alone cleared the overlap threshold even
+// though the two describe different causes entirely. Stripped from the
+// FALLBACK lexical check below; the PRIMARY check is canonical cause-concept
+// tag matching (context-semantics.js's causeConceptTags), which never had
+// this problem in the first place since "last"/"night" don't map to any tag.
+const TEMPORAL_STOPWORDS = new Set([
+  'last', 'night', 'nights', 'yesterday', 'overnight', 'evening', 'evenings',
+  'morning', 'mornings', 'today', 'tonight', 'before', 'previous', 'day', 'days',
+]);
+function causalSigWords(s) {
+  const words = String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/);
+  return new Set(words.filter((w) => w.length > 2 && !STOPWORDS.has(w) && !TEMPORAL_STOPWORDS.has(w)));
+}
+function causalOverlapRatio(sentence, phrase) {
+  const pw = causalSigWords(phrase);
+  if (!pw.size) return 0;
+  const sw = causalSigWords(sentence);
+  let common = 0;
+  for (const w of pw) if (sw.has(w)) common++;
+  return common / pw.size;
+}
 const CAUSE_OVERLAP_THRESHOLD = 0.3;
+
 function checkRecoveryCause(result, facts) {
   // Only meaningful once the caller has actually computed eligible drivers —
   // absent facts.recoveryDrivers (an older/partial facts object), stay silent
   // rather than false-positive on every causal recovery sentence.
   if (!facts || !Array.isArray(facts.recoveryDrivers)) return [];
   const drivers = facts.recoveryDrivers;
+  // Canonical concept tags named by the eligible drivers (e.g. "drank wine
+  // last night" -> ['alcohol']). Every eligible driver already passed
+  // context-semantics.js's isPlausibleHealthCause to BECOME eligible, so it
+  // is guaranteed to name at least one tag.
+  const eligibleTags = new Set(drivers.flatMap((d) => causeConceptTags(d)));
   const violations = [];
   for (const [field, text] of briefFields(result)) {
     for (const sentence of splitIntoSentences(text)) {
       if (!RECOVERY_CONTEXT_RE.test(sentence)) continue;
       if (!CAUSAL_RE.test(sentence)) continue;
-      const groundedInDriver = drivers.some((d) => overlapRatio(sentence, d) >= CAUSE_OVERLAP_THRESHOLD);
+      // Grounded if the claim names a RECOGNIZED cause concept that's among
+      // the eligible drivers' own concepts (primary check — precise, immune
+      // to shared temporal wording), OR — for a driver/claim phrasing the
+      // fixed concept list doesn't cover — the claim's non-temporal,
+      // non-generic vocabulary substantially overlaps a specific driver's.
+      const claimedTags = causeConceptTags(sentence);
+      const tagGrounded = claimedTags.length > 0 && claimedTags.some((t) => eligibleTags.has(t));
+      const lexicallyGrounded = !tagGrounded && drivers.some((d) => causalOverlapRatio(sentence, d) >= CAUSE_OVERLAP_THRESHOLD);
+      const groundedInDriver = tagGrounded || lexicallyGrounded;
       if (!groundedInDriver) {
         violations.push({
           check: 'recovery_cause', field, sentence, severity: 'high',

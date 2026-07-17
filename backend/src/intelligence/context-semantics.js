@@ -65,7 +65,7 @@ const FUTURE_RE =
 // note mentioning both "last night" and "tonight" in passing) — also the
 // signal used by isTemporallyAligned to accept a same-morning report.
 const PAST_RE =
-  /\blast night\b|\byesterday\b|\bovernight\b|\bearlier (today|this evening)\b|\balready (went|had|did|drank|ate)\b|\bended up\b|\blast evening\b/i;
+  /\blast night\b|\byesterday\b|\bovernight\b|\bearlier (today|this evening)\b|\balready (went|had|did|drank|ate)\b|\bended up\b|\blast evening\b|\bthe night before\b|\bprevious night\b/i;
 
 // Category-based fallback: an 'illness'/'travel'-categorized annotation with
 // no other overriding cue (retraction/negation/future) defaults to ONGOING
@@ -99,15 +99,37 @@ function isRetraction(text, opts) {
 // ── Topic/domain plausibility ───────────────────────────────────────────────
 
 // Plausible, physiologically-grounded drivers of an overnight body-metric
-// deviation (HRV, resting HR, sleep, respiratory rate). Deliberately NOT
-// "any life event" — accepting every annotation regardless of content was
-// the root cause of the bug this module fixes. A real causal candidate
-// names one of these.
-const HEALTH_CAUSE_RE =
-  /\b(drinks?|drank|alcohol|wine|beer|cocktails?|shots?|hungover|hangover)\b|\b(sick|illness|ill|cold|flu|fever|nause(a|ous)|vomit(ed|ing)?|food poisoning)\b|\b(travel(l?ed|ling)?|flight|jet ?lag(ged)?|time ?zone|red-?eye)\b|\b(hot|cold|noisy|loud) (room|bedroom)\b|\b(room|bedroom) (was |is )?(very |really |so )?(hot|cold|noisy|loud)\b|\bair ?conditioning\b|\bheat ?wave\b|\b(late|big|heavy) (meal|dinner)\b|\bate late\b|\bspicy\b|\b(medication|prescription|dosage|new med)\b|\bstress(ed|ful)?\b|\banxi(ous|ety)\b|\bargument\b|\bfight\b|\bdeadline\b|\b(intense|hard|unusual) (workout|training|session)\b|\bovertrain(ed|ing)?\b|\brace\b/i;
+// deviation (HRV, resting HR, sleep, respiratory rate), broken into CANONICAL
+// CAUSE CONCEPTS rather than one flat alternation. Deliberately NOT "any life
+// event" — accepting every annotation regardless of content was the root
+// cause of the bug this module fixes. A real causal candidate names one of
+// these tags — and, critically, the TAG (not raw word overlap) is what a
+// downstream causal-attribution check (brain/claimValidator.js's
+// checkRecoveryCause) matches a generated claim against: "drank wine last
+// night" and "a late meal last night" share the words "last"/"night" but are
+// DIFFERENT cause concepts (alcohol vs late_meal), and must never be treated
+// as the same driver just because they're both time-anchored the same way.
+const CAUSE_CONCEPTS = [
+  { tag: 'alcohol', re: /\b(drinks?|drank|alcohol|wine|beer|cocktails?|shots?|hungover|hangover)\b/i },
+  { tag: 'illness', re: /\b(sick|illness|ill|cold|flu|fever|nause(a|ous)|vomit(ed|ing)?|food poisoning)\b/i },
+  { tag: 'travel', re: /\b(travel(l?ed|ling)?|flight|jet ?lag(ged)?|time ?zone|red-?eye)\b/i },
+  { tag: 'room_conditions', re: /\b(hot|cold|noisy|loud) (room|bedroom)\b|\b(room|bedroom) (was |is )?(very |really |so )?(hot|cold|noisy|loud)\b|\bair ?conditioning\b|\bheat ?wave\b/i },
+  { tag: 'late_meal', re: /\b(late|big|heavy) (meal|dinner)\b|\bate late\b|\bspicy\b/i },
+  { tag: 'medication', re: /\b(medication|prescription|dosage|new med)\b/i },
+  { tag: 'stress', re: /\bstress(ed|ful)?\b|\banxi(ous|ety)\b|\bargument\b|\bfight\b|\bdeadline\b/i },
+  { tag: 'hard_training', re: /\b(intense|hard|unusual) (workout|training|session)\b|\bovertrain(ed|ing)?\b|\brace\b/i },
+];
+
+/** Pure: which canonical cause-concept tags does this text name (possibly
+ *  several — "drank wine after a stressful day" is both alcohol and stress)?
+ *  Empty array = names no recognized physiological cause at all. */
+function causeConceptTags(text) {
+  const t = String(text || '');
+  return CAUSE_CONCEPTS.filter((c) => c.re.test(t)).map((c) => c.tag);
+}
 
 function isPlausibleHealthCause(text) {
-  return HEALTH_CAUSE_RE.test(String(text || ''));
+  return causeConceptTags(text).length > 0;
 }
 
 // Word-boundary anchors matter here: an un-anchored `ill` matches "chill",
@@ -174,6 +196,39 @@ function isTemporallyAligned(annotation, window, kind) {
   if (annStart > window.end && annStart <= graceEnd) return PAST_RE.test(text.toLowerCase());
 
   return false;
+}
+
+// ── "Describes the completed overnight sleep window" ────────────────────────
+// Centralizes the temporal-parsing decision routes/annotations.js's POST
+// /briefing/context uses to bind an answer's EFFECTIVE window to the actual
+// night it describes (analyze.js's resolveNightWindow) instead of "now".
+// Previously this lived as a narrower, duplicated regex directly in the
+// route (only "last night"/"yesterday"/"overnight") — one canonical
+// definition here instead, reusing PAST_RE so a new phrasing only needs to
+// be taught once.
+
+// Signal keys whose answer is, BY DEFINITION, about the completed overnight
+// sleep window that produced the metric the question is even asking about —
+// no wording check needed at all. recovery_low's entire premise is "your
+// score is low TODAY — what from last night is driving it?"; an answer like
+// "I had a drink and late meal" carries no date phrase whatsoever, but it is
+// unambiguously describing last night because that is the only thing the
+// question could be asking about. Binding on wording alone would silently
+// miss exactly this case.
+const NIGHT_BOUND_SIGNAL_KEYS = new Set(['recovery_low']);
+
+/**
+ * Pure: should this answer's effective annotation window be bound to the
+ * night that produced today's already-collected data, rather than left at
+ * "now" (which would default forward and could bleed into tomorrow)?
+ * True when the SIGNAL itself is inherently about last night (see
+ * NIGHT_BOUND_SIGNAL_KEYS), OR the question/answer text explicitly says so
+ * ("last night", "yesterday", "overnight", "last evening", "the night
+ * before", "previous night", ...).
+ */
+function describesCompletedNight({ signalKey, question, answer } = {}) {
+  if (signalKey && NIGHT_BOUND_SIGNAL_KEYS.has(signalKey)) return true;
+  return PAST_RE.test(`${question || ''} ${answer || ''}`);
 }
 
 // ── The main eligibility gate ───────────────────────────────────────────────
@@ -318,4 +373,6 @@ module.exports = {
   isEligibleContext,
   filterEligible,
   findRetractionTarget,
+  describesCompletedNight,
+  causeConceptTags,
 };

@@ -203,3 +203,47 @@ test('absent facts.recoveryDrivers (older/partial facts object) never triggers r
   );
   assert.ok(!violations.some((v) => v.check === 'recovery_cause'));
 });
+
+// ── Audit fix: lexical-overlap alone could be satisfied by generic/temporal
+// words ("last night") even when the actual CAUSE differs from the eligible
+// driver's. checkRecoveryCause now primarily matches on canonical cause-
+// concept tags (context-semantics.js's causeConceptTags), not raw shared
+// vocabulary. ─────────────────────────────────────────────────────────────
+
+test('reproduction: eligible driver "drank wine last night" does NOT ground a claim of "a late meal last night" — different causes, same generic wording', () => {
+  const facts = { ...FACTS, recoveryDrivers: ['drank wine last night'] };
+  const { violations } = validateChiefBriefClaims(
+    brief({ synthesis: 'Recovery dipped because of a late meal last night.' }),
+    facts
+  );
+  assert.ok(violations.some((v) => v.check === 'recovery_cause'),
+    'a different cause concept (late_meal) must be rejected even though it shares "last night" with the eligible driver (alcohol)');
+});
+
+test('a claim correctly citing the SAME cause concept as the eligible driver is grounded', () => {
+  const facts = { ...FACTS, recoveryDrivers: ['drank wine last night'] };
+  const { violations } = validateChiefBriefClaims(
+    brief({ synthesis: 'Recovery dipped because of the wine last night.' }),
+    facts
+  );
+  assert.ok(!violations.some((v) => v.check === 'recovery_cause'));
+});
+
+test('a claim citing the same cause concept in different words (still matching the concept regex) is grounded', () => {
+  const facts = { ...FACTS, recoveryDrivers: ['a couple of drinks last night'] };
+  const { violations } = validateChiefBriefClaims(
+    brief({ synthesis: 'Recovery is down, likely driven by the alcohol last night.' }),
+    facts
+  );
+  assert.ok(!violations.some((v) => v.check === 'recovery_cause'));
+});
+
+test('two different eligible drivers: a claim naming EITHER concept is grounded, a third concept is not', () => {
+  const facts = { ...FACTS, recoveryDrivers: ['drank wine last night', 'stressful argument before bed'] };
+  const stressClaim = brief({ synthesis: 'Recovery dipped because of the argument last night.' });
+  assert.ok(!validateChiefBriefClaims(stressClaim, facts).violations.some((v) => v.check === 'recovery_cause'));
+
+  const travelClaim = brief({ synthesis: 'Recovery dipped because of the flight last night.' });
+  assert.ok(validateChiefBriefClaims(travelClaim, facts).violations.some((v) => v.check === 'recovery_cause'),
+    'travel was never an eligible driver — must still be rejected');
+});

@@ -135,3 +135,69 @@ test('a materially changed schedule is asked about again despite a stored answer
   assert.ok(signals.find((s) => s.key === TODAY_KEY),
     'a schedule that moved from 1h to 5h since the stored answer must re-ask, not stay suppressed');
 });
+
+// Audit fix: the tomorrow look-ahead used to call computeCalendarLoad with
+// calendar: [] (personal events never fetched), so a mirrored Sabbath block
+// had nothing to net against and inflated tomorrow's load exactly like the
+// already-fixed same-day bug. tomorrowCalendar must reach the same canonical
+// projection tomorrowWorkBusy does.
+test('tomorrow look-ahead: a mirrored Sabbath block reports the NET hours, not the gross block', () => {
+  const dayBefore = new Date('2026-07-16T15:00:00Z');
+  // 12h gross work-busy block, 4h of which mirrors the Sabbath -> 8h net,
+  // still over the 6h look-ahead threshold so it fires with the right number.
+  const tomorrowWorkBusy = [{ start: '9:00 AM', end: '9:00 PM' }];
+  const tomorrowCalendar = [{ title: 'Sabbath', startTime: '5:00 PM', endTime: '9:00 PM', allDay: false }];
+  const signals = buildSignals({
+    recovery: null, workBusy: [], calendar: [], tomorrowWorkBusy, tomorrowCalendar, now: dayBefore, tz: TZ,
+  });
+  const lookAhead = signals.find((s) => s.key === TODAY_KEY);
+  assert.ok(lookAhead, 'the net 8h load should still clear the 6h look-ahead threshold');
+  assert.match(lookAhead.question, /8\.0h/, 'must report the NET 8h (12h gross minus the 4h Sabbath overlap), not 12h');
+});
+
+test('tomorrow look-ahead: a mirrored Sabbath block that nets BELOW threshold produces no false-positive signal', () => {
+  const dayBefore = new Date('2026-07-16T15:00:00Z');
+  // Exactly the bug report's reproduction: 1-9pm work-busy, 5-9pm mirrored
+  // Sabbath -> nets to 4h, well under the 6h look-ahead threshold. The OLD
+  // code (calendar: [] always) would have reported the gross 8h and
+  // incorrectly fired "heavily blocked."
+  const tomorrowWorkBusy = [{ start: '1:00 PM', end: '9:00 PM' }];
+  const tomorrowCalendar = [{ title: 'Sabbath', startTime: '5:00 PM', endTime: '9:00 PM', allDay: false }];
+  const signals = buildSignals({
+    recovery: null, workBusy: [], calendar: [], tomorrowWorkBusy, tomorrowCalendar, now: dayBefore, tz: TZ,
+  });
+  assert.equal(signals.find((s) => s.key === TODAY_KEY), undefined,
+    'the net 4h load must never trigger the look-ahead question — the gross 8h would have');
+});
+
+// Full production-path sequence: yesterday's look-ahead (with the Sabbath
+// netting applied) is answered; today's build, computing the identical net
+// load from the SAME underlying schedule, must come back suppressed.
+test('full sequence: answering yesterday\'s Sabbath-netted look-ahead suppresses today\'s otherwise-identical question', () => {
+  const dayBefore = new Date('2026-07-16T15:00:00Z');
+  const workBusyBlock = [{ start: '9:00 AM', end: '9:00 PM' }]; // 12h gross
+  const calendarBlock = [{ title: 'Sabbath', startTime: '5:00 PM', endTime: '9:00 PM', allDay: false }]; // 4h overlap
+
+  const dayBeforeSignals = buildSignals({
+    recovery: null, workBusy: [], calendar: [], tomorrowWorkBusy: workBusyBlock, tomorrowCalendar: calendarBlock,
+    now: dayBefore, tz: TZ,
+  });
+  const lookAhead = dayBeforeSignals.find((s) => s.key === TODAY_KEY);
+  assert.ok(lookAhead, 'sanity: the 8h net load should fire the look-ahead question');
+  assert.equal(lookAhead.fingerprint, '8.00');
+
+  // The answer is recorded server-side against calendar_load:2026-07-17 with
+  // the fingerprint the look-ahead computed (see routes/annotations.js).
+  const answered = new Map([['2026-07-17', { fingerprint: lookAhead.fingerprint, answer: 'work offsite' }]]);
+
+  // Today's build: the SAME underlying schedule (now today's, not tomorrow's)
+  // — same 12h gross work-busy block, same mirrored Sabbath — nets to the
+  // identical 8h. Without the tomorrowCalendar fix this fingerprint would
+  // never have matched (yesterday's fingerprint would have been the WRONG
+  // gross 12h), so the suppression would have silently failed too.
+  const todaySignals = buildSignals({
+    recovery: null, workBusy: workBusyBlock, calendar: calendarBlock, now: NOW, tz: TZ, calendarLoadAnswers: answered,
+  });
+  assert.equal(todaySignals.find((s) => s.key === TODAY_KEY), undefined,
+    'today\'s identical-load question must be suppressed by yesterday\'s answer');
+});
