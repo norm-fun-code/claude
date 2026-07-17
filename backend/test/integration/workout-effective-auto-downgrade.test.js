@@ -45,13 +45,22 @@ test('no override + red band => full auto_downgrade contract (scheduled Push, do
   assert.equal(eff.recoveryBand, 'red');
 });
 
-test('a manual override wins over the automatic downgrade — the override is returned verbatim, with no scheduled*/recoveryBand fields', async () => {
+test('a manual override wins over the automatic downgrade — and carries the scheduled baseline it replaced (but no recoveryBand/duration)', async () => {
   await db.query(`INSERT INTO workout_overrides (log_date, workout_id) VALUES ($1, 'zone2')`, [THU_DATE]);
   const eff = await getEffectiveWorkout({ asOf: THU_NOON, tz: TZ, band: 'red' });
   assert.equal(eff.source, 'override');
   assert.equal(eff.workoutId, 'zone2');
   assert.equal(eff.label, 'Zone 2');
-  assert.equal(eff.scheduledWorkoutId, undefined, 'an override result carries no auto-downgrade metadata');
+  // The override now ALWAYS carries the scheduled baseline it replaced, so the
+  // claim validator can catch a brief that describes the original scheduled
+  // session ("crush your Push") after the user overrode it away. (This is the
+  // deliberate contract change from the central-brain audit — override results
+  // used to omit these.)
+  assert.equal(eff.scheduledWorkoutId, 'push');
+  assert.equal(eff.scheduledLabel, 'Push');
+  // …but auto-downgrade-only metadata stays absent for an override.
+  assert.equal(eff.recoveryBand, undefined, 'recoveryBand is auto_downgrade-only, not on an override');
+  assert.equal(eff.duration, undefined, 'no synthesized downgrade duration on an override');
 });
 
 test('green band => unchanged scheduled result, source stays "scheduled"', async () => {
