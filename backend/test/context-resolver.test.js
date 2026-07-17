@@ -7,7 +7,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   buildResolvedContext, getDriversFor, getConstraintsFor, getPreferencesFor, getCompletionState,
-  getCalendarClassification, getResolvedUncertainties, getUnresolvedUncertainties, getRelevantContext,
+  getCalendarClassification, matchCalendarClassifications, extractClockTimeRange, matchCompletionCorrections,
+  getResolvedUncertainties, getUnresolvedUncertainties, getRelevantContext,
   scoreRelation,
 } = require('../src/intelligence/context-resolver');
 
@@ -171,4 +172,157 @@ test('getRelevantContext: "general" purpose includes negated assertions (still w
   const negated = assertion({ id: 'a-negated', eventStatus: 'negated', domains: ['health'] });
   const resolved = buildResolvedContext({ assertions: [negated], relations: [], tz: 'America/New_York', now: NOW });
   assert.deepEqual(getRelevantContext(resolved, 'general').map((a) => a.id), ['a-negated']);
+});
+
+// ── extractClockTimeRange ─────────────────────────────────────────────────
+
+test('extractClockTimeRange: parses "5-9pm" with a single trailing meridiem applying to both ends', () => {
+  const r = extractClockTimeRange("that's a Sabbath block, 5-9pm, not meetings");
+  assert.deepEqual(r, { startMin: 17 * 60, endMin: 21 * 60 });
+});
+
+test('extractClockTimeRange: parses "5:00-9:00 PM" and "5 to 9pm"', () => {
+  assert.deepEqual(extractClockTimeRange('5:00-9:00 PM'), { startMin: 17 * 60, endMin: 21 * 60 });
+  assert.deepEqual(extractClockTimeRange('5 to 9pm'), { startMin: 17 * 60, endMin: 21 * 60 });
+});
+
+test('extractClockTimeRange: returns null when no range is present, or the range is backwards', () => {
+  assert.equal(extractClockTimeRange('that meeting with the team'), null);
+  assert.equal(extractClockTimeRange('9-5pm'), null); // end before start once normalized — not a sane forward interval
+});
+
+// ── matchCalendarClassifications ─────────────────────────────────────────
+// item 3a: a calendar-classification correction ("that's a Sabbath block,
+// not meetings") must change the ACTUAL computed calendar-load projection,
+// matched against the real workBusy/calendar intervals — not just be
+// queryable via getCalendarClassification's fixture-shaped return.
+
+function classifyAssertion(overrides = {}) {
+  return assertion({ id: 'a-class', subject: '5-9pm block', objectValue: 'a Sabbath observance', rawText: "that's a Sabbath block, 5-9pm, not meetings", ...overrides });
+}
+function classifyRelation(overrides = {}) {
+  return relation({
+    id: 'r-class', sourceAssertionId: 'a-class', targetType: 'calendar_event', targetId: '5_9pm_block',
+    relationship: 'classifies', permittedLanguage: 'a Sabbath observance, not meetings', ...overrides,
+  });
+}
+
+test('matchCalendarClassifications: matches a single overlapping work-busy block by explicit clock-time range', () => {
+  const resolved = buildResolvedContext({ assertions: [classifyAssertion()], relations: [classifyRelation()], tz: 'America/New_York', now: NOW });
+  const workBusy = [{ start: '5:00 PM', end: '9:00 PM' }, { start: '10:00 AM', end: '11:00 AM' }];
+  const overrides = matchCalendarClassifications(resolved, { calendar: [], workBusy });
+  assert.equal(overrides.length, 1);
+  assert.equal(overrides[0].title, 'a Sabbath observance, not meetings');
+  assert.equal(overrides[0].startTime, '5:00 PM');
+  assert.equal(overrides[0].endTime, '9:00 PM');
+  assert.equal(overrides[0].allDay, false);
+});
+
+test('matchCalendarClassifications: ambiguous time-range overlap (two candidate blocks) falls through to text match; no title match either -> not applied', () => {
+  const resolved = buildResolvedContext({ assertions: [classifyAssertion()], relations: [classifyRelation()], tz: 'America/New_York', now: NOW });
+  // Two work-busy blocks both overlap the extracted 5-9pm range, so the
+  // time-range path is ambiguous — must fall through to text matching, which
+  // also fails (no named calendar events at all) — the assertion stays
+  // persisted/queryable but is applied to nothing.
+  const workBusy = [{ start: '5:00 PM', end: '7:00 PM' }, { start: '6:00 PM', end: '9:00 PM' }];
+  const overrides = matchCalendarClassifications(resolved, { calendar: [], workBusy });
+  assert.deepEqual(overrides, []);
+  // Still readable directly, per getCalendarClassification's contract.
+  assert.ok(getCalendarClassification(resolved, '5_9pm_block'));
+});
+
+test('matchCalendarClassifications: text-only fallback matches a named calendar event title when no clock-time range is present', () => {
+  const noRange = classifyAssertion({ subject: 'the Sabbath dinner block', objectValue: 'a Sabbath observance', rawText: "that's a Sabbath block, not meetings" });
+  const rel = classifyRelation({ sourceAssertionId: 'a-class' });
+  const resolved = buildResolvedContext({ assertions: [noRange], relations: [rel], tz: 'America/New_York', now: NOW });
+  const calendar = [{ title: 'Sabbath dinner block', startTime: '5:00 PM', endTime: '9:00 PM', allDay: false }];
+  const overrides = matchCalendarClassifications(resolved, { calendar, workBusy: [] });
+  assert.equal(overrides.length, 1);
+  assert.equal(overrides[0].startTime, '5:00 PM');
+  assert.equal(overrides[0].endTime, '9:00 PM');
+});
+
+test('matchCalendarClassifications: no overlapping interval and no matching title -> not applied at all (fail closed, never guesses)', () => {
+  const resolved = buildResolvedContext({ assertions: [classifyAssertion()], relations: [classifyRelation()], tz: 'America/New_York', now: NOW });
+  const workBusy = [{ start: '10:00 AM', end: '11:00 AM' }];
+  const calendar = [{ title: 'Unrelated dentist appointment', startTime: '2:00 PM', endTime: '3:00 PM', allDay: false }];
+  const overrides = matchCalendarClassifications(resolved, { calendar, workBusy });
+  assert.deepEqual(overrides, []);
+});
+
+test('matchCalendarClassifications: no classification relations at all -> empty array, no crash', () => {
+  const resolved = buildResolvedContext({ assertions: [], relations: [], tz: 'America/New_York', now: NOW });
+  assert.deepEqual(matchCalendarClassifications(resolved, { calendar: [], workBusy: [] }), []);
+});
+
+// ── matchCompletionCorrections ────────────────────────────────────────────
+// item 3b: "I did not complete the valuation conversation" must change the
+// canonical goal/commitment/workout projection every surface reads (see
+// store/commitments.js's listActive, which is this function's real
+// production caller) — not just be resolvable via getCompletionState.
+
+function completionAssertion(overrides = {}) {
+  return assertion({ id: 'a-completion', subject: 'user', objectValue: 'the valuation conversation', rawText: 'I did not complete the valuation conversation', ...overrides });
+}
+function completionRelation(overrides = {}) {
+  return relation({
+    id: 'r-completion', sourceAssertionId: 'a-completion', targetType: 'commitment', targetId: 'the_valuation_conversation',
+    relationship: 'completes', permittedLanguage: 'not completed', createdAt: NOW.toISOString(), ...overrides,
+  });
+}
+
+test('matchCompletionCorrections: unambiguous match against an item never explicitly completed -> override applies', () => {
+  const resolved = buildResolvedContext({ assertions: [completionAssertion()], relations: [completionRelation()], tz: 'America/New_York', now: NOW });
+  const items = [
+    { id: 'c1', title: 'Have the valuation conversation with the broker', completedAt: null },
+    { id: 'c2', title: 'Go for a run', completedAt: null },
+  ];
+  const overrides = matchCompletionCorrections(resolved, { items, targetType: 'commitment' });
+  assert.equal(overrides.size, 1);
+  assert.equal(overrides.get('c1').completed, false);
+  assert.equal(overrides.has('c2'), false);
+});
+
+test('matchCompletionCorrections: a LATER authoritative completion supersedes the correction', () => {
+  const resolved = buildResolvedContext({ assertions: [completionAssertion()], relations: [completionRelation()], tz: 'America/New_York', now: NOW });
+  const items = [{ id: 'c1', title: 'Have the valuation conversation with the broker', completedAt: new Date(NOW.getTime() + 3600000).toISOString() }];
+  const overrides = matchCompletionCorrections(resolved, { items, targetType: 'commitment' });
+  assert.equal(overrides.size, 0, 'a completion recorded AFTER the correction must win — no override');
+});
+
+test('matchCompletionCorrections: a completion recorded BEFORE the correction does not supersede it', () => {
+  const resolved = buildResolvedContext({ assertions: [completionAssertion()], relations: [completionRelation()], tz: 'America/New_York', now: NOW });
+  const items = [{ id: 'c1', title: 'Have the valuation conversation with the broker', completedAt: new Date(NOW.getTime() - 3600000).toISOString() }];
+  const overrides = matchCompletionCorrections(resolved, { items, targetType: 'commitment' });
+  assert.equal(overrides.size, 1);
+  assert.equal(overrides.get('c1').completed, false);
+});
+
+test('matchCompletionCorrections: ambiguous match (two equally-scoring candidates) -> no override for either, never guesses', () => {
+  const resolved = buildResolvedContext({ assertions: [completionAssertion()], relations: [completionRelation()], tz: 'America/New_York', now: NOW });
+  const items = [
+    { id: 'c1', title: 'the valuation conversation', completedAt: null },
+    { id: 'c2', title: 'the valuation conversation', completedAt: null },
+  ];
+  const overrides = matchCompletionCorrections(resolved, { items, targetType: 'commitment' });
+  assert.equal(overrides.size, 0);
+});
+
+test('matchCompletionCorrections: no matching text at all -> empty map', () => {
+  const resolved = buildResolvedContext({ assertions: [completionAssertion()], relations: [completionRelation()], tz: 'America/New_York', now: NOW });
+  const items = [{ id: 'c1', title: 'Buy groceries', completedAt: null }];
+  const overrides = matchCompletionCorrections(resolved, { items, targetType: 'commitment' });
+  assert.equal(overrides.size, 0);
+});
+
+test('matchCompletionCorrections: wrong targetType never matches (a "goal" correction does not apply to commitment items)', () => {
+  const resolved = buildResolvedContext({ assertions: [completionAssertion()], relations: [completionRelation({ targetType: 'goal' })], tz: 'America/New_York', now: NOW });
+  const items = [{ id: 'c1', title: 'Have the valuation conversation with the broker', completedAt: null }];
+  const overrides = matchCompletionCorrections(resolved, { items, targetType: 'commitment' });
+  assert.equal(overrides.size, 0);
+});
+
+test('matchCompletionCorrections: no completion relations at all -> empty map, no crash', () => {
+  const resolved = buildResolvedContext({ assertions: [], relations: [], tz: 'America/New_York', now: NOW });
+  assert.equal(matchCompletionCorrections(resolved, { items: [{ id: 'c1', title: 'x' }], targetType: 'commitment' }).size, 0);
 });

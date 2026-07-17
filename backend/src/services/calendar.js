@@ -56,6 +56,14 @@ async function fetchCalendarEvents({ date } = {}) {
     const endTime = allDay ? null : formatTime(event.end?.dateTime, timeZone);
 
     return {
+      // Google's own stable event id — previously dropped here entirely, so
+      // no consumer could ever reference "this exact calendar event" (only
+      // its title, which can collide or get reworded). Threaded through so
+      // intelligence/context-resolver.js's matchCalendarClassifications can
+      // prefer an exact id match over fuzzy time/text matching when a
+      // future input path starts carrying one (see that function's doc
+      // comment for the current state — no input path populates one yet).
+      id: event.id || null,
       title: event.summary || 'Untitled',
       startTime,
       endTime,

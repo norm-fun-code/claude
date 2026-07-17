@@ -218,6 +218,21 @@ function createAnnotationsRouter() {
       }
       return result;
     }));
+    // Invalidation happens STRICTLY AFTER commit, and only because we got
+    // here at all (a rejected transaction throws out of the `await` above,
+    // so this line is unreached on rollback — never invalidates toward
+    // state that was never actually committed). bumpDurable (not bump) is
+    // used deliberately: it awaits the durable cross-instance write-through
+    // before this handler responds, so a request that immediately hits a
+    // DIFFERENT instance right after this one can't observe a version bump
+    // for context that instance's own connection hasn't seen committed yet
+    // — the exact race a prior version of this code had by calling
+    // invalidation.bump() from INSIDE persistCompiledContext, i.e. inside
+    // the still-open transaction, before COMMIT (see that function's doc
+    // comment in intelligence/context-compiler.js).
+    if (compiled.assertions.length) {
+      await require('../brain/invalidation').bumpDurable('context_assertion_change');
+    }
     if (retiredAnnotationId) {
       console.log(`[briefing/context] retraction retired prior annotation ${retiredAnnotationId}`);
     }

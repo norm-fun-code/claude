@@ -393,25 +393,52 @@ function rankActions(findings = [], { goals = [], latestByKey = {}, forecastStat
 
   // Durable user preferences (see intelligence/context-resolver.js's
   // 'action_type'/'changes_priority' relations, e.g. "don't recommend
-  // evening workouts") — drop any candidate whose title/detail plainly
-  // matches a preference the user stated. Word-overlap against the
-  // preference's own target words (its normalized targetId, de-underscored)
-  // — the same primitive used everywhere else in this codebase for matching
-  // generated text against stored context, so "evening workout" and
-  // "workouts in the evening" both match without a rigid action taxonomy.
+  // evening workouts" vs "I prefer morning workouts") — POLARITY decides the
+  // effect, not a blanket exclusion (the bug this fixes: "I prefer morning
+  // workouts" used to remove matching morning-workout actions, identically
+  // to an "avoid" preference, because polarity didn't exist yet). Word-
+  // overlap against the preference's own target words (its normalized
+  // targetId, de-underscored) — the same primitive used everywhere else in
+  // this codebase for matching generated text against stored context, so
+  // "evening workout" and "workouts in the evening" both match without a
+  // rigid action taxonomy.
+  //   avoid:   exclude the candidate entirely.
+  //   prefer:  boost its score (still ranked/scored normally, just favored).
+  //   require: boost it MORE STRONGLY than 'prefer' — a hard rule the user
+  //            explicitly stated gets treated as a much stronger signal than
+  //            an ordinary preference, but this is deliberately NOT a full
+  //            constraint solver over every alternative action (see the
+  //            harden-pass report: enforcing "require" as a true hard
+  //            constraint would need an action-type taxonomy this codebase
+  //            doesn't have — scoped down to "boost strongly" rather than
+  //            invent one).
+  //   neutral/unrecognized: no effect on ranking at all.
+  const PREF_MATCH_THRESHOLD = 0.4;
+  const PREF_BOOST = { prefer: 1.4, require: 3, avoid: 0, neutral: 1 };
   if (preferences.length) {
     const { overlapScore } = require('./context-semantics');
-    const PREF_MATCH_THRESHOLD = 0.4;
-    const before = candidates.length;
+    let excluded = 0, boosted = 0;
     for (let i = candidates.length - 1; i >= 0; i--) {
       const c = candidates[i];
       const text = `${c.title} ${c.detail || ''}`;
-      const conflicts = preferences.some((p) => overlapScore(text, p.targetId.replace(/_/g, ' ')) >= PREF_MATCH_THRESHOLD);
-      if (conflicts) candidates.splice(i, 1);
+      const matches = preferences.filter((p) => overlapScore(text, p.targetId.replace(/_/g, ' ')) >= PREF_MATCH_THRESHOLD);
+      if (!matches.length) continue;
+      // If ANY matching preference says avoid, exclude outright — a stated
+      // "don't" always wins over a coincidentally-also-matching "prefer" on
+      // the same candidate rather than netting them against each other.
+      if (matches.some((p) => p.direction === 'avoid')) {
+        candidates.splice(i, 1);
+        excluded += 1;
+        continue;
+      }
+      const strongest = matches.reduce((best, p) => Math.max(best, PREF_BOOST[p.direction] ?? 1), 1);
+      if (strongest > 1) {
+        c._preferenceBoost = strongest;
+        boosted += 1;
+      }
     }
-    if (candidates.length < before) {
-      console.log(`[leverage] ${before - candidates.length} candidate action(s) excluded by a durable user preference`);
-    }
+    if (excluded) console.log(`[leverage] ${excluded} candidate action(s) excluded by an "avoid" preference`);
+    if (boosted) console.log(`[leverage] ${boosted} candidate action(s) boosted by a "prefer"/"require" preference`);
   }
 
   // Score and de-dupe by title (keep strongest per unique action).
@@ -428,6 +455,10 @@ function rankActions(findings = [], { goals = [], latestByKey = {}, forecastStat
     if (verdict === 'confirmed') c.confidence = Math.min(0.95, c.confidence * 1.25);
 
     c.score = round(c.impact * c.confidence * c.ease, 4);
+
+    // Apply a "prefer"/"require" preference boost computed above (avoid was
+    // already excluded outright, before this loop even started).
+    if (c._preferenceBoost) c.score = round(c.score * c._preferenceBoost, 4);
 
     // Measured track record from the recommendation ledger. Suppression needs
     // repeated evidence (metric deltas are noisy) — one flat week is not a

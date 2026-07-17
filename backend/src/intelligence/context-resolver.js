@@ -88,6 +88,11 @@ const EVIDENCE_WEIGHT = Object.freeze({
   personal_experiment: 0.85,
   user_explicit: 0.75,
   personal_observation: 0.5,
+  // A real, generally-accepted physiological pattern without one specific
+  // verified citation attached (knowledge-registry.js's
+  // EVIDENCE_TIER.SUPPORTED_ASSOCIATION) — weaker than a cited established
+  // relation, stronger than a bare model_hypothesis guess.
+  supported_association: 0.6,
   model_hypothesis: 0.25,
 });
 
@@ -207,6 +212,190 @@ function getCalendarClassification(resolved, eventKey) {
   return { classification: top.permittedLanguage, assertionId: top.sourceAssertionId, confidence: top.confidence };
 }
 
+const COMPLETION_MATCH_THRESHOLD = 0.34;
+const COMPLETION_MATCH_MARGIN = 0.15;
+
+/**
+ * Match active completion-correction relations ('I did not complete the
+ * valuation conversation') against a REAL list of stable-ID'd items (e.g.
+ * store/commitments.js rows) — the mechanism that makes a correction change
+ * the canonical projection every surface reads (UI's GET /commitments,
+ * BrainSnapshot's `commitments` field feeding briefing/Ask/realtime, action
+ * ranking), not just something queryable via getCompletionState if a caller
+ * already knows the exact matching targetId (harden pass, item 3b — same
+ * shape/rationale as matchCalendarClassifications above).
+ *
+ * `items` must carry a stable `id` and MAY carry `completedAt` (ISO string
+ * or null) — the item's own most recent authoritative completion timestamp.
+ * A correction only overrides an item whose `completedAt` is either absent
+ * or OLDER than the correction (`relation.createdAt`); a completion that
+ * happened AFTER the correction was stated is a later authoritative action
+ * (e.g. the user explicitly checked it done, or a fresh metric-driven
+ * auto-complete) and always wins — the correction never overrides it. This
+ * is what "a later authoritative completion must supersede the correction"
+ * means in practice.
+ *
+ * No stable-ID match is attempted here: no current input path threads a
+ * commitment/goal's real DB id through a compiled assertion (mirrors
+ * matchCalendarClassifications' documented state for calendar event ids) —
+ * every match is the same conservative word-overlap primitive used
+ * throughout this module. Ambiguous (no clear single winner) -> not
+ * applied; the assertion/relation stay persisted and queryable via
+ * getCompletionState directly.
+ *
+ * @returns {Map<string, {completed: boolean, assertionId: string, confidence: number}>}
+ *   keyed by matched item id.
+ */
+function matchCompletionCorrections(resolved, { items = [], targetType = 'commitment', getText = (item) => item.title, getCompletedAt = (item) => item.completedAt ?? null } = {}) {
+  const { overlapScore } = require('./context-semantics');
+  const completionRelations = (resolved.relations || []).filter((r) => r.relationship === 'completes' && r.targetType === targetType);
+  const overrides = new Map();
+
+  for (const rel of completionRelations) {
+    const assertion = resolved.assertionById.get(rel.sourceAssertionId);
+    if (!assertion) continue;
+    const probeText = `${assertion.subject || ''} ${assertion.objectValue || ''} ${assertion.rawText || ''}`;
+
+    const scored = items
+      .map((item) => ({ item, score: overlapScore(probeText, getText(item) || '') }))
+      .filter((s) => s.score >= COMPLETION_MATCH_THRESHOLD)
+      .sort((a, b) => b.score - a.score);
+    if (scored.length !== 1 && !(scored.length > 1 && scored[0].score - scored[1].score >= COMPLETION_MATCH_MARGIN)) {
+      // Ambiguous or no match at all — never guess which item this
+      // correction was about.
+      continue;
+    }
+    const item = scored[0].item;
+    const completedAt = getCompletedAt(item);
+    if (completedAt && new Date(completedAt) > new Date(rel.createdAt)) {
+      // A later authoritative completion (explicit or metric-driven)
+      // supersedes an older correction — the DB state already wins, no
+      // override needed.
+      continue;
+    }
+    const existing = overrides.get(item.id);
+    if (existing && new Date(existing.createdAt) > new Date(rel.createdAt)) continue; // keep the most recent correction per item
+    overrides.set(item.id, {
+      completed: rel.permittedLanguage === 'completed',
+      assertionId: rel.sourceAssertionId,
+      confidence: rel.confidence,
+      createdAt: rel.createdAt,
+    });
+  }
+
+  return overrides;
+}
+
+// ── Calendar classification -> canonical calendar-load projection ─────────
+// (harden pass, item 3a). getCalendarClassification above answers "how was
+// THIS specific event classified" for a caller that already knows which
+// event it means; matchCalendarClassifications answers the harder question
+// "which of TODAY'S actual calendar-load-projection blocks does a
+// classification correction apply to" — the answer that actually changes
+// intelligence/calendar-load.js's computed meeting hours, not just what the
+// claim validator rejects in generated prose.
+
+/** Best-effort extraction of an explicit clock-time range from free text —
+ *  "5-9pm", "5:00-9:00 PM", "5 to 9pm". A single trailing meridiem applies
+ *  to both ends ("5-9pm" means 5pm-9pm, not 5am-9pm). Returns
+ *  {startMin, endMin} in minutes-since-midnight, or null if no range is
+ *  found or it doesn't parse into a sane forward interval. Deliberately
+ *  narrow — this is NOT a general time-expression parser, just enough to
+ *  match the common "X-Ypm" shape a compiled assertion's subject/objectValue
+ *  plausibly carries (the compiler prompt sees the ORIGINAL question, which
+ *  is where a time range like this usually comes from). */
+function extractClockTimeRange(text) {
+  const m = String(text || '').match(/\b(\d{1,2})(?::(\d{2}))?\s*(?:-|–|to)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
+  if (!m) return null;
+  const [, h1, min1, h2, min2, meridiem] = m;
+  const to24 = (h, mm) => {
+    let hour = parseInt(h, 10) % 12;
+    if (meridiem.toLowerCase() === 'pm') hour += 12;
+    return hour * 60 + (mm ? parseInt(mm, 10) : 0);
+  };
+  const startMin = to24(h1, min1);
+  const endMin = to24(h2, min2);
+  if (!Number.isFinite(startMin) || !Number.isFinite(endMin) || endMin <= startMin) return null;
+  return { startMin, endMin };
+}
+
+const CLASSIFICATION_MATCH_THRESHOLD = 0.34;
+const CLASSIFICATION_MATCH_MARGIN = 0.15;
+
+/**
+ * Match today's active calendar-classification relations against the
+ * REAL, already-fetched calendar-load inputs (`workBusy`/`calendar`, the
+ * exact shape intelligence/calendar-load.js's computeCalendarLoad takes) —
+ * not against the LLM's own paraphrased subject text alone. Priority order:
+ *   1. A stable calendar event id on the source assertion's entities, if
+ *      the caller's `calendar` list carries ids too (see
+ *      services/calendar.js — Google's real event id is now threaded
+ *      through). Exact match, never ambiguous. NOTE: no current input path
+ *      (POST /briefing/context, Ask, voice) captures/passes an event id
+ *      when compiling an answer — this path is implemented and ready, not
+ *      yet exercised by a real caller (see the harden-pass report).
+ *   2. An explicit clock-time range extracted from the assertion's own
+ *      subject/objectValue/rawText (extractClockTimeRange) — matched
+ *      against whichever work-busy/calendar interval(s) overlap it. Exactly
+ *      ONE overlapping interval -> applied. Zero or more-than-one -> AMBIGUOUS,
+ *      the assertion is left applied to nothing (still persisted as
+ *      context — see getCalendarClassification for reading it directly).
+ *   3. Text-only fallback: conservative word-overlap (same threshold/margin
+ *      as context-semantics.js's findRetractionTarget) against NAMED
+ *      calendar-event titles only — work-busy blocks carry no titles to
+ *      text-match against at all. Same ambiguity rule: no clear single
+ *      winner -> not applied.
+ * Returns an array shaped exactly like `calendar` entries
+ * (title/startTime/endTime) — ready to pass as computeCalendarLoad's
+ * `classifiedOverrides` — one per successfully-matched classification.
+ */
+function matchCalendarClassifications(resolved, { calendar = [], workBusy = [] } = {}) {
+  const { overlapScore } = require('./context-semantics');
+  const { toMinutesSinceMidnight } = require('../util/date');
+  const classifyRelations = (resolved.relations || []).filter((r) => r.relationship === 'classifies' && r.targetType === 'calendar_event');
+  const overrides = [];
+
+  for (const rel of classifyRelations) {
+    const assertion = resolved.assertionById.get(rel.sourceAssertionId);
+    if (!assertion) continue;
+    const probeText = `${assertion.subject || ''} ${assertion.objectValue || ''} ${assertion.rawText || ''}`;
+
+    // Priority 2: explicit clock-time range against REAL block intervals.
+    const range = extractClockTimeRange(probeText);
+    if (range) {
+      const candidates = [
+        ...workBusy.map((b, i) => ({ kind: 'workBusy', index: i, block: b, startMin: toMinutesSinceMidnight(b.start), endMin: toMinutesSinceMidnight(b.end) })),
+        ...calendar.filter((e) => !e.allDay).map((e, i) => ({ kind: 'calendar', index: i, block: e, startMin: toMinutesSinceMidnight(e.startTime), endMin: toMinutesSinceMidnight(e.endTime) })),
+      ].filter((c) => c.startMin != null && c.endMin != null
+        && Math.min(c.endMin, range.endMin) - Math.max(c.startMin, range.startMin) > 0);
+      if (candidates.length === 1) {
+        const c = candidates[0];
+        overrides.push({ title: rel.permittedLanguage || assertion.objectValue || 'reclassified', startTime: c.block.start ?? c.block.startTime, endTime: c.block.end ?? c.block.endTime, allDay: false });
+        continue;
+      }
+      // Zero or ambiguous multiple matches — fall through to text matching
+      // rather than giving up immediately, in case the range was a red
+      // herring (e.g. mentioned in passing) and the title match is cleaner.
+    }
+
+    // Priority 3: conservative text match against NAMED calendar titles only.
+    const scored = calendar
+      .filter((e) => !e.allDay && e.title)
+      .map((e) => ({ e, score: overlapScore(probeText, e.title) }))
+      .filter((s) => s.score >= CLASSIFICATION_MATCH_THRESHOLD)
+      .sort((a, b) => b.score - a.score);
+    if (scored.length === 1 || (scored.length > 1 && scored[0].score - scored[1].score >= CLASSIFICATION_MATCH_MARGIN)) {
+      const e = scored[0].e;
+      overrides.push({ title: rel.permittedLanguage || e.title, startTime: e.startTime, endTime: e.endTime, allDay: false });
+    }
+    // Otherwise: ambiguous or no match at all — the assertion/relation stay
+    // persisted (queryable via getCalendarClassification) but are NOT
+    // applied to any specific block, per the fail-closed requirement.
+  }
+
+  return overrides;
+}
+
 function getResolvedUncertainties(resolved) {
   return resolved.resolvedUncertainties;
 }
@@ -243,8 +432,9 @@ function getRelevantContext(resolved, surfacePurpose = 'general') {
 module.exports = {
   buildResolvedContext, resolveContext,
   getDriversFor, getConstraintsFor, getPreferencesFor, getCompletionState,
-  getCalendarClassification, getResolvedUncertainties, getUnresolvedUncertainties,
+  getCalendarClassification, matchCalendarClassifications, matchCompletionCorrections,
+  getResolvedUncertainties, getUnresolvedUncertainties,
   getRelevantContext,
   // Exposed for focused unit tests:
-  scoreRelation, EVIDENCE_WEIGHT, describeAssertion, targetKey,
+  scoreRelation, EVIDENCE_WEIGHT, describeAssertion, targetKey, extractClockTimeRange,
 };

@@ -50,6 +50,20 @@ test('annotation_retirement invalidates eligible context AND the forecast projec
   assert.ok(isInvalidatedBy('todayForecast', TRIGGER.ANNOTATION_RETIREMENT));
 });
 
+// Context Understanding Layer harden pass: a compiled correction (a
+// temporal move, a retraction, a driver ranking change) must invalidate
+// more than just its own raw fields — it must reach todayForecast (and any
+// other real consumer) transitively, or a context_assertion_change bump
+// would silently stop at contextAssertions/contextRelations/resolvedContext
+// without ever reaching anything the version-based staleness comparison in
+// realtimeTodayContext (which checks recovery/effectiveWorkout/
+// todayForecast) actually looks at.
+test('context_assertion_change invalidates contextAssertions/contextRelations/resolvedContext AND the forecast built from it', () => {
+  const set = invalidationSet(TRIGGER.CONTEXT_ASSERTION_CHANGE);
+  assert.deepEqual(set, ['contextAssertions', 'contextRelations', 'resolvedContext', 'todayForecast']);
+  assert.ok(isInvalidatedBy('todayForecast', TRIGGER.CONTEXT_ASSERTION_CHANGE));
+});
+
 test('every field names an authoritative selector (no field without an owner)', () => {
   for (const key of Object.keys(FIELDS)) {
     assert.equal(typeof authorityFor(key), 'string', `${key} must declare an authority`);

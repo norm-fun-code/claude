@@ -104,7 +104,7 @@ const sumMinutes = (intervals) => intervals.reduce((acc, [s, e]) => acc + (e - s
  *   `degraded` is true. Callers MUST check `degraded` and suppress any
  *   question or claim built from the numeric fields when it's true.
  */
-function computeCalendarLoad({ workBusy = [], calendar = [], sourcesAvailable = {} } = {}) {
+function computeCalendarLoad({ workBusy = [], calendar = [], sourcesAvailable = {}, classifiedOverrides = [] } = {}) {
   const workBusyAvailable = sourcesAvailable.workBusy !== false;
   const calendarAvailable = sourcesAvailable.calendar !== false;
 
@@ -119,8 +119,18 @@ function computeCalendarLoad({ workBusy = [], calendar = [], sourcesAvailable = 
     ([s, e]) => s <= ALL_DAY_START_MIN && e >= ALL_DAY_END_MIN
   );
 
+  // classifiedOverrides — the Context Understanding Layer's matched
+  // calendar-classification corrections (see
+  // intelligence/context-resolver.js's matchCalendarClassifications), e.g.
+  // "that's a Sabbath block, not meetings" matched to the specific
+  // work-busy interval it describes. Shaped exactly like a `calendar` entry
+  // (title/startTime/endTime) so it nets out of meeting load through the
+  // IDENTICAL mechanism a real named personal-calendar event already uses —
+  // this is what makes a classification correction change the actual
+  // computed meeting hours, not just make the claim validator reject bad
+  // prose describing the old (wrong) number.
   const namedEvents = calendarAvailable
-    ? calendar
+    ? [...calendar, ...classifiedOverrides]
         .filter((e) => !e.allDay && e.startTime && e.endTime)
         .map((e) => ({ title: e.title, interval: toInterval(e, 'startTime', 'endTime') }))
         .filter((e) => e.interval)

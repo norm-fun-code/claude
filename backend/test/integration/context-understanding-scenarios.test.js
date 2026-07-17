@@ -19,8 +19,9 @@ const llm = require('../../src/llm');
 const contextAssertionsStore = require('../../src/store/contextAssertions');
 const {
   resolveContext, getDriversFor, getConstraintsFor, getPreferencesFor,
-  getCompletionState, getCalendarClassification,
+  getCompletionState, getCalendarClassification, matchCalendarClassifications,
 } = require('../../src/intelligence/context-resolver');
+const { computeCalendarLoad } = require('../../src/intelligence/calendar-load');
 const { checkResolvedContextConflicts } = require('../../src/brain/claimValidator');
 const { rankActions } = require('../../src/intelligence/leverage');
 
@@ -118,6 +119,24 @@ test('scenario 3 — calendar classification: "that\'s a Sabbath block, not meet
     { resolvedContext: resolved }
   );
   assert.ok(violations.some((v) => v.check === 'calendar_classification'));
+
+  // Harden pass, item 3a: the correction must change the ACTUAL computed
+  // calendar-load projection (intelligence/calendar-load.js), not merely be
+  // queryable via getCalendarClassification's fixture-shaped return or
+  // rejected in generated prose. Real work-busy blocks: a 5-9pm block
+  // (matching the classified subject's clock-time range) plus a genuinely
+  // unrelated 9-11am block of real meetings.
+  const workBusy = [
+    { start: '9:00 AM', end: '11:00 AM' }, // 2h of real, unrelated meetings
+    { start: '5:00 PM', end: '9:00 PM' }, // the reclassified Sabbath block
+  ];
+  const withoutOverride = computeCalendarLoad({ workBusy, calendar: [] });
+  assert.equal(withoutOverride.meetingHours, 6, 'sanity: without the correction, the block reads as 6h of meeting load');
+
+  const classifiedOverrides = matchCalendarClassifications(resolved, { calendar: [], workBusy });
+  assert.equal(classifiedOverrides.length, 1, 'expected exactly one matched classification override');
+  const withOverride = computeCalendarLoad({ workBusy, calendar: [], classifiedOverrides });
+  assert.equal(withOverride.meetingHours, 2, 'the reclassified block must be netted out, leaving only the genuine 2h of meetings — the ACTUAL computed number, not just resolvable classification metadata');
 });
 
 // ── 4. Completion correction ─────────────────────────────────────────────
@@ -140,6 +159,40 @@ test('scenario 4 — completion correction: "I did not complete the valuation co
     { resolvedContext: resolved, goals: [{ text: `${TEST_MARKER} the valuation conversation`, achieved: false }] }
   );
   assert.ok(violations.some((v) => v.check === 'completion_state_resolved'));
+});
+
+// Harden pass, item 3b: the correction must change the ACTUAL canonical
+// commitment projection every surface reads (store/commitments.js's
+// listActive — the one selector BrainSnapshot/briefing/Ask/realtime/action
+// ranking all share), not merely be resolvable via getCompletionState. This
+// reproduces the real failure mode: a commitment gets wrongly marked done
+// (an explicit markDone, or the metric-driven auto-complete in
+// notify/commitments.js acting on stale/coincidental evidence), and the
+// user's correction must resurrect it back into the active list.
+test('scenario 4b — completion correction changes the ACTUAL store/commitments.js listActive() projection, not just getCompletionState', async () => {
+  const commitmentsStore = require('../../src/store/commitments');
+  const title = `${TEST_MARKER} have the valuation conversation with the broker`;
+  const created = await commitmentsStore.create({ title, source: 'test' });
+  await commitmentsStore.markDone(created.id);
+  try {
+    const beforeCorrection = await commitmentsStore.listActive({ limit: 50 });
+    assert.ok(!beforeCorrection.some((c) => c.id === created.id), 'sanity: the wrongly-completed commitment is absent from the active list before any correction');
+
+    mockCompile([{
+      assertionType: 'completion', subject: `${TEST_MARKER} the valuation conversation`, predicate: 'is',
+      objectValue: 'not complete', concepts: [], domains: ['commitments'], eventStatus: 'negated',
+      temporalRef: 'today', explicitDate: '', correctsPriorText: '', confidence: 0.9,
+    }]);
+    const res = await postContext(`${TEST_MARKER} I did not complete the valuation conversation`);
+    assert.equal(res.status, 200);
+
+    const afterCorrection = await commitmentsStore.listActive({ limit: 50 });
+    const resurrected = afterCorrection.find((c) => c.id === created.id);
+    assert.ok(resurrected, 'the corrected commitment must reappear in the ACTUAL canonical listActive() projection, not just be queryable via getCompletionState');
+    assert.equal(resurrected.status, 'open');
+  } finally {
+    await db.query(`DELETE FROM commitments WHERE id = $1`, [created.id]);
+  }
 });
 
 // ── 5. Constraint (skipped workout) ──────────────────────────────────────

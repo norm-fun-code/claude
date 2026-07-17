@@ -92,16 +92,90 @@ function invalidateCommitments() {
   try { require('../brain/invalidation').bump('commitment_change'); } catch { /* bus not loaded */ }
 }
 
-/** Open commitments, soonest-due first (untimed last), newest tie-break. For the card. */
-async function listActive({ limit = 20 } = {}) {
+// How far back a 'done' commitment is even considered as a completion-
+// correction target — bounded deliberately (not a full-table scan): a
+// correction naming something completed days ago is vanishingly unlikely,
+// and every candidate row here gets matched against every active
+// completion-correction relation on each listActive() call.
+const CORRECTION_LOOKBACK_HOURS = 48;
+
+/** 'done' commitments within CORRECTION_LOOKBACK_HOURS — candidates a fresh
+ *  completion correction ("I did not complete X") could plausibly reverse. */
+async function recentlyDone({ limit = 50 } = {}) {
   const { rows } = await query(
     `SELECT * FROM commitments
-      WHERE status = 'open'
-      ORDER BY due_at ASC NULLS LAST, created_at DESC
-      LIMIT $1`,
-    [limit]
+      WHERE status = 'done' AND completed_at >= now() - ($1 * interval '1 hour')
+      ORDER BY completed_at DESC
+      LIMIT $2`,
+    [CORRECTION_LOOKBACK_HOURS, limit]
   );
   return rows;
+}
+
+/**
+ * Overlay any active, unsuperseded 'not completed' correction onto `rows` —
+ * a commitment marked done (an explicit markDone, or the metric-driven
+ * auto-complete in notify/commitments.js acting on stale/coincidental
+ * evidence) must stop reading as done everywhere the canonical
+ * listActive() projection is consumed (the mobile commitments card,
+ * BrainSnapshot -> briefing/Ask/realtime, action ranking) once the user
+ * explicitly says otherwise (harden pass, item 3b) — not merely be
+ * queryable via getCompletionState directly.
+ *
+ * Read-only: NEVER mutates the stored `status` column. A later, real
+ * markDone() naturally wins again on the next call without any race,
+ * because matchCompletionCorrections compares timestamps itself — this
+ * function doesn't need its own supersession logic.
+ *
+ * Best-effort: a resolver failure must never break the commitments card;
+ * on error this returns `rows` unchanged.
+ */
+async function applyCompletionCorrections(rows) {
+  if (!rows.length) return rows;
+  try {
+    const { resolveContext, matchCompletionCorrections } = require('../intelligence/context-resolver');
+    const resolved = await resolveContext({});
+    const overrides = matchCompletionCorrections(resolved, {
+      items: rows, targetType: 'commitment',
+      getText: (r) => r.title, getCompletedAt: (r) => r.completed_at,
+    });
+    if (!overrides.size) return rows;
+    return rows.map((r) => {
+      const ov = overrides.get(r.id);
+      if (!ov || ov.completed !== false || r.status !== 'done') return r;
+      return { ...r, status: 'open', completion_corrected: true };
+    });
+  } catch (e) {
+    console.error('[commitments] applyCompletionCorrections failed:', e.message);
+    return rows;
+  }
+}
+
+/** Open commitments, soonest-due first (untimed last), newest tie-break —
+ *  PLUS any recently-done commitment a completion correction resurrected
+ *  back to effectively-open (see applyCompletionCorrections). For the card,
+ *  and the ONE canonical read every other surface (BrainSnapshot, Ask,
+ *  realtime, action ranking) shares. */
+async function listActive({ limit = 20 } = {}) {
+  const [{ rows: openRows }, doneRows] = await Promise.all([
+    query(
+      `SELECT * FROM commitments
+        WHERE status = 'open'
+        ORDER BY due_at ASC NULLS LAST, created_at DESC
+        LIMIT $1`,
+      [limit]
+    ),
+    recentlyDone(),
+  ]);
+  const corrected = await applyCompletionCorrections([...openRows, ...doneRows]);
+  const active = corrected.filter((r) => r.status === 'open');
+  active.sort((a, b) => {
+    if (a.due_at && b.due_at) return new Date(a.due_at) - new Date(b.due_at);
+    if (a.due_at) return -1;
+    if (b.due_at) return 1;
+    return new Date(b.created_at) - new Date(a.created_at);
+  });
+  return active.slice(0, limit);
 }
 
 /**

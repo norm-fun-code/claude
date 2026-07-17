@@ -115,7 +115,7 @@ const WISDOM_SYSTEM =
   '- notionQuote: pick a self-contained, meaningful line — never a title, never an intro that trails off (e.g. "Rather than trying to find someone who will:"). If the best idea spans a sentence, quote the whole sentence.\n' +
   '- quoteInsight / notionInsight: first sentence draws out the core idea as lived wisdom. Second sentence makes the connection to their actual data explicit — name the specific state or pattern that makes this quote land right now (e.g. "energy running low this week makes this idea about sustainable effort particularly timely" or "with recovery in the yellow band and cold shower adherence slipping this week, this hits differently"). If wellbeing data shows "no recent check-in data", return empty string for BOTH quoteInsight and notionInsight — a quote with no data connection is not shown. Connect through their wellbeing/health state (mood/energy/focus, recovery band, habits) — speak in plain human terms (low/ok/high, settled/slipping), like a friend who noticed, NEVER a raw number or "X/5" — that reads clinical, not like someone who actually knows them. Do NOT reference their calendar, specific tasks, schedule, "today", or their job/profession. Do NOT cite any dollar amount, net-worth figure, or financial percentage here — even if the quote is about money, make the connection qualitative (e.g. "the optionality you\'re building"), never with a computed number.';
 
-function buildChiefBriefPrompt(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '', attentionContext = '', openGoals = [], recoveryDriversContext = '', calendarSourcesAvailable = { workBusy: true, calendar: true }, answeredQuestionsContext = '') {
+function buildChiefBriefPrompt(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '', attentionContext = '', openGoals = [], recoveryDriversContext = '', calendarSourcesAvailable = { workBusy: true, calendar: true }, answeredQuestionsContext = '', classifiedOverrides = []) {
   // Input size wasn't the timeout cause (the proven Apps Script sends 15K/email
   // and is fine) — OUTPUT length was. So allow a generous 15K/email like that
   // setup, with a total budget as a safety net against a huge unread pile.
@@ -148,8 +148,17 @@ function buildChiefBriefPrompt(emailData, currentDay, workoutPlan, calendarEvent
   // mirrored onto the work calendar's titleless free/busy feed as a separate
   // anonymous chunk — without this the model summed it into "8.5h of
   // meetings" on top of the personal-calendar entry for the same commitment).
+  // classifiedOverrides — user calendar-classification corrections ("that's
+  // a Sabbath block, not meetings") already matched to a specific
+  // work-busy/calendar interval by context-resolver.js's
+  // matchCalendarClassifications (harden pass, item 3a). Passed straight
+  // through to computeCalendarLoad, which nets them out of meeting load via
+  // the identical mechanism a real named personal-calendar event already
+  // uses — this is what makes the correction change the ACTUAL computed
+  // meeting hours the model sees below, not just prose the claim validator
+  // rejects after the fact.
   const calendarLoad = computeCalendarLoad({
-    workBusy: workBusyBlocks, calendar: calendarEvents, sourcesAvailable: calendarSourcesAvailable,
+    workBusy: workBusyBlocks, calendar: calendarEvents, sourcesAvailable: calendarSourcesAvailable, classifiedOverrides,
   });
   const allDayBlock = calendarLoad.isAllDayBlocked;
   const openWindows = calendarLoad.openWindows;
@@ -580,7 +589,23 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
   // Apply the same hard filter as generateEmailBriefs so automated senders
   // never reach the main briefing LLM call either.
   const filteredEmails = filterActionableEmails(emailData);
-  const prompt = buildChiefBriefPrompt(filteredEmails, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusyBlocks, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext, attentionContext, openGoals, recoveryDriversContext, calendarSourcesAvailable, answeredQuestionsContext);
+
+  // Match any active calendar-classification correction ("that's a Sabbath
+  // block, not meetings") against TODAY's real calendar/workBusy intervals
+  // off the SAME resolvedContext already carried on snapshotFacts for claim
+  // validation — no extra fetch/param needed at either call site. Best-effort:
+  // a matching failure must never block brief generation, it just means the
+  // correction isn't reflected in this build's meeting-load number (the claim
+  // validator's checkResolvedContextConflicts still catches stale prose).
+  let classifiedOverrides = [];
+  if (snapshotFacts?.resolvedContext) {
+    try {
+      classifiedOverrides = require('../intelligence/context-resolver')
+        .matchCalendarClassifications(snapshotFacts.resolvedContext, { calendar: calendarEvents, workBusy: workBusyBlocks });
+    } catch (e) { console.error('[chief-brief] matchCalendarClassifications failed:', e.message); }
+  }
+
+  const prompt = buildChiefBriefPrompt(filteredEmails, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusyBlocks, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext, attentionContext, openGoals, recoveryDriversContext, calendarSourcesAvailable, answeredQuestionsContext, classifiedOverrides);
 
   // One correlation ID per build, threaded through every attempt's log lines
   // so a failure can be traced across attempts without ever logging content.

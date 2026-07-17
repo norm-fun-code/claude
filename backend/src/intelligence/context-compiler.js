@@ -45,6 +45,13 @@ const { knowledgeRelationsForConcept, EVIDENCE_TIER, KNOWLEDGE_REGISTRY_VERSION 
 
 const COMPILER_VERSION = '1.0.0';
 
+// Fallback expiry window (hours) for a metric-driver relation whose
+// knowledge-registry entry doesn't state its own effectWindowHours — see
+// deriveRelations' fail-closed temporal handling below. Every metric
+// relation gets a real, finite expiresAt; this is the backstop, never a
+// substitute for a registry entry stating its own window.
+const DEFAULT_METRIC_RELATION_WINDOW_HOURS = 24;
+
 const ASSERTION_TYPES = [
   'event', 'state', 'preference', 'constraint', 'plan', 'decision',
   'correction', 'explanation', 'classification', 'completion',
@@ -52,6 +59,12 @@ const ASSERTION_TYPES = [
 const EVENT_STATUSES = ['occurred', 'planned', 'ongoing', 'completed', 'negated', 'retracted', 'superseded'];
 const TEMPORAL_REFS = ['last_night', 'today', 'yesterday', 'this_morning', 'ongoing', 'future', 'unspecified', 'explicit_date'];
 const DOMAINS = ['health', 'wellbeing', 'calendar', 'wealth', 'habits', 'goals', 'commitments', 'workouts', 'other'];
+// Explicit preference polarity (harden pass, item 4) — meaningful only for
+// assertionType 'preference'; every other assertion carries 'neutral'. Not
+// every preference is an exclusion: "I prefer morning workouts" must BOOST
+// matching actions, "don't recommend evening workouts" must EXCLUDE them —
+// treating both as the same "avoid" relation was the bug this fixes.
+const PREFERENCE_POLARITIES = ['prefer', 'avoid', 'require', 'neutral'];
 
 // ── Structured Outputs schema ───────────────────────────────────────────────
 // Same convention as briefing-ai.js's CHIEF_JSON_SCHEMA: additionalProperties
@@ -79,11 +92,22 @@ const COMPILE_JSON_SCHEMA = {
           temporalRef: { type: 'string', enum: TEMPORAL_REFS },
           explicitDate: { type: 'string' }, // 'YYYY-MM-DD' or '' when temporalRef !== 'explicit_date'
           correctsPriorText: { type: 'string' }, // best-effort quote/paraphrase of what this corrects, else ''
+          // Meaningful only when assertionType is 'preference' — 'neutral'
+          // for every other assertion type.
+          polarity: { type: 'string', enum: PREFERENCE_POLARITIES },
+          // The exact clause/span of the ORIGINAL text this SPECIFIC
+          // assertion is drawn from (a verbatim substring, not a
+          // paraphrase) — see reconcileEventStatus below, which validates
+          // negation/retraction against THIS span rather than the whole
+          // message, so a compound statement ("I didn't drink, but I ate a
+          // late meal") negates only the assertion whose own span contains
+          // the negation cue.
+          evidenceSpan: { type: 'string' },
           confidence: { type: 'number' },
         },
         required: [
           'assertionType', 'subject', 'predicate', 'objectValue', 'concepts', 'domains',
-          'eventStatus', 'temporalRef', 'explicitDate', 'correctsPriorText', 'confidence',
+          'eventStatus', 'temporalRef', 'explicitDate', 'correctsPriorText', 'evidenceSpan', 'polarity', 'confidence',
         ],
       },
     },
@@ -113,6 +137,8 @@ Fields:
 - eventStatus: occurred|planned|ongoing|completed|negated|retracted|superseded. NEGATED means the text explicitly says something did NOT happen ("I didn't drink") — this is different from simply not mentioning it. RETRACTED means the user is asking to disregard/forget something they said earlier ("forget what I said about...", "ignore that", "scratch that").
 - temporalRef: when this happened/applies, from the user's own wording — last_night | today | yesterday | this_morning | ongoing | future | unspecified | explicit_date (only when the user names a specific day, e.g. "Thursday" — put that day's date, if inferable from context, in explicitDate as YYYY-MM-DD, else leave explicitDate empty and use temporalRef "unspecified").
 - correctsPriorText: if this statement corrects, retracts, or supersedes something the user likely said before (a temporal correction, a classification change, a completion correction, an explicit retraction), give your best short paraphrase of what it corrects so the caller can match it against recent history. Empty string if this is not a correction of anything.
+- polarity: ONLY meaningful when assertionType is "preference" — otherwise always "neutral". prefer: the user wants MORE of this ("I prefer morning workouts", "I like scheduling deep work early"). avoid: the user wants LESS of or NO this ("don't recommend evening workouts", "avoid scheduling calls after 5pm"). require: the user stated a HARD, non-negotiable rule, not just a leaning ("never schedule anything before 8am", "I must have Fridays free") — use this sparingly, only for genuinely absolute wording. neutral: not a preference, or the direction genuinely can't be told.
+- evidenceSpan: the EXACT verbatim clause of the input text this specific assertion is drawn from — copy it character-for-character from the input, do not paraphrase. For a compound statement with multiple distinct facts ("I didn't drink, but I ate a late meal"), each assertion's evidenceSpan must be ONLY its own clause ("I didn't drink" for the alcohol assertion, "I ate a late meal" for the late-meal assertion) — never the whole sentence for every assertion. This is what lets negation/retraction in one clause avoid wrongly applying to a sibling assertion drawn from a different clause of the same message.
 - confidence: your own 0-1 confidence in this extraction.
 
 Be conservative: only extract what the text actually supports. Never invent a cause, a completion state, or a preference the text doesn't state. A plain observational note with no clear structure still gets ONE assertion (assertionType "state", predicate/objectValue capturing it plainly) — never return zero assertions for non-empty text.`;
@@ -190,6 +216,14 @@ function resolveTemporalWindow({ temporalRef, explicitDate, domains = [] }, { tz
     return { effectiveStart: start, effectiveEnd: end };
   }
   if (temporalRef === 'today' || temporalRef === 'ongoing') {
+    // 'ongoing's effectiveEnd is deliberately pinned to compile-time `now`,
+    // not left open-ended — this IS the lifecycle/refresh policy for a
+    // still-in-progress condition (illness, travel): the derived metric
+    // relation's expiresAt is the registry's effect window measured from
+    // THIS moment, so if the condition is still true days later, it simply
+    // decays out like any other driver and needs a fresh assertion (the
+    // user mentioning it again) to keep counting as an active driver,
+    // rather than staying "ongoing" indefinitely from one mention.
     const { start } = localDayBoundsUtc(tz, now);
     return { effectiveStart: start, effectiveEnd: now };
   }
@@ -211,9 +245,22 @@ function resolveTemporalWindow({ temporalRef, explicitDate, domains = [] }, { tz
  *  context-semantics.js's classifier but the LLM's eventStatus disagrees,
  *  the regex wins — this is exactly the class of thing a closed, reviewed
  *  pattern set is good at (catching an unambiguous case the model missed),
- *  not a replacement for the model's broader interpretation. */
-function reconcileEventStatus(rawAssertion, rawText) {
-  const kind = classifyEventKind(rawText);
+ *  not a replacement for the model's broader interpretation.
+ *
+ *  ASSERTION-LOCAL, not message-global: classifies `rawAssertion.evidenceSpan`
+ *  (the specific clause this assertion was drawn from), never the whole
+ *  `fullRawText` — a compound statement ("I didn't drink, but I ate a late
+ *  meal") must negate only the alcohol assertion (whose span is "I didn't
+ *  drink"), never the late-meal assertion (whose span is "I ate a late
+ *  meal" and contains no negation cue at all). `fullRawText` is used ONLY
+ *  as a fallback when evidenceSpan is missing/empty (a malformed response
+ *  from an older/misbehaving call) — classifying the whole message in that
+ *  narrow fallback case is strictly safer than skipping the safety net
+ *  entirely, but is never the normal path since the schema requires
+ *  evidenceSpan on every assertion. */
+function reconcileEventStatus(rawAssertion, fullRawText) {
+  const span = String(rawAssertion.evidenceSpan || '').trim() || fullRawText;
+  const kind = classifyEventKind(span);
   const out = { ...rawAssertion };
   if (kind === EVENT_KIND.RETRACTION && out.eventStatus !== 'retracted') {
     out.eventStatus = 'retracted';
@@ -273,13 +320,28 @@ function normalizeTargetId(s) {
   return String(s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 120) || 'unspecified';
 }
 
+// Maps a knowledge-registry entry's evidenceTier to the derived relation's
+// shape — three distinct tiers, not a binary established/everything-else
+// split (the harden pass added SUPPORTED_ASSOCIATION as a real middle tier:
+// a genuinely-accepted physiological pattern without one specific verified
+// citation attached, stronger than a bare model_hypothesis guess but not
+// entitled to 'established_knowledge''s confidence).
+const TIER_TO_RELATION_META = {
+  [EVIDENCE_TIER.ESTABLISHED]: { relationship: 'contributes_to', evidenceBasis: 'established_knowledge', strength: 0.7, confidenceBase: 0.75 },
+  [EVIDENCE_TIER.SUPPORTED_ASSOCIATION]: { relationship: 'supports', evidenceBasis: 'supported_association', strength: 0.45, confidenceBase: 0.5 },
+};
+const DEFAULT_TIER_META = { relationship: 'supports', evidenceBasis: 'model_hypothesis', strength: 0.3, confidenceBase: 0.3 };
+function relationMetaForTier(evidenceTier) {
+  return TIER_TO_RELATION_META[evidenceTier] || DEFAULT_TIER_META;
+}
+
 /** Blend a registry entry's population-level evidence with this assertion's
- *  own extraction confidence — established knowledge caps how confident a
- *  single mention can ever make a relation (a hedge model_hypothesis entry
- *  can never look as confident as an established one just because the user
- *  stated it plainly). */
+ *  own extraction confidence — the entry's tier caps how confident a single
+ *  mention can ever make a relation (a hedged model_hypothesis/
+ *  supported_association entry can never look as confident as an
+ *  established one just because the user stated it plainly). */
 function blendConfidence(assertionConfidence, entry) {
-  const base = entry.evidenceTier === EVIDENCE_TIER.ESTABLISHED ? 0.75 : 0.3;
+  const base = relationMetaForTier(entry.evidenceTier).confidenceBase;
   const a = Number.isFinite(assertionConfidence) ? Math.max(0, Math.min(1, assertionConfidence)) : 0.6;
   return Math.round(Math.min(base, base * 0.6 + a * 0.4) * 100) / 100;
 }
@@ -345,9 +407,20 @@ function deriveRelations(assertion, { supersedesAssertionId = null } = {}) {
   }
 
   if (assertion.assertionType === 'preference') {
+    // direction carries the polarity (harden pass, item 4) — 'avoid'/
+    // 'prefer'/'require'/'neutral' — so a consumer (leverage.js's
+    // rankActions via context-resolver.js's getPreferencesFor) can exclude,
+    // boost, strongly-boost, or ignore a matching candidate respectively,
+    // instead of the old behavior of treating every preference as an
+    // exclusion regardless of what the user actually said. Falls back to
+    // 'neutral' (no ranking effect) for a malformed/missing polarity rather
+    // than guessing 'avoid', which is the fail-safe direction for this
+    // relation type: "do nothing" is always safer than silently excluding
+    // something the user actually asked FOR more of.
+    const polarity = PREFERENCE_POLARITIES.includes(assertion.polarity) ? assertion.polarity : 'neutral';
     relations.push({
       targetType: 'action_type', targetId: normalizeTargetId(assertion.objectValue || assertion.predicate),
-      relationship: 'changes_priority', evidenceBasis: 'user_explicit', confidence: conf, strength: 0.8,
+      relationship: 'changes_priority', direction: polarity, evidenceBasis: 'user_explicit', confidence: conf, strength: 0.8,
       permittedLanguage: assertion.rawText || null,
     });
   }
@@ -357,24 +430,43 @@ function deriveRelations(assertion, { supersedesAssertionId = null } = {}) {
   // evidence_basis, never the assertion's own sourceAuthority (which is
   // always 'user' — the user being authoritative about WHAT happened does
   // not make them authoritative about its PHYSIOLOGICAL EFFECT).
+  //
+  // FAIL CLOSED ON UNKNOWN TIMING: a metric-driver relation requires a
+  // BOUNDED effective window (assertion.effectiveEnd non-null). When
+  // resolveTemporalWindow couldn't anchor the assertion (temporalRef
+  // 'unspecified' — no reliable question metadata, explicit wording, or
+  // known event timestamp), effectiveEnd is null and NO metric relation is
+  // created at all, for either the concept-matched branch or the
+  // unknown-concept-hypothesis branch below — the assertion still persists
+  // as a context_assertions row (queryable as context, still shown to the
+  // user), it just can never surface via getDriversFor. Without this, an
+  // untimed health mention got `expiresAt: null` (Number.isFinite(undefined)
+  // is false, so the old ternary's else-branch fired), which
+  // buildResolvedContext's expiration filter treats as "never expires" — a
+  // permanent driver from a single mention with no known timing.
   const isMetricEligible = ['event', 'state', 'explanation'].includes(assertion.assertionType)
     && ['occurred', 'ongoing'].includes(assertion.eventStatus)
-    && domains.includes('health');
+    && domains.includes('health')
+    && Boolean(assertion.effectiveEnd);
   if (isMetricEligible) {
     let matchedAny = false;
     for (const concept of concepts) {
       for (const entry of knowledgeRelationsForConcept(concept)) {
         matchedAny = true;
-        const expiresAt = assertion.effectiveEnd && Number.isFinite(entry.effectWindowHours)
-          ? new Date(new Date(assertion.effectiveEnd).getTime() + entry.effectWindowHours * 3600 * 1000).toISOString()
-          : null;
+        // Every metric relation gets a real expiresAt — effectWindowHours
+        // when the registry entry states one, else a conservative default
+        // cap (never "no expiration") so an entry that someday omits
+        // effectWindowHours can't silently produce an undecaying driver.
+        const windowHours = Number.isFinite(entry.effectWindowHours) ? entry.effectWindowHours : DEFAULT_METRIC_RELATION_WINDOW_HOURS;
+        const expiresAt = new Date(new Date(assertion.effectiveEnd).getTime() + windowHours * 3600 * 1000).toISOString();
+        const meta = relationMetaForTier(entry.evidenceTier);
         relations.push({
           targetType: 'metric', targetId: entry.targetConcept,
-          relationship: entry.evidenceTier === EVIDENCE_TIER.ESTABLISHED ? 'contributes_to' : 'supports',
+          relationship: meta.relationship,
           direction: entry.expectedDirection,
-          evidenceBasis: entry.evidenceTier === EVIDENCE_TIER.ESTABLISHED ? 'established_knowledge' : 'model_hypothesis',
+          evidenceBasis: meta.evidenceBasis,
           confidence: blendConfidence(conf, entry),
-          strength: entry.evidenceTier === EVIDENCE_TIER.ESTABLISHED ? 0.7 : 0.3,
+          strength: meta.strength,
           windowStart: assertion.effectiveStart, windowEnd: assertion.effectiveEnd, expiresAt,
           permittedLanguage: entry.allowedLanguage?.[0] ?? null,
         });
@@ -391,6 +483,7 @@ function deriveRelations(assertion, { supersedesAssertionId = null } = {}) {
         relationship: 'supports', direction: 'unknown', evidenceBasis: 'model_hypothesis',
         confidence: Math.min(0.3, conf), strength: 0.2,
         windowStart: assertion.effectiveStart, windowEnd: assertion.effectiveEnd,
+        expiresAt: new Date(new Date(assertion.effectiveEnd).getTime() + DEFAULT_METRIC_RELATION_WINDOW_HOURS * 3600 * 1000).toISOString(),
         permittedLanguage: 'may be worth watching',
       });
     }
@@ -446,6 +539,11 @@ async function compileUserContext({ rawText, source, question = null, tz = proce
       confidence, sourceAuthority: 'user',
       supersedesAssertionId: superseded ? superseded.id : null,
       compilerVersion: COMPILER_VERSION,
+      // Transient — read by deriveRelations below to set a preference
+      // relation's direction/polarity, NOT a persisted column (see
+      // store/contextAssertions.js's create(), which only inserts the
+      // specific fields it destructures).
+      polarity: PREFERENCE_POLARITIES.includes(reconciled.polarity) ? reconciled.polarity : 'neutral',
     };
     compiledAssertions.push(assertion);
     candidatePool.push({ ...assertion, id: null }); // no real id yet — a later assertion in this batch can still overlap-match its subject/predicate/objectValue text, id stays null (not usable as a real FK) until persisted
@@ -464,9 +562,21 @@ async function compileUserContext({ rawText, source, question = null, tz = proce
  * alongside another write (the annotation it was compiled from) — this
  * function does not open its own transaction. Retires any assertion each
  * new one supersedes (which also retires that assertion's own relations —
- * see store/contextAssertions.js's retire()). Bumps the invalidation bus
- * (TRIGGER.CONTEXT_ASSERTION_CHANGE) so BrainSnapshot's contextAssertions/
- * contextRelations/resolvedContext fields recompute on the next read.
+ * see store/contextAssertions.js's retire()).
+ *
+ * Deliberately does NOT touch the invalidation bus. A prior version called
+ * `invalidation.bump()` from inside this function — i.e. inside the
+ * caller's still-open transaction, before COMMIT. `bump()` increments the
+ * in-process version immediately AND fires a separate-connection durable
+ * write-through; another instance polling that durable version via
+ * `refresh()` could observe the NEW version and confidently serve/cache
+ * "current" context before this transaction's writes were even committed
+ * (and if the transaction then rolled back, that instance would have
+ * invalidated toward state that never existed). Invalidation must happen
+ * strictly AFTER commit, and only on success — see routes/annotations.js's
+ * `await withTransaction(...)` call site, which calls
+ * `invalidation.bumpDurable('context_assertion_change')` itself once this
+ * promise (and the whole transaction) has resolved, never from inside here.
  */
 async function persistCompiledContext({ assertions, relations }, { sourceAnnotationId = null, db }) {
   const contextAssertionsStore = require('../store/contextAssertions');
@@ -488,9 +598,6 @@ async function persistCompiledContext({ assertions, relations }, { sourceAnnotat
     // more to do here.
     const id = await contextRelationsStore.create({ ...rest, sourceAssertionId }, db);
     createdRelationIds.push(id);
-  }
-  if (createdAssertionIds.length) {
-    try { require('../brain/invalidation').bump('context_assertion_change'); } catch { /* bus not loaded */ }
   }
   return { assertionIds: createdAssertionIds, relationIds: createdRelationIds };
 }

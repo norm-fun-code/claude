@@ -67,3 +67,34 @@ test('with no work-busy blocks at all, the annotation logic never runs (no crash
   const text = prompt({ calendarEvents: [{ title: 'Sabbath', startTime: '5:00 PM', endTime: '9:00 PM' }], workBusyBlocks: [] });
   assert.match(text, /No busy blocks visible/);
 });
+
+// ── classifiedOverrides (harden pass, item 3a) ────────────────────────────
+// A calendar-classification correction ("that's a Sabbath block, not
+// meetings") matched by context-resolver.js's matchCalendarClassifications
+// must change the ACTUAL "TOTAL MEETING LOAD TODAY" figure the model reads —
+// not just be excluded via a personal-calendar title match (the prior two
+// tests already cover that path). This proves an override applies even for a
+// work-busy block with NO corresponding named personal-calendar event at
+// all — the case a raw calendar title match can never catch.
+
+function promptWithOverrides({ calendarEvents = [], workBusyBlocks = [], classifiedOverrides = [] } = {}) {
+  return buildChiefBriefPrompt(
+    [], 'Friday', { type: 'Rest' }, calendarEvents,
+    '', '', '', '', '', '', workBusyBlocks,
+    '', '', '', '', '', '', '', '', '', [], '',
+    { workBusy: true, calendar: true }, '', classifiedOverrides
+  );
+}
+
+test('classifiedOverrides: reclassified work-busy block with no matching personal-calendar event is netted out of TOTAL MEETING LOAD', () => {
+  const workBusyBlocks = [{ start: '9:00 AM', end: '10:00 AM' }, { start: '5:00 PM', end: '9:00 PM' }];
+  const withoutOverride = promptWithOverrides({ calendarEvents: [], workBusyBlocks });
+  assert.match(withoutOverride, /TOTAL MEETING LOAD TODAY[^:]*: 5\.0h/);
+
+  const withOverride = promptWithOverrides({
+    calendarEvents: [], workBusyBlocks,
+    classifiedOverrides: [{ title: 'a Sabbath observance, not meetings', startTime: '5:00 PM', endTime: '9:00 PM', allDay: false }],
+  });
+  assert.match(withOverride, /TOTAL MEETING LOAD TODAY[^:]*: 1\.0h/);
+  assert.match(withOverride, /matches your personal calendar's "a Sabbath observance, not meetings"/);
+});

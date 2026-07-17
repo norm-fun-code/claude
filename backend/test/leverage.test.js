@@ -117,22 +117,57 @@ test('fromCorrelation: never uses "move the needle" or unhedged "confirmed" caus
   assert.match(detail, /observed association|not a proven cause|worth (deliberately )?testing/, 'must use tentative, observational framing');
 });
 
-// Context Understanding Layer, scenario 6: a durable user preference
-// ("don't recommend evening workouts") excludes a matching candidate action
-// from the ranked list — see intelligence/context-resolver.js's
-// 'action_type'/'changes_priority' relations and analyze.js's rankActions call.
-test('a durable preference excludes a matching candidate action', () => {
+// Context Understanding Layer, scenario 6 + harden-pass item 4 (preference
+// POLARITY): "don't recommend X" (avoid) must exclude a matching candidate,
+// but "I prefer X" (prefer) must BOOST the identical candidate instead — the
+// bug an independent audit caught was that every preference, regardless of
+// what the user actually said, was treated as an exclusion. See
+// intelligence/context-resolver.js's 'action_type'/'changes_priority'
+// relations (direction carries the polarity) and analyze.js's rankActions call.
+function matchingTargetIdFor(title) {
+  return title.toLowerCase().split(/\s+/).slice(0, 3).join('_');
+}
+
+test('an "avoid" preference excludes a matching candidate action', () => {
   const withoutPref = rankActions([corr('health:sleep_hours', 'wellbeing:focus', 0.6)]);
   assert.ok(withoutPref.length >= 1, 'sanity: the candidate exists without a preference');
-  const matchingTitleWords = withoutPref[0].title.toLowerCase();
-
-  const preferences = [{ targetId: matchingTitleWords.split(/\s+/).slice(0, 3).join('_'), relationship: 'changes_priority' }];
+  const preferences = [{ targetId: matchingTargetIdFor(withoutPref[0].title), relationship: 'changes_priority', direction: 'avoid' }];
   const withPref = rankActions([corr('health:sleep_hours', 'wellbeing:focus', 0.6)], { preferences });
-  assert.equal(withPref.length, 0, 'the preference-conflicting candidate must be excluded, not merely deprioritized');
+  assert.equal(withPref.length, 0, 'an "avoid" preference must exclude the matching candidate, not merely deprioritize it');
+});
+
+test('a "prefer" preference on the SAME target BOOSTS the matching candidate instead of excluding it', () => {
+  const withoutPref = rankActions([corr('health:sleep_hours', 'wellbeing:focus', 0.6)]);
+  assert.ok(withoutPref.length >= 1, 'sanity: the candidate exists without a preference');
+  const baseScore = withoutPref[0].confidence; // rankActions maps score -> finding.confidence
+
+  const preferences = [{ targetId: matchingTargetIdFor(withoutPref[0].title), relationship: 'changes_priority', direction: 'prefer' }];
+  const withPref = rankActions([corr('health:sleep_hours', 'wellbeing:focus', 0.6)], { preferences });
+  assert.equal(withPref.length, 1, 'a "prefer" preference must NEVER exclude the matching candidate (this was the reported bug)');
+  assert.ok(withPref[0].confidence > baseScore, `expected a boosted score (${withPref[0].confidence}) to exceed the unboosted score (${baseScore})`);
+});
+
+test('a "require" preference on the SAME target boosts MORE STRONGLY than "prefer"', () => {
+  const preferTarget = matchingTargetIdFor(rankActions([corr('health:sleep_hours', 'wellbeing:focus', 0.6)])[0].title);
+  const preferred = rankActions([corr('health:sleep_hours', 'wellbeing:focus', 0.6)], {
+    preferences: [{ targetId: preferTarget, relationship: 'changes_priority', direction: 'prefer' }],
+  });
+  const required = rankActions([corr('health:sleep_hours', 'wellbeing:focus', 0.6)], {
+    preferences: [{ targetId: preferTarget, relationship: 'changes_priority', direction: 'require' }],
+  });
+  assert.ok(required[0].confidence > preferred[0].confidence, 'a "require" (hard rule) must boost more than an ordinary "prefer"');
+});
+
+test('a "neutral"/unrecognized-direction preference does not alter ranking at all', () => {
+  const withoutPref = rankActions([corr('health:sleep_hours', 'wellbeing:focus', 0.6)]);
+  const preferences = [{ targetId: matchingTargetIdFor(withoutPref[0].title), relationship: 'changes_priority', direction: 'neutral' }];
+  const withPref = rankActions([corr('health:sleep_hours', 'wellbeing:focus', 0.6)], { preferences });
+  assert.equal(withPref.length, withoutPref.length);
+  assert.equal(withPref[0].confidence, withoutPref[0].confidence, 'neutral must leave the score completely unchanged');
 });
 
 test('a preference that does not match any candidate leaves the ranking untouched', () => {
-  const preferences = [{ targetId: 'evening_workouts', relationship: 'changes_priority' }];
+  const preferences = [{ targetId: 'evening_workouts', relationship: 'changes_priority', direction: 'avoid' }];
   const acts = rankActions([corr('health:sleep_hours', 'wellbeing:focus', 0.6)], { preferences });
   assert.ok(acts.length >= 1, 'an unrelated preference must not suppress an unrelated candidate');
 });

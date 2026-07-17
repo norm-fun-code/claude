@@ -67,6 +67,50 @@ test('reconcileEventStatus: leaves a correctly-classified assertion untouched', 
   assert.equal(out.eventStatus, 'occurred');
 });
 
+// ── Compound negation/retraction is ASSERTION-LOCAL (harden pass, item 6) ──
+// reconcileEventStatus must classify each assertion's OWN evidenceSpan, not
+// the whole message — a compound statement bundles a negated clause with an
+// unrelated occurred clause, and only the matching assertion may be negated.
+test('reconcileEventStatus: "I didn\'t drink, but I ate a late meal" negates ONLY the alcohol assertion, not the late-meal one', () => {
+  const fullText = "I didn't drink, but I ate a late meal";
+  const alcohol = reconcileEventStatus({ eventStatus: 'occurred', assertionType: 'event', evidenceSpan: "I didn't drink" }, fullText);
+  const lateMeal = reconcileEventStatus({ eventStatus: 'occurred', assertionType: 'event', evidenceSpan: 'I ate a late meal' }, fullText);
+  assert.equal(alcohol.eventStatus, 'negated');
+  assert.equal(lateMeal.eventStatus, 'occurred', 'the sibling assertion\'s own span has no negation cue and must stay occurred');
+});
+
+test('reconcileEventStatus: "I drank, but I didn\'t eat late" negates ONLY the late-meal assertion', () => {
+  const fullText = "I drank, but I didn't eat late";
+  const alcohol = reconcileEventStatus({ eventStatus: 'occurred', assertionType: 'event', evidenceSpan: 'I drank' }, fullText);
+  const lateMeal = reconcileEventStatus({ eventStatus: 'occurred', assertionType: 'event', evidenceSpan: "I didn't eat late" }, fullText);
+  assert.equal(alcohol.eventStatus, 'occurred');
+  assert.equal(lateMeal.eventStatus, 'negated');
+});
+
+test('reconcileEventStatus: "Forget the late meal; the drinks still happened" retracts ONLY the late-meal assertion', () => {
+  const fullText = 'Please forget the late meal; the drinks still happened';
+  const lateMeal = reconcileEventStatus({ eventStatus: 'occurred', assertionType: 'event', evidenceSpan: 'Please forget the late meal' }, fullText);
+  const alcohol = reconcileEventStatus({ eventStatus: 'occurred', assertionType: 'event', evidenceSpan: 'the drinks still happened' }, fullText);
+  assert.equal(lateMeal.eventStatus, 'retracted');
+  assert.equal(lateMeal.assertionType, 'correction');
+  assert.equal(alcohol.eventStatus, 'occurred', 'a sibling clause reporting the drinks DID happen must not be retracted just because the message also retracts something else');
+});
+
+test('reconcileEventStatus: "I planned drinks but didn\'t go, and I still ate late" negates the plan, leaves the late meal occurred', () => {
+  const fullText = "I planned drinks but didn't go, and I still ate late";
+  const plan = reconcileEventStatus({ eventStatus: 'planned', assertionType: 'plan', evidenceSpan: "I planned drinks but didn't go" }, fullText);
+  const lateMeal = reconcileEventStatus({ eventStatus: 'occurred', assertionType: 'event', evidenceSpan: 'I still ate late' }, fullText);
+  assert.equal(plan.eventStatus, 'negated');
+  assert.equal(lateMeal.eventStatus, 'occurred');
+});
+
+test('reconcileEventStatus: missing evidenceSpan falls back to the full message (backward-safe, not the normal path)', () => {
+  // The schema REQUIRES evidenceSpan on every real compiled assertion; this
+  // only covers a malformed/older response reaching this function directly.
+  const out = reconcileEventStatus({ eventStatus: 'occurred', assertionType: 'event', evidenceSpan: '' }, "I didn't drink last night");
+  assert.equal(out.eventStatus, 'negated');
+});
+
 // ── dedupeAssertions ─────────────────────────────────────────────────────
 
 test('dedupeAssertions: drops exact duplicate (subject/predicate/objectValue/day) pairs', () => {
@@ -147,14 +191,56 @@ test('deriveRelations: a plain health event with NO recognized concept produces 
 });
 
 test('deriveRelations: an "explanation" for a health outcome with NO recognized concept becomes a visibly-uncertain model_hypothesis (scenario 9 — unknown concept)', () => {
+  // A realistic compiled assertion always carries a bounded window from
+  // resolveTemporalWindow (e.g. temporalRef 'last_night') — metric relations
+  // require one (see the fail-closed temporal test below), so this fixture
+  // includes one rather than testing an incomplete/unrealistic shape.
   const assertion = {
     assertionType: 'explanation', eventStatus: 'occurred', domains: ['health'], concepts: ['box_breathing'],
     confidence: 0.8, subject: 'user', predicate: 'did', objectValue: 'box breathing before bed', rawText: 'box breathing before bed helped',
+    effectiveStart: NOW.toISOString(), effectiveEnd: NOW.toISOString(),
   };
   const rels = deriveRelations(assertion, {});
   assert.equal(rels.length, 1);
   assert.equal(rels[0].evidenceBasis, 'model_hypothesis');
   assert.ok(rels[0].confidence <= 0.3);
+  assert.ok(rels[0].expiresAt, 'a metric relation must always carry a real, finite expiresAt');
+});
+
+// ── Fail-closed temporal handling (harden pass, item 5) ──────────────────
+// A health event whose timing could NOT be resolved (temporalRef
+// 'unspecified' -> resolveTemporalWindow returns effectiveEnd: null) must
+// never become a permanent recovery/health driver just because timing was
+// unknown. It still compiles as context (the assertion itself is
+// unconditional); it just gets NO metric-targeting relation.
+test('deriveRelations: a health event/concept match with UNKNOWN timing (effectiveEnd null) produces NO metric relation at all', () => {
+  const assertion = {
+    assertionType: 'event', eventStatus: 'occurred', domains: ['health'], concepts: ['alcohol'],
+    confidence: 0.9, subject: 'user', predicate: 'drank', objectValue: 'wine', rawText: 'drank wine at some point',
+    effectiveStart: null, effectiveEnd: null,
+  };
+  assert.deepEqual(deriveRelations(assertion, {}), []);
+});
+
+test('deriveRelations: an unrecognized-concept "explanation" with UNKNOWN timing also produces NO hypothesis relation', () => {
+  const assertion = {
+    assertionType: 'explanation', eventStatus: 'occurred', domains: ['health'], concepts: ['box_breathing'],
+    confidence: 0.8, subject: 'user', predicate: 'did', objectValue: 'box breathing', rawText: 'box breathing seems to help',
+    effectiveStart: null, effectiveEnd: null,
+  };
+  assert.deepEqual(deriveRelations(assertion, {}), []);
+});
+
+test('deriveRelations: every metric relation created gets a finite expiresAt, never null/undefined (no undecaying driver)', () => {
+  const assertion = {
+    assertionType: 'event', eventStatus: 'occurred', domains: ['health'], concepts: ['alcohol'],
+    confidence: 0.9, subject: 'user', predicate: 'drank', objectValue: 'wine', rawText: 'drank wine last night',
+    effectiveStart: NOW.toISOString(), effectiveEnd: NOW.toISOString(),
+  };
+  const rels = deriveRelations(assertion, {});
+  assert.equal(rels.length, 1);
+  assert.ok(rels[0].expiresAt, 'expiresAt must be set');
+  assert.ok(new Date(rels[0].expiresAt).getTime() > new Date(assertion.effectiveEnd).getTime(), 'expiresAt must be strictly after the effective window');
 });
 
 test('deriveRelations: a workout-skip DECISION with a constraint reason produces a "constrains" relation, never a "completes: true"', () => {
@@ -191,16 +277,39 @@ test('deriveRelations: a calendar classification never targets a metric, only a 
   assert.equal(rels[0].evidenceBasis, 'user_explicit');
 });
 
-test('deriveRelations: a durable preference targets action_type with changes_priority, no expiration fields set', () => {
+test('deriveRelations: a durable "avoid" preference targets action_type with changes_priority, no expiration fields set', () => {
   const assertion = {
     assertionType: 'preference', eventStatus: 'occurred', domains: ['workouts'], concepts: [],
     confidence: 0.9, subject: 'user', predicate: 'prefers not to schedule', objectValue: 'evening workouts', rawText: "don't recommend evening workouts",
+    polarity: 'avoid',
   };
   const rels = deriveRelations(assertion, {});
   assert.equal(rels.length, 1);
   assert.equal(rels[0].targetType, 'action_type');
   assert.equal(rels[0].relationship, 'changes_priority');
+  assert.equal(rels[0].direction, 'avoid');
   assert.equal(rels[0].expiresAt, undefined);
+});
+
+test('deriveRelations: a "prefer" polarity carries through to the relation\'s direction (harden pass, item 4)', () => {
+  const assertion = {
+    assertionType: 'preference', eventStatus: 'occurred', domains: ['workouts'], concepts: [],
+    confidence: 0.9, subject: 'user', predicate: 'prefers', objectValue: 'morning workouts', rawText: 'I prefer morning workouts',
+    polarity: 'prefer',
+  };
+  const rels = deriveRelations(assertion, {});
+  assert.equal(rels.length, 1);
+  assert.equal(rels[0].direction, 'prefer', 'a "prefer" statement must carry prefer polarity, never default to avoid');
+});
+
+test('deriveRelations: a missing/invalid polarity defaults to "neutral" (fail-safe: never guesses "avoid")', () => {
+  const assertion = {
+    assertionType: 'preference', eventStatus: 'occurred', domains: ['workouts'], concepts: [],
+    confidence: 0.9, subject: 'user', predicate: 'mentioned', objectValue: 'workouts', rawText: 'workouts came up',
+    // polarity intentionally omitted
+  };
+  const rels = deriveRelations(assertion, {});
+  assert.equal(rels[0].direction, 'neutral');
 });
 
 test('deriveRelations: supersession produces an "invalidates" relation for a retraction, "supersedes" otherwise', () => {

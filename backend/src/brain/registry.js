@@ -56,7 +56,18 @@ const FIELDS = Object.freeze({
   },
   todayForecast: {
     authority: 'intelligence/predict.computeTodayForecast',
-    dependsOn: ['recovery', 'effectiveWorkout', 'eligibleContext'],
+    // resolvedContext (Context Understanding Layer — see
+    // intelligence/context-resolver.js) added alongside eligibleContext: a
+    // compiled correction (a temporal move, a retraction, a driver the
+    // resolver now ranks differently) must invalidate the forecast built
+    // from it exactly like a raw-annotation change already does, or a
+    // context_assertion_change bump would silently stop at
+    // contextAssertions/contextRelations/resolvedContext themselves —
+    // technically "invalidated" but never reaching anything a cached
+    // consumer (the scoped/full-build staleness comparison in
+    // realtimeTodayContext, which checks recovery/effectiveWorkout/
+    // todayForecast versions) would actually notice.
+    dependsOn: ['recovery', 'effectiveWorkout', 'eligibleContext', 'resolvedContext'],
     invalidatedBy: [],
     ttlMs: null,
     liveRefreshable: true,

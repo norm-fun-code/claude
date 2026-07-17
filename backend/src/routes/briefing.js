@@ -1155,12 +1155,26 @@ async function buildFreshBriefing({ force = false } = {}) {
     // (unwrap(...) ?? []), which is exactly the ambiguity this module exists
     // to remove — so track fulfilled/rejected here rather than re-deriving it
     // from the now-indistinguishable empty array.
+    // Match any active calendar-classification correction against TODAY's
+    // (and tomorrow's — matchCalendarClassifications simply finds no
+    // applicable interval if the correction doesn't apply there) real
+    // calendar/workBusy intervals off this build's one BrainSnapshot cut, so
+    // a "that's a Sabbath block, not meetings" correction also suppresses
+    // the packed-calendar question itself, not just the number inside it.
+    let signalClassifiedOverrides = [];
+    if (brainSnapshot?.resolvedContext?.value) {
+      try {
+        signalClassifiedOverrides = require('../intelligence/context-resolver')
+          .matchCalendarClassifications(brainSnapshot.resolvedContext.value, { calendar, workBusy });
+      } catch (e) { console.error('[pre-brief-signals] matchCalendarClassifications failed:', e.message); }
+    }
     const allSignals = preBriefSignals.buildSignals({
       recovery, calendar, workBusy, spend: recentSpend, spendBaseline, tomorrowWorkBusy, tomorrowCalendar,
       tz: signalsTz, now: nowForSignals, calendarLoadAnswers,
       workBusyAvailable: workBusyResult.status === 'fulfilled',
       calendarAvailable: calendarResult.status === 'fulfilled',
       tomorrowWorkBusyAvailable, tomorrowCalendarAvailable,
+      classifiedOverrides: signalClassifiedOverrides,
     });
     signals = preBriefSignals.selectQuestions(allSignals, 2);
   } catch (err) {

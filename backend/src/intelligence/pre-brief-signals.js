@@ -52,6 +52,13 @@ function buildSignals({
   // fetch failure must never silently read as "genuinely no events."
   workBusyAvailable = true, calendarAvailable = true,
   tomorrowWorkBusyAvailable = true, tomorrowCalendarAvailable = true,
+  // Matched calendar-classification corrections (context-resolver.js's
+  // matchCalendarClassifications) — same shape/purpose as
+  // briefing-ai.js's classifiedOverrides, passed straight through to both
+  // computeCalendarLoad calls below so a "that's a Sabbath block, not
+  // meetings" correction also changes whether THIS signal fires, not just
+  // what the chief-brief prompt says.
+  classifiedOverrides = [],
 } = {}) {
   const signals = [];
   const todayKey = localDateStr(tz, now);
@@ -72,6 +79,7 @@ function buildSignals({
     const tomorrowLoad = computeCalendarLoad({
       workBusy: tomorrowWorkBusy, calendar: tomorrowCalendar,
       sourcesAvailable: { workBusy: tomorrowWorkBusyAvailable, calendar: tomorrowCalendarAvailable },
+      classifiedOverrides,
     });
     if (tomorrowLoad.degraded) {
       // A source needed to rule out double-counting is unavailable — never
@@ -118,6 +126,7 @@ function buildSignals({
     const todayLoad = computeCalendarLoad({
       workBusy, calendar,
       sourcesAvailable: { workBusy: workBusyAvailable, calendar: calendarAvailable },
+      classifiedOverrides,
     });
     if (todayLoad.degraded) {
       console.error(`[pre-brief-signals] today calendar_load degraded (${todayLoad.degradedReason}) — suppressing the packed-calendar question`);
