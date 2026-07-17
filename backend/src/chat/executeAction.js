@@ -13,6 +13,7 @@ const lifeChaptersStore = require('../store/lifeChapters');
 const commitmentsStore = require('../store/commitments');
 const dayJournalStore = require('../store/dayJournal');
 const { recomputeHabitScore } = require('../intelligence/habit-score');
+const { recordUserContext } = require('../intelligence/context-input');
 const { VALID_WORKOUT_IDS } = require('../routes/workout');
 
 async function executeAction(routed) {
@@ -111,17 +112,32 @@ async function executeAction(routed) {
       };
     }
     if (routed.action === 'add_context' && routed.text) {
-      await annotationsStore.createAnnotation({
-        category: 'brief_context',
-        label: String(routed.text).slice(0, 200),
-        startTs: new Date(),
-        endTs: new Date(Date.now() + 24 * 3600 * 1000),
+      const text = String(routed.text);
+      // Context Understanding Layer: compile through the SAME shared
+      // pipeline routes/annotations.js's POST /briefing/context uses (see
+      // intelligence/context-input.js) — this is what makes an Ask
+      // statement or a realtime voice statement (realtimeTools.js's
+      // executeNormosAction/deepAsk both call this same executeAction())
+      // reach ResolvedContext, not just the raw annotations table.
+      await recordUserContext({
+        rawText: text, source: 'ask_add_context', tz,
+        writeInTransaction: (client, db) => annotationsStore.createAnnotation({
+          category: 'brief_context',
+          label: text.slice(0, 200),
+          startTs: new Date(),
+          endTs: new Date(Date.now() + 24 * 3600 * 1000),
+        }, db),
+        getSourceAnnotationId: (written) => written?.id ?? null,
       });
       return { done: true, description: `Noted for the next brief: ${routed.text}` };
     }
     if (routed.action === 'log_day_context' && routed.text) {
+      const text = String(routed.text);
       const entryDate = new Date().toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD local
-      await dayJournalStore.create({ text: String(routed.text).slice(0, 4000), entryDate, source: 'voice' });
+      await recordUserContext({
+        rawText: text, source: 'voice_day_context', tz,
+        writeInTransaction: (client, db) => dayJournalStore.create({ text: text.slice(0, 4000), entryDate, source: 'voice' }, db),
+      });
       return { done: true, description: 'Logged today\'s context — I\'ll factor it into your briefs and remember it.' };
     }
     if (routed.action === 'set_reminder' && routed.text) {

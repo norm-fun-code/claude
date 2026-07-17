@@ -1674,6 +1674,24 @@ async function buildFreshBriefing({ force = false } = {}) {
   // completion is checked against the exact same values the prompt and the
   // response cards already reflect. Best-effort: on any failure the validator
   // falls back to just its goal-completion checks (facts=null → no extra checks).
+  // Context Understanding Layer: prefer the compiled/resolved projection
+  // over raw annotation reinterpretation when available (harden pass, item
+  // 2) — reuses the SAME brainSnapshot.resolvedContext cut used for
+  // chiefFacts below, so this costs nothing extra. The raw annotationsContext
+  // computed earlier (from annotationsStore.overlapping()) is retained AFTER
+  // it, as provenance/fallback for whatever the compiler didn't structure —
+  // never replaced outright, since compileUserContext can degrade to zero
+  // assertions on a compiler failure.
+  if (brainSnapshot?.resolvedContext?.value) {
+    try {
+      const { summarizeResolvedContext } = require('../intelligence/context-resolver');
+      const compiled = summarizeResolvedContext(brainSnapshot.resolvedContext.value, { purpose: 'general' });
+      if (compiled) {
+        annotationsContext = annotationsContext ? `${compiled}\n(raw notes, for reference): ${annotationsContext}` : compiled;
+      }
+    } catch (e) { console.error('[briefing build] resolved-context summary failed:', e.message); }
+  }
+
   let chiefFacts = null;
   if (brainSnapshot) {
     try {
@@ -2384,6 +2402,19 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
       // (cheap, DB-only) resolveContext() call.
       require('../intelligence/context-resolver').resolveContext({ tz: factsTz }).catch(() => null),
     ]);
+    // Context Understanding Layer: same compiled-over-raw preference as the
+    // full build (see that call site) — reuses resolvedContextForFacts just
+    // fetched above for chiefFacts, no extra read. ctx.annotationsContext
+    // (from buildQuickChiefBriefContext) is retained AFTER it as fallback.
+    if (resolvedContextForFacts) {
+      try {
+        const { summarizeResolvedContext } = require('../intelligence/context-resolver');
+        const compiled = summarizeResolvedContext(resolvedContextForFacts, { purpose: 'general' });
+        if (compiled) {
+          ctx.annotationsContext = ctx.annotationsContext ? `${compiled}\n(raw notes, for reference): ${ctx.annotationsContext}` : compiled;
+        }
+      } catch (e) { console.error('[chief-brief rebuild] resolved-context summary failed:', e.message); }
+    }
     chiefFacts = canonicalFactsFrom({
       recovery: recForFacts,
       effectiveWorkout: effForFacts,

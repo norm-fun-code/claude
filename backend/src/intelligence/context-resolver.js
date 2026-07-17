@@ -429,12 +429,50 @@ function getRelevantContext(resolved, surfacePurpose = 'general') {
   });
 }
 
+/** One compact line describing a single assertion for a prompt — never the
+ *  full row, never raw provenance noise. Prefers the structured
+ *  predicate/objectValue (what the compiler actually extracted) over
+ *  rawText, since that's the point of compiling at all; falls back to a
+ *  truncated rawText when predicate/objectValue are both empty (an
+ *  assertion type the compiler couldn't structure further). */
+function summarizeAssertionLine(a) {
+  const body = a.predicate
+    ? `${a.predicate}${a.objectValue ? ` ${a.objectValue}` : ''}`.trim()
+    : String(a.rawText || '').trim().slice(0, 140);
+  if (!body) return null;
+  const status = ['negated', 'retracted'].includes(a.eventStatus) ? ` [${a.eventStatus}]` : '';
+  return `- ${body}${status}`;
+}
+
+/**
+ * Compact, purpose-specific text projection of ResolvedContext for an LLM
+ * prompt (harden pass, item 2) — the deliberate alternative to a surface
+ * dumping the complete assertions/relations graph, or re-reading raw
+ * annotations/day-journal text itself. Every surface that migrates to this
+ * (Chief Brief, Ask, realtime voice) sees the SAME compiled facts in the
+ * SAME compact shape, instead of each independently reinterpreting raw
+ * text and risking disagreement.
+ *
+ * Returns '' when there's nothing relevant — callers should treat an empty
+ * string as "fall back to raw annotations/day-journal text," never as
+ * "the user has no context" (see each call site's own raw-text fallback).
+ */
+function summarizeResolvedContext(resolved, { purpose = 'general', maxItems = 8 } = {}) {
+  if (!resolved) return '';
+  const relevant = getRelevantContext(resolved, purpose)
+    .slice()
+    .sort((a, b) => new Date(b.recordedAt || b.createdAt || 0) - new Date(a.recordedAt || a.createdAt || 0))
+    .slice(0, maxItems);
+  const lines = relevant.map(summarizeAssertionLine).filter(Boolean);
+  return lines.join('\n');
+}
+
 module.exports = {
   buildResolvedContext, resolveContext,
   getDriversFor, getConstraintsFor, getPreferencesFor, getCompletionState,
   getCalendarClassification, matchCalendarClassifications, matchCompletionCorrections,
   getResolvedUncertainties, getUnresolvedUncertainties,
-  getRelevantContext,
+  getRelevantContext, summarizeResolvedContext,
   // Exposed for focused unit tests:
   scoreRelation, EVIDENCE_WEIGHT, describeAssertion, targetKey, extractClockTimeRange,
 };

@@ -10,7 +10,7 @@ function toVectorLiteral(embedding) {
  * Upsert a document, deduped on (source, external_id). Embedding is optional —
  * it can be backfilled later by the intelligence layer.
  */
-async function upsertDocument(doc) {
+async function upsertDocument(doc, db = query) {
   const {
     source,
     domain,
@@ -26,7 +26,7 @@ async function upsertDocument(doc) {
 
   if (!content) return null;
 
-  const { rows } = await query(
+  const { rows } = await db(
     `INSERT INTO documents
        (source, domain, external_id, title, author, url, content, occurred_at, metadata, embedding)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::vector)

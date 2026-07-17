@@ -308,7 +308,7 @@ async function recoveryContext() {
   }
 }
 
-function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [], snapshot = null, experiments = [], pastConversations = [], wealthInsights = null, recoveryInsight = null, dayContext = [], voice = false }) {
+function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [], snapshot = null, experiments = [], pastConversations = [], wealthInsights = null, recoveryInsight = null, dayContext = [], resolvedContextSummary = '', voice = false }) {
   const parts = [];
 
   // Voice replies are spoken aloud and the user is physically waiting on them —
@@ -382,6 +382,15 @@ function buildPrompt({ question, findings = [], docs = [], annotations = [], his
       'SELF-EXPERIMENTS (hypotheses you have personally tested):\n' +
         experiments.map(fmt).join('\n')
     );
+  }
+
+  // Context Understanding Layer: the compiled/resolved projection, preferred
+  // over raw annotation reinterpretation when available (harden pass, item
+  // 2) — the same canonical facts Chief Brief and realtime voice now read.
+  // Raw LIFE CONTEXT below is retained as fallback/provenance, never
+  // replaced outright (compileUserContext can degrade to zero assertions).
+  if (resolvedContextSummary) {
+    parts.push(`RESOLVED CONTEXT (compiled from what you've told NormOS — canonical; prefer this over LIFE CONTEXT below when they overlap):\n${resolvedContextSummary}`);
   }
 
   if (annotations.length) {
@@ -512,6 +521,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     wealthResult,
     dayContextResult,
     recoveryResult,
+    resolvedContextResult,
   ] = await Promise.allSettled([
     findingsStore.listFindings({ status: 'open' }),
     annotationsStore.listAnnotations({ from: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000), limit: 20 }),
@@ -530,6 +540,10 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     // tab and the voice tool's get_current_recovery — so a personal/health
     // question cites the true number instead of the model inferring one.
     personal ? recoveryContext() : Promise.resolve(null),
+    // Context Understanding Layer: the SAME canonical selectors Chief Brief
+    // and realtime voice read (harden pass, item 2) — 'general' purpose
+    // since Ask fields arbitrary questions, not one fixed domain.
+    require('../intelligence/context-resolver').resolveContext({}).catch(() => null),
   ]);
 
   const findings = findingsResult.status === 'fulfilled' ? findingsResult.value : [];
@@ -558,8 +572,11 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     : null;
   const dayContext = dayContextResult.status === 'fulfilled' ? (dayContextResult.value || []) : [];
   const recoveryInsight = recoveryResult.status === 'fulfilled' ? recoveryResult.value : null;
+  const resolvedContextSummary = resolvedContextResult.status === 'fulfilled' && resolvedContextResult.value
+    ? require('../intelligence/context-resolver').summarizeResolvedContext(resolvedContextResult.value, { purpose: 'general' })
+    : '';
 
-  const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments, pastConversations, wealthInsights, recoveryInsight, dayContext, voice });
+  const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations, history, snapshot, experiments, pastConversations, wealthInsights, recoveryInsight, dayContext, resolvedContextSummary, voice });
   let system = selfModelText ? `${baseSystem}\n\n${selfModelText}` : baseSystem;
   if (chaptersText) system += `\n\nLIFE CHAPTERS (standing long-arc facts, auto-updated — never ask the user to re-confirm these):\n${chaptersText}\nThis same fact is already shown elsewhere in the app (the brief, goals, forecasts) — don't just restate it here too. Use it as background that shapes tone and advice on a genuinely related question; if you reference it explicitly, relay something new (a next step, an implication for the actual question asked), not just the bare fact the user already knows.`;
   // Today's planned session — so a swap_workout action can be acknowledged

@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const {
   buildResolvedContext, getDriversFor, getConstraintsFor, getPreferencesFor, getCompletionState,
   getCalendarClassification, matchCalendarClassifications, extractClockTimeRange, matchCompletionCorrections,
-  getResolvedUncertainties, getUnresolvedUncertainties, getRelevantContext,
+  getResolvedUncertainties, getUnresolvedUncertainties, getRelevantContext, summarizeResolvedContext,
   scoreRelation,
 } = require('../src/intelligence/context-resolver');
 
@@ -172,6 +172,48 @@ test('getRelevantContext: "general" purpose includes negated assertions (still w
   const negated = assertion({ id: 'a-negated', eventStatus: 'negated', domains: ['health'] });
   const resolved = buildResolvedContext({ assertions: [negated], relations: [], tz: 'America/New_York', now: NOW });
   assert.deepEqual(getRelevantContext(resolved, 'general').map((a) => a.id), ['a-negated']);
+});
+
+// ── summarizeResolvedContext ──────────────────────────────────────────────
+// item 2: a compact, purpose-specific prompt projection — not the complete
+// graph, not raw annotation text.
+
+test('summarizeResolvedContext: formats a relevant assertion as a compact predicate/objectValue line', () => {
+  const a = assertion({ id: 'a1', predicate: 'drank', objectValue: 'wine', domains: ['health'], recordedAt: NOW.toISOString() });
+  const resolved = buildResolvedContext({ assertions: [a], relations: [], tz: 'America/New_York', now: NOW });
+  const text = summarizeResolvedContext(resolved, { purpose: 'health' });
+  assert.equal(text, '- drank wine');
+});
+
+test('summarizeResolvedContext: falls back to truncated rawText when predicate/objectValue are empty', () => {
+  const a = assertion({ id: 'a1', predicate: null, objectValue: null, rawText: 'a plain observational note', domains: ['health'], recordedAt: NOW.toISOString() });
+  const resolved = buildResolvedContext({ assertions: [a], relations: [], tz: 'America/New_York', now: NOW });
+  assert.equal(summarizeResolvedContext(resolved, { purpose: 'health' }), '- a plain observational note');
+});
+
+test('summarizeResolvedContext: marks a negated/retracted assertion inline rather than silently dropping it (general purpose only)', () => {
+  const a = assertion({ id: 'a1', predicate: 'drank', objectValue: 'wine', eventStatus: 'negated', domains: ['health'], recordedAt: NOW.toISOString() });
+  const resolved = buildResolvedContext({ assertions: [a], relations: [], tz: 'America/New_York', now: NOW });
+  assert.equal(summarizeResolvedContext(resolved, { purpose: 'general' }), '- drank wine [negated]');
+});
+
+test('summarizeResolvedContext: excludes out-of-domain assertions for a non-general purpose', () => {
+  const a = assertion({ id: 'a1', predicate: 'spent', objectValue: '$50', domains: ['wealth'], recordedAt: NOW.toISOString() });
+  const resolved = buildResolvedContext({ assertions: [a], relations: [], tz: 'America/New_York', now: NOW });
+  assert.equal(summarizeResolvedContext(resolved, { purpose: 'health' }), '');
+});
+
+test('summarizeResolvedContext: most-recent-first, capped at maxItems', () => {
+  const older = assertion({ id: 'a-old', predicate: 'did', objectValue: 'thing one', domains: ['health'], recordedAt: new Date(NOW.getTime() - 3600000).toISOString() });
+  const newer = assertion({ id: 'a-new', predicate: 'did', objectValue: 'thing two', domains: ['health'], recordedAt: NOW.toISOString() });
+  const resolved = buildResolvedContext({ assertions: [older, newer], relations: [], tz: 'America/New_York', now: NOW });
+  const text = summarizeResolvedContext(resolved, { purpose: 'health', maxItems: 1 });
+  assert.equal(text, '- did thing two');
+});
+
+test('summarizeResolvedContext: empty when nothing relevant — callers must treat this as "fall back to raw text," not "no context"', () => {
+  const resolved = buildResolvedContext({ assertions: [], relations: [], tz: 'America/New_York', now: NOW });
+  assert.equal(summarizeResolvedContext(resolved, { purpose: 'health' }), '');
 });
 
 // ── extractClockTimeRange ─────────────────────────────────────────────────

@@ -27,7 +27,17 @@ function createCheckinRouter() {
     const tz = process.env.TZ || 'America/New_York';
     const { metrics, document } = mapCheckin(req.body, { ts: req.query.ts, tz });
     const written = await metricsStore.insertMetrics(metrics);
-    if (document) await documentsStore.upsertDocument(document);
+    if (document) {
+      // Context Understanding Layer: a check-in note ("stressed about a
+      // deadline, slept badly") is free-form user-stated context exactly
+      // like a brief answer or an Ask statement — compile it through the
+      // SAME shared pipeline (harden pass, item 1) so it reaches
+      // ResolvedContext, not just the semantic-search document corpus.
+      await require('../intelligence/context-input').recordUserContext({
+        rawText: document.content, source: 'checkin', tz,
+        writeInTransaction: (client, db) => documentsStore.upsertDocument(document, db),
+      });
+    }
     await sourcesStore.markSync(CHECKIN_SOURCE);
     // Same-day reaction to a rough check-in (fire-and-forget, mirrors the
     // health-ingest -> runWatch pattern): a low mood/energy/focus rating gets

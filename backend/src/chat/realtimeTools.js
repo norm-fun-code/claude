@@ -35,7 +35,12 @@ async function getTodayContext() {
     buildBrainSnapshot({ include: {
       forecast: false, goals: false, weeklyIntention: false, commitments: false,
       wealth: false, findings: false, experiments: false, eligibleContext: false,
-      sourceHealth: false, resolvedContext: false,
+      sourceHealth: false,
+      // Context Understanding Layer: previously excluded here (voice
+      // explicitly disabled it), so a calendar reclassification or
+      // completion correction spoken about earlier never reached the SAME
+      // voice session's later turns (harden pass, item 2). resolvedContext
+      // is a cheap DB-only read, not one of the heavy sections above.
     } }).catch(() => null),
     require('../store/briefings').latestBriefing('daily').catch(() => null),
     // Pull the authoritative (cross-instance) invalidation versions so a

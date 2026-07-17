@@ -133,6 +133,27 @@ test("realtime projection DOES surface a brief generated today", async () => {
   assert.equal(rt.synthesis, 'Today synthesis');
 });
 
+// Harden pass, item 2: realtime voice previously explicitly disabled
+// resolvedContext (buildBrainSnapshot's include.resolvedContext: false) —
+// this proves the compact projection now reaches the SAME voice-facing
+// realtimeTodayContext() every other field above comes from.
+test('realtime projection includes a compact resolvedContext summary when the snapshot carries one', async () => {
+  const { buildResolvedContext } = require('../src/intelligence/context-resolver');
+  const withContext = buildResolvedContext({
+    assertions: [{ id: 'a1', predicate: 'drank', objectValue: 'wine', rawText: 'drank wine', eventStatus: 'occurred', domains: ['health'], retiredAt: null, recordedAt: ASOF.toISOString() }],
+    relations: [], tz: TZ, now: ASOF,
+  });
+  const snap = await buildFixtureSnapshot();
+  const rt = realtimeTodayContext({ ...snap, resolvedContext: { value: withContext } }, null);
+  assert.equal(rt.resolvedContext, '- drank wine');
+});
+
+test('realtime projection resolvedContext is null (not a crash) when the snapshot has nothing relevant', async () => {
+  const snap = await buildFixtureSnapshot(); // stubbed RESOLVED_CONTEXT has no assertions
+  const rt = realtimeTodayContext(snap, null);
+  assert.equal(rt.resolvedContext, null);
+});
+
 // ── Requirement #9: deterministic under an injected TZ ≠ process TZ ───────────
 test('snapshot localDate is computed from the injected timezone, not process.env.TZ', async () => {
   const savedTz = process.env.TZ;

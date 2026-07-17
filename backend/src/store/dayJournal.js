@@ -5,10 +5,10 @@ const { query } = require('../db');
 // context, not a string — the exact bug that made habit-streak dots never fill
 // in earlier this session. Every read of entry_date below goes through
 // to_char() instead of relying on the driver's default parsing.
-async function create({ text, entryDate, source = 'voice' }) {
+async function create({ text, entryDate, source = 'voice' }, db = query) {
   const t = String(text || '').trim();
   if (!t) throw new Error('day journal text required');
-  const { rows } = await query(
+  const { rows } = await db(
     `INSERT INTO day_journal (entry_date, text, source)
      VALUES ($1, $2, $3)
      RETURNING id, to_char(entry_date, 'YYYY-MM-DD') AS entry_date, text, source, created_at`,

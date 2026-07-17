@@ -341,3 +341,116 @@ test('scenario 9 — unknown concept: a previously unseen context still compiles
   assert.equal(result.evidenceBasis, 'model_hypothesis');
   assert.ok(result.confidence <= 0.35, `expected a visibly low confidence for an unsupported hypothesis, got ${result.confidence}`);
 });
+
+// ── 10. Input-path migration (harden pass, item 1) ────────────────────────
+// Ask-added context and realtime-voice-added context both call
+// chat/executeAction.js's add_context/log_day_context handlers — proving
+// THIS path reaches ResolvedContext proves both surfaces at once, since
+// chat/realtimeTools.js's executeNormosAction/deepAsk delegate to the exact
+// same executeAction() function (see intelligence/context-input.js's doc
+// comment). This is the actual production entrypoint, not the
+// /api/briefing/context route the other 9 scenarios exercise.
+test('scenario 10a — Ask/voice add_context reaches ResolvedContext through executeAction (shared by Ask and realtime voice)', async () => {
+  const { executeAction } = require('../../src/chat/executeAction');
+  mockCompile([{
+    assertionType: 'preference', subject: 'user', predicate: 'prefers', objectValue: `${TEST_MARKER} morning workouts`,
+    concepts: [], domains: ['workouts'], eventStatus: 'occurred', temporalRef: 'unspecified',
+    explicitDate: '', correctsPriorText: '', confidence: 0.85,
+  }]);
+  const result = await executeAction({ action: 'add_context', text: `${TEST_MARKER} I prefer morning workouts` });
+  assert.equal(result.done, true);
+
+  const stored = await contextAssertionsStore.getActive({ recordedFrom: new Date(Date.now() - 3600000) });
+  assert.ok(stored.some((a) => a.rawText.includes(TEST_MARKER)), 'add_context must compile through the SAME shared pipeline as POST /briefing/context, not bypass it');
+
+  const resolved = await resolveContext({});
+  const prefs = getPreferencesFor(resolved, `${TEST_MARKER} morning workouts`);
+  assert.ok(prefs.length >= 1, 'the Ask/voice-added preference must be resolvable through the canonical selector');
+});
+
+test('scenario 10b — realtime voice log_day_context reaches ResolvedContext through the SAME executeAction path', async () => {
+  const { executeAction } = require('../../src/chat/executeAction');
+  mockCompile([{
+    assertionType: 'event', subject: 'user', predicate: 'drank', objectValue: 'alcohol',
+    concepts: ['alcohol'], domains: ['health'], eventStatus: 'occurred', temporalRef: 'today',
+    explicitDate: '', correctsPriorText: '', confidence: 0.9,
+  }]);
+  const result = await executeAction({ action: 'log_day_context', text: `${TEST_MARKER} had a couple drinks tonight, rough week` });
+  assert.equal(result.done, true);
+
+  const resolved = await resolveContext({});
+  const drivers = getDriversFor(resolved, 'health:recovery_autonomic');
+  assert.ok(drivers.driver && drivers.driver.includes('alcohol'), `expected the voice-logged day-context to become a resolvable driver, got: ${JSON.stringify(drivers)}`);
+
+  const journalRows = await db.query(`SELECT id FROM day_journal WHERE text LIKE $1`, [`%${TEST_MARKER}%`]);
+  assert.equal(journalRows.rows.length, 1, 'the underlying day_journal write must still happen exactly as before (compilation is additive, never a replacement for the caller\'s own write)');
+});
+
+test('scenario 10c — check-in free-text note reaches ResolvedContext through the SAME shared pipeline', async () => {
+  mockCompile([{
+    assertionType: 'explanation', subject: 'user', predicate: 'felt', objectValue: 'stressed',
+    concepts: ['stress'], domains: ['health'], eventStatus: 'occurred', temporalRef: 'today',
+    explicitDate: '', correctsPriorText: '', confidence: 0.85,
+  }]);
+  const res = await request(app).post('/api/checkin').set(authHeader())
+    .send({ mood: 2, energy: 2, focus: 3, note: `${TEST_MARKER} stressed about a deadline, slept badly` });
+  assert.equal(res.status, 200);
+
+  const stored = await contextAssertionsStore.getActive({ recordedFrom: new Date(Date.now() - 3600000) });
+  assert.ok(stored.some((a) => a.rawText.includes(TEST_MARKER)), 'the check-in note must compile through the shared pipeline, not stay confined to the documents corpus');
+
+  const resolved = await resolveContext({});
+  const drivers = getDriversFor(resolved, 'health:recovery_autonomic');
+  assert.ok(drivers.driver && drivers.driver.includes('stressed'), `expected the check-in note to become a resolvable driver, got: ${JSON.stringify(drivers)}`);
+
+  await db.query(`DELETE FROM documents WHERE content LIKE $1`, [`%${TEST_MARKER}%`]);
+  // POST /checkin also writes real mood/energy/focus metrics (source=
+  // 'checkin') for TODAY, independent of the compiled-context path this
+  // scenario is testing — leaving them behind makes notify-evening-
+  // reminder.test.js's "nothing logged" case see a checkin that never
+  // happened in ITS test, a real cross-file pollution bug the harden pass's
+  // own full-integration-suite run caught. ingest/checkin.js anchors the
+  // metric ts to a fixed per-day anchor (dayAnchorTs), NOT now() — so the
+  // window here must cover the whole day, not a narrow "last hour" (which
+  // missed it entirely whenever the anchor time and the actual test-run
+  // time fell more than an hour apart).
+  await db.query(`DELETE FROM metrics WHERE source = 'checkin' AND ts >= now() - interval '1 day'`);
+});
+
+test('scenario 10d — Ask receives the resolved driver as reasoning input in its own LLM prompt', async () => {
+  mockCompile([{
+    assertionType: 'event', subject: 'user', predicate: 'drank', objectValue: `${TEST_MARKER} wine`,
+    concepts: ['alcohol'], domains: ['health'], eventStatus: 'occurred', temporalRef: 'last_night',
+    explicitDate: '', correctsPriorText: '', confidence: 0.9,
+  }]);
+  const res = await postContext(`${TEST_MARKER} I had drinks last night`);
+  assert.equal(res.status, 200);
+
+  const resolved = await resolveContext({});
+  assert.ok(getDriversFor(resolved, 'health:recovery_autonomic').driver, 'sanity: compiled context produced a resolvable driver');
+
+  let capturedPrompt = null;
+  llm.generateText = async ({ system, prompt }) => { capturedPrompt = `${system}\n${prompt}`; return 'A short answer.'; };
+  const { ask } = require('../../src/chat/ask');
+  await ask('Why has my recovery been off lately?');
+
+  assert.ok(capturedPrompt, 'expected the full-reasoning LLM path to run, not the fast command path');
+  assert.match(capturedPrompt, /RESOLVED CONTEXT/, 'Ask must feed the SAME compiled/resolved projection Chief Brief uses into its own prompt');
+  assert.match(capturedPrompt, new RegExp(TEST_MARKER), 'the specific compiled assertion must actually appear in the prompt text, not just an empty block header');
+});
+
+test('scenario 10e — realtime voice get_today_context surfaces the same compact resolved context (previously explicitly disabled)', async () => {
+  mockCompile([{
+    assertionType: 'event', subject: 'user', predicate: 'drank', objectValue: `${TEST_MARKER} beer`,
+    concepts: ['alcohol'], domains: ['health'], eventStatus: 'occurred', temporalRef: 'today',
+    explicitDate: '', correctsPriorText: '', confidence: 0.9,
+  }]);
+  const res = await postContext(`${TEST_MARKER} had a beer earlier`);
+  assert.equal(res.status, 200);
+
+  const toolRes = await request(app).post('/api/voice/realtime/tool').set(authHeader())
+    .send({ sessionId: 'test-cul-scenario-10e', name: 'get_today_context', arguments: {} });
+  assert.equal(toolRes.status, 200);
+  assert.ok(toolRes.body.result.resolvedContext, 'get_today_context must return a non-null resolvedContext once real context was compiled');
+  assert.match(toolRes.body.result.resolvedContext, new RegExp(TEST_MARKER));
+});

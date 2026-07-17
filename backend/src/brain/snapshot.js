@@ -323,6 +323,20 @@ function realtimeTodayContext(snapshot, briefing, opts = {}) {
   const cb = briefIsToday ? briefing?.content?.chiefBrief : null;
   const w = snapshot.effectiveWorkout.value;
   const r = snapshot.recovery.value;
+  // Context Understanding Layer: a compact projection of what the user has
+  // told NormOS (harden pass, item 2) — so a calendar reclassification or
+  // completion correction said earlier in the SAME voice session (or in a
+  // brief/Ask turn just before it) is visible to later voice turns too,
+  // instead of the realtime session re-reasoning from nothing. Capped
+  // smaller than Chief Brief/Ask's projection (voice's context budget is
+  // tighter) — see context-resolver.js's summarizeResolvedContext.
+  let resolvedContextNote = null;
+  if (snapshot.resolvedContext?.value) {
+    try {
+      const { summarizeResolvedContext } = require('../intelligence/context-resolver');
+      resolvedContextNote = summarizeResolvedContext(snapshot.resolvedContext.value, { purpose: 'general', maxItems: 4 }) || null;
+    } catch { /* non-critical */ }
+  }
   return {
     synthesis: cb?.synthesis ?? null,
     action: cb?.action ?? null,
@@ -330,6 +344,7 @@ function realtimeTodayContext(snapshot, briefing, opts = {}) {
     briefIsCurrent: briefIsToday,
     workout: w ? { type: w.label, source: w.source, isHard: w.isHard } : null,
     recovery: r ? { score: r.score ?? null, band: r.band ?? null } : null,
+    resolvedContext: resolvedContextNote,
   };
 }
 
