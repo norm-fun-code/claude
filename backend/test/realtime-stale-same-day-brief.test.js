@@ -52,12 +52,17 @@ test('a same-calendar-day brief whose fieldVersions predate a later recovery cha
   // bumping the real invalidation bus past what the brief reflects — this is
   // the actual mechanism store/metrics.js's insertMetrics drives in production.
   // bumpDurable (not bump) so the durable write-through has definitely landed
-  // before this proceeds — bump()'s write-through is fire-and-forget, and a
-  // pending write resolving mid-test (with a real DB behind it, as CI/this env
-  // has) could otherwise race the assertions below.
-  await invalidation.bumpDurable('recovery_change');
-  await invalidation.bumpDurable('recovery_change');
-  await invalidation.bumpDurable('recovery_change'); // now well past the brief's recorded version 3
+  // (or definitely failed) before this proceeds — bump()'s write-through is
+  // fire-and-forget, and a pending write resolving mid-test (with a real DB
+  // behind it, as CI/this env has) could otherwise race the assertions below.
+  // This test only needs the IN-PROCESS version bumped (applyLocal runs
+  // synchronously inside bumpDurable before the durable write is even
+  // attempted — see invalidation.js) — it doesn't depend on brain_state_version
+  // actually existing, so a genuine durable-persistence failure (e.g. this
+  // suite's pre-migration DB in CI) is expected and irrelevant here.
+  await invalidation.bumpDurable('recovery_change').catch(() => {});
+  await invalidation.bumpDurable('recovery_change').catch(() => {});
+  await invalidation.bumpDurable('recovery_change').catch(() => {}); // now well past the brief's recorded version 3
 
   try {
     const result = await runTool('get_today_context', {});
