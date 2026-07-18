@@ -67,7 +67,11 @@ function createRecoveryRouter() {
     // submitted) can have cached a "no data yet" null that's still within its
     // TTL — without invalidation that stale null gets served right back through
     // the write and the recovery score never appears to have been created.
-    require('../brain/invalidation').bump('recovery_change');
+    // Durable and awaited (not fire-and-forget): a self-report is user-facing
+    // state the caller is about to confirm as saved, so a request that
+    // immediately hits a different instance must not observe stale recovery
+    // (Transactional Brain Invalidation, audit recommendation #2, item 5).
+    await require('../brain/invalidation').bumpDurable('recovery_change');
     const recovery = await recoveryModule.liveRecovery();
     // Return the new proxy recovery immediately. The mobile then fires its normal
     // non-blocking briefing rebuild (triggerRebuild) which picks up this stored

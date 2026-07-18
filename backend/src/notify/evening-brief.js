@@ -363,12 +363,17 @@ async function runEveningHealthBrief(opts = {}) {
   signals.dataGap = detectDeviceDataGap({ load: signals.load, isRestDay });
   if (signals.dataGap) {
     try {
-      await annotationsStore.createAnnotation({
+      const { id } = await annotationsStore.createAnnotation({
         startTs: new Date().toISOString(),
         category: 'data_quality',
         label: 'Watch data gap — active energy/steps look under-tracked, not a real dip',
         note: signals.dataGap,
       });
+      // Transactional Brain Invalidation (audit recommendation #2): the store
+      // no longer invalidates itself (see its doc comment) — a single INSERT
+      // already commits atomically on its own, so invalidating right after it
+      // resolves is "strictly after commit."
+      if (id) await require('../brain/invalidation').bumpDurable('annotation_retirement');
     } catch (err) {
       console.error('[evening-brief] data-gap annotation failed:', err.message);
     }

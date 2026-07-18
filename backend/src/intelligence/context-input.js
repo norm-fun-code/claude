@@ -78,6 +78,17 @@ async function recordUserContext({ rawText, source, question = null, tz = proces
   if (compiled.assertions.length) {
     await require('../brain/invalidation').bumpDurable('context_assertion_change');
   }
+  // Transactional Brain Invalidation (audit recommendation #2): when
+  // writeInTransaction wrote an annotations row (getSourceAnnotationId
+  // returns non-null — e.g. add_context's createAnnotation call), that store
+  // no longer invalidates itself (see store/annotations.js's doc comment) —
+  // this caller is the transaction owner and must invalidate here, strictly
+  // after commit. A caller whose write targets a different table (e.g.
+  // log_day_context's dayJournalStore.create) omits getSourceAnnotationId and
+  // this is correctly skipped.
+  if (getSourceAnnotationId(result) != null) {
+    await require('../brain/invalidation').bumpDurable('annotation_retirement');
+  }
   return result;
 }
 

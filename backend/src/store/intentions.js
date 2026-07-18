@@ -12,8 +12,11 @@ const { query } = require('../db');
 // GOAL_CHANGE invalidates both `goals` and `weeklyIntention`, so route every
 // mutation here through the ONE bus rather than leaving a cached briefing's
 // weeklyGoals card unaware a new intention/achievement was just recorded.
-function invalidateIntentions() {
-  try { require('../brain/invalidation').bump('goal_change'); } catch { /* bus not loaded */ }
+// Durable and awaited (not fire-and-forget): a Sunday-checkin write is
+// user-facing-state the caller is about to confirm as saved (Transactional
+// Brain Invalidation, audit recommendation #2, item 5).
+async function invalidateIntentions() {
+  try { await require('../brain/invalidation').bumpDurable('goal_change'); } catch { /* bus not loaded */ }
 }
 
 /** The Sunday (local) that starts the week containing `date`. YYYY-MM-DD. */
@@ -62,7 +65,7 @@ async function saveIntention({ weekStart: ws, context = null, goals = [] } = {})
     [week, context ? String(context).trim() : null, JSON.stringify(clean)]
   );
   const r = rows[0];
-  if (r) invalidateIntentions();
+  if (r) await invalidateIntentions();
   return r ? { ...r, goals: normalizeGoals(r.goals) } : null;
 }
 
@@ -91,7 +94,7 @@ async function saveGoalResults({ weekStart: ws, achieved = [] } = {}) {
     [week, JSON.stringify(goals)]
   );
   const r = out[0];
-  if (r) invalidateIntentions();
+  if (r) await invalidateIntentions();
   return r ? { weekStart: r.week_start, context: r.context, goals: normalizeGoals(r.goals) } : null;
 }
 

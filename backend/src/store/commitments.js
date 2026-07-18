@@ -82,14 +82,17 @@ async function create({ title, detail = null, source = 'voice', dueAt = null, me
      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
     [t.slice(0, 200), detail ? String(detail).slice(0, 500) : null, source, dueAt, metricKey, recommendationId]
   );
-  if (rows[0]) invalidateCommitments();
+  if (rows[0]) await invalidateCommitments();
   return rows[0] ?? null;
 }
 
 // A commitment create/complete/skip changes what the brief's completion language
 // may claim — route it through the ONE invalidation bus (registry: COMMITMENT_CHANGE).
-function invalidateCommitments() {
-  try { require('../brain/invalidation').bump('commitment_change'); } catch { /* bus not loaded */ }
+// Durable and awaited (not fire-and-forget): the caller is about to confirm this
+// write as saved/done to the user (Transactional Brain Invalidation, audit
+// recommendation #2, item 5).
+async function invalidateCommitments() {
+  try { await require('../brain/invalidation').bumpDurable('commitment_change'); } catch { /* bus not loaded */ }
 }
 
 // How far back a 'done' commitment is even considered as a completion-
@@ -231,7 +234,7 @@ async function markDone(id, { at = new Date() } = {}) {
     [id, at]
   );
   const row = rows[0] ?? null;
-  if (row) { recordAdherenceOutcome(row, 1); invalidateCommitments(); }
+  if (row) { recordAdherenceOutcome(row, 1); await invalidateCommitments(); }
   return row;
 }
 
@@ -241,7 +244,7 @@ async function markSkipped(id) {
     [id]
   );
   const row = rows[0] ?? null;
-  if (row) { recordAdherenceOutcome(row, -1); invalidateCommitments(); }
+  if (row) { recordAdherenceOutcome(row, -1); await invalidateCommitments(); }
   return row;
 }
 

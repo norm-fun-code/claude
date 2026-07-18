@@ -29,6 +29,12 @@ function createAnnotationsRouter() {
     const { startTs, endTs, category, label, note } = req.body || {};
     if (!requireFields(req.body, ['startTs', 'category', 'label'], res)) return;
     const { id } = await annotationsStore.createAnnotation({ startTs, endTs, category, label, note });
+    // Transactional Brain Invalidation (audit recommendation #2): the store
+    // no longer invalidates itself (see its doc comment) — this write has no
+    // surrounding transaction (a single INSERT already commits atomically on
+    // its own), so invalidating right after it resolves is "strictly after
+    // commit" same as the transactional call sites below.
+    if (id) await require('../brain/invalidation').bumpDurable('annotation_retirement');
     res.json({ id });
   }));
 
@@ -53,7 +59,12 @@ function createAnnotationsRouter() {
     const id = req.params.id;
     if (!id || typeof id !== 'string' || id.length < 8) return res.status(400).json({ error: 'invalid id' });
     const { query } = require('../db');
-    await query('DELETE FROM annotations WHERE id = $1', [id]);
+    const { rowCount } = await query('DELETE FROM annotations WHERE id = $1', [id]);
+    // Equivalent-path gap (Transactional Brain Invalidation, audit
+    // recommendation #2, item 5): a deleted annotation changes eligible
+    // context exactly like a retirement does, but this route never
+    // invalidated at all before — every OTHER mutation path here now does.
+    if (rowCount > 0) await require('../brain/invalidation').bumpDurable('annotation_retirement');
     res.json({ ok: true });
   }));
 
@@ -70,6 +81,11 @@ function createAnnotationsRouter() {
     if (label == null && category == null) return res.status(400).json({ error: 'label or category required' });
     const updated = await annotationsStore.updateAnnotation(id, { label, category });
     if (!updated) return res.status(400).json({ error: 'nothing to update' });
+    // Transactional Brain Invalidation (audit recommendation #2): the store no
+    // longer invalidates itself (see its doc comment) — a single UPDATE
+    // already commits atomically on its own, so invalidating right after it
+    // resolves is "strictly after commit."
+    await require('../brain/invalidation').bumpDurable('annotation_retirement');
     res.json({ ok: true });
   }));
 
@@ -230,6 +246,14 @@ function createAnnotationsRouter() {
     // invalidation.bump() from INSIDE persistCompiledContext, i.e. inside
     // the still-open transaction, before COMMIT (see that function's doc
     // comment in intelligence/context-compiler.js).
+    // The annotation write itself (and any retraction-triggered retirement of
+    // a prior one, per createAnnotation's own logic) needs the SAME
+    // after-commit treatment now that store/annotations.js no longer
+    // invalidates itself — this is the one new invalidation this handler
+    // needs for the write above.
+    if (id) {
+      await require('../brain/invalidation').bumpDurable('annotation_retirement');
+    }
     if (compiled.assertions.length) {
       await require('../brain/invalidation').bumpDurable('context_assertion_change');
     }

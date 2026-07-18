@@ -8,11 +8,11 @@ const db = require('../db');
 const workoutChecks = require('../store/workoutChecks');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { requireFields } = require('../middleware/validate');
+const { VALID_WORKOUT_IDS, setWorkoutOverride } = require('../services/workout');
 
 // Manual per-day workout swaps. GET returns a date→workoutId map across a range
 // (so the week strip can show swapped days); POST sets one day (empty/null
 // workoutId reverts that day to the scheduled split).
-const VALID_WORKOUT_IDS = new Set(['push', 'pull', 'zone2', 'mobility', 'intervals', 'rest']);
 
 function createWorkoutRouter() {
   const router = express.Router();
@@ -49,23 +49,15 @@ function createWorkoutRouter() {
   router.post('/workout/override', asyncHandler(async (req, res) => {
     const { date, workoutId } = req.body || {};
     if (!requireFields(req.body, ['date'], res)) return;
-    // A workout override changes the effective plan, which the registry declares
-    // also invalidates the forecast's hard-session assumption — bump the ONE bus
-    // so every consumer of the effective workout / forecast recomputes.
-    const invalidate = () => require('../brain/invalidation').bump('workout_override', { date });
-    if (!workoutId) {
-      await db.query('DELETE FROM workout_overrides WHERE log_date = $1', [date]);
-      invalidate();
-      return res.json({ ok: true, date, workoutId: null });
-    }
-    if (!VALID_WORKOUT_IDS.has(workoutId)) return res.status(400).json({ error: 'invalid workoutId' });
-    await db.query(
-      `INSERT INTO workout_overrides (log_date, workout_id) VALUES ($1, $2)
-       ON CONFLICT (log_date) DO UPDATE SET workout_id = EXCLUDED.workout_id, created_at = now()`,
-      [date, workoutId]
-    );
-    invalidate();
-    res.json({ ok: true, date, workoutId });
+    if (workoutId && !VALID_WORKOUT_IDS.has(workoutId)) return res.status(400).json({ error: 'invalid workoutId' });
+    // Transactional Brain Invalidation (audit recommendation #2), item 4: the
+    // write + invalidation both live in services/workout.js's
+    // setWorkoutOverride now — the SAME function Ask/realtime voice
+    // (chat/executeAction.js) and the rest-day-commitment helper call, so
+    // every workout-override write path is identical instead of three
+    // near-duplicate upsert+invalidate implementations.
+    const result = await setWorkoutOverride({ date, workoutId: workoutId || null });
+    res.json({ ok: true, ...result });
   }));
 
   // GET /api/workout/progression?exercise=A&exercise=B&limit=10 — per-exercise
@@ -134,4 +126,4 @@ function createWorkoutRouter() {
   return router;
 }
 
-module.exports = { createWorkoutRouter, VALID_WORKOUT_IDS };
+module.exports = { createWorkoutRouter };

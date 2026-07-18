@@ -44,10 +44,15 @@ const plan = {
 };
 
 // Canonical workout ids — the same vocabulary workout_overrides/swap_workout
-// use (routes/workout.js's VALID_WORKOUT_IDS). Every plan-type string maps
-// onto one of these so overrides and the scheduled plan can be compared and
-// classified with a single vocabulary instead of two parallel ones.
+// use. Every plan-type string maps onto one of these so overrides and the
+// scheduled plan can be compared and classified with a single vocabulary
+// instead of two parallel ones.
 const OVERRIDE_LABELS = { push: 'Push', pull: 'Pull', zone2: 'Zone 2', mobility: 'Mobility', intervals: 'Intervals', rest: 'Rest' };
+
+// Derived from OVERRIDE_LABELS' own keys (not a second, separately-maintained
+// list) — this used to be redefined independently in routes/workout.js, a
+// duplicated vocabulary the comment above already warned against.
+const VALID_WORKOUT_IDS = new Set(Object.keys(OVERRIDE_LABELS));
 
 // Training-load classification: which workout ids actually load the body hard
 // enough to carry fatigue into tomorrow. Rest and Recovery + Mobility are
@@ -252,25 +257,65 @@ function isRestDayCommitment(text) {
 }
 
 /**
- * Write-through: same upsert swap_workout performs (see chat/executeAction.js,
- * routes/workout.js), so a rest-day commitment becomes visible to every other
- * reader of workout_overrides, not just the commitments list.
+ * Transactional Brain Invalidation (audit recommendation #2), item 4: THE
+ * ONE shared write path for every workout-override mutation — the manual
+ * REST route (routes/workout.js), Ask/realtime voice's swap_workout
+ * (chat/executeAction.js, shared by both since realtimeTools.js and
+ * routes/chat.js/voice.js all funnel through the same executeAction()), and
+ * the rest-day-commitment helper below all call this instead of each
+ * upserting/deleting workout_overrides and invalidating independently. Live
+ * bug this replaces: executeAction.js's swap_workout wrote workout_overrides
+ * directly with no invalidation at all — a voice/Ask-driven swap left the
+ * forecast/brief/surfaces silently stale until something ELSE happened to
+ * invalidate workout_override.
+ *
+ * `workoutId` null/falsy reverts the day to the scheduled split (DELETE);
+ * otherwise it must be one of VALID_WORKOUT_IDS. Idempotent (an UPSERT / a
+ * DELETE of a possibly-already-absent row, either way safe to call twice).
+ * Invalidates the workout_override trigger through the ONE bus exactly once
+ * per call, after the write completes. Throws on an invalid workoutId (the
+ * REST route turns that into its own 400; callers that already validate
+ * upstream — like executeAction's own VALID_WORKOUT_IDS check — won't hit it).
+ */
+async function setWorkoutOverride({ date, workoutId = null } = {}) {
+  if (!date) throw new Error('setWorkoutOverride: date is required');
+  const db = require('../db');
+  if (!workoutId) {
+    await db.query('DELETE FROM workout_overrides WHERE log_date = $1', [date]);
+  } else {
+    if (!VALID_WORKOUT_IDS.has(workoutId)) throw new Error(`setWorkoutOverride: invalid workoutId "${workoutId}"`);
+    await db.query(
+      `INSERT INTO workout_overrides (log_date, workout_id) VALUES ($1, $2)
+       ON CONFLICT (log_date) DO UPDATE SET workout_id = EXCLUDED.workout_id, created_at = now()`,
+      [date, workoutId]
+    );
+  }
+  // A workout override changes the effective plan, which the registry
+  // declares also invalidates the forecast's hard-session assumption — bump
+  // the ONE bus so every consumer of the effective workout / forecast
+  // recomputes, exactly once per call regardless of caller. Durable and
+  // awaited (not bump()'s fire-and-forget): this is a user-facing-state
+  // mutation the caller is about to respond to the user as "done," so a
+  // request that immediately hits a different instance right after must not
+  // be able to observe the pre-swap state (Transactional Brain Invalidation,
+  // audit recommendation #2).
+  await require('../brain/invalidation').bumpDurable('workout_override', { date });
+  return { date, workoutId: workoutId || null };
+}
+
+/**
+ * Write-through: same upsert setWorkoutOverride performs, so a rest-day
+ * commitment becomes visible to every other reader of workout_overrides,
+ * not just the commitments list.
  */
 async function applyRestDayOverride(tz = process.env.TZ || 'America/New_York') {
-  const db = require('../db');
   const day = new Date().toLocaleDateString('en-CA', { timeZone: tz });
-  await db.query(
-    `INSERT INTO workout_overrides (log_date, workout_id) VALUES ($1, 'rest')
-     ON CONFLICT (log_date) DO UPDATE SET workout_id = EXCLUDED.workout_id, created_at = now()`,
-    [day]
-  );
-  // Same effective-plan change as the manual override route — invalidate through
-  // the ONE bus so the forecast/brief don't keep the pre-rest-day session.
-  try { require('../brain/invalidation').bump('workout_override', { date: day }); } catch { /* bus not loaded */ }
+  await setWorkoutOverride({ date: day, workoutId: 'rest' });
 }
 
 module.exports = {
   getWorkout, getTodayWorkout, getUpcomingWorkouts, isRestDayCommitment, applyRestDayOverride,
   getEffectiveWorkout, isHardWorkoutId, isHardWorkoutType, workoutIdForPlanType, OVERRIDE_LABELS,
+  VALID_WORKOUT_IDS, setWorkoutOverride,
   autoDowngradeFor,
 };

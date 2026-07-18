@@ -81,9 +81,15 @@ async function recomputeWealthFlows(opts = {}) {
   });
 
   // New transaction-derived flow metrics landed → the canonical wealth totals
-  // (spendingMtd) changed. Invalidate through the ONE bus (TRANSACTION_SYNC).
+  // (spendingMtd) changed. Invalidate through the ONE bus (TRANSACTION_SYNC),
+  // strictly after the transaction above committed. Durable and awaited (not
+  // fire-and-forget): both callers (the admin resync route, the briefing
+  // rebuild path) await this function and act on wealth state immediately
+  // after, so a request that hits a different instance right after must not
+  // observe stale wealth (Transactional Brain Invalidation, audit
+  // recommendation #2, item 5).
   if (metricsWritten > 0) {
-    try { require('../brain/invalidation').bump('transaction_sync'); } catch { /* bus not loaded */ }
+    try { await require('../brain/invalidation').bumpDurable('transaction_sync'); } catch { /* bus not loaded */ }
   }
 
   return { transactions: records.length, metricsWritten };

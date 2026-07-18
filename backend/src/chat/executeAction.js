@@ -14,18 +14,21 @@ const commitmentsStore = require('../store/commitments');
 const dayJournalStore = require('../store/dayJournal');
 const { recomputeHabitScore } = require('../intelligence/habit-score');
 const { recordUserContext } = require('../intelligence/context-input');
-const { VALID_WORKOUT_IDS } = require('../routes/workout');
+const { VALID_WORKOUT_IDS, setWorkoutOverride } = require('../services/workout');
 
 async function executeAction(routed) {
   const tz = process.env.TZ || 'America/New_York';
   const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
   try {
     if (routed.action === 'swap_workout' && VALID_WORKOUT_IDS.has(routed.workoutId)) {
-      await db.query(
-        `INSERT INTO workout_overrides (log_date, workout_id) VALUES ($1, $2)
-         ON CONFLICT (log_date) DO UPDATE SET workout_id = EXCLUDED.workout_id, created_at = now()`,
-        [today, routed.workoutId]
-      );
+      // Transactional Brain Invalidation (audit recommendation #2), item 4:
+      // this used to write workout_overrides directly with NO invalidation
+      // at all — a voice/Ask-driven swap left the forecast/brief/surfaces
+      // silently stale (the REST route had its own, different, correct
+      // invalidation path). Now routes through the SAME shared helper the
+      // REST route and the rest-day-commitment helper use, so every
+      // workout-override write emits the exact same invalidation.
+      await setWorkoutOverride({ date: today, workoutId: routed.workoutId });
       return { done: true, description: `Swapped today's workout to ${routed.workoutId}` };
     }
     if (routed.action === 'log_habit' && ['morningTM', 'afternoonTM', 'gratitude', 'coldShower', 'exercise'].includes(routed.habit)) {

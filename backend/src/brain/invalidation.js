@@ -74,17 +74,19 @@ async function persist(fields) {
 }
 
 /**
- * Apply a change trigger: invalidate every field the registry says it reaches
- * (transitively), bump versions IN-PROCESS synchronously (so a caller that
- * checks versionOf() right after bump() sees its own write with no await),
- * fire listeners, and kick off a best-effort durable write-through so other
- * instances/processes converge on refresh(). Returns the invalidated field
- * set + the new (at-least-local) global version. An unknown trigger
- * invalidates nothing.
- * @param {string} trigger one of TRIGGER.*
- * @param {object} [meta] passed through to listeners (e.g. { asOf })
+ * The IN-PROCESS half of applying a change trigger: invalidate every field
+ * the registry says it reaches (transitively), bump versions synchronously
+ * (so a caller that checks versionOf() right after sees its own write with
+ * no await), and fire listeners. Does NOT touch the durable store — bump()
+ * and bumpDurable() each call this exactly once and then decide separately
+ * how to persist, so persist() is never invoked twice for one trigger
+ * (Transactional Brain Invalidation, audit recommendation #2: bump() used
+ * to persist fire-and-forget internally, and bumpDurable() called bump()
+ * AND persisted again itself — one mutation could double-increment the
+ * durable version). Returns the invalidated field set + the new (at-least-
+ * local) global version. An unknown trigger invalidates nothing.
  */
-function bump(trigger, meta = {}) {
+function applyLocal(trigger, meta) {
   const fields = invalidationSet(trigger);
   if (!fields.length) return { trigger, fields: [], stateVersion: globalVersion };
   for (const field of fields) {
@@ -97,17 +99,33 @@ function bump(trigger, meta = {}) {
   }
   globalVersion += 1;
   console.log(`[brain/invalidation] ${trigger} → invalidated [${fields.join(', ')}] (state v${globalVersion})`);
-  persist(fields).catch(() => {}); // persist() already catches internally; this is a pure safety net
   return { trigger, fields, stateVersion: globalVersion };
 }
 
-/** Same as bump(), but AWAITS the durable write before resolving. Use when the
- *  caller must guarantee the invalidation is durably visible to other
- *  instances before it proceeds — e.g. before responding to the client whose
- *  action caused the mutation, so a request that immediately hits a different
- *  instance can't observe pre-mutation state. */
+/**
+ * Apply a change trigger and kick off a best-effort, FIRE-AND-FORGET durable
+ * write-through so other instances/processes eventually converge on
+ * refresh(). Use for mutations where cross-instance freshness isn't
+ * immediately load-bearing for the response about to be sent.
+ * @param {string} trigger one of TRIGGER.*
+ * @param {object} [meta] passed through to listeners (e.g. { asOf })
+ */
+function bump(trigger, meta = {}) {
+  const result = applyLocal(trigger, meta);
+  if (result.fields.length) persist(result.fields).catch(() => {}); // persist() already catches internally; this is a pure safety net
+  return result;
+}
+
+/** Same as bump(), but AWAITS the durable write before resolving, and persists
+ *  EXACTLY ONCE (not bump()'s own fire-and-forget PLUS a second awaited
+ *  call — see applyLocal's doc comment for the bug this replaced). Use when
+ *  the caller must guarantee the invalidation is durably visible to other
+ *  instances before it proceeds — e.g. after a transaction COMMITs and
+ *  before responding to the client whose action caused the mutation, so a
+ *  request that immediately hits a different instance can't observe
+ *  pre-mutation state. */
 async function bumpDurable(trigger, meta = {}) {
-  const result = bump(trigger, meta);
+  const result = applyLocal(trigger, meta);
   if (result.fields.length) await persist(result.fields);
   return result;
 }

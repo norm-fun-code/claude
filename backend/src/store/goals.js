@@ -2,9 +2,12 @@ const { query } = require('../db');
 
 // A goal create/update/delete changes what the brief's completion + weekly-intention
 // language may claim — route through the ONE invalidation bus (registry: GOAL_CHANGE
-// invalidates goals + weeklyIntention).
-function invalidateGoals() {
-  try { require('../brain/invalidation').bump('goal_change'); } catch { /* bus not loaded */ }
+// invalidates goals + weeklyIntention). Durable and awaited (not fire-and-forget):
+// a goal write is user-facing-state the caller is about to confirm as saved, so a
+// request that immediately hits a different instance must not observe stale goals
+// (Transactional Brain Invalidation, audit recommendation #2, item 5).
+async function invalidateGoals() {
+  try { await require('../brain/invalidation').bumpDurable('goal_change'); } catch { /* bus not loaded */ }
 }
 
 async function listGoals({ status = 'active' } = {}) {
@@ -25,7 +28,7 @@ async function createGoal({ title, domain = null, metric = null, targetValue = n
      RETURNING *`,
     [title, domain, metric, targetValue ?? null, unit, targetDate ?? null, baselineValue ?? null]
   );
-  if (rows[0]) invalidateGoals();
+  if (rows[0]) await invalidateGoals();
   return rows[0] ?? null;
 }
 
@@ -36,12 +39,12 @@ async function updateGoal(id, { status, title } = {}) {
   if (title !== undefined)  { vals.push(title);  fields.push(`title = $${vals.length}`); }
   if (!fields.length) return;
   await query(`UPDATE goals SET ${fields.join(', ')} WHERE id = $1`, vals);
-  invalidateGoals();
+  await invalidateGoals();
 }
 
 async function deleteGoal(id) {
   await query('DELETE FROM goals WHERE id = $1', [id]);
-  invalidateGoals();
+  await invalidateGoals();
 }
 
 module.exports = { listGoals, createGoal, updateGoal, deleteGoal };

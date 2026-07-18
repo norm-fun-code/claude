@@ -47,6 +47,17 @@ function endOfTomorrowET(d = new Date()) {
  * (e.g. POST /briefing/context's calendar_load signal_answers row — see
  * that route) passes the shared client through here instead of letting each
  * write commit independently.
+ *
+ * Transactional Brain Invalidation (audit recommendation #2): this store is
+ * deliberately side-effect FREE with respect to brain/invalidation — it used
+ * to call bump('annotation_retirement') itself the instant a row was
+ * inserted, which, when called with an injected transaction client mid-
+ * transaction, fired the invalidation BEFORE COMMIT. A rollback after that
+ * point left the brain claiming state had changed when it hadn't. Every
+ * caller is now the transaction owner and is responsible for invalidating
+ * itself, strictly after its own transaction (if any) commits — see
+ * routes/annotations.js and intelligence/context-input.js for the two
+ * present patterns.
  */
 async function createAnnotation(a, db = query) {
   const { startTs, endTs = null, category, label, note = null } = a;
@@ -94,27 +105,21 @@ async function createAnnotation(a, db = query) {
     }
   }
 
-  if (id) invalidateContext();
   return { id, eventKind, retiredAnnotationId };
-}
-
-// An annotation added/retired/updated changes which context is eligible, which
-// the registry declares also invalidates every context projection (and the
-// forecast that reads it) — route through the ONE bus (ANNOTATION_RETIREMENT).
-function invalidateContext() {
-  try { require('../brain/invalidation').bump('annotation_retirement'); } catch { /* bus not loaded */ }
 }
 
 /** Mark an annotation retired — excluded from every intelligence consumer
  *  (see overlapping() below) but never deleted, so history/audit views can
  *  still show it. Idempotent: a no-op if already retired. `db` accepts an
- *  injected transaction client, same as createAnnotation above. */
+ *  injected transaction client, same as createAnnotation above. Does NOT
+ *  invalidate itself — see createAnnotation's doc comment; the caller
+ *  invalidates 'annotation_retirement' after its own transaction (if any)
+ *  commits. */
 async function retireAnnotation(id, reason = null, db = query) {
   const { rowCount } = await db(
     `UPDATE annotations SET retired_at = now(), retired_reason = $2 WHERE id = $1 AND retired_at IS NULL`,
     [id, reason]
   );
-  if (rowCount > 0) invalidateContext();
   return rowCount > 0;
 }
 
@@ -168,12 +173,13 @@ function buildAnnotationUpdate({ label, category, id }) {
 
 /** Edit an existing annotation's label and/or category IN PLACE (same row —
  *  every downstream reader queries annotations live, so a correction is
- *  visible on the very next read). Returns false if there was nothing to update. */
+ *  visible on the very next read). Returns false if there was nothing to
+ *  update. Does NOT invalidate itself — see createAnnotation's doc comment;
+ *  the caller invalidates 'annotation_retirement' after this resolves. */
 async function updateAnnotation(id, { label, category } = {}) {
   const built = buildAnnotationUpdate({ label, category, id });
   if (!built) return false;
   await query(built.sql, built.params);
-  invalidateContext();
   return true;
 }
 
