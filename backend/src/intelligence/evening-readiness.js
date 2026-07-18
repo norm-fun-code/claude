@@ -228,20 +228,44 @@ async function todayCheckin({ tz } = {}) {
   };
 }
 
+/**
+ * Last `days` nights of sleep_hours + sleep_need — the two raw series
+ * recovery.js's sleepBalance7() needs. That's the single canonical sleep
+ * debt/surplus calculation in the app (see its own doc comment: "anywhere
+ * debt is shown should call this rather than reading the raw Eight Sleep
+ * field directly") — evening-brief.js's wind-down advice must be grounded in
+ * it, not in whether tomorrow happens to be a day off. gatherEvening()
+ * otherwise never touches sleep data at all (recovery.js's own callers
+ * compute this as a side effect of a much bigger seriesByKey fetch this
+ * module has no reason to duplicate).
+ */
+async function recentSleepSeries({ tz, days = 10 } = {}) {
+  const { to } = dayWindow(tz);
+  const from = new Date(to.getTime() - days * DAY);
+  const [sleepHours, sleepNeed] = await Promise.all([
+    metricsStore.dailyAggregate({ domain: 'health', metric: 'sleep_hours', from, to, agg: 'avg' }),
+    metricsStore.dailyAggregate({ domain: 'health', metric: 'sleep_need', from, to, agg: 'avg' }),
+  ]);
+  return { sleepHours, sleepNeed };
+}
+
 /** Gather everything the evening brief composer needs. */
 async function gatherEvening({ tz, isRestDay = false, isSick = false } = {}) {
-  const [autonomic, load, openHabits, checkin] = await Promise.all([
+  const [autonomic, load, openHabits, checkin, sleepSeries] = await Promise.all([
     autonomicRead({ tz }),
     todayLoad({ tz }),
     openEveningHabits({ tz, isRestDay, isSick }),
     todayCheckin({ tz }),
+    recentSleepSeries({ tz }),
   ]);
-  return { autonomic, load, openHabits, checkin };
+  const { sleepBalance7 } = require('./recovery');
+  const sleepBalance = sleepBalance7(sleepSeries.sleepHours, sleepSeries.sleepNeed);
+  return { autonomic, load, openHabits, checkin, sleepBalance };
 }
 
 module.exports = {
   autonomicRead, todayLoad, todayCheckin, openEveningHabits, eveningHabitsToTrack,
-  gatherEvening, dayWindow, detectDeviceDataGap, isSickDay,
+  gatherEvening, dayWindow, detectDeviceDataGap, isSickDay, recentSleepSeries,
   // Exported for direct, date-parameterized regression testing — todayLoad()
   // itself is hard-wired to literal wall-clock "today" (dayWindow() reads
   // `new Date()`), so a test exercising it can't pick an isolated historical

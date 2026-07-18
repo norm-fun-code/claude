@@ -40,10 +40,8 @@ function Chip({ label, value }: { label: string; value: string }) {
 }
 
 function EveningBriefCard({ brief }: Props) {
-  // 60s (matches BriefCard's shared default — see useBriefAudio's doc
-  // comment) rather than the previous 30s: the backend TTS call itself can
-  // take up to ~45s per model attempt before falling back, so a 30s client
-  // timeout could abort a request that was about to succeed.
+  // Uses useBriefAudio's shared default timeout/poll-retry policy — see that
+  // hook's doc comment.
   const { state: audioState, toggle: toggleListen } = useBriefAudio(EVENING_BRIEF_AUDIO_URL);
 
   if (!brief || !brief.headline) return null;
@@ -70,9 +68,9 @@ function EveningBriefCard({ brief }: Props) {
             style={styles.listenBtn}
             accessibilityRole="button"
             accessibilityLabel={audioState === 'playing' ? 'Stop narration' : 'Listen to tonight\'s wind-down brief'}
-            accessibilityState={{ busy: audioState === 'loading', disabled: audioState === 'loading' }}
+            accessibilityState={{ busy: audioState === 'loading' || audioState === 'preparing', disabled: audioState === 'loading' || audioState === 'preparing' }}
           >
-            {audioState === 'loading' ? (
+            {audioState === 'loading' || audioState === 'preparing' ? (
               <ActivityIndicator size="small" color="#A78BFA" />
             ) : (
               <Text style={styles.listenText}>

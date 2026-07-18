@@ -58,9 +58,9 @@ test('synthesize: a fast success within the deadline is unaffected — the deadl
 
 test('synthesize: each individual attempt is capped at whichever is smaller — its own per-call timeout, or the remaining overall budget (floored at 1s so a near-exhausted budget never hands axios a degenerate ~0ms timeout)', async () => {
   // With only 60ms of overall budget and a per-call GEMINI_TTS_TIMEOUT_MS of
-  // 45000ms (the default), the actual axios timeout passed for every attempt
+  // 8000ms (the default), the actual axios timeout passed for every attempt
   // must be clamped down to roughly what's left of the 60ms budget (floored
-  // at 1000ms) — nowhere near the full 45s default. Confirms the clamp
+  // at 1000ms) — nowhere near the full 8s default. Confirms the clamp
   // logic actually engaged, not just that SOME timeout was passed.
   const timeouts = [];
   axios.post = async (url, body, opts) => {
@@ -70,5 +70,5 @@ test('synthesize: each individual attempt is capped at whichever is smaller — 
   await assert.rejects(() => voice.synthesize('hello world'));
   assert.ok(timeouts.length > 0);
   assert.ok(timeouts.every((t) => t === 1000), `expected every attempt's own timeout to clamp down to the 1000ms floor (60ms budget is smaller than the floor), got ${JSON.stringify(timeouts)}`);
-  assert.ok(timeouts.every((t) => t < 45000), 'must never be the full un-clamped per-call default when the overall budget is this small');
+  assert.ok(timeouts.every((t) => t < 8000), 'must never be the full un-clamped per-call default when the overall budget is this small');
 });

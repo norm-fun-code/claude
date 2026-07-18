@@ -95,3 +95,38 @@ test('synthesize: "model doesn\'t exist" (404/400) on an early model falls throu
   assert.equal(result.mime, 'audio/wav');
   assert.equal(calls.length, 2, 'a bad-model-id error must not stop the fallback chain');
 });
+
+test('synthesize: returns which model actually produced the audio, for prewarm/backfill logging', async () => {
+  let first = true;
+  axios.post = async () => {
+    if (first) { first = false; throw errTimeout(); }
+    return okResponse();
+  };
+  const result = await voice.synthesize('hello world');
+  assert.equal(result.model, 'gemini-2.5-pro-preview-tts', 'must report the SECOND (fallback) model, not the first that failed');
+});
+
+// ── Wisdom Listen timeout fix: a primary-model timeout must fall back and
+// succeed comfortably within the client's terminal deadline, not merely
+// "eventually" — the live bug was one slow/hanging model alone eating
+// nearly the ENTIRE overall budget, leaving no real room for a fallback. ──
+
+test('synthesize: a primary-model timeout still succeeds via fallback well within the total deadline (fast-fallback, not one long attempt)', async () => {
+  let first = true;
+  axios.post = async () => {
+    if (first) {
+      first = false;
+      await new Promise((r) => setTimeout(r, 20)); // simulate a genuinely slow/hanging primary model
+      throw errTimeout();
+    }
+    return okResponse();
+  };
+  const start = Date.now();
+  const result = await voice.synthesize('hello world');
+  const elapsed = Date.now() - start;
+  assert.equal(result.mime, 'audio/wav');
+  // The whole point of shrinking GEMINI_TTS_TIMEOUT_MS is that a fallback
+  // succeeds in low-single-digit-seconds territory, not by burning most of
+  // the ~40s overall budget on the first attempt alone.
+  assert.ok(elapsed < 2000, `expected the fallback to succeed quickly, took ${elapsed}ms`);
+});

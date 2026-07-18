@@ -130,6 +130,15 @@ runMigrations()
       // Optional self-running morning routine (cloud deploys; ENABLE_SCHEDULER=true).
       startScheduler();
 
+      // Backfill today's spoken-narration cache (brief + Wisdom + evening, if
+      // already built) from whatever's already persisted — covers a restart
+      // mid-day, or this Wisdom-prewarm feature itself landing on a deploy
+      // after today's briefing already built without it. Without this, the
+      // first "Listen" tap of the day would hit a genuinely cold cache with
+      // no prewarm ever having run for it. Best-effort, never blocks boot.
+      require('./src/services/brief-audio').backfillTodayAudio()
+        .catch((err) => console.error('[brief audio backfill] failed:', err.message));
+
       // One-setting demo data: set SEED_DEMO_ON_BOOT=true to populate realistic
       // sample data + findings so the app shows a full dashboard on first open.
       // Idempotent (only touches 'seed' rows); turn the flag off once real data flows.

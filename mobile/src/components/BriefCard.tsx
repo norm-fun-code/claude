@@ -214,12 +214,12 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing, snapshotId }
   // sent, same hold-to-talk pattern as the Ask overlay's push-to-talk.
   const [qVoice, setQVoice] = useState<'idle' | 'recording' | 'thinking'>('idle');
   // Spoken narration — streamed from the server's pre-warmed neural TTS.
-  // 60s (not 30s): the backend's TTS call can itself take up to ~45s per
-  // model attempt (see voice.js's GEMINI_TTS_TIMEOUT_MS) before falling back
-  // to the next candidate model — a shorter client timeout used to abort and
-  // show "Unavailable" WHILE a slow-but-recoverable backend request was
-  // still running and about to succeed.
-  const { state: audioState, toggle: toggleListen } = useBriefAudio(BRIEFING_AUDIO_URL, 60000, snapshotId);
+  // Uses useBriefAudio's shared default timeout/poll-retry policy (see that
+  // hook's doc comment): a generous first-attempt window sized above the
+  // backend's own bounded TTS deadline, plus one automatic follow-up
+  // attempt before ever showing "Unavailable" for a request that was
+  // actually still finishing server-side.
+  const { state: audioState, toggle: toggleListen } = useBriefAudio(BRIEFING_AUDIO_URL, undefined, snapshotId);
 
   async function answerQuestion(overrideText?: string) {
     const trimmed = (overrideText ?? qAnswer).trim();
@@ -378,9 +378,9 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing, snapshotId }
               style={styles.listenBtn}
               accessibilityRole="button"
               accessibilityLabel={audioState === 'playing' ? 'Stop narration' : 'Listen to this morning\'s brief'}
-              accessibilityState={{ busy: audioState === 'loading', disabled: audioState === 'loading' }}
+              accessibilityState={{ busy: audioState === 'loading' || audioState === 'preparing', disabled: audioState === 'loading' || audioState === 'preparing' }}
             >
-              {audioState === 'loading' ? (
+              {audioState === 'loading' || audioState === 'preparing' ? (
                 <ActivityIndicator size="small" color="#A89CFF" />
               ) : (
                 <Text style={styles.listenText}>

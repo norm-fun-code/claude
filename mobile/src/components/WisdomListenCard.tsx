@@ -30,7 +30,7 @@ const GOLD = '#FF9F0A';
 function WisdomListenCard({ hasContent, snapshotId }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
-  const { state: audioState, toggle: toggleListen } = useBriefAudio(WISDOM_AUDIO_URL, 60000, snapshotId);
+  const { state: audioState, toggle: toggleListen } = useBriefAudio(WISDOM_AUDIO_URL, undefined, snapshotId);
 
   if (!voiceAvailable || !hasContent) return null;
 
@@ -44,9 +44,9 @@ function WisdomListenCard({ hasContent, snapshotId }: Props) {
           style={[styles.listenBtn, { borderColor: withAlpha(GOLD, 0.4) }]}
           accessibilityRole="button"
           accessibilityLabel={audioState === 'playing' ? 'Stop narration' : "Listen to today's wisdom"}
-          accessibilityState={{ busy: audioState === 'loading', disabled: audioState === 'loading' }}
+          accessibilityState={{ busy: audioState === 'loading' || audioState === 'preparing', disabled: audioState === 'loading' || audioState === 'preparing' }}
         >
-          {audioState === 'loading' ? (
+          {audioState === 'loading' || audioState === 'preparing' ? (
             <ActivityIndicator size="small" color={GOLD} />
           ) : (
             <Text style={[styles.listenText, { color: GOLD }]}>

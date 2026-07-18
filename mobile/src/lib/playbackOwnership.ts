@@ -101,3 +101,23 @@ export function createRequestGuard() {
 
   return { begin, isStale, isLive, invalidate };
 }
+
+export type FirstAttemptOutcome = 'stale' | 'retry' | 'terminal';
+
+/**
+ * Classifies what useBriefAudio.ts's toggle() should do after its FIRST
+ * fetch-and-play attempt throws — the exact decision behind the Wisdom
+ * Listen timeout fix: a request superseded/unmounted mid-flight does
+ * nothing; the first attempt's OWN local timer firing (AbortError) while
+ * still relevant gets one automatic follow-up attempt (a truthful
+ * "Preparing…" state) instead of an immediate "Unavailable", since the
+ * backend's bounded TTS deadline may only just be finishing; anything else
+ * (bad status, no audio, playback failure, a real network error) is
+ * terminal immediately — no free pass. Pure so this is unit-testable
+ * without a React harness (this project has none) — see
+ * playbackOwnership.test.ts.
+ */
+export function classifyFirstAttemptFailure(errName: string | undefined, stale: boolean): FirstAttemptOutcome {
+  if (stale) return 'stale';
+  return errName === 'AbortError' ? 'retry' : 'terminal';
+}

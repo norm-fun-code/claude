@@ -29,10 +29,16 @@ const TONE_HEADLINE = {
 
 // ── deterministic fallback (also the LLM's scaffold) ─────────────────────────
 
+// A cumulative 7-night net (recovery.js's sleepBalance7 — see its own doc
+// comment for why this, not Eight Sleep's raw debt field, is canonical) below
+// this many hours is treated as a real deficit worth naming tonight. Below
+// this, day-to-day noise isn't worth a special call-out.
+const MEANINGFUL_SLEEP_DEBT_HOURS = -2;
+
 function composeFallback({
   autonomic, load, openHabits, gratitude = [], training = null, isRestDay = false,
   tomorrowFirstEvent = null, tomorrowIsDayOff = false, tomorrowHoliday = null,
-  checkin = null, dataGap = null,
+  checkin = null, dataGap = null, sleepBalance = null,
 }) {
   const { hrv, hrvBaseline, rhr, rhrBaseline, tone, sampleThin } = autonomic;
 
@@ -74,32 +80,56 @@ function composeFallback({
     if (low.length) readiness += ` Your ${low.join(' and ')} ${low.length > 1 ? 'were' : 'was'} low today too — worth trusting how you actually felt over the numbers tonight.`;
   }
 
+  // Steps/movement are judged against the user's own baseline, independent of
+  // whether today was a rest day — a rest day means no planned hard TRAINING,
+  // it does not imply low steps. Without a valid baseline, stay neutral
+  // (never "high"/"low"/"lighter") rather than guess.
   let today = '';
   if (load.steps != null) {
+    const steps = commas(load.steps);
+    const aboveBaseline = load.stepsBaseline != null && load.steps >= load.stepsBaseline;
+    const belowBaseline = load.stepsBaseline != null && load.steps < load.stepsBaseline;
     if (isRestDay) {
-      // A rest day has no training-day norm to fall short of — lighter movement
-      // is the plan working, not a miss.
-      today = `You logged ${commas(load.steps)} steps today — a scheduled rest day, so lighter movement is expected.`;
+      if (aboveBaseline) {
+        today = `You still logged ${steps} steps on a scheduled rest day — plenty of movement without adding structured training stress.`;
+      } else if (belowBaseline) {
+        today = `You logged ${steps} steps on a scheduled rest day, a bit under your ${commas(load.stepsBaseline)} norm — no structured training today, and that's the plan working as intended.`;
+      } else {
+        today = `You logged ${steps} steps today, a scheduled rest day — no structured training, just how the day landed.`;
+      }
     } else {
       const vs =
         load.stepsBaseline != null
-          ? load.steps >= load.stepsBaseline
+          ? aboveBaseline
             ? ` — at or above your ${commas(load.stepsBaseline)} norm`
             : ` — under your ${commas(load.stepsBaseline)} norm`
           : '';
-      today = `You logged ${commas(load.steps)} steps today${vs}.`;
+      today = `You logged ${steps} steps today${vs}.`;
     }
   }
   if (dataGap) today = today ? `${today} ${dataGap}` : dataGap;
 
-  let tomorrow =
-    tone === 'settled'
-      ? 'Hold your bedtime window and tomorrow opens from a good place.'
-      : 'Lights down on time tonight is the single biggest lever on tomorrow — protect the bedtime window.';
+  // Bedtime/wind-down lever — grounded in tonight's own recovery signal
+  // (autonomic tone) and the canonical 7-night sleep balance (recovery.js's
+  // sleepBalance7), plus tomorrow's ACTUAL requirements. Whether tomorrow
+  // happens to be free never loosens this: a day off is not evidence that
+  // shortening sleep tonight is harmless.
+  const sleepDebtHours = sleepBalance ? sleepBalance.net : null;
+  const hasMeaningfulDebt = sleepDebtHours != null && sleepDebtHours <= MEANINGFUL_SLEEP_DEBT_HOURS;
+  let tomorrow;
   if (tomorrowFirstEvent) {
     tomorrow = `${tomorrowFirstEvent} tomorrow — get to bed on time so you're not running on empty for it.`;
-  } else if (tomorrowIsDayOff) {
-    tomorrow = 'Tomorrow' + (tomorrowHoliday ? ` is ${tomorrowHoliday}` : "'s a day off") + " — you've got more room tonight if you want it, but the wind-down still pays off.";
+  } else {
+    // A day off/holiday may be named as a FACT, but it never changes the
+    // advice itself — that's driven only by debt/tone above, exactly as it
+    // would be on a normal working day.
+    const dayOffNote = tomorrowIsDayOff ? `Tomorrow${tomorrowHoliday ? ` is ${tomorrowHoliday}` : "'s a day off"}. ` : '';
+    const advice = hasMeaningfulDebt
+      ? "You're carrying a sleep deficit over the last week — tonight's a good night to actually catch up."
+      : tone === 'settled'
+        ? 'Hold your bedtime window and tomorrow opens from a good place.'
+        : 'Lights down on time tonight is the single biggest lever on tomorrow — protect the bedtime window.';
+    tomorrow = `${dayOffNote}${advice}`;
   }
 
   const habits = openHabits.length
@@ -135,7 +165,7 @@ function composeFallback({
     signals: {
       hrv, hrvBaseline, rhr, rhrBaseline,
       steps: load.steps, stepsBaseline: load.stepsBaseline, activeEnergy: load.activeEnergy,
-      openHabits, dataGap,
+      openHabits, dataGap, sleepDebtHours,
     },
   };
 }
@@ -148,6 +178,19 @@ const SYSTEM =
   'do NOT restate recovery scores or morning advice — focus on how today landed on the body ' +
   'and how to close the day. Use ONLY the numbers provided; never invent data. ' +
   'Daytime HRV is a noisy autonomic-tone signal, NOT a recovery score — never call it recovery. ' +
+  'HARD RULES (never violate these, no matter how natural the phrasing feels): ' +
+  '(1) A scheduled rest day means no planned hard TRAINING today — it does NOT mean low steps or ' +
+  'light movement. Judge steps/movement against the user\'s own step baseline ONLY. If a valid ' +
+  'baseline is not provided, use neutral factual language (just state the number) — never call ' +
+  'steps "light", "low", or "lighter" without a baseline that actually supports it. ' +
+  '(2) Never describe steps or general daily movement as if it were a hard or structured workout — ' +
+  'only a logged/completed training session earns that language. ' +
+  '(3) A free or day-off tomorrow is NEVER evidence that shortening sleep tonight is harmless. ' +
+  'Ground the wind-down/bedtime advice in tonight\'s autonomic tone, the sleep debt/surplus figure ' +
+  'if given, recent sleep, and tomorrow\'s ACTUAL requirements (an early commitment) or explicit ' +
+  'user plans — never in "tomorrow is free so there is more room tonight". If the user has genuinely ' +
+  'late plans of their own, you may acknowledge the tradeoff honestly without endorsing loosening ' +
+  'the wind-down because of it. ' +
   'Return ONLY valid JSON.';
 
 function commitmentsLine(commitments) {
@@ -168,7 +211,7 @@ function buildPrompt(signals) {
     autonomic: a, load: l, openHabits, gratitude = [], morningPlan = null, training = null,
     commitments = null, dayContext = '', isRestDay = false,
     tomorrowFirstEvent = null, tomorrowIsDayOff = false, tomorrowHoliday = null,
-    checkin = null, dataGap = null,
+    checkin = null, dataGap = null, sleepBalance = null,
   } = signals;
   const checkinParts = checkin
     ? ['mood', 'energy', 'focus'].filter((k) => checkin[k] != null).map((k) => `${k} ${wellbeingLevel(checkin[k])}`)
@@ -180,9 +223,16 @@ function buildPrompt(signals) {
     checkinParts.length
       ? `Today's self-reported check-in: ${checkinParts.join(', ')} — this is how they said they actually felt today; weave it into the read wherever it's genuinely relevant (it can reinforce or contradict the body metrics — a settled HRV with a low mood/energy check-in is still worth naming, not just the numbers). Speak in these same plain words (low/ok/high) — never a raw score like "2/5".`
       : `Today's self-reported check-in: (none logged)`,
-    l.steps != null ? `Steps today: ${commas(l.steps)}${l.stepsBaseline != null ? ` (norm ${commas(l.stepsBaseline)})` : ''}` : 'Steps today: (none)',
+    l.steps != null
+      ? `Steps today: ${commas(l.steps)}${l.stepsBaseline != null ? ` (your baseline norm: ${commas(l.stepsBaseline)})` : ' (NO valid step baseline available — do not call this high/low/light, just state the number)'}`
+      : 'Steps today: (none)',
     l.activeEnergy != null ? `Active energy today: ${commas(l.activeEnergy)} kcal` : null,
-    isRestDay ? 'Today was a SCHEDULED REST DAY — lower steps/energy and no exercise are EXPECTED, not a shortfall. Do not compare against the training-day norm as if something was missed.' : null,
+    isRestDay
+      ? 'Today was a SCHEDULED REST DAY — this means no planned hard TRAINING today, nothing more. It does NOT mean steps or movement were low; judge steps ONLY against the step baseline line above, exactly as you would on a training day.'
+      : null,
+    sleepBalance
+      ? `7-night sleep balance (canonical, hours vs need — negative = debt, positive = surplus): ${sleepBalance.net > 0 ? '+' : ''}${sleepBalance.net}h over ${sleepBalance.nights} nights. Use this (not tomorrow's calendar) to judge whether tonight's wind-down needs to be firmer than usual.`
+      : 'Sleep balance: (not enough recent data to compute)',
     dataGap
       ? `DATA QUALITY FLAG: ${dataGap} Say this plainly in "today" (or "readiness" if more natural) — don't grade the day against these numbers as if they're real, and don't invent a health explanation for the dip.`
       : null,
@@ -201,7 +251,7 @@ function buildPrompt(signals) {
     tomorrowFirstEvent
       ? `Tomorrow's first commitment: ${tomorrowFirstEvent} — this is EARLY, factor it into how firmly you push bedtime tonight.`
       : tomorrowIsDayOff
-        ? `Tomorrow is a day off${tomorrowHoliday ? ` (${tomorrowHoliday})` : ''} — no early alarm to protect; there's more slack tonight if the user wants it.`
+        ? `Tomorrow is a day off${tomorrowHoliday ? ` (${tomorrowHoliday})` : ''} — no early alarm to protect. This is calendar information ONLY: it must NOT be treated as a reason the wind-down can be looser tonight. Base tonight's advice on the sleep-balance and autonomic-tone lines above instead.`
         : 'Tomorrow: (no early commitment on record — a normal working day)',
   ].filter(Boolean);
 
@@ -212,9 +262,9 @@ Write the evening wind-down brief as JSON with EXACTLY these string fields:
 {
   "headline": "≤6 words capturing tonight's read (e.g. 'Settled — wind down easy')",
   "readiness": "1-2 sentences on autonomic tone from the HRV/RHR vs the user's norm, and what it means for tonight. If data is thin, say so and defer to how they feel. If today's self-reported check-in (mood/energy/focus) is present and notably low or notably high, fold it in — a settled HRV reading doesn't override a day that was actually hard or draining; when the body metrics and the self-report disagree, say so plainly rather than only reporting the numbers.",
-  "today": "ONE sentence closing the loop on today's movement (steps/energy). If today was a scheduled rest day, say so and frame lower activity as expected/fine — never as falling short of the training-day norm. Empty string if no data.",
-  "plan": "ONE sentence grading the day against what was asked of it — this morning's plan AND any commitments the user made today (see the commitments line). The honest ledger, not a lecture: credit what they kept (session done, commitments honored) plainly; name what slipped without guilt and without re-issuing the instruction — the day is over. On a rest day, there was no session to grade — do not treat the rest itself as a miss. Prefer concrete evidence (planned session done/not, commitments kept/open, steps vs norm, today's check-in and what the user told you about their day). Empty string only if there's genuinely nothing to grade.",
-  "tomorrow": "ONE sentence: the bedtime/wind-down lever that sets up tomorrow. If tomorrow's first commitment is early, make the bedtime push concrete and specific to that (e.g. 'a 7:30 start tomorrow — get down by 10:30'), not generic. If tomorrow is a day off with no early commitment, say there's more room tonight while still valuing the wind-down. Do not cite a recovery score.",
+  "today": "ONE sentence closing the loop on today's movement (steps/energy), judged ONLY against the step baseline line above — if no baseline was given, just state the number neutrally, never 'high'/'low'/'lighter'. Separately, if today was a scheduled rest day, you may note that no structured training happened, but that is a statement about TRAINING, not about steps — never use the rest day to describe substantial or baseline-or-above steps as light, low, or lighter. Empty string if no data.",
+  "plan": "ONE sentence grading the day against what was asked of it — this morning's plan AND any commitments the user made today (see the commitments line). The honest ledger, not a lecture: credit what they kept (session done, commitments honored) plainly; name what slipped without guilt and without re-issuing the instruction — the day is over. On a rest day, there was no session to grade — do not treat the rest itself as a miss, and do not describe steps/movement as a hard workout when no session was logged. Prefer concrete evidence (planned session done/not, commitments kept/open, steps vs norm, today's check-in and what the user told you about their day). Empty string only if there's genuinely nothing to grade.",
+  "tomorrow": "ONE sentence: the bedtime/wind-down lever for tonight, grounded in the sleep-balance and autonomic-tone lines above, recent sleep, and tomorrow's ACTUAL requirements. If tomorrow's first commitment is early, make the bedtime push concrete and specific to that (e.g. 'a 7:30 start tomorrow — get down by 10:30'), not generic. If tomorrow is a day off, you may say so factually, but never use it as a reason the wind-down can be looser — a free day is not evidence reduced sleep is harmless. If the user has genuinely late plans of their own tonight (see 'what the user told you about today'), you may acknowledge that tradeoff honestly without endorsing it. Do not cite a recovery score.",
   "habits": "ONE short nudge listing the still-open evening habits, or empty string if none.",
   "reflection": "ONE sentence — the presence beat that closes the day, the mindfulness counterpart to the body read above. If recent gratitude notes are present, gently echo their theme in your own words (never quote verbatim, never list them like a report) so the reflection lands as something a person who was listening would say. If none are present, warmly invite one line of gratitude before bed. Keep it human and unforced; empty string only if anything here would feel hollow."
 }`;
@@ -240,7 +290,19 @@ async function composeEveningBrief(signals) {
     const v = parseAndValidate(text, { label: 'evening-brief', validate });
     if (!v) return fallback;
     // Keep the deterministic tone band + signals; take the model's prose.
-    return { ...fallback, ...v };
+    const merged = { ...fallback, ...v };
+    // Deterministic last-resort guard: the prompt instructs the model not to
+    // conflate a rest day with low steps, not to call steps a workout, and not
+    // to treat a free tomorrow as sleep-loosening permission — but an LLM can
+    // still slip. Any field that violates one of those rules gets replaced
+    // wholesale with the fallback's already-safe version of that same field.
+    const { validateEveningBriefClaims, neutralizeEveningBriefViolations } = require('./evening-brief-validator');
+    const violations = validateEveningBriefClaims(merged, signals);
+    if (violations.length) {
+      console.warn('[evening-brief] neutralizing LLM violations:', violations.map((x) => `${x.check}:${x.field}`).join(', '));
+      return neutralizeEveningBriefViolations(merged, violations, fallback);
+    }
+    return merged;
   } catch (err) {
     console.error('[evening-brief] LLM compose failed, using fallback:', err.message);
     return fallback;
@@ -435,4 +497,4 @@ async function runEveningHealthBrief(opts = {}) {
   }
 }
 
-module.exports = { runEveningHealthBrief, composeEveningBrief, composeFallback, buildPrompt };
+module.exports = { runEveningHealthBrief, composeEveningBrief, composeFallback, buildPrompt, SYSTEM };

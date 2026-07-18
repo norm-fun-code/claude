@@ -13,6 +13,15 @@ function key() {
   return k;
 }
 
+// Fail immediately and loudly (never silently degrade into a slow timeout)
+// when the one credential every TTS/STT call needs is absent — never logs
+// the key itself, only whether one is configured.
+function assertKeyConfigured(context) {
+  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()) return;
+  console.error(`[voice ${context}] GEMINI_API_KEY is not set — narration/transcription cannot work until it is configured.`);
+  throw new Error('GEMINI_API_KEY not set');
+}
+
 // Primary + fallbacks so a retired preview model degrades gracefully instead
 // of killing narration until someone edits env vars.
 function ttsModels() {
@@ -62,21 +71,24 @@ function isTransientTtsError(err) {
     || err.code === 'ECONNABORTED' || /timeout of/i.test(err.message || '');
 }
 
-// Audit fix, item 4/7: the per-attempt timeout below (45s) is a PER-CALL
-// budget, not a total one — with 3 candidate models and the last one getting
-// a same-model retry, the worst case was up to 3*45s + backoff ≈ 135s+ of
-// real wall-clock time, while every mobile Listen caller (useBriefAudio.ts)
-// times out its OWN fetch at 60s. That mismatch meant the server could keep
-// synthesizing (and burning Gemini quota) for over a minute after the
-// client had already shown "Unavailable" and moved on — no one would ever
-// see the eventual result. OVERALL_TIMEOUT_MS is the ONE bounded end-to-end
-// deadline for the whole retry loop, deliberately kept comfortably under
-// the client's 60s so the server can still return a clean 502 (see
-// routes/audio.js) BEFORE the client's own AbortController fires in the
-// common case, rather than racing it.
-const OVERALL_TIMEOUT_MS = Number(process.env.GEMINI_TTS_OVERALL_TIMEOUT_MS || 50000);
+// Audit fix, item 4/7: the per-attempt timeout used to be 45s — a PER-CALL
+// budget, not a total one. With 3 candidate models and the last one getting
+// a same-model retry, that meant ONE slow/hanging model could burn nearly
+// the entire OVERALL_TIMEOUT_MS by itself (45s of a 50s budget), leaving the
+// "fast fallback" in name only: by the time the first attempt failed there
+// was only ~5s left for every other candidate combined, and the 50s-vs-60s
+// margin against the mobile client's own timeout (useBriefAudio.ts) left
+// almost no room for normal network/Railway/proxy latency on top. That's
+// the mechanism behind "Listen" timing out at 60s and showing "Unavailable"
+// even though the server was still (usually pointlessly, by then) trying.
+// Fixed by shrinking BOTH numbers: a short per-model timeout so a bad model
+// fails fast enough that the loop can actually try its fallbacks within the
+// budget, and a shorter overall deadline that leaves real margin under the
+// client's terminal timeout instead of racing it to the wire.
+const OVERALL_TIMEOUT_MS = Number(process.env.GEMINI_TTS_OVERALL_TIMEOUT_MS || 40000);
 
 async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
+  assertKeyConfigured('tts');
   const trimmed = String(text || '').trim();
   if (!trimmed) throw new Error('nothing to synthesize');
   const directive = style || process.env.NORMOS_VOICE_STYLE ||
@@ -101,7 +113,16 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
   // failure (an earlier model falling through to the NEXT candidate beats
   // waiting on one that just failed); every model is tried regardless of
   // error type — a non-transient error just skips that model's retry.
-  const timeoutMs = Number(process.env.GEMINI_TTS_TIMEOUT_MS || 45000);
+  //
+  // 8s per attempt is deliberately short: a healthy TTS call for a script
+  // this size (composeWisdomNarrationScript caps at 1400 chars) normally
+  // returns in low single-digit seconds, so 8s already means "something is
+  // wrong with this model" rather than "give it more time." With
+  // OVERALL_TIMEOUT_MS=40000, that's enough budget for all 3 candidate
+  // models PLUS the last one's retry (4 attempts × 8s + one backoff ≈
+  // 32.5s) to actually run within the deadline, instead of the old math
+  // where one bad attempt alone could eat the whole budget.
+  const timeoutMs = Number(process.env.GEMINI_TTS_TIMEOUT_MS || 8000);
   const backoffMs = Number(process.env.GEMINI_TTS_BACKOFF_MS || 500);
   const models = ttsModels();
   const deadline = Date.now() + OVERALL_TIMEOUT_MS;
@@ -119,7 +140,7 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
     // Mime like "audio/L16;codec=pcm;rate=24000" — pull the rate if present.
     const rateMatch = String(part.inlineData.mimeType || '').match(/rate=(\d+)/);
     const sampleRate = rateMatch ? Number(rateMatch[1]) : 24000;
-    return { audio: pcmToWav(pcm, { sampleRate }), mime: 'audio/wav' };
+    return { audio: pcmToWav(pcm, { sampleRate }), mime: 'audio/wav', model };
   };
 
   let lastErr = null;
@@ -170,6 +191,7 @@ function isTransientSttError(err) {
 
 /** Transcribe recorded speech (base64 audio). Returns the plain transcript. */
 async function transcribe(base64Audio, mime = 'audio/wav') {
+  assertKeyConfigured('stt');
   // A real transcription of a short clip comes back in 1-3s; the old 45s
   // timeout just meant an overloaded/hung model burned 45s (twice, with the
   // retry) — the 60-second spinner users hit. Fail each attempt fast (12s)

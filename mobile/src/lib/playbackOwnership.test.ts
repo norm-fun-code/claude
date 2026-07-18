@@ -10,7 +10,7 @@
 // (also wired up as `npm test` in mobile/package.json).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createOwnershipRegistry, createRequestGuard } from './playbackOwnership.ts';
+import { createOwnershipRegistry, createRequestGuard, classifyFirstAttemptFailure } from './playbackOwnership.ts';
 
 // ── createOwnershipRegistry ─────────────────────────────────────────────
 
@@ -141,4 +141,36 @@ test('requestGuard: two begin() calls in the SAME synchronous tick still produce
   assert.equal(guard.isStale(ids[0]), true);
   assert.equal(guard.isStale(ids[1]), true);
   assert.equal(guard.isStale(ids[2]), false, 'only the LAST of the rapid-fire calls is current');
+});
+
+// ── classifyFirstAttemptFailure — Wisdom Listen timeout fix ────────────────
+// The decision behind "don't show Unavailable just because a local timer
+// fired": a first-attempt AbortError while still relevant gets one more
+// try (truthful "Preparing…"); anything else is terminal immediately; a
+// stale/unmounted request never does either.
+
+test('classifyFirstAttemptFailure: an AbortError while still relevant (not stale) is retryable', () => {
+  assert.equal(classifyFirstAttemptFailure('AbortError', false), 'retry');
+});
+
+test('classifyFirstAttemptFailure: a non-abort failure (bad status, no audio, playback error) is terminal immediately — no free pass', () => {
+  assert.equal(classifyFirstAttemptFailure(undefined, false), 'terminal');
+  assert.equal(classifyFirstAttemptFailure('TypeError', false), 'terminal');
+  assert.equal(classifyFirstAttemptFailure('Error', false), 'terminal');
+});
+
+test('classifyFirstAttemptFailure: a stale/unmounted request is neither retried nor errored, regardless of the error type', () => {
+  assert.equal(classifyFirstAttemptFailure('AbortError', true), 'stale');
+  assert.equal(classifyFirstAttemptFailure('TypeError', true), 'stale');
+  assert.equal(classifyFirstAttemptFailure(undefined, true), 'stale');
+});
+
+test('classifyFirstAttemptFailure: staleness is checked before the error type — a stale AbortError must never trigger a poll retry (no ghost fetch after unmount)', () => {
+  // If this were ever reordered (error-type check before staleness), an
+  // unmount racing exactly with the first attempt's own timeout could still
+  // kick off a second (POLL_TIMEOUT_MS) fetch for a screen nobody is
+  // looking at anymore — a resurrected "ghost" request.
+  const outcome = classifyFirstAttemptFailure('AbortError', /* stale */ true);
+  assert.equal(outcome, 'stale');
+  assert.notEqual(outcome, 'retry');
 });

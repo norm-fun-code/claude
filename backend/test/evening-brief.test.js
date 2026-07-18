@@ -59,19 +59,43 @@ test('reflection: recent gratitude → echo, none → invite', () => {
   assert.notEqual(withG.reflection, none.reflection);
 });
 
-// ── Rest day: lower steps + no exercise habit are expected, not a shortfall ──
+// ── Rest day: a rest day means no planned hard TRAINING — it does NOT mean
+// low steps. Steps are judged against the user's own baseline regardless of
+// rest-day status; "expected/fine" language is about training, never a cover
+// for mislabeling substantial movement as light. ──────────────────────────
 
-test('rest day: lower steps framed as expected, not "under norm"', () => {
+test('rest day + steps ABOVE baseline: framed as plenty of movement, never "light"/"low"/"lighter"', () => {
+  const c = composeFallback({
+    ...sig({ tone: 'settled' }, { steps: 11842, stepsBaseline: 9000 }),
+    isRestDay: true,
+  });
+  assert.match(c.today, /11,842/);
+  assert.match(c.today, /rest day/i);
+  assert.doesNotMatch(c.today, /\blight(?:er)?\b|\blow(?:er)?\b/i);
+  assert.match(c.today, /plenty of movement|structured training/i);
+});
+
+test('rest day + steps BELOW baseline: honestly cites the norm — a rest day does not suppress the comparison', () => {
   const c = composeFallback({
     ...sig({ tone: 'settled' }, { steps: 5392, stepsBaseline: 12731 }),
     isRestDay: true,
   });
   assert.match(c.today, /5,392/);
   assert.match(c.today, /rest day/i);
-  assert.doesNotMatch(c.today, /under your/i);
+  assert.match(c.today, /under your 12,731 norm/);
 });
 
-test('non-rest day still frames steps against the norm as before', () => {
+test('rest day + NO valid step baseline: neutral factual language only, never "high"/"low"/"lighter"', () => {
+  const c = composeFallback({
+    ...sig({ tone: 'settled' }, { steps: 8000, stepsBaseline: null }),
+    isRestDay: true,
+  });
+  assert.match(c.today, /8,000/);
+  assert.match(c.today, /rest day/i);
+  assert.doesNotMatch(c.today, /\bhigh\b|\blow(?:er)?\b|\blight(?:er)?\b/i);
+});
+
+test('training day + LOW steps: still compared honestly against baseline (no rest-day special-casing to hide behind)', () => {
   const c = composeFallback({
     ...sig({ tone: 'settled' }, { steps: 5392, stepsBaseline: 12731 }),
     isRestDay: false,
@@ -89,7 +113,8 @@ test('rest day: the plan line does not grade the rest itself as a miss', () => {
 });
 
 // ── Tomorrow-awareness: the bedtime lever gets concrete when there's an early
-// commitment on record, or eases off when tomorrow is a day off ────────────
+// commitment on record. A day off may be named as a fact but never loosens
+// the advice itself — that's driven only by sleep debt/tone. ───────────────
 
 test('an early first event tomorrow tightens the bedtime line with the specific commitment', () => {
   const c = composeFallback({
@@ -100,22 +125,40 @@ test('an early first event tomorrow tightens the bedtime line with the specific 
   assert.match(c.tomorrow, /bed on time/i);
 });
 
-test('tomorrow a day off (no early event) reads as more slack, not the generic bedtime line', () => {
+test('tomorrow a day off, NO sleep debt, settled tone: normal settled wind-down line — never framed as "more room"', () => {
   const c = composeFallback({
     ...sig({ tone: 'settled' }),
     tomorrowIsDayOff: true,
+    sleepBalance: { net: 0.5, nights: 5, need: 8 },
   });
-  assert.match(c.tomorrow, /day off/i);
-  assert.match(c.tomorrow, /more room/i);
+  assert.doesNotMatch(c.tomorrow, /more room|no rush|stay up|slack tonight/i);
+  assert.match(c.tomorrow, /bedtime window/i);
 });
 
-test('day off tomorrow names the holiday when there is one', () => {
+// ── A free/day-off tomorrow must never be treated as permission to shorten
+// sleep — the wind-down lever is grounded in the canonical 7-night sleep
+// balance (recovery.js's sleepBalance7) and tonight's autonomic tone, not in
+// whether tomorrow happens to be open. ──────────────────────────────────────
+
+test('tomorrow free BUT a real sleep deficit is on record: normal/firmer wind-down still applies, day off does not loosen it', () => {
+  const c = composeFallback({
+    ...sig({ tone: 'settled' }),
+    tomorrowIsDayOff: true,
+    sleepBalance: { net: -4.5, nights: 6, need: 8 },
+  });
+  assert.match(c.tomorrow, /sleep deficit|catch up/i);
+  assert.doesNotMatch(c.tomorrow, /more room|no rush|stay up|slack tonight|doesn'?t matter/i);
+});
+
+test('day off tomorrow names the holiday when there is one, still without "more room" framing', () => {
   const c = composeFallback({
     ...sig({ tone: 'settled' }),
     tomorrowIsDayOff: true,
     tomorrowHoliday: 'Independence Day',
+    sleepBalance: { net: 0.5, nights: 5, need: 8 },
   });
   assert.match(c.tomorrow, /Independence Day/);
+  assert.doesNotMatch(c.tomorrow, /more room|no rush|stay up/i);
 });
 
 test('an early event takes priority over a day-off flag if both are somehow set', () => {

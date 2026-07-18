@@ -24,25 +24,40 @@ import { useEffect, useRef, useState } from 'react';
 import * as Haptics from 'expo-haptics';
 import { authHeaders, fetchWithTimeout } from '../config';
 import { voiceAvailable, playBase64, claimOwnership, releaseIfOwner } from '../lib/voice';
-import { createRequestGuard } from '../lib/playbackOwnership';
+import { createRequestGuard, classifyFirstAttemptFailure } from '../lib/playbackOwnership';
 
-export type BriefAudioState = 'idle' | 'loading' | 'playing' | 'error';
+export type BriefAudioState = 'idle' | 'loading' | 'preparing' | 'playing' | 'error';
+
+// The backend's own bounded end-to-end TTS deadline (services/voice.js's
+// GEMINI_TTS_OVERALL_TIMEOUT_MS, default 40s) is what actually bounds cold
+// synthesis — this default is kept comfortably above it (not equal, not
+// racing it) so the server can normally finish and reply before the client
+// gives up on the FIRST attempt. If the first attempt's own local timer does
+// fire anyway (network hiccup, Railway/proxy overhead, an unusually slow
+// cold generation), that is deliberately NOT treated as terminal — see the
+// POLL_TIMEOUT_MS retry below.
+const DEFAULT_TIMEOUT_MS = 45000;
+// A single automatic follow-up attempt after a first-attempt client-side
+// timeout, before ever surfacing "Unavailable". By the time the first
+// attempt's timer fires, the backend has very likely already finished (or
+// terminally failed) within its OWN ~40s budget and cached the result — so a
+// short poll is enough to pick up a real success without the user tapping
+// again, while still keeping the total worst-case wait bounded (well short
+// of "several minutes").
+const POLL_TIMEOUT_MS = 15000;
 
 /**
  * @param url the brief-audio endpoint to fetch (BRIEFING_AUDIO_URL,
  *   EVENING_BRIEF_AUDIO_URL, WISDOM_AUDIO_URL, ...).
- * @param timeoutMs client fetch timeout. The backend's own overall TTS
- *   deadline (services/voice.js's GEMINI_TTS_OVERALL_TIMEOUT_MS) is
- *   deliberately kept under this default (50s vs 60s) so the server can
- *   return a clean error before the client's own AbortController fires in
- *   the common case, rather than racing it (audit fix, item 7) — don't drop
- *   this below the backend's budget without lowering that too.
+ * @param timeoutMs client fetch timeout for the FIRST attempt. Don't drop
+ *   this below the backend's own overall TTS deadline without lowering that
+ *   too (see DEFAULT_TIMEOUT_MS above).
  * @param snapshotId optional — binds narration to the EXACT build currently
  *   on screen (BriefingData.snapshotId) rather than "whatever the server
  *   thinks is most recent right now" (audit fix, item 4). Omit for Evening
  *   Brief, which has its own day-based (not snapshot-based) identity.
  */
-export function useBriefAudio(url: string, timeoutMs = 60000, snapshotId?: string | null) {
+export function useBriefAudio(url: string, timeoutMs = DEFAULT_TIMEOUT_MS, snapshotId?: string | null) {
   const [state, setState] = useState<BriefAudioState>('idle');
   // A unique, stable identity for THIS hook instance — the playback-
   // ownership token (lib/voice.ts). useRef(...).current is computed once
@@ -98,15 +113,21 @@ export function useBriefAudio(url: string, timeoutMs = 60000, snapshotId?: strin
 
     Haptics.selectionAsync();
     safeSetState('loading');
-    const controller = new AbortController();
-    abortRef.current = controller;
     const requestUrl = snapshotId ? `${url}${url.includes('?') ? '&' : '?'}snapshotId=${encodeURIComponent(snapshotId)}` : url;
-    try {
-      const res = await fetchWithTimeout(requestUrl, { headers: authHeaders(), signal: controller.signal }, timeoutMs);
-      if (isStale()) return;
+
+    // One fetch-then-play attempt, bounded by `attemptTimeoutMs`. Returns
+    // 'ok' on success (or a benign no-op) and 'stale' when this request has
+    // been superseded/unmounted mid-flight; throws for a genuine failure
+    // (bad status, no audio, playback failure) OR a client-side timeout
+    // (AbortError) — the caller distinguishes which.
+    const attempt = async (attemptTimeoutMs: number): Promise<'ok' | 'stale'> => {
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const res = await fetchWithTimeout(requestUrl, { headers: authHeaders(), signal: controller.signal }, attemptTimeoutMs);
+      if (isStale()) return 'stale';
       if (!res.ok) throw new Error(`Server ${res.status}`);
       const data = await res.json();
-      if (isStale()) return;
+      if (isStale()) return 'stale';
       if (!data?.audio) throw new Error('no audio');
       // Fetch the narration as base64 JSON (auth headers sent reliably via
       // fetch), then play from a local file — the same path the voice reply
@@ -120,17 +141,45 @@ export function useBriefAudio(url: string, timeoutMs = 60000, snapshotId?: strin
         // was awaiting. Release ownership immediately rather than leaving
         // an orphaned "owner" nothing will ever clean up.
         await releaseIfOwner(ownerId);
-        return;
+        return 'stale';
       }
-      if (!ok) { safeSetState('idle'); return; }
+      if (!ok) { safeSetState('idle'); return 'ok'; }
       // Claim ownership AFTER playback has actually started (playBase64 ->
       // playRemote already stopped/replaced whatever was playing before) —
       // so a LATER play elsewhere correctly finds and evicts THIS owner.
       claimOwnership(ownerId, () => safeSetState('idle'));
       safeSetState('playing');
+      return 'ok';
+    };
+
+    try {
+      try {
+        const result = await attempt(timeoutMs);
+        if (result === 'stale') return;
+      } catch (err: any) {
+        const outcome = classifyFirstAttemptFailure(err?.name, isStale());
+        if (outcome === 'stale') return;
+        // Anything other than OUR OWN first-attempt timer firing is a real
+        // failure (bad status, no audio, playback error, or a genuine
+        // network abort) — surface it as an error below, no free pass.
+        if (outcome === 'terminal') throw err;
+        // outcome === 'retry': the first attempt's local deadline elapsed,
+        // but the backend's OWN bounded TTS deadline (services/voice.js's
+        // GEMINI_TTS_OVERALL_TIMEOUT_MS) may only just be finishing — a
+        // truthful "Preparing…" state plus one automatic follow-up request
+        // picks up that result the moment it's ready (now warmed in the
+        // tts_audio cache), instead of flashing "Unavailable" purely
+        // because a fixed local timer fired while real work was still
+        // legitimately in progress. If this second attempt ALSO throws
+        // (including its own timeout), that propagates to the outer catch
+        // below and becomes a genuine terminal error — never a silent loop.
+        safeSetState('preparing');
+        const result = await attempt(POLL_TIMEOUT_MS);
+        if (result === 'stale') return;
+      }
     } catch {
       if (isStale()) return;
-      // No brief / TTS unavailable / playback failed / fetch aborted —
+      // No brief / TTS unavailable / playback failed / fetch aborted twice —
       // surface it briefly instead of silently doing nothing. Auto-reset
       // after 3s IS the retry affordance: the button's label returns to
       // "Listen" and a tap re-fires toggle() from scratch, no separate
