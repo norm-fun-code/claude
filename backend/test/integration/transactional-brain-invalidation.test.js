@@ -13,10 +13,12 @@ const assert = require('node:assert/strict');
 const request = require('supertest');
 const { buildTestApp, authHeader, closeDb } = require('./helpers');
 const db = require('../../src/db');
+const { withTransaction } = require('../../src/db');
 const inv = require('../../src/brain/invalidation');
 const llm = require('../../src/llm');
 const { executeAction } = require('../../src/chat/executeAction');
 const { buildBrainSnapshot } = require('../../src/brain/snapshot');
+const annotationsStore = require('../../src/store/annotations');
 
 const app = buildTestApp();
 const TZ = process.env.TZ || 'America/New_York';
@@ -165,4 +167,75 @@ test('a fresh BrainSnapshot built after a mutation sees the committed annotation
     snapshot.eligibleContext.value.some((a) => a.label === label),
     'the annotation committed via the HTTP route is visible in a freshly-built BrainSnapshot'
   );
+});
+
+// ── bumpDurable()'s double-persist fix, proven against the real durable
+// store (test/brain-invalidation.test.js covers the pure in-process half —
+// this tier is where anything that queries brain_state_version/annotations
+// directly belongs, since it's the only tier guaranteed to run AFTER
+// `npm run migrate`, see test/integration/helpers.js) ──────────────────────
+
+test('bumpDurable(): persists each affected field EXACTLY ONCE in the durable store, not twice', async () => {
+  // Drain any still-in-flight fire-and-forget persist() from an earlier
+  // test's plain bump() call (shared global state, no reset between tests)
+  // — otherwise a straggler landing mid-test would look like this call
+  // double-persisted when it didn't.
+  await new Promise((r) => setTimeout(r, 250));
+  const before = await Promise.all(['recovery', 'effectiveWorkout', 'todayForecast', 'recoveryComposite', inv.GLOBAL_FIELD].map(durableVersion));
+  await inv.bumpDurable('recovery_change');
+  const afterVals = await Promise.all(['recovery', 'effectiveWorkout', 'todayForecast', 'recoveryComposite', inv.GLOBAL_FIELD].map(durableVersion));
+  afterVals.forEach((v, i) => assert.equal(v, before[i] + 1, `field at index ${i} should have incremented by exactly 1 in the durable store, went from ${before[i]} to ${v}`));
+});
+
+test('bumpDurable(): the in-process cache and the durable store agree after one call (no drift from a double-persist)', async () => {
+  const localBefore = inv.versionOf('recovery');
+  const durableBefore = await durableVersion('recovery');
+  await inv.bumpDurable('recovery_change');
+  assert.equal(inv.versionOf('recovery'), localBefore + 1);
+  assert.equal(await durableVersion('recovery'), durableBefore + 1);
+});
+
+test('bumpDurable(): a trigger with no registered fields never touches the durable store at all', async () => {
+  const globalBefore = await durableVersion(inv.GLOBAL_FIELD);
+  const result = await inv.bumpDurable('not_a_real_trigger');
+  assert.deepEqual(result.fields, []);
+  assert.equal(await durableVersion(inv.GLOBAL_FIELD), globalBefore, 'an unknown trigger must never bump the global durable counter');
+});
+
+test('bump() (fire-and-forget) still eventually persists exactly once — same guarantee, different await style', async () => {
+  const before = await durableVersion('wealth');
+  inv.bump('transaction_sync');
+  // persist() is fire-and-forget from bump(); give its microtask/DB
+  // round-trip a moment to land before asserting the durable store.
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(await durableVersion('wealth'), before + 1);
+});
+
+// ── Transactional Brain Invalidation, item 5: a rolled-back transaction must
+// never invalidate anything. Production code (routes/annotations.js,
+// intelligence/context-input.js, services/recompute-wealth.js) always places
+// its bumpDurable() call AFTER (not inside) its withTransaction(...) call, so
+// a rejected transaction's `await` throws before that line is ever reached.
+// This proves BOTH halves against the real DB: the write itself rolled back
+// (the row never lands), and the exact statement-ordering pattern those
+// callers use never reaches invalidation. ──────────────────────────────────
+
+test('a transaction that rolls back never reaches its post-commit invalidation, and the write itself never lands', async () => {
+  const before = inv.versionOf('eligibleContext');
+  const label = `${MARKER} rollback`;
+  let threw = false;
+  try {
+    await withTransaction(async (client) => {
+      const dbFn = (text, params) => client.query(text, params);
+      await annotationsStore.createAnnotation({ startTs: new Date().toISOString(), category: 'test', label }, dbFn);
+      throw new Error('forced rollback');
+    });
+    await inv.bumpDurable('annotation_retirement'); // must never run
+  } catch (err) {
+    threw = true;
+  }
+  assert.equal(threw, true, 'the forced failure must propagate out of withTransaction');
+  assert.equal(inv.versionOf('eligibleContext'), before, 'no invalidation happened — the post-commit line was never reached');
+  const { rows } = await db.query('SELECT 1 FROM annotations WHERE label = $1', [label]);
+  assert.equal(rows.length, 0, 'the annotation write itself rolled back — it never committed');
 });
