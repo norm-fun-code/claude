@@ -57,6 +57,29 @@ async function listBriefings({ kind = 'weekly', limit = 4 } = {}) {
 }
 
 /**
+ * The EXACT briefing row carrying this snapshotId, or null. A direct,
+ * bounded (LIMIT 1) lookup — not a paginated/historical browse — so a
+ * caller that needs to serve or narrate the SPECIFIC persisted build a
+ * client is displaying (mobile's BriefingData.snapshotId) can find it
+ * regardless of which local day it was generated on, without either
+ * fetching unbounded history or silently substituting a different build
+ * (see routes/audio.js's snapshotId handling — the bug this fixes: a stale
+ * cached mobile screen showing yesterday's briefing got a 404 before TTS
+ * was ever attempted, because the old lookup filtered to TODAY's rows
+ * before ever checking snapshotId).
+ */
+async function findBySnapshotId(kind, snapshotId) {
+  if (!snapshotId) return null;
+  const { rows } = await query(
+    `SELECT id, kind, generated_at, period_start, period_end, content FROM briefings
+      WHERE kind = $1 AND content->>'snapshotId' = $2
+      ORDER BY generated_at DESC LIMIT 1`,
+    [kind, snapshotId]
+  );
+  return rows[0] ?? null;
+}
+
+/**
  * The last `days` distinct CALENDAR days' chief-of-staff briefs, most recent
  * first, excluding today. Multiple manual rebuilds in one day each insert their
  * own row (no upsert), so this dedupes to the LATEST build per local day — the
@@ -100,4 +123,4 @@ async function todaysMorningBrief() {
   return null;
 }
 
-module.exports = { saveBriefing, latestBriefing, listBriefings, recentDailyBriefOpeners, todaysMorningBrief, blankTodaysOpenQuestion };
+module.exports = { saveBriefing, latestBriefing, listBriefings, findBySnapshotId, recentDailyBriefOpeners, todaysMorningBrief, blankTodaysOpenQuestion };

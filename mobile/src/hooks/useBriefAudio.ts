@@ -27,6 +27,14 @@ import { voiceAvailable, playBase64, claimOwnership, releaseIfOwner } from '../l
 import { createRequestGuard, classifyFirstAttemptFailure } from '../lib/playbackOwnership';
 
 export type BriefAudioState = 'idle' | 'loading' | 'preparing' | 'playing' | 'error';
+// Distinguishes WHY toggle() landed in 'error', so the UI can tell "there's
+// nothing here to narrate" (the displayed content — a stale cached snapshot,
+// or no brief at all yet — genuinely doesn't exist server-side) apart from
+// "narration itself failed" (a real TTS/network/playback failure on content
+// that DOES exist). Backend error codes: 'no_brief' / 'snapshot_not_found' /
+// 'nothing_to_narrate' → 'not_found'; 'tts_failed' and anything else
+// (network error, bad JSON, no audio, playback failure) → 'narration_failed'.
+export type BriefAudioErrorKind = 'not_found' | 'narration_failed' | null;
 
 // The backend's own bounded end-to-end TTS deadline (services/voice.js's
 // GEMINI_TTS_OVERALL_TIMEOUT_MS, default 45s) is what actually bounds cold
@@ -58,8 +66,13 @@ const POLL_TIMEOUT_MS = 20000;
  *   thinks is most recent right now" (audit fix, item 4). Omit for Evening
  *   Brief, which has its own day-based (not snapshot-based) identity.
  */
+// Server error codes that mean "no such content" rather than "narration
+// broke" — see backend/src/routes/audio.js.
+const NOT_FOUND_CODES = new Set(['no_brief', 'snapshot_not_found', 'nothing_to_narrate']);
+
 export function useBriefAudio(url: string, timeoutMs = DEFAULT_TIMEOUT_MS, snapshotId?: string | null) {
   const [state, setState] = useState<BriefAudioState>('idle');
+  const [errorKind, setErrorKind] = useState<BriefAudioErrorKind>(null);
   // A unique, stable identity for THIS hook instance — the playback-
   // ownership token (lib/voice.ts). useRef(...).current is computed once
   // per mount and never changes across re-renders.
@@ -105,6 +118,7 @@ export function useBriefAudio(url: string, timeoutMs = DEFAULT_TIMEOUT_MS, snaps
     }
     if (loadingRef.current) return; // already in flight — a second tap is a no-op, not a duplicate request
     loadingRef.current = true;
+    setErrorKind(null); // a fresh attempt starts clean — a prior error's kind must not linger into this one
 
     const myRequestId = guard.begin();
     // True once a NEWER toggle() call (or unmount) has superseded this one —
@@ -126,7 +140,18 @@ export function useBriefAudio(url: string, timeoutMs = DEFAULT_TIMEOUT_MS, snaps
       abortRef.current = controller;
       const res = await fetchWithTimeout(requestUrl, { headers: authHeaders(), signal: controller.signal }, attemptTimeoutMs);
       if (isStale()) return 'stale';
-      if (!res.ok) throw new Error(`Server ${res.status}`);
+      if (!res.ok) {
+        // Read the machine-readable {error, message} body (see
+        // routes/audio.js) so the outer catch can classify WHY this failed —
+        // "nothing to narrate" vs. a genuine narration failure — rather than
+        // only ever seeing a bare HTTP status. Best-effort: a non-JSON or
+        // empty error body still fails, just without a specific code.
+        let code: string | undefined;
+        try { code = (await res.json())?.error; } catch { /* no JSON body */ }
+        const err: any = new Error(`Server ${res.status}`);
+        err.code = code;
+        throw err;
+      }
       const data = await res.json();
       if (isStale()) return 'stale';
       if (!data?.audio) throw new Error('no audio');
@@ -178,21 +203,32 @@ export function useBriefAudio(url: string, timeoutMs = DEFAULT_TIMEOUT_MS, snaps
         const result = await attempt(POLL_TIMEOUT_MS);
         if (result === 'stale') return;
       }
-    } catch {
+    } catch (err: any) {
       if (isStale()) return;
       // No brief / TTS unavailable / playback failed / fetch aborted twice —
       // surface it briefly instead of silently doing nothing. Auto-reset
       // after 3s IS the retry affordance: the button's label returns to
       // "Listen" and a tap re-fires toggle() from scratch, no separate
-      // "Retry" control needed.
+      // "Retry" control needed. Classify WHY: a server error code meaning
+      // "nothing to narrate" (no_brief / snapshot_not_found /
+      // nothing_to_narrate) reads as 'not_found' — the displayed content
+      // itself couldn't be located — anything else (tts_failed, a network
+      // error, a bad/missing audio payload, a playback failure, or a
+      // client-side timeout with no server response at all) reads as
+      // 'narration_failed'. Callers use this to show a distinct, honest
+      // message instead of one generic "Unavailable".
+      if (guard.isLive()) setErrorKind(err?.code && NOT_FOUND_CODES.has(err.code) ? 'not_found' : 'narration_failed');
       safeSetState('error');
       setTimeout(() => {
-        if (!isStale()) setState((s) => (s === 'error' ? 'idle' : s));
+        if (!isStale()) {
+          setState((s) => (s === 'error' ? 'idle' : s));
+          setErrorKind(null);
+        }
       }, 3000);
     } finally {
       loadingRef.current = false;
     }
   }
 
-  return { state, toggle, voiceAvailable };
+  return { state, errorKind, toggle, voiceAvailable };
 }

@@ -88,8 +88,17 @@ async function recomputeWealthFlows(opts = {}) {
   // after, so a request that hits a different instance right after must not
   // observe stale wealth (Transactional Brain Invalidation, audit
   // recommendation #2, item 5).
+  //
+  // Deliberately UNGUARDED — see store/goals.js's invalidateGoals for the
+  // full rationale: bumpDurable() REJECTS on a genuine durable-persistence
+  // failure (InvalidationPersistError), and swallowing that here would let
+  // a caller believe cross-instance freshness was confirmed when it wasn't.
+  // The metrics write above already committed; let the rejection propagate
+  // rather than retrying the recompute automatically (it's idempotent to
+  // re-run in principle, but that's the caller's call to make, not this
+  // function's).
   if (metricsWritten > 0) {
-    try { await require('../brain/invalidation').bumpDurable('transaction_sync'); } catch { /* bus not loaded */ }
+    await require('../brain/invalidation').bumpDurable('transaction_sync');
   }
 
   return { transactions: records.length, metricsWritten };

@@ -259,6 +259,10 @@ export default function App() {
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   });
+  // YYYY-MM-DD, device-local — comparable against BriefingData.localDate to
+  // tell genuinely current content apart from a carried-over cached build
+  // from a prior day (see WisdomListenCard's `stale` prop below).
+  const todayLocalDate = new Date().toLocaleDateString('en-CA');
 
   const tabTitle = TABS.find((t) => t.key === tab)?.label ?? '';
 
@@ -382,6 +386,7 @@ export default function App() {
                 (d?.quote && d?.quoteInsight) || (d?.notionQuote && d?.notionInsight) || d?.relevantHighlight?.content
               )}
               snapshotId={d?.snapshotId}
+              stale={Boolean(d?.localDate) && d?.localDate !== todayLocalDate}
             />
             {d?.quote && d?.quoteInsight && <QuoteCard quote={d.quote} insight={d.quoteInsight} />}
             {d?.notionText && d?.notionInsight && (

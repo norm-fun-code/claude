@@ -250,6 +250,13 @@ export interface BriefingData {
   fieldVersions?: Record<string, number>;
   snapshotId?: string;
   snapshotVersion?: number;
+  // The LOCAL calendar day (YYYY-MM-DD) this content was actually built for
+  // — present on every build since the Context Understanding Layer (see
+  // backend routes/briefing.js's `response.localDate`). Lets a card compare
+  // against "today" to know whether it's showing genuinely current content
+  // or a carried-over cached build from a prior day (e.g. Wisdom after
+  // midnight, before the next rebuild has landed) and label it honestly.
+  localDate?: string;
   morningFocus?: string;
   chiefBrief?: ChiefBrief | null;
   // True when the chiefBrief above is carried over from a prior build (this

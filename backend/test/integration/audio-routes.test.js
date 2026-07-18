@@ -194,12 +194,16 @@ test('GET /api/evening-brief/audio returns a clean 404 (never falls back to a pr
   assert.equal(res.body.error, 'no_brief');
 });
 
-test('GET /api/briefing/audio with an unknown snapshotId returns 404 rather than silently substituting a different build', async () => {
+test('GET /api/briefing/audio with an unknown snapshotId returns a distinct snapshot_not_found 404 rather than silently substituting a different build', async () => {
   stubSynthesize();
   await seedDaily({ snapshotId: 'real-snapshot-abc' });
   const res = await request(app).get('/api/briefing/audio').query({ snapshotId: 'stale-cached-snapshot-xyz' }).set(authHeader());
   assert.equal(res.status, 404);
-  assert.equal(res.body.error, 'no_brief');
+  // Distinct from the no-snapshotId 'no_brief' case (see the audit fix
+  // below) — an EXPLICIT snapshotId that can't be found is a different,
+  // more specific failure than "no briefing for today at all", and the
+  // mobile client (useBriefAudio.ts) tells them apart.
+  assert.equal(res.body.error, 'snapshot_not_found');
 });
 
 test('GET /api/briefing/audio with a matching snapshotId narrates the EXACT build requested, even when a newer one exists', async () => {
@@ -224,4 +228,86 @@ test('GET /api/briefing/audio with NO snapshotId still works (older mobile clien
   await seedDaily();
   const res = await request(app).get('/api/briefing/audio').set(authHeader());
   assert.equal(res.status, 200);
+});
+
+// ── Fix: an explicit snapshotId is served EXACTLY, even from a prior day ──
+// (backend/src/routes/audio.js — the bug: todaysDailyBriefing() used to
+// filter to TODAY's rows BEFORE ever checking snapshotId, so a stale mobile
+// screen still showing yesterday's cached briefing after midnight got a
+// clean 404 before TTS was ever attempted.)
+
+test('GET /api/briefing/audio with YESTERDAY\'s snapshotId narrates yesterday\'s EXACT content, cached under yesterday\'s day', async () => {
+  voiceService.synthesize = async (text) => ({ audio: Buffer.from(text), mime: 'audio/wav' });
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const yesterdayLocal = yesterday.toLocaleDateString('en-CA', { timeZone: tz });
+  await seedBackdated({
+    kind: 'daily',
+    content: {
+      __test_marker: 'audio-routes-test', snapshotId: 'stale-yesterday-snap', localDate: yesterdayLocal,
+      chiefBrief: { synthesis: 'YESTERDAY exact synthesis marker.', action: 'a', risk: 'r' },
+    },
+    generatedAt: yesterday,
+  });
+  const res = await request(app).get('/api/briefing/audio').query({ snapshotId: 'stale-yesterday-snap' }).set(authHeader());
+  assert.equal(res.status, 200, 'a stale-but-real snapshotId must be served, not 404d, even from a prior day');
+  const decoded = Buffer.from(res.body.audio, 'base64').toString('utf8');
+  assert.match(decoded, /YESTERDAY exact synthesis marker/, 'must narrate yesterday\'s OWN exact content');
+  // The audio cache key is derived from the CONTENT's own day (localDate),
+  // never from "now" — so this lands under yesterday's bucket, not today's.
+  const { rows } = await db.query(`SELECT cache_key FROM tts_audio WHERE cache_key LIKE $1`, [`brief:${yesterdayLocal}:%`]);
+  assert.equal(rows.length, 1, 'narrating a stale snapshot must cache under the CONTENT\'s own day, not today\'s');
+});
+
+test('GET /api/wisdom/audio with YESTERDAY\'s snapshotId narrates yesterday\'s EXACT Wisdom content, cached under yesterday\'s day', async () => {
+  voiceService.synthesize = async (text) => ({ audio: Buffer.from(text), mime: 'audio/wav' });
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const yesterdayLocal = yesterday.toLocaleDateString('en-CA', { timeZone: tz });
+  await seedBackdated({
+    kind: 'daily',
+    content: {
+      __test_marker: 'audio-routes-test', snapshotId: 'stale-yesterday-wisdom-snap', localDate: yesterdayLocal,
+      quote: 'YESTERDAY exact quote marker.', quoteInsight: 'Yesterday insight.',
+    },
+    generatedAt: yesterday,
+  });
+  const res = await request(app).get('/api/wisdom/audio').query({ snapshotId: 'stale-yesterday-wisdom-snap' }).set(authHeader());
+  assert.equal(res.status, 200);
+  const decoded = Buffer.from(res.body.audio, 'base64').toString('utf8');
+  assert.match(decoded, /YESTERDAY exact quote marker/);
+  const { rows } = await db.query(`SELECT cache_key FROM tts_audio WHERE cache_key LIKE $1`, [`wisdom:${yesterdayLocal}:%`]);
+  assert.equal(rows.length, 1);
+});
+
+test('GET /api/wisdom/audio with an unknown snapshotId returns a distinct snapshot_not_found 404', async () => {
+  stubSynthesize();
+  await seedDaily({ snapshotId: 'real-wisdom-snapshot' });
+  const res = await request(app).get('/api/wisdom/audio').query({ snapshotId: 'garbage-id-nobody-has' }).set(authHeader());
+  assert.equal(res.status, 404);
+  assert.equal(res.body.error, 'snapshot_not_found');
+});
+
+test('cache keys never collide across days or snapshots: today\'s real brief and a stale-snapshot replay of a DIFFERENT day cache under distinct keys', async () => {
+  voiceService.synthesize = async (text) => ({ audio: Buffer.from(text), mime: 'audio/wav' });
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const yesterdayLocal = yesterday.toLocaleDateString('en-CA', { timeZone: tz });
+  await seedDaily({ snapshotId: 'today-real-snap', chiefBrief: { synthesis: 'TODAY exact synthesis marker.', action: 'a', risk: 'r' } });
+  await seedBackdated({
+    kind: 'daily',
+    content: {
+      __test_marker: 'audio-routes-test', snapshotId: 'yesterday-real-snap', localDate: yesterdayLocal,
+      chiefBrief: { synthesis: 'TODAY exact synthesis marker.', action: 'a', risk: 'r' }, // deliberately IDENTICAL content
+    },
+    generatedAt: yesterday,
+  });
+  const todayRes = await request(app).get('/api/briefing/audio').query({ snapshotId: 'today-real-snap' }).set(authHeader());
+  const yesterdayRes = await request(app).get('/api/briefing/audio').query({ snapshotId: 'yesterday-real-snap' }).set(authHeader());
+  assert.equal(todayRes.status, 200);
+  assert.equal(yesterdayRes.status, 200);
+  // Same script/hash (identical chiefBrief content) but DIFFERENT day buckets
+  // — two distinct cache rows, never one shared/colliding row.
+  const { rows } = await db.query(
+    `SELECT cache_key FROM tts_audio WHERE cache_key LIKE $1 OR cache_key LIKE $2`,
+    [`brief:${today}:%`, `brief:${yesterdayLocal}:%`]
+  );
+  assert.equal(rows.length, 2, 'identical content from two different days must still produce two distinct cache rows, one per day');
 });

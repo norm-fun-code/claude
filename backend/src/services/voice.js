@@ -5,9 +5,12 @@
 //   GEMINI_TTS_MODEL   — TTS model override. MUST be an actual TTS-capable
 //                        model id (contains "tts", e.g.
 //                        gemini-2.5-flash-preview-tts) — it is tried FIRST,
-//                        ahead of every built-in fallback below, so a wrong
-//                        value here breaks narration entirely no matter what
-//                        the fallback list contains (see checkTtsModelOverride).
+//                        ahead of every built-in fallback below. A wrong
+//                        value there fails its own attempt (logged loudly —
+//                        see checkTtsModelOverride) but the retry loop still
+//                        falls through to the real candidates afterward, so
+//                        narration degrades rather than breaking outright —
+//                        just don't expect the override itself to ever work.
 const axios = require('axios');
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta';
@@ -46,14 +49,15 @@ function assertKeyConfigured(context) {
 const TTS_CANDIDATES = ['gemini-3.1-flash-tts-preview', 'gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts'];
 
 // A GEMINI_TTS_MODEL override is tried FIRST, ahead of every candidate above
-// — so a wrong value there breaks narration entirely no matter what this
-// file's fallback list contains (this was the SECOND live bug: Railway's
-// GEMINI_TTS_MODEL was set to 'gemini-3.5-flash', a plain text-generation
-// model reused from GEMINI_CHAT_MODEL, not a TTS-capable one). This can't be
-// silently overridden — the operator's explicit choice is still tried first
-// — but it CAN be loudly warned about and safely fallen through past, which
-// is what this does: log one clear, actionable line, then let the retry loop
-// continue on to the real candidates above instead of hard-failing.
+// — a wrong value there wastes one attempt (this was the SECOND live bug:
+// Railway's GEMINI_TTS_MODEL was set to 'gemini-3.5-flash', a plain
+// text-generation model reused from GEMINI_CHAT_MODEL, not a TTS-capable
+// one), but the retry loop still falls through to the real candidates above
+// afterward — it does not break narration outright. This can't be silently
+// overridden — the operator's explicit choice is still tried first — but it
+// CAN be loudly warned about, which is what this does: log one clear,
+// actionable line, then let the retry loop continue on to the real
+// candidates as it already would.
 function checkTtsModelOverride(model) {
   if (!/tts/i.test(model)) {
     console.error(

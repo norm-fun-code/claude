@@ -44,32 +44,79 @@ function on(field, fn) {
   (listeners[field] || (listeners[field] = [])).push(fn);
 }
 
-/** Best-effort durable write-through: bump `fields` (+ the global counter) by
- *  1 each in brain_state_version, and merge whatever Postgres reports back
+/** Named error type for a genuine durable-persistence failure (see
+ *  persistStrict/bumpDurable below) — lets a caller (or the central error
+ *  middleware) distinguish "the invalidation bus's durable write-through
+ *  failed" from an arbitrary application error, without inspecting message
+ *  text. Carries only field NAMES (never query params, connection strings,
+ *  or anything else DB-internal) — safe to log or include in a sanitized
+ *  5xx response body the same way every other thrown error in this app is. */
+class InvalidationPersistError extends Error {
+  constructor(fields, cause) {
+    super(`durable brain-state persistence failed for [${fields.join(', ')}]: ${cause.message}`);
+    this.name = 'InvalidationPersistError';
+    this.fields = [...fields];
+    this.cause = cause;
+  }
+}
+
+/** The raw durable write-through: bump `fields` (+ the global counter) by 1
+ *  each in brain_state_version, and merge whatever Postgres reports back
  *  (authoritative in case a concurrent writer — another instance, or another
- *  concurrent request in this process — got there first) into the in-process
- *  cache via max(). Never throws; a missing/unreachable DB just means this
- *  instance's in-process values are the only copy, same as before this table
- *  existed. */
+ *  concurrent request in this process — got there first) into the
+ *  in-process cache via max(). THROWS on failure — persist() and
+ *  persistStrict() below each wrap this with a DIFFERENT failure policy
+ *  (swallow vs. propagate); the raw DB work lives here exactly once so
+ *  those two policies can never drift out of sync with each other. */
+async function doPersist(fields) {
+  const db = require('../db');
+  const { rows } = await db.query(
+    `INSERT INTO brain_state_version (field, version, updated_at)
+     SELECT unnest($1::text[]), 1, now()
+     ON CONFLICT (field) DO UPDATE
+       SET version = brain_state_version.version + 1, updated_at = now()
+     RETURNING field, version`,
+    [[...fields, GLOBAL_FIELD]]
+  );
+  for (const row of rows) {
+    const v = Number(row.version);
+    if (row.field === GLOBAL_FIELD) globalVersion = Math.max(globalVersion, v);
+    else versions[row.field] = Math.max(versions[row.field] ?? 0, v);
+  }
+}
+
+/** Best-effort durable write-through — for bump() only. Never throws; a
+ *  missing/unreachable DB just means this instance's in-process values are
+ *  the only copy, same as before this table existed. Cross-instance
+ *  freshness is NOT guaranteed to have landed when this resolves — that
+ *  guarantee is exactly what persistStrict()/bumpDurable() exist for. */
 async function persist(fields) {
   if (!fields.length) return;
   try {
-    const db = require('../db');
-    const { rows } = await db.query(
-      `INSERT INTO brain_state_version (field, version, updated_at)
-       SELECT unnest($1::text[]), 1, now()
-       ON CONFLICT (field) DO UPDATE
-         SET version = brain_state_version.version + 1, updated_at = now()
-       RETURNING field, version`,
-      [[...fields, GLOBAL_FIELD]]
-    );
-    for (const row of rows) {
-      const v = Number(row.version);
-      if (row.field === GLOBAL_FIELD) globalVersion = Math.max(globalVersion, v);
-      else versions[row.field] = Math.max(versions[row.field] ?? 0, v);
-    }
+    await doPersist(fields);
   } catch (err) {
     console.error(`[brain/invalidation] durable persist failed (in-process version still applied): ${err.message}`);
+  }
+}
+
+/** STRICT durable write-through — for bumpDurable() only. Logs safe context
+ *  (the affected field names and the DB error message — never raw query
+ *  params or connection details) and then RE-THROWS as InvalidationPersistError,
+ *  so a caller that specifically asked for a durable, cross-instance-visible
+ *  invalidation learns about a genuine failure instead of the call silently
+ *  resolving as if it had succeeded (the bug this replaces: persist() always
+ *  swallowed, so `await bumpDurable(...)` could never actually fail even
+ *  when the durable write never landed). The in-process cache was ALREADY
+ *  updated by applyLocal() before this runs (see bumpDurable) — THIS
+ *  instance still sees its own write immediately regardless; only
+ *  cross-instance durability is what's actually broken when this throws. */
+async function persistStrict(fields) {
+  if (!fields.length) return;
+  try {
+    await doPersist(fields);
+  } catch (err) {
+    console.error(`[brain/invalidation] STRICT durable persist FAILED for [${fields.join(', ')}] — propagating to caller, not silently ignored: ${err.message}`);
+    throw new InvalidationPersistError(fields, err);
   }
 }
 
@@ -123,10 +170,23 @@ function bump(trigger, meta = {}) {
  *  instances before it proceeds — e.g. after a transaction COMMITs and
  *  before responding to the client whose action caused the mutation, so a
  *  request that immediately hits a different instance can't observe
- *  pre-mutation state. */
+ *  pre-mutation state.
+ *
+ *  REJECTS (InvalidationPersistError) if the durable write itself fails —
+ *  it does not silently succeed while only the in-process cache updated.
+ *  This is deliberate: "durable" must mean something. A caller whose own
+ *  data mutation already committed before this runs should let the
+ *  rejection propagate as its own distinct application error (e.g. via
+ *  asyncHandler → the central error middleware, same as any other thrown
+ *  error) rather than retry the whole user action — the underlying mutation
+ *  is not idempotent in general (re-running goal/commitment creation, a
+ *  workout swap, etc. from scratch could duplicate it), so an automatic
+ *  retry here is NOT safe. The honest outcome is: the user's data change is
+ *  saved, but this response reports that cross-instance freshness could not
+ *  be confirmed — never a silent "everything's fine" that isn't true. */
 async function bumpDurable(trigger, meta = {}) {
   const result = applyLocal(trigger, meta);
-  if (result.fields.length) await persist(result.fields);
+  if (result.fields.length) await persistStrict(result.fields);
   return result;
 }
 
@@ -169,4 +229,4 @@ on('recovery', () => {
   try { require('../intelligence/recovery').invalidateRecoveryCache(); } catch { /* not loaded */ }
 });
 
-module.exports = { bump, bumpDurable, refresh, on, versionOf, stateVersion, TRIGGER, GLOBAL_FIELD };
+module.exports = { bump, bumpDurable, refresh, on, versionOf, stateVersion, TRIGGER, GLOBAL_FIELD, InvalidationPersistError };

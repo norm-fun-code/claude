@@ -17,6 +17,13 @@ interface Props {
   // audit fix, item 4: never lets a stale mobile cache narrate a different
   // build than what's actually displayed.
   snapshotId?: string | null;
+  // True when the Wisdom content on screen is carried over from a PRIOR
+  // local day (d.localDate !== today — see App.tsx), not freshly built for
+  // today. The card still narrates it (its own exact snapshotId, see
+  // useBriefAudio) but must not claim it's "today's" reflection while doing
+  // so — audit fix: stale cached content deserves an honest label, not a
+  // silent implication it's current.
+  stale?: boolean;
 }
 
 const GOLD = '#FF9F0A';
@@ -27,12 +34,18 @@ const GOLD = '#FF9F0A';
  *  once") as Chief Brief and Evening Brief's own Listen buttons. Hides
  *  entirely when there's nothing narratable yet, or when voice playback
  *  isn't available on this build. */
-function WisdomListenCard({ hasContent, snapshotId }: Props) {
+function WisdomListenCard({ hasContent, snapshotId, stale }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
-  const { state: audioState, toggle: toggleListen } = useBriefAudio(WISDOM_AUDIO_URL, undefined, snapshotId);
+  const { state: audioState, errorKind, toggle: toggleListen } = useBriefAudio(WISDOM_AUDIO_URL, undefined, snapshotId);
 
   if (!voiceAvailable || !hasContent) return null;
+
+  // "Not found" (the displayed snapshot genuinely isn't on the server —
+  // stale cache pointing at a superseded/garbage id) reads differently from
+  // "Unavailable" (the content exists but narration itself failed) — see
+  // useBriefAudio's BriefAudioErrorKind.
+  const errorLabel = errorKind === 'not_found' ? 'Not found' : 'Unavailable';
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
@@ -43,20 +56,22 @@ function WisdomListenCard({ hasContent, snapshotId }: Props) {
           hitSlop={8}
           style={[styles.listenBtn, { borderColor: withAlpha(GOLD, 0.4) }]}
           accessibilityRole="button"
-          accessibilityLabel={audioState === 'playing' ? 'Stop narration' : "Listen to today's wisdom"}
+          accessibilityLabel={audioState === 'playing' ? 'Stop narration' : "Listen to this wisdom"}
           accessibilityState={{ busy: audioState === 'loading' || audioState === 'preparing', disabled: audioState === 'loading' || audioState === 'preparing' }}
         >
           {audioState === 'loading' || audioState === 'preparing' ? (
             <ActivityIndicator size="small" color={GOLD} />
           ) : (
             <Text style={[styles.listenText, { color: GOLD }]}>
-              {audioState === 'playing' ? '◼ Stop' : audioState === 'error' ? 'Unavailable' : '▶ Listen'}
+              {audioState === 'playing' ? '◼ Stop' : audioState === 'error' ? errorLabel : '▶ Listen'}
             </Text>
           )}
         </Pressable>
       </View>
       <Text style={[styles.subtext, { color: c.subtext }]}>
-        Today's quote, reading, and library pick — read aloud in under two minutes.
+        {stale
+          ? "An earlier day's quote, reading, and library pick — read aloud in under two minutes."
+          : "Today's quote, reading, and library pick — read aloud in under two minutes."}
       </Text>
     </View>
   );

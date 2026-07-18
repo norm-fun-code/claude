@@ -272,34 +272,49 @@ function isRestDayCommitment(text) {
  * `workoutId` null/falsy reverts the day to the scheduled split (DELETE);
  * otherwise it must be one of VALID_WORKOUT_IDS. Idempotent (an UPSERT / a
  * DELETE of a possibly-already-absent row, either way safe to call twice).
- * Invalidates the workout_override trigger through the ONE bus exactly once
- * per call, after the write completes. Throws on an invalid workoutId (the
- * REST route turns that into its own 400; callers that already validate
- * upstream — like executeAction's own VALID_WORKOUT_IDS check — won't hit it).
+ * Invalidates the workout_override trigger through the ONE bus — but ONLY
+ * when the override state actually CHANGED (a DELETE that removed a real
+ * row, or an UPSERT whose workout_id genuinely differs from what was already
+ * stored) — never for a no-op call (re-applying the same swap twice, or
+ * clearing a day that had no override to begin with). This avoids pointless
+ * durable version churn (and the awaited DB round trip that comes with it)
+ * for a call that changes nothing observable. Throws on an invalid
+ * workoutId (the REST route turns that into its own 400; callers that
+ * already validate upstream — like executeAction's own VALID_WORKOUT_IDS
+ * check — won't hit it).
  */
 async function setWorkoutOverride({ date, workoutId = null } = {}) {
   if (!date) throw new Error('setWorkoutOverride: date is required');
   const db = require('../db');
+  let changed;
   if (!workoutId) {
-    await db.query('DELETE FROM workout_overrides WHERE log_date = $1', [date]);
+    const { rowCount } = await db.query('DELETE FROM workout_overrides WHERE log_date = $1', [date]);
+    changed = rowCount > 0;
   } else {
     if (!VALID_WORKOUT_IDS.has(workoutId)) throw new Error(`setWorkoutOverride: invalid workoutId "${workoutId}"`);
-    await db.query(
+    // The WHERE clause on DO UPDATE makes this a genuine no-op (rowCount 0)
+    // when the stored workout_id already matches — a fresh INSERT, or an
+    // UPDATE that actually changes the value, both report rowCount 1.
+    const { rowCount } = await db.query(
       `INSERT INTO workout_overrides (log_date, workout_id) VALUES ($1, $2)
-       ON CONFLICT (log_date) DO UPDATE SET workout_id = EXCLUDED.workout_id, created_at = now()`,
+       ON CONFLICT (log_date) DO UPDATE SET workout_id = EXCLUDED.workout_id, created_at = now()
+         WHERE workout_overrides.workout_id IS DISTINCT FROM EXCLUDED.workout_id`,
       [date, workoutId]
     );
+    changed = rowCount > 0;
   }
   // A workout override changes the effective plan, which the registry
   // declares also invalidates the forecast's hard-session assumption — bump
   // the ONE bus so every consumer of the effective workout / forecast
-  // recomputes, exactly once per call regardless of caller. Durable and
-  // awaited (not bump()'s fire-and-forget): this is a user-facing-state
-  // mutation the caller is about to respond to the user as "done," so a
-  // request that immediately hits a different instance right after must not
-  // be able to observe the pre-swap state (Transactional Brain Invalidation,
-  // audit recommendation #2).
-  await require('../brain/invalidation').bumpDurable('workout_override', { date });
+  // recomputes, exactly once per call regardless of caller, and only when
+  // something actually changed. Durable and awaited (not bump()'s
+  // fire-and-forget): this is a user-facing-state mutation the caller is
+  // about to respond to the user as "done," so a request that immediately
+  // hits a different instance right after must not be able to observe the
+  // pre-swap state (Transactional Brain Invalidation, audit recommendation #2).
+  if (changed) {
+    await require('../brain/invalidation').bumpDurable('workout_override', { date });
+  }
   return { date, workoutId: workoutId || null };
 }
 

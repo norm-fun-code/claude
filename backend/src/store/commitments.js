@@ -91,8 +91,15 @@ async function create({ title, detail = null, source = 'voice', dueAt = null, me
 // Durable and awaited (not fire-and-forget): the caller is about to confirm this
 // write as saved/done to the user (Transactional Brain Invalidation, audit
 // recommendation #2, item 5).
+//
+// Deliberately UNGUARDED — see store/goals.js's invalidateGoals for the full
+// rationale: bumpDurable() REJECTS on a genuine durable-persistence failure
+// (InvalidationPersistError), and swallowing that here would let a caller
+// believe cross-instance freshness was confirmed when it wasn't. The write
+// above already committed; let the rejection propagate rather than retrying
+// a non-idempotent mutation automatically.
 async function invalidateCommitments() {
-  try { await require('../brain/invalidation').bumpDurable('commitment_change'); } catch { /* bus not loaded */ }
+  await require('../brain/invalidation').bumpDurable('commitment_change');
 }
 
 // How far back a 'done' commitment is even considered as a completion-
