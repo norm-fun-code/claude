@@ -41,17 +41,23 @@ test('probeTtsModelAvailability: reports which candidates are LISTED (ListModels
   delete process.env.GEMINI_TTS_MODEL;
   axios.get = async (url) => {
     assert.doesNotMatch(url, /key=$/, 'sanity: a key value was actually substituted into the URL');
-    return listModelsResponse(['gemini-3.1-flash-tts-preview', 'gemini-2.5-flash-preview-tts']);
+    // ListModels returns flash-preview-tts (a candidate) but NOT pro-preview-tts.
+    return listModelsResponse(['gemini-2.5-flash-preview-tts', 'gemini-3.1-flash-tts-preview']);
   };
   const result = await voice.probeTtsModelAvailability();
   assert.equal(result.configured, null);
-  assert.deepEqual(result.listed.sort(), ['gemini-2.5-flash-preview-tts', 'gemini-3.1-flash-tts-preview'].sort());
+  // Only the intersection of the candidate list and what ListModels returned.
+  // gemini-2.5-flash-preview-tts is a candidate AND listed; gemini-2.5-pro-preview-tts
+  // is a candidate but NOT listed; gemini-3.1-flash-tts-preview is listed but
+  // is NOT a default candidate (it hangs on generateContent), so it never
+  // appears here.
+  assert.deepEqual(result.listed.sort(), ['gemini-2.5-flash-preview-tts']);
   assert.ok(result.notListed.includes('gemini-2.5-pro-preview-tts'));
   assert.equal(result.error, null);
   // Live bug this field naming exists to prevent recurring: a model being
-  // LISTED here is not proof an actual Interactions TTS call will succeed —
-  // gemini-2.5-flash-preview-tts was listed yet still 400'd in production
-  // because the bug was the request path/shape, not model existence.
+  // LISTED here is not proof an actual TTS call will succeed —
+  // gemini-2.5-flash-preview-tts was listed yet still 400'd in one production
+  // report, because the bug was elsewhere, not model existence.
   assert.equal(result.available, undefined, 'must not use the old "available" field name, which implied a confirmed-working guarantee ListModels never made');
 });
 

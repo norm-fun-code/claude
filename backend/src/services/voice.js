@@ -15,33 +15,33 @@ const axios = require('axios');
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
-// Live bug, confirmed via Railway logs: gemini-3.1-flash-tts-preview timed
-// out at 25s and the gemini-2.5-flash-preview-tts fallback 400'd — NOT a
-// timeout/ordering problem (that was the PREVIOUS fix). Root cause: every TTS
-// model was being sent to the legacy GenerateContent endpoint
-// (POST /v1beta/models/{model}:generateContent with camelCase
-// generationConfig). Per ai.google.dev/gemini-api/docs/speech-generation,
-// current Gemini TTS models are served through a SEPARATE Interactions API
-// (POST /v1beta/interactions, snake_case body, response audio at
-// output_audio.data) — GenerateContent for these models either hangs waiting
-// on a response shape that never arrives (the 25s timeout) or is rejected
-// outright (the 400). STT is unaffected — transcribe() below still uses
-// GenerateContent, which remains the correct/documented path for it; only
-// TTS moved.
-const INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
-// Live bug: an earlier version of this fix sent a guessed 'Api-Revision:
-// 2026-05-20' header on every call, sourced from a less-reliable secondary
-// fetch. Deployed to production, EVERY candidate model then hung for
-// exactly the configured per-attempt timeout instead of the fast
-// success/rejection the canonical documented curl example implies — the
-// canonical example itself sends no Api-Revision header at all. Unverified
-// header value on a request that then hangs (rather than a clean 400) is
-// exactly the failure mode of an API gateway choking on a value it doesn't
-// recognize. Default to NOT sending this header; set
-// GEMINI_INTERACTIONS_API_REVISION explicitly only if Google's docs are
-// re-confirmed (via a neutral, non-leading check, not a leading question)
-// to require one.
-const INTERACTIONS_API_REVISION = process.env.GEMINI_INTERACTIONS_API_REVISION || null;
+// TTS ENDPOINT — REVERTED to GenerateContent, the API the Gemini SDKs
+// actually use for speech.
+//
+// History (the whole painful arc, so this doesn't get "fixed" wrong again):
+//  - Originally TTS ran on GenerateContent (POST .../models/{model}:generateContent
+//    with responseModalities:['AUDIO'] + speechConfig) and Chief narration
+//    WORKED, with gemini-2.5-flash-preview-tts as the primary model.
+//  - When Wisdom Listen was added, a SECOND full prewarm fired concurrently
+//    with Chief's — two overlapping TTS calls, each timing out at 25s. That
+//    RESOURCE CONTENTION (now fixed by the process-wide gate in
+//    services/brief-audio.js) was the real regression.
+//  - It was mis-diagnosed as a wrong-endpoint problem and migrated to a
+//    "/v1beta/interactions" API sourced from unverifiable doc-scraping.
+//    Deployed, EVERY serialized (uncontended) call to that endpoint hung
+//    with ECONNABORTED — Google never responded at all. The authoritative
+//    google-genai Python SDK (_SpeechConfig_to_mldev, response_modalities
+//    on generate_content) and the JS SDK confirm TTS is served through
+//    generateContent, with NO interactions endpoint. So that migration is
+//    reverted here in full.
+//
+// KEY behavioral property this restores: on GenerateContent a bad model
+// FAILS FAST (a 404/400 in well under a second), so the fallback chain
+// moves on immediately. The interactions endpoint instead HUNG for the
+// full per-attempt timeout on every model, which is what made every
+// "Listen" tap sit for ~25s and then show Unavailable.
+//
+// STT (transcribe() below) always used GenerateContent and is untouched.
 
 function key() {
   const k = process.env.GEMINI_API_KEY;
@@ -58,23 +58,23 @@ function assertKeyConfigured(context) {
   throw new Error('GEMINI_API_KEY not set');
 }
 
-// Primary + fallbacks so a retired preview model degrades gracefully instead
+// Primary + fallback so a retired preview model degrades gracefully instead
 // of killing narration until someone edits env vars.
 //
-// Live bug found via Railway logs on the Wisdom Listen "Unavailable" report
-// (two distinct root causes, both confirmed from production logs, not
-// guessed):
-//  1. 'gemini-3.5-flash-tts' does not exist — Gemini returned a 404 "is not
-//     found for API version v1beta, or is not supported for generateContent"
-//     for every single call to it. No amount of timeout tuning fixes calling
-//     a nonexistent model. Removed entirely.
-//  2. Of the two real, documented preview models, 'gemini-2.5-flash-preview-tts'
-//     400'd and 'gemini-2.5-pro-preview-tts' timed out in this account —
-//     'gemini-3.1-flash-tts-preview' (the current model per
-//     ai.google.dev/gemini-api/docs/speech-generation) is the one that
-//     actually works, so it's now PRIMARY, with the two 2.5 preview models
-//     kept as fallbacks in case 3.1 is ever degraded/retired in turn.
-const TTS_CANDIDATES = ['gemini-3.1-flash-tts-preview', 'gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts'];
+// gemini-2.5-flash-preview-tts is PRIMARY: it is the exact model that was
+// primary (on GenerateContent) the last time Chief narration is confirmed
+// to have worked in production — before Wisdom Listen introduced the
+// concurrent-prewarm contention regression (git: commit bd2b8ab). Its
+// documented pro sibling gemini-2.5-pro-preview-tts follows as a fallback.
+//
+// Deliberately EXCLUDES gemini-3.1-flash-tts-preview: production Railway
+// logs showed it HANGING on GenerateContent (a full ~25s timeout, not a
+// fast 404) — a model that hangs rather than fails-fast poisons the whole
+// fallback budget if it's reached, and it never once produced audio on
+// either endpoint we tried. An operator can still force any specific model
+// (including 3.1, or a newer one) at runtime via GEMINI_TTS_MODEL without a
+// code deploy — see ttsModels().
+const TTS_CANDIDATES = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts'];
 
 // A GEMINI_TTS_MODEL override is tried FIRST, ahead of every candidate above
 // — a wrong value there wastes one attempt (this was the SECOND live bug:
@@ -91,7 +91,7 @@ function checkTtsModelOverride(model) {
     console.error(
       `[voice tts] GEMINI_TTS_MODEL="${model}" does not look like a TTS-capable model id (no "tts" in the name) ` +
       `— it will be tried FIRST, ahead of every built-in fallback, and will very likely fail on every call. ` +
-      `Unset GEMINI_TTS_MODEL or point it at a real TTS model (e.g. gemini-3.1-flash-tts-preview).`
+      `Unset GEMINI_TTS_MODEL or point it at a real TTS model (e.g. gemini-2.5-flash-preview-tts).`
     );
   }
 }
@@ -213,23 +213,18 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
     'Speak naturally with a warm, calm, optimistic tone. Sound like a trusted friend who is genuinely excited to help. ' +
     'Keep responses conversational and concise. Never sound robotic, overly enthusiastic, or like a customer support agent. ' +
     'Use occasional humor and warmth. Pause naturally. Celebrate wins without exaggeration.';
-  // The Interactions API's `input` has no separate field for delivery/style
-  // direction — it's one text blob the model both reads for guidance AND may
-  // speak verbatim if it can't tell the two apart. Per the documented
-  // prompting guidance (ai.google.dev/gemini-api/docs/speech-generation):
-  // "vague prompts may... caus[e] the model to read your style instructions
-  // and director's notes aloud" — the fix is an explicit preamble plus
-  // clearly labeled sections so the model has an unambiguous boundary for
-  // where performance direction ends and the exact words to speak begin.
-  const input =
-    `Synthesize natural speech audio for the text below. Follow DIRECTOR'S NOTES for tone, pace, and delivery — ` +
-    `do not speak the notes themselves aloud. Speak only the exact words under TRANSCRIPT, verbatim, nothing added or omitted.\n\n` +
-    `DIRECTOR'S NOTES\n${directive}\n\n` +
-    `TRANSCRIPT\n${trimmed.slice(0, 4000)}`;
+  // GenerateContent TTS request shape (responseModalities:['AUDIO'] +
+  // speechConfig) — the exact payload that worked for Chief narration before
+  // the Wisdom-contention regression, and the shape the google-genai SDKs
+  // generate. The style directive rides inside the prompt text (Gemini TTS
+  // follows natural-language delivery instructions without reading them
+  // aloud), separated from the transcript so the two don't blur.
   const payload = {
-    input,
-    response_format: { type: 'audio' },
-    generation_config: { speech_config: [{ voice }] },
+    contents: [{ parts: [{ text: `${directive}:\n\n${trimmed.slice(0, 4000)}` }] }],
+    generationConfig: {
+      responseModalities: ['AUDIO'],
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
+    },
   };
 
   // Live bug: a single timed-out (or otherwise transient) Gemini call used to
@@ -262,39 +257,27 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
     // total budget before the loop even gets a chance to check it again.
     const remaining = deadline - Date.now();
     const attemptStart = Date.now();
-    // Live bug found via Railway logs after deploying the Interactions
-    // migration: EVERY candidate model hung for exactly the configured
-    // per-attempt timeout (25004ms/25003ms — not a fast rejection), on both
-    // Brief and Wisdom simultaneously. Re-verified the documented request
-    // shape with a neutral (non-leading) fetch of the canonical curl example
-    // on ai.google.dev/gemini-api/docs/speech-generation — it does NOT
-    // include an Api-Revision header at all. That header was added earlier
-    // from a separate, less-reliable source and is the one part of this
-    // request that doesn't match the verified canonical example — an
-    // unrecognized/invalid revision value is a plausible way for a gateway
-    // to silently hang a request instead of fast-rejecting it. Only send it
-    // if an operator explicitly configures one (nothing sent by default).
-    const headers = {
-      'x-goog-api-key': key(),
-      'Content-Type': 'application/json',
-    };
-    if (INTERACTIONS_API_REVISION) headers['Api-Revision'] = INTERACTIONS_API_REVISION;
+    // GenerateContent (the reverted, SDK-authoritative TTS endpoint — see this
+    // file's header). x-goog-api-key header, never the key in the URL query
+    // string (so it can't leak into a logged request URL). The audio comes
+    // back inline as base64 PCM under candidates[0].content.parts[].inlineData.
     const { data } = await axios.post(
-      INTERACTIONS_URL,
-      { model, ...payload },
-      { timeout: Math.max(1000, Math.min(timeoutMs, remaining)), headers }
+      `${BASE}/models/${model}:generateContent`,
+      payload,
+      {
+        timeout: Math.max(1000, Math.min(timeoutMs, remaining)),
+        headers: { 'x-goog-api-key': key(), 'Content-Type': 'application/json' },
+      }
     );
     const elapsedMs = Date.now() - attemptStart;
-    const audioB64 = data.output_audio?.data;
-    if (!audioB64) throw new Error('no audio in TTS response');
-    const pcm = Buffer.from(audioB64, 'base64');
-    // Mime like "audio/L16;codec=pcm;rate=24000" if present — pull the rate;
-    // Gemini TTS's underlying engine defaults to 24kHz mono PCM regardless of
-    // endpoint, so that's the safe fallback when the field is absent (not
-    // documented as always present for Interactions responses).
-    const rateMatch = String(data.output_audio?.mime_type || '').match(/rate=(\d+)/);
+    const part = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
+    if (!part) throw new Error('no audio in TTS response');
+    const pcm = Buffer.from(part.inlineData.data, 'base64');
+    // Mime like "audio/L16;codec=pcm;rate=24000" — pull the rate if present;
+    // Gemini TTS defaults to 24kHz mono PCM otherwise.
+    const rateMatch = String(part.inlineData.mimeType || '').match(/rate=(\d+)/);
     const sampleRate = rateMatch ? Number(rateMatch[1]) : 24000;
-    console.log(`[voice tts] endpoint=interactions model=${model} status=200 elapsedMs=${elapsedMs}`);
+    console.log(`[voice tts] endpoint=generateContent model=${model} status=200 elapsedMs=${elapsedMs}`);
     return { audio: pcmToWav(pcm, { sampleRate }), mime: 'audio/wav', model };
   };
 
@@ -332,7 +315,7 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
         // "status=timeout" bucket is exactly what made the last live
         // "everything hangs at 25s" incident slower to diagnose than it
         // needed to be.
-        console.error(`[voice tts] endpoint=interactions model=${model} status=${status} errCode=${err.code || 'n/a'} try=${tryNum + 1}/${maxTries} elapsedMs=${elapsedMs}: ${err.message}${detail ? ` — ${detail}` : ''}`);
+        console.error(`[voice tts] endpoint=generateContent model=${model} status=${status} errCode=${err.code || 'n/a'} try=${tryNum + 1}/${maxTries} elapsedMs=${elapsedMs}: ${err.message}${detail ? ` — ${detail}` : ''}`);
         if (!isTransientTtsError(err)) break;
         if (tryNum < maxTries - 1 && backoffMs > 0 && Date.now() + backoffMs < deadline) await sleep(backoffMs);
       }
@@ -499,5 +482,4 @@ function speakable(text) {
 module.exports = {
   synthesize, transcribe, composeNarrationScript, composeEveningNarrationScript, composeWisdomNarrationScript,
   speakable, pcmToWav, DEFAULT_VOICE, ttsModels, TTS_CANDIDATES, probeTtsModelAvailability, checkTtsModelOverride,
-  INTERACTIONS_URL,
 };

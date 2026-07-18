@@ -31,26 +31,28 @@ function err503() {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 test('synthesize: the overall deadline stops the retry loop early — never keeps trying after the client would have given up', async () => {
-  // Every candidate model is transient-failing and slow (25ms/call) — with
-  // no overall deadline this would exhaust all 3 models plus the last
-  // model's own retry (4 calls total, mirroring voice-tts-retry.test.js's
-  // "only the LAST model gets a same-model retry" case).
+  // Every candidate model is transient-failing and slow (40ms/call) — with
+  // no overall deadline this would exhaust both models plus the last model's
+  // own retry (3 calls total, mirroring voice-tts-retry.test.js's "only the
+  // LAST model gets a same-model retry" case). At 40ms/call against the 60ms
+  // budget, the deadline check before the last model's retry (fired at
+  // ~t=80ms, past the 60ms deadline) cuts the loop short at 2 calls.
   const calls = [];
   axios.post = async (url) => {
     calls.push(url);
-    await sleep(25);
+    await sleep(40);
     throw err503();
   };
   const start = Date.now();
   await assert.rejects(() => voice.synthesize('hello world'), (e) => /TTS failed/.test(e.message));
   const elapsed = Date.now() - start;
-  assert.ok(calls.length < 4, `expected the 60ms overall deadline to cut the loop short before all 4 attempts, got ${calls.length} calls`);
+  assert.ok(calls.length < 3, `expected the 60ms overall deadline to cut the loop short before all 3 attempts, got ${calls.length} calls`);
   assert.ok(elapsed < 500, `expected synthesize() to give up close to the configured deadline, took ${elapsed}ms`);
 });
 
 test('synthesize: a fast success within the deadline is unaffected — the deadline only bounds the FAILURE/retry path', async () => {
   axios.post = async () => ({
-    data: { output_audio: { data: Buffer.from('pcm').toString('base64'), mime_type: 'audio/L16;rate=24000' } },
+    data: { candidates: [{ content: { parts: [{ inlineData: { data: Buffer.from('pcm').toString('base64'), mimeType: 'audio/L16;rate=24000' } }] } }] },
   });
   const result = await voice.synthesize('hello world');
   assert.equal(result.mime, 'audio/wav');
