@@ -24,9 +24,16 @@ function assertKeyConfigured(context) {
 
 // Primary + fallbacks so a retired preview model degrades gracefully instead
 // of killing narration until someone edits env vars.
+//
+// Live bug found via Railway logs on the Wisdom Listen "Unavailable" report:
+// 'gemini-3.5-flash-tts' does not exist — Gemini returned a 404 "is not
+// found for API version v1beta, or is not supported for generateContent"
+// for every single call to it. No amount of timeout tuning fixes calling a
+// nonexistent model. Replaced with 'gemini-3.1-flash-tts-preview', the
+// actual current model per ai.google.dev/gemini-api/docs/speech-generation.
 function ttsModels() {
   const fromEnv = process.env.GEMINI_TTS_MODEL;
-  const candidates = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts', 'gemini-3.5-flash-tts'];
+  const candidates = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts', 'gemini-3.1-flash-tts-preview'];
   return fromEnv ? [fromEnv, ...candidates.filter((m) => m !== fromEnv)] : candidates;
 }
 
@@ -158,7 +165,15 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
         return await attempt(model);
       } catch (err) {
         lastErr = err;
-        console.error(`[voice tts] ${model} failed (try ${tryNum + 1}/${maxTries}): ${err.message}`);
+        // Log the PROVIDER's own error detail (e.g. "model not found for API
+        // version v1beta"), not just axios's generic "Request failed with
+        // status code 400" — that generic message alone was not enough to
+        // diagnose a live "Unavailable" report (root cause turned out to be
+        // an invalid model id in ttsModels(), not a timeout at all). Never
+        // logs the request URL/key — only the response body Gemini itself
+        // returned.
+        const detail = err.response?.data?.error?.message;
+        console.error(`[voice tts] ${model} failed (try ${tryNum + 1}/${maxTries}): ${err.message}${detail ? ` — ${detail}` : ''}`);
         if (!isTransientTtsError(err)) break;
         if (tryNum < maxTries - 1 && backoffMs > 0 && Date.now() + backoffMs < deadline) await sleep(backoffMs);
       }

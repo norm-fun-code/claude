@@ -111,6 +111,40 @@ test('synthesize: returns which model actually produced the audio, for prewarm/b
 // "eventually" — the live bug was one slow/hanging model alone eating
 // nearly the ENTIRE overall budget, leaving no real room for a fallback. ──
 
+// ── Live production bug, confirmed via Railway logs: the model list itself
+// contained an invalid model id ('gemini-3.5-flash-tts' — Gemini returned a
+// 404 "is not found for API version v1beta, or is not supported for
+// generateContent" on every single call). No timeout tuning fixes calling a
+// nonexistent model — this regression test pins the model list to the real
+// current model ids so a future edit can't silently reintroduce a typo'd or
+// retired one. ──────────────────────────────────────────────────────────
+
+test('synthesize: the configured model list never regresses to the retired/nonexistent "gemini-3.5-flash-tts" id', async () => {
+  const calls = [];
+  axios.post = async (url) => { calls.push(String(url).match(/\/models\/([^:]+):/)?.[1]); throw err503(); };
+  process.env.GEMINI_TTS_BACKOFF_MS = '0';
+  await assert.rejects(() => voice.synthesize('hello world'));
+  assert.ok(!calls.includes('gemini-3.5-flash-tts'), `must never call the nonexistent 'gemini-3.5-flash-tts' model again, got: ${JSON.stringify(calls)}`);
+  assert.deepEqual(calls, ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts', 'gemini-3.1-flash-tts-preview', 'gemini-3.1-flash-tts-preview']);
+});
+
+test('synthesize: logs the PROVIDER\'s own error detail (not just the generic HTTP status message) so a bad model id is diagnosable from logs alone', async () => {
+  axios.post = async () => {
+    const e = new Error('Request failed with status code 404');
+    e.response = { status: 404, data: { error: { message: "models/gemini-3.5-flash-tts is not found for API version v1beta, or is not supported for generateContent." } } };
+    throw e;
+  };
+  const originalError = console.error;
+  const logged = [];
+  console.error = (...args) => { logged.push(args.join(' ')); };
+  try {
+    await assert.rejects(() => voice.synthesize('hello world'));
+  } finally {
+    console.error = originalError;
+  }
+  assert.ok(logged.some((l) => l.includes('is not found for API version')), 'the provider\'s detailed error message must appear in the per-attempt log line, not just "Request failed with status code 404"');
+});
+
 test('synthesize: a primary-model timeout still succeeds via fallback well within the total deadline (fast-fallback, not one long attempt)', async () => {
   let first = true;
   axios.post = async () => {
