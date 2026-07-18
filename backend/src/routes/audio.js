@@ -84,7 +84,7 @@ function createAudioRouter() {
     }
     let out;
     try {
-      out = await briefAudio.audioFor('brief', target.content, contentDayFor(target, tz));
+      out = await briefAudio.audioFor('brief', target.content, contentDayFor(target, tz), { source: 'foreground' });
     } catch (ttsErr) {
       console.error('[briefing audio] TTS failed:', ttsErr.message);
       return res.status(502).json({ error: 'tts_failed', message: 'Narration is temporarily unavailable.' });
@@ -118,7 +118,7 @@ function createAudioRouter() {
     if (!latest?.content || !isToday) return res.status(404).json({ error: 'no_brief', message: 'No wind-down brief to narrate yet.' });
     let out;
     try {
-      out = await briefAudio.audioFor('evening', latest.content, day); // isToday above already guarantees latest.content.day === day
+      out = await briefAudio.audioFor('evening', latest.content, day, { source: 'foreground' }); // isToday above already guarantees latest.content.day === day
     } catch (ttsErr) {
       console.error('[evening audio] TTS failed:', ttsErr.message);
       return res.status(502).json({ error: 'tts_failed', message: 'Narration is temporarily unavailable.' });
@@ -147,7 +147,7 @@ function createAudioRouter() {
     }
     let out;
     try {
-      out = await briefAudio.audioFor('wisdom', target.content, contentDayFor(target, tz));
+      out = await briefAudio.audioFor('wisdom', target.content, contentDayFor(target, tz), { source: 'foreground' });
     } catch (ttsErr) {
       console.error('[wisdom audio] TTS failed:', ttsErr.message);
       return res.status(502).json({ error: 'tts_failed', message: 'Narration is temporarily unavailable.' });

@@ -2288,29 +2288,21 @@ async function buildFreshBriefing({ force = false } = {}) {
   briefingsStore.saveBriefing({ kind: 'daily', content: response })
     .catch((err) => console.error('[persist briefing] failed:', err.message));
 
-  // Pre-warm the spoken narration so the first tap of "Listen" plays instantly
-  // instead of waiting on synthesis. Fire-and-forget from THIS function's
-  // perspective (nothing here awaits it, so it never delays the response) —
-  // but Chief and Wisdom are deliberately SEQUENCED, not concurrent: both
-  // narrate off the same final `response` object and go through the same
-  // TTS provider/model list at the exact moment the system is already
-  // busiest (right after a build), so firing them at once meant they
-  // competed for the same rate-limited provider instead of either one
-  // getting a clean shot. Chief keeps priority (it's the more load-bearing
-  // narration); Wisdom is queued to start only after Chief's prewarm has
-  // SETTLED (success or failure — .catch() below ensures the chain
-  // continues either way). A Wisdom failure can never affect Chief's
-  // prewarm or the briefing persistence above — they're fully independent
-  // promises, this only orders their START time.
-  const briefAudio = require('../services/brief-audio');
-  briefAudio.prewarmDaily(response)
-    .catch((err) => console.error('[brief audio prewarm] failed:', err.message))
-    .then(() => {
-      const tz = process.env.TZ || 'America/New_York';
-      const wisdomDay = new Date().toLocaleDateString('en-CA', { timeZone: tz });
-      return briefAudio.prewarm('wisdom', response, wisdomDay);
-    })
-    .catch((err) => console.error('[wisdom audio prewarm] failed:', err.message));
+  // Pre-warm Chief's spoken narration so the first tap of "Listen" plays
+  // instantly instead of waiting on synthesis. Fire-and-forget from THIS
+  // function's perspective (nothing here awaits it, so it never delays the
+  // response). Deliberately CHIEF ONLY — Wisdom used to be prewarmed here
+  // too (sequenced after Chief), but two independent background-prewarm
+  // trigger paths (this one and, until removed, a boot-time backfill) could
+  // each be mid-sequence at once with nothing coordinating between them:
+  // production logs showed simultaneous cache MISS for both kinds and two
+  // concurrent Interactions calls to the same TTS model, each timing out.
+  // Wisdom now only ever synthesizes on an explicit user Listen tap
+  // (routes/audio.js), which is itself protected by brief-audio.js's
+  // process-wide serialization gate against colliding with a live Chief
+  // prewarm or another Listen tap.
+  require('../services/brief-audio').prewarmDaily(response)
+    .catch((err) => console.error('[brief audio prewarm] failed:', err.message));
 
   // Deliberately OUTSIDE this build's lifecycle (see primeNextBuildCycle's own
   // header comment): scheduled via setImmediate so it starts only after this

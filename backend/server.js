@@ -58,17 +58,20 @@ async function boot() {
     // Optional self-running morning routine (cloud deploys; ENABLE_SCHEDULER=true).
     startScheduler();
 
-    // Backfill today's spoken-narration cache (brief + Wisdom + evening, if
-    // already built) from whatever's already persisted — covers a restart
-    // mid-day, or this Wisdom-prewarm feature itself landing on a deploy
-    // after today's briefing already built without it. Without this, the
-    // first "Listen" tap of the day would hit a genuinely cold cache with
-    // no prewarm ever having run for it. Best-effort, never blocks boot.
-    // Read-only from the app's perspective (it only warms a cache table),
-    // not the kind of ledger/finding mutation Production Safety Gate #5
-    // moved out of boot.
-    require('./src/services/brief-audio').backfillTodayAudio()
-      .catch((err) => console.error('[brief audio backfill] failed:', err.message));
+    // Deliberately NO narration cache backfill/prewarm at boot. A prior
+    // version of this warmed brief+Wisdom+evening narration for whatever
+    // was already persisted, reasoning that a restart mid-day shouldn't
+    // leave the cache cold — but that meant a Railway restart alone could
+    // fire real (paid, rate-sensitive) Gemini TTS calls with no user ever
+    // having asked for narration, and could race against this SAME boot's
+    // other prewarm triggers with nothing coordinating between them (the
+    // live bug: simultaneous Chief+Wisdom TTS calls, each timing out).
+    // Narration now only ever generates from Chief's own post-build prewarm
+    // (routes/briefing.js) or an explicit user Listen tap (routes/audio.js)
+    // — both go through brief-audio.js's process-wide serialization gate,
+    // so a cold cache after a restart just means the FIRST Listen tap of
+    // the day pays a normal cold-synthesis cost once, same as any other
+    // cache miss, not a background job racing to beat it there.
 
     // One-setting demo data: set SEED_DEMO_ON_BOOT=true to populate realistic
     // sample data + findings so the app shows a full dashboard on first open.
