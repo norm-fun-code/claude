@@ -298,7 +298,29 @@ test('scenario 8 — retraction: "forget what I said about the late meal" retire
   }]);
   const first = await postContext(`${TEST_MARKER} ate a late meal last night`);
   assert.equal(first.status, 200);
-  const resolvedBefore = await resolveContext({});
+  // late_meal's knowledge-registry entry deliberately uses a narrow 12h
+  // effectWindowHours (see knowledge-registry.js — digestive/postprandial
+  // autonomic load is bounded to the same night, unlike e.g. alcohol's 24h
+  // window). expiresAt is computed server-side at COMPILE time as
+  // windowEnd + 12h — windowEnd itself is "last night" resolved against the
+  // REAL wall clock at post time, so late enough at night (past
+  // windowEnd + 12h, e.g. ~11pm ET when "this morning"'s cutoff is ~11am
+  // ET), the relation is already expired the instant it's created,
+  // regardless of when resolveContext() is later called. This was flaky
+  // exactly here: any CI run landing in that real nightly window found the
+  // relation born stale. Fixed by reading the relation's OWN windowEnd back
+  // from the DB and checking as-of a time safely inside its 12h decay
+  // window (windowEnd + 1h) instead of the real current time — this proves
+  // the exact same "is it a driver right after creation" behavior without
+  // being at the mercy of what hour the suite happens to run.
+  const { rows: freshRelation } = await db.query(
+    `SELECT window_end FROM context_relations WHERE source_assertion_id IN
+       (SELECT id FROM context_assertions WHERE raw_text LIKE $1) ORDER BY created_at DESC LIMIT 1`,
+    [`%${TEST_MARKER}%`]
+  );
+  assert.ok(freshRelation[0], 'sanity: a context_relation must have been derived from the posted assertion');
+  const checkNow = new Date(new Date(freshRelation[0].window_end).getTime() + 60 * 60 * 1000); // windowEnd + 1h — well inside the 12h decay window
+  const resolvedBefore = await resolveContext({ now: checkNow });
   assert.ok(getDriversFor(resolvedBefore, 'health:recovery_autonomic').driver, 'sanity: the late-meal event is a driver before retraction');
 
   mockCompile([{
@@ -309,7 +331,7 @@ test('scenario 8 — retraction: "forget what I said about the late meal" retire
   const second = await postContext(`${TEST_MARKER} forget what I said about the late meal`);
   assert.equal(second.status, 200);
 
-  const resolvedAfter = await resolveContext({});
+  const resolvedAfter = await resolveContext({ now: checkNow });
   const result = getDriversFor(resolvedAfter, 'health:recovery_autonomic');
   assert.equal(result.driver, null, 'the retracted assertion\'s relation must be gone from the resolver');
 
