@@ -209,18 +209,34 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
   assertKeyConfigured('tts');
   const trimmed = String(text || '').trim();
   if (!trimmed) throw new Error('nothing to synthesize');
+  // The delivery style is PURE PROSODY description — no "responses",
+  // "help", "conversational" or other chat-assistant language. Live bug
+  // (the exact one this rewrite fixes): the previous directive said things
+  // like "Keep responses conversational and concise" / "Sound like a
+  // trusted friend who is genuinely excited to help", which the TTS model
+  // read as an instruction to GENERATE a conversational response rather
+  // than read the transcript aloud. Gemini's own 400 said so verbatim:
+  // "Model tried to generate text, but it should only be used for TTS.
+  // Make sure your instructions are clear to only generate audio from the
+  // transcript." Under the AUDIO-only response modality that manifests as
+  // either that 400 OR a hang (the model tries to voice a long generated
+  // response until the client times out) — which is what produced the
+  // "everything ECONNABORTED at 25s" logs.
   const directive = style || process.env.NORMOS_VOICE_STYLE ||
-    'Speak naturally with a warm, calm, optimistic tone. Sound like a trusted friend who is genuinely excited to help. ' +
-    'Keep responses conversational and concise. Never sound robotic, overly enthusiastic, or like a customer support agent. ' +
-    'Use occasional humor and warmth. Pause naturally. Celebrate wins without exaggeration.';
+    'a warm, calm, optimistic tone with natural pacing and gentle warmth; never robotic, never over-enthusiastic, never like a customer-support agent';
   // GenerateContent TTS request shape (responseModalities:['AUDIO'] +
-  // speechConfig) — the exact payload that worked for Chief narration before
-  // the Wisdom-contention regression, and the shape the google-genai SDKs
-  // generate. The style directive rides inside the prompt text (Gemini TTS
-  // follows natural-language delivery instructions without reading them
-  // aloud), separated from the transcript so the two don't blur.
+  // speechConfig). The prompt is now an UNAMBIGUOUS read-aloud instruction:
+  // the style is explicitly labelled as delivery guidance, and the model is
+  // told in plain terms to speak ONLY the transcript, verbatim, adding
+  // nothing — exactly what Gemini's 400 asked for. The transcript is fenced
+  // on its own lines so its boundary is unmistakable.
+  const promptText =
+    `Read the following transcript aloud as natural speech, in ${directive}. ` +
+    `Speak only the transcript, word for word, exactly as written. ` +
+    `Do not reply to it, summarize it, describe it, or add any words of your own.\n\n` +
+    `Transcript:\n${trimmed.slice(0, 4000)}`;
   const payload = {
-    contents: [{ parts: [{ text: `${directive}:\n\n${trimmed.slice(0, 4000)}` }] }],
+    contents: [{ parts: [{ text: promptText }] }],
     generationConfig: {
       responseModalities: ['AUDIO'],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },

@@ -93,6 +93,28 @@ test('synthesize: parses audio from candidates[0].content.parts[].inlineData (th
   assert.ok(Buffer.isBuffer(result.audio) && result.audio.length > 44, 'must return a real WAV buffer decoded from the inline PCM');
 });
 
+// Live bug, confirmed by Gemini's own 400 in production: "Model tried to
+// generate text, but it should only be used for TTS. Make sure your
+// instructions are clear to only generate audio from the transcript." The
+// old prompt front-loaded chat-assistant language ("Keep responses
+// conversational and concise", "Sound like a trusted friend who is
+// genuinely excited to help") that the TTS model read as a request to
+// GENERATE a response, causing that 400 (or a hang while it tried to voice
+// a generated response). The prompt must now be an unambiguous read-aloud
+// instruction that speaks ONLY the transcript.
+test('synthesize: the prompt is a clear read-aloud instruction that speaks only the transcript — never chat-assistant "generate a response" language', async () => {
+  let body = null;
+  axios.post = async (url, b) => { body = b; return okResponse(); };
+  await voice.synthesize('Recovery is green at ninety today.');
+  const text = body.contents[0].parts[0].text;
+  assert.match(text, /read the following transcript aloud/i, 'must explicitly instruct reading the transcript aloud');
+  assert.match(text, /speak only the transcript/i, 'must tell the model to speak ONLY the transcript, per Gemini\'s own 400 guidance');
+  assert.match(text, /do not (reply|respond)/i, 'must forbid replying/responding to the transcript');
+  assert.match(text, /Recovery is green at ninety today\./, 'the exact transcript text must be present, under its own Transcript: label');
+  // Regression guard on the specific phrases that caused the 400.
+  assert.doesNotMatch(text, /keep responses conversational/i, 'must not carry the old "keep responses conversational" chat-assistant instruction');
+});
+
 // ── Retry/fallback behavior ─────────────────────────────────────────────────
 
 test('synthesize: the primary model succeeds on the first try — one call, no fallback', async () => {
