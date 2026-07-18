@@ -55,15 +55,29 @@ test('synthesize: POSTs to the Interactions API endpoint, never legacy GenerateC
   assert.doesNotMatch(calledUrl, /generateContent/, 'must never hit the legacy GenerateContent path');
 });
 
-test('synthesize: sends x-goog-api-key (never the key in the URL query string) and the required headers', async () => {
+test('synthesize: sends x-goog-api-key (never the key in the URL query string) and matches the verified canonical request shape', async () => {
   let capturedOpts = null;
   let capturedUrl = null;
   axios.post = async (url, body, opts) => { capturedUrl = url; capturedOpts = opts; return okResponse(); };
   await voice.synthesize('hello world');
   assert.equal(capturedOpts.headers['x-goog-api-key'], 'test-key');
   assert.equal(capturedOpts.headers['Content-Type'], 'application/json');
-  assert.ok(capturedOpts.headers['Api-Revision'], 'must send the documented API revision header');
   assert.doesNotMatch(capturedUrl, /key=/, 'the key must never ride in the URL query string for Interactions calls');
+});
+
+// Live bug: an earlier version of this fix sent an UNVERIFIED
+// 'Api-Revision: 2026-05-20' header on every call (sourced from a
+// less-reliable secondary fetch, not the canonical documented example).
+// Deployed to production, every candidate model then hung for exactly the
+// configured client timeout instead of the fast success/rejection the
+// canonical curl example implies. The canonical example sends NO
+// Api-Revision header — pin that here so a future "helpful" re-add of an
+// unverified header can't silently reintroduce the same class of bug.
+test('synthesize: never sends an Api-Revision header unless an operator explicitly opts in via GEMINI_INTERACTIONS_API_REVISION', async () => {
+  let capturedOpts = null;
+  axios.post = async (url, body, opts) => { capturedOpts = opts; return okResponse(); };
+  await voice.synthesize('hello world');
+  assert.equal(capturedOpts.headers['Api-Revision'], undefined, 'the canonical documented example sends no Api-Revision header — do not send an unverified one by default');
 });
 
 test('synthesize: request body is exact snake_case Interactions shape (model, input, response_format, generation_config.speech_config)', async () => {

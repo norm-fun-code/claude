@@ -29,12 +29,19 @@ const BASE = 'https://generativelanguage.googleapis.com/v1beta';
 // GenerateContent, which remains the correct/documented path for it; only
 // TTS moved.
 const INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
-// Shown in the current REST examples for this API — send it on every
-// Interactions call (not just streaming) since the docs don't confirm it's
-// SAFE to omit for a plain request, and a wrong/missing revision header is
-// exactly the class of bug this fix exists to close. Override via env if
-// Google revises the header value without a code deploy.
-const INTERACTIONS_API_REVISION = process.env.GEMINI_INTERACTIONS_API_REVISION || '2026-05-20';
+// Live bug: an earlier version of this fix sent a guessed 'Api-Revision:
+// 2026-05-20' header on every call, sourced from a less-reliable secondary
+// fetch. Deployed to production, EVERY candidate model then hung for
+// exactly the configured per-attempt timeout instead of the fast
+// success/rejection the canonical documented curl example implies — the
+// canonical example itself sends no Api-Revision header at all. Unverified
+// header value on a request that then hangs (rather than a clean 400) is
+// exactly the failure mode of an API gateway choking on a value it doesn't
+// recognize. Default to NOT sending this header; set
+// GEMINI_INTERACTIONS_API_REVISION explicitly only if Google's docs are
+// re-confirmed (via a neutral, non-leading check, not a leading question)
+// to require one.
+const INTERACTIONS_API_REVISION = process.env.GEMINI_INTERACTIONS_API_REVISION || null;
 
 function key() {
   const k = process.env.GEMINI_API_KEY;
@@ -255,17 +262,27 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
     // total budget before the loop even gets a chance to check it again.
     const remaining = deadline - Date.now();
     const attemptStart = Date.now();
+    // Live bug found via Railway logs after deploying the Interactions
+    // migration: EVERY candidate model hung for exactly the configured
+    // per-attempt timeout (25004ms/25003ms — not a fast rejection), on both
+    // Brief and Wisdom simultaneously. Re-verified the documented request
+    // shape with a neutral (non-leading) fetch of the canonical curl example
+    // on ai.google.dev/gemini-api/docs/speech-generation — it does NOT
+    // include an Api-Revision header at all. That header was added earlier
+    // from a separate, less-reliable source and is the one part of this
+    // request that doesn't match the verified canonical example — an
+    // unrecognized/invalid revision value is a plausible way for a gateway
+    // to silently hang a request instead of fast-rejecting it. Only send it
+    // if an operator explicitly configures one (nothing sent by default).
+    const headers = {
+      'x-goog-api-key': key(),
+      'Content-Type': 'application/json',
+    };
+    if (INTERACTIONS_API_REVISION) headers['Api-Revision'] = INTERACTIONS_API_REVISION;
     const { data } = await axios.post(
       INTERACTIONS_URL,
       { model, ...payload },
-      {
-        timeout: Math.max(1000, Math.min(timeoutMs, remaining)),
-        headers: {
-          'x-goog-api-key': key(),
-          'Content-Type': 'application/json',
-          'Api-Revision': INTERACTIONS_API_REVISION,
-        },
-      }
+      { timeout: Math.max(1000, Math.min(timeoutMs, remaining)), headers }
     );
     const elapsedMs = Date.now() - attemptStart;
     const audioB64 = data.output_audio?.data;
@@ -308,7 +325,14 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
         const status = err.response?.status ?? (err.code === 'ECONNABORTED' || /timeout of/i.test(err.message || '') ? 'timeout' : 'unknown');
         const detail = err.response?.data?.error?.message;
         const elapsedMs = Date.now() - tryStart;
-        console.error(`[voice tts] endpoint=interactions model=${model} status=${status} try=${tryNum + 1}/${maxTries} elapsedMs=${elapsedMs}: ${err.message}${detail ? ` — ${detail}` : ''}`);
+        // errCode distinguishes OUR OWN client-side timeout firing with zero
+        // response (ECONNABORTED — what a hung/never-responding request looks
+        // like) from a fast network-level rejection (ECONNREFUSED/ENOTFOUND)
+        // or a genuine HTTP error response — collapsing these into one
+        // "status=timeout" bucket is exactly what made the last live
+        // "everything hangs at 25s" incident slower to diagnose than it
+        // needed to be.
+        console.error(`[voice tts] endpoint=interactions model=${model} status=${status} errCode=${err.code || 'n/a'} try=${tryNum + 1}/${maxTries} elapsedMs=${elapsedMs}: ${err.message}${detail ? ` — ${detail}` : ''}`);
         if (!isTransientTtsError(err)) break;
         if (tryNum < maxTries - 1 && backoffMs > 0 && Date.now() + backoffMs < deadline) await sleep(backoffMs);
       }
