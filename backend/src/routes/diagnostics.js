@@ -258,6 +258,106 @@ function createDiagnosticsRouter() {
     }
   });
 
+  // Live TTS probe for the "Listen hangs / Unavailable" production incident.
+  // Makes a REAL generateContent TTS call to each candidate model (plus any
+  // GEMINI_TTS_MODEL override) with a TINY script by default, and reports the
+  // exact outcome per model: HTTP status, elapsed ms, whether audio bytes
+  // actually came back, and the provider's own error detail. This is the
+  // experiment that distinguishes the two live hypotheses:
+  //   • a tiny script SUCCEEDS but the real (long) narration hangs  → the
+  //     synchronous generateContent generation-time for multi-minute audio
+  //     exceeds the per-attempt timeout (fix = streaming or a longer budget,
+  //     NOT another model/endpoint guess);
+  //   • even a tiny script hangs/errors on every model              → the TTS
+  //     models themselves aren't answering for this key/region (an
+  //     account/model-availability problem, not our code).
+  // Also does a plain-TEXT generateContent reachability check first, so we can
+  // tell "the whole Gemini host is unreachable" apart from "only TTS models
+  // hang". Explicit + admin-gated + one bounded call per model — NOT the
+  // automatic doctor paid-audio path. ?long=1 additionally probes with a
+  // ~2000-char script to measure real-length generation time; ?timeout=<ms>
+  // overrides the per-call budget (default 30000). Never logs/returns the key.
+  router.get('/diag/tts', async (req, res) => {
+    if (!process.env.GEMINI_API_KEY) {
+      return res.json({ ok: false, error: 'GEMINI_API_KEY not set' });
+    }
+    const axios = require('axios');
+    const voiceService = require('../services/voice');
+    const BASE = 'https://generativelanguage.googleapis.com/v1beta';
+    const timeoutMs = Math.min(Math.max(Number(req.query.timeout) || 30000, 2000), 60000);
+    const override = process.env.GEMINI_TTS_MODEL || null;
+    const models = [...new Set([...(override ? [override] : []), ...voiceService.TTS_CANDIDATES])];
+    const shortText = 'This is a short narration test.';
+    const longText = 'This is a longer narration test. ' + 'The day looks steady and the plan holds. '.repeat(50); // ~2000 chars
+    const voice = voiceService.DEFAULT_VOICE;
+
+    const ttsOnce = async (model, text, label) => {
+      const t0 = Date.now();
+      try {
+        const { data } = await axios.post(
+          `${BASE}/models/${model}:generateContent`,
+          {
+            contents: [{ parts: [{ text: `Read the following transcript aloud as natural speech. Speak only the transcript, word for word.\n\nTranscript:\n${text}` }] }],
+            generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } },
+          },
+          { timeout: timeoutMs, headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY, 'Content-Type': 'application/json' } }
+        );
+        const b64 = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data)?.inlineData?.data;
+        const audioBytes = b64 ? Buffer.from(b64, 'base64').length : 0;
+        const out = { model, probe: label, ok: audioBytes > 0, status: 200, elapsedMs: Date.now() - t0, audioBytes };
+        console.log(`[voice tts probe] endpoint=generateContent model=${model} probe=${label} status=200 elapsedMs=${out.elapsedMs} audioBytes=${audioBytes}`);
+        return out;
+      } catch (err) {
+        const status = err.response?.status ?? (err.code === 'ECONNABORTED' || /timeout of/i.test(err.message || '') ? 'timeout' : 'unknown');
+        const detail = (err.response?.data?.error?.message || err.message || '').slice(0, 300);
+        console.error(`[voice tts probe] endpoint=generateContent model=${model} probe=${label} status=${status} errCode=${err.code || 'n/a'} elapsedMs=${Date.now() - t0}: ${detail}`);
+        return { model, probe: label, ok: false, status, errCode: err.code || null, elapsedMs: Date.now() - t0, error: detail };
+      }
+    };
+
+    // 1) Plain-TEXT reachability — is the Gemini generateContent host answering
+    //    at all with this key? (Uses a normal model, not a TTS model.)
+    let reachability;
+    {
+      const t0 = Date.now();
+      try {
+        const { data } = await axios.post(
+          `${BASE}/models/gemini-2.5-flash:generateContent`,
+          { contents: [{ parts: [{ text: 'Reply with the single word: ok' }] }] },
+          { timeout: timeoutMs, headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY, 'Content-Type': 'application/json' } }
+        );
+        const txt = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('').trim();
+        reachability = { ok: true, model: 'gemini-2.5-flash', elapsedMs: Date.now() - t0, sample: txt.slice(0, 40) };
+        console.log(`[voice tts probe] reachability endpoint=generateContent model=gemini-2.5-flash status=200 elapsedMs=${reachability.elapsedMs}`);
+      } catch (err) {
+        const status = err.response?.status ?? (err.code === 'ECONNABORTED' ? 'timeout' : 'unknown');
+        reachability = { ok: false, model: 'gemini-2.5-flash', status, errCode: err.code || null, elapsedMs: Date.now() - t0, error: (err.response?.data?.error?.message || err.message || '').slice(0, 300) };
+        console.error(`[voice tts probe] reachability FAILED status=${status} errCode=${err.code || 'n/a'}: ${reachability.error}`);
+      }
+    }
+
+    // 2) One short TTS call per model. 3) Optionally one long TTS call per model.
+    const shortResults = [];
+    for (const m of models) shortResults.push(await ttsOnce(m, shortText, 'short'));
+    let longResults;
+    if (req.query.long === '1') {
+      longResults = [];
+      for (const m of models) longResults.push(await ttsOnce(m, longText, 'long'));
+    }
+
+    res.json({
+      timeoutMs,
+      configuredOverride: override,
+      candidateModels: models,
+      reachability,
+      shortResults,
+      longResults,
+      hint: 'If reachability.ok=false → the whole Gemini host is unreachable from this deploy (network/key), not a TTS problem. '
+        + 'If short succeeds but long times out → generation-time for long audio exceeds the app timeout (needs streaming or a bigger budget). '
+        + 'If even short fails on every model → the TTS models are not answering for this key/region.',
+    });
+  });
+
   router.get('/diag/gemini', async (req, res) => {
     const t0 = Date.now();
     // Reports whichever provider llm.generateText() actually dispatches to —
