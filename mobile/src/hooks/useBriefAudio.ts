@@ -29,22 +29,23 @@ import { createRequestGuard, classifyFirstAttemptFailure } from '../lib/playback
 export type BriefAudioState = 'idle' | 'loading' | 'preparing' | 'playing' | 'error';
 
 // The backend's own bounded end-to-end TTS deadline (services/voice.js's
-// GEMINI_TTS_OVERALL_TIMEOUT_MS, default 40s) is what actually bounds cold
-// synthesis — this default is kept comfortably above it (not equal, not
-// racing it) so the server can normally finish and reply before the client
-// gives up on the FIRST attempt. If the first attempt's own local timer does
-// fire anyway (network hiccup, Railway/proxy overhead, an unusually slow
-// cold generation), that is deliberately NOT treated as terminal — see the
-// POLL_TIMEOUT_MS retry below.
-const DEFAULT_TIMEOUT_MS = 45000;
+// GEMINI_TTS_OVERALL_TIMEOUT_MS, default 45s) is what actually bounds cold
+// synthesis — this default is kept comfortably ABOVE it (10s of margin, not
+// equal, not racing it) so the server can normally finish and reply before
+// the client gives up on the FIRST attempt. If the first attempt's own local
+// timer does fire anyway (network hiccup, Railway/proxy overhead, an
+// unusually slow cold generation), that is deliberately NOT treated as
+// terminal — see the POLL_TIMEOUT_MS retry below. Keep this above the
+// server's GEMINI_TTS_OVERALL_TIMEOUT_MS if that ever changes.
+const DEFAULT_TIMEOUT_MS = 55000;
 // A single automatic follow-up attempt after a first-attempt client-side
 // timeout, before ever surfacing "Unavailable". By the time the first
 // attempt's timer fires, the backend has very likely already finished (or
-// terminally failed) within its OWN ~40s budget and cached the result — so a
+// terminally failed) within its OWN ~45s budget and cached the result — so a
 // short poll is enough to pick up a real success without the user tapping
 // again, while still keeping the total worst-case wait bounded (well short
 // of "several minutes").
-const POLL_TIMEOUT_MS = 15000;
+const POLL_TIMEOUT_MS = 20000;
 
 /**
  * @param url the brief-audio endpoint to fetch (BRIEFING_AUDIO_URL,

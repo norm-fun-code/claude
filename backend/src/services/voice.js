@@ -2,7 +2,12 @@
 // and STT (push-to-talk transcription), both via Gemini so no new API accounts
 // are needed. Swap the voice/model via env without code changes:
 //   NORMOS_VOICE       — Gemini prebuilt voice name (default 'Charon')
-//   GEMINI_TTS_MODEL   — TTS model override
+//   GEMINI_TTS_MODEL   — TTS model override. MUST be an actual TTS-capable
+//                        model id (contains "tts", e.g.
+//                        gemini-2.5-flash-preview-tts) — it is tried FIRST,
+//                        ahead of every built-in fallback below, so a wrong
+//                        value here breaks narration entirely no matter what
+//                        the fallback list contains (see checkTtsModelOverride).
 const axios = require('axios');
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta';
@@ -25,16 +30,80 @@ function assertKeyConfigured(context) {
 // Primary + fallbacks so a retired preview model degrades gracefully instead
 // of killing narration until someone edits env vars.
 //
-// Live bug found via Railway logs on the Wisdom Listen "Unavailable" report:
-// 'gemini-3.5-flash-tts' does not exist — Gemini returned a 404 "is not
-// found for API version v1beta, or is not supported for generateContent"
-// for every single call to it. No amount of timeout tuning fixes calling a
-// nonexistent model. Replaced with 'gemini-3.1-flash-tts-preview', the
-// actual current model per ai.google.dev/gemini-api/docs/speech-generation.
+// Live bug found via Railway logs on the Wisdom Listen "Unavailable" report
+// (two distinct root causes, both confirmed from production logs, not
+// guessed):
+//  1. 'gemini-3.5-flash-tts' does not exist — Gemini returned a 404 "is not
+//     found for API version v1beta, or is not supported for generateContent"
+//     for every single call to it. No amount of timeout tuning fixes calling
+//     a nonexistent model. Removed entirely.
+//  2. Of the two real, documented preview models, 'gemini-2.5-flash-preview-tts'
+//     400'd and 'gemini-2.5-pro-preview-tts' timed out in this account —
+//     'gemini-3.1-flash-tts-preview' (the current model per
+//     ai.google.dev/gemini-api/docs/speech-generation) is the one that
+//     actually works, so it's now PRIMARY, with the two 2.5 preview models
+//     kept as fallbacks in case 3.1 is ever degraded/retired in turn.
+const TTS_CANDIDATES = ['gemini-3.1-flash-tts-preview', 'gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts'];
+
+// A GEMINI_TTS_MODEL override is tried FIRST, ahead of every candidate above
+// — so a wrong value there breaks narration entirely no matter what this
+// file's fallback list contains (this was the SECOND live bug: Railway's
+// GEMINI_TTS_MODEL was set to 'gemini-3.5-flash', a plain text-generation
+// model reused from GEMINI_CHAT_MODEL, not a TTS-capable one). This can't be
+// silently overridden — the operator's explicit choice is still tried first
+// — but it CAN be loudly warned about and safely fallen through past, which
+// is what this does: log one clear, actionable line, then let the retry loop
+// continue on to the real candidates above instead of hard-failing.
+function checkTtsModelOverride(model) {
+  if (!/tts/i.test(model)) {
+    console.error(
+      `[voice tts] GEMINI_TTS_MODEL="${model}" does not look like a TTS-capable model id (no "tts" in the name) ` +
+      `— it will be tried FIRST, ahead of every built-in fallback, and will very likely fail on every call. ` +
+      `Unset GEMINI_TTS_MODEL or point it at a real TTS model (e.g. gemini-3.1-flash-tts-preview).`
+    );
+  }
+}
+
 function ttsModels() {
   const fromEnv = process.env.GEMINI_TTS_MODEL;
-  const candidates = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts', 'gemini-3.1-flash-tts-preview'];
-  return fromEnv ? [fromEnv, ...candidates.filter((m) => m !== fromEnv)] : candidates;
+  if (!fromEnv) return TTS_CANDIDATES;
+  checkTtsModelOverride(fromEnv);
+  return [fromEnv, ...TTS_CANDIDATES.filter((m) => m !== fromEnv)];
+}
+
+/**
+ * Live model-availability probe via Gemini's ListModels endpoint — reports
+ * which of TTS_CANDIDATES (plus a configured GEMINI_TTS_MODEL override, if
+ * any) actually exist and support generateContent for THIS API key, without
+ * ever logging the key itself. Used by `npm run doctor` (and safe to call
+ * from an admin diagnostic route) — read-only, never throws, degrades to a
+ * clear error string on any network/auth failure so a doctor-style caller
+ * can just print whatever comes back.
+ */
+async function probeTtsModelAvailability() {
+  const configured = process.env.GEMINI_TTS_MODEL || null;
+  const candidates = [...new Set([...(configured ? [configured] : []), ...TTS_CANDIDATES])];
+  if (!process.env.GEMINI_API_KEY) {
+    return { configured, configuredLooksValid: configured ? /tts/i.test(configured) : null, candidates, available: null, error: 'GEMINI_API_KEY not set' };
+  }
+  try {
+    const { data } = await axios.get(`${BASE}/models?key=${key()}&pageSize=1000`, { timeout: 8000 });
+    const liveNames = new Set((data.models || []).map((m) => String(m.name || '').replace(/^models\//, '')));
+    const available = candidates.filter((m) => liveNames.has(m));
+    return {
+      configured,
+      configuredLooksValid: configured ? /tts/i.test(configured) : null,
+      candidates,
+      available,
+      unavailable: candidates.filter((m) => !available.includes(m)),
+      error: null,
+    };
+  } catch (err) {
+    // Never include the request URL (it carries the key in the query
+    // string) — only the provider's own sanitized error detail.
+    const detail = err.response?.data?.error?.message || err.message;
+    return { configured, configuredLooksValid: configured ? /tts/i.test(configured) : null, candidates, available: null, error: detail };
+  }
 }
 
 /** Wrap raw 16-bit PCM in a WAV header so any player can play it. */
@@ -88,11 +157,14 @@ function isTransientTtsError(err) {
 // almost no room for normal network/Railway/proxy latency on top. That's
 // the mechanism behind "Listen" timing out at 60s and showing "Unavailable"
 // even though the server was still (usually pointlessly, by then) trying.
-// Fixed by shrinking BOTH numbers: a short per-model timeout so a bad model
-// fails fast enough that the loop can actually try its fallbacks within the
-// budget, and a shorter overall deadline that leaves real margin under the
-// client's terminal timeout instead of racing it to the wire.
-const OVERALL_TIMEOUT_MS = Number(process.env.GEMINI_TTS_OVERALL_TIMEOUT_MS || 40000);
+// Fixed by shrinking BOTH numbers: a per-model timeout generous enough for a
+// genuinely slow (not hung) model to still succeed, but short enough that a
+// bad/hung model can't eat the whole budget — and a shorter overall deadline
+// that leaves real margin under the client's terminal timeout instead of
+// racing it to the wire. 25s/45s (not the earlier 8s/40s): real failures
+// here are near-instant (400/404 in well under a second), so this budget is
+// almost entirely a safety net for a genuine hang, not a "normal" wait.
+const OVERALL_TIMEOUT_MS = Number(process.env.GEMINI_TTS_OVERALL_TIMEOUT_MS || 45000);
 
 async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
   assertKeyConfigured('tts');
@@ -121,15 +193,14 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
   // waiting on one that just failed); every model is tried regardless of
   // error type — a non-transient error just skips that model's retry.
   //
-  // 8s per attempt is deliberately short: a healthy TTS call for a script
-  // this size (composeWisdomNarrationScript caps at 1400 chars) normally
-  // returns in low single-digit seconds, so 8s already means "something is
-  // wrong with this model" rather than "give it more time." With
-  // OVERALL_TIMEOUT_MS=40000, that's enough budget for all 3 candidate
-  // models PLUS the last one's retry (4 attempts × 8s + one backoff ≈
-  // 32.5s) to actually run within the deadline, instead of the old math
-  // where one bad attempt alone could eat the whole budget.
-  const timeoutMs = Number(process.env.GEMINI_TTS_TIMEOUT_MS || 8000);
+  // 25s per attempt: a healthy TTS call for a script this size
+  // (composeWisdomNarrationScript caps at 1400 chars) normally returns in
+  // low single-digit seconds, so this is mostly a hang guard, not a normal
+  // wait. With OVERALL_TIMEOUT_MS=45000, that's still enough budget for all
+  // 3 candidate models plus the last one's retry to run within the deadline
+  // even in the worst case, while staying generous enough that a genuinely
+  // (not hung, just) slow model gets a real chance to finish.
+  const timeoutMs = Number(process.env.GEMINI_TTS_TIMEOUT_MS || 25000);
   const backoffMs = Number(process.env.GEMINI_TTS_BACKOFF_MS || 500);
   const models = ttsModels();
   const deadline = Date.now() + OVERALL_TIMEOUT_MS;
@@ -165,15 +236,16 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
         return await attempt(model);
       } catch (err) {
         lastErr = err;
-        // Log the PROVIDER's own error detail (e.g. "model not found for API
-        // version v1beta"), not just axios's generic "Request failed with
-        // status code 400" — that generic message alone was not enough to
+        // Log model name, HTTP status, AND the PROVIDER's own error detail
+        // (e.g. "model not found for API version v1beta") — axios's generic
+        // "Request failed with status code 400" alone was not enough to
         // diagnose a live "Unavailable" report (root cause turned out to be
         // an invalid model id in ttsModels(), not a timeout at all). Never
-        // logs the request URL/key — only the response body Gemini itself
-        // returned.
+        // logs the request URL/key — only the HTTP status and the response
+        // body Gemini itself returned.
+        const status = err.response?.status ?? (err.code === 'ECONNABORTED' || /timeout of/i.test(err.message || '') ? 'timeout' : 'unknown');
         const detail = err.response?.data?.error?.message;
-        console.error(`[voice tts] ${model} failed (try ${tryNum + 1}/${maxTries}): ${err.message}${detail ? ` — ${detail}` : ''}`);
+        console.error(`[voice tts] model=${model} status=${status} try=${tryNum + 1}/${maxTries}: ${err.message}${detail ? ` — ${detail}` : ''}`);
         if (!isTransientTtsError(err)) break;
         if (tryNum < maxTries - 1 && backoffMs > 0 && Date.now() + backoffMs < deadline) await sleep(backoffMs);
       }
@@ -339,5 +411,5 @@ function speakable(text) {
 
 module.exports = {
   synthesize, transcribe, composeNarrationScript, composeEveningNarrationScript, composeWisdomNarrationScript,
-  speakable, pcmToWav, DEFAULT_VOICE,
+  speakable, pcmToWav, DEFAULT_VOICE, ttsModels, TTS_CANDIDATES, probeTtsModelAvailability, checkTtsModelOverride,
 };

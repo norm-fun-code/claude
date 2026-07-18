@@ -61,6 +61,42 @@ async function main() {
   if (!chatReady) blocking++;
   lines.push('  ' + (embedReady ? ok(`embeddings → ${embed}`) : meh(`embeddings → ${embed} (needed for library search/chat)`)));
 
+  // --- Voice (TTS) ------------------------------------------------------------
+  // Live bug this section exists to catch early: GEMINI_TTS_MODEL was set in
+  // production to 'gemini-3.5-flash' (a plain text model, not TTS-capable) —
+  // every Wisdom/brief/evening "Listen" tap failed until that was found by
+  // reading Railway logs by hand. This reports the same thing at a glance,
+  // read-only, without ever printing the key.
+  lines.push('\nVOICE (TTS — Listen narration)');
+  if (!has('GEMINI_API_KEY')) {
+    lines.push('  ' + meh('GEMINI_TTS_MODEL/candidates not checked — GEMINI_API_KEY not set (voice/narration is off)'));
+  } else {
+    try {
+      const voice = require('./services/voice');
+      const probe = await voice.probeTtsModelAvailability();
+      if (probe.configured) {
+        lines.push('  ' + (probe.configuredLooksValid
+          ? ok(`GEMINI_TTS_MODEL override: ${probe.configured}`)
+          : no(`GEMINI_TTS_MODEL override: ${probe.configured} — does NOT look like a TTS model id (no "tts" in the name); it is tried FIRST and will likely fail every call`)));
+        if (!probe.configuredLooksValid) blocking++;
+      } else {
+        lines.push('  ' + meh('GEMINI_TTS_MODEL not set — using the built-in candidate order'));
+      }
+      lines.push('  ' + DIM + `candidates (in try order): ${voice.TTS_CANDIDATES.join(', ')}` + RST);
+      if (probe.error) {
+        lines.push('  ' + meh(`could not verify live model availability: ${probe.error}`));
+      } else if (probe.available) {
+        lines.push('  ' + (probe.available.length ? ok(`confirmed available for this key: ${probe.available.join(', ')}`) : no('NONE of the configured/candidate TTS models are available for this key')));
+        if (probe.unavailable?.length) {
+          lines.push('  ' + meh(`not available for this key: ${probe.unavailable.join(', ')}`));
+        }
+        if (!probe.available.length) blocking++;
+      }
+    } catch (err) {
+      lines.push('  ' + meh(`voice TTS check failed: ${err.message}`));
+    }
+  }
+
   // --- Connectors -----------------------------------------------------------
   lines.push('\nCONNECTORS (data sources)');
   const monarchDir = process.env.MONARCH_IMPORT_DIR || path.join(__dirname, '..', 'imports', 'monarch');

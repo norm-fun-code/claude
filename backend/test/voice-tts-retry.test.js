@@ -103,7 +103,7 @@ test('synthesize: returns which model actually produced the audio, for prewarm/b
     return okResponse();
   };
   const result = await voice.synthesize('hello world');
-  assert.equal(result.model, 'gemini-2.5-pro-preview-tts', 'must report the SECOND (fallback) model, not the first that failed');
+  assert.equal(result.model, 'gemini-2.5-flash-preview-tts', 'must report the SECOND (fallback) model, not the first that failed');
 });
 
 // ── Wisdom Listen timeout fix: a primary-model timeout must fall back and
@@ -125,7 +125,16 @@ test('synthesize: the configured model list never regresses to the retired/nonex
   process.env.GEMINI_TTS_BACKOFF_MS = '0';
   await assert.rejects(() => voice.synthesize('hello world'));
   assert.ok(!calls.includes('gemini-3.5-flash-tts'), `must never call the nonexistent 'gemini-3.5-flash-tts' model again, got: ${JSON.stringify(calls)}`);
-  assert.deepEqual(calls, ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts', 'gemini-3.1-flash-tts-preview', 'gemini-3.1-flash-tts-preview']);
+  assert.deepEqual(calls, ['gemini-3.1-flash-tts-preview', 'gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts', 'gemini-2.5-pro-preview-tts']);
+});
+
+test('synthesize: gemini-3.1-flash-tts-preview (the model confirmed working in production) is PRIMARY, tried first', async () => {
+  const calls = [];
+  axios.post = async (url) => { calls.push(String(url).match(/\/models\/([^:]+):/)?.[1]); return okResponse(); };
+  const result = await voice.synthesize('hello world');
+  assert.equal(calls[0], 'gemini-3.1-flash-tts-preview');
+  assert.equal(result.model, 'gemini-3.1-flash-tts-preview');
+  assert.equal(calls.length, 1, 'the confirmed-working primary should succeed on the first call — no fallback needed');
 });
 
 test('synthesize: logs the PROVIDER\'s own error detail (not just the generic HTTP status message) so a bad model id is diagnosable from logs alone', async () => {

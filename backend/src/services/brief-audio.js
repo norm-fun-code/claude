@@ -97,10 +97,13 @@ async function backfillTodayAudio() {
     const dailyRows = await briefingsStore.listBriefings({ kind: 'daily', limit: 10 });
     const todaysDaily = dailyRows.find((r) => new Date(r.generated_at).toLocaleDateString('en-CA', { timeZone: tz }) === day);
     if (todaysDaily?.content) {
-      await Promise.all([
-        prewarm('brief', todaysDaily.content, day).catch((err) => console.error(`[brief audio backfill] brief prewarm failed: ${err.message}`)),
-        prewarm('wisdom', todaysDaily.content, day).catch((err) => console.error(`[brief audio backfill] wisdom prewarm failed: ${err.message}`)),
-      ]);
+      // Sequenced, not concurrent — same reasoning as routes/briefing.js's
+      // post-build prewarm: Chief and Wisdom would otherwise compete for the
+      // same rate-limited TTS provider at the exact moment the system is
+      // already busiest (server boot). Chief keeps priority; a Wisdom
+      // failure never affects Chief's own prewarm result.
+      await prewarm('brief', todaysDaily.content, day).catch((err) => console.error(`[brief audio backfill] brief prewarm failed: ${err.message}`));
+      await prewarm('wisdom', todaysDaily.content, day).catch((err) => console.error(`[brief audio backfill] wisdom prewarm failed: ${err.message}`));
     } else {
       console.log(`[brief audio backfill] no daily briefing persisted for ${day} yet — nothing to backfill`);
     }

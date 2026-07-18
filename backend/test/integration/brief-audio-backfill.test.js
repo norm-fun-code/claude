@@ -120,3 +120,57 @@ test('backfillTodayAudio(): a TTS failure during backfill is caught and never th
   await seedDaily();
   await assert.doesNotReject(() => briefAudio.backfillTodayAudio());
 });
+
+// ── Chief and Wisdom must not compete for the TTS provider concurrently —
+// they narrate off the SAME just-built content at the exact moment the
+// system is already busiest, so firing them at once meant they raced for
+// the same rate-limited provider instead of either getting a clean shot.
+// Chief keeps priority (sequenced first); a Wisdom failure must never
+// affect Chief's own result. ────────────────────────────────────────────
+
+test('backfillTodayAudio(): brief prewarm is sequenced BEFORE wisdom, never concurrent', async () => {
+  const order = [];
+  voiceService.synthesize = async (text) => {
+    const kind = text.includes('quote') || text.includes('wisdom') ? 'wisdom-ish' : 'brief-ish';
+    order.push({ startedFor: text.slice(0, 15), at: Date.now() });
+    await new Promise((r) => setTimeout(r, 15)); // hold the "provider" busy briefly
+    return { audio: Buffer.from('wav'), mime: 'audio/wav', model: 'stub-model' };
+  };
+  await seedDaily();
+  await briefAudio.backfillTodayAudio();
+  assert.equal(order.length, 2, 'exactly one synthesis call per kind');
+  // The SECOND call must not have STARTED until the first one's 15ms delay
+  // had already elapsed — proves they ran sequentially, not concurrently
+  // (a concurrent Promise.all would start both within ~0ms of each other).
+  assert.ok(order[1].at - order[0].at >= 14, `expected the second synthesis call to start only after the first resolved, got a ${order[1].at - order[0].at}ms gap`);
+});
+
+test('backfillTodayAudio(): a Chief (brief) synthesis FAILURE never prevents Wisdom from independently synthesizing and caching', async () => {
+  let callNum = 0;
+  voiceService.synthesize = async () => {
+    callNum++;
+    if (callNum === 1) throw new Error('simulated Chief TTS outage'); // brief is always sequenced first
+    return { audio: Buffer.from('wisdom-wav'), mime: 'audio/wav', model: 'stub-model' };
+  };
+  await seedDaily();
+  await assert.doesNotReject(() => briefAudio.backfillTodayAudio());
+
+  const { rows } = await db.query(`SELECT cache_key FROM tts_audio`);
+  const kinds = rows.map((r) => r.cache_key.split(':')[0]);
+  assert.deepEqual(kinds, ['wisdom'], 'Wisdom must still get cached even though the Chief prewarm failed first');
+});
+
+test('backfillTodayAudio(): a Wisdom synthesis FAILURE never affects the already-succeeded Chief cache', async () => {
+  let callNum = 0;
+  voiceService.synthesize = async () => {
+    callNum++;
+    if (callNum === 1) return { audio: Buffer.from('brief-wav'), mime: 'audio/wav', model: 'stub-model' }; // brief succeeds first
+    throw new Error('simulated Wisdom TTS outage');
+  };
+  await seedDaily();
+  await assert.doesNotReject(() => briefAudio.backfillTodayAudio());
+
+  const { rows } = await db.query(`SELECT cache_key FROM tts_audio`);
+  const kinds = rows.map((r) => r.cache_key.split(':')[0]);
+  assert.deepEqual(kinds, ['brief'], 'Chief must stay cached regardless of the later Wisdom failure');
+});
