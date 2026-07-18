@@ -84,13 +84,19 @@ async function main() {
       }
       lines.push('  ' + DIM + `candidates (in try order): ${voice.TTS_CANDIDATES.join(', ')}` + RST);
       if (probe.error) {
-        lines.push('  ' + meh(`could not verify live model availability: ${probe.error}`));
-      } else if (probe.available) {
-        lines.push('  ' + (probe.available.length ? ok(`confirmed available for this key: ${probe.available.join(', ')}`) : no('NONE of the configured/candidate TTS models are available for this key')));
-        if (probe.unavailable?.length) {
-          lines.push('  ' + meh(`not available for this key: ${probe.unavailable.join(', ')}`));
+        lines.push('  ' + meh(`could not check live model listing: ${probe.error}`));
+      } else if (probe.listed) {
+        // "listed" means ListModels can see it for this key — NOT that a real
+        // Interactions TTS call will succeed (this doctor never places a paid
+        // synthesis call to find out). Live bug this wording exists to
+        // prevent recurring: a model was listed here yet still 400'd in
+        // production because the actual bug was the request path, not model
+        // existence — see services/voice.js's synthesize() header comment.
+        lines.push('  ' + (probe.listed.length ? ok(`listed for this key (not a confirmed working call): ${probe.listed.join(', ')}`) : no('NONE of the configured/candidate TTS models are listed for this key')));
+        if (probe.notListed?.length) {
+          lines.push('  ' + meh(`not listed for this key: ${probe.notListed.join(', ')}`));
         }
-        if (!probe.available.length) blocking++;
+        if (!probe.listed.length) blocking++;
       }
     } catch (err) {
       lines.push('  ' + meh(`voice TTS check failed: ${err.message}`));

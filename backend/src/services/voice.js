@@ -15,6 +15,27 @@ const axios = require('axios');
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
+// Live bug, confirmed via Railway logs: gemini-3.1-flash-tts-preview timed
+// out at 25s and the gemini-2.5-flash-preview-tts fallback 400'd — NOT a
+// timeout/ordering problem (that was the PREVIOUS fix). Root cause: every TTS
+// model was being sent to the legacy GenerateContent endpoint
+// (POST /v1beta/models/{model}:generateContent with camelCase
+// generationConfig). Per ai.google.dev/gemini-api/docs/speech-generation,
+// current Gemini TTS models are served through a SEPARATE Interactions API
+// (POST /v1beta/interactions, snake_case body, response audio at
+// output_audio.data) — GenerateContent for these models either hangs waiting
+// on a response shape that never arrives (the 25s timeout) or is rejected
+// outright (the 400). STT is unaffected — transcribe() below still uses
+// GenerateContent, which remains the correct/documented path for it; only
+// TTS moved.
+const INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
+// Shown in the current REST examples for this API — send it on every
+// Interactions call (not just streaming) since the docs don't confirm it's
+// SAFE to omit for a plain request, and a wrong/missing revision header is
+// exactly the class of bug this fix exists to close. Override via env if
+// Google revises the header value without a code deploy.
+const INTERACTIONS_API_REVISION = process.env.GEMINI_INTERACTIONS_API_REVISION || '2026-05-20';
+
 function key() {
   const k = process.env.GEMINI_API_KEY;
   if (!k) throw new Error('GEMINI_API_KEY not set');
@@ -76,37 +97,44 @@ function ttsModels() {
 }
 
 /**
- * Live model-availability probe via Gemini's ListModels endpoint — reports
- * which of TTS_CANDIDATES (plus a configured GEMINI_TTS_MODEL override, if
- * any) actually exist and support generateContent for THIS API key, without
- * ever logging the key itself. Used by `npm run doctor` (and safe to call
- * from an admin diagnostic route) — read-only, never throws, degrades to a
- * clear error string on any network/auth failure so a doctor-style caller
- * can just print whatever comes back.
+ * Live model-LISTING probe via Gemini's ListModels endpoint — reports which
+ * of TTS_CANDIDATES (plus a configured GEMINI_TTS_MODEL override, if any)
+ * this API key can even SEE, without ever logging the key itself. This is
+ * NOT proof a model actually works: ListModels merely enumerates what the
+ * account can address, it doesn't exercise the Interactions API's request
+ * contract at all (live bug this distinction exists to prevent recurring:
+ * gemini-2.5-flash-preview-tts was listed here yet still 400'd in
+ * production, because the real bug was the request path/shape, not model
+ * existence — see synthesize()'s header comment). Field names say `listed`,
+ * not `available`, on purpose. Used by `npm run doctor` (and safe to call
+ * from an admin diagnostic route) — read-only, never throws, never places a
+ * real (paid) synthesis call, degrades to a clear error string on any
+ * network/auth failure so a doctor-style caller can just print whatever
+ * comes back.
  */
 async function probeTtsModelAvailability() {
   const configured = process.env.GEMINI_TTS_MODEL || null;
   const candidates = [...new Set([...(configured ? [configured] : []), ...TTS_CANDIDATES])];
   if (!process.env.GEMINI_API_KEY) {
-    return { configured, configuredLooksValid: configured ? /tts/i.test(configured) : null, candidates, available: null, error: 'GEMINI_API_KEY not set' };
+    return { configured, configuredLooksValid: configured ? /tts/i.test(configured) : null, candidates, listed: null, error: 'GEMINI_API_KEY not set' };
   }
   try {
     const { data } = await axios.get(`${BASE}/models?key=${key()}&pageSize=1000`, { timeout: 8000 });
     const liveNames = new Set((data.models || []).map((m) => String(m.name || '').replace(/^models\//, '')));
-    const available = candidates.filter((m) => liveNames.has(m));
+    const listed = candidates.filter((m) => liveNames.has(m));
     return {
       configured,
       configuredLooksValid: configured ? /tts/i.test(configured) : null,
       candidates,
-      available,
-      unavailable: candidates.filter((m) => !available.includes(m)),
+      listed,
+      notListed: candidates.filter((m) => !listed.includes(m)),
       error: null,
     };
   } catch (err) {
     // Never include the request URL (it carries the key in the query
     // string) — only the provider's own sanitized error detail.
     const detail = err.response?.data?.error?.message || err.message;
-    return { configured, configuredLooksValid: configured ? /tts/i.test(configured) : null, candidates, available: null, error: detail };
+    return { configured, configuredLooksValid: configured ? /tts/i.test(configured) : null, candidates, listed: null, error: detail };
   }
 }
 
@@ -178,12 +206,23 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
     'Speak naturally with a warm, calm, optimistic tone. Sound like a trusted friend who is genuinely excited to help. ' +
     'Keep responses conversational and concise. Never sound robotic, overly enthusiastic, or like a customer support agent. ' +
     'Use occasional humor and warmth. Pause naturally. Celebrate wins without exaggeration.';
+  // The Interactions API's `input` has no separate field for delivery/style
+  // direction — it's one text blob the model both reads for guidance AND may
+  // speak verbatim if it can't tell the two apart. Per the documented
+  // prompting guidance (ai.google.dev/gemini-api/docs/speech-generation):
+  // "vague prompts may... caus[e] the model to read your style instructions
+  // and director's notes aloud" — the fix is an explicit preamble plus
+  // clearly labeled sections so the model has an unambiguous boundary for
+  // where performance direction ends and the exact words to speak begin.
+  const input =
+    `Synthesize natural speech audio for the text below. Follow DIRECTOR'S NOTES for tone, pace, and delivery — ` +
+    `do not speak the notes themselves aloud. Speak only the exact words under TRANSCRIPT, verbatim, nothing added or omitted.\n\n` +
+    `DIRECTOR'S NOTES\n${directive}\n\n` +
+    `TRANSCRIPT\n${trimmed.slice(0, 4000)}`;
   const payload = {
-    contents: [{ parts: [{ text: `${directive}:\n\n${trimmed.slice(0, 4000)}` }] }],
-    generationConfig: {
-      responseModalities: ['AUDIO'],
-      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
-    },
+    input,
+    response_format: { type: 'audio' },
+    generation_config: { speech_config: [{ voice }] },
   };
 
   // Live bug: a single timed-out (or otherwise transient) Gemini call used to
@@ -215,13 +254,30 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
     // — so a slow first attempt can't single-handedly blow through the
     // total budget before the loop even gets a chance to check it again.
     const remaining = deadline - Date.now();
-    const { data } = await axios.post(`${BASE}/models/${model}:generateContent?key=${key()}`, payload, { timeout: Math.max(1000, Math.min(timeoutMs, remaining)) });
-    const part = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
-    if (!part) throw new Error('no audio in TTS response');
-    const pcm = Buffer.from(part.inlineData.data, 'base64');
-    // Mime like "audio/L16;codec=pcm;rate=24000" — pull the rate if present.
-    const rateMatch = String(part.inlineData.mimeType || '').match(/rate=(\d+)/);
+    const attemptStart = Date.now();
+    const { data } = await axios.post(
+      INTERACTIONS_URL,
+      { model, ...payload },
+      {
+        timeout: Math.max(1000, Math.min(timeoutMs, remaining)),
+        headers: {
+          'x-goog-api-key': key(),
+          'Content-Type': 'application/json',
+          'Api-Revision': INTERACTIONS_API_REVISION,
+        },
+      }
+    );
+    const elapsedMs = Date.now() - attemptStart;
+    const audioB64 = data.output_audio?.data;
+    if (!audioB64) throw new Error('no audio in TTS response');
+    const pcm = Buffer.from(audioB64, 'base64');
+    // Mime like "audio/L16;codec=pcm;rate=24000" if present — pull the rate;
+    // Gemini TTS's underlying engine defaults to 24kHz mono PCM regardless of
+    // endpoint, so that's the safe fallback when the field is absent (not
+    // documented as always present for Interactions responses).
+    const rateMatch = String(data.output_audio?.mime_type || '').match(/rate=(\d+)/);
     const sampleRate = rateMatch ? Number(rateMatch[1]) : 24000;
+    console.log(`[voice tts] endpoint=interactions model=${model} status=200 elapsedMs=${elapsedMs}`);
     return { audio: pcmToWav(pcm, { sampleRate }), mime: 'audio/wav', model };
   };
 
@@ -236,20 +292,23 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
         console.error(`[voice tts] overall ${OVERALL_TIMEOUT_MS}ms deadline exceeded before trying ${model} (try ${tryNum + 1}/${maxTries})`);
         break outer;
       }
+      const tryStart = Date.now();
       try {
         return await attempt(model);
       } catch (err) {
         lastErr = err;
-        // Log model name, HTTP status, AND the PROVIDER's own error detail
-        // (e.g. "model not found for API version v1beta") — axios's generic
-        // "Request failed with status code 400" alone was not enough to
-        // diagnose a live "Unavailable" report (root cause turned out to be
-        // an invalid model id in ttsModels(), not a timeout at all). Never
-        // logs the request URL/key — only the HTTP status and the response
-        // body Gemini itself returned.
+        // Log the exact endpoint/API path, model, HTTP status, elapsed time,
+        // AND the PROVIDER's own error detail (e.g. "model not found for API
+        // version v1beta") — axios's generic "Request failed with status
+        // code 400" alone was not enough to diagnose a live "Unavailable"
+        // report (root cause turned out to be the wrong endpoint contract
+        // entirely — see this file's header comment). Never logs the
+        // request URL/key — only the HTTP status and the response body
+        // Gemini itself returned.
         const status = err.response?.status ?? (err.code === 'ECONNABORTED' || /timeout of/i.test(err.message || '') ? 'timeout' : 'unknown');
         const detail = err.response?.data?.error?.message;
-        console.error(`[voice tts] model=${model} status=${status} try=${tryNum + 1}/${maxTries}: ${err.message}${detail ? ` — ${detail}` : ''}`);
+        const elapsedMs = Date.now() - tryStart;
+        console.error(`[voice tts] endpoint=interactions model=${model} status=${status} try=${tryNum + 1}/${maxTries} elapsedMs=${elapsedMs}: ${err.message}${detail ? ` — ${detail}` : ''}`);
         if (!isTransientTtsError(err)) break;
         if (tryNum < maxTries - 1 && backoffMs > 0 && Date.now() + backoffMs < deadline) await sleep(backoffMs);
       }
@@ -416,4 +475,5 @@ function speakable(text) {
 module.exports = {
   synthesize, transcribe, composeNarrationScript, composeEveningNarrationScript, composeWisdomNarrationScript,
   speakable, pcmToWav, DEFAULT_VOICE, ttsModels, TTS_CANDIDATES, probeTtsModelAvailability, checkTtsModelOverride,
+  INTERACTIONS_URL,
 };

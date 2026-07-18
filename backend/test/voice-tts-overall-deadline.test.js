@@ -50,7 +50,7 @@ test('synthesize: the overall deadline stops the retry loop early — never keep
 
 test('synthesize: a fast success within the deadline is unaffected — the deadline only bounds the FAILURE/retry path', async () => {
   axios.post = async () => ({
-    data: { candidates: [{ content: { parts: [{ inlineData: { data: Buffer.from('pcm').toString('base64'), mimeType: 'audio/L16;rate=24000' } } ] } }] },
+    data: { output_audio: { data: Buffer.from('pcm').toString('base64'), mime_type: 'audio/L16;rate=24000' } },
   });
   const result = await voice.synthesize('hello world');
   assert.equal(result.mime, 'audio/wav');

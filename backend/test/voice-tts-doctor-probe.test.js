@@ -37,7 +37,7 @@ test('probeTtsModelAvailability: no GEMINI_API_KEY — reports the gap without a
   }
 });
 
-test('probeTtsModelAvailability: reports which candidates are confirmed available for this key, never logs the key', async () => {
+test('probeTtsModelAvailability: reports which candidates are LISTED (ListModels-visible) for this key — not a confirmed-working claim — never logs the key', async () => {
   delete process.env.GEMINI_TTS_MODEL;
   axios.get = async (url) => {
     assert.doesNotMatch(url, /key=$/, 'sanity: a key value was actually substituted into the URL');
@@ -45,9 +45,14 @@ test('probeTtsModelAvailability: reports which candidates are confirmed availabl
   };
   const result = await voice.probeTtsModelAvailability();
   assert.equal(result.configured, null);
-  assert.deepEqual(result.available.sort(), ['gemini-2.5-flash-preview-tts', 'gemini-3.1-flash-tts-preview'].sort());
-  assert.ok(result.unavailable.includes('gemini-2.5-pro-preview-tts'));
+  assert.deepEqual(result.listed.sort(), ['gemini-2.5-flash-preview-tts', 'gemini-3.1-flash-tts-preview'].sort());
+  assert.ok(result.notListed.includes('gemini-2.5-pro-preview-tts'));
   assert.equal(result.error, null);
+  // Live bug this field naming exists to prevent recurring: a model being
+  // LISTED here is not proof an actual Interactions TTS call will succeed —
+  // gemini-2.5-flash-preview-tts was listed yet still 400'd in production
+  // because the bug was the request path/shape, not model existence.
+  assert.equal(result.available, undefined, 'must not use the old "available" field name, which implied a confirmed-working guarantee ListModels never made');
 });
 
 test('probeTtsModelAvailability: an invalid GEMINI_TTS_MODEL override is flagged as configuredLooksValid=false', async () => {
@@ -73,7 +78,7 @@ test('probeTtsModelAvailability: a ListModels network/auth failure degrades to a
     throw e;
   };
   const result = await voice.probeTtsModelAvailability();
-  assert.equal(result.available, null);
+  assert.equal(result.listed, null);
   assert.match(result.error, /API key not valid/);
   assert.doesNotMatch(JSON.stringify(result), /key=test-key/, 'the raw request URL (which carries the key) must never leak into the result');
 });
