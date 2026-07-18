@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 const {
   validateEveningBriefClaims,
   neutralizeEveningBriefViolations,
+  buildEveningEvidenceFacts,
   checkRestDayStepsMislabeled,
   checkStepsDescribedAsWorkout,
   checkDayOffUsedAsSleepPermission,
@@ -124,4 +125,47 @@ test('a clean result produces zero violations and neutralize is a no-op', () => 
   const violations = validateEveningBriefClaims(result, facts);
   assert.equal(violations.length, 0);
   assert.deepEqual(neutralizeEveningBriefViolations(result, violations, {}), result);
+});
+
+// ── EvidenceClaim v1: shared completion/resolved-context checks ─────────────
+
+test('buildEveningEvidenceFacts flattens signals.commitments {done,open,skipped} into a {title,status} list', () => {
+  const signals = {
+    evidenceGoals: [{ text: 'Ship the deck', achieved: false }],
+    commitments: { done: [{ title: 'Book flights' }], open: [{ title: 'Call the accountant' }], skipped: [{ title: 'Gym' }] },
+    resolvedContext: null,
+  };
+  const facts = buildEveningEvidenceFacts(signals);
+  assert.deepEqual(facts.goals, [{ text: 'Ship the deck', achieved: false }]);
+  assert.deepEqual(facts.commitments.sort((a, b) => a.title.localeCompare(b.title)), [
+    { title: 'Book flights', status: 'done' },
+    { title: 'Call the accountant', status: 'open' },
+    { title: 'Gym', status: 'skipped' },
+  ]);
+  assert.ok(Array.isArray(facts.claims), 'the EvidenceClaim packet is attached too');
+});
+
+test('validateEveningBriefClaims catches "plan" describing a still-open commitment as done', () => {
+  const signals = { evidenceGoals: [], commitments: { done: [], open: [{ title: 'Call the accountant' }], skipped: [] }, resolvedContext: null };
+  const result = { today: '', plan: 'Call the accountant is done — nice follow-through today.', tomorrow: '', readiness: '' };
+  const violations = validateEveningBriefClaims(result, signals);
+  assert.ok(violations.some((v) => v.check === 'commitment_completion'));
+});
+
+test('validateEveningBriefClaims catches "today" citing a retracted context item as if it happened', () => {
+  const { buildResolvedContext } = require('../src/intelligence/context-resolver');
+  const resolvedContext = buildResolvedContext({
+    assertions: [{ id: 'a1', predicate: 'went to', objectValue: 'the late show', rawText: 'went to the late show', eventStatus: 'retracted', domains: ['other'] }],
+    relations: [], tz: 'America/New_York', now: new Date('2026-07-18T15:00:00Z'),
+  });
+  const signals = { evidenceGoals: [], commitments: {}, resolvedContext };
+  const result = { today: 'Since you went to the late show, expect a slower start.', plan: '', tomorrow: '', readiness: '' };
+  const violations = validateEveningBriefClaims(result, signals);
+  assert.ok(violations.some((v) => v.check === 'negated_event_cited'));
+});
+
+test('validateEveningBriefClaims stays silent when goals/commitments/resolvedContext are absent (backward compatible)', () => {
+  const result = { today: 'A solid day overall.', plan: '', tomorrow: '', readiness: '' };
+  const violations = validateEveningBriefClaims(result, {});
+  assert.deepEqual(violations, []);
 });

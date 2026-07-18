@@ -59,11 +59,11 @@ const BAND_SYNONYMS = {
 };
 const RECOVERY_CONTEXT_RE = /\brecover|\bhrv\b|\bband\b|\brested\b|\breadiness\b/i;
 
-function checkRecoveryBand(result, facts) {
+function checkRecoveryBand(fields, facts) {
   const band = facts.recoveryBand;
   if (!band || !BAND_SYNONYMS[band]) return [];
   const violations = [];
-  for (const [field, text] of briefFields(result)) {
+  for (const [field, text] of fields) {
     for (const sentence of splitIntoSentences(text)) {
       if (!RECOVERY_CONTEXT_RE.test(sentence)) continue;
       for (const [claimedBand, re] of Object.entries(BAND_SYNONYMS)) {
@@ -84,11 +84,11 @@ function checkRecoveryBand(result, facts) {
 // ── Recovery score ───────────────────────────────────────────────────────────
 // A cited "recovery score of NN" / "NN/100" that's materially off the real one.
 const SCORE_TOLERANCE = 6;
-function checkRecoveryScore(result, facts) {
+function checkRecoveryScore(fields, facts) {
   const score = facts.recoveryScore;
   if (score == null || !Number.isFinite(score)) return [];
   const violations = [];
-  for (const [field, text] of briefFields(result)) {
+  for (const [field, text] of fields) {
     for (const sentence of splitIntoSentences(text)) {
       if (!RECOVERY_CONTEXT_RE.test(sentence) && !/\bscore\b/i.test(sentence)) continue;
       // "recovery score of 72", "recovery at 72", "72/100", "score is 72"
@@ -149,7 +149,7 @@ function causalOverlapRatio(sentence, phrase) {
 }
 const CAUSE_OVERLAP_THRESHOLD = 0.3;
 
-function checkRecoveryCause(result, facts) {
+function checkRecoveryCause(fields, facts) {
   // Only meaningful once the caller has actually computed eligible drivers —
   // absent facts.recoveryDrivers (an older/partial facts object), stay silent
   // rather than false-positive on every causal recovery sentence.
@@ -161,7 +161,7 @@ function checkRecoveryCause(result, facts) {
   // is guaranteed to name at least one tag.
   const eligibleTags = new Set(drivers.flatMap((d) => causeConceptTags(d)));
   const violations = [];
-  for (const [field, text] of briefFields(result)) {
+  for (const [field, text] of fields) {
     for (const sentence of splitIntoSentences(text)) {
       if (!RECOVERY_CONTEXT_RE.test(sentence)) continue;
       if (!CAUSAL_RE.test(sentence)) continue;
@@ -208,7 +208,7 @@ function checkRecoveryCause(result, facts) {
 // effective source is NOT the plain schedule and a sentence binds an action verb
 // to the scheduled label.
 const WORKOUT_ACTION_RE = /\b(scale back|ease off|crush|hit|do|tackle|power through|go hard on|push through|send)\b/i;
-function checkEffectiveWorkout(result, facts) {
+function checkEffectiveWorkout(fields, facts) {
   const source = facts.effectiveWorkoutSource;
   const scheduled = facts.scheduledWorkoutLabel;
   const effective = facts.effectiveWorkoutLabel;
@@ -216,7 +216,7 @@ function checkEffectiveWorkout(result, facts) {
   if (!source || source === 'scheduled' || !scheduled || !effective) return [];
   if (String(scheduled).toLowerCase() === String(effective).toLowerCase()) return [];
   const violations = [];
-  for (const [field, text] of briefFields(result)) {
+  for (const [field, text] of fields) {
     for (const sentence of splitIntoSentences(text)) {
       if (!WORKOUT_ACTION_RE.test(sentence)) continue;
       // Sentence is substantially about the SCHEDULED session and does NOT
@@ -241,7 +241,7 @@ const COMPLETION_VERB_RE =
   /\b(?:is|are|was|were|has been|have been)\s+(?:done|complete|completed|finished|closed(?:\s+out)?|delivered|wrapped(?:\s+up)?|shipped)\b|\bchecked (?:it |that |this )?off\b|\bcrossed (?:it |that |this )?off\b|\bclosed (?:it|that|this) out\b/i;
 const COMPLETION_OVERLAP_THRESHOLD = 0.6;
 
-function checkCompletion(result, facts) {
+function checkCompletion(fields, facts) {
   const openGoals = (facts.goals || []).filter((g) => g && (g.text) && !g.achieved);
   const openCommitments = (facts.commitments || []).filter((c) => c && c.title && c.status !== 'completed' && c.status !== 'done');
   const targets = [
@@ -250,7 +250,7 @@ function checkCompletion(result, facts) {
   ];
   if (!targets.length) return [];
   const violations = [];
-  for (const [field, text] of briefFields(result)) {
+  for (const [field, text] of fields) {
     for (const sentence of splitIntoSentences(text)) {
       if (!COMPLETION_VERB_RE.test(sentence)) continue;
       for (const t of targets) {
@@ -282,7 +282,7 @@ function checkCompletion(result, facts) {
 // unchanged; this check ADDS the resolver's stronger, corrected view on top.
 const MEETING_LOAD_RE = /\bmeetings?\b|\bpacked\b|\bbusy\b|\bback-to-back\b/i;
 
-function checkResolvedContextConflicts(result, facts) {
+function checkResolvedContextConflicts(fields, facts) {
   const resolved = facts?.resolvedContext;
   if (!resolved || !Array.isArray(resolved.assertions)) return [];
   const { getCompletionState, getDriversFor, getCalendarClassification } = require('../intelligence/context-resolver');
@@ -292,7 +292,7 @@ function checkResolvedContextConflicts(result, facts) {
   // own record of what the user explicitly said did NOT happen or was
   // withdrawn, independent of (and stronger than) any lexical driver check.
   const negated = resolved.assertions.filter((a) => ['negated', 'retracted'].includes(a.eventStatus));
-  for (const [field, text] of briefFields(result)) {
+  for (const [field, text] of fields) {
     for (const sentence of splitIntoSentences(text)) {
       for (const a of negated) {
         const probe = a.predicate ? `${a.predicate} ${a.objectValue || ''}`.trim() : a.rawText;
@@ -319,7 +319,7 @@ function checkResolvedContextConflicts(result, facts) {
     for (const t of completionTargets) {
       const state = getCompletionState(resolved, t.kind === 'goal' ? 'goal' : 'commitment', normalizeTargetId(t.text));
       if (!state || state.completed !== false) continue; // only an explicit "not completed" correction matters here
-      for (const [field, text] of briefFields(result)) {
+      for (const [field, text] of fields) {
         for (const sentence of splitIntoSentences(text)) {
           if (!COMPLETION_VERB_RE.test(sentence)) continue;
           if (overlapRatio(sentence, t.text) < COMPLETION_OVERLAP_THRESHOLD) continue;
@@ -340,7 +340,7 @@ function checkResolvedContextConflicts(result, facts) {
   // checkRecoveryCause's empty-drivers branch, but sourced from the
   // resolver's evidence-tiered ranking rather than raw eligible annotations).
   const driverResult = getDriversFor(resolved, 'health:recovery_autonomic');
-  for (const [field, text] of briefFields(result)) {
+  for (const [field, text] of fields) {
     for (const sentence of splitIntoSentences(text)) {
       if (!RECOVERY_CONTEXT_RE.test(sentence) || !CAUSAL_RE.test(sentence)) continue;
       const claimedTags = causeConceptTags(sentence);
@@ -367,7 +367,7 @@ function checkResolvedContextConflicts(result, facts) {
     if (!cls || !cls.classification) continue;
     const saysNotMeeting = /not meetings?|isn'?t a meeting|not a meeting/i.test(cls.classification);
     if (!saysNotMeeting) continue;
-    for (const [field, text] of briefFields(result)) {
+    for (const [field, text] of fields) {
       for (const sentence of splitIntoSentences(text)) {
         if (!MEETING_LOAD_RE.test(sentence)) continue;
         if (overlapRatio(sentence, a.subject || a.objectValue || '') < 0.4) continue;
@@ -385,11 +385,11 @@ function checkResolvedContextConflicts(result, facts) {
 
 // ── Experiment verdict ───────────────────────────────────────────────────────
 const CONFIRM_VERB_RE = /\b(?:confirm(?:ed|s)?|prov(?:ed|en|es)|validated|worked|is working|paid off)\b/i;
-function checkExperiments(result, facts) {
+function checkExperiments(fields, facts) {
   const experiments = (facts.experiments || []).filter((e) => e && e.hypothesis);
   if (!experiments.length) return [];
   const violations = [];
-  for (const [field, text] of briefFields(result)) {
+  for (const [field, text] of fields) {
     for (const sentence of splitIntoSentences(text)) {
       if (!CONFIRM_VERB_RE.test(sentence)) continue;
       for (const e of experiments) {
@@ -415,12 +415,12 @@ const SPEND_CONTEXT_RE = /\bspen[dt]|\bspending\b|\bthis month\b|\bmonth-to-date
 // the old 20% tolerance would wave through a "$2,900" when the truth was $2,450.
 const SPEND_TOLERANCE_FRAC = 0.02;
 const SPEND_TOLERANCE_ABS = 10;
-function checkSpending(result, facts) {
+function checkSpending(fields, facts) {
   const total = facts.spendingTotalMonth;
   if (total == null || !Number.isFinite(total) || total <= 0) return [];
   const allowed = Math.max(SPEND_TOLERANCE_ABS, total * SPEND_TOLERANCE_FRAC);
   const violations = [];
-  for (const [field, text] of briefFields(result)) {
+  for (const [field, text] of fields) {
     for (const sentence of splitIntoSentences(text)) {
       if (!SPEND_CONTEXT_RE.test(sentence)) continue;
       const m = sentence.match(/\$\s?([\d,]+(?:\.\d+)?)/);
@@ -449,13 +449,13 @@ function checkSpending(result, facts) {
 const FORECAST_CONTEXT_RE = /\bforecast|\btoday'?s? (?:a |an )?(?:grade|[abcdf][+-]? day)|\btomorrow\b|\bday ahead\b|\bcapacity\b/i;
 const GRADE_CLAIM_RE = /\b(?:grade\s+)?([ABCDF])[+-]?\s+day\b|\btoday'?s?\s+(?:an?\s+)?([ABCDF])[+-]?\b/i;
 const BAND_WORD = { green: /\bgreen\b/i, yellow: /\byellow\b/i, red: /\bred\b/i };
-function checkForecast(result, facts) {
+function checkForecast(fields, facts) {
   const grade = facts.forecastGrade;    // e.g. 'B-'
   const tomorrowBand = facts.tomorrowBand;
   if (!grade && !tomorrowBand) return [];
   const gradeLetter = grade ? String(grade).trim().charAt(0).toUpperCase() : null;
   const violations = [];
-  for (const [field, text] of briefFields(result)) {
+  for (const [field, text] of fields) {
     for (const sentence of splitIntoSentences(text)) {
       if (!FORECAST_CONTEXT_RE.test(sentence)) continue;
       // Day-grade contradiction.
@@ -494,7 +494,7 @@ function checkForecast(result, facts) {
 // Friday" reference to another day.
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const TODAY_IS_RE = /\b(?:today is|it'?s|happy|this)\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i;
-function checkCurrentDate(result, facts) {
+function checkCurrentDate(fields, facts) {
   if (!facts.localDate) return [];
   // Canonical weekday of the snapshot's local date (parse as a plain date; noon
   // UTC avoids any tz rollover on the YYYY-MM-DD string).
@@ -502,7 +502,7 @@ function checkCurrentDate(result, facts) {
   if (Number.isNaN(d.getTime())) return [];
   const canonical = WEEKDAYS[d.getUTCDay()];
   const violations = [];
-  for (const [field, text] of briefFields(result)) {
+  for (const [field, text] of fields) {
     for (const sentence of splitIntoSentences(text)) {
       const m = sentence.match(TODAY_IS_RE);
       if (!m) continue;
@@ -519,26 +519,86 @@ function checkCurrentDate(result, facts) {
   return violations;
 }
 
+// ── EvidenceClaim overclaim (generic, cross-surface) ─────────────────────────
+// The general form of checkExperiments' "described as confirmed" rule,
+// driven by facts.claims (see brain/evidenceClaim.js's buildEvidenceClaims)
+// instead of facts.experiments directly — so it also catches an OBSERVATION
+// or ASSOCIATION claim (a self-model pattern, a knowledge-registry-backed
+// recovery driver) being asserted as settled/proven, not just an
+// experiment. Absent facts.claims (a caller that hasn't adopted the
+// EvidenceClaim packet yet), this is silently a no-op — same
+// backward-compatible pattern as every other check here. Only claims whose
+// allowedLanguage is NOT already 'assertive' can be overclaimed — an
+// association/observation is ALWAYS non-assertive by construction (see
+// DEFAULT_LANGUAGE_FOR_TYPE), so this never double-flags what
+// checkExperiments already covers for a confirmed experiment (its
+// allowedLanguage IS 'assertive', so it's correctly excluded here).
+const OVERCLAIM_VERB_RE = /\b(?:confirm(?:ed|s)?|prov(?:ed|en|es)|validated|is a proven|guarantee[sd]?)\b/i;
+const OVERCLAIM_OVERLAP_THRESHOLD = 0.4;
+
+function checkAssociationOverclaim(fields, facts) {
+  const claims = Array.isArray(facts?.claims) ? facts.claims : null;
+  if (!claims || !claims.length) return [];
+  const weakClaims = claims.filter(
+    (c) => (c.claimType === 'association' || c.claimType === 'observation') && c.allowedLanguage !== 'assertive'
+  );
+  if (!weakClaims.length) return [];
+  const violations = [];
+  for (const [field, text] of fields) {
+    for (const sentence of splitIntoSentences(text)) {
+      if (!OVERCLAIM_VERB_RE.test(sentence)) continue;
+      for (const c of weakClaims) {
+        const probe = typeof c.value === 'string' ? c.value : String(c.subject || '').replace(/^[a-z]+:/, '');
+        if (!probe || overlapRatio(sentence, probe) < OVERCLAIM_OVERLAP_THRESHOLD) continue;
+        violations.push({
+          check: 'association_overclaim', field, sentence, severity: 'high',
+          expected: `${c.claimType} (${c.evidenceTier}) — observational only`, actual: 'described as confirmed/proven',
+          message: `describes "${probe}" as confirmed/proven, but it's only a ${c.claimType} (${c.evidenceTier}) — label it as observed/associated, not proof`,
+        });
+      }
+    }
+  }
+  return violations;
+}
+
+/**
+ * Run every claim check against an arbitrary set of generated text fields.
+ * `fields` is an array of [fieldName, text] pairs — the shared shape every
+ * surface (Chief Brief via briefFields(), Evening Brief, Ask) normalizes its
+ * own output into before validating. Pure. `facts` absent/null returns no
+ * violations (every check below independently no-ops on a missing fact, so
+ * this is redundant safety, not load-bearing).
+ */
+function validateClaims(fields, facts) {
+  if (!fields || !facts) return [];
+  return [
+    ...checkRecoveryBand(fields, facts),
+    ...checkRecoveryScore(fields, facts),
+    ...checkRecoveryCause(fields, facts),
+    ...checkEffectiveWorkout(fields, facts),
+    ...checkCompletion(fields, facts),
+    ...checkExperiments(fields, facts),
+    ...checkSpending(fields, facts),
+    ...checkForecast(fields, facts),
+    ...checkCurrentDate(fields, facts),
+    ...checkResolvedContextConflicts(fields, facts),
+    ...checkAssociationOverclaim(fields, facts),
+  ];
+}
+
 /**
  * Validate a chief-brief result against canonical facts (from
  * brain/snapshot.js's canonicalFacts). Returns { violations, hasHighSeverity }.
  * Pure. When `facts` is null/empty, returns no violations (backward compatible —
  * callers without a snapshot still work, they just don't get the extra checks).
+ * A thin wrapper over validateClaims(briefFields(result), facts) — kept as
+ * its own function (rather than inlined at every Chief Brief call site) so
+ * this module's existing public API and behavior are 100% unchanged by the
+ * EvidenceClaim generalization.
  */
 function validateChiefBriefClaims(result, facts) {
   if (!result || !facts) return { violations: [], hasHighSeverity: false };
-  const violations = [
-    ...checkRecoveryBand(result, facts),
-    ...checkRecoveryScore(result, facts),
-    ...checkRecoveryCause(result, facts),
-    ...checkEffectiveWorkout(result, facts),
-    ...checkCompletion(result, facts),
-    ...checkExperiments(result, facts),
-    ...checkSpending(result, facts),
-    ...checkForecast(result, facts),
-    ...checkCurrentDate(result, facts),
-    ...checkResolvedContextConflicts(result, facts),
-  ];
+  const violations = validateClaims(briefFields(result), facts);
   return { violations, hasHighSeverity: violations.some((v) => v.severity === 'high') };
 }
 
@@ -620,6 +680,38 @@ function neutralizeClaimViolations(result, violations, facts = null) {
 }
 
 /**
+ * Same sentence-level neutralization as neutralizeClaimViolations, but for a
+ * FLAT `{ fieldName: string }` object — Evening Brief's composed result and
+ * Ask's single `answer` field (wrapped as `{ answer: text }`) instead of the
+ * Chief Brief's nested `{ chiefBrief: {...}, morningFocus }` shape. Strips
+ * exactly the offending sentence(s) out of each violated field; never
+ * mutates the input. `requiredFields` names fields that must never end up
+ * blank (default: none — Ask/Evening Brief have no Chief-Brief-style "the
+ * card breaks if this is empty" requirement for every field); `fallbackFor`
+ * supplies the grounded replacement text for a required field that would
+ * otherwise go blank.
+ */
+function neutralizeClaimsGeneric(fieldsObj, violations, { requiredFields = new Set(), fallbackFor = () => '' } = {}) {
+  if (!violations.length) return fieldsObj;
+  const out = { ...fieldsObj };
+  const bySentenceField = new Map();
+  for (const v of violations) {
+    if (!v.field || !v.sentence) continue;
+    if (!bySentenceField.has(v.field)) bySentenceField.set(v.field, new Set());
+    bySentenceField.get(v.field).add(v.sentence.trim());
+  }
+  for (const [field, sentences] of bySentenceField) {
+    const src = out[field];
+    if (typeof src !== 'string' || !src.trim()) continue;
+    const kept = splitIntoSentences(src).filter((s) => !sentences.has(s.trim()));
+    let rebuilt = kept.join(' ').trim();
+    if (!rebuilt && requiredFields.has(field)) rebuilt = fallbackFor(field);
+    out[field] = rebuilt;
+  }
+  return out;
+}
+
+/**
  * Final backstop: guarantee every REQUIRED_BRIEF_FIELDS entry is a non-empty
  * string, no matter what upstream correction/neutralization did. Called after
  * finalizeSafe() so a blank field can never reach the client regardless of
@@ -652,6 +744,9 @@ function buildClaimCorrectionPrompt(basePrompt, violations) {
 module.exports = {
   validateChiefBriefClaims, buildClaimCorrectionPrompt, neutralizeClaimViolations,
   REQUIRED_BRIEF_FIELDS, groundedFallbackSentence, ensureRequiredFieldsPresent,
+  // EvidenceClaim v1 — the shared, surface-agnostic entrypoints Evening Brief
+  // and Ask use (see notify/evening-brief-validator.js, chat/ask.js).
+  validateClaims, neutralizeClaimsGeneric, checkAssociationOverclaim,
   // Exposed for focused unit tests:
   checkRecoveryBand, checkRecoveryScore, checkRecoveryCause, checkEffectiveWorkout,
   checkCompletion, checkExperiments, checkSpending, checkForecast, checkCurrentDate, briefFields,

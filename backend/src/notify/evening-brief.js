@@ -419,6 +419,22 @@ async function runEveningHealthBrief(opts = {}) {
   try {
     signals.commitments = await require('../store/commitments').todaySummary(tz);
   } catch { signals.commitments = null; }
+  // EvidenceClaim v1: canonical goals + the Context Understanding Layer's
+  // resolved projection — fetched here (not inside the validator) because
+  // ONLY this module talks to the store/resolver directly; evening-brief-
+  // validator.js's buildEveningEvidenceFacts is a pure projection of
+  // whatever lands on `signals`, same discipline as every other signal
+  // above. Best-effort: a fetch failure here must never block tonight's
+  // brief — it just means the completion/resolved-context checks see fewer
+  // targets (never MORE — an absent goal/commitment/assertion can't be
+  // falsely claimed against, so failing open here is safe).
+  try {
+    signals.evidenceGoals = (await require('../store/goals').listGoals({ status: 'active' }))
+      .map((g) => ({ text: g.title, achieved: false }));
+  } catch { signals.evidenceGoals = []; }
+  try {
+    signals.resolvedContext = await require('../intelligence/context-resolver').resolveContext({ tz });
+  } catch { signals.resolvedContext = null; }
   // Tomorrow's calendar — makes the bedtime lever concrete ("7:30 start
   // tomorrow, get down by 10:30") instead of the same generic sleep-hygiene
   // line every night. Best-effort: calendar creds may be absent.

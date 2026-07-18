@@ -522,6 +522,9 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     dayContextResult,
     recoveryResult,
     resolvedContextResult,
+    commitmentsResult,
+    rawRecoveryResult,
+    spendingMtdResult,
   ] = await Promise.allSettled([
     findingsStore.listFindings({ status: 'open' }),
     annotationsStore.listAnnotations({ from: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000), limit: 20 }),
@@ -544,6 +547,23 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     // and realtime voice read (harden pass, item 2) — 'general' purpose
     // since Ask fields arbitrary questions, not one fixed domain.
     require('../intelligence/context-resolver').resolveContext({}).catch(() => null),
+    // EvidenceClaim v1: canonical commitments (goals already come back on
+    // `snapshot` via personalSnapshot) — the same store selector Chief Brief's
+    // BrainSnapshot reads, so a "you finished X" answer is checked against the
+    // identical completion state every other surface uses.
+    personal ? require('../store/commitments').listActive({ limit: 20 }) : Promise.resolve([]),
+    // Raw recovery VALUE (score/band), not just recoveryContext()'s rendered
+    // prompt string — liveRecovery() is TTL-cached (see intelligence/recovery.js),
+    // so this is a cache hit alongside the recoveryContext() call above, not a
+    // second real computation.
+    personal ? require('../intelligence/recovery').liveRecovery().catch(() => null) : Promise.resolve(null),
+    // Canonical month-to-date discretionary spend — the SAME rule
+    // brain/snapshot.js's canonicalFacts uses — so a cited spending figure is
+    // checked against the real number, not left to the model's own arithmetic
+    // over the WEALTH DASHBOARD prose block.
+    financial
+      ? require('../brain/snapshot').canonicalSpendingMtd(new Date(), process.env.TZ || 'America/New_York').catch(() => null)
+      : Promise.resolve(null),
   ]);
 
   const findings = findingsResult.status === 'fulfilled' ? findingsResult.value : [];
@@ -577,6 +597,36 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     ? require('../intelligence/context-resolver').summarizeResolvedContext(resolvedContext, { purpose: 'general' })
     : '';
 
+  // EvidenceClaim v1: a lean canonical facts packet for THIS answer, built
+  // exclusively from the canonical fetches above (store selectors, the
+  // resolver, liveRecovery) — never from selfModelText/dayContext/pastConversations,
+  // which are prose the model may paraphrase but which claimValidator.js's
+  // checks must never treat as ground truth themselves. Same shape
+  // brain/snapshot.js's canonicalFactsFrom produces, so the exact same check
+  // functions Chief Brief and Evening Brief run apply here unchanged.
+  const rawRecovery = rawRecoveryResult.status === 'fulfilled' ? rawRecoveryResult.value : null;
+  const commitmentsForFacts = commitmentsResult.status === 'fulfilled' ? (commitmentsResult.value || []) : [];
+  const spendingMtd = spendingMtdResult.status === 'fulfilled' ? spendingMtdResult.value : null;
+  // Fetched once, used both for "TODAY'S PLANNED WORKOUT" in the system
+  // prompt below AND for the effective-workout claim here — so an answer
+  // that prescribes the scheduled session after recovery/a swap already
+  // overrode it away gets caught the same way Chief Brief's
+  // checkEffectiveWorkout already catches it.
+  let effectiveWorkout = null;
+  try { effectiveWorkout = await require('../services/workout').getEffectiveWorkout(); } catch { /* non-critical */ }
+  const { canonicalFactsFrom } = require('../brain/snapshot');
+  const { buildEvidenceClaims } = require('../brain/evidenceClaim');
+  const factsForValidation = canonicalFactsFrom({
+    recovery: rawRecovery,
+    effectiveWorkout,
+    goals: (snapshot?.goals || []).map((g) => ({ title: g.title })), // active-status goals are always open
+    commitments: commitmentsForFacts,
+    experiments: experimentsResult.status === 'fulfilled' ? experimentsResult.value : [],
+    wealth: spendingMtd != null ? { spendingMtd } : null,
+    resolvedContext,
+  });
+  factsForValidation.claims = buildEvidenceClaims(factsForValidation);
+
   // Audit fix (item 2): raw context is now a REAL fallback, not something
   // always handed over alongside the compiled version. Only whichever
   // LIFE CONTEXT annotations / day-journal entries partitionRawContext
@@ -597,13 +647,12 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
   const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations: annotationsForPrompt, history, snapshot, experiments, pastConversations, wealthInsights, recoveryInsight, dayContext, resolvedContextSummary, voice });
   let system = selfModelText ? `${baseSystem}\n\n${selfModelText}` : baseSystem;
   if (chaptersText) system += `\n\nLIFE CHAPTERS (standing long-arc facts, auto-updated — never ask the user to re-confirm these):\n${chaptersText}\nThis same fact is already shown elsewhere in the app (the brief, goals, forecasts) — don't just restate it here too. Use it as background that shapes tone and advice on a genuinely related question; if you reference it explicitly, relay something new (a next step, an implication for the actual question asked), not just the bare fact the user already knows.`;
-  // Today's planned session — so a swap_workout action can be acknowledged
-  // accurately ("swapped your Push session to…") and the answer can judge the
-  // substitute against the plan.
-  try {
-    const w = await require('../services/workout').getEffectiveWorkout();
-    if (w?.label) system += `\n\nTODAY'S PLANNED WORKOUT: ${w.label}${w.duration ? ` (${w.duration})` : ''}.`;
-  } catch { /* non-critical */ }
+  // Today's planned session (fetched above, alongside factsForValidation) —
+  // so a swap_workout action can be acknowledged accurately ("swapped your
+  // Push session to…") and the answer can judge the substitute against the plan.
+  if (effectiveWorkout?.label) {
+    system += `\n\nTODAY'S PLANNED WORKOUT: ${effectiveWorkout.label}${effectiveWorkout.duration ? ` (${effectiveWorkout.duration})` : ''}.`;
+  }
   // Current local time — so a set_reminder action can compute a correct future
   // "at" (e.g. "remind me at 6" → today or tomorrow depending on now). Shown in
   // 12-hour form so the model mirrors that when it speaks a time back; the
@@ -679,6 +728,29 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
   const actions = parseActions(answer);
   if (actions.length) answer = answer.replace(/<action>[\s\S]*?<\/action>/gi, '').trim();
 
+  // EvidenceClaim v1: validate the PROSE only — `actions` above is already
+  // independently allowlisted (validateAction's strict enum/shape check), so
+  // this never touches the action payload, only whatever rationale the model
+  // wrote around it (exactly the "validate action rationale separately from
+  // action payload" requirement). No new LLM call: the same deterministic
+  // checks Chief Brief and Evening Brief run (brain/claimValidator.js's
+  // validateClaims), against the canonical facts packet built above. A
+  // violation is neutralized by stripping just the offending sentence(s) —
+  // Ask's conversational tone/uncertainty elsewhere in the answer is
+  // untouched, same precision-first discipline as every other surface.
+  const { validateClaims, neutralizeClaimsGeneric } = require('../brain/claimValidator');
+  const claimViolations = validateClaims([['answer', answer]], factsForValidation);
+  let debugEvidence;
+  if (claimViolations.length) {
+    console.warn(`[chat] answer contradicted canonical state (${claimViolations.map((v) => v.check).join(', ')}) — neutralizing.`);
+    const neutralized = neutralizeClaimsGeneric({ answer }, claimViolations, {
+      requiredFields: new Set(['answer']),
+      fallbackFor: () => "I don't have a reliable, confirmed number for that right now — let me know if you'd like me to look closer.",
+    });
+    answer = neutralized.answer;
+    debugEvidence = claimViolations.map((v) => v.check);
+  }
+
   return {
     answer,
     actions, // all validated actions for the caller to execute (may be 0, 1, or more)
@@ -691,6 +763,12 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
       similarity: d.similarity,
     })),
     ...(fastPathError ? { fastPathError } : {}),
+    // Debug/diagnostic only — which claim checks fired and were neutralized,
+    // by name (never the raw contradicting text or any claim value). Callers
+    // serving an HTTP response strip this before it reaches the client (see
+    // routes/chat.js, routes/voice.js); it exists for tests/log-level
+    // diagnostics, not the normal UI (design brief item 7).
+    ...(debugEvidence ? { debugEvidence } : {}),
   };
 }
 

@@ -22,7 +22,7 @@ const {
   getCompletionState, getCalendarClassification, matchCalendarClassifications,
 } = require('../../src/intelligence/context-resolver');
 const { computeCalendarLoad } = require('../../src/intelligence/calendar-load');
-const { checkResolvedContextConflicts } = require('../../src/brain/claimValidator');
+const { checkResolvedContextConflicts, briefFields } = require('../../src/brain/claimValidator');
 const { rankActions } = require('../../src/intelligence/leverage');
 
 const app = buildTestApp();
@@ -115,7 +115,7 @@ test('scenario 3 — calendar classification: "that\'s a Sabbath block, not meet
 
   // And the claim validator rejects a brief that still frames it as meeting load.
   const violations = checkResolvedContextConflicts(
-    { chiefBrief: { synthesis: `Your ${TEST_MARKER} the 5-9pm block is packed with meetings today.` } },
+    briefFields({ chiefBrief: { synthesis: `Your ${TEST_MARKER} the 5-9pm block is packed with meetings today.` } }),
     { resolvedContext: resolved }
   );
   assert.ok(violations.some((v) => v.check === 'calendar_classification'));
@@ -155,7 +155,7 @@ test('scenario 4 — completion correction: "I did not complete the valuation co
   assert.equal(state.completed, false);
 
   const violations = checkResolvedContextConflicts(
-    { chiefBrief: { synthesis: `The ${TEST_MARKER} the valuation conversation is done — nice work.` } },
+    briefFields({ chiefBrief: { synthesis: `The ${TEST_MARKER} the valuation conversation is done — nice work.` } }),
     { resolvedContext: resolved, goals: [{ text: `${TEST_MARKER} the valuation conversation`, achieved: false }] }
   );
   assert.ok(violations.some((v) => v.check === 'completion_state_resolved'));

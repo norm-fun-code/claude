@@ -10,7 +10,21 @@
 // violates a rule, it is replaced wholesale with the corresponding field from
 // the deterministic fallback (composeFallback), which is built from the same
 // canonical facts and is guaranteed to already satisfy these rules.
+//
+// EvidenceClaim v1 (audit recommendation): the 3 hard-rule checks above are
+// evening-brief-specific and stay exactly as they were. ADDED on top: the
+// SAME shared, cross-surface completion/resolved-context checks Chief Brief
+// runs (brain/claimValidator.js's checkCompletion/checkResolvedContextConflicts)
+// — so "plan" (which grades today's commitments/session against what was
+// asked of it) can never describe a still-open commitment as done, or cite a
+// context item the user has since retracted/corrected, using the exact same
+// canonical evidence and the exact same deterministic rules Chief Brief and
+// Ask are held to. See buildEveningEvidenceFacts below for how the evening
+// brief's own `signals` object is projected into that shared fact shape.
 'use strict';
+
+const { checkCompletion, checkResolvedContextConflicts } = require('../brain/claimValidator');
+const { buildEvidenceClaims } = require('../brain/evidenceClaim');
 
 const LIGHT_WORDS_RE = /\blight(?:er)?\b|\blow(?:er)?\b|\bminimal(?:ly)?\b|\bbarely (?:any )?moved\b|\bnot much movement\b/i;
 const RESTDAY_CONTEXT_RE = /\brest day\b/i;
@@ -97,16 +111,48 @@ function fieldEntries(result) {
 }
 
 /**
+ * Project the evening brief's own `signals` object into the SAME canonical
+ * facts shape brain/snapshot.js's canonicalFactsFrom produces for Chief
+ * Brief/Ask — only the parts evening-brief prose can actually reference
+ * (goals, commitments, resolvedContext; deliberately NOT recovery/spending/
+ * forecast, which the evening brief never cites — see its own SYSTEM
+ * prompt's "never call it recovery" rule). Every input here is itself
+ * already canonical: `signals.evidenceGoals`/`signals.resolvedContext` are
+ * fetched straight from store/goals and context-resolver.js by
+ * runEveningHealthBrief (see notify/evening-brief.js), never derived from
+ * this module. `signals.commitments` (todaySummary's {done, open, skipped}
+ * shape) is flattened into the {title, status} list checkCompletion expects
+ * — anything not literally 'done' counts as still-open, so a SKIPPED
+ * commitment described as done is caught exactly like an open one.
+ */
+function buildEveningEvidenceFacts(signals) {
+  const goals = (signals?.evidenceGoals || []).map((g) => ({ text: g.text, achieved: g.achieved === true }));
+  const c = signals?.commitments || {};
+  const commitments = [
+    ...(c.done || []).map((x) => ({ title: x.title, status: 'done' })),
+    ...(c.open || []).map((x) => ({ title: x.title, status: 'open' })),
+    ...(c.skipped || []).map((x) => ({ title: x.title, status: 'skipped' })),
+  ];
+  const resolvedContext = signals?.resolvedContext || null;
+  const facts = { goals, commitments, resolvedContext };
+  facts.claims = buildEvidenceClaims(facts);
+  return facts;
+}
+
+/**
  * Validate an evening-brief result against canonical facts (the same
  * `signals` object passed to composeFallback/buildPrompt). Returns an array
  * of violations (empty when clean). Pure.
  */
 function validateEveningBriefClaims(result, facts) {
   const fields = fieldEntries(result);
+  const evidenceFacts = buildEveningEvidenceFacts(facts);
   return [
     ...checkRestDayStepsMislabeled(fields, facts),
     ...checkStepsDescribedAsWorkout(fields, facts),
     ...checkDayOffUsedAsSleepPermission(fields),
+    ...checkCompletion(fields, evidenceFacts),
+    ...checkResolvedContextConflicts(fields, evidenceFacts),
   ];
 }
 
@@ -127,6 +173,7 @@ function neutralizeEveningBriefViolations(result, violations, fallback) {
 module.exports = {
   validateEveningBriefClaims,
   neutralizeEveningBriefViolations,
+  buildEveningEvidenceFacts,
   // Exposed for focused unit tests:
   checkRestDayStepsMislabeled, checkStepsDescribedAsWorkout, checkDayOffUsedAsSleepPermission,
 };

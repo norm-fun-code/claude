@@ -7,7 +7,7 @@
 // calendar block described as meeting load after the user reclassified it.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { validateChiefBriefClaims, checkResolvedContextConflicts } = require('../src/brain/claimValidator');
+const { validateChiefBriefClaims, checkResolvedContextConflicts, briefFields } = require('../src/brain/claimValidator');
 const { buildResolvedContext } = require('../src/intelligence/context-resolver');
 
 const NOW = new Date('2026-07-17T15:00:00Z');
@@ -149,7 +149,7 @@ test('checkResolvedContextConflicts is silent on a clean, fully-consistent brief
     }],
   });
   const violations = checkResolvedContextConflicts(
-    brief({ synthesis: 'Recovery dipped because of the wine last night — worth keeping an eye on tonight.' }),
+    briefFields(brief({ synthesis: 'Recovery dipped because of the wine last night — worth keeping an eye on tonight.' })),
     { resolvedContext: resolved }
   );
   assert.deepEqual(violations, []);

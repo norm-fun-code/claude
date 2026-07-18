@@ -53,10 +53,12 @@ function createChatRouter() {
     chatStore.saveMessage({ role: 'assistant', content: result.answer, sources: result.sources ?? [], conversationId: convId })
       .catch((e) => console.error('[chat memory] save assistant failed:', e.message));
 
-    // Don't leak the raw embedding vector or the internal parsed actions to the
-    // client; surface executed-action summaries instead. `action` stays for
-    // back-compat (the first executed); `actions` is the full list.
-    const { questionEmbedding, action: _parsed, actions: _parsedActions, ...clientResult } = result;
+    // Don't leak the raw embedding vector, the internal parsed actions, or the
+    // EvidenceClaim debug field to the client; surface executed-action
+    // summaries instead. `action` stays for back-compat (the first executed);
+    // `actions` is the full list. debugEvidence (which claim checks fired, if
+    // any — see chat/ask.js) is diagnostic-only, never shown in the normal UI.
+    const { questionEmbedding, action: _parsed, actions: _parsedActions, debugEvidence: _debugEvidence, ...clientResult } = result;
     res.json({ ...clientResult, action: executed, actions: executedList.filter(Boolean) });
   }));
 
