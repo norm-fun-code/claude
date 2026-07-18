@@ -56,20 +56,31 @@ function createApp({ bootTime, port, quiet } = {}) {
   app.use(express.json({ limit: '2mb' }));
 
   // Bearer-token auth on every /api route except the health check. Set
-  // NORMOS_API_TOKEN to require `Authorization: Bearer <token>`. In production we
-  // warn loudly if it's missing, since the same code is deployed to a public host.
+  // NORMOS_API_TOKEN to require `Authorization: Bearer <token>`. Production
+  // Safety Gate (audit recommendation #1): in production this now fails
+  // CLOSED, not open — an unconfigured token used to mean "let every request
+  // through," which is exactly backwards for a public deploy. In practice
+  // this branch of failClosedInProd should be unreachable in production:
+  // checkEnv.js's validateBootConfig() already exits the process before
+  // createApp() is ever called if NORMOS_API_TOKEN is missing there — this
+  // is defense in depth for any other entrypoint that constructs the app
+  // without running that check first. Local dev is unaffected: outside
+  // production, an unconfigured token still means "no auth required," so
+  // running the app locally with no token set stays exactly as convenient
+  // as before.
   // The diagnostic (/api/diag/*, /api/debug/*) and destructive-admin
   // (/api/admin/reset-demo, /api/admin/recompute-wealth, /api/ingest/run) routes
   // are exempted here and instead require a SEPARATE NORMOS_ADMIN_TOKEN, checked
   // inside their own router files (src/middleware/adminAuth.js) — both checks
   // read the same Authorization header, so gating a path on two different
-  // expected secrets at once would make it permanently unreachable.
+  // expected secrets at once would make it permanently unreachable. That gate
+  // already fails closed in production (see adminAuth.js's requireAdminToken).
   if (!quiet && !process.env.NORMOS_API_TOKEN) {
     const msg = '[auth] NORMOS_API_TOKEN is not set — the /api surface (including admin/reset and ingest) is UNAUTHENTICATED.';
     if (process.env.NODE_ENV === 'production') console.error(`\n⚠️  ${msg} Set it now.\n`);
     else console.warn(msg);
   }
-  app.use('/api', createTokenGate('NORMOS_API_TOKEN', { skip: (req) => req.path === '/health' || isAdminPath(req.path) }));
+  app.use('/api', createTokenGate('NORMOS_API_TOKEN', { skip: (req) => req.path === '/health' || isAdminPath(req.path), failClosedInProd: true }));
 
   // Health-domain routes (server health check, Apple Health + Eight Sleep
   // ingest/readback) live in src/routes/health.js — the first router

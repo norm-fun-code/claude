@@ -4,165 +4,104 @@ const { validateBootConfig } = require('./src/config/checkEnv');
 validateBootConfig();
 
 const { createApp } = require('./src/app');
-const recommendationsStore = require('./src/store/recommendations');
-const db = require('./src/db');
 const { start: startScheduler } = require('./src/scheduler');
+const { migrateWithLock } = require('./src/db/migrateWithLock');
 
-// Last-resort safety net: log instead of crashing on an unhandled rejection /
-// uncaught exception, so one stray missed .catch() can't silently kill an
-// always-on server during an unattended week. (Per-route handlers still catch
-// their own errors; this only catches things that slip past them.)
-process.on('unhandledRejection', (reason) => {
-  console.error('[unhandledRejection]', reason instanceof Error ? reason.stack : reason);
-});
-process.on('uncaughtException', (err) => {
-  console.error('[uncaughtException]', err?.stack || err);
-});
+// Production Safety Gate (audit recommendation #1), item 4: an uncaught
+// exception or unhandled rejection means some part of the process's
+// in-memory state may now be inconsistent with reality (a half-applied
+// write, a listener that never re-armed, a promise chain that silently
+// died) — continuing to serve requests on a process in an unknown state
+// risks corrupting data or serving wrong answers far worse than a few
+// seconds of restart downtime. Railway's restartPolicyType: ON_FAILURE
+// (railway.json) means a nonzero exit here gets a fresh, known-good process
+// back quickly; the old "log and keep running indefinitely" behavior traded
+// that recovery for an unbounded risk. This deliberately does NOT affect
+// normal per-request errors — those are caught by Express's own error
+// middleware (src/middleware/errorHandler.js, via asyncHandler-wrapped
+// routes) and never reach process-level handlers at all; only a genuinely
+// unhandled failure outside any request's control flow lands here.
+let shuttingDown = false;
+function fatal(label, err) {
+  console.error(`[${label}]`, err instanceof Error ? err.stack : err);
+  if (shuttingDown) return; // a second fatal error mid-shutdown shouldn't re-enter this
+  shuttingDown = true;
+  console.error(`[boot] exiting after ${label} — Railway will restart the process.`);
+  // Deferred (not a synchronous process.exit() mid-handler) so the error log
+  // above actually flushes to stdout/stderr before the process dies —
+  // that's the "graceful" half of "graceful shutdown and nonzero exit."
+  setTimeout(() => process.exit(1), 100).unref();
+}
+process.on('unhandledRejection', (reason) => fatal('unhandledRejection', reason));
+process.on('uncaughtException', (err) => fatal('uncaughtException', err));
 
 const PORT = process.env.PORT || 3001;
 const BOOT_TIME = new Date().toISOString(); // process start — confirms a fresh deploy restarted the server
 const app = createApp({ bootTime: BOOT_TIME, port: PORT });
 
-const { runMigrations } = require('./src/db/migrate');
-runMigrations()
-  .catch((err) => console.error('[migrate] failed, starting anyway:', err.message))
-  .finally(() => {
-    const server = app.listen(PORT, () => {
-      console.log(`NormOS backend running on http://localhost:${PORT}`);
-      console.log(`Health check: http://localhost:${PORT}/api/health`);
-      // Cleanup: delete recommendation ledger entries that are Monarch query steps
-      // (the LLM was tagging "Pull Jan–Jun..." as <rec> recommendations).
-      db.query(
-        `DELETE FROM recommendations WHERE title ~* '^(pull|export|fetch|get|check|look|query|run|import|download|analyze|review|compare) '`
-      ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} bad query-step recommendation(s)`); })
-        .catch(() => {});
+/**
+ * Production Safety Gate (audit recommendation #1), item 3: the one
+ * explicit boot path. Runs migrations exactly once under an advisory lock
+ * (see src/db/migrateWithLock.js) and ONLY THEN starts accepting HTTP
+ * traffic. A migration failure exits nonzero WITHOUT ever calling
+ * app.listen — Railway's healthcheck then correctly reports the deploy as
+ * failed instead of serving traffic against an unmigrated (or
+ * half-migrated) schema.
+ */
+async function boot() {
+  await migrateWithLock();
 
-      // Cleanup: delete any correlation findings where either side is an environment
-      // metric. Env correlations now come exclusively from computeDaytimeCardio
-      // (Apple Watch daytime HRV/RHR) — not the general Pearson engine. Also remove
-      // tautological findings (exercise habit → active energy) and the energy↔HRV
-      // pair (energy is an output of HRV, not a lever for improving it).
-      db.query(
-        `DELETE FROM findings
-          WHERE evidence->>'kind' = 'correlation'
-            AND (
-              evidence->>'a' LIKE 'environment:%'
-              OR evidence->>'b' LIKE 'environment:%'
-              OR (evidence->>'a', evidence->>'b') IN (
-                ('habits:exercise','health:active_energy'),('health:active_energy','habits:exercise'),
-                ('habits:exercise','health:exercise_minutes'),('health:exercise_minutes','habits:exercise'),
-                ('health:exercise_minutes','health:active_energy'),('health:active_energy','health:exercise_minutes'),
-                ('health:hrv','wellbeing:energy'),('wellbeing:energy','health:hrv'),
-                ('health:resting_hr','wellbeing:energy'),('wellbeing:energy','health:resting_hr')
-              )
-            )`
-      ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} spurious/tautological finding(s)`); })
-        .catch(() => {});
+  const server = app.listen(PORT, () => {
+    console.log(`NormOS backend running on http://localhost:${PORT}`);
+    console.log(`Health check: http://localhost:${PORT}/api/health`);
 
-      // Cleanup: delete habit_split findings whose lever is a subjective wellbeing
-      // state (high-mood / high-energy / high-focus days). These invert causality —
-      // mood/energy/focus are OUTPUTS of recovery, not levers that drive HRV/sleep.
-      // No longer generated; this removes any already in the DB.
-      db.query(
-        `DELETE FROM findings
-          WHERE evidence->>'kind' = 'habit_split'
-            AND evidence->>'habit' IN ('High-mood days','High-energy days','High-focus days')`
-      ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} backwards wellbeing-lever finding(s)`); })
-        .catch(() => {});
+    // Optional self-running morning routine (cloud deploys; ENABLE_SCHEDULER=true).
+    startScheduler();
 
-      // Cleanup: delete trend findings on Eight Sleep DERIVED intermediates
-      // (sleep need/debt) and any correlation involving them or VO₂ max. These
-      // leaked into the general trend/correlation engines before being excluded;
-      // they're derived or near-flat estimate series, so patterns like
-      // "higher VO₂ max → lower sleep need" are noise, not physiology.
-      db.query(
-        `DELETE FROM findings
-          WHERE (evidence->>'kind' = 'trend' AND evidence->>'metric' IN ('health:sleep_debt','health:sleep_need'))
-             OR (evidence->>'kind' = 'correlation' AND (
-                   evidence->>'a' IN ('health:sleep_debt','health:sleep_need','health:vo2_max','health:respiratory_rate')
-                OR evidence->>'b' IN ('health:sleep_debt','health:sleep_need','health:vo2_max','health:respiratory_rate')))`
-      ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} derived/estimate-metric finding(s)`); })
-        .catch(() => {});
+    // Backfill today's spoken-narration cache (brief + Wisdom + evening, if
+    // already built) from whatever's already persisted — covers a restart
+    // mid-day, or this Wisdom-prewarm feature itself landing on a deploy
+    // after today's briefing already built without it. Without this, the
+    // first "Listen" tap of the day would hit a genuinely cold cache with
+    // no prewarm ever having run for it. Best-effort, never blocks boot.
+    // Read-only from the app's perspective (it only warms a cache table),
+    // not the kind of ledger/finding mutation Production Safety Gate #5
+    // moved out of boot.
+    require('./src/services/brief-audio').backfillTodayAudio()
+      .catch((err) => console.error('[brief audio backfill] failed:', err.message));
 
-      // Cleanup: collapse near-duplicate PENDING recommendations — same dedup_key
-      // (same finding basis) or, for older rows with no dedup_key, titles that
-      // differ only by the numbers (e.g. "Best sleep nights → 13% better HRV" vs
-      // "→ 12%"). Keeps the newest; never touches rows the user has rated.
-      recommendationsStore.dedupePending()
-        .then((n) => { if (n > 0) console.log(`[boot] collapsed ${n} duplicate recommendation(s)`); })
-        .catch(() => {});
-
-      // Cleanup: the sleep_impact finding's title was reworded from
-      // "Best sleep nights → NN% better X" to "Best sleep nights lift your
-      // next-day X" — same insight, different words, so dedup_key/title-based
-      // dedupePending above can't tell they're duplicates. Drop the old-worded
-      // row when a new-worded one for the same run already exists; never
-      // touches rated rows.
-      db.query(
-        `DELETE FROM recommendations r
-          WHERE r.outcome_measured_at IS NULL
-            AND r.title ~* '^Best sleep nights? →'
-            AND EXISTS (
-              SELECT 1 FROM recommendations r2
-               WHERE r2.id <> r.id
-                 AND r2.title ILIKE 'Best sleep nights lift%'
-            )`
-      ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] collapsed ${rowCount} reworded sleep_impact duplicate(s)`); })
-        .catch(() => {});
-
-      // Cleanup: undo outcomes the old engine auto-measured after only ~3 days
-      // (premature "No effect"). Returns them to "Measuring…" for a proper check.
-      // User thumbs (exact ±1 delta) are preserved.
-      recommendationsStore.clearPrematureAutoOutcomes()
-        .then((n) => { if (n > 0) console.log(`[boot] reset ${n} prematurely-measured recommendation(s)`); })
-        .catch(() => {});
-
-      // Cleanup: delete stale "High-energy days → HRV" ledger rows — a backwards-
-      // causality recommendation from before that finding was removed (energy is an
-      // output of HRV, not a lever). Only un-rated rows, so no feedback is lost.
-      db.query(
-        `DELETE FROM recommendations
-          WHERE outcome_measured_at IS NULL
-            AND title ILIKE '%high-energy days%'`
-      ).then(({ rowCount }) => { if (rowCount > 0) console.log(`[boot] removed ${rowCount} backwards energy→HRV recommendation(s)`); })
-        .catch(() => {});
-
-      // Optional self-running morning routine (cloud deploys; ENABLE_SCHEDULER=true).
-      startScheduler();
-
-      // Backfill today's spoken-narration cache (brief + Wisdom + evening, if
-      // already built) from whatever's already persisted — covers a restart
-      // mid-day, or this Wisdom-prewarm feature itself landing on a deploy
-      // after today's briefing already built without it. Without this, the
-      // first "Listen" tap of the day would hit a genuinely cold cache with
-      // no prewarm ever having run for it. Best-effort, never blocks boot.
-      require('./src/services/brief-audio').backfillTodayAudio()
-        .catch((err) => console.error('[brief audio backfill] failed:', err.message));
-
-      // One-setting demo data: set SEED_DEMO_ON_BOOT=true to populate realistic
-      // sample data + findings so the app shows a full dashboard on first open.
-      // Idempotent (only touches 'seed' rows); turn the flag off once real data flows.
-      if (process.env.SEED_DEMO_ON_BOOT === 'true') {
-        (async () => {
-          try {
-            const { seed } = require('./src/db/seed');
-            const { analyze } = require('./src/intelligence/analyze');
-            const s = await seed();
-            await analyze();
-            console.log(`[demo] seeded ${s.metrics} metrics + ${s.goals} goals and analyzed.`);
-          } catch (err) {
-            console.error('[demo] seed-on-boot failed:', err.message);
-          }
-        })();
-      }
-    });
-
-    // Global socket-inactivity cap: the longest legitimate request is a full
-    // briefing rebuild (source fetch + up to BRIEFING_LLM_TIMEOUT_MS ~130s of
-    // LLM calls), so this sits well above that — a request past this either
-    // has a stuck DB query (statement_timeout should catch that first) or a
-    // hung upstream call with no timeout of its own; either way, the socket
-    // gets torn down instead of holding a connection (and its DB pool slot)
-    // open indefinitely.
-    server.setTimeout(Number(process.env.SERVER_REQUEST_TIMEOUT_MS) || 180_000);
+    // One-setting demo data: set SEED_DEMO_ON_BOOT=true to populate realistic
+    // sample data + findings so the app shows a full dashboard on first open.
+    // Idempotent (only touches 'seed' rows); turn the flag off once real data flows.
+    // Opt-in and explicit (an operator must set the flag), unlike the
+    // unconditional cleanup queries Production Safety Gate #5 removed.
+    if (process.env.SEED_DEMO_ON_BOOT === 'true') {
+      (async () => {
+        try {
+          const { seed } = require('./src/db/seed');
+          const { analyze } = require('./src/intelligence/analyze');
+          const s = await seed();
+          await analyze();
+          console.log(`[demo] seeded ${s.metrics} metrics + ${s.goals} goals and analyzed.`);
+        } catch (err) {
+          console.error('[demo] seed-on-boot failed:', err.message);
+        }
+      })();
+    }
   });
+
+  // Global socket-inactivity cap: the longest legitimate request is a full
+  // briefing rebuild (source fetch + up to BRIEFING_LLM_TIMEOUT_MS ~130s of
+  // LLM calls), so this sits well above that — a request past this either
+  // has a stuck DB query (statement_timeout should catch that first) or a
+  // hung upstream call with no timeout of its own; either way, the socket
+  // gets torn down instead of holding a connection (and its DB pool slot)
+  // open indefinitely.
+  server.setTimeout(Number(process.env.SERVER_REQUEST_TIMEOUT_MS) || 180_000);
+}
+
+boot().catch((err) => {
+  console.error('[boot] FATAL: migration failed — refusing to start the HTTP server.');
+  console.error(err.stack || err.message);
+  process.exit(1);
+});

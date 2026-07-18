@@ -39,7 +39,7 @@ jobs:
 
       - name: Install backend deps
         working-directory: backend
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Unit tests
         working-directory: backend
