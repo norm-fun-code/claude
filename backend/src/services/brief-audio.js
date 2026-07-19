@@ -17,6 +17,7 @@
 const crypto = require('crypto');
 const db = require('../db');
 const voiceService = require('./voice');
+const ttsProvider = require('./ttsProvider');
 
 function scriptFor(kind, content) {
   if (kind === 'evening') return voiceService.composeEveningNarrationScript(content);
@@ -89,9 +90,20 @@ async function audioFor(kind, content, day, { source = 'foreground' } = {}) {
   const start = Date.now();
   const script = scriptFor(kind, content);
   if (!script) return null;
-  // Key on the voice too — changing NORMOS_VOICE (or the default) must
-  // regenerate, not serve audio narrated in the old voice.
-  const hash = crypto.createHash('sha1').update(`${voiceService.DEFAULT_VOICE}\n${script}`).digest('hex').slice(0, 10);
+  // Key on provider + model + voice too, not just the script — changing
+  // NORMOS_TTS_PROVIDER, the configured model, or the voice must regenerate,
+  // never silently serve audio narrated by a different provider/voice than
+  // what's currently configured (audit fix: "include provider/model/voice/
+  // script hash in cache identity so configuration changes cannot serve
+  // incompatible stale audio"). ttsConfig reflects the CONFIGURED primary —
+  // if the primary fails and a fallback provider actually serves this
+  // request, the audio is still cached under the configured-primary's key
+  // (consistent with how this cache already treats Gemini's own two
+  // candidate models as interchangeable under one key).
+  const ttsConfig = ttsProvider.describeConfig();
+  const hash = crypto.createHash('sha1')
+    .update(`${ttsConfig.primary}\n${ttsConfig.model}\n${ttsConfig.voice}\n${script}`)
+    .digest('hex').slice(0, 10);
   const cacheKey = `${kind}:${day}:${hash}`;
   const { rows } = await db.query(`SELECT audio, mime FROM tts_audio WHERE cache_key = $1`, [cacheKey]);
   if (rows[0]) {
@@ -119,8 +131,8 @@ async function audioFor(kind, content, day, { source = 'foreground' } = {}) {
         console.log(`[brief audio] cache HIT (warmed while queued) kind=${kind} day=${day} source=${source} job=${jobId} queueWaitMs=${queueWaitMs}`);
         return { audio: rowsAfterGate[0].audio, mime: rowsAfterGate[0].mime };
       }
-      console.log(`[brief audio] synthesis START kind=${kind} day=${day} source=${source} job=${jobId} queueWaitMs=${queueWaitMs} active=1 queued=${gateQueue.length}`);
-      const { audio, mime, model } = await voiceService.synthesize(script);
+      console.log(`[brief audio] synthesis START kind=${kind} day=${day} source=${source} job=${jobId} queueWaitMs=${queueWaitMs} active=1 queued=${gateQueue.length} intendedProvider=${ttsConfig.primary} scriptChars=${script.length}`);
+      const { audio, mime, model, provider } = await ttsProvider.synthesizeWithFallback(script);
       await db.query(
         `INSERT INTO tts_audio (cache_key, audio, mime) VALUES ($1, $2, $3)
          ON CONFLICT (cache_key) DO NOTHING`,
@@ -128,7 +140,7 @@ async function audioFor(kind, content, day, { source = 'foreground' } = {}) {
       );
       // Prune stale narrations so the table never grows past a handful of rows.
       db.query(`DELETE FROM tts_audio WHERE created_at < now() - interval '7 days'`).catch(() => {});
-      console.log(`[brief audio] synthesis SUCCESS kind=${kind} day=${day} source=${source} job=${jobId} model=${model || 'unknown'} queueWaitMs=${queueWaitMs} elapsedMs=${Date.now() - start}`);
+      console.log(`[brief audio] synthesis SUCCESS kind=${kind} day=${day} source=${source} job=${jobId} provider=${provider || 'unknown'} model=${model || 'unknown'} queueWaitMs=${queueWaitMs} elapsedMs=${Date.now() - start}`);
       return { audio, mime };
     } catch (err) {
       console.error(`[brief audio] synthesis FAILED kind=${kind} day=${day} source=${source} job=${jobId} queueWaitMs=${queueWaitMs} elapsedMs=${Date.now() - start}: ${err.message}`);

@@ -205,7 +205,7 @@ function isTransientTtsError(err) {
 // almost entirely a safety net for a genuine hang, not a "normal" wait.
 const OVERALL_TIMEOUT_MS = Number(process.env.GEMINI_TTS_OVERALL_TIMEOUT_MS || 45000);
 
-async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
+async function synthesize(text, { voice = DEFAULT_VOICE, style, budgetMs } = {}) {
   assertKeyConfigured('tts');
   const trimmed = String(text || '').trim();
   if (!trimmed) throw new Error('nothing to synthesize');
@@ -264,7 +264,15 @@ async function synthesize(text, { voice = DEFAULT_VOICE, style } = {}) {
   const timeoutMs = Number(process.env.GEMINI_TTS_TIMEOUT_MS || 25000);
   const backoffMs = Number(process.env.GEMINI_TTS_BACKOFF_MS || 500);
   const models = ttsModels();
-  const deadline = Date.now() + OVERALL_TIMEOUT_MS;
+  // budgetMs (optional): the provider-neutral router (services/ttsProvider.js)
+  // passes a SMALLER deadline than OVERALL_TIMEOUT_MS when Gemini is running
+  // as a bounded fallback after another provider already spent part of the
+  // shared request deadline — this is what stops Gemini's own internal
+  // candidate-model loop from claiming the full 45s for itself regardless of
+  // how much time is actually left. Every existing direct caller of
+  // synthesize() (no budgetMs passed) is unaffected — falls back to the same
+  // OVERALL_TIMEOUT_MS as before.
+  const deadline = Date.now() + (budgetMs ?? OVERALL_TIMEOUT_MS);
 
   const attempt = async (model) => {
     // Each individual attempt is capped at whichever is SMALLER: its own

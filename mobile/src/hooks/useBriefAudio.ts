@@ -36,15 +36,18 @@ export type BriefAudioState = 'idle' | 'loading' | 'preparing' | 'playing' | 'er
 // (network error, bad JSON, no audio, playback failure) → 'narration_failed'.
 export type BriefAudioErrorKind = 'not_found' | 'narration_failed' | null;
 
-// The backend's own bounded end-to-end TTS deadline (services/voice.js's
-// GEMINI_TTS_OVERALL_TIMEOUT_MS, default 45s) is what actually bounds cold
-// synthesis — this default is kept comfortably ABOVE it (10s of margin, not
-// equal, not racing it) so the server can normally finish and reply before
-// the client gives up on the FIRST attempt. If the first attempt's own local
-// timer does fire anyway (network hiccup, Railway/proxy overhead, an
-// unusually slow cold generation), that is deliberately NOT treated as
-// terminal — see the POLL_TIMEOUT_MS retry below. Keep this above the
-// server's GEMINI_TTS_OVERALL_TIMEOUT_MS if that ever changes.
+// The backend's own bounded end-to-end TTS deadline — services/ttsProvider.js's
+// TTS_OVERALL_TIMEOUT_MS (default 40s), the provider-neutral router's whole
+// fallback sequence, which is what actually bounds cold synthesis today
+// (services/voice.js's own GEMINI_TTS_OVERALL_TIMEOUT_MS, default 45s, only
+// bounds Gemini's internal candidate-model loop when Gemini runs as one leg
+// of that sequence) — this default is kept comfortably ABOVE the router's
+// deadline (15s of margin, not equal, not racing it) so the server can
+// normally finish and reply before the client gives up on the FIRST attempt.
+// If the first attempt's own local timer does fire anyway (network hiccup,
+// Railway/proxy overhead, an unusually slow cold generation), that is
+// deliberately NOT treated as terminal — see the POLL_TIMEOUT_MS retry
+// below. Keep this above TTS_OVERALL_TIMEOUT_MS if that ever changes.
 const DEFAULT_TIMEOUT_MS = 55000;
 // A single automatic follow-up attempt after a first-attempt client-side
 // timeout, before ever surfacing "Unavailable". By the time the first

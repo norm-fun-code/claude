@@ -102,6 +102,22 @@ async function main() {
       lines.push('  ' + meh(`voice TTS check failed: ${err.message}`));
     }
   }
+  // Provider-neutral router config (audit fix: durable OpenAI fallback
+  // alongside Gemini preview TTS) — read-only, no live/paid call here (that's
+  // what the admin-gated GET /api/diag/tts probe is for); just reports which
+  // provider narration will actually try FIRST right now and whether OpenAI
+  // has a key configured at all.
+  try {
+    const ttsProvider = require('./services/ttsProvider');
+    const openaiService = require('./services/ttsOpenai');
+    const cfg = ttsProvider.describeConfig();
+    lines.push('  ' + DIM + `provider router: mode=${cfg.mode} order=[${cfg.order.join(', ')}] primary=${cfg.primary} (model=${cfg.model}, voice=${cfg.voice})` + RST);
+    lines.push('  ' + (openaiService.isConfigured()
+      ? ok(`OPENAI_API_KEY configured (model=${openaiService.DEFAULT_MODEL}, format=${openaiService.DEFAULT_FORMAT})`)
+      : meh('OPENAI_API_KEY not set — OpenAI TTS fallback is unavailable; narration relies on Gemini alone. Use GET /api/diag/tts to live-probe both providers.')));
+  } catch (err) {
+    lines.push('  ' + meh(`TTS provider router check failed: ${err.message}`));
+  }
 
   // --- Connectors -----------------------------------------------------------
   lines.push('\nCONNECTORS (data sources)');

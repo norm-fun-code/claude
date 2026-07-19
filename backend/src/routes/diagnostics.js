@@ -278,11 +278,10 @@ function createDiagnosticsRouter() {
   // ~2000-char script to measure real-length generation time; ?timeout=<ms>
   // overrides the per-call budget (default 30000). Never logs/returns the key.
   router.get('/diag/tts', async (req, res) => {
-    if (!process.env.GEMINI_API_KEY) {
-      return res.json({ ok: false, error: 'GEMINI_API_KEY not set' });
-    }
     const axios = require('axios');
     const voiceService = require('../services/voice');
+    const openaiService = require('../services/ttsOpenai');
+    const ttsProvider = require('../services/ttsProvider');
     const BASE = 'https://generativelanguage.googleapis.com/v1beta';
     const timeoutMs = Math.min(Math.max(Number(req.query.timeout) || 30000, 2000), 60000);
     const override = process.env.GEMINI_TTS_MODEL || null;
@@ -291,6 +290,17 @@ function createDiagnosticsRouter() {
     const longText = 'This is a longer narration test. ' + 'The day looks steady and the plan holds. '.repeat(50); // ~2000 chars
     const voice = voiceService.DEFAULT_VOICE;
 
+    // Provider-neutral router config as it stands RIGHT NOW (audit fix: a
+    // durable OpenAI fallback alongside Gemini) — shown up front so this
+    // probe's results can be read against what production actually does.
+    const router_ = ttsProvider.describeConfig();
+
+    // Every result below reports provider, model, script character count
+    // (never the transcript itself), elapsed time, status, and error code —
+    // per the diagnostic requirement. time-to-first-byte is NOT reported
+    // (null): both generateContent and /v1/audio/speech are single-shot
+    // request/response calls with no streaming here, so there is no
+    // meaningfully distinct "first byte" from "whole response" to measure.
     const ttsOnce = async (model, text, label) => {
       const t0 = Date.now();
       try {
@@ -304,21 +314,51 @@ function createDiagnosticsRouter() {
         );
         const b64 = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data)?.inlineData?.data;
         const audioBytes = b64 ? Buffer.from(b64, 'base64').length : 0;
-        const out = { model, probe: label, ok: audioBytes > 0, status: 200, elapsedMs: Date.now() - t0, audioBytes };
-        console.log(`[voice tts probe] endpoint=generateContent model=${model} probe=${label} status=200 elapsedMs=${out.elapsedMs} audioBytes=${audioBytes}`);
+        const out = {
+          provider: 'gemini', model, probe: label, ok: audioBytes > 0, status: 200,
+          scriptChars: text.length, timeToFirstByteMs: null, elapsedMs: Date.now() - t0, audioBytes,
+        };
+        console.log(`[voice tts probe] provider=gemini endpoint=generateContent model=${model} probe=${label} status=200 scriptChars=${text.length} elapsedMs=${out.elapsedMs} audioBytes=${audioBytes}`);
         return out;
       } catch (err) {
         const status = err.response?.status ?? (err.code === 'ECONNABORTED' || /timeout of/i.test(err.message || '') ? 'timeout' : 'unknown');
         const detail = (err.response?.data?.error?.message || err.message || '').slice(0, 300);
-        console.error(`[voice tts probe] endpoint=generateContent model=${model} probe=${label} status=${status} errCode=${err.code || 'n/a'} elapsedMs=${Date.now() - t0}: ${detail}`);
-        return { model, probe: label, ok: false, status, errCode: err.code || null, elapsedMs: Date.now() - t0, error: detail };
+        console.error(`[voice tts probe] provider=gemini endpoint=generateContent model=${model} probe=${label} status=${status} errCode=${err.code || 'n/a'} scriptChars=${text.length} elapsedMs=${Date.now() - t0}: ${detail}`);
+        return {
+          provider: 'gemini', model, probe: label, ok: false, status, errCode: err.code || null,
+          scriptChars: text.length, timeToFirstByteMs: null, elapsedMs: Date.now() - t0, error: detail,
+        };
       }
     };
 
-    // 1) Plain-TEXT reachability — is the Gemini generateContent host answering
-    //    at all with this key? (Uses a normal model, not a TTS model.)
+    const openaiOnce = async (text, label) => {
+      const t0 = Date.now();
+      try {
+        const out = await openaiService.synthesize(text, { budgetMs: timeoutMs });
+        const result = {
+          provider: 'openai', model: out.model, probe: label, ok: true, status: 200,
+          scriptChars: text.length, timeToFirstByteMs: null, elapsedMs: Date.now() - t0, audioBytes: out.audio.length,
+        };
+        console.log(`[voice tts probe] provider=openai endpoint=audio/speech model=${out.model} probe=${label} status=200 scriptChars=${text.length} elapsedMs=${result.elapsedMs} audioBytes=${out.audio.length}`);
+        return result;
+      } catch (err) {
+        console.error(`[voice tts probe] provider=openai endpoint=audio/speech probe=${label} status=${err.status ?? 'unknown'} errCode=${err.code || 'n/a'} scriptChars=${text.length} elapsedMs=${Date.now() - t0}: ${err.message}`);
+        return {
+          provider: 'openai', model: openaiService.DEFAULT_MODEL, probe: label, ok: false,
+          status: err.status ?? 'unknown', errCode: err.code || null,
+          scriptChars: text.length, timeToFirstByteMs: null, elapsedMs: Date.now() - t0, error: err.message,
+        };
+      }
+    };
+
+    // 1) Plain-TEXT Gemini reachability — is the generateContent host
+    //    answering at all with this key? (Uses a normal model, not a TTS
+    //    model.) Skipped cleanly (not a hard failure) when no Gemini key is
+    //    configured — the OpenAI probes below are still fully independent.
     let reachability;
-    {
+    if (!process.env.GEMINI_API_KEY) {
+      reachability = { ok: false, error: 'GEMINI_API_KEY not set' };
+    } else {
       const t0 = Date.now();
       try {
         const { data } = await axios.post(
@@ -336,25 +376,36 @@ function createDiagnosticsRouter() {
       }
     }
 
-    // 2) One short TTS call per model. 3) Optionally one long TTS call per model.
-    const shortResults = [];
-    for (const m of models) shortResults.push(await ttsOnce(m, shortText, 'short'));
+    // 2) One short TTS call per Gemini model + one OpenAI short call.
+    //    3) Optionally (?long=1) one long TTS call for each, same shape —
+    //    this is what actually distinguishes "short works, Wisdom-length
+    //    stalls" from "everything stalls" from "host unreachable".
+    const shortResults = process.env.GEMINI_API_KEY ? [] : [{ provider: 'gemini', ok: false, error: 'GEMINI_API_KEY not set' }];
+    if (process.env.GEMINI_API_KEY) for (const m of models) shortResults.push(await ttsOnce(m, shortText, 'short'));
+    shortResults.push(await openaiOnce(shortText, 'short'));
+
     let longResults;
     if (req.query.long === '1') {
       longResults = [];
-      for (const m of models) longResults.push(await ttsOnce(m, longText, 'long'));
+      if (process.env.GEMINI_API_KEY) for (const m of models) longResults.push(await ttsOnce(m, longText, 'long'));
+      longResults.push(await openaiOnce(longText, 'long'));
     }
 
     res.json({
       timeoutMs,
+      router: router_,
       configuredOverride: override,
       candidateModels: models,
+      openaiConfigured: openaiService.isConfigured(),
+      openaiModel: openaiService.DEFAULT_MODEL,
       reachability,
       shortResults,
       longResults,
       hint: 'If reachability.ok=false → the whole Gemini host is unreachable from this deploy (network/key), not a TTS problem. '
-        + 'If short succeeds but long times out → generation-time for long audio exceeds the app timeout (needs streaming or a bigger budget). '
-        + 'If even short fails on every model → the TTS models are not answering for this key/region.',
+        + 'If short succeeds but long times out → generation-time for long audio exceeds the per-provider budget (this is what the provider-neutral '
+        + 'router/fallback in services/ttsProvider.js exists for). '
+        + 'If even short fails on every Gemini model but openai short succeeds → Gemini-specific outage, router already routes around it. '
+        + 'If both providers fail even on short → check network egress from this deploy, not model/timeout config.',
     });
   });
 

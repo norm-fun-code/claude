@@ -5,6 +5,7 @@
 // callers hide voice UI when `voiceAvailable` is false. The next native build
 // includes the modules and the UI lights up with no further JS change.
 import { createOwnershipRegistry } from './playbackOwnership';
+import { extensionForMime } from './audioFormat';
 
 let AV: any = null;
 let FS: any = null;
@@ -93,7 +94,7 @@ export async function playRemote(uri: string, headers: Record<string, string>, o
 /** Play base64 audio (the voice-ask reply) by writing it to a cache file. */
 export async function playBase64(base64: string, mime = 'audio/wav', onDone?: () => void): Promise<boolean> {
   if (!voiceAvailable) return false;
-  const ext = mime.includes('wav') ? 'wav' : 'm4a';
+  const ext = extensionForMime(mime);
   const path = `${FS.cacheDirectory}voice-answer.${ext}`;
   await FS.writeAsStringAsync(path, base64, { encoding: FS.EncodingType.Base64 });
   return playRemote(path, {}, onDone);
