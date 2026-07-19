@@ -449,17 +449,54 @@ function createDiagnosticsRouter() {
   // and producing usable content, without needing the general app token.
   router.get('/diag/weekly-review', asyncHandler(async (req, res) => {
     const rows = await briefingsStore.listBriefings({ kind: 'weekly', limit: 8 });
-    res.json({
-      count: rows.length,
-      briefings: rows.map((r) => ({
+    // For each stored review, recompute the CURRENT canonical weekly event
+    // ledger for its exact period (bug fix: two-nights-reported-as-one) and
+    // re-run claim validation against the stored text — a sanitized view of
+    // "what the ledger says now, and whether the stored review's claims are
+    // still supported", so this class of bug is directly diagnosable without
+    // hand-querying the DB. Only categorical data (dates, concept tags,
+    // assertion ids, aggregate counts) is exposed — never raw annotation
+    // label/note text, which can carry personal content.
+    const { buildWeeklyLedger } = require('../intelligence/weeklyLedger');
+    const { validateClaims } = require('../brain/claimValidator');
+    const { buildEvidenceClaims } = require('../brain/evidenceClaim');
+    const { weeklyReviewFields } = require('../intelligence/review');
+    const briefings = await Promise.all(rows.map(async (r) => {
+      const base = {
         id: r.id,
         generatedAt: r.generated_at,
         periodStart: r.period_start,
         periodEnd: r.period_end,
         headline: r.content?.headline ?? null,
         isFallback: r.content?.headline === 'Weekly review', // extractJson-failure sentinel — briefing.js suppresses these from the mobile response
-      })),
-    });
+      };
+      if (!r.period_start || !r.period_end) return base;
+      try {
+        const ledger = await buildWeeklyLedger({ periodStart: r.period_start, periodEnd: r.period_end });
+        const evidenceFacts = { weeklyLedger: ledger };
+        evidenceFacts.claims = buildEvidenceClaims(evidenceFacts);
+        const violations = r.content ? validateClaims(weeklyReviewFields(r.content), evidenceFacts) : [];
+        return {
+          ...base,
+          ledger: {
+            episodes: ledger.episodes.map((ep) => ({
+              nightOf: ep.nightOf, concepts: ep.concepts, assertionIds: ep.assertionIds, source: ep.source,
+            })),
+            nightsByConcept: ledger.nightsByConcept,
+            alcoholNights: ledger.alcoholNights,
+            lateMealNights: ledger.lateMealNights,
+            combinedNights: ledger.combinedNights,
+            totalEpisodes: ledger.totalEpisodes,
+          },
+          rejectedClaims: violations.map((v) => ({
+            check: v.check, field: v.field, message: v.message, expected: v.expected, actual: v.actual,
+          })),
+        };
+      } catch (err) {
+        return { ...base, ledgerError: err.message };
+      }
+    }));
+    res.json({ count: rows.length, briefings });
   }));
 
   // Diagnostic: dump the RAW metric rows for a metric over the last N days,

@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Modal, TextInput, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Modal, TextInput, KeyboardAvoidingView, Platform, ScrollView, AppState } from 'react-native';
 import { getColors, spacing, radius, shadow } from '../theme';
 import { API_BASE, WORKOUT_LOG_URL, WORKOUT_OVERRIDE_URL, WORKOUT_OVERRIDES_URL, ACTIVITY_URL, authHeaders, fetchWithTimeout, localTz } from '../config';
+import { localDateInTz, weekdayIndexOfDate, shouldResetToToday } from '../lib/workoutDate';
+import { createRequestGuard } from '../lib/playbackOwnership';
 import {
   getTodaysWorkout,
   HRV_ZONES,
@@ -108,11 +110,9 @@ function getEasternDay(): number {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(wd);
 }
 
-// Today's date as YYYY-MM-DD in Eastern Time.
+// Today's date as YYYY-MM-DD in the device's local timezone.
 function getEasternDateString(offsetDays = 0): string {
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  return new Intl.DateTimeFormat('en-CA', { timeZone: ET_TZ }).format(d);
+  return localDateInTz(new Date(), ET_TZ, offsetDays);
 }
 
 function getTodayDayIndex(): number {
@@ -1665,7 +1665,17 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
   const c = getColors(isDark);
   const todayDayIndex = getTodayDayIndex();
 
-  const [selectedDayIndex, setSelectedDayIndex] = useState(todayDayIndex);
+  // Source of truth is the absolute local date, not a weekday index — a
+  // weekday index alone is ambiguous across week boundaries (bug fix: the
+  // screen was still showing Wednesday's checks/logs when reopened days
+  // later on Sunday, because "selected" was tracked as a weekday position
+  // that never got re-anchored to a new date once today moved on).
+  // selectedDayIndex below is derived from selectedDate purely for
+  // rendering / schedule lookups, never the other way around.
+  const [selectedDate, setSelectedDate] = useState(() => getEasternDateString(0));
+  const lastKnownTodayRef = useRef(selectedDate);
+  const logsRequestGuard = useRef(createRequestGuard()).current;
+  const selectedDayIndex = weekdayIndexOfDate(selectedDate);
   const [completedExercises, setCompletedExercises] = useState<Set<string>>(new Set());
   const [expandedCues, setExpandedCues] = useState<Set<string>>(new Set());
   const [nonNegotiables, setNonNegotiables] = useState({
@@ -1702,7 +1712,47 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
   const [progressionVersion, setProgressionVersion] = useState(0);
 
   const todayKey = getDateKey(todayDayIndex);
-  const selectedKey = getDateKey(selectedDayIndex);
+  // selectedDate IS the absolute date already — no need to round-trip it
+  // through a weekday index, which would silently re-anchor to a date in
+  // the CURRENT week if selectedDate ever fell outside it.
+  const selectedKey = selectedDate;
+
+  // Clears everything that's specific to whichever day is currently
+  // selected, synchronously — used both on a manual day tap and on a
+  // foreground-triggered reset to today, so a stale day's checks/logs never
+  // linger on screen even for the brief moment before the refetch resolves.
+  function resetDateTransientState() {
+    setCompletedExercises(new Set());
+    setExpandedCues(new Set());
+    setWorkoutLogs({});
+    setWorkoutHistory({});
+    setNonNegotiables({ chinTucks: false, walk: false, noLateTraining: false });
+    setLogsLoadError(false);
+  }
+
+  // The actual fix for "Wednesday's checks/logs were still showing on
+  // Sunday": if the app is merely backgrounded (not killed), selectedDate
+  // stays pinned to whatever day it was last on — nothing re-derives it
+  // against the real current date on its own. Reconcile on every
+  // foreground-resume: if the local calendar date has moved on since we
+  // last checked, snap the selection back to today and reload its state. A
+  // same-day background/foreground cycle leaves a deliberately-selected day
+  // untouched.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      const newToday = getEasternDateString(0);
+      if (!shouldResetToToday(lastKnownTodayRef.current, newToday)) return;
+      lastKnownTodayRef.current = newToday;
+      setSelectedDate(newToday);
+      resetDateTransientState();
+      // The visible week (WeeklyStrip + the overrides fetched for it) is
+      // relative to today too — a date rollover shifts which week that is.
+      setReloadTick((t) => t + 1);
+    });
+    return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Rehydrate today's completion from the exercise habit so the workout shows as
   // done if it was already logged today (and resets at midnight, backend-side).
@@ -1822,10 +1872,15 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
     return () => { cancelled = true; };
   }, [selectedKey, reloadTick]);
 
-  async function fetchLogsForDay(day: string, exercises: string[]) {
+  // requestId pins this call to the day it was started for — a response
+  // that resolves after the user has since selected a different day (the
+  // "delayed Wednesday response arriving after Sunday" case) is discarded
+  // instead of overwriting the now-current day's state.
+  async function fetchLogsForDay(day: string, exercises: string[], requestId: number) {
     try {
       const res = await fetchWithRetry(`${WORKOUT_LOG_URL}?day=${day}`, { headers: authHeaders() });
       const data = await res.json();
+      if (logsRequestGuard.isStale(requestId)) return;
       const grouped: Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>> = {};
       for (const row of data.logs ?? []) {
         if (!grouped[row.exercise]) grouped[row.exercise] = [];
@@ -1836,7 +1891,7 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
     } catch {
       // Retries exhausted — flag it rather than silently leaving the
       // already-reset-to-{} state, which read as "nothing logged today".
-      setLogsLoadError(true);
+      if (!logsRequestGuard.isStale(requestId)) setLogsLoadError(true);
     }
     // Each exercise's "last time" lookup is independent — fetch concurrently
     // instead of one at a time. Best-effort only (a "last time" hint, not core
@@ -1846,6 +1901,7 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
         const res = await fetchWithTimeout(`${WORKOUT_LOG_URL}/history?exercise=${encodeURIComponent(ex)}&limit=1`, { headers: authHeaders() });
         if (!res.ok) return;
         const data = await res.json();
+        if (logsRequestGuard.isStale(requestId)) return;
         if (data.history?.[0]?.sets) {
           setWorkoutHistory(prev => ({ ...prev, [ex]: data.history[0].sets }));
         }
@@ -1854,21 +1910,26 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
   }
 
   useEffect(() => {
-    const day = getDateKey(selectedDayIndex);
+    const day = selectedKey;
     // Use the swapped id if the day was manually swapped, else the scheduled one,
     // so set-logging loads for a swapped-in Push/Pull session too.
     const effId = swapByDay[day] ?? getWeekDayWorkoutId(selectedDayIndex);
     setWorkoutLogs({});
     setWorkoutHistory({});
+    const requestId = logsRequestGuard.begin();
     if (effId === 'push' || effId === 'pull') {
       // "Last time" history is only meaningful for the session's working sets
       // (not warmup) — same exercise list WorkoutProgressionCard tracks.
       const exercises = (effId === 'push' ? SESSION_A : SESSION_B).working.map((e) => e.name);
-      fetchLogsForDay(day, exercises);
+      fetchLogsForDay(day, exercises, requestId);
     } else {
       setLogsLoadError(false);
     }
-  }, [selectedDayIndex, swapByDay, reloadTick]);
+    // Keyed on selectedKey (the absolute date), NOT selectedDayIndex — two
+    // different dates can share the same weekday index across week
+    // boundaries, which would otherwise make this effect silently skip a
+    // real day change.
+  }, [selectedKey, swapByDay, reloadTick]);
 
   // Persist a single check for the selected day. On failure we surface it and
   // roll the checkbox back, so the UI never claims something was saved when it
@@ -1888,7 +1949,11 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
     }
   }
 
-  const isViewingToday = selectedDayIndex === todayDayIndex;
+  // Compare absolute dates, not weekday indices — two different dates can
+  // share the same weekday index across week boundaries, which would
+  // otherwise wrongly treat e.g. "last Wednesday" as "today" whenever today
+  // itself happens to also be a Wednesday.
+  const isViewingToday = selectedKey === todayKey;
   // Convert strip day index (Mon=0) to JS day-of-week (Sun=0) for the selected day
   const selectedJsDay = (selectedDayIndex + 1) % 7;
   // Only apply recovery logic for today — other days show the scheduled workout.
@@ -1922,9 +1987,11 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
   const displayOverride = swappedId ? undefined : override;
 
   function handleDayPress(dayIndex: number) {
-    setSelectedDayIndex(dayIndex);
-    setCompletedExercises(new Set());
-    setExpandedCues(new Set());
+    // dayIndex is a cell position in the currently-displayed (real, current)
+    // week — resolve it to that cell's absolute date immediately, since
+    // selectedDate is the source of truth, not the index itself.
+    setSelectedDate(getDateKey(dayIndex));
+    resetDateTransientState();
   }
 
   function toggleExercise(name: string) {
@@ -2085,8 +2152,7 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
   }
 
   const duration = 'duration' in workout ? (workout as any).duration : undefined;
-  const dateKey = getDateKey(selectedDayIndex);
-  const done = !!weeklyCompleted[dateKey];
+  const done = !!weeklyCompleted[selectedKey];
 
   return (
     <View>
@@ -2178,7 +2244,7 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
       )}
 
       <TouchableOpacity
-        onPress={() => handleMarkDone(dateKey)}
+        onPress={() => handleMarkDone(selectedKey)}
         style={[markDoneStyles.btn, { borderColor: done ? '#1D9E75' : c.border, backgroundColor: done ? '#1D9E7515' : 'transparent' }]}
         activeOpacity={0.7}
       >
@@ -2217,7 +2283,7 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
         toggleCue,
         c,
         isDark,
-        getDateKey(selectedDayIndex),
+        selectedKey,
         workoutLogs,
         workoutHistory,
         handleSetSaved,

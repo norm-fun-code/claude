@@ -72,6 +72,31 @@ async function getActive({ domains = null, recordedFrom = null, recordedTo = nul
   return rows.map(mapRow);
 }
 
+/** Active, non-negated/retracted/superseded assertions whose EFFECTIVE
+ *  window overlaps [periodStart, periodEnd] — the period-bounded
+ *  counterpart to getActive()'s recorded_at-only filtering. A weekly-scoped
+ *  consumer (intelligence/weeklyLedger.js) needs "what applied during this
+ *  period", not "what was compiled during this period": recorded_at can lag
+ *  effective_start by hours (an evening event logged the next morning), so
+ *  filtering on recorded_at alone would both miss and wrongly include rows
+ *  near the period boundary. Falls back to recorded_at only when
+ *  effective_start/effective_end are null (an assertion with no resolved
+ *  temporal window at all) rather than excluding it outright. */
+async function getActiveOverlapping(periodStart, periodEnd, { domains = null, limit = 500 } = {}) {
+  const { rows } = await query(
+    `SELECT * FROM context_assertions
+      WHERE retired_at IS NULL
+        AND event_status NOT IN ('negated', 'retracted', 'superseded')
+        AND COALESCE(effective_start, recorded_at) <= $2
+        AND COALESCE(effective_end, effective_start, recorded_at) >= $1
+        AND ($3::text[] IS NULL OR domains && $3::text[])
+      ORDER BY effective_start DESC NULLS LAST, recorded_at DESC
+      LIMIT $4`,
+    [periodStart, periodEnd, domains, limit]
+  );
+  return rows.map(mapRow);
+}
+
 async function getById(id) {
   const { rows } = await query(`SELECT * FROM context_assertions WHERE id = $1`, [id]);
   return rows[0] ? mapRow(rows[0]) : null;
@@ -105,4 +130,4 @@ function mapRow(r) {
   };
 }
 
-module.exports = { create, retire, getActive, getById, mapRow };
+module.exports = { create, retire, getActive, getActiveOverlapping, getById, mapRow };

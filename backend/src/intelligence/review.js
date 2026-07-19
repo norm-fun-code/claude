@@ -7,10 +7,12 @@ const llm = require('../llm');
 const cat = require('./catalog');
 const metricsStore = require('../store/metrics');
 const findingsStore = require('../store/findings');
-const annotationsStore = require('../store/annotations');
 const intentionsStore = require('../store/intentions');
 const briefingsStore = require('../store/briefings');
 const { parseAndValidate } = require('../llm/parseJson');
+const { buildWeeklyLedger } = require('./weeklyLedger');
+const { validateClaims, buildClaimCorrectionPrompt, splitIntoSentences } = require('../brain/claimValidator');
+const { buildEvidenceClaims } = require('../brain/evidenceClaim');
 
 const DAY = 24 * 60 * 60 * 1000;
 // wealth:spending (the raw total, including rent/fixed costs) is
@@ -109,7 +111,15 @@ async function gatherWeek(asOf = new Date()) {
       .filter((f) => f.type === 'leverage')
       .sort((x, y) => (x.evidence?.rank ?? 9) - (y.evidence?.rank ?? 9))
       .slice(0, 5),
-    annotations: await annotationsStore.listAnnotations({ from: periodStart, limit: 20 }),
+    // Canonical weekly event ledger (bug fix: two-nights-reported-as-one) —
+    // one row per physical episode/night, deduped and grouped by
+    // intelligence/weeklyLedger.js from the Context Understanding Layer
+    // (with a conservative raw-annotation fallback), bounded to this exact
+    // period. Replaces a raw per-annotation-row listAnnotations() pull that
+    // had no periodEnd bound, no retirement/negation filtering, and no
+    // notion that a post-midnight row can belong to the SAME night as the
+    // evening before it.
+    weeklyLedger: await buildWeeklyLedger({ periodStart, periodEnd }),
     // ONLY the check-in that governed THIS review week — the intention whose
     // week_start matches the period being reviewed. A rolling 14-day pull grabbed
     // the prior week's check-in too, so the review claimed wins "across both
@@ -153,10 +163,19 @@ function composeReview(ctx) {
   const corr = ctx.correlations.map((f) => `- ${f.title}`).join('\n') || '- none identified this week';
   const fc = ctx.forecasts.map((f) => `- ${f.title}`).join('\n') || '- none';
   const lev = ctx.leverage.map((f, i) => `${i + 1}. ${f.title}`).join('\n') || '- none';
-  const ann = ctx.annotations.length
-    ? ctx.annotations.map((a) => {
-        const day = new Date(a.start_ts).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
-        return `- ${day}: ${a.category}: ${a.label}`;
+  // Rendered from the canonical weekly event ledger (intelligence/
+  // weeklyLedger.js), NOT raw annotation rows — this is the actual prompt-
+  // level fix for the "two nights of alcohol + late meals (Wed/Thu)" bug:
+  // one line per physical EPISODE (a Wednesday-evening-to-Thursday-morning
+  // drink+late-meal is already grouped into ONE "night of Wednesday" line
+  // by the ledger, before the model ever sees it), not one line per raw
+  // row. The explicit instruction below stops the model from re-splitting
+  // a single line back into multiple nights on its own.
+  const episodes = ctx.weeklyLedger?.episodes || [];
+  const ann = episodes.length
+    ? episodes.map((ep) => {
+        const day = new Date(`${ep.nightOf}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+        return `- night of ${day}: ${ep.concepts.join(', ')}`;
       }).join('\n')
     : '- none logged';
   const intentions = (ctx.intentions || [])
@@ -185,7 +204,7 @@ ${lev}
 THEIR STATED FOCUS & LIFE CONTEXT (from THIS week's Sunday check-in only — judge the week against THESE goals; do not reference prior weeks' goals or "both check-ins"):
 ${intentions}
 
-LIFE CONTEXT (annotations) THIS WEEK:
+LIFE CONTEXT (canonical weekly event ledger) THIS WEEK — each line below is ONE physical night/day, already deduplicated and grouped; do NOT split one line into multiple separate nights or days, and never claim an occurrence beyond what's listed here:
 ${ann}
 
 Write the weekly review as JSON with EXACTLY:
@@ -277,6 +296,83 @@ async function reviewAttempt(system, prompt, attemptLabel) {
   return { content, rawText: text };
 }
 
+/** Pure: flatten a validated weekly-review content object into the shared
+ *  [fieldName, text][] shape brain/claimValidator.js's validateClaims
+ *  expects. Array fields (wins/watchouts/focus) get an indexed field name
+ *  (e.g. 'wins[0]') so a violation can be traced back to exactly which
+ *  array entry it came from — see neutralizeWeeklyReviewClaims below. */
+function weeklyReviewFields(content) {
+  const out = [];
+  if (typeof content?.headline === 'string' && content.headline.trim()) out.push(['headline', content.headline]);
+  if (typeof content?.narrative === 'string' && content.narrative.trim()) out.push(['narrative', content.narrative]);
+  const dr = content?.domainReads;
+  if (dr && typeof dr === 'object') {
+    for (const key of ['health', 'wealth', 'focus']) {
+      if (typeof dr[key] === 'string' && dr[key].trim()) out.push([`domainReads.${key}`, dr[key]]);
+    }
+  }
+  if (typeof content?.crossDomain === 'string' && content.crossDomain.trim()) out.push(['crossDomain', content.crossDomain]);
+  for (const arrName of ['wins', 'watchouts', 'focus']) {
+    (Array.isArray(content?.[arrName]) ? content[arrName] : []).forEach((s, i) => {
+      if (typeof s === 'string' && s.trim()) out.push([`${arrName}[${i}]`, s]);
+    });
+  }
+  return out;
+}
+
+/**
+ * Strip exactly the offending sentence(s) out of each violated field —
+ * same sentence-level neutralization principle as claimValidator's
+ * neutralizeClaimViolations/neutralizeClaimsGeneric, but aware of this
+ * surface's array fields (wins/watchouts/focus), which those two don't
+ * handle (they assume flat string fields). Never mutates the input; an
+ * array entry that's fully stripped is dropped rather than left blank.
+ */
+function neutralizeWeeklyReviewClaims(content, violations) {
+  if (!violations.length) return content;
+  const out = { ...content, domainReads: content.domainReads ? { ...content.domainReads } : content.domainReads };
+  const bySentenceField = new Map();
+  for (const v of violations) {
+    if (!v.field || !v.sentence) continue;
+    if (!bySentenceField.has(v.field)) bySentenceField.set(v.field, new Set());
+    bySentenceField.get(v.field).add(v.sentence.trim());
+  }
+  const stripSentences = (text, sentences) => splitIntoSentences(text).filter((s) => !sentences.has(s.trim())).join(' ').trim();
+  const arrayEdits = new Map(); // arrName -> Map(index -> newText|null)
+  for (const [field, sentences] of bySentenceField) {
+    const arrMatch = field.match(/^(wins|watchouts|focus)\[(\d+)\]$/);
+    if (arrMatch) {
+      const [, arrName, idxStr] = arrMatch;
+      const idx = Number(idxStr);
+      const original = Array.isArray(out[arrName]) ? out[arrName][idx] : undefined;
+      if (typeof original !== 'string') continue;
+      if (!arrayEdits.has(arrName)) arrayEdits.set(arrName, new Map());
+      arrayEdits.get(arrName).set(idx, stripSentences(original, sentences));
+      continue;
+    }
+    const drMatch = field.match(/^domainReads\.(health|wealth|focus)$/);
+    if (drMatch) {
+      const key = drMatch[1];
+      out.domainReads = { ...(out.domainReads || {}) };
+      out.domainReads[key] = stripSentences(out.domainReads[key] || '', sentences);
+      continue;
+    }
+    if (field === 'headline' || field === 'narrative' || field === 'crossDomain') {
+      out[field] = stripSentences(out[field] || '', sentences);
+    }
+  }
+  for (const [arrName, edits] of arrayEdits) {
+    out[arrName] = out[arrName].map((s, i) => (edits.has(i) ? edits.get(i) : s)).filter((s) => typeof s === 'string' && s.trim());
+  }
+  // headline/narrative are the card's load-bearing fields — never leave them
+  // blank (a blank card reads as broken, not just less specific).
+  if (!out.headline || !out.headline.trim()) out.headline = 'Weekly review';
+  if (!out.narrative || !out.narrative.trim()) {
+    out.narrative = "This week's numbers are below — the written summary couldn't be safely generated this time.";
+  }
+  return out;
+}
+
 async function runReview({ asOf = new Date(), persist = true } = {}) {
   // Measure outcomes for recently-surfaced recommendations (measureOutcomes'
   // own default lookback window) before generating the review, so the "what I
@@ -315,10 +411,21 @@ async function runReview({ asOf = new Date(), persist = true } = {}) {
 
   // Prepend the self-model so the review writer knows the full person, not just
   // this week's numbers. Falls back to the base system if no model exists yet.
+  // The self-model is prose written from a rolling window of journal/context
+  // text — useful for TONE and stable preferences, but it is NOT a dated,
+  // deduplicated event record, and must never be read as evidence for a
+  // dated/event-count claim (how many nights, which weekday) — that's the
+  // canonical weekly event ledger's job (see the LIFE CONTEXT block above
+  // and checkWeeklyEventCounts). The instruction below is explicit rather
+  // than implied, matching the bug's root cause: the self-model can restate
+  // the same episode the ledger already captured, in different words, and
+  // without this guardrail an LLM could "count" it a second time.
   let system = baseSystem;
   try {
     const selfModelText = await require('../store/selfModel').latestModelText();
-    if (selfModelText) system = `${baseSystem}\n\n${selfModelText}`;
+    if (selfModelText) {
+      system = `${baseSystem}\n\n${selfModelText}\n\nThe self-model text above is for TONE and stable preferences only — it is not a dated event record. Never use it to count occurrences, name a weekday, or add an event beyond what LIFE CONTEXT (canonical weekly event ledger) THIS WEEK lists.`;
+    }
   } catch { /* non-critical */ }
 
   let { content, rawText } = await reviewAttempt(system, prompt, 'attempt 1/2');
@@ -337,6 +444,26 @@ async function runReview({ asOf = new Date(), persist = true } = {}) {
     // visible/debuggable from the card instead of silently blank.
     content = { headline: 'Weekly review', narrative: rawText || '', wins: [], watchouts: [], focus: [] };
   }
+  // EvidenceClaim validation (bug fix: two-nights-reported-as-one) — a
+  // generated event-count/weekday claim ("two nights", "Wed/Thu") must be
+  // supported by the canonical weekly event ledger; the LLM must never be
+  // trusted to have counted correctly on its own. One retry with an
+  // explicit correction prompt, then degrade to neutral wording (strip the
+  // offending sentence) — the false claim is never shipped, retried or not.
+  const evidenceFacts = { weeklyLedger: ctx.weeklyLedger };
+  evidenceFacts.claims = buildEvidenceClaims(evidenceFacts);
+  let claimViolations = validateClaims(weeklyReviewFields(content), evidenceFacts);
+  if (claimViolations.length) {
+    const correctionPrompt = buildClaimCorrectionPrompt(prompt, claimViolations);
+    const retry = await reviewAttempt(system, correctionPrompt, 'attempt retry (claim correction)');
+    if (retry.content) {
+      const retryViolations = validateClaims(weeklyReviewFields(retry.content), evidenceFacts);
+      content = retryViolations.length ? neutralizeWeeklyReviewClaims(retry.content, retryViolations) : retry.content;
+    } else {
+      content = neutralizeWeeklyReviewClaims(content, claimViolations);
+    }
+  }
+
   content.metrics = ctx.metrics; // always attach the raw stats
 
   let saved = null;
@@ -348,7 +475,11 @@ async function runReview({ asOf = new Date(), persist = true } = {}) {
   return { ...content, id: saved?.id, generatedAt: saved?.generated_at };
 }
 
-module.exports = { runReview, gatherWeek, composeReview, reviewAttempt, WEEKLY_REVIEW_JSON_SCHEMA };
+module.exports = {
+  runReview, gatherWeek, composeReview, reviewAttempt, WEEKLY_REVIEW_JSON_SCHEMA,
+  // Exposed for focused unit tests:
+  weeklyReviewFields, neutralizeWeeklyReviewClaims,
+};
 
 if (require.main === module) {
   const { pool } = require('../db');

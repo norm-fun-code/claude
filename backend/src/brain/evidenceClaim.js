@@ -317,6 +317,33 @@ function buildEvidenceClaims(facts, meta = {}) {
     }
   }
 
+  // ── Weekly event ledger (bug fix: two-nights-reported-as-one) ───────────
+  // Each canonical episode from intelligence/weeklyLedger.js becomes its own
+  // FACT claim — a physical night/day the user's own logged context
+  // establishes actually occurred, with which concepts (alcohol, late_meal,
+  // etc.) applied to it. This is what backs claimValidator's
+  // checkWeeklyEventCounts: a generated surface claiming "N nights of X"
+  // must match how many of these claims exist for concept X, never a
+  // number the LLM derived itself from reading raw per-row prose. A
+  // raw-annotation-only episode (no compiled ContextAssertion backing it)
+  // is a real but weaker source than a compiled one, so it's tagged
+  // PERSONAL_OBSERVATION with lower confidence rather than ESTABLISHED.
+  if (Array.isArray(facts.weeklyLedger?.episodes)) {
+    for (const ep of facts.weeklyLedger.episodes) {
+      if (!ep?.nightOf || !Array.isArray(ep.concepts) || !ep.concepts.length) continue;
+      const structurallyBacked = ep.source === 'assertion' || ep.source === 'mixed';
+      claims.push(makeClaim({
+        ...base, claimType: CLAIM_TYPE.FACT, subject: `weeklyEvent:${ep.nightOf}`, predicate: 'concepts',
+        value: ep.concepts,
+        evidenceRefs: ep.assertionIds?.length ? ep.assertionIds : ['intelligence/weeklyLedger.buildWeeklyLedger'],
+        evidenceTier: structurallyBacked ? EVIDENCE_TIER.ESTABLISHED : EVIDENCE_TIER.PERSONAL_OBSERVATION,
+        confidence: structurallyBacked ? 0.9 : 0.65,
+        observedFrom: facts.weeklyLedger.periodStart ?? null,
+        observedTo: facts.weeklyLedger.periodEnd ?? null,
+      }));
+    }
+  }
+
   return claims;
 }
 

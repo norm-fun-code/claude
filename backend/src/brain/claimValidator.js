@@ -561,6 +561,48 @@ function checkAssociationOverclaim(fields, facts) {
   return violations;
 }
 
+// ── Weekly event count / episode date ────────────────────────────────────
+// Generalization of the "two nights of alcohol + late meals (Wed/Thu)"
+// production bug: a surface citing a night/occasion COUNT, or naming two or
+// more distinct weekdays for what reads as one recurring event, must match
+// intelligence/weeklyLedger.js's canonical episode ledger — never a count
+// the LLM derived itself from reading raw per-row prose. Gated entirely on
+// facts.weeklyLedger being present (only Weekly Review passes this), same
+// backward-compatible no-op pattern as every other check here. Fully
+// general: driven by causeConceptTags (the SAME concept vocabulary
+// checkRecoveryCause already uses) and the ledger's own concept sets —
+// nothing here is specific to any one concept.
+const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7 };
+const NIGHT_COUNT_RE = /\b(one|two|three|four|five|six|seven|\d+)\s+(?:separate\s+|different\s+)?(nights?|times?|occasions?|evenings?)\b/i;
+const WEEKDAY_RE = /\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/gi;
+
+function checkWeeklyEventCounts(fields, facts) {
+  const ledger = facts?.weeklyLedger;
+  if (!ledger || !Array.isArray(ledger.episodes)) return [];
+  const violations = [];
+  for (const [field, text] of fields) {
+    for (const sentence of splitIntoSentences(text)) {
+      const claimedTags = causeConceptTags(sentence);
+      if (!claimedTags.length) continue; // no recognized concept named — nothing to check against the ledger
+      const weekdaysNamed = new Set((sentence.match(WEEKDAY_RE) || []).map((w) => w.toLowerCase()));
+      const nm = sentence.match(NIGHT_COUNT_RE);
+      const claimedCount = nm
+        ? (NUMBER_WORDS[nm[1].toLowerCase()] ?? Number(nm[1]))
+        : (weekdaysNamed.size >= 2 ? weekdaysNamed.size : null);
+      if (claimedCount == null || !Number.isFinite(claimedCount)) continue;
+      const matchingEpisodes = ledger.episodes.filter((ep) => claimedTags.every((t) => ep.concepts.includes(t)));
+      if (claimedCount !== matchingEpisodes.length) {
+        violations.push({
+          check: 'weekly_event_count', field, sentence, severity: 'high',
+          expected: matchingEpisodes.length, actual: claimedCount,
+          message: `claims ${claimedCount} night(s)/occasion(s) of ${claimedTags.join(' + ')} but the canonical weekly ledger supports ${matchingEpisodes.length} (dates: ${matchingEpisodes.map((ep) => ep.nightOf).join(', ') || 'none'})`,
+        });
+      }
+    }
+  }
+  return violations;
+}
+
 /**
  * Run every claim check against an arbitrary set of generated text fields.
  * `fields` is an array of [fieldName, text] pairs — the shared shape every
@@ -583,6 +625,7 @@ function validateClaims(fields, facts) {
     ...checkCurrentDate(fields, facts),
     ...checkResolvedContextConflicts(fields, facts),
     ...checkAssociationOverclaim(fields, facts),
+    ...checkWeeklyEventCounts(fields, facts),
   ];
 }
 
@@ -750,5 +793,5 @@ module.exports = {
   // Exposed for focused unit tests:
   checkRecoveryBand, checkRecoveryScore, checkRecoveryCause, checkEffectiveWorkout,
   checkCompletion, checkExperiments, checkSpending, checkForecast, checkCurrentDate, briefFields,
-  checkResolvedContextConflicts,
+  checkResolvedContextConflicts, checkWeeklyEventCounts, splitIntoSentences,
 };

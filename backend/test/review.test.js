@@ -14,7 +14,10 @@ test('composeReview builds a JSON-shaped weekly-review prompt from context', () 
     correlations: [{ title: 'Sleep ↔ Focus: strong positive correlation [confirmed]' }],
     forecasts: [{ title: 'Hit $260k: 0% likely' }],
     leverage: [{ title: 'Protect more sleep' }],
-    annotations: [{ category: 'travel', label: 'NYC trip' }],
+    // Canonical weekly event ledger shape (intelligence/weeklyLedger.js) —
+    // composeReview renders from ctx.weeklyLedger.episodes, not raw
+    // annotation rows (see the two-nights-reported-as-one bug fix).
+    weeklyLedger: { episodes: [{ nightOf: '2026-05-24', concepts: ['travel'], assertionIds: ['annotation:1'], labels: ['NYC trip'] }] },
   };
   const { system, prompt } = composeReview(ctx);
 
@@ -25,7 +28,7 @@ test('composeReview builds a JSON-shaped weekly-review prompt from context', () 
   assert.match(prompt, /Spending: 6698 \(weekly total\)/);
   assert.match(prompt, /Sleep ↔ Focus/);
   assert.match(prompt, /Protect more sleep/);
-  assert.match(prompt, /travel: NYC trip/);
+  assert.match(prompt, /night of Sunday, May 24: travel/);
   assert.match(prompt, /"headline"/); // asks for the JSON shape
 });
 
@@ -33,7 +36,7 @@ test('composeReview tolerates an empty week', () => {
   const { prompt } = composeReview({
     periodStart: new Date('2026-05-23T00:00:00Z'),
     periodEnd: new Date('2026-05-30T00:00:00Z'),
-    metrics: [], correlations: [], forecasts: [], leverage: [], annotations: [], intentions: [],
+    metrics: [], correlations: [], forecasts: [], leverage: [], weeklyLedger: { episodes: [] }, intentions: [],
   });
   assert.match(prompt, /not enough data/i);
   assert.match(prompt, /none identified this week/i);
