@@ -92,4 +92,33 @@ export function usePushRegistration(onNotificationTap?: (data: Record<string, un
     });
     return () => sub.remove();
   }, []);
+
+  // Cold start: addNotificationResponseReceivedListener above only fires for
+  // a tap that happens while this listener is already registered (app
+  // foregrounded, or backgrounded but still running in memory). If the app
+  // was fully closed, tapping a notification LAUNCHES it fresh — that tap
+  // happens before this hook ever mounts, so the listener never sees it and
+  // the tap silently does nothing (the exact "I tap the check-in
+  // notification and it doesn't take me anywhere" bug: a notification
+  // that's sat for a while is much more likely to be tapped from a killed
+  // app). getLastNotificationResponseAsync() is the separate Expo API for
+  // recovering that launch-triggering tap.
+  const handledLaunchResponse = useRef(false);
+  useEffect(() => {
+    (async () => {
+      try {
+        const response = await Notifications.getLastNotificationResponseAsync();
+        if (!response || handledLaunchResponse.current) return;
+        handledLaunchResponse.current = true;
+        const data = (response.notification.request.content.data ?? {}) as Record<string, unknown>;
+        tapCb.current?.(data);
+        // Clear it so this same launch tap doesn't get replayed on a LATER
+        // cold start too (e.g. after a crash, or a dev Fast Refresh) —
+        // "last" otherwise stays frozen until a brand new tap replaces it.
+        await Notifications.clearLastNotificationResponseAsync();
+      } catch {
+        // Non-fatal: worst case the cold-launch tap doesn't navigate.
+      }
+    })();
+  }, []);
 }
