@@ -439,7 +439,7 @@ async function buildQuickChiefBriefContext(prior) {
  * for what is, underneath, a same-process function call. force=true skips
  * the cache and always rebuilds (mirrors ?refresh=1).
  */
-async function buildFreshBriefing({ force = false } = {}) {
+async function buildFreshBriefing({ force = false, publish = true } = {}) {
   const errors = [];
 
   // Serve a cached briefing instantly unless force. Building fresh calls
@@ -2247,6 +2247,14 @@ async function buildFreshBriefing({ force = false } = {}) {
     // True when the card above is carried over from a prior build (this
     // build's generation failed/invalid) rather than freshly generated.
     chiefBriefStale,
+    // THE authoritative quality contract result for THIS build's own LLM
+    // output (brain/claimValidator.js's assessChiefBriefQuality) — fresh,
+    // degraded (grounded-fallback/underfilled/unresolved contradiction), or
+    // failed (no usable shape at all). Always reflects this build's own
+    // attempt, never the carried-forward card above: a stale card must never
+    // be mistaken for a successful fresh build (see hasPublishableFreshBriefToday
+    // in notify/morning.js). null only for builds that predate this contract.
+    chiefBriefQuality: geminiResult?.chiefBriefQuality ?? null,
     weather,
     workout,
     calendar,
@@ -2283,6 +2291,30 @@ async function buildFreshBriefing({ force = false } = {}) {
     response.errors = errors;
   }
 
+  // publish=false (the automatic morning path's prepare step) returns the
+  // built-but-UNPUBLISHED draft here: no persistence, no TTS prewarm, no
+  // next-cycle priming. The caller (notify/morning.js's warmAndNotify) runs
+  // its own final readiness + quality re-check against this exact draft and
+  // only calls publishBriefingDraft() once that re-check still passes — never
+  // "save then delete a premature row"; an unconfirmed draft is simply never
+  // written anywhere.
+  if (publish) {
+    await publishBriefingDraft(response);
+  }
+
+  return response;
+}
+
+/**
+ * The "publish" half of the prepare -> validate -> publish lifecycle: persist
+ * the briefing for history/spine, pre-warm Chief's spoken narration, and
+ * schedule the next-build-cycle housekeeping. Split out of buildFreshBriefing
+ * so the automatic morning path can build an unpublished draft, run its own
+ * final readiness/quality check against it, and only invoke this once that
+ * check still passes. Every other caller (manual rebuild, GET /api/briefing)
+ * calls this immediately as part of buildFreshBriefing, exactly as before.
+ */
+async function publishBriefingDraft(response) {
   // Persist the briefing for history, and capture today's data into the spine.
   // Fire-and-forget: never let persistence failures affect the live response.
   briefingsStore.saveBriefing({ kind: 'daily', content: response })
@@ -2312,8 +2344,6 @@ async function buildFreshBriefing({ force = false } = {}) {
   setImmediate(() => {
     primeNextBuildCycle().catch((err) => console.error('[prime next build] failed:', err.message));
   });
-
-  return response;
 }
 
 /**
@@ -2547,6 +2577,9 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
     chiefBrief: finalChiefBrief,
     morningFocus: chiefResult.morningFocus || prior.content.morningFocus || '',
     chiefBriefStale,
+    // See the full build's identical field for the contract — always this
+    // rebuild's OWN attempt, never the carried-forward card.
+    chiefBriefQuality: chiefResult.chiefBriefQuality ?? null,
     errors,
     // builtAt = response PRODUCTION time, and stays the client's "rebuild
     // finished" poll signal (mobile useBriefing polls until builtAt advances),
@@ -2630,7 +2663,7 @@ router.post('/briefing/rebuild', asyncHandler(async (req, res) => {
 }
 
 module.exports = {
-  createBriefingRouter, buildFreshBriefing, REBUILD_LOCK_ID,
+  createBriefingRouter, buildFreshBriefing, publishBriefingDraft, REBUILD_LOCK_ID,
   // Exported for the timestamp-semantics + recovery-materiality regression tests.
   stampFields, recoveryMateriallyChanged, FULL_BUILD_FIELDS,
   // Exported so tests can prove primeNextBuildCycle runs standalone, AFTER

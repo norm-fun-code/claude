@@ -24,25 +24,60 @@ const expo = require('./expo');
 // to age out of. "Valid" excludes a failed/incomplete build (no chiefBrief at
 // all, fresh or carried-forward) so a broken manual attempt doesn't block the
 // scheduled build from ever happening.
+//
+// Audit fix: "valid" (a non-null chiefBrief) used to be the ONLY bar — but a
+// degraded automatic build (a claim-validator grounded-fallback sentence, or
+// an underfilled response — see brain/claimValidator.js's
+// assessChiefBriefQuality) has a non-null chiefBrief too. Treating that as
+// "today is done" is exactly the bug where the first automatic brief is a
+// bare "Recovery is green at 100/100 today." and nothing ever retries it.
+// Two separate predicates now exist for two separate questions:
+//   - hasDisplayableBriefToday: is there SOMETHING to show today (may be
+//     degraded) — used to decide whether a manual rebuild has ANY card to
+//     carry forward if this build fails.
+//   - hasPublishableFreshBriefToday: was today's brief actually a GOOD build
+//     — the only thing allowed to suppress the automatic morning routine,
+//     burn the once-a-day push, or skip a bounded retry.
 
 /** Local calendar-day string (YYYY-MM-DD) in the given timezone. */
 function localDay(d, tz = process.env.TZ || 'America/New_York') {
   return d.toLocaleDateString('en-CA', { timeZone: tz });
 }
 
-/**
- * Pure: does `latest` (a { generated_at, content } row from briefings) already
- * satisfy today — same local calendar day AND a real chiefBrief present (not
- * a totally failed/empty build)?
- * @param {{ generated_at: string|Date, content?: { chiefBrief?: any } }|null} latest
- * @param {{ now?: Date, tz?: string }} [opts]
- */
-function builtToday(latest, { now = new Date(), tz = process.env.TZ || 'America/New_York' } = {}) {
+function sameLocalDayAsNow(latest, { now = new Date(), tz = process.env.TZ || 'America/New_York' } = {}) {
   if (!latest?.generated_at) return false;
   const t = new Date(latest.generated_at);
   if (Number.isNaN(t.getTime())) return false;
-  if (localDay(t, tz) !== localDay(now, tz)) return false;
+  return localDay(t, tz) === localDay(now, tz);
+}
+
+/**
+ * Pure: does `latest` (a { generated_at, content } row from briefings) have
+ * ANY brief to show for today — same local calendar day AND a non-null
+ * chiefBrief (which may be degraded/carried-forward, not necessarily fresh)?
+ * @param {{ generated_at: string|Date, content?: { chiefBrief?: any } }|null} latest
+ * @param {{ now?: Date, tz?: string }} [opts]
+ */
+function hasDisplayableBriefToday(latest, opts = {}) {
+  if (!sameLocalDayAsNow(latest, opts)) return false;
   return latest.content?.chiefBrief != null;
+}
+
+/**
+ * Pure: was today's brief a GOOD build — same local calendar day, a real
+ * chiefBrief, AND (per brain/claimValidator.js's assessChiefBriefQuality)
+ * quality status 'fresh', not 'degraded' or 'failed'? Rows saved before this
+ * quality contract existed carry no chiefBriefQuality at all — treated as
+ * fresh for backward compatibility (they predate the contract, not the bar).
+ * THIS is the only predicate allowed to suppress the automatic morning
+ * routine, burn the once-a-day "ready" push, or skip a bounded retry.
+ * @param {{ generated_at: string|Date, content?: { chiefBrief?: any, chiefBriefQuality?: { status?: string } } }|null} latest
+ * @param {{ now?: Date, tz?: string }} [opts]
+ */
+function hasPublishableFreshBriefToday(latest, opts = {}) {
+  if (!hasDisplayableBriefToday(latest, opts)) return false;
+  const quality = latest.content?.chiefBriefQuality;
+  return quality == null || quality.status === 'fresh';
 }
 
 /** The newest daily briefing row ({ generated_at, content, ... }), or null. */
@@ -56,10 +91,41 @@ async function latestDailyBriefing() {
   }
 }
 
-/** Force a fresh briefing build so the app opens to a ready briefing. */
-async function warmBriefing() {
+/** Force a fresh briefing build so the app opens to a ready briefing.
+ *  publish=false returns an unpublished DRAFT (see buildFreshBriefing/
+ *  publishBriefingDraft in routes/briefing.js) — nothing is persisted,
+ *  TTS-prewarmed, or handed to the next-build-cycle priming until the caller
+ *  explicitly publishes it. Used by the automatic morning path so a final
+ *  readiness + quality check can run against the exact draft before anything
+ *  ships. */
+async function warmBriefing({ publish = true } = {}) {
   const { buildFreshBriefing } = require('../routes/briefing');
-  return buildFreshBriefing({ force: true });
+  return buildFreshBriefing({ force: true, publish });
+}
+
+// Duplicated from scheduler.js's identical helper (not required FROM it) —
+// scheduler.js already requires this module, so requiring scheduler.js back
+// here would be a cycle.
+function eightSleepConfigured() {
+  return Boolean(process.env.EIGHT_SLEEP_EMAIL && process.env.EIGHT_SLEEP_PASSWORD);
+}
+
+/**
+ * Re-run the authoritative sleep-readiness gate one more time, immediately
+ * before publishing a prepared draft — closes the race where the user
+ * returns to bed (or a new interval/fingerprint appears) while the
+ * expensive analyze()/Opus build was still running. The earlier gates
+ * (scheduler.js's pre-ingest check + revalidate-after-ingest check) both run
+ * BEFORE that expensive work; this is the third, FINAL check, against
+ * whatever the world looks like right as we're about to publish. A no-op
+ * pass-through when Eight Sleep isn't configured — there's nothing to gate.
+ */
+async function finalMorningGate({ asOf = new Date() } = {}) {
+  if (!eightSleepConfigured()) return { ready: true, reason: 'not_configured' };
+  const readiness = require('../intelligence/sleep-readiness');
+  const result = await readiness.getMorningSleepReadiness({ asOf, trigger: 'final_gate' });
+  console.log(readiness.readinessLogLine(result));
+  return result;
 }
 
 /** Local-day dedup key for the "Good morning" push — ONE brief-ready ping per
@@ -70,40 +136,23 @@ function morningPushKey(d = new Date()) {
   return `morning_brief_push:${d.toLocaleDateString('en-CA', { timeZone: tz })}`;
 }
 
-/** Build the briefing and push the "ready" notification. Shared by the morning
- *  routine AND the sleep check-in (which triggers it after you log). */
-async function warmAndNotify(opts = {}) {
-  const send = opts.send !== false;
-  let built = false;
-  let briefing = null;
-  try {
-    briefing = await warmBriefing();
-    built = true;
-  } catch (err) {
-    console.error('[morning] briefing warm failed:', err.message);
-  }
-
-  if (!send) return { built, sent: 0 };
-
-  // Hard once-per-day gate on the push itself. Every earlier dedup lived on the
-  // trigger side (in-flight guard, 2-hour freshness window) and each new trigger
-  // path (external cron, sleep check-in, watcher) re-opened a permutation — a
-  // cron build at 6:50 plus a watcher run at 9:00 is over the 2h window and
-  // would ping twice. Deduping at the single point where the push leaves the
-  // building closes all of them at once, including ones not written yet.
+/** Send the "Good morning" ready push for an already-published `briefing`,
+ *  honoring the once-per-day dedup key. Shared tail of warmAndNotify's two
+ *  paths (automatic-published-fresh and manual/forced). */
+async function sendReadyPush(built, briefing, quality) {
   const nudgesStore = require('../store/nudges');
   try {
     const recent = await nudgesStore.recentlySentKeys(1);
     if (recent.has(morningPushKey())) {
       console.log('[morning] brief-ready push already sent today — rebuilt content, skipping duplicate push');
-      return { built, sent: 0, skipped: 'already_pushed_today' };
+      return { built, sent: 0, skipped: 'already_pushed_today', quality };
     }
   } catch (e) {
     console.error('[morning] push-dedup check failed (proceeding):', e.message);
   }
 
   const tokens = await devicesStore.listActiveTokens();
-  if (tokens.length === 0) return { built, sent: 0, reason: 'no_devices' };
+  if (tokens.length === 0) return { built, sent: 0, reason: 'no_devices', quality };
 
   // A touch of useful context in the body when we have it (e.g. weather/date).
   let body = 'Your morning briefing is ready — tap to start your day.';
@@ -144,11 +193,76 @@ async function warmAndNotify(opts = {}) {
         console.error('[morning] push-dedup record failed:', e.message);
       }
     }
-    return { built, sent: r.sent };
+    return { built, sent: r.sent, quality };
   } catch (err) {
     console.error('[morning] push failed:', err.message);
-    return { built, sent: 0, error: err.message };
+    return { built, sent: 0, error: err.message, quality };
   }
+}
+
+/**
+ * Build the briefing and push the "ready" notification. Shared by the morning
+ * routine AND the sleep check-in (which triggers it after you log).
+ *
+ * `opts.automatic` (set by runMorningRoutineUnguarded for every non-forced
+ * call) routes this through the prepare -> validate -> publish lifecycle:
+ * the briefing is built as an UNPUBLISHED draft, a final readiness re-check
+ * runs against that exact draft, and the draft is published only if that
+ * re-check still passes. A final-readiness failure discards the draft
+ * entirely — no visible daily briefing, no TTS prewarm, no "ready" push, no
+ * morning marker (the caller sees built:false). A degraded/failed QUALITY
+ * result still publishes the draft (so there's something to show if nothing
+ * else exists) but never sends the "ready" push and reports `quality` so the
+ * caller (scheduler.js) knows not to burn the once-a-day morning marker — a
+ * later bounded retry can still publish once quality becomes fresh.
+ * `opts.force` (manual authenticated diagnostics only) bypasses all of this,
+ * exactly as before: eager build, eager publish, eager push.
+ */
+async function warmAndNotify(opts = {}) {
+  const send = opts.send !== false;
+  const automatic = opts.automatic === true && opts.force !== true;
+
+  if (!automatic) {
+    let built = false;
+    let briefing = null;
+    try {
+      briefing = await warmBriefing();
+      built = true;
+    } catch (err) {
+      console.error('[morning] briefing warm failed:', err.message);
+    }
+    const quality = briefing?.chiefBriefQuality?.status ?? null;
+    if (!send) return { built, sent: 0, quality };
+    if (!built) return { built, sent: 0, quality };
+    return sendReadyPush(built, briefing, quality);
+  }
+
+  // ── Automatic path: prepare -> validate -> publish ──────────────────────
+  let draft = null;
+  try {
+    draft = await warmBriefing({ publish: false });
+  } catch (err) {
+    console.error('[morning] briefing draft build failed:', err.message);
+    return { built: false, sent: 0, skipped: 'draft_build_failed', quality: null };
+  }
+
+  const gate = await finalMorningGate();
+  if (!gate.ready) {
+    console.log(`[morning] final readiness gate failed after preparing the draft (${gate.reason}) — discarding the draft; nothing published.`);
+    return { built: false, sent: 0, skipped: 'final_gate_failed', reason: gate.reason, quality: null };
+  }
+
+  const { publishBriefingDraft } = require('../routes/briefing');
+  await publishBriefingDraft(draft);
+  const quality = draft?.chiefBriefQuality?.status ?? null;
+
+  if (quality !== 'fresh') {
+    console.log(`[morning] published a ${quality || 'unknown'}-quality draft — not sending the "ready" push, not burning the morning marker (a bounded retry can still run later).`);
+    return { built: true, sent: 0, skipped: 'quality_not_fresh', quality };
+  }
+
+  if (!send) return { built: true, sent: 0, quality };
+  return sendReadyPush(true, draft, quality);
 }
 
 /** Push the "log your sleep" prompt (no brief is built — it waits for the log). */
@@ -190,9 +304,11 @@ async function runMorningBriefing(opts = {}) {
 
   // Fast pre-check with no DB connection held — covers the common case (a
   // brief already visibly exists for today) without any locking overhead.
+  // hasPublishableFreshBriefToday (NOT hasDisplayableBriefToday) is the bar —
+  // a degraded automatic attempt must not suppress today's later retry.
   const latest = await latestDailyBriefing();
-  if (builtToday(latest)) {
-    console.log(`[morning] a valid briefing was already built today (${latest.generated_at}) — skipping automatic rebuild + push`);
+  if (hasPublishableFreshBriefToday(latest)) {
+    console.log(`[morning] a fresh briefing was already published today (${latest.generated_at}) — skipping automatic rebuild + push`);
     return { built: false, sent: 0, skipped: 'already_built_today' };
   }
 
@@ -210,7 +326,7 @@ async function runMorningBriefing(opts = {}) {
     // between the pre-check above and acquiring the lock, or we may have
     // just waited out a build that finished satisfying today's brief.
     const latest2 = await latestDailyBriefing();
-    if (builtToday(latest2)) {
+    if (hasPublishableFreshBriefToday(latest2)) {
       return { built: false, sent: 0, skipped: 'already_built_today' };
     }
     return await runMorningRoutineUnguarded(opts);
@@ -222,7 +338,12 @@ async function runMorningBriefing(opts = {}) {
   }
 }
 
-/** The actual sleep-check-in-or-build decision, once the freshness/lock guard has cleared. */
+/** The actual sleep-check-in-or-build decision, once the freshness/lock guard
+ *  has cleared. `automatic` marks every call reaching this point through the
+ *  normal (non-force) path — it routes warmAndNotify through the prepare ->
+ *  validate -> publish lifecycle rather than the eager manual/diagnostic
+ *  path. opts.force (already handled by the caller, kept here too for the
+ *  rare direct call) always takes the eager path regardless. */
 async function runMorningRoutineUnguarded(opts) {
   try {
     const needs = await require('../intelligence/recovery').needsSleepCheckIn();
@@ -231,7 +352,8 @@ async function runMorningRoutineUnguarded(opts) {
     console.error('[morning] sleep check-in check failed:', err.message);
     // fall through to the normal briefing build
   }
-  return warmAndNotify(opts);
+  const automatic = opts.force !== true;
+  return warmAndNotify({ ...opts, automatic });
 }
 
 /**
@@ -275,4 +397,7 @@ async function runWeeklyReviewWithPush(opts = {}) {
   }
 }
 
-module.exports = { runMorningBriefing, warmBriefing, warmAndNotify, pushSleepCheckIn, runWeeklyReviewWithPush, builtToday, latestDailyBriefing };
+module.exports = {
+  runMorningBriefing, warmBriefing, warmAndNotify, pushSleepCheckIn, runWeeklyReviewWithPush,
+  hasDisplayableBriefToday, hasPublishableFreshBriefToday, latestDailyBriefing, finalMorningGate,
+};

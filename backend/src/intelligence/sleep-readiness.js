@@ -30,6 +30,16 @@
 //     by the normal polling interval == finalized-and-stable. (The private API
 //     exposes no literal "End tracking" event, so finalized+stable trend data is
 //     the required proxy — we do NOT invent a field that isn't there.)
+//   - WAKE CONFIRMATION (audit fix): stability alone (~10 minutes, 2 polls) is
+//     only evidence of TEMPORARY inactivity — a bathroom trip the Pod doesn't
+//     reopen a session for, or a provisional trend simply not changing for ten
+//     minutes while the user is still in bed, both satisfy it. "ready" instead
+//     requires the SAME continuous-inactive/unchanged-fingerprint evidence held
+//     for a meaningfully longer, conservative window (thresholds().wakeConfirmationMinMs,
+//     default 30 min) — any active presence, new interval, or fingerprint
+//     change resets/suspends it via the same continuity check stability uses,
+//     since it's the identical accumulator held to a stricter bar, not a
+//     separate state machine.
 //   - `presenceEnd`, WHEN the API populates it, is the moment presence ended; we
 //     additionally require it to be at least ~12 minutes old so a just-ended
 //     session isn't mistaken for a settled morning. When the API doesn't provide
@@ -54,8 +64,24 @@ function thresholds(overrides = {}) {
     minObservations: Number(process.env.EIGHT_SLEEP_MIN_OBSERVATIONS) || 2,
     // The finalized snapshot must have been unchanged for at least this long —
     // the "separated by the normal polling interval" requirement, made robust to
-    // a fast poll cadence. Default ~10 min.
+    // a fast poll cadence. Default ~10 min. NOTE: this alone is NOT sufficient
+    // to call the night done — see wakeConfirmationMinMs below. A bathroom trip
+    // the Pod never re-opens a session for, or a provisional trend simply not
+    // changing for ten-odd minutes while the user is still in bed, both satisfy
+    // this window on their own; it exists as an early/cheap floor, not the
+    // final word.
     minStabilityMs: (Number(process.env.EIGHT_SLEEP_STABILITY_MIN_MIN) || 10) * MIN,
+    // THE actual wake-confirmation gate (audit fix: the 10-minute window above
+    // was being treated as proof the night was over — it is only evidence of
+    // TEMPORARY inactivity/stability). Same evidence (continuous inactive
+    // presence + an unchanged finalized fingerprint, i.e. minObservations +
+    // stableForMs), but held to a meaningfully longer, conservative default —
+    // at the default ~6-minute poll cadence this needs roughly five
+    // consecutive matching polls, not two. Safe by default (no new required
+    // Railway variable): unset, this alone already prevents "ready" from ever
+    // firing on the old 10-minute evidence. "Silence or lateness is
+    // preferable to waking me with an early notification" — err long.
+    wakeConfirmationMinMs: (Number(process.env.EIGHT_SLEEP_WAKE_CONFIRMATION_MIN) || 30) * MIN,
     // When presenceEnd IS available, it must be at least this old (10–15 min).
     telemetryMinAgeMs: (Number(process.env.EIGHT_SLEEP_TELEMETRY_MIN_MIN) || 12) * MIN,
     ...overrides,
@@ -179,7 +205,7 @@ async function getMorningSleepReadiness({ asOf = new Date(), trigger = 'unknown'
   const evidence = {
     trigger, day: today, presence: 'unknown', presenceEndAvailable: false,
     hasFinalizedTrend: false, fingerprint: null, observations: 0,
-    stableForMs: 0, telemetryAgeMs: null, thresholds: th,
+    stableForMs: 0, telemetryAgeMs: null, wakeConfirmed: false, thresholds: th,
   };
   const done = (ready, reason) => ({ ready, reason, evidence });
 
@@ -268,8 +294,19 @@ async function getMorningSleepReadiness({ asOf = new Date(), trigger = 'unknown'
     // 4) Gates. presenceEnd age only applies when the API actually gives us one.
     const telemetryOk = telemetryAgeMs == null || telemetryAgeMs >= th.telemetryMinAgeMs;
     const stableOk = observations >= th.minObservations && stableForMs >= th.minStabilityMs;
+    // The actual "the night is genuinely over" gate — a longer, conservative
+    // hold on the SAME continuous-inactive-and-unchanged-fingerprint evidence
+    // stableOk already tracks. stableOk alone (the ~10-minute floor) is
+    // deliberately NOT sufficient — see thresholds()'s wakeConfirmationMinMs
+    // comment. Any active presence, new interval, or fingerprint change resets
+    // stableForMs/observations above (via the fingerprint-continuity check),
+    // so this gate is automatically re-suspended by the same mechanism that
+    // already resets stability — nothing additional to wire up here.
+    const wakeConfirmed = observations >= th.minObservations && stableForMs >= th.wakeConfirmationMinMs;
+    evidence.wakeConfirmed = wakeConfirmed;
     if (!telemetryOk) return done(false, 'telemetry_too_recent');
     if (!stableOk) return done(false, 'insufficient_stability');
+    if (!wakeConfirmed) return done(false, 'wake_not_confirmed');
     return done(true, 'ready');
   } catch (e) {
     console.error('[readiness] unexpected error — failing closed:', e.message);
@@ -287,7 +324,7 @@ function readinessLogLine(result, { pastCutoff = false, pastGiveup = false } = {
   const secs = (ms) => (ms == null ? 'n/a' : `${Math.round(ms / 1000)}s`);
   return `[readiness] trigger=${e.trigger} ready=${result.ready} reason=${result.reason} `
     + `presence=${e.presence} presenceEnd=${e.presenceEndAvailable} finalizedTrend=${e.hasFinalizedTrend} `
-    + `telemetryAge=${secs(e.telemetryAgeMs)} stableFor=${secs(e.stableForMs)} obs=${e.observations} `
+    + `telemetryAge=${secs(e.telemetryAgeMs)} stableFor=${secs(e.stableForMs)} obs=${e.observations} wakeConfirmed=${e.wakeConfirmed} `
     + `pastCutoff=${pastCutoff} pastGiveup=${pastGiveup}`;
 }
 

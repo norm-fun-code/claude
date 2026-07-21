@@ -8,8 +8,10 @@
 //   - `/intervals/present` null is NOT proof of completion on its own
 //   - a just-ended session (recent presenceEnd) must wait
 //   - a single finalized observation is not "stable"
-//   - two stable observations with sufficiently old telemetry ARE ready
-//   - returning to bed resets stability
+//   - two stable observations past the 10-min floor are NOT yet wake-confirmed
+//   - only a continuously-inactive, unchanged fingerprint held past the
+//     wake-confirmation window (default 30 min) is genuinely ready
+//   - returning to bed resets stability (and wake confirmation) to zero
 //   - an active interval always vetoes
 //   - any API error fails CLOSED (no build)
 //   - a process restart cannot turn one observation into a false "stable"
@@ -20,9 +22,14 @@ const { getMorningSleepReadiness } = require('../src/intelligence/sleep-readines
 
 const TZ = 'America/New_York';
 const MIN = 60 * 1000;
-// Deterministic thresholds for tests: 2 observations, 10-minute stability window,
-// 12-minute presenceEnd age.
-const CFG = { minObservations: 2, minStabilityMs: 10 * MIN, telemetryMinAgeMs: 12 * MIN };
+// Deterministic thresholds for tests: 2 observations, 10-minute stability
+// floor, 30-minute wake-CONFIRMATION window (production default — see
+// sleep-readiness.js's thresholds()), 12-minute presenceEnd age. Using the
+// real production default for wakeConfirmationMinMs (not a scaled-down test
+// value) is deliberate: these are pure logic tests with injected timestamps,
+// not real waits, so there's no cost to it, and it keeps the tests honest
+// about what production actually requires.
+const CFG = { minObservations: 2, minStabilityMs: 10 * MIN, wakeConfirmationMinMs: 30 * MIN, telemetryMinAgeMs: 12 * MIN };
 
 // A fixed "morning" instant: 8:00 AM EDT on 2026-07-14 == 12:00 UTC.
 const T0 = new Date('2026-07-14T12:00:00.000Z');
@@ -127,19 +134,59 @@ test('presenceEnd populated but telemetry too recent → no build', async () => 
   assert.equal(r.reason, 'telemetry_too_recent');
 });
 
-test('two stable observations with sufficiently old telemetry → READY', async () => {
+test('two observations past the 10-min stability floor are stable but NOT yet wake-confirmed', async () => {
+  // This is the exact case that used to read "ready" and is the production bug:
+  // ten-odd minutes of inactive/stable telemetry is only a floor, not proof the
+  // night — as opposed to a bathroom trip or a provisional trend briefly holding
+  // still — is actually over.
   const { deps, holder } = mkDeps({ present: false, days: [finalizedDay()] });
   const r1 = await call(deps, T0);
   assert.equal(r1.ready, false);
   assert.equal(r1.evidence.observations, 1);
-  // Same fingerprint, 11 minutes later (> 10-min stability window).
+  // Same fingerprint, 11 minutes later (> 10-min stability window, < 30-min
+  // wake-confirmation window).
   const r2 = await call(deps, at(11 * MIN));
-  assert.equal(r2.ready, true);
-  assert.equal(r2.reason, 'ready');
+  assert.equal(r2.ready, false, 'stability alone must not be treated as wake completion');
+  assert.equal(r2.reason, 'wake_not_confirmed');
   assert.equal(r2.evidence.observations, 2);
   assert.ok(r2.evidence.stableForMs >= CFG.minStabilityMs);
-  assert.ok(r2.evidence.telemetryAgeMs >= CFG.telemetryMinAgeMs);
+  assert.ok(r2.evidence.stableForMs < CFG.wakeConfirmationMinMs);
+  assert.equal(r2.evidence.wakeConfirmed, false);
   assert.equal(holder.state.observations, 2);
+});
+
+test('a genuinely finalized, continuously inactive night eventually becomes READY once wake-confirmed', async () => {
+  const { deps, holder } = mkDeps({ present: false, days: [finalizedDay()] });
+  await call(deps, T0); // obs 1
+  const r2 = await call(deps, at(11 * MIN)); // obs 2, stable but not yet wake-confirmed
+  assert.equal(r2.ready, false);
+  assert.equal(r2.reason, 'wake_not_confirmed');
+  // Same fingerprint continues to hold, now past the 30-min wake-confirmation window.
+  const r3 = await call(deps, at(31 * MIN));
+  assert.equal(r3.ready, true);
+  assert.equal(r3.reason, 'ready');
+  assert.equal(r3.evidence.wakeConfirmed, true);
+  assert.ok(r3.evidence.stableForMs >= CFG.wakeConfirmationMinMs);
+  assert.ok(r3.evidence.telemetryAgeMs >= CFG.telemetryMinAgeMs);
+  assert.equal(holder.state.observations, 3);
+});
+
+test('inactive → stable → active again never builds or pushes, even after the wake-confirmation window would otherwise have elapsed', async () => {
+  const { deps, holder } = mkDeps({ present: false, days: [finalizedDay()] });
+  await call(deps, T0); // obs 1
+  await call(deps, at(11 * MIN)); // obs 2, stable-but-not-confirmed
+  // User gets back into bed right before the window would have closed.
+  deps.getIntervalPresent = async () => true;
+  const rBed = await call(deps, at(25 * MIN));
+  assert.equal(rBed.ready, false);
+  assert.equal(rBed.reason, 'session_active');
+  assert.equal(holder.state.observations, 0, 'wake confirmation is wiped, not just paused');
+  // Even well past where the original window would have elapsed, going inactive
+  // again restarts the count from scratch — it cannot fast-forward to ready.
+  deps.getIntervalPresent = async () => false;
+  const rOut = await call(deps, at(35 * MIN));
+  assert.equal(rOut.ready, false);
+  assert.equal(rOut.evidence.observations, 1);
 });
 
 test('two identical observations too CLOSE together are not yet stable (needs the min window)', async () => {
@@ -207,8 +254,8 @@ test('an API error must not advance stability (a blip cannot count as an observa
   const rFail = await call(failing, at(11 * MIN));
   assert.equal(rFail.ready, false);
   assert.equal(holder.state.observations, 1, 'the failed poll left the persisted count untouched');
-  // Recovery poll with the same fingerprint at a later time → now stable.
-  const rOk = await call(deps, at(22 * MIN));
+  // Recovery poll with the same fingerprint, now past the wake-confirmation window.
+  const rOk = await call(deps, at(31 * MIN));
   assert.equal(rOk.evidence.observations, 2);
   assert.equal(rOk.ready, true);
 });
@@ -226,8 +273,12 @@ test('a process restart does NOT turn one persisted observation into a false "st
   assert.equal(rSoon.evidence.observations, 2);
   assert.equal(rSoon.ready, false, 'two obs but < min stability window is still not ready');
   assert.equal(rSoon.reason, 'insufficient_stability');
-  // Only once the genuine time window has also elapsed does it become ready.
-  const rLater = await call(afterRestart.deps, at(11 * MIN));
+  // Past the 10-min floor but still short of wake confirmation.
+  const rStable = await call(afterRestart.deps, at(11 * MIN));
+  assert.equal(rStable.ready, false);
+  assert.equal(rStable.reason, 'wake_not_confirmed');
+  // Only once the genuine wake-confirmation window has also elapsed does it become ready.
+  const rLater = await call(afterRestart.deps, at(31 * MIN));
   assert.equal(rLater.ready, true);
 });
 

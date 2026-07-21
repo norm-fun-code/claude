@@ -27,6 +27,7 @@ const crossContextMod = require('../../src/intelligence/crossContext');
 const experimentsMod = require('../../src/intelligence/experiments');
 const wealthNudgesMod = require('../../src/intelligence/wealth-nudges');
 const sourcesStore = require('../../src/store/sources');
+const morningRetryLedger = require('../../src/intelligence/morning-retry-ledger');
 
 const TZ = process.env.TZ || 'America/New_York';
 const MIN = 60 * 1000;
@@ -66,7 +67,11 @@ function stubAll({ present = false, days = [finalizedDay()] } = {}) {
   eightSleepApi.getIntervalPresent = async () => present;
   eightSleepApi.getTrends = async () => days;
   ingestRun.runIngest = async () => { calls.push('ingest'); return []; };
-  morningNotify.runMorningBriefing = async () => { calls.push('brief'); buildCount += 1; return { built: true, sent: 1 }; };
+  // quality:'fresh' — a genuine successful automatic build always carries
+  // quality metadata (brain/claimValidator.js's assessChiefBriefQuality via
+  // generateChiefBrief); scheduler.morningRoutine() only marks the day done
+  // when quality is exactly 'fresh' (see the audit fix in scheduler.js).
+  morningNotify.runMorningBriefing = async () => { calls.push('brief'); buildCount += 1; return { built: true, sent: 1, quality: 'fresh' }; };
   analyzeMod.analyze = async () => {};
   watchMod.runWatch = async () => ({});
   crossContextMod.generateCrossContext = async () => ({});
@@ -76,13 +81,19 @@ function stubAll({ present = false, days = [finalizedDay()] } = {}) {
 }
 
 /** Pre-seed durable readiness state so THIS poll is the 2nd stable observation
- *  (matching the stubbed finalized day's fingerprint), making the gate ready. */
+ *  (matching the stubbed finalized day's fingerprint), past BOTH the 10-min
+ *  stability floor AND the 30-min wake-confirmation window (production
+ *  default — see sleep-readiness.js's thresholds().wakeConfirmationMinMs),
+ *  making the gate genuinely ready. 20 minutes used to be enough under the
+ *  old single 10-minute-only gate — that was exactly the production bug
+ *  (stability alone treated as proof the night was over); 35 minutes is the
+ *  honest fixture for what "ready" actually requires now. */
 async function seedStableState() {
   const snap = readiness.extractFinalizedSnapshot(finalizedDay());
   const fp = readiness.fingerprintOf(snap);
   await sourcesStore.registerSource({ id: readiness.READINESS_SOURCE_ID, domain: 'health', displayName: 'Eight Sleep readiness state' });
   await sourcesStore.updateConfig(readiness.READINESS_SOURCE_ID, {
-    readiness: { day: today(), fingerprint: fp, observations: 1, firstStableAt: Date.now() - 20 * MIN },
+    readiness: { day: today(), fingerprint: fp, observations: 1, firstStableAt: Date.now() - 35 * MIN },
   });
 }
 
@@ -111,7 +122,12 @@ before(async () => {
 });
 
 async function cleanup() {
-  await db.query(`DELETE FROM sources WHERE id = $1`, [readiness.READINESS_SOURCE_ID]);
+  // Both durable per-day state machines this suite exercises must be reset —
+  // otherwise a same-day retry-backoff row left by an earlier test (in this
+  // file or a prior interrupted run) makes a LATER test's "first attempt
+  // today" assumption false, and every readiness assertion after it starts
+  // failing with retry_backoff instead of the reason under test.
+  await db.query(`DELETE FROM sources WHERE id = ANY($1)`, [[readiness.READINESS_SOURCE_ID, morningRetryLedger.LEDGER_SOURCE_ID]]);
   await db.query(`DELETE FROM nudges WHERE dedup_key LIKE 'morning_routine:%' OR dedup_key LIKE 'morning_brief_push:%'`);
 }
 
@@ -224,4 +240,62 @@ test('a second automatic trigger after the routine already ran today is skipped'
   assert.equal(second.built, false);
   assert.equal(second.skipped, 'already_ran_today');
   assert.equal(buildCount, 1, 'still exactly one build for the day');
+});
+
+// Scenario 4 (required test): a DEGRADED automatic build (a claim-validator
+// grounded-fallback sentence, or an underfilled response — see
+// brain/claimValidator.js's assessChiefBriefQuality) must NOT burn the
+// once-a-day morning marker. A later trigger must not see "already ran
+// today" — it must instead be held by the bounded retry-backoff ledger
+// (intelligence/morning-retry-ledger.js), never re-attempting on every poll.
+test('scenario 4: a degraded automatic build does not create the completed-day marker; a later trigger is held by retry backoff, not "already ran today"', async () => {
+  stubAll({ present: false, days: [finalizedDay()] });
+  await seedStableState();
+  morningNotify.runMorningBriefing = async () => { calls.push('brief'); buildCount += 1; return { built: true, sent: 0, quality: 'degraded' }; };
+
+  const first = await scheduler.morningRoutine({ reason: 'watcher' });
+  assert.equal(first.built, true);
+  assert.equal(first.quality, 'degraded');
+
+  const second = await scheduler.morningRoutine({ reason: 'watcher' });
+  assert.notEqual(second.skipped, 'already_ran_today', 'a degraded build must never burn the once-a-day marker');
+  assert.equal(second.skipped, 'retry_backoff', 'held by the bounded backoff, not silently re-attempted on every poll');
+  assert.equal(buildCount, 1, 'the second trigger did not re-run the expensive build while backoff is active');
+});
+
+// Scenario 5 (required test): once the retry-ledger's backoff window has
+// elapsed, a bounded later automatic attempt CAN publish — and only THEN
+// (quality fresh) does the day get marked done.
+test('scenario 5: a bounded later retry can publish once quality becomes fresh, and only then marks the day done', async () => {
+  stubAll({ present: false, days: [finalizedDay()] });
+  await seedStableState();
+  let call = 0;
+  morningNotify.runMorningBriefing = async () => {
+    calls.push('brief'); buildCount += 1; call += 1;
+    return call === 1
+      ? { built: true, sent: 0, quality: 'degraded' }
+      : { built: true, sent: 1, quality: 'fresh' };
+  };
+
+  const first = await scheduler.morningRoutine({ reason: 'watcher' });
+  assert.equal(first.quality, 'degraded');
+
+  // Fast-forward the retry ledger's backoff window directly in its durable
+  // state (no real wait, no env-var override needed — MORNING_RETRY_BACKOFF_MIN=0
+  // would fall through to the default via the same `Number(x) || default`
+  // pattern every other threshold in this codebase uses, since 0 is falsy).
+  const ledgerRow = await sourcesStore.getSource(morningRetryLedger.LEDGER_SOURCE_ID);
+  await sourcesStore.updateConfig(morningRetryLedger.LEDGER_SOURCE_ID, {
+    ledger: { ...ledgerRow.config.ledger, lastAttemptAt: Date.now() - 25 * MIN },
+  });
+
+  const second = await scheduler.morningRoutine({ reason: 'watcher' });
+  assert.equal(second.built, true);
+  assert.equal(second.quality, 'fresh');
+  assert.equal(buildCount, 2, 'the retry actually ran a second real attempt, not a cached result');
+
+  // Now the day IS done — a third trigger cleanly skips via the marker.
+  const third = await scheduler.morningRoutine({ reason: 'watcher' });
+  assert.equal(third.skipped, 'already_ran_today');
+  assert.equal(buildCount, 2, 'no further build once fresh quality has published');
 });

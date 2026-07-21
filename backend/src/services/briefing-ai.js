@@ -629,12 +629,14 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
   const { result: firstResult, failureType: firstFailure } =
     await chiefBriefAttempt(prompt, 'attempt 1/2', { maxTokens: initialMaxTokens, correlationId });
 
+  const FAILED_QUALITY = (reasonCode) => ({ status: 'failed', reasonCodes: [reasonCode], fieldWordCounts: {}, fallbackFields: [], violatedChecks: [] });
+
   let result = firstResult;
   let successMaxTokens = initialMaxTokens;
   if (!result) {
     if (firstFailure === 'refusal') {
       console.error(`[briefing-ai] chief-brief refused — not retrying the identical request. [correlationId=${correlationId}]`);
-      return { ...EMPTY_CHIEF };
+      return { ...EMPTY_CHIEF, chiefBriefQuality: FAILED_QUALITY('refusal') };
     }
     const retryMaxTokens = firstFailure === 'max_tokens' ? chiefBumpedMaxTokens(initialMaxTokens) : initialMaxTokens;
     const { result: secondResult } =
@@ -642,7 +644,7 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
     result = secondResult;
     successMaxTokens = retryMaxTokens;
   }
-  if (!result) return { ...EMPTY_CHIEF };
+  if (!result) return { ...EMPTY_CHIEF, chiefBriefQuality: FAILED_QUALITY('generation_failed') };
 
   // ── Semantic guards ────────────────────────────────────────────────────
   // (1) Goal completion: weekly_intentions.goals[].achieved is the SOLE
@@ -661,39 +663,13 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
   //     every other class has its offending sentence deterministically stripped
   //     (neutralizeClaimViolations). Absent facts, this is a no-op, so every
   //     existing caller keeps working unchanged.
-  const { neutralizeClaimViolations, ensureRequiredFieldsPresent } = require('../brain/claimValidator');
+  const { neutralizeClaimViolations, ensureRequiredFieldsPresent, assessChiefBriefQuality, buildQualityRetryPrompt } = require('../brain/claimValidator');
   const goalViolations = findFalseGoalCompletions(result, openGoals);
   const { violations: claimViolations } = validateChiefBriefClaims(result, snapshotFacts);
   if (claimViolations.length) {
     console.error(`[briefing-ai] chief-brief contradicted canonical state (${claimViolations.length} claim violation(s): ${claimViolations.map((v) => v.check).join(', ')}) [correlationId=${correlationId}]`);
   }
-  if (!goalViolations.length && !claimViolations.length) return result;
 
-  // ANY contradiction is worth one paid correction attempt — a wrong spend total
-  // or experiment verdict is still a false claim we won't ship.
-  if (goalViolations.length) {
-    console.error(`[briefing-ai] chief-brief claimed an OPEN goal was done (${goalViolations.length} instance(s)) — retrying with a targeted correction. [correlationId=${correlationId}]`);
-  }
-  // Layer whichever corrections apply onto the base prompt (goal first, then
-  // claim contradictions) — either or both may be present.
-  let correctionPrompt = prompt;
-  if (goalViolations.length) correctionPrompt = buildGoalCorrectionPrompt(correctionPrompt, goalViolations);
-  if (claimViolations.length) {
-    const { buildClaimCorrectionPrompt } = require('../brain/claimValidator');
-    correctionPrompt = buildClaimCorrectionPrompt(correctionPrompt, claimViolations);
-  }
-
-  // Deterministically FINALIZE a result so nothing contradicting ever ships:
-  // rephrase goal-completion sentences, strip any other surviving contradiction,
-  // then rerun BOTH checks and apply a grounded backstop:
-  //   1. Shape: every REQUIRED field (synthesis/action/risk/move) must still be
-  //      a non-empty string after neutralization — stripping every sentence in
-  //      a field that was ENTIRELY the false claim would otherwise ship a blank
-  //      card, which is a worse failure than the contradiction it replaced.
-  //   2. Claims: re-validate the finalized text — neutralization only strips
-  //      the SPECIFIC flagged sentences, so this is a correctness check that
-  //      nothing else in the field still contradicts state (logged if so; the
-  //      shape guarantee above always holds regardless).
   const finalizeSafe = (r) => {
     const gv = findFalseGoalCompletions(r, openGoals);
     let out = gv.length ? rewriteFalseGoalCompletions(r, gv) : r;
@@ -715,23 +691,85 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
     return out;
   };
 
+  if (!goalViolations.length && !claimViolations.length) {
+    const quality = assessChiefBriefQuality(result, snapshotFacts);
+    if (quality.status === 'fresh') return { ...result, chiefBriefQuality: quality };
+
+    // Schema-valid and not contradicting anything, but underfilled (or, in
+    // theory, exactly a grounded fallback with zero claim violations — that
+    // can't happen on a clean attempt 1/2 result, but the contract still
+    // handles it correctly either way). Worth exactly ONE bounded, targeted
+    // retry — never an unbounded watcher loop.
+    console.error(`[briefing-ai] chief-brief quality ${quality.status} (${quality.reasonCodes.join(',') || 'none'}) — retrying once with a targeted quality prompt. [correlationId=${correlationId}]`);
+    const { result: qualityRetry } = await chiefBriefAttempt(
+      buildQualityRetryPrompt(prompt, quality), 'attempt 3/3 (quality retry)', { maxTokens: successMaxTokens, correlationId }
+    );
+    if (!qualityRetry) return { ...result, chiefBriefQuality: quality };
+
+    const retryGoalViolations = findFalseGoalCompletions(qualityRetry, openGoals);
+    const { violations: retryClaimViolations } = validateChiefBriefClaims(qualityRetry, snapshotFacts);
+    if (!retryGoalViolations.length && !retryClaimViolations.length) {
+      const retryQuality = assessChiefBriefQuality(qualityRetry, snapshotFacts);
+      return { ...qualityRetry, chiefBriefQuality: retryQuality };
+    }
+    // The quality retry introduced a NEW contradiction — do not ship it;
+    // finalize the ORIGINAL underfilled-but-correct result deterministically.
+    console.error(`[briefing-ai] quality retry introduced a contradiction — discarding it, finalizing the original result instead. [correlationId=${correlationId}]`);
+    const safe = finalizeSafe(result);
+    return { ...safe, chiefBriefQuality: assessChiefBriefQuality(safe, snapshotFacts) };
+  }
+
+  // ANY contradiction is worth one paid correction attempt — a wrong spend total
+  // or experiment verdict is still a false claim we won't ship.
+  if (goalViolations.length) {
+    console.error(`[briefing-ai] chief-brief claimed an OPEN goal was done (${goalViolations.length} instance(s)) — retrying with a targeted correction. [correlationId=${correlationId}]`);
+  }
+  // Layer whichever corrections apply onto the base prompt (goal first, then
+  // claim contradictions) — either or both may be present.
+  let correctionPrompt = prompt;
+  if (goalViolations.length) correctionPrompt = buildGoalCorrectionPrompt(correctionPrompt, goalViolations);
+  if (claimViolations.length) {
+    const { buildClaimCorrectionPrompt } = require('../brain/claimValidator');
+    correctionPrompt = buildClaimCorrectionPrompt(correctionPrompt, claimViolations);
+  }
+
+  // Deterministically FINALIZE a result so nothing contradicting ever ships
+  // (finalizeSafe defined above): rephrase goal-completion sentences, strip
+  // any other surviving contradiction, then rerun BOTH checks and apply a
+  // grounded backstop:
+  //   1. Shape: every REQUIRED field (synthesis/action/risk/move) must still be
+  //      a non-empty string after neutralization — stripping every sentence in
+  //      a field that was ENTIRELY the false claim would otherwise ship a blank
+  //      card, which is a worse failure than the contradiction it replaced.
+  //   2. Claims: re-validate the finalized text — neutralization only strips
+  //      the SPECIFIC flagged sentences, so this is a correctness check that
+  //      nothing else in the field still contradicts state (logged if so; the
+  //      shape guarantee above always holds regardless).
   const { result: retry } = await chiefBriefAttempt(
     correctionPrompt, 'attempt 3/3 (semantic correction)', { maxTokens: successMaxTokens, correlationId }
   );
   if (retry) {
     const retryGoalViolations = findFalseGoalCompletions(retry, openGoals);
     const { violations: retryClaimViolations } = validateChiefBriefClaims(retry, snapshotFacts);
-    if (!retryGoalViolations.length && !retryClaimViolations.length) return retry;
+    if (!retryGoalViolations.length && !retryClaimViolations.length) {
+      // Clean on correctness — still run it through the quality contract:
+      // neutralization never ran, so this can only be fresh or underfilled,
+      // never a fallback-field degrade, but it must still be assessed rather
+      // than assumed.
+      return { ...retry, chiefBriefQuality: assessChiefBriefQuality(retry, snapshotFacts) };
+    }
     // The retry STILL contradicts canonical state — do NOT ship it as-is.
     console.error(`[briefing-ai] semantic correction retry still contradicted state (goals:${retryGoalViolations.length}, claims:${retryClaimViolations.map((v) => v.check).join('|') || 0}) — finalizing deterministically. [correlationId=${correlationId}]`);
-    return finalizeSafe(retry);
+    const safe = finalizeSafe(retry);
+    return { ...safe, chiefBriefQuality: assessChiefBriefQuality(safe, snapshotFacts) };
   }
   // The correction retry failed entirely — finalize the FIRST valid result
   // deterministically rather than losing it (returning EMPTY_CHIEF would make the
   // caller reuse a POTENTIALLY CONTAMINATED prior brief, which is what this guard
   // exists to avoid).
   console.error(`[briefing-ai] semantic correction retry failed — finalizing the original result deterministically instead. [correlationId=${correlationId}]`);
-  return finalizeSafe(result);
+  const safe = finalizeSafe(result);
+  return { ...safe, chiefBriefQuality: assessChiefBriefQuality(safe, snapshotFacts) };
 }
 
 /**

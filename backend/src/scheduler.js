@@ -19,6 +19,7 @@ const wealthNudgesMod = require('./intelligence/wealth-nudges');
 const nudgesStore = require('./store/nudges');
 const { pool } = require('./db');
 const sleepReadiness = require('./intelligence/sleep-readiness');
+const morningRetryLedger = require('./intelligence/morning-retry-ledger');
 
 /** Is the Eight Sleep auto-sync configured (creds present)? */
 function eightSleepConfigured() {
@@ -143,6 +144,20 @@ async function morningRoutine({ reason = 'scheduled', force = false, asOf = new 
       return { built: false, skipped: 'already_ran_today' };
     }
 
+    // A degraded automatic build (grounded-fallback/underfilled chief brief —
+    // see brain/claimValidator.js's assessChiefBriefQuality) does NOT mark the
+    // day done (below), so without this check every ~6-minute automatic
+    // trigger would re-attempt the full expensive build (ingest+analyze+Opus)
+    // chasing the same degraded result. Bounded backoff/attempt cap instead —
+    // see intelligence/morning-retry-ledger.js.
+    if (!force) {
+      const attempt = await morningRetryLedger.canAttempt({ asOf });
+      if (!attempt.allowed) {
+        console.log(`[scheduler] morning retry backoff active — skipping (${reason}): ${attempt.reason}`);
+        return { built: false, skipped: 'retry_backoff', reason: attempt.reason };
+      }
+    }
+
     const gated = !force && eightSleepConfigured();
     if (gated) {
       const readiness = await sleepReadiness.getMorningSleepReadiness({ asOf, trigger: reason });
@@ -195,12 +210,29 @@ async function morningRoutine({ reason = 'scheduled', force = false, asOf = new 
     let briefResult = { built: false, sent: 0 };
     try {
       briefResult = await morningNotify.runMorningBriefing({});
-      console.log(`[scheduler] morning briefing: built=${briefResult.built} pushed=${briefResult.sent}`);
+      console.log(`[scheduler] morning briefing: built=${briefResult.built} pushed=${briefResult.sent} quality=${briefResult.quality ?? 'n/a'}`);
     } catch (e) { console.error('[scheduler] morning briefing:', e.message); }
-    // Mark the day done so a post-8:30am restart's catch-up check skips it.
-    await markMorningRan();
+    // The day is only "done" on a genuine terminal outcome: the sleep
+    // check-in prompt went out (waiting on the user to log, not a build
+    // failure), OR a build actually published with FRESH quality. Anything
+    // else (skipped, discarded by the final readiness gate, or published but
+    // DEGRADED) must NOT burn the once-a-day marker — record the attempt in
+    // the retry ledger instead so a later automatic trigger can try again,
+    // bounded by its own backoff/attempt cap.
+    const reachedTerminalOutcome = briefResult.sleepCheckIn === true
+      || (briefResult.built === true && briefResult.quality === 'fresh')
+      // A fresh brief already existed for today (built by a concurrent manual
+      // rebuild, or an earlier automatic trigger this same morning) — the day
+      // genuinely IS done, even though THIS call didn't do the building.
+      || briefResult.skipped === 'already_built_today';
+    if (reachedTerminalOutcome) {
+      await markMorningRan();
+    } else if (!force) {
+      console.log(`[scheduler] morning routine did not reach a terminal outcome (built=${briefResult.built} quality=${briefResult.quality ?? 'n/a'} skipped=${briefResult.skipped ?? 'n/a'}) — NOT marking the day done; recording a retry attempt instead.`);
+      await morningRetryLedger.recordAttempt({ asOf });
+    }
     console.log('[scheduler] morning routine done');
-    return { built: !!briefResult.built, sent: briefResult.sent || 0 };
+    return { built: !!briefResult.built, sent: briefResult.sent || 0, quality: briefResult.quality ?? null };
   } finally {
     _morningRoutineInFlight = false;
   }

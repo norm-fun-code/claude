@@ -32,9 +32,20 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+// Field text is deliberately long enough to clear assessChiefBriefQuality's
+// minimum-completeness bar (brain/claimValidator.js) — a too-short "valid"
+// fixture would otherwise silently trigger the one bounded quality retry and
+// throw off every exact-call-count assertion in this file.
 const CHIEF_JSON = JSON.stringify({
-  chiefBrief: { synthesis: 'Test synthesis.', action: 'Test action.', risk: 'Test risk.', move: 'Test move.', openQuestion: '', affirmation: 'Test affirmation.' },
-  morningFocus: 'Test morning focus.',
+  chiefBrief: {
+    synthesis: 'Test synthesis with enough words in it to clear the quality bar for a complete brief.',
+    action: 'Test action with enough words here to clear the bar.',
+    risk: 'Test risk with enough words here to clear the bar.',
+    move: 'Test move with enough words here to clear the bar.',
+    openQuestion: '',
+    affirmation: 'Test affirmation with enough words here to clear the bar.',
+  },
+  morningFocus: 'Test morning focus with enough words in it to comfortably clear the fifteen word minimum threshold for this field.',
   urgentEmails: [],
 });
 
@@ -179,8 +190,8 @@ test('end-to-end through the REAL anthropic provider: the chief-brief request ha
     // Produces schema-valid JSON: the real round trip parsed cleanly into the
     // validated internal brief shape.
     assert.ok(result.chiefBrief, 'the real-provider round trip produced a valid parsed brief');
-    assert.equal(result.chiefBrief.synthesis, 'Test synthesis.');
-    assert.equal(result.morningFocus, 'Test morning focus.');
+    assert.equal(result.chiefBrief.synthesis, 'Test synthesis with enough words in it to clear the quality bar for a complete brief.');
+    assert.equal(result.morningFocus, 'Test morning focus with enough words in it to comfortably clear the fifteen word minimum threshold for this field.');
     assert.deepEqual(result.urgentEmails, []);
 
     assert.equal(capturedBody.model, 'claude-opus-4-8');
@@ -316,7 +327,7 @@ test('a max_tokens truncation followed by a successful retry stops at two attemp
     assert.equal(callCount, 2);
     assert.deepEqual(capturedMaxTokens, [16384, 32768]);
     assert.ok(result.chiefBrief, 'the bumped-token retry succeeded and its result is used');
-    assert.equal(result.chiefBrief.synthesis, 'Test synthesis.');
+    assert.equal(result.chiefBrief.synthesis, 'Test synthesis with enough words in it to clear the quality bar for a complete brief.');
   } finally {
     axios.post = originalPost;
     process.env = ORIGINAL_ENV;

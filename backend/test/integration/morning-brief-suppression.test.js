@@ -23,6 +23,7 @@ const recovery = require('../../src/intelligence/recovery');
 const morning = require('../../src/notify/morning');
 
 const ORIG_BUILD = briefingRoute.buildFreshBriefing;
+const ORIG_PUBLISH = briefingRoute.publishBriefingDraft;
 const ORIG_SEND = expo.sendPush;
 const ORIG_TOKENS = devicesStore.listActiveTokens;
 const ORIG_DEACTIVATE = devicesStore.deactivate;
@@ -41,7 +42,11 @@ function stubAll({ buildDelayMs = 0 } = {}) {
     return { ok: true, sent: 1, tickets: [], invalidTokens: [] };
   };
   recovery.needsSleepCheckIn = async () => false;
-  briefingRoute.buildFreshBriefing = async () => {
+  // Mirrors the real buildFreshBriefing/publishBriefingDraft split (see
+  // routes/briefing.js): publish:false (the automatic morning path's prepare
+  // step) must NOT persist — persistence only happens when the caller later
+  // calls publishBriefingDraft (also stubbed below), exactly like production.
+  briefingRoute.buildFreshBriefing = async ({ publish = true } = {}) => {
     buildCount += 1;
     if (buildDelayMs) await new Promise((r) => setTimeout(r, buildDelayMs));
     const content = {
@@ -49,9 +54,17 @@ function stubAll({ buildDelayMs = 0 } = {}) {
       day: new Date().toISOString().slice(0, 10),
       builtAt: new Date().toISOString(),
       chiefBrief: { synthesis: 'ZZmorning test build', action: 'a', risk: 'r', move: 'm', openQuestion: '' },
+      // A genuine automatic build always carries quality metadata (see
+      // brain/claimValidator.js's assessChiefBriefQuality via generateChiefBrief) —
+      // 'fresh' here so these tests exercise the normal successful-build path,
+      // not the separate quality-gating behavior covered in morning-lifecycle tests.
+      chiefBriefQuality: { status: 'fresh', reasonCodes: [], fieldWordCounts: {}, fallbackFields: [], violatedChecks: [] },
     };
-    await briefingsStore.saveBriefing({ kind: 'daily', content });
+    if (publish) await briefingsStore.saveBriefing({ kind: 'daily', content });
     return content;
+  };
+  briefingRoute.publishBriefingDraft = async (content) => {
+    await briefingsStore.saveBriefing({ kind: 'daily', content });
   };
 }
 
@@ -83,6 +96,7 @@ afterEach(async () => {
   devicesStore.deactivate = ORIG_DEACTIVATE;
   recovery.needsSleepCheckIn = ORIG_NEEDS;
   briefingRoute.buildFreshBriefing = ORIG_BUILD;
+  briefingRoute.publishBriefingDraft = ORIG_PUBLISH;
 });
 after(async () => { await closeDb(); });
 

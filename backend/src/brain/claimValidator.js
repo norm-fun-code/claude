@@ -775,6 +775,121 @@ function ensureRequiredFieldsPresent(result, facts = null) {
   return changed ? { ...result, chiefBrief: cb } : result;
 }
 
+function wordCount(text) {
+  return String(text || '').trim().split(/\s+/).filter(Boolean).length;
+}
+
+/** True iff `text` is EXACTLY the deterministic grounded-fallback sentence for
+ *  `field` (the sentence neutralizeClaimViolations/ensureRequiredFieldsPresent
+ *  ship when a field would otherwise go blank) — the authoritative signal that
+ *  this field's content was NOT actually generated fresh this build. */
+function isGroundedFallbackText(field, text, facts) {
+  if (typeof text !== 'string') return false;
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  return trimmed === groundedFallbackSentence(field, facts).trim();
+}
+
+// Meaningful LOWER bounds, not exact-length requirements — a synthesis
+// prompted for "20-35 words" that comes back at 3-4 words is underfilled even
+// though it's technically non-empty and not a byte-for-byte fallback match;
+// these thresholds sit comfortably below the prompt's own target so normal
+// stylistic variance never trips them, while still catching a degenerately
+// short response. synthesis's floor is set well above the shortest grounded
+// fallback ("Recovery is green at 100/100 today." = 6 words) specifically so
+// a near-fallback-length synthesis is still flagged even on the rare occasion
+// it isn't a byte-for-byte match.
+const REQUIRED_FIELD_MIN_WORDS = { synthesis: 12, action: 4, risk: 4, move: 4 };
+const OPTIONAL_FIELD_MIN_WORDS = { affirmation: 5, morningFocus: 15 };
+
+/**
+ * THE authoritative Chief Brief quality contract — one pure function every
+ * producer and consumer of a chief brief runs through: generateChiefBrief,
+ * the full briefing build, the scoped Chief Brief rebuild, persistence,
+ * "was today's brief actually built", and automatic morning push eligibility.
+ * A brief is not "fresh" merely because every field is a non-empty string —
+ * this also rejects the exact grounded-fallback sentences, enforces sensible
+ * minimum completeness per field, and refuses to call anything fresh that
+ * still contradicts canonical facts. Pure; never throws; never logs or
+ * returns generated prose — only safe, decision-shaped metadata.
+ *
+ * @param {Object} result  a chief-brief result, `{ chiefBrief: {...}, morningFocus }`
+ * @param {Object} facts   canonical facts (brain/snapshot.js's canonicalFacts), or null
+ * @returns {{status: 'fresh'|'degraded'|'failed', reasonCodes: string[],
+ *            fieldWordCounts: Object<string,number>, fallbackFields: string[],
+ *            violatedChecks: string[]}}
+ */
+function assessChiefBriefQuality(result, facts = null) {
+  const cb = result?.chiefBrief;
+  if (!cb || typeof cb !== 'object') {
+    return { status: 'failed', reasonCodes: ['no_chief_brief'], fieldWordCounts: {}, fallbackFields: [], violatedChecks: [] };
+  }
+
+  const reasonCodes = [];
+  const fallbackFields = [];
+  const fieldWordCounts = {};
+
+  let missingRequired = false;
+  for (const field of REQUIRED_BRIEF_FIELDS) {
+    const text = cb[field];
+    if (typeof text !== 'string' || !text.trim()) {
+      reasonCodes.push(`${field}_missing`);
+      missingRequired = true;
+      continue;
+    }
+    fieldWordCounts[field] = wordCount(text);
+    if (isGroundedFallbackText(field, text, facts)) fallbackFields.push(field);
+  }
+  for (const field of Object.keys(OPTIONAL_FIELD_MIN_WORDS)) {
+    const text = field === 'morningFocus' ? result?.morningFocus : cb[field];
+    if (typeof text === 'string' && text.trim()) fieldWordCounts[field] = wordCount(text);
+  }
+
+  if (missingRequired) {
+    return { status: 'failed', reasonCodes, fieldWordCounts, fallbackFields, violatedChecks: [] };
+  }
+
+  if (fallbackFields.length) reasonCodes.push('grounded_fallback_used');
+
+  for (const [field, min] of Object.entries(REQUIRED_FIELD_MIN_WORDS)) {
+    if ((fieldWordCounts[field] ?? 0) < min) reasonCodes.push(`${field}_underfilled`);
+  }
+  for (const [field, min] of Object.entries(OPTIONAL_FIELD_MIN_WORDS)) {
+    if (fieldWordCounts[field] != null && fieldWordCounts[field] < min) reasonCodes.push(`${field}_underfilled`);
+  }
+
+  // Claim correctness — never call a contradiction "fresh" merely because it's
+  // long enough. High-severity survivors mean neutralizeClaimViolations either
+  // wasn't run or the retry loop is being bypassed by a caller; treat exactly
+  // like a fallback would be treated (degraded, not fresh).
+  const { violations, hasHighSeverity } = validateChiefBriefClaims(result, facts);
+  const violatedChecks = hasHighSeverity ? violations.filter((v) => v.severity === 'high').map((v) => v.check) : [];
+  if (hasHighSeverity) reasonCodes.push('unresolved_claim_violation');
+
+  const degraded = fallbackFields.length > 0
+    || hasHighSeverity
+    || reasonCodes.some((r) => r.endsWith('_underfilled'));
+
+  return { status: degraded ? 'degraded' : 'fresh', reasonCodes, fieldWordCounts, fallbackFields, violatedChecks };
+}
+
+/** Build a targeted retry prompt asking specifically for fuller content on the
+ *  fields the quality contract flagged as underfilled/fallback — used for the
+ *  ONE bounded quality retry (never an unbounded watcher loop). Deliberately
+ *  does not restate any generated prose, only which fields and why. */
+function buildQualityRetryPrompt(basePrompt, quality) {
+  const lines = quality.reasonCodes
+    .filter((r) => r.endsWith('_underfilled') || r === 'grounded_fallback_used')
+    .map((r) => {
+      if (r === 'grounded_fallback_used') {
+        return `- ${quality.fallbackFields.join(', ')}: came back as a minimal placeholder sentence, not real generated content — write full, specific content grounded in the context above.`;
+      }
+      const field = r.replace(/_underfilled$/, '');
+      return `- ${field}: too short/thin for what was asked — follow the field's word-count guidance above and give it real substance.`;
+    });
+  return `${basePrompt}\n\nQUALITY RETRY — your previous attempt was schema-valid but under-filled:\n${lines.join('\n')}\nRegenerate the FULL JSON response with these fields properly filled out. Every other fact must remain exactly as accurate as before.`;
+}
+
 /** Build a targeted correction prompt describing the contradictions found, for
  *  the one-shot semantic-retry (same pattern as the goal-completion guard). */
 function buildClaimCorrectionPrompt(basePrompt, violations) {
@@ -787,6 +902,10 @@ function buildClaimCorrectionPrompt(basePrompt, violations) {
 module.exports = {
   validateChiefBriefClaims, buildClaimCorrectionPrompt, neutralizeClaimViolations,
   REQUIRED_BRIEF_FIELDS, groundedFallbackSentence, ensureRequiredFieldsPresent,
+  // Chief Brief quality contract — fresh/degraded/failed, the authoritative
+  // "was this actually a good build" check (see brief-quality docs at its
+  // definition above).
+  assessChiefBriefQuality, buildQualityRetryPrompt, isGroundedFallbackText,
   // EvidenceClaim v1 — the shared, surface-agnostic entrypoints Evening Brief
   // and Ask use (see notify/evening-brief-validator.js, chat/ask.js).
   validateClaims, neutralizeClaimsGeneric, checkAssociationOverclaim,

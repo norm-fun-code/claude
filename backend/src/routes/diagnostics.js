@@ -489,7 +489,7 @@ function createDiagnosticsRouter() {
       reason: result.reason,
       logLine: readiness.readinessLogLine(result),
       evidence: { ...safeEvidence, fingerprintPresent: fingerprint != null },
-      note: 'ready=false with reason=session_active/no_finalized_trend/insufficient_stability/telemetry_too_recent means the brief is correctly HELD until the night finalizes. A *_failed reason means an Eight Sleep API problem (failing closed — no early brief).',
+      note: 'ready=false with reason=session_active/no_finalized_trend/insufficient_stability/wake_not_confirmed/telemetry_too_recent means the brief is correctly HELD until the night finalizes. wake_not_confirmed specifically means the 10-min stability floor is met but the longer wakeConfirmationMinMs window (evidence.thresholds.wakeConfirmationMinMs, evidence.wakeConfirmed) has not yet elapsed. A *_failed reason means an Eight Sleep API problem (failing closed — no early brief).',
     });
   }));
 

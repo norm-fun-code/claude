@@ -9,9 +9,19 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const llm = require('../src/llm');
 
+// Field text is deliberately long enough to clear assessChiefBriefQuality's
+// minimum-completeness bar (brain/claimValidator.js) — a too-short "valid"
+// fixture would otherwise silently trigger the one bounded quality retry and
+// throw off every exact-call-count assertion in this file.
 const CHIEF_JSON = JSON.stringify({
-  chiefBrief: { synthesis: 'Test synthesis.', action: 'Test action.', risk: 'Test risk.', move: 'Test move.', openQuestion: '' },
-  morningFocus: 'Test morning focus.',
+  chiefBrief: {
+    synthesis: 'Test synthesis with enough words in it to clear the quality bar for a complete brief.',
+    action: 'Test action with enough words here to clear the bar.',
+    risk: 'Test risk with enough words here to clear the bar.',
+    move: 'Test move with enough words here to clear the bar.',
+    openQuestion: '',
+  },
+  morningFocus: 'Test morning focus with enough words in it to comfortably clear the fifteen word minimum threshold for this field.',
   urgentEmails: [],
 });
 const WISDOM_JSON = JSON.stringify({
@@ -43,9 +53,9 @@ const { generateBriefing, generateChiefBrief, generateWisdomInsights } = require
 test('generateChiefBrief parses a valid response into the expected shape', async () => {
   stubLlm({ chief: CHIEF_JSON, wisdom: WISDOM_JSON });
   const result = await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
-  assert.equal(result.morningFocus, 'Test morning focus.');
+  assert.equal(result.morningFocus, 'Test morning focus with enough words in it to comfortably clear the fifteen word minimum threshold for this field.');
   assert.ok(result.chiefBrief);
-  assert.equal(result.chiefBrief.synthesis, 'Test synthesis.');
+  assert.equal(result.chiefBrief.synthesis, 'Test synthesis with enough words in it to clear the quality bar for a complete brief.');
   assert.deepEqual(result.urgentEmails, []);
 });
 
@@ -116,7 +126,7 @@ test('generateChiefBrief retries once and recovers if the second attempt is vali
   const result = await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
   assert.equal(call, 2, 'expected exactly one retry');
   assert.ok(result.chiefBrief, 'the retry succeeded, so chiefBrief should be populated, not null');
-  assert.equal(result.chiefBrief.synthesis, 'Test synthesis.');
+  assert.equal(result.chiefBrief.synthesis, 'Test synthesis with enough words in it to clear the quality bar for a complete brief.');
 });
 
 test('generateChiefBrief gives up (null) only after BOTH attempts fail', async () => {
@@ -158,13 +168,16 @@ test('generateChiefBrief logs which field was invalid so a silent stale-brief fa
 test('generateChiefBrief falls back to empty shape on malformed JSON', async () => {
   llm.generateText = async () => chiefMeta('not json at all');
   const result = await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
-  assert.deepEqual(result, { morningFocus: '', chiefBrief: null, urgentEmails: [] });
+  assert.deepEqual(result, {
+    morningFocus: '', chiefBrief: null, urgentEmails: [],
+    chiefBriefQuality: { status: 'failed', reasonCodes: ['generation_failed'], fieldWordCounts: {}, fallbackFields: [], violatedChecks: [] },
+  });
 });
 
 test('generateBriefing (combined, backward-compat) merges both calls into one object', async () => {
   stubLlm({ chief: CHIEF_JSON, wisdom: WISDOM_JSON });
   const result = await generateBriefing([], 'notion text', 'a quote', 'Tuesday', { type: 'Rest' }, []);
-  assert.equal(result.morningFocus, 'Test morning focus.');
+  assert.equal(result.morningFocus, 'Test morning focus with enough words in it to comfortably clear the fifteen word minimum threshold for this field.');
   assert.ok(result.chiefBrief);
   assert.equal(result.quoteInsight, 'Test quote insight.');
   assert.equal(result.notionQuote, 'A complete, self-contained sentence of real wisdom worth reading.');
