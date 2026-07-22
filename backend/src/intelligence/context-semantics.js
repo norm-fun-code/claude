@@ -114,7 +114,15 @@ const CAUSE_CONCEPTS = [
   { tag: 'illness', re: /\b(sick|illness|ill|cold|flu|fever|nause(a|ous)|vomit(ed|ing)?|food poisoning)\b/i },
   { tag: 'travel', re: /\b(travel(l?ed|ling)?|flight|jet ?lag(ged)?|time ?zone|red-?eye)\b/i },
   { tag: 'room_conditions', re: /\b(hot|cold|noisy|loud) (room|bedroom)\b|\b(room|bedroom) (was |is )?(very |really |so )?(hot|cold|noisy|loud)\b|\bair ?conditioning\b|\bheat ?wave\b/i },
-  { tag: 'late_meal', re: /\b(late|big|heavy) (meal|dinner)\b|\bate late\b|\bspicy\b/i },
+  // [\s-] (not just a literal space) so a hyphenated compound like
+  // "late-meal flag" — the exact wording a rendered nightly-context-tag
+  // label produces in generated prose — still matches; (ate|eat(?:ing)?)
+  // covers past AND present/future phrasing ("ate late" as well as "eat
+  // late tonight"), since the temporal-framing check in claimValidator.js
+  // needs the concept to register regardless of tense to correctly judge
+  // whether the surrounding sentence is an assertive claim or advisory/
+  // conditional language.
+  { tag: 'late_meal', re: /\b(late|big|heavy)[\s-](meal|dinner)\b|\b(ate|eat(?:ing)?) late\b|\bspicy\b/i },
   { tag: 'medication', re: /\b(medication|prescription|dosage|new med)\b/i },
   { tag: 'stress', re: /\bstress(ed|ful)?\b|\banxi(ous|ety)\b|\bargument\b|\bfight\b|\bdeadline\b/i },
   { tag: 'hard_training', re: /\b(intense|hard|unusual) (workout|training|session)\b|\bovertrain(ed|ing)?\b|\brace\b/i },

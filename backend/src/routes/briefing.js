@@ -207,6 +207,7 @@ async function buildQuickChiefBriefContext(prior) {
     chaptersContext,
     liveGoals,
     recoveryDrivers,
+    nightlyContextHistory,
   ] = await Promise.all([
     (async () => {
       try {
@@ -381,6 +382,15 @@ async function buildQuickChiefBriefContext(prior) {
     })(),
     require('../intelligence/recovery-drivers').computeRecoveryDrivers({ tz })
       .catch((err) => { console.error('[quick chief-brief] recovery drivers failed:', err.message); return { context: '', labels: [] }; }),
+    // Same canonical authority the full build's brainSnapshot composes (see
+    // brain/registry.js's nightlyContextHistory field) — the scoped rebuild
+    // doesn't build a full snapshot, so this is its own direct, cheap,
+    // DB-only call, exactly like recoveryDrivers above and resolvedContext
+    // below. Ensures both build paths validate against IDENTICAL canonical
+    // temporal facts (required test: full build and scoped rebuild receive
+    // identical canonical temporal facts).
+    require('../intelligence/nightly-context-history').computeNightlyContextHistory({ tz })
+      .catch((err) => { console.error('[quick chief-brief] nightly context history failed:', err.message); return []; }),
   ]);
 
   // Derived from persisted output, not a fresh findings query — see the
@@ -425,6 +435,8 @@ async function buildQuickChiefBriefContext(prior) {
     liveGoals,
     recoveryDriversContext: recoveryDrivers.context,
     recoveryDriverLabels: recoveryDrivers.labels,
+    nightlyContextHistory,
+    nightlyContextHistoryContext: require('../intelligence/nightly-context-history').renderNightlyContextHistoryPrompt(nightlyContextHistory),
   };
 }
 
@@ -472,7 +484,20 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     console.error('[briefing prior] read failed:', err.message);
   }
 
-  if (!force && prior?.content) {
+  // A cached row built under an OLDER snapshot contract (SNAPSHOT_VERSION —
+  // see brain/snapshot.js) may carry a claim the CURRENT validator would
+  // reject but the row's own build never checked for (the temporal-grounding
+  // fix, v1->v2, is exactly this: a v1 row can contain a false "tonight"
+  // claim generated from a historical context tag with no checkTemporalFraming
+  // to catch it). Missing snapshotVersion (pre-dates the field entirely) is
+  // treated the same as "older" — fail toward a fresh rebuild, not toward
+  // trusting unvalidated old content. This never mutates or deletes the old
+  // row — history is preserved; the row is simply not eligible for the
+  // cache-hit fast path, so the very next request forces a real rebuild
+  // (stamping the current version) instead of serving it indefinitely.
+  const cacheContractCurrent = (prior?.content?.snapshotVersion ?? 0) >= require('../brain/snapshot').SNAPSHOT_VERSION;
+
+  if (!force && prior?.content && cacheContractCurrent) {
     const ageMin = prior.generated_at
       ? (Date.now() - new Date(prior.generated_at).getTime()) / 60000
       : 0;
@@ -1430,38 +1455,15 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
 
     const parts = [];
     if (streaks.length) parts.push(`PERSISTENT ISSUES (from the novelty ledger):\n${streaks.join('\n')}`);
-    // Factual recency for nightly context tags (Alcohol, Late meal, …) — real,
-    // computed "logged on K of the last N days" ground truth, so the brief
-    // never has to invent a frequency/streak claim from freeform notes. A real
-    // incident narrated a single alcohol log after two clean nights as "third
-    // straight day" and "550% above usual" — this block gives the model the
-    // ACTUAL count instead. Separate from PERSISTENT ISSUES: that block's
-    // "open N days" is how long a FINDING has been flagged, not how many
-    // consecutive days a behavior occurred — never the same thing.
-    try {
-      const { computeContextRecency } = require('../intelligence/analyze');
-      const contextFrom = new Date(Date.now() - 4 * 864e5);
-      const { rows: contextRows } = await require('../db').query(
-        `SELECT metric, (ts AT TIME ZONE $2)::date AS day, avg(value) AS value
-           FROM metrics WHERE domain = 'context' AND ts >= $1
-           GROUP BY metric, day`,
-        [contextFrom, tz]
-      );
-      const contextSeriesByKey = {};
-      for (const r of contextRows) {
-        const key = `context:${r.metric}`;
-        (contextSeriesByKey[key] || (contextSeriesByKey[key] = [])).push({ day: r.day, value: Number(r.value) });
-      }
-      const recency = computeContextRecency(contextSeriesByKey, { today: todayKeyForStreaks });
-      if (recency.length) {
-        parts.push(
-          `RECENT CONTEXT TAGS (factual — cite these exact counts; NEVER convert them into a percentage-above-baseline or a different streak length):\n` +
-            recency.map((r) => `- ${r.summary}`).join('\n')
-        );
-      }
-    } catch (err) {
-      console.error('[context recency] failed:', err.message);
-    }
+    // Nightly context-tag recency (Alcohol, Late meal, …) used to be an
+    // ad-hoc inline query here feeding analyze.js's computeContextRecency,
+    // whose "logged on K of the last N days" output named no date and let a
+    // historical occurrence read as ongoing/current. It's now sourced from
+    // THE canonical, explicitly-dated brainSnapshot.nightlyContextHistory
+    // projection (see intelligence/nightly-context-history.js) — built into
+    // nightlyContextHistoryContext below, alongside chiefFacts, so both the
+    // prompt text and the deterministic validator (claimValidator.js's
+    // checkTemporalFraming) agree on the exact same dated facts.
     if (lastActionLine) parts.push(lastActionLine);
     if (calibrationLine) parts.push(calibrationLine);
     // Fresh experiment verdicts — the payoff of a multi-week self-test lands
@@ -1492,6 +1494,20 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     continuityContext = parts.join('\n\n');
   } catch (err) {
     console.error('[continuity context] failed:', err.message);
+  }
+
+  // THE canonical, explicitly-dated nightly context-tag history — see
+  // intelligence/nightly-context-history.js. Sourced from THIS SAME
+  // brainSnapshot cut (zero extra reads), exactly like resolvedContext
+  // above, so the prompt text and chiefFacts (below) always agree.
+  let nightlyContextHistoryContext = '';
+  try {
+    if (brainSnapshot?.nightlyContextHistory?.value?.length) {
+      nightlyContextHistoryContext = require('../intelligence/nightly-context-history')
+        .renderNightlyContextHistoryPrompt(brainSnapshot.nightlyContextHistory.value);
+    }
+  } catch (err) {
+    console.error('[nightly context history] prompt render failed:', err.message);
   }
 
   let leverageContext = '';
@@ -1743,6 +1759,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
         // catch negated/retracted events, resolver-corrected completion
         // states, driver conflicts, and calendar reclassifications.
         resolvedContext: brainSnapshot.resolvedContext?.value ?? null,
+        nightlyContextHistory: brainSnapshot.nightlyContextHistory?.value ?? [],
       });
     } catch (e) { console.error('[briefing build] chiefFacts assembly failed:', e.message); }
   }
@@ -1773,7 +1790,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
           // from "genuinely empty" by the time `calendar`/`workBusy` reach
           // here, so this is tracked separately rather than re-derived.
           { workBusy: workBusyResult.status === 'fulfilled', calendar: calendarResult.status === 'fulfilled' },
-          answeredQuestionsContext),
+          answeredQuestionsContext, nightlyContextHistoryContext),
         LLM_TIMEOUT,
         'gemini_chief'
       ),
@@ -2506,6 +2523,7 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
       localDate: new Date().toLocaleDateString('en-CA', { timeZone: factsTz }),
       recoveryDrivers: ctx.recoveryDriverLabels,
       resolvedContext: resolvedContextForFacts,
+      nightlyContextHistory: ctx.nightlyContextHistory,
     });
   } catch (e) { console.error('[chief-brief rebuild] chiefFacts assembly failed:', e.message); }
 
@@ -2526,7 +2544,8 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
     ctx.strengthContext, ctx.spendingContext, ctx.continuityContext, ctx.cashflowContext,
     ctx.progressContext, ctx.weeklyGoalsContext, ctx.chaptersContext, ctx.dayOffContext,
     /* attentionContext */ '', ctx.liveGoals, chiefFacts, ctx.recoveryDriversContext,
-    /* calendarSourcesAvailable */ { workBusy: true, calendar: true }, answeredQuestionsContext
+    /* calendarSourcesAvailable */ { workBusy: true, calendar: true }, answeredQuestionsContext,
+    ctx.nightlyContextHistoryContext
   );
 
   // Same deterministic "one question" suppression the full build runs (see

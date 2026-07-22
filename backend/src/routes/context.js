@@ -58,6 +58,19 @@ function createContextRouter() {
       metrics.push({ ts, domain: 'context', metric: '_submitted', value: 1, unit: 'bool', source: 'self_report' });
     }
     const written = await metricsStore.insertMetrics(metrics);
+    // Durable, post-commit invalidation — AFTER insertMetrics has resolved
+    // (the write has landed), never before, and exactly once per submission.
+    // Fires the SAME registry.js dependency graph every other canonical-field
+    // mutation goes through (see brain/invalidation.js): invalidates
+    // nightlyContextHistory and cascades to anything that depends on it,
+    // so a stale cached brief field can never silently keep citing an
+    // out-of-date tag history. asyncHandler ensures a thrown error here
+    // (or from insertMetrics above) propagates as a real 500 rather than a
+    // silently-successful response with an unrecorded invalidation.
+    if (written > 0) {
+      const { bumpDurable, TRIGGER } = require('../brain/invalidation');
+      await bumpDurable(TRIGGER.CONTEXT_TAG_CHANGE, { source: 'self_report', date: dateStr });
+    }
     res.json({ ok: true, date: dateStr, active: [...active], submitted: !!body.submitted, written });
   }));
 

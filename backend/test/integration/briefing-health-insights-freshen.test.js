@@ -50,6 +50,10 @@ async function seedStoredBriefing() {
         evidence: { auto: true, kind: 'fitness', metric: 'health:vo2_max', current: 43.7, per90: 2.1, n: 30 },
       },
     ],
+    // Current snapshot contract — see routes/briefing.js's cacheContractCurrent;
+    // a seeded row must stamp this or it's never eligible for the cache-hit
+    // fast path this test is exercising.
+    snapshotVersion: require('../../src/brain/snapshot').SNAPSHOT_VERSION,
   };
   const { rows } = await db.query(
     `INSERT INTO briefings (kind, content) VALUES ('daily', $1) RETURNING id`,

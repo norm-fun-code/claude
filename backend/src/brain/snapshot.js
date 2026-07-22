@@ -24,7 +24,15 @@ const DEFAULT_TZ = process.env.TZ || 'America/New_York';
 // Bump when the snapshot's SHAPE changes in a way consumers must notice. Pushes
 // and briefs stamp this + snapshotId so an in-app view and a notification can be
 // proven to reference the same cut of state.
-const SNAPSHOT_VERSION = 1;
+//
+// v2 (temporal-grounding fix): added nightlyContextHistory + the
+// checkTemporalFraming claim check — a briefing row built under v1 may carry
+// a false "tonight" claim generated from a historical context tag with no
+// validator to catch it. routes/briefing.js's buildFreshBriefing() compares
+// this against a cached row's OWN stamped snapshotVersion and forces a fresh
+// rebuild (never serves the cache-hit fast path) when the cached row
+// predates the current version — see that file's cacheContractCurrent.
+const SNAPSHOT_VERSION = 2;
 
 /** Wrap a value with provenance metadata. `source` is the authoritative
  *  selector (from the registry); `freshness` is 'fresh' | 'stale' |
@@ -104,6 +112,7 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
     calendar: include.calendar === true, // network — default OFF
     sourceHealth: include.sourceHealth !== false,
     resolvedContext: include.resolvedContext !== false,
+    nightlyContextHistory: include.nightlyContextHistory !== false,
   };
 
   // A section that wasn't requested — distinct from one that failed. Its
@@ -138,6 +147,7 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
     workoutRead, goalsRead, intentionRead, commitmentsRead,
     wealthInsightsRead, spendingRead, findingsRead, experimentsRead,
     contextRead, calendarRead, sourceHealthRead, resolvedContextRead,
+    nightlyContextHistoryRead,
   ] = await Promise.all([
     read('effectiveWorkout', () => require('../services/workout').getEffectiveWorkout({ asOf, tz, band: recoveryVal?.band ?? null })),
     want.goals ? read('goals', () => require('../store/goals').listGoals({ status: 'active' }), []) : skip([]),
@@ -166,6 +176,9 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
     // contextRelations below are cheap derived views of THIS read's result,
     // not separate DB round trips.
     want.resolvedContext ? read('resolvedContext', () => require('../intelligence/context-resolver').resolveContext({ tz, now: asOf }), null) : skip(null),
+    want.nightlyContextHistory
+      ? read('nightlyContextHistory', () => require('../intelligence/nightly-context-history').computeNightlyContextHistory({ tz, asOf }), [])
+      : skip([]),
   ]);
 
   // forecast depends on recovery + the ALREADY-RESOLVED effective workout — pass
@@ -279,6 +292,12 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
       ...provenance(resolvedContextRead, { emptyIsValid: true }), source: authorityFor('contextRelations'),
     }),
     resolvedContext: fact(resolvedContextRead.value, provenance(resolvedContextRead, { emptyIsValid: false })),
+    // Canonical nightly context-tag history — see registry.js's
+    // nightlyContextHistory field and intelligence/nightly-context-history.js.
+    // Empty is a normal, valid state (no tags logged in the window), not a
+    // data gap — a user who hasn't opened the self-report card recently is
+    // not "unavailable", it's genuinely nothing to report.
+    nightlyContextHistory: fact(nightlyContextHistoryRead.value, provenance(nightlyContextHistoryRead, { emptyIsValid: true })),
   };
 }
 
@@ -353,7 +372,7 @@ function realtimeTodayContext(snapshot, briefing, opts = {}) {
  *  ONE fact-shaping function: both canonicalFacts(snapshot) and the briefing
  *  hot path (which already has these parts in scope) call THIS, so a brief is
  *  always validated against the identical fact shape the snapshot exposes. */
-function canonicalFactsFrom({ recovery, effectiveWorkout, forecast, goals, commitments, experiments, wealth, localDate, recoveryDrivers, resolvedContext } = {}) {
+function canonicalFactsFrom({ recovery, effectiveWorkout, forecast, goals, commitments, experiments, wealth, localDate, recoveryDrivers, resolvedContext, nightlyContextHistory } = {}) {
   const r = recovery, w = effectiveWorkout, f = forecast;
   return {
     localDate: localDate ?? null,
@@ -391,6 +410,13 @@ function canonicalFactsFrom({ recovery, effectiveWorkout, forecast, goals, commi
     // every check gated on it simply stays silent, same as `facts` itself
     // being null.
     resolvedContext: resolvedContext ?? null,
+    // Canonical, per-occurrence, EXPLICITLY-dated nightly context-tag
+    // history — see intelligence/nightly-context-history.js. Every entry is
+    // a COMPLETED-night observation; brain/claimValidator.js's
+    // checkTemporalFraming reads this (via facts.nightlyContextHistory)
+    // alongside resolvedContext to reject a generated claim that restates
+    // one of these as a current/future plan.
+    nightlyContextHistory: nightlyContextHistory || [],
   };
 }
 
@@ -406,6 +432,7 @@ function canonicalFacts(snapshot) {
     wealth: snapshot.wealth.value,
     localDate: snapshot.localDate,
     resolvedContext: snapshot.resolvedContext?.value ?? null,
+    nightlyContextHistory: snapshot.nightlyContextHistory?.value ?? [],
   });
 }
 

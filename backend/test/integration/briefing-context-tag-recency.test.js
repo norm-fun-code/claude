@@ -68,7 +68,7 @@ afterEach(async () => {
 });
 after(async () => { await closeDb(); });
 
-test('Fri=0, Sat=0, Sun=1: the brief prompt reports "1 of the last 3 days", never a streak or a percentage', async (t) => {
+test('Fri=0, Sat=0, Sun=1: the brief prompt reports a dated historical occurrence, never a streak or a percentage', async (t) => {
   await seedAlcohol([[2, 0], [1, 0], [0, 1]]); // 2 days ago, yesterday, today
   const getPrompt = captureChiefPrompt(t);
 
@@ -78,12 +78,14 @@ test('Fri=0, Sat=0, Sun=1: the brief prompt reports "1 of the last 3 days", neve
   const prompt = getPrompt();
   assert.ok(prompt, 'expected the chief-brief LLM call to have fired');
   assert.match(prompt, /RECENT CONTEXT TAGS/);
-  assert.match(prompt, /Alcohol: logged on 1 of the last 3 days/);
-  assert.doesNotMatch(prompt, /third straight day|3 straight days|3 consecutive days/i, 'must never claim a 3-day streak for a single gapped occurrence');
+  assert.match(prompt, /Alcohol: occurred on 1 of the last 3 completed nights; latest occurrence was last night\./);
+  assert.match(prompt, /Historical observation only — not evidence of a plan tonight\./, 'must carry the explicit not-a-plan disclaimer');
+  assert.doesNotMatch(prompt, /third straight day|3 straight days|3 consecutive (days|nights)/i, 'must never claim a 3-night streak for a single gapped occurrence');
   assert.doesNotMatch(prompt, /alcohol[^\n]*%/i, 'must never attach a percentage to the alcohol tag');
+  assert.doesNotMatch(prompt, /alcohol[^.\n]*\btonight\b/i, 'must never restate a historical occurrence as a tonight claim');
 });
 
-test('a true 3-for-3 run correctly reports as a real consecutive streak', async (t) => {
+test('a true 3-for-3 run correctly reports as a real consecutive streak, dated, never "tonight"', async (t) => {
   await seedAlcohol([[2, 1], [1, 1], [0, 1]]);
   const getPrompt = captureChiefPrompt(t);
 
@@ -92,7 +94,8 @@ test('a true 3-for-3 run correctly reports as a real consecutive streak', async 
 
   const prompt = getPrompt();
   assert.ok(prompt);
-  assert.match(prompt, /Alcohol: 3 consecutive days/);
+  assert.match(prompt, /Alcohol: occurred 3 consecutive nights, most recently last night\./);
+  assert.doesNotMatch(prompt, /alcohol[^.\n]*\btonight\b/i, 'must never restate a historical occurrence as a tonight claim');
 });
 
 // A pre-existing bogus "context:alcohol" trend/anomaly finding (from before

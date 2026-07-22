@@ -25,6 +25,12 @@ async function seedPriorBriefing() {
     chiefBrief: { synthesis: MARKER, action: 'a', risk: 'r', move: 'm', openQuestion: '' },
     morningFocus: 'prior focus',
     urgentEmails: [],
+    // Current snapshot contract — a row missing/behind this is treated as
+    // pre-dating the current validation contract and is never served from
+    // the cache-hit fast path (see routes/briefing.js's cacheContractCurrent);
+    // tests that seed a row and expect a cache-hit must stamp the current
+    // version, same as any real build would.
+    snapshotVersion: require('../../src/brain/snapshot').SNAPSHOT_VERSION,
   };
   const { rows } = await db.query(
     `INSERT INTO briefings (kind, content) VALUES ('daily', $1) RETURNING id`,

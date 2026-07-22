@@ -26,6 +26,7 @@ const TRIGGER = Object.freeze({
   COMMITMENT_CHANGE: 'commitment_change',   // a commitment created/completed
   ANNOTATION_RETIREMENT: 'annotation_retirement', // an annotation retired/retracted/added
   CONTEXT_ASSERTION_CHANGE: 'context_assertion_change', // a ContextAssertion/ContextRelation created, retired, or resolved
+  CONTEXT_TAG_CHANGE: 'context_tag_change',       // a nightly context-tag (routes/context.js) submission landed
 });
 
 // The canonical fields. `key` is stable — surfaces reference these, not raw
@@ -170,6 +171,20 @@ const FIELDS = Object.freeze({
     authority: 'intelligence/context-resolver.resolveContext',
     dependsOn: ['contextAssertions', 'contextRelations'],
     invalidatedBy: [TRIGGER.CONTEXT_ASSERTION_CHANGE],
+    ttlMs: null,
+    liveRefreshable: true,
+  },
+  nightlyContextHistory: {
+    // The canonical, per-occurrence, EXPLICITLY-dated projection of the
+    // nightly context-tag self-report card (Magnesium, Alcohol, Late meal,
+    // ...) — see intelligence/nightly-context-history.js. Every occurrence
+    // is a COMPLETED-night observation, never a plan; consumed by the Chief
+    // Brief prompt and by claimValidator.js's checkTemporalFraming so a
+    // generated brief can never restate a historical tag as a "tonight"
+    // claim (the exact production bug this field exists to close).
+    authority: 'intelligence/nightly-context-history.computeNightlyContextHistory',
+    dependsOn: [],
+    invalidatedBy: [TRIGGER.CONTEXT_TAG_CHANGE],
     ttlMs: null,
     liveRefreshable: true,
   },

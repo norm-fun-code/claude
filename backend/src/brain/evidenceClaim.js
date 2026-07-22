@@ -344,6 +344,26 @@ function buildEvidenceClaims(facts, meta = {}) {
     }
   }
 
+  // ── Nightly context-tag history (self-reported: alcohol, late meal, ...) ──
+  // Each occurrence becomes its own FACT claim about a COMPLETED past night —
+  // see intelligence/nightly-context-history.js. This is what backs
+  // claimValidator's checkTemporalFraming generically: a surface framing one
+  // of these as a current/future plan has no PLAN-type claim to license that
+  // framing, only this FACT-tier, explicitly backward-looking one.
+  if (Array.isArray(facts.nightlyContextHistory)) {
+    for (const tagHistory of facts.nightlyContextHistory) {
+      for (const occ of tagHistory?.occurrences || []) {
+        if (!occ?.concept || !occ?.nightEndingLocalDate) continue;
+        claims.push(makeClaim({
+          ...base, claimType: CLAIM_TYPE.FACT, subject: `nightlyContext:${occ.concept}:${occ.nightEndingLocalDate}`,
+          predicate: 'occurred', value: true,
+          evidenceRefs: ['intelligence/nightly-context-history.computeNightlyContextHistory'],
+          evidenceTier: EVIDENCE_TIER.ESTABLISHED,
+        }));
+      }
+    }
+  }
+
   return claims;
 }
 

@@ -603,6 +603,80 @@ function checkWeeklyEventCounts(fields, facts) {
   return violations;
 }
 
+// ── Temporal grounding: a historical observation is never a current/future plan ─
+// Production bug: a late_meal context tag logged TWO NIGHTS AGO ("occurred on 1
+// of the last 3 completed nights") got restated by the Chief Brief as "the
+// late-meal flag tonight can dent sleep" and "with a late meal on deck tonight"
+// — a completed-night OBSERVATION rewritten as an invented FUTURE plan.
+// Generic by design (works for ANY concept intelligence/context-semantics.js's
+// causeConceptTags recognizes — alcohol, travel, stress, etc. — not just
+// late_meal): fires only when a sentence BOTH (a) names a recognized cause
+// concept AND (b) frames it with current/future language, AND (c) is not
+// itself advisory/conditional/negated ("avoid a late meal tonight", "if you
+// eat late tonight…", "no late meal planned tonight" are all fine) — and even
+// then, is a violation only when no CANONICAL planned evidence licenses the
+// claim. A historical nightlyContextHistory occurrence — no matter how recent
+// ("last night" included) — can NEVER supply that license on its own; only a
+// genuine compiled ContextAssertion (facts.resolvedContext.assertions) with
+// eventStatus 'planned', a matching concept, and an effective window
+// overlapping TODAY can.
+//
+// Reuses context-semantics.js's own forward-looking vocabulary (FUTURE_RE)
+// so "what counts as future framing" means the same thing everywhere in the
+// codebase, rather than a second, possibly-drifting definition here.
+const TEMPORAL_FUTURE_FRAME_RE =
+  /\btonight\b|\btomorrow\b|\blater (today|tonight)\b|\bthis (evening|weekend)\b|\bnext (week|weekend|month)\b|\bgoing to\b|\bplan(?:ning)? to\b|\babout to\b|\bwill be\b|\bscheduled to\b|\bupcoming\b|\bon deck\b/i;
+// Non-assertive framing that must NOT be flagged even alongside a concept +
+// future marker: advice/caution, conditionals, and explicit negation. A false
+// negative here (missing a real violation) is far safer than a false
+// positive on legitimate advice — same precision-first philosophy as every
+// other check in this file (see the module header).
+const TEMPORAL_NON_ASSERTIVE_RE =
+  /\b(?:avoid|skip|watch (?:out )?for|be careful|steer clear of|don'?t|do not|try not to|limit|reduce|cut back on|resist|if you|if there'?s|should you|in case|no|not planning|isn'?t planning|aren'?t planning|won'?t be|didn'?t|did not|wasn'?t|weren'?t)\b/i;
+
+/** Pure: does a compiled, PLANNED ContextAssertion naming one of `conceptTags`
+ *  cover TODAY (facts.localDate)? Only this — never a historical
+ *  nightlyContextHistory occurrence — can license an affirmative
+ *  current/future claim. */
+function hasCanonicalFutureEvidence(facts, conceptTags) {
+  const assertions = facts?.resolvedContext?.assertions;
+  if (!Array.isArray(assertions) || !assertions.length) return false;
+  const today = facts?.localDate || null;
+  const dayOf = (iso) => {
+    const t = iso ? new Date(iso).getTime() : NaN;
+    return Number.isNaN(t) ? null : new Date(t).toISOString().slice(0, 10);
+  };
+  return assertions.some((a) => {
+    if (!a || a.eventStatus !== 'planned') return false;
+    const aConcepts = Array.isArray(a.concepts) ? a.concepts : [];
+    if (!conceptTags.some((t) => aConcepts.includes(t))) return false;
+    if (!today) return true; // no local date to compare against — don't over-reject genuine evidence
+    return dayOf(a.effectiveStart) === today || dayOf(a.effectiveEnd) === today;
+  });
+}
+
+function checkTemporalFraming(fields, facts) {
+  if (!facts) return [];
+  const violations = [];
+  for (const [field, text] of fields) {
+    for (const sentence of splitIntoSentences(text)) {
+      if (!TEMPORAL_FUTURE_FRAME_RE.test(sentence)) continue;
+      const concepts = causeConceptTags(sentence);
+      if (!concepts.length) continue;
+      if (TEMPORAL_NON_ASSERTIVE_RE.test(sentence)) continue;
+      if (hasCanonicalFutureEvidence(facts, concepts)) continue;
+      const marker = TEMPORAL_FUTURE_FRAME_RE.exec(sentence)?.[0] ?? 'a future marker';
+      violations.push({
+        check: 'temporal_framing', field, sentence, severity: 'high',
+        expected: 'a historical observation, or genuine planned-event evidence',
+        actual: 'an unsupported current/future claim',
+        message: `frames a historical ${concepts.join('/')} observation as a current/future plan ("${marker}") with no canonical planned-event evidence to support it`,
+      });
+    }
+  }
+  return violations;
+}
+
 /**
  * Run every claim check against an arbitrary set of generated text fields.
  * `fields` is an array of [fieldName, text] pairs — the shared shape every
@@ -626,6 +700,7 @@ function validateClaims(fields, facts) {
     ...checkResolvedContextConflicts(fields, facts),
     ...checkAssociationOverclaim(fields, facts),
     ...checkWeeklyEventCounts(fields, facts),
+    ...checkTemporalFraming(fields, facts),
   ];
 }
 
@@ -913,4 +988,5 @@ module.exports = {
   checkRecoveryBand, checkRecoveryScore, checkRecoveryCause, checkEffectiveWorkout,
   checkCompletion, checkExperiments, checkSpending, checkForecast, checkCurrentDate, briefFields,
   checkResolvedContextConflicts, checkWeeklyEventCounts, splitIntoSentences,
+  checkTemporalFraming,
 };

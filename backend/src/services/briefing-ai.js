@@ -56,14 +56,21 @@ const CHIEF_SYSTEM =
   'CRITICAL — streaks and consecutive-day language: PERSISTENT ISSUES\' "open N days" ' +
   'describes how long a FINDING has been flagged (a trend/anomaly still holding), NOT how ' +
   'many consecutive days a behavior occurred — never translate finding-age into "N ' +
-  'straight days" or "N consecutive days" of something the user did. Only use ' +
-  '"consecutive"/"straight days" language when the evidence explicitly states an ' +
-  'unbroken run of local-calendar days (e.g. RECENT CONTEXT TAGS literally says "N ' +
-  'consecutive days"). For a nightly context tag (alcohol, late meal, magnesium, etc.), ' +
-  'use ONLY the exact phrasing given in RECENT CONTEXT TAGS ("logged on K of the last N ' +
-  'days", or "N consecutive days" only when it says that) — never compute or invent a ' +
-  'percentage-above-baseline for one of these, and never state a streak length that ' +
-  'isn\'t the literal number given there. ' +
+  'straight days" or "N consecutive nights" of something the user did. Only use ' +
+  '"consecutive"/"straight" language when the evidence explicitly states an unbroken run ' +
+  '(e.g. RECENT CONTEXT TAGS literally says "occurred N consecutive nights"). For a ' +
+  'nightly context tag (alcohol, late meal, magnesium, etc.), use ONLY the exact dated ' +
+  'phrasing given in RECENT CONTEXT TAGS ("occurred on K of the last N completed nights", ' +
+  'with its exact "the night ending <date>" / "last night" wording) — never compute or ' +
+  'invent a percentage-above-baseline for one of these, and never state a streak length ' +
+  'that isn\'t the literal number given there. ' +
+  'CRITICAL — a RECENT CONTEXT TAGS entry is ALWAYS a historical, already-occurred ' +
+  'observation about a COMPLETED past night — it is NEVER evidence of a plan for tonight ' +
+  'or today, no matter how recent ("last night" is still the past). Never rephrase one as ' +
+  '"tonight," "on deck tonight," "planned for tonight," "coming up," or any other current/ ' +
+  'future framing. Only a genuinely planned/upcoming event named ELSEWHERE in the data ' +
+  'above (never derived from RECENT CONTEXT TAGS) may be described as happening tonight or ' +
+  'today. ' +
   'WRITING: complete, well-punctuated sentences. Never run two independent clauses ' +
   'together without a period, semicolon, or conjunction (no "a strong base for the week your ' +
   'stated focus is…" — close the first thought, then start the next). ' +
@@ -115,7 +122,7 @@ const WISDOM_SYSTEM =
   '- notionQuote: pick a self-contained, meaningful line — never a title, never an intro that trails off (e.g. "Rather than trying to find someone who will:"). If the best idea spans a sentence, quote the whole sentence.\n' +
   '- quoteInsight / notionInsight: first sentence draws out the core idea as lived wisdom. Second sentence makes the connection to their actual data explicit — name the specific state or pattern that makes this quote land right now (e.g. "energy running low this week makes this idea about sustainable effort particularly timely" or "with recovery in the yellow band and cold shower adherence slipping this week, this hits differently"). If wellbeing data shows "no recent check-in data", return empty string for BOTH quoteInsight and notionInsight — a quote with no data connection is not shown. Connect through their wellbeing/health state (mood/energy/focus, recovery band, habits) — speak in plain human terms (low/ok/high, settled/slipping), like a friend who noticed, NEVER a raw number or "X/5" — that reads clinical, not like someone who actually knows them. Do NOT reference their calendar, specific tasks, schedule, "today", or their job/profession. Do NOT cite any dollar amount, net-worth figure, or financial percentage here — even if the quote is about money, make the connection qualitative (e.g. "the optionality you\'re building"), never with a computed number.';
 
-function buildChiefBriefPrompt(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '', attentionContext = '', openGoals = [], recoveryDriversContext = '', calendarSourcesAvailable = { workBusy: true, calendar: true }, answeredQuestionsContext = '', classifiedOverrides = []) {
+function buildChiefBriefPrompt(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '', attentionContext = '', openGoals = [], recoveryDriversContext = '', calendarSourcesAvailable = { workBusy: true, calendar: true }, answeredQuestionsContext = '', classifiedOverrides = [], nightlyContextHistoryContext = '') {
   // Input size wasn't the timeout cause (the proven Apps Script sends 15K/email
   // and is fine) — OUTPUT length was. So allow a generous 15K/email like that
   // setup, with a total budget as a safety net against a huge unread pile.
@@ -221,7 +228,7 @@ Active life context (acknowledge if relevant — NEVER cite anything here as a c
 
 ELIGIBLE RECOVERY DRIVERS (the ONLY things that may explain today's recovery score/HRV/RHR — already filtered to the exact overnight window that produced today's reading): ${recoveryDriversContext || 'none identified'}
 ${recoveryDriversContext ? '' : 'If recovery moved and you reference a cause, you have NO eligible driver to cite — say the cause is unknown/unclear rather than guessing from Active life context, a habit, or anything not listed here.\n'}
-${answeredQuestionsContext ? `ALREADY ANSWERED TODAY (do NOT set openQuestion to any of these, or a close paraphrase of one — a deterministic check will strip it anyway, but asking again reads as not listening; instead, fold the answer in as live context for today's synthesis, exactly like any other fact above):\n${answeredQuestionsContext}\n\n` : ''}${attentionContext ? `FLAGGED EARLIER TODAY (the attention policy noticed these but judged them not worth a real-time interruption — fold whichever are genuinely relevant into the brief; skip the rest, and never invent detail beyond what's stated):\n${attentionContext}\n\n` : ''}${chaptersContext ? `LIFE CHAPTERS (standing long-arc facts about the user's life right now — auto-updated, always true, the user never needs to repeat them):\n${chaptersContext}\n\n` : ''}${continuityContext ? `${continuityContext}\n\n` : ''}${openGoalsBlock}${weeklyGoalsContext ? `THIS WEEK'S STATED GOALS (the user wrote these themselves at the Sunday check-in — [OPEN] = not yet checked off): ${weeklyGoalsContext}\n\n` : ''}${progressContext ?`YOU VS PAST YOU (longitudinal zoom-out — trailing 4-week averages vs the same measures ~3 months ago; only shifts big enough to be real are listed): ${progressContext}\n\n` : ''}${cashflowContext ? `UPCOMING BILLS WARNING (forward-looking — this hasn't happened yet, don't describe it in the past tense): ${cashflowContext}\n\n` : ''}${spendingContext ? `Spending signal: ${spendingContext}\n\n` : ''}${strengthContext ? `Strength progression (logged lifts): ${strengthContext}\n\n` : ''}${leverageContext ? `${leverageContext}\n\n` : ''}Unread emails (${emailData.length} threads):
+${answeredQuestionsContext ? `ALREADY ANSWERED TODAY (do NOT set openQuestion to any of these, or a close paraphrase of one — a deterministic check will strip it anyway, but asking again reads as not listening; instead, fold the answer in as live context for today's synthesis, exactly like any other fact above):\n${answeredQuestionsContext}\n\n` : ''}${attentionContext ? `FLAGGED EARLIER TODAY (the attention policy noticed these but judged them not worth a real-time interruption — fold whichever are genuinely relevant into the brief; skip the rest, and never invent detail beyond what's stated):\n${attentionContext}\n\n` : ''}${chaptersContext ? `LIFE CHAPTERS (standing long-arc facts about the user's life right now — auto-updated, always true, the user never needs to repeat them):\n${chaptersContext}\n\n` : ''}${continuityContext ? `${continuityContext}\n\n` : ''}${nightlyContextHistoryContext ? `${nightlyContextHistoryContext}\n\n` : ''}${openGoalsBlock}${weeklyGoalsContext ? `THIS WEEK'S STATED GOALS (the user wrote these themselves at the Sunday check-in — [OPEN] = not yet checked off): ${weeklyGoalsContext}\n\n` : ''}${progressContext ?`YOU VS PAST YOU (longitudinal zoom-out — trailing 4-week averages vs the same measures ~3 months ago; only shifts big enough to be real are listed): ${progressContext}\n\n` : ''}${cashflowContext ? `UPCOMING BILLS WARNING (forward-looking — this hasn't happened yet, don't describe it in the past tense): ${cashflowContext}\n\n` : ''}${spendingContext ? `Spending signal: ${spendingContext}\n\n` : ''}${strengthContext ? `Strength progression (logged lifts): ${strengthContext}\n\n` : ''}${leverageContext ? `${leverageContext}\n\n` : ''}Unread emails (${emailData.length} threads):
 ${emailSection}`;
 }
 
@@ -585,7 +592,7 @@ function buildGoalCorrectionPrompt(prompt, violations) {
  *  against (see findFalseGoalCompletions above). Both the full builder and
  *  the scoped chief-brief rebuild call this same function, so the guard
  *  applies identically to each — no separate, weaker path. */
-async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '', attentionContext = '', openGoals = [], snapshotFacts = null, recoveryDriversContext = '', calendarSourcesAvailable = { workBusy: true, calendar: true }, answeredQuestionsContext = '') {
+async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '', attentionContext = '', openGoals = [], snapshotFacts = null, recoveryDriversContext = '', calendarSourcesAvailable = { workBusy: true, calendar: true }, answeredQuestionsContext = '', nightlyContextHistoryContext = '') {
   // Apply the same hard filter as generateEmailBriefs so automated senders
   // never reach the main briefing LLM call either.
   const filteredEmails = filterActionableEmails(emailData);
@@ -605,7 +612,7 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
     } catch (e) { console.error('[chief-brief] matchCalendarClassifications failed:', e.message); }
   }
 
-  const prompt = buildChiefBriefPrompt(filteredEmails, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusyBlocks, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext, attentionContext, openGoals, recoveryDriversContext, calendarSourcesAvailable, answeredQuestionsContext, classifiedOverrides);
+  const prompt = buildChiefBriefPrompt(filteredEmails, currentDay, workoutPlan, calendarEvents, wellbeingContext, annotationsContext, recoveryContext, experimentsContext, selfModel, leverageContext, workBusyBlocks, strengthContext, spendingContext, continuityContext, cashflowContext, progressContext, weeklyGoalsContext, chaptersContext, dayOffContext, attentionContext, openGoals, recoveryDriversContext, calendarSourcesAvailable, answeredQuestionsContext, classifiedOverrides, nightlyContextHistoryContext);
 
   // One correlation ID per build, threaded through every attempt's log lines
   // so a failure can be traced across attempts without ever logging content.

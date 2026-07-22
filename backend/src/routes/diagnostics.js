@@ -493,6 +493,69 @@ function createDiagnosticsRouter() {
     });
   }));
 
+  // Diagnostic: the canonical nightly context-tag history + a live
+  // checkTemporalFraming probe — for tracing the temporal-grounding fix
+  // (a historical context tag, e.g. late_meal, restated as a "tonight"
+  // claim). Deliberately exposes ONLY safe, decision-shaped metadata: tag
+  // keys, occurred/planned status, night-ending dates, ages, provenance, the
+  // current snapshot id/version, and the validator's verdict on a caller-
+  // supplied probe sentence — NEVER any generated Chief Brief prose, raw
+  // annotation text, or other private context. `?probe=<sentence>` is
+  // optional free text FROM THE CALLER (an admin diagnosing a specific
+  // reported claim, not a stored user record), run through the same
+  // checkTemporalFraming used in production; it is validated but not
+  // persisted or logged.
+  //   GET /api/diag/nightly-context-history[?probe=<sentence>]
+  router.get('/diag/nightly-context-history', asyncHandler(async (req, res) => {
+    const { computeNightlyContextHistory } = require('../intelligence/nightly-context-history');
+    const { SNAPSHOT_VERSION } = require('../brain/snapshot');
+    const tz = process.env.TZ || 'America/New_York';
+    const history = await computeNightlyContextHistory({ tz });
+
+    // Safe projection only: tag/status/nightEndingLocalDate/ageNights/
+    // provenance/isCurrentOrFuturePlan per occurrence — no summary prose
+    // (the summary text is deterministic and non-sensitive, but omitted here
+    // anyway to keep this endpoint strictly to the structured fields the
+    // task's diagnostics contract names).
+    const safeHistory = history.map((h) => ({
+      tag: h.tag,
+      windowDays: h.windowDays,
+      loggedDays: h.loggedDays,
+      streakDays: h.streakDays,
+      isConsecutiveStreak: h.isConsecutiveStreak,
+      occurrences: h.occurrences.map((o) => ({
+        concept: o.concept,
+        status: o.status,
+        nightEndingLocalDate: o.nightEndingLocalDate,
+        ageNights: o.ageNights,
+        provenance: o.provenance,
+        isCurrentOrFuturePlan: o.isCurrentOrFuturePlan,
+      })),
+    }));
+
+    let probeResult = null;
+    if (typeof req.query.probe === 'string' && req.query.probe.trim()) {
+      const { checkTemporalFraming } = require('../brain/claimValidator');
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+      const violations = checkTemporalFraming([['probe', req.query.probe]], { localDate: today, resolvedContext: null });
+      // Report the verdict + check names only — never echo the probe text
+      // itself back (the caller already has it; this response must not
+      // become a place generated/typed prose gets logged or cached).
+      probeResult = {
+        violated: violations.length > 0,
+        checks: violations.map((v) => v.check),
+      };
+    }
+
+    res.json({
+      snapshotVersion: SNAPSHOT_VERSION,
+      tz,
+      windowDays: history[0]?.windowDays ?? require('../intelligence/nightly-context-history').DEFAULT_WINDOW_DAYS,
+      tags: safeHistory,
+      probe: probeResult,
+    });
+  }));
+
   // Diagnostic: recent stored 'weekly' briefings (scheduler.js runs this
   // Sunday morning, ~10min after the daily morning-routine time — see
   // scheduleWeekly(0, ...) — NOT Monday, despite an out-of-date comment at
