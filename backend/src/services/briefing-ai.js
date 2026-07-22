@@ -249,24 +249,28 @@ const CHIEF_REQUIRED_FIELDS = ['synthesis', 'action', 'risk', 'move'];
 
 // Model for the chief-brief call specifically — the one that has to actually
 // REASON across body/money/focus/calendar/inbox, not just extract or classify.
-// Deliberately NOT the shared ANTHROPIC_MODEL default (Sonnet 5, used for
-// every lighter call — wisdom reflections, context adjustment, habit
-// parsing): at this call volume (once or twice a day) the price difference
-// between tiers is cents, so there's no reason not to spend it on the one
-// call that most benefits from it. Independently env-overridable so this
-// can be dialed without touching the shared default.
-const CHIEF_MODEL = process.env.ANTHROPIC_CHIEF_MODEL || 'claude-opus-4-8';
+// Sonnet 5 with adaptive thinking + medium effort (below) is the current
+// default: comparable reasoning quality to Opus-tier for this call at a
+// fraction of the cost, at this call volume (once or twice a day) still a
+// negligible absolute spend either way — this is a cost/quality dial, not a
+// capability cliff. Independently env-overridable (ANTHROPIC_CHIEF_MODEL) so
+// Railway can pin a different model (e.g. back to an Opus tier) without
+// touching this file or the shared ANTHROPIC_MODEL default (used for every
+// lighter call — wisdom reflections, context adjustment, habit parsing).
+const CHIEF_MODEL = process.env.ANTHROPIC_CHIEF_MODEL || 'claude-sonnet-5';
 
-// Reasoning depth for the chief-brief call (output_config.effort). 'high' is
-// the strongest setting worth defaulting to for a call this infrequent (once
-// or twice a day) — independently overridable without touching CHIEF_MODEL.
-// Validated against Anthropic's actual accepted values at require time (i.e.
-// at server boot, since this module is required from routes/briefing.js at
-// startup) rather than left to surface as a 400 on the first real request —
-// an invalid value would otherwise fail identically on both attempts of
-// every single brief build, burning two paid calls for nothing.
+// Reasoning depth for the chief-brief call (output_config.effort). 'medium'
+// is the current default — a deliberate cost/quality balance point paired
+// with Sonnet 5 above, not a ceiling: independently overridable
+// (ANTHROPIC_CHIEF_EFFORT) up to 'xhigh'/'max' without touching CHIEF_MODEL,
+// e.g. if a stronger model is pinned via the override above. Validated
+// against Anthropic's actual accepted values at require time (i.e. at server
+// boot, since this module is required from routes/briefing.js at startup)
+// rather than left to surface as a 400 on the first real request — an
+// invalid value would otherwise fail identically on both attempts of every
+// single brief build, burning two paid calls for nothing.
 const VALID_CHIEF_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
-const CHIEF_EFFORT = process.env.ANTHROPIC_CHIEF_EFFORT || 'high';
+const CHIEF_EFFORT = process.env.ANTHROPIC_CHIEF_EFFORT || 'medium';
 if (!VALID_CHIEF_EFFORTS.has(CHIEF_EFFORT)) {
   throw new Error(
     `Invalid ANTHROPIC_CHIEF_EFFORT "${CHIEF_EFFORT}" — must be one of: ${[...VALID_CHIEF_EFFORTS].join(', ')}.`
@@ -275,14 +279,19 @@ if (!VALID_CHIEF_EFFORTS.has(CHIEF_EFFORT)) {
 
 // maxTokens for the chief-brief call. Thinking tokens share this budget with
 // the final JSON, so the right ceiling depends on effort: xhigh/max produce
-// substantially more thinking output on Opus 4.8, and Anthropic recommends
-// at least 65536 max_tokens at those levels so a genuinely complete response
-// isn't truncated by a cap sized for a lower tier. low/medium/high start at
-// a smaller, still-generous ceiling and only pay for more on an actual
-// max_tokens truncation (see the error-specific retry policy below).
+// substantially more thinking output on Opus-tier models, and Anthropic
+// recommends at least 65536 max_tokens at those levels so a genuinely
+// complete response isn't truncated by a cap sized for a lower tier.
+// low/medium/high (the current default) start at a smaller, still-generous
+// ceiling and only pay for more on an actual max_tokens truncation (see the
+// error-specific retry policy below). CHIEF_MAX_TOKENS_CEILING is a
+// conservative absolute cap this app never exceeds regardless of which
+// Anthropic model CHIEF_MODEL is pinned to — sized at the top end of the
+// Opus tier so it stays a genuine ceiling if a caller overrides CHIEF_MODEL
+// back to one, not a per-model exact limit.
 const CHIEF_MAX_TOKENS_BASE = 16384;
 const CHIEF_MAX_TOKENS_XHIGH_MIN = 65536;
-const CHIEF_MAX_TOKENS_CEILING = 128000; // Opus 4.8's max output tokens
+const CHIEF_MAX_TOKENS_CEILING = 128000;
 function chiefInitialMaxTokens() {
   return CHIEF_EFFORT === 'xhigh' || CHIEF_EFFORT === 'max' ? CHIEF_MAX_TOKENS_XHIGH_MIN : CHIEF_MAX_TOKENS_BASE;
 }

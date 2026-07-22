@@ -50,7 +50,7 @@ const CHIEF_JSON = JSON.stringify({
 });
 
 function metaResult(text, overrides = {}) {
-  return { text, stopReason: 'end_turn', requestId: 'msg_test', model: 'claude-opus-4-8', ...overrides };
+  return { text, stopReason: 'end_turn', requestId: 'msg_test', model: 'claude-sonnet-5', ...overrides };
 }
 
 function resetModules() {
@@ -60,7 +60,7 @@ function resetModules() {
   delete require.cache[require.resolve('../src/llm/providers/gemini')];
 }
 
-test('generateChiefBrief asks llm.generateText for Opus 4.8 with native Structured Outputs, pinned to the anthropic provider, NOT forced-tool jsonMode/jsonSchema, no temperature', async () => {
+test('generateChiefBrief asks llm.generateText for Sonnet 5 with adaptive thinking + native Structured Outputs, pinned to the anthropic provider, NOT forced-tool jsonMode/jsonSchema, no temperature', async () => {
   const llm = require('../src/llm');
   const original = llm.generateText;
   let captured = null;
@@ -69,18 +69,18 @@ test('generateChiefBrief asks llm.generateText for Opus 4.8 with native Structur
     const { generateChiefBrief } = require('../src/services/briefing-ai');
     await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
     assert.ok(captured, 'llm.generateText was called');
-    assert.equal(captured.model, 'claude-opus-4-8');
+    assert.equal(captured.model, 'claude-sonnet-5');
     assert.equal(captured.provider, 'anthropic', 'must pin to the anthropic provider explicitly');
     assert.equal(captured.returnMeta, true, 'must request safe metadata (model/stopReason/requestId) alongside the text');
     assert.equal(captured.jsonMode, undefined, 'forced-tool jsonMode must not be requested — it disables extended thinking');
     assert.equal(captured.jsonSchema, undefined);
-    assert.equal(captured.temperature, undefined, 'the Anthropic provider never forwards temperature — Opus 4.6+/5 reject non-default sampling params');
+    assert.equal(captured.temperature, undefined, 'the Anthropic provider never forwards temperature — Opus 4.6+/Sonnet 5 reject non-default sampling params');
     assert.ok(captured.outputSchema && typeof captured.outputSchema === 'object', 'outputSchema (Structured Outputs) must be requested');
     assert.equal(captured.outputSchema.additionalProperties, false);
     assert.ok(captured.outputSchema.properties.chiefBrief, 'schema covers chiefBrief');
     assert.ok(captured.outputSchema.properties.urgentEmails, 'schema covers urgentEmails');
-    assert.equal(captured.effort, 'high', 'defaults to high effort');
-    assert.equal(captured.maxTokens, 16384, 'high effort gets the base 16384 initial ceiling');
+    assert.equal(captured.effort, 'medium', 'defaults to medium effort');
+    assert.equal(captured.maxTokens, 16384, 'medium effort gets the base 16384 initial ceiling');
   } finally {
     llm.generateText = original;
   }
@@ -88,7 +88,7 @@ test('generateChiefBrief asks llm.generateText for Opus 4.8 with native Structur
 
 test('ANTHROPIC_CHIEF_MODEL env override is respected without touching the shared ANTHROPIC_MODEL default', async () => {
   const ORIGINAL_ENV = { ...process.env };
-  process.env.ANTHROPIC_CHIEF_MODEL = 'claude-sonnet-5';
+  process.env.ANTHROPIC_CHIEF_MODEL = 'claude-opus-4-8';
   try {
     resetModules();
     const llm = require('../src/llm');
@@ -98,7 +98,7 @@ test('ANTHROPIC_CHIEF_MODEL env override is respected without touching the share
     try {
       const { generateChiefBrief } = require('../src/services/briefing-ai');
       await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
-      assert.equal(captured.model, 'claude-sonnet-5');
+      assert.equal(captured.model, 'claude-opus-4-8');
     } finally {
       llm.generateText = original;
     }
@@ -110,7 +110,7 @@ test('ANTHROPIC_CHIEF_MODEL env override is respected without touching the share
 
 test('ANTHROPIC_CHIEF_EFFORT env override is respected independently of the model', async () => {
   const ORIGINAL_ENV = { ...process.env };
-  process.env.ANTHROPIC_CHIEF_EFFORT = 'medium';
+  process.env.ANTHROPIC_CHIEF_EFFORT = 'high';
   try {
     resetModules();
     const llm = require('../src/llm');
@@ -120,8 +120,8 @@ test('ANTHROPIC_CHIEF_EFFORT env override is respected independently of the mode
     try {
       const { generateChiefBrief } = require('../src/services/briefing-ai');
       await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
-      assert.equal(captured.effort, 'medium');
-      assert.equal(captured.model, 'claude-opus-4-8', 'model default untouched by the effort override');
+      assert.equal(captured.effort, 'high');
+      assert.equal(captured.model, 'claude-sonnet-5', 'model default untouched by the effort override');
     } finally {
       llm.generateText = original;
     }
@@ -194,12 +194,12 @@ test('end-to-end through the REAL anthropic provider: the chief-brief request ha
     assert.equal(result.morningFocus, 'Test morning focus with enough words in it to comfortably clear the fifteen word minimum threshold for this field.');
     assert.deepEqual(result.urgentEmails, []);
 
-    assert.equal(capturedBody.model, 'claude-opus-4-8');
+    assert.equal(capturedBody.model, 'claude-sonnet-5');
     assert.deepEqual(capturedBody.thinking, { type: 'adaptive' }, 'extended thinking must actually be requested');
     assert.equal(capturedBody.tools, undefined, 'no forced tool call');
     assert.equal(capturedBody.tool_choice, undefined, 'no forced tool_choice');
     assert.ok(capturedBody.output_config, 'output_config must be present');
-    assert.equal(capturedBody.output_config.effort, 'high');
+    assert.equal(capturedBody.output_config.effort, 'medium');
     assert.equal(capturedBody.output_config.format.type, 'json_schema');
     assert.ok(capturedBody.output_config.format.schema.properties.chiefBrief, 'the request schema covers chiefBrief');
     assert.equal(capturedBody.output_config.format.schema.additionalProperties, false);
@@ -296,7 +296,7 @@ test('a max_tokens truncation is retried exactly once, with a larger maxTokens o
     const { generateChiefBrief } = require('../src/services/briefing-ai');
     const result = await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
     assert.equal(callCount, 2, 'max_tokens gets exactly one retry (two attempts total)');
-    assert.deepEqual(capturedMaxTokens, [16384, 32768], 'the retry must use a LARGER maxTokens than the initial attempt (default high effort: 16384 -> 32768)');
+    assert.deepEqual(capturedMaxTokens, [16384, 32768], 'the retry must use a LARGER maxTokens than the initial attempt (default medium effort: 16384 -> 32768)');
     assert.equal(result.chiefBrief, null, 'still-truncated after the retry falls back to empty, not a fabricated/partial brief');
   } finally {
     axios.post = originalPost;
@@ -440,7 +440,7 @@ test('a JSON-parse failure never logs response content — only safe metadata (m
     }
     // Safe metadata IS expected to be present.
     const combined = loggedLines.join(' | ');
-    assert.match(combined, /model=claude-opus-4-8/);
+    assert.match(combined, /model=claude-sonnet-5/);
     assert.match(combined, /responseLength=\d+/);
     assert.match(combined, /correlationId=/);
   } finally {
