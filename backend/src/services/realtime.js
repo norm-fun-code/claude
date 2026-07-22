@@ -22,6 +22,14 @@ function isConfigured() {
 
 const DEFAULT_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1';
 const DEFAULT_VOICE = process.env.REALTIME_VOICE || 'cedar';
+// Phantom-turn hardening: background noise/echo transcribed as a tiny
+// foreign-language utterance (e.g. "お願いします。") was being treated as a
+// real user turn. Pinning the transcriber to the expected spoken language
+// sharply cuts how often noise gets hallucinated into SOME language's words
+// at all — and mobile's transcriptGuard.ts's script check (English-session
+// only) needs to know what language it's guarding, so this is exported
+// alongside the session config, not just inlined below.
+const DEFAULT_TRANSCRIBE_LANGUAGE = process.env.REALTIME_TRANSCRIBE_LANGUAGE || 'en';
 
 /**
  * Mint an ephemeral client secret scoped to one Realtime session. `instructions`
@@ -49,15 +57,44 @@ async function createEphemeralSession({ instructions, tools = [], voice = DEFAUL
           // in the live transcript AND a spoken turn could never be persisted
           // to the shared Ask thread (the client keys persistence off the user
           // transcript). Model is env-overridable in case the default name
-          // changes. See mobile/src/lib/realtimeVoice.ts's transcript handling.
-          transcription: { model: process.env.REALTIME_TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe' },
+          // changes. `language` pins the transcriber to the expected spoken
+          // language (env-overridable via REALTIME_TRANSCRIBE_LANGUAGE) — a
+          // major contributor to noise/echo getting hallucinated into a
+          // random short foreign-language "word" in the first place. See
+          // mobile/src/lib/realtimeVoice.ts's transcript handling and
+          // transcriptGuard.ts's pre-response validation.
+          transcription: {
+            model: process.env.REALTIME_TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe',
+            language: DEFAULT_TRANSCRIBE_LANGUAGE,
+          },
+          // near_field assumes the mic is close to the speaker's mouth (a phone
+          // held/worn during the call, not a conference-room far mic) — the
+          // right profile for this app and a real reduction in the ambient
+          // noise/echo that was getting transcribed as phantom speech.
+          noise_reduction: { type: 'near_field' },
           turn_detection: {
             type: 'semantic_vad',
-            // Interrupt the model's own audio the instant the user starts
-            // talking over it — this IS the barge-in requirement; without it
-            // the server would wait for the model to finish before noticing
-            // the new user turn.
-            interrupt_response: true,
+            // Low eagerness biases the VAD toward waiting for a more
+            // confident end-of-turn read rather than firing on every brief
+            // pause or noise blip — fewer spurious "turns" reaching
+            // transcription at all.
+            eagerness: 'low',
+            // The client (realtimeVoice.ts) now owns response creation: it
+            // only sends response.create AFTER a spoken transcript passes the
+            // pre-response validation gate (transcriptGuard.ts). If the
+            // server auto-created a response the instant VAD detected
+            // end-of-turn (the previous, implicit default), unvalidated noise
+            // could still trigger a full response — and a tool call — before
+            // the client ever got a chance to judge the transcript.
+            create_response: false,
+            // Likewise, automatic interrupt_response let ANY VAD-detected
+            // speech_started truncate the assistant's audio instantly — a
+            // stray noise blip could cut off a real answer before validation
+            // even ran. Barge-in is still preserved, just moved client-side:
+            // a short duration-gated cancellation (bargeInGate.ts) only
+            // interrupts once user speech has actually sustained past a brief
+            // threshold, not on the first instant of detected audio energy.
+            interrupt_response: false,
           },
         },
       },
@@ -86,6 +123,7 @@ async function createEphemeralSession({ instructions, tools = [], voice = DEFAUL
     expiresAt: data?.expires_at ?? data?.client_secret?.expires_at ?? null,
     model,
     voice,
+    language: DEFAULT_TRANSCRIBE_LANGUAGE,
   };
 }
 
@@ -143,4 +181,4 @@ function classifyError(err) {
   return classified;
 }
 
-module.exports = { createEphemeralSession, isConfigured, classifyError, redactKeyFragments, DEFAULT_MODEL, DEFAULT_VOICE };
+module.exports = { createEphemeralSession, isConfigured, classifyError, redactKeyFragments, DEFAULT_MODEL, DEFAULT_VOICE, DEFAULT_TRANSCRIBE_LANGUAGE };

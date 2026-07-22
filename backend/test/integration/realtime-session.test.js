@@ -78,6 +78,7 @@ test('POST /voice/realtime/session mints a session and never leaks the permanent
   assert.ok(res.body.sessionId);
   assert.equal(res.body.model, 'gpt-realtime-2.1');
   assert.equal(res.body.voice, 'cedar');
+  assert.equal(res.body.language, 'en', 'the client needs the configured transcription language for its own script guard');
 
   // The permanent key was used to AUTHENTICATE the mint request (server-side
   // only) — it must never appear anywhere in the response body.
@@ -92,6 +93,42 @@ test('POST /voice/realtime/session mints a session and never leaks the permanent
   // Input transcription MUST be enabled — without it the user's spoken words
   // never transcribe, breaking both the live transcript and turn persistence.
   assert.ok(capturedBody.session.audio.input.transcription?.model, 'input transcription must be configured');
+
+  // Phantom-Realtime-turn hardening (see mobile's transcriptGuard.ts): the
+  // transcriber is pinned to English, near-field noise reduction is on, the
+  // VAD is biased toward low eagerness, and — critically — the server must
+  // NOT auto-create a response or auto-interrupt on its own; the mobile
+  // client's pre-response gate owns both of those now.
+  assert.equal(capturedBody.session.audio.input.transcription.language, 'en');
+  assert.deepEqual(capturedBody.session.audio.input.noise_reduction, { type: 'near_field' });
+  assert.equal(capturedBody.session.audio.input.turn_detection.eagerness, 'low');
+  assert.equal(capturedBody.session.audio.input.turn_detection.create_response, false);
+  assert.equal(capturedBody.session.audio.input.turn_detection.interrupt_response, false);
+});
+
+test('POST /voice/realtime/session respects REALTIME_TRANSCRIBE_LANGUAGE overrides without touching the other hardening fields', async () => {
+  process.env.OPENAI_API_KEY = 'sk-test-key';
+  process.env.VOICE_REALTIME_ENABLED = 'true';
+  process.env.REALTIME_TRANSCRIBE_LANGUAGE = 'es';
+  let capturedBody = null;
+  axios.post = async (url, body) => {
+    capturedBody = body;
+    return { data: { value: 'ek_ephemeral_es', expires_at: 1234567890 } };
+  };
+  try {
+    // realtimeService reads the env var at require time, so this test needs
+    // a fresh module instance rather than the one buildTestApp() already
+    // wired up with the default 'en'.
+    delete require.cache[require.resolve('../../src/services/realtime')];
+    const freshRealtimeService = require('../../src/services/realtime');
+    const result = await freshRealtimeService.createEphemeralSession({ instructions: 'test', tools: [] });
+    assert.equal(result.language, 'es');
+    assert.equal(capturedBody.session.audio.input.transcription.language, 'es');
+    assert.equal(capturedBody.session.audio.input.turn_detection.create_response, false, 'the override must not touch unrelated hardening fields');
+  } finally {
+    delete process.env.REALTIME_TRANSCRIBE_LANGUAGE;
+    delete require.cache[require.resolve('../../src/services/realtime')];
+  }
 });
 
 test('POST /voice/realtime/session surfaces a mint failure as a fallback-eligible error, not a 500', async () => {

@@ -178,6 +178,11 @@ function createRealtimeRouter() {
       expiresAt: session.expiresAt,
       model: session.model,
       voice: session.voice,
+      // The spoken language the transcriber was actually configured for —
+      // the client's transcriptGuard.ts script check needs this to match
+      // whatever REALTIME_TRANSCRIBE_LANGUAGE is set to server-side, not
+      // assume 'en' unconditionally.
+      language: session.language,
     });
   }));
 

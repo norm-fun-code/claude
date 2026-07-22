@@ -52,6 +52,8 @@ import {
   authHeaders,
   fetchWithTimeout,
 } from '../config';
+import { decideSpokenTurn } from './realtimeTurnGate';
+import { createBargeInGate, BargeInGate } from './bargeInGate';
 
 export type RealtimeState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'executing' | 'error';
 
@@ -121,10 +123,19 @@ export class RealtimeVoiceSession {
   private localStream: any = null;
   private sessionId: string | null = null;
   private model: string | null = null;
+  /** Spoken language the transcriber was configured for (from the session
+   *  mint response — mirrors backend's REALTIME_TRANSCRIBE_LANGUAGE). Governs
+   *  whether transcriptGuard's script check applies. Defaults to 'en' so a
+   *  session response that omits it (older backend) still gets the guard. */
+  private language = 'en';
   private handlers: RealtimeHandlers;
   private state: RealtimeState = 'idle';
   private startedAt = 0;
   private speechStoppedAt: number | null = null;
+  /** VAD speech_started timestamp for the CURRENT turn — paired with
+   *  speechStoppedAt to compute a captured speech duration for
+   *  transcriptGuard's implausibly-short-noise-turn check. */
+  private turnSpeechStartedAt: number | null = null;
   private firstAudioLogged = false;
   private pendingCalls = new Map<string, PendingCall>();
   private turnUserText = '';
@@ -134,6 +145,16 @@ export class RealtimeVoiceSession {
   private turnUsedDeepAsk = false;
   private turnPersisted = false;
   private muted = false;
+  /** Duration-gated barge-in cancellation (see bargeInGate.ts) — replaces
+   *  the server's automatic interrupt_response, which the session no longer
+   *  sets, so a stray noise blip can't cut off assistant audio before a
+   *  turn is validated. */
+  private bargeInGate: BargeInGate = createBargeInGate();
+  /** Realtime conversation item_ids already handled by the transcription-
+   *  completed handler — makes that handler idempotent so a duplicate
+   *  completion event (a delivery replay, not a new turn) can never create a
+   *  second response or a second reject/delete cycle for the same item. */
+  private processedItemIds = new Set<string>();
   /** Set true at the start of stop() — checked after every `await` in a
    *  data-channel event handler so a message that finishes resolving AFTER
    *  the user ended the session never touches a torn-down dc/pc. */
@@ -164,7 +185,7 @@ export class RealtimeVoiceSession {
     this.startedAt = Date.now();
     this.setState('connecting');
 
-    let session: { sessionId: string; clientSecret: string; model: string };
+    let session: { sessionId: string; clientSecret: string; model: string; language?: string };
     try {
       const res = await fetchWithTimeout(REALTIME_SESSION_URL, { method: 'POST', headers: authHeaders(), body: '{}' }, 15000);
       if (!res.ok) {
@@ -190,6 +211,7 @@ export class RealtimeVoiceSession {
     }
     this.sessionId = session.sessionId;
     this.model = session.model;
+    this.language = session.language || 'en';
 
     try {
       // Force loud-speaker routing before any audio track exists — must run
@@ -274,6 +296,7 @@ export class RealtimeVoiceSession {
     try { this.localStream?.getTracks().forEach((t: any) => t.stop()); } catch { /* noop */ }
     try { this.pc?.close(); } catch { /* noop */ }
     try { InCallManager?.stop(); } catch { /* noop */ }
+    try { this.bargeInGate.dispose(); } catch { /* noop */ }
     this.dc = null;
     this.pc = null;
     this.localStream = null;
@@ -302,6 +325,7 @@ export class RealtimeVoiceSession {
    *  from the previous exchange. */
   private resetTurn() {
     this.speechStoppedAt = null;
+    this.turnSpeechStartedAt = null;
     this.firstAudioLogged = false;
     this.turnUserText = '';
     this.turnAssistantText = '';
@@ -311,10 +335,10 @@ export class RealtimeVoiceSession {
     this.turnPersisted = false;
   }
 
-  /** Belt-and-suspenders manual interrupt — semantic VAD with
-   *  interrupt_response already truncates the assistant's audio server-side
-   *  the instant the user starts talking, but an explicit "tap to stop
-   *  talking" affordance gives the user a sure way to cut it off too. */
+  /** Explicit "tap to stop talking" affordance — an immediate, unconditional
+   *  interrupt, unlike the automatic duration-gated one in bargeInGate.ts
+   *  (which only fires after sustained VAD speech). A deliberate tap is
+   *  never ambiguous, so it skips the gate entirely. */
   interrupt() {
     if (!this.dc || this.dc.readyState !== 'open') return;
     this.dc.send(JSON.stringify({ type: 'response.cancel' }));
@@ -350,26 +374,30 @@ export class RealtimeVoiceSession {
     const type = String(evt.type || '').replace('response.output_audio_transcript.', 'response.audio_transcript.');
 
     switch (type) {
-      case 'input_audio_buffer.speech_started':
-        if (this.state === 'speaking' && this.sessionId) logMetric(this.sessionId, 'interruption', undefined, { auto: true });
+      case 'input_audio_buffer.speech_started': {
+        // Genuine barge-in is now duration-gated client-side (bargeInGate.ts)
+        // instead of the server's automatic interrupt_response (which the
+        // session no longer sets — see createEphemeralSession): a stray noise
+        // blip mid-playback must not instantly cut off the assistant's audio
+        // before anything has been validated. Only actually cancel once this
+        // speech burst has SUSTAINED past the short gate.
+        if (this.state === 'speaking') {
+          this.bargeInGate.speechStarted(() => this.cancelAssistantResponse());
+        }
         this.resetTurn();
+        this.turnSpeechStartedAt = Date.now();
         this.setState('listening');
         break;
+      }
 
       case 'input_audio_buffer.speech_stopped':
+        this.bargeInGate.speechStopped();
         this.speechStoppedAt = Date.now();
         this.setState('thinking');
         break;
 
       case 'conversation.item.input_audio_transcription.completed':
-        this.turnUserText = evt.transcript || this.turnUserText;
-        this.turnUserFinal = true;
-        this.handlers.onTranscript?.('user', evt.transcript || '', true);
-        // The user-transcript and assistant-reply events resolve on
-        // independent, non-deterministically-ordered timelines — either can
-        // finish last. Try persisting from BOTH completion points rather
-        // than assuming this one always precedes response.done.
-        this.maybePersistTurn();
+        this.handleSpokenTranscript(evt.item_id, evt.transcript || '');
         break;
 
       case 'response.audio_transcript.delta':
@@ -418,6 +446,66 @@ export class RealtimeVoiceSession {
       default:
         break; // session.created/updated, response.created, output_item events — no action needed
     }
+  }
+
+  /** Fires when a barge-in has sustained past the gate — distinct from
+   *  interrupt()'s user-tap path, but sends the same event. Note: by fire
+   *  time `state` has already moved to 'listening' (speech_started resets
+   *  optimistically the instant it's detected, before the gate even starts),
+   *  so this can't re-check "still speaking" — response.cancel is a no-op on
+   *  OpenAI's side if there's nothing left to cancel, which is the correct
+   *  behavior for a response that already finished naturally in the interim. */
+  private cancelAssistantResponse() {
+    if (this.stopped || !this.dc || this.dc.readyState !== 'open') return;
+    this.dc.send(JSON.stringify({ type: 'response.cancel' }));
+    if (this.sessionId) logMetric(this.sessionId, 'interruption', undefined, { auto: true });
+  }
+
+  /** The pre-response audio-turn gate. The session no longer auto-creates a
+   *  response when VAD detects end-of-turn (create_response: false — see
+   *  createEphemeralSession) specifically so this can run BEFORE anything
+   *  user-visible or agentic happens: a rejected transcript never renders,
+   *  never gets a response, never runs a tool, and never persists. Accepted
+   *  transcripts are the only path that sends response.create. The actual
+   *  accept/reject/idempotency DECISION lives in realtimeTurnGate.ts (a pure
+   *  function, independently unit-tested) — this method just executes it. */
+  private handleSpokenTranscript(itemId: string | undefined, transcript: string) {
+    const durationMs = this.turnSpeechStartedAt != null && this.speechStoppedAt != null
+      ? this.speechStoppedAt - this.turnSpeechStartedAt
+      : null;
+    const decision = decideSpokenTurn(itemId, transcript, this.processedItemIds, {
+      language: this.language,
+      speechDurationMs: durationMs,
+    });
+
+    if (decision.kind === 'duplicate') return;
+
+    if (decision.kind === 'rejected') {
+      // Safe diagnostics only — reason, character count, detected script
+      // category, and speech duration. NEVER the transcript text or audio.
+      console.warn(`[voice] rejected phantom turn — ${decision.logLine}`);
+      // Delete the rejected item at OpenAI so it can never contaminate a
+      // later turn's context (e.g. the model "remembering" a phantom
+      // utterance a few turns later).
+      if (decision.deleteItemId && this.dc && this.dc.readyState === 'open') {
+        this.dc.send(JSON.stringify({ type: 'conversation.item.delete', item_id: decision.deleteItemId }));
+      }
+      this.resetTurn();
+      this.setState('listening');
+      return;
+    }
+
+    this.turnUserText = decision.transcript;
+    this.turnUserFinal = true;
+    this.handlers.onTranscript?.('user', decision.transcript, true);
+    if (this.dc && this.dc.readyState === 'open') {
+      this.dc.send(JSON.stringify({ type: 'response.create' }));
+    }
+    // The user-transcript and assistant-reply events resolve on independent,
+    // non-deterministically-ordered timelines — either can finish last. Try
+    // persisting from BOTH completion points rather than assuming this one
+    // always precedes response.done.
+    this.maybePersistTurn();
   }
 
   /** Persist the current turn to the shared Ask thread once both sides are
