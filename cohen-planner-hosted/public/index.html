@@ -167,8 +167,14 @@ tr:hover td{background:var(--s2)}
 .adv-proposal-old{color:var(--t3);text-decoration:line-through}
 .adv-proposal-new{color:var(--p);font-weight:600}
 .adv-proposal-reason{color:var(--t2);font-size:9.5px;margin-left:auto;text-align:right;max-width:200px}
-.adv-proposals-actions{display:flex;gap:6px}
+.adv-proposals-target{display:flex;gap:6px;margin-bottom:8px}
+.adv-proposals-target select,.adv-proposals-target input{font-size:11px;padding:6px 8px;border-radius:5px;border:1px solid var(--bd);background:var(--s2);color:var(--tx);font-family:inherit}
+.adv-proposals-target select{flex:0 0 auto;min-width:130px}
+.adv-proposals-target input{flex:1;min-width:0}
+.adv-proposals-actions{display:flex;gap:6px;flex-wrap:wrap}
 .adv-proposals-actions button{padding:6px 11px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .12s}
+.adv-proposals-apply{background:var(--g);color:#fff;border:none;box-shadow:0 3px 9px -3px rgba(26,135,84,.6)}
+.adv-proposals-apply:hover{background:#158049}
 .adv-proposals-save{background:var(--p);color:#fff;border:none}
 .adv-proposals-save:hover{background:#6d28d9}
 .adv-proposals-view{background:var(--s2);color:var(--tx);border:1px solid var(--bd)}
@@ -3275,7 +3281,7 @@ function advToggleAgentic(){
   if(btn){btn.classList.toggle('active',advAgenticMode);btn.textContent=advAgenticMode?'🤖 Propose changes ✓':'🤖 Propose changes'}
   if(lbl)lbl.style.display=advAgenticMode?'block':'none';
   const input=document.getElementById('advInput');
-  if(input)input.placeholder=advAgenticMode?'Describe what you want me to explore (e.g. "What if we bought a $1.7M home?")...':'Ask anything about your plan, portfolio, scenarios, taxes...';
+  if(input)input.placeholder=advAgenticMode?'Try "update my 2027 income to $320K" or "what if we bought a $1.7M home?"...':'Ask anything about your plan, portfolio, scenarios, taxes...';
 }
 
 async function loadAdvisorState(){
@@ -3364,6 +3370,14 @@ INCOME (${planSY} base year)
 • Effective tax rate: ${(y26.effRate*100).toFixed(1)}% all-in (Fed + NYS + NYC + FICA)
 • Net take-home: ${fmt(y26.inc)}
 • Pre-tax deductions: 401k ${fmt(P.pretax401k)} + benefits ${fmt(P.pretaxBenefits)} = ${fmt(P.pretax401k+P.pretaxBenefits)}
+
+PER-YEAR INCOME INPUTS (editable via set_param — years past Y3 come from normCashBase/normStockBase/normGrowth for Norm, or the client-ramp formula for Nancy once yr≥nancyRampYear)
+• Norm cash: Y0 (${planSY}) ${fmt(P.normCashY0)} · Y1 (${planSY+1}) ${fmt(P.normCashY1)} · Y2 (${planSY+2}) ${fmt(P.normCashY2)} · Y3 (${planSY+3}) ${fmt(P.normCashY3)}  [keys: normCashY0, normCashY1, normCashY2, normCashY3]
+• Norm stock/RSU: Y0 ${fmt(P.normStockY0)} · Y1 ${fmt(P.normStockY1)} · Y2 ${fmt(P.normStockY2)} · Y3 ${fmt(P.normStockY3)}  [keys: normStockY0, normStockY1, normStockY2, normStockY3]
+• Nancy W2 (only used while yr<nancyRampYear=${P.nancyRampYear}): Y0 ${fmt(P.nancyW2Y0)} · Y1 ${fmt(P.nancyW2Y1)} · Y2 ${fmt(P.nancyW2Y2)} · Y3 ${fmt(P.nancyW2Y3)}  [keys: nancyW2Y0, nancyW2Y1, nancyW2Y2, nancyW2Y3]
+
+SAVED SCENARIOS (${scenarios.length}) — reference these by name if he asks to update one
+${scenarios.length?scenarios.map(s=>`• "${s.name}"`).join('\n'):'• none saved yet'}
 
 LIFECYCLE PROJECTIONS (current plan)
 • Starting liquid NW: ${fmt(P.startingLiquid)}
@@ -3459,9 +3473,9 @@ function renderAdvisorTab(R,P){
       <div class="adv-msgs" id="advMsgs"></div>
       <div class="adv-input-area">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;padding:0 2px;gap:6px">
-          <button class="adv-agentic-btn" id="advAgenticBtn" onclick="advToggleAgentic()" title="Agentic mode: AI proposes plan changes in its own sandbox scenario">🤖 Propose changes</button>
+          <button class="adv-agentic-btn" id="advAgenticBtn" onclick="advToggleAgentic()" title="Agentic mode: AI computes exact plan changes for you to review and apply">🤖 Propose changes</button>
           <button class="adv-agentic-btn" onclick="advOptimize()" style="background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600" title="Run full optimization — AI analyzes all levers and saves best scenario">⚡ Optimize</button>
-          <span id="advAgenticLabel" style="display:none;font-size:9px;color:var(--p);font-weight:600;margin-left:auto">AI sandbox active — changes go to a separate scenario</span>
+          <span id="advAgenticLabel" style="display:none;font-size:9px;color:var(--p);font-weight:600;margin-left:auto">AI sandbox active — you'll review the diff, then apply to your plan or a scenario</span>
         </div>
         <div class="adv-input-wrap">
           <textarea class="adv-input" id="advInput" placeholder="Ask anything about your plan, portfolio, scenarios, taxes..." rows="1"></textarea>
@@ -3494,6 +3508,7 @@ function advRenderMessages(){
         <div class="adv-starter" onclick="advAsk('How would moving from a \$2M to \$1.7M home affect my plan? Be specific.')"><strong>🏠 Home tradeoff</strong>\$2M vs \$1.7M</div>
         <div class="adv-starter" onclick="advAsk('What\\'s the single biggest risk I\\'m underweighting in this plan?')"><strong>🔍 Blind spots</strong>What am I missing?</div>
         <div class="adv-starter" onclick="advAsk('Using my live Monarch data, what did I actually spend over the last 3 months, broken down by category? Flag anything that looks high.')"><strong>📊 My real spending</strong>Live from Monarch</div>
+        <div class="adv-starter" onclick="advAskAgentic('Update my 2027 income assumptions')"><strong>✏️ Edit an input</strong>Type a change, I'll apply it</div>
       </div>
     </div>`;
     return;
@@ -3522,6 +3537,9 @@ function advAddMessage(role,content,isThinking,container){
 }
 
 function advAsk(q){const input=document.getElementById('advInput');if(input){input.value=q;advSend()}}
+// Like advAsk, but turns agentic mode on first — for starters that need set_param
+// (a plain chat message can't propose plan changes, only agentic mode can).
+function advAskAgentic(q){if(!advAgenticMode)advToggleAgentic();advAsk(q)}
 
 async function advOptimize(){
   // Ensure agentic mode is on
@@ -3836,7 +3854,10 @@ async function advSendAgentic(text,chat,liveContext,thinking){
     const answer=fullReply||'';
     if(answer)thinking.innerHTML=advMarkdown(answer);
     else if(thinking.innerHTML==='')thinking.remove();
-    if(advPendingProposals)advShowProposals(advPendingProposals,chat.title);
+    if(advPendingProposals){
+      const suggestedName=[...toolLog].reverse().find(t=>t.name==='save_scenario')?.scenarioName;
+      advShowProposals(advPendingProposals,chat.title,suggestedName);
+    }
     advisorConversation.push({role:'assistant',content:answer||'[Agentic analysis complete]'});
     chat.messages=advisorConversation;chat.updatedAt=Date.now();
     advRenderRail();
@@ -3866,12 +3887,12 @@ function advInsertToolCallBubble(tc){
   msgs.appendChild(div);msgs.scrollTop=msgs.scrollHeight;
 }
 
-function advShowProposals(proposals,chatTitle){
+function advShowProposals(proposals,chatTitle,suggestedName){
   const msgs=document.getElementById('advMsgs');if(!msgs)return;
   const el=document.createElement('div');el.className='adv-proposals';el.id='advProposalsPanel';
   const fmtVal=(key,v)=>{
     if(['investReturn','expenseInflation','tuitionInflation','homeAppreciation','normGrowth','capGainsTaxRate'].includes(key))return(v*100).toFixed(1)+'%';
-    if(['homePrice','startingLiquid','normCashBase','normStockBase','pretax401k'].includes(key))return fmt(v);
+    if(['homePrice','startingLiquid','normCashBase','normStockBase','pretax401k'].includes(key)||/^(normCashY|normStockY|nancyW2Y)\d$/.test(key))return fmt(v);
     return String(v);
   };
   const rows=proposals.changes.map(c=>`<div class="adv-proposal-row">
@@ -3881,18 +3902,56 @@ function advShowProposals(proposals,chatTitle){
     <span class="adv-proposal-new">${fmtVal(c.key,c.value)}</span>
     <span class="adv-proposal-reason">${advEscape(c.reason||'')}</span>
   </div>`).join('');
-  const scenarioName='AI Advisor — '+(chatTitle||'analysis').slice(0,40);
+  const defaultName=suggestedName||('AI Advisor — '+(chatTitle||'analysis').slice(0,40));
+  const scenarioOptions=scenarios.map((s,i)=>`<option value="${i}">Update: ${advEscape(s.name)}</option>`).join('');
   el.innerHTML=`
   <div class="adv-proposals-hdr">
     <h4>🤖 ${proposals.changes.length} proposed change${proposals.changes.length===1?'':'s'}</h4>
     <button onclick="document.getElementById('advProposalsPanel').remove()">✕</button>
   </div>
   <div class="adv-proposal-list">${rows}</div>
+  <div class="adv-proposals-target">
+    <select id="advProposalTarget" onchange="advUpdateProposalSaveUI()">
+      <option value="new">+ New scenario</option>
+      ${scenarioOptions}
+    </select>
+    <input type="text" id="advProposalNewName" value="${advEscape(defaultName)}" placeholder="Scenario name">
+  </div>
   <div class="adv-proposals-actions">
-    <button class="adv-proposals-save" onclick="advAcceptProposals('${advEscape(scenarioName).replace(/'/g,"\\'")}')">💾 Save as scenario</button>
+    <button class="adv-proposals-apply" onclick="advApplyToLivePlan()" title="Updates your actual plan inputs — not a scenario">✅ Apply to my plan</button>
+    <button class="adv-proposals-save" id="advProposalSaveBtn" onclick="advSaveProposalToTarget()">💾 Save as new scenario</button>
     <button class="adv-proposals-view" onclick="advPreviewProposals()">👁 Preview on chart</button>
   </div>`;
   msgs.appendChild(el);msgs.scrollTop=msgs.scrollHeight;
+}
+
+// Toggles the name field and save-button label between "create new" and "update existing"
+// as the user picks a destination for the AI's proposed changes.
+function advUpdateProposalSaveUI(){
+  const sel=document.getElementById('advProposalTarget');
+  const nameInput=document.getElementById('advProposalNewName');
+  const btn=document.getElementById('advProposalSaveBtn');
+  if(!sel||!btn)return;
+  if(sel.value==='new'){
+    btn.textContent='💾 Save as new scenario';
+    if(nameInput)nameInput.style.display='';
+  } else {
+    const s=scenarios[parseInt(sel.value,10)];
+    btn.textContent='🔄 Update "'+(s?s.name:'')+'"';
+    if(nameInput)nameInput.style.display='none';
+  }
+}
+
+function advSaveProposalToTarget(){
+  const sel=document.getElementById('advProposalTarget');
+  if(!sel)return;
+  if(sel.value==='new'){
+    const nameInput=document.getElementById('advProposalNewName');
+    const name=nameInput&&nameInput.value.trim()?nameInput.value.trim():'AI Advisor scenario';
+    advAcceptProposals(name);
+  } else {
+    advUpdateExistingScenario(parseInt(sel.value,10));
+  }
 }
 
 async function advAcceptProposals(name){
@@ -3908,6 +3967,48 @@ async function advAcceptProposals(name){
   advPendingProposals=null;
   showToast('✓ Saved advisor scenario: "'+name+'" — switch to Charts → Compare to see it','green');
   buildControls();render();
+}
+
+// Applies just the AI's specific proposed changes onto the TARGET scenario's own params —
+// not the AI's full sandbox. The sandbox is always seeded from the LIVE plan (see
+// advSendAgentic's currentParams:{...P}), so replacing a scenario's params with it wholesale
+// would silently revert every field that scenario legitimately differs on (e.g. a distinct
+// home price) back to the live plan's value, keeping only the one field the AI touched.
+async function advUpdateExistingScenario(i){
+  if(!advPendingProposals||!scenarios[i])return;
+  const delta={};advPendingProposals.changes.forEach(c=>{delta[c.key]=c.value});
+  const aiP={...D,...migrateP({...scenarios[i].params,...delta})};
+  scenarios[i].params=aiP;
+  scenarios[i].results=run(aiP);
+  const s=scenarios[i];
+  activeScenarioIdx=i;
+  document.getElementById('advProposalsPanel')?.remove();
+  advPendingProposals=null;
+  showToast('✓ Updated scenario: "'+s.name+'"','green');
+  buildControls();render();savePlannerState();
+  try{
+    const r=await fetch('/api/scenarios/'+s.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:s.params,results:s.results})});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+  }catch(e){console.error('advUpdateExistingScenario failed:',e);setSyncStatus('error')}
+}
+
+// Applies the AI's proposed changes directly to the live plan — the only destination that
+// actually changes Norm's real numbers, so it requires an explicit confirm on top of the
+// explicit button click (the diff was already reviewed in the panel above).
+function advApplyToLivePlan(){
+  if(!advPendingProposals)return;
+  const n=advPendingProposals.changes.length;
+  if(!showConfirm(`Apply ${n} change${n===1?'':'s'} directly to your live plan? This updates your actual numbers, not just a scenario.`))return;
+  // Apply just the specific changed keys onto the CURRENT live plan (not the AI's possibly-
+  // stale sandbox snapshot) — if the user tweaked other sliders while this proposal was
+  // pending, those edits are preserved instead of silently reverted.
+  const delta={};advPendingProposals.changes.forEach(c=>{delta[c.key]=c.value});
+  P={...D,...migrateP({...P,...delta})};
+  activeScenarioIdx=-1;
+  document.getElementById('advProposalsPanel')?.remove();
+  advPendingProposals=null;
+  showToast('✓ Applied to your live plan','green');
+  buildControls();render();savePlannerState();
 }
 
 function advPreviewProposals(){

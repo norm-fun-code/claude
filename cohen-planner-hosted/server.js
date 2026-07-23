@@ -20,11 +20,11 @@ const { run: runModel } = require('./public/model.js');
 const ADVISOR_TOOLS = [
   {
     name: 'set_param',
-    description: 'Propose changing one parameter in the AI sandbox. Never modifies the user\'s actual plan.',
+    description: 'Propose changing one parameter in a sandbox copy of the plan. Never modifies anything until the user reviews the diff and explicitly applies it (to their live plan, a new scenario, or an existing one).',
     input_schema: {
       type: 'object',
       properties: {
-        key: { type: 'string', description: 'Exact parameter key (e.g. homePrice, investReturn, startingLiquid)' },
+        key: { type: 'string', description: 'Exact parameter key (e.g. homePrice, investReturn, startingLiquid, normCashY1)' },
         value: { type: 'number', description: 'New numeric value' },
         reason: { type: 'string', description: 'One sentence: why this change improves the plan' },
       },
@@ -1292,14 +1292,25 @@ app.post('/api/advisor/agentic', requireAuth, advisorLimiter, async (req, res) =
   const agenticSystemPrompt = systemPrompt + `
 
 ═══ AGENTIC MODE ═══
-You have tools to explore changes to Norm's plan in a sandbox. Changes never affect his live plan until he explicitly saves the scenario.
+You have tools to compute changes to Norm's plan in a sandbox (a full copy of his current inputs). Nothing you do here touches his real data by itself — after you finish, he sees an exact diff and picks where it goes: apply directly to his live plan, update an existing saved scenario, or save as a new one. So when he asks you to "update," "change," or "set" something directly (e.g. "update my 2027 income to $320K"), that's exactly what set_param is for — compute the precise change he described, don't just discuss it in prose.
 
 Tools available:
-• set_param(key, value, reason) — propose changing a parameter. Available keys: homePrice, downPctg, mortgageRate, homePurchaseYear, propTaxRate, investReturn, startingLiquid, expenseInflation, normCashBase, nancyHourlyRate, nancyMaxClients, nancyRampYears, pretax401k, mcVol, tuitionInflation, homeAppreciation, normGrowth, capGainsTaxRate
-• run_projection() — compute key metrics with current sandbox params
-• save_scenario(name) — propose saving this sandbox as a named scenario
+• set_param(key, value, reason) — stage one parameter change. See the full key reference below.
+• run_projection() — compute key metrics (final NW, deficit years, worst surplus, total tuition, liquid) with the current sandbox params. Call this after set_param calls to show impact.
+• save_scenario(name) — suggest a name for the change set (used to prefill the "save as new scenario" box he'll see — he can still rename it or choose a different destination).
 
-Workflow: understand what he's asking → set_param for each change → run_projection → interpret results → save_scenario if it's a worthwhile alternative. Be specific and quantitative in your analysis.`;
+═══ PARAMETER KEY REFERENCE ═══
+Per-year income (Y0=the plan's start year, Y1=+1yr, Y2=+2yr, Y3=+3yr — see "PER-YEAR INCOME INPUTS" above in the live state for the actual years and current values):
+• normCashY0, normCashY1, normCashY2, normCashY3 — Norm's cash comp in each of the next 4 years
+• normStockY0, normStockY1, normStockY2, normStockY3 — Norm's stock/RSU comp in each of the next 4 years
+• nancyW2Y0, nancyW2Y1, nancyW2Y2, nancyW2Y3 — Nancy's W2 income in each of the next 4 years (only actually used for years before nancyRampYear — see below)
+Beyond year 4, Norm's income instead grows automatically from normCashBase/normStockBase/normGrowth (no year-specific keys needed — change the base/growth rate instead). Nancy's income beyond nancyRampYear is computed from nancyHourlyRate × client ramp (nancyRampClients→nancyMaxClients over nancyRampYears), not from a per-year field.
+
+Other editable keys: homePrice, downPctg, mortgageRate, homePurchaseYear, propTaxRate, investReturn, startingLiquid, expenseInflation, normCashBase, normStockBase, normGrowth, nancyHourlyRate, nancyMaxClients, nancyRampClients, nancyRampYear, nancyRampYears, nancyWeeksPerYear, pretax401k, mcVol, tuitionInflation, homeAppreciation, capGainsTaxRate, numKids, planStartYear.
+
+If a request is genuinely ambiguous about WHICH income he means (e.g. just "update my income" with no further context — could be Norm, Nancy, cash vs stock, or a specific year), ask him to clarify rather than guessing which key to change. If he names a year and a person, or the context makes it clear, just do it.
+
+Workflow: understand what he's asking → set_param for each change → run_projection → interpret results → optionally save_scenario if it's worth naming. Be specific and quantitative in your analysis.`;
 
   // Live read-only Monarch access (same tools as the normal chat) so the AI can ground
   // its proposals in real balances, spending and holdings — not just plan assumptions.
