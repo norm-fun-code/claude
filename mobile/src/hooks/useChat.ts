@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   CHAT_URL,
   CHAT_HISTORY_URL,
@@ -8,10 +8,14 @@ import {
   authHeaders,
   fetchWithTimeout,
 } from '../config';
+import { mapAskError, NETWORK_ERROR_MESSAGE } from '../lib/askError';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  /** Set on a failed turn's assistant bubble — lets the UI offer a distinct
+      "retry" affordance instead of treating it as a normal answer. */
+  error?: boolean;
 }
 
 export interface Conversation {
@@ -54,6 +58,10 @@ export function useChat() {
   // and the embedded Ask tab (which unmounts/remounts on every tab switch and
   // should open fresh, not silently resume). Each caller loads explicitly —
   // see AskOverlay.tsx's mount effect.
+  // Tracks the last question that failed, so `retry()` can resend it without
+  // the caller having to hold onto the text itself.
+  const lastFailedQuestionRef = useRef<string | null>(null);
+
   const send = useCallback(async (q: string) => {
     if (!q.trim() || loading) return;
     setMessages((prev) => [...prev, { role: 'user', content: q }]);
@@ -66,16 +74,35 @@ export function useChat() {
       }, 90000);
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setMessages((prev) => [...prev, { role: 'assistant', content: `NormOS hit an error (${res.status}). Please try again in a moment.` }]);
+        // json.code is the backend's sanitized, stable error code (e.g.
+        // ask_truncated/ask_declined/ask_unavailable — see
+        // backend/src/chat/ask.js's AskGenerationError and
+        // errorHandler.js's additive `code` field) — never the raw
+        // internal error text. mapAskError distinguishes these from a
+        // generic status-only failure so the user isn't shown the same
+        // undifferentiated message for every kind of backend failure.
+        lastFailedQuestionRef.current = q;
+        const { message } = mapAskError(res.status, json);
+        setMessages((prev) => [...prev, { role: 'assistant', content: message, error: true }]);
         return;
       }
+      lastFailedQuestionRef.current = null;
       setMessages((prev) => [...prev, { role: 'assistant', content: json.answer || 'No answer.' }]);
     } catch {
-      setMessages((prev) => [...prev, { role: 'assistant', content: 'Could not reach NormOS. Check your connection and try again.' }]);
+      lastFailedQuestionRef.current = q;
+      setMessages((prev) => [...prev, { role: 'assistant', content: NETWORK_ERROR_MESSAGE, error: true }]);
     } finally {
       setLoading(false);
     }
   }, [loading]);
+
+  // Re-sends the question from the most recent failed turn, if any — the
+  // "offer a retry" affordance for a truncated/declined/unavailable answer
+  // (or a network failure) without the user having to retype it.
+  const retry = useCallback(() => {
+    const q = lastFailedQuestionRef.current;
+    if (q) send(q);
+  }, [send]);
 
   // Discard the active thread without saving.
   const clear = useCallback(async () => {
@@ -127,5 +154,5 @@ export function useChat() {
     }
   }, [loadConversations]);
 
-  return { messages, loading, conversations, send, clear, save, open, remove, rename, loadConversations, loadHistory };
+  return { messages, loading, conversations, send, retry, clear, save, open, remove, rename, loadConversations, loadHistory };
 }

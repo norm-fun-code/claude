@@ -15,10 +15,18 @@
 // unless it happened to also be caught by an unrelated fire-and-forget
 // sub-operation's own .catch(). This is a pure observability improvement,
 // not a behavior change: the client-facing response is unchanged.
+//
+// `err.code` (when a thrown error sets one — e.g. chat/ask.js's
+// AskGenerationError) rides along as an additional `code` field, purely
+// additive: any error without a `.code` produces the exact same
+// `{ error: message }` body as before, so every existing route/client is
+// unaffected. This is what lets a client (mobile/src/hooks/useChat.ts)
+// distinguish a specific, sanitized failure reason (e.g. "ask_truncated")
+// from a generic 500 without the message text having to encode it.
 function errorHandler(err, req, res, next) {
   console.error(`[${req.method} ${req.originalUrl}] error:`, err.message);
   if (res.headersSent) return next(err); // let Express's default handler close the connection
-  res.status(err.status || 500).json({ error: err.message });
+  res.status(err.status || 500).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
 }
 
 module.exports = { errorHandler };

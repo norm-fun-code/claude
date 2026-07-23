@@ -171,7 +171,7 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
   const [question, setQuestion] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editTitle, setEditTitle] = useState('');
-  const { messages, loading, conversations, send, clear, save, open: openConvo, remove, rename, loadConversations, loadHistory } = useChat();
+  const { messages, loading, conversations, send, retry, clear, save, open: openConvo, remove, rename, loadConversations, loadHistory } = useChat();
   const scrollRef = useRef<ScrollView>(null);
   const inputRef = useRef<TextInput>(null);
   const [kbHeight, setKbHeight] = useState(0);
@@ -487,6 +487,15 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
                   </Animated.View>
                 ))}
 
+                {!loading && messages.length > 0 && messages[messages.length - 1].role === 'assistant' && messages[messages.length - 1].error && (
+                  <Pressable
+                    onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); retry(); }}
+                    style={[styles.retryBtn, { borderColor: c.accent, backgroundColor: c.accentSoft }]}
+                  >
+                    <Text style={[styles.retryBtnText, { color: c.accent }]}>Retry</Text>
+                  </Pressable>
+                )}
+
                 {expState !== null && (
                   <Animated.View
                     entering={FadeInDown.duration(220).springify().damping(18)}
@@ -754,6 +763,8 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 14, fontWeight: '500', flex: 1, lineHeight: 20 },
   chipArrow: { fontSize: 20, fontWeight: '300', marginLeft: spacing.sm },
   bubble: { borderRadius: radius.md, paddingHorizontal: spacing.sm, paddingVertical: 6, marginTop: spacing.sm, maxWidth: '92%' },
+  retryBtn: { alignSelf: 'flex-start', marginTop: spacing.xs, marginLeft: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: 7, borderRadius: radius.pill, borderWidth: 1 },
+  retryBtnText: { fontSize: 13, fontWeight: '700' as const },
   userText: { ...typography.body, fontSize: 15 },
   toolbar: {
     flexDirection: 'row',

@@ -2,7 +2,9 @@
 // Fuses (a) the intelligence layer's findings, (b) semantically-retrieved
 // documents from your library (Readwise + Notion + journal), and (c) the
 // question, then asks the configured LLM to answer from that context only.
+const crypto = require('crypto');
 const llm = require('../llm');
+const { AnthropicRefusalError, AnthropicMaxTokensError } = llm;
 const documents = require('../store/documents');
 const findingsStore = require('../store/findings');
 const annotationsStore = require('../store/annotations');
@@ -456,6 +458,140 @@ function mergeUnique(...lists) {
   return out;
 }
 
+// Model/effort/token-ceiling policy for Ask's own reasoning call —
+// independent of ANTHROPIC_MODEL (the global default) and
+// ANTHROPIC_CHIEF_MODEL/ANTHROPIC_CHIEF_EFFORT (Chief Brief's own policy, see
+// briefing-ai.js) and ANTHROPIC_FAST_MODEL (the clear-command path,
+// answerCommand() above — untouched by any of this).
+//
+// Production bug this fixes: Ask's reasoning call ran with no model/effort
+// override and only maxTokens:1600. Sonnet 5's adaptive thinking SHARES
+// max_tokens with the final visible answer, so a real reasoning question
+// (e.g. "rate my heart health for my age, what does it mean for longevity")
+// could exhaust the entire budget on thinking alone, leaving zero tokens for
+// the answer: stop_reason 'max_tokens' with an empty text block, thrown as
+// AnthropicMaxTokensError, uncaught all the way to asyncHandler -> a bare 500.
+// Fixed the same way Chief Brief was: an explicit, independently
+// configurable model/effort/token-ceiling policy plus an error-specific
+// one-retry policy (askAnswer, below) that never returns or parses a
+// truncated response.
+const ASK_MODEL = process.env.ANTHROPIC_ASK_MODEL || 'claude-sonnet-5';
+const VALID_ASK_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+const ASK_EFFORT = process.env.ANTHROPIC_ASK_EFFORT || 'medium';
+if (!VALID_ASK_EFFORTS.has(ASK_EFFORT)) {
+  throw new Error(`Invalid ANTHROPIC_ASK_EFFORT "${ASK_EFFORT}" — must be one of: ${[...VALID_ASK_EFFORTS].join(', ')}.`);
+}
+// Shared thinking+output budget. Ask returns free-form prose (no Structured
+// Outputs schema like Chief Brief), so a single generous ceiling covers a
+// normal conversational answer at medium effort; the larger retry ceiling
+// only gets paid for on an ACTUAL max_tokens truncation (see askAnswer).
+// max_tokens is a CEILING, not a requested answer length — normal Ask
+// responses stay concise through the SYSTEM prompt's own instructions
+// above, not by starving the ceiling.
+const ASK_MAX_TOKENS_INITIAL = Number(process.env.ANTHROPIC_ASK_MAX_TOKENS) || 8192;
+const ASK_MAX_TOKENS_RETRY = Number(process.env.ANTHROPIC_ASK_MAX_TOKENS_RETRY) || 16384;
+
+// Stable, sanitized error surfaced to callers (routes/chat.js, routes/voice.js)
+// after retry exhaustion — never the raw provider error/message, which could
+// leak request internals. `.status` is always 503 (a provider-side failure,
+// never the caller's fault); `.code` is what the mobile client (useChat.ts)
+// branches on to show a specific, non-generic message.
+class AskGenerationError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'AskGenerationError';
+    this.code = code;
+    this.status = 503;
+  }
+}
+
+/**
+ * One LLM call for Ask's reasoning path. Returns `{ text, failureType }`:
+ * `text` is the generated answer or null; `failureType` is null on success or
+ * one of 'refusal' | 'max_tokens' | 'other' — askAnswer (below) branches on
+ * this to decide whether/how to retry. Mirrors briefing-ai.js's
+ * chiefBriefAttempt. Never logs the question, the answer, the API key, or any
+ * personal context — only safe metadata (route, model, effort, attempt,
+ * token ceiling, elapsed time, Anthropic request ID).
+ */
+async function askAttempt({ system, prompt, maxTokens, attemptLabel, correlationId, route }) {
+  const startedAt = Date.now();
+  const logMeta = () =>
+    `route=${route} model=${ASK_MODEL} effort=${ASK_EFFORT} attempt=${attemptLabel} ` +
+    `maxTokens=${maxTokens} elapsedMs=${Date.now() - startedAt} [correlationId=${correlationId}]`;
+  try {
+    // `provider: 'anthropic'` pins this call regardless of the globally
+    // configured LLM_PROVIDER — ASK_MODEL/ASK_EFFORT/adaptive thinking are
+    // Anthropic-specific concepts, exactly like Chief Brief's own pinned call
+    // (briefing-ai.js). No `temperature`: the Anthropic provider never
+    // forwards it (Opus 4.6+/5 reject non-default sampling params), so it was
+    // always dead weight here.
+    const raw = await llm.generateText({
+      system, prompt, maxTokens, model: ASK_MODEL, effort: ASK_EFFORT,
+      provider: 'anthropic', returnMeta: true,
+    });
+    // Tolerate a bare-string return (the default shape, and what several
+    // existing tests' llm.generateText stubs return regardless of
+    // returnMeta) as well as the {text, requestId, ...} shape returnMeta
+    // actually requests from the real provider — either way `text` must
+    // never end up undefined for a call that didn't throw.
+    const text = typeof raw === 'string' ? raw : raw?.text;
+    const requestId = typeof raw === 'string' ? null : raw?.requestId;
+    console.log(`[chat] ask generation ok (${logMeta()} requestId=${requestId || 'n/a'})`);
+    return { text, failureType: null };
+  } catch (err) {
+    if (err instanceof AnthropicRefusalError) {
+      console.error(`[chat] ask refused (${logMeta()} category=${err.category || 'unspecified'} requestId=${err.requestId || 'n/a'})`);
+      return { text: null, failureType: 'refusal' };
+    }
+    if (err instanceof AnthropicMaxTokensError) {
+      console.error(`[chat] ask truncated at max_tokens (${logMeta()} responseLength=${err.responseLength ?? 'n/a'} requestId=${err.requestId || 'n/a'})`);
+      return { text: null, failureType: 'max_tokens' };
+    }
+    console.error(`[chat] ask generation failed (${logMeta()}): ${err.name || 'Error'} ${err.message}`);
+    return { text: null, failureType: 'other' };
+  }
+}
+
+/**
+ * Error-specific one-retry policy for Ask's reasoning call — mirrors
+ * generateChiefBrief's retry policy in briefing-ai.js:
+ *   - refusal: never retry. Repeating an identical declined request wastes a
+ *     paid call for a result that won't change.
+ *   - max_tokens: retry exactly once, with the LARGER ceiling — a same-size
+ *     retry would just truncate again. Never the same insufficient limit.
+ *   - anything else (network, transient provider error): retry once with the
+ *     SAME params — adaptive thinking's own sampling is non-deterministic, so
+ *     a second identical attempt has a real chance of succeeding.
+ * Throws AskGenerationError (never returns/lets a truncated or otherwise
+ * failed response through) if both attempts fail.
+ */
+async function askAnswer({ system, prompt, route }) {
+  const correlationId = crypto.randomUUID();
+  const first = await askAttempt({
+    system, prompt, maxTokens: ASK_MAX_TOKENS_INITIAL, attemptLabel: 'attempt 1/2', correlationId, route,
+  });
+  if (first.text != null) return first.text;
+
+  if (first.failureType === 'refusal') {
+    throw new AskGenerationError('ask_declined', 'NormOS declined to answer that question.');
+  }
+
+  const retryMaxTokens = first.failureType === 'max_tokens' ? ASK_MAX_TOKENS_RETRY : ASK_MAX_TOKENS_INITIAL;
+  const second = await askAttempt({
+    system, prompt, maxTokens: retryMaxTokens, attemptLabel: 'attempt 2/2 (retry)', correlationId, route,
+  });
+  if (second.text != null) return second.text;
+
+  if (second.failureType === 'refusal') {
+    throw new AskGenerationError('ask_declined', 'NormOS declined to answer that question.');
+  }
+  if (second.failureType === 'max_tokens') {
+    throw new AskGenerationError('ask_truncated', 'NormOS could not finish that answer within its response limit.');
+  }
+  throw new AskGenerationError('ask_unavailable', 'NormOS is temporarily unable to answer questions. Please try again shortly.');
+}
+
 async function ask(question, { history = [], k = 14, voice = false } = {}) {
   if (!question || !question.trim()) throw new Error('question is required');
 
@@ -691,7 +827,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     }
   }
   if (answer == null) {
-    answer = await llm.generateText({ system, prompt, temperature: 0.3, maxTokens: voice ? 400 : 1600 });
+    answer = await askAnswer({ system, prompt, route: voice ? 'voice' : 'chat' });
   }
 
   // Extract and record any recommendation the model flagged via <rec> tag.
@@ -873,4 +1009,11 @@ function parseAction(text) {
   return parseActions(text)[0] ?? null;
 }
 
-module.exports = { ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot, recoveryContext, parseAction, parseActions, looksLikeCommand, validateAction };
+module.exports = {
+  ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot, recoveryContext,
+  parseAction, parseActions, looksLikeCommand, validateAction,
+  // Exported for regression tests (see test/ask-generation.test.js) — not
+  // used by any other production call site.
+  askAnswer, askAttempt, AskGenerationError,
+  ASK_MODEL, ASK_EFFORT, ASK_MAX_TOKENS_INITIAL, ASK_MAX_TOKENS_RETRY,
+};
