@@ -1490,11 +1490,27 @@ app.post('/api/advisor/message', requireAuth, advisorLimiter, async (req, res) =
 // ── Start ─────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 
-db.initSchema()
-  .then(() => {
-    app.listen(PORT, () => console.log(`Cohen Planner running on port ${PORT}`));
-  })
-  .catch(err => {
-    console.error('Failed to init DB schema:', err);
-    process.exit(1);
-  });
+// Start listening immediately — the login page and static assets don't need the DB, and
+// every DB-touching route already catches its own errors and returns a graceful JSON 500
+// (the frontend shows a toast, it doesn't take the app down). Previously app.listen() was
+// gated entirely on initSchema() succeeding, and any failure called process.exit(1) — so a
+// single transient DB connectivity blip during a fresh deploy's startup (common right after
+// a container restarts and reconnects) took the WHOLE app offline. Combined with Railway's
+// restartPolicyMaxRetries:3, three unlucky blips in a row would leave the app down until
+// someone manually redeployed, even though the DB may have already recovered by then.
+app.listen(PORT, () => console.log(`Cohen Planner running on port ${PORT}`));
+
+async function initSchemaWithRetry(retries = 5, delayMs = 3000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      await db.initSchema();
+      console.log('DB schema ready');
+      return;
+    } catch (err) {
+      console.error(`DB schema init attempt ${i + 1}/${retries} failed:`, err.message);
+      if (i < retries - 1) await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+  console.error('DB schema init failed after all retries — server is running but DB-dependent routes will error until this is resolved.');
+}
+initSchemaWithRetry();
