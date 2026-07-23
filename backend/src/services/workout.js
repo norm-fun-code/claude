@@ -328,9 +328,196 @@ async function applyRestDayOverride(tz = process.env.TZ || 'America/New_York') {
   await setWorkoutOverride({ date: day, workoutId: 'rest' });
 }
 
+/**
+ * THE ONE shared write path for explicit workout-level completion
+ * (workout_completions) — the "Mark as complete" button on the workout
+ * currently displayed. Mirrors setWorkoutOverride's shape exactly: null/
+ * falsy workoutId reverts to "not completed" (DELETE); otherwise upserts an
+ * explicit completion record for `date`, keyed to `workoutId` (the effective
+ * workout being marked) with `source` provenance ('manual' from the button,
+ * 'activity_match' when resolveTrainingOutcome infers completion from a
+ * logged activity whose type matches the effective workout — see below).
+ * Idempotent; invalidates the 'training_change' trigger (→ trainingOutcome →
+ * todayForecast) durably, and ONLY when something actually changed.
+ */
+async function setWorkoutCompletion({ date, workoutId = null, source = 'manual' } = {}) {
+  if (!date) throw new Error('setWorkoutCompletion: date is required');
+  const db = require('../db');
+  let changed;
+  if (!workoutId) {
+    const { rowCount } = await db.query('DELETE FROM workout_completions WHERE log_date = $1', [date]);
+    changed = rowCount > 0;
+  } else {
+    if (!VALID_WORKOUT_IDS.has(workoutId)) throw new Error(`setWorkoutCompletion: invalid workoutId "${workoutId}"`);
+    const { rowCount } = await db.query(
+      `INSERT INTO workout_completions (log_date, workout_id, source) VALUES ($1, $2, $3)
+       ON CONFLICT (log_date) DO UPDATE SET workout_id = EXCLUDED.workout_id, source = EXCLUDED.source, completed_at = now()
+         WHERE workout_completions.workout_id IS DISTINCT FROM EXCLUDED.workout_id
+            OR workout_completions.source IS DISTINCT FROM EXCLUDED.source`,
+      [date, workoutId, source]
+    );
+    changed = rowCount > 0;
+  }
+  if (changed) {
+    await require('../brain/invalidation').bumpDurable('training_change', { date });
+  }
+  return { date, workoutId: workoutId || null, source: workoutId ? source : null };
+}
+
+/** Read the explicit completion record for one date, or null if the day's
+ *  effective workout has not been explicitly completed. */
+async function getWorkoutCompletion({ date }) {
+  const db = require('../db');
+  const { rows } = await db.query(
+    `SELECT workout_id, source, completed_at FROM workout_completions WHERE log_date = $1`,
+    [date]
+  );
+  const r = rows[0];
+  return r ? { workoutId: r.workout_id, source: r.source, completedAt: r.completed_at } : null;
+}
+
+/** Human-friendly description of one logged activity, e.g. "a 60-minute
+ *  walk" or "a run" — used by the evening brief's deterministic wording so
+ *  it never has to guess at phrasing itself. Pure. */
+function describeActivity(a) {
+  if (!a) return null;
+  const label = String(a.label || a.activityType || 'activity').toLowerCase();
+  return a.durationMin ? `a ${a.durationMin}-minute ${label}` : `a ${label}`;
+}
+
+/**
+ * THE authoritative "what actually happened toward training today" resolver
+ * — the completion counterpart to getEffectiveWorkout's "what's planned".
+ * Root-cause fix for the production bug where logging ANY activity (a walk)
+ * on a hard-workout day (Intervals) got read as completing that specific
+ * scheduled session, because the only completion signal available was the
+ * generic Exercise habit boolean — which proves some exercise happened, not
+ * WHICH workout or whether it was hard.
+ *
+ * Distinguishes:
+ *   - exerciseHabitDone: the generic habit metric — proves only that SOME
+ *     exercise occurred; never workout identity or intensity.
+ *   - plannedWorkoutCompleted: the EFFECTIVE workout's id was explicitly
+ *     completed — either a workout_completions row for it (source:'manual',
+ *     the Mark Complete button), or a logged activity whose activity_type
+ *     exactly equals the effective workoutId (source:'activity_match' —
+ *     "explicitly logging an Intervals activity is valid evidence of a hard
+ *     session even without tapping Mark Complete"). A logged activity of a
+ *     DIFFERENT type (a walk on an Intervals day) never sets this.
+ *   - actualActivities: every activity_logs row for the day, structured.
+ *   - hardSessionCompleted: true when ANY logged activity's type is itself
+ *     a hard workout id (push/pull/intervals — an unplanned hard session
+ *     still counts, matching the pre-existing forecast rule), OR the
+ *     effective workout was explicitly completed AND is itself hard. NEVER
+ *     true from exerciseHabitDone alone, regardless of whether the
+ *     effective plan is hard — that inference is exactly the bug this
+ *     resolver exists to remove.
+ *   - status: none | planned_only | planned_completed | alternate_activity |
+ *     mixed | generic_exercise_only — see the branches below.
+ *
+ * Every DB read is fail-soft (a query failure yields "no evidence", never a
+ * thrown error) — a training-outcome resolution failure must not break the
+ * forecast/brief it feeds.
+ *
+ * @param {{ asOf?: Date, tz?: string, effectiveWorkout?: object }} [opts]
+ *   Pass `effectiveWorkout` (as BrainSnapshot does) to reuse an
+ *   already-resolved getEffectiveWorkout() result instead of a redundant
+ *   lookup — omit it to have this resolve it itself.
+ */
+async function resolveTrainingOutcome({ asOf = new Date(), tz = process.env.TZ || 'America/New_York', effectiveWorkout } = {}) {
+  const day = asOf.toLocaleDateString('en-CA', { timeZone: tz });
+  const db = require('../db');
+
+  const effective = effectiveWorkout !== undefined
+    ? effectiveWorkout
+    : await getEffectiveWorkout({ asOf, tz });
+
+  let habitRows = [], activityRows = [], completionRows = [];
+  try {
+    [{ rows: habitRows }, { rows: activityRows }, { rows: completionRows }] = await Promise.all([
+      db.query(
+        `SELECT 1 FROM metrics WHERE domain = 'habits' AND metric = 'exercise' AND value >= 0.5
+          AND (ts AT TIME ZONE $1)::date = $2::date LIMIT 1`,
+        [tz, day]
+      ),
+      db.query(
+        `SELECT activity_type, label, duration_min, created_at
+           FROM activity_logs WHERE log_date = $1 ORDER BY created_at ASC`,
+        [day]
+      ),
+      db.query(`SELECT workout_id, source, completed_at FROM workout_completions WHERE log_date = $1`, [day]),
+    ]);
+  } catch { /* fail-soft — resolve with no evidence rather than throw */ }
+
+  const exerciseHabitDone = habitRows.length > 0;
+  const actualActivities = activityRows.map((r) => ({
+    activityType: r.activity_type,
+    label: r.label,
+    durationMin: r.duration_min,
+    loggedAt: r.created_at ? new Date(r.created_at).toISOString() : null,
+  }));
+
+  const plannedWorkoutId = effective?.workoutId ?? null;
+  const plannedWorkoutLabel = effective?.label ?? null;
+
+  const manualCompletion = completionRows[0] || null;
+  const matchingActivity = plannedWorkoutId
+    ? activityRows.find((r) => r.activity_type === plannedWorkoutId) || null
+    : null;
+
+  let plannedWorkoutCompleted = false;
+  let completionSource = null;
+  let completedAt = null;
+  if (manualCompletion && manualCompletion.workout_id === plannedWorkoutId) {
+    plannedWorkoutCompleted = true;
+    completionSource = manualCompletion.source || 'manual';
+    completedAt = manualCompletion.completed_at ? new Date(manualCompletion.completed_at).toISOString() : null;
+  } else if (matchingActivity) {
+    plannedWorkoutCompleted = true;
+    completionSource = 'activity_match';
+    completedAt = matchingActivity.created_at ? new Date(matchingActivity.created_at).toISOString() : null;
+  }
+
+  const hardSessionCompleted =
+    activityRows.some((r) => isHardWorkoutId(r.activity_type)) ||
+    (plannedWorkoutCompleted && isHardWorkoutId(plannedWorkoutId));
+
+  // Activities that are NOT evidence of the planned workout itself — logged
+  // alongside an explicit completion (mixed), or on their own with no
+  // completion at all (alternate_activity).
+  const extraActivities = actualActivities.filter((a) => a.activityType !== plannedWorkoutId);
+
+  let status;
+  const isRestPlan = !plannedWorkoutId || plannedWorkoutId === 'rest';
+  if (plannedWorkoutCompleted) {
+    status = extraActivities.length > 0 ? 'mixed' : 'planned_completed';
+  } else if (actualActivities.length > 0) {
+    status = 'alternate_activity';
+  } else if (exerciseHabitDone) {
+    status = 'generic_exercise_only';
+  } else if (isRestPlan) {
+    status = 'none';
+  } else {
+    status = 'planned_only';
+  }
+
+  return {
+    exerciseHabitDone,
+    plannedWorkoutCompleted,
+    actualActivities,
+    hardSessionCompleted,
+    status,
+    plannedWorkoutId,
+    plannedWorkoutLabel,
+    completionSource,
+    completedAt,
+  };
+}
+
 module.exports = {
   getWorkout, getTodayWorkout, getUpcomingWorkouts, isRestDayCommitment, applyRestDayOverride,
   getEffectiveWorkout, isHardWorkoutId, isHardWorkoutType, workoutIdForPlanType, OVERRIDE_LABELS,
   VALID_WORKOUT_IDS, setWorkoutOverride,
   autoDowngradeFor,
+  setWorkoutCompletion, getWorkoutCompletion, resolveTrainingOutcome, describeActivity,
 };

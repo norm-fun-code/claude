@@ -68,6 +68,12 @@ export const WORKOUT_LOG_URL = `${API_BASE}/api/workout/log`;
 export const WORKOUT_PROGRESSION_URL = `${API_BASE}/api/workout/progression`;
 export const WORKOUT_OVERRIDE_URL = `${API_BASE}/api/workout/override`;
 export const WORKOUT_OVERRIDES_URL = `${API_BASE}/api/workout/overrides`;
+// Explicit workout-level completion — distinct from the generic Exercise
+// habit (POST /api/habits), which only proves SOME exercise occurred, never
+// WHICH workout. See backend/src/services/workout.js's setWorkoutCompletion/
+// resolveTrainingOutcome for the authority these front.
+export const WORKOUT_COMPLETION_URL = `${API_BASE}/api/workout/completion`;
+export const WORKOUT_COMPLETIONS_URL = `${API_BASE}/api/workout/completions`;
 export const ACTIVITY_URL = `${API_BASE}/api/activity`;
 export const ANNOTATIONS_URL = `${API_BASE}/api/annotations`;
 export const CHECKIN_HISTORY_URL = `${API_BASE}/api/checkin/history`;

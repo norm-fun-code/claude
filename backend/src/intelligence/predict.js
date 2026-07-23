@@ -239,14 +239,15 @@ function sleepDebtTrajectory({ debtHours, needHours, asOf = new Date(), creditPe
 /**
  * Gather today's signals from the spine and build the forecast. `recovery` is the
  * liveRecovery() result (passed in to avoid a redundant call). `effectiveWorkout`
- * is the already-resolved getEffectiveWorkout() result — pass it (as the
- * BrainSnapshot does) so a single snapshot resolves the effective workout ONCE
- * instead of this function re-resolving it (a second override lookup + a second
- * recovery-band read). Omit it and this falls back to resolving it itself, so
- * standalone callers still work. Returns { capacity, sleepDebt } — either field
- * may be null.
+ * is the already-resolved getEffectiveWorkout() result, and `trainingOutcome` is
+ * the already-resolved resolveTrainingOutcome() result — pass both (as
+ * BrainSnapshot does) so a single snapshot resolves each ONCE instead of this
+ * function re-resolving them (a second override lookup, a second recovery-band
+ * read, a second set of activity/habit/completion queries). Omit either and this
+ * falls back to resolving it itself, so standalone callers still work. Returns
+ * { capacity, sleepDebt } — either field may be null.
  */
-async function computeTodayForecast({ recovery = null, asOf = new Date(), effectiveWorkout = undefined } = {}) {
+async function computeTodayForecast({ recovery = null, asOf = new Date(), effectiveWorkout = undefined, trainingOutcome = undefined } = {}) {
   const metricsStore = require('../store/metrics');
   const rec = recovery || (await require('./recovery').liveRecovery());
   if (!rec || rec.score == null) return { capacity: null, sleepDebt: null };
@@ -321,47 +322,35 @@ async function computeTodayForecast({ recovery = null, asOf = new Date(), effect
   // Replaced with the authoritative data model: the effective plan
   // (workout_overrides first, else the scheduled split — see
   // services/workout.js's getEffectiveWorkout) tells us whether today is
-  // SUPPOSED to be hard; explicit same-local-day completion evidence (a
-  // logged activity, or the exercise habit checked) tells us whether a hard
-  // session actually HAPPENED. Active energy is no longer consulted at all.
+  // SUPPOSED to be hard; the canonical trainingOutcome (services/workout.js's
+  // resolveTrainingOutcome — hardSessionCompleted specifically) tells us
+  // whether a hard session actually HAPPENED. This function no longer queries
+  // activity_logs/metrics itself at all — that used to make the exercise
+  // habit alone (proving only that SOME exercise occurred) corroborate a hard
+  // session whenever the plan itself was hard, so logging an unrelated walk
+  // on a scheduled Intervals day got read as completing the Intervals session.
+  // resolveTrainingOutcome fixes that at the source; this just reads its
+  // verdict. Active energy is no longer consulted at all.
   const tz = process.env.TZ || 'America/New_York';
   const todayStr = asOf.toLocaleDateString('en-CA', { timeZone: tz });
   let hardSessionStatus = 'none'; // 'none' | 'planned' | 'completed'
   try {
     const workoutSvc = require('../services/workout');
-    const db = require('../db');
-    // Use the snapshot's already-resolved effective workout when provided —
-    // this is the ONE authority read per snapshot. Only resolve it here when a
-    // standalone caller didn't supply it. The effective plan may itself be an
-    // automatic recovery-based downgrade (e.g. red recovery swaps a scheduled
-    // Push to Mobility), which is exactly the case this function exists to get
-    // right: a downgraded, non-hard session must not carry a "hard session"
-    // drag into tomorrow's forecast.
-    const resolveEffective = effectiveWorkout !== undefined
-      ? Promise.resolve(effectiveWorkout)
-      : workoutSvc.getEffectiveWorkout({ asOf, tz, band: rec.band ?? null });
-    const [effective, { rows: exercised }, { rows: acts }] = await Promise.all([
-      resolveEffective,
-      db.query(
-        `SELECT 1 FROM metrics
-          WHERE domain = 'habits' AND metric = 'exercise' AND value >= 0.5
-            AND (ts AT TIME ZONE $1)::date = $2::date
-          LIMIT 1`,
-        [tz, todayStr]
-      ),
-      db.query(
-        `SELECT activity_type FROM activity_logs WHERE log_date = $1`,
-        [todayStr]
-      ),
-    ]);
-    // The exercise habit alone doesn't say WHAT was done, so it only confirms
-    // completion if the effective plan itself is hard; a logged activity_type
-    // that matches the hard vocabulary (push/pull/intervals) is self-evident
-    // regardless of the plan (an unplanned hard session still counts).
-    const completedHard =
-      acts.some((a) => workoutSvc.isHardWorkoutId(a.activity_type)) ||
-      (exercised.length > 0 && !!effective?.isHard);
-    if (completedHard) hardSessionStatus = 'completed';
+    // Use the snapshot's already-resolved effective workout/trainingOutcome
+    // when provided — this is the ONE authority read per snapshot. Only
+    // resolve either here when a standalone caller didn't supply it. The
+    // effective plan may itself be an automatic recovery-based downgrade
+    // (e.g. red recovery swaps a scheduled Push to Mobility), which is
+    // exactly the case this function exists to get right: a downgraded,
+    // non-hard session must not carry a "hard session" drag into tomorrow's
+    // forecast.
+    const effective = effectiveWorkout !== undefined
+      ? effectiveWorkout
+      : await workoutSvc.getEffectiveWorkout({ asOf, tz, band: rec.band ?? null });
+    const outcome = trainingOutcome !== undefined
+      ? trainingOutcome
+      : await workoutSvc.resolveTrainingOutcome({ asOf, tz, effectiveWorkout: effective });
+    if (outcome?.hardSessionCompleted) hardSessionStatus = 'completed';
     else if (effective?.isHard) hardSessionStatus = 'planned';
   } catch { /* non-critical — no drag when we can't determine it */ }
 

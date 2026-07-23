@@ -53,7 +53,11 @@ async function executeAction(routed) {
       );
       await require('../intelligence/activity-sync').syncActivityMinutes(today);
       // Mirrors mobile's addActivity(): logging a non-rest activity for today
-      // also marks the Exercise habit, so streaks/insights stay in sync.
+      // also marks the Exercise habit, so streaks/insights stay in sync. This
+      // is ONLY the generic habit — it never marks a scheduled workout
+      // complete on its own; see services/workout.js's resolveTrainingOutcome
+      // for how activityType is separately matched against the effective
+      // workout for THAT (plannedWorkoutCompleted/hardSessionCompleted).
       if (routed.activityType !== 'rest') {
         await sourcesStore.registerSource({ id: HABITS_SOURCE, domain: 'habits', displayName: 'Habit Stack' });
         const { metrics } = mapHabits({ exercise: true }, { tz });
@@ -61,6 +65,10 @@ async function executeAction(routed) {
         await recomputeHabitScore(tz);
         await sourcesStore.markSync(HABITS_SOURCE);
       }
+      // A voice/Ask-logged activity is part of the canonical trainingOutcome
+      // just like the REST route's — see routes/activity.js's POST handler
+      // for the identical invalidation this mirrors.
+      await require('../brain/invalidation').bumpDurable('training_change', { date: today });
       const durationStr = routed.durationMin ? `${routed.durationMin} min ` : '';
       return { done: true, description: `Logged ${durationStr}${routed.label || routed.activityType}` };
     }

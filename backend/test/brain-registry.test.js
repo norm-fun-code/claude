@@ -13,19 +13,32 @@ const { TRIGGER, invalidationSet, isInvalidatedBy, authorityFor, FIELDS } = requ
 // serve a forecast built from the old score beside the fresh recovery.
 test('recovery_change invalidates recovery AND every field derived from it', () => {
   const set = invalidationSet(TRIGGER.RECOVERY_CHANGE);
-  // Recovery itself, the effective workout (reads the band), the forecast
-  // (reads recovery + effective workout), and the Health recovery composite.
-  assert.deepEqual(set, ['effectiveWorkout', 'recovery', 'recoveryComposite', 'todayForecast']);
+  // Recovery itself, the effective workout (reads the band), trainingOutcome
+  // (depends on effectiveWorkout), the forecast (reads recovery + effective
+  // workout + trainingOutcome), and the Health recovery composite.
+  assert.deepEqual(set, ['effectiveWorkout', 'recovery', 'recoveryComposite', 'todayForecast', 'trainingOutcome']);
   // The specific stale-forecast bug: recovery change reaches the forecast.
   assert.ok(isInvalidatedBy('todayForecast', TRIGGER.RECOVERY_CHANGE));
 });
 
-test('workout_override invalidates the effective workout AND the forecast that assumes it', () => {
+test('workout_override invalidates the effective workout, trainingOutcome, AND the forecast that assumes them', () => {
   const set = invalidationSet(TRIGGER.WORKOUT_OVERRIDE);
-  assert.deepEqual(set, ['effectiveWorkout', 'todayForecast']);
+  assert.deepEqual(set, ['effectiveWorkout', 'todayForecast', 'trainingOutcome']);
   // A "use scheduled workout anyway" / manual swap must not leave the forecast
-  // reasoning about the pre-override session.
+  // reasoning about the pre-override session, and must not leave
+  // trainingOutcome matching completion evidence against the WRONG workout id.
   assert.ok(isInvalidatedBy('todayForecast', TRIGGER.WORKOUT_OVERRIDE));
+  assert.ok(isInvalidatedBy('trainingOutcome', TRIGGER.WORKOUT_OVERRIDE));
+});
+
+// Workout-identity fix: an activity logged/deleted or a workout-completion
+// mutation must invalidate trainingOutcome AND transitively the forecast
+// that reads its hardSessionCompleted verdict.
+test('training_change invalidates trainingOutcome AND the forecast built from it', () => {
+  const set = invalidationSet(TRIGGER.TRAINING_CHANGE);
+  assert.deepEqual(set, ['todayForecast', 'trainingOutcome']);
+  assert.ok(isInvalidatedBy('todayForecast', TRIGGER.TRAINING_CHANGE));
+  assert.ok(!isInvalidatedBy('effectiveWorkout', TRIGGER.TRAINING_CHANGE), 'a training change does not itself change the PLAN, only what happened toward it');
 });
 
 test('transaction_sync invalidates wealth totals (and nothing unrelated)', () => {

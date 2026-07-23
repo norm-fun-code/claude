@@ -78,6 +78,24 @@ test('buildEvidenceClaims: no recovery value at all produces no cause claim (not
   assert.equal(claims.find((c) => c.subject === 'recovery' && c.predicate === 'cause'), undefined);
 });
 
+test('buildEvidenceClaims: workout completion (plannedWorkoutCompleted) becomes its own FACT claim, distinct from the effectivePlan claim', () => {
+  const claims = buildEvidenceClaims({
+    effectiveWorkoutLabel: '4×4 Intervals', effectiveWorkoutSource: 'scheduled', plannedWorkoutCompleted: false,
+  });
+  const planClaim = claims.find((c) => c.subject === 'workout' && c.predicate === 'effectivePlan');
+  const completionClaim = claims.find((c) => c.subject === 'workout' && c.predicate === 'completed');
+  assert.ok(planClaim, 'the plan claim still exists');
+  assert.ok(completionClaim, 'a separate completion claim exists');
+  assert.equal(completionClaim.value, false);
+  assert.equal(completionClaim.evidenceTier, EVIDENCE_TIER.ESTABLISHED);
+  assert.deepEqual(completionClaim.evidenceRefs, ['services/workout.resolveTrainingOutcome']);
+});
+
+test('buildEvidenceClaims: no workout completion claim when plannedWorkoutCompleted is unknown (null/undefined)', () => {
+  const claims = buildEvidenceClaims({ effectiveWorkoutLabel: '4×4 Intervals', effectiveWorkoutSource: 'scheduled' });
+  assert.ok(!claims.some((c) => c.subject === 'workout' && c.predicate === 'completed'));
+});
+
 test('buildEvidenceClaims: goals/commitments become per-item FACT completion claims', () => {
   const claims = buildEvidenceClaims({
     goals: [{ text: 'Ship the deck', achieved: false }, { text: 'Renew passport', achieved: true }],

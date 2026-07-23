@@ -169,3 +169,59 @@ test('validateEveningBriefClaims stays silent when goals/commitments/resolvedCon
   const violations = validateEveningBriefClaims(result, {});
   assert.deepEqual(violations, []);
 });
+
+// ── Workout completion overclaim (workout-identity fix) ─────────────────────
+// The evening brief's own copy of the "walk logged on an Intervals day"
+// production bug: even if an LLM slip reintroduces "done (logged as walk)"
+// wording, this deterministic guard must catch and neutralize it.
+
+test('buildEveningEvidenceFacts exposes plannedWorkoutCompleted/effectiveWorkoutLabel from signals.trainingOutcome', () => {
+  const signals = { trainingOutcome: { plannedWorkoutCompleted: false, plannedWorkoutLabel: '4×4 Intervals' } };
+  const facts = buildEveningEvidenceFacts(signals);
+  assert.equal(facts.plannedWorkoutCompleted, false);
+  assert.equal(facts.effectiveWorkoutLabel, '4×4 Intervals');
+});
+
+test('validateEveningBriefClaims catches "plan" claiming the scheduled workout is done when plannedWorkoutCompleted is false', () => {
+  const signals = {
+    trainingOutcome: { plannedWorkoutCompleted: false, plannedWorkoutLabel: '4×4 Intervals' },
+  };
+  const result = { today: '', plan: 'Planned 4×4 Intervals — done (logged as walk).', tomorrow: '', readiness: '' };
+  const violations = validateEveningBriefClaims(result, signals);
+  assert.ok(violations.some((v) => v.check === 'workout_completion_overclaim'));
+});
+
+test('validateEveningBriefClaims does NOT flag the corrected wording ("not marked complete")', () => {
+  const signals = {
+    trainingOutcome: { plannedWorkoutCompleted: false, plannedWorkoutLabel: '4×4 Intervals' },
+  };
+  const result = { today: '', plan: 'Planned 4×4 Intervals — not marked complete; logged a 60-minute walk.', tomorrow: '', readiness: '' };
+  const violations = validateEveningBriefClaims(result, signals);
+  assert.ok(!violations.some((v) => v.check === 'workout_completion_overclaim'));
+});
+
+test('validateEveningBriefClaims does NOT flag "done" when plannedWorkoutCompleted is genuinely true', () => {
+  const signals = {
+    trainingOutcome: { plannedWorkoutCompleted: true, plannedWorkoutLabel: '4×4 Intervals' },
+  };
+  const result = { today: '', plan: 'Planned 4×4 Intervals — done.', tomorrow: '', readiness: '' };
+  const violations = validateEveningBriefClaims(result, signals);
+  assert.ok(!violations.some((v) => v.check === 'workout_completion_overclaim'));
+});
+
+test('neutralizeEveningBriefViolations replaces the false "done (logged as walk)" plan with the safe fallback', () => {
+  const signals = {
+    trainingOutcome: { plannedWorkoutCompleted: false, plannedWorkoutLabel: '4×4 Intervals' },
+  };
+  const result = {
+    today: 'A normal day.',
+    plan: 'Planned 4×4 Intervals — done (logged as walk).',
+    tomorrow: 'Wind down as usual.',
+    readiness: 'Settled.',
+  };
+  const violations = validateEveningBriefClaims(result, signals);
+  const fallback = { plan: 'Planned 4×4 Intervals — not marked complete; logged a 60-minute walk.' };
+  const neutralized = neutralizeEveningBriefViolations(result, violations, fallback);
+  assert.equal(neutralized.plan, 'Planned 4×4 Intervals — not marked complete; logged a 60-minute walk.');
+  assert.doesNotMatch(neutralized.plan, /done \(logged as walk\)/i);
+});

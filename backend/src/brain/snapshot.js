@@ -32,7 +32,15 @@ const DEFAULT_TZ = process.env.TZ || 'America/New_York';
 // this against a cached row's OWN stamped snapshotVersion and forces a fresh
 // rebuild (never serves the cache-hit fast path) when the cached row
 // predates the current version — see that file's cacheContractCurrent.
-const SNAPSHOT_VERSION = 2;
+//
+// v3 (workout-identity fix): added trainingOutcome + the
+// checkWorkoutCompletionOverclaim claim check — a briefing row built under
+// v2 may carry a false "done" claim about a scheduled hard workout that was
+// actually completed by an unrelated logged activity (the "walk on an
+// Intervals day" bug), with no validator able to catch it (the fact this
+// check depends on, plannedWorkoutCompleted, didn't exist yet). Same
+// cacheContractCurrent forced-rebuild mechanism as v2.
+const SNAPSHOT_VERSION = 3;
 
 /** Wrap a value with provenance metadata. `source` is the authoritative
  *  selector (from the registry); `freshness` is 'fresh' | 'stale' |
@@ -181,12 +189,24 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
       : skip([]),
   ]);
 
-  // forecast depends on recovery + the ALREADY-RESOLVED effective workout — pass
-  // it in so computeTodayForecast does NOT re-resolve the override/band a second
-  // time. One authority read per snapshot.
+  // trainingOutcome depends on the ALREADY-RESOLVED effective workout (same
+  // "one authority read per snapshot" discipline as forecast below) — what
+  // actually happened toward training today (exerciseHabitDone vs
+  // plannedWorkoutCompleted vs hardSessionCompleted), never re-derived by
+  // predict.js or evening-brief.js from raw activity/habit queries anymore.
+  // Always built (not gated by `include`) — cheap (same handful of rows
+  // predict.js used to query inline every forecast build) and both the
+  // forecast and the evening brief need it.
+  const trainingOutcomeRead = await read('trainingOutcome', () => require('../services/workout').resolveTrainingOutcome({
+    asOf, tz, effectiveWorkout: workoutRead.value,
+  }));
+
+  // forecast depends on recovery + the ALREADY-RESOLVED effective workout AND
+  // trainingOutcome — pass both in so computeTodayForecast does NOT
+  // re-resolve/re-query them a second time. One authority read per snapshot.
   const forecastRead = want.forecast
     ? await read('forecast', () => require('../intelligence/predict').computeTodayForecast({
-      recovery: recoveryVal, asOf, effectiveWorkout: workoutRead.value,
+      recovery: recoveryVal, asOf, effectiveWorkout: workoutRead.value, trainingOutcome: trainingOutcomeRead.value,
     }))
     : skip(null);
 
@@ -263,6 +283,9 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
     })),
     effectiveWorkout: fact(workoutRead.value, provenance(workoutRead, {
       confidence: workoutRead.value ? 'high' : null,
+    })),
+    trainingOutcome: fact(trainingOutcomeRead.value, provenance(trainingOutcomeRead, {
+      confidence: trainingOutcomeRead.value ? 'high' : null,
     })),
     forecast: fact(forecastVal?.capacity ? forecastVal : (forecastVal ?? null), provenance(forecastRead, {
       confidence: forecastVal?.capacity?.proxy ? 'low' : (forecastVal?.capacity ? 'high' : null),
@@ -372,8 +395,8 @@ function realtimeTodayContext(snapshot, briefing, opts = {}) {
  *  ONE fact-shaping function: both canonicalFacts(snapshot) and the briefing
  *  hot path (which already has these parts in scope) call THIS, so a brief is
  *  always validated against the identical fact shape the snapshot exposes. */
-function canonicalFactsFrom({ recovery, effectiveWorkout, forecast, goals, commitments, experiments, wealth, localDate, recoveryDrivers, resolvedContext, nightlyContextHistory } = {}) {
-  const r = recovery, w = effectiveWorkout, f = forecast;
+function canonicalFactsFrom({ recovery, effectiveWorkout, trainingOutcome, forecast, goals, commitments, experiments, wealth, localDate, recoveryDrivers, resolvedContext, nightlyContextHistory } = {}) {
+  const r = recovery, w = effectiveWorkout, f = forecast, t = trainingOutcome;
   return {
     localDate: localDate ?? null,
     recoveryScore: r?.score ?? null,
@@ -390,6 +413,15 @@ function canonicalFactsFrom({ recovery, effectiveWorkout, forecast, goals, commi
     effectiveWorkoutId: w?.workoutId ?? null,
     effectiveWorkoutSource: w?.source ?? null,       // override | auto_downgrade | scheduled
     scheduledWorkoutLabel: w?.scheduledLabel ?? null,
+    // Canonical training-completion facts — see services/workout.
+    // resolveTrainingOutcome. `null` (trainingOutcome absent) means "unknown",
+    // never "not completed" — brain/claimValidator.js's
+    // checkWorkoutCompletionOverclaim only fires on an explicit `false`, so a
+    // caller without this fact simply doesn't get the extra check (same
+    // backward-compatible pattern as every other canonical fact here).
+    plannedWorkoutCompleted: t?.plannedWorkoutCompleted ?? null,
+    hardSessionCompleted: t?.hardSessionCompleted ?? null,
+    trainingOutcomeStatus: t?.status ?? null,
     forecastGrade: f?.capacity?.grade ?? null,
     forecastBand: f?.capacity?.band ?? null,
     tomorrowBand: f?.tomorrow?.band ?? null,
@@ -425,6 +457,7 @@ function canonicalFacts(snapshot) {
   return canonicalFactsFrom({
     recovery: snapshot.recovery.value,
     effectiveWorkout: snapshot.effectiveWorkout.value,
+    trainingOutcome: snapshot.trainingOutcome?.value ?? null,
     forecast: snapshot.forecast.value,
     goals: snapshot.goals.value,
     commitments: snapshot.commitments.value,

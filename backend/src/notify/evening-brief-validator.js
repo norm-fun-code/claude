@@ -23,7 +23,7 @@
 // brief's own `signals` object is projected into that shared fact shape.
 'use strict';
 
-const { checkCompletion, checkResolvedContextConflicts } = require('../brain/claimValidator');
+const { checkCompletion, checkResolvedContextConflicts, checkWorkoutCompletionOverclaim } = require('../brain/claimValidator');
 const { buildEvidenceClaims } = require('../brain/evidenceClaim');
 
 const LIGHT_WORDS_RE = /\blight(?:er)?\b|\blow(?:er)?\b|\bminimal(?:ly)?\b|\bbarely (?:any )?moved\b|\bnot much movement\b/i;
@@ -124,6 +124,11 @@ function fieldEntries(result) {
  * shape) is flattened into the {title, status} list checkCompletion expects
  * — anything not literally 'done' counts as still-open, so a SKIPPED
  * commitment described as done is caught exactly like an open one.
+ *
+ * `plannedWorkoutCompleted`/`effectiveWorkoutLabel` come straight from
+ * `signals.trainingOutcome` (services/workout.js's resolveTrainingOutcome,
+ * fetched by runEveningHealthBrief — see notify/evening-brief.js) — the same
+ * canonical fact checkWorkoutCompletionOverclaim reads for Chief Brief.
  */
 function buildEveningEvidenceFacts(signals) {
   const goals = (signals?.evidenceGoals || []).map((g) => ({ text: g.text, achieved: g.achieved === true }));
@@ -134,7 +139,12 @@ function buildEveningEvidenceFacts(signals) {
     ...(c.skipped || []).map((x) => ({ title: x.title, status: 'skipped' })),
   ];
   const resolvedContext = signals?.resolvedContext || null;
-  const facts = { goals, commitments, resolvedContext };
+  const trainingOutcome = signals?.trainingOutcome || null;
+  const facts = {
+    goals, commitments, resolvedContext,
+    plannedWorkoutCompleted: trainingOutcome?.plannedWorkoutCompleted ?? null,
+    effectiveWorkoutLabel: trainingOutcome?.plannedWorkoutLabel ?? null,
+  };
   facts.claims = buildEvidenceClaims(facts);
   return facts;
 }
@@ -151,6 +161,7 @@ function validateEveningBriefClaims(result, facts) {
     ...checkRestDayStepsMislabeled(fields, facts),
     ...checkStepsDescribedAsWorkout(fields, facts),
     ...checkDayOffUsedAsSleepPermission(fields),
+    ...checkWorkoutCompletionOverclaim(fields, evidenceFacts),
     ...checkCompletion(fields, evidenceFacts),
     ...checkResolvedContextConflicts(fields, evidenceFacts),
   ];

@@ -27,6 +27,7 @@ const TRIGGER = Object.freeze({
   ANNOTATION_RETIREMENT: 'annotation_retirement', // an annotation retired/retracted/added
   CONTEXT_ASSERTION_CHANGE: 'context_assertion_change', // a ContextAssertion/ContextRelation created, retired, or resolved
   CONTEXT_TAG_CHANGE: 'context_tag_change',       // a nightly context-tag (routes/context.js) submission landed
+  TRAINING_CHANGE: 'training_change',             // an activity logged/deleted, or a workout-completion record changed
 });
 
 // The canonical fields. `key` is stable — surfaces reference these, not raw
@@ -55,6 +56,22 @@ const FIELDS = Object.freeze({
     ttlMs: null,
     liveRefreshable: true,
   },
+  trainingOutcome: {
+    // The completion counterpart to effectiveWorkout's "what's planned":
+    // what actually happened toward training today (exerciseHabitDone vs
+    // plannedWorkoutCompleted vs hardSessionCompleted — see
+    // services/workout.resolveTrainingOutcome's own doc comment for the
+    // full distinction and the production bug it fixes). Depends on
+    // effectiveWorkout since "was THE EFFECTIVE workout completed" is only
+    // answerable once the effective plan itself is known (an override or
+    // recovery downgrade changes which workout id counts as "the planned
+    // one" for completion-matching purposes).
+    authority: 'services/workout.resolveTrainingOutcome',
+    dependsOn: ['effectiveWorkout'],
+    invalidatedBy: [TRIGGER.TRAINING_CHANGE],
+    ttlMs: null,
+    liveRefreshable: true,
+  },
   todayForecast: {
     authority: 'intelligence/predict.computeTodayForecast',
     // resolvedContext (Context Understanding Layer — see
@@ -67,8 +84,14 @@ const FIELDS = Object.freeze({
     // technically "invalidated" but never reaching anything a cached
     // consumer (the scoped/full-build staleness comparison in
     // realtimeTodayContext, which checks recovery/effectiveWorkout/
-    // todayForecast versions) would actually notice.
-    dependsOn: ['recovery', 'effectiveWorkout', 'eligibleContext', 'resolvedContext'],
+    // todayForecast versions) would actually notice. trainingOutcome added
+    // for the same reason: the forecast's hard-session drag now reads
+    // trainingOutcome.hardSessionCompleted instead of querying
+    // activity/habit rows itself, so a training_change (an activity
+    // logged/deleted, a workout-completion mark/unmark) must reach the
+    // forecast transitively through trainingOutcome, not just invalidate it
+    // in isolation.
+    dependsOn: ['recovery', 'effectiveWorkout', 'eligibleContext', 'resolvedContext', 'trainingOutcome'],
     invalidatedBy: [],
     ttlMs: null,
     liveRefreshable: true,

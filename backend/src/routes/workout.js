@@ -8,7 +8,7 @@ const db = require('../db');
 const workoutChecks = require('../store/workoutChecks');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { requireFields } = require('../middleware/validate');
-const { VALID_WORKOUT_IDS, setWorkoutOverride } = require('../services/workout');
+const { VALID_WORKOUT_IDS, setWorkoutOverride, setWorkoutCompletion } = require('../services/workout');
 
 // Manual per-day workout swaps. GET returns a date→workoutId map across a range
 // (so the week strip can show swapped days); POST sets one day (empty/null
@@ -57,6 +57,44 @@ function createWorkoutRouter() {
     // every workout-override write path is identical instead of three
     // near-duplicate upsert+invalidate implementations.
     const result = await setWorkoutOverride({ date, workoutId: workoutId || null });
+    res.json({ ok: true, ...result });
+  }));
+
+  // Explicit workout-level completion — distinct from the generic Exercise
+  // habit (POST /api/habits), which only proves SOME exercise occurred, never
+  // WHICH workout. GET returns a date→completion map across a range (so the
+  // week strip's checkmarks hydrate from explicit records, never from
+  // /api/habits/today's bare exercise boolean); POST sets/clears the day's
+  // record. See services/workout.js's setWorkoutCompletion/
+  // resolveTrainingOutcome for the full authority these routes front.
+  router.get('/workout/completions', asyncHandler(async (req, res) => {
+    const { from = null, to = null } = req.query;
+    const { rows } = await db.query(
+      `SELECT to_char(log_date, 'YYYY-MM-DD') AS day, workout_id, source, completed_at
+         FROM workout_completions
+        WHERE ($1::date IS NULL OR log_date >= $1)
+          AND ($2::date IS NULL OR log_date <= $2)`,
+      [from, to]
+    );
+    const completions = {};
+    for (const r of rows) {
+      completions[r.day] = { workoutId: r.workout_id, source: r.source, completedAt: r.completed_at };
+    }
+    res.json({ completions });
+  }));
+
+  // POST /api/workout/completion — body: { date, workoutId }. `workoutId`
+  // null/falsy CLEARS the explicit completion record for that date (the
+  // "unmark" path) rather than completing it. "Mark as complete" on the
+  // client sends the workout currently displayed (workout.id) — the same
+  // effective workout getEffectiveWorkout resolves for that date — so this
+  // always writes/removes completion for THE workout on screen, never an
+  // arbitrary id.
+  router.post('/workout/completion', asyncHandler(async (req, res) => {
+    const { date, workoutId } = req.body || {};
+    if (!requireFields(req.body, ['date'], res)) return;
+    if (workoutId && !VALID_WORKOUT_IDS.has(workoutId)) return res.status(400).json({ error: 'invalid workoutId' });
+    const result = await setWorkoutCompletion({ date, workoutId: workoutId || null, source: 'manual' });
     res.json({ ok: true, ...result });
   }));
 

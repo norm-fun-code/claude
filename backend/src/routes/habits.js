@@ -44,6 +44,15 @@ function createHabitsRouter() {
     if (req.body?.gratitude === false) {
       await gratitudeLogsStore.upsert({ logDate: mealLogDateStr(tz), text: '' }).catch(() => {});
     }
+    // exerciseHabitDone is one of the canonical trainingOutcome facts (see
+    // services/workout.js's resolveTrainingOutcome) — a standalone toggle of
+    // the Exercise habit (the Habit Stack screen, independent of logging an
+    // activity) must invalidate it too, or a rebuild right after would keep
+    // reading a stale exerciseHabitDone. Only bump when this write actually
+    // touched `exercise` — every other habit field is irrelevant to training.
+    if (req.body?.exercise !== undefined) {
+      await require('../brain/invalidation').bumpDurable('training_change', { date: mealLogDateStr(tz) });
+    }
     res.json({ written });
   }));
 

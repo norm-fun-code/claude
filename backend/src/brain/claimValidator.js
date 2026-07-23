@@ -236,6 +236,47 @@ function checkEffectiveWorkout(fields, facts) {
   return violations;
 }
 
+// ── Workout completion overclaim ────────────────────────────────────────────
+// The prose-layer half of the "walk logged on an Intervals day" production
+// bug: a sentence claiming the scheduled/effective workout was DONE when the
+// canonical trainingOutcome (services/workout.js's resolveTrainingOutcome,
+// via facts.plannedWorkoutCompleted) says it was NOT explicitly completed.
+// Fires only when facts.plannedWorkoutCompleted is explicitly `false` — an
+// absent/unknown fact (null/undefined, a caller without a trainingOutcome
+// reading) never manufactures a violation, same backward-compatible pattern
+// as every other check here — and only when the sentence is substantially
+// about the effective workout (overlapRatio, same threshold as
+// checkEffectiveWorkout) AND uses completion language not itself negated
+// ("not done", "wasn't completed" must never be flagged — those are the
+// CORRECT wording this check exists to make sure ships).
+const WORKOUT_COMPLETION_VERB_RE = /\bdone\b|\bcompleted\b|\bfinished\b|\bcrushed\b|\bknocked out\b|\bwrapped up\b/i;
+const WORKOUT_COMPLETION_NEGATION_BEFORE_RE = /\b(without|no|not|zero|isn'?t|wasn'?t|hasn'?t|haven'?t|didn'?t|wouldn'?t|never)\b[^.!?]{0,30}$/i;
+
+function checkWorkoutCompletionOverclaim(fields, facts) {
+  if (facts.plannedWorkoutCompleted !== false) return []; // only an explicit "not completed" fact licenses this check
+  const label = facts.effectiveWorkoutLabel;
+  if (!label || String(label).toLowerCase() === 'rest') return [];
+  const violations = [];
+  for (const [field, text] of fields) {
+    for (const sentence of splitIntoSentences(text)) {
+      if (overlapRatio(sentence, label) < 0.5) continue; // sentence isn't substantially about this workout
+      const re = new RegExp(WORKOUT_COMPLETION_VERB_RE.source, 'gi');
+      let m;
+      while ((m = re.exec(sentence))) {
+        const before = sentence.slice(0, m.index);
+        if (WORKOUT_COMPLETION_NEGATION_BEFORE_RE.test(before)) continue; // negated — correct wording, not a violation
+        violations.push({
+          check: 'workout_completion_overclaim', field, sentence, severity: 'high',
+          expected: `${label} not explicitly completed`, actual: 'described as done/completed',
+          message: `describes "${label}" as done/completed, but it was not explicitly completed today (canonical trainingOutcome says plannedWorkoutCompleted=false)`,
+        });
+        break; // one violation per field is enough
+      }
+    }
+  }
+  return violations;
+}
+
 // ── Goal & commitment completion ─────────────────────────────────────────────
 const COMPLETION_VERB_RE =
   /\b(?:is|are|was|were|has been|have been)\s+(?:done|complete|completed|finished|closed(?:\s+out)?|delivered|wrapped(?:\s+up)?|shipped)\b|\bchecked (?:it |that |this )?off\b|\bcrossed (?:it |that |this )?off\b|\bclosed (?:it|that|this) out\b/i;
@@ -692,6 +733,7 @@ function validateClaims(fields, facts) {
     ...checkRecoveryScore(fields, facts),
     ...checkRecoveryCause(fields, facts),
     ...checkEffectiveWorkout(fields, facts),
+    ...checkWorkoutCompletionOverclaim(fields, facts),
     ...checkCompletion(fields, facts),
     ...checkExperiments(fields, facts),
     ...checkSpending(fields, facts),
@@ -986,6 +1028,7 @@ module.exports = {
   validateClaims, neutralizeClaimsGeneric, checkAssociationOverclaim,
   // Exposed for focused unit tests:
   checkRecoveryBand, checkRecoveryScore, checkRecoveryCause, checkEffectiveWorkout,
+  checkWorkoutCompletionOverclaim,
   checkCompletion, checkExperiments, checkSpending, checkForecast, checkCurrentDate, briefFields,
   checkResolvedContextConflicts, checkWeeklyEventCounts, splitIntoSentences,
   checkTemporalFraming,

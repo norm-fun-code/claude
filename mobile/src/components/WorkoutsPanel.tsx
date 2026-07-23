@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, TextInput, KeyboardAvoidingView, Platform, ScrollView, AppState } from 'react-native';
 import { getColors, spacing, radius, shadow } from '../theme';
-import { API_BASE, WORKOUT_LOG_URL, WORKOUT_OVERRIDE_URL, WORKOUT_OVERRIDES_URL, ACTIVITY_URL, authHeaders, fetchWithTimeout, localTz } from '../config';
+import { API_BASE, WORKOUT_LOG_URL, WORKOUT_OVERRIDE_URL, WORKOUT_OVERRIDES_URL, WORKOUT_COMPLETION_URL, WORKOUT_COMPLETIONS_URL, ACTIVITY_URL, authHeaders, fetchWithTimeout, localTz } from '../config';
 import { localDateInTz, weekdayIndexOfDate, shouldResetToToday } from '../lib/workoutDate';
 import { createRequestGuard } from '../lib/playbackOwnership';
+import { isWorkoutMarkedComplete, shouldWriteExerciseHabit } from '../lib/workoutCompletion';
 import {
   getTodaysWorkout,
   HRV_ZONES,
@@ -1683,18 +1684,33 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
     walk: false,
     noLateTraining: false,
   });
-  const [weeklyCompleted, setWeeklyCompleted] = useState<Record<string, boolean>>({});
+  // Explicit workout-level completion records (workout_completions), keyed by
+  // date — the ONLY source of truth for "was THIS workout marked complete".
+  // Deliberately NOT hydrated from /api/habits/today's bare `exercise`
+  // boolean (the root cause of the production bug: that boolean proves only
+  // that SOME exercise happened, never WHICH workout — so logging an
+  // unrelated walk on a scheduled Intervals day used to flip this on for
+  // Intervals too). See backend/src/services/workout.js's
+  // setWorkoutCompletion/resolveTrainingOutcome.
+  const [completionByDay, setCompletionByDay] = useState<Record<string, { workoutId: string; source: string } | undefined>>({});
+  // Derived, presence-based view for the WeeklyStrip's checkmarks — any
+  // explicit completion record for a date reads as "done" there (the strip
+  // doesn't need per-workout-id precision the way the Mark Complete button's
+  // own `done` state below does).
+  const weeklyCompleted: Record<string, boolean> = {};
+  for (const [d, c] of Object.entries(completionByDay)) if (c) weeklyCompleted[d] = true;
   const [saveFailed, setSaveFailed] = useState(false);
   // Independent per-source load-failure flags for today's rehydration fetches
-  // (checks, swaps, activities, logged sets) — surfaced as one banner with a
-  // manual retry, so a transient failure reads as "couldn't load, tap to
-  // retry" instead of silently rendering as an empty/reset day.
+  // (checks, swaps, activities, logged sets, completions) — surfaced as one
+  // banner with a manual retry, so a transient failure reads as "couldn't
+  // load, tap to retry" instead of silently rendering as an empty/reset day.
   const [checksLoadError, setChecksLoadError] = useState(false);
   const [overridesLoadError, setOverridesLoadError] = useState(false);
   const [activitiesLoadError, setActivitiesLoadError] = useState(false);
   const [logsLoadError, setLogsLoadError] = useState(false);
+  const [completionsLoadError, setCompletionsLoadError] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
-  const loadError = checksLoadError || overridesLoadError || activitiesLoadError || logsLoadError;
+  const loadError = checksLoadError || overridesLoadError || activitiesLoadError || logsLoadError || completionsLoadError;
   const [workoutLogs, setWorkoutLogs] = useState<Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>>({});
   const [workoutHistory, setWorkoutHistory] = useState<Record<string, Array<{set_number: number; reps: number | null; weight_lbs: number | null}>>>({});
   // Ad hoc exercises added to a day that the plan didn't call for (e.g. "Chest
@@ -1754,23 +1770,27 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Rehydrate today's completion from the exercise habit so the workout shows as
-  // done if it was already logged today (and resets at midnight, backend-side).
+  // Rehydrate explicit workout-completion records for the visible week (Mon..Sun
+  // around today) — mirrors the workout-overrides effect just below it. This is
+  // the ONLY hydration path for weeklyCompleted/"Marked complete": never
+  // /api/habits/today's bare exercise boolean (see completionByDay's own doc
+  // comment above for why).
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetchWithTimeout(`${API_BASE}/api/habits/today`, { headers: authHeaders() });
-        if (!res.ok) return;
-        const t = await res.json();
-        if (cancelled || !t?.logged) return;
-        if (t.exercise) setWeeklyCompleted((prev) => ({ ...prev, [todayKey]: true }));
+        const from = getDateKey(0), to = getDateKey(6);
+        const res = await fetchWithRetry(`${WORKOUT_COMPLETIONS_URL}?from=${from}&to=${to}`, { headers: authHeaders() });
+        if (cancelled) return;
+        const { completions } = await res.json();
+        setCompletionsLoadError(false);
+        setCompletionByDay(completions ?? {});
       } catch {
-        /* offline — leave blank */
+        if (!cancelled) setCompletionsLoadError(true);
       }
     })();
     return () => { cancelled = true; };
-  }, [todayKey]);
+  }, [reloadTick]);
 
   // Rehydrate the per-exercise + non-negotiable checks for the selected day, so
   // ticking off exercises survives tab switches / reopens (resets at midnight).
@@ -2075,9 +2095,23 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
     return [];
   }
 
+  // "Mark as complete" — writes/removes the EXPLICIT completion record for
+  // THE WORKOUT CURRENTLY DISPLAYED (workout.id), never inferred from any
+  // activity or habit. `done` (below, at render time) is likewise computed
+  // by comparing completionByDay against workout.id — not bare presence —
+  // so a completion recorded for a different workout (e.g. before a swap or
+  // a recovery downgrade changed today's effective session) never reads as
+  // "this workout is done".
   async function handleMarkDone(dateKey: string) {
-    const nextDone = !weeklyCompleted[dateKey];
-    setWeeklyCompleted((prev) => ({ ...prev, [dateKey]: nextDone }));
+    const wasComplete = isWorkoutMarkedComplete(completionByDay[dateKey], workout.id);
+    const nextDone = !wasComplete;
+    const prevEntry = completionByDay[dateKey];
+    setCompletionByDay((prev) => {
+      const next = { ...prev };
+      if (nextDone) next[dateKey] = { workoutId: workout.id, source: 'manual' };
+      else delete next[dateKey];
+      return next;
+    });
 
     // Marking complete also checks (or unchecks) every exercise in the workout,
     // and persists each so it survives a reopen / matches the per-exercise state.
@@ -2092,29 +2126,58 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
       saveCheck(n, 'exercise', nextDone, () => setSaveFailed(true));
     }
 
-    // Marking *today's* workout complete also logs the Exercise habit (and
-    // unchecking clears it), so the Today tab and Insights stay in sync. Other
-    // days are local-only — we can't backfill a habit for a past/future date here.
+    setSaveFailed(false);
+    try {
+      const res = await fetchWithTimeout(WORKOUT_COMPLETION_URL, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ date: dateKey, workoutId: nextDone ? workout.id : null }),
+      });
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+    } catch {
+      // Roll back so the button doesn't claim a completion that wasn't saved.
+      setCompletionByDay((prev) => {
+        const next = { ...prev };
+        if (prevEntry) next[dateKey] = prevEntry; else delete next[dateKey];
+        return next;
+      });
+      setSaveFailed(true);
+      return;
+    }
+
+    // Marking *today's* workout complete also logs the Exercise habit, so the
+    // Today tab and Insights stay in sync. UNmarking only clears it when no
+    // OTHER non-rest activity remains logged today — otherwise unmarking one
+    // scheduled workout would wrongly wipe out the habit credit a separate,
+    // still-logged activity already earned. Other days are local-only — we
+    // can't backfill/retract a habit for a past/future date here.
     if (dateKey === todayKey) {
-      setSaveFailed(false);
-      try {
-        const res = await fetchWithTimeout(`${API_BASE}/api/habits`, {
-          method: 'POST',
-          headers: authHeaders(),
-          body: JSON.stringify({ exercise: nextDone }),
-        });
-        if (!res.ok) throw new Error(`Server ${res.status}`);
-      } catch {
-        // Roll back so the button doesn't claim a completion that wasn't saved.
-        setWeeklyCompleted((prev) => ({ ...prev, [dateKey]: !nextDone }));
-        setSaveFailed(true);
+      if (shouldWriteExerciseHabit(nextDone, activities)) {
+        try {
+          const res = await fetchWithTimeout(`${API_BASE}/api/habits`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({ exercise: nextDone }),
+          });
+          if (!res.ok) throw new Error(`Server ${res.status}`);
+        } catch {
+          setSaveFailed(true);
+        }
       }
     }
   }
 
   // Log an alternate activity for the selected day. Optimistic insert with a
   // temp id; on success we swap in the server row. Logging a non-rest activity
-  // for TODAY also marks the Exercise habit so streaks/insights stay in sync.
+  // for TODAY still marks the generic Exercise habit (streaks/insights stay in
+  // sync) — but it must NEVER mark a scheduled workout complete on its own.
+  // completionByDay/weeklyCompleted are hydrated ONLY from explicit
+  // workout-completion records (GET /api/workout/completions above); this
+  // function deliberately does not touch that state at all. The backend's
+  // canonical trainingOutcome (services/workout.js's resolveTrainingOutcome)
+  // separately recognizes an activity whose type exactly matches the
+  // effective workout as valid completion evidence for the forecast/evening
+  // brief — that's a server-side fact, not something this button reflects.
   async function addActivity(a: { activity_type: string; label: string; duration_min: number | null; note: string | null; no_watch: boolean }) {
     try {
       const res = await fetchWithTimeout(ACTIVITY_URL, {
@@ -2127,7 +2190,6 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
       setActivities((prev) => [...prev, { ...activity, estimate }]);
 
       if (selectedKey === todayKey && a.activity_type !== 'rest') {
-        setWeeklyCompleted((prev) => ({ ...prev, [todayKey]: true }));
         fetchWithTimeout(`${API_BASE}/api/habits`, {
           method: 'POST',
           headers: authHeaders(),
@@ -2152,7 +2214,10 @@ function WorkoutsPanel({ hrv, isDark, recoveryBand, recoveryScore }: Props) {
   }
 
   const duration = 'duration' in workout ? (workout as any).duration : undefined;
-  const done = !!weeklyCompleted[selectedKey];
+  // Precise (workout-id-matched) completion for the selected day's own Mark
+  // Complete button — distinct from weeklyCompleted's presence-based view
+  // used by the WeeklyStrip (see completionByDay's doc comment above).
+  const done = isWorkoutMarkedComplete(completionByDay[selectedKey], workout.id);
 
   return (
     <View>

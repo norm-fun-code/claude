@@ -219,6 +219,19 @@ function buildEvidenceClaims(facts, meta = {}) {
       evidenceTier: EVIDENCE_TIER.ESTABLISHED,
     }));
   }
+  // ── Workout completion (explicit, canonical — see
+  // services/workout.resolveTrainingOutcome) — distinct from the plan claim
+  // above: this is whether the effective workout was EXPLICITLY completed,
+  // never inferred from the generic Exercise habit alone. Backs
+  // claimValidator.js's checkWorkoutCompletionOverclaim.
+  if (facts.plannedWorkoutCompleted != null && facts.effectiveWorkoutLabel) {
+    claims.push(makeClaim({
+      ...base, claimType: CLAIM_TYPE.FACT, subject: 'workout', predicate: 'completed',
+      value: facts.plannedWorkoutCompleted,
+      evidenceRefs: ['services/workout.resolveTrainingOutcome'],
+      evidenceTier: EVIDENCE_TIER.ESTABLISHED,
+    }));
+  }
 
   // ── Goal / commitment completion ───────────────────────────────────────
   for (const g of facts.goals || []) {

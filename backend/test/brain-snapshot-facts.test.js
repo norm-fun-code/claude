@@ -20,6 +20,12 @@ const EFFECTIVE_WORKOUT = {
   isHard: false, scheduledWorkoutId: 'push', scheduledLabel: 'Push', recoveryBand: 'red',
 };
 const FORECAST = { capacity: { grade: 'B-', band: 'yellow', proxy: false }, tomorrow: { band: 'green' } };
+const TRAINING_OUTCOME = {
+  exerciseHabitDone: false, plannedWorkoutCompleted: false, actualActivities: [],
+  hardSessionCompleted: false, status: 'planned_only',
+  plannedWorkoutId: 'mobility', plannedWorkoutLabel: 'Mobility',
+  completionSource: null, completedAt: null,
+};
 const GOALS = [{ title: 'Ship the wealth reconciler', achieved: false }];
 const COMMITMENTS = [{ title: 'Call the accountant', status: 'open' }];
 const EXPERIMENTS = [{ hypothesis: 'Magnesium improves deep sleep', status: 'running', verdict: null }];
@@ -47,6 +53,7 @@ function stub(modPath, name, fn) {
 }
 test.before(() => {
   stub('../src/services/workout', 'getEffectiveWorkout', async () => EFFECTIVE_WORKOUT);
+  stub('../src/services/workout', 'resolveTrainingOutcome', async () => TRAINING_OUTCOME);
   stub('../src/intelligence/predict', 'computeTodayForecast', async () => FORECAST);
   stub('../src/store/goals', 'listGoals', async () => GOALS);
   stub('../src/store/intentions', 'currentIntention', async () => ({ context: 'Focus week' }));
@@ -77,7 +84,7 @@ test('a single snapshot yields identical recovery/workout/goal/commitment/spendi
   // the snapshot path projects via canonicalFacts. They MUST agree — that's the
   // single-source-of-truth guarantee.
   const fromParts = canonicalFactsFrom({
-    recovery: RECOVERY, effectiveWorkout: EFFECTIVE_WORKOUT, forecast: FORECAST,
+    recovery: RECOVERY, effectiveWorkout: EFFECTIVE_WORKOUT, trainingOutcome: TRAINING_OUTCOME, forecast: FORECAST,
     goals: GOALS, commitments: COMMITMENTS, experiments: EXPERIMENTS,
     wealth: { insights: WEALTH_INSIGHTS, spendingMtd: SPENDING_MTD },
     localDate: snap.localDate,
@@ -94,6 +101,11 @@ test('a single snapshot yields identical recovery/workout/goal/commitment/spendi
   assert.equal(fromSnap.effectiveWorkoutSource, 'auto_downgrade');
   assert.equal(fromSnap.forecastGrade, 'B-');
   assert.equal(fromSnap.tomorrowBand, 'green');
+  // Workout-identity fix: trainingOutcome facts flow through the same
+  // single-source-of-truth projection as everything else.
+  assert.equal(fromSnap.plannedWorkoutCompleted, false);
+  assert.equal(fromSnap.hardSessionCompleted, false);
+  assert.equal(fromSnap.trainingOutcomeStatus, 'planned_only');
 
   // The realtime voice projection reads the SAME effective workout + recovery —
   // not a re-derivation. (Requirement: realtime + briefing describe one session.)

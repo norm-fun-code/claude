@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { composeFallback } = require('../src/notify/evening-brief');
+const { composeFallback, composeEveningBrief } = require('../src/notify/evening-brief');
+const llm = require('../src/llm');
 
 const sig = (autonomic, load = {}, openHabits = []) => ({
   autonomic: { tone: 'settled', sampleThin: false, hrv: null, hrvBaseline: null, rhr: null, rhrBaseline: null, ...autonomic },
@@ -112,6 +113,76 @@ test('rest day: the plan line does not grade the rest itself as a miss', () => {
   assert.equal(c.plan, ''); // nothing to grade — matches the pre-existing training.planned==='rest' guard
 });
 
+// ── Workout-identity fix: the exact production reproduction ────────────────
+// "Planned 4×4 Intervals — done (logged as walk)." must never be produced
+// again. `training.completed` now means ONLY "the effective workout was
+// EXPLICITLY completed" (canonical plannedWorkoutCompleted) — a walk logged
+// on an Intervals day must read as NOT completed, with the walk described
+// plainly as what it is.
+
+test('THE EXACT REPRODUCTION: Intervals planned + a 60-minute walk logged => "not marked complete; logged a 60-minute walk.", never "done"', () => {
+  const c = composeFallback({
+    ...sig({ tone: 'settled' }),
+    training: {
+      planned: '4×4 Intervals',
+      completed: false,
+      actual: 'walk',
+      actualActivityDescription: 'a 60-minute walk',
+      hasExtraActivity: false,
+      extraActivityDescription: null,
+    },
+  });
+  assert.equal(c.plan, 'Planned 4×4 Intervals — not marked complete; logged a 60-minute walk.');
+  assert.doesNotMatch(c.plan, /\bdone\b/i, 'must never say "done" when the planned workout was not explicitly completed');
+  assert.doesNotMatch(c.plan, /logged as walk/i, 'must never use the old "done (logged as X)" phrasing');
+});
+
+test('explicit Intervals completion => "done." wording, no walk to mention', () => {
+  const c = composeFallback({
+    ...sig({ tone: 'settled' }),
+    training: {
+      planned: '4×4 Intervals',
+      completed: true,
+      actual: 'intervals',
+      actualActivityDescription: null,
+      hasExtraActivity: false,
+      extraActivityDescription: null,
+    },
+  });
+  assert.equal(c.plan, 'Planned 4×4 Intervals — done.');
+});
+
+test('mixed: explicit Intervals completion PLUS an additional walk => "done." plus a SEPARATE mention of the walk, never describing the walk as Intervals', () => {
+  const c = composeFallback({
+    ...sig({ tone: 'settled' }),
+    training: {
+      planned: '4×4 Intervals',
+      completed: true,
+      actual: 'intervals',
+      actualActivityDescription: 'a walk',
+      hasExtraActivity: true,
+      extraActivityDescription: 'a walk',
+    },
+  });
+  assert.equal(c.plan, 'Planned 4×4 Intervals — done. Also logged a walk today.');
+  assert.doesNotMatch(c.plan, /logged as walk/i);
+});
+
+test('generic Exercise habit alone (no specific activity logged) falls back to the original "not logged as done" wording', () => {
+  const c = composeFallback({
+    ...sig({ tone: 'settled' }),
+    training: {
+      planned: '4×4 Intervals',
+      completed: false,
+      actual: null,
+      actualActivityDescription: null,
+      hasExtraActivity: false,
+      extraActivityDescription: null,
+    },
+  });
+  assert.equal(c.plan, 'Planned 4×4 Intervals — not logged as done; the day\'s closed either way.');
+});
+
 // ── Tomorrow-awareness: the bedtime lever gets concrete when there's an early
 // commitment on record. A day off may be named as a fact but never loosens
 // the advice itself — that's driven only by sleep debt/tone. ───────────────
@@ -201,4 +272,73 @@ test('no check-in logged does not alter the readiness read', () => {
   const withNull = composeFallback({ ...sig({ tone: 'settled' }), checkin: null });
   const withoutKey = composeFallback(sig({ tone: 'settled' }));
   assert.equal(withNull.readiness, withoutKey.readiness);
+});
+
+// ── composeEveningBrief end-to-end: the LLM path is neutralized too ────────
+// Even if the model itself slips and writes the old buggy wording, the
+// deterministic post-generation guard (evening-brief-validator.js's
+// checkWorkoutCompletionOverclaim) must catch and replace it — this is not
+// just a composeFallback-level fix.
+
+test('an LLM result that says "done (logged as walk)" gets neutralized back to the safe fallback wording', async () => {
+  const originalGenerateText = llm.generateText;
+  llm.generateText = async () => JSON.stringify({
+    headline: 'Settled tonight',
+    readiness: 'Your body looks settled tonight.',
+    today: 'A normal day of movement.',
+    plan: 'Planned 4×4 Intervals — done (logged as walk).',
+    tomorrow: 'Hold your bedtime window.',
+    habits: '',
+    reflection: 'Take a moment for gratitude.',
+  });
+  try {
+    const signals = {
+      ...sig({ tone: 'settled' }),
+      training: {
+        planned: '4×4 Intervals',
+        completed: false,
+        actual: 'walk',
+        actualActivityDescription: 'a 60-minute walk',
+        hasExtraActivity: false,
+        extraActivityDescription: null,
+      },
+      trainingOutcome: { plannedWorkoutCompleted: false, plannedWorkoutLabel: '4×4 Intervals' },
+    };
+    const result = await composeEveningBrief(signals);
+    assert.doesNotMatch(result.plan, /done \(logged as walk\)/i, 'the false completion claim must never survive to the final result');
+    assert.equal(result.plan, 'Planned 4×4 Intervals — not marked complete; logged a 60-minute walk.', 'replaced with the safe, canonical fallback wording');
+  } finally {
+    llm.generateText = originalGenerateText;
+  }
+});
+
+test('an LLM result that correctly says the plan was NOT completed passes through untouched', async () => {
+  const originalGenerateText = llm.generateText;
+  llm.generateText = async () => JSON.stringify({
+    headline: 'Settled tonight',
+    readiness: 'Your body looks settled tonight.',
+    today: 'A normal day of movement.',
+    plan: 'You had 4×4 Intervals on the books but it was not marked complete — a walk went in the books instead.',
+    tomorrow: 'Hold your bedtime window.',
+    habits: '',
+    reflection: 'Take a moment for gratitude.',
+  });
+  try {
+    const signals = {
+      ...sig({ tone: 'settled' }),
+      training: {
+        planned: '4×4 Intervals',
+        completed: false,
+        actual: 'walk',
+        actualActivityDescription: 'a 60-minute walk',
+        hasExtraActivity: false,
+        extraActivityDescription: null,
+      },
+      trainingOutcome: { plannedWorkoutCompleted: false, plannedWorkoutLabel: '4×4 Intervals' },
+    };
+    const result = await composeEveningBrief(signals);
+    assert.match(result.plan, /not marked complete/i);
+  } finally {
+    llm.generateText = originalGenerateText;
+  }
 });

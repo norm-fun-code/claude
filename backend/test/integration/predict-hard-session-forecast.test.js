@@ -36,6 +36,7 @@ const WED_DATE = '2026-07-15';
 
 async function cleanup() {
   await db.query(`DELETE FROM workout_overrides WHERE log_date IN ($1, $2, $3)`, [MON_DATE, TUE_DATE, WED_DATE]);
+  await db.query(`DELETE FROM workout_completions WHERE log_date IN ($1, $2, $3)`, [MON_DATE, TUE_DATE, WED_DATE]);
   await db.query(`DELETE FROM activity_logs WHERE log_date IN ($1, $2, $3)`, [MON_DATE, TUE_DATE, WED_DATE]);
   await db.query(
     `DELETE FROM metrics WHERE domain IN ('habits', 'health') AND metric IN ('exercise', 'active_energy')
@@ -101,15 +102,25 @@ test('planned hard workout not yet completed => only PLANNED/provisional wording
   assert.doesNotMatch(tomorrow.detail, /today's hard session adds fatigue\b/i);
 });
 
-test('the exercise habit alone (no activity_type) confirms completion only when the plan itself is hard', async () => {
-  // Wednesday/Intervals is hard: checking the generic "exercise" habit is
-  // enough corroborating evidence to call it COMPLETED.
+// REVERSED (workout-identity fix): this test used to codify the exact
+// production bug — "the generic exercise habit alone is enough corroborating
+// evidence to call a hard plan COMPLETED" is precisely the reasoning that let
+// an unrelated walk logged on a scheduled Intervals day get read as
+// completing Intervals (the habit fires for ANY logged activity). The
+// canonical trainingOutcome (services/workout.js's resolveTrainingOutcome)
+// now requires EXPLICIT evidence — a workout_completions record, or a
+// logged activity whose type matches the effective workout — never the bare
+// habit boolean. See the "generic Exercise habit alone" test below for the
+// corrected behavior, and the exact Wednesday-Intervals-plus-walk
+// reproduction further down.
+test('the exercise habit alone (no activity_type, no completion record) NEVER confirms a hard plan as completed', async () => {
   await db.query(
     `INSERT INTO metrics (ts, domain, metric, value, unit, source) VALUES ($1, 'habits', 'exercise', 1, '', 'checkin')`,
     [`${WED_DATE}T20:00:00Z`]
   );
   const { tomorrow } = await computeTodayForecast({ recovery: REC, asOf: WED_NOON });
-  assert.match(tomorrow.detail, /today's hard session adds fatigue/i);
+  assert.doesNotMatch(tomorrow.detail, /today's hard session adds fatigue/i, 'the generic habit alone must never manufacture a COMPLETED hard session');
+  assert.match(tomorrow.detail, /today's planned hard session may add fatigue/i, 'still correctly PLANNED — the habit alone just isn\'t completion evidence');
 });
 
 test('the exercise habit alone on a NOT-hard day (Tuesday) does not manufacture a hard-session drag', async () => {
@@ -182,4 +193,56 @@ test('green recovery never downgrades — a scheduled hard day stays hard', asyn
   const GREEN = { score: 80, band: 'green', parts: { hrv: 70 } };
   const { tomorrow } = await computeTodayForecast({ recovery: GREEN, asOf: WED_NOON });
   assert.match(tomorrow.detail, /today's planned hard session may add fatigue/i);
+});
+
+// ── Workout-identity fix: the exact production reproduction ────────────────
+// Wednesday's effective workout is 4×4 Intervals. The user logs a 60-minute
+// walk under "What I actually did" AND the walk marks the generic Exercise
+// habit (mirrors mobile's addActivity()). Neither, together or alone, may
+// read as completing the scheduled Intervals session.
+
+test('THE EXACT REPRODUCTION: Wednesday Intervals + a logged 60-minute walk (plus the habit it marks) => no hard-session drag, no COMPLETED wording', async () => {
+  await db.query(
+    `INSERT INTO activity_logs (log_date, activity_type, label, duration_min) VALUES ($1, 'walk', 'Walk', 60)`,
+    [WED_DATE]
+  );
+  await db.query(
+    `INSERT INTO metrics (ts, domain, metric, value, unit, source) VALUES ($1, 'habits', 'exercise', 1, '', 'checkin')`,
+    [`${WED_DATE}T20:00:00Z`]
+  );
+  const { tomorrow } = await computeTodayForecast({ recovery: REC, asOf: WED_NOON });
+  assert.doesNotMatch(tomorrow.detail, /today's hard session adds fatigue/i, 'a walk must never read as completing the scheduled Intervals session');
+  assert.match(tomorrow.detail, /today's planned hard session may add fatigue/i, 'still correctly PLANNED, not completed');
+});
+
+test('explicit Intervals completion (workout_completions record) on Wednesday => COMPLETED hard-session wording', async () => {
+  await db.query(
+    `INSERT INTO workout_completions (log_date, workout_id, source) VALUES ($1, 'intervals', 'manual')`,
+    [WED_DATE]
+  );
+  const { tomorrow } = await computeTodayForecast({ recovery: REC, asOf: WED_NOON });
+  assert.match(tomorrow.detail, /today's hard session adds fatigue/i);
+  assert.doesNotMatch(tomorrow.detail, /planned hard session may add fatigue/i);
+});
+
+test('explicit Intervals completion PLUS an additional walk (mixed) still carries the completed hard-session drag', async () => {
+  await db.query(
+    `INSERT INTO workout_completions (log_date, workout_id, source) VALUES ($1, 'intervals', 'manual')`,
+    [WED_DATE]
+  );
+  await db.query(
+    `INSERT INTO activity_logs (log_date, activity_type, label, duration_min) VALUES ($1, 'walk', 'Walk', 30)`,
+    [WED_DATE]
+  );
+  const { tomorrow } = await computeTodayForecast({ recovery: REC, asOf: WED_NOON });
+  assert.match(tomorrow.detail, /today's hard session adds fatigue/i, 'the explicit Intervals completion still counts, regardless of the extra walk');
+});
+
+test('explicitly logging an Intervals activity (no Mark Complete tap) is itself valid completion evidence', async () => {
+  await db.query(
+    `INSERT INTO activity_logs (log_date, activity_type, label) VALUES ($1, 'intervals', 'Intervals')`,
+    [WED_DATE]
+  );
+  const { tomorrow } = await computeTodayForecast({ recovery: REC, asOf: WED_NOON });
+  assert.match(tomorrow.detail, /today's hard session adds fatigue/i);
 });

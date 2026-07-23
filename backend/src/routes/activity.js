@@ -45,6 +45,11 @@ function createActivityRouter() {
       [date, activity_type, label, duration_min == null ? null : Number(duration_min), note, planned_type, !!no_watch]
     );
     await syncActivityMinutes(date);
+    // A logged activity is part of the canonical trainingOutcome (see
+    // brain/registry.js's trainingOutcome field / services/workout.js's
+    // resolveTrainingOutcome) — durably invalidate so the forecast/evening
+    // brief never keep grading against a stale "nothing logged yet" read.
+    await require('../brain/invalidation').bumpDurable('training_change', { date });
     // Per-activity estimate so the client can show "≈ 1,240 steps · 540 kcal".
     // Only meaningful for watch-off activities (otherwise the watch already counted it).
     const weightRow = await metricsStore.latest({ domain: 'health', metric: 'weight' }).catch(() => null);
@@ -61,6 +66,11 @@ function createActivityRouter() {
       const d = rows[0].log_date;
       const ds = d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
       await syncActivityMinutes(ds);
+      // Deleting an activity can change trainingOutcome just as much as
+      // logging one — e.g. removing the one activity that was the sole
+      // evidence for plannedWorkoutCompleted/hardSessionCompleted — so this
+      // must invalidate exactly like the POST route does.
+      await require('../brain/invalidation').bumpDurable('training_change', { date: ds });
     }
     res.json({ ok: true });
   }));

@@ -138,11 +138,28 @@ function composeFallback({
 
   // Deterministic plan-vs-actual line so the day-close ledger survives an LLM
   // outage. The nuanced version comes from the prose pass.
+  //
+  // `training.completed` means ONLY "the effective/planned workout was
+  // EXPLICITLY completed" (canonical plannedWorkoutCompleted — see
+  // services/workout.js's resolveTrainingOutcome). This is the exact wording
+  // the production bug shipped ("Planned 4×4 Intervals — done (logged as
+  // walk).") when an unrelated activity got conflated with completing the
+  // scheduled session — that phrasing can no longer be produced: a logged
+  // activity that does NOT match the planned workout is described plainly as
+  // what it is ("logged a 60-minute walk"), never folded into a "done" claim
+  // about the plan.
   let plan = '';
   if (training?.planned && String(training.planned).toLowerCase() !== 'rest') {
-    plan = training.completed
-      ? `Planned ${training.planned} — done${training.actual && String(training.actual).toLowerCase() !== String(training.planned).toLowerCase() ? ` (logged as ${training.actual})` : ''}.`
-      : `Planned ${training.planned} — not logged as done; the day's closed either way.`;
+    if (training.completed) {
+      const extra = training.hasExtraActivity && training.extraActivityDescription
+        ? ` Also logged ${training.extraActivityDescription} today.`
+        : '';
+      plan = `Planned ${training.planned} — done.${extra}`;
+    } else if (training.actualActivityDescription) {
+      plan = `Planned ${training.planned} — not marked complete; logged ${training.actualActivityDescription}.`;
+    } else {
+      plan = `Planned ${training.planned} — not logged as done; the day's closed either way.`;
+    }
   }
 
   // Presence beat — the mindfulness counterpart to the body read. The LLM pass
@@ -191,6 +208,11 @@ const SYSTEM =
   'user plans — never in "tomorrow is free so there is more room tonight". If the user has genuinely ' +
   'late plans of their own, you may acknowledge the tradeoff honestly without endorsing loosening ' +
   'the wind-down because of it. ' +
+  '(4) A logged activity that does NOT match the planned session (e.g. a walk logged on a day ' +
+  'Intervals/Push/Pull was planned) NEVER means the planned session was completed — say plainly that ' +
+  'the planned session was not marked complete, and separately note what was actually logged. Only ' +
+  'call the planned session "done"/"completed" when the ground truth below explicitly says it was ' +
+  'completed; never infer completion from an unrelated activity, however similar in duration or effort. ' +
   'Return ONLY valid JSON.';
 
 function commitmentsLine(commitments) {
@@ -238,7 +260,13 @@ function buildPrompt(signals) {
       : null,
     openHabits.length ? `Evening habits still open: ${openHabits.join(', ')}` : 'Evening habits: all logged',
     training
-      ? `Planned session today: ${training.planned ?? '(none)'} — ${training.completed ? `DONE${training.actual ? ` (logged: ${training.actual})` : ''}` : 'not logged as done'}`
+      ? `Planned session today: ${training.planned ?? '(none)'} — ${
+          training.completed
+            ? `EXPLICITLY COMPLETED${training.hasExtraActivity && training.extraActivityDescription ? ` (plus, separately, ${training.extraActivityDescription} was also logged today)` : ''}`
+            : training.actualActivityDescription
+              ? `NOT completed as planned — instead, ${training.actualActivityDescription} was logged today. Do NOT describe the planned session as done/completed; describe the logged activity as what it is.`
+              : 'not logged as done'
+        }`
       : null,
     morningPlan?.action ? `This morning's brief asked: "${String(morningPlan.action).slice(0, 300)}"` : 'This morning\'s brief: (not available)',
     commitmentsLine(commitments),
@@ -331,11 +359,12 @@ async function runEveningHealthBrief(opts = {}) {
   // action is for.
   let plannedLabel = null;
   let isRestDay = false;
+  let effectiveWorkout = null;
   try {
     const { getEffectiveWorkout } = require('../services/workout');
-    const effective = await getEffectiveWorkout({ tz });
-    plannedLabel = effective?.label ?? null;
-    isRestDay = effective?.workoutId === 'rest';
+    effectiveWorkout = await getEffectiveWorkout({ tz });
+    plannedLabel = effectiveWorkout?.label ?? null;
+    isRestDay = effectiveWorkout?.workoutId === 'rest';
   } catch { /* non-critical — defaults (null, false) are safe */ }
 
   // Today's context the user narrated (if any) — fetched BEFORE gatherEvening
@@ -393,27 +422,31 @@ async function runEveningHealthBrief(opts = {}) {
     signals.morningPlan = await briefingsStore.todaysMorningBrief();
   } catch { signals.morningPlan = null; }
   try {
-    const db = require('../db');
-    const [{ rows: exercised }, { rows: acts }] = await Promise.all([
-      db.query(
-        `SELECT 1 FROM metrics
-          WHERE domain = 'habits' AND metric = 'exercise' AND value >= 0.5
-            AND (ts AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
-          LIMIT 1`,
-        [tz]
-      ),
-      db.query(
-        `SELECT activity_type FROM activity_logs
-          WHERE log_date = (now() AT TIME ZONE $1)::date ORDER BY id DESC LIMIT 1`,
-        [tz]
-      ),
-    ]);
+    // The SAME canonical authority the forecast reads — see
+    // services/workout.js's resolveTrainingOutcome — never a second,
+    // independent activity/habit query here. This is the root-cause fix for
+    // "Planned 4×4 Intervals — done (logged as walk)": completed used to be
+    // `exercised.length > 0 || acts.length > 0` (true for ANY logged
+    // activity or habit tick, regardless of whether it matched the planned
+    // session), which is exactly the bug. `completed` now means ONLY
+    // "the effective/planned workout was EXPLICITLY completed"
+    // (plannedWorkoutCompleted) — a non-matching activity (a walk on an
+    // Intervals day) never sets it, no matter how the wording is phrased.
+    const { resolveTrainingOutcome, describeActivity } = require('../services/workout');
+    const outcome = await resolveTrainingOutcome({ tz, effectiveWorkout });
+    // Activities that are NOT evidence of the planned workout itself — the
+    // ones "What I actually did" shows alongside (or instead of) it.
+    const extraActivities = (outcome.actualActivities || []).filter((a) => a.activityType !== outcome.plannedWorkoutId);
+    signals.trainingOutcome = outcome;
     signals.training = {
       planned: plannedLabel,
-      completed: exercised.length > 0 || acts.length > 0,
-      actual: acts[0]?.activity_type ?? null,
+      completed: outcome.plannedWorkoutCompleted === true,
+      actual: outcome.actualActivities?.[0]?.activityType ?? null,
+      actualActivityDescription: describeActivity(extraActivities[0] ?? outcome.actualActivities?.[0] ?? null),
+      hasExtraActivity: extraActivities.length > 0,
+      extraActivityDescription: describeActivity(extraActivities[0] ?? null),
     };
-  } catch { signals.training = null; }
+  } catch { signals.training = null; signals.trainingOutcome = null; }
   // Today's commitments — so the day-close grades what the user actually said
   // they'd do, not only the morning brief's asks.
   try {

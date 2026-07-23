@@ -43,6 +43,56 @@ test('catches prescribing the scheduled hard session after an auto-downgrade', (
   assert.ok(hasHighSeverity);
 });
 
+// ── Workout completion overclaim (workout-identity fix) ─────────────────────
+// The prose-layer counterpart to the "walk logged on an Intervals day"
+// production bug: a sentence claiming the scheduled/effective workout was
+// done when the canonical trainingOutcome says it was not.
+const FACTS_WORKOUT_NOT_COMPLETED = {
+  ...FACTS,
+  effectiveWorkoutLabel: '4×4 Intervals',
+  effectiveWorkoutSource: 'scheduled',
+  scheduledWorkoutLabel: '4×4 Intervals',
+  plannedWorkoutCompleted: false,
+};
+
+test('catches claiming the planned workout is done when plannedWorkoutCompleted is explicitly false', () => {
+  const { violations, hasHighSeverity } = validateChiefBriefClaims(
+    brief({ action: 'Your 4×4 Intervals session is done — logged as a walk.' }), FACTS_WORKOUT_NOT_COMPLETED);
+  assert.ok(violations.some((v) => v.check === 'workout_completion_overclaim'));
+  assert.ok(hasHighSeverity);
+});
+
+test('does NOT flag the correct wording — "not marked complete" is accurate, not an overclaim', () => {
+  const { violations } = validateChiefBriefClaims(
+    brief({ action: '4×4 Intervals was not marked complete — you logged a 60-minute walk instead.' }), FACTS_WORKOUT_NOT_COMPLETED);
+  assert.ok(!violations.some((v) => v.check === 'workout_completion_overclaim'), 'negated "not marked complete" must never be flagged');
+});
+
+test('does NOT flag when plannedWorkoutCompleted is true (the workout genuinely was completed)', () => {
+  const { violations } = validateChiefBriefClaims(
+    brief({ action: 'Your 4×4 Intervals session is done.' }), { ...FACTS_WORKOUT_NOT_COMPLETED, plannedWorkoutCompleted: true });
+  assert.ok(!violations.some((v) => v.check === 'workout_completion_overclaim'));
+});
+
+test('does NOT flag when plannedWorkoutCompleted is unknown (null) — absent fact must never manufacture a violation', () => {
+  const { violations } = validateChiefBriefClaims(
+    brief({ action: 'Your 4×4 Intervals session is done.' }), { ...FACTS_WORKOUT_NOT_COMPLETED, plannedWorkoutCompleted: null });
+  assert.ok(!violations.some((v) => v.check === 'workout_completion_overclaim'));
+});
+
+test('does NOT flag an unrelated sentence that just happens to use "done" elsewhere', () => {
+  const { violations } = validateChiefBriefClaims(
+    brief({ action: 'Once your morning routine is done, check your recovery.' }), FACTS_WORKOUT_NOT_COMPLETED);
+  assert.ok(!violations.some((v) => v.check === 'workout_completion_overclaim'), 'sentence is not substantially about the effective workout');
+});
+
+test('does NOT flag a rest-day effective workout even if plannedWorkoutCompleted is false', () => {
+  const { violations } = validateChiefBriefClaims(
+    brief({ action: 'Rest day today — nothing is done or owed.' }),
+    { ...FACTS_WORKOUT_NOT_COMPLETED, effectiveWorkoutLabel: 'Rest', plannedWorkoutCompleted: false });
+  assert.ok(!violations.some((v) => v.check === 'workout_completion_overclaim'));
+});
+
 test('catches claiming a still-open goal is done', () => {
   const { violations } = validateChiefBriefClaims(
     brief({ synthesis: 'Nice — the wealth reconciler is shipped and done.' }), FACTS);
