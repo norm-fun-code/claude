@@ -210,6 +210,38 @@ test('end-to-end through the REAL anthropic provider: the chief-brief request ha
   }
 });
 
+test('a fresh synthesis that still writes "NN/100" is normalized to the bare number before shipping (headline never shows /100)', async () => {
+  const ORIGINAL_ENV = { ...process.env };
+  process.env.ANTHROPIC_API_KEY = 'test-key';
+  const withSlash = JSON.stringify({
+    chiefBrief: {
+      synthesis: 'Recovery is green at 90/100 today, and mood, energy, and focus are all running high — a genuine green-light day.',
+      action: 'Run the scheduled interval session as planned and focus on hitting your target paces in each rep of the workout.',
+      risk: 'Nothing is below its healthy range right now — protect the afternoon focus window so today stays as strong as it started.',
+      move: 'Dining spend is running well above your usual weekly pace — worth a glance before it compounds into the monthly budget.',
+      openQuestion: '', affirmation: 'I have kept my sleep above seven hours for five days straight, and it is showing up in the numbers.',
+    },
+    morningFocus: 'Sleep held above seven hours all week and recovery is green at 90/100 — real capacity to spend on the one thing that matters most today.',
+    urgentEmails: [],
+  });
+  const axios = require('axios');
+  const originalPost = axios.post;
+  axios.post = async () => ({ data: { id: 'msg_slash', content: [{ type: 'text', text: withSlash }], stop_reason: 'end_turn', usage: {} } });
+  try {
+    resetModules();
+    const { generateChiefBrief } = require('../src/services/briefing-ai');
+    const result = await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
+    assert.ok(result.chiefBrief);
+    assert.match(result.chiefBrief.synthesis, /green at 90\b/, 'the bare score survives');
+    assert.doesNotMatch(result.chiefBrief.synthesis, /\/\s*100/, 'the "/100" fraction is stripped from the headline');
+    assert.doesNotMatch(result.morningFocus, /\/\s*100/, 'and from the other prose fields too');
+  } finally {
+    axios.post = originalPost;
+    process.env = ORIGINAL_ENV;
+    resetModules();
+  }
+});
+
 test('LLM_PROVIDER=gemini does not change which provider the chief brief uses — it stays pinned to anthropic', async () => {
   const ORIGINAL_ENV = { ...process.env };
   process.env.ANTHROPIC_API_KEY = 'test-key';

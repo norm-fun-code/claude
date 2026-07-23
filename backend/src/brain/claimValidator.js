@@ -121,6 +121,23 @@ function checkRecoveryScore(fields, facts) {
 // unknown, not guess.
 const CAUSAL_RE = /\b(because|due to|thanks to|caused by|driven by|driving|drove|drives|explains?|behind (?:the|this|today'?s)|from (?:the|last night'?s|yesterday'?s))\b/i;
 
+// The hazard this check exists for is inventing a cause for a recovery that
+// came in LOW/reduced ("recovery dipped because of X" with no eligible X). A
+// benign causal attribution for a GOOD recovery — "recovery is green at 90 on
+// the back of a solid night's sleep" — is not a fabricated health claim:
+// recovery is computed FROM sleep/HRV, so tying a strong number to a good
+// night restates the reading rather than guessing an external driver. The old
+// check fired on BOTH, so on a normal good-recovery morning the whole
+// synthesis got neutralized to the bare grounded fallback ("Recovery is green
+// at 90 today."), which (a) read as "just the recovery score" and (b) marked
+// the brief DEGRADED, withholding the morning "ready" push and forcing a
+// manual rebuild every day. Gate the check on an impaired-recovery framing so
+// it still catches the invented-negative-cause case (every existing test) but
+// no longer nukes a benign positive one. Every recovery_cause regression
+// fixture uses "dipped"/"down"/"driven by" a decline, so this narrows nothing
+// they cover.
+const RECOVERY_IMPAIRMENT_RE = /\b(dip(?:s|ped|ping)?|drop(?:s|ped|ping)?|down|lower(?:ed)?|low\b|reduc(?:e|ed|es|tion)|suppress(?:ed|es)?|tank(?:ed|ing)?|slump(?:ed|ing)?|sagg?(?:ed|ing)?|under-?recover(?:ed|y)?|in the red|red band|yellow band|\byellow\b|took (?:a|the) hit|\bhit\b|weigh(?:ed|ing|s)?|soft(?:er)?|worse|poor(?:er)?|rough|strain(?:ed)?|elevated (?:resting|rhr|rest))/i;
+
 // Generic time-anchoring words that appear in almost EVERY causal recovery
 // sentence regardless of what the actual cause is ("last night", "the night
 // before", "this morning"...). The bug this fixes: the old lexical-overlap
@@ -165,6 +182,12 @@ function checkRecoveryCause(fields, facts) {
     for (const sentence of splitIntoSentences(text)) {
       if (!RECOVERY_CONTEXT_RE.test(sentence)) continue;
       if (!CAUSAL_RE.test(sentence)) continue;
+      // Only police a cause that's attached to an IMPAIRED recovery framing —
+      // a benign positive attribution for a good number ("green at 90 thanks
+      // to a solid night") is not a fabricated driver claim and must not be
+      // neutralized to the bare grounded fallback (see RECOVERY_IMPAIRMENT_RE
+      // above for the full rationale).
+      if (!RECOVERY_IMPAIRMENT_RE.test(sentence)) continue;
       // Grounded if the claim names a RECOGNIZED cause concept — compared
       // concept-to-concept ONLY, never overridden by lexical overlap. Every
       // eligible driver already has >=1 recognized tag (guaranteed by
@@ -789,7 +812,10 @@ function groundedFallbackSentence(field, facts) {
   const workout = facts?.effectiveWorkoutLabel;
   switch (field) {
     case 'synthesis':
-      if (band) return `Recovery is ${band}${score != null ? ` at ${score}/100` : ''} today.`;
+      // Bare score, never "NN/100": the headline states the number itself
+      // ("Recovery is green at 90 today."), not a fraction — the "/100" reads
+      // as clutter in a headline and is what the daily brief must never show.
+      if (band) return `Recovery is ${band}${score != null ? ` at ${score}` : ''} today.`;
       return "Today's numbers are in — check the Health tab for the full picture.";
     case 'action':
       if (workout) return `Today's plan: ${workout}.`;
@@ -913,7 +939,7 @@ function isGroundedFallbackText(field, text, facts) {
 // these thresholds sit comfortably below the prompt's own target so normal
 // stylistic variance never trips them, while still catching a degenerately
 // short response. synthesis's floor is set well above the shortest grounded
-// fallback ("Recovery is green at 100/100 today." = 6 words) specifically so
+// fallback ("Recovery is green at 100 today." = 6 words) specifically so
 // a near-fallback-length synthesis is still flagged even on the rare occasion
 // it isn't a byte-for-byte match.
 const REQUIRED_FIELD_MIN_WORDS = { synthesis: 12, action: 4, risk: 4, move: 4 };

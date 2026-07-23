@@ -1,6 +1,6 @@
 // THE authoritative Chief Brief quality contract (brain/claimValidator.js's
 // assessChiefBriefQuality) — proves the exact bug from the production audit:
-// "Recovery is green at 100/100 today." (the deterministic grounded-fallback
+// "Recovery is green at 100 today." (the deterministic grounded-fallback
 // sentence groundedFallbackSentence() ships when a required field would
 // otherwise go blank) was being treated as a successful FRESH morning build
 // because shape validation only checked "every field non-empty". A brief is
@@ -34,10 +34,13 @@ const FRESH = {
   morningFocus: 'With recovery this strong, the highest-leverage move today is the scheduled hard session — everything else on the calendar is secondary to protecting that window.',
 };
 
-test('scenario 1: the exact "Recovery is green at 100/100 today." fallback is classified degraded, not fresh', () => {
+test('scenario 1: the exact "Recovery is green at 100 today." fallback is classified degraded, not fresh — and carries no "/100"', () => {
   const result = { chiefBrief: { synthesis: groundedFallbackSentence('synthesis', FACTS), action: 'a', risk: 'r', move: 'm' } };
-  // Sanity-check the exact string the bug report described.
-  assert.equal(groundedFallbackSentence('synthesis', FACTS), 'Recovery is green at 100/100 today.');
+  // The grounded fallback states the bare score, never a "NN/100" fraction —
+  // the daily headline must never show "/100" (this is what the user sees when
+  // the synthesis falls back).
+  assert.equal(groundedFallbackSentence('synthesis', FACTS), 'Recovery is green at 100 today.');
+  assert.doesNotMatch(groundedFallbackSentence('synthesis', FACTS), /\/\s*100/);
   const quality = assessChiefBriefQuality(result, FACTS);
   assert.equal(quality.status, 'degraded');
   assert.ok(quality.fallbackFields.includes('synthesis'));
@@ -49,6 +52,28 @@ test('scenario 3: a valid, detailed synthesis (and the rest of the fields) passe
   assert.equal(quality.status, 'fresh');
   assert.deepEqual(quality.fallbackFields, []);
   assert.deepEqual(quality.violatedChecks, []);
+});
+
+// Regression for the reported bug: on a good-recovery morning the model
+// naturally attributes the strong number to a good night ("green at 90 thanks
+// to a solid night"). Previously checkRecoveryCause flagged that (no eligible
+// driver on a normal night), neutralization nuked the whole synthesis to the
+// bare fallback, and the brief was marked DEGRADED — withholding the morning
+// push and forcing a manual rebuild. It must now assess FRESH.
+test('a green-recovery brief whose synthesis attributes the good number to a solid night is FRESH, not degraded', () => {
+  const facts = { ...FACTS, recoveryScore: 90, recoveryDrivers: [] }; // [] => recovery_cause is active
+  const result = {
+    chiefBrief: {
+      synthesis: 'Recovery landed green at 90 thanks to a solid night of sleep, so today is a genuine green-light day to push the hard session.',
+      action: FRESH.chiefBrief.action, risk: FRESH.chiefBrief.risk, move: FRESH.chiefBrief.move,
+      openQuestion: '', affirmation: FRESH.chiefBrief.affirmation,
+    },
+    morningFocus: FRESH.morningFocus,
+  };
+  const quality = assessChiefBriefQuality(result, facts);
+  assert.equal(quality.status, 'fresh');
+  assert.deepEqual(quality.violatedChecks, []);
+  assert.deepEqual(quality.fallbackFields, []);
 });
 
 test('no chiefBrief at all → failed, not degraded', () => {

@@ -82,7 +82,7 @@ test('a build from earlier the SAME local day, close to midnight, still counts',
 // ── hasPublishableFreshBriefToday — the quality-aware bar ───────────────────
 // A displayable brief is not necessarily a GOOD one: the audit-fix bug was a
 // degraded automatic build (an exact claim-validator grounded-fallback
-// sentence, e.g. "Recovery is green at 100/100 today.") being treated as a
+// sentence, e.g. "Recovery is green at 100 today.") being treated as a
 // successful morning build, permanently burning the once-a-day slot so no
 // later automatic retry ever ran.
 
@@ -100,7 +100,7 @@ test('a DEGRADED build (grounded-fallback / underfilled) does NOT count as publi
   const latest = {
     generated_at: at.toISOString(),
     content: {
-      chiefBrief: { synthesis: 'Recovery is green at 100/100 today.' },
+      chiefBrief: { synthesis: 'Recovery is green at 100 today.' },
       chiefBriefQuality: { status: 'degraded', reasonCodes: ['grounded_fallback_used'], fallbackFields: ['synthesis'] },
     },
   };

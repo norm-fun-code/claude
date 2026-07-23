@@ -237,6 +237,38 @@ test('a non-causal recovery sentence (no cause asserted) is never flagged', () =
   assert.ok(!violations.some((v) => v.check === 'recovery_cause'));
 });
 
+// ── Recovery causation only polices an IMPAIRED framing ──────────────────────
+// The check exists to stop the brief INVENTING a negative driver for a recovery
+// that came in low ("recovery dipped because of X"). A benign positive
+// attribution for a GOOD recovery — "green at 90 thanks to a solid night" —
+// is not a fabricated health claim (recovery is computed from sleep/HRV), and
+// firing on it neutralized the whole synthesis to the bare grounded fallback
+// every good-recovery morning, which read as "just the recovery score" and
+// marked the brief degraded (withholding the ready push).
+const FACTS_GREEN = { recoveryScore: 90, recoveryBand: 'green', recoveryDrivers: [], localDate: '2026-07-23' };
+
+test('a POSITIVE causal attribution for a GREEN recovery is NOT flagged, even with no eligible driver', () => {
+  for (const synthesis of [
+    'Recovery landed green at 90 thanks to a solid night, so today is a green-light day to push.',
+    'Recovery is green at 90 on the back of a strong night of sleep — everything is firing today.',
+    'Recovery is green at 90, driven by consistent sleep this week — spend the capacity on the hard session.',
+  ]) {
+    const { violations } = validateChiefBriefClaims(brief({ synthesis }), FACTS_GREEN);
+    assert.ok(!violations.some((v) => v.check === 'recovery_cause'), `must not flag a benign positive attribution: "${synthesis}"`);
+  }
+});
+
+test('a causal attribution for an IMPAIRED recovery is STILL flagged with no eligible driver (regression guard for the narrowing)', () => {
+  for (const text of [
+    'Recovery dipped to 41 because of the big presentation today.',
+    'Recovery is down today, likely driven by a rough week at work.',
+    'HRV took a hit last night, driven by the late meal.',
+  ]) {
+    const { violations } = validateChiefBriefClaims(brief({ synthesis: text }), FACTS_NO_DRIVER);
+    assert.ok(violations.some((v) => v.check === 'recovery_cause'), `an invented cause for a decline must still be flagged: "${text}"`);
+  }
+});
+
 test('neutralizing a recovery_cause violation removes the fabricated cause, not the whole field', () => {
   const { neutralizeClaimViolations } = require('../src/brain/claimValidator');
   const result = brief({ synthesis: 'Recovery is 41 today. Recovery dipped because of the big presentation today.' });

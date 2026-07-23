@@ -30,7 +30,7 @@ const expo = require('./expo');
 // an underfilled response — see brain/claimValidator.js's
 // assessChiefBriefQuality) has a non-null chiefBrief too. Treating that as
 // "today is done" is exactly the bug where the first automatic brief is a
-// bare "Recovery is green at 100/100 today." and nothing ever retries it.
+// bare "Recovery is green at 100 today." and nothing ever retries it.
 // Two separate predicates now exist for two separate questions:
 //   - hasDisplayableBriefToday: is there SOMETHING to show today (may be
 //     degraded) — used to decide whether a manual rebuild has ANY card to
