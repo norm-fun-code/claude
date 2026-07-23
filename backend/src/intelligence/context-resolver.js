@@ -505,10 +505,19 @@ function temporalAnchorSuffix(a, tz) {
  *  rawText, since that's the point of compiling at all; falls back to a
  *  truncated rawText when predicate/objectValue are both empty (an
  *  assertion type the compiler couldn't structure further). */
-function summarizeAssertionLine(a, tz) {
+function summarizeAssertionLine(a, tz, asOf = new Date()) {
+  // The structured predicate/objectValue is already temporally grounded (it
+  // carries no raw "tonight"). Only the rawText fallback — an assertion the
+  // compiler couldn't structure — can still contain a frozen relative time
+  // word, so re-anchor THAT to today off the assertion's entry time. See
+  // intelligence/reanchor-time.js (the same fix applied to the raw-notes path
+  // in routes/briefing.js).
   const body = a.predicate
     ? `${a.predicate}${a.objectValue ? ` ${a.objectValue}` : ''}`.trim()
-    : String(a.rawText || '').trim().slice(0, 140);
+    : (() => {
+        const { reanchorRelativeTime } = require('./reanchor-time');
+        return reanchorRelativeTime(String(a.rawText || '').trim(), { fromDate: a.recordedAt || a.createdAt, now: asOf, tz }).slice(0, 140);
+      })();
   if (!body) return null;
   const status = ['negated', 'retracted'].includes(a.eventStatus) ? ` [${a.eventStatus}]` : '';
   return `- ${body}${status}${temporalAnchorSuffix(a, tz)}`;
@@ -543,7 +552,7 @@ function summarizeResolvedContext(resolved, { purpose = 'general', maxItems = 8,
     .slice()
     .sort((a, b) => new Date(b.recordedAt || b.createdAt || 0) - new Date(a.recordedAt || a.createdAt || 0))
     .slice(0, maxItems);
-  const lines = relevant.map((a) => summarizeAssertionLine(a, resolved.tz)).filter(Boolean);
+  const lines = relevant.map((a) => summarizeAssertionLine(a, resolved.tz, effectiveAsOf)).filter(Boolean);
   return lines.join('\n');
 }
 

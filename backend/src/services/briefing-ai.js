@@ -210,7 +210,15 @@ function buildChiefBriefPrompt(emailData, currentDay, workoutPlan, calendarEvent
           `MEETINGS (busy — no titles): ${workBusyBlocks.map((b) => `${b.start}–${b.end}${overlapLabel(b)}`).join(', ')}\nOPEN windows for focus work: ${openWindows.length ? openWindows.join(', ') : 'none'}`
         : 'No busy blocks visible (calendar may be clear or data unavailable).';
 
-  return `${selfModel ? selfModel + '\n\n---\n\n' : ''}Today is ${currentDay}.
+  // The ABSOLUTE date, not just the weekday — the model needs a real anchor to
+  // read every dated context note and relative time reference correctly.
+  // Without it, "Today is Tuesday" gave nothing to resolve a note's "[Sun]
+  // …tonight" against, and relative timing came out consistently off.
+  const todayDateStr = new Date().toLocaleDateString('en-US', {
+    month: 'long', day: 'numeric', year: 'numeric', timeZone: process.env.TZ || 'America/New_York',
+  });
+
+  return `${selfModel ? selfModel + '\n\n---\n\n' : ''}Today is ${currentDay}, ${todayDateStr}. Anchor ALL timing to this date: a dated context note below (shown as "[Weekday, Mon D] …") describes the day in its bracket, and any "tonight"/"today"/"tomorrow" wording in it has ALREADY been rewritten to read correctly as of today — relay it as written, never re-cast a past note's event as happening tonight or tomorrow.
 ${dayOffContext ? `\nDAY CONTEXT: ${dayOffContext}\n` : ''}
 Today's workout: ${workoutPlan.type}${workoutPlan.duration ? ` (${workoutPlan.duration})` : ''}
 ${workoutPlan.autoSwapNote ? `${workoutPlan.autoSwapNote}\n` : ''}${recoveryContext ? `Recovery status: ${recoveryContext}` : ''}

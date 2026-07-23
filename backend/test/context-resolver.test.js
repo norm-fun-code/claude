@@ -192,6 +192,22 @@ test('summarizeResolvedContext: falls back to truncated rawText when predicate/o
   assert.equal(summarizeResolvedContext(resolved, { purpose: 'health' }), '- a plain observational note');
 });
 
+test('summarizeResolvedContext: re-anchors a relative time word in a rawText note to today (a note entered last night reads "last night", not "tonight")', () => {
+  // "context timing has been consistently off": a free-text note the compiler
+  // couldn't structure keeps its raw wording. Entered the evening before,
+  // surfaced the next day, its "tonight" must read as "last night".
+  const entered = new Date('2026-07-16T23:00:00Z'); // Jul 16 evening ET (Jul 17 is "today")
+  const a = assertion({
+    id: 'a-fast', predicate: null, objectValue: null,
+    rawText: '25 hour fast starting tonight', domains: ['health'],
+    recordedAt: entered.toISOString(),
+  });
+  const resolved = buildResolvedContext({ assertions: [a], relations: [], tz: 'America/New_York', now: NOW });
+  const text = summarizeResolvedContext(resolved, { purpose: 'health', asOf: NOW });
+  assert.match(text, /starting last night/);
+  assert.doesNotMatch(text, /tonight/);
+});
+
 test('summarizeResolvedContext: marks a negated/retracted assertion inline rather than silently dropping it (general purpose only)', () => {
   const a = assertion({ id: 'a1', predicate: 'drank', objectValue: 'wine', eventStatus: 'negated', domains: ['health'], recordedAt: NOW.toISOString() });
   const resolved = buildResolvedContext({ assertions: [a], relations: [], tz: 'America/New_York', now: NOW });

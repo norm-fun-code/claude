@@ -953,15 +953,25 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   // item 2) — and re-render only the genuinely unmatched subset, instead of
   // handing the model the compiled version AND every one of these again.
   let eligibleAnnotationRows = [];
+  const briefTz = process.env.TZ || 'America/New_York';
+  const { reanchorRelativeTime } = require('../intelligence/reanchor-time');
   const formatAnnotationRows = (rows) => rows
     .map((a) => {
       // Include the submission date so the AI can resolve relative terms like
       // "tomorrow" or "today" in notes entered the night before.
       const submitted = a.start_ts
-        ? new Date(a.start_ts).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/New_York' })
+        ? new Date(a.start_ts).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: briefTz })
         : null;
       const dateTag = submitted ? `[${submitted}] ` : '';
-      return `${dateTag}${a.label}${a.note ? ` (${a.note})` : ''}`;
+      // Re-anchor relative time words to TODAY rather than leaving the model to
+      // do the date math off the bracketed date (which it does unreliably — a
+      // "25 hour fast starting tonight" note entered last night was echoed the
+      // next morning as "starting tonight" instead of "last night"). Anchor
+      // off the true entry time (created_at) so a past-referring note whose
+      // start_ts was backdated to the night it describes still re-anchors from
+      // when it was actually written. See intelligence/reanchor-time.js.
+      const label = reanchorRelativeTime(a.label, { fromDate: a.created_at || a.start_ts, tz: briefTz });
+      return `${dateTag}${label}${a.note ? ` (${a.note})` : ''}`;
     })
     .slice(0, 5)
     .join('; ');
