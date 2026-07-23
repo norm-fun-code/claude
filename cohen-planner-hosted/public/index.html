@@ -461,10 +461,13 @@ const D={
   nannyEndAge:1.5,nannyHourlyRate:30,nannyDaysPerWeek:4,daycareMonthly:2800,
   tuitionInflation:.035,yeshivaStartAge:2,yeshivaEndAge:17,kid1YeshivaStartAge:3,
   startingLiquid:1100000,nycRent:5500,
-  // Norm — 4 rolling specific years (Y0=planStartYear, Y1=+1, Y2=+2, Y3=+3)
-  normCashY0:280000,normCashY1:260000,normCashY2:275000,normCashY3:265000,
-  normStockY0:197000,normStockY1:162000,normStockY2:153000,normStockY3:158000,
-  normCashBase:275000,normGrowth:.01,normStockBase:150000,
+  // Norm — total comp (cash+stock combined; both are taxed identically as ordinary
+  // W2 income at vest, so the split added complexity with no differentiated treatment).
+  // 11 explicit years, Y0=planStartYear through Y10 (2026-2036); normGrowth compounds
+  // forward from Y10 for any plan years beyond that.
+  normTCY0:477000,normTCY1:422000,normTCY2:428000,normTCY3:423000,
+  normTCY4:427000,normTCY5:432000,normTCY6:436000,normTCY7:440000,
+  normTCY8:445000,normTCY9:449000,normTCY10:454000,normGrowth:.01,
   pretax401k:23500,pretaxBenefits:11700,
   company401kMatch:8750,
   // Nancy — 4 rolling specific W2 years (ignored once yr >= nancyRampYear)
@@ -515,20 +518,39 @@ function savePlannerState(){
 
 // Migrate old year-keyed format (normCash2026…) to rolling Y0-Y3 format
 function migrateP(raw){
-  if(raw.normCashY0!==undefined)return raw; // already new format
-  const sy=raw.planStartYear||raw.startYear||2026;
-  const m={...raw,planStartYear:sy};
-  const oldNormCash={2026:280000,2027:260000,2028:275000,2029:265000};
-  const oldNormStock={2026:197000,2027:162000,2028:153000,2029:158000};
-  const oldNancyW2={2026:130000,2027:80000,2028:100000,2029:75000};
-  for(let i=0;i<4;i++){
-    const yr=sy+i;
-    m['normCashY'+i]=raw['normCash'+yr]??oldNormCash[yr]??275000;
-    m['normStockY'+i]=raw['normStock'+yr]??oldNormStock[yr]??150000;
-    m['nancyW2Y'+i]=raw['nancyW2_'+yr]??oldNancyW2[yr]??100000;
+  let m=raw;
+  if(raw.normCashY0===undefined&&raw.normTCY0===undefined){
+    const sy=raw.planStartYear||raw.startYear||2026;
+    m={...raw,planStartYear:sy};
+    const oldNormCash={2026:280000,2027:260000,2028:275000,2029:265000};
+    const oldNormStock={2026:197000,2027:162000,2028:153000,2029:158000};
+    const oldNancyW2={2026:130000,2027:80000,2028:100000,2029:75000};
+    for(let i=0;i<4;i++){
+      const yr=sy+i;
+      m['normCashY'+i]=raw['normCash'+yr]??oldNormCash[yr]??275000;
+      m['normStockY'+i]=raw['normStock'+yr]??oldNormStock[yr]??150000;
+      m['nancyW2Y'+i]=raw['nancyW2_'+yr]??oldNancyW2[yr]??100000;
+    }
+    m.normCashBase=raw.normCash2030Base??raw.normCashBase??275000;
+    m.normStockBase=raw.normStock2030??raw.normStockBase??150000;
   }
-  m.normCashBase=raw.normCash2030Base??raw.normCashBase??275000;
-  m.normStockBase=raw.normStock2030??raw.normStockBase??150000;
+  // Cash/stock split -> single Total Comp per year (Y0-Y10). Both were always taxed
+  // identically as ordinary income at vest, so this just collapses 8 sliders into 11
+  // (extending the explicit window from 4 years to 11) without losing any real fidelity.
+  if(m.normTCY0===undefined){
+    const sy=m.planStartYear||2026;
+    const cashBase=m.normCashBase??275000,stockBase=m.normStockBase??150000,growth=m.normGrowth??0.01;
+    const out={...m};
+    for(let i=0;i<11;i++){
+      // Years 0-3 keep the exact figures the old model used. Years 4-10 reproduce what
+      // the OLD base+growth formula would have projected for those years, so an existing
+      // saved plan's numbers don't shift just from this migration running.
+      out['normTCY'+i]=i<4
+        ? (m['normCashY'+i]??cashBase)+(m['normStockY'+i]??stockBase)
+        : cashBase*(1+growth)**(i-4)+stockBase;
+    }
+    m=out;
+  }
   return m;
 }
 
@@ -930,7 +952,7 @@ tr:hover td{background:#f6f9fc}
     </div>
   </div>
   <div style="text-align:right;font-size:9px;color:#8898aa">
-    <div>Norm: ${fmtK((P.normCashBase||275000)+(P.normStockBase||150000))}/yr base</div>
+    <div>Norm: ${fmtK(P.normTCY0||477000)}/yr current</div>
     <div>Nancy: ${P.nancyMaxClients} clients max · $${P.nancyHourlyRate}/hr</div>
     <div>${P.numKids} kid${P.numKids!==1?'s':''} · ${P.downPctg}% down in ${P.homePurchaseYear}</div>
   </div>
@@ -1007,7 +1029,6 @@ function buildControls(){
   const s=(l,k,mn,mx,st,fn)=>`<div class="sr"><div class="sh"><span class="sl">${l}</span><span class="sv" id="v_${k}">${fn?fn(P[k]):P[k]}</span></div><input type="range" id="s_${k}" min="${mn}" max="${mx}" step="${st}" value="${P[k]}" oninput="U('${k}',this.value)"></div>`;
   const ST=(label,key,body)=>{const c=_collapsedSections.has(key);return`<div class="st" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;user-select:none" onclick="toggleSection('${key}')"><span>${label}</span><span style="font-size:9px;color:var(--t3);opacity:.6">${c?'▶':'▼'}</span></div>${c?'':body}`};
   const sy=P.planStartYear||2026;
-  const baseYr=sy+4;
   let h=`<div style="font-size:10px;font-weight:700;margin-bottom:8px">⚙️ Parameters</div>`;
   h+=`<div style="margin-bottom:8px">
     <div id="scenarioSaveArea">
@@ -1047,11 +1068,11 @@ function buildControls(){
 
   // Norm income
   let normBody='';
-  for(let i=0;i<4;i++){const yr=sy+i;normBody+=s(yr+' cash','normCashY'+i,200000,500000,5000,fmtF)+s(yr+' stock','normStockY'+i,0,300000,5000,fmtF)}
-  normBody+=s(baseYr+'+ cash base','normCashBase',200000,500000,5000,fmtF)+s(baseYr+'+ stock/yr','normStockBase',0,250000,5000,fmtF)+s('Comp growth','normGrowth',0,.04,.005,v=>(v*100).toFixed(1)+'%');
+  for(let i=0;i<11;i++){const yr=sy+i;normBody+=s(yr+' total comp','normTCY'+i,150000,800000,5000,fmtF)}
+  normBody+=s('Comp growth ('+(sy+11)+'+)','normGrowth',0,.04,.005,v=>(v*100).toFixed(1)+'%');
   normBody+=s('401k employee','pretax401k',0,30500,500,fmtF)+s('Benefits pre-tax','pretaxBenefits',0,15000,200,fmtF);
   normBody+=`<div id="norm_preview" style="font-size:7.5px;color:var(--t3);margin:1px 0 4px;font-style:italic"></div>`;
-  h+=ST('💼 Norm — Gross Income','norm-income',normBody);
+  h+=ST('💼 Norm — Total Comp','norm-income',normBody);
 
   // Nancy income
   let nancyBody='';
@@ -1123,8 +1144,10 @@ async function confirmRollForward(overlay,curYear,nextYear){
   const liqStr=inp?inp.value:'';
   if(overlay)overlay.remove();
   await saveSnapshot(true,`${curYear} plan · rolled forward ${new Date().toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`);
-  P.normCashY0=P.normCashY1;P.normCashY1=P.normCashY2;P.normCashY2=P.normCashY3;P.normCashY3=P.normCashBase;
-  P.normStockY0=P.normStockY1;P.normStockY1=P.normStockY2;P.normStockY2=P.normStockY3;P.normStockY3=P.normStockBase;
+  // Norm's TC window shifts forward one year; the new Y10 is exactly what the model's own
+  // growth formula would already project for that year (no ambiguity here, unlike Nancy's
+  // W2 field below — Norm's post-window growth is single-track and well-defined).
+  {const oldY10=P.normTCY10;for(let i=0;i<10;i++)P['normTCY'+i]=P['normTCY'+(i+1)];P.normTCY10=Math.round(oldY10*(1+(P.normGrowth??0.01)));}
   // Nancy W2 years shift forward. Y3 has no separate steady-state base field (unlike Norm's
   // cash/stock), so there's no real "new" value to pull in. Two things that DON'T work:
   //  - Leaving Y3 untouched (original bug): after the first roll Y2(new)=Y3(old), and Y3
@@ -1145,7 +1168,7 @@ async function confirmRollForward(overlay,curYear,nextYear){
   showToast(`✓ Rolled forward to ${nextYear}`,'green');
 }
 
-const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,nannyEndAge:v=>v+' yrs',nannyHourlyRate:v=>'$'+v,nannyDaysPerWeek:null,daycareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normCashY0:fmtF,normStockY0:fmtF,normCashY1:fmtF,normStockY1:fmtF,normCashY2:fmtF,normStockY2:fmtF,normCashY3:fmtF,normStockY3:fmtF,normCashBase:fmtF,normStockBase:fmtF,normGrowth:v=>(v*100).toFixed(1)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo'};
+const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,nannyEndAge:v=>v+' yrs',nannyHourlyRate:v=>'$'+v,nannyDaysPerWeek:null,daycareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normTCY0:fmtF,normTCY1:fmtF,normTCY2:fmtF,normTCY3:fmtF,normTCY4:fmtF,normTCY5:fmtF,normTCY6:fmtF,normTCY7:fmtF,normTCY8:fmtF,normTCY9:fmtF,normTCY10:fmtF,normGrowth:v=>(v*100).toFixed(1)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo'};
 
 function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'+key);const fn=SF[key];if(el&&fn)el.textContent=fn(P[key]);else if(el)el.textContent=P[key];if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear')buildControls();activeScenarioIdx=-1;render();savePlannerState()}
 
@@ -1365,8 +1388,8 @@ function render(){
   if(monarchSnapshot)_checkMilestone(monarchSnapshot.netWorth);
   if(_firstPaint){_firstPaint=false;if(!_reduceMotion())requestAnimationFrame(_introAnimate);}
   const np=document.getElementById('norm_preview');
-  const _sy=P.planStartYear||2026;const _by=_sy+4;
-  if(np)np.textContent=`${_by}: ${fmtF(Math.round((P.normCashBase??275000)+(P.normStockBase??150000)))} · ${_by+10}: ${fmtF(Math.round((P.normCashBase??275000)*(1+P.normGrowth)**10+(P.normStockBase??150000)))}`;
+  const _sy=P.planStartYear||2026;const _lastY=_sy+10;
+  if(np){const _y10=P.normTCY10??454000;np.textContent=`${_lastY}: ${fmtF(_y10)} · ${_lastY+10}: ${fmtF(Math.round(_y10*(1+(P.normGrowth??0.01))**10))} (at ${((P.normGrowth??0.01)*100).toFixed(1)}%/yr growth)`;}
   const nap=document.getElementById('nancy_preview');
   if(nap){const matYr=P.nancyRampYear+P.nancyRampYears;const nc=Math.min(P.nancyMaxClients,P.nancyRampClients+(P.nancyMaxClients-P.nancyRampClients)*Math.max(0,Math.min(1,(matYr-P.nancyRampYear)/P.nancyRampYears)));nap.textContent=`${matYr}: ~${Math.round(nc)} clients → ${fmtF(Math.round(nc*P.nancyHourlyRate*P.nancyWeeksPerYear))} gross`}
   let sc='';if(scenarios.length>0){sc='<div class="scenario-bar"><span style="font-size:7px;color:var(--t3);font-weight:600">SAVED:</span>';
@@ -2120,8 +2143,7 @@ function renderSensitivityTab(R,P){
 
   const ALL_PARAMS=[
     {key:'investReturn',label:'Portfolio Return',delta:0.01,hi:'+1%',lo:'−1%',fmtV:v=>(v*100).toFixed(1)+'%',better:1},
-    {key:'normCashBase',label:'Norm Cash Comp',delta:25000,hi:'+$25K',lo:'−$25K',fmtV:v=>fmt(v),better:1},
-    {key:'normStockBase',label:'Norm Stock Comp',delta:25000,hi:'+$25K',lo:'−$25K',fmtV:v=>fmt(v),better:1},
+    {key:'normTC',label:'Norm Total Comp',delta:25000,hi:'+$25K/yr',lo:'−$25K/yr',fmtV:v=>fmt(v),better:1},
     {key:'nancyHourlyRate',label:'Nancy Rate',delta:25,hi:'+$25/hr',lo:'−$25/hr',fmtV:v=>'$'+v+'/hr',better:1},
     {key:'nancyMaxClients',label:'Nancy Clients',delta:5,hi:'+5',lo:'−5',fmtV:v=>v+' clients',better:1},
     {key:'pretax401k',label:'401k Contribution',delta:5000,hi:'+$5K/yr',lo:'−$5K/yr',fmtV:v=>fmt(v),better:1},
@@ -2136,7 +2158,7 @@ function renderSensitivityTab(R,P){
 
   const PRESETS={
     all:{label:'All factors',keys:ALL_PARAMS.map(p=>p.key)},
-    income:{label:'Income levers',keys:['investReturn','normCashBase','normStockBase','nancyHourlyRate','nancyMaxClients','pretax401k']},
+    income:{label:'Income levers',keys:['investReturn','normTC','nancyHourlyRate','nancyMaxClients','pretax401k']},
     housing:{label:'Housing',keys:['homePrice','downPctg','startingLiquid','homeAppreciation']},
     costs:{label:'Cost control',keys:['expenseInflation','taxInflation','nancyRampYears','pretax401k']},
   };
@@ -2146,11 +2168,21 @@ function renderSensitivityTab(R,P){
 
   const results=PARAMS.map(p=>{
     const delta=_sensiDeltas[p.key]??p.delta;
-    const vBase=P[p.key];
-    const hiV=vBase+delta;
-    const loV=Math.max(0,vBase-delta);
-    const hiP={...P,[p.key]:hiV};
-    const loP={...P,[p.key]:loV};
+    let vBase,hiP,loP;
+    if(p.key==='normTC'){
+      // Synthetic multi-field param: shift ALL 11 explicit comp years by the same flat
+      // amount (a single P.key perturbation can't represent "Norm's comp is $25K higher
+      // across the board" since that's spread across normTCY0..Y10).
+      vBase=P.normTCY0;
+      hiP={...P};loP={...P};
+      for(let i=0;i<11;i++){hiP['normTCY'+i]=P['normTCY'+i]+delta;loP['normTCY'+i]=Math.max(0,P['normTCY'+i]-delta)}
+    } else {
+      vBase=P[p.key];
+      const hiV=vBase+delta;
+      const loV=Math.max(0,vBase-delta);
+      hiP={...P,[p.key]:hiV};
+      loP={...P,[p.key]:loV};
+    }
     const hiR=run(hiP).R;const loR=run(loP).R;
     const hiNW=hiR[hiR.length-1].nw;
     const loNW=loR[loR.length-1].nw;
@@ -2963,9 +2995,9 @@ function renderCompareTab(R,P){
   });
   h+=`</tbody></table></div>`;
   // Parameter diffs
-  const PKEYS=['homePrice','downPctg','mortgageRate','homePurchaseYear','investReturn','startingLiquid','expenseInflation','nancyHourlyRate','nancyMaxClients','normCashBase','normStockBase','pretax401k','numKids'];
-  const PLABELS={homePrice:'Home Price',downPctg:'Down %',mortgageRate:'Mortgage Rate',homePurchaseYear:'Purchase Year',investReturn:'Return %',startingLiquid:'Starting Liquid',expenseInflation:'Exp Inflation',nancyHourlyRate:'Nancy $/hr',nancyMaxClients:'Nancy Max Clients',normCashBase:'Norm Cash Base',normStockBase:'Norm Stock Base',pretax401k:'401k Contrib',numKids:'# Kids'};
-  const fmtPv=(k,v)=>{if(['investReturn','expenseInflation'].includes(k))return(v*100).toFixed(1)+'%';if(['homePrice','startingLiquid','normCashBase','normStockBase','pretax401k'].includes(k))return fmt(v);if(k==='downPctg')return v+'%';if(k==='mortgageRate')return v+'%';return String(v)};
+  const PKEYS=['homePrice','downPctg','mortgageRate','homePurchaseYear','investReturn','startingLiquid','expenseInflation','nancyHourlyRate','nancyMaxClients','normTCY0','normGrowth','pretax401k','numKids'];
+  const PLABELS={homePrice:'Home Price',downPctg:'Down %',mortgageRate:'Mortgage Rate',homePurchaseYear:'Purchase Year',investReturn:'Return %',startingLiquid:'Starting Liquid',expenseInflation:'Exp Inflation',nancyHourlyRate:'Nancy $/hr',nancyMaxClients:'Nancy Max Clients',normTCY0:'Norm Comp (Y0)',normGrowth:'Comp Growth',pretax401k:'401k Contrib',numKids:'# Kids'};
+  const fmtPv=(k,v)=>{if(['investReturn','expenseInflation','normGrowth'].includes(k))return(v*100).toFixed(1)+'%';if(['homePrice','startingLiquid','normTCY0','pretax401k'].includes(k))return fmt(v);if(k==='downPctg')return v+'%';if(k==='mortgageRate')return v+'%';return String(v)};
   const diffCols=cols.slice(1).filter(c=>PKEYS.some(k=>c.params[k]!==undefined&&c.params[k]!==P[k]));
   if(diffCols.length){
     h+=`<div style="margin-top:16px"><div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:8px">Parameter differences vs. current plan</div>`;
@@ -3364,16 +3396,16 @@ function buildLiveContext(R,P){
 ═══ LIVE PLANNER STATE (auto-updated from his current inputs) ═══
 
 INCOME (${planSY} base year)
-• Norm gross: ${fmt(y26.normG)} (cash + RSU stock)
+• Norm gross: ${fmt(y26.normG)} (total comp — cash + RSU/stock combined; both are taxed identically as ordinary income at vest, so the plan doesn't split them)
 • Nancy gross: ${fmt(y26.nancyG)} (W2 currently, solo practice ${P.nancyRampYear}+)
 • Combined gross: ${fmt(y26.gross)}
 • Effective tax rate: ${(y26.effRate*100).toFixed(1)}% all-in (Fed + NYS + NYC + FICA)
 • Net take-home: ${fmt(y26.inc)}
 • Pre-tax deductions: 401k ${fmt(P.pretax401k)} + benefits ${fmt(P.pretaxBenefits)} = ${fmt(P.pretax401k+P.pretaxBenefits)}
 
-PER-YEAR INCOME INPUTS (editable via set_param — years past Y3 come from normCashBase/normStockBase/normGrowth for Norm, or the client-ramp formula for Nancy once yr≥nancyRampYear)
-• Norm cash: Y0 (${planSY}) ${fmt(P.normCashY0)} · Y1 (${planSY+1}) ${fmt(P.normCashY1)} · Y2 (${planSY+2}) ${fmt(P.normCashY2)} · Y3 (${planSY+3}) ${fmt(P.normCashY3)}  [keys: normCashY0, normCashY1, normCashY2, normCashY3]
-• Norm stock/RSU: Y0 ${fmt(P.normStockY0)} · Y1 ${fmt(P.normStockY1)} · Y2 ${fmt(P.normStockY2)} · Y3 ${fmt(P.normStockY3)}  [keys: normStockY0, normStockY1, normStockY2, normStockY3]
+PER-YEAR INCOME INPUTS (editable via set_param)
+• Norm total comp, Y0-Y10 (${planSY}-${planSY+10}): ${Array.from({length:11},(_,i)=>fmt(P['normTCY'+i])).join(' · ')}  [keys: normTCY0 .. normTCY10]
+• Beyond ${planSY+10}, Norm's comp compounds forward from Y10 at normGrowth (currently ${((P.normGrowth??0.01)*100).toFixed(1)}%/yr) — no year-specific key needed, just change normGrowth or normTCY10.
 • Nancy W2 (only used while yr<nancyRampYear=${P.nancyRampYear}): Y0 ${fmt(P.nancyW2Y0)} · Y1 ${fmt(P.nancyW2Y1)} · Y2 ${fmt(P.nancyW2Y2)} · Y3 ${fmt(P.nancyW2Y3)}  [keys: nancyW2Y0, nancyW2Y1, nancyW2Y2, nancyW2Y3]
 
 SAVED SCENARIOS (${scenarios.length}) — reference these by name if he asks to update one
@@ -3550,7 +3582,7 @@ async function advOptimize(){
   const prompt=`Optimize my financial plan. Follow these exact steps using your tools:
 
 1. Call run_projection() to lock in the baseline (final NW, deficit years, worst surplus).
-2. Systematically test the levers I can actually control: investReturn, normCashBase, normStockBase, nancyHourlyRate, nancyMaxClients, pretax401k, homePrice, downPctg, homePurchaseYear, expenseInflation. For each, use set_param() then run_projection() to measure the impact on final NW vs baseline.
+2. Systematically test the levers I can actually control: investReturn, normTCY0, normGrowth, nancyHourlyRate, nancyMaxClients, pretax401k, homePrice, downPctg, homePurchaseYear, expenseInflation. For each, use set_param() then run_projection() to measure the impact on final NW vs baseline.
 3. Pick the top 2-3 changes with the biggest positive impact AND that are realistically achievable given my situation.
 4. Apply all those changes together with set_param() calls, then run_projection() one final time to show the combined effect.
 5. Call save_scenario() with a descriptive name like "Optimized: lower home + higher 401k".
@@ -3892,7 +3924,7 @@ function advShowProposals(proposals,chatTitle,suggestedName){
   const el=document.createElement('div');el.className='adv-proposals';el.id='advProposalsPanel';
   const fmtVal=(key,v)=>{
     if(['investReturn','expenseInflation','tuitionInflation','homeAppreciation','normGrowth','capGainsTaxRate'].includes(key))return(v*100).toFixed(1)+'%';
-    if(['homePrice','startingLiquid','normCashBase','normStockBase','pretax401k'].includes(key)||/^(normCashY|normStockY|nancyW2Y)\d$/.test(key))return fmt(v);
+    if(['homePrice','startingLiquid','pretax401k'].includes(key)||/^(normTCY|nancyW2Y)\d+$/.test(key))return fmt(v);
     return String(v);
   };
   const rows=proposals.changes.map(c=>`<div class="adv-proposal-row">

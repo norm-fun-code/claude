@@ -24,7 +24,7 @@ const ADVISOR_TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        key: { type: 'string', description: 'Exact parameter key (e.g. homePrice, investReturn, startingLiquid, normCashY1)' },
+        key: { type: 'string', description: 'Exact parameter key (e.g. homePrice, investReturn, startingLiquid, normTCY1)' },
         value: { type: 'number', description: 'New numeric value' },
         reason: { type: 'string', description: 'One sentence: why this change improves the plan' },
       },
@@ -1300,13 +1300,12 @@ Tools available:
 • save_scenario(name) — suggest a name for the change set (used to prefill the "save as new scenario" box he'll see — he can still rename it or choose a different destination).
 
 ═══ PARAMETER KEY REFERENCE ═══
-Per-year income (Y0=the plan's start year, Y1=+1yr, Y2=+2yr, Y3=+3yr — see "PER-YEAR INCOME INPUTS" above in the live state for the actual years and current values):
-• normCashY0, normCashY1, normCashY2, normCashY3 — Norm's cash comp in each of the next 4 years
-• normStockY0, normStockY1, normStockY2, normStockY3 — Norm's stock/RSU comp in each of the next 4 years
+Per-year income (Y0=the plan's start year, Y1=+1yr, … Y10=+10yr — see "PER-YEAR INCOME INPUTS" above in the live state for the actual years and current values):
+• normTCY0 through normTCY10 — Norm's TOTAL comp (cash + stock/RSU combined — they're taxed identically as ordinary income at vest, so there's no separate cash/stock split) for each of the next 11 years.
 • nancyW2Y0, nancyW2Y1, nancyW2Y2, nancyW2Y3 — Nancy's W2 income in each of the next 4 years (only actually used for years before nancyRampYear — see below)
-Beyond year 4, Norm's income instead grows automatically from normCashBase/normStockBase/normGrowth (no year-specific keys needed — change the base/growth rate instead). Nancy's income beyond nancyRampYear is computed from nancyHourlyRate × client ramp (nancyRampClients→nancyMaxClients over nancyRampYears), not from a per-year field.
+Beyond Y10, Norm's income instead compounds forward automatically from Y10's value at normGrowth (no year-specific key needed — change normGrowth or normTCY10 itself). Nancy's income beyond nancyRampYear is computed from nancyHourlyRate × client ramp (nancyRampClients→nancyMaxClients over nancyRampYears), not from a per-year field.
 
-Other editable keys: homePrice, downPctg, mortgageRate, homePurchaseYear, propTaxRate, investReturn, startingLiquid, expenseInflation, normCashBase, normStockBase, normGrowth, nancyHourlyRate, nancyMaxClients, nancyRampClients, nancyRampYear, nancyRampYears, nancyWeeksPerYear, pretax401k, mcVol, tuitionInflation, homeAppreciation, capGainsTaxRate, numKids, planStartYear.
+Other editable keys: homePrice, downPctg, mortgageRate, homePurchaseYear, propTaxRate, investReturn, startingLiquid, expenseInflation, normGrowth, nancyHourlyRate, nancyMaxClients, nancyRampClients, nancyRampYear, nancyRampYears, nancyWeeksPerYear, pretax401k, mcVol, tuitionInflation, homeAppreciation, capGainsTaxRate, numKids, planStartYear.
 
 If a request is genuinely ambiguous about WHICH income he means (e.g. just "update my income" with no further context — could be Norm, Nancy, cash vs stock, or a specific year), ask him to clarify rather than guessing which key to change. If he names a year and a person, or the context makes it clear, just do it.
 

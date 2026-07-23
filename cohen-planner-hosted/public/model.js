@@ -132,10 +132,11 @@ function kidCost(a){
 function mPmt(pr,r,y=30){if(pr<=0||r<=0)return 0;const m=r/12,n=y*12;return pr*(m*(1+m)**n)/((1+m)**n-1)*12}
 function mBal(pr,r,yp,ty=30){if(yp>=ty||pr<=0)return 0;const m=r/12,n=ty*12,pp=yp*12;return pr*((1+m)**n-(1+m)**pp)/((1+m)**n-1)}
 
+const NORM_TC_YEARS=11; // explicit per-year comp inputs: Y0 (planStartYear) through Y10
+
 function run(p,rets){
   const sy=p.planStartYear||2026;
   const ey=p.planEndYear||2058;
-  const baseYr=sy+4;
   const kids=[p.kid1Birth];
   if(p.numKids>=2)kids.push(p.kid2Birth);
   if(p.numKids>=3)kids.push(p.kid3Birth);
@@ -146,10 +147,17 @@ function run(p,rets){
   for(let yr=sy;yr<=ey;yr++){
     const nk=kids.filter(k=>yr>=k).length;
     const yIdx=yr-sy;
-    let normCash,normStock;
-    if(yIdx<4){normCash=p['normCashY'+yIdx]??p.normCashBase;normStock=p['normStockY'+yIdx]??p.normStockBase}
-    else{normCash=(p.normCashBase??275000)*(1+p.normGrowth)**(yr-baseYr);normStock=p.normStockBase??150000}
-    const normW2=normCash+normStock;
+    // Total comp (single figure — cash vs. stock/RSU split was removed since both were
+    // always taxed identically as ordinary W2 income at vest; the split added 8 sliders'
+    // worth of UI with no differentiated treatment anywhere). Explicit per-year inputs run
+    // Y0 (planStartYear) through Y10; beyond that, compounds forward from Y10's own value
+    // at normGrowth so there's no discontinuity at the edge of the explicit window.
+    let normW2;
+    if(yIdx<NORM_TC_YEARS){normW2=p['normTCY'+yIdx]??425000}
+    else{
+      const lastTC=p['normTCY'+(NORM_TC_YEARS-1)]??425000;
+      normW2=lastTC*(1+(p.normGrowth??0.01))**(yr-(sy+NORM_TC_YEARS-1));
+    }
     let nancyGross,nancyIsSolo=false,nancySENet=0,nancyOH=0;
     if(yIdx<4&&yr<p.nancyRampYear){nancyGross=p['nancyW2Y'+yIdx]??100000}
     else{
