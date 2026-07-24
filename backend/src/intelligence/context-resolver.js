@@ -327,13 +327,22 @@ const CLASSIFICATION_MATCH_MARGIN = 0.15;
  * REAL, already-fetched calendar-load inputs (`workBusy`/`calendar`, the
  * exact shape intelligence/calendar-load.js's computeCalendarLoad takes) —
  * not against the LLM's own paraphrased subject text alone. Priority order:
+ *   0. An EXACT stable block-identity match: the relation's targetId IS a
+ *      calendar-block-identity.js id (source+date+normalized start/end —
+ *      see that module), set directly by routes/annotations.js when the
+ *      client echoed back which exact block a question's answer described
+ *      (question-time provenance, never reconstructed from the answer text
+ *      at all). Never ambiguous, never needs a title or a clock range in
+ *      the answer — this is what lets a TITLELESS work-busy block get
+ *      classified correctly. This is the primary, reliable path for any
+ *      answer that originated from a structured calendar-load question.
  *   1. A stable calendar event id on the source assertion's entities, if
  *      the caller's `calendar` list carries ids too (see
  *      services/calendar.js — Google's real event id is now threaded
  *      through). Exact match, never ambiguous. NOTE: no current input path
- *      (POST /briefing/context, Ask, voice) captures/passes an event id
- *      when compiling an answer — this path is implemented and ready, not
- *      yet exercised by a real caller (see the harden-pass report).
+ *      populates `entities` with an id when compiling an answer — distinct
+ *      from priority 0 above (which uses targetId, not entities) and kept
+ *      for a future caller that might.
  *   2. An explicit clock-time range extracted from the assertion's own
  *      subject/objectValue/rawText (extractClockTimeRange) — matched
  *      against whichever work-busy/calendar interval(s) overlap it. Exactly
@@ -345,19 +354,49 @@ const CLASSIFICATION_MATCH_MARGIN = 0.15;
  *      calendar-event titles only — work-busy blocks carry no titles to
  *      text-match against at all. Same ambiguity rule: no clear single
  *      winner -> not applied.
+ *
+ * Date-scoped (priorities 1-3 only — priority 0's id already encodes the
+ * exact date, so it needs no separate gate): when `targetLocalDate` is
+ * given and a relation's `windowStart` is known (the date IT was actually
+ * about), the relation is skipped entirely unless that date matches — this
+ * is what stops "the same clock window next week" from silently inheriting
+ * this week's classification. A relation with no windowStart at all (a
+ * genuinely undated legacy correction, predating this date-binding) falls
+ * through ungated, matching the prior behavior — a narrow, documented
+ * boundary rather than a silent gap for anything created going forward.
+ *
  * Returns an array shaped exactly like `calendar` entries
  * (title/startTime/endTime) — ready to pass as computeCalendarLoad's
  * `classifiedOverrides` — one per successfully-matched classification.
  */
-function matchCalendarClassifications(resolved, { calendar = [], workBusy = [] } = {}) {
+function matchCalendarClassifications(resolved, { calendar = [], workBusy = [], targetLocalDate = null } = {}) {
   const { overlapScore } = require('./context-semantics');
-  const { toMinutesSinceMidnight } = require('../util/date');
+  const { toMinutesSinceMidnight, localDateStr } = require('../util/date');
   const classifyRelations = (resolved.relations || []).filter((r) => r.relationship === 'classifies' && r.targetType === 'calendar_event');
   const overrides = [];
+  const tz = resolved.tz || 'America/New_York';
 
   for (const rel of classifyRelations) {
     const assertion = resolved.assertionById.get(rel.sourceAssertionId);
     if (!assertion) continue;
+
+    if (targetLocalDate && rel.windowStart) {
+      const relDate = localDateStr(tz, new Date(rel.windowStart));
+      if (relDate !== targetLocalDate) continue;
+    }
+
+    // Priority 0: exact stable block-identity match — see the doc comment.
+    const idMatch = [...workBusy, ...calendar].find((b) => b.id && b.id === rel.targetId);
+    if (idMatch) {
+      overrides.push({
+        title: rel.permittedLanguage || assertion.objectValue || 'reclassified',
+        startTime: idMatch.start ?? idMatch.startTime,
+        endTime: idMatch.end ?? idMatch.endTime,
+        allDay: false,
+      });
+      continue;
+    }
+
     const probeText = `${assertion.subject || ''} ${assertion.objectValue || ''} ${assertion.rawText || ''}`;
 
     // Priority 2: explicit clock-time range against REAL block intervals.
@@ -451,12 +490,24 @@ function getRelevantContext(resolved, surfacePurpose = 'general') {
  *  currently just preferences (the compiler's own definition: "a durable
  *  'I prefer/don't want' statement"), which by design have no natural
  *  expiry. Everything else with an effectiveEnd is episodic and DOES
- *  expire; an assertion with no effectiveEnd at all (temporalRef
- *  'unspecified'/'future', or a plan) is left untouched by this filter —
- *  it was never a dated claim to begin with, so there is no "window" to
- *  have ended. */
+ *  expire. */
 function isDurableAssertion(a) {
   return a.assertionType === 'preference';
+}
+
+/** A forward-looking episodic statement — a stated future plan or an
+ *  ongoing/in-progress state (a fast, a trip, an illness, ANY temporary
+ *  condition; not tied to any one named example). See
+ *  context-compiler.js's resolveTemporalWindow: this eventStatus/
+ *  assertionType combination is exactly the one that can resolve to an
+ *  UNBOUNDED `effectiveEnd: null` when the text states no duration/end —
+ *  "give episodic context a real lifecycle" requires that this specific
+ *  case never reads as current indefinitely (see isTemporallyEligible
+ *  below), unlike a past/completed assertion's null window (which was
+ *  never a forward claim that could go stale) or a durable preference
+ *  (which has no expiry by design). */
+function isForwardEpisodic(a) {
+  return ['event', 'state', 'plan'].includes(a.assertionType) && ['planned', 'ongoing'].includes(a.eventStatus);
 }
 
 /** True if `a` should still be shown as CURRENT context at `asOf`. An
@@ -477,7 +528,19 @@ function isDurableAssertion(a) {
 function isTemporallyEligible(a, { asOf = new Date(), tz = 'UTC', includeHistorical = false } = {}) {
   if (includeHistorical) return true;
   if (isDurableAssertion(a)) return true;
-  if (!a.effectiveEnd) return true;
+  if (!a.effectiveEnd) {
+    // A forward-looking plan/state (isForwardEpisodic) with NO establishable
+    // end must never read as current indefinitely — "never treat
+    // effectiveEnd = null as currently active forever for an episodic plan"
+    // (see context-compiler.js's resolveTemporalWindow + this module's
+    // header). Excluded from current-state projections, not guessed at; the
+    // row itself is untouched and still visible via includeHistorical:true.
+    // Every other untimed assertion (a past/completed event with no
+    // resolvable window, an undated note) keeps the original "no window =
+    // always shown" behavior — it was never a forward claim that could go
+    // stale, so there's nothing to expire.
+    return !isForwardEpisodic(a);
+  }
   const { localDayBoundsUtc } = require('../util/date');
   const eligibleThrough = localDayBoundsUtc(tz, new Date(a.effectiveEnd)).end;
   return eligibleThrough.getTime() >= new Date(asOf).getTime();
@@ -611,5 +674,5 @@ module.exports = {
   getRelevantContext, summarizeResolvedContext,
   // Exposed for focused unit tests:
   scoreRelation, EVIDENCE_WEIGHT, describeAssertion, targetKey, extractClockTimeRange,
-  isTemporallyEligible, isDurableAssertion, temporalAnchorSuffix, partitionRawContext,
+  isTemporallyEligible, isDurableAssertion, isForwardEpisodic, temporalAnchorSuffix, partitionRawContext,
 };

@@ -27,6 +27,23 @@ function calendarLoadFingerprint(load) {
   return load.isAllDayBlocked ? 'allday' : load.meetingHours.toFixed(2);
 }
 
+/** Question-time provenance ("give every question a canonical subject"): the
+ *  exact work-busy block(s) contributing to a calendar_load question's
+ *  reported hours, as {id, source, date, start, end} — computed HERE, once,
+ *  from the same live blocks the meeting-hours figure itself was computed
+ *  from (never reconstructed later from the answer's own wording). Echoed
+ *  back by the client on answer (see routes/annotations.js's POST
+ *  /briefing/context) so a classification correction ("that's a Sabbath
+ *  block, not meetings") can bind to the EXACT block it describes — no
+ *  title, no clock range in the answer required. A block missing a
+ *  resolvable id (malformed source data) is dropped rather than sent with a
+ *  null identity. */
+function blockRefsFor(workBusyBlocks) {
+  return (workBusyBlocks || [])
+    .filter((b) => b && b.id)
+    .map((b) => ({ id: b.id, source: 'work_busy', date: b.date, start: b.start, end: b.end }));
+}
+
 /** True if `load`'s current fingerprint differs materially from the one
  *  stored when the day's question was last answered. */
 function calendarLoadMateriallyChanged(storedFingerprint, load) {
@@ -54,11 +71,17 @@ function buildSignals({
   tomorrowWorkBusyAvailable = true, tomorrowCalendarAvailable = true,
   // Matched calendar-classification corrections (context-resolver.js's
   // matchCalendarClassifications) — same shape/purpose as
-  // briefing-ai.js's classifiedOverrides, passed straight through to both
-  // computeCalendarLoad calls below so a "that's a Sabbath block, not
+  // briefing-ai.js's classifiedOverrides, so a "that's a Sabbath block, not
   // meetings" correction also changes whether THIS signal fires, not just
-  // what the chief-brief prompt says.
-  classifiedOverrides = [],
+  // what the chief-brief prompt says. TWO separate lists, one per date
+  // (each pre-matched by the caller with that date's own targetLocalDate —
+  // see context-resolver.js's date-scoping) — sharing one list across both
+  // today's and tomorrow's computeCalendarLoad calls would let a
+  // classification meant for one day silently apply to the other day's
+  // block at the same clock time, exactly the cross-day leakage this fix
+  // closes.
+  classifiedOverridesToday = [],
+  classifiedOverridesTomorrow = [],
 } = {}) {
   const signals = [];
   const todayKey = localDateStr(tz, now);
@@ -79,7 +102,7 @@ function buildSignals({
     const tomorrowLoad = computeCalendarLoad({
       workBusy: tomorrowWorkBusy, calendar: tomorrowCalendar,
       sourcesAvailable: { workBusy: tomorrowWorkBusyAvailable, calendar: tomorrowCalendarAvailable },
-      classifiedOverrides,
+      classifiedOverrides: classifiedOverridesTomorrow,
     });
     if (tomorrowLoad.degraded) {
       // A source needed to rule out double-counting is unavailable — never
@@ -96,6 +119,9 @@ function buildSignals({
           // "what the schedule looked like when this was answered" without
           // re-fetching calendar data inside the annotation route.
           fingerprint: calendarLoadFingerprint(tomorrowLoad),
+          // Canonical subject provenance — see blockRefsFor above.
+          subjectLocalDate: tomorrowKey,
+          blocks: blockRefsFor(tomorrowWorkBusy),
           question: tomorrowLoad.isAllDayBlocked
             ? "There's an all-day block on your work calendar tomorrow — what's going on? (OOO, travel, an offsite?)"
             : `Tomorrow's work calendar is heavily blocked (${tomorrowLoad.meetingHours.toFixed(1)}h) — anything specific driving it?`,
@@ -126,7 +152,7 @@ function buildSignals({
     const todayLoad = computeCalendarLoad({
       workBusy, calendar,
       sourcesAvailable: { workBusy: workBusyAvailable, calendar: calendarAvailable },
-      classifiedOverrides,
+      classifiedOverrides: classifiedOverridesToday,
     });
     if (todayLoad.degraded) {
       console.error(`[pre-brief-signals] today calendar_load degraded (${todayLoad.degradedReason}) — suppressing the packed-calendar question`);
@@ -137,6 +163,8 @@ function buildSignals({
         signals.push({
           key: `calendar_load:${todayKey}`,
           fingerprint: calendarLoadFingerprint(todayLoad),
+          subjectLocalDate: todayKey,
+          blocks: blockRefsFor(workBusy),
           question: `You have ${todayLoad.meetingHours.toFixed(1)}h of meetings today — anything specific driving that, or just a heavy week?`,
           context: 'calendar note',
           severity: Math.min(0.75, 0.4 + (todayLoad.meetingHours - 4) * 0.06),

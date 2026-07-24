@@ -108,6 +108,27 @@ function createAnnotationsRouter() {
     // re-ask a question already answered here.
     const CALENDAR_LOAD_KEY_RE = /^calendar_load:(\d{4}-\d{2}-\d{2})$/;
     const calendarLoadMatch = CALENDAR_LOAD_KEY_RE.exec(String(signalKey || ''));
+    // Question-time provenance ("give every question a canonical subject"):
+    // the client echoes back the EXACT local date/block(s) a structured
+    // calendar-load question described — computed server-side when the
+    // question was generated (see intelligence/pre-brief-signals.js's
+    // `blocks` field), never reconstructed here from the answer's own
+    // (often date/block-free) wording. `subjectLocalDate` defaults to the
+    // date embedded in a `calendar_load:<date>` signalKey but can also be
+    // sent explicitly — the SAME contract works for a future Chief Brief
+    // open-question caller that isn't itself a pre-brief signal. Both are
+    // untrusted-but-bounded client input: capped in size and only ever used
+    // to bind a classification assertion's date/target — never blindly
+    // trusted as a fact about the calendar itself.
+    const subjectLocalDate = (typeof req.body?.subjectLocalDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.body.subjectLocalDate))
+      ? req.body.subjectLocalDate
+      : (calendarLoadMatch ? calendarLoadMatch[1] : null);
+    const subjectBlocks = Array.isArray(req.body?.blocks) ? req.body.blocks.slice(0, 20) : null;
+    // An "identity-bearing" question is one where the client understands
+    // itself to be answering about a specific calendar-load subject — the
+    // ONLY case where "answered but not structurally understood" is worse
+    // than not answering at all (see below, after compilation runs).
+    const isIdentityBearingQuestion = Boolean(calendarLoadMatch) || Boolean(subjectLocalDate);
     // The chief brief's "one open question" — see
     // intelligence/open-question-policy.js for the full rationale. Answering
     // it must durably retire it (this ledger row + the cached-brief blank
@@ -185,9 +206,31 @@ function createAnnotationsRouter() {
     const compiled = await compileUserContext({
       rawText: answer.trim(), source: 'briefing_context', question: question || null, tz, now: nowTs,
       recentActiveAssertions: await contextAssertionsStore.getActive({ recordedFrom: new Date(nowTs.getTime() - 7 * 24 * 60 * 60 * 1000) }).catch(() => []),
+      subjectLocalDate, subjectBlocks,
     });
     if (compiled.failed) {
-      console.error(`[briefing/context] context compilation failed (${compiled.failureType}) — annotation still saved, no structured assertions this time.`);
+      console.error(`[briefing/context] context compilation failed (${compiled.failureType})${isIdentityBearingQuestion ? '' : ' — annotation still saved, no structured assertions this time.'}`);
+    }
+    // For an identity-bearing question (a calendar-load subject the client
+    // expects to be durably reclassified), "answered but not understood"
+    // must never read as success — a generic annotation with no calendar
+    // assertion behind it would silently let the SAME stale meeting-hours
+    // number keep computing on every later build, which is indistinguishable
+    // from the answer having been lost. Nothing has been persisted yet (this
+    // check runs BEFORE the transaction below opens), so the client can
+    // safely retry the whole request. Every OTHER kind of answer (a plain
+    // "add context" note, an ordinary chief-brief openQuestion reply)
+    // preserves the original behavior exactly — the raw note is never lost
+    // just because structured extraction didn't fire.
+    if (isIdentityBearingQuestion) {
+      const hasCalendarAssertion = !compiled.failed && compiled.assertions.some((a) => (a.domains || []).includes('calendar'));
+      if (!hasCalendarAssertion) {
+        console.error(`[briefing/context] identity-bearing calendar-load answer was not structurally understood (${compiled.failed ? compiled.failureType : 'no calendar-domain assertion produced'}) — refusing to report success; the client should retry.`);
+        return res.status(503).json({
+          error: 'NormOS could not confirm it understood that answer — please try again.',
+          code: 'context_compilation_failed',
+        });
+      }
     }
 
     let id, eventKind, retiredAnnotationId;

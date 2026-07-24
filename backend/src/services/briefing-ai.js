@@ -632,8 +632,17 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
   let classifiedOverrides = [];
   if (snapshotFacts?.resolvedContext) {
     try {
+      const { localDateStr } = require('../util/date');
       classifiedOverrides = require('../intelligence/context-resolver')
-        .matchCalendarClassifications(snapshotFacts.resolvedContext, { calendar: calendarEvents, workBusy: workBusyBlocks });
+        .matchCalendarClassifications(snapshotFacts.resolvedContext, {
+          calendar: calendarEvents, workBusy: workBusyBlocks,
+          // Date-scoped to TODAY specifically (this call always describes
+          // today's calendar, never tomorrow's — see the function's own
+          // params) — a classification meant for a different day must never
+          // silently apply here just because the clock times happen to line
+          // up (see context-resolver.js's matchCalendarClassifications).
+          targetLocalDate: localDateStr(process.env.TZ || 'America/New_York'),
+        });
     } catch (e) { console.error('[chief-brief] matchCalendarClassifications failed:', e.message); }
   }
 

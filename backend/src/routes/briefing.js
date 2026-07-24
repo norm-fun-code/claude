@@ -1212,12 +1212,27 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     // calendar/workBusy intervals off this build's one BrainSnapshot cut, so
     // a "that's a Sabbath block, not meetings" correction also suppresses
     // the packed-calendar question itself, not just the number inside it.
-    let signalClassifiedOverrides = [];
+    // Date-scoped separately for today vs tomorrow (context-resolver.js's
+    // matchCalendarClassifications `targetLocalDate`) — a classification
+    // meant for one day must never silently apply to the other day's block
+    // at the same clock time (see pre-brief-signals.js's split
+    // classifiedOverridesToday/Tomorrow params).
+    let signalClassifiedOverridesToday = [];
+    let signalClassifiedOverridesTomorrow = [];
     if (brainSnapshot?.resolvedContext?.value) {
+      const resolver = require('../intelligence/context-resolver');
+      const todayKeyForMatch = localDateStr(signalsTz, nowForSignals);
+      const tomorrowKeyForMatch = localDateStr(signalsTz, new Date(nowForSignals.getTime() + 24 * 60 * 60 * 1000));
       try {
-        signalClassifiedOverrides = require('../intelligence/context-resolver')
-          .matchCalendarClassifications(brainSnapshot.resolvedContext.value, { calendar, workBusy });
-      } catch (e) { console.error('[pre-brief-signals] matchCalendarClassifications failed:', e.message); }
+        signalClassifiedOverridesToday = resolver.matchCalendarClassifications(
+          brainSnapshot.resolvedContext.value, { calendar, workBusy, targetLocalDate: todayKeyForMatch }
+        );
+      } catch (e) { console.error('[pre-brief-signals] matchCalendarClassifications (today) failed:', e.message); }
+      try {
+        signalClassifiedOverridesTomorrow = resolver.matchCalendarClassifications(
+          brainSnapshot.resolvedContext.value, { calendar: tomorrowCalendar, workBusy: tomorrowWorkBusy, targetLocalDate: tomorrowKeyForMatch }
+        );
+      } catch (e) { console.error('[pre-brief-signals] matchCalendarClassifications (tomorrow) failed:', e.message); }
     }
     const allSignals = preBriefSignals.buildSignals({
       recovery, calendar, workBusy, spend: recentSpend, spendBaseline, tomorrowWorkBusy, tomorrowCalendar,
@@ -1225,7 +1240,8 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
       workBusyAvailable: workBusyResult.status === 'fulfilled',
       calendarAvailable: calendarResult.status === 'fulfilled',
       tomorrowWorkBusyAvailable, tomorrowCalendarAvailable,
-      classifiedOverrides: signalClassifiedOverrides,
+      classifiedOverridesToday: signalClassifiedOverridesToday,
+      classifiedOverridesTomorrow: signalClassifiedOverridesTomorrow,
     });
     signals = preBriefSignals.selectQuestions(allSignals, 2);
   } catch (err) {

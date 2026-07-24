@@ -130,6 +130,14 @@ export interface Alert {
   message: string;
 }
 
+export interface BriefSignalBlock {
+  id: string;
+  source: string;
+  date: string | null;
+  start: string | null;
+  end: string | null;
+}
+
 export interface BriefSignal {
   key: string;
   question: string;
@@ -139,6 +147,16 @@ export interface BriefSignal {
   // echoed back on answer so the server can record what the underlying
   // signal looked like without re-fetching source data in the answer route.
   fingerprint?: string;
+  // Canonical subject provenance ("give every question a canonical
+  // subject") — the exact local date and calendar block(s) this question
+  // describes, computed server-side when the question was generated. Echoed
+  // back verbatim on answer (see BriefSignalsCard) so a classification
+  // correction ("that's a Sabbath block, not meetings") can bind to the
+  // EXACT block it was about, without the server having to reconstruct it
+  // from the answer text later — see routes/annotations.js's POST
+  // /briefing/context.
+  subjectLocalDate?: string;
+  blocks?: BriefSignalBlock[];
 }
 
 export interface Recovery {

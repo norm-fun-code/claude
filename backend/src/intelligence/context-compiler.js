@@ -104,10 +104,20 @@ const COMPILE_JSON_SCHEMA = {
           // the negation cue.
           evidenceSpan: { type: 'string' },
           confidence: { type: 'number' },
+          // Episodic lifecycle (bounded absolute interval — see
+          // resolveTemporalWindow below). At most one of these is ever
+          // meaningful for a given assertion; 0 / '' means "not stated."
+          // Deterministically re-validated against evidenceSpan before
+          // either is trusted — see textStatesDurationHours/
+          // textImpliesBoundedEnd — so a hallucinated duration/end the text
+          // never actually said is ignored, not silently trusted.
+          durationHours: { type: 'number' }, // e.g. 25 for "a 25-hour fast" — 0 when no explicit duration is stated
+          explicitEndDate: { type: 'string' }, // 'YYYY-MM-DD', the actual calendar date an explicit end ("through tomorrow", "until Friday") resolves to — '' when no explicit end is stated
         },
         required: [
           'assertionType', 'subject', 'predicate', 'objectValue', 'concepts', 'domains',
           'eventStatus', 'temporalRef', 'explicitDate', 'correctsPriorText', 'evidenceSpan', 'polarity', 'confidence',
+          'durationHours', 'explicitEndDate',
         ],
       },
     },
@@ -136,6 +146,8 @@ Fields:
 - domains: which of ${DOMAINS.join(', ')} this affects — usually one, sometimes two.
 - eventStatus: occurred|planned|ongoing|completed|negated|retracted|superseded. NEGATED means the text explicitly says something did NOT happen ("I didn't drink") — this is different from simply not mentioning it. RETRACTED means the user is asking to disregard/forget something they said earlier ("forget what I said about...", "ignore that", "scratch that").
 - temporalRef: when this happened/applies, from the user's own wording — last_night | today | yesterday | this_morning | ongoing | future | unspecified | explicit_date (only when the user names a specific day, e.g. "Thursday" — put that day's date, if inferable from context, in explicitDate as YYYY-MM-DD, else leave explicitDate empty and use temporalRef "unspecified").
+- durationHours: ONLY for a plan/event/state (temporalRef future/ongoing) that states an explicit DURATION — "25 hour fast", "gone for 3 days", "a two-week trip" — the duration in hours as a plain number (25, 72, 336). Otherwise 0. Never guess a duration the text doesn't state.
+- explicitEndDate: ONLY for a plan/event/state that states an explicit END DAY in words, not a duration — "through tomorrow", "until Friday", "ending Sunday", "back on the 14th" — that day's actual calendar date (YYYY-MM-DD), computed from today's date above. Otherwise empty string. Use EITHER durationHours OR explicitEndDate for a given assertion, whichever the text actually states — never both, never neither when the text gives one. A future/ongoing statement with NO stated duration or end (a bare "I'm traveling") leaves both 0/empty — this is expected and correct; do not invent an end.
 - correctsPriorText: if this statement corrects, retracts, or supersedes something the user likely said before (a temporal correction, a classification change, a completion correction, an explicit retraction), give your best short paraphrase of what it corrects so the caller can match it against recent history. Empty string if this is not a correction of anything.
 - polarity: ONLY meaningful when assertionType is "preference" — otherwise always "neutral". prefer: the user wants MORE of this ("I prefer morning workouts", "I like scheduling deep work early"). avoid: the user wants LESS of or NO this ("don't recommend evening workouts", "avoid scheduling calls after 5pm"). require: the user stated a HARD, non-negotiable rule, not just a leaning ("never schedule anything before 8am", "I must have Fridays free") — use this sparingly, only for genuinely absolute wording. neutral: not a preference, or the direction genuinely can't be told.
 - evidenceSpan: the EXACT verbatim clause of the input text this specific assertion is drawn from — copy it character-for-character from the input, do not paraphrase. For a compound statement with multiple distinct facts ("I didn't drink, but I ate a late meal"), each assertion's evidenceSpan must be ONLY its own clause ("I didn't drink" for the alcohol assertion, "I ate a late meal" for the late-meal assertion) — never the whole sentence for every assertion. This is what lets negation/retraction in one clause avoid wrongly applying to a sibling assertion drawn from a different clause of the same message.
@@ -143,11 +155,21 @@ Fields:
 
 Be conservative: only extract what the text actually supports. Never invent a cause, a completion state, or a preference the text doesn't state. A plain observational note with no clear structure still gets ONE assertion (assertionType "state", predicate/objectValue capturing it plainly) — never return zero assertions for non-empty text.`;
 
-function buildCompilePrompt({ rawText, question = null, tz, now }) {
+function buildCompilePrompt({ rawText, question = null, tz, now, subjectLocalDate = null }) {
   const localDate = now.toLocaleDateString('en-CA', { timeZone: tz });
   const weekday = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: tz });
+  // subjectLocalDate — when the caller already knows WHICH day this answer
+  // describes (e.g. a calendar-load question asked about a specific day's
+  // schedule — see routes/annotations.js's POST /briefing/context) — tells
+  // the model explicitly, rather than leaving it to infer the date purely
+  // from the question's prose. Defense-in-depth only: the caller applies its
+  // own deterministic date binding to a calendar-classification assertion
+  // regardless of what temporalRef/explicitDate the model picks (see
+  // routes/annotations.js), so this doesn't need to be perfectly reliable —
+  // it just improves the odds the model's own extraction agrees.
+  const subjectLine = subjectLocalDate ? `This answer specifically describes ${subjectLocalDate}.\n` : '';
   return `Today is ${weekday}, ${localDate} (timezone ${tz}).
-${question ? `The question being answered was: "${question}"\n` : ''}Text to compile:
+${subjectLine}${question ? `The question being answered was: "${question}"\n` : ''}Text to compile:
 "${rawText}"`;
 }
 
@@ -193,51 +215,118 @@ async function compileAttempt(prompt, attemptLabel, { maxTokens = COMPILER_MAX_T
 
 // ── Deterministic validation/enrichment (pure, unit-testable) ──────────────
 
+// ── Episodic lifecycle: bounded-duration deterministic validation ──────────
+// "Deterministically validate the LLM extraction against the original text"
+// — a duration/end-date the compiler extracted is only ever trusted when the
+// ASSERTION'S OWN text (evidenceSpan, falling back to the full raw text —
+// same fallback rule reconcileEventStatus uses) actually contains a matching
+// signal. A hallucinated "25 hours" the user never said is silently ignored
+// (falls back to the single-day-bounded default below), never trusted blind.
+const MAX_EPISODIC_DURATION_HOURS = 24 * 14; // two weeks — a generous ceiling for any real episodic statement, not a real-world limit
+
+/** True if `text` states a duration reasonably close to `hours` (as "N
+ *  hour(s)"/"N hr(s)"/"N day(s)", loosely — "25 hour fast", "25-hour",
+ *  "3 days"). Half-hour tolerance absorbs "24.5-hour" vs durationHours:24.5
+ *  style rounding; day-to-hour conversion lets "a 2 day trip" validate
+ *  durationHours:48. */
+function textStatesDurationHours(text, hours) {
+  if (!Number.isFinite(hours) || hours <= 0) return false;
+  const matches = [...String(text || '').matchAll(/(\d+(?:\.\d+)?)\s*-?\s*(hour|hr|day)s?\b/gi)];
+  return matches.some((m) => {
+    const n = Number(m[1]);
+    const asHours = m[2].toLowerCase().startsWith('day') ? n * 24 : n;
+    return Math.abs(asHours - hours) < 0.5;
+  });
+}
+
+/** True if `text` uses END-bounding language at all ("through", "until",
+ *  "till", "ending", "back on/by") — a loose but deterministic guard that an
+ *  explicitEndDate the compiler extracted corresponds to SOMETHING the text
+ *  actually said, not an invented end. */
+function textImpliesBoundedEnd(text) {
+  return /\b(through|until|till|'til|ending|back (on|by))\b/i.test(String(text || ''));
+}
+
 /** Reuses analyze.js's resolveNightWindow for night-anchored health refs (the
  *  SAME canonical "last night" definition every other night-binding surface
  *  uses — see intelligence/recovery-drivers.js, routes/annotations.js), and
  *  simple local-day boundaries for everything else. Never throws — an
  *  unresolvable temporal ref just leaves both bounds null (an assertion with
  *  no effective window is still valid; it just can't anchor a driver's
- *  temporal-alignment score, see context-resolver.js). */
-function resolveTemporalWindow({ temporalRef, explicitDate, domains = [] }, { tz, now, wakeTimeSeries = [] }) {
+ *  temporal-alignment score, see context-resolver.js) — this null-window
+ *  fail-closed contract for 'unspecified' is unchanged and load-bearing
+ *  (deriveRelations below refuses to create a metric-driver relation without
+ *  a bounded effectiveEnd; do not weaken that).
+ *
+ *  Episodic lifecycle ("give episodic context a real lifecycle"): a
+ *  temporalRef 'future' statement (a stated plan/event starting now or
+ *  later) still starts with an open `effectiveEnd: null` by default — BUT a
+ *  stated duration or explicit end EXTENDS it to the actual described bound,
+ *  which is what makes "25 hour fast starting tonight through tomorrow"
+ *  resolve to a real two-day interval instead of staying open-ended. Both
+ *  are deterministically cross-checked against the assertion's own text
+ *  before being trusted (see textStatesDurationHours/textImpliesBoundedEnd
+ *  above) and clamped to a sane ceiling — an LLM extraction is validated,
+ *  never blindly applied. When NEITHER is stated (a bare "I'm traveling"),
+ *  effectiveEnd stays null exactly as before — context-resolver.js's
+ *  isTemporallyEligible/isForwardEpisodic is what stops that from reading as
+ *  current forever (never treats a forward-looking plan/state with no
+ *  establishable end as indefinitely current), not a guessed default here. */
+function resolveTemporalWindow({ temporalRef, explicitDate, domains = [], durationHours = 0, explicitEndDate = '', evidenceSpan = '' }, { tz, now, wakeTimeSeries = [] }) {
   const { localDayBoundsUtc } = require('../util/date');
   const isHealthLike = domains.includes('health') || domains.includes('wellbeing');
+
+  let effectiveStart = null;
+  let effectiveEnd = null;
 
   if ((temporalRef === 'last_night' || temporalRef === 'this_morning') && isHealthLike) {
     const { resolveNightWindow } = require('./analyze');
     const todayKey = now.toLocaleDateString('en-CA', { timeZone: tz });
     const w = resolveNightWindow(todayKey, wakeTimeSeries, tz);
-    return { effectiveStart: w.start, effectiveEnd: w.end };
-  }
-  if (temporalRef === 'yesterday') {
+    effectiveStart = w.start;
+    effectiveEnd = w.end;
+  } else if (temporalRef === 'yesterday') {
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const { start, end } = localDayBoundsUtc(tz, yesterday);
-    return { effectiveStart: start, effectiveEnd: end };
-  }
-  if (temporalRef === 'today' || temporalRef === 'ongoing') {
-    // 'ongoing's effectiveEnd is deliberately pinned to compile-time `now`,
-    // not left open-ended — this IS the lifecycle/refresh policy for a
-    // still-in-progress condition (illness, travel): the derived metric
-    // relation's expiresAt is the registry's effect window measured from
-    // THIS moment, so if the condition is still true days later, it simply
-    // decays out like any other driver and needs a fresh assertion (the
-    // user mentioning it again) to keep counting as an active driver,
-    // rather than staying "ongoing" indefinitely from one mention.
+    const b = localDayBoundsUtc(tz, yesterday);
+    effectiveStart = b.start;
+    effectiveEnd = b.end;
+  } else if (temporalRef === 'today' || temporalRef === 'ongoing') {
     const { start } = localDayBoundsUtc(tz, now);
-    return { effectiveStart: start, effectiveEnd: now };
-  }
-  if (temporalRef === 'explicit_date' && explicitDate) {
+    effectiveStart = start;
+    effectiveEnd = now;
+  } else if (temporalRef === 'explicit_date' && explicitDate) {
     const d = new Date(`${explicitDate}T12:00:00Z`);
     if (!Number.isNaN(d.getTime())) {
-      const { start, end } = localDayBoundsUtc(tz, d);
-      return { effectiveStart: start, effectiveEnd: end };
+      const b = localDayBoundsUtc(tz, d);
+      effectiveStart = b.start;
+      effectiveEnd = b.end;
+    }
+  } else if (temporalRef === 'future') {
+    effectiveStart = now; // effectiveEnd stays null unless extended below
+  }
+  // 'unspecified' (or an explicit_date that failed to parse) falls through
+  // with both bounds still null — genuinely no temporal signal in the text.
+
+  // Deterministic bounded-duration override — the mechanism that gives an
+  // episodic FUTURE plan a real absolute end. Only ever EXTENDS a known
+  // effectiveStart (so it's inert for 'unspecified', which has none); never
+  // invents a start.
+  if (effectiveStart) {
+    if (Number.isFinite(durationHours) && durationHours > 0 && durationHours <= MAX_EPISODIC_DURATION_HOURS
+      && textStatesDurationHours(evidenceSpan, durationHours)) {
+      const candidateEnd = new Date(effectiveStart.getTime() + durationHours * 3600 * 1000);
+      if (candidateEnd.getTime() > effectiveStart.getTime()) effectiveEnd = candidateEnd;
+    } else if (explicitEndDate && textImpliesBoundedEnd(evidenceSpan)) {
+      const d = new Date(`${explicitEndDate}T12:00:00Z`);
+      if (!Number.isNaN(d.getTime())) {
+        const candidateEnd = localDayBoundsUtc(tz, d).end;
+        const spanMs = candidateEnd.getTime() - effectiveStart.getTime();
+        if (spanMs > 0 && spanMs <= MAX_EPISODIC_DURATION_HOURS * 3600 * 1000) effectiveEnd = candidateEnd;
+      }
     }
   }
-  if (temporalRef === 'future') {
-    return { effectiveStart: now, effectiveEnd: null };
-  }
-  return { effectiveStart: null, effectiveEnd: null };
+
+  return { effectiveStart, effectiveEnd };
 }
 
 /** Deterministic safety net (constrain, don't replace): if the raw text
@@ -372,7 +461,16 @@ function deriveRelations(assertion, { supersedesAssertionId = null } = {}) {
 
   if (assertion.assertionType === 'classification' && domains.includes('calendar')) {
     relations.push({
-      targetType: 'calendar_event', targetId: normalizeTargetId(assertion.subject || assertion.objectValue),
+      targetType: 'calendar_event',
+      // classifiedBlockId — set ONLY by routes/annotations.js's POST
+      // /briefing/context when the client echoed back the EXACT block a
+      // structured calendar-load question's answer described (question-time
+      // provenance — see calendar-block-identity.js) — targets that block
+      // directly, no text/clock-range matching needed at all. Falls back to
+      // the old text-derived id (still used by matchCalendarClassifications'
+      // priority 2/3 fuzzy fallback for anything without such provenance,
+      // e.g. a proactive correction with no question behind it).
+      targetId: assertion.classifiedBlockId || normalizeTargetId(assertion.subject || assertion.objectValue),
       relationship: 'classifies', evidenceBasis: 'user_explicit', confidence: conf, strength: 1,
       windowStart: assertion.effectiveStart, windowEnd: assertion.effectiveEnd,
       permittedLanguage: assertion.objectValue || null,
@@ -500,11 +598,24 @@ function deriveRelations(assertion, { supersedesAssertionId = null } = {}) {
  * relations: [], failed: true, failureType}` so a compiler failure can
  * never block the underlying annotation write (see routes/annotations.js).
  */
-async function compileUserContext({ rawText, source, question = null, tz = process.env.TZ || 'America/New_York', now = new Date(), recentActiveAssertions = [], wakeTimeSeries = [] }) {
+async function compileUserContext({
+  rawText, source, question = null, tz = process.env.TZ || 'America/New_York', now = new Date(),
+  recentActiveAssertions = [], wakeTimeSeries = [],
+  // Question-time provenance ("give every question a canonical subject"):
+  // when the caller already knows WHICH calendar date/block(s) this answer
+  // describes — echoed back by the client from a structured calendar-load
+  // question, see routes/annotations.js — pass them here. A
+  // calendar-classification assertion is then bound to that EXACT
+  // date/block deterministically below, overriding whatever
+  // temporalRef/explicitDate the LLM itself extracted from the answer's own
+  // (often date-free) wording. Reconstructing identity from the answer text
+  // alone at read time is exactly the unreliable mechanism this replaces.
+  subjectLocalDate = null, subjectBlocks = null,
+} = {}) {
   const text = String(rawText || '').trim();
   if (!text) return { assertions: [], relations: [], failed: false, failureType: null };
 
-  const prompt = buildCompilePrompt({ rawText: text, question, tz, now });
+  const prompt = buildCompilePrompt({ rawText: text, question, tz, now, subjectLocalDate });
   const correlationId = require('crypto').randomUUID();
 
   let { result, failureType } = await compileAttempt(prompt, 'attempt 1/2', { correlationId });
@@ -524,7 +635,14 @@ async function compileUserContext({ rawText, source, question = null, tz = proce
   for (const raw of dedupeAssertions(result)) {
     if (!ASSERTION_TYPES.includes(raw.assertionType) || !EVENT_STATUSES.includes(raw.eventStatus)) continue;
     const reconciled = reconcileEventStatus(raw, text);
-    const { effectiveStart, effectiveEnd } = resolveTemporalWindow(reconciled, { tz, now, wakeTimeSeries });
+    // Same evidenceSpan-with-fallback rule reconcileEventStatus itself uses
+    // (an assertion-local clause, falling back to the full message only when
+    // the model left evidenceSpan empty) — so the duration/end-date
+    // deterministic text validation below checks the right substring.
+    const spanForValidation = String(reconciled.evidenceSpan || '').trim() || text;
+    const { effectiveStart, effectiveEnd } = resolveTemporalWindow(
+      { ...reconciled, evidenceSpan: spanForValidation }, { tz, now, wakeTimeSeries }
+    );
     const confidence = Number.isFinite(reconciled.confidence) ? Math.max(0, Math.min(1, reconciled.confidence)) : 0.6;
 
     const superseded = findSupersededAssertion(reconciled, candidatePool);
@@ -545,6 +663,30 @@ async function compileUserContext({ rawText, source, question = null, tz = proce
       // specific fields it destructures).
       polarity: PREFERENCE_POLARITIES.includes(reconciled.polarity) ? reconciled.polarity : 'neutral',
     };
+
+    // Question-time provenance override — see the module header above. Only
+    // ever touches a calendar-domain classification assertion, and only
+    // when the caller actually supplied subject metadata; every other
+    // assertion (and a classification with no known subject) is untouched.
+    if (subjectLocalDate && assertion.assertionType === 'classification' && assertion.domains.includes('calendar')) {
+      const { localDayBoundsUtc } = require('../util/date');
+      const subjectDate = new Date(`${subjectLocalDate}T12:00:00Z`);
+      if (!Number.isNaN(subjectDate.getTime())) {
+        const b = localDayBoundsUtc(tz, subjectDate);
+        assertion.effectiveStart = b.start;
+        assertion.effectiveEnd = b.end;
+      }
+      // Only when the subject is UNAMBIGUOUSLY one exact block — see
+      // context-resolver.js's matchCalendarClassifications priority 0. With
+      // more than one candidate block, identity stays unset here and the
+      // relation falls back to date-scoped clock-range/text matching at
+      // read time (matchCalendarClassifications priorities 2/3) rather than
+      // guessing which of several blocks the answer meant.
+      if (Array.isArray(subjectBlocks) && subjectBlocks.length === 1 && subjectBlocks[0]?.id) {
+        assertion.classifiedBlockId = subjectBlocks[0].id;
+      }
+    }
+
     compiledAssertions.push(assertion);
     candidatePool.push({ ...assertion, id: null }); // no real id yet — a later assertion in this batch can still overlap-match its subject/predicate/objectValue text, id stays null (not usable as a real FK) until persisted
 

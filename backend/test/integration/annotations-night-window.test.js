@@ -13,17 +13,44 @@ const { localDateStr } = require('../../src/util/date');
 const { computeRecoveryDrivers } = require('../../src/intelligence/recovery-drivers');
 const signalAnswersStore = require('../../src/store/signalAnswers');
 const annotationsStore = require('../../src/store/annotations');
+const llm = require('../../src/llm');
 
 const app = buildTestApp();
 const TZ = process.env.TZ || 'America/New_York';
+const ORIGINAL_GENERATE_TEXT = llm.generateText;
+
+// calendar_load is an identity-bearing signalKey (routes/annotations.js) —
+// POST /briefing/context now refuses to report success for it unless
+// compilation actually produces a calendar-domain assertion, so these tests
+// mock the LLM extraction call the same way context-lifecycle-and-question-
+// provenance.test.js does, rather than relying on a real Anthropic call.
+function mockCompileCalendarLoad(objectValue, evidenceSpan) {
+  llm.generateText = async () => ({
+    text: JSON.stringify({ assertions: [{
+      assertionType: 'classification', subject: 'meetings today', predicate: 'is', objectValue,
+      concepts: [], domains: ['calendar'], eventStatus: 'occurred', temporalRef: 'today',
+      explicitDate: '', correctsPriorText: '', evidenceSpan, confidence: 0.9,
+      durationHours: 0, explicitEndDate: '', polarity: 'neutral',
+    }] }),
+    stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
+  });
+}
 
 async function cleanupAnnotations(labelLike) {
   await db.query(`DELETE FROM annotations WHERE label ILIKE $1`, [`%${labelLike}%`]);
 }
 
 afterEach(async () => {
+  llm.generateText = ORIGINAL_GENERATE_TEXT;
   await cleanupAnnotations('overnight-window-marker');
   await db.query(`DELETE FROM signal_answers WHERE subject_key = 'calendar_load' AND fingerprint LIKE 'test-%'`);
+  // The calendar_load tests below compile real context_assertions (mocked
+  // LLM) referencing a "Q: You have 5.0h of meetings today" annotation via
+  // source_annotation_id — delete assertions/relations before the annotation
+  // itself, or the FK constraint blocks the annotation delete.
+  await db.query(`DELETE FROM context_relations WHERE source_assertion_id IN (SELECT ca.id FROM context_assertions ca JOIN annotations a ON a.id = ca.source_annotation_id WHERE a.note LIKE 'Q: You have 5.0h of meetings today%')`);
+  await db.query(`DELETE FROM context_assertions WHERE source_annotation_id IN (SELECT id FROM annotations WHERE note LIKE 'Q: You have 5.0h of meetings today%')`);
+  await db.query(`DELETE FROM annotations WHERE note LIKE 'Q: You have 5.0h of meetings today%'`);
 });
 after(async () => { await closeDb(); });
 
@@ -122,6 +149,7 @@ test('general (non-health) context can never become a recovery driver, even when
 });
 
 test('POST /briefing/context with a calendar_load signalKey persists a durable, server-side answer BEFORE the response returns', async () => {
+  mockCompileCalendarLoad('meetings, ran long', 'Sprint planning ran long');
   const today = localDateStr(TZ, new Date());
   const signalKey = `calendar_load:${today}`;
   const res = await request(app)
@@ -141,6 +169,7 @@ test('POST /briefing/context with a calendar_load signalKey persists a durable, 
 });
 
 test('a signal-answer write failure surfaces as an error response, not a false {ok:true}', async () => {
+  mockCompileCalendarLoad('meetings', 'should not be saved');
   // Force recordAnswer to reject, simulating a DB hiccup on the durable write.
   const original = signalAnswersStore.recordAnswer;
   signalAnswersStore.recordAnswer = async () => { throw new Error('simulated write failure'); };
@@ -166,6 +195,7 @@ test('an annotation-creation failure AFTER the signal-answer write rolls back th
   // suppressed with no explanatory annotation to justify it. Both writes now
   // run inside one transaction (see routes/annotations.js) — force the
   // SECOND write to fail and assert the FIRST one is not left behind either.
+  mockCompileCalendarLoad('meetings', 'should not be durably suppressed');
   const original = annotationsStore.createAnnotation;
   annotationsStore.createAnnotation = async () => { throw new Error('simulated annotation failure'); };
   try {

@@ -1,5 +1,6 @@
 const { google } = require('googleapis');
-const { localDayBoundsUtc } = require('../util/date');
+const { localDayBoundsUtc, localDateStr } = require('../util/date');
+const { calendarBlockId } = require('../intelligence/calendar-block-identity');
 
 function getAuthClient() {
   const oauth2Client = new google.auth.OAuth2(
@@ -64,6 +65,12 @@ async function fetchCalendarEvents({ date } = {}) {
       // future input path starts carrying one (see that function's doc
       // comment for the current state — no input path populates one yet).
       id: event.id || null,
+      // The local calendar date this event was FETCHED for — carried on the
+      // block itself (not just implied by which variable the caller stored
+      // the result in) so a stable block identity (see
+      // intelligence/calendar-block-identity.js) and date-scoped
+      // classification matching are both possible downstream.
+      date: localDateStr(process.env.TZ || 'America/New_York', now),
       title: event.summary || 'Untitled',
       startTime,
       endTime,
@@ -113,10 +120,22 @@ async function fetchWorkBusyBlocks({ date } = {}) {
     throw new Error(`Google freebusy query failed for ${calId}: ${reasons}`);
   }
   const busy = calResult?.busy ?? [];
-  return busy.map((block) => ({
-    start: formatTime(block.start, timeZone),
-    end: formatTime(block.end, timeZone),
-  }));
+  const localDate = localDateStr(timeZone, day);
+  return busy.map((block) => {
+    const start = formatTime(block.start, timeZone);
+    const end = formatTime(block.end, timeZone);
+    return {
+      start, end,
+      // The local date this block was FETCHED for (see fetchCalendarEvents'
+      // identical field above) — work-busy blocks carry no title and no id
+      // of their own from Google's freebusy API, so `date` + normalized
+      // start/end is the ONLY stable identity available; see
+      // intelligence/calendar-block-identity.js. Computed here (once,
+      // authoritatively, at fetch time) rather than re-derived downstream.
+      date: localDate,
+      id: calendarBlockId({ source: 'work_busy', date: localDate, start, end }),
+    };
+  });
 }
 
 module.exports = { fetchCalendarEvents, fetchWorkBusyBlocks };

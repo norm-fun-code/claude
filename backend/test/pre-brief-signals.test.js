@@ -84,8 +84,8 @@ test('classifiedOverrides nets a reclassified work-busy block out of the packed-
   const withoutOverride = buildSignals({ recovery: null, workBusy, calendar: [], now: NOW, tz: TZ });
   assert.ok(withoutOverride.find((s) => s.key === TODAY_KEY), 'sanity: 4h of unclassified busy time should fire the signal');
 
-  const classifiedOverrides = [{ title: 'a Sabbath observance, not meetings', startTime: '5:00 PM', endTime: '9:00 PM', allDay: false }];
-  const withOverride = buildSignals({ recovery: null, workBusy, calendar: [], now: NOW, tz: TZ, classifiedOverrides });
+  const classifiedOverridesToday = [{ title: 'a Sabbath observance, not meetings', startTime: '5:00 PM', endTime: '9:00 PM', allDay: false }];
+  const withOverride = buildSignals({ recovery: null, workBusy, calendar: [], now: NOW, tz: TZ, classifiedOverridesToday });
   assert.equal(withOverride.find((s) => s.key === TODAY_KEY), undefined,
     'the reclassified block must net to 0h of real meeting load, well under the 4h threshold');
 });

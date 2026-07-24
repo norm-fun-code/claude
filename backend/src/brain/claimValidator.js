@@ -447,6 +447,54 @@ function checkResolvedContextConflicts(fields, facts) {
   return violations;
 }
 
+// ── Episodic state overclaim ─────────────────────────────────────────────────
+// General lifecycle-enforcement check (harden pass — "a brief cannot claim
+// the user is currently fasting unless an active assertion overlaps the
+// snapshot time"): a forward-looking episodic assertion (a stated future
+// plan or ongoing state — a fast, a trip, an illness; ANY temporary
+// condition, not tied to any one named example — see
+// intelligence/context-resolver.js's isForwardEpisodic) must not be
+// described as CURRENTLY true once its own resolved lifecycle window says
+// otherwise (already ended, or never had an establishable end at all). This
+// is what stops "you're fasting" from surviving past the fast's own stated
+// end, or "starting tonight" from being restated once the event has already
+// begun — general lifecycle enforcement, not a fasting-specific rule.
+const PAST_TENSE_FRAME_RE = /\b(was|were|ended|finished|completed|wrapped up|used to|had been|no longer)\b/i;
+function checkEpisodicStateOverclaim(fields, facts) {
+  const resolved = facts?.resolvedContext;
+  if (!resolved || !Array.isArray(resolved.assertions)) return [];
+  const { isForwardEpisodic, isTemporallyEligible } = require('../intelligence/context-resolver');
+  // "Overlaps the snapshot time" — anchored to when THIS ResolvedContext was
+  // actually built (resolved.generatedAt), never a fresh `new Date()` at
+  // validation time, so a snapshot built once and validated/read multiple
+  // times gives the same answer every time (same discipline as
+  // context-resolver.js's summarizeResolvedContext).
+  const asOf = resolved.generatedAt ? new Date(resolved.generatedAt) : new Date();
+  const staleEpisodic = resolved.assertions.filter(
+    (a) => isForwardEpisodic(a) && !isTemporallyEligible(a, { asOf, tz: resolved.tz })
+  );
+  if (!staleEpisodic.length) return [];
+
+  const violations = [];
+  for (const a of staleEpisodic) {
+    const probe = a.predicate ? `${a.predicate} ${a.objectValue || ''}`.trim() : (a.rawText || '').trim();
+    if (!probe) continue;
+    for (const [field, text] of fields) {
+      for (const sentence of splitIntoSentences(text)) {
+        if (overlapRatio(sentence, probe) < 0.5) continue;
+        if (PAST_TENSE_FRAME_RE.test(sentence)) continue; // already correctly framed as over — nothing to flag
+        violations.push({
+          check: 'episodic_state_overclaim', field, sentence, severity: 'high',
+          expected: 'not current — its resolved window has ended, or was never established',
+          actual: 'described as currently true',
+          message: `describes "${probe}" as current, but its resolved lifecycle window has ended (or was never bounded) — should be past tense or omitted`,
+        });
+      }
+    }
+  }
+  return violations;
+}
+
 // ── Experiment verdict ───────────────────────────────────────────────────────
 const CONFIRM_VERB_RE = /\b(?:confirm(?:ed|s)?|prov(?:ed|en|es)|validated|worked|is working|paid off)\b/i;
 function checkExperiments(fields, facts) {
@@ -763,6 +811,7 @@ function validateClaims(fields, facts) {
     ...checkForecast(fields, facts),
     ...checkCurrentDate(fields, facts),
     ...checkResolvedContextConflicts(fields, facts),
+    ...checkEpisodicStateOverclaim(fields, facts),
     ...checkAssociationOverclaim(fields, facts),
     ...checkWeeklyEventCounts(fields, facts),
     ...checkTemporalFraming(fields, facts),
@@ -1057,5 +1106,5 @@ module.exports = {
   checkWorkoutCompletionOverclaim,
   checkCompletion, checkExperiments, checkSpending, checkForecast, checkCurrentDate, briefFields,
   checkResolvedContextConflicts, checkWeeklyEventCounts, splitIntoSentences,
-  checkTemporalFraming,
+  checkTemporalFraming, checkEpisodicStateOverclaim,
 };

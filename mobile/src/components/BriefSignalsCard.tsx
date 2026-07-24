@@ -78,6 +78,13 @@ function BriefSignalsCard({ signals }: Props) {
           answer: trimmed,
           signalKey: current.key,
           fingerprint: current.fingerprint,
+          // Canonical subject provenance, echoed back verbatim — see
+          // useBriefing.ts's BriefSignal type and routes/annotations.js's
+          // POST /briefing/context, which uses this to bind a calendar
+          // classification to the EXACT block the question described
+          // instead of re-guessing it from the answer text.
+          subjectLocalDate: current.subjectLocalDate,
+          blocks: current.blocks,
         }),
       });
       if (!res.ok) throw new Error(`Server ${res.status}`);
