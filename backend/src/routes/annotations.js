@@ -92,7 +92,7 @@ function createAnnotationsRouter() {
   // Pre-brief context answers — user responds to a signal question; store as
   // annotation so it flows into annotationsContext on the next briefing build.
   router.post('/briefing/context', asyncHandler(async (req, res) => {
-    const { question, answer, signalKey, fingerprint } = req.body || {};
+    const { question, answer, signalKey, fingerprint, questionId } = req.body || {};
     if (!answer || typeof answer !== 'string' || !answer.trim()) {
       return res.status(400).json({ error: 'answer required' });
     }
@@ -108,27 +108,6 @@ function createAnnotationsRouter() {
     // re-ask a question already answered here.
     const CALENDAR_LOAD_KEY_RE = /^calendar_load:(\d{4}-\d{2}-\d{2})$/;
     const calendarLoadMatch = CALENDAR_LOAD_KEY_RE.exec(String(signalKey || ''));
-    // Question-time provenance ("give every question a canonical subject"):
-    // the client echoes back the EXACT local date/block(s) a structured
-    // calendar-load question described — computed server-side when the
-    // question was generated (see intelligence/pre-brief-signals.js's
-    // `blocks` field), never reconstructed here from the answer's own
-    // (often date/block-free) wording. `subjectLocalDate` defaults to the
-    // date embedded in a `calendar_load:<date>` signalKey but can also be
-    // sent explicitly — the SAME contract works for a future Chief Brief
-    // open-question caller that isn't itself a pre-brief signal. Both are
-    // untrusted-but-bounded client input: capped in size and only ever used
-    // to bind a classification assertion's date/target — never blindly
-    // trusted as a fact about the calendar itself.
-    const subjectLocalDate = (typeof req.body?.subjectLocalDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.body.subjectLocalDate))
-      ? req.body.subjectLocalDate
-      : (calendarLoadMatch ? calendarLoadMatch[1] : null);
-    const subjectBlocks = Array.isArray(req.body?.blocks) ? req.body.blocks.slice(0, 20) : null;
-    // An "identity-bearing" question is one where the client understands
-    // itself to be answering about a specific calendar-load subject — the
-    // ONLY case where "answered but not structurally understood" is worse
-    // than not answering at all (see below, after compilation runs).
-    const isIdentityBearingQuestion = Boolean(calendarLoadMatch) || Boolean(subjectLocalDate);
     // The chief brief's "one open question" — see
     // intelligence/open-question-policy.js for the full rationale. Answering
     // it must durably retire it (this ledger row + the cached-brief blank
@@ -136,6 +115,73 @@ function createAnnotationsRouter() {
     // failure can never leave the question durably suppressed with its
     // answer lost, or vice versa.
     const isOpenQuestionAnswer = signalKey === 'brief_open_question' && !!String(question || '').trim();
+
+    // Canonical subject provenance for a Chief Brief openQuestion (see
+    // store/openQuestionInstances.js + intelligence/open-question-policy.js's
+    // bindOpenQuestionInstance): the SOLE authority for what this question's
+    // subject is — never reconstructed from the answer text, and never
+    // trusted from any client-supplied subjectLocalDate/blocks field, which
+    // remain valid ONLY for the pre-brief-signal calendar_load path below
+    // (a different, already-trusted mechanism — see pre-brief-signals.js's
+    // blockRefsFor, computed and handed to the client at signal-generation
+    // time, not user-suppliable free text). Absent `questionId` (an older
+    // client, or a generic non-calendar question) degrades to the exact
+    // pre-this-fix behavior — nothing below changes for it.
+    let questionInstance = null;
+    if (isOpenQuestionAnswer && typeof questionId === 'string' && questionId.trim()) {
+      const openQuestionInstancesStore = require('../store/openQuestionInstances');
+      questionInstance = await openQuestionInstancesStore.getById(questionId.trim()).catch((e) => {
+        console.error('[briefing/context] openQuestionInstance lookup failed:', e.message);
+        return null;
+      });
+    }
+    // Idempotent short-circuit: already answered (a client retry after a
+    // slow-but-successful first attempt, or a double-tap) — redoing the
+    // compile/persist could double-classify or double-count in the ledger.
+    if (questionInstance?.answeredAt) {
+      return res.json({ ok: true, id: null, alreadyAnswered: true });
+    }
+    // Several comparably-sized candidate blocks, no safe dominant one (see
+    // calendar-block-identity.js's pickBlockBinding) — resolved at
+    // question-generation time, not guessable now. Fail closed with a
+    // distinct, actionable code BEFORE any compile/persist: nothing is
+    // written, the question stays open and answerable, and the client can
+    // tell this apart from a transient compiler failure. A real
+    // clarification UI (asking the user WHICH block) is a client follow-up
+    // out of scope here — the contract this closes is "never a false
+    // success," not "never ask twice."
+    if (questionInstance?.subjectType === 'calendar_load' && questionInstance.subjectAmbiguous) {
+      return res.status(409).json({
+        error: 'Multiple meetings could match that answer — NormOS needs a more specific reply (which one, or its time) to apply the correction.',
+        code: 'calendar_subject_ambiguous',
+      });
+    }
+    // Question-time provenance ("give every question a canonical subject"):
+    // the client echoes back the EXACT local date/block(s) a structured
+    // calendar-load question described — computed server-side when the
+    // question was generated (see intelligence/pre-brief-signals.js's
+    // `blocks` field for the pre-brief-signal path, or `questionInstance`
+    // above for a Chief Brief openQuestion), never reconstructed here from
+    // the answer's own (often date/block-free) wording. `subjectLocalDate`
+    // defaults to the date embedded in a `calendar_load:<date>` signalKey
+    // but can also be sent explicitly for the pre-brief-signal path. Both
+    // are untrusted-but-bounded client input: capped in size and only ever
+    // used to bind a classification assertion's date/target — never blindly
+    // trusted as a fact about the calendar itself.
+    const instanceIsCalendarLoad = questionInstance?.subjectType === 'calendar_load';
+    const subjectLocalDate = instanceIsCalendarLoad
+      ? questionInstance.subjectLocalDate
+      : (typeof req.body?.subjectLocalDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.body.subjectLocalDate))
+        ? req.body.subjectLocalDate
+        : (calendarLoadMatch ? calendarLoadMatch[1] : null);
+    const subjectBlocks = instanceIsCalendarLoad
+      ? questionInstance.subjectBlockIds.map((id) => ({ id }))
+      : (Array.isArray(req.body?.blocks) ? req.body.blocks.slice(0, 20) : null);
+    // An "identity-bearing" question is one where the answer is expected to
+    // durably change a specific calendar-load subject — the ONLY case where
+    // "answered but not structurally understood" is worse than not
+    // answering at all (see below, after compilation runs).
+    const isIdentityBearingQuestion = Boolean(calendarLoadMatch) || Boolean(subjectLocalDate) || instanceIsCalendarLoad;
     // Tag spending-related answers so they're excluded from health/recovery anomaly
     // context (a "$665 on vacation" answer must never explain a low-HRV deviation).
     // The 'spend' substring is what the anomaly filter in analyze.js keys off.
@@ -223,9 +269,35 @@ function createAnnotationsRouter() {
     // preserves the original behavior exactly — the raw note is never lost
     // just because structured extraction didn't fire.
     if (isIdentityBearingQuestion) {
-      const hasCalendarAssertion = !compiled.failed && compiled.assertions.some((a) => (a.domains || []).includes('calendar'));
-      if (!hasCalendarAssertion) {
-        console.error(`[briefing/context] identity-bearing calendar-load answer was not structurally understood (${compiled.failed ? compiled.failureType : 'no calendar-domain assertion produced'}) — refusing to report success; the client should retry.`);
+      // When candidate blocks were actually supplied (both the pre-brief-
+      // signal path's echoed `blocks` and a Chief Brief calendar-load
+      // instance's resolved subjectBlockIds always supply at least one —
+      // see open-question-subject.js), success requires an EXACT
+      // subject-bound `classifies` relation: a calendar-domain
+      // classification assertion whose classifiedBlockId was actually set
+      // (compileUserContext/pickBlockBinding only sets it when unambiguous —
+      // see context-compiler.js). Any calendar-domain assertion with NO
+      // block binding is exactly the "answered but not understood" case
+      // this gate exists to catch, even though `compiled.failed` is false.
+      // A day-only subject with no candidate blocks at all (subjectBlocks
+      // null/empty) keeps the original, looser "some calendar assertion"
+      // bar — read-time fuzzy matching (matchCalendarClassifications
+      // priorities 2/3) is still the intended path for that case.
+      const hasBlocks = Array.isArray(subjectBlocks) && subjectBlocks.length > 0;
+      const boundOk = !compiled.failed && compiled.assertions.some((a) => {
+        if (!(a.domains || []).includes('calendar')) return false;
+        return hasBlocks ? Boolean(a.classifiedBlockId) : true;
+      });
+      if (!boundOk) {
+        const wasAmbiguous = hasBlocks && !compiled.failed && compiled.assertions.some((a) => a.subjectAmbiguous);
+        if (wasAmbiguous) {
+          console.error('[briefing/context] identity-bearing calendar-load answer resolved to multiple candidate blocks with no dominant one — refusing to report success; needs a targeted clarification.');
+          return res.status(409).json({
+            error: 'Multiple meetings could match that answer — NormOS needs a more specific reply (which one, or its time) to apply the correction.',
+            code: 'calendar_subject_ambiguous',
+          });
+        }
+        console.error(`[briefing/context] identity-bearing calendar-load answer was not structurally understood (${compiled.failed ? compiled.failureType : 'no block-bound calendar classification produced'}) — refusing to report success; the client should retry.`);
         return res.status(503).json({
           error: 'NormOS could not confirm it understood that answer — please try again.',
           code: 'context_compilation_failed',
@@ -274,6 +346,16 @@ function createAnnotationsRouter() {
         }, db);
         const n = await briefingsStore.blankTodaysOpenQuestion(tz, db);
         if (n > 0) console.log(`[briefing/context] retired answered openQuestion from ${n} cached build(s)`);
+      }
+      // Stamp the canonical instance answered atomically with everything
+      // else above — a partial failure must never leave a calendar-load
+      // instance durably answered without its classification (or vice
+      // versa). Only reached once the identity-bearing gate above already
+      // confirmed the exact subject-bound write succeeded (for a
+      // calendar_load instance); a generic (subjectType: null) instance has
+      // no such requirement and is stamped unconditionally, same as before.
+      if (questionInstance) {
+        await require('../store/openQuestionInstances').markAnswered(questionInstance.id, db);
       }
       return result;
     }));

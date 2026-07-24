@@ -97,7 +97,11 @@ function stripAnsweredOpenQuestion(chiefBrief, answeredToday) {
   if (!q || !String(q).trim()) return chiefBrief;
   const rows = answeredToday || [];
   const alreadyAnswered = rows.some((a) => isSameOpenQuestionTopic(q, a.questionText));
-  if (alreadyAnswered) return { ...chiefBrief, openQuestion: '', openQuestionFingerprint: null };
+  // openQuestionId is blanked here too — a suppressed question has nothing
+  // for the client to answer, so it must never carry a stale/reusable id
+  // forward (see bindOpenQuestionInstance below, which mints a fresh one
+  // only for a SURVIVING question).
+  if (alreadyAnswered) return { ...chiefBrief, openQuestion: '', openQuestionFingerprint: null, openQuestionId: null };
   return { ...chiefBrief, openQuestionFingerprint: openQuestionFingerprint(q) };
 }
 
@@ -122,6 +126,54 @@ async function suppressAnsweredOpenQuestion(chiefBrief, { localDate } = {}) {
   return stripAnsweredOpenQuestion(chiefBrief, answeredToday);
 }
 
+/**
+ * Mint a server-owned canonical instance for a SURVIVING openQuestion (call
+ * this AFTER suppressAnsweredOpenQuestion — a blanked question has nothing
+ * to mint) and stamp its id onto the returned chiefBrief as
+ * `openQuestionId`. Every generation path that can produce a fresh
+ * chiefBrief (full build, scoped rebuild) must call this — it's what lets
+ * routes/annotations.js's POST /briefing/context load the question's
+ * server-side subject provenance by id instead of trusting whatever the
+ * client echoes back.
+ *
+ * `subjectContext` (optional) — the SAME today/tomorrow calendar-load
+ * inputs the caller already computed for its own prompt/pre-brief-signals
+ * (todayLoad/tomorrowLoad/todayKey/tomorrowKey/todayWorkBusy/
+ * tomorrowWorkBusy — see open-question-subject.js's
+ * detectCalendarLoadSubject) — when omitted, every question mints with no
+ * subject (subjectType: null), identical to the pre-this-fix behavior for
+ * every non-calendar-load question.
+ *
+ * Never throws and never leaves an unanswerable-but-shown question: a
+ * persistence failure here blanks the question entirely (rather than
+ * showing one with no id the client could ever successfully answer),
+ * mirroring the existing "degrade gracefully, never block the brief"
+ * philosophy used everywhere else in this pipeline.
+ */
+async function bindOpenQuestionInstance(chiefBrief, { localDate, subjectContext = null } = {}) {
+  const q = chiefBrief?.openQuestion;
+  if (!q || !String(q).trim() || !localDate) return chiefBrief;
+  try {
+    const openQuestionInstancesStore = require('../store/openQuestionInstances');
+    const { detectCalendarLoadSubject } = require('./open-question-subject');
+    const subject = subjectContext ? detectCalendarLoadSubject(q, subjectContext) : null;
+    const id = await openQuestionInstancesStore.create({
+      localDate,
+      questionText: q,
+      fingerprint: chiefBrief.openQuestionFingerprint ?? openQuestionFingerprint(q),
+      topicKey: openQuestionTopicKey(q),
+      subjectType: subject?.subjectType ?? null,
+      subjectLocalDate: subject?.subjectLocalDate ?? null,
+      subjectBlockIds: subject?.blockIds ?? [],
+      subjectAmbiguous: subject?.ambiguous ?? false,
+    });
+    return { ...chiefBrief, openQuestionId: id };
+  } catch (err) {
+    console.error('[open-question-policy] bindOpenQuestionInstance failed — blanking the question rather than showing one with no answerable id:', err.message);
+    return { ...chiefBrief, openQuestion: '', openQuestionFingerprint: null, openQuestionId: null };
+  }
+}
+
 /** Plain-text block for the chief-brief prompt: today's already-answered
  *  questions and their answers, so the model (a) avoids re-asking them (the
  *  deterministic check above is the actual enforcement; this is a
@@ -144,5 +196,6 @@ module.exports = {
   isSameOpenQuestionTopic,
   stripAnsweredOpenQuestion,
   suppressAnsweredOpenQuestion,
+  bindOpenQuestionInstance,
   formatAnsweredQuestionsContext,
 };

@@ -188,7 +188,7 @@ test('createAnnotation does not retire an unrelated annotation when the retracti
     label: unrelatedMarker,
   });
 
-  const { retiredAnnotationId } = await annotationsStore.createAnnotation({
+  const { id: retractionId, retiredAnnotationId } = await annotationsStore.createAnnotation({
     startTs: new Date().toISOString(),
     category: 'brief_context',
     label: 'Never mind, forget what I said about the movie plans',
@@ -198,5 +198,10 @@ test('createAnnotation does not retire an unrelated annotation when the retracti
   const { rows } = await db.query('SELECT retired_at FROM annotations WHERE id = $1', [unrelatedId]);
   assert.equal(rows[0].retired_at, null);
 
-  await db.query('DELETE FROM annotations WHERE id = $1', [unrelatedId]);
+  // The retraction annotation itself defaults to a multi-day end_ts (see
+  // createAnnotation's endOfTomorrowET fallback) — left uncleaned, it stays
+  // "currently active" for up to two real days and pollutes any later
+  // test/suite run that reads current annotations (e.g. predict.js's
+  // forecast context).
+  await db.query('DELETE FROM annotations WHERE id = ANY($1)', [[unrelatedId, retractionId]]);
 });

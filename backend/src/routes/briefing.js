@@ -21,8 +21,9 @@ const { fetchRandomQuote } = require('../services/googleDoc');
 const { fetchWeather } = require('../services/weather');
 const { generateChiefBrief, generateWisdomInsights } = require('../services/briefing-ai');
 const { getEffectiveWorkout } = require('../services/workout');
-const { suppressAnsweredOpenQuestion, formatAnsweredQuestionsContext } = require('../intelligence/open-question-policy');
+const { suppressAnsweredOpenQuestion, bindOpenQuestionInstance, formatAnsweredQuestionsContext } = require('../intelligence/open-question-policy');
 const openQuestionsStore = require('../store/openQuestions');
+const { computeCalendarLoad } = require('../intelligence/calendar-load');
 
 /** Today's plan for the chief-brief prompt, shaped like getWorkout()'s
  *  { type, duration, hrTarget, protein, hrvNote } — but resolved through
@@ -1116,6 +1117,20 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     }
   }
 
+  // Hoisted out of the try block below (not just locals of the pre-brief-
+  // signals computation) — bindOpenQuestionInstance (after chief-brief
+  // generation, further down this route) needs the SAME today/tomorrow
+  // calendar-load inputs to deterministically detect whether the model's
+  // own freeform openQuestion is ABOUT this exact canonical figure. Default
+  // values match "the pre-brief-signals block failed/found nothing" — the
+  // subject detector treats missing load data as "don't bind", never as a
+  // reason to fail brief generation itself.
+  let tomorrowWorkBusy = [];
+  let tomorrowCalendar = [];
+  let tomorrowWorkBusyAvailable = false;
+  let tomorrowCalendarAvailable = false;
+  let signalClassifiedOverridesToday = [];
+  let signalClassifiedOverridesTomorrow = [];
   try {
     const preBriefSignals = require('../intelligence/pre-brief-signals');
     // Anomaly callout for the brief narrative (distinct from the user-facing
@@ -1170,10 +1185,6 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     // today — fetching only workBusy here reproduced the double-counting bug
     // one day early, since computeCalendarLoad({calendar: []}) has nothing to
     // net against.
-    let tomorrowWorkBusy = [];
-    let tomorrowCalendar = [];
-    let tomorrowWorkBusyAvailable = false;
-    let tomorrowCalendarAvailable = false;
     {
       const tmr = new Date(Date.now() + 24 * 60 * 60 * 1000);
       const calendarSvc = require('../services/calendar');
@@ -1217,8 +1228,6 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     // meant for one day must never silently apply to the other day's block
     // at the same clock time (see pre-brief-signals.js's split
     // classifiedOverridesToday/Tomorrow params).
-    let signalClassifiedOverridesToday = [];
-    let signalClassifiedOverridesTomorrow = [];
     if (brainSnapshot?.resolvedContext?.value) {
       const resolver = require('../intelligence/context-resolver');
       const todayKeyForMatch = localDateStr(signalsTz, nowForSignals);
@@ -1897,9 +1906,37 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   if (geminiResult?.chiefBrief?.openQuestion) {
     try {
       const openQuestionsTz = process.env.TZ || 'America/New_York';
-      geminiResult.chiefBrief = await suppressAnsweredOpenQuestion(geminiResult.chiefBrief, {
-        localDate: localDateStr(openQuestionsTz, new Date()),
-      });
+      const todayKey = localDateStr(openQuestionsTz, new Date());
+      geminiResult.chiefBrief = await suppressAnsweredOpenQuestion(geminiResult.chiefBrief, { localDate: todayKey });
+      // Give the SURVIVING question a server-owned canonical instance/id —
+      // see open-question-policy.js's bindOpenQuestionInstance. Reuses the
+      // exact today/tomorrow calendar-load inputs already computed above
+      // for the prompt/pre-brief-signals (workBusy/calendar/
+      // signalClassifiedOverridesToday match generateChiefBrief's OWN
+      // internal classifiedOverrides computation byte-for-byte — same
+      // resolvedContext, same calendar/workBusy, same targetLocalDate), so
+      // the deterministic subject detector sees the identical figures the
+      // model could have summed itself.
+      if (geminiResult.chiefBrief?.openQuestion) {
+        const tomorrowKey = localDateStr(openQuestionsTz, new Date(Date.now() + 24 * 60 * 60 * 1000));
+        const todayLoad = computeCalendarLoad({
+          workBusy, calendar,
+          sourcesAvailable: { workBusy: workBusyResult.status === 'fulfilled', calendar: calendarResult.status === 'fulfilled' },
+          classifiedOverrides: signalClassifiedOverridesToday,
+        });
+        const tomorrowLoad = computeCalendarLoad({
+          workBusy: tomorrowWorkBusy, calendar: tomorrowCalendar,
+          sourcesAvailable: { workBusy: tomorrowWorkBusyAvailable, calendar: tomorrowCalendarAvailable },
+          classifiedOverrides: signalClassifiedOverridesTomorrow,
+        });
+        geminiResult.chiefBrief = await bindOpenQuestionInstance(geminiResult.chiefBrief, {
+          localDate: todayKey,
+          subjectContext: {
+            todayLoad, tomorrowLoad, todayKey, tomorrowKey,
+            todayWorkBusy: workBusy, tomorrowWorkBusy,
+          },
+        });
+      }
     } catch (err) {
       console.error('[openQuestion dedup] failed:', err.message);
     }
@@ -2584,9 +2621,31 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
   if (chiefResult.chiefBrief?.openQuestion) {
     try {
       const openQuestionsTz = process.env.TZ || 'America/New_York';
-      chiefResult.chiefBrief = await suppressAnsweredOpenQuestion(chiefResult.chiefBrief, {
-        localDate: localDateStr(openQuestionsTz, new Date()),
-      });
+      const todayKey = localDateStr(openQuestionsTz, new Date());
+      chiefResult.chiefBrief = await suppressAnsweredOpenQuestion(chiefResult.chiefBrief, { localDate: todayKey });
+      // Same canonical-instance minting the full build does (see that call
+      // site's comment) — this scoped rebuild only has TODAY's calendar
+      // data (ctx.calendar/ctx.workBusy, carried from the prior full
+      // build's own snapshot), so it can only bind a question about TODAY's
+      // meeting load; one about tomorrow's simply won't match here and
+      // stays a plain non-subject-bound question (the full build covers
+      // that case).
+      if (chiefResult.chiefBrief?.openQuestion) {
+        const classifiedOverridesToday = chiefFacts?.resolvedContext
+          ? require('../intelligence/context-resolver').matchCalendarClassifications(chiefFacts.resolvedContext, {
+              calendar: ctx.calendar, workBusy: ctx.workBusy, targetLocalDate: todayKey,
+            })
+          : [];
+        const todayLoad = computeCalendarLoad({
+          workBusy: ctx.workBusy, calendar: ctx.calendar,
+          sourcesAvailable: { workBusy: true, calendar: true },
+          classifiedOverrides: classifiedOverridesToday,
+        });
+        chiefResult.chiefBrief = await bindOpenQuestionInstance(chiefResult.chiefBrief, {
+          localDate: todayKey,
+          subjectContext: { todayLoad, todayKey, todayWorkBusy: ctx.workBusy },
+        });
+      }
     } catch (err) {
       console.error('[chief-brief rebuild][openQuestion dedup] failed:', err.message);
     }

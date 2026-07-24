@@ -42,6 +42,7 @@ const llm = require('../llm');
 const { AnthropicRefusalError, AnthropicMaxTokensError } = llm;
 const { classifyEventKind, EVENT_KIND, significantWords, overlapScore } = require('./context-semantics');
 const { knowledgeRelationsForConcept, EVIDENCE_TIER, KNOWLEDGE_REGISTRY_VERSION } = require('./knowledge-registry');
+const { pickBlockBinding } = require('./calendar-block-identity');
 
 const COMPILER_VERSION = '1.0.0';
 
@@ -676,14 +677,23 @@ async function compileUserContext({
         assertion.effectiveStart = b.start;
         assertion.effectiveEnd = b.end;
       }
-      // Only when the subject is UNAMBIGUOUSLY one exact block — see
-      // context-resolver.js's matchCalendarClassifications priority 0. With
-      // more than one candidate block, identity stays unset here and the
-      // relation falls back to date-scoped clock-range/text matching at
-      // read time (matchCalendarClassifications priorities 2/3) rather than
-      // guessing which of several blocks the answer meant.
-      if (Array.isArray(subjectBlocks) && subjectBlocks.length === 1 && subjectBlocks[0]?.id) {
-        assertion.classifiedBlockId = subjectBlocks[0].id;
+      // Bind to a single exact block whenever one is unambiguous — either
+      // literally the only candidate, or one that clearly DOMINATES the
+      // combined duration of several (see calendar-block-identity.js's
+      // pickBlockBinding — the shared "never guess" rule). With several
+      // comparably-sized candidate blocks and no dominant one, identity
+      // stays unset here (assertion.subjectAmbiguous is flagged instead, so
+      // routes/annotations.js can require a targeted clarification rather
+      // than silently falling back to date-scoped clock-range/text matching
+      // at read time, which risks classifying the WRONG one of several
+      // blocks the answer could plausibly have meant).
+      if (Array.isArray(subjectBlocks) && subjectBlocks.length) {
+        const { blockIds, ambiguous } = pickBlockBinding(subjectBlocks);
+        if (!ambiguous && blockIds.length === 1) {
+          assertion.classifiedBlockId = blockIds[0];
+        } else if (ambiguous) {
+          assertion.subjectAmbiguous = true;
+        }
       }
     }
 

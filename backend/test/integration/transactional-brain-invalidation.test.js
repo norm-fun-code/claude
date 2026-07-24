@@ -35,6 +35,12 @@ afterEach(async () => {
 });
 after(async () => {
   await db.query('DELETE FROM annotations WHERE label LIKE $1', [`%${MARKER}%`]);
+  // The POST /briefing/context "nothing unusual, quiet day" tests below carry
+  // no signalKey, so routes/annotations.js's isDayContext also files them
+  // into day_journal (see that route) — left uncleaned, they linger as
+  // today's dayContext for any later test/suite run that reads it (e.g.
+  // predict.js's forecast context-adjustment step).
+  await db.query('DELETE FROM day_journal WHERE text LIKE $1', [`%${MARKER}%`]);
   await db.query(`DELETE FROM workout_overrides WHERE log_date IN ('2026-04-06', '2026-04-07')`);
   await closeDb();
 });

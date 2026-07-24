@@ -213,6 +213,20 @@ export interface ChiefBrief {
   // correctness aid for the durable record, not required for suppression
   // to work correctly.
   openQuestionFingerprint?: string | null;
+  // Server-owned canonical identity for THIS instance of openQuestion (see
+  // backend's intelligence/open-question-policy.js's
+  // bindOpenQuestionInstance / store/openQuestionInstances.js) — minted
+  // fresh every time a surviving openQuestion is generated (full build or
+  // scoped rebuild). Send this back verbatim as `questionId` in POST
+  // /briefing/context when answering: the server loads any structured
+  // subject (e.g. which exact calendar block a meeting-load question was
+  // about) from ITS OWN row by this id — never reconstructed from the
+  // answer text or trusted from other client-supplied fields. Absent (or
+  // null) on a briefing cached from before this field existed, or when the
+  // server couldn't establish an id (see bindOpenQuestionInstance's
+  // fail-safe) — the answer still submits, just without subject binding,
+  // identical to the pre-this-fix behavior.
+  openQuestionId?: string | null;
   // A first-person line affirming something real and specific from today's
   // data (a streak, a trend holding up, a win) — generated fresh each day,
   // not the old static "I show up with joy and courage" filler. Optional so

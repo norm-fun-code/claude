@@ -234,6 +234,15 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing, snapshotId }
           question: openQ,
           answer: trimmed,
           signalKey: 'brief_open_question',
+          // Server-owned canonical identity for THIS question instance (see
+          // useBriefing's ChiefBrief.openQuestionId) — the server loads any
+          // structured subject (e.g. exactly which calendar block a
+          // meeting-load question described) from its own record by this
+          // id, never from anything echoed here. Required for a calendar-
+          // load-subject question to durably reclassify the block it was
+          // about; a plain question with no subject still answers fine
+          // without it.
+          questionId: brief?.openQuestionId ?? undefined,
           // Server-computed identity for this exact question (see
           // useBriefing's ChiefBrief.openQuestionFingerprint) — echoed back
           // so the durable ledger record carries it. The server still keys
