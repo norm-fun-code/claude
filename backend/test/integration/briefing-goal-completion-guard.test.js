@@ -60,9 +60,22 @@ test('POST /briefing/chief-brief/rebuild rejects a claim that an OPEN goal is do
 test('POST /briefing/chief-brief/rebuild allows completion language for a goal marked achieved', async () => {
   await intentionsStore.saveIntention({ goals: [{ text: 'Finish the Q3 board deck', achieved: true }] });
   await seedPriorDailyBriefing();
-  llm.generateText = async () => chiefMeta(chiefJson({ synthesis: 'The Q3 board deck is done — nice work.' }));
+  // Every field must clear assessChiefBriefQuality's minimum-completeness bar
+  // (synthesis >= 12 words, action/risk/move >= 4, morningFocus >= 15 when
+  // present) — since a scoped rebuild that fails the quality bar no longer
+  // replaces the existing card (audit fix, item B), the bare chiefJson()
+  // placeholders (single-letter action/risk/move, 2-word morningFocus) would
+  // silently keep showing the seeded prior's synthesis and fail the
+  // assertion below.
+  llm.generateText = async () => chiefMeta(chiefJson({
+    synthesis: 'The Q3 board deck is done — nice work wrapping up that project ahead of schedule.',
+    action: 'Block time this afternoon to prep for the next board meeting.',
+    risk: 'Momentum could stall if follow-up items are not assigned owners.',
+    move: 'Send a wrap-up note thanking the team for finishing the deck.',
+    morningFocus: 'Nice work finishing that board deck well ahead of schedule with plenty of time to spare today',
+  }));
 
   const res = await request(app).post('/api/briefing/chief-brief/rebuild').set(authHeader()).send({});
-  assert.equal(res.status, 200);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.match(res.body.chiefBrief.synthesis, /Q3 board deck is done/);
 });

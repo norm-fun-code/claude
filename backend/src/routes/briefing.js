@@ -2261,16 +2261,29 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     }
   }
 
-  // Carry the prior build's brief when this build's LLM call failed or returned
-  // an invalid shape (no chiefBrief). Without this, a single bad rebuild blanks
-  // the whole Chief-of-Staff card. Fresh always wins when present — but the
-  // fallback used to be invisible: same-looking payload, no error anywhere, no
-  // sign the "fresh" rebuild the user just triggered didn't actually update
-  // this card. Track it so it shows up in `errors` and the response can flag it.
-  const chiefBriefStale = geminiResult?.chiefBrief == null && prior?.content?.chiefBrief != null;
+  // Fresh-before-replace invariant (audit fix, twin of notify/morning.js's
+  // warmAndNotify gate): THIS build's own chiefBrief only ships when its OWN
+  // quality is 'fresh' (brain/claimValidator.js's assessChiefBriefQuality).
+  // A missing OR merely degraded generation must never overwrite a genuinely
+  // good card — the earlier version of this carry-forward only triggered on
+  // a null/invalid shape, so a schema-valid but degraded result (the exact
+  // "Recovery is green at NN today." grounded-fallback case) shipped as-is,
+  // looking indistinguishable from a real brief. The carry-forward target is
+  // also scoped to a FRESH SAME-DAY prior — never a degraded one (that would
+  // just ship the SAME false content a moment later) and never a stale
+  // cross-day one (yesterday's numbers/dates reading as today's is its own
+  // kind of wrong). hasPublishableFreshBriefToday is the exact same
+  // same-day + non-null + fresh-or-legacy predicate notify/morning.js uses
+  // to decide whether the automatic routine may skip a rebuild — reused here
+  // so "what counts as a good existing brief" can never drift between the
+  // two call sites.
+  const { hasPublishableFreshBriefToday } = require('../notify/morning');
+  const thisAttemptFresh = geminiResult?.chiefBrief != null && geminiResult?.chiefBriefQuality?.status === 'fresh';
+  const priorFreshSameDay = hasPublishableFreshBriefToday(prior, { now: new Date() });
+  const chiefBriefStale = !thisAttemptFresh && priorFreshSameDay;
   if (chiefBriefStale) {
-    console.error('[briefing build] chiefBrief generation failed/invalid — carrying forward the prior build\'s brief.');
-    errors.push({ service: 'chiefBrief', error: 'invalid or missing shape from the LLM; showing the previous build\'s brief' });
+    console.error('[briefing build] this build\'s own chiefBrief was missing or degraded quality — carrying forward today\'s existing fresh brief instead.');
+    errors.push({ service: 'chiefBrief', error: 'this build\'s attempt was missing or degraded quality; showing the existing fresh brief from earlier today' });
   }
   // The carried-forward fallback needs its own suppression pass: `prior` was
   // fetched at the START of this (potentially 60-90s) build, so if the user
@@ -2279,8 +2292,8 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   // OTHER cached build) was already updated by POST /briefing/context's
   // atomic retirement. geminiResult.chiefBrief (the fresh path) was already
   // suppression-checked above right after generation.
-  let finalChiefBrief = geminiResult?.chiefBrief ?? prior?.content?.chiefBrief ?? null;
-  if (geminiResult?.chiefBrief == null && finalChiefBrief?.openQuestion) {
+  let finalChiefBrief = thisAttemptFresh ? geminiResult.chiefBrief : (chiefBriefStale ? prior.content.chiefBrief : null);
+  if (!thisAttemptFresh && finalChiefBrief?.openQuestion) {
     try {
       const openQuestionsTz = process.env.TZ || 'America/New_York';
       finalChiefBrief = await suppressAnsweredOpenQuestion(finalChiefBrief, {
@@ -2290,6 +2303,19 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
       console.error('[openQuestion dedup] failed (carried-forward brief):', err.message);
     }
   }
+  // Neither a fresh new attempt nor a fresh same-day prior exists — an
+  // explicit PENDING state (see the response's chiefBriefPending field
+  // below), never brain/claimValidator.js's groundedFallbackSentence()
+  // shown as if it were a completed brief. morningFocus comes from the SAME
+  // LLM attempt as chiefBrief, so it follows the identical precedence — a
+  // degraded attempt's morningFocus is just as unproven as its chiefBrief.
+  const chiefBriefPending = finalChiefBrief == null;
+  if (chiefBriefPending && geminiResult?.chiefBrief != null) {
+    console.error(`[briefing build] this build's chiefBrief was ${geminiResult?.chiefBriefQuality?.status ?? 'unknown'}-quality and no fresh same-day card exists to carry forward — reporting pending, not shipping degraded prose.`);
+  }
+  const finalMorningFocus = thisAttemptFresh
+    ? (geminiResult.morningFocus || '')
+    : (chiefBriefStale ? (prior?.content?.morningFocus || '') : '');
 
   const nowIso = new Date().toISOString();
   // The state-cut time + identity come from the ONE real snapshot (snapAsOf),
@@ -2321,12 +2347,20 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     fieldVersions: snapshotFieldVersions,
     localDate: brainSnapshot?.localDate ?? new Date().toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/New_York' }),
     timezone: process.env.TZ || 'America/New_York',
-    morningFocus: geminiResult?.morningFocus || prior?.content?.morningFocus || '',
+    morningFocus: finalMorningFocus,
     // Structured Chief-of-Staff brief (Beta): synthesis + ACTION/RISK/MOVE.
+    // null when chiefBriefPending (below) is true — see that field's comment.
     chiefBrief: finalChiefBrief,
     // True when the card above is carried over from a prior build (this
-    // build's generation failed/invalid) rather than freshly generated.
+    // build's own attempt was missing or degraded quality) rather than
+    // freshly generated THIS build.
     chiefBriefStale,
+    // True when NEITHER this build's own attempt NOR a fresh same-day prior
+    // was available to show — chiefBrief is null, not
+    // groundedFallbackSentence() text. The mobile client (BriefCard.tsx)
+    // renders calm "Finishing today's brief…" copy in this state instead of
+    // ever mistaking it for a completed brief.
+    chiefBriefPending,
     // THE authoritative quality contract result for THIS build's own LLM
     // output (brain/claimValidator.js's assessChiefBriefQuality) — fresh,
     // degraded (grounded-fallback/underfilled/unresolved contradiction), or
@@ -2651,11 +2685,20 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
     }
   }
 
-  const chiefBriefStale = chiefResult.chiefBrief == null;
+  // Fresh-before-replace invariant (audit fix) — identical contract to the
+  // full build (see that call site's comment): this rebuild's OWN chiefBrief
+  // only ships when its OWN quality is fresh. A degraded scoped rebuild must
+  // never overwrite the fresh card the user already has — "the scoped ↻
+  // failed" should read as "still today's, unchanged", not as a worse brief
+  // silently replacing a good one.
+  const { hasPublishableFreshBriefToday } = require('../notify/morning');
+  const thisAttemptFresh = chiefResult.chiefBrief != null && chiefResult.chiefBriefQuality?.status === 'fresh';
+  const priorFreshSameDay = hasPublishableFreshBriefToday(prior, { now: new Date() });
+  const chiefBriefStale = !thisAttemptFresh && priorFreshSameDay;
   const errors = Array.isArray(prior.content.errors) ? prior.content.errors.filter((e) => e.service !== 'chiefBrief') : [];
   if (chiefBriefStale) {
-    console.error('[chief-brief rebuild] still invalid after the scoped retry — keeping the existing card.');
-    errors.push({ service: 'chiefBrief', error: 'invalid or missing shape from the LLM (after a retry); showing the previous build\'s brief' });
+    console.error('[chief-brief rebuild] this attempt was missing or degraded quality — keeping the existing fresh card unchanged.');
+    errors.push({ service: 'chiefBrief', error: 'this rebuild attempt was missing or degraded quality; the existing fresh brief was left unchanged' });
   }
   // Same carried-forward-fallback race as the full build: `prior` was read
   // at the top of this handler, before the LLM call above — if the user
@@ -2663,8 +2706,8 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
   // object can predate the answer even though the DB row was already
   // updated. chiefResult.chiefBrief (the fresh path) was already
   // suppression-checked above right after generation.
-  let finalChiefBrief = chiefResult.chiefBrief ?? prior.content.chiefBrief ?? null;
-  if (chiefResult.chiefBrief == null && finalChiefBrief?.openQuestion) {
+  let finalChiefBrief = thisAttemptFresh ? chiefResult.chiefBrief : (chiefBriefStale ? prior.content.chiefBrief : null);
+  if (!thisAttemptFresh && finalChiefBrief?.openQuestion) {
     try {
       const openQuestionsTz = process.env.TZ || 'America/New_York';
       finalChiefBrief = await suppressAnsweredOpenQuestion(finalChiefBrief, {
@@ -2674,13 +2717,24 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
       console.error('[chief-brief rebuild][openQuestion dedup] failed (carried-forward brief):', err.message);
     }
   }
+  // Neither this attempt nor a fresh same-day prior exists — explicit
+  // pending, never groundedFallbackSentence() text (see the full build's
+  // identical comment).
+  const chiefBriefPending = finalChiefBrief == null;
+  if (chiefBriefPending && chiefResult.chiefBrief != null) {
+    console.error(`[chief-brief rebuild] this attempt was ${chiefResult.chiefBriefQuality?.status ?? 'unknown'}-quality and no fresh same-day card exists to carry forward — reporting pending, not shipping degraded prose.`);
+  }
+  const finalMorningFocus = thisAttemptFresh
+    ? (chiefResult.morningFocus || '')
+    : (chiefBriefStale ? (prior.content.morningFocus || '') : '');
 
   const rebuildNow = new Date().toISOString();
   const content = {
     ...prior.content,
     chiefBrief: finalChiefBrief,
-    morningFocus: chiefResult.morningFocus || prior.content.morningFocus || '',
+    morningFocus: finalMorningFocus,
     chiefBriefStale,
+    chiefBriefPending,
     // See the full build's identical field for the contract — always this
     // rebuild's OWN attempt, never the carried-forward card.
     chiefBriefQuality: chiefResult.chiefBriefQuality ?? null,

@@ -451,6 +451,8 @@ export default function App() {
                     brief={d?.chiefBrief}
                     fallback={d?.morningFocus}
                     stale={d?.chiefBriefStale}
+                    pending={d?.chiefBriefPending}
+                    quality={d?.chiefBriefQuality}
                     onRefresh={briefing.refreshChiefBrief}
                     refreshing={briefing.chiefBriefRefreshing}
                     snapshotId={d?.snapshotId}
@@ -463,6 +465,8 @@ export default function App() {
                   brief={d?.chiefBrief}
                   fallback={d?.morningFocus}
                   stale={d?.chiefBriefStale}
+                  pending={d?.chiefBriefPending}
+                  quality={d?.chiefBriefQuality}
                   onRefresh={briefing.refreshChiefBrief}
                   refreshing={briefing.chiefBriefRefreshing}
                   snapshotId={d?.snapshotId}

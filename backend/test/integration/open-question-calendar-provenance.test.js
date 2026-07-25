@@ -49,12 +49,25 @@ function mockCompileThrows(message = 'simulated compiler outage') {
 }
 // Full-build/scoped-rebuild chief-brief stub: routes on the system prompt,
 // same convention as open-question-suppression.test.js.
+// Fields are long enough to clear assessChiefBriefQuality's
+// minimum-completeness bar (synthesis >= 12 words, action/risk/move >= 4,
+// morningFocus >= 15 when present) — since a scoped rebuild that fails the
+// quality bar no longer replaces the existing card (audit fix, item B), bare
+// single-letter placeholders would silently keep the prior card and this
+// file's questionId/openQuestion assertions would fail against stale data.
 function stubChiefBrief(openQuestion) {
   llm.generateText = async ({ system } = {}) => {
     if (system && system.includes('chief of staff and data scientist')) {
       return chiefMeta(JSON.stringify({
-        chiefBrief: { synthesis: 's', action: 'a', risk: 'r', move: 'm', openQuestion },
-        morningFocus: 'mf', urgentEmails: [],
+        chiefBrief: {
+          synthesis: 'Today is on track with a heavy but manageable meeting load overall.',
+          action: 'Block a short buffer before the next meeting to reset and refocus.',
+          risk: 'Back-to-back meetings could leave no room for the actual follow-up work.',
+          move: 'Confirm which meetings are essential and decline or shorten the rest.',
+          openQuestion,
+        },
+        morningFocus: 'Take a quiet moment before the day starts to plan around today\'s heavier meeting load.',
+        urgentEmails: [],
       }));
     }
     return JSON.stringify({ quoteInsight: '', notionQuote: '', notionInsight: '' });

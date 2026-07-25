@@ -17,17 +17,42 @@ const { registerSource, getSource, updateConfig } = require('../store/sources');
 
 const LEDGER_SOURCE_ID = 'morning_build_retry';
 const MIN = 60 * 1000;
+const DEFAULT_BACKOFF_STEPS_MIN = [5, 15, 30];
+
+function parseStepsMin(raw, fallback) {
+  if (!raw) return fallback;
+  const parsed = String(raw).split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0);
+  return parsed.length ? parsed : fallback;
+}
 
 function config(overrides = {}) {
   return {
-    // How long to wait after a degraded automatic attempt before trying again.
-    backoffMs: (Number(process.env.MORNING_RETRY_BACKOFF_MIN) || 20) * MIN,
+    // Bounded STEPPED backoff (audit fix, item E): a rejected draft is no
+    // longer published at all (see notify/morning.js's fresh-before-publish
+    // invariant), so a flat 20-minute wait before the first retry is too
+    // slow — nothing displayable exists in the meantime. Each successive
+    // degraded attempt waits progressively longer instead of hammering Opus
+    // every few minutes chasing the same result: first retry ~5min, second
+    // ~15min, third-and-later ~30min. backoffForAttempts() below indexes
+    // this by the number of attempts ALREADY recorded today.
+    backoffStepsMs: parseStepsMin(process.env.MORNING_RETRY_BACKOFF_STEPS_MIN, DEFAULT_BACKOFF_STEPS_MIN).map((m) => m * MIN),
     // Hard cap on automatic attempts per day — after this many degraded
     // attempts, stop retrying until tomorrow rather than burning tokens
     // indefinitely on a night that just isn't going to produce a fresh brief.
     maxAttemptsPerDay: Number(process.env.MORNING_RETRY_MAX_ATTEMPTS) || 5,
     ...overrides,
   };
+}
+
+/** The backoff to apply before the NEXT attempt, given how many attempts
+ *  have already been recorded today. Attempt 1 recorded -> waiting for
+ *  attempt 2 uses steps[0] (first retry); attempt 2 recorded -> steps[1]
+ *  (second retry); every attempt beyond the configured steps reuses the
+ *  last (largest) step rather than growing unbounded. */
+function backoffForAttempts(attempts, cfg) {
+  const steps = cfg.backoffStepsMs;
+  const idx = Math.min(Math.max(attempts - 1, 0), steps.length - 1);
+  return steps[idx];
 }
 
 function localDay(d, tz) {
@@ -59,8 +84,9 @@ async function defaultSave(state) {
 function evaluate(state, { today, now, cfg }) {
   if (!state || state.day !== today) return { allowed: true, reason: 'first_attempt_today' };
   if (state.attempts >= cfg.maxAttemptsPerDay) return { allowed: false, reason: 'max_attempts_reached' };
+  const backoffMs = backoffForAttempts(state.attempts, cfg);
   const sinceLastMs = now - state.lastAttemptAt;
-  if (sinceLastMs < cfg.backoffMs) return { allowed: false, reason: 'backoff_active' };
+  if (sinceLastMs < backoffMs) return { allowed: false, reason: 'backoff_active' };
   return { allowed: true, reason: 'backoff_elapsed' };
 }
 
@@ -97,4 +123,4 @@ async function recordAttempt({ asOf = new Date(), tz = process.env.TZ || 'Americ
   return state;
 }
 
-module.exports = { canAttempt, recordAttempt, evaluate, config, LEDGER_SOURCE_ID };
+module.exports = { canAttempt, recordAttempt, evaluate, config, backoffForAttempts, LEDGER_SOURCE_ID };

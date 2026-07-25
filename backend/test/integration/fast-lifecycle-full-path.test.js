@@ -44,9 +44,18 @@ function stubChiefBriefClaimingCurrentFast() {
         text: JSON.stringify({
           chiefBrief: {
             synthesis: `${TEST_MARKER} You're fasting for 25 hours through a busy day, so keep it light. Stay focused on your afternoon meetings.`,
-            action: 'a', risk: 'r', move: 'm', openQuestion: '',
+            // Long enough to clear assessChiefBriefQuality's minimum-completeness
+            // bar (action/risk/move >= 4 words, morningFocus >= 15 when
+            // present) — a degraded attempt with no same-day prior would
+            // otherwise report chiefBriefPending (chiefBrief: null) instead
+            // of the neutralized/untouched synthesis these tests assert on.
+            action: 'Keep meals light and simple during the fasting window today.',
+            risk: 'Low blood sugar could make afternoon meetings harder to focus through.',
+            move: 'Set a reminder to break the fast gently with a small snack.',
+            openQuestion: '',
           },
-          morningFocus: 'mf', urgentEmails: [],
+          morningFocus: 'Stay hydrated and keep today\'s schedule light and manageable while the fasting window is still active.',
+          urgentEmails: [],
         }),
         stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
       };
@@ -99,15 +108,25 @@ after(async () => { await closeDb(); });
 test('scenario 7a — a chiefBrief claiming "currently fasting" is neutralized by the FULL brief pipeline once the fast has genuinely ended, but left alone while it is genuinely still current', async () => {
   const now = new Date();
 
-  // Ended yesterday (a prior calendar day) — must be neutralized.
+  // Ended yesterday (a prior calendar day) — the false "currently fasting"
+  // claim must be neutralized, which (per the audit fix, item B) means it
+  // can no longer ship as a displayable chiefBrief at all: a neutralized
+  // field falls back to claimValidator.js's deterministic
+  // groundedFallbackSentence(), which is itself degraded-quality prose and
+  // must never be shown as if it were a completed brief. With no fresh
+  // same-day prior seeded in this test, the correct outcome is an explicit
+  // PENDING state (chiefBrief: null), not a fallback sentence that merely
+  // happens not to say "fasting".
   const endedId = await seedFastAssertion(endedFastWindow(now));
   stubChiefBriefClaimingCurrentFast();
   const { buildFreshBriefing } = require('../../src/routes/briefing');
   const endedResult = await buildFreshBriefing({ force: true });
-  assert.ok(endedResult?.chiefBrief, 'a chiefBrief must still be produced');
-  assert.doesNotMatch(
-    endedResult.chiefBrief.synthesis, /fasting/i,
-    `a false "currently fasting" claim must be neutralized once the fast has ended: got "${endedResult.chiefBrief.synthesis}"`
+  assert.equal(endedResult?.chiefBrief, null, 'a degraded/neutralized attempt with no fresh prior must report pending, not ship fallback prose');
+  assert.equal(endedResult?.chiefBriefPending, true);
+  assert.equal(endedResult?.chiefBriefQuality?.status, 'degraded');
+  assert.ok(
+    endedResult?.chiefBriefQuality?.violatedChecks?.includes('episodic_state_overclaim'),
+    `expected the original violated check to survive in safe diagnostics; got: ${JSON.stringify(endedResult?.chiefBriefQuality)}`
   );
   await contextAssertionsStore.retire(endedId, 'test cleanup');
 

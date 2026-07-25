@@ -50,7 +50,13 @@ test('POST /api/briefing/chief-brief/rebuild 409s when no briefing has ever been
 
 test('a successful scoped rebuild replaces chiefBrief/morningFocus and clears chiefBriefStale, WITHOUT touching other fields', async (t) => {
   await seedPriorBriefing();
-  const FRESH = 'quick fresh synthesis';
+  // Long enough to clear assessChiefBriefQuality's minimum-completeness bar
+  // (brain/claimValidator.js: synthesis >= 12 words, action/risk/move >= 4,
+  // morningFocus >= 15 when present) — since a scoped rebuild that fails the
+  // quality bar no longer replaces the existing card (audit fix, item B), a
+  // too-short "fresh" fixture here would silently keep showing the OLD
+  // MARKER content and fail this test's very next assertion.
+  const FRESH = 'quick fresh synthesis with plenty of real words to clear the completeness bar';
 
   const original = llm.generateText;
   t.after(() => { llm.generateText = original; });
@@ -59,17 +65,23 @@ test('a successful scoped rebuild replaces chiefBrief/morningFocus and clears ch
   // break chiefBriefAttempt's destructuring.
   llm.generateText = async () => ({
     text: JSON.stringify({
-      chiefBrief: { synthesis: FRESH, action: 'a2', risk: 'r2', move: 'm2', openQuestion: '' },
-      morningFocus: 'fresh focus',
+      chiefBrief: {
+        synthesis: FRESH,
+        action: 'Block focus time this morning for the highest-leverage task.',
+        risk: 'Meetings could crowd out the deep work window if unprotected.',
+        move: 'Commit to the single most important task before checking email.',
+        openQuestion: '',
+      },
+      morningFocus: 'fresh focus with enough words in it to comfortably clear the fifteen word minimum threshold',
     }),
     stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
   });
 
   const res = await request(app).post('/api/briefing/chief-brief/rebuild').set(authHeader()).timeout(15000);
 
-  assert.equal(res.status, 200);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.equal(res.body.chiefBrief.synthesis, FRESH);
-  assert.equal(res.body.morningFocus, 'fresh focus');
+  assert.equal(res.body.morningFocus, 'fresh focus with enough words in it to comfortably clear the fifteen word minimum threshold');
   assert.equal(res.body.chiefBriefStale, false);
   assert.deepEqual(res.body.weather, WEATHER_MARKER, 'unrelated fields must be untouched');
   assert.deepEqual(res.body.leverageActions, [{ title: 'Sleep earlier', detail: 'HRV trends up on early nights' }]);

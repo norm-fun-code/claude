@@ -207,14 +207,27 @@ async function sendReadyPush(built, briefing, quality) {
  * `opts.automatic` (set by runMorningRoutineUnguarded for every non-forced
  * call) routes this through the prepare -> validate -> publish lifecycle:
  * the briefing is built as an UNPUBLISHED draft, a final readiness re-check
- * runs against that exact draft, and the draft is published only if that
- * re-check still passes. A final-readiness failure discards the draft
- * entirely — no visible daily briefing, no TTS prewarm, no "ready" push, no
- * morning marker (the caller sees built:false). A degraded/failed QUALITY
- * result still publishes the draft (so there's something to show if nothing
- * else exists) but never sends the "ready" push and reports `quality` so the
- * caller (scheduler.js) knows not to burn the once-a-day morning marker — a
- * later bounded retry can still publish once quality becomes fresh.
+ * runs against that exact draft, and the draft is published only if BOTH
+ * that re-check AND the quality gate below still pass.
+ *
+ * Fresh-before-publish invariant (audit fix — a degraded automatic draft
+ * used to be published anyway "so there's something to show", which is
+ * exactly the production bug: the app showed brain/claimValidator.js's
+ * deterministic grounded-fallback sentence — "Recovery is green at NN
+ * today." — as if it were a completed brief, and nothing ever visibly
+ * retried it since a non-null chiefBrief already looked "done"). Now:
+ *   - A final-readiness failure discards the draft entirely — no visible
+ *     daily briefing, no TTS prewarm, no "ready" push, no morning marker
+ *     (the caller sees built:false, skipped:'final_gate_failed').
+ *   - A degraded/failed QUALITY draft is likewise discarded — NEVER
+ *     published, saved, TTS-prewarmed, or pushed (built:false,
+ *     skipped:'quality_not_fresh', quality:<status>). The existing fresh
+ *     Chief Brief (if any) already on `briefings` is left completely
+ *     untouched — this function never even attempts to save over it.
+ *   - Only a FRESH draft is published and (if `send`) triggers the "ready"
+ *     push. `quality` is always reported so the caller (scheduler.js) can
+ *     record a bounded retry attempt instead of burning the once-a-day
+ *     morning marker.
  * `opts.force` (manual authenticated diagnostics only) bypasses all of this,
  * exactly as before: eager build, eager publish, eager push.
  */
@@ -252,14 +265,24 @@ async function warmAndNotify(opts = {}) {
     return { built: false, sent: 0, skipped: 'final_gate_failed', reason: gate.reason, quality: null };
   }
 
+  // Fresh-before-publish invariant (audit fix): a draft the system already
+  // knows is degraded/failed (brain/claimValidator.js's assessChiefBriefQuality)
+  // must NEVER be published, TTS-prewarmed, or pushed — publishBriefingDraft
+  // persists the row (store/briefings.js), and Postgres has no readable
+  // "draft" state once that INSERT lands: every reader (GET /api/briefing,
+  // the app's cache-hit path, the morning push) would see it immediately.
+  // The ONLY safe gate is checking quality BEFORE that call, not saving and
+  // then trying to hide/delete a bad row after the fact. Nothing here is
+  // persisted for a non-fresh draft — the retry ledger (scheduler.js) is what
+  // paces the next automatic attempt.
+  const quality = draft?.chiefBriefQuality?.status ?? null;
+  if (quality !== 'fresh') {
+    console.log(`[morning] draft quality is ${quality || 'unknown'} — NOT publishing (never saved, never TTS-prewarmed, never pushed); a bounded retry can run later.`);
+    return { built: false, sent: 0, skipped: 'quality_not_fresh', quality };
+  }
+
   const { publishBriefingDraft } = require('../routes/briefing');
   await publishBriefingDraft(draft);
-  const quality = draft?.chiefBriefQuality?.status ?? null;
-
-  if (quality !== 'fresh') {
-    console.log(`[morning] published a ${quality || 'unknown'}-quality draft — not sending the "ready" push, not burning the morning marker (a bounded retry can still run later).`);
-    return { built: true, sent: 0, skipped: 'quality_not_fresh', quality };
-  }
 
   if (!send) return { built: true, sent: 0, quality };
   return sendReadyPush(true, draft, quality);

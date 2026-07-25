@@ -77,7 +77,11 @@ test('a rebuild whose LLM call returns an invalid chiefBrief shape falls back to
 
 test('a rebuild whose LLM call returns a valid chiefBrief shape is NOT flagged stale', async (t) => {
   await seedPriorBriefing();
-  const FRESH_MARKER = `fresh synthesis ${Date.now()}`;
+  // synthesis must still clear assessChiefBriefQuality's own minimum-word
+  // bar (12 words) to count as 'fresh' and actually replace the prior card
+  // (audit fix, item B) — a bare marker phrase would silently stay
+  // "degraded" and this test would still see the OLD prior brief.
+  const FRESH_MARKER = `fresh synthesis ${Date.now()} with plenty of real words to clear the completeness bar`;
 
   const original = llm.generateText;
   t.after(() => { llm.generateText = original; });
@@ -85,8 +89,14 @@ test('a rebuild whose LLM call returns a valid chiefBrief shape is NOT flagged s
     if (system.includes('chief of staff and data scientist')) {
       return {
         text: JSON.stringify({
-          chiefBrief: { synthesis: FRESH_MARKER, action: 'a', risk: 'r', move: 'm', openQuestion: '' },
-          morningFocus: 'fresh focus',
+          chiefBrief: {
+            synthesis: FRESH_MARKER,
+            action: 'Block focus time this morning for the highest-leverage task.',
+            risk: 'Meetings could crowd out the deep work window if unprotected.',
+            move: 'Commit to the single most important task before checking email.',
+            openQuestion: '',
+          },
+          morningFocus: 'fresh focus with enough words in it to comfortably clear the fifteen word minimum threshold',
         }),
         stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
       };
@@ -96,7 +106,7 @@ test('a rebuild whose LLM call returns a valid chiefBrief shape is NOT flagged s
 
   const res = await request(app).get('/api/briefing').query({ refresh: '1' }).set(authHeader()).timeout(20000);
 
-  assert.equal(res.status, 200);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.equal(res.body.chiefBrief?.synthesis, FRESH_MARKER);
   assert.equal(res.body.chiefBriefStale, false);
 

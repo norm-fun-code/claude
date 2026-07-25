@@ -39,10 +39,23 @@ const Q_DIFFERENT = 'Did you take your magnesium last night?';
 function chiefMeta(text) {
   return { text, stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8' };
 }
+// Long enough to clear assessChiefBriefQuality's minimum-completeness bar
+// (synthesis >= 12 words, action/risk/move >= 4, morningFocus >= 15 when
+// present) — since a build/rebuild that fails the quality bar no longer
+// replaces the existing card (audit fix, item B), bare single-letter
+// placeholders would silently keep the seeded prior's openQuestion and fail
+// every assertion in this file that checks the fresh openQuestion value.
 function chiefJson(openQuestion, overrides = {}) {
   return JSON.stringify({
-    chiefBrief: { synthesis: 's', action: 'a', risk: 'r', move: 'm', openQuestion, ...overrides },
-    morningFocus: 'mf',
+    chiefBrief: {
+      synthesis: 'Today looks steady overall with one open item worth a quick check-in.',
+      action: 'Block a few minutes to resolve the one open item below.',
+      risk: 'Leaving it unresolved could cause a scramble later in the week.',
+      move: 'Reply to the open question as soon as you get a moment.',
+      openQuestion,
+      ...overrides,
+    },
+    morningFocus: 'Take a quiet moment early today to close out the one open question waiting below.',
     urgentEmails: [],
   });
 }

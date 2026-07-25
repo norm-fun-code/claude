@@ -26,7 +26,14 @@ const metricsStore = require('../../src/store/metrics');
 const monarchWealth = require('../../src/services/monarch-wealth');
 
 const app = buildTestApp();
-const MARKER = `wealth-anomalies-context ${Date.now()}`;
+// Long enough to clear assessChiefBriefQuality's minimum-completeness bar
+// (synthesis >= 12 words) — a bare marker phrase would silently degrade and
+// fail the exact-equality assertions below (audit fix, item B).
+const MARKER = `Wealth anomalies context regression marker with plenty of extra descriptive words today ${Date.now()}`;
+const FULL_ACTION = 'Review the top spending anomalies before they compound further this month.';
+const FULL_RISK = 'Overspending in these categories could crowd out this quarter\'s savings goal.';
+const FULL_MOVE = 'Set a reminder to check category budgets again at the next pay cycle.';
+const FULL_MORNING_FOCUS = 'Take a few minutes today to review where spending has quietly drifted away from the original plan.';
 
 function monthsBack(n, d = new Date()) {
   const x = new Date(d.getFullYear(), d.getMonth() - n, 1);
@@ -105,8 +112,8 @@ test('chief-brief spendingContext is built from buildWealthInsights(), ranked by
       // break chiefBriefAttempt's destructuring.
       return {
         text: JSON.stringify({
-          chiefBrief: { synthesis: MARKER, action: 'a', risk: 'r', move: 'm', openQuestion: '' },
-          morningFocus: 'fresh focus',
+          chiefBrief: { synthesis: MARKER, action: FULL_ACTION, risk: FULL_RISK, move: FULL_MOVE, openQuestion: '' },
+          morningFocus: FULL_MORNING_FOCUS,
         }),
         stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
       };
@@ -116,7 +123,7 @@ test('chief-brief spendingContext is built from buildWealthInsights(), ranked by
 
   const res = await request(app).get('/api/briefing').query({ refresh: '1' }).set(authHeader()).timeout(20000);
 
-  assert.equal(res.status, 200);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.equal(res.body.chiefBrief?.synthesis, MARKER, 'confirms this went through the real fresh-build path');
   assert.ok(capturedPrompt, 'expected the chief-brief LLM call to have fired');
 
@@ -189,8 +196,8 @@ test('the day-level "anything to explain that spend?" pre-brief question still f
     if (system.includes('chief of staff and data scientist')) {
       return {
         text: JSON.stringify({
-          chiefBrief: { synthesis: `${MARKER}-2`, action: 'a', risk: 'r', move: 'm', openQuestion: '' },
-          morningFocus: 'fresh focus',
+          chiefBrief: { synthesis: `${MARKER} 2`, action: FULL_ACTION, risk: FULL_RISK, move: FULL_MOVE, openQuestion: '' },
+          morningFocus: FULL_MORNING_FOCUS,
         }),
         stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
       };
@@ -200,8 +207,8 @@ test('the day-level "anything to explain that spend?" pre-brief question still f
 
   const res = await request(app).get('/api/briefing').query({ refresh: '1' }).set(authHeader()).timeout(20000);
 
-  assert.equal(res.status, 200);
-  assert.equal(res.body.chiefBrief?.synthesis, `${MARKER}-2`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.chiefBrief?.synthesis, `${MARKER} 2`);
   assert.ok(Array.isArray(res.body.signals), 'expected a signals array in the response');
   const spike = res.body.signals.find((s) => s.key === 'spending_spike');
   assert.ok(spike, `expected a spending_spike pre-brief question; got signals: ${JSON.stringify(res.body.signals)}`);

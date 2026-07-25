@@ -17,6 +17,21 @@ interface Props {
   // shown as a small note so a rebuild that didn't actually refresh this card
   // doesn't look like it silently did nothing (see server chiefBriefStale).
   stale?: boolean;
+  // True when NEITHER this build's own attempt NOR a fresh same-day prior
+  // was available server-side (see BriefingData.chiefBriefPending) — brief
+  // is null, and this shows calm "Finishing…" copy instead of either
+  // rendering nothing or leaking fallback/morningFocus text as if it were a
+  // completed brief (audit fix, item C).
+  pending?: boolean;
+  // THE authoritative quality result for `brief` (see BriefingData.
+  // chiefBriefQuality) — a defense-in-depth check only: the server already
+  // never ships a degraded/failed brief as fresh (item B), but a briefing
+  // object hydrated from a stale AsyncStorage cache (written before this
+  // fix, or by a future regression) could still carry one. When `stale` is
+  // true, `brief` is a carried-forward FRESH prior and this quality result
+  // (which always describes THIS build's own attempt, never the carried
+  // card) does not apply to it.
+  quality?: { status?: string } | null;
   // Fast, scoped retry for just this card (seconds, not the full 60-90s
   // "Rebuild briefing") — wired to POST /api/briefing/chief-brief/rebuild.
   onRefresh?: () => void;
@@ -142,9 +157,14 @@ function BeatRow({ label, emoji, tint, text }: { label: string; emoji: string; t
 // UI until the next server-truth refetch.
 const answeredQuestions = new Set<string>();
 
-function BriefCard({ brief, fallback, stale, onRefresh, refreshing, snapshotId }: Props) {
+function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, onRefresh, refreshing, snapshotId }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
+  // Never render a degraded/failed chiefBrief (item C) — a stale carried-
+  // forward card (`stale`) is exempt since `quality` always describes THIS
+  // build's own attempt, not the fresh prior being shown.
+  const badQuality = !stale && (quality?.status === 'degraded' || quality?.status === 'failed');
+  const brief = badQuality ? null : rawBrief;
   const [note, setNote] = useState('');
   const [noteSaved, setNoteSaved] = useState(false);
   const [noteFailed, setNoteFailed] = useState(false);
@@ -351,7 +371,7 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing, snapshotId }
     }
   }
 
-  if (!brief && !fallback) return null;
+  if (!brief && !pending && !fallback) return null;
 
   return (
     <View style={[styles.card, glow('#5A52F0', 0.22, 26)]}>
@@ -366,7 +386,7 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing, snapshotId }
       <View style={styles.kickerRow}>
         <Text style={styles.kicker}>CHIEF OF STAFF BRIEF</Text>
         <View style={styles.kickerActions}>
-          {onRefresh && brief && (
+          {onRefresh && (brief || pending) && (
             <Pressable
               onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onRefresh(); }}
               disabled={refreshing}
@@ -477,9 +497,12 @@ function BriefCard({ brief, fallback, stale, onRefresh, refreshing, snapshotId }
         </>
       ) : (
         <AnimatedEntry delay={60} distance={10}>
-          {/* morningFocus is the lead text whenever the chief brief hasn't
-              generated — it gets the same headline number treatment. */}
-          <HighlightedSynthesis text={fallback ?? ''} />
+          {/* No fresh chiefBrief and no fresh same-day prior to carry
+              forward (or a defensive client-side reject of degraded/failed
+              content) — calm temporary copy, never the raw fallback/
+              morningFocus text mistaken for a completed brief (audit fix,
+              item C). */}
+          <Text style={styles.pendingText}>Finishing today's brief…</Text>
         </AnimatedEntry>
       )}
 
@@ -670,6 +693,15 @@ const styles = StyleSheet.create({
   },
   synthesisNum: {
     color: '#A89CFF',
+  },
+  pendingText: {
+    fontFamily: FONTS.display,
+    fontSize: 17,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.6)',
+    fontStyle: 'italic',
+    lineHeight: 24,
+    marginBottom: spacing.md,
   },
   separator: {
     height: 1,

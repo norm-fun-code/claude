@@ -81,9 +81,15 @@ const DEGRADED_DRAFT = {
   chiefBriefQuality: { status: 'degraded', reasonCodes: ['grounded_fallback_used'], fieldWordCounts: {}, fallbackFields: ['synthesis'], violatedChecks: [] },
 };
 
-// Scenario 2: a semantic-neutralization fallback (degraded quality) must
-// never trigger the morning-ready push, on the AUTOMATIC path.
-test('scenario 2: automatic path — a degraded (grounded-fallback) draft is published but never sends the "ready" push', async () => {
+// Scenario 2 (audit fix — DEG task): quality is checked BEFORE publish, not
+// after. A degraded (grounded-fallback) draft must never be published,
+// TTS-prewarmed, or pushed — the production bug was exactly the opposite of
+// this: publishBriefingDraft() ran unconditionally, THEN quality was
+// checked, so a draft the system already knew was degraded (the literal
+// "Recovery is green at 81 today." fallback) still landed on the app. See
+// notify/morning.js's warmAndNotify doc comment for the full fresh-before-
+// publish invariant.
+test('scenario 2: automatic path — a degraded (grounded-fallback) draft is NEVER published, TTS-prewarmed, or pushed', async () => {
   let publishCalls = 0;
   let pushCalls = 0;
   await withStubs({
@@ -96,10 +102,11 @@ test('scenario 2: automatic path — a degraded (grounded-fallback) draft is pub
     push: async () => { pushCalls += 1; return { sent: 1, invalidTokens: [] }; },
   }, async () => {
     const res = await morning.warmAndNotify({ send: true, automatic: true });
-    assert.equal(res.built, true, 'a degraded draft is still published so something is displayable');
+    assert.equal(res.built, false, 'nothing is published — a degraded draft must never ship as if it were a completed brief');
     assert.equal(res.sent, 0, 'no "ready" push for a degraded build');
+    assert.equal(res.skipped, 'quality_not_fresh');
     assert.equal(res.quality, 'degraded');
-    assert.equal(publishCalls, 1, 'the draft WAS published (unlike a final-gate failure)');
+    assert.equal(publishCalls, 0, 'publishBriefingDraft must never be called for a degraded draft — no save, no TTS prewarm');
     assert.equal(pushCalls, 0, 'sendPush must never be called for a degraded build');
   });
 });

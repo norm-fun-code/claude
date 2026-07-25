@@ -168,10 +168,18 @@ test('generateChiefBrief logs which field was invalid so a silent stale-brief fa
 test('generateChiefBrief falls back to empty shape on malformed JSON', async () => {
   llm.generateText = async () => chiefMeta('not json at all');
   const result = await generateChiefBrief([], 'Tuesday', { type: 'Rest' }, []);
-  assert.deepEqual(result, {
-    morningFocus: '', chiefBrief: null, urgentEmails: [],
-    chiefBriefQuality: { status: 'failed', reasonCodes: ['generation_failed'], fieldWordCounts: {}, fallbackFields: [], violatedChecks: [] },
-  });
+  assert.equal(result.morningFocus, '');
+  assert.equal(result.chiefBrief, null);
+  assert.deepEqual(result.urgentEmails, []);
+  assert.equal(result.chiefBriefQuality.status, 'failed');
+  assert.deepEqual(result.chiefBriefQuality.reasonCodes, ['generation_failed']);
+  assert.deepEqual(result.chiefBriefQuality.fieldWordCounts, {});
+  assert.deepEqual(result.chiefBriefQuality.fallbackFields, []);
+  assert.deepEqual(result.chiefBriefQuality.violatedChecks, []);
+  // Safe diagnostic metadata (item D) — never generated prose, but enough to
+  // trace WHICH attempt/correlation produced a failed result.
+  assert.equal(result.chiefBriefQuality.failedAttempt, 'generation_failed');
+  assert.ok(result.chiefBriefQuality.correlationId);
 });
 
 test('generateBriefing (combined, backward-compat) merges both calls into one object', async () => {

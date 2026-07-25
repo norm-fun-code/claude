@@ -1007,14 +1007,44 @@ const OPTIONAL_FIELD_MIN_WORDS = { affirmation: 5, morningFocus: 15 };
  *
  * @param {Object} result  a chief-brief result, `{ chiefBrief: {...}, morningFocus }`
  * @param {Object} facts   canonical facts (brain/snapshot.js's canonicalFacts), or null
+ * @param {Object} [diag]  Safe, non-prose diagnostic context from the generation
+ *   pipeline (services/briefing-ai.js) — never generated text. Threaded through
+ *   into the return value so a caller inspecting the FINAL (post-neutralization)
+ *   quality result can still see WHY it was degraded, not just THAT it was.
+ *   Without this, `violatedChecks` below is computed by re-validating the
+ *   ALREADY-neutralized text, which (correctly) finds nothing left to
+ *   violate — silently losing the original check that caused the fallback in
+ *   the first place, making a production "why did today's brief fall back"
+ *   question unanswerable from the persisted quality metadata alone.
+ * @param {string} [diag.correlationId] this generation attempt's correlation id.
+ * @param {string[]} [diag.preNeutralizationViolatedChecks] the check IDs
+ *   (brain/claimValidator.js check names, e.g. 'episodic_state_overclaim')
+ *   that were violated BEFORE neutralizeClaimViolations ran — unioned into
+ *   the returned `violatedChecks`.
+ * @param {string[]} [diag.neutralizedFields] chiefBrief field names that had
+ *   at least one sentence stripped by neutralization (a superset of
+ *   `fallbackFields` below — a field can lose one offending sentence among
+ *   several without collapsing all the way to the grounded fallback).
+ * @param {string|null} [diag.failedAttempt] which attempt number/kind ended
+ *   up shipping this result, e.g. 'quality_retry', 'semantic_correction',
+ *   'original' — never the prose itself.
  * @returns {{status: 'fresh'|'degraded'|'failed', reasonCodes: string[],
  *            fieldWordCounts: Object<string,number>, fallbackFields: string[],
- *            violatedChecks: string[]}}
+ *            violatedChecks: string[], neutralizedFields: string[],
+ *            correlationId: string|null, failedAttempt: string|null}}
  */
-function assessChiefBriefQuality(result, facts = null) {
+function assessChiefBriefQuality(result, facts = null, diag = null) {
+  const correlationId = diag?.correlationId ?? null;
+  const neutralizedFields = Array.isArray(diag?.neutralizedFields) ? diag.neutralizedFields : [];
+  const failedAttempt = diag?.failedAttempt ?? null;
+  const preViolated = Array.isArray(diag?.preNeutralizationViolatedChecks) ? diag.preNeutralizationViolatedChecks : [];
+
   const cb = result?.chiefBrief;
   if (!cb || typeof cb !== 'object') {
-    return { status: 'failed', reasonCodes: ['no_chief_brief'], fieldWordCounts: {}, fallbackFields: [], violatedChecks: [] };
+    return {
+      status: 'failed', reasonCodes: ['no_chief_brief'], fieldWordCounts: {}, fallbackFields: [],
+      violatedChecks: [...new Set(preViolated)], neutralizedFields, correlationId, failedAttempt,
+    };
   }
 
   const reasonCodes = [];
@@ -1038,7 +1068,10 @@ function assessChiefBriefQuality(result, facts = null) {
   }
 
   if (missingRequired) {
-    return { status: 'failed', reasonCodes, fieldWordCounts, fallbackFields, violatedChecks: [] };
+    return {
+      status: 'failed', reasonCodes, fieldWordCounts, fallbackFields,
+      violatedChecks: [...new Set(preViolated)], neutralizedFields, correlationId, failedAttempt,
+    };
   }
 
   if (fallbackFields.length) reasonCodes.push('grounded_fallback_used');
@@ -1055,14 +1088,24 @@ function assessChiefBriefQuality(result, facts = null) {
   // wasn't run or the retry loop is being bypassed by a caller; treat exactly
   // like a fallback would be treated (degraded, not fresh).
   const { violations, hasHighSeverity } = validateChiefBriefClaims(result, facts);
-  const violatedChecks = hasHighSeverity ? violations.filter((v) => v.severity === 'high').map((v) => v.check) : [];
+  const postViolated = hasHighSeverity ? violations.filter((v) => v.severity === 'high').map((v) => v.check) : [];
   if (hasHighSeverity) reasonCodes.push('unresolved_claim_violation');
 
   const degraded = fallbackFields.length > 0
     || hasHighSeverity
     || reasonCodes.some((r) => r.endsWith('_underfilled'));
 
-  return { status: degraded ? 'degraded' : 'fresh', reasonCodes, fieldWordCounts, fallbackFields, violatedChecks };
+  // Union with whatever the caller already knew was violated BEFORE
+  // neutralization ran — the post-check alone would be empty here on the
+  // common path (neutralization already stripped the offending sentence),
+  // which is exactly the data loss this diag threading exists to prevent.
+  // Only surfaced when the FINAL result is actually degraded — a field that
+  // lost one flagged sentence but still clears every bar on its own
+  // shouldn't report a lingering "violated" check against a result that
+  // shipped clean.
+  const violatedChecks = degraded ? [...new Set([...postViolated, ...preViolated])] : postViolated;
+
+  return { status: degraded ? 'degraded' : 'fresh', reasonCodes, fieldWordCounts, fallbackFields, violatedChecks, neutralizedFields, correlationId, failedAttempt };
 }
 
 /** Build a targeted retry prompt asking specifically for fuller content on the

@@ -296,6 +296,18 @@ export interface BriefingData {
   // freshly generated — lets the card say so instead of silently looking
   // like a successful rebuild that just didn't change anything.
   chiefBriefStale?: boolean;
+  // True when NEITHER this build's own attempt NOR a fresh same-day prior
+  // was available — chiefBrief above is null. The client shows calm
+  // "Finishing…" copy in this state rather than either rendering nothing or
+  // a deterministic fallback sentence mistaken for a completed brief (audit
+  // fix, item C).
+  chiefBriefPending?: boolean;
+  // THE authoritative quality contract result for THIS build's own chiefBrief
+  // attempt (backend brain/claimValidator.js's assessChiefBriefQuality) —
+  // 'fresh' | 'degraded' | 'failed', plus non-prose diagnostics. Always
+  // describes this build's own attempt, never a carried-forward card (see
+  // chiefBriefStale) — null on a cached build that predates this contract.
+  chiefBriefQuality?: { status?: 'fresh' | 'degraded' | 'failed'; [key: string]: unknown } | null;
   experiments?: {
     completed: CompletedExperiment[];
     running: RunningExperiment[];
