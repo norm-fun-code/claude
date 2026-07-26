@@ -271,18 +271,30 @@ function checkEffectiveWorkout(fields, facts) {
 // individually tripping checkEffectiveWorkout, since that check never runs at
 // all when source === 'scheduled' (the common case — no override, no
 // auto-downgrade, just an ordinary Sunday Pull day) and its WORKOUT_ACTION_RE
-// verb list has no "rest" vocabulary regardless. Deliberately reuses
-// services/workout.js's isRestDayCommitment — the SAME regex that decides
-// whether free-text counts as a rest-day declaration for the commitment/
-// override write path — rather than a second, independently-tuned pattern.
+// verb list has no "rest" vocabulary regardless.
+//
+// Root-cause note (production incident): the FIRST version of this check
+// reused services/workout.js's isRestDayCommitment (a narrow "rest day" /
+// "full rest" / "skip my workout" phrase list). It caught the original
+// violation, triggered the one-shot correction retry — but the model's
+// REWORDED retry ("Treat today as a genuine rest day, not a data point.")
+// slipped past the SAME narrow list on a technicality-adjacent phrasing,
+// and the retry's output ships without a second validation pass in the
+// "clean" branch. Fixed at the fact/classifier layer, not by patching more
+// prompt wording: brain/trainingDayState.js's describesRestFraming is a
+// broader, still-precision-first, EXPLICIT phrase list (semantic
+// equivalents: "no training", "avoid load", "genuine rest", "stand down",
+// etc. — never a fuzzy classifier) — the ONE place this vocabulary lives,
+// reused here AND by todayCommandCenter.js's pre-render guard, so widening
+// coverage never has to happen in two places again.
 function checkRestFramingAgainstEffectiveWorkout(fields, facts) {
   const effective = facts.effectiveWorkoutLabel;
   if (!effective || String(effective).toLowerCase() === 'rest') return [];
-  const { isRestDayCommitment } = require('../services/workout');
+  const { describesRestFraming } = require('./trainingDayState');
   const violations = [];
   for (const [field, text] of fields) {
     for (const sentence of splitIntoSentences(text)) {
-      if (!isRestDayCommitment(sentence)) continue;
+      if (!describesRestFraming(sentence)) continue;
       violations.push({
         check: 'rest_framing_vs_effective_workout', field, sentence, severity: 'high',
         expected: effective, actual: 'rest day',
@@ -299,18 +311,20 @@ function checkRestFramingAgainstEffectiveWorkout(fields, facts) {
 // yet a field still prescribes the pre-override scheduled hard session by
 // name ("Pull day (~45 min) is on deck") using framing language outside
 // checkEffectiveWorkout's narrow action-verb vocabulary ("on deck", "is up",
-// "planned for today" — not "crush"/"hit"/"scale back" etc.).
-const PRESCRIBE_FRAMING_RE = /\b(on deck|is up|planned for today|scheduled for today|calls for|time for|today'?s (?:session|workout) is)\b/i;
+// "planned for today" — not "crush"/"hit"/"scale back" etc.). Reuses
+// trainingDayState.js's describesHardWorkoutDirective for the same reason
+// as above — one shared, broadened classifier, not a second phrase list.
 function checkHardWorkoutAgainstRestOverride(fields, facts) {
   const source = facts.effectiveWorkoutSource;
   const effective = facts.effectiveWorkoutLabel;
   const scheduled = facts.scheduledWorkoutLabel;
   if (source !== 'override' || !effective || String(effective).toLowerCase() !== 'rest') return [];
   if (!scheduled || String(scheduled).toLowerCase() === 'rest') return [];
+  const { describesHardWorkoutDirective } = require('./trainingDayState');
   const violations = [];
   for (const [field, text] of fields) {
     for (const sentence of splitIntoSentences(text)) {
-      if (!WORKOUT_ACTION_RE.test(sentence) && !PRESCRIBE_FRAMING_RE.test(sentence)) continue;
+      if (!describesHardWorkoutDirective(sentence, scheduled)) continue;
       const aboutScheduled = overlapRatio(sentence, scheduled) >= 0.5;
       const acknowledgesRest = /\brest\b|\bskip|\boverride|\binstead|\boff today\b/i.test(sentence);
       if (aboutScheduled && !acknowledgesRest) {

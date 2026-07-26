@@ -926,7 +926,17 @@ const styles = StyleSheet.create({
   loadingText: { fontSize: 14, fontStyle: 'italic' },
   empty: { borderRadius: 14, padding: spacing.lg, marginBottom: spacing.md },
   emptyText: { fontSize: 14, lineHeight: 21, fontStyle: 'italic' },
-  footer: { height: spacing.lg },
+  // Clears the floating Ask mic FAB (AskOverlay's fabWrap: position:absolute,
+  // bottom: bottomInset+70, 52pt tall — so its top edge sits ~59-67pt above
+  // the TabBar's top edge, which is where the scrollable area ends). The
+  // prior height (spacing.lg=24, +content's paddingBottom=32 => 56pt total)
+  // left the last scrolled item's bottom edge a few points BEHIND the FAB —
+  // most visible when a quiet/empty-state row (e.g. RadarSection's "Everything
+  // else looks on track") is the last thing on screen, since it has little
+  // visual weight of its own to make the clipping obvious as anything but a
+  // real bug. This is a general scroll-clearance fix, not a RadarSection-only
+  // patch, since ANY tab's last item can land in the same spot.
+  footer: { height: spacing.xxl + spacing.md },
   wealthAskBtn: {
     marginTop: spacing.sm,
     marginBottom: spacing.md,

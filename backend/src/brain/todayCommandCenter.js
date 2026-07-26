@@ -142,17 +142,60 @@ async function buildTodayCommandCenter(input) {
     dismissed = null,
   } = input || {};
 
-  // Pre-render semantic guard (Part 1): the SAME rest-vs-workout checks
-  // claimValidator.js runs at generation time, re-run here against whatever
-  // is actually about to be SERVED — catches an older stored brief that
-  // predates the check, or residual text a best-effort neutralization pass
-  // didn't fully clear. Today must never present two incompatible
+  // Pre-render semantic guard (Part 1): the authoritative trainingDayState —
+  // the SAME canonical fact/state object brain/trainingDayState.js's
+  // resolveTrainingDayState() computes from effectiveWorkout — is resolved
+  // ONCE here and is what BOTH the headline and the action below are
+  // validated against, never independently. This re-runs the SAME broadened
+  // checks claimValidator.js applies at generation time against whatever is
+  // actually about to be SERVED — catches an older stored brief that
+  // predates the check, or a correction-retry paraphrase a narrower phrase
+  // list let through. Today must never present two incompatible
   // interpretations of the plan (a "rest day" headline next to a hard-
-  // workout action, or vice versa); when detected, the action is suppressed
-  // in favor of a compact resolution the user resolves explicitly — never a
-  // guess at which side is right.
-  const planConflict = (!chiefBriefPending && chiefBrief)
-    ? require('./claimValidator').findPlanConflict(chiefBrief, effectiveWorkout)
+  // workout action, or vice versa): when detected, BOTH the headline and
+  // the action are replaced with a compact, factual resolution — a
+  // self-contradictory headline sitting next to a suppressed action is
+  // still a contradiction, not a fix.
+  const { resolveTrainingDayState, validateTrainingDayContent } = require('./trainingDayState');
+  const trainingDayState = resolveTrainingDayState({ effectiveWorkout, snapshotId, snapshotVersion });
+  let planConflict = null;
+  if (!chiefBriefPending && chiefBrief) {
+    const { valid } = validateTrainingDayContent(trainingDayState, {
+      synthesis: chiefBrief.synthesis, action: chiefBrief.action, risk: chiefBrief.risk, move: chiefBrief.move,
+    });
+    if (!valid) {
+      const label = trainingDayState.effectiveWorkout?.label;
+      const scheduledLabel = trainingDayState.plannedWorkout?.label;
+      planConflict = trainingDayState.state === 'REST'
+        ? {
+            direction: 'workout_vs_rest',
+            question: `Today is marked as a rest day, but the brief also recommends ${scheduledLabel}. Which should govern?`,
+            effectiveWorkoutLabel: label, scheduledWorkoutLabel: scheduledLabel,
+            options: [
+              { id: 'keep_rest', label: 'Keep rest day', workoutId: 'rest' },
+              { id: 'do_planned', label: `Do ${scheduledLabel}`, workoutId: trainingDayState.plannedWorkout?.workoutId ?? null },
+            ],
+          }
+        : {
+            direction: 'rest_vs_workout',
+            question: `Your training plan has ${label}, but today is also described as a rest day. Which should govern?`,
+            effectiveWorkoutLabel: label, scheduledWorkoutLabel: null,
+            options: [
+              { id: 'keep_rest', label: 'Keep rest day', workoutId: 'rest' },
+              { id: 'do_planned', label: `Do ${label}`, workoutId: trainingDayState.effectiveWorkout?.workoutId ?? null },
+            ],
+          };
+    }
+  }
+
+  // A conflict makes the RAW chief-brief synthesis untrustworthy as a
+  // headline (it's the field carrying the contradiction in the observed
+  // production case) — replace it with a deterministic, factual line built
+  // from the SAME resolved trainingDayState, never a second guess at wording.
+  const conflictHeadline = planConflict
+    ? (planConflict.direction === 'workout_vs_rest'
+        ? `Today is marked as a rest day, but the plan also lists ${planConflict.scheduledWorkoutLabel}. Resolve below to continue.`
+        : `Your plan has ${planConflict.effectiveWorkoutLabel} today, but the brief also called it a rest day. Resolve below to continue.`)
     : null;
 
   const now = {
@@ -160,10 +203,12 @@ async function buildTodayCommandCenter(input) {
     // Chief Brief's `synthesis` is ALREADY the single 20-35-word cross-domain
     // headline the product contract wants for NOW — reused verbatim, never
     // re-synthesized on the client. Pending/stale states get their own calm
-    // copy rather than null (never render nothing where a state exists).
+    // copy rather than null (never render nothing where a state exists); an
+    // unresolved plan conflict gets the same treatment — a deterministic,
+    // factual line, never the raw self-contradictory text.
     headline: chiefBriefPending
       ? 'Finishing today\'s brief…'
-      : (chiefBrief?.synthesis ?? null),
+      : (conflictHeadline ?? chiefBrief?.synthesis ?? null),
     detail: null,
     evidence: {
       chiefBriefQuality: chiefBriefQuality?.status ?? null,
@@ -172,6 +217,7 @@ async function buildTodayCommandCenter(input) {
       goalsWeekStart,
       chiefBriefGoalsStale: Boolean(chiefBriefGoalsStale),
       planConflict: Boolean(planConflict),
+      trainingDayState: trainingDayState.state,
     },
   };
 

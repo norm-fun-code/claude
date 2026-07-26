@@ -674,6 +674,59 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
       }
     } catch { /* non-critical — leave cached value on error */ }
 
+    // Automatic trainingDayState-contract repair: invalidate and rebuild a
+    // STORED brief whose chiefBrief text fails the canonical training-day
+    // contract (brain/trainingDayState.js) even though it otherwise passes
+    // cache freshness — the production incident this exists to fix was
+    // exactly a cached brief whose headline/action disagreed with the
+    // authoritative effective workout. This runs AFTER the workout-refresh
+    // block above so it always validates against the freshest
+    // cachedContent.effectiveWorkout, never a stale one (a workout override
+    // applied moments before this exact request must be reflected here).
+    // Same idempotent, cooldown-gated, no-notification scoped rebuild
+    // mechanism as the goals-staleness repair above (performScopedChiefBriefRebuild)
+    // — reused, not reimplemented. Deliberately DIFFERENT from that repair on
+    // one point: treatPriorAsFreshFallback is true here, not false. Goals
+    // staleness re-serves a definitively FALSE claim ("all done") with no
+    // downstream check to catch it if the repair attempt fails, so it must
+    // degrade to honest "pending" rather than risk re-serving it. A
+    // trainingDayState-contract violation is different: todayCommandCenter.
+    // buildTodayCommandCenter (below) ALSO runs this same check on EVERY
+    // serve, unconditionally, and neutralizes the DISPLAY (deterministic
+    // conflict-resolution copy, action suppressed) regardless of whether
+    // this repair fires or succeeds. So when the LLM rebuild attempt itself
+    // fails, falling back to the prior (still-contradictory) chiefBrief is
+    // safe — it can never reach the user raw, because the guard below always
+    // re-checks it — and it's strictly better than discarding a whole
+    // otherwise-good cached brief down to "pending" over one bad field. This
+    // block's real job is fixing the underlying STORED text so other
+    // consumers of cachedContent.chiefBrief (Ask/voice, notifications) don't
+    // keep reading the bad copy either; the render-time guard is what
+    // actually keeps the user safe either way.
+    if (!cachedContent.chiefBriefPending && cachedContent.chiefBrief) {
+      try {
+        const { resolveTrainingDayState, validateTrainingDayContent } = require('../brain/trainingDayState');
+        const tds = resolveTrainingDayState({ effectiveWorkout: cachedContent.effectiveWorkout });
+        const { valid } = validateTrainingDayContent(tds, {
+          synthesis: cachedContent.chiefBrief.synthesis, action: cachedContent.chiefBrief.action,
+          risk: cachedContent.chiefBrief.risk, move: cachedContent.chiefBrief.move,
+        });
+        if (!valid) {
+          const REPAIR_COOLDOWN_MS = 10 * 60 * 1000;
+          const priorAttempt = cachedContent.planConflictRepairAttempt;
+          const eligible = !priorAttempt || (Date.now() - new Date(priorAttempt.at).getTime()) > REPAIR_COOLDOWN_MS;
+          if (eligible) {
+            const repaired = await performScopedChiefBriefRebuild(prior, {
+              treatPriorAsFreshFallback: true, repairReason: 'plan_conflict',
+            });
+            Object.assign(cachedContent, repaired.content);
+          }
+        }
+      } catch (err) {
+        console.error('[briefing cache] automatic trainingDayState repair failed:', err.message);
+      }
+    }
+
     // Wealth: version-gated only — unlike recovery there's no cheap "did the
     // value move" signal to check first, so a transaction_sync bump is the
     // ONLY trigger. Recomputes through the SAME authorities the snapshot
@@ -2966,16 +3019,20 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
     snapshotId: prior.content.snapshotId ?? null,
     // Only the chief brief + morningFocus were actually re-derived now.
     fieldsBuiltAt: stampFields(prior.content.fieldsBuiltAt, ['chiefBrief', 'morningFocus'], rebuildNow),
-    // Explicit attempt/state tracking for the automatic goals-staleness
-    // repair (Part 2) — rebuild-loop protection. A successful repair clears
-    // any prior cooldown marker; a failed one stamps ONE, bound to the week
-    // it was trying to fix, so the cache-hit path's cooldown check (see that
-    // call site) can skip re-attempting every single request while an LLM
-    // outage or similar persists, instead of hammering the LLM once per
-    // request. Untouched (carried forward via ...prior.content above) for
-    // every OTHER caller of this function (repairReason null).
+    // Explicit attempt/state tracking for the automatic repair callers
+    // (Part 2's goals-staleness repair, and the trainingDayState-contract
+    // repair below) — rebuild-loop protection. A successful repair clears
+    // any prior cooldown marker; a failed one stamps ONE, so the cache-hit
+    // path's cooldown check (see that call site) can skip re-attempting
+    // every single request while an LLM outage or similar persists, instead
+    // of hammering the LLM once per request. Untouched (carried forward via
+    // ...prior.content above) for every OTHER caller of this function
+    // (repairReason null).
     ...(repairReason === 'goals_stale'
       ? { goalsRepairAttempt: thisAttemptFresh ? null : { at: rebuildNow, weekStart: ctx.goalsWeekStart ?? null } }
+      : {}),
+    ...(repairReason === 'plan_conflict'
+      ? { planConflictRepairAttempt: thisAttemptFresh ? null : { at: rebuildNow } }
       : {}),
   };
   // Awaited (unlike /briefing/rebuild's background full rebuild, this is one

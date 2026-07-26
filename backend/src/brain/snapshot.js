@@ -413,6 +413,12 @@ function canonicalFactsFrom({ recovery, effectiveWorkout, trainingOutcome, forec
     effectiveWorkoutId: w?.workoutId ?? null,
     effectiveWorkoutSource: w?.source ?? null,       // override | auto_downgrade | scheduled
     scheduledWorkoutLabel: w?.scheduledLabel ?? null,
+    // The ONE canonical training-day state object (brain/trainingDayState.js)
+    // every Today surface should resolve from — packaged here alongside the
+    // flattened fields above (kept for backward compatibility with existing
+    // checks) so a caller building chiefFacts already has it without a
+    // second resolve.
+    trainingDayState: require('./trainingDayState').resolveTrainingDayState({ effectiveWorkout: w }),
     // Canonical training-completion facts — see services/workout.
     // resolveTrainingOutcome. `null` (trainingOutcome absent) means "unknown",
     // never "not completed" — brain/claimValidator.js's
