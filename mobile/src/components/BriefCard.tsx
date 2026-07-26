@@ -47,16 +47,24 @@ interface Props {
   // audit fix, item 4: never lets a stale mobile cache narrate a different
   // build than what's actually displayed.
   snapshotId?: string | null;
+  // Today command-center's server-gated risk (see brain/todayCommandCenter.js)
+  // — deliberately NOT brief.risk. brief.risk is a REQUIRED field in the
+  // chief-brief's structured-output schema, so the model always writes
+  // something there even on a day with nothing wrong ("stay the course").
+  // This prop is null unless independently-computed evidence (an at-risk
+  // forecast, a red capacity day, a truth-contract-gated health anomaly)
+  // actually backs a risk — the Today redesign's "no filler Risk section"
+  // requirement is enforced server-side, not by trusting the prose here.
+  risk?: { title: string; rationale: string; severity?: string } | null;
 }
 
-// Each block gets a mini emoji tile (same elevated-tile language as
-// SectionHeader) and its own tint so the three beats read as distinct at a
-// glance even before any text is parsed.
-const BLOCKS: { key: 'action' | 'risk' | 'move'; label: string; emoji: string; tint: string }[] = [
-  { key: 'action', label: 'THE ACTION', emoji: '⚡️', tint: '#A89CFF' },
-  { key: 'risk', label: 'THE RISK', emoji: '⚠️', tint: '#FFC44D' },
-  { key: 'move', label: 'THE MOVE', emoji: '📈', tint: '#5AE89A' },
-];
+// THE ACTION is the one always-structured beat left on Today (see risk prop
+// above for why RISK moved to its own server-gated block, and the Today
+// redesign's rationale for dropping THE MOVE from the primary Today flow —
+// it was "the most consequential thing that changed," which the new
+// sinceMorning/previews sections now cover from canonical, evidence-gated
+// sources instead of free LLM prose).
+const ACTION_BLOCK = { key: 'action' as const, label: 'THE ACTION', emoji: '⚡️', tint: '#A89CFF' };
 
 // Editorial number highlighting: the synthesis is a headline, and the numbers
 // are its payload — set them in the accent so the eye catches "64", "29%",
@@ -164,7 +172,7 @@ function BeatRow({ label, emoji, tint, text }: { label: string; emoji: string; t
 // UI until the next server-truth refetch.
 const answeredQuestions = new Set<string>();
 
-function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsStale, onRefresh, refreshing, snapshotId }: Props) {
+function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsStale, onRefresh, refreshing, snapshotId, risk }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   // Never render a degraded/failed chiefBrief (item C) — a stale carried-
@@ -176,6 +184,16 @@ function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsSt
   const [noteSaved, setNoteSaved] = useState(false);
   const [noteFailed, setNoteFailed] = useState(false);
   const [noteSaving, setNoteSaving] = useState(false);
+  // Progressive disclosure (Today redesign): the open question, affirmation,
+  // and free-context box are all valuable but secondary to NOW/ACTION/RISK —
+  // collapsed by default so they never compete for the same visual weight as
+  // the primary content above the fold.
+  const [moreOpen, setMoreOpen] = useState(false);
+  const toggleMore = () => {
+    Haptics.selectionAsync();
+    LayoutAnimation.configureNext(LayoutAnimation.create(220, 'easeInEaseOut', 'opacity'));
+    setMoreOpen((v) => !v);
+  };
   // The chief's one open question (when present) — answered inline; the answer
   // becomes context for the next brief so it learns from the correction.
   // A question answered earlier this session stays retired across REMOUNTS —
@@ -440,70 +458,78 @@ function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsSt
             <HighlightedSynthesis text={brief.synthesis} />
           </AnimatedEntry>
           <View style={styles.separator} />
-          {BLOCKS.map(({ key, label, emoji, tint }, idx) => (
-            <AnimatedEntry key={key} delay={130 + idx * 55} distance={8}>
-              <BeatRow label={label} emoji={emoji} tint={tint} text={brief[key]} />
-              {/* One-tap commit on THE ACTION: turns the morning's highest-
-                  leverage move into a real commitment (due tonight, reminded,
-                  auto-verified from metrics where possible) instead of prose
-                  the user has to transcribe into their own system. */}
-              {key === 'action' && brief.action ? (
-                <TouchableOpacity
-                  onPress={commitAction}
-                  disabled={actionCommit !== 'idle'}
-                  style={styles.commitBtn}
-                  hitSlop={6}
-                >
-                  <Text style={[styles.commitBtnText, actionCommit === 'done' && { color: '#5AE89A' }]}>
-                    {actionCommit === 'done'
-                      ? '✓ Committed — on your list for today'
-                      : actionCommit === 'saving'
-                        ? 'Committing…'
-                        : actionCommit === 'error'
-                          ? "Didn't go through — tap to retry"
-                          : '→ Commit to this'}
+          {/* THE ACTION — the ONE primary CTA (Today redesign: exactly one
+              action, not several competing beats). RISK below is entirely
+              separate: server-gated (see the `risk` prop's doc comment), so
+              it renders only when real evidence backs it, never from
+              brief.risk's always-filled prose. */}
+          <AnimatedEntry delay={130} distance={8}>
+            <BeatRow label={ACTION_BLOCK.label} emoji={ACTION_BLOCK.emoji} tint={ACTION_BLOCK.tint} text={brief.action} />
+            {/* One-tap commit on THE ACTION: turns the morning's highest-
+                leverage move into a real commitment (due tonight, reminded,
+                auto-verified from metrics where possible) instead of prose
+                the user has to transcribe into their own system. */}
+            {brief.action ? (
+              <TouchableOpacity
+                onPress={commitAction}
+                disabled={actionCommit !== 'idle'}
+                style={styles.commitBtn}
+                hitSlop={6}
+              >
+                <Text style={[styles.commitBtnText, actionCommit === 'done' && { color: '#5AE89A' }]}>
+                  {actionCommit === 'done'
+                    ? '✓ Committed — on your list for today'
+                    : actionCommit === 'saving'
+                      ? 'Committing…'
+                      : actionCommit === 'error'
+                        ? "Didn't go through — tap to retry"
+                        : '→ Commit to this'}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+            {brief.action && actionCommit !== 'done' ? (
+              altPicker === 'closed' || altPicker === 'loading' ? (
+                <TouchableOpacity onPress={openAltPicker} disabled={altPicker === 'loading'} hitSlop={6} style={styles.altLink}>
+                  <Text style={styles.altLinkText}>
+                    {altPicker === 'loading' ? 'Loading other options…' : 'Commit to something else'}
                   </Text>
                 </TouchableOpacity>
-              ) : null}
-              {key === 'action' && brief.action && actionCommit !== 'done' ? (
-                altPicker === 'closed' || altPicker === 'loading' ? (
-                  <TouchableOpacity onPress={openAltPicker} disabled={altPicker === 'loading'} hitSlop={6} style={styles.altLink}>
-                    <Text style={styles.altLinkText}>
-                      {altPicker === 'loading' ? 'Loading other options…' : 'Commit to something else'}
-                    </Text>
-                  </TouchableOpacity>
-                ) : (
-                  <View style={styles.altPicker}>
-                    {alternates.map((a) => (
-                      <TouchableOpacity key={a.id} onPress={() => commitText(a.title)} disabled={actionCommit === 'saving'} style={styles.altRow}>
-                        <Text style={styles.altRowText}>{a.title}</Text>
-                        {a.detail ? <Text style={styles.altRowDetail}>{a.detail}</Text> : null}
-                      </TouchableOpacity>
-                    ))}
-                    <View style={styles.altFreeformRow}>
-                      <TextInput
-                        style={styles.altFreeformInput}
-                        placeholder="Or write your own…"
-                        placeholderTextColor={c.subtext}
-                        value={altText}
-                        onChangeText={setAltText}
-                        onSubmitEditing={() => commitText(altText)}
-                        returnKeyType="done"
-                        autoCorrect
-                        spellCheck
-                      />
-                      <TouchableOpacity onPress={() => commitText(altText)} disabled={!altText.trim() || actionCommit === 'saving'} hitSlop={6}>
-                        <Text style={[styles.altLinkText, !altText.trim() && { opacity: 0.4 }]}>Commit</Text>
-                      </TouchableOpacity>
-                    </View>
-                    <TouchableOpacity onPress={() => setAltPicker('closed')} hitSlop={6}>
-                      <Text style={styles.altCancelText}>Cancel</Text>
+              ) : (
+                <View style={styles.altPicker}>
+                  {alternates.map((a) => (
+                    <TouchableOpacity key={a.id} onPress={() => commitText(a.title)} disabled={actionCommit === 'saving'} style={styles.altRow}>
+                      <Text style={styles.altRowText}>{a.title}</Text>
+                      {a.detail ? <Text style={styles.altRowDetail}>{a.detail}</Text> : null}
+                    </TouchableOpacity>
+                  ))}
+                  <View style={styles.altFreeformRow}>
+                    <TextInput
+                      style={styles.altFreeformInput}
+                      placeholder="Or write your own…"
+                      placeholderTextColor={c.subtext}
+                      value={altText}
+                      onChangeText={setAltText}
+                      onSubmitEditing={() => commitText(altText)}
+                      returnKeyType="done"
+                      autoCorrect
+                      spellCheck
+                    />
+                    <TouchableOpacity onPress={() => commitText(altText)} disabled={!altText.trim() || actionCommit === 'saving'} hitSlop={6}>
+                      <Text style={[styles.altLinkText, !altText.trim() && { opacity: 0.4 }]}>Commit</Text>
                     </TouchableOpacity>
                   </View>
-                )
-              ) : null}
+                  <TouchableOpacity onPress={() => setAltPicker('closed')} hitSlop={6}>
+                    <Text style={styles.altCancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              )
+            ) : null}
+          </AnimatedEntry>
+          {risk ? (
+            <AnimatedEntry delay={185} distance={8}>
+              <BeatRow label="THE RISK" emoji="⚠️" tint="#FFC44D" text={risk.rationale} />
             </AnimatedEntry>
-          ))}
+          ) : null}
         </>
       ) : (
         <AnimatedEntry delay={60} distance={10}>
@@ -516,6 +542,18 @@ function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsSt
         </AnimatedEntry>
       )}
 
+      {/* Progressive disclosure (Today redesign): the open question,
+          affirmation, and free-context box are all real, useful features —
+          kept in full, just no longer competing for the same above-the-fold
+          weight as NOW/ACTION/RISK. A pending open question keeps a small
+          dot on the collapsed toggle so it's never silently missed. */}
+      <Pressable onPress={toggleMore} style={styles.moreToggle} hitSlop={8}>
+        <Text style={styles.moreToggleText}>{moreOpen ? 'Less' : 'More from your Chief of Staff'}</Text>
+        {!moreOpen && brief && openQ ? <View style={styles.moreDot} /> : null}
+        <Text style={[styles.beatChevron, moreOpen && styles.beatChevronOpen]}>›</Text>
+      </Pressable>
+      {moreOpen && (
+      <>
       {/* The chief's one open question — only when the brief genuinely has one.
           Answering it teaches the next brief and can correct today's read. */}
       {brief && openQ ? (
@@ -618,6 +656,8 @@ function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsSt
         </TouchableOpacity>
       </View>
       {noteFailed && <Text style={styles.contextFailed}>Couldn't save — try again.</Text>}
+      </>
+      )}
     </View>
   );
 }
@@ -645,6 +685,25 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
     borderTopWidth: 1,
     borderTopColor: 'rgba(255,255,255,0.12)',
+  },
+  moreToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: spacing.sm,
+    paddingVertical: spacing.xs,
+    minHeight: 44, // 44pt touch target
+  },
+  moreToggleText: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  moreDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#A89CFF',
   },
   qText: { ...typography.body, color: '#fff', fontSize: 15, lineHeight: 22, fontWeight: '600' },
   qThanks: { ...typography.caption, color: '#A89CFF', fontSize: 13, marginTop: spacing.sm, fontStyle: 'italic' },

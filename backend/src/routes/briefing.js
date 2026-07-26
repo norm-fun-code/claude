@@ -705,9 +705,30 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     } catch (err) {
       console.error('[briefing cache] weeklyReview refresh failed:', err.message);
     }
+    // Today command-center: recomputed fresh on EVERY cache-hit serve (cheap —
+    // one attention-ledger query, no rebuild) rather than served from
+    // whatever was stored, so "Since This Morning" and the risk gate reflect
+    // what's true right now, not what was true when this row was cached.
+    let todayCommandCenter = cachedContent.todayCommandCenter ?? null;
+    try {
+      todayCommandCenter = await require('../brain/todayCommandCenter').buildTodayCommandCenter({
+        snapshotId: cachedContent.snapshotId, snapshotVersion: cachedContent.snapshotVersion,
+        snapshotAt: cachedContent.snapshotAt, builtAt: cachedContent.builtAt,
+        tz: cachedContent.timezone || process.env.TZ || 'America/New_York',
+        chiefBrief: cachedContent.chiefBrief, chiefBriefStale: cachedContent.chiefBriefStale,
+        chiefBriefPending: cachedContent.chiefBriefPending, chiefBriefQuality: cachedContent.chiefBriefQuality,
+        goalsWeekStart: cachedContent.goalsWeekStart, chiefBriefGoalsStale,
+        forecasts: cachedContent.forecasts, todayForecast: cachedContent.todayForecast,
+        healthInsights: cachedContent.healthInsights, wealthInsights: cachedContent.wealthInsights,
+        weeklyReview, wealth: cachedContent.wealth, recovery: cachedContent.recovery,
+      });
+    } catch (err) {
+      console.error('[todayCommandCenter] cache-hit build failed:', err.message);
+    }
+
     // Always serve the cache — never block the client on a 60-90s rebuild.
     // `stale: true` signals the app to show a "Rebuild briefing" button.
-    return { ...cachedContent, weeklyGoals, weeklyReview, chiefBriefGoalsStale, cached: true, stale: isStale, cachedAgeMin: Math.round(ageMin) };
+    return { ...cachedContent, weeklyGoals, weeklyReview, chiefBriefGoalsStale, todayCommandCenter, cached: true, stale: isStale, cachedAgeMin: Math.round(ageMin) };
   }
 
   // Format today's date label
@@ -2503,6 +2524,24 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     signals,
   };
 
+  // Today command-center projection (Today-tab redesign): ONE server-owned
+  // selection over data already assembled above — no second snapshot, no new
+  // LLM call, no mobile-side derivation. See brain/todayCommandCenter.js.
+  try {
+    response.todayCommandCenter = await require('../brain/todayCommandCenter').buildTodayCommandCenter({
+      snapshotId: response.snapshotId, snapshotVersion: response.snapshotVersion,
+      snapshotAt: response.snapshotAt, builtAt: response.builtAt, tz: response.timezone,
+      chiefBrief: response.chiefBrief, chiefBriefStale: response.chiefBriefStale,
+      chiefBriefPending: response.chiefBriefPending, chiefBriefQuality: response.chiefBriefQuality,
+      goalsWeekStart: response.goalsWeekStart, chiefBriefGoalsStale: response.chiefBriefGoalsStale,
+      forecasts: response.forecasts, todayForecast: response.todayForecast,
+      healthInsights: response.healthInsights, wealthInsights: response.wealthInsights,
+      weeklyReview: response.weeklyReview, wealth: response.wealth, recovery: response.recovery,
+    });
+  } catch (err) {
+    console.error('[todayCommandCenter] build failed:', err.message);
+  }
+
   if (errors.length > 0) {
     response.errors = errors;
   }
@@ -2889,7 +2928,28 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
     console.error('[chief-brief rebuild] save failed:', err.message);
   }
 
-  res.json({ ...content, cached: false });
+  // Recompute the Today command center against this rebuild's own fresh
+  // chiefBrief/goalsWeekStart — everything else (forecasts, insights,
+  // wealth, recovery) is carried forward from `prior.content` unchanged,
+  // same as the rest of `content` above.
+  let todayCommandCenter = prior.content.todayCommandCenter ?? null;
+  try {
+    todayCommandCenter = await require('../brain/todayCommandCenter').buildTodayCommandCenter({
+      snapshotId: content.snapshotId, snapshotVersion: content.snapshotVersion,
+      snapshotAt: content.snapshotAt, builtAt: content.builtAt,
+      tz: process.env.TZ || 'America/New_York',
+      chiefBrief: content.chiefBrief, chiefBriefStale: content.chiefBriefStale,
+      chiefBriefPending: content.chiefBriefPending, chiefBriefQuality: content.chiefBriefQuality,
+      goalsWeekStart: content.goalsWeekStart, chiefBriefGoalsStale: content.chiefBriefGoalsStale,
+      forecasts: content.forecasts, todayForecast: content.todayForecast,
+      healthInsights: content.healthInsights, wealthInsights: content.wealthInsights,
+      weeklyReview: content.weeklyReview, wealth: content.wealth, recovery: content.recovery,
+    });
+  } catch (err) {
+    console.error('[todayCommandCenter] scoped rebuild build failed:', err.message);
+  }
+
+  res.json({ ...content, todayCommandCenter, cached: false });
 }));
 
 router.post('/briefing/rebuild', asyncHandler(async (req, res) => {

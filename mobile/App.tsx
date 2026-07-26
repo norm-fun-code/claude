@@ -39,7 +39,7 @@ import { WealthCard } from './src/components/WealthCard';
 import { InsightsCard } from './src/components/InsightsCard';
 import { AskOverlay, type AskOverlayHandle } from './src/components/AskOverlay';
 import { CheckinModal } from './src/components/CheckinModal';
-import { WeeklyIntentionsCard } from './src/components/WeeklyIntentionsCard';
+import { WeeklyReviewModal } from './src/components/WeeklyReviewModal';
 import { HealthCard } from './src/components/HealthCard';
 import { LinearGradient } from 'expo-linear-gradient';
 import { RecoveryCard } from './src/components/RecoveryCard';
@@ -66,6 +66,9 @@ import { CheckinHistoryCard } from './src/components/CheckinHistoryCard';
 import { HabitsModal } from './src/components/HabitsModal';
 import { LibraryCard } from './src/components/LibraryCard';
 import { CommitmentsCard } from './src/components/CommitmentsCard';
+import { SinceMorningCard } from './src/components/SinceMorningCard';
+import { PreviewsRow } from './src/components/PreviewsRow';
+import { selectTodayCommandCenter } from './src/lib/todayCommandCenter';
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
 import { useCommitments } from './src/hooks/useCommitments';
 
@@ -176,6 +179,10 @@ export default function App() {
   const [showWelcome, setShowWelcome] = useState(true);
   const [checkinOpen, setCheckinOpen] = useState(false);
   const [habitsOpen, setHabitsOpen] = useState(false);
+  // Weekly review's dedicated destination (Today redesign) — opened by
+  // tapping the "Weekly review is ready" preview rather than rendering the
+  // full review/goals card inline on Today.
+  const [weeklyReviewOpen, setWeeklyReviewOpen] = useState(false);
   const [pendingAskQ, setPendingAskQ] = useState('');
   const dailyLog = useDailyLogStatus();
   const commitments = useCommitments();
@@ -256,6 +263,17 @@ export default function App() {
 
   usePushRegistration(onNotificationTap);
 
+  // Server-decided destinations from todayCommandCenter's sinceMorning[]/
+  // previews[] (see brain/todayCommandCenter.js) — mobile just navigates
+  // where it's told, never deciding on its own what a domain preview should
+  // link to. 'review' opens the dedicated weekly-review modal instead of a
+  // tab switch, since there's no standalone Review tab.
+  const navigateFromToday = useCallback((destination: string) => {
+    if (destination === 'review') { setWeeklyReviewOpen(true); return; }
+    if (destination === 'health' || destination === 'wealth') { setTab(destination); return; }
+    // 'today' (or anything unrecognized) — already there, no-op.
+  }, []);
+
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   });
@@ -291,6 +309,12 @@ export default function App() {
     const asOf = f?.evidence?.asOf;
     return { value: current, asOf: typeof asOf === 'string' ? asOf : null };
   }, [d?.healthInsights]);
+
+  // Today command-center's risk/sinceMorning/previews — ONE safe accessor
+  // (src/lib/todayCommandCenter.ts) rather than three separate inline
+  // `d?.todayCommandCenter?.x ?? y` expressions, so an older cached payload
+  // missing this field degrades identically everywhere it's read.
+  const todayCC = useMemo(() => selectTodayCommandCenter(d), [d]);
 
   // The quick-ask FAB reads this every render (it's a prop on AskOverlay) —
   // memoize so it isn't a fresh array each time only the recovery score's
@@ -348,14 +372,28 @@ export default function App() {
             <HealthCard health={health} canonicalVo2={vo2Fact} />
             {/* healthInsights is the server-curated top set of health domain findings,
                 already scored and ranked. Habit/wellbeing-only findings go to the
-                merged CheckinHistoryCard in Today's collapsible. */}
+                merged CheckinHistoryCard below. */}
             {(d?.healthInsights?.length ?? 0) > 0 ? (
               <InsightsCard insights={d!.healthInsights!} />
             ) : (
               <EmptyNote c={c} text="Insights appear after a few days of health + habit data." />
             )}
             <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} recoveryScore={liveRecovery.recovery?.score ?? null} />
+            {/* Today's capacity grade/prescription — relocated here from
+                Today (Today redesign: "detailed forecast card" moves to its
+                domain destination; NOW's synthesis already states the
+                recovery band/score plainly, so this detail lives with the
+                rest of Health's data instead of duplicating on Today). */}
+            <TodayForecastCard forecast={d?.todayForecast} />
             <ForecastCard forecasts={d?.forecasts ?? EMPTY_ARRAY} />
+            {/* Check-in trend grid + habit/wellbeing streak insights —
+                relocated here from Today (the "existing appropriate habit
+                surface": Health, since these are wellbeing/health trends). */}
+            <CheckinHistoryCard insights={checkinHistoryInsights} />
+            {/* What I'm actively running — relocated here from Today
+                (personal-health interventions belong with the rest of
+                Health's data, not a permanent card on the 30-second page). */}
+            <ExperimentsCard />
             <CollapsibleSection title="NormOS profile">
               <SelfModelCard />
             </CollapsibleSection>
@@ -429,21 +467,24 @@ export default function App() {
         }
         return (
           <>
-            {/* TODAY-FIRST ordering: the home tab answers "what's the one thing,
-                how am I today, what's urgent, what am I running" before any
-                reflective/historical detail. The brief leads, immediately followed
-                by the cross-domain insight (the differentiator — see the product
-                review's "what feels magical" notes, moved up from position 5 so
-                it reads as part of the brief's synthesis, not just another card),
-                then commitments, recovery grade, and urgent flags; goal forecasts,
-                trends, weekly review, and the ledger drop below the fold. */}
+            {/* Today command-center ordering (redesign): NOW + the single
+                ACTION (+ RISK, only when server-gated evidence exists) must
+                be understandable in ~30 seconds, at or near the top of the
+                fold — everything else is progressive disclosure or a link
+                out to its authoritative domain tab. See
+                brain/todayCommandCenter.js for the projection this renders;
+                mobile never recomputes risk, resolves the workout, or
+                decides what's important on its own. */}
 
-            {/* 0. Sleep check-in — only when there's no Pod reading to fill the gap.
-                Leads when present so logging sleep is the first action. */}
+            {/* Sleep check-in — only when there's no Pod reading to fill the
+                gap. Leads when present so logging sleep is the first action. */}
             <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={onSleepLogged} />
-            {/* 0.5 Evening wind-down brief — leads in the evening (self-hides during
-                the day and when no brief is built), so the home tab feels alive at
-                night instead of showing a stale morning memo. */}
+            {/* Evening wind-down brief — leads in the evening (self-hides
+                during the day and when no brief is built) and already
+                implements the "plan vs. actual, not the morning action
+                treated as unfinished" adaptive requirement on its own
+                (notify/evening-brief.js's canonical trainingOutcome-based
+                grading) — reused as-is, not rebuilt. */}
             {eveningBrief.brief && (
               // Opacity-only (distance 0): the evening brief loads async and inserts
               // at the top, so a slide would compound with the layout shift and read
@@ -453,11 +494,12 @@ export default function App() {
                 <EveningBriefCard brief={eveningBrief.brief} />
               </AnimatedEntry>
             )}
-            {/* 1. Chief Brief — the one thing, leads the day. On sessions that
-                START in the evening (wind-down brief already live), the day is
-                over and this is yesterday-morning news: it steps back into a
-                collapsed recap so the evening card owns the screen. Latched per
-                session (see eveningMode) so it never swaps subtrees mid-use. */}
+            {/* NOW + ACTION (+ RISK) — the one thing, leads the day. On
+                sessions that START in the evening (wind-down brief already
+                live), the day is over and this is yesterday-morning news: it
+                steps back into a collapsed recap so the evening card owns
+                the screen. Latched per session (see eveningMode) so it never
+                swaps subtrees mid-use. */}
             {eveningMode ? (
               <AnimatedEntry delay={10}>
                 <CollapsibleSection title="This morning's brief">
@@ -471,6 +513,7 @@ export default function App() {
                     onRefresh={briefing.refreshChiefBrief}
                     refreshing={briefing.chiefBriefRefreshing}
                     snapshotId={d?.snapshotId}
+                    risk={todayCC.risk}
                   />
                 </CollapsibleSection>
               </AnimatedEntry>
@@ -486,67 +529,63 @@ export default function App() {
                   onRefresh={briefing.refreshChiefBrief}
                   refreshing={briefing.chiefBriefRefreshing}
                   snapshotId={d?.snapshotId}
+                  risk={todayCC.risk}
                 />
               </AnimatedEntry>
             )}
-            {/* 2. Cross-domain patterns — the differentiating insight (per the
-                product review's "what feels magical" + taxonomy-collapse notes:
-                this is the moat, not just another card in the stack, so it sits
-                immediately under the brief instead of five positions down). */}
-            {d?.crossContextInsights && d.crossContextInsights.length > 0 && (
-              <AnimatedEntry delay={5}>
-                <CrossContextCard insights={d.crossContextInsights} />
-              </AnimatedEntry>
-            )}
-            {/* 3. Commitments — what you said you'd do, still open. Self-hides
-                when nothing is outstanding. */}
+            {/* COMMITMENTS — what you explicitly agreed to do today. Self-
+                hides when nothing is outstanding. */}
             {commitments.commitments.length > 0 && (
               <AnimatedEntry delay={10}>
                 <CommitmentsCard commitments={commitments.commitments} onResolve={commitments.resolve} />
               </AnimatedEntry>
             )}
-            {/* 4. Recovery grade — "how am I TODAY" is the home-tab question */}
-            <AnimatedEntry delay={20}>
-              <TodayForecastCard forecast={d?.todayForecast} />
-            </AnimatedEntry>
-            {/* 5. Alerts — operational/source-health warnings, not a personal
-                insight (kept distinct from the taxonomy collapse for exactly
-                that reason — it needs to read as "something broke", not blend
-                into "the app noticed a pattern"). */}
+            {/* Alerts — operational/source-health warnings ("something
+                broke"), kept visually distinct from a personal insight. */}
             {d?.alerts && d.alerts.length > 0 && (
-              <AnimatedEntry delay={30}>
+              <AnimatedEntry delay={20}>
                 <AlertCard alerts={d.alerts} />
               </AnimatedEntry>
             )}
-            {/* 6. Experiments — what I'm actively running */}
-            <AnimatedEntry delay={40}>
-              <ExperimentsCard />
+            {/* SINCE THIS MORNING — only genuine post-snapshot changes (see
+                todayCommandCenter.sinceMorning); self-hides when empty. */}
+            <AnimatedEntry delay={30}>
+              <SinceMorningCard
+                items={todayCC.sinceMorning}
+                onNavigate={navigateFromToday}
+              />
             </AnimatedEntry>
-            {/* 7. Goal forecasts — trajectory, not a daily action → below the fold */}
-            {(d?.forecasts ?? []).length > 0 && (
-              <AnimatedEntry delay={55}>
-                <ForecastCard forecasts={d!.forecasts} />
+            {/* OPTIONAL PREVIEWS — at most one compact link per domain into
+                Health/Wealth/the weekly review, only when something deserves
+                attention (see todayCommandCenter.previews); self-hides when
+                empty. Cross-domain "what feels magical" patterns get exactly
+                one preview slot too, rather than a permanent always-on card. */}
+            <AnimatedEntry delay={35}>
+              <PreviewsRow
+                previews={todayCC.previews}
+                onNavigate={navigateFromToday}
+              />
+            </AnimatedEntry>
+            {d?.crossContextInsights && d.crossContextInsights.length > 0 && (
+              <AnimatedEntry delay={40}>
+                <CrossContextCard insights={d.crossContextInsights.slice(0, 1)} />
               </AnimatedEntry>
             )}
-            {/* 8. Streak / trend signals (one-question prompts) — kept as its own
-                card: it's an interactive question+answer input, not a passive
-                "noticed something" display, so it can't fold into a feed. */}
+            {/* Streak / trend signals (one-question prompts) — kept as its
+                own small interactive card, positioned low (not competing
+                with NOW/ACTION for visual weight). */}
             {d?.signals && d.signals.length > 0 && (
-              <AnimatedEntry delay={70}>
+              <AnimatedEntry delay={50}>
                 <BriefSignalsCard signals={d.signals} />
               </AnimatedEntry>
             )}
-            {/* 9. Check-in trends + habit streaks — reference detail */}
-            <AnimatedEntry delay={85}>
-              <CheckinHistoryCard insights={checkinHistoryInsights} />
-            </AnimatedEntry>
-            {/* 10. Weekly review + intentions. Leverage recommendations no longer
-                render here — every recommendation now surfaces as exactly one
-                thing, a Commitment (#3 above); the ledger card is gone too
-                (outcome measurement still runs, it's just not its own card). */}
-            <AnimatedEntry delay={100}>
-              <WeeklyIntentionsCard review={d?.weeklyReview ?? null} />
-            </AnimatedEntry>
+            {weeklyReviewOpen && (
+              <WeeklyReviewModal
+                visible={weeklyReviewOpen}
+                onClose={() => setWeeklyReviewOpen(false)}
+                review={d?.weeklyReview ?? null}
+              />
+            )}
             {briefing.error && !d && (
               <AnimatedEntry delay={0}>
                 <View style={[styles.errorBox, { backgroundColor: c.card }, shadow(isDark)]}>

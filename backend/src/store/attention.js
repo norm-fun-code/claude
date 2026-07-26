@@ -307,16 +307,32 @@ async function outcomeCounts({ days = 30 } = {}) {
 
 /** Today's add_to_brief / ask_question rows — what the next briefing build
  *  should consider surfacing (routes/briefing.js's consumer). */
-async function pendingForBrief({ tz = process.env.TZ || 'America/New_York', limit = 8 } = {}) {
+/**
+ * `since` (optional Date) narrows to rows strictly AFTER that instant — the
+ * Today command-center's "Since This Morning" addenda reuses this SAME
+ * ledger with `since: snapshotAt` so a mutation the morning snapshot already
+ * reflects is never re-surfaced as new, and only a genuinely post-snapshot
+ * event appears (truth-and-evidence contract: no second event system, no
+ * mobile-side derivation of what counts as "new"). Omitting `since` keeps the
+ * original today-only behavior used to feed the chief-brief prompt.
+ */
+async function pendingForBrief({ tz = process.env.TZ || 'America/New_York', limit = 8, since = null } = {}) {
   try {
+    const params = [tz, limit];
+    let sinceClause = '';
+    if (since) {
+      params.push(new Date(since));
+      sinceClause = `AND created_at > $${params.length}`;
+    }
     const { rows } = await query(
-      `SELECT event_key, domain, type, subject, disposition, reason, scores
+      `SELECT event_key, domain, type, subject, disposition, reason, scores, created_at
          FROM attention_log
         WHERE disposition IN ('add_to_brief','ask_question')
           AND (created_at AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date
+          ${sinceClause}
         ORDER BY (scores->>'value')::float DESC NULLS LAST
         LIMIT $2`,
-      [tz, limit]
+      params
     );
     return rows;
   } catch {

@@ -296,6 +296,61 @@ export interface TodayForecast {
   } | null;
 }
 
+// Today command-center projection (Today-tab redesign) — see backend
+// brain/todayCommandCenter.js. ONE server-owned selection over canonical
+// data; the client renders this verbatim and must never independently
+// decide what's important, recompute risk, or resolve conflicts itself.
+// Optional/possibly-absent everywhere: a briefing payload hydrated from an
+// older AsyncStorage cache (written before this field existed) simply won't
+// have it, and every consumer must degrade gracefully rather than crash.
+export interface TodayNow {
+  stableId: string;
+  headline: string | null;
+  detail: string | null;
+  evidence?: Record<string, unknown>;
+}
+
+export interface TodayAction {
+  stableId: string;
+  title: string;
+  rationale: string | null;
+  commitmentPayload?: { text: string } | null;
+}
+
+export interface TodayRisk {
+  stableId: string;
+  title: string;
+  rationale: string;
+  severity?: string;
+  evidence?: Record<string, unknown>;
+}
+
+export interface SinceMorningItem {
+  stableId: string;
+  occurredAt: string | null;
+  summary: string;
+  destination: string;
+}
+
+export interface TodayPreview {
+  domain: string;
+  title: string;
+  summary: string;
+  destination: string;
+}
+
+export interface TodayCommandCenter {
+  snapshotId: string | null;
+  snapshotVersion: number | null;
+  snapshotAt: string | null;
+  builtAt: string | null;
+  now: TodayNow;
+  action: TodayAction | null;
+  risk: TodayRisk | null;
+  sinceMorning: SinceMorningItem[];
+  previews: TodayPreview[];
+}
+
 export interface BriefingData {
   date: string;
   // builtAt = when this RESPONSE was produced (the rebuild-finished poll signal).
@@ -388,6 +443,7 @@ export interface BriefingData {
   wellbeingTheme?: string | null;
   weeklyReview: WeeklyReview | null;
   wealth: Wealth | null;
+  todayCommandCenter?: TodayCommandCenter | null;
   dailyQuote?: string | null;
   alerts?: Alert[];
   signals?: BriefSignal[];
