@@ -332,11 +332,54 @@ export interface SinceMorningItem {
   destination: string;
 }
 
-export interface TodayPreview {
+// A compact, resolvable "the plan disagrees with itself" state (Today-tab
+// cleanup, Part 1) — e.g. the headline calls today a rest day while the
+// action recommends a hard session. Rendered as a compact resolution
+// (Keep rest day / Do X) instead of guessing which side is right; resolving
+// writes an explicit workout override through the existing infrastructure.
+export interface PlanConflict {
+  stableId: string;
+  direction: 'rest_vs_workout' | 'workout_vs_rest';
+  question: string;
+  effectiveWorkoutLabel: string | null;
+  scheduledWorkoutLabel: string | null;
+  options: Array<{ id: string; label: string; workoutId: string | null }>;
+}
+
+// Typed deep-link contract ("On My Radar" → domain tabs). `surface` is what
+// navigateFromToday switches to; `entityType`/`entityId`/`anchor` are best-
+// effort — a destination screen that doesn't (yet) support anchoring simply
+// falls back to `fallbackRoute` (== `surface`, i.e. the top of that tab)
+// rather than crash or silently do nothing.
+export interface RadarDestination {
+  surface: 'health' | 'wealth' | 'review' | 'today';
+  entityType: string | null;
+  entityId: string | null;
+  anchor: string | null;
+  snapshotId: string | null;
+  fallbackRoute: string;
+}
+
+// "On My Radar" — server-ranked replacement for the old fixed three-tile
+// preview row (see brain/radar.js). 0-2 cards normally, never a guaranteed
+// one-per-domain slot; each card carries everything the detail sheet needs
+// to render without a second fetch.
+export interface RadarCard {
+  stableId: string;
   domain: string;
-  title: string;
-  summary: string;
-  destination: string;
+  entityId: string | null;
+  snapshotId: string | null;
+  priority: number;
+  status: string;
+  severity: 'material' | 'watch' | 'info' | string;
+  headline: string;
+  whyNow: string | null;
+  evidenceSummary: string | null;
+  asOf: string | null;
+  actionLabel: string;
+  destination: RadarDestination;
+  dismissable?: boolean;
+  dismissKey?: string;
 }
 
 export interface TodayCommandCenter {
@@ -346,9 +389,10 @@ export interface TodayCommandCenter {
   builtAt: string | null;
   now: TodayNow;
   action: TodayAction | null;
+  planConflict?: PlanConflict | null;
   risk: TodayRisk | null;
   sinceMorning: SinceMorningItem[];
-  previews: TodayPreview[];
+  radar: RadarCard[];
 }
 
 export interface BriefingData {

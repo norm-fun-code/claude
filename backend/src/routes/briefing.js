@@ -526,18 +526,65 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     // response's live weeklyGoals shows fresh unchecked ones. Flag it
     // explicitly rather than let the two silently disagree (truth-and-
     // evidence contract, audit priority #1).
-    const chiefBriefGoalsStale = Boolean(
+    let chiefBriefGoalsStale = Boolean(
       prior.content.goalsWeekStart && weeklyGoals?.current?.weekStart
         && prior.content.goalsWeekStart !== weeklyGoals.current.weekStart
     );
     // Apply insight dismissals live too, so dismissing a card sticks on the next
     // instant cache reload rather than waiting for a full rebuild.
     const cachedContent = { ...prior.content };
+
+    // Automatic stale-period repair (Today-tab cleanup, Part 2): NormOS must
+    // detect and repair a stale period-dependent claim itself, not knowingly
+    // serve it and ask the user to tap refresh. One idempotent SCOPED rebuild
+    // (chiefBrief/morningFocus only — see performScopedChiefBriefRebuild,
+    // reused verbatim from the manual ↻ endpoint, not reimplemented) fixes
+    // the overwhelmingly common case (the week rolled over; a fresh
+    // generation against the now-current week's goals just isn't stale
+    // anymore). `treatPriorAsFreshFallback: false` is the one deliberate
+    // behavior difference from the manual endpoint: `prior` IS the stale
+    // content this call exists to replace, so a failed attempt must resolve
+    // to the honest pending state, never silently re-serve the same stale
+    // claim it was trying to fix.
+    //
+    // Loop protection: `cachedContent.goalsRepairAttempt` (persisted by
+    // performScopedChiefBriefRebuild on a FAILED attempt, cleared on
+    // success) is an explicit attempt/state cooldown marker, bound to the
+    // specific week it was trying to fix — an outage that makes every
+    // attempt fail degrades to "try again in REPAIR_COOLDOWN_MS" rather than
+    // firing a full LLM call on every single cache-hit request. No push
+    // notification is sent from this path (performScopedChiefBriefRebuild
+    // only saves the briefing row; briefing.js's cache-hit serve has never
+    // sent notifications) and no unrelated section (recovery/wealth/
+    // insights/etc., all untouched here) is rebuilt.
+    if (chiefBriefGoalsStale) {
+      const REPAIR_COOLDOWN_MS = 10 * 60 * 1000;
+      const priorAttempt = cachedContent.goalsRepairAttempt;
+      const eligible = !priorAttempt
+        || priorAttempt.weekStart !== weeklyGoals?.current?.weekStart
+        || (Date.now() - new Date(priorAttempt.at).getTime()) > REPAIR_COOLDOWN_MS;
+      if (eligible) {
+        try {
+          const repaired = await performScopedChiefBriefRebuild(prior, {
+            treatPriorAsFreshFallback: false, repairReason: 'goals_stale',
+          });
+          Object.assign(cachedContent, repaired.content);
+          chiefBriefGoalsStale = Boolean(cachedContent.chiefBriefGoalsStale);
+        } catch (err) {
+          console.error('[briefing cache] automatic goals-staleness repair failed:', err.message);
+        }
+      }
+    }
+
+    // Hoisted out of the try block below (not a fresh const there) so
+    // "On My Radar"'s buildTodayCommandCenter call further down can reuse
+    // the SAME fetched set for its own dismiss filter — one query, not two.
+    let dismissedKeysSet = new Set();
     try {
       const dismissedInsights = require('../store/dismissedInsights');
-      const dismissed = await dismissedInsights.dismissedKeys();
+      dismissedKeysSet = await dismissedInsights.dismissedKeys();
       for (const k of ['insights', 'wealthInsights', 'healthInsights', 'crossContextInsights']) {
-        if (Array.isArray(cachedContent[k])) cachedContent[k] = dismissedInsights.applyDismissals(cachedContent[k], dismissed);
+        if (Array.isArray(cachedContent[k])) cachedContent[k] = dismissedInsights.applyDismissals(cachedContent[k], dismissedKeysSet);
       }
     } catch (err) {
       console.error('[briefing cache] dismissals failed:', err.message);
@@ -580,6 +627,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
           // self-fetching call via the old resolveWorkoutForPrompt(tz).
           freshEff = await getEffectiveWorkout({ tz, band: freshRecovery?.band ?? null });
           cachedContent.workout = workoutPromptShape(freshEff);
+          cachedContent.effectiveWorkout = freshEff;
           cachedContent.fieldsBuiltAt = stampFields(cachedContent.fieldsBuiltAt, ['workout']);
         } catch (e) { console.error('[briefing cache] workout recompute failed:', e.message); }
       }
@@ -721,6 +769,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
         forecasts: cachedContent.forecasts, todayForecast: cachedContent.todayForecast,
         healthInsights: cachedContent.healthInsights, wealthInsights: cachedContent.wealthInsights,
         weeklyReview, wealth: cachedContent.wealth, recovery: cachedContent.recovery,
+        effectiveWorkout: cachedContent.effectiveWorkout, dismissed: dismissedKeysSet,
       });
     } catch (err) {
       console.error('[todayCommandCenter] cache-hit build failed:', err.message);
@@ -1146,14 +1195,23 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   // direct (single) resolve only if the snapshot itself failed to build, so a
   // snapshot failure degrades gracefully instead of blanking the whole brief.
   let workout;
+  // The RAW getEffectiveWorkout() shape (label/source/scheduledLabel/
+  // workoutId) — kept alongside `workout` (the prompt-text shape above)
+  // purely so todayCommandCenter's plan-conflict guard has source/scheduled
+  // identity to compare chiefBrief text against, without a second resolve.
+  let effectiveWorkoutRaw = null;
   let wealthInsights = [];
   if (brainSnapshot) {
+    effectiveWorkoutRaw = brainSnapshot.effectiveWorkout.value ?? { label: 'Rest', source: 'scheduled' };
     workout = brainSnapshot.effectiveWorkout.value
       ? workoutPromptShape(brainSnapshot.effectiveWorkout.value)
       : workoutPromptShape({ label: 'Rest', source: 'scheduled', isHard: false });
     wealthInsights = brainSnapshot.wealth.value?.insights ?? [];
   } else {
-    try { workout = await resolveWorkoutForPrompt(factsTz); } catch { workout = workoutPromptShape({ label: 'Rest', source: 'scheduled', isHard: false }); }
+    try {
+      effectiveWorkoutRaw = await getEffectiveWorkout({ tz: factsTz });
+      workout = workoutPromptShape(effectiveWorkoutRaw);
+    } catch { workout = workoutPromptShape({ label: 'Rest', source: 'scheduled', isHard: false }); }
     try {
       wealthInsights = await buildWealthInsights();
     } catch (err) {
@@ -2006,6 +2064,10 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   let healthInsights = [];
   let leverageActions = [];
   let forecasts = [];
+  // Set below (dismissals block) and reused by the todayCommandCenter call
+  // further down ("On My Radar"'s dismiss filter) — one dismissedKeys()
+  // query, not two.
+  let dismissedKeysSet = new Set();
   // `recovery` is already declared + computed earlier (for the briefing prompt);
   // the block below reuses it and only recomputes if that early call came back null.
   let healthComposites = [];
@@ -2125,11 +2187,11 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     // to stored findings AND live-computed wealth insights.
     try {
       const dismissedInsights = require('../store/dismissedInsights');
-      const dismissed = await dismissedInsights.dismissedKeys();
-      insights = dismissedInsights.applyDismissals(insights, dismissed);
-      wealthInsights = dismissedInsights.applyDismissals(wealthInsights, dismissed);
-      healthInsights = dismissedInsights.applyDismissals(healthInsights, dismissed);
-      crossContextInsights = dismissedInsights.applyDismissals(crossContextInsights, dismissed);
+      dismissedKeysSet = await dismissedInsights.dismissedKeys();
+      insights = dismissedInsights.applyDismissals(insights, dismissedKeysSet);
+      wealthInsights = dismissedInsights.applyDismissals(wealthInsights, dismissedKeysSet);
+      healthInsights = dismissedInsights.applyDismissals(healthInsights, dismissedKeysSet);
+      crossContextInsights = dismissedInsights.applyDismissals(crossContextInsights, dismissedKeysSet);
     } catch (err) {
       console.error('[insights dismissals] failed:', err.message);
     }
@@ -2494,6 +2556,10 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     chiefBriefQuality: geminiResult?.chiefBriefQuality ?? null,
     weather,
     workout,
+    // Raw getEffectiveWorkout() shape, persisted alongside the prompt-text
+    // `workout` above purely for todayCommandCenter's plan-conflict guard —
+    // see effectiveWorkoutRaw's definition above.
+    effectiveWorkout: effectiveWorkoutRaw,
     calendar,
     workBusy: workBusy ?? [],
     urgentEmails: priorIsToday && p?.urgentEmails?.length ? p.urgentEmails : (geminiResult?.urgentEmails ?? []),
@@ -2537,6 +2603,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
       forecasts: response.forecasts, todayForecast: response.todayForecast,
       healthInsights: response.healthInsights, wealthInsights: response.wealthInsights,
       weeklyReview: response.weeklyReview, wealth: response.wealth, recovery: response.recovery,
+      effectiveWorkout: response.effectiveWorkout, dismissed: dismissedKeysSet,
     });
   } catch (err) {
     console.error('[todayCommandCenter] build failed:', err.message);
@@ -2690,22 +2757,8 @@ async function primeNextBuildCycle() {
   await require('../notify/run').runNudges({ suppressCheckin: true })
     .catch((e) => console.error('[proactive nudge]', e.message));
 }
-function createBriefingRouter({ port }) {
-  const router = express.Router();
-
-// Fast, scoped retry for JUST the Chief-of-Staff card — added after a live
-// silent-fallback bug (see briefing-ai.js's shape-validation logging and the
-// chiefBriefStale flag below) kept showing yesterday's brief with no way to
-// force a quick re-try short of the full 60-90s rebuild. Recomputes only the
-// context generateChiefBrief needs (see buildQuickChiefBriefContext above)
-// and touches ONLY chiefBrief/morningFocus/chiefBriefStale in the saved
-// content — every other field (weather, wealth, insights, etc.) is untouched.
-router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
-  const prior = await briefingsStore.latestBriefing('daily');
-  if (!prior?.content) {
-    return res.status(409).json({ error: 'no briefing built yet — load the briefing first' });
-  }
-
+async function performScopedChiefBriefRebuild(prior, opts = {}) {
+  const { treatPriorAsFreshFallback = true, repairReason = null } = opts;
   const ctx = await buildQuickChiefBriefContext(prior);
 
   // Canonical facts for the claim validator — same authorities as the full
@@ -2840,7 +2893,7 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
   const { hasPublishableFreshBriefToday } = require('../notify/morning');
   const thisAttemptFresh = chiefResult.chiefBrief != null && chiefResult.chiefBriefQuality?.status === 'fresh';
   const priorFreshSameDay = hasPublishableFreshBriefToday(prior, { now: new Date() });
-  const chiefBriefStale = !thisAttemptFresh && priorFreshSameDay;
+  const chiefBriefStale = treatPriorAsFreshFallback && !thisAttemptFresh && priorFreshSameDay;
   const errors = Array.isArray(prior.content.errors) ? prior.content.errors.filter((e) => e.service !== 'chiefBrief') : [];
   if (chiefBriefStale) {
     console.error('[chief-brief rebuild] this attempt was missing or degraded quality — keeping the existing fresh card unchanged.');
@@ -2913,6 +2966,17 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
     snapshotId: prior.content.snapshotId ?? null,
     // Only the chief brief + morningFocus were actually re-derived now.
     fieldsBuiltAt: stampFields(prior.content.fieldsBuiltAt, ['chiefBrief', 'morningFocus'], rebuildNow),
+    // Explicit attempt/state tracking for the automatic goals-staleness
+    // repair (Part 2) — rebuild-loop protection. A successful repair clears
+    // any prior cooldown marker; a failed one stamps ONE, bound to the week
+    // it was trying to fix, so the cache-hit path's cooldown check (see that
+    // call site) can skip re-attempting every single request while an LLM
+    // outage or similar persists, instead of hammering the LLM once per
+    // request. Untouched (carried forward via ...prior.content above) for
+    // every OTHER caller of this function (repairReason null).
+    ...(repairReason === 'goals_stale'
+      ? { goalsRepairAttempt: thisAttemptFresh ? null : { at: rebuildNow, weekStart: ctx.goalsWeekStart ?? null } }
+      : {}),
   };
   // Awaited (unlike /briefing/rebuild's background full rebuild, this is one
   // fast scoped LLM call + a single-row save — nothing here justifies making
@@ -2934,6 +2998,12 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
   // same as the rest of `content` above.
   let todayCommandCenter = prior.content.todayCommandCenter ?? null;
   try {
+    // This path doesn't already fetch dismissedKeys() anywhere else (it only
+    // re-derives chiefBrief/morningFocus) — one cheap extra SELECT, only on
+    // a scoped rebuild (infrequent), so "On My Radar" here reflects the same
+    // dismiss state the other two call sites already apply.
+    let dismissedForRadar = new Set();
+    try { dismissedForRadar = await require('../store/dismissedInsights').dismissedKeys(); } catch { /* fail-open: nothing filtered */ }
     todayCommandCenter = await require('../brain/todayCommandCenter').buildTodayCommandCenter({
       snapshotId: content.snapshotId, snapshotVersion: content.snapshotVersion,
       snapshotAt: content.snapshotAt, builtAt: content.builtAt,
@@ -2944,11 +3014,53 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
       forecasts: content.forecasts, todayForecast: content.todayForecast,
       healthInsights: content.healthInsights, wealthInsights: content.wealthInsights,
       weeklyReview: content.weeklyReview, wealth: content.wealth, recovery: content.recovery,
+      effectiveWorkout: content.effectiveWorkout, dismissed: dismissedForRadar,
     });
   } catch (err) {
     console.error('[todayCommandCenter] scoped rebuild build failed:', err.message);
   }
 
+  return { content, todayCommandCenter };
+}
+
+function createBriefingRouter({ port }) {
+  const router = express.Router();
+
+// Fast, scoped retry for JUST the Chief-of-Staff card — added after a live
+// silent-fallback bug (see briefing-ai.js's shape-validation logging and the
+// chiefBriefStale flag below) kept showing yesterday's brief with no way to
+// force a quick re-try short of the full 60-90s rebuild. Recomputes only the
+// context generateChiefBrief needs (see buildQuickChiefBriefContext above)
+// and touches ONLY chiefBrief/morningFocus/chiefBriefStale in the saved
+// content — every other field (weather, wealth, insights, etc.) is untouched.
+//
+// Extracted from the POST /briefing/chief-brief/rebuild handler so a SECOND
+// caller — the cache-hit serve path's automatic stale-goal repair (Today-tab
+// cleanup, Part 2) — can trigger the identical scoped rebuild without a second,
+// drifting reimplementation. `prior` is the caller's already-fetched latest
+// daily briefing row; this never fetches it itself.
+//
+// @param {object} prior a `store/briefings.js` row `{content, generated_at}`.
+// @param {object} [opts]
+// @param {boolean} [opts.treatPriorAsFreshFallback] Default true (the manual
+//   ↻ button's original behavior): when this attempt is missing/degraded,
+//   carry forward `prior`'s still-good chiefBrief rather than show nothing.
+//   The automatic goals-staleness repair passes `false` — `prior` IS the
+//   stale content being repaired, so falling back to it on a failed repair
+//   would re-serve the exact claim this call exists to fix. With `false`, a
+//   failed attempt resolves to the explicit pending state instead (never a
+//   silently-stale claim shown as current).
+// @param {string|null} [opts.repairReason] When `'goals_stale'`, stamps a
+//   `goalsRepairAttempt` cooldown marker into the saved content on a failed
+//   attempt (rebuild-loop protection for the automatic caller) and clears it
+//   on success.
+// @returns {Promise<{content: object, todayCommandCenter: object|null}>}
+router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
+  const prior = await briefingsStore.latestBriefing('daily');
+  if (!prior?.content) {
+    return res.status(409).json({ error: 'no briefing built yet — load the briefing first' });
+  }
+  const { content, todayCommandCenter } = await performScopedChiefBriefRebuild(prior);
   res.json({ ...content, todayCommandCenter, cached: false });
 }));
 

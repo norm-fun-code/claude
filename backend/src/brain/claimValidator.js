@@ -260,6 +260,127 @@ function checkEffectiveWorkout(fields, facts) {
   return violations;
 }
 
+// ── Rest-day framing vs. effective workout ──────────────────────────────────
+// The other half of the "day off" production bug (see also checkEffectiveWorkout
+// above, which only fires on a scheduled→effective DIVERGENCE and only matches
+// action-verb sentences prescribing the SCHEDULED session): a chief brief can
+// call today "a real rest day" in one field (typically because the DAY CONTEXT
+// prompt block leads with weekend/holiday "rest" framing) while ANOTHER field
+// correctly names today's genuine effective workout ("Pull day is on deck") —
+// two fields from the SAME generation contradicting each other with neither one
+// individually tripping checkEffectiveWorkout, since that check never runs at
+// all when source === 'scheduled' (the common case — no override, no
+// auto-downgrade, just an ordinary Sunday Pull day) and its WORKOUT_ACTION_RE
+// verb list has no "rest" vocabulary regardless. Deliberately reuses
+// services/workout.js's isRestDayCommitment — the SAME regex that decides
+// whether free-text counts as a rest-day declaration for the commitment/
+// override write path — rather than a second, independently-tuned pattern.
+function checkRestFramingAgainstEffectiveWorkout(fields, facts) {
+  const effective = facts.effectiveWorkoutLabel;
+  if (!effective || String(effective).toLowerCase() === 'rest') return [];
+  const { isRestDayCommitment } = require('../services/workout');
+  const violations = [];
+  for (const [field, text] of fields) {
+    for (const sentence of splitIntoSentences(text)) {
+      if (!isRestDayCommitment(sentence)) continue;
+      violations.push({
+        check: 'rest_framing_vs_effective_workout', field, sentence, severity: 'high',
+        expected: effective, actual: 'rest day',
+        message: `frames today as a rest day, but today's effective workout is "${effective}" — no rest-day override is in effect`,
+      });
+    }
+  }
+  return violations;
+}
+
+// ── Hard workout prescribed against an explicit rest override ──────────────
+// The mirror direction: an explicit rest override IS today's authoritative
+// plan (facts.effectiveWorkoutSource === 'override', effective label "Rest"),
+// yet a field still prescribes the pre-override scheduled hard session by
+// name ("Pull day (~45 min) is on deck") using framing language outside
+// checkEffectiveWorkout's narrow action-verb vocabulary ("on deck", "is up",
+// "planned for today" — not "crush"/"hit"/"scale back" etc.).
+const PRESCRIBE_FRAMING_RE = /\b(on deck|is up|planned for today|scheduled for today|calls for|time for|today'?s (?:session|workout) is)\b/i;
+function checkHardWorkoutAgainstRestOverride(fields, facts) {
+  const source = facts.effectiveWorkoutSource;
+  const effective = facts.effectiveWorkoutLabel;
+  const scheduled = facts.scheduledWorkoutLabel;
+  if (source !== 'override' || !effective || String(effective).toLowerCase() !== 'rest') return [];
+  if (!scheduled || String(scheduled).toLowerCase() === 'rest') return [];
+  const violations = [];
+  for (const [field, text] of fields) {
+    for (const sentence of splitIntoSentences(text)) {
+      if (!WORKOUT_ACTION_RE.test(sentence) && !PRESCRIBE_FRAMING_RE.test(sentence)) continue;
+      const aboutScheduled = overlapRatio(sentence, scheduled) >= 0.5;
+      const acknowledgesRest = /\brest\b|\bskip|\boverride|\binstead|\boff today\b/i.test(sentence);
+      if (aboutScheduled && !acknowledgesRest) {
+        violations.push({
+          check: 'hard_workout_vs_rest_override', field, sentence, severity: 'high',
+          expected: 'Rest (override)', actual: scheduled,
+          message: `prescribes the scheduled "${scheduled}" but today is an explicit rest-day override`,
+        });
+      }
+    }
+  }
+  return violations;
+}
+
+/**
+ * Defense-in-depth for the Today command center (brain/todayCommandCenter.js):
+ * a compact, presentation-facing summary of the SAME two checks above, run
+ * against whatever chiefBrief is actually about to be SERVED (not just the
+ * one just-generated attempt neutralizeClaimViolations already had a chance
+ * to clean) — an older stored brief predating this fix, or residual text a
+ * best-effort neutralization pass didn't fully clear, both still reach here.
+ * Pure; returns null when nothing conflicts. Deliberately does NOT decide
+ * which side is right — the two `options` are handed to the UI as-is, and
+ * resolving is an explicit user action (an override write), never a guess.
+ *
+ * @param {{synthesis?:string, action?:string, risk?:string, move?:string}|null} chiefBrief
+ * @param {{label?:string, source?:string, scheduledLabel?:string, workoutId?:string, scheduledWorkoutId?:string}|null} effectiveWorkout
+ *   The SAME shape services/workout.js's getEffectiveWorkout() returns.
+ */
+function findPlanConflict(chiefBrief, effectiveWorkout) {
+  if (!chiefBrief || !effectiveWorkout?.label) return null;
+  const fields = briefFields({ chiefBrief });
+  if (!fields.length) return null;
+  const facts = {
+    effectiveWorkoutLabel: effectiveWorkout.label,
+    effectiveWorkoutSource: effectiveWorkout.source ?? null,
+    scheduledWorkoutLabel: effectiveWorkout.scheduledLabel ?? null,
+  };
+
+  const restViolations = checkRestFramingAgainstEffectiveWorkout(fields, facts);
+  if (restViolations.length) {
+    return {
+      direction: 'rest_vs_workout',
+      question: `Your training plan has ${effectiveWorkout.label}, but today is also described as a rest day. Which should govern?`,
+      effectiveWorkoutLabel: effectiveWorkout.label,
+      scheduledWorkoutLabel: facts.scheduledWorkoutLabel,
+      options: [
+        { id: 'keep_rest', label: 'Keep rest day', workoutId: 'rest' },
+        { id: 'do_planned', label: `Do ${effectiveWorkout.label}`, workoutId: effectiveWorkout.workoutId ?? null },
+      ],
+    };
+  }
+
+  const hardViolations = checkHardWorkoutAgainstRestOverride(fields, facts);
+  if (hardViolations.length) {
+    return {
+      direction: 'workout_vs_rest',
+      question: `Today is marked as a rest day, but the brief also recommends ${facts.scheduledWorkoutLabel}. Which should govern?`,
+      effectiveWorkoutLabel: effectiveWorkout.label,
+      scheduledWorkoutLabel: facts.scheduledWorkoutLabel,
+      options: [
+        { id: 'keep_rest', label: 'Keep rest day', workoutId: 'rest' },
+        { id: 'do_planned', label: `Do ${facts.scheduledWorkoutLabel}`, workoutId: effectiveWorkout.scheduledWorkoutId ?? null },
+      ],
+    };
+  }
+
+  return null;
+}
+
 // ── Workout completion overclaim ────────────────────────────────────────────
 // The prose-layer half of the "walk logged on an Intervals day" production
 // bug: a sentence claiming the scheduled/effective workout was DONE when the
@@ -849,6 +970,8 @@ function validateClaims(fields, facts) {
     ...checkRecoveryScore(fields, facts),
     ...checkRecoveryCause(fields, facts),
     ...checkEffectiveWorkout(fields, facts),
+    ...checkRestFramingAgainstEffectiveWorkout(fields, facts),
+    ...checkHardWorkoutAgainstRestOverride(fields, facts),
     ...checkWorkoutCompletionOverclaim(fields, facts),
     ...checkCompletion(fields, facts),
     ...checkExperiments(fields, facts),
@@ -1192,6 +1315,7 @@ module.exports = {
   validateClaims, neutralizeClaimsGeneric, checkAssociationOverclaim, checkCausalLanguage,
   // Exposed for focused unit tests:
   checkRecoveryBand, checkRecoveryScore, checkRecoveryCause, checkEffectiveWorkout,
+  checkRestFramingAgainstEffectiveWorkout, checkHardWorkoutAgainstRestOverride, findPlanConflict,
   checkWorkoutCompletionOverclaim,
   checkCompletion, checkExperiments, checkSpending, checkForecast, checkCurrentDate, briefFields,
   checkResolvedContextConflicts, checkWeeklyEventCounts, splitIntoSentences,

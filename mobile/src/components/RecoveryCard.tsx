@@ -34,6 +34,13 @@ interface Props {
   recovery: Recovery | null | undefined;
   composites?: HealthComposite[];
   builtAt?: string;
+  // Set when a Today "On My Radar" card's secondary "Open in Health" nav
+  // targeted this exact card (destination.entityType === 'recovery') — a
+  // real deep-link, not just a bare tab switch. Draws a brief accent border
+  // and reports its own Y position once so the shared ScrollView (App.tsx)
+  // can scroll straight to it instead of leaving it wherever it falls.
+  highlight?: boolean;
+  onHighlightLayout?: (y: number) => void;
 }
 
 const PART_LABEL: Record<string, string> = {
@@ -75,7 +82,7 @@ function formatBuiltAt(iso: string | undefined): string | null {
   return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
-function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
+function RecoveryCard({ recovery, composites = [], builtAt, highlight, onHighlightLayout }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [selected, setSelected] = useState<MetricConfig | null>(null);
@@ -117,7 +124,10 @@ function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
   const displayBandLabel = recovery.proxy ? `${recovery.category ?? bandLabel} · provisional` : bandLabel;
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
+    <View
+      style={[styles.card, { backgroundColor: c.card }, shadow(isDark), highlight && { borderWidth: 2, borderColor: c.accent }]}
+      onLayout={highlight && onHighlightLayout ? (e) => onHighlightLayout(e.nativeEvent.layout.y) : undefined}
+    >
       <SectionHeader emoji="🔋" title="Recovery" tint="green" />
 
       <View style={styles.scoreRow}>

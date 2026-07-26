@@ -117,7 +117,14 @@ test('scenario 1 — VO2 title and evidence.current agree on a fresh cache-hit s
 });
 
 // ── Scenario 2: prior-week vs current-week goals carry distinct period IDs. ──
-test('scenario 2 — a cached chiefBrief built against last week\'s goals is flagged stale against this week\'s live (different) goals', async (t) => {
+// Updated for the Today command-center cleanup (Part 2 — automatic
+// stale-period repair): a cross-week goal mismatch is no longer just
+// flagged and served as-is — briefing.js's cache-hit path now
+// automatically repairs it (one scoped chief-brief rebuild) before this
+// response goes out. The underlying period-identity fields this scenario
+// exists to prove (weeklyGoals refreshed live, the two periods never
+// conflated) still apply, just against the REPAIRED state.
+test('scenario 2 — a cached chiefBrief built against last week\'s goals is automatically repaired against this week\'s live (different) goals, never served stale', async (t) => {
   const priorWeek = intentionsStore.priorWeekStart ? intentionsStore.priorWeekStart() : null;
   const currentWeek = intentionsStore.weekStart();
   await intentionsStore.saveIntention({ weekStart: currentWeek, context: `${MARKER} current week`, goals: [{ text: `${MARKER} ship the thing`, achieved: false }] });
@@ -131,14 +138,33 @@ test('scenario 2 — a cached chiefBrief built against last week\'s goals is fla
   });
   seededBriefingIds.push(id);
 
-  const res = await request(app).get('/api/briefing').set(authHeader()).timeout(15000);
+  llm.generateText = async ({ system }) => {
+    if (system.includes('chief of staff and data scientist')) {
+      return {
+        text: JSON.stringify({
+          chiefBrief: {
+            synthesis: `${MARKER} repaired — this week's goal is still open, ship the thing is on deck today.`,
+            action: 'Make progress on the open goal today.',
+            risk: 'No material risk is flagged for today at all.',
+            move: 'No change is needed from the current plan.',
+            openQuestion: '',
+          },
+          morningFocus: 'Keep today steady, protect the open goal, and revisit the full plan again once more data lands in later.',
+        }),
+        stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
+      };
+    }
+    return JSON.stringify({ quoteInsight: '', notionQuote: '', notionInsight: '' });
+  };
+  t.after(() => { delete llm.generateText; });
+
+  const res = await request(app).get('/api/briefing').set(authHeader()).timeout(20000);
   assert.equal(res.status, 200, JSON.stringify(res.body));
-  assert.equal(res.body.chiefBrief?.synthesis, `${MARKER} all this week's goals are done — great follow-through.`, 'served from cache, unchanged');
-  assert.equal(res.body.goalsWeekStart, priorWeek, 'the chiefBrief\'s own period identity is carried through, not silently dropped');
+  assert.match(res.body.chiefBrief?.synthesis || '', /repaired/, 'the served synthesis must be the FRESH repair attempt, never the old stale cached claim');
   const liveWeekStart = String(res.body.weeklyGoals?.current?.weekStart ?? '').slice(0, 10);
   assert.equal(liveWeekStart, currentWeek, 'weeklyGoals is refreshed LIVE even on a cache-hit serve');
-  assert.notEqual(res.body.goalsWeekStart, liveWeekStart, 'the two periods must never be conflated into one');
-  assert.equal(res.body.chiefBriefGoalsStale, true, 'the cross-week mismatch must be explicitly flagged');
+  assert.equal(String(res.body.goalsWeekStart).slice(0, 10), currentWeek, 'the repaired chiefBrief\'s own period identity must now match the live current week');
+  assert.equal(res.body.chiefBriefGoalsStale, false, 'once repaired, the cross-week mismatch must no longer be flagged — it is resolved, not just noted');
 });
 
 // ── Scenario 3: self-reported sleep can't generate unsupported precise

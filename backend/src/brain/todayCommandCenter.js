@@ -96,55 +96,6 @@ async function buildSinceMorning({ tz, snapshotAt }) {
   }
 }
 
-/** At most one compact preview per domain (Health/Wealth/Review) — server-
- *  decided, never left to the client to guess at. Each preview reuses a
- *  value ALREADY computed for this response (recovery.proxy, the top
- *  dollar-ranked wealthInsight, wealth.sourceSyncedAt staleness,
- *  weeklyReview's presence) rather than recomputing anything. */
-function buildPreviews({ recovery, wealth, wealthInsights, weeklyReview }) {
-  const previews = [];
-
-  if (recovery?.proxy) {
-    previews.push({
-      domain: 'health',
-      title: 'Recovery is provisional',
-      summary: 'Based on your self-report — Eight Sleep hasn\'t synced overnight data.',
-      destination: 'health',
-    });
-  }
-
-  const topWealthInsight = (wealthInsights || [])[0] ?? null;
-  if (topWealthInsight) {
-    previews.push({
-      domain: 'wealth',
-      title: topWealthInsight.title,
-      summary: topWealthInsight.detail || '',
-      destination: 'wealth',
-    });
-  } else if (wealth?.sourceSyncedAt) {
-    const ageH = (Date.now() - new Date(wealth.sourceSyncedAt).getTime()) / 36e5;
-    if (ageH > 40) {
-      previews.push({
-        domain: 'wealth',
-        title: 'Wealth data may be stale',
-        summary: `Monarch hasn't synced in ${Math.round(ageH)}h.`,
-        destination: 'wealth',
-      });
-    }
-  }
-
-  if (weeklyReview?.headline) {
-    previews.push({
-      domain: 'review',
-      title: 'Weekly review is ready',
-      summary: weeklyReview.headline,
-      destination: 'review',
-    });
-  }
-
-  return previews;
-}
-
 /**
  * Build the Today command-center projection. Pure aside from the one
  * `sinceMorning` ledger read. `input` fields are all things the caller
@@ -171,6 +122,13 @@ function buildPreviews({ recovery, wealth, wealthInsights, weeklyReview }) {
  * @param {object|null} input.weeklyReview
  * @param {object|null} input.wealth
  * @param {object|null} input.recovery
+ * @param {object|null} input.effectiveWorkout the SAME shape services/workout.js's
+ *   getEffectiveWorkout() returns — used ONLY by the plan-conflict guard below,
+ *   never re-derived here.
+ * @param {Set<string>} [input.dismissed] dismissed-insight keys (see
+ *   store/dismissedInsights.js) — reused for the "On My Radar" dismiss
+ *   filter, the SAME set the caller already fetched for its other insight
+ *   arrays this response, never a second query.
  * @returns {Promise<object>} the todayCommandCenter object.
  */
 async function buildTodayCommandCenter(input) {
@@ -180,8 +138,22 @@ async function buildTodayCommandCenter(input) {
     chiefBrief = null, chiefBriefStale = false, chiefBriefPending = false, chiefBriefQuality = null,
     goalsWeekStart = null, chiefBriefGoalsStale = false,
     forecasts = [], todayForecast = null, healthInsights = [], wealthInsights = [],
-    weeklyReview = null, wealth = null, recovery = null,
+    weeklyReview = null, wealth = null, recovery = null, effectiveWorkout = null,
+    dismissed = null,
   } = input || {};
+
+  // Pre-render semantic guard (Part 1): the SAME rest-vs-workout checks
+  // claimValidator.js runs at generation time, re-run here against whatever
+  // is actually about to be SERVED — catches an older stored brief that
+  // predates the check, or residual text a best-effort neutralization pass
+  // didn't fully clear. Today must never present two incompatible
+  // interpretations of the plan (a "rest day" headline next to a hard-
+  // workout action, or vice versa); when detected, the action is suppressed
+  // in favor of a compact resolution the user resolves explicitly — never a
+  // guess at which side is right.
+  const planConflict = (!chiefBriefPending && chiefBrief)
+    ? require('./claimValidator').findPlanConflict(chiefBrief, effectiveWorkout)
+    : null;
 
   const now = {
     stableId: `now:${snapshotId ?? 'none'}`,
@@ -199,12 +171,16 @@ async function buildTodayCommandCenter(input) {
       chiefBriefPending: Boolean(chiefBriefPending),
       goalsWeekStart,
       chiefBriefGoalsStale: Boolean(chiefBriefGoalsStale),
+      planConflict: Boolean(planConflict),
     },
   };
 
   // No action until a real chiefBrief exists — never invent one, never show
-  // a stale action alongside a "finishing" NOW state.
-  const action = (!chiefBriefPending && chiefBrief?.action)
+  // a stale action alongside a "finishing" NOW state. A detected plan
+  // conflict also suppresses the action: a contradictory "Pull day is on
+  // deck" (or "keep resting") must not render as THE single next action
+  // while the plan itself is unresolved.
+  const action = (!chiefBriefPending && !planConflict && chiefBrief?.action)
     ? {
         stableId: `action:${snapshotId ?? 'none'}`,
         title: chiefBrief.action,
@@ -230,14 +206,20 @@ async function buildTodayCommandCenter(input) {
       }
     : null;
 
-  const [sinceMorning, previews] = await Promise.all([
-    buildSinceMorning({ tz, snapshotAt }),
-    Promise.resolve(buildPreviews({ recovery, wealth, wealthInsights, weeklyReview })),
-  ]);
+  const sinceMorning = await buildSinceMorning({ tz, snapshotAt });
+  // "On My Radar" — server-ranked replacement for the old fixed three-tile
+  // preview row (see brain/radar.js). Never computed from wealth/recovery/
+  // weeklyReview alone; always dedup'd against the risk ALREADY built above
+  // so the same signal can't show up twice on one screen.
+  const radar = require('./radar').buildRadarCards({
+    wealthInsights, wealth, weeklyReview, recovery, chiefBrief, risk, snapshotId, dismissed,
+  });
 
   return {
     snapshotId, snapshotVersion, snapshotAt, builtAt,
-    now, action, risk, sinceMorning, previews,
+    now, action,
+    planConflict: planConflict ? { stableId: `planConflict:${snapshotId ?? 'none'}`, ...planConflict } : null,
+    risk, sinceMorning, radar,
   };
 }
 

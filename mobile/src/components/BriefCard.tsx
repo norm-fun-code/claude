@@ -448,9 +448,13 @@ function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsSt
       {stale && brief && (
         <Text style={styles.staleNote}>Still yesterday's — tap ↻ to retry</Text>
       )}
-      {!stale && goalsStale && brief && (
-        <Text style={styles.staleNote}>References an earlier week's goals — tap ↻ to refresh</Text>
-      )}
+      {/* The "references an earlier week's goals" warning is gone —
+          NormOS now detects and repairs this itself (one automatic scoped
+          chief-brief rebuild server-side, see routes/briefing.js's cache-hit
+          serve path) rather than knowingly serving the stale claim and
+          asking the user to fix it. `goalsStale` is still threaded through
+          (server-side defense-in-depth / an older cached payload) but no
+          longer rendered as a user-facing ask. */}
 
       {brief ? (
         <>

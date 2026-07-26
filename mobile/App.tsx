@@ -15,6 +15,8 @@ import {
   Platform,
   useWindowDimensions,
   AppState,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { AnimatedEntry } from './src/components/AnimatedEntry';
@@ -67,8 +69,14 @@ import { HabitsModal } from './src/components/HabitsModal';
 import { LibraryCard } from './src/components/LibraryCard';
 import { CommitmentsCard } from './src/components/CommitmentsCard';
 import { SinceMorningCard } from './src/components/SinceMorningCard';
-import { PreviewsRow } from './src/components/PreviewsRow';
+import { RadarSection } from './src/components/RadarSection';
+import { RadarDetailSheet } from './src/components/RadarDetailSheet';
+import { PlanConflictCard } from './src/components/PlanConflictCard';
 import { selectTodayCommandCenter } from './src/lib/todayCommandCenter';
+import { resolveRadarNavigation } from './src/lib/radarNavigation';
+import { nextScrollY } from './src/lib/scrollRestore';
+import type { RadarCard } from './src/hooks/useBriefing';
+import { WORKOUT_OVERRIDE_URL, CHIEF_BRIEF_REBUILD_URL, INSIGHT_DISMISS_URL, authHeaders, fetchWithTimeout } from './src/config';
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
 import { useCommitments } from './src/hooks/useCommitments';
 
@@ -144,9 +152,20 @@ export default function App() {
   const [tab, setTab] = useState<TabKey>('today');
   // All tabs share ONE ScrollView (only its contents swap), so switching tabs
   // never reset scroll on its own — it stayed wherever the previous tab left it.
-  // Snap to top whenever the active tab changes.
+  // Snap to top whenever the active tab changes — EXCEPT returning to Today
+  // specifically (e.g. after "Open in Health" from a radar card's secondary
+  // nav), which restores exactly where Today was left (todayScrollYRef,
+  // updated on every Today scroll event below) rather than snapping to 0.
   const scrollRef = useRef<ScrollView>(null);
-  useEffect(() => { scrollRef.current?.scrollTo({ y: 0, animated: false }); }, [tab]);
+  const todayScrollYRef = useRef(0);
+  const prevTabRef = useRef<TabKey>('today');
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ y: nextScrollY(tab, prevTabRef.current, todayScrollYRef.current), animated: false });
+    prevTabRef.current = tab;
+  }, [tab]);
+  const onScrollTrackToday = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (tab === 'today') todayScrollYRef.current = e.nativeEvent.contentOffset.y;
+  }, [tab]);
   // Summonable Ask: long-press the Ask tab from anywhere to open the chat as a
   // sheet ABOVE the current tab — ask without losing your place.
   const quickAskRef = useRef<AskOverlayHandle>(null);
@@ -263,15 +282,74 @@ export default function App() {
 
   usePushRegistration(onNotificationTap);
 
-  // Server-decided destinations from todayCommandCenter's sinceMorning[]/
-  // previews[] (see brain/todayCommandCenter.js) — mobile just navigates
-  // where it's told, never deciding on its own what a domain preview should
-  // link to. 'review' opens the dedicated weekly-review modal instead of a
-  // tab switch, since there's no standalone Review tab.
+  // Server-decided destinations from todayCommandCenter's sinceMorning[]
+  // (see brain/todayCommandCenter.js) — mobile just navigates where it's
+  // told, never deciding on its own what an item should link to. 'review'
+  // opens the dedicated weekly-review modal instead of a tab switch, since
+  // there's no standalone Review tab.
   const navigateFromToday = useCallback((destination: string) => {
     if (destination === 'review') { setWeeklyReviewOpen(true); return; }
     if (destination === 'health' || destination === 'wealth') { setTab(destination); return; }
     // 'today' (or anything unrecognized) — already there, no-op.
+  }, []);
+
+  // "On My Radar" (Today Part 4): the card that's currently open in the
+  // full-detail sheet (null when closed). `radarAnchor` is the typed deep-
+  // link's best-effort entity target — Health/Wealth cards read it to
+  // highlight + scroll to the exact insight instead of leaving the user at
+  // the arbitrary top of the tab; it self-clears once consumed so revisiting
+  // the tab later doesn't keep re-highlighting.
+  const [radarDetailCard, setRadarDetailCard] = useState<RadarCard | null>(null);
+  const [radarAnchor, setRadarAnchor] = useState<{ entityType: string | null; entityId: string | null } | null>(null);
+  const openRadarCard = useCallback((card: RadarCard) => setRadarDetailCard(card), []);
+  const closeRadarDetail = useCallback(() => setRadarDetailCard(null), []);
+
+  // Secondary nav from the detail sheet ("Open in Health"/"Open in Wealth"/
+  // "Read the review") — degrades gracefully to destination.fallbackRoute
+  // (the top of that tab) when there's no anchor to resolve to.
+  const openRadarDestination = useCallback((card: RadarCard) => {
+    setRadarDetailCard(null);
+    const nav = resolveRadarNavigation(card.destination);
+    if (nav.kind === 'review') { setWeeklyReviewOpen(true); return; }
+    if (nav.kind === 'tab') { setRadarAnchor(nav.anchor); setTab(nav.tab); return; }
+    setTab(nav.tab as TabKey);
+  }, []);
+
+  const dismissRadarCard = useCallback((card: RadarCard) => {
+    setRadarDetailCard(null);
+    if (!card.dismissKey) return;
+    fetchWithTimeout(
+      INSIGHT_DISMISS_URL,
+      { method: 'POST', headers: authHeaders(), body: JSON.stringify({ key: card.dismissKey, title: card.headline }) },
+      8000
+    ).then(() => briefing.reload()).catch(() => {});
+  }, [briefing]);
+
+  // Part 1's plan-conflict resolution: writes an explicit workout override
+  // through the SAME existing infrastructure the Health tab's day-swap uses
+  // (POST /workout/override — invalidates effectiveWorkout/trainingOutcome/
+  // todayForecast already), then resyncs the chief brief against it via the
+  // existing scoped-rebuild flow (briefing.refreshChiefBrief, the identical
+  // request the manual ↻ button makes) — never a second, parallel mechanism.
+  const resolvePlanConflict = useCallback(async (workoutId: string | null) => {
+    const date = new Date().toLocaleDateString('en-CA');
+    try {
+      await fetchWithTimeout(
+        WORKOUT_OVERRIDE_URL,
+        { method: 'POST', headers: authHeaders(), body: JSON.stringify({ date, workoutId }) },
+        10000
+      );
+    } catch { /* best-effort — refreshChiefBrief below still runs and will reflect whatever the server has */ }
+    await briefing.refreshChiefBrief();
+  }, [briefing]);
+
+  // Fired once by whichever Health/Wealth card matches radarAnchor's
+  // entityType/entityId (RecoveryCard / InsightsCard's onHighlightLayout) —
+  // scrolls the shared ScrollView straight to it and consumes the anchor so
+  // a later, unrelated visit to the tab doesn't keep re-scrolling.
+  const onRadarAnchorLayout = useCallback((y: number) => {
+    scrollRef.current?.scrollTo({ y: Math.max(0, y - spacing.md), animated: true });
+    setRadarAnchor(null);
   }, []);
 
   const today = new Date().toLocaleDateString('en-US', {
@@ -367,6 +445,8 @@ export default function App() {
               // (advanced by the cache-hit recovery refresh, NOT by a scoped
               // chief-brief rebuild), falling back to the snapshot cut time.
               builtAt={liveRecovery.fetched ? undefined : (d?.fieldsBuiltAt?.recovery ?? d?.snapshotAt ?? d?.builtAt)}
+              highlight={radarAnchor?.entityType === 'recovery'}
+              onHighlightLayout={onRadarAnchorLayout}
             />
             <NightContextCard />
             <HealthCard health={health} canonicalVo2={vo2Fact} />
@@ -421,7 +501,11 @@ export default function App() {
                 cards were removed too: unpersonalized content, and the brief
                 cost a real LLM call on every briefing build for something with
                 no connection to this user's data. */}
-            <InsightsCard insights={d?.wealthInsights ?? EMPTY_ARRAY} />
+            <InsightsCard
+              insights={d?.wealthInsights ?? EMPTY_ARRAY}
+              highlightTitle={radarAnchor?.entityType === 'wealthInsight' ? radarAnchor.entityId : null}
+              onHighlightLayout={onRadarAnchorLayout}
+            />
             {!d?.wealth && (
               <EmptyNote c={c} text="Connect Monarch to see net worth, spending, and cashflow." />
             )}
@@ -494,6 +578,15 @@ export default function App() {
                 <EveningBriefCard brief={eveningBrief.brief} />
               </AnimatedEntry>
             )}
+            {/* PLAN CONFLICT (Part 1) — the day's plan disagreeing with
+                itself takes priority over everything below it; resolving it
+                IS the single best next action when it's present, so it
+                renders above NOW/ACTION rather than competing with them. */}
+            {todayCC.planConflict && (
+              <AnimatedEntry delay={0}>
+                <PlanConflictCard conflict={todayCC.planConflict} onResolve={resolvePlanConflict} />
+              </AnimatedEntry>
+            )}
             {/* NOW + ACTION (+ RISK) — the one thing, leads the day. On
                 sessions that START in the evening (wind-down brief already
                 live), the day is over and this is yesterday-morning news: it
@@ -555,16 +648,14 @@ export default function App() {
                 onNavigate={navigateFromToday}
               />
             </AnimatedEntry>
-            {/* OPTIONAL PREVIEWS — at most one compact link per domain into
-                Health/Wealth/the weekly review, only when something deserves
-                attention (see todayCommandCenter.previews); self-hides when
-                empty. Cross-domain "what feels magical" patterns get exactly
-                one preview slot too, rather than a permanent always-on card. */}
+            {/* ON MY RADAR — server-ranked, full-width (Today redesign Part
+                3): 0-2 cards normally, never a guaranteed per-domain slot
+                (see todayCommandCenter.radar / brain/radar.js). Tapping opens
+                the full detail sheet below; the section itself never
+                self-hides — it shows the truthful quiet line instead of an
+                empty grid when nothing deserves attention. */}
             <AnimatedEntry delay={35}>
-              <PreviewsRow
-                previews={todayCC.previews}
-                onNavigate={navigateFromToday}
-              />
+              <RadarSection radar={todayCC.radar} onOpen={openRadarCard} />
             </AnimatedEntry>
             {d?.crossContextInsights && d.crossContextInsights.length > 0 && (
               <AnimatedEntry delay={40}>
@@ -586,6 +677,12 @@ export default function App() {
                 review={d?.weeklyReview ?? null}
               />
             )}
+            <RadarDetailSheet
+              card={radarDetailCard}
+              onClose={closeRadarDetail}
+              onOpenDestination={openRadarDestination}
+              onDismiss={dismissRadarCard}
+            />
             {briefing.error && !d && (
               <AnimatedEntry delay={0}>
                 <View style={[styles.errorBox, { backgroundColor: c.card }, shadow(isDark)]}>
@@ -655,6 +752,8 @@ export default function App() {
             contentContainerStyle={styles.content}
             refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={c.subtext} />}
             showsVerticalScrollIndicator={false}
+            onScroll={onScrollTrackToday}
+            scrollEventThrottle={16}
             // Cards embedded here (WeeklyIntentionsCard's goal/context inputs,
             // BriefCard's alternate-action freeform box, etc.) sit at arbitrary
             // scroll positions, not pinned to the bottom like AskOverlay/

@@ -7,6 +7,11 @@ import { INSIGHT_DISMISS_URL, authHeaders, fetchWithTimeout } from '../config';
 
 interface Props {
   insights: Insight[];
+  // Set when a Today "On My Radar" wealth/health card's secondary "Open in
+  // X" nav targeted a specific insight (destination.entityId === title) — a
+  // real deep-link to that exact card, not the arbitrary top of the tab.
+  highlightTitle?: string | null;
+  onHighlightLayout?: (y: number) => void;
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -37,7 +42,7 @@ const TYPE_LABEL: Record<string, string> = {
 // shown as a clean list. Each is dismissible: some flags are nothing you're
 // concerned about (e.g. a recurring car payment shown as "review"), so a ×
 // removes it and it stays gone across rebuilds.
-function InsightsCard({ insights }: Props) {
+function InsightsCard({ insights, highlightTitle, onHighlightLayout }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -70,8 +75,17 @@ function InsightsCard({ insights }: Props) {
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <SectionHeader emoji="↗" title="What The Data Shows" />
-      {visible.map((ins, i) => (
-        <View key={ins.dismissKey ?? i} style={[styles.item, i > 0 && { borderTopColor: c.border, borderTopWidth: 1 }]}>
+      {visible.map((ins, i) => {
+        const isHighlighted = !!highlightTitle && ins.title === highlightTitle;
+        return (
+        <View
+          key={ins.dismissKey ?? i}
+          style={[
+            styles.item, i > 0 && { borderTopColor: c.border, borderTopWidth: 1 },
+            isHighlighted && { backgroundColor: c.accent + '1a', borderRadius: radius.md, paddingHorizontal: spacing.xs },
+          ]}
+          onLayout={isHighlighted && onHighlightLayout ? (e) => onHighlightLayout(e.nativeEvent.layout.y) : undefined}
+        >
           <View style={styles.itemBody}>
             <Text style={[styles.tag, { color: c.accent }]}>{TYPE_LABEL[ins.type] ?? ins.type.toUpperCase()}</Text>
             <Text style={[styles.title, { color: c.text }]}>{ins.title}</Text>
@@ -83,7 +97,8 @@ function InsightsCard({ insights }: Props) {
             </TouchableOpacity>
           ) : null}
         </View>
-      ))}
+        );
+      })}
     </View>
   );
 }

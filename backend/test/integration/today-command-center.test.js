@@ -164,25 +164,51 @@ test('scenario 4 — a healthy-absolute-level focus score (gated upstream by com
 });
 
 // ── 5. Goals from different week identities cannot be presented as contradictory ──
-test('scenario 5 — todayCommandCenter.now surfaces the SAME goalsWeekStart/chiefBriefGoalsStale identity fields already proven in the truth contract, never re-derived', async (t) => {
+// Updated for Today command-center cleanup Part 2: a stale goalsWeekStart is
+// no longer just flagged and served — briefing.js's cache-hit path now
+// automatically repairs it (ONE scoped chief-brief rebuild) BEFORE this
+// response goes out, so the served state must show the REPAIRED (current-
+// week) identity, never the stale one.
+test('scenario 5 — a stale cross-week goal claim is automatically repaired before being served, never presented as current', async (t) => {
   const currentWeek = intentionsStore.weekStart();
   const priorWeek = intentionsStore.priorWeekStart();
   await intentionsStore.saveIntention({ weekStart: currentWeek, context: `${MARKER} current week`, goals: [{ text: `${MARKER} ship it`, achieved: false }] });
   t.after(async () => { await db.query(`DELETE FROM weekly_intentions WHERE week_start = $1`, [currentWeek]); });
 
-  const id = await seedCachedBriefing({
+  await seedCachedBriefing({
     chiefBrief: { synthesis: `${MARKER} all this week's goals are done.`, action: 'a', risk: 'r', move: 'm', openQuestion: '' },
     goalsWeekStart: priorWeek,
   });
-  const res = await request(app).get('/api/briefing').set(authHeader()).timeout(15000);
+
+  llm.generateText = async ({ system }) => {
+    if (system.includes('chief of staff and data scientist')) {
+      return {
+        text: JSON.stringify({
+          chiefBrief: {
+            synthesis: `${MARKER} repaired brief — this week's goals are still open, ship it is on deck.`,
+            action: 'Make progress on the open goal today.',
+            risk: 'No material risk is flagged for today at all.',
+            move: 'No change is needed from the current plan.',
+            openQuestion: '',
+          },
+          morningFocus: 'Keep today steady, protect the open goal, and revisit the full plan again once more data lands in later this week.',
+        }),
+        stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
+      };
+    }
+    return JSON.stringify({ quoteInsight: '', notionQuote: '', notionInsight: '' });
+  };
+  t.after(() => { delete llm.generateText; });
+
+  const res = await request(app).get('/api/briefing').set(authHeader()).timeout(20000);
   assert.equal(res.status, 200);
-  assert.equal(res.body.chiefBriefGoalsStale, true, 'precondition: the underlying contract field is stale');
+  assert.equal(res.body.chiefBriefGoalsStale, false, 'the repaired chief brief describes the CURRENT week — no longer stale');
+  assert.equal(String(res.body.goalsWeekStart).slice(0, 10), currentWeek, 'the repaired goalsWeekStart identity must be the live current week, not the prior one');
+  assert.match(res.body.chiefBrief.synthesis, /repaired brief/, 'the served synthesis must be the FRESH repair attempt, never the old stale claim');
   const tcc = res.body.todayCommandCenter;
   assert.ok(tcc, 'expected a todayCommandCenter');
-  assert.equal(tcc.now.evidence.goalsWeekStart, priorWeek);
-  assert.equal(tcc.now.evidence.chiefBriefGoalsStale, true, 'NOW must expose the SAME cross-week staleness flag, not silently drop it');
-  assert.notEqual(tcc.now.evidence.goalsWeekStart, res.body.weeklyGoals?.current?.weekStart?.slice(0, 10), 'the two week identities must remain distinguishable, never conflated');
-  void id;
+  assert.equal(tcc.now.evidence.chiefBriefGoalsStale, false, 'NOW must expose the SAME repaired staleness flag, not silently drop it');
+  assert.equal(String(tcc.now.evidence.goalsWeekStart).slice(0, 10), currentWeek);
 });
 
 // ── 6. A completed commitment does not remain active today ─────────────────
@@ -256,16 +282,16 @@ test('scenario 9 — an attention-log row created BEFORE snapshotAt is excluded 
   assert.ok(!tcc.sinceMorning.some((s) => s.stableId === eventKey), 'a row already predating snapshotAt must not be repeated as a new addendum');
 });
 
-// ── 10. Empty addendum and preview sections are omitted ────────────────────
-test('scenario 10 — sinceMorning and previews are empty arrays (the omission contract) when nothing deserves attention', async () => {
+// ── 10. Empty addendum and radar sections are omitted ────────────────────
+test('scenario 10 — sinceMorning and radar are empty arrays (the omission contract) when nothing deserves attention', async () => {
   const tcc = await buildTodayCommandCenter({
     snapshotId: 'snap-10', snapshotVersion: 3, snapshotAt: new Date().toISOString(), builtAt: new Date().toISOString(),
-    chiefBrief: { synthesis: 's', action: 'a', risk: 'r' }, chiefBriefStale: false, chiefBriefPending: false, chiefBriefQuality: { status: 'fresh' },
+    chiefBrief: { synthesis: 's', action: 'a', risk: 'r', move: 'm' }, chiefBriefStale: false, chiefBriefPending: false, chiefBriefQuality: { status: 'fresh' },
     forecasts: [], todayForecast: null, healthInsights: [],
     wealthInsights: [], weeklyReview: null, wealth: null, recovery: { proxy: false },
   });
   assert.deepEqual(tcc.sinceMorning, [], 'sinceMorning must be empty, not filler, when nothing new happened');
-  assert.deepEqual(tcc.previews, [], 'previews must be empty when no domain deserves attention');
+  assert.deepEqual(tcc.radar, [], 'radar must be empty when no domain deserves attention');
 });
 
 // ── 12. Today and Health resolve the identical effective workout ──────────
@@ -319,14 +345,14 @@ test('scenario 13 — the wealth preview reuses buildWealthInsights\' OWN title/
 
   const tcc = await buildTodayCommandCenter({
     snapshotId: 'snap-13', snapshotVersion: 3, snapshotAt: new Date().toISOString(), builtAt: new Date().toISOString(),
-    chiefBrief: { synthesis: 's', action: 'a', risk: 'r' }, chiefBriefStale: false, chiefBriefPending: false, chiefBriefQuality: { status: 'fresh' },
+    chiefBrief: { synthesis: 's', action: 'a', risk: 'r', move: 'm' }, chiefBriefStale: false, chiefBriefPending: false, chiefBriefQuality: { status: 'fresh' },
     forecasts: [], todayForecast: null, healthInsights: [],
     wealthInsights, weeklyReview: null, wealth: null, recovery: null,
   });
-  const wealthPreview = tcc.previews.find((p) => p.domain === 'wealth');
-  assert.ok(wealthPreview, 'expected a wealth preview');
-  assert.equal(wealthPreview.title, wealthInsights[0].title, 'the preview title must be IDENTICAL to the Wealth tab\'s own top insight, not independently worded');
-  assert.equal(wealthPreview.summary, wealthInsights[0].detail || '');
+  const wealthCard = tcc.radar.find((c) => c.domain === 'wealth');
+  assert.ok(wealthCard, 'expected a wealth radar card');
+  assert.equal(wealthCard.headline, wealthInsights[0].title, 'the radar headline must be IDENTICAL to the Wealth tab\'s own top insight, not independently worded');
+  assert.equal(wealthCard.evidenceSummary, wealthInsights[0].detail || null);
 });
 
 // ── 14. Evening state reflects actual-vs-planned, not any exercise as completion ──
@@ -351,14 +377,14 @@ test('scenario 14 — logging a DIFFERENT activity than planned does not mark th
 });
 
 // ── 15. Self-reported recovery remains clearly provisional ─────────────────
-test('scenario 15 — a self-report recovery proxy surfaces an explicit "provisional" health preview, never presented as a genuine device reading', async () => {
+test('scenario 15 — a self-report recovery proxy surfaces an explicit "provisional" health radar card, never presented as a genuine device reading', async () => {
   const tcc = await buildTodayCommandCenter({
     snapshotId: 'snap-15', snapshotVersion: 3, snapshotAt: new Date().toISOString(), builtAt: new Date().toISOString(),
-    chiefBrief: { synthesis: 's', action: 'a', risk: 'r' }, chiefBriefStale: false, chiefBriefPending: false, chiefBriefQuality: { status: 'fresh' },
+    chiefBrief: { synthesis: 's', action: 'a', risk: 'r', move: 'm' }, chiefBriefStale: false, chiefBriefPending: false, chiefBriefQuality: { status: 'fresh' },
     forecasts: [], todayForecast: null, healthInsights: [],
     wealthInsights: [], weeklyReview: null, wealth: null, recovery: { proxy: true, category: 'Good' },
   });
-  const healthPreview = tcc.previews.find((p) => p.domain === 'health');
-  assert.ok(healthPreview, 'expected a health preview when recovery is a self-report proxy');
-  assert.match(healthPreview.title.toLowerCase(), /provisional/, 'must explicitly say provisional, never silently pass off a self-report as a genuine reading');
+  const healthCard = tcc.radar.find((c) => c.domain === 'health');
+  assert.ok(healthCard, 'expected a health radar card when recovery is a self-report proxy');
+  assert.match(healthCard.headline.toLowerCase(), /provisional/, 'must explicitly say provisional, never silently pass off a self-report as a genuine reading');
 });
