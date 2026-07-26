@@ -115,14 +115,25 @@ async function getSeries({ domain, metric, from, to, limit = 1000 }) {
 }
 
 /** Most recent value for a metric. */
-async function latest({ domain, metric }) {
+// sources: optional allowlist (e.g. recovery.js's RECOVERY_SOURCE_LOCK) so a
+// caller that needs "the latest OVERNIGHT HRV/RHR reading" specifically
+// doesn't silently get a same-day-or-newer daytime Apple Watch row instead —
+// the same source-distinctness every other recovery-comparable read in this
+// codebase already enforces (truth-and-evidence contract, audit priority #1).
+async function latest({ domain, metric, sources = null }) {
+  const params = [domain, metric];
+  let sourceClause = '';
+  if (Array.isArray(sources) && sources.length) {
+    params.push(sources);
+    sourceClause = ` AND source = ANY($${params.length})`;
+  }
   const { rows } = await query(
     `SELECT ts, value, unit, source, metadata
        FROM metrics
-      WHERE domain = $1 AND metric = $2
+      WHERE domain = $1 AND metric = $2${sourceClause}
       ORDER BY ts DESC
       LIMIT 1`,
-    [domain, metric]
+    params
   );
   return rows[0] ?? null;
 }

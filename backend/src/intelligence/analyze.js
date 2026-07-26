@@ -433,6 +433,21 @@ function computeAnomalies(seriesByKey, opts = {}) {
     let tone = 'unusual';
     if (good === 'up') tone = a.z > 0 ? 'a strong day' : 'worth attention';
     else if (good === 'down') tone = a.z < 0 ? 'a strong day' : 'worth attention';
+
+    // Signal-vs-noise gate (truth-and-evidence contract, audit priority #1):
+    // a self-rated wellbeing score (mood/energy/focus, 1-5) differing from
+    // this user's OWN tight personal average is not by itself a warning — a
+    // healthy absolute score (e.g. 4/5) that merely reads as "below your
+    // usual 4.8" must never be labeled "worth attention". Gate the negative
+    // tone on cat.wellbeingLevel (the SAME absolute-level classification
+    // notify/evening-brief.js already uses for "mood/energy/focus low") —
+    // only an absolutely low reading may carry the alarming tone; otherwise
+    // this is a non-event and the finding is dropped entirely (a relative
+    // dip with no unhealthy absolute level, no persistence beyond one day,
+    // and no actionability has no other basis to be surfaced as anomalous).
+    if (domain === 'wellbeing' && tone === 'worth attention' && cat.wellbeingLevel(a.latest) !== 'low') {
+      continue;
+    }
     const absZ = Math.abs(a.z);
     const magnitude = absZ >= 4 ? 'far' : absZ >= 2.5 ? 'well' : 'noticeably';
     const pctDiff = a.baselineMean !== 0
@@ -1541,7 +1556,22 @@ async function analyze(opts = {}) {
   const trends = computeTrends(seriesByKey, o);
   const correlations = computeCorrelations(seriesByKey, o);
   const anomalies = computeAnomalies(seriesByKey, o);
-  const composites = computeHealthComposites(seriesByKey, o);
+  // How many of the last 7 sleep_hours points are self-reported (approximate)
+  // rather than device-measured — computeHealthComposites' sleep-debt finding
+  // must not present minute-level precision built partly from an
+  // approximate "~8h" self-report as if every input were equally exact
+  // (truth-and-evidence contract, audit priority #1).
+  let selfReportedSleepNights = 0;
+  try {
+    const selfReportRows = await metricsStore.dailyAggregate({
+      domain: 'health', metric: 'sleep_hours', from, agg: 'avg', onlySource: 'self_report',
+    });
+    selfReportedSleepNights = selfReportRows.filter((r) => {
+      const day = r.day instanceof Date ? r.day : new Date(r.day);
+      return Date.now() - day.getTime() <= 7 * 864e5;
+    }).length;
+  } catch { /* non-critical — composites just skip the approximate qualifier */ }
+  const composites = computeHealthComposites(seriesByKey, { ...o, selfReportedSleepNights });
 
   // Annotate anomaly findings with life-context annotations — see
   // annotateAnomaliesWithContext above for the actual eligibility logic

@@ -38,13 +38,16 @@ test('buildEvidenceClaims returns [] for null/undefined facts', () => {
   assert.deepEqual(buildEvidenceClaims(undefined), []);
 });
 
-test('buildEvidenceClaims: recovery band/score become FACT claims at ESTABLISHED tier, ASSERTIVE language', () => {
+test('buildEvidenceClaims: recovery band/score become FACT claims at DIRECT_OBSERVATION tier, ASSERTIVE language', () => {
   const claims = buildEvidenceClaims({ recoveryBand: 'red', recoveryScore: 38 });
   const band = claims.find((c) => c.subject === 'recovery' && c.predicate === 'band');
   const score = claims.find((c) => c.subject === 'recovery' && c.predicate === 'score');
   assert.equal(band.value, 'red');
   assert.equal(band.claimType, CLAIM_TYPE.FACT);
-  assert.equal(band.evidenceTier, EVIDENCE_TIER.ESTABLISHED);
+  // DIRECT_OBSERVATION, not ESTABLISHED — a raw current reading is not the
+  // same kind of evidence as curated population-level science (audit
+  // priority #1, truth-and-evidence contract).
+  assert.equal(band.evidenceTier, EVIDENCE_TIER.DIRECT_OBSERVATION);
   assert.equal(band.allowedLanguage, LANGUAGE_LEVEL.ASSERTIVE);
   assert.equal(score.value, 38);
 });
@@ -87,7 +90,7 @@ test('buildEvidenceClaims: workout completion (plannedWorkoutCompleted) becomes 
   assert.ok(planClaim, 'the plan claim still exists');
   assert.ok(completionClaim, 'a separate completion claim exists');
   assert.equal(completionClaim.value, false);
-  assert.equal(completionClaim.evidenceTier, EVIDENCE_TIER.ESTABLISHED);
+  assert.equal(completionClaim.evidenceTier, EVIDENCE_TIER.DIRECT_OBSERVATION);
   assert.deepEqual(completionClaim.evidenceRefs, ['services/workout.resolveTrainingOutcome']);
 });
 

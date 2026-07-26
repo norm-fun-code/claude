@@ -39,12 +39,49 @@
 
 const KNOWLEDGE_REGISTRY_VERSION = '2.0.0';
 
+// The universal 5-tier evidence vocabulary (truth-and-evidence contract,
+// audit priority #1) — every user-facing claim across every NormOS surface
+// is tagged with exactly one of these, from strongest generalizable
+// evidence for a RELATIONSHIP down to a bare current fact with no inferred
+// relationship at all:
+//   1. ESTABLISHED         — curated, cited population-level science (THIS
+//      registry's own entries: "alcohol suppresses next-morning HRV").
+//   2. PERSONAL_EXPERIMENT — a completed, confirmed N-of-1 self-experiment
+//      on the exact relationship (store/experiments.js).
+//   3. PERSONAL_OBSERVATION — a repeated, statistically-supported personal
+//      association (a correlation finding with sample size/confidence —
+//      store/findings.js), never described as proof.
+//   4. MODEL_HYPOTHESIS    — an emerging signal: preliminary, too limited to
+//      call an association yet (a proposed/running experiment, a single
+//      low-n observation).
+//   5. DIRECT_OBSERVATION  — a raw current fact with NO inferred
+//      relationship at all (today's recovery band, whether a goal is
+//      checked off, this month's spend total). Distinct from ESTABLISHED:
+//      a direct DB read is exactly as solid as curated science for THIS
+//      instant, but it is not a citable, generalizable claim about how two
+//      things relate — conflating the two is exactly how "generic
+//      scientific knowledge" and "a personalized finding" get confused for
+//      each other. See brain/evidenceClaim.js's buildEvidenceClaims for the
+//      claims that use this tier.
 const EVIDENCE_TIER = Object.freeze({
   ESTABLISHED: 'established',                   // well-supported, specifically-cited population relationship
   SUPPORTED_ASSOCIATION: 'supported_association', // a real, generally-accepted physiological pattern, but without one specific verified citation attached to THIS entry
   PERSONAL_EXPERIMENT: 'personal_experiment',    // confirmed N-of-1 self-experiment (tracked in store/experiments.js, not here)
   PERSONAL_OBSERVATION: 'personal_observation',  // an observed personal correlation only (tracked in findings, not here)
   MODEL_HYPOTHESIS: 'model_hypothesis',          // proposed, not backed by either of the above
+  DIRECT_OBSERVATION: 'direct_observation',      // a raw current fact, no inferred relationship (see note above)
+});
+
+// User-facing labels for each tier — NEVER render the raw enum value in the
+// UI (internal implementation vocabulary). Deliberately plain, non-jargon
+// phrasing a non-technical user reads naturally in a small caption/badge.
+const EVIDENCE_TIER_LABEL = Object.freeze({
+  [EVIDENCE_TIER.ESTABLISHED]: 'Established evidence',
+  [EVIDENCE_TIER.PERSONAL_EXPERIMENT]: 'Confirmed by your experiment',
+  [EVIDENCE_TIER.PERSONAL_OBSERVATION]: 'A pattern in your data',
+  [EVIDENCE_TIER.SUPPORTED_ASSOCIATION]: 'A known general pattern',
+  [EVIDENCE_TIER.MODEL_HYPOTHESIS]: 'Early signal',
+  [EVIDENCE_TIER.DIRECT_OBSERVATION]: 'Direct reading',
 });
 
 const POPULATION_EVIDENCE_NOTE =
@@ -280,6 +317,7 @@ function allSourceConcepts() {
 module.exports = {
   KNOWLEDGE_REGISTRY_VERSION,
   EVIDENCE_TIER,
+  EVIDENCE_TIER_LABEL,
   KNOWLEDGE_RELATIONS,
   knowledgeRelationsForConcept,
   findKnowledgeRelation,

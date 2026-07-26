@@ -16,13 +16,15 @@
 // claimType and evidenceTier are deliberately reused vocabulary, not new
 // invented enums: evidenceTier IS intelligence/knowledge-registry.js's
 // EVIDENCE_TIER (established / supported_association / personal_experiment /
-// personal_observation / model_hypothesis) — the same tiers a compiled
-// ContextAssertion's driver relations already carry. A claim about a
-// directly-known canonical value (today's recovery band, whether a goal is
-// checked off) is tagged EVIDENCE_TIER.ESTABLISHED not because it's a
-// population-level finding, but because "established" already means, in
-// this codebase's vocabulary, the strongest tier — direct DB truth is at
-// least that strong.
+// personal_observation / model_hypothesis / direct_observation) — the same
+// tiers a compiled ContextAssertion's driver relations already carry. A claim
+// about a directly-known canonical value (today's recovery band, whether a
+// goal is checked off) is tagged EVIDENCE_TIER.DIRECT_OBSERVATION, NOT
+// ESTABLISHED — audit priority #1 (truth-and-evidence contract) split these
+// apart: ESTABLISHED is curated population-level science, DIRECT_OBSERVATION
+// is a raw current fact with no inferred relationship. Direct DB truth is at
+// least as strong as either, but it is not the same KIND of evidence as a
+// scientific finding, and the two must never share a label.
 'use strict';
 
 const { EVIDENCE_TIER } = require('../intelligence/knowledge-registry');
@@ -176,7 +178,11 @@ function buildEvidenceClaims(facts, meta = {}) {
     claims.push(makeClaim({
       ...base, claimType: CLAIM_TYPE.FACT, subject: 'recovery', predicate: 'band',
       value: facts.recoveryBand, evidenceRefs: ['intelligence/recovery.liveRecovery'],
-      evidenceTier: EVIDENCE_TIER.ESTABLISHED,
+      // DIRECT_OBSERVATION, not ESTABLISHED: this is a raw current reading
+      // (or its self-report proxy), not curated population-level science —
+      // see knowledge-registry.js's EVIDENCE_TIER doc comment for the
+      // distinction (audit priority #1, truth-and-evidence contract).
+      evidenceTier: EVIDENCE_TIER.DIRECT_OBSERVATION,
       confidence: facts.recoveryProxy ? 0.5 : 0.9,
     }));
   }
@@ -184,7 +190,7 @@ function buildEvidenceClaims(facts, meta = {}) {
     claims.push(makeClaim({
       ...base, claimType: CLAIM_TYPE.FACT, subject: 'recovery', predicate: 'score',
       value: facts.recoveryScore, evidenceRefs: ['intelligence/recovery.liveRecovery'],
-      evidenceTier: EVIDENCE_TIER.ESTABLISHED,
+      evidenceTier: EVIDENCE_TIER.DIRECT_OBSERVATION,
     }));
   }
   // Recovery CAUSE is the one place a FACT-tier subject (recovery) pairs with
@@ -216,7 +222,7 @@ function buildEvidenceClaims(facts, meta = {}) {
       ...base, claimType: CLAIM_TYPE.FACT, subject: 'workout', predicate: 'effectivePlan',
       value: { label: facts.effectiveWorkoutLabel, source: facts.effectiveWorkoutSource },
       evidenceRefs: ['services/workout.getEffectiveWorkout'],
-      evidenceTier: EVIDENCE_TIER.ESTABLISHED,
+      evidenceTier: EVIDENCE_TIER.DIRECT_OBSERVATION,
     }));
   }
   // ── Workout completion (explicit, canonical — see
@@ -229,7 +235,7 @@ function buildEvidenceClaims(facts, meta = {}) {
       ...base, claimType: CLAIM_TYPE.FACT, subject: 'workout', predicate: 'completed',
       value: facts.plannedWorkoutCompleted,
       evidenceRefs: ['services/workout.resolveTrainingOutcome'],
-      evidenceTier: EVIDENCE_TIER.ESTABLISHED,
+      evidenceTier: EVIDENCE_TIER.DIRECT_OBSERVATION,
     }));
   }
 
@@ -239,7 +245,7 @@ function buildEvidenceClaims(facts, meta = {}) {
     claims.push(makeClaim({
       ...base, claimType: CLAIM_TYPE.FACT, subject: `goal:${g.text}`, predicate: 'completed',
       value: g.achieved === true, evidenceRefs: ['store/goals.listGoals', 'store/intentions.currentIntention'],
-      evidenceTier: EVIDENCE_TIER.ESTABLISHED,
+      evidenceTier: EVIDENCE_TIER.DIRECT_OBSERVATION,
     }));
   }
   for (const c of facts.commitments || []) {
@@ -248,7 +254,7 @@ function buildEvidenceClaims(facts, meta = {}) {
     claims.push(makeClaim({
       ...base, claimType: CLAIM_TYPE.FACT, subject: `commitment:${c.title}`, predicate: 'completed',
       value: completed, evidenceRefs: ['store/commitments.listActive'],
-      evidenceTier: EVIDENCE_TIER.ESTABLISHED,
+      evidenceTier: EVIDENCE_TIER.DIRECT_OBSERVATION,
     }));
   }
 
@@ -257,7 +263,7 @@ function buildEvidenceClaims(facts, meta = {}) {
     claims.push(makeClaim({
       ...base, claimType: CLAIM_TYPE.FACT, subject: 'wealth', predicate: 'spendingMonthToDate',
       value: facts.spendingTotalMonth, evidenceRefs: ['brain/snapshot.canonicalSpendingMtd'],
-      evidenceTier: EVIDENCE_TIER.ESTABLISHED,
+      evidenceTier: EVIDENCE_TIER.DIRECT_OBSERVATION,
     }));
   }
 
@@ -266,14 +272,14 @@ function buildEvidenceClaims(facts, meta = {}) {
     claims.push(makeClaim({
       ...base, claimType: CLAIM_TYPE.FACT, subject: 'forecast', predicate: 'todayGrade',
       value: facts.forecastGrade, evidenceRefs: ['intelligence/predict.computeTodayForecast'],
-      evidenceTier: EVIDENCE_TIER.ESTABLISHED,
+      evidenceTier: EVIDENCE_TIER.DIRECT_OBSERVATION,
     }));
   }
   if (facts.tomorrowBand) {
     claims.push(makeClaim({
       ...base, claimType: CLAIM_TYPE.FACT, subject: 'forecast', predicate: 'tomorrowBand',
       value: facts.tomorrowBand, evidenceRefs: ['intelligence/predict.computeTodayForecast'],
-      evidenceTier: EVIDENCE_TIER.ESTABLISHED,
+      evidenceTier: EVIDENCE_TIER.DIRECT_OBSERVATION,
     }));
   }
 
@@ -282,7 +288,7 @@ function buildEvidenceClaims(facts, meta = {}) {
     claims.push(makeClaim({
       ...base, claimType: CLAIM_TYPE.FACT, subject: 'calendar', predicate: 'localDate',
       value: facts.localDate, evidenceRefs: ['brain/snapshot.buildBrainSnapshot'],
-      evidenceTier: EVIDENCE_TIER.ESTABLISHED,
+      evidenceTier: EVIDENCE_TIER.DIRECT_OBSERVATION,
     }));
   }
 
@@ -322,7 +328,7 @@ function buildEvidenceClaims(facts, meta = {}) {
       claims.push(makeClaim({
         ...base, claimType: CLAIM_TYPE.FACT, subject: `assertion:${a.id ?? probe}`, predicate: 'eventStatus',
         value: a.eventStatus ?? 'occurred', evidenceRefs: ['intelligence/context-resolver.resolveContext', `context_assertions:${a.id ?? 'n/a'}`],
-        evidenceTier: EVIDENCE_TIER.ESTABLISHED, // user_explicit — the strongest evidence this layer carries
+        evidenceTier: EVIDENCE_TIER.DIRECT_OBSERVATION, // user_explicit — a raw stated fact, not an inferred relationship
         observedFrom: a.effectiveStart ?? null, observedTo: a.effectiveEnd ?? null,
         expiresAt: a.effectiveEnd ?? null,
         supersededBy: a.eventStatus === 'retracted' ? (a.supersededByAssertionId ?? null) : null,
@@ -349,7 +355,7 @@ function buildEvidenceClaims(facts, meta = {}) {
         ...base, claimType: CLAIM_TYPE.FACT, subject: `weeklyEvent:${ep.nightOf}`, predicate: 'concepts',
         value: ep.concepts,
         evidenceRefs: ep.assertionIds?.length ? ep.assertionIds : ['intelligence/weeklyLedger.buildWeeklyLedger'],
-        evidenceTier: structurallyBacked ? EVIDENCE_TIER.ESTABLISHED : EVIDENCE_TIER.PERSONAL_OBSERVATION,
+        evidenceTier: structurallyBacked ? EVIDENCE_TIER.DIRECT_OBSERVATION : EVIDENCE_TIER.PERSONAL_OBSERVATION,
         confidence: structurallyBacked ? 0.9 : 0.65,
         observedFrom: facts.weeklyLedger.periodStart ?? null,
         observedTo: facts.weeklyLedger.periodEnd ?? null,
@@ -371,7 +377,7 @@ function buildEvidenceClaims(facts, meta = {}) {
           ...base, claimType: CLAIM_TYPE.FACT, subject: `nightlyContext:${occ.concept}:${occ.nightEndingLocalDate}`,
           predicate: 'occurred', value: true,
           evidenceRefs: ['intelligence/nightly-context-history.computeNightlyContextHistory'],
-          evidenceTier: EVIDENCE_TIER.ESTABLISHED,
+          evidenceTier: EVIDENCE_TIER.DIRECT_OBSERVATION,
         }));
       }
     }

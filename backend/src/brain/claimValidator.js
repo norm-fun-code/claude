@@ -18,6 +18,7 @@
 'use strict';
 
 const { causeConceptTags } = require('../intelligence/context-semantics');
+const { classifyCausalLanguage, sentenceAuthorizedByExperiments } = require('../intelligence/crossContext');
 
 function splitIntoSentences(text) {
   return String(text || '').split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
@@ -673,6 +674,50 @@ function checkAssociationOverclaim(fields, facts) {
   return violations;
 }
 
+// ── Causal-language overclaim (generic, cross-surface) ───────────────────────
+// The broader form of the check above (audit priority #1, bug 10:
+// "associations sometimes written as causes/drivers/levers/predictions/
+// confirmed facts"). checkAssociationOverclaim only catches literal
+// confirm/prove/validate wording; this catches the mechanism vocabulary
+// (drives/boosts/causes/triggers/effect/"leads to"/...) via
+// crossContext.js's classifyCausalLanguage — the SAME classifier
+// generateCrossContext() already polices its own generated insights with,
+// reused here (not reimplemented) so every surface that adopts facts.claims
+// enforces one causal-language vocabulary instead of two independently
+// maintained word lists that could drift apart. A weak (association/
+// observation/hypothesis) claim described in causal terms is only allowed
+// when sentenceAuthorizedByExperiments finds a matching CONFIRMED experiment
+// (same intervention + outcome) — exactly crossContext.js's own
+// authorization rule, reused rather than re-derived from facts.experiments.
+function checkCausalLanguage(fields, facts) {
+  const claims = Array.isArray(facts?.claims) ? facts.claims : null;
+  if (!claims || !claims.length) return [];
+  const weakClaims = claims.filter(
+    (c) => (c.claimType === 'association' || c.claimType === 'observation' || c.claimType === 'hypothesis')
+      && c.allowedLanguage !== 'assertive'
+  );
+  if (!weakClaims.length) return [];
+  const confirmedExperiments = (facts.experiments || []).filter((e) => e && e.verdict === 'confirmed');
+  const violations = [];
+  for (const [field, text] of fields) {
+    for (const sentence of splitIntoSentences(text)) {
+      if (!classifyCausalLanguage(sentence)) continue;
+      for (const c of weakClaims) {
+        const probe = typeof c.value === 'string' ? c.value : String(c.subject || '').replace(/^[a-z]+:/, '');
+        if (!probe || overlapRatio(sentence, probe) < OVERCLAIM_OVERLAP_THRESHOLD) continue;
+        if (sentenceAuthorizedByExperiments(sentence, confirmedExperiments)) continue;
+        violations.push({
+          check: 'causal_language_overclaim', field, sentence, severity: 'high',
+          expected: `${c.claimType} (${c.evidenceTier}) — no causal claim without established evidence or a matching confirmed experiment`,
+          actual: 'described with causal/mechanism language',
+          message: `describes "${probe}" with causal language (drives/boosts/causes/etc.), but it's only a ${c.claimType} (${c.evidenceTier}) with no matching confirmed experiment behind it — describe it as an association, not a cause`,
+        });
+      }
+    }
+  }
+  return violations;
+}
+
 // ── Weekly event count / episode date ────────────────────────────────────
 // Generalization of the "two nights of alcohol + late meals (Wed/Thu)"
 // production bug: a surface citing a night/occasion COUNT, or naming two or
@@ -813,6 +858,7 @@ function validateClaims(fields, facts) {
     ...checkResolvedContextConflicts(fields, facts),
     ...checkEpisodicStateOverclaim(fields, facts),
     ...checkAssociationOverclaim(fields, facts),
+    ...checkCausalLanguage(fields, facts),
     ...checkWeeklyEventCounts(fields, facts),
     ...checkTemporalFraming(fields, facts),
   ];
@@ -1143,7 +1189,7 @@ module.exports = {
   assessChiefBriefQuality, buildQualityRetryPrompt, isGroundedFallbackText,
   // EvidenceClaim v1 — the shared, surface-agnostic entrypoints Evening Brief
   // and Ask use (see notify/evening-brief-validator.js, chat/ask.js).
-  validateClaims, neutralizeClaimsGeneric, checkAssociationOverclaim,
+  validateClaims, neutralizeClaimsGeneric, checkAssociationOverclaim, checkCausalLanguage,
   // Exposed for focused unit tests:
   checkRecoveryBand, checkRecoveryScore, checkRecoveryCause, checkEffectiveWorkout,
   checkWorkoutCompletionOverclaim,

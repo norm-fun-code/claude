@@ -63,6 +63,14 @@ function WealthCard({ wealth }: Props) {
     ? new Date(wealth.syncedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     : null;
   const show = (s: string) => (hidden ? MASK : s);
+  const shortDate = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  // Honest window label for netWorthChange — it's an average-vs-now compare
+  // over the from/to range the server actually used, not a clean "30 days".
+  const netWorthChangeLabel =
+    wealth.netWorthChangeFrom && wealth.netWorthChangeTo
+      ? `vs. ${shortDate(wealth.netWorthChangeFrom)}–${shortDate(wealth.netWorthChangeTo)} avg`
+      : 'over ~30 days';
+  const mtdLabel = wealth.mtdSince ? `MTD since ${shortDate(wealth.mtdSince)}` : 'MTD';
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
@@ -80,7 +88,7 @@ function WealthCard({ wealth }: Props) {
         )}
         {wealth.netWorthChange != null ? (
           <Text style={[styles.change, { color: hidden ? c.subtext : up ? c.green : c.red }]}>
-            {hidden ? MASK : `${up ? '▲' : '▼'} ${money(Math.abs(wealth.netWorthChange))} over ~30 days`}
+            {hidden ? MASK : `${up ? '▲' : '▼'} ${money(Math.abs(wealth.netWorthChange))} ${netWorthChangeLabel}`}
           </Text>
         ) : null}
         {planDelta != null && !hidden && (
@@ -92,7 +100,17 @@ function WealthCard({ wealth }: Props) {
           </Text>
         )}
         {syncedDate && !hidden && (
-          <Text style={[styles.syncedAt, { color: c.subtext }]}>as of {syncedDate}</Text>
+          <Text style={[styles.syncedAt, { color: c.subtext }]}>
+            data as of {syncedDate}
+            {wealth.sourceSyncedAt && (
+              // Deliberately a SEPARATE fact from "data as of" above — that's
+              // the net worth figure's own date, this is when Monarch itself
+              // actually last ran a sync. They can legitimately differ (a
+              // sync that finds no new data still updates its clock) and
+              // must never be presented as the same timestamp.
+              <Text> · Monarch synced {new Date(wealth.sourceSyncedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</Text>
+            )}
+          </Text>
         )}
       </Pressable>
 
@@ -128,6 +146,14 @@ function WealthCard({ wealth }: Props) {
               ? ` · ${show(money(wealth.discretionaryThisMonth))} discretionary (30d, ex rent/mortgage)`
               : ''}
           </Text>
+          {wealth.spendingMtd != null && (
+            // Deliberately a SEPARATE line from the rolling-30d figures above —
+            // this is calendar month-to-date, a genuinely different window,
+            // and the two must never be allowed to blur into one number.
+            <Text style={[styles.discretionary, { color: c.subtext }]}>
+              {show(money(wealth.spendingMtd))} discretionary {mtdLabel} (calendar, ex rent/mortgage)
+            </Text>
+          )}
         </>
       ) : (
         // Fallback for older payloads without 30-day fields.

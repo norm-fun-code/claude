@@ -110,6 +110,11 @@ function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
       : recovery.band === 'yellow' ? 'Moderate'
       : recovery.band === 'red' ? 'Low'
       : 'Recovery';
+  // A self-reported (no Eight Sleep) night is a subjective proxy, not a
+  // device measurement — say so plainly rather than let the score/band look
+  // as precise as a real reading (truth-and-evidence contract, audit
+  // priority #1: "Prefer categorical output such as 'Good · provisional'").
+  const displayBandLabel = recovery.proxy ? `${recovery.category ?? bandLabel} · provisional` : bandLabel;
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
@@ -123,7 +128,7 @@ function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
           <RecoveryOrb score={recovery.score} band={recovery.band} size={84} />
         </View>
         <View style={styles.scoreMeta}>
-          <Text style={[styles.band, { color: bandColor }]}>{bandLabel}</Text>
+          <Text style={[styles.band, { color: bandColor }]}>{displayBandLabel}</Text>
           {recovery.detail ? (
             <Text style={[styles.detail, { color: c.subtext }]}>{recovery.detail}</Text>
           ) : null}
@@ -181,7 +186,11 @@ function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
           {recovery.rawHrv != null && (
             <TouchableOpacity onPress={() => setSelected(RECOVERY_METRICS.hrv)} activeOpacity={0.6} style={styles.rawTap}>
               <Text style={[styles.rawItem, { color: c.subtext }]}>
-                HRV <Text style={{ color: c.text, fontWeight: '600' }}>{Math.round(recovery.rawHrv)}ms</Text>
+                {/* "overnight" distinguishes this Eight Sleep-sourced reading
+                    from the Health card's daytime Apple Watch HRV — the two
+                    must never look like the same number (truth-and-evidence
+                    contract, audit priority #1). */}
+                HRV (overnight) <Text style={{ color: c.text, fontWeight: '600' }}>{Math.round(recovery.rawHrv)}ms</Text>
                 <Text style={{ color: c.border }}> ›</Text>
               </Text>
             </TouchableOpacity>
@@ -189,7 +198,7 @@ function RecoveryCard({ recovery, composites = [], builtAt }: Props) {
           {recovery.rawRhr != null && (
             <TouchableOpacity onPress={() => setSelected(RECOVERY_METRICS.resting_hr)} activeOpacity={0.6} style={styles.rawTap}>
               <Text style={[styles.rawItem, { color: c.subtext }]}>
-                RHR <Text style={{ color: c.text, fontWeight: '600' }}>{Math.round(recovery.rawRhr)}bpm</Text>
+                RHR (overnight) <Text style={{ color: c.text, fontWeight: '600' }}>{Math.round(recovery.rawRhr)}bpm</Text>
                 <Text style={{ color: c.border }}> ›</Text>
               </Text>
             </TouchableOpacity>

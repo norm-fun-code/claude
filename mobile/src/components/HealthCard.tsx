@@ -4,6 +4,7 @@ import { getColors, spacing, radius, typography, shadow, colors, FONTS } from '.
 import { SectionHeader } from './SectionHeader';
 import { formatHM } from '../utils/format';
 import type { HealthData } from '../hooks/useHealthData';
+import { getVo2Category } from '../hooks/useHealthData';
 import { MetricDetailSheet, type MetricConfig } from './MetricDetailSheet';
 import { MiniBars } from './viz/MiniBars';
 import { Trend } from './viz/Trend';
@@ -12,6 +13,14 @@ import { METRICS_HISTORY_URL } from '../config';
 
 interface Props {
   health: HealthData;
+  // THE canonical VO2 max fact (backend intelligence/recovery.js's
+  // fitnessFinding — the SAME value "What The Data Shows" renders). Preferred
+  // over `health.vo2Max` (a raw, independent on-device HealthKit read) so
+  // this card and the insights card can never disagree on "current" VO2 —
+  // the exact "46.3 vs 46.6" production bug (truth-and-evidence contract,
+  // audit priority #1). Falls back to the local HealthKit read only before
+  // the server has ever computed a fitness insight (first-run bootstrap).
+  canonicalVo2?: { value: number; asOf?: string | null } | null;
 }
 
 // A 14-day trend for one metric, fetched on demand. Continuous signals (HRV, RHR)
@@ -123,12 +132,18 @@ const METRICS: Record<string, MetricConfig> = {
   },
 };
 
-function HealthCard({ health }: Props) {
+function HealthCard({ health, canonicalVo2 }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [selected, setSelected] = useState<MetricConfig | null>(null);
 
   const open = (key: string) => setSelected(METRICS[key]);
+
+  // Single derivation: the category is always recomputed from whichever
+  // value is actually displayed, so the number and its badge never
+  // contradict each other even when the canonical value overrides the local one.
+  const displayVo2 = canonicalVo2?.value ?? health.vo2Max;
+  const displayVo2Category = displayVo2 != null ? getVo2Category(displayVo2) : null;
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
@@ -140,7 +155,15 @@ function HealthCard({ health }: Props) {
           <Text style={[styles.hrvNumber, { color: c.text }]}>
             {health.hrv ?? '—'}
           </Text>
-          <Text style={[styles.hrvUnit, { color: c.subtext }]}>ms HRV</Text>
+          <View>
+            <Text style={[styles.hrvUnit, { color: c.subtext }]}>ms HRV</Text>
+            {/* Source + measurement context: this is a DAYTIME Apple Watch
+                reading, distinct from the overnight Eight Sleep HRV the
+                Recovery card's score is built from — the two must never
+                read as the same number with no way to tell them apart
+                (truth-and-evidence contract, audit priority #1). */}
+            <Text style={[styles.hrvSourceLabel, { color: c.subtext }]}>Apple Watch · daytime</Text>
+          </View>
         </View>
         <View style={styles.hrvSpark}>
           <RowSpark metric="hrv" source="apple_health" color={c.accent} height={34} width={130} line />
@@ -150,18 +173,18 @@ function HealthCard({ health }: Props) {
 
       <View style={[styles.divider, { backgroundColor: c.border }]} />
 
-      {health.vo2Max !== null && (
+      {displayVo2 !== null && (
         <>
           <TouchableOpacity onPress={() => open('vo2_max')} activeOpacity={0.6} style={styles.vo2Row}>
             <View style={styles.vo2Left}>
-              <Text style={[styles.vo2Number, { color: vo2Color(health.vo2MaxCategory) }]}>
-                {health.vo2Max}
+              <Text style={[styles.vo2Number, { color: vo2Color(displayVo2Category) }]}>
+                {displayVo2}
               </Text>
               <Text style={[styles.vo2Unit, { color: c.subtext }]}>mL/kg/min VO2</Text>
             </View>
-            {health.vo2MaxCategory && (
-              <View style={[styles.vo2Badge, { backgroundColor: vo2Color(health.vo2MaxCategory) + '22', borderColor: vo2Color(health.vo2MaxCategory) + '55' }]}>
-                <Text style={[styles.vo2BadgeText, { color: vo2Color(health.vo2MaxCategory) }]}>{health.vo2MaxCategory}</Text>
+            {displayVo2Category && (
+              <View style={[styles.vo2Badge, { backgroundColor: vo2Color(displayVo2Category) + '22', borderColor: vo2Color(displayVo2Category) + '55' }]}>
+                <Text style={[styles.vo2BadgeText, { color: vo2Color(displayVo2Category) }]}>{displayVo2Category}</Text>
               </View>
             )}
           </TouchableOpacity>
@@ -230,6 +253,7 @@ const styles = StyleSheet.create({
   hrvLeft: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.xs },
   hrvNumber: { fontFamily: FONTS.displayLight, fontSize: 48, fontWeight: '300', letterSpacing: -2 },
   hrvUnit: { ...typography.caption, fontSize: 14 },
+  hrvSourceLabel: { ...typography.caption, fontSize: 10, opacity: 0.75, marginTop: 1 },
   hrvSpark: { flex: 1, alignItems: 'flex-end', justifyContent: 'flex-end', marginHorizontal: spacing.md, paddingBottom: 8 },
   hrvChevron: { fontSize: 22, fontWeight: '300' },
   divider: { height: 1, marginBottom: spacing.md },

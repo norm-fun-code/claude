@@ -120,14 +120,21 @@ async function queryMetric({ domain, metric, days = 7 } = {}) {
   // the recovery score and the analysis engine do, so voice reports the same
   // number the rest of the app computes.
   const agg = cat.aggFor ? cat.aggFor(metric) : 'avg';
+  // HRV/resting-HR are source-locked to overnight Eight Sleep readings — the
+  // SAME lock recovery.js uses everywhere else — so "what's my HRV" can never
+  // silently answer with a same-day daytime Apple Watch reading instead of
+  // the overnight one the Health/Recovery cards show (source-distinct HRV,
+  // truth-and-evidence contract, audit priority #1).
+  const { RECOVERY_SOURCE_LOCK } = require('../intelligence/recovery');
+  const sources = RECOVERY_SOURCE_LOCK[`${domain}:${metric}`] ?? null;
   const [latest, series] = await Promise.all([
-    metricsStore.latest({ domain, metric }).catch(() => null),
-    metricsStore.dailyAggregatePreferSource({ domain, metric, from: new Date(Date.now() - clampedDays * 864e5), agg }).catch(() => []),
+    metricsStore.latest({ domain, metric, sources }).catch(() => null),
+    metricsStore.dailyAggregatePreferSource({ domain, metric, from: new Date(Date.now() - clampedDays * 864e5), agg, sources }).catch(() => []),
   ]);
   const values = series.map((r) => Number(r.value)).filter(Number.isFinite);
   const avg = values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
   return {
-    latest: latest ? { value: latest.value, ts: new Date(latest.ts).toISOString(), unit: latest.unit ?? null } : null,
+    latest: latest ? { value: latest.value, ts: new Date(latest.ts).toISOString(), unit: latest.unit ?? null, source: latest.source ?? null } : null,
     trailingAvg: avg != null ? Math.round(avg * 100) / 100 : null,
     days: clampedDays,
     points: values.length,

@@ -204,9 +204,8 @@ async function buildQuickChiefBriefContext(prior) {
     selfModel,
     strengthContext,
     spendingContext,
-    weeklyGoalsContext,
+    weeklyGoals,
     chaptersContext,
-    liveGoals,
     recoveryDrivers,
     nightlyContextHistory,
   ] = await Promise.all([
@@ -346,17 +345,27 @@ async function buildQuickChiefBriefContext(prior) {
         return '';
       }
     })(),
+    // ONE currentIntention() read feeds the prose context, the structured
+    // liveGoals used by the goal-completion guard, AND goalsWeekStart (the
+    // explicit period identity this chiefBrief's goal claims describe) — a
+    // single canonical fetch instead of two independent re-derivations of
+    // the same row (truth-and-evidence contract, audit priority #1: every
+    // surface must stamp WHICH week's goals a "done"/"open" claim is about,
+    // so a cache-served chiefBrief generated against a NOW-PRIOR week can
+    // never silently look like it's describing this week's goals).
     (async () => {
       try {
-        const [currentInt] = await Promise.all([intentionsStore.currentIntention()]);
+        const currentInt = await intentionsStore.currentIntention();
         const goals = currentInt?.goals ?? [];
-        if (!goals.length) return '';
+        const liveGoals = goals.map((g) => ({ text: g.text, achieved: !!g.achieved }));
+        if (!goals.length) return { weeklyGoalsContext: '', liveGoals, goalsWeekStart: currentInt?.weekStart ?? null };
         const done = goals.filter((g) => g.achieved).map((g) => `[done] ${g.text}`);
         const open = goals.filter((g) => !g.achieved).map((g) => `[OPEN] ${g.text}`);
-        return `${[...open, ...done].join(' · ')}` + (currentInt?.context ? ` (week context: "${String(currentInt.context).slice(0, 300)}")` : '');
+        const weeklyGoalsContext = `${[...open, ...done].join(' · ')}` + (currentInt?.context ? ` (week context: "${String(currentInt.context).slice(0, 300)}")` : '');
+        return { weeklyGoalsContext, liveGoals, goalsWeekStart: currentInt?.weekStart ?? null };
       } catch (err) {
         console.error('[quick chief-brief] weeklyGoals context failed:', err.message);
-        return '';
+        return { weeklyGoalsContext: '', liveGoals: [], goalsWeekStart: null };
       }
     })(),
     (async () => {
@@ -366,19 +375,6 @@ async function buildQuickChiefBriefContext(prior) {
       } catch (err) {
         console.error('[quick chief-brief] chapters context failed:', err.message);
         return '';
-      }
-    })(),
-    // Structured live goal state for the goal-completion guard (see the
-    // weeklyGoalsContext IIFE above, which builds the prose version of the
-    // SAME query) — the scoped rebuild must enforce the exact same
-    // never-claim-an-OPEN-goal-is-done invariant as the full builder.
-    (async () => {
-      try {
-        const currentInt = await intentionsStore.currentIntention();
-        return (currentInt?.goals ?? []).map((g) => ({ text: g.text, achieved: !!g.achieved }));
-      } catch (err) {
-        console.error('[quick chief-brief] liveGoals failed:', err.message);
-        return [];
       }
     })(),
     require('../intelligence/recovery-drivers').computeRecoveryDrivers({ tz })
@@ -430,10 +426,15 @@ async function buildQuickChiefBriefContext(prior) {
     continuityContext: '', // has write side effects in the full builder — skipped here, see header comment
     cashflowContext: '', // Monday-only + a live Monarch round-trip — skipped for speed
     progressContext: '', // Monday-only — skipped for speed
-    weeklyGoalsContext,
+    weeklyGoalsContext: weeklyGoals.weeklyGoalsContext,
     chaptersContext,
     dayOffContext,
-    liveGoals,
+    liveGoals: weeklyGoals.liveGoals,
+    // The explicit week identity these liveGoals/weeklyGoalsContext describe
+    // — carried through to the response so a cache-served chiefBrief can
+    // never silently look like it's about a DIFFERENT (now-current) week's
+    // goals than the one it was actually generated against.
+    goalsWeekStart: weeklyGoals.goalsWeekStart,
     recoveryDriversContext: recoveryDrivers.context,
     recoveryDriverLabels: recoveryDrivers.labels,
     nightlyContextHistory,
@@ -517,6 +518,18 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     } catch (err) {
       console.error('[briefing cache] weeklyGoals refresh failed:', err.message);
     }
+    // The cached chiefBrief's goal-completion claims were validated against
+    // whatever week was current AT BUILD TIME (content.goalsWeekStart) — if
+    // the week has rolled over since (weeklyGoals.current is now refreshed
+    // live, above, and can be a NEWER week), that chiefBrief can be
+    // describing an already-past week's "all done" goals while this same
+    // response's live weeklyGoals shows fresh unchecked ones. Flag it
+    // explicitly rather than let the two silently disagree (truth-and-
+    // evidence contract, audit priority #1).
+    const chiefBriefGoalsStale = Boolean(
+      prior.content.goalsWeekStart && weeklyGoals?.current?.weekStart
+        && prior.content.goalsWeekStart !== weeklyGoals.current.weekStart
+    );
     // Apply insight dismissals live too, so dismissing a card sticks on the next
     // instant cache reload rather than waiting for a full rebuild.
     const cachedContent = { ...prior.content };
@@ -655,8 +668,19 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
             const { formatFitnessFinding } = require('../intelligence/recovery');
             const per90 = cachedContent.healthInsights[fitnessIdx].evidence?.per90 ?? null;
             const { title, detail } = formatFitnessFinding(current, per90);
+            const round1 = (n) => Math.round(n * 10) / 10;
             cachedContent.healthInsights = [...cachedContent.healthInsights];
-            cachedContent.healthInsights[fitnessIdx] = { ...cachedContent.healthInsights[fitnessIdx], title, detail };
+            cachedContent.healthInsights[fitnessIdx] = {
+              ...cachedContent.healthInsights[fitnessIdx],
+              title, detail,
+              // evidence.current must be refreshed alongside title/detail — a
+              // prior version of this freshen only updated the prose, leaving
+              // evidence.current (the ONE field the mobile Health screen and
+              // Ask/briefing context should all read for cross-surface
+              // identity) silently stale and disagreeing with the headline
+              // (the exact "46.3 vs 46.6" production bug).
+              evidence: { ...(cachedContent.healthInsights[fitnessIdx].evidence || {}), current: round1(current), asOf: latestVo2?.ts ?? null },
+            };
           }
         } catch (err) {
           console.error('[briefing cache] fitness freshen failed:', err.message);
@@ -683,7 +707,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     }
     // Always serve the cache — never block the client on a 60-90s rebuild.
     // `stale: true` signals the app to show a "Rebuild briefing" button.
-    return { ...cachedContent, weeklyGoals, weeklyReview, cached: true, stale: isStale, cachedAgeMin: Math.round(ageMin) };
+    return { ...cachedContent, weeklyGoals, weeklyReview, chiefBriefGoalsStale, cached: true, stale: isStale, cachedAgeMin: Math.round(ageMin) };
   }
 
   // Format today's date label
@@ -1135,13 +1159,14 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     const preBriefSignals = require('../intelligence/pre-brief-signals');
     // Anomaly callout for the brief narrative (distinct from the user-facing
     // question below): surface the same category spending-pattern flags the
-    // Wealth tab shows, ranked by dollar impact (not raw percentage — a
-    // $576/460% spike and a $527/47% one are comparably real; percentage-of-
-    // a-small-base manufactures noise, a separate product review finding
-    // fixed here too).
+    // Wealth tab shows. buildWealthInsights() is now the ONE place that
+    // ranks these by dollar impact (not raw percentage — a $576/460% spike
+    // and a $527/47% one are comparably real; percentage-of-a-small-base
+    // manufactures noise) — no second, independent re-sort here, so the
+    // Wealth tab and this prompt can never silently disagree on order
+    // (truth-and-evidence contract, audit priority #1).
     const spendingAnomalies = wealthInsights
       .filter((i) => i.type === 'spending_pattern' || i.type === 'over_budget')
-      .sort((a, b) => (b.evidence?.impactDollars ?? 0) - (a.evidence?.impactDollars ?? 0))
       .slice(0, 3);
     if (spendingAnomalies.length) {
       spendingContext = `Spending patterns this month (ranked by dollar impact): ${spendingAnomalies.map((i) => i.title).join('; ')}.`;
@@ -1796,6 +1821,15 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
         resolvedContext: brainSnapshot.resolvedContext?.value ?? null,
         nightlyContextHistory: brainSnapshot.nightlyContextHistory?.value ?? [],
       });
+      // EvidenceClaim packet (truth-and-evidence contract, audit priority
+      // #1) — without this, claimValidator.checkAssociationOverclaim is a
+      // silent no-op for Chief Brief (it only fires when facts.claims is
+      // present), so Chief Brief had no deterministic backstop against
+      // "confirmed"/"proven" language for an association/observation claim,
+      // unlike Evening Brief/Ask/Weekly Review which already adopted this
+      // packet. Pure projection of the SAME chiefFacts just built above —
+      // no new data, no extra read.
+      if (chiefFacts) chiefFacts.claims = require('../brain/evidenceClaim').buildEvidenceClaims(chiefFacts);
     } catch (e) { console.error('[briefing build] chiefFacts assembly failed:', e.message); }
   }
 
@@ -2129,6 +2163,9 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
 
   // Wealth snapshot for the Wealth tab (from the canonical spine — Monarch etc.).
   let wealth = null;
+  // Hoisted so the staleness-alerts block below can reuse this ONE fetch of
+  // Monarch's real sync-clock record instead of querying it again.
+  let monarchSrcForAlerts = null;
   try {
     const sum = (arr) => arr.reduce((s, r) => s + Number(r.value), 0);
     // Truncate to UTC midnight so the range boundary aligns with how metrics
@@ -2141,20 +2178,40 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     const nw = await metricsStore.latest({ domain: 'wealth', metric: 'net_worth' });
     const nwPrev = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'net_worth', from: monthAgo, to: weekAgo, agg: 'avg', excludeSource: 'seed' });
     const now = new Date();
-    const [spend, discretionary, income, spendMonth, incomeMonth, discretionaryMonth] = await Promise.all([
+    const [spend, discretionary, income, spendMonth, incomeMonth, discretionaryMonth, monarchSrc] = await Promise.all([
       metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: weekAgo, to: now, agg: 'sum', excludeSource: 'seed' }),
       metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: weekAgo, to: now, agg: 'sum', excludeSource: 'seed' }),
       metricsStore.dailyAggregate({ domain: 'wealth', metric: 'income', from: weekAgo, to: now, agg: 'sum', excludeSource: 'seed' }),
       metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending', from: monthAgo, to: now, agg: 'sum', excludeSource: 'seed' }),
       metricsStore.dailyAggregate({ domain: 'wealth', metric: 'income', from: monthAgo, to: now, agg: 'sum', excludeSource: 'seed' }),
       metricsStore.dailyAggregate({ domain: 'wealth', metric: 'spending_discretionary', from: monthAgo, to: now, agg: 'sum', excludeSource: 'seed' }),
+      sourcesStore.getSource('monarch'),
     ]);
+    monarchSrcForAlerts = monarchSrc;
     if (nw || spend.length) {
       const netWorth = nw ? Number(nw.value) : null;
       const priorNw = nwPrev.length ? sum(nwPrev) / nwPrev.length : null;
+      // Calendar month-to-date discretionary spend — the SAME canonical figure
+      // BrainSnapshot exposes as wealth.spendingMtd (brain/snapshot.js's
+      // canonicalSpendingMtd), reused here rather than re-derived, so the
+      // Wealth tab and any chief-brief/claim-validator reference to "MTD
+      // spending" can never disagree. This is a genuinely different window
+      // from discretionaryThisMonth below (rolling 30 days) — audit priority
+      // #1 bug 7 ("Wealth mixes MTD/rolling-7d/rolling-30d figures
+      // contradictorily"): both are now present, separately labeled, instead
+      // of one silently standing in for the other.
+      const { localMonthKeyStartUtc } = require('../util/date');
+      const mtdSince = localMonthKeyStartUtc(factsTz, now).toISOString();
       wealth = {
         netWorth,
         netWorthChange: netWorth != null && priorNw ? Math.round((netWorth - priorNw)) : null,
+        // The exact window netWorthChange was computed over — a 23-day average
+        // (monthAgo..weekAgo) vs. today, not a clean "30 days ago" point. The
+        // client renders this range explicitly instead of the old blanket
+        // "~30 days" label, which implied more precision than the underlying
+        // averaging window actually has.
+        netWorthChangeFrom: monthAgo.toISOString(),
+        netWorthChangeTo: weekAgo.toISOString(),
         spendingThisWeek: Math.round(sum(spend)),
         discretionaryThisWeek: discretionary.length ? Math.round(sum(discretionary)) : null,
         incomeThisWeek: Math.round(sum(income)),
@@ -2168,7 +2225,23 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
         incomeThisMonth: Math.round(sum(incomeMonth)),
         cashflowThisMonth: Math.round(sum(incomeMonth) - sum(spendMonth)),
         discretionaryThisMonth: discretionaryMonth.length ? Math.round(sum(discretionaryMonth)) : null,
+        // Calendar MTD discretionary spend (distinct from discretionaryThisMonth's
+        // rolling 30d above) + the local calendar-month start it's summed from,
+        // so the client can render "MTD (since Jul 1)" without recomputing or
+        // guessing the boundary itself.
+        spendingMtd: brainSnapshot?.wealth?.spendingMtd ?? null,
+        mtdSince,
+        // syncedAt is the net-worth METRIC's own data date (when the figure is
+        // AS OF) — not when Monarch itself last actually ran a sync. Those are
+        // two different facts (audit priority #1 bug 9: "brief built" time
+        // doesn't distinguish per-source sync times) and conflating them meant
+        // a stale-but-unchanged net worth reading could look freshly synced.
+        // sourceSyncedAt is the real connector clock time from the sources
+        // table (the same ground truth the staleness alerts below check),
+        // surfaced here for the first time instead of only driving a binary
+        // alert.
         syncedAt: nw?.ts ? new Date(nw.ts).toISOString() : null,
+        sourceSyncedAt: monarchSrc?.last_sync_at ? new Date(monarchSrc.last_sync_at).toISOString() : null,
       };
     }
   } catch (err) {
@@ -2191,8 +2264,10 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   // way transactions/income do, so an MCP-only outage is otherwise invisible).
   const alerts = [];
   try {
+    // monarchSrcForAlerts was already fetched once above (inside the wealth
+    // block) — reuse it instead of querying the same source row twice.
     const [monarchSrc, monarchMcpSrc] = await Promise.all([
-      sourcesStore.getSource('monarch'),
+      monarchSrcForAlerts ? Promise.resolve(monarchSrcForAlerts) : sourcesStore.getSource('monarch'),
       sourcesStore.getSource('monarch_mcp_sync'),
     ]);
     if (monarchSrc) {
@@ -2317,6 +2392,22 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     ? (geminiResult.morningFocus || '')
     : (chiefBriefStale ? (prior?.content?.morningFocus || '') : '');
 
+  // Explicit period identity for finalChiefBrief's goal-completion claims
+  // (truth-and-evidence contract, audit priority #1 — "Chief Brief says
+  // every goal is completed while This Week's Focus shows unchecked goals,
+  // and the UI does not identify the periods"). weeklyGoals.current.weekStart
+  // is the LIVE current week (just fetched above); when finalChiefBrief was
+  // carried forward from a prior build (chiefBriefStale), its own goal
+  // claims may describe an EARLIER week's weekStart. Comparing the two
+  // gives an honest, explicit flag instead of two surfaces silently
+  // disagreeing with no way for the user to tell why.
+  const goalsWeekStart = thisAttemptFresh
+    ? (weeklyGoals?.current?.weekStart ?? null)
+    : (chiefBriefStale ? (prior?.content?.goalsWeekStart ?? null) : null);
+  const chiefBriefGoalsStale = Boolean(
+    goalsWeekStart && weeklyGoals?.current?.weekStart && goalsWeekStart !== weeklyGoals.current.weekStart
+  );
+
   const nowIso = new Date().toISOString();
   // The state-cut time + identity come from the ONE real snapshot (snapAsOf),
   // NOT an independently-minted id — so the saved brief and the morning push
@@ -2361,6 +2452,17 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     // renders calm "Finishing today's brief…" copy in this state instead of
     // ever mistaking it for a completed brief.
     chiefBriefPending,
+    // The local week (Sunday, YYYY-MM-DD) whose goals finalChiefBrief's
+    // completion claims actually describe — see store/intentions.js's
+    // weekStart(). Compare against weeklyGoals.current.weekStart below to
+    // know whether they're the SAME period.
+    goalsWeekStart,
+    // True when finalChiefBrief's goal claims reference a DIFFERENT week
+    // than weeklyGoals.current (the live current week) — e.g. a carried-
+    // forward chiefBrief from before the week rolled over. Mobile shows an
+    // explicit qualifier instead of letting "all goals done" (last week)
+    // visually contradict this week's fresh unchecked goals.
+    chiefBriefGoalsStale,
     // THE authoritative quality contract result for THIS build's own LLM
     // output (brain/claimValidator.js's assessChiefBriefQuality) — fresh,
     // degraded (grounded-fallback/underfilled/unresolved contradiction), or
@@ -2622,6 +2724,11 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
       resolvedContext: resolvedContextForFacts,
       nightlyContextHistory: ctx.nightlyContextHistory,
     });
+    // Same EvidenceClaim wiring as the full build (see that call site's
+    // identical comment) — closes the gap where the scoped rebuild's
+    // chiefFacts never carried .claims, silently no-opping
+    // checkAssociationOverclaim for this path too.
+    if (chiefFacts) chiefFacts.claims = require('../brain/evidenceClaim').buildEvidenceClaims(chiefFacts);
   } catch (e) { console.error('[chief-brief rebuild] chiefFacts assembly failed:', e.message); }
 
   // Same best-effort prompt context the full build feeds in (see that call
@@ -2728,6 +2835,16 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
     ? (chiefResult.morningFocus || '')
     : (chiefBriefStale ? (prior.content.morningFocus || '') : '');
 
+  // Same explicit goal-period identity as the full build (see that call
+  // site's identical comment) — ctx.goalsWeekStart is the LIVE current week
+  // (buildQuickChiefBriefContext just fetched it for this request).
+  const goalsWeekStart = thisAttemptFresh
+    ? (ctx.goalsWeekStart ?? null)
+    : (chiefBriefStale ? (prior.content.goalsWeekStart ?? null) : null);
+  const chiefBriefGoalsStale = Boolean(
+    goalsWeekStart && ctx.goalsWeekStart && goalsWeekStart !== ctx.goalsWeekStart
+  );
+
   const rebuildNow = new Date().toISOString();
   const content = {
     ...prior.content,
@@ -2735,6 +2852,8 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
     morningFocus: finalMorningFocus,
     chiefBriefStale,
     chiefBriefPending,
+    goalsWeekStart,
+    chiefBriefGoalsStale,
     // See the full build's identical field for the contract — always this
     // rebuild's OWN attempt, never the carried-forward card.
     chiefBriefQuality: chiefResult.chiefBriefQuality ?? null,

@@ -38,6 +38,19 @@ function isSunday(): boolean {
   return easternDayOfWeek() === 0;
 }
 
+// Explicit period identity for this card's goals (truth-and-evidence
+// contract, audit priority #1 — "the UI does not identify the periods"):
+// every render of "this week's focus" names WHICH week it is, so it can
+// never be silently conflated with a different week's goals shown
+// elsewhere (e.g. a carried-forward Chief Brief still describing last
+// week's now-fully-checked-off goals).
+function weekOfLabel(weekStart: string | null): string | null {
+  if (!weekStart) return null;
+  const d = new Date(`${weekStart}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  return `Week of ${d.toLocaleDateString('en-US', { timeZone: ET_TZ, month: 'short', day: 'numeric' })}`;
+}
+
 function WeeklyIntentionsCard({ review = null }: Props = {}) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
@@ -221,6 +234,9 @@ function WeeklyIntentionsCard({ review = null }: Props = {}) {
     return (
       <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
         <SectionHeader emoji="🎯" title="This week's focus" />
+        {weekOfLabel(currentWeek) && (
+          <Text style={[styles.weekOfLabel, { color: c.subtext }]}>{weekOfLabel(currentWeek)}</Text>
+        )}
         {currentGoals.length > 0 ? (
           <View>
             {currentGoals.map((g, i) => (
@@ -376,6 +392,7 @@ const styles = StyleSheet.create({
   editLink: { marginTop: spacing.sm },
   editLinkText: { ...typography.body, fontWeight: '600' },
   staleNote: { ...typography.caption, fontSize: 12, marginTop: spacing.sm, fontStyle: 'italic' },
+  weekOfLabel: { ...typography.caption, fontSize: 11, marginBottom: spacing.xs },
 });
 
 const WeeklyIntentionsCardMemo = React.memo(WeeklyIntentionsCard);

@@ -134,14 +134,18 @@ test('chief-brief spendingContext is built from buildWealthInsights(), ranked by
   );
   // Same anomalies the Wealth tab's "What The Data Shows" card would surface
   // (buildWealthInsights' own titles), in dollar-descending order: $800
-  // (Entertainment over_budget) > $600 (Restaurants, 60%) > $400 (Clothing,
-  // 400% — louder percentage, smaller dollar impact, correctly ranked last).
+  // (Entertainment over_budget) > $600 (Restaurants) > $400 (Clothing —
+  // louder percentage, smaller dollar impact, correctly ranked last). Titles
+  // are dollar-first (truth-and-evidence contract, audit priority #1);
+  // Clothing's $100 baseline is below SMALL_BASELINE_FOR_PCT so its 400%
+  // figure is omitted entirely rather than leading with it.
   const entIdx = capturedPrompt.indexOf('Entertainment: over budget ($1,800 of $1,000)');
-  const restIdx = capturedPrompt.indexOf('Restaurants trending 60% above your usual');
-  const clothIdx = capturedPrompt.indexOf('Clothing trending 400% above your usual');
+  const restIdx = capturedPrompt.indexOf('Restaurants: $600 more than usual (60% above usual)');
+  const clothIdx = capturedPrompt.indexOf('Clothing: $400 more than usual');
   assert.ok(entIdx !== -1, `expected Entertainment over-budget line in prompt spendingContext; got: ${capturedPrompt.match(/Spending signal:[^\n]*/)}`);
-  assert.ok(restIdx !== -1, 'expected Restaurants trend line in prompt spendingContext');
-  assert.ok(clothIdx !== -1, 'expected Clothing trend line in prompt spendingContext');
+  assert.ok(restIdx !== -1, `expected Restaurants trend line in prompt spendingContext; got: ${capturedPrompt.match(/Spending signal:[^\n]*/)}`);
+  assert.ok(clothIdx !== -1, `expected Clothing trend line in prompt spendingContext; got: ${capturedPrompt.match(/Spending signal:[^\n]*/)}`);
+  assert.doesNotMatch(capturedPrompt, /Clothing[^;]*400%/, 'Clothing\'s tiny $100 baseline must not lead with a 400% figure');
   assert.ok(entIdx < restIdx && restIdx < clothIdx, 'must be ranked by dollar impact ($800 > $600 > $400), not by percentage (400% > 60%)');
 
   assert.doesNotMatch(

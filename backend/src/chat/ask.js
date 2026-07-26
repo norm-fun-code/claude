@@ -205,11 +205,19 @@ async function personalSnapshot() {
       const v = rows.map((r) => Number(r.value)).filter(Number.isFinite);
       return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
     };
+    // HRV/resting-HR are source-locked to overnight Eight Sleep readings —
+    // the SAME lock recovery.js applies for every recovery-comparable read —
+    // so Ask's "recent trend" for these two metrics can never silently blend
+    // in a daytime Apple Watch reading and answer with a number that
+    // disagrees with the Health tab's overnight-anchored one (source-distinct
+    // HRV, truth-and-evidence contract, audit priority #1).
+    const { RECOVERY_SOURCE_LOCK } = require('../intelligence/recovery');
     for (const { domain, metric } of keys.filter(({ domain, metric }) => cat.isTracked(domain, metric)).slice(0, 25)) {
       const agg = cat.aggFor(metric);
+      const sources = RECOVERY_SOURCE_LOCK[`${domain}:${metric}`] ?? null;
       const [recent, prior] = await Promise.all([
-        metricsStore.dailyAggregatePreferSource({ domain, metric, from: d7, agg }),
-        metricsStore.dailyAggregatePreferSource({ domain, metric, from: d14, to: d7, agg }),
+        metricsStore.dailyAggregatePreferSource({ domain, metric, from: d7, agg, sources }),
+        metricsStore.dailyAggregatePreferSource({ domain, metric, from: d14, to: d7, agg, sources }),
       ]);
       const r = avg(recent);
       const p = avg(prior);

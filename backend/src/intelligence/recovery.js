@@ -5,6 +5,21 @@
 // (analyze.js) feeds it the same per-metric series it already loads.
 const stats = require('./stats');
 
+// HRV and resting HR are autonomic recovery signals read overnight from
+// Eight Sleep — source-locked here (and everywhere else that reads them for
+// a recovery-comparable purpose) to NIGHT_SOURCES so a daytime Apple Watch
+// reading (structurally higher/lower — see recovery.js's own doc comments)
+// never silently blends into a night-vs-night baseline or gets returned as
+// if it were the overnight figure. Exported so every non-recovery consumer
+// of these two metrics for a "recovery-equivalent" read (chat/ask.js,
+// chat/realtimeTools.js) shares this SAME lock instead of re-deriving it
+// (truth-and-evidence contract, audit priority #1 — source-distinct HRV).
+const NIGHT_SOURCES = ['eight_sleep', 'eight_sleep_baseline'];
+const RECOVERY_SOURCE_LOCK = {
+  'health:hrv': NIGHT_SOURCES,
+  'health:resting_hr': NIGHT_SOURCES,
+};
+
 /** Format decimal hours as "Xh Ym" — mirrors mobile's formatHM utility. */
 function fmtHM(hours) {
   if (hours == null || !Number.isFinite(hours)) return '—';
@@ -440,13 +455,21 @@ function fitnessFinding(seriesByKey) {
   const per90 = fit && fit.slope != null ? fit.slope * 90 : null;
   const { title, detail } = formatFitnessFinding(current, per90);
 
+  const lastDay = vo2[vo2.length - 1]?.day;
   return {
     type: 'fitness',
     domains: ['health'],
     title,
     detail,
     confidence: 0.8,
-    evidence: { auto: true, kind: 'fitness', metric: 'health:vo2_max', current: round1(current), per90: per90 == null ? null : round1(per90), n: vo2.length },
+    evidence: {
+      auto: true, kind: 'fitness', metric: 'health:vo2_max',
+      current: round1(current), per90: per90 == null ? null : round1(per90), n: vo2.length,
+      // asOf lets every reader of this SAME fact (Health screen, Ask
+      // context, briefing) agree on when "current" was actually measured,
+      // not just what the number is (truth-and-evidence contract).
+      asOf: lastDay ? new Date(lastDay).toISOString() : null,
+    },
   };
 }
 
@@ -489,30 +512,41 @@ function computeHealthComposites(seriesByKey, opts = {}) {
   const MIN = 0.08; // ~5 min threshold
   const balance7 = sleepBalance7(sleep, sleepNeedSeries);
 
+  // How many of the last 7 sleep-hours points came from a self-report
+  // (approximate, ~8h) rather than a device measurement — see
+  // opts.selfReportedSleepNights, threaded in by analyze.js. When any did,
+  // the 7-day net can't honestly claim minute-level precision (truth-and-
+  // evidence contract, audit priority #1: never manufacture minute-level
+  // sleep debt from an approximate self-reported input) — round to the
+  // nearest QUARTER HOUR instead of the nearest minute, and say so.
+  const hasSelfReportNight = Number(opts.selfReportedSleepNights) > 0;
+  const roundDebt = (h) => (hasSelfReportNight ? Math.round(h * 4) / 4 : h);
+  const approxNote = hasSelfReportNight ? ' Includes a self-reported (approximate) night, so this is a rounded estimate.' : '';
+
   if (balance7 != null) {
     const { net, nights } = balance7;
     const nightCtx = lastNight != null && eightSleepNeed != null
       ? ` Last night: ${fmtHM(lastNight)} vs your ${fmtHM(eightSleepNeed)} need.`
       : '';
     if (net <= -MIN) {
-      const debtFmt = fmtHM(-net);
+      const debtFmt = fmtHM(roundDebt(-net));
       findings.push({
         type: 'sleep_debt',
         domains: ['health'],
         title: `Sleep debt: ${debtFmt}`,
-        detail: `Seven-day net sleep is ${debtFmt} below your need.${nightCtx}`,
-        confidence: 0.9,
-        evidence: { auto: true, kind: 'sleep_debt', debtHours: -net, lastNight, need: eightSleepNeed, source: 'seven_day_balance' },
+        detail: `Seven-day net sleep is ${debtFmt} below your need.${nightCtx}${approxNote}`,
+        confidence: hasSelfReportNight ? 0.6 : 0.9,
+        evidence: { auto: true, kind: 'sleep_debt', debtHours: roundDebt(-net), lastNight, need: eightSleepNeed, source: 'seven_day_balance', approximate: hasSelfReportNight },
       });
     } else if (net >= MIN) {
-      const surplusFmt = fmtHM(net);
+      const surplusFmt = fmtHM(roundDebt(net));
       findings.push({
         type: 'sleep_debt',
         domains: ['health'],
         title: `Sleep surplus: ${surplusFmt}`,
-        detail: `Seven-day net sleep is ${surplusFmt} above your need — well rested this week.${nightCtx}`,
-        confidence: 0.9,
-        evidence: { auto: true, kind: 'sleep_surplus', surplusHours: net, lastNight, need: eightSleepNeed, source: 'seven_day_balance' },
+        detail: `Seven-day net sleep is ${surplusFmt} above your need — well rested this week.${nightCtx}${approxNote}`,
+        confidence: hasSelfReportNight ? 0.6 : 0.9,
+        evidence: { auto: true, kind: 'sleep_surplus', surplusHours: roundDebt(net), lastNight, need: eightSleepNeed, source: 'seven_day_balance', approximate: hasSelfReportNight },
       });
     }
   } else if (lastNight != null && eightSleepNeed != null) {
@@ -609,13 +643,28 @@ function computeHealthComposites(seriesByKey, opts = {}) {
 /**
  * Subjective recovery proxy from a self-reported night — used on mornings with no
  * Eight Sleep reading. Sleep quality (1–5) is a validated readiness signal, so we
- * blend it (quality-weighted) with duration adequacy vs the user's need. Pure;
- * returns { score, parts } on the same 0–100 scale as recoveryBand, or null on
- * bad input.
+ * blend it (quality-weighted) with duration adequacy vs the user's need to get a
+ * single coarse `score` on the same 0-100 scale recoveryBand() expects, purely so
+ * this proxy can share the SAME green/yellow/red banding as a real device-derived
+ * reading elsewhere in the codebase. Pure; returns null on bad input.
+ *
+ * Deliberately does NOT return `parts` (truth-and-evidence contract, audit
+ * priority #1 — precision rules): a real device-derived recovery reading's
+ * `parts` are genuine percentiles vs a 30-day baseline (see
+ * formatRecoveryComposite/computeHealthComposites), and RecoveryCard.tsx
+ * renders them captioned "percentile vs your 30-day baseline". qScore/dScore
+ * here are NOT that — they're just this one estimate's internal weighting —
+ * so exposing them as `parts.quality`/`parts.duration` produced the exact
+ * false-precision bug this fixes: a bare "4/5, ~8h" self-report rendering as
+ * "Recovery 80, Quality 75, Duration 88" — three confident-looking numbers
+ * from one coarse rating. `category` is the honest, categorical summary the
+ * task's own wording asks for ("Good · provisional"), derived directly from
+ * the self-report, not manufactured.
  */
 function selfReportRecovery({ quality, hours, need = 7.5 } = {}) {
   const q = Number(quality);
   if (!Number.isFinite(q) || q < 1 || q > 5) return null;
+  const category = q >= 4 ? 'Good' : q >= 3 ? 'Fair' : 'Poor';
   // Quality 1..5 → soft 0..100 (never a literal 0/100). Interpolate non-integers.
   const QMAP = { 1: 20, 2: 38, 3: 55, 4: 75, 5: 92 };
   const lo = Math.max(1, Math.floor(q));
@@ -631,7 +680,7 @@ function selfReportRecovery({ quality, hours, need = 7.5 } = {}) {
     dScore = Math.max(10, Math.min(95, dScore));
   }
   const score = Math.max(5, Math.min(98, Math.round(0.6 * qScore + 0.4 * dScore)));
-  return { score, parts: { quality: Math.round(qScore), duration: Math.round(dScore) } };
+  return { score, category };
 }
 
 /** Load today's self-reported sleep and build a proxy recovery, or null. */
@@ -671,7 +720,11 @@ async function liveSelfReport(metricsStore, from60, todayLocal) {
         : 'You rated it a rough night — keep today easy (mobility or a walk) and protect tonight’s sleep.';
   const hStr = Number.isFinite(hours) && hours > 0 ? `, ~${fmtHM(hours)}` : '';
   return {
-    score: proxy.score, band, parts: proxy.parts,
+    // parts intentionally omitted — see selfReportRecovery's doc comment;
+    // `category` (+ `proxy: true`) is the honest categorical summary a
+    // consumer should render ("Good · provisional"), never split into
+    // manufactured "quality"/"duration" percentile-looking sub-scores.
+    score: proxy.score, band, category: proxy.category,
     detail: `${proxyGuidance} Based on your self-reported sleep (${Math.round(quality)}/5${hStr}) — no Eight Sleep reading last night.`,
     source: 'self_report', proxy: true, rawHrv: null, rawRhr: null,
     quality: Math.round(quality), hours: Number.isFinite(hours) ? hours : null,
@@ -711,15 +764,8 @@ async function liveRecoveryUncached() {
   const metricsStore = require('../store/metrics');
   const from60 = new Date(Date.now() - 60 * 864e5);
   // HRV and RHR are the autonomic recovery signals the user enters manually each
-  // morning from Eight Sleep (overnight). Source-lock them to eight_sleep (+ the
-  // seeded eight_sleep_baseline) so the night-vs-night baseline is consistent —
-  // daytime Apple Watch readings run higher and would make a normal overnight
-  // value look like a dip. Sleep can use any source (eight_sleep preferred).
-  const NIGHT_SOURCES = ['eight_sleep', 'eight_sleep_baseline'];
-  const SOURCE_LOCK = {
-    'health:hrv': NIGHT_SOURCES,
-    'health:resting_hr': NIGHT_SOURCES,
-  };
+  // morning from Eight Sleep (overnight). Sleep can use any source (eight_sleep
+  // preferred). See module-level RECOVERY_SOURCE_LOCK for why HRV/RHR are locked.
   const KEYS = ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score'];
   // Each key's fetch is independent — parallelize instead of one round trip at
   // a time (this function is called from several unrelated request paths, so
@@ -727,7 +773,7 @@ async function liveRecoveryUncached() {
   const results = await Promise.all(KEYS.map(async (key) => {
     const [dm, mt] = key.split(':');
     const rows = await metricsStore.dailyAggregatePreferSource({
-      domain: dm, metric: mt, from: from60, agg: 'avg', sources: SOURCE_LOCK[key] ?? null,
+      domain: dm, metric: mt, from: from60, agg: 'avg', sources: RECOVERY_SOURCE_LOCK[key] ?? null,
     });
     return [key, rows];
   }));
@@ -884,13 +930,11 @@ async function recoveryHistory({ days = 30 } = {}) {
   const metricsStore = require('../store/metrics');
   // Pull extra lead-in days so early points in the window still have a baseline.
   const from = new Date(Date.now() - (days + 40) * 864e5);
-  const NIGHT_SOURCES = ['eight_sleep', 'eight_sleep_baseline'];
-  const SOURCE_LOCK = { 'health:hrv': NIGHT_SOURCES, 'health:resting_hr': NIGHT_SOURCES };
   const seriesByKey = {};
   for (const key of ['health:hrv', 'health:resting_hr', 'health:sleep_hours', 'health:sleep_score']) {
     const [dm, mt] = key.split(':');
     const rows = await metricsStore.dailyAggregatePreferSource({
-      domain: dm, metric: mt, from, agg: 'avg', sources: SOURCE_LOCK[key] ?? null,
+      domain: dm, metric: mt, from, agg: 'avg', sources: RECOVERY_SOURCE_LOCK[key] ?? null,
     });
     if (rows.length) seriesByKey[key] = rows;
   }
@@ -959,4 +1003,6 @@ module.exports = {
   recoveryHistory,
   selfReportRecovery,
   needsSleepCheckIn,
+  NIGHT_SOURCES,
+  RECOVERY_SOURCE_LOCK,
 };

@@ -125,7 +125,7 @@ export interface HealthData {
 // Apple's VO2 max fitness classification for adult males (mL/kg/min).
 // VO2 max updates only during outdoor workouts so we show the most recent
 // reading rather than a daily value.
-function getVo2Category(vo2: number): string {
+export function getVo2Category(vo2: number): string {
   if (vo2 >= 55) return 'Very High';
   if (vo2 >= 48) return 'High';
   if (vo2 >= 42) return 'Above Average';

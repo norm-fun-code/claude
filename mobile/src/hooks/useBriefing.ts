@@ -59,6 +59,11 @@ export interface Insight {
   domains?: string[];
   // Stable key the server stamps on each insight; echoed back to dismiss it.
   dismissKey?: string;
+  // Structured, non-prose backing for this insight (e.g. the 'fitness'
+  // insight's { current, per90, n, asOf } — see brain/evidenceClaim.js's
+  // truth-and-evidence contract). Shape varies by insight type; read
+  // defensively.
+  evidence?: Record<string, unknown>;
 }
 
 export interface LeverageAction {
@@ -113,6 +118,11 @@ export interface WeeklyReview {
 export interface Wealth {
   netWorth: number | null;
   netWorthChange: number | null;
+  // The exact averaging window netWorthChange was computed over (audit
+  // priority #1, truth-and-evidence contract) — an honest date range instead
+  // of a hardcoded "~30 days" label.
+  netWorthChangeFrom?: string | null;
+  netWorthChangeTo?: string | null;
   spendingThisWeek: number;
   discretionaryThisWeek?: number | null;
   incomeThisWeek: number;
@@ -121,7 +131,19 @@ export interface Wealth {
   incomeThisMonth?: number;
   cashflowThisMonth?: number;
   discretionaryThisMonth?: number | null;
+  // Calendar month-to-date discretionary spend — distinct from the ROLLING
+  // 30-day discretionaryThisMonth above (audit priority #1 bug 7: MTD and
+  // rolling-30d figures must retain explicit, separate windows).
+  spendingMtd?: number | null;
+  mtdSince?: string | null;
+  // syncedAt is the net-worth metric's own AS-OF data date. sourceSyncedAt is
+  // when Monarch itself actually last ran a sync (from the sources table) —
+  // a genuinely different fact (audit priority #1 bug 9: "brief built" time
+  // doesn't distinguish per-source sync times). Neither is the same as the
+  // top-level BriefingData.builtAt, which is just when this API response was
+  // produced.
   syncedAt?: string | null;
+  sourceSyncedAt?: string | null;
 }
 
 export interface Alert {
@@ -166,6 +188,21 @@ export interface Recovery {
   detail: string | null;
   rawHrv?: number | null;
   rawRhr?: number | null;
+  // True when this reading is a SUBJECTIVE self-report proxy (no Eight Sleep
+  // reading last night — see backend intelligence/recovery.js's
+  // selfReportRecovery), not a device-derived measurement. `parts` is never
+  // populated for a proxy reading (no genuine percentile components to
+  // show); render `category` + "provisional" instead of implying the same
+  // precision as a real reading (truth-and-evidence contract, audit
+  // priority #1).
+  proxy?: boolean;
+  // Categorical summary for a proxy reading ('Good' | 'Fair' | 'Poor'),
+  // derived directly from the self-report — never a manufactured
+  // percentile sub-score.
+  category?: string;
+  // The actual self-report this proxy reading is based on.
+  quality?: number | null;
+  hours?: number | null;
 }
 
 export interface HealthComposite {
@@ -308,6 +345,20 @@ export interface BriefingData {
   // describes this build's own attempt, never a carried-forward card (see
   // chiefBriefStale) — null on a cached build that predates this contract.
   chiefBriefQuality?: { status?: 'fresh' | 'degraded' | 'failed'; [key: string]: unknown } | null;
+  // The local week (Sunday, YYYY-MM-DD — see backend store/intentions.js's
+  // weekStart()) whose goals chiefBrief's completion claims actually
+  // describe. Compare against weeklyGoals.current.weekStart to know
+  // whether they're the SAME period (truth-and-evidence contract, audit
+  // priority #1 — "Chief Brief says every goal is completed while This
+  // Week's Focus shows unchecked goals, and the UI does not identify the
+  // periods").
+  goalsWeekStart?: string | null;
+  // True when chiefBrief's goal claims reference a DIFFERENT week than
+  // weeklyGoals.current (the live current week) — e.g. a carried-forward
+  // chiefBrief from before the week rolled over. Show an explicit qualifier
+  // instead of letting "all goals done" (an earlier week) visually
+  // contradict this week's fresh unchecked goals.
+  chiefBriefGoalsStale?: boolean;
   experiments?: {
     completed: CompletedExperiment[];
     running: RunningExperiment[];

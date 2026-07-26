@@ -148,7 +148,16 @@ function SelfModelCard() {
           {/* Stats strip */}
           {(confirmedCount + runningCount + completedCount + goals.length) > 0 && (
             <View style={[styles.stats, { borderColor: c.border }]}>
-              <Stat label="CONFIRMED" value={String(confirmedCount)} sub="correlations" c={c} />
+              {/* "CONFIRMED" was misleading — this count is statistically-
+                  stable correlations (analyze.js's split-half gate), NOT
+                  proof from a completed self-experiment. A correlation is
+                  never called "confirmed" (truth-and-evidence contract,
+                  audit priority #1) — "ASSOCIATIONS" matches the tier this
+                  data actually is (see backend intelligence/consolidate.js's
+                  own "statistical associations ... not proven causes"
+                  framing). Actual confirmed-by-experiment results are the
+                  separate COMPLETED stat below. */}
+              <Stat label="ASSOCIATIONS" value={String(confirmedCount)} sub="in your data" c={c} />
               <View style={[styles.statDivider, { backgroundColor: c.border }]} />
               {/* "Active" (not "Running") — the backend count includes paused
                   experiments too, matching this card's own definition below
@@ -190,10 +199,11 @@ function SelfModelCard() {
             )}
           </View>
 
-          {/* Confirmed correlations */}
+          {/* Statistical associations — never "confirmed"/"proof" language;
+              see the ASSOCIATIONS stat above for why. */}
           {topFindings.length > 0 && (
             <View style={[styles.section, { borderTopColor: c.border }]}>
-              <Text style={[styles.sectionLabel, { color: c.subtext }]}>WHAT THE DATA CONFIRMS</Text>
+              <Text style={[styles.sectionLabel, { color: c.subtext }]}>OBSERVED PATTERNS IN YOUR DATA</Text>
               {topFindings.map((f, i) => (
                 <View key={i} style={styles.findingRow}>
                   <Text style={[styles.findingBullet, { color: c.accent }]}>↔</Text>

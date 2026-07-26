@@ -32,6 +32,13 @@ interface Props {
   // (which always describes THIS build's own attempt, never the carried
   // card) does not apply to it.
   quality?: { status?: string } | null;
+  // True when brief's goal-completion claims reference a DIFFERENT week than
+  // the live current one (see BriefingData.chiefBriefGoalsStale) — e.g. this
+  // brief still says "all goals done" from a week that has since rolled
+  // over. Shown as an explicit qualifier so it can never silently look like
+  // it's describing THIS week's (possibly still-open) goals (truth-and-
+  // evidence contract, audit priority #1).
+  goalsStale?: boolean;
   // Fast, scoped retry for just this card (seconds, not the full 60-90s
   // "Rebuild briefing") — wired to POST /api/briefing/chief-brief/rebuild.
   onRefresh?: () => void;
@@ -157,7 +164,7 @@ function BeatRow({ label, emoji, tint, text }: { label: string; emoji: string; t
 // UI until the next server-truth refetch.
 const answeredQuestions = new Set<string>();
 
-function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, onRefresh, refreshing, snapshotId }: Props) {
+function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsStale, onRefresh, refreshing, snapshotId }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   // Never render a degraded/failed chiefBrief (item C) — a stale carried-
@@ -422,6 +429,9 @@ function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, onRefre
       </View>
       {stale && brief && (
         <Text style={styles.staleNote}>Still yesterday's — tap ↻ to retry</Text>
+      )}
+      {!stale && goalsStale && brief && (
+        <Text style={styles.staleNote}>References an earlier week's goals — tap ↻ to refresh</Text>
       )}
 
       {brief ? (

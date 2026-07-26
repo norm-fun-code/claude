@@ -14,6 +14,13 @@ const MIN_SPEND = 50;       // ignore trivially small categories
 const SPIKE_RATIO = 1.15;   // 15%+ over your usual is noteworthy
 const SPIKE_DOLLARS = 100;  // ...and at least $100 more, so it's material
 const OVER_BUDGET = 1.05;  // 5%+ over budget is noteworthy
+// Below this baseline, a percentage overage is mostly an artifact of a tiny
+// denominator (a $100 avg category swinging to $500 reads as "400% above
+// usual" even though the dollar impact is modest) — omit the percentage
+// entirely below this line rather than lead with a manufactured-looking
+// number (truth-and-evidence contract, audit priority #1: "prefer dollar
+// deviation over huge percentages against tiny baselines").
+const SMALL_BASELINE_FOR_PCT = 150;
 
 // Categories paid as a single monthly lump sum, not a recurring daily spend —
 // projecting "on pace for $X" from day-of-month elapsed is nonsensical for
@@ -167,14 +174,20 @@ async function buildWealthInsights() {
       spikes.sort((a, b) => (b.projected - b.avg) - (a.projected - a.avg));
       const projected = currentIsThisMonth && projFactor > 1.05;
       for (const s of spikes.slice(0, 3)) {
+        const impactDollars = Math.round(s.projected - s.avg);
         const vsUsual = projected
           ? `You've spent ${fmt(s.current)} on ${s.category} so far this month — on pace for about ${fmt(s.projected)}, roughly ${s.over} above your recent average of ${fmt(s.avg)}.`
           : `You've spent ${fmt(s.current)} on ${s.category} this month — about ${s.over} more than your recent average of ${fmt(s.avg)}.`;
+        // Dollar-first title, percentage as secondary context — and OMITTED
+        // below SMALL_BASELINE_FOR_PCT, where it's mostly a tiny-denominator
+        // artifact (e.g. "Clothing trending 400% above your usual" from a
+        // $100 avg reads as far more alarming than the $400 it actually is).
+        const pctSuffix = s.avg >= SMALL_BASELINE_FOR_PCT ? ` (${s.over} above usual)` : '';
         insights.push({
           type: 'spending_pattern',
           tone: 'watch',
           category: s.category,
-          title: `${s.category} trending ${s.over} above your usual`,
+          title: `${s.category}: ${fmt(impactDollars)} more than usual${pctSuffix}`,
           // Trend vs the user's own history PLUS, when Monarch has a budget for
           // the category, where that trend lands against the budget — the two
           // reads the user actually cares about, on one card.
@@ -185,7 +198,7 @@ async function buildWealthInsights() {
           // alone makes the small-base one look far more urgent than it is
           // (product review finding). Callers should rank/select by this, not
           // by re-parsing "over" out of the title string.
-          evidence: { kind: 'spending_pattern', category: s.category, current: Math.round(s.current), projected: Math.round(s.projected), avg: Math.round(s.avg), impactDollars: Math.round(s.projected - s.avg) },
+          evidence: { kind: 'spending_pattern', category: s.category, current: Math.round(s.current), projected: Math.round(s.projected), avg: Math.round(s.avg), impactDollars },
         });
       }
     }
@@ -367,12 +380,29 @@ async function buildWealthInsights() {
 
   // Lead with the wins. Stable-sort by tone so the user sees what's going RIGHT
   // (saving 57%, net worth growing, under budget) before the watch-outs, instead
-  // of a wall of negatives — without dropping any signal. Order preserved within
-  // each tone band.
+  // of a wall of negatives — without dropping any signal. Within the 'watch'
+  // band, order by DOLLAR IMPACT (evidence.impactDollars), not insertion order —
+  // this is THE canonical ranking (truth-and-evidence contract, audit priority
+  // #1: "prefer dollar deviation over huge percentages against tiny baselines").
+  // Both spending_pattern and over_budget items carry impactDollars, so an
+  // objectively bigger over_budget overage (e.g. $800) always outranks a
+  // smaller spending_pattern spike (e.g. $400) regardless of which section of
+  // this function pushed it first. This is the ONE place that ranking happens —
+  // routes/briefing.js's chief-brief spendingContext reads THIS SAME ordering
+  // instead of independently re-sorting the same list a second time.
   const toneRank = { win: 0, neutral: 1, watch: 2 };
   deduped = deduped
     .map((ins, i) => ({ ins, i }))
-    .sort((a, b) => (toneRank[a.ins.tone] ?? 1) - (toneRank[b.ins.tone] ?? 1) || a.i - b.i)
+    .sort((a, b) => {
+      const toneDiff = (toneRank[a.ins.tone] ?? 1) - (toneRank[b.ins.tone] ?? 1);
+      if (toneDiff !== 0) return toneDiff;
+      const aDollars = a.ins.evidence?.impactDollars;
+      const bDollars = b.ins.evidence?.impactDollars;
+      if (typeof aDollars === 'number' && typeof bDollars === 'number' && aDollars !== bDollars) {
+        return bDollars - aDollars;
+      }
+      return a.i - b.i;
+    })
     .map((x) => x.ins);
 
   return deduped;

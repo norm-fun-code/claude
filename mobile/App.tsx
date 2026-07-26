@@ -278,6 +278,20 @@ export default function App() {
     });
   }, [d?.insights]);
 
+  // The ONE canonical VO2 max fact — the server's 'fitness' health insight
+  // (intelligence/recovery.js's fitnessFinding, the SAME authority "What The
+  // Data Shows" renders) — passed to HealthCard so its hero number can never
+  // silently disagree with the insights card (the "46.3 vs 46.6" production
+  // bug: the Health screen used to compute its own value straight off
+  // on-device HealthKit, independent of this server fact).
+  const vo2Fact = useMemo(() => {
+    const f = d?.healthInsights?.find((i) => i.type === 'fitness');
+    const current = f?.evidence?.current;
+    if (typeof current !== 'number') return null;
+    const asOf = f?.evidence?.asOf;
+    return { value: current, asOf: typeof asOf === 'string' ? asOf : null };
+  }, [d?.healthInsights]);
+
   // The quick-ask FAB reads this every render (it's a prop on AskOverlay) —
   // memoize so it isn't a fresh array each time only the recovery score's
   // digits are unchanged but something unrelated re-rendered App.
@@ -331,7 +345,7 @@ export default function App() {
               builtAt={liveRecovery.fetched ? undefined : (d?.fieldsBuiltAt?.recovery ?? d?.snapshotAt ?? d?.builtAt)}
             />
             <NightContextCard />
-            <HealthCard health={health} />
+            <HealthCard health={health} canonicalVo2={vo2Fact} />
             {/* healthInsights is the server-curated top set of health domain findings,
                 already scored and ranked. Habit/wellbeing-only findings go to the
                 merged CheckinHistoryCard in Today's collapsible. */}
@@ -453,6 +467,7 @@ export default function App() {
                     stale={d?.chiefBriefStale}
                     pending={d?.chiefBriefPending}
                     quality={d?.chiefBriefQuality}
+                    goalsStale={d?.chiefBriefGoalsStale}
                     onRefresh={briefing.refreshChiefBrief}
                     refreshing={briefing.chiefBriefRefreshing}
                     snapshotId={d?.snapshotId}
@@ -467,6 +482,7 @@ export default function App() {
                   stale={d?.chiefBriefStale}
                   pending={d?.chiefBriefPending}
                   quality={d?.chiefBriefQuality}
+                  goalsStale={d?.chiefBriefGoalsStale}
                   onRefresh={briefing.refreshChiefBrief}
                   refreshing={briefing.chiefBriefRefreshing}
                   snapshotId={d?.snapshotId}
