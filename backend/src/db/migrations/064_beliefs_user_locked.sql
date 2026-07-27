@@ -1,0 +1,19 @@
+-- Belief hardening pass: make belief controls genuinely authoritative.
+--
+-- Root cause 1: upsertBelief's ON CONFLICT WHERE clause only checked
+-- status = 'active', so nightly re-promotion silently overwrote a
+-- user-confirmed or user-edited belief's statement/evidence the next time
+-- the same deterministic dedup_key (e.g. a dismissal_pattern) recurred.
+-- user_locked is set by confirm() and updateStatement() and gates the
+-- upsert's content-overwrite path, same as status already gates it for
+-- retired rows.
+--
+-- Root cause 2: forget() was a hard DELETE, so the UNIQUE dedup_key
+-- constraint stopped protecting against resurrection the moment the row
+-- was gone, and the next matching nightly upsert did a plain INSERT.
+-- status now gets a third value, 'forgotten' — reusing the exact
+-- resurrection-prevention mechanism already proven for 'retired' — so
+-- forget() becomes an UPDATE (durable tombstone, no resurrection) instead
+-- of a DELETE. Existing rows are unaffected: default false / status
+-- untouched, fully backward-compatible with production data.
+ALTER TABLE beliefs ADD COLUMN IF NOT EXISTS user_locked BOOLEAN NOT NULL DEFAULT false;

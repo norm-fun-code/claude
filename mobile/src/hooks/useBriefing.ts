@@ -717,7 +717,16 @@ export function useBriefing(): BriefingState {
       try {
         const cachedV2 = await AsyncStorage.getItem(CACHE_KEY);
         if (cachedV2) {
-          if (!cancelled) setData(JSON.parse(cachedV2));
+          // Same same-local-day guard the v1->v2 migration below already
+          // applies (migrateV1Cache — the function is generic over shape,
+          // not actually v1-specific). Right after midnight, before
+          // fetchBriefing() below resolves, this cached v2 blob can still be
+          // yesterday's — without this check it would render as today's
+          // Chief Brief with no staleness signal for however long the
+          // network fetch takes.
+          const todayLocalDate = new Date().toLocaleDateString('en-CA');
+          const dayChecked = migrateV1Cache(JSON.parse(cachedV2), todayLocalDate);
+          if (dayChecked && !cancelled) setData(dayChecked);
         } else {
           // One-time v1 -> v2 migration (Chief Brief regression fix): an
           // already-poisoned v1 cache (chiefBrief: null written over a

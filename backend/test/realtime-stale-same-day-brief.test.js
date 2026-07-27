@@ -35,10 +35,13 @@ function fakeSnapshot(localDate) {
 test('a same-calendar-day brief whose fieldVersions predate a later recovery change is rejected as stale', async () => {
   const TODAY = '2026-06-11';
   const origBuild = snapshotMod.buildBrainSnapshot;
-  const origLatest = briefingsStore.latestBriefing;
+  // Belief/Chief-Brief hardening pass: getTodayContext() now resolves the
+  // newest PUBLISHABLE same-day row (latestPublishableDailyForLocalDay), not
+  // latestBriefing('daily') — mock the function it actually calls.
+  const origLatestPublishable = briefingsStore.latestPublishableDailyForLocalDay;
 
   snapshotMod.buildBrainSnapshot = async () => fakeSnapshot(TODAY);
-  briefingsStore.latestBriefing = async () => ({
+  briefingsStore.latestPublishableDailyForLocalDay = async () => ({
     generated_at: `${TODAY}T11:00:00.000Z`, // built THIS morning — same calendar day
     content: {
       localDate: TODAY,
@@ -79,14 +82,14 @@ test('a same-calendar-day brief whose fieldVersions predate a later recovery cha
     assert.equal(result.workout.type, 'Zone 2');
   } finally {
     snapshotMod.buildBrainSnapshot = origBuild;
-    briefingsStore.latestBriefing = origLatest;
+    briefingsStore.latestPublishableDailyForLocalDay = origLatestPublishable;
   }
 });
 
 test('a same-calendar-day brief whose fieldVersions MATCH the current bus is accepted as current', async () => {
   const TODAY = '2026-06-12';
   const origBuild = snapshotMod.buildBrainSnapshot;
-  const origLatest = briefingsStore.latestBriefing;
+  const origLatestPublishable = briefingsStore.latestPublishableDailyForLocalDay;
 
   snapshotMod.buildBrainSnapshot = async () => fakeSnapshot(TODAY);
   // Settle against the SAME authoritative source getTodayContext()'s internal
@@ -98,7 +101,7 @@ test('a same-calendar-day brief whose fieldVersions MATCH the current bus is acc
     effectiveWorkout: invalidation.versionOf('effectiveWorkout'),
     todayForecast: invalidation.versionOf('todayForecast'),
   };
-  briefingsStore.latestBriefing = async () => ({
+  briefingsStore.latestPublishableDailyForLocalDay = async () => ({
     generated_at: `${TODAY}T11:00:00.000Z`,
     content: {
       localDate: TODAY,
@@ -113,6 +116,6 @@ test('a same-calendar-day brief whose fieldVersions MATCH the current bus is acc
     assert.equal(result.synthesis, 'Fresh synthesis');
   } finally {
     snapshotMod.buildBrainSnapshot = origBuild;
-    briefingsStore.latestBriefing = origLatest;
+    briefingsStore.latestPublishableDailyForLocalDay = origLatestPublishable;
   }
 });

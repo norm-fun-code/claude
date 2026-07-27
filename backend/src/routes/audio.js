@@ -37,6 +37,13 @@ const { asyncHandler } = require('../middleware/asyncHandler');
  * eligible, and the newest one wins — no fallback to "whatever's freshest"
  * (audit fix, item 4, preserved) — so an older app build (or a client that
  * has no snapshotId yet) still only ever narrates genuinely current content.
+ *
+ * This resolves a ROW, not specifically a chief brief — /wisdom/audio reads
+ * unrelated fields (quote/notion passage) off the same row, and those can be
+ * perfectly fine on a day the chief brief itself degraded. So this function
+ * deliberately does NOT gate on isPublishableRow: the /briefing/audio route
+ * (chief-brief narration specifically) applies that check itself, with its
+ * own same-day publishable fallback, right where it decides what to narrate.
  */
 async function resolveDailyBriefingTarget(tz, day, snapshotId) {
   if (snapshotId) return briefingsStore.findBySnapshotId('daily', snapshotId);
@@ -70,7 +77,17 @@ function createAudioRouter() {
     // (see resolveDailyBriefingTarget's doc comment) — a client that omits
     // it (older app build) gets today's build, same as before.
     const snapshotId = typeof req.query.snapshotId === 'string' ? req.query.snapshotId : null;
-    const target = await resolveDailyBriefingTarget(tz, day, snapshotId);
+    let target = await resolveDailyBriefingTarget(tz, day, snapshotId);
+    // Chief-brief-specific same-day publishable fallback: an explicit
+    // snapshotId pin is never substituted (it means "narrate exactly this
+    // build"), but absent one, a degraded/pending/thin repair attempt that
+    // landed as today's newest row must not be narrated in place of the
+    // last valid same-day Chief Brief — same selector the mobile client's
+    // displayed content already falls back to (store/briefings.js's
+    // latestPublishableDailyForLocalDay).
+    if (!snapshotId && target?.content && !briefingsStore.isPublishableRow(target.content)) {
+      target = await briefingsStore.latestPublishableDailyForLocalDay(day, { tz });
+    }
     if (!target?.content) {
       // Distinct, machine-readable: an explicit snapshotId that couldn't be
       // found (stale/garbage id) is a DIFFERENT failure than "no snapshotId

@@ -52,7 +52,12 @@ async function buildContextPackage({ now = new Date() } = {}) {
     require('../store/lifeChapters').listActive().catch(() => []),
     require('../store/commitments').listActive({ limit: 5 }).catch(() => []),
     require('../store/intentions').currentIntention().catch(() => null),
-    require('../store/briefings').latestBriefing('daily').catch(() => null),
+    // The newest same-day row that's actually PUBLISHABLE (not merely the
+    // newest same-day row) — a degraded/pending repair attempt must not be
+    // narrated as "this morning's brief" in place of the last valid one.
+    // Naturally same-day-or-null, matching (and replacing) the old
+    // `briefDay === today` check below.
+    require('../store/briefings').latestPublishableDailyForLocalDay(today, { tz }).catch(() => null),
     require('../intelligence/recovery').liveRecovery().catch(() => null),
     // Only the last ~2 days, and only surfaced with an explicit today/yesterday
     // label below — never as undated "current" context.
@@ -90,13 +95,11 @@ async function buildContextPackage({ now = new Date() } = {}) {
   // ── CURRENT — each item carries its own date/label. These are the ONLY
   //    things that may be spoken of as today/yesterday.
   const current = [];
-  // Today's briefing snapshot ONLY if it was actually generated today; a
-  // yesterday's brief is stale and must not be narrated as "this morning".
-  const briefDay = briefing?.generated_at
-    ? new Date(briefing.generated_at).toLocaleDateString('en-CA', { timeZone: tz })
-    : null;
+  // `briefing` above is already scoped to today's newest PUBLISHABLE row (or
+  // null) — a yesterday's or degraded/pending brief never reaches here, so
+  // no separate same-day check is needed.
   const cb = briefing?.content?.chiefBrief;
-  if (cb && briefDay === today) {
+  if (cb) {
     if (cb.synthesis) current.push(`TODAY (${today}) — this morning's brief: ${cb.synthesis}`);
     if (cb.action) current.push(`TODAY (${today}) — suggested move: ${cb.action}`);
   }

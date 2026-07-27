@@ -79,10 +79,14 @@ function createCheckinRouter() {
     res.json({ days: [...byDay.values()] });
   }));
 
-  // Last N weekly review briefings — for the history panel on the Insights tab.
+  // Last N weekly review briefings — for the history panel on the Insights
+  // tab. Only weekly/quarterly kinds: 'daily' is the Chief Brief kind, and
+  // this route has no publishable-row filtering or day scoping, so letting
+  // it serve 'daily' rows would bypass every other Chief Brief consumer's
+  // selector contract (store/briefings.js's latestPublishableDailyForLocalDay).
   router.get('/briefings/history', asyncHandler(async (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 8, 20);
-    const kind = req.query.kind || 'weekly';
+    const kind = req.query.kind === 'quarterly' ? 'quarterly' : 'weekly';
     const rows = await briefingsStore.listBriefings({ kind, limit });
     res.json({ reviews: rows.map((r) => ({ content: r.content, generatedAt: r.generated_at })) });
   }));

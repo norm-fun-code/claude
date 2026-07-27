@@ -201,19 +201,18 @@ async function recentDailyBriefOpeners(days = 3) {
 }
 
 /**
- * TODAY's chief-of-staff brief (latest build this local day), or null before
- * the morning build exists. Lets the evening brief grade the morning's plan —
- * "this morning I asked for X; here's what actually happened."
+ * TODAY's DISPLAYED chief-of-staff brief — the newest same-day row that's
+ * actually publishable (latestPublishableDailyForLocalDay), not simply the
+ * newest same-day database row. Lets the evening brief grade the morning's
+ * ACTUAL plan — "this morning I asked for X; here's what actually
+ * happened" — using the same brief the user was shown, not a later failed/
+ * pending/thin repair attempt that never displayed. Returns null before any
+ * publishable build exists yet today.
  */
-async function todaysMorningBrief() {
-  const rows = await listBriefings({ kind: 'daily', limit: 10 });
-  const tz = process.env.TZ || 'America/New_York';
-  const localDay = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: tz });
-  const todayLocal = localDay(new Date());
-  for (const r of rows) {
-    if (localDay(r.generated_at) === todayLocal) return r.content?.chiefBrief ?? null;
-  }
-  return null;
+async function todaysMorningBrief(tz = process.env.TZ || 'America/New_York') {
+  const todayLocal = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  const row = await latestPublishableDailyForLocalDay(todayLocal, { tz });
+  return row?.content?.chiefBrief ?? null;
 }
 
 module.exports = {

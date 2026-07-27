@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, useColorScheme } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, useColorScheme, Alert } from 'react-native';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { BELIEFS_URL, authHeaders, fetchWithTimeout } from '../config';
@@ -37,21 +37,37 @@ function BeliefRow({ belief, onChanged, c, isDark }: {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(belief.statement);
   const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const act = useCallback(async (path: string, method: 'POST' | 'PATCH' | 'DELETE', body?: unknown) => {
     setBusy(true);
+    setActionError(null);
     try {
-      await fetchWithTimeout(`${BELIEFS_URL}/${belief.id}${path}`, {
+      const res = await fetchWithTimeout(`${BELIEFS_URL}/${belief.id}${path}`, {
         method, headers: authHeaders(), body: body ? JSON.stringify(body) : undefined,
       }, 10000);
+      if (!res.ok) {
+        setActionError(res.status === 404 ? 'This belief no longer exists.' : 'That action failed — please try again.');
+        return;
+      }
       onChanged();
     } catch {
-      // Best-effort — a failed action just leaves the belief as-is; the user
-      // can retry, and nothing here silently corrupts the durable record.
+      setActionError('Could not reach the server — please try again.');
     } finally {
       setBusy(false);
     }
   }, [belief.id, onChanged]);
+
+  const confirmForget = useCallback(() => {
+    Alert.alert(
+      'Forget this belief?',
+      'This is destructive: NormOS will stop surfacing it, and the same pattern can be relearned from scratch later. This cannot be undone from here.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Forget', style: 'destructive', onPress: () => act('', 'DELETE') },
+      ],
+    );
+  }, [act]);
 
   return (
     <View style={[styles.row, { borderBottomColor: c.border }]}>
@@ -98,11 +114,12 @@ function BeliefRow({ belief, onChanged, c, isDark }: {
               <TouchableOpacity onPress={() => act('/retire', 'POST')} disabled={busy} hitSlop={6}>
                 <Text style={[styles.actionText, { color: c.subtext }]}>Retire</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => act('', 'DELETE')} disabled={busy} hitSlop={6}>
+              <TouchableOpacity onPress={confirmForget} disabled={busy} hitSlop={6}>
                 <Text style={[styles.actionText, { color: '#FF6B6B' }]}>Forget</Text>
               </TouchableOpacity>
             </View>
           )}
+          {actionError ? <Text style={[styles.errorText, { color: '#FF6B6B' }]}>{actionError}</Text> : null}
         </>
       )}
     </View>
@@ -122,16 +139,24 @@ export function BeliefsCard() {
   const c = getColors(isDark);
   const [beliefs, setBeliefs] = useState<Belief[]>([]);
   const [loading, setLoading] = useState(true);
+  // Distinct from "no beliefs yet": a fetch/HTTP failure must never render as
+  // the honest empty state — that would be a false empty state hiding a real
+  // outage from the user.
+  const [loadError, setLoadError] = useState(false);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
       const res = await fetchWithTimeout(BELIEFS_URL, { headers: authHeaders() });
-      if (res.ok) {
-        const json = await res.json();
-        setBeliefs(json.beliefs ?? []);
+      if (!res.ok) {
+        setLoadError(true);
+        return;
       }
+      const json = await res.json();
+      setBeliefs(json.beliefs ?? []);
+      setLoadError(false);
     } catch {
-      // stay with whatever was last loaded
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -146,6 +171,13 @@ export function BeliefsCard() {
       <SectionHeader emoji="🧠" title="What NormOS currently believes" tint="blue" />
       {loading ? (
         <ActivityIndicator color={c.accent} style={{ marginVertical: spacing.md }} />
+      ) : loadError ? (
+        <View>
+          <Text style={[styles.errorText, { color: '#FF6B6B' }]}>Couldn't load beliefs — check your connection.</Text>
+          <TouchableOpacity onPress={load} hitSlop={6}>
+            <Text style={[styles.actionText, { color: c.accent, marginTop: spacing.xs }]}>Retry</Text>
+          </TouchableOpacity>
+        </View>
       ) : active.length === 0 ? (
         <Text style={[styles.empty, { color: c.subtext }]}>Nothing learned yet — this fills in as patterns are confirmed.</Text>
       ) : (
@@ -158,6 +190,7 @@ export function BeliefsCard() {
 const styles = StyleSheet.create({
   card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
   empty: { ...typography.caption, fontSize: 13, fontStyle: 'italic', marginTop: spacing.sm },
+  errorText: { ...typography.caption, fontSize: 13, marginTop: spacing.xs },
   row: { paddingVertical: spacing.sm, borderBottomWidth: 1, gap: 4 },
   rowHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   statusPill: { borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 2 },

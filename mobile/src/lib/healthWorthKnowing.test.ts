@@ -23,18 +23,61 @@ test('a live deviation (anomaly/strain) always outranks an evergreen data-qualit
   assert.equal(top[0].title, 'HRV dropped sharply', 'tier must beat raw confidence');
 });
 
-test('required 9: a duplicate sleep→HRV and sleep→resting-HR observation for the same night is consolidated into one', () => {
-  const hrvOne = ins({ title: 'Poor sleep linked to lower HRV', type: 'sleep_impact', confidence: 0.7 });
-  const rhrOne = ins({ title: 'Poor sleep linked to higher resting HR', type: 'sleep_impact', confidence: 0.6 });
-  const deduped = dedupeSleepAutonomicInsights([hrvOne, rhrOne]);
+test('required 9: two emissions of the SAME sleep->HRV observation (same type, same driver+outcome evidence) consolidate into the higher-confidence one', () => {
+  const strong = ins({
+    title: 'Poor sleep linked to lower HRV', type: 'sleep_impact', confidence: 0.7,
+    evidence: { driver: 'health:sleep_duration', outcome: 'health:hrv' },
+  });
+  const weak = ins({
+    title: 'Poor sleep linked to lower HRV (redo)', type: 'sleep_impact', confidence: 0.4,
+    evidence: { driver: 'health:sleep_duration', outcome: 'health:hrv' },
+  });
+  const deduped = dedupeSleepAutonomicInsights([strong, weak]);
   assert.equal(deduped.length, 1);
-  assert.equal(deduped[0].title, hrvOne.title, 'the more sensitive HRV-based reading is kept over the RHR duplicate');
+  assert.equal(deduped[0].title, strong.title, 'the higher-confidence emission of the identical observation is kept');
 });
 
-test('dedup never removes unrelated insights, or a lone HRV/RHR mention with nothing to dedupe against', () => {
-  const solo = ins({ title: 'HRV trending up this month', type: 'sleep_impact', confidence: 0.7 });
+test('a distinct resting-HR finding is never suppressed merely because an HRV sleep finding also fired — different evidence.outcome, different observation', () => {
+  const hrvFinding = ins({
+    title: 'Poor sleep linked to lower HRV', type: 'sleep_impact', confidence: 0.7,
+    evidence: { driver: 'health:sleep_duration', outcome: 'health:hrv' },
+  });
+  const rhrFinding = ins({
+    title: 'Poor sleep linked to higher resting HR', type: 'sleep_impact', confidence: 0.6,
+    evidence: { driver: 'health:sleep_duration', outcome: 'health:resting_hr' },
+  });
+  const deduped = dedupeSleepAutonomicInsights([hrvFinding, rhrFinding]);
+  assert.equal(deduped.length, 2, 'HRV and resting-HR are different metrics — both must survive');
+});
+
+test('dedup never removes unrelated insights, or a lone finding with nothing to dedupe against', () => {
+  const solo = ins({
+    title: 'HRV trending up this month', type: 'sleep_impact', confidence: 0.7,
+    evidence: { driver: 'health:sleep_duration', outcome: 'health:hrv' },
+  });
   const unrelated = ins({ title: 'Spending spike in dining', type: 'over_budget', confidence: 0.8 });
   assert.deepEqual(dedupeSleepAutonomicInsights([solo, unrelated]), [solo, unrelated]);
+});
+
+test('findings with no resolvable evidence identity are never deduped against each other, even with matching type/text', () => {
+  const a = ins({ title: 'Poor sleep linked to lower HRV', type: 'sleep_impact', confidence: 0.7 });
+  const b = ins({ title: 'Poor sleep linked to lower HRV', type: 'sleep_impact', confidence: 0.6 });
+  assert.deepEqual(dedupeSleepAutonomicInsights([a, b]), [a, b], 'no evidence shape to key on — never risk a false merge');
+});
+
+test('an unrecognized/unknown finding type defaults to the lowest (informational) tier, never the milestone tier', () => {
+  const unknown = ins({ title: 'Something new', type: 'a_brand_new_type_never_seen_before', confidence: 0.9 });
+  const milestone = ins({ title: 'Consistency streak', type: 'habit_consistency', confidence: 0.5 });
+  const top = selectWorthKnowing([unknown, milestone], 2);
+  assert.equal(top[0].title, milestone.title, 'a real milestone must outrank an unrecognized type despite lower confidence');
+});
+
+test('daytime_cardio (Apple Watch daytime HRV/RHR vs lifestyle levers) is classified as a confirmed pattern (tier 2), not demoted by the unknown-type fallback', () => {
+  const daytime = ins({ title: 'Eating well: daytime HRV higher', type: 'daytime_cardio', confidence: 0.6 });
+  const deviation = ins({ title: 'HRV dropped sharply', type: 'anomaly', confidence: 0.6 });
+  const milestone = ins({ title: 'Consistency streak', type: 'habit_consistency', confidence: 0.9 });
+  const top = selectWorthKnowing([milestone, daytime, deviation], 3);
+  assert.deepEqual(top.map((i) => i.title), [deviation.title, daytime.title, milestone.title], 'tier order: deviation > pattern > milestone');
 });
 
 test('selectWorthKnowing is pure and total on empty/missing input', () => {

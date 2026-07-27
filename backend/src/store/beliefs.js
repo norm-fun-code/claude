@@ -5,10 +5,12 @@ const { query } = require('../db');
 /**
  * Insert or refresh a belief. Keyed on dedup_key so re-promotion (which runs
  * nightly) updates the statement/evidence in place instead of duplicating.
- * A retired belief is NOT resurrected: once the user (or a future retire
- * pathway) has turned a belief off, the nightly promoter must not silently
- * turn it back on — the update only touches active rows' content, and the
- * insert path only fires when no row exists at all.
+ * A retired or forgotten belief is NOT resurrected, and a user_locked
+ * belief (one the user has confirmed or hand-edited) is NOT overwritten:
+ * the update only touches active, unlocked rows' content. The insert path
+ * only fires when no row exists at all — including forgotten rows, whose
+ * dedup_key still occupies the UNIQUE constraint, so a matching nightly
+ * upsert can never resurrect them as a fresh INSERT either.
  */
 async function upsertBelief({ kind, dedupKey, statement, confidence = null, evidence = {} }) {
   if (!kind || !dedupKey || !statement) throw new Error('kind, dedupKey, statement required');
@@ -20,11 +22,11 @@ async function upsertBelief({ kind, dedupKey, statement, confidence = null, evid
            confidence = EXCLUDED.confidence,
            evidence = EXCLUDED.evidence,
            updated_at = now()
-       WHERE beliefs.status = 'active'
+       WHERE beliefs.status = 'active' AND beliefs.user_locked = false
      RETURNING id`,
     [kind, dedupKey, statement, confidence, JSON.stringify(evidence)]
   );
-  return rows[0]?.id ?? null; // null = row exists but is retired (no-op)
+  return rows[0]?.id ?? null; // null = row exists but is retired/forgotten/locked (no-op)
 }
 
 /** Active beliefs, optionally filtered by kind(s). Fail-safe: [] on error, so
@@ -53,16 +55,26 @@ async function retire(dedupKey) {
   return rowCount > 0;
 }
 
-/** Every belief (active + retired), for the Patterns & experiments screen's
- *  "What NormOS currently believes" — unlike listActive() this is a
- *  read-only management view, not what gets injected into prompts. */
+/** Every belief the user is allowed to see (active + retired), for the
+ *  Patterns & experiments screen's "What NormOS currently believes" —
+ *  unlike listActive() this is a read-only management view, not what gets
+ *  injected into prompts. Forgotten beliefs are excluded: they stay in the
+ *  table for auditability (forget() never deletes), but forgotten content
+ *  must never be retrieved or surfaced to the user.
+ *
+ *  Deliberately NOT fail-safe: this store function has exactly one caller
+ *  (GET /beliefs, the management route), and swallowing a real DB error
+ *  into [] would render as an indistinguishable-from-genuine "nothing
+ *  learned yet" empty state — a false empty state the route must not show.
+ *  Let the error propagate; asyncHandler/errorHandler turn it into an
+ *  honest 5xx. Contrast with listActive(), whose sole caller is the
+ *  no-catch nightly pipeline, where fail-open is the correct behavior. */
 async function listAll({ limit = 200 } = {}) {
-  try {
-    const { rows } = await query(`SELECT * FROM beliefs ORDER BY updated_at DESC LIMIT $1`, [limit]);
-    return rows;
-  } catch {
-    return [];
-  }
+  const { rows } = await query(
+    `SELECT * FROM beliefs WHERE status != 'forgotten' ORDER BY updated_at DESC LIMIT $1`,
+    [limit]
+  );
+  return rows;
 }
 
 /** Retire by id (the management UI addresses beliefs by id, not dedup_key). */
@@ -76,33 +88,52 @@ async function retireById(id) {
 
 /** User-initiated "Confirm" (health tab redesign, audit rec #4) — an
  *  explicit affirmation distinct from the system's own confidence score.
+ *  Sets user_locked so the nightly promoter can no longer silently rewrite
+ *  this belief's statement/evidence out from under the user's confirmation
+ *  — the belief stays bound to the exact statement the user confirmed.
  *  Only meaningful on an active belief; a retired one must be un-retired
  *  first (there is no "confirm a retired belief" path — Edit/Confirm always
  *  act on what's currently shown, and a retired belief isn't shown as
  *  confirmable). */
 async function confirm(id) {
   const { rowCount } = await query(
-    `UPDATE beliefs SET confirmed_at = now(), updated_at = now() WHERE id = $1 AND status = 'active'`,
+    `UPDATE beliefs SET confirmed_at = now(), user_locked = true, updated_at = now()
+      WHERE id = $1 AND status = 'active'`,
     [id]
   );
   return rowCount > 0;
 }
 
-/** User edit of the belief's own statement text. */
+/** User edit of the belief's own statement text. The edited statement is
+ *  authoritative: this also sets user_locked so later automated extraction
+ *  can never silently overwrite what the user wrote. Only meaningful on an
+ *  active belief, matching confirm()/the UI (edit is only offered on
+ *  non-retired beliefs, and a forgotten belief is never listed at all). */
 async function updateStatement(id, statement) {
   if (!statement || !statement.trim()) throw new Error('statement required');
   const { rowCount } = await query(
-    `UPDATE beliefs SET statement = $2, updated_at = now() WHERE id = $1`,
+    `UPDATE beliefs SET statement = $2, user_locked = true, updated_at = now()
+      WHERE id = $1 AND status = 'active'`,
     [id, statement.trim()]
   );
   return rowCount > 0;
 }
 
-/** "Forget" — a hard delete, distinct from Retire (which keeps the row as
- *  history but stops surfacing it). Forget is for a belief the user says is
- *  simply wrong, not just no longer worth acting on. */
+/** "Forget" — a durable tombstone, distinct from Retire (which keeps the
+ *  row active-adjacent as visible history but stops injecting it into
+ *  prompts). Forget is for a belief the user says is simply wrong: content
+ *  must stop being retrieved/surfaced (listAll excludes status='forgotten'),
+ *  but the row is not hard-deleted — provenance for auditability survives,
+ *  and critically, the row keeps occupying its dedup_key's UNIQUE slot so
+ *  the next matching nightly upsert can never resurrect it via a fresh
+ *  INSERT (upsertBelief's ON CONFLICT path also refuses to touch a
+ *  non-'active' row's content, so it can't revive it via UPDATE either). */
 async function forget(id) {
-  const { rowCount } = await query(`DELETE FROM beliefs WHERE id = $1`, [id]);
+  const { rowCount } = await query(
+    `UPDATE beliefs SET status = 'forgotten', user_locked = true, updated_at = now()
+      WHERE id = $1 AND status != 'forgotten'`,
+    [id]
+  );
   return rowCount > 0;
 }
 

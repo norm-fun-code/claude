@@ -301,3 +301,59 @@ test('e2e — publish a valid morning brief, run a degraded later attempt, simul
   assert.equal(coldLaunchRes.body.chiefBrief.synthesis, MORNING, 'cold-launch GET /briefing after app restart must still show the identical morning Chief Brief');
   assert.ok(!coldLaunchRes.body.chiefBriefPending, 'must not be pending — real content is showing');
 });
+
+// ── Belief/Training/Worth-Knowing/Chief-Brief hardening pass — remaining
+// backend regression scenarios for item 4 (displayed-content contract). ──
+
+test('hardening — todaysMorningBrief() uses the newest PUBLISHABLE same-day row, not simply the newest same-day row', async (t) => {
+  t.after(cleanupAllTagged);
+  const GOOD = `${MARKER} the morning plan holds steady with nothing urgent.`;
+  await seedRow({ chiefBrief: { synthesis: GOOD, action: 'a', risk: 'r', move: 'm', openQuestion: '' } });
+  // A later, degraded/pending repair attempt landed as the newest same-day row.
+  await seedRow({ chiefBrief: null, chiefBriefPending: true, chiefBriefQuality: { status: 'failed' } });
+
+  const morning = await briefingsStore.todaysMorningBrief();
+  assert.ok(morning, 'expected the earlier good row to be returned');
+  assert.equal(morning.synthesis, GOOD, 'a later failed/pending row must not hide the valid earlier same-day brief');
+});
+
+test('hardening — todaysMorningBrief() returns null when no same-day row is publishable yet, never a thin/pending one', async (t) => {
+  t.after(cleanupAllTagged);
+  await seedRow({ chiefBrief: null, chiefBriefPending: true, chiefBriefQuality: { status: 'failed' } });
+  const morning = await briefingsStore.todaysMorningBrief();
+  assert.equal(morning, null);
+});
+
+test('hardening — cache-hit recovery of an older same-day Chief Brief does not overwrite the global payload\'s snapshotId/snapshotAt/builtAt with the recovered row\'s identity', async (t) => {
+  t.after(cleanupAllTagged);
+  const GOOD = `${MARKER} the earlier build today already covered everything that matters.`;
+  // Row A: older, good, own distinct snapshot identity.
+  await seedRow({
+    chiefBrief: { synthesis: GOOD, action: 'a', risk: 'r', move: 'm', openQuestion: '' },
+    snapshotId: 'OLD_SNAP_ID', builtAt: '2020-01-01T00:00:00.000Z', snapshotAt: '2020-01-01T00:00:00.000Z',
+  });
+  // Row B: newer, poisoned (becomes `prior` for the cache-hit path), own
+  // distinct — and NEWER — snapshot identity, matching what the rest of
+  // this same response (recovery/wealth/forecasts) still reflects.
+  await seedRow({
+    chiefBrief: null, chiefBriefPending: true, chiefBriefQuality: { status: 'failed' },
+    snapshotId: 'NEW_SNAP_ID', builtAt: '2030-01-01T00:00:00.000Z', snapshotAt: '2030-01-01T00:00:00.000Z',
+  });
+
+  const res = await request(app).get('/api/briefing').set(authHeader()).timeout(20000);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.chiefBrief.synthesis, GOOD, 'the recovered (older) Chief Brief content is displayed');
+
+  // The GLOBAL payload identity must stay `prior`'s own (the newer cut) —
+  // never overwritten by the older recovered row's identity, which would
+  // otherwise disagree with every other field in this same response.
+  assert.equal(res.body.snapshotId, 'NEW_SNAP_ID', 'global snapshotId must not be overwritten by the recovered row');
+  assert.equal(res.body.snapshotAt, '2030-01-01T00:00:00.000Z', 'global snapshotAt must not be overwritten by the recovered row');
+  assert.equal(res.body.builtAt, '2030-01-01T00:00:00.000Z', 'global builtAt must not be overwritten by the recovered row');
+
+  // chiefBriefProvenance, in contrast, MUST identify the snapshot/build that
+  // actually produced the displayed Chief Brief — the OLDER row's own identity.
+  assert.equal(res.body.chiefBriefProvenance?.snapshotId, 'OLD_SNAP_ID', 'chiefBriefProvenance must point at the recovered row\'s own snapshot');
+  assert.equal(res.body.chiefBriefProvenance?.builtAt, '2020-01-01T00:00:00.000Z', 'chiefBriefProvenance must point at the recovered row\'s own build time');
+  assert.equal(res.body.chiefBriefProvenance?.source, 'last_good');
+});

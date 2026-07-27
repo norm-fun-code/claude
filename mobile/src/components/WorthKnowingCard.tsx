@@ -16,6 +16,7 @@ const EVIDENCE_TIER_LABEL: Record<string, string> = {
   correlation: 'Confirmed pattern',
   sleep_impact: 'Confirmed pattern',
   activity_impact: 'Confirmed pattern',
+  daytime_cardio: 'Confirmed pattern',
   cross_context: 'Cross-domain pattern',
   training_load: 'Training trend',
   habit_consistency: 'Streak milestone',

@@ -7,6 +7,11 @@ import type { EffectiveWorkoutFact } from '../lib/healthState';
 
 interface Props {
   effectiveWorkout: EffectiveWorkoutFact | null | undefined;
+  // Shared Training drill-in invalidation contract (App.tsx): bumped
+  // whenever the Training drill-in closes, so this card's completion fetch
+  // re-fires even when a mutation (e.g. toggling completion on the SAME
+  // workoutId) didn't change effectiveWorkout?.workoutId at all.
+  refreshKey?: number;
   onOpenTraining: () => void;
   onSwap: () => void;
   onLogDifferent: () => void;
@@ -27,7 +32,7 @@ function todayKey(): string {
  * workout_completions endpoint WorkoutsPanel itself hydrates from, so the two
  * screens can never show a different "done" state for the same day.
  */
-function TrainingSummaryCard({ effectiveWorkout, onOpenTraining, onSwap, onLogDifferent }: Props) {
+function TrainingSummaryCard({ effectiveWorkout, refreshKey, onOpenTraining, onSwap, onLogDifferent }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [completion, setCompletion] = useState<WorkoutCompletionFact | null>(null);
@@ -47,7 +52,7 @@ function TrainingSummaryCard({ effectiveWorkout, onOpenTraining, onSwap, onLogDi
       }
     })();
     return () => { cancelled = true; };
-  }, [effectiveWorkout?.workoutId]);
+  }, [effectiveWorkout?.workoutId, refreshKey]);
 
   const summary = describeTrainingSummary(effectiveWorkout, completion);
 

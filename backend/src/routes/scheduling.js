@@ -107,9 +107,15 @@ function createSchedulingRouter() {
     }
   }));
 
-  // Weekly review — the reflective narrative.
+  // Weekly review — the reflective narrative. Only weekly/quarterly kinds are
+  // allowed here: 'daily' is the Chief Brief kind, and reading it through
+  // this route would bypass the publishable-row selector contract
+  // (store/briefings.js's latestPublishableDailyForLocalDay) every other
+  // Chief Brief consumer goes through, risking a degraded/pending row being
+  // shown as "the" review.
   router.get('/review', asyncHandler(async (req, res) => {
-    const wr = await briefingsStore.latestBriefing(req.query.kind || 'weekly');
+    const kind = req.query.kind === 'quarterly' ? 'quarterly' : 'weekly';
+    const wr = await briefingsStore.latestBriefing(kind);
     res.json(wr ? { ...wr.content, generatedAt: wr.generated_at } : null);
   }));
 

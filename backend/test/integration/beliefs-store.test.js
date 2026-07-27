@@ -62,6 +62,91 @@ test('listActive filters by kind', async () => {
   assert.equal(stmts[0].dedup_key, key('c1'));
 });
 
+// Belief hardening pass — genuine authority for confirm/edit/forget, and an
+// honest (non-swallowing) management read.
+test('a CONFIRMED belief stays bound to the exact statement the user confirmed — nightly re-promotion cannot silently change it', async () => {
+  const id = await beliefsStore.upsertBelief({
+    kind: 'dismissal_pattern', dedupKey: key('confirm-a'),
+    statement: 'Original nightly statement.', confidence: 0.6, evidence: { n: 3 },
+  });
+  assert.equal(await beliefsStore.confirm(id), true);
+
+  // The nightly promoter re-running the same deterministic dedupKey (the
+  // near-guaranteed nightly occurrence for dismissal_pattern/
+  // recommendation_outcome kinds) must be a no-op against a confirmed belief.
+  const reupsertId = await beliefsStore.upsertBelief({
+    kind: 'dismissal_pattern', dedupKey: key('confirm-a'),
+    statement: 'A newer nightly statement that would silently overwrite confirmation.', confidence: 0.9, evidence: { n: 9 },
+  });
+  assert.equal(reupsertId, null, 'upsert against a confirmed (locked) belief returns null (no-op)');
+
+  const { rows } = await db.query(`SELECT statement, confirmed_at, user_locked FROM beliefs WHERE id = $1`, [id]);
+  assert.equal(rows[0].statement, 'Original nightly statement.', 'confirmed statement is preserved, not overwritten');
+  assert.ok(rows[0].confirmed_at, 'confirmation timestamp is preserved');
+  assert.equal(rows[0].user_locked, true);
+});
+
+test('a user-EDITED belief is authoritative — later automated extraction cannot overwrite it', async () => {
+  const id = await beliefsStore.upsertBelief({
+    kind: 'user_statement', dedupKey: key('edit-a'), statement: 'System-extracted statement.',
+  });
+  assert.equal(await beliefsStore.updateStatement(id, 'User-corrected statement.'), true);
+
+  const reupsertId = await beliefsStore.upsertBelief({
+    kind: 'user_statement', dedupKey: key('edit-a'), statement: 'A later re-extraction that should not win.',
+  });
+  assert.equal(reupsertId, null, 'upsert against a user-edited (locked) belief returns null (no-op)');
+
+  const { rows } = await db.query(`SELECT statement, user_locked FROM beliefs WHERE id = $1`, [id]);
+  assert.equal(rows[0].statement, 'User-corrected statement.');
+  assert.equal(rows[0].user_locked, true);
+});
+
+test('"Forget" creates a durable tombstone — the same dedup key is never recreated by the next nightly upsert, and is excluded from listAll but not hard-deleted', async () => {
+  const id = await beliefsStore.upsertBelief({
+    kind: 'dismissal_pattern', dedupKey: key('forget-a'), statement: 'A belief the user says is simply wrong.',
+  });
+  assert.equal(await beliefsStore.forget(id), true);
+
+  // The next nightly run re-inferring the identical pattern must not
+  // resurrect it — neither via the UPDATE path (blocked by status check)
+  // nor via a fresh INSERT (blocked by the dedup_key UNIQUE constraint
+  // still being occupied by the tombstoned row).
+  const reupsertId = await beliefsStore.upsertBelief({
+    kind: 'dismissal_pattern', dedupKey: key('forget-a'), statement: 'The same pattern, re-inferred.',
+  });
+  assert.equal(reupsertId, null, 'forgotten belief is never resurrected');
+
+  const all = await beliefsStore.listAll({ limit: 500 });
+  assert.ok(!all.some((b) => b.dedup_key === key('forget-a')), 'forgotten content must not be retrieved or surfaced');
+
+  // Provenance for auditability is preserved — not hard-deleted.
+  const { rows } = await db.query(`SELECT status, statement FROM beliefs WHERE dedup_key = $1`, [key('forget-a')]);
+  assert.equal(rows.length, 1, 'the row still exists for auditability');
+  assert.equal(rows[0].status, 'forgotten');
+  assert.equal(rows[0].statement, 'A belief the user says is simply wrong.');
+});
+
+test('retired, forgotten, and active beliefs are unambiguous: listAll shows active+retired but never forgotten', async () => {
+  const activeId = await beliefsStore.upsertBelief({ kind: 'user_statement', dedupKey: key('state-active'), statement: 'Active.' });
+  const retiredId = await beliefsStore.upsertBelief({ kind: 'user_statement', dedupKey: key('state-retired'), statement: 'Retired.' });
+  const forgottenId = await beliefsStore.upsertBelief({ kind: 'user_statement', dedupKey: key('state-forgotten'), statement: 'Forgotten.' });
+  await beliefsStore.retireById(retiredId);
+  await beliefsStore.forget(forgottenId);
+
+  const all = await beliefsStore.listAll({ limit: 500 });
+  const byId = new Map(all.map((b) => [b.id, b]));
+  assert.equal(byId.get(activeId)?.status, 'active');
+  assert.equal(byId.get(retiredId)?.status, 'retired');
+  assert.equal(byId.get(forgottenId), undefined, 'forgotten belief is absent from listAll entirely');
+});
+
+test('listAll surfaces a real database failure honestly instead of a false empty state', async () => {
+  // A negative LIMIT is a genuine Postgres query error (LIMIT must not be
+  // negative) — listAll must propagate it, not swallow it into [].
+  await assert.rejects(() => beliefsStore.listAll({ limit: -1 }));
+});
+
 // End-to-end: dismissals in the real table -> promoteBeliefs() -> belief row ->
 // consolidate's self-model text carries it. This is the full path that makes
 // a thumb-tap pattern durable knowledge every surface sees.

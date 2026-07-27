@@ -539,6 +539,16 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     const todayLocalDay = new Date().toLocaleDateString('en-CA', { timeZone: tz });
     const priorLocalDay = prior.generated_at ? new Date(prior.generated_at).toLocaleDateString('en-CA', { timeZone: tz }) : null;
     const chiefBriefNeedsRecovery = priorLocalDay !== todayLocalDay || !briefingsStore.isPublishableRow(cachedContent);
+    // Set only when a recovery actually swaps in an OLDER row's chiefBrief —
+    // carries THAT row's own builtAt/snapshotId for chiefBriefProvenance
+    // (below) without touching cachedContent's global snapshotId/snapshotAt/
+    // builtAt. Those three feed todayCommandCenter and the rest of this same
+    // response (recovery/wealth/forecasts/todayForecast), which still
+    // reflect `prior`'s own (newer) snapshot cut — overwriting them with the
+    // recovered row's older identity would ship an internally inconsistent
+    // payload (chiefBriefProvenance is the ONLY place the recovered row's
+    // own build identity belongs).
+    let recoveredProvenance = null;
     if (chiefBriefNeedsRecovery) {
       try {
         const lastGoodRow = await briefingsStore.latestPublishableDailyForLocalDay(todayLocalDay, { tz });
@@ -548,8 +558,10 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
           cachedContent.chiefBriefPending = false;
           cachedContent.chiefBriefStale = true;
           cachedContent.goalsWeekStart = lastGoodRow.content.goalsWeekStart ?? null;
-          cachedContent.builtAt = lastGoodRow.content.builtAt ?? null;
-          cachedContent.snapshotId = lastGoodRow.content.snapshotId ?? null;
+          recoveredProvenance = {
+            builtAt: lastGoodRow.content.builtAt ?? null,
+            snapshotId: lastGoodRow.content.snapshotId ?? null,
+          };
         } else if (priorLocalDay !== todayLocalDay) {
           // No usable row for today exists at all, and `prior` is from a
           // previous day — an honest pending state, never yesterday's brief
@@ -870,8 +882,11 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
       chiefBrief: cachedContent.chiefBrief,
       source: cachedContent.chiefBriefStale ? 'last_good' : 'fresh',
       localDate: cachedContent.localDate ?? null,
-      builtAt: cachedContent.builtAt ?? null,
-      snapshotId: cachedContent.snapshotId ?? null,
+      // A recovered (older) row's own build identity — NOT this response's
+      // global builtAt/snapshotId, which stayed untouched above precisely so
+      // it wouldn't drift from the rest of this same payload.
+      builtAt: recoveredProvenance?.builtAt ?? cachedContent.builtAt ?? null,
+      snapshotId: recoveredProvenance?.snapshotId ?? cachedContent.snapshotId ?? null,
       attemptState: attemptStateFromQuality(cachedContent.chiefBriefQuality?.status ?? null, cachedContent.chiefBrief != null),
       attemptedAt: cachedContent.builtAt ?? null,
       reasonCodes: cachedContent.chiefBriefQuality?.reasonCodes ?? [],
@@ -2259,6 +2274,13 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     }
 
     const slim = (f) => ({ type: f.type, title: f.title, detail: f.detail, confidence: f.confidence, domains: f.domains });
+    // healthInsights additionally carries evidence: the mobile Worth Knowing
+    // dedup (healthWorthKnowing.ts) needs the underlying metric/comparison
+    // identity (evidence.metric / evidence.driver+outcome / evidence.a+b) to
+    // tell two DISTINCT findings (e.g. an HRV finding vs a resting-HR one)
+    // apart from two duplicate emissions of the SAME finding — a title/detail
+    // text match alone can't make that distinction safely.
+    const slimHealth = (f) => ({ ...slim(f), evidence: f.evidence });
 
     // Today's "What The Data Shows": the top of the curated pool, already ranked
     // by signal strength. The client splits this into health vs. habit cards by
@@ -2278,7 +2300,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     healthInsights = rankedPool
       .filter((f) => Array.isArray(f.domains) && f.domains.includes('health'))
       .slice(0, 5)
-      .map(slim);
+      .map(slimHealth);
     // NOTE: no VO2 "current" freshening needed here — this is the fresh-build
     // path, and analyze() (which just ran, see the ingest/analyze call above)
     // already read the latest vo2_max metric fresh when it computed this

@@ -27,6 +27,8 @@ function snippet(text, n = 240) {
 async function getTodayContext() {
   const { buildBrainSnapshot, realtimeTodayContext } = require('../brain/snapshot');
   const invalidation = require('../brain/invalidation');
+  const tz = process.env.TZ || 'America/New_York';
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
   const [snapshot, briefing] = await Promise.all([
     // Lean projection: get_today_context only needs recovery + effective workout
     // (+ the brief, fetched separately). Skip the heavy sections — wealth
@@ -42,7 +44,10 @@ async function getTodayContext() {
       // voice session's later turns (harden pass, item 2). resolvedContext
       // is a cheap DB-only read, not one of the heavy sections above.
     } }).catch(() => null),
-    require('../store/briefings').latestBriefing('daily').catch(() => null),
+    // The newest same-day row that's actually PUBLISHABLE — a degraded/
+    // pending repair attempt landing as today's newest row must not be
+    // narrated to the live voice session in place of the last valid brief.
+    require('../store/briefings').latestPublishableDailyForLocalDay(today, { tz }).catch(() => null),
     // Pull the authoritative (cross-instance) invalidation versions so a
     // SAME-CALENDAR-DAY brief that's nonetheless gone stale (recovery moved,
     // a workout was overridden, an annotation retired — all AFTER the brief

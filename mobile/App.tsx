@@ -204,6 +204,18 @@ export default function App() {
   // Health tab redesign (audit rec #4) — the three focused drill-ins, opened
   // as full-screen sheets rather than a new bottom-navigation tab.
   const [trainingOpen, setTrainingOpen] = useState(false);
+  // Shared Training drill-in invalidation contract: WorkoutsPanel's six
+  // mutation paths (complete/undo, log/remove substitute activity,
+  // swap/restore workout, log sets) all write through the backend's
+  // existing durable invalidation bus (bumpDurable), but nothing called
+  // back up to the parent to refetch what TrainingSummaryCard reads. Rather
+  // than a callback per mutation type, one contract covers all of them:
+  // closing the drill-in (a) reloads the briefing so `d.effectiveWorkout`
+  // picks up the version-gated cheap re-derivation the backend already does,
+  // and (b) bumps this generation counter so TrainingSummaryCard's own
+  // completion fetch re-fires even when workoutId itself didn't change
+  // (e.g. a same-workout complete/undo toggle).
+  const [trainingRefreshGen, setTrainingRefreshGen] = useState(0);
   const [patternsOpen, setPatternsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [pendingAskQ, setPendingAskQ] = useState('');
@@ -484,6 +496,7 @@ export default function App() {
             <HealthCard health={health} canonicalVo2={vo2Fact} />
             <TrainingSummaryCard
               effectiveWorkout={d?.effectiveWorkout}
+              refreshKey={trainingRefreshGen}
               onOpenTraining={() => setTrainingOpen(true)}
               onSwap={() => setTrainingOpen(true)}
               onLogDifferent={() => setTrainingOpen(true)}
@@ -503,7 +516,11 @@ export default function App() {
 
             <TrainingScreen
               visible={trainingOpen}
-              onClose={() => setTrainingOpen(false)}
+              onClose={() => {
+                setTrainingOpen(false);
+                briefing.reload();
+                setTrainingRefreshGen((g) => g + 1);
+              }}
               hrv={health.hrv}
               isDark={isDark}
               recoveryBand={liveRecovery.recovery?.band ?? null}

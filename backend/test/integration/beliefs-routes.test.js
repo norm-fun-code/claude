@@ -107,7 +107,7 @@ test('POST /api/beliefs/:id/retire moves it to retired — it still lists (as hi
   assert.ok(!active.some((b) => b.id === belief.id), 'a retired belief must never be re-promoted/injected as active');
 });
 
-test('DELETE /api/beliefs/:id ("Forget") hard-deletes — distinct from Retire', async () => {
+test('DELETE /api/beliefs/:id ("Forget") tombstones — never surfaced again via the API, but not hard-deleted (provenance preserved)', async () => {
   await beliefsStore.upsertBelief({
     kind: 'user_statement', dedupKey: key('f'),
     statement: 'Forget me.', confidence: 0.6, evidence: {},
@@ -120,7 +120,15 @@ test('DELETE /api/beliefs/:id ("Forget") hard-deletes — distinct from Retire',
 
   const after1 = (await request(app).get('/api/beliefs').set(authHeader())).body.beliefs
     .find((b) => b.id === belief.id);
-  assert.equal(after1, undefined, 'Forget must remove the row entirely, unlike Retire');
+  assert.equal(after1, undefined, 'Forget must never surface the belief again via the API, same observable behavior as Retire');
+
+  // Unlike Retire, the row is not merely hidden from prompts — it's a durable
+  // tombstone (status='forgotten'), not a hard delete: provenance survives
+  // for auditability even though the API never surfaces it again.
+  const { rows } = await db.query(`SELECT status, statement FROM beliefs WHERE id = $1`, [belief.id]);
+  assert.equal(rows.length, 1, 'the row still exists in the database for auditability');
+  assert.equal(rows[0].status, 'forgotten');
+  assert.equal(rows[0].statement, 'Forget me.');
 });
 
 test('a 404 for confirm/patch/retire/forget on a nonexistent id never throws', async () => {
