@@ -627,6 +627,8 @@ export default function App() {
                     snapshotId={d?.snapshotId}
                     risk={todayCC.risk}
                     error={Boolean(briefing.error)}
+                    buildState={briefing.buildState}
+                    buildFailure={briefing.buildFailure}
                   />
                 </CollapsibleSection>
               </AnimatedEntry>
@@ -644,6 +646,8 @@ export default function App() {
                   snapshotId={d?.snapshotId}
                   risk={todayCC.risk}
                   error={Boolean(briefing.error)}
+                  buildState={briefing.buildState}
+                  buildFailure={briefing.buildFailure}
                 />
               </AnimatedEntry>
             )}

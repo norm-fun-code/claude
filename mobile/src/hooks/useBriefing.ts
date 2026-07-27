@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BRIEFING_URL, BRIEFING_REBUILD_URL, BRIEFING_REBUILD_STATUS_URL, CHIEF_BRIEF_REBUILD_URL, authHeaders, fetchWithTimeout } from '../config';
+import type { BuildJobState } from '../lib/chiefBriefState';
 
 const API_URL = BRIEFING_URL;
 const CACHE_KEY = 'normos.briefing.v1';
@@ -521,6 +522,13 @@ export interface BriefingState {
   triggerRebuild: () => void; // non-blocking rebuild — responds in <1s, then polls
   chiefBriefRefreshing: boolean;    // scoped chief-brief-only retry in progress
   refreshChiefBrief: () => void;    // fast, scoped retry — seconds, not the full rebuild
+  // Today's durable build-job state, when one is known — lets the Chief Brief
+  // card distinguish "a build is genuinely running" from "a build finished and
+  // failed", instead of treating every empty-brief-without-a-fetch-error as
+  // still loading. null when no job row exists for today.
+  buildState: BuildJobState;
+  // Safe, non-prose diagnostics for the failure the card explains.
+  buildFailure: { reasonCodes: string[] | null; persistenceFailed: boolean } | null;
 }
 
 export function useBriefing(): BriefingState {
@@ -528,6 +536,15 @@ export function useBriefing(): BriefingState {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rebuilding, setRebuilding] = useState(false);
+  // Server truth about whether a build is ACTUALLY running right now, so the
+  // Chief Brief card can tell "still working" apart from "finished and
+  // failed". Without this the card could only infer in-flight from the
+  // absence of a client fetch error, so a build that completed hours ago with
+  // an unusable Chief Brief (HTTP 200, chiefBrief: null) pulsed a skeleton
+  // forever. null = no job row for today, which is NOT evidence of a build in
+  // flight (the automatic morning path doesn't mint job rows).
+  const [buildState, setBuildState] = useState<BuildJobState>(null);
+  const [buildFailure, setBuildFailure] = useState<{ reasonCodes: string[] | null; persistenceFailed: boolean } | null>(null);
   // Aborts any prior in-flight request when a new one starts, so foregrounding
   // can't leave two briefing fetches racing to setData (stale-data flash).
   const controllerRef = useRef<AbortController | null>(null);
@@ -540,6 +557,32 @@ export function useBriefing(): BriefingState {
   const lastOkRef = useRef(0);
   // Poll timer for async rebuild — cleared on unmount and on new rebuild start.
   const rebuildPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // One cheap, best-effort read of today's durable build job — ONLY called
+  // when a fetch came back with no Chief Brief, to answer the single question
+  // the briefing payload itself can't: is a build still running, or is this a
+  // finished failure? A 404 (no job today, e.g. the automatic morning path)
+  // clears to null rather than erroring, and the card then falls back to the
+  // server's own chiefBriefQuality verdict. Never sets `error` — this is
+  // supplementary diagnosis, and failing to reach it must not turn a
+  // successfully-loaded briefing into an error state.
+  const probeBuildState = useCallback(async () => {
+    try {
+      const res = await fetchWithTimeout(BRIEFING_REBUILD_STATUS_URL, { headers: authHeaders() }, 8000);
+      if (!res.ok) { setBuildState(null); setBuildFailure(null); return; }
+      const status: { state?: string; reasonCodes?: string[]; errorMessage?: string | null } = await res.json();
+      setBuildState((status.state as BuildJobState) ?? null);
+      setBuildFailure({
+        reasonCodes: Array.isArray(status.reasonCodes) ? status.reasonCodes : null,
+        persistenceFailed: typeof status.errorMessage === 'string' && status.errorMessage.includes('persistence_failed'),
+      });
+    } catch {
+      // Unreachable status endpoint tells us nothing — leave the card to its
+      // quality-verdict / time-bound fallbacks rather than guessing.
+      setBuildState(null);
+      setBuildFailure(null);
+    }
+  }, []);
 
   // Loads the warm server cache — instant, no LLM, no rebuild. The other two
   // refresh mechanisms (triggerRebuild's full async rebuild, refreshChiefBrief's
@@ -574,6 +617,19 @@ export function useBriefing(): BriefingState {
       setData(json);
       // Persist so the next app open shows this instantly (no spinner / cold start).
       AsyncStorage.setItem(CACHE_KEY, JSON.stringify(json)).catch(() => {});
+      // The fetch succeeded but there's no Chief Brief to show. That is either
+      // "a build is still running" or "a build finished and failed" — the
+      // briefing payload alone can't say which, and guessing "still running"
+      // is what produced an indefinitely pulsing skeleton over a build that
+      // had failed hours earlier. Ask the build-job endpoint exactly once.
+      // Any brief present (fresh OR carried-forward) means there's nothing to
+      // diagnose, so clear rather than leave a stale verdict on screen.
+      if (json?.chiefBrief == null) {
+        probeBuildState();
+      } else {
+        setBuildState(null);
+        setBuildFailure(null);
+      }
     } catch (err: unknown) {
       // An aborted request isn't a real error — a newer one took over.
       if (err instanceof Error && err.name === 'AbortError') return;
@@ -584,7 +640,7 @@ export function useBriefing(): BriefingState {
       // Only the latest request controls the spinner.
       if (myReqId === reqIdRef.current) setLoading(false);
     }
-  }, []);
+  }, [probeBuildState]);
 
   // On open: hydrate instantly from the last saved briefing (survives app close),
   // then quietly refresh in the background. Pull-to-refresh forces a fresh fetch.
@@ -641,6 +697,11 @@ export function useBriefing(): BriefingState {
     if (rebuilding) return;
     setRebuilding(true);
     setError(null);
+    // A build we just asked for IS in flight — clear any prior failure verdict
+    // immediately so the card shows progress rather than the old failure while
+    // the first status poll is still 5s out.
+    setBuildState('building');
+    setBuildFailure(null);
     if (rebuildPollRef.current) clearTimeout(rebuildPollRef.current);
 
     let buildId: string | null = null;
@@ -659,6 +720,7 @@ export function useBriefing(): BriefingState {
       buildId = json.buildId ?? null;
     } catch (err: unknown) {
       setRebuilding(false);
+      setBuildState(null); // never leave a phantom 'building' after a failed trigger
       setError(err instanceof Error ? err.message : 'Rebuild trigger failed');
       return;
     }
@@ -669,6 +731,10 @@ export function useBriefing(): BriefingState {
     const poll = async () => {
       if (attempts++ >= MAX_ATTEMPTS) {
         setRebuilding(false);
+        // Stop claiming a build is in flight once we've given up watching it —
+        // otherwise the card would keep showing a skeleton indefinitely, the
+        // exact failure mode this whole contract exists to prevent.
+        setBuildState(null);
         setError('Rebuild timed out — try again or check the server');
         return;
       }
@@ -678,8 +744,9 @@ export function useBriefing(): BriefingState {
           : BRIEFING_REBUILD_STATUS_URL;
         const res = await fetchWithTimeout(url, { headers: authHeaders() }, 12000);
         if (res.ok) {
-          const status: { buildId?: string; state?: string } = await res.json();
+          const status: { buildId?: string; state?: string; reasonCodes?: string[]; errorMessage?: string | null } = await res.json();
           if (!buildId && status.buildId) buildId = status.buildId;
+          setBuildState((status.state as BuildJobState) ?? null);
           if (status.state === 'ready') {
             // The job published a genuinely fresh brief — fetch the actual
             // content (the status poll itself is metadata-only).
@@ -689,13 +756,19 @@ export function useBriefing(): BriefingState {
               setData(json);
               AsyncStorage.setItem(CACHE_KEY, JSON.stringify(json)).catch(() => {});
             }
+            setBuildFailure(null);
             setRebuilding(false);
             return;
           }
           if (status.state === 'failed') {
             // A degraded/failed/unpersisted attempt — the existing `data`
             // (last known good, or none) is left exactly as it was; never
-            // rendered as if this attempt had succeeded.
+            // rendered as if this attempt had succeeded. The card reads
+            // buildState/buildFailure to explain WHY rather than spinning.
+            setBuildFailure({
+              reasonCodes: Array.isArray(status.reasonCodes) ? status.reasonCodes : null,
+              persistenceFailed: typeof status.errorMessage === 'string' && status.errorMessage.includes('persistence_failed'),
+            });
             setRebuilding(false);
             setError('Rebuild did not produce a usable brief — tap to try again.');
             return;
@@ -728,6 +801,10 @@ export function useBriefing(): BriefingState {
       const json: BriefingData = await res.json();
       setData(json);
       AsyncStorage.setItem(CACHE_KEY, JSON.stringify(json)).catch(() => {});
+      // A scoped retry that came back with a usable card clears the stale
+      // failure verdict; one that didn't leaves the card to explain why from
+      // this build's own chiefBriefQuality (already in `json`).
+      if (json?.chiefBrief != null) { setBuildState(null); setBuildFailure(null); }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Chief-brief refresh failed');
     } finally {
@@ -744,5 +821,7 @@ export function useBriefing(): BriefingState {
     triggerRebuild,                           // preferred: non-blocking rebuild with polling
     chiefBriefRefreshing,
     refreshChiefBrief,
+    buildState,
+    buildFailure,
   };
 }

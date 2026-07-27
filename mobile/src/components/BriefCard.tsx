@@ -9,7 +9,7 @@ import type { ChiefBrief } from '../hooks/useBriefing';
 import { BRIEFING_CONTEXT_URL, BRIEFING_AUDIO_URL, BRIEFING_ACTION_COMMIT_URL, BRIEFING_ACTION_ALTERNATES_URL, VOICE_TRANSCRIBE_URL, authHeaders, fetchWithTimeout } from '../config';
 import { voiceAvailable, ensureMicPermission, startRecording, stopRecording } from '../lib/voice';
 import { useBriefAudio } from '../hooks/useBriefAudio';
-import { resolveChiefBriefState } from '../lib/chiefBriefState';
+import { resolveChiefBriefState, hasBeenPendingTooLong, describeChiefBriefFailure, type BuildJobState } from '../lib/chiefBriefState';
 
 interface Props {
   brief: ChiefBrief | null | undefined;
@@ -64,6 +64,15 @@ interface Props {
   // attempt with NO content ever obtained shows an explicit Retry state
   // instead of an indefinite "Finishing today's brief…".
   error?: boolean;
+  // Today's durable build-job state (see useBriefing). The ONLY positive
+  // evidence that a build is genuinely running right now — without it, a
+  // build that finished hours ago having produced nothing usable was
+  // indistinguishable from one still in progress, and pulsed a skeleton
+  // forever. null = no job row today (the automatic morning path mints none),
+  // which is NOT evidence of a build in flight.
+  buildState?: BuildJobState;
+  // Safe, non-prose diagnostics used to explain WHY there's no brief.
+  buildFailure?: { reasonCodes: string[] | null; persistenceFailed: boolean } | null;
 }
 
 // THE ACTION is the one always-structured beat left on Today (see risk prop
@@ -207,7 +216,7 @@ function BriefSkeleton() {
   );
 }
 
-function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsStale, onRefresh, refreshing, snapshotId, risk, error }: Props) {
+function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsStale, onRefresh, refreshing, snapshotId, risk, error, buildState, buildFailure }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   // Never render a degraded/failed chiefBrief (item C) — a stale carried-
@@ -220,7 +229,43 @@ function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsSt
   // failed-with-retry, instead of `pending` alone driving a single static
   // "Finishing today's brief…" string regardless of whether we already had
   // good content or how long it's been.
-  const cardState = resolveChiefBriefState({ brief, pending: Boolean(pending), refreshing: Boolean(refreshing), error: Boolean(error) });
+  // Last-resort time bound on the skeleton, for when the server gives us NO
+  // verdict either way (a cached build predating the quality contract, or an
+  // unreachable status endpoint). Without this a skeleton could still run
+  // forever in exactly the cases we can't diagnose. Starts the clock the
+  // first time we render with no brief, and resets once one arrives.
+  const [noBriefSince, setNoBriefSince] = useState<number | null>(null);
+  const [tooLong, setTooLong] = useState(false);
+  useEffect(() => {
+    if (brief) { setNoBriefSince(null); setTooLong(false); return; }
+    setNoBriefSince((prev) => prev ?? Date.now());
+  }, [brief]);
+  useEffect(() => {
+    if (brief || noBriefSince == null) return;
+    // Re-evaluate on a timer rather than assuming a re-render will happen —
+    // nothing else necessarily changes while we sit in the loading state.
+    const id = setInterval(() => setTooLong(hasBeenPendingTooLong(noBriefSince, Date.now())), 5_000);
+    return () => clearInterval(id);
+  }, [brief, noBriefSince]);
+
+  const cardState = resolveChiefBriefState({
+    brief,
+    pending: Boolean(pending),
+    refreshing: Boolean(refreshing),
+    error: Boolean(error),
+    quality: quality?.status as 'fresh' | 'degraded' | 'failed' | undefined,
+    buildState,
+    pendingTooLong: tooLong,
+  });
+  // One short, honest sentence about what went wrong — never raw reason codes
+  // and never generated prose (the whole point of the quality gate is that
+  // unusable model output doesn't reach the screen).
+  const failureReason = describeChiefBriefFailure({
+    quality: quality?.status as 'fresh' | 'degraded' | 'failed' | undefined,
+    buildState,
+    reasonCodes: buildFailure?.reasonCodes ?? (quality as { reasonCodes?: string[] } | null | undefined)?.reasonCodes ?? null,
+    persistenceFailed: buildFailure?.persistenceFailed,
+  });
   const [note, setNote] = useState('');
   const [noteSaved, setNoteSaved] = useState(false);
   const [noteFailed, setNoteFailed] = useState(false);
@@ -595,6 +640,7 @@ function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsSt
               offer a deliberate, user-initiated retry (never auto-retried by
               a timer or by re-renders/polling). */}
           <Text style={styles.failedEmptyText}>Couldn't put together today's brief.</Text>
+          <Text style={styles.failedEmptyReason}>{failureReason}</Text>
           {onRefresh && (
             <Pressable
               onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onRefresh(); }}
@@ -871,6 +917,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 21,
     color: 'rgba(255,255,255,0.65)',
+    marginBottom: spacing.xs,
+  },
+  // The one-line "why" under the headline — quieter than the headline, so the
+  // card explains itself without turning a failure into a wall of text.
+  failedEmptyReason: {
+    fontFamily: FONTS.text,
+    fontSize: 13,
+    lineHeight: 19,
+    color: 'rgba(255,255,255,0.45)',
     marginBottom: spacing.md,
   },
   retryBtn: {
