@@ -52,7 +52,9 @@ const TRAINING_DAY_STATE = Object.freeze({
  * @param {Array<{activityType:string, label?:string}>} [input.loggedActualActivities]
  * @param {string|null} [input.snapshotId]
  * @param {number|null} [input.snapshotVersion]
- * @param {string|null} [input.resolvedAt] ISO timestamp; defaults to now.
+ * @param {string|null} [input.resolvedAt] ISO timestamp; null unless the
+ *   caller supplies one (never wall-clock "now" — see the field's own
+ *   comment below for why).
  */
 function resolveTrainingDayState({
   effectiveWorkout = null, loggedActualActivities = [],
@@ -76,7 +78,14 @@ function resolveTrainingDayState({
     loggedActualActivity: Array.isArray(loggedActualActivities) ? loggedActualActivities : [],
     provenance: effectiveWorkout?.source ?? null,
     snapshotId, snapshotVersion,
-    resolvedAt: resolvedAt || new Date().toISOString(),
+    // Deliberately NOT defaulted to `new Date()` — two independent
+    // resolutions of the SAME underlying effectiveWorkout (e.g.
+    // canonicalFactsFrom vs canonicalFacts(snapshot) in the same request)
+    // must produce byte-identical facts for the cross-surface-identity
+    // contract (see brain-snapshot-facts.test.js) to hold; a wall-clock
+    // default made two calls a millisecond apart compare unequal. Callers
+    // that want a real resolution timestamp pass one explicitly.
+    resolvedAt: resolvedAt ?? null,
   };
 }
 

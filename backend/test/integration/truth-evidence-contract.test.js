@@ -35,7 +35,9 @@ const MARKER = `truth-${Date.now()}`;
 const TEST_RUN_STARTED_AT = new Date();
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  // LOCAL (America/New_York) calendar date, not UTC — see the identical
+  // comment in today-command-center.test.js's todayIso().
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
 /** Minimal cache-eligible `briefings` row: recent generated_at (today, local),

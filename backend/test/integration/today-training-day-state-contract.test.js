@@ -24,7 +24,11 @@ const MARKER = `tds-${Date.now()}`;
 const TEST_RUN_STARTED_AT = new Date();
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  // LOCAL (America/New_York) calendar date, not UTC — getEffectiveWorkout
+  // and every other production "today" resolver key off the injected tz, so
+  // a UTC-date fixture silently misses its own override during the ET-behind-
+  // UTC window (~8pm-midnight ET), when UTC has already rolled to tomorrow.
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
 async function seedCachedBriefing(content) {
