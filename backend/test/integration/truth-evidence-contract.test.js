@@ -130,6 +130,11 @@ test('scenario 2 — a cached chiefBrief built against last week\'s goals is aut
   const priorWeek = intentionsStore.priorWeekStart ? intentionsStore.priorWeekStart() : null;
   const currentWeek = intentionsStore.weekStart();
   await intentionsStore.saveIntention({ weekStart: currentWeek, context: `${MARKER} current week`, goals: [{ text: `${MARKER} ship the thing`, achieved: false }] });
+  // store/chiefBriefRepairLedger.js's cooldown is ONE row per repair_reason,
+  // shared across every test file in this run — clear it first so an
+  // earlier file's failed goals_stale attempt (same real current week as
+  // contextKey) doesn't leave this repair ineligible.
+  await db.query(`DELETE FROM chief_brief_repair_attempts WHERE repair_reason = 'goals_stale'`);
   t.after(async () => {
     await db.query(`DELETE FROM weekly_intentions WHERE week_start = $1`, [currentWeek]);
   });

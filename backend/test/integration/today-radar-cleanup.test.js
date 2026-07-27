@@ -174,6 +174,9 @@ test('scenario 9 — the automatic goals-staleness repair never sends a push not
   const currentWeek = intentionsStore.weekStart();
   const priorWeek = intentionsStore.priorWeekStart();
   await intentionsStore.saveIntention({ weekStart: currentWeek, context: `${MARKER} current week`, goals: [{ text: `${MARKER} ship it`, achieved: false }] });
+  // See scenario 10's identical comment — the repair-attempt ledger is one
+  // row per repair_reason, shared across tests in this run.
+  await db.query(`DELETE FROM chief_brief_repair_attempts WHERE repair_reason = 'goals_stale'`);
   t.after(async () => { await db.query(`DELETE FROM weekly_intentions WHERE week_start = $1`, [currentWeek]); });
 
   await seedCachedBriefing({
@@ -193,11 +196,16 @@ test('scenario 9 — the automatic goals-staleness repair never sends a push not
   assert.equal(pushCalls, 0, 'automatic repair must never send a push notification — it is a silent, server-side correction');
 });
 
-// ── 10. Failed repair omits/degrades the stale claim instead of presenting it as current ──
-test('scenario 10 — when the repair attempt itself fails, the stale claim is never served as current; the response degrades to pending instead', async (t) => {
+// ── 10. Failed repair preserves the last-good card, still qualified as goals-stale ──
+test('scenario 10 — when the repair attempt itself fails, the last-good card is preserved (never deleted), still explicitly flagged goals-stale', async (t) => {
   const currentWeek = intentionsStore.weekStart();
   const priorWeek = intentionsStore.priorWeekStart();
   await intentionsStore.saveIntention({ weekStart: currentWeek, context: `${MARKER} current week 2`, goals: [{ text: `${MARKER} ship it too`, achieved: false }] });
+  // The repair-attempt ledger (store/chiefBriefRepairLedger.js) is ONE row
+  // per repair_reason, not per-test — clear it first so an earlier test's
+  // recorded failure (same 'goals_stale' reason, same real current week as
+  // contextKey) doesn't leave this test's own repair ineligible via cooldown.
+  await db.query(`DELETE FROM chief_brief_repair_attempts WHERE repair_reason = 'goals_stale'`);
   t.after(async () => { await db.query(`DELETE FROM weekly_intentions WHERE week_start = $1`, [currentWeek]); });
 
   await seedCachedBriefing({
@@ -206,9 +214,12 @@ test('scenario 10 — when the repair attempt itself fails, the stale claim is n
   });
 
   // A degraded (under-length) attempt — fails assessChiefBriefQuality, so
-  // performScopedChiefBriefRebuild's repair resolves to `failed`, and with
-  // treatPriorAsFreshFallback:false (the automatic caller's contract) must
-  // NOT carry forward `prior`'s stale chiefBrief either.
+  // performScopedChiefBriefRebuild's repair resolves to `failed`. Chief Brief
+  // regression fix (Backend requirement #6): a failed repair must NOT delete
+  // the whole card — it falls back to the last-known-good same-day content
+  // (here, the seeded row itself, since it's structurally usable and not
+  // pending), and chiefBriefGoalsStale stays the explicit qualifier on the
+  // one stale claim rather than the brief being nulled out.
   llm.generateText = async ({ system }) => {
     if (system.includes('chief of staff and data scientist')) {
       return {
@@ -222,14 +233,21 @@ test('scenario 10 — when the repair attempt itself fails, the stale claim is n
 
   const res = await request(app).get('/api/briefing').set(authHeader()).timeout(20000);
   assert.equal(res.status, 200);
-  assert.doesNotMatch(
+  assert.match(
     res.body.chiefBrief?.synthesis || '',
     /all of this week's goals are already done/,
-    'the old stale claim must never be knowingly served as current'
+    'a failed repair must preserve the last-good card, never delete it'
   );
-  assert.equal(res.body.chiefBriefPending, true, 'a failed repair with no fresh same-day prior must degrade to the honest pending state');
+  assert.equal(res.body.chiefBriefPending, false, 'a failed repair with a good same-day card to carry forward must not degrade to pending');
+  assert.equal(res.body.chiefBriefGoalsStale, true, 'the stale goal-dependent claim stays explicitly qualified until repair succeeds');
+  assert.ok(
+    ['degraded', 'failed'].includes(res.body.chiefBriefAttempt?.state),
+    `the attempt itself is honestly reported as non-fresh (got ${res.body.chiefBriefAttempt?.state})`
+  );
+  assert.ok(res.body.chiefBriefProvenance, 'provenance must be present since a Chief Brief IS being shown');
   const tcc = res.body.todayCommandCenter;
-  assert.equal(tcc.now.headline, 'Finishing today\'s brief…');
+  assert.notEqual(tcc.now.headline, 'Finishing today\'s brief…');
+  assert.equal(tcc.now.evidence.chiefBriefGoalsStale, true);
 });
 
 // ── 11. Rebuild-loop protection works ───────────────────────────────────────
@@ -237,6 +255,9 @@ test('scenario 11 — repeated cache-hit requests while repair keeps failing do 
   const currentWeek = intentionsStore.weekStart();
   const priorWeek = intentionsStore.priorWeekStart();
   await intentionsStore.saveIntention({ weekStart: currentWeek, context: `${MARKER} current week 3`, goals: [{ text: `${MARKER} ship it thrice`, achieved: false }] });
+  // See scenario 10's identical comment — the ledger is one row per
+  // repair_reason, shared across tests in this run.
+  await db.query(`DELETE FROM chief_brief_repair_attempts WHERE repair_reason = 'goals_stale'`);
   t.after(async () => { await db.query(`DELETE FROM weekly_intentions WHERE week_start = $1`, [currentWeek]); });
 
   await seedCachedBriefing({

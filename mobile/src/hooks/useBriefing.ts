@@ -3,9 +3,17 @@ import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BRIEFING_URL, BRIEFING_REBUILD_URL, BRIEFING_REBUILD_STATUS_URL, CHIEF_BRIEF_REBUILD_URL, authHeaders, fetchWithTimeout } from '../config';
 import type { BuildJobState } from '../lib/chiefBriefState';
+import { mergeBriefingResponse, migrateV1Cache } from '../lib/briefingMerge';
 
 const API_URL = BRIEFING_URL;
-const CACHE_KEY = 'normos.briefing.v1';
+// v2 (Chief Brief regression fix): normos.briefing.v1 used to act as BOTH
+// "the most recent raw server response" and "the last-known-good display
+// state" — the same key a destructive setData(json) wrote to directly. v2 is
+// written to ONLY via mergeBriefingResponse's output, never a raw response,
+// so whatever's cached here is always already last-good-safe. See
+// migrateV1Cache for one-time recovery of an already-poisoned v1 cache.
+const CACHE_KEY = 'normos.briefing.v2';
+const CACHE_KEY_V1 = 'normos.briefing.v1';
 
 export interface WeatherHour {
   time: string;
@@ -472,6 +480,24 @@ export interface BriefingData {
   // instead of letting "all goals done" (an earlier week) visually
   // contradict this week's fresh unchecked goals.
   chiefBriefGoalsStale?: boolean;
+  // Unambiguous displayed-content-vs-attempt-state contract (Chief Brief
+  // regression fix). `chiefBriefProvenance` describes WHAT chiefBrief above
+  // actually is (null exactly when chiefBrief is null); `chiefBriefAttempt`
+  // describes the health of the LATEST build/repair attempt, entirely
+  // independently — a failed/degraded attempt can report failure here while
+  // chiefBriefProvenance keeps pointing at still-good displayed content.
+  chiefBriefProvenance?: {
+    source: 'fresh' | 'last_good';
+    localDate: string | null;
+    builtAt: string | null;
+    snapshotId: string | null;
+  } | null;
+  chiefBriefAttempt?: {
+    state: 'none' | 'queued' | 'building' | 'fresh' | 'degraded' | 'failed';
+    attemptedAt: string | null;
+    reasonCodes: string[];
+    persistenceFailed: boolean;
+  } | null;
   experiments?: {
     completed: CompletedExperiment[];
     running: RunningExperiment[];
@@ -586,11 +612,20 @@ export function useBriefing(): BriefingState {
   // server's own chiefBriefQuality verdict. Never sets `error` — this is
   // supplementary diagnosis, and failing to reach it must not turn a
   // successfully-loaded briefing into an error state.
-  const probeBuildState = useCallback(async () => {
+  //
+  // Race-safe (Chief Brief regression fix, mobile requirement #9): `forReqId`
+  // is the fetchBriefing request this probe was launched for. If a NEWER
+  // request has already landed and updated state by the time this probe's
+  // response arrives, this late result is discarded — a late failed status
+  // probe must never blank/downgrade content a newer successful request
+  // already delivered.
+  const probeBuildState = useCallback(async (forReqId: number) => {
     try {
       const res = await fetchWithTimeout(BRIEFING_REBUILD_STATUS_URL, { headers: authHeaders() }, 8000);
+      if (forReqId !== reqIdRef.current) return;
       if (!res.ok) { setBuildState(null); setBuildFailure(null); return; }
       const status: { state?: string; reasonCodes?: string[]; errorMessage?: string | null } = await res.json();
+      if (forReqId !== reqIdRef.current) return;
       setBuildState((status.state as BuildJobState) ?? null);
       setBuildFailure({
         reasonCodes: Array.isArray(status.reasonCodes) ? status.reasonCodes : null,
@@ -599,6 +634,7 @@ export function useBriefing(): BriefingState {
     } catch {
       // Unreachable status endpoint tells us nothing — leave the card to its
       // quality-verdict / time-bound fallbacks rather than guessing.
+      if (forReqId !== reqIdRef.current) return;
       setBuildState(null);
       setBuildFailure(null);
     }
@@ -634,18 +670,29 @@ export function useBriefing(): BriefingState {
       // Ignore a stale response that a newer request has superseded.
       if (myReqId !== reqIdRef.current) return;
       lastOkRef.current = Date.now(); // mark a real success for the foreground throttle
-      setData(json);
+      // Non-destructive merge (Chief Brief regression fix): a response with
+      // no usable Chief Brief must never overwrite an existing same-day
+      // last-good one — see mergeBriefingResponse. Applies identically to
+      // cold-launch background refresh and pull/reload (this is the ONE
+      // fetchBriefing call site for both).
+      let merged: BriefingData = json;
+      setData((prev) => {
+        merged = mergeBriefingResponse(prev, json);
+        return merged;
+      });
       // Persist so the next app open shows this instantly (no spinner / cold start).
-      AsyncStorage.setItem(CACHE_KEY, JSON.stringify(json)).catch(() => {});
-      // The fetch succeeded but there's no Chief Brief to show. That is either
-      // "a build is still running" or "a build finished and failed" — the
-      // briefing payload alone can't say which, and guessing "still running"
-      // is what produced an indefinitely pulsing skeleton over a build that
-      // had failed hours earlier. Ask the build-job endpoint exactly once.
-      // Any brief present (fresh OR carried-forward) means there's nothing to
-      // diagnose, so clear rather than leave a stale verdict on screen.
-      if (json?.chiefBrief == null) {
-        probeBuildState();
+      AsyncStorage.setItem(CACHE_KEY, JSON.stringify(merged)).catch(() => {});
+      // The fetch succeeded but there's no Chief Brief to show (even after
+      // merge — i.e. no last-good card existed to protect either). That is
+      // either "a build is still running" or "a build finished and failed" —
+      // the briefing payload alone can't say which, and guessing "still
+      // running" is what produced an indefinitely pulsing skeleton over a
+      // build that had failed hours earlier. Ask the build-job endpoint
+      // exactly once. Any brief present (fresh OR carried-forward) means
+      // there's nothing to diagnose, so clear rather than leave a stale
+      // verdict on screen.
+      if (merged?.chiefBrief == null) {
+        probeBuildState(myReqId);
       } else {
         setBuildState(null);
         setBuildFailure(null);
@@ -668,8 +715,24 @@ export function useBriefing(): BriefingState {
     let cancelled = false;
     (async () => {
       try {
-        const cached = await AsyncStorage.getItem(CACHE_KEY);
-        if (cached && !cancelled) setData(JSON.parse(cached));
+        const cachedV2 = await AsyncStorage.getItem(CACHE_KEY);
+        if (cachedV2) {
+          if (!cancelled) setData(JSON.parse(cachedV2));
+        } else {
+          // One-time v1 -> v2 migration (Chief Brief regression fix): an
+          // already-poisoned v1 cache (chiefBrief: null written over a
+          // previously-good card by the pre-fix client) must not surface as
+          // today's brief — migrateV1Cache drops it while keeping the rest
+          // of the cached payload (Today/Radar/weather) usable instantly.
+          const cachedV1Raw = await AsyncStorage.getItem(CACHE_KEY_V1);
+          if (cachedV1Raw) {
+            const v1: BriefingData = JSON.parse(cachedV1Raw);
+            const todayLocalDate = new Date().toLocaleDateString('en-CA');
+            const migrated = migrateV1Cache(v1, todayLocalDate);
+            if (migrated && !cancelled) setData(migrated);
+            AsyncStorage.removeItem(CACHE_KEY_V1).catch(() => {});
+          }
+        }
       } catch {
         // ignore corrupt cache
       }
@@ -769,12 +832,17 @@ export function useBriefing(): BriefingState {
           setBuildState((status.state as BuildJobState) ?? null);
           if (status.state === 'ready') {
             // The job published a genuinely fresh brief — fetch the actual
-            // content (the status poll itself is metadata-only).
+            // content (the status poll itself is metadata-only). Still
+            // merged (not a raw setData) for consistency — a 'ready' job's
+            // own chiefBrief is always usable, so the merge is a no-op here,
+            // but going through the SAME merge point everywhere means there
+            // is exactly one place this rule can ever be implemented.
             const briefRes = await fetchWithTimeout(BRIEFING_URL, { headers: authHeaders() }, 12000);
             if (briefRes.ok) {
               const json: BriefingData = await briefRes.json();
-              setData(json);
-              AsyncStorage.setItem(CACHE_KEY, JSON.stringify(json)).catch(() => {});
+              let merged: BriefingData = json;
+              setData((prev) => { merged = mergeBriefingResponse(prev, json); return merged; });
+              AsyncStorage.setItem(CACHE_KEY, JSON.stringify(merged)).catch(() => {});
             }
             setBuildFailure(null);
             setRebuilding(false);
@@ -819,12 +887,19 @@ export function useBriefing(): BriefingState {
       const res = await fetchWithTimeout(CHIEF_BRIEF_REBUILD_URL, { method: 'POST', headers: authHeaders() }, 20000);
       if (!res.ok) throw new Error(`Server ${res.status}`);
       const json: BriefingData = await res.json();
-      setData(json);
-      AsyncStorage.setItem(CACHE_KEY, JSON.stringify(json)).catch(() => {});
+      // Non-destructive merge (Chief Brief regression fix): a failed scoped
+      // retry must retain whatever last-good card was already on screen —
+      // see mergeBriefingResponse. (The server itself already carries
+      // forward last-good content in `json` on a failed repair — see
+      // routes/briefing.js's performScopedChiefBriefRebuild — this is
+      // defense-in-depth against a stale/poisoned client cache.)
+      let merged: BriefingData = json;
+      setData((prev) => { merged = mergeBriefingResponse(prev, json); return merged; });
+      AsyncStorage.setItem(CACHE_KEY, JSON.stringify(merged)).catch(() => {});
       // A scoped retry that came back with a usable card clears the stale
       // failure verdict; one that didn't leaves the card to explain why from
-      // this build's own chiefBriefQuality (already in `json`).
-      if (json?.chiefBrief != null) { setBuildState(null); setBuildFailure(null); }
+      // this attempt's own chiefBriefQuality (already in `merged`).
+      if (merged?.chiefBrief != null) { setBuildState(null); setBuildFailure(null); }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Chief-brief refresh failed');
     } finally {

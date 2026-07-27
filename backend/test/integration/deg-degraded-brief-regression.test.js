@@ -277,6 +277,19 @@ test('DEG 6: with no prior fresh card, GET /api/briefing exposes chiefBriefPendi
 test('DEG 7: the original violated check name survives in chiefBriefQuality diagnostics after neutralization', async (t) => {
   await intentionsStore.saveIntention({ goals: [{ text: `${TEST_MARKER} Ship the Q3 report`, achieved: false }] });
   t.after(async () => { await db.query(`DELETE FROM weekly_intentions WHERE week_start = $1`, [intentionsStore.weekStart()]); });
+  const { rows: [{ now: baselineAt }] } = await db.query(`SELECT now() AS now`);
+  // Untagged (no TEST_MARKER) — this row's whole purpose is to be an opaque
+  // "some prior row exists" fixture for THIS test's diagnostics-survival
+  // assertion, so the shared afterEach's TEST_MARKER-scoped cleanup won't
+  // touch it. Since Chief Brief regression fix, store/briefings.js's
+  // resolveLastGoodChiefBrief treats ANY structurally-usable, non-pending
+  // chiefBrief as last-known-good REGARDLESS of that row's own quality
+  // verdict (by design — that's the fix for a second consecutive failure
+  // losing already-carried-forward content) — so this placeholder (and
+  // whatever row this test's own scoped rebuild below saves) must be
+  // explicitly deleted afterward, or later tests in this file that assume
+  // "no prior card exists" would incorrectly see it as last-good.
+  t.after(async () => { await db.query(`DELETE FROM briefings WHERE kind = 'daily' AND generated_at >= $1`, [baselineAt]); });
   await db.query(
     `INSERT INTO briefings (kind, content) VALUES ('daily', $1)`,
     [JSON.stringify({ chiefBrief: { synthesis: 'prior', action: 'a', risk: 'r', move: 'm' }, morningFocus: 'prior mf' })]

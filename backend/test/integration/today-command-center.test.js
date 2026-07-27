@@ -177,6 +177,11 @@ test('scenario 5 — a stale cross-week goal claim is automatically repaired bef
   const currentWeek = intentionsStore.weekStart();
   const priorWeek = intentionsStore.priorWeekStart();
   await intentionsStore.saveIntention({ weekStart: currentWeek, context: `${MARKER} current week`, goals: [{ text: `${MARKER} ship it`, achieved: false }] });
+  // store/chiefBriefRepairLedger.js's cooldown is ONE row per repair_reason,
+  // shared across every test file in this run (not scoped to this test) —
+  // clear it first so an earlier file's FAILED goals_stale attempt (same
+  // real current week as contextKey) doesn't leave this repair ineligible.
+  await db.query(`DELETE FROM chief_brief_repair_attempts WHERE repair_reason = 'goals_stale'`);
   t.after(async () => { await db.query(`DELETE FROM weekly_intentions WHERE week_start = $1`, [currentWeek]); });
 
   await seedCachedBriefing({

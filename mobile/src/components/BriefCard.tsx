@@ -219,11 +219,16 @@ function BriefSkeleton() {
 function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsStale, onRefresh, refreshing, snapshotId, risk, error, buildState, buildFailure }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
-  // Never render a degraded/failed chiefBrief (item C) — a stale carried-
-  // forward card (`stale`) is exempt since `quality` always describes THIS
-  // build's own attempt, not the fresh prior being shown.
-  const badQuality = !stale && (quality?.status === 'degraded' || quality?.status === 'failed');
-  const brief = badQuality ? null : rawBrief;
+  // The card renders whatever content it's given, verbatim (Chief Brief
+  // regression fix, mobile requirement #7) — `rawBrief` is already the
+  // server's (or useBriefing's merge function's) fully-resolved DISPLAY
+  // content; `quality`/`pending` describe the separate ATTEMPT state and are
+  // read below only to choose the loading/failure copy around the content,
+  // never to null the content out. Re-deriving a "is this good enough to
+  // show" verdict here was the exact bug: `quality` reflects the LATEST
+  // attempt, which can be degraded even while `rawBrief` is a perfectly good
+  // same-day card carried forward from an earlier attempt.
+  const brief = rawBrief;
   // Deterministic loading state machine (On My Radar audit item 8) — the
   // ONE place that decides skeleton vs. last-good-plus-"Updating…" vs.
   // failed-with-retry, instead of `pending` alone driving a single static

@@ -518,21 +518,63 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     } catch (err) {
       console.error('[briefing cache] weeklyGoals refresh failed:', err.message);
     }
+    // Apply insight dismissals live too, so dismissing a card sticks on the next
+    // instant cache reload rather than waiting for a full rebuild.
+    const cachedContent = { ...prior.content };
+
+    // Read-time recovery for an already-corrupted/pending `prior` row, AND
+    // for a `prior` that is honest but from a PREVIOUS calendar day (Chief
+    // Brief regression fix — Backend requirements #2/#3/#8/#9): `prior`'s OWN
+    // chiefBrief may be null/pending (a destructive repair row from before
+    // this fix, or a same-day build that never finished) even though an
+    // EARLIER same-day build published a perfectly good card — or `prior`
+    // itself may simply predate today (this cache-hit branch has no day
+    // boundary of its own; it only gates on TTL age, so a build from late
+    // last night can still be "not stale enough" to force a rebuild shortly
+    // after midnight). Either way, this never mutates or deletes anything —
+    // it only decides what THIS response's cachedContent.chiefBrief shows,
+    // and it is ALWAYS scoped to TODAY's actual local day (never a previous
+    // day's content silently masquerading as today's, and never reaching
+    // past today into an even-older day either).
+    const todayLocalDay = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    const priorLocalDay = prior.generated_at ? new Date(prior.generated_at).toLocaleDateString('en-CA', { timeZone: tz }) : null;
+    const chiefBriefNeedsRecovery = priorLocalDay !== todayLocalDay || !briefingsStore.isPublishableRow(cachedContent);
+    if (chiefBriefNeedsRecovery) {
+      try {
+        const lastGoodRow = await briefingsStore.latestPublishableDailyForLocalDay(todayLocalDay, { tz });
+        if (lastGoodRow) {
+          cachedContent.chiefBrief = lastGoodRow.content.chiefBrief;
+          cachedContent.morningFocus = lastGoodRow.content.morningFocus || '';
+          cachedContent.chiefBriefPending = false;
+          cachedContent.chiefBriefStale = true;
+          cachedContent.goalsWeekStart = lastGoodRow.content.goalsWeekStart ?? null;
+          cachedContent.builtAt = lastGoodRow.content.builtAt ?? null;
+          cachedContent.snapshotId = lastGoodRow.content.snapshotId ?? null;
+        } else if (priorLocalDay !== todayLocalDay) {
+          // No usable row for today exists at all, and `prior` is from a
+          // previous day — an honest pending state, never yesterday's brief
+          // shown as today's.
+          cachedContent.chiefBrief = null;
+          cachedContent.chiefBriefPending = true;
+          cachedContent.chiefBriefStale = false;
+        }
+      } catch (err) {
+        console.error('[briefing cache] last-good recovery scan failed:', err.message);
+      }
+    }
+
     // The cached chiefBrief's goal-completion claims were validated against
-    // whatever week was current AT BUILD TIME (content.goalsWeekStart) — if
-    // the week has rolled over since (weeklyGoals.current is now refreshed
-    // live, above, and can be a NEWER week), that chiefBrief can be
+    // whatever week was current AT BUILD TIME (cachedContent.goalsWeekStart)
+    // — if the week has rolled over since (weeklyGoals.current is now
+    // refreshed live, above, and can be a NEWER week), that chiefBrief can be
     // describing an already-past week's "all done" goals while this same
     // response's live weeklyGoals shows fresh unchecked ones. Flag it
     // explicitly rather than let the two silently disagree (truth-and-
     // evidence contract, audit priority #1).
     let chiefBriefGoalsStale = Boolean(
-      prior.content.goalsWeekStart && weeklyGoals?.current?.weekStart
-        && prior.content.goalsWeekStart !== weeklyGoals.current.weekStart
+      cachedContent.goalsWeekStart && weeklyGoals?.current?.weekStart
+        && cachedContent.goalsWeekStart !== weeklyGoals.current.weekStart
     );
-    // Apply insight dismissals live too, so dismissing a card sticks on the next
-    // instant cache reload rather than waiting for a full rebuild.
-    const cachedContent = { ...prior.content };
 
     // Automatic stale-period repair (Today-tab cleanup, Part 2): NormOS must
     // detect and repair a stale period-dependent claim itself, not knowingly
@@ -541,38 +583,36 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     // reused verbatim from the manual ↻ endpoint, not reimplemented) fixes
     // the overwhelmingly common case (the week rolled over; a fresh
     // generation against the now-current week's goals just isn't stale
-    // anymore). `treatPriorAsFreshFallback: false` is the one deliberate
-    // behavior difference from the manual endpoint: `prior` IS the stale
-    // content this call exists to replace, so a failed attempt must resolve
-    // to the honest pending state, never silently re-serve the same stale
-    // claim it was trying to fix.
+    // anymore). A FAILED repair attempt no longer nulls out chiefBrief (see
+    // performScopedChiefBriefRebuild's own header comment): it falls back to
+    // the same last-known-good content the recovery block above would have
+    // used, and chiefBriefGoalsStale (recomputed after the repair, below)
+    // stays the deterministic, explicit qualifier on the one stale
+    // goal-dependent claim — the brief itself is never deleted over it.
     //
-    // Loop protection: `cachedContent.goalsRepairAttempt` (persisted by
-    // performScopedChiefBriefRebuild on a FAILED attempt, cleared on
-    // success) is an explicit attempt/state cooldown marker, bound to the
-    // specific week it was trying to fix — an outage that makes every
+    // Loop protection: store/chiefBriefRepairLedger.js's durable
+    // 'goals_stale' attempt marker (a failed attempt records a cooldown tied
+    // to the specific week it was trying to fix — an outage that makes every
     // attempt fail degrades to "try again in REPAIR_COOLDOWN_MS" rather than
-    // firing a full LLM call on every single cache-hit request. No push
+    // firing a full LLM call on every single cache-hit request). No push
     // notification is sent from this path (performScopedChiefBriefRebuild
-    // only saves the briefing row; briefing.js's cache-hit serve has never
-    // sent notifications) and no unrelated section (recovery/wealth/
-    // insights/etc., all untouched here) is rebuilt.
+    // only saves the briefing row on SUCCESS; briefing.js's cache-hit serve
+    // has never sent notifications) and no unrelated section (recovery/
+    // wealth/insights/etc., all untouched here) is rebuilt.
     if (chiefBriefGoalsStale) {
       const REPAIR_COOLDOWN_MS = 10 * 60 * 1000;
-      const priorAttempt = cachedContent.goalsRepairAttempt;
-      const eligible = !priorAttempt
-        || priorAttempt.weekStart !== weeklyGoals?.current?.weekStart
-        || (Date.now() - new Date(priorAttempt.at).getTime()) > REPAIR_COOLDOWN_MS;
-      if (eligible) {
-        try {
-          const repaired = await performScopedChiefBriefRebuild(prior, {
-            treatPriorAsFreshFallback: false, repairReason: 'goals_stale',
-          });
+      const repairLedger = require('../store/chiefBriefRepairLedger');
+      try {
+        const eligible = await repairLedger.eligibleForRepair('goals_stale', {
+          contextKey: weeklyGoals?.current?.weekStart ?? null, cooldownMs: REPAIR_COOLDOWN_MS,
+        });
+        if (eligible) {
+          const repaired = await performScopedChiefBriefRebuild(prior, { repairReason: 'goals_stale' });
           Object.assign(cachedContent, repaired.content);
           chiefBriefGoalsStale = Boolean(cachedContent.chiefBriefGoalsStale);
-        } catch (err) {
-          console.error('[briefing cache] automatic goals-staleness repair failed:', err.message);
         }
+      } catch (err) {
+        console.error('[briefing cache] automatic goals-staleness repair failed:', err.message);
       }
     }
 
@@ -684,25 +724,20 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     // cachedContent.effectiveWorkout, never a stale one (a workout override
     // applied moments before this exact request must be reflected here).
     // Same idempotent, cooldown-gated, no-notification scoped rebuild
-    // mechanism as the goals-staleness repair above (performScopedChiefBriefRebuild)
-    // — reused, not reimplemented. Deliberately DIFFERENT from that repair on
-    // one point: treatPriorAsFreshFallback is true here, not false. Goals
-    // staleness re-serves a definitively FALSE claim ("all done") with no
-    // downstream check to catch it if the repair attempt fails, so it must
-    // degrade to honest "pending" rather than risk re-serving it. A
-    // trainingDayState-contract violation is different: todayCommandCenter.
-    // buildTodayCommandCenter (below) ALSO runs this same check on EVERY
-    // serve, unconditionally, and neutralizes the DISPLAY (deterministic
-    // conflict-resolution copy, action suppressed) regardless of whether
-    // this repair fires or succeeds. So when the LLM rebuild attempt itself
-    // fails, falling back to the prior (still-contradictory) chiefBrief is
-    // safe — it can never reach the user raw, because the guard below always
-    // re-checks it — and it's strictly better than discarding a whole
-    // otherwise-good cached brief down to "pending" over one bad field. This
-    // block's real job is fixing the underlying STORED text so other
-    // consumers of cachedContent.chiefBrief (Ask/voice, notifications) don't
-    // keep reading the bad copy either; the render-time guard is what
-    // actually keeps the user safe either way.
+    // mechanism as the goals-staleness repair above (performScopedChiefBriefRebuild),
+    // and the durable store/chiefBriefRepairLedger.js cooldown. A failed
+    // repair attempt falls back to the last-known-good same-day content
+    // (same as every other caller of performScopedChiefBriefRebuild) — safe
+    // even when that carried-forward text is the same still-contradictory
+    // brief, because todayCommandCenter.buildTodayCommandCenter (below) ALSO
+    // runs this same trainingDayState check on EVERY serve, unconditionally,
+    // and neutralizes the DISPLAY (deterministic conflict-resolution copy,
+    // action suppressed) regardless of whether this repair fires or
+    // succeeds — it can never reach the user raw. This block's real job is
+    // fixing the underlying STORED text so other consumers of
+    // cachedContent.chiefBrief (Ask/voice, notifications) don't keep reading
+    // the bad copy either; the render-time guard is what actually keeps the
+    // user safe either way.
     if (!cachedContent.chiefBriefPending && cachedContent.chiefBrief) {
       try {
         const { resolveTrainingDayState, validateTrainingDayContent } = require('../brain/trainingDayState');
@@ -713,12 +748,10 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
         });
         if (!valid) {
           const REPAIR_COOLDOWN_MS = 10 * 60 * 1000;
-          const priorAttempt = cachedContent.planConflictRepairAttempt;
-          const eligible = !priorAttempt || (Date.now() - new Date(priorAttempt.at).getTime()) > REPAIR_COOLDOWN_MS;
+          const repairLedger = require('../store/chiefBriefRepairLedger');
+          const eligible = await repairLedger.eligibleForRepair('plan_conflict', { cooldownMs: REPAIR_COOLDOWN_MS });
           if (eligible) {
-            const repaired = await performScopedChiefBriefRebuild(prior, {
-              treatPriorAsFreshFallback: true, repairReason: 'plan_conflict',
-            });
+            const repaired = await performScopedChiefBriefRebuild(prior, { repairReason: 'plan_conflict' });
             Object.assign(cachedContent, repaired.content);
           }
         }
@@ -828,9 +861,29 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
       console.error('[todayCommandCenter] cache-hit build failed:', err.message);
     }
 
+    // Unambiguous displayed-content-vs-attempt-state contract (Chief Brief
+    // regression fix, requirement #7) — computed from whatever cachedContent
+    // ended up holding above (untouched cache, or merged repair/recovery
+    // result), so it always describes what THIS response actually returns.
+    const { buildChiefBriefContract, attemptStateFromQuality } = require('../brain/chiefBriefContract');
+    const contractFields = buildChiefBriefContract({
+      chiefBrief: cachedContent.chiefBrief,
+      source: cachedContent.chiefBriefStale ? 'last_good' : 'fresh',
+      localDate: cachedContent.localDate ?? null,
+      builtAt: cachedContent.builtAt ?? null,
+      snapshotId: cachedContent.snapshotId ?? null,
+      attemptState: attemptStateFromQuality(cachedContent.chiefBriefQuality?.status ?? null, cachedContent.chiefBrief != null),
+      attemptedAt: cachedContent.builtAt ?? null,
+      reasonCodes: cachedContent.chiefBriefQuality?.reasonCodes ?? [],
+      persistenceFailed: Boolean(cachedContent.persistenceFailed),
+    });
+
     // Always serve the cache — never block the client on a 60-90s rebuild.
     // `stale: true` signals the app to show a "Rebuild briefing" button.
-    return { ...cachedContent, weeklyGoals, weeklyReview, chiefBriefGoalsStale, todayCommandCenter, cached: true, stale: isStale, cachedAgeMin: Math.round(ageMin) };
+    return {
+      ...cachedContent, weeklyGoals, weeklyReview, chiefBriefGoalsStale, todayCommandCenter,
+      ...contractFields, cached: true, stale: isStale, cachedAgeMin: Math.round(ageMin),
+    };
   }
 
   // Format today's date label
@@ -2480,30 +2533,36 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   // a null/invalid shape, so a schema-valid but degraded result (the exact
   // "Recovery is green at NN today." grounded-fallback case) shipped as-is,
   // looking indistinguishable from a real brief. The carry-forward target is
-  // also scoped to a FRESH SAME-DAY prior — never a degraded one (that would
-  // just ship the SAME false content a moment later) and never a stale
-  // cross-day one (yesterday's numbers/dates reading as today's is its own
-  // kind of wrong). hasPublishableFreshBriefToday is the exact same
-  // same-day + non-null + fresh-or-legacy predicate notify/morning.js uses
-  // to decide whether the automatic routine may skip a rebuild — reused here
-  // so "what counts as a good existing brief" can never drift between the
-  // two call sites.
-  const { hasPublishableFreshBriefToday } = require('../notify/morning');
+  // resolved by store/briefings.js's resolveLastGoodChiefBrief — the ONE
+  // shared "what's last-known-good?" primitive every carry-forward call site
+  // (this one, performScopedChiefBriefRebuild, the cache-hit serve) uses, so
+  // it can never drift between them. Deliberately NOT
+  // notify/morning.js's hasPublishableFreshBriefToday(prior): that predicate
+  // reads `prior`'s OWN chiefBriefQuality, which reflects prior's own build
+  // ATTEMPT, not whether prior's chiefBrief content is fit to display — a
+  // `prior` that itself carried forward an earlier fresh brief (chiefBriefStale:
+  // true) has a degraded quality but perfectly good content, and trusting
+  // quality there is exactly the bug that let a SECOND consecutive
+  // degraded/failed build delete an already-good, already-carried-forward
+  // brief. resolveLastGoodChiefBrief scans backward through same-day history
+  // instead of trusting prior's own quality stamp — never a stale cross-day
+  // fallback either (yesterday's numbers/dates reading as today's is its own
+  // kind of wrong).
   const thisAttemptFresh = geminiResult?.chiefBrief != null && geminiResult?.chiefBriefQuality?.status === 'fresh';
-  const priorFreshSameDay = hasPublishableFreshBriefToday(prior, { now: new Date() });
-  const chiefBriefStale = !thisAttemptFresh && priorFreshSameDay;
+  const lastGood = thisAttemptFresh ? null : await briefingsStore.resolveLastGoodChiefBrief(prior, { tz: process.env.TZ || 'America/New_York' });
+  const chiefBriefStale = !thisAttemptFresh && lastGood != null;
   if (chiefBriefStale) {
-    console.error('[briefing build] this build\'s own chiefBrief was missing or degraded quality — carrying forward today\'s existing fresh brief instead.');
-    errors.push({ service: 'chiefBrief', error: 'this build\'s attempt was missing or degraded quality; showing the existing fresh brief from earlier today' });
+    console.error('[briefing build] this build\'s own chiefBrief was missing or degraded quality — carrying forward today\'s existing good brief instead.');
+    errors.push({ service: 'chiefBrief', error: 'this build\'s attempt was missing or degraded quality; showing the existing good brief from earlier today' });
   }
-  // The carried-forward fallback needs its own suppression pass: `prior` was
-  // fetched at the START of this (potentially 60-90s) build, so if the user
-  // answered the open question WHILE this build was still running, this
-  // in-memory object predates that answer even though the DB row (and every
-  // OTHER cached build) was already updated by POST /briefing/context's
-  // atomic retirement. geminiResult.chiefBrief (the fresh path) was already
-  // suppression-checked above right after generation.
-  let finalChiefBrief = thisAttemptFresh ? geminiResult.chiefBrief : (chiefBriefStale ? prior.content.chiefBrief : null);
+  // The carried-forward fallback needs its own suppression pass: `lastGood`
+  // may have been resolved from a row read at the START of this (potentially
+  // 60-90s) build, so if the user answered the open question WHILE this
+  // build was still running, this in-memory object predates that answer even
+  // though the DB row (and every OTHER cached build) was already updated by
+  // POST /briefing/context's atomic retirement. geminiResult.chiefBrief (the
+  // fresh path) was already suppression-checked above right after generation.
+  let finalChiefBrief = thisAttemptFresh ? geminiResult.chiefBrief : (chiefBriefStale ? lastGood.chiefBrief : null);
   if (!thisAttemptFresh && finalChiefBrief?.openQuestion) {
     try {
       const openQuestionsTz = process.env.TZ || 'America/New_York';
@@ -2514,7 +2573,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
       console.error('[openQuestion dedup] failed (carried-forward brief):', err.message);
     }
   }
-  // Neither a fresh new attempt nor a fresh same-day prior exists — an
+  // Neither a fresh new attempt nor a good same-day prior exists — an
   // explicit PENDING state (see the response's chiefBriefPending field
   // below), never brain/claimValidator.js's groundedFallbackSentence()
   // shown as if it were a completed brief. morningFocus comes from the SAME
@@ -2522,11 +2581,11 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   // degraded attempt's morningFocus is just as unproven as its chiefBrief.
   const chiefBriefPending = finalChiefBrief == null;
   if (chiefBriefPending && geminiResult?.chiefBrief != null) {
-    console.error(`[briefing build] this build's chiefBrief was ${geminiResult?.chiefBriefQuality?.status ?? 'unknown'}-quality and no fresh same-day card exists to carry forward — reporting pending, not shipping degraded prose.`);
+    console.error(`[briefing build] this build's chiefBrief was ${geminiResult?.chiefBriefQuality?.status ?? 'unknown'}-quality and no good same-day card exists to carry forward — reporting pending, not shipping degraded prose.`);
   }
   const finalMorningFocus = thisAttemptFresh
     ? (geminiResult.morningFocus || '')
-    : (chiefBriefStale ? (prior?.content?.morningFocus || '') : '');
+    : (chiefBriefStale ? (lastGood.morningFocus || '') : '');
 
   // Explicit period identity for finalChiefBrief's goal-completion claims
   // (truth-and-evidence contract, audit priority #1 — "Chief Brief says
@@ -2539,7 +2598,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   // disagreeing with no way for the user to tell why.
   const goalsWeekStart = thisAttemptFresh
     ? (weeklyGoals?.current?.weekStart ?? null)
-    : (chiefBriefStale ? (prior?.content?.goalsWeekStart ?? null) : null);
+    : (chiefBriefStale ? (lastGood.goalsWeekStart ?? null) : null);
   const chiefBriefGoalsStale = Boolean(
     goalsWeekStart && weeklyGoals?.current?.weekStart && goalsWeekStart !== weeklyGoals.current.weekStart
   );
@@ -2706,6 +2765,21 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     }
   }
 
+  // Unambiguous displayed-content-vs-attempt-state contract (Chief Brief
+  // regression fix, requirement #7) — see brain/chiefBriefContract.js.
+  const { buildChiefBriefContract, attemptStateFromQuality } = require('../brain/chiefBriefContract');
+  Object.assign(response, buildChiefBriefContract({
+    chiefBrief: response.chiefBrief,
+    source: chiefBriefStale ? 'last_good' : 'fresh',
+    localDate: thisAttemptFresh ? response.localDate : (lastGood?.localDate ?? response.localDate),
+    builtAt: thisAttemptFresh ? response.builtAt : (lastGood?.builtAt ?? null),
+    snapshotId: thisAttemptFresh ? response.snapshotId : (lastGood?.snapshotId ?? null),
+    attemptState: attemptStateFromQuality(geminiResult?.chiefBriefQuality?.status ?? null, geminiResult?.chiefBrief != null),
+    attemptedAt: response.builtAt,
+    reasonCodes: geminiResult?.chiefBriefQuality?.reasonCodes ?? [],
+    persistenceFailed: Boolean(response.publishFailed),
+  }));
+
   return response;
 }
 
@@ -2846,7 +2920,7 @@ async function primeNextBuildCycle() {
     .catch((e) => console.error('[proactive nudge]', e.message));
 }
 async function performScopedChiefBriefRebuild(prior, opts = {}) {
-  const { treatPriorAsFreshFallback = true, repairReason = null } = opts;
+  const { repairReason = null } = opts;
   const ctx = await buildQuickChiefBriefContext(prior);
 
   // Canonical facts for the claim validator — same authorities as the full
@@ -2975,25 +3049,30 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
   // Fresh-before-replace invariant (audit fix) — identical contract to the
   // full build (see that call site's comment): this rebuild's OWN chiefBrief
   // only ships when its OWN quality is fresh. A degraded scoped rebuild must
-  // never overwrite the fresh card the user already has — "the scoped ↻
+  // never overwrite the good card the user already has — "the scoped ↻
   // failed" should read as "still today's, unchanged", not as a worse brief
-  // silently replacing a good one.
-  const { hasPublishableFreshBriefToday } = require('../notify/morning');
+  // silently replacing a good one. Uses the SAME resolveLastGoodChiefBrief
+  // primitive as the full build and the cache-hit recovery block (never
+  // notify/morning.js's hasPublishableFreshBriefToday(prior) — see the full
+  // build's identical comment for why that predicate is the wrong tool
+  // here: it trusts `prior`'s OWN quality stamp, not whether prior's content
+  // is actually usable, which is exactly what let a SECOND consecutive
+  // failed repair delete an already-carried-forward good brief).
   const thisAttemptFresh = chiefResult.chiefBrief != null && chiefResult.chiefBriefQuality?.status === 'fresh';
-  const priorFreshSameDay = hasPublishableFreshBriefToday(prior, { now: new Date() });
-  const chiefBriefStale = treatPriorAsFreshFallback && !thisAttemptFresh && priorFreshSameDay;
+  const lastGood = thisAttemptFresh ? null : await briefingsStore.resolveLastGoodChiefBrief(prior, { tz: process.env.TZ || 'America/New_York' });
+  const chiefBriefStale = !thisAttemptFresh && lastGood != null;
   const errors = Array.isArray(prior.content.errors) ? prior.content.errors.filter((e) => e.service !== 'chiefBrief') : [];
   if (chiefBriefStale) {
-    console.error('[chief-brief rebuild] this attempt was missing or degraded quality — keeping the existing fresh card unchanged.');
-    errors.push({ service: 'chiefBrief', error: 'this rebuild attempt was missing or degraded quality; the existing fresh brief was left unchanged' });
+    console.error('[chief-brief rebuild] this attempt was missing or degraded quality — keeping the existing good card unchanged.');
+    errors.push({ service: 'chiefBrief', error: 'this rebuild attempt was missing or degraded quality; the existing good brief was left unchanged' });
   }
-  // Same carried-forward-fallback race as the full build: `prior` was read
-  // at the top of this handler, before the LLM call above — if the user
-  // answered the question WHILE that call was in flight, this in-memory
-  // object can predate the answer even though the DB row was already
-  // updated. chiefResult.chiefBrief (the fresh path) was already
+  // Same carried-forward-fallback race as the full build: `lastGood` may
+  // have been resolved from a row read before the LLM call above — if the
+  // user answered the question WHILE that call was in flight, this
+  // in-memory object can predate the answer even though the DB row was
+  // already updated. chiefResult.chiefBrief (the fresh path) was already
   // suppression-checked above right after generation.
-  let finalChiefBrief = thisAttemptFresh ? chiefResult.chiefBrief : (chiefBriefStale ? prior.content.chiefBrief : null);
+  let finalChiefBrief = thisAttemptFresh ? chiefResult.chiefBrief : (chiefBriefStale ? lastGood.chiefBrief : null);
   if (!thisAttemptFresh && finalChiefBrief?.openQuestion) {
     try {
       const openQuestionsTz = process.env.TZ || 'America/New_York';
@@ -3004,23 +3083,23 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
       console.error('[chief-brief rebuild][openQuestion dedup] failed (carried-forward brief):', err.message);
     }
   }
-  // Neither this attempt nor a fresh same-day prior exists — explicit
+  // Neither this attempt nor a good same-day prior exists — explicit
   // pending, never groundedFallbackSentence() text (see the full build's
   // identical comment).
   const chiefBriefPending = finalChiefBrief == null;
   if (chiefBriefPending && chiefResult.chiefBrief != null) {
-    console.error(`[chief-brief rebuild] this attempt was ${chiefResult.chiefBriefQuality?.status ?? 'unknown'}-quality and no fresh same-day card exists to carry forward — reporting pending, not shipping degraded prose.`);
+    console.error(`[chief-brief rebuild] this attempt was ${chiefResult.chiefBriefQuality?.status ?? 'unknown'}-quality and no good same-day card exists to carry forward — reporting pending, not shipping degraded prose.`);
   }
   const finalMorningFocus = thisAttemptFresh
     ? (chiefResult.morningFocus || '')
-    : (chiefBriefStale ? (prior.content.morningFocus || '') : '');
+    : (chiefBriefStale ? (lastGood.morningFocus || '') : '');
 
   // Same explicit goal-period identity as the full build (see that call
   // site's identical comment) — ctx.goalsWeekStart is the LIVE current week
   // (buildQuickChiefBriefContext just fetched it for this request).
   const goalsWeekStart = thisAttemptFresh
     ? (ctx.goalsWeekStart ?? null)
-    : (chiefBriefStale ? (prior.content.goalsWeekStart ?? null) : null);
+    : (chiefBriefStale ? (lastGood.goalsWeekStart ?? null) : null);
   const chiefBriefGoalsStale = Boolean(
     goalsWeekStart && ctx.goalsWeekStart && goalsWeekStart !== ctx.goalsWeekStart
   );
@@ -3054,35 +3133,65 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
     snapshotId: prior.content.snapshotId ?? null,
     // Only the chief brief + morningFocus were actually re-derived now.
     fieldsBuiltAt: stampFields(prior.content.fieldsBuiltAt, ['chiefBrief', 'morningFocus'], rebuildNow),
-    // Explicit attempt/state tracking for the automatic repair callers
-    // (Part 2's goals-staleness repair, and the trainingDayState-contract
-    // repair below) — rebuild-loop protection. A successful repair clears
-    // any prior cooldown marker; a failed one stamps ONE, so the cache-hit
-    // path's cooldown check (see that call site) can skip re-attempting
-    // every single request while an LLM outage or similar persists, instead
-    // of hammering the LLM once per request. Untouched (carried forward via
-    // ...prior.content above) for every OTHER caller of this function
-    // (repairReason null).
-    ...(repairReason === 'goals_stale'
-      ? { goalsRepairAttempt: thisAttemptFresh ? null : { at: rebuildNow, weekStart: ctx.goalsWeekStart ?? null } }
-      : {}),
-    ...(repairReason === 'plan_conflict'
-      ? { planConflictRepairAttempt: thisAttemptFresh ? null : { at: rebuildNow } }
-      : {}),
   };
-  // Awaited (unlike /briefing/rebuild's background full rebuild, this is one
-  // fast scoped LLM call + a single-row save — nothing here justifies making
-  // it fire-and-forget). Un-awaited, the response could return before the
-  // write landed: a client that immediately re-fetches races the save and
-  // can see stale content. Confirmed as a real, timing-dependent flake in
-  // exactly this shape — the next test's own insert occasionally landed
-  // AFTER this save's still-in-flight one, so it read back THIS content
-  // instead of its own.
-  try {
-    await briefingsStore.saveBriefing({ kind: 'daily', content });
-  } catch (err) {
-    console.error('[chief-brief rebuild] save failed:', err.message);
+
+  // Never insert a new row on a non-fresh attempt (Chief Brief regression
+  // fix, Backend requirements #4/#5 — the exact root cause of the
+  // "reopen the app and the good brief is gone" bug): the OLD behavior saved
+  // this row unconditionally, which for the goals_stale caller (its failed
+  // attempt used to force finalChiefBrief to null) inserted a brand-new
+  // chiefBrief:null row as the newest daily briefing — subsequent
+  // latestBriefing('daily') calls then served THAT poisoned row forever,
+  // never the still-good one underneath it. A successful (fresh) repair may
+  // publish updated content; a failed one leaves the previously-published
+  // row completely untouched and only records the attempt in the durable
+  // ledger below (never in the briefings table).
+  let persistenceFailed = false;
+  if (thisAttemptFresh) {
+    try {
+      await briefingsStore.saveBriefing({ kind: 'daily', content });
+    } catch (err) {
+      console.error('[chief-brief rebuild] save failed:', err.message);
+      persistenceFailed = true;
+    }
+  } else {
+    console.log(`[chief-brief rebuild] this attempt was ${chiefResult.chiefBriefQuality?.status ?? 'unknown'}-quality — NOT publishing as a new canonical daily row (chiefBriefStale=${chiefBriefStale}); the existing published content is untouched.`);
   }
+
+  // Durable loop-protection ledger for the automatic repair callers (Part
+  // 2's goals-staleness repair, and the trainingDayState-contract repair) —
+  // replaces the old goalsRepairAttempt/planConflictRepairAttempt markers
+  // that used to live INSIDE the saved briefing content (which no longer
+  // even gets a new row on failure — see store/chiefBriefRepairLedger.js).
+  // Untouched for the manual endpoint (repairReason null): a user-initiated
+  // retry has no automatic-loop-protection concern.
+  if (repairReason) {
+    try {
+      await require('../store/chiefBriefRepairLedger').recordAttempt({
+        repairReason,
+        succeeded: thisAttemptFresh,
+        contextKey: repairReason === 'goals_stale' ? (ctx.goalsWeekStart ?? null) : null,
+        reasonCodes: chiefResult.chiefBriefQuality?.reasonCodes ?? [],
+      });
+    } catch (err) {
+      console.error('[chief-brief rebuild] repair ledger write failed:', err.message);
+    }
+  }
+
+  // Unambiguous displayed-content-vs-attempt-state contract (Chief Brief
+  // regression fix, requirement #7) — see brain/chiefBriefContract.js.
+  const { buildChiefBriefContract, attemptStateFromQuality } = require('../brain/chiefBriefContract');
+  Object.assign(content, buildChiefBriefContract({
+    chiefBrief: finalChiefBrief,
+    source: chiefBriefStale ? 'last_good' : 'fresh',
+    localDate: content.localDate ?? null,
+    builtAt: thisAttemptFresh ? rebuildNow : (lastGood?.builtAt ?? null),
+    snapshotId: content.snapshotId ?? null,
+    attemptState: attemptStateFromQuality(chiefResult.chiefBriefQuality?.status ?? null, chiefResult.chiefBrief != null),
+    attemptedAt: rebuildNow,
+    reasonCodes: chiefResult.chiefBriefQuality?.reasonCodes ?? [],
+    persistenceFailed,
+  }));
 
   // Recompute the Today command center against this rebuild's own fresh
   // chiefBrief/goalsWeekStart — everything else (forecasts, insights,
@@ -3134,18 +3243,16 @@ function createBriefingRouter({ port }) {
 //
 // @param {object} prior a `store/briefings.js` row `{content, generated_at}`.
 // @param {object} [opts]
-// @param {boolean} [opts.treatPriorAsFreshFallback] Default true (the manual
-//   ↻ button's original behavior): when this attempt is missing/degraded,
-//   carry forward `prior`'s still-good chiefBrief rather than show nothing.
-//   The automatic goals-staleness repair passes `false` — `prior` IS the
-//   stale content being repaired, so falling back to it on a failed repair
-//   would re-serve the exact claim this call exists to fix. With `false`, a
-//   failed attempt resolves to the explicit pending state instead (never a
-//   silently-stale claim shown as current).
-// @param {string|null} [opts.repairReason] When `'goals_stale'`, stamps a
-//   `goalsRepairAttempt` cooldown marker into the saved content on a failed
-//   attempt (rebuild-loop protection for the automatic caller) and clears it
-//   on success.
+// @param {string|null} [opts.repairReason] 'goals_stale' | 'plan_conflict' | null
+//   (null = the manual ↻ endpoint). When set, records the attempt's outcome
+//   in store/chiefBriefRepairLedger.js (rebuild-loop protection for the
+//   automatic callers — a user-initiated manual retry has no such concern).
+//   When this attempt is missing/degraded, EVERY caller carries forward the
+//   newest same-local-day PUBLISHABLE Chief Brief (store/briefings.js's
+//   resolveLastGoodChiefBrief — never simply `prior`, which may itself be
+//   mid-repair or already-corrupted) rather than show nothing. A non-fresh
+//   attempt never inserts a new briefings row (see the save block below) —
+//   only a genuinely fresh attempt is ever published.
 // @returns {Promise<{content: object, todayCommandCenter: object|null}>}
 router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
   const prior = await briefingsStore.latestBriefing('daily');

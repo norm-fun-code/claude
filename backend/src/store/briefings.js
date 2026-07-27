@@ -47,6 +47,99 @@ async function latestBriefing(kind = 'weekly') {
   return rows[0] ?? null;
 }
 
+/**
+ * Pure: does this ChiefBrief object have the minimum shape to actually show
+ * something (not itself a QUALITY judgment — that's chiefBriefQuality; this
+ * only asks "is there a real object here, not a null/stub")?
+ */
+function isStructurallyUsableChiefBrief(cb) {
+  return Boolean(cb && typeof cb === 'object' && (cb.synthesis || cb.action || cb.risk || cb.move));
+}
+
+/**
+ * Is a stored daily-briefing row's content eligible to be treated as
+ * "the last-known-good Chief Brief"? Structurally usable content, and not
+ * explicitly flagged pending (chiefBriefPending: true means the row's own
+ * build/repair attempt came back empty even if chiefBrief is somehow
+ * non-null — belt & suspenders).
+ *
+ * Deliberately does NOT require content.chiefBriefQuality?.status === 'fresh'.
+ * That field describes THIS row's OWN build/repair ATTEMPT, not whether its
+ * chiefBrief content is fit to display — a row that carried forward an
+ * earlier fresh brief because its OWN attempt was degraded
+ * (chiefBriefStale: true) has a degraded chiefBriefQuality but a perfectly
+ * good chiefBrief. Treating quality as the bar here is exactly the bug that
+ * let a SECOND consecutive failed repair delete an already-good,
+ * already-carried-forward brief (see routes/briefing.js's
+ * performScopedChiefBriefRebuild and the Chief Brief regression fix).
+ */
+function isPublishableRow(content) {
+  return Boolean(content) && !content.chiefBriefPending && isStructurallyUsableChiefBrief(content.chiefBrief);
+}
+
+/**
+ * The newest SAME-LOCAL-DAY daily row with a structurally usable, non-pending
+ * Chief Brief — the read-time safety net for corrupted/poisoned days. Does
+ * NOT simply trust the newest daily row (latestBriefing('daily')): a
+ * degraded/failed build or repair attempt can insert a row too (or, for a
+ * row from before this fix, could have left one with chiefBrief: null), so
+ * this scans backward through a bounded window of same-day rows for the
+ * newest one that's actually publishable.
+ *
+ * `limit` defaults generously (200, not the ~10-40 rows the other helpers in
+ * this file scan) specifically to recover ALREADY-poisoned production days:
+ * before this fix shipped, a run of consecutive failed automatic repairs
+ * could have inserted many degraded/null rows in a single day, each one
+ * burying the last good row one row deeper.
+ */
+async function latestPublishableDailyForLocalDay(localDay, { tz = process.env.TZ || 'America/New_York', limit = 200 } = {}) {
+  if (!localDay) return null;
+  const rows = await listBriefings({ kind: 'daily', limit });
+  const dayOf = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: tz });
+  for (const r of rows) {
+    if (dayOf(r.generated_at) !== localDay) continue;
+    if (isPublishableRow(r.content)) return r;
+  }
+  return null;
+}
+
+/**
+ * The one shared "what should we carry forward when THIS attempt isn't
+ * fresh?" resolver — used identically by every caller (cache-hit serve,
+ * full build, scoped rebuild) so "what counts as last-known-good" can never
+ * drift between them. Prefers `prior` itself when it's already publishable
+ * (the common case — no extra query); only falls back to the bounded
+ * backward scan when `prior` itself isn't currently publishable (a
+ * corrupted/pending row, or a row mid-repair).
+ *
+ * Same-local-day only (`prior`'s own local day) — a previous-day Chief Brief
+ * must never masquerade as today's.
+ *
+ * @returns {Promise<{chiefBrief:object, morningFocus:string, goalsWeekStart:string|null, builtAt:string|null, snapshotId:string|null, localDate:string}|null>}
+ */
+async function resolveLastGoodChiefBrief(prior, { tz = process.env.TZ || 'America/New_York' } = {}) {
+  if (!prior?.generated_at) return null;
+  // Scoped to TODAY's actual current local day — NOT merely "the same day
+  // `prior` itself was built on". `prior` is usually today's own latest row,
+  // but when it isn't (the very first request after midnight, before
+  // today's own build has run), trusting prior's own day label would carry
+  // an honest-but-PREVIOUS-day brief forward as if it were today's — the
+  // exact cross-day masquerade requirement #9 forbids.
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  const priorDay = new Date(prior.generated_at).toLocaleDateString('en-CA', { timeZone: tz });
+  const shape = (content) => ({
+    chiefBrief: content.chiefBrief,
+    morningFocus: content.morningFocus || '',
+    goalsWeekStart: content.goalsWeekStart ?? null,
+    builtAt: content.builtAt ?? null,
+    snapshotId: content.snapshotId ?? null,
+    localDate: today,
+  });
+  if (priorDay === today && isPublishableRow(prior.content)) return shape(prior.content);
+  const row = await latestPublishableDailyForLocalDay(today, { tz });
+  return row ? shape(row.content) : null;
+}
+
 async function listBriefings({ kind = 'weekly', limit = 4 } = {}) {
   const { rows } = await query(
     `SELECT id, kind, generated_at, period_start, period_end, content FROM briefings
@@ -123,4 +216,7 @@ async function todaysMorningBrief() {
   return null;
 }
 
-module.exports = { saveBriefing, latestBriefing, listBriefings, findBySnapshotId, recentDailyBriefOpeners, todaysMorningBrief, blankTodaysOpenQuestion };
+module.exports = {
+  saveBriefing, latestBriefing, listBriefings, findBySnapshotId, recentDailyBriefOpeners, todaysMorningBrief, blankTodaysOpenQuestion,
+  isStructurallyUsableChiefBrief, isPublishableRow, latestPublishableDailyForLocalDay, resolveLastGoodChiefBrief,
+};

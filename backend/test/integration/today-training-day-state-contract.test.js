@@ -209,6 +209,11 @@ test('scenario 7 — a STORED brief that fails the trainingDayState contract is 
   // the real schedule on the day this suite happens to run.
   await workoutService.setWorkoutOverride({ date: today, workoutId: 'pull' });
   t.after(async () => { await workoutService.setWorkoutOverride({ date: today, workoutId: null }); });
+  // store/chiefBriefRepairLedger.js's cooldown is ONE row per repair_reason,
+  // shared across every test file in this run — plan_conflict has no
+  // contextKey, so an earlier file's failed plan_conflict attempt would
+  // otherwise leave EVERY later plan_conflict repair ineligible suite-wide.
+  await db.query(`DELETE FROM chief_brief_repair_attempts WHERE repair_reason = 'plan_conflict'`);
   const pullEff = await workoutService.getEffectiveWorkout({ tz: 'America/New_York' });
   assert.equal(pullEff.label, 'Pull');
 
