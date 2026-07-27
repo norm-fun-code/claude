@@ -46,6 +46,7 @@ import { NightContextCard } from './src/components/NightContextCard';
 import { SleepCheckInCard } from './src/components/SleepCheckInCard';
 import { GradientButton } from './src/components/GradientButton';
 import { HealthStateCard } from './src/components/HealthStateCard';
+import { HealthCard } from './src/components/HealthCard';
 import { TrainingSummaryCard } from './src/components/TrainingSummaryCard';
 import { WorthKnowingCard } from './src/components/WorthKnowingCard';
 import { TrainingScreen } from './src/components/TrainingScreen';
@@ -476,6 +477,11 @@ export default function App() {
               highlight={radarAnchor?.entityType === 'recovery'}
               onHighlightLayout={onRadarAnchorLayout}
             />
+            {/* Graduated from the buried Health history drill-in: HRV, resting
+                HR, sleep, steps, active calories, and VO2 max — right under
+                the recovery hero so the actual vitals behind "Ready"/"Recover"
+                are visible without a second tap. */}
+            <HealthCard health={health} canonicalVo2={vo2Fact} />
             <TrainingSummaryCard
               effectiveWorkout={d?.effectiveWorkout}
               onOpenTraining={() => setTrainingOpen(true)}
@@ -510,8 +516,6 @@ export default function App() {
               recovery={currentRecovery}
               composites={d?.healthComposites ?? EMPTY_ARRAY}
               recoveryBuiltAt={liveRecovery.fetched ? undefined : (d?.fieldsBuiltAt?.recovery ?? d?.snapshotAt ?? d?.builtAt)}
-              health={health}
-              canonicalVo2={vo2Fact}
               todayForecast={d?.todayForecast}
               forecasts={d?.forecasts ?? EMPTY_ARRAY}
               checkinHistoryInsights={checkinHistoryInsights}
