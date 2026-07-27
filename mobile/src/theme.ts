@@ -11,6 +11,12 @@ export const colors = {
   green: '#34C759',                 // iOS systemGreen
   yellow: '#FF9F0A',                // iOS systemYellow
   red: '#FF3B30',                   // iOS systemRed
+  // Same violet as tileTint.violet below — the ONE canonical "ready/new
+  // artifact" purple (used by RadarSection/RadarDetailSheet's 'ready'
+  // status). Deliberately distinct from BriefCard's own hardcoded #A89CFF —
+  // that's a separate, more saturated brand accent scoped to the Chief
+  // Brief hero card's own identity, not a shared semantic-status color.
+  purple: '#A78BFA',
   hero: '#1C1C1E',                  // dark surface for hero cards (BriefCard etc.)
   // Dark mode
   backgroundDark: '#000000',
@@ -194,6 +200,7 @@ export function getColors(isDark: boolean) {
     green: colors.green,
     yellow: colors.yellow,
     red: colors.red,
+    purple: colors.purple,
     hero: colors.hero,
   };
 }

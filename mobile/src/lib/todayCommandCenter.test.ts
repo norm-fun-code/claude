@@ -74,8 +74,8 @@ test('selectTodayCommandCenter: a fresh, complete payload passes risk/sinceMorni
       sinceMorning: [{ stableId: 's1', occurredAt: null, summary: 'x', destination: 'wealth' }],
       radar: [{
         stableId: 'radar:x:wealth_insight', domain: 'wealth', entityId: 'e', snapshotId: 'x',
-        priority: 1, status: 'open', severity: 'material', headline: 'h', whyNow: 'w',
-        evidenceSummary: null, asOf: null, actionLabel: 'Open in Wealth',
+        priority: 1, status: 'open', attentionClass: 'action_required', headline: 'h', whyNow: 'w',
+        evidenceSummary: null, evidenceItems: null, asOf: null, actionLabel: 'Open in Wealth',
         destination: { surface: 'wealth', entityType: 'wealthInsight', entityId: 'e', anchor: 'e', snapshotId: null, fallbackRoute: 'wealth' },
       }],
     },

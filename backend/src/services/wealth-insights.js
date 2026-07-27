@@ -2,6 +2,32 @@
 // Pure-ish — pulls category spend from stored Monarch transaction docs, and (if
 // a Monarch token is available) this month's budget targets. Produces short,
 // plain-language insight strings for the Wealth tab.
+//
+// Semantic contract (On My Radar audit): every insight this function returns
+// ALSO declares a small set of structured fields describing what kind of
+// thing it is, not just what it says — this is the authoritative source
+// brain/radar.js's wealthCandidate() consumes to decide whether (and how) an
+// insight belongs on "On My Radar." Before this contract existed, radar.js
+// took wealthInsights[0] unconditionally and stamped it material/tier-1 —
+// which meant a POSITIVE "saving 28% of income" result rendered as a red
+// "Needs attention" alert, because nothing upstream had ever recorded that
+// it was good news. These fields fix that at the source, not with a title-
+// specific patch:
+//   - attentionClass: 'action_required' | 'watch' | 'positive' | 'informational'
+//       ('ready' is reserved for newly-available artifacts like the weekly
+//       review, which this module doesn't produce.) 'informational' means
+//       "never shown on Radar" — routine, already-on-track data.
+//   - material: does this represent a real, dollar/impact-significant fact?
+//   - timeSensitive: does its relevance decay if not seen soon?
+//   - actionable: is there something the user could actually do about it?
+//   - direction: 'positive' | 'negative' | 'neutral' | 'uncertain' — the
+//       VALENCE of the fact, independent of how urgent it is.
+//   - reasonCode: a stable, non-title-specific identifier a presentation
+//       layer (radar.js) can switch on to write copy — never regex/string
+//       matching against `title`/`detail`.
+// `evidence` (already existed for some types) is the structured data a
+// presentation layer can format into compact bullets instead of re-parsing
+// prose; every type below now carries one.
 const documents = require('../store/documents');
 const metricsStore = require('../store/metrics');
 const { computeSubscriptionInsights } = require('../intelligence/subscriptions');
@@ -69,6 +95,21 @@ async function buildWealthInsights() {
         detail: positive
           ? `Over the last 30 days you brought in ${fmt(income)} and spent ${fmt(spending)} — a savings rate of ${ratePct}%. ${ratePct >= 20 ? 'Strong — at or above the 20% rule of thumb.' : 'Below the common 20% target; small cuts compound.'}`
           : `Over the last 30 days you spent ${fmt(spending)} against ${fmt(income)} of income — drawing down savings. Worth a look at the biggest categories.`,
+        // A positive savings rate — even a strong one — is routine on-track
+        // information, not an alert: never material, regardless of how high
+        // the percentage is. There's no persisted trend/comparison here to
+        // tell "healthy as usual" apart from "a genuinely new milestone," so
+        // rather than guess, this stays informational (Wealth tab only,
+        // never Radar) until a real novelty signal exists to justify more.
+        // A NEGATIVE rate (spending more than earned) is the one genuinely
+        // actionable fact this insight can produce.
+        attentionClass: positive ? 'informational' : 'action_required',
+        material: !positive,
+        timeSensitive: !positive,
+        actionable: !positive,
+        direction: positive ? 'positive' : 'negative',
+        reasonCode: positive ? 'savings_rate_healthy' : 'overspending_30d',
+        evidence: { kind: 'savings_rate', income: Math.round(income), spending: Math.round(spending), ratePct, windowDays: 30 },
       });
     }
   } catch (err) {
@@ -199,6 +240,11 @@ async function buildWealthInsights() {
           // (product review finding). Callers should rank/select by this, not
           // by re-parsing "over" out of the title string.
           evidence: { kind: 'spending_pattern', category: s.category, current: Math.round(s.current), projected: Math.round(s.projected), avg: Math.round(s.avg), impactDollars },
+          // Already gated by SPIKE_RATIO + SPIKE_DOLLARS above — every spike
+          // that reaches this line is a real, dollar-material deviation from
+          // the user's own recent history, worth acting on now.
+          attentionClass: 'action_required', material: true, timeSensitive: true, actionable: true,
+          direction: 'negative', reasonCode: 'spending_spike',
         });
       }
     }
@@ -221,6 +267,10 @@ async function buildWealthInsights() {
             `Monarch tracks ${active.length} recurring expenses totaling ${fmt(totalMonthly)}/month (${fmt(totalAnnual)}/yr). ` +
             `Top: ${active.slice(0, 3).map((s) => `${s.name} (${fmt(s.monthly)}/mo)`).join(', ')}.`,
           evidence: { kind: 'subscriptions', count: active.length, totalAnnual, totalMonthly, items: active.slice(0, 10) },
+          // A standing summary, not a new development — always true, never
+          // urgent. Wealth-tab reference material, never a Radar candidate.
+          attentionClass: 'informational', material: false, timeSensitive: false, actionable: false,
+          direction: 'neutral', reasonCode: 'subscriptions_summary',
         });
         const big = active.find((s) => s.annual >= 200);
         if (big) {
@@ -230,6 +280,10 @@ async function buildWealthInsights() {
             title: `Review: ${big.name} is ${fmt(big.annual)}/yr`,
             detail: `${big.name} bills ${fmt(big.amount)} ${big.frequency} — about ${fmt(big.annual)} a year. Worth confirming it's still earning its keep.`,
             evidence: { kind: 'subscription_review', merchant: big.name, annual: big.annual },
+            // Evergreen suggestion, not tied to anything that just happened —
+            // worth reviewing eventually, not worth interrupting today for.
+            attentionClass: 'informational', material: false, timeSensitive: false, actionable: true,
+            direction: 'neutral', reasonCode: 'subscription_review',
           });
         }
       }
@@ -261,6 +315,12 @@ async function buildWealthInsights() {
       const monthlyChange = perDay * 30;
       if (Math.abs(monthlyChange) >= 50) {
         const dir = monthlyChange >= 0 ? 'growing' : 'declining';
+        // A growing trend only rises to a genuine Radar-worthy milestone at a
+        // meaningfully higher bar than "worth mentioning in the Wealth tab at
+        // all" ($50/mo) — a general, value-based threshold, not tied to any
+        // specific number seen in production. A declining trend is a real,
+        // if slow-moving, concern worth watching rather than an emergency.
+        const MILESTONE_MONTHLY = 1000;
         insights.push({
           type: 'net_worth_path',
           tone: monthlyChange >= 0 ? 'win' : 'watch',
@@ -269,6 +329,11 @@ async function buildWealthInsights() {
             `Based on your 4-month trend, net worth is ${dir} about ${fmt(Math.abs(monthlyChange))}/month — ` +
             `on track for roughly ${fmt(projected)} by year-end (now ${fmt(current)}). A projection from trend, not a guarantee.`,
           evidence: { kind: 'net_worth_path', current: Math.round(current), projected: Math.round(projected), monthlyChange: Math.round(monthlyChange) },
+          ...(monthlyChange >= 0
+            ? (monthlyChange >= MILESTONE_MONTHLY
+                ? { attentionClass: 'positive', material: true, timeSensitive: false, actionable: false, direction: 'positive', reasonCode: 'net_worth_growth_milestone' }
+                : { attentionClass: 'informational', material: false, timeSensitive: false, actionable: false, direction: 'positive', reasonCode: 'net_worth_trend' })
+            : { attentionClass: 'watch', material: Math.abs(monthlyChange) >= 300, timeSensitive: false, actionable: true, direction: 'negative', reasonCode: 'net_worth_decline' }),
         });
       }
     }
@@ -302,6 +367,10 @@ async function buildWealthInsights() {
           // impactDollars mirrors spending_pattern's field so callers can rank
           // both types by dollar impact with one consistent field name.
           evidence: { kind: 'budget_pacing', category: l.category, budget: l.budget, actual: l.actual, pace: l.pace, overBudget: l.overBudget, impactDollars: Math.round(Math.abs(l.actual - l.budget)) },
+          // A confirmed real budget overage (or fast pace toward one) — the
+          // most authoritative, actionable wealth signal this module produces.
+          attentionClass: 'action_required', material: true, timeSensitive: true, actionable: true,
+          direction: 'negative', reasonCode: l.overBudget ? 'over_budget' : 'pacing_over_budget',
         });
       }
       // Lump-sum categories (rent, mortgage) are excluded entirely, not just from
@@ -348,6 +417,12 @@ async function buildWealthInsights() {
             topGainers: inv.topGainers,
             topLosers: inv.topLosers,
           },
+          // Deliberately informational even on a big up week — the comment
+          // above explains why (a single week's swing is noise; surfacing it
+          // as an alert or a milestone would itself nudge toward
+          // market-timing anxiety, exactly what this card is written to avoid).
+          attentionClass: 'informational', material: false, timeSensitive: false, actionable: false,
+          direction: inv.periodChange >= 0 ? 'positive' : 'negative', reasonCode: 'portfolio_performance',
         });
       } else {
         // Performance data unavailable — show value only.
@@ -357,6 +432,8 @@ async function buildWealthInsights() {
           title: `Portfolio value: ${fmt(inv.totalValue)}`,
           detail: `Total portfolio value: ${fmt(inv.totalValue)}. 7-day performance data not yet available from Monarch.`,
           evidence: { kind: 'investments', totalValue: Math.round(inv.totalValue) },
+          attentionClass: 'informational', material: false, timeSensitive: false, actionable: false,
+          direction: 'neutral', reasonCode: 'portfolio_value',
         });
       }
     }
@@ -404,6 +481,26 @@ async function buildWealthInsights() {
       return a.i - b.i;
     })
     .map((x) => x.ins);
+
+  // Every insight built above declares the full semantic contract explicitly
+  // (see the module header comment). The one exception is the heuristic
+  // subscriptions fallback (intelligence/subscriptions.js's
+  // computeSubscriptionInsights, used only when Monarch's own recurring-
+  // streams API isn't available) — it predates this contract and produces
+  // the same shape either way, so it's normalized here rather than
+  // duplicating the contract in a second module. Default is deliberately the
+  // SAFEST one: 'informational' (never shown on Radar) — an insight this
+  // function forgot to classify must never silently default to an alert.
+  // `asOf` is stamped once, uniformly, at the moment this whole batch was
+  // computed — every figure above comes from a live read taken during this
+  // same call, so a single timestamp for the batch is honest, not a fiction.
+  const builtAt = new Date().toISOString();
+  deduped = deduped.map((ins) => ({
+    attentionClass: 'informational', material: false, timeSensitive: false, actionable: false,
+    direction: 'neutral', reasonCode: ins.type || 'wealth_insight',
+    ...ins,
+    asOf: ins.asOf || builtAt,
+  }));
 
   return deduped;
 }

@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, useColorScheme, TextInput, TouchableOpacity, Pressable, LayoutAnimation, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, useColorScheme, TextInput, TouchableOpacity, Pressable, LayoutAnimation, ActivityIndicator, Animated } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,6 +9,7 @@ import type { ChiefBrief } from '../hooks/useBriefing';
 import { BRIEFING_CONTEXT_URL, BRIEFING_AUDIO_URL, BRIEFING_ACTION_COMMIT_URL, BRIEFING_ACTION_ALTERNATES_URL, VOICE_TRANSCRIBE_URL, authHeaders, fetchWithTimeout } from '../config';
 import { voiceAvailable, ensureMicPermission, startRecording, stopRecording } from '../lib/voice';
 import { useBriefAudio } from '../hooks/useBriefAudio';
+import { resolveChiefBriefState } from '../lib/chiefBriefState';
 
 interface Props {
   brief: ChiefBrief | null | undefined;
@@ -56,6 +57,13 @@ interface Props {
   // actually backs a risk — the Today redesign's "no filler Risk section"
   // requirement is enforced server-side, not by trusting the prose here.
   risk?: { title: string; rationale: string; severity?: string } | null;
+  // The most recent fetch/refresh attempt (whichever kind) ended in an
+  // error (see useBriefing's `error`) — feeds the loading state machine
+  // (chiefBriefState.ts) so a failed refresh with good content still on
+  // screen offers a retry instead of silently doing nothing, and a failed
+  // attempt with NO content ever obtained shows an explicit Retry state
+  // instead of an indefinite "Finishing today's brief…".
+  error?: boolean;
 }
 
 // THE ACTION is the one always-structured beat left on Today (see risk prop
@@ -172,7 +180,34 @@ function BeatRow({ label, emoji, tint, text }: { label: string; emoji: string; t
 // UI until the next server-truth refetch.
 const answeredQuestions = new Set<string>();
 
-function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsStale, onRefresh, refreshing, snapshotId, risk }: Props) {
+// A deliberate skeleton for the "we've never had a brief yet this session"
+// state (chiefBriefState.ts's 'initial_loading') — a few pulsing placeholder
+// bars shaped like the real content (headline, then a shorter action row),
+// not an empty card and not indefinite italic text. Plain RN Animated (no
+// reanimated/gesture-handler dependency) looping an opacity tween.
+function BriefSkeleton() {
+  const pulse = React.useRef(new Animated.Value(0.35)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 0.75, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.35, duration: 700, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+  return (
+    <Animated.View style={{ opacity: pulse }} accessibilityLabel="Preparing today's brief" accessibilityRole="progressbar">
+      <View style={[styles.skeletonBar, { width: '88%', height: 22 }]} />
+      <View style={[styles.skeletonBar, { width: '64%', height: 22, marginBottom: spacing.md }]} />
+      <View style={[styles.skeletonBar, { width: '40%', height: 14 }]} />
+      <View style={[styles.skeletonBar, { width: '72%', height: 14 }]} />
+    </Animated.View>
+  );
+}
+
+function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsStale, onRefresh, refreshing, snapshotId, risk, error }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   // Never render a degraded/failed chiefBrief (item C) — a stale carried-
@@ -180,6 +215,12 @@ function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsSt
   // build's own attempt, not the fresh prior being shown.
   const badQuality = !stale && (quality?.status === 'degraded' || quality?.status === 'failed');
   const brief = badQuality ? null : rawBrief;
+  // Deterministic loading state machine (On My Radar audit item 8) — the
+  // ONE place that decides skeleton vs. last-good-plus-"Updating…" vs.
+  // failed-with-retry, instead of `pending` alone driving a single static
+  // "Finishing today's brief…" string regardless of whether we already had
+  // good content or how long it's been.
+  const cardState = resolveChiefBriefState({ brief, pending: Boolean(pending), refreshing: Boolean(refreshing), error: Boolean(error) });
   const [note, setNote] = useState('');
   const [noteSaved, setNoteSaved] = useState(false);
   const [noteFailed, setNoteFailed] = useState(false);
@@ -409,7 +450,12 @@ function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsSt
       {/* signature accent bar */}
       <LinearGradient colors={accentGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.accentBar} />
       <View style={styles.kickerRow}>
-        <Text style={styles.kicker}>CHIEF OF STAFF BRIEF</Text>
+        <View style={styles.kickerLeft}>
+          <Text style={styles.kicker}>CHIEF OF STAFF BRIEF</Text>
+          {cardState === 'refreshing_with_last_good' && (
+            <Text style={styles.updatingBadge} accessibilityLabel="Updating">· Updating…</Text>
+          )}
+        </View>
         <View style={styles.kickerActions}>
           {onRefresh && (brief || pending) && (
             <Pressable
@@ -447,6 +493,13 @@ function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsSt
       </View>
       {stale && brief && (
         <Text style={styles.staleNote}>Still yesterday's — tap ↻ to retry</Text>
+      )}
+      {/* Distinct from the `stale` note above (that one is a server-computed
+          "this IS a carried-forward prior"; this one is "the last refresh
+          WE attempted failed") — never both at once, so at most one amber
+          note ever shows. */}
+      {!stale && cardState === 'failed_with_last_good' && (
+        <Text style={styles.staleNote}>Couldn't refresh — tap ↻ to retry</Text>
       )}
       {/* The "references an earlier week's goals" warning is gone —
           NormOS now detects and repairs this itself (one automatic scoped
@@ -535,14 +588,34 @@ function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsSt
             </AnimatedEntry>
           ) : null}
         </>
+      ) : cardState === 'failed_empty' ? (
+        <AnimatedEntry delay={60} distance={10}>
+          {/* Never an indefinite "Finishing…" — the last attempt genuinely
+              failed and there is no content to fall back to, so say so and
+              offer a deliberate, user-initiated retry (never auto-retried by
+              a timer or by re-renders/polling). */}
+          <Text style={styles.failedEmptyText}>Couldn't put together today's brief.</Text>
+          {onRefresh && (
+            <Pressable
+              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onRefresh(); }}
+              disabled={refreshing}
+              style={styles.retryBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Retry"
+            >
+              {refreshing ? <ActivityIndicator size="small" color="#A89CFF" /> : <Text style={styles.retryBtnText}>Retry</Text>}
+            </Pressable>
+          )}
+        </AnimatedEntry>
       ) : (
         <AnimatedEntry delay={60} distance={10}>
           {/* No fresh chiefBrief and no fresh same-day prior to carry
               forward (or a defensive client-side reject of degraded/failed
-              content) — calm temporary copy, never the raw fallback/
-              morningFocus text mistaken for a completed brief (audit fix,
-              item C). */}
-          <Text style={styles.pendingText}>Finishing today's brief…</Text>
+              content) — a deliberate skeleton (chiefBriefState.ts's
+              'initial_loading'), never the raw fallback/morningFocus text
+              mistaken for a completed brief (audit fix, item C), and never
+              an empty card. */}
+          <BriefSkeleton />
         </AnimatedEntry>
       )}
 
@@ -717,11 +790,23 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: spacing.xs,
   },
+  kickerLeft: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 6,
+    flexShrink: 1,
+  },
   kicker: {
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 1.4,
     color: '#A89CFF',
+  },
+  updatingBadge: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.45)',
+    fontStyle: 'italic',
   },
   staleNote: {
     fontSize: 10,
@@ -775,6 +860,34 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     lineHeight: 24,
     marginBottom: spacing.md,
+  },
+  skeletonBar: {
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    borderRadius: radius.sm,
+    marginBottom: spacing.sm,
+  },
+  failedEmptyText: {
+    fontFamily: FONTS.text,
+    fontSize: 15,
+    lineHeight: 21,
+    color: 'rgba(255,255,255,0.65)',
+    marginBottom: spacing.md,
+  },
+  retryBtn: {
+    alignSelf: 'flex-start',
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: 'rgba(168,156,255,0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.md,
+  },
+  retryBtnText: {
+    color: '#A89CFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
   separator: {
     height: 1,

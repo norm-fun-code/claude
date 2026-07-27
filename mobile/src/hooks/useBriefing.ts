@@ -364,6 +364,18 @@ export interface RadarDestination {
 // preview row (see brain/radar.js). 0-2 cards normally, never a guaranteed
 // one-per-domain slot; each card carries everything the detail sheet needs
 // to render without a second fetch.
+//
+// `attentionClass` is the ONE authoritative semantic status the server
+// declares — mobile renders it consistently (see radarPresentation.ts) and
+// never re-derives severity from `priority` or from card position. A
+// 'positive' card is genuinely good news and must never render as a warning.
+export type RadarAttentionClass = 'action_required' | 'watch' | 'ready' | 'positive' | 'informational';
+
+export interface RadarEvidenceItem {
+  label: string;
+  value: string;
+}
+
 export interface RadarCard {
   stableId: string;
   domain: string;
@@ -371,10 +383,11 @@ export interface RadarCard {
   snapshotId: string | null;
   priority: number;
   status: string;
-  severity: 'material' | 'watch' | 'info' | string;
+  attentionClass: RadarAttentionClass | string;
   headline: string;
   whyNow: string | null;
   evidenceSummary: string | null;
+  evidenceItems: RadarEvidenceItem[] | null;
   asOf: string | null;
   actionLabel: string;
   destination: RadarDestination;

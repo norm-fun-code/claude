@@ -1,18 +1,13 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, useColorScheme } from 'react-native';
-import { getColors, spacing, radius, typography, shadow, colors } from '../theme';
+import { getColors, spacing, radius, typography, shadow } from '../theme';
+import { presentationForAttentionClass } from '../lib/radarPresentation';
 import type { RadarCard } from '../hooks/useBriefing';
 
 interface Props {
   radar: RadarCard[];
   onOpen: (card: RadarCard) => void;
 }
-
-const SEVERITY_COLOR: Record<string, string> = {
-  material: colors.red,
-  watch: colors.yellow,
-  info: colors.green,
-};
 
 const DOMAIN_LABEL: Record<string, string> = {
   health: 'HEALTH',
@@ -24,10 +19,12 @@ const DOMAIN_LABEL: Record<string, string> = {
 // Health/Wealth/Review preview row (see backend brain/radar.js). Full-width,
 // editorial cards — never narrow columns, never more than what the server
 // decided is worth attention (0-2 normally, a 3rd only when the server
-// flagged it both material and time-sensitive). Tapping a card opens the
-// full detail sheet (App.tsx owns that state) — this component never
-// navigates directly, matching every other Today section's "server
-// decides, mobile renders" contract.
+// flagged it genuinely urgent). Color/label come ONLY from the server's
+// `attentionClass` via radarPresentation.ts — this component never invents
+// severity from card position or domain. Tapping a card opens the full
+// detail sheet (App.tsx owns that state) — this component never navigates
+// directly, matching every other Today section's "server decides, mobile
+// renders" contract.
 function RadarSection({ radar, onOpen }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
@@ -48,27 +45,31 @@ function RadarSection({ radar, onOpen }: Props) {
       <Text style={[styles.header, { color: c.subtext }]}>
         ON MY RADAR · {radar.length} {radar.length === 1 ? 'ITEM' : 'ITEMS'}
       </Text>
-      {radar.map((card) => (
-        <Pressable
-          key={card.stableId}
-          onPress={() => onOpen(card)}
-          accessibilityRole="button"
-          accessibilityLabel={`${card.headline}. ${card.whyNow ?? ''}`}
-          style={({ pressed }) => [
-            styles.card, { backgroundColor: c.card, opacity: pressed ? 0.85 : 1 }, shadow(isDark),
-          ]}
-        >
-          <View style={styles.topRow}>
-            <View style={[styles.dot, { backgroundColor: SEVERITY_COLOR[card.severity] ?? c.subtext }]} />
-            <Text style={[styles.domain, { color: c.subtext }]}>{DOMAIN_LABEL[card.domain] ?? card.domain.toUpperCase()}</Text>
-          </View>
-          <Text style={[styles.headline, { color: c.text }]}>{card.headline}</Text>
-          {card.whyNow ? (
-            <Text style={[styles.whyNow, { color: c.subtext }]} numberOfLines={3}>{card.whyNow}</Text>
-          ) : null}
-          <Text style={[styles.cta, { color: c.accent }]}>{card.actionLabel} →</Text>
-        </Pressable>
-      ))}
+      {radar.map((card) => {
+        const presentation = presentationForAttentionClass(card.attentionClass);
+        const dotColor = c[presentation.colorToken] ?? c.subtext;
+        return (
+          <Pressable
+            key={card.stableId}
+            onPress={() => onOpen(card)}
+            accessibilityRole="button"
+            accessibilityLabel={`${presentation.label}. ${card.headline}. ${card.whyNow ?? ''}`}
+            style={({ pressed }) => [
+              styles.card, { backgroundColor: c.card, opacity: pressed ? 0.85 : 1 }, shadow(isDark),
+            ]}
+          >
+            <View style={styles.topRow}>
+              <View style={[styles.dot, { backgroundColor: dotColor }]} />
+              <Text style={[styles.domain, { color: c.subtext }]}>{DOMAIN_LABEL[card.domain] ?? card.domain.toUpperCase()}</Text>
+            </View>
+            <Text style={[styles.headline, { color: c.text }]}>{card.headline}</Text>
+            {card.whyNow ? (
+              <Text style={[styles.whyNow, { color: c.subtext }]} numberOfLines={3}>{card.whyNow}</Text>
+            ) : null}
+            <Text style={[styles.cta, { color: c.accent }]}>{card.actionLabel} →</Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }

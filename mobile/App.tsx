@@ -352,6 +352,25 @@ export default function App() {
     setRadarAnchor(null);
   }, []);
 
+  // Deep-link fallback (Today Part 4/On My Radar audit item 7): the anchor
+  // above is consumed by whichever card matches on its next layout pass —
+  // normally near-instant. If the exact entity never renders (e.g. a wealth
+  // insight's title drifted between when the Radar card was built and when
+  // the user tapped through, or the underlying data was dismissed/removed
+  // in the meantime), nothing would ever call onRadarAnchorLayout and the
+  // anchor would linger silently, ready to mis-highlight an unrelated later
+  // insight. Log the reason and self-clear instead of failing silently —
+  // the tab switch itself (already done in openRadarDestination) is the
+  // graceful fallback; this only accounts for the highlight/scroll step.
+  useEffect(() => {
+    if (!radarAnchor) return undefined;
+    const timer = setTimeout(() => {
+      console.warn(`[radar anchor] entityType=${radarAnchor.entityType ?? 'null'} entityId=${radarAnchor.entityId ?? 'null'} was never matched by a rendered card — falling back to the top of the tab.`);
+      setRadarAnchor(null);
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [radarAnchor]);
+
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   });
@@ -607,6 +626,7 @@ export default function App() {
                     refreshing={briefing.chiefBriefRefreshing}
                     snapshotId={d?.snapshotId}
                     risk={todayCC.risk}
+                    error={Boolean(briefing.error)}
                   />
                 </CollapsibleSection>
               </AnimatedEntry>
@@ -623,6 +643,7 @@ export default function App() {
                   refreshing={briefing.chiefBriefRefreshing}
                   snapshotId={d?.snapshotId}
                   risk={todayCC.risk}
+                  error={Boolean(briefing.error)}
                 />
               </AnimatedEntry>
             )}
@@ -682,6 +703,7 @@ export default function App() {
               onClose={closeRadarDetail}
               onOpenDestination={openRadarDestination}
               onDismiss={dismissRadarCard}
+              bottomInset={bottomInset}
             />
             {briefing.error && !d && (
               <AnimatedEntry delay={0}>

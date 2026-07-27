@@ -314,7 +314,13 @@ test('scenario 12 — BrainSnapshot (which Today\'s command center validates aga
 });
 
 // ── 13. Today and Wealth expose identical canonical spending facts ────────
-test('scenario 13 — the wealth preview reuses buildWealthInsights\' OWN title/detail verbatim, never a re-derived one', async (t) => {
+// Updated for the On My Radar audit: evidenceSummary is deliberately no
+// longer a verbatim copy of `detail` (that WAS the exact "whyNow and
+// evidenceSummary are identical" defect the audit fixed) — the radar card
+// now carries structured evidenceItems built from the insight's OWN
+// `evidence` object instead. The headline identity guarantee (never
+// independently re-worded) still holds and is still asserted below.
+test('scenario 13 — the wealth preview reuses buildWealthInsights\' OWN title verbatim, and structured evidenceItems from its OWN evidence object, never re-derived', async (t) => {
   function monthsBack(n, d = new Date()) {
     const x = new Date(d.getFullYear(), d.getMonth() - n, 1);
     return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`;
@@ -355,8 +361,15 @@ test('scenario 13 — the wealth preview reuses buildWealthInsights\' OWN title/
   });
   const wealthCard = tcc.radar.find((c) => c.domain === 'wealth');
   assert.ok(wealthCard, 'expected a wealth radar card');
-  assert.equal(wealthCard.headline, wealthInsights[0].title, 'the radar headline must be IDENTICAL to the Wealth tab\'s own top insight, not independently worded');
-  assert.equal(wealthCard.evidenceSummary, wealthInsights[0].detail || null);
+  assert.equal(wealthCard.headline, top.title, 'the radar headline must be IDENTICAL to the Wealth tab\'s own top insight, not independently worded');
+  assert.equal(wealthCard.attentionClass, 'action_required', 'a real dollar-material spending spike is action_required');
+  // The old contract copied `detail` into BOTH whyNow and evidenceSummary
+  // verbatim (the exact defect the On My Radar audit fixed) — now
+  // evidenceSummary is null and the distinct supporting numbers live in
+  // evidenceItems, built from the insight's OWN `evidence` object.
+  assert.equal(wealthCard.evidenceSummary, null);
+  assert.ok(Array.isArray(wealthCard.evidenceItems) && wealthCard.evidenceItems.length > 0);
+  assert.notEqual(wealthCard.whyNow, JSON.stringify(wealthCard.evidenceItems));
 });
 
 // ── 14. Evening state reflects actual-vs-planned, not any exercise as completion ──
