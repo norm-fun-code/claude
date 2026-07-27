@@ -24,6 +24,7 @@ const { createIngestAdminRouter } = require('./routes/ingest-admin');
 const { createSpineRouter } = require('./routes/spine');
 const { createDiagnosticsRouter } = require('./routes/diagnostics');
 const { createRecoveryRouter } = require('./routes/recovery');
+const { createBeliefsRouter } = require('./routes/beliefs');
 const { createChatRouter } = require('./routes/chat');
 const { createVoiceRouter } = require('./routes/voice');
 const { createRealtimeRouter } = require('./routes/realtime');
@@ -137,6 +138,7 @@ function createApp({ bootTime, port, quiet } = {}) {
   // Recovery routes (live score, history, self-report) live in
   // src/routes/recovery.js — the fourteenth router extraction out of this file.
   app.use('/api', createRecoveryRouter());
+  app.use('/api', createBeliefsRouter());
 
   // Chat routes (typed Ask thread + saved conversations) live in
   // src/routes/chat.js — the seventeenth router extraction out of this file.

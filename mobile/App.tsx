@@ -32,23 +32,25 @@ import { useHealthData } from './src/hooks/useHealthData';
 import { useRecovery } from './src/hooks/useRecovery';
 import { usePushRegistration } from './src/hooks/usePushRegistration';
 import * as Haptics from 'expo-haptics';
-import { getColors, spacing, shadow, FONTS } from './src/theme';
+import { getColors, spacing, shadow, radius, FONTS } from './src/theme';
 
 import { Header } from './src/components/Header';
 import { TabBar, TabKey, TABS } from './src/components/TabBar';
-import { ForecastCard } from './src/components/ForecastCard';
 import { WealthCard } from './src/components/WealthCard';
 import { InsightsCard } from './src/components/InsightsCard';
 import { AskOverlay, type AskOverlayHandle } from './src/components/AskOverlay';
 import { CheckinModal } from './src/components/CheckinModal';
 import { WeeklyReviewModal } from './src/components/WeeklyReviewModal';
-import { HealthCard } from './src/components/HealthCard';
 import { LinearGradient } from 'expo-linear-gradient';
-import { RecoveryCard } from './src/components/RecoveryCard';
 import { NightContextCard } from './src/components/NightContextCard';
 import { SleepCheckInCard } from './src/components/SleepCheckInCard';
 import { GradientButton } from './src/components/GradientButton';
-import { WorkoutsPanel } from './src/components/WorkoutsPanel';
+import { HealthStateCard } from './src/components/HealthStateCard';
+import { TrainingSummaryCard } from './src/components/TrainingSummaryCard';
+import { WorthKnowingCard } from './src/components/WorthKnowingCard';
+import { TrainingScreen } from './src/components/TrainingScreen';
+import { PatternsExperimentsScreen } from './src/components/PatternsExperimentsScreen';
+import { HealthHistoryScreen } from './src/components/HealthHistoryScreen';
 import { QuoteCard } from './src/components/QuoteCard';
 import { NotionCard } from './src/components/NotionCard';
 import { WisdomListenCard } from './src/components/WisdomListenCard';
@@ -59,12 +61,8 @@ import { EveningBriefCard } from './src/components/EveningBriefCard';
 import { WelcomeScreen } from './src/components/WelcomeScreen';
 import { SkeletonCard } from './src/components/viz/Skeleton';
 import { BriefSignalsCard } from './src/components/BriefSignalsCard';
-import { TodayForecastCard } from './src/components/TodayForecastCard';
-import { ExperimentsCard } from './src/components/ExperimentsCard';
 import { CrossContextCard } from './src/components/CrossContextCard';
 import { CollapsibleSection } from './src/components/CollapsibleSection';
-import { SelfModelCard } from './src/components/SelfModelCard';
-import { CheckinHistoryCard } from './src/components/CheckinHistoryCard';
 import { HabitsModal } from './src/components/HabitsModal';
 import { LibraryCard } from './src/components/LibraryCard';
 import { CommitmentsCard } from './src/components/CommitmentsCard';
@@ -202,6 +200,11 @@ export default function App() {
   // tapping the "Weekly review is ready" preview rather than rendering the
   // full review/goals card inline on Today.
   const [weeklyReviewOpen, setWeeklyReviewOpen] = useState(false);
+  // Health tab redesign (audit rec #4) — the three focused drill-ins, opened
+  // as full-screen sheets rather than a new bottom-navigation tab.
+  const [trainingOpen, setTrainingOpen] = useState(false);
+  const [patternsOpen, setPatternsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [pendingAskQ, setPendingAskQ] = useState('');
   const dailyLog = useDailyLogStatus();
   const commitments = useCommitments();
@@ -453,51 +456,69 @@ export default function App() {
 
   const renderTab = () => {
     switch (tab) {
-      case 'health':
+      case 'health': {
+        // Health tab redesign (audit rec #4) — a compact landing page
+        // answering "what state am I in / what should I train / is it
+        // reliable / what's worth noticing" in under five seconds, with
+        // detailed execution (Training), evidence depth (Patterns &
+        // experiments), and history (Health history) one tap away as
+        // full-screen drill-ins rather than an endless stacked scroll.
+        // `liveRecovery` is the SAME canonical authority the old landing page
+        // used; `d.effectiveWorkout` is backend getEffectiveWorkout()'s own
+        // shape (routes/briefing.js), never re-derived on the client.
+        const currentRecovery = liveRecovery.fetched ? liveRecovery.recovery : (liveRecovery.recovery ?? d?.recovery);
         return (
           <>
             <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={onSleepLogged} />
-            <RecoveryCard
-              recovery={liveRecovery.fetched ? liveRecovery.recovery : (liveRecovery.recovery ?? d?.recovery)}
-              composites={d?.healthComposites ?? EMPTY_ARRAY}
-              // Show WHEN recovery was actually derived: its own field time
-              // (advanced by the cache-hit recovery refresh, NOT by a scoped
-              // chief-brief rebuild), falling back to the snapshot cut time.
-              builtAt={liveRecovery.fetched ? undefined : (d?.fieldsBuiltAt?.recovery ?? d?.snapshotAt ?? d?.builtAt)}
+            <HealthStateCard
+              recovery={currentRecovery}
+              effectiveWorkout={d?.effectiveWorkout}
               highlight={radarAnchor?.entityType === 'recovery'}
               onHighlightLayout={onRadarAnchorLayout}
             />
-            <NightContextCard />
-            <HealthCard health={health} canonicalVo2={vo2Fact} />
-            {/* healthInsights is the server-curated top set of health domain findings,
-                already scored and ranked. Habit/wellbeing-only findings go to the
-                merged CheckinHistoryCard below. */}
-            {(d?.healthInsights?.length ?? 0) > 0 ? (
-              <InsightsCard insights={d!.healthInsights!} />
-            ) : (
-              <EmptyNote c={c} text="Insights appear after a few days of health + habit data." />
-            )}
-            <WorkoutsPanel hrv={health.hrv} isDark={isDark} recoveryBand={liveRecovery.recovery?.band ?? null} recoveryScore={liveRecovery.recovery?.score ?? null} />
-            {/* Today's capacity grade/prescription — relocated here from
-                Today (Today redesign: "detailed forecast card" moves to its
-                domain destination; NOW's synthesis already states the
-                recovery band/score plainly, so this detail lives with the
-                rest of Health's data instead of duplicating on Today). */}
-            <TodayForecastCard forecast={d?.todayForecast} />
-            <ForecastCard forecasts={d?.forecasts ?? EMPTY_ARRAY} />
-            {/* Check-in trend grid + habit/wellbeing streak insights —
-                relocated here from Today (the "existing appropriate habit
-                surface": Health, since these are wellbeing/health trends). */}
-            <CheckinHistoryCard insights={checkinHistoryInsights} />
-            {/* What I'm actively running — relocated here from Today
-                (personal-health interventions belong with the rest of
-                Health's data, not a permanent card on the 30-second page). */}
-            <ExperimentsCard />
-            <CollapsibleSection title="NormOS profile">
-              <SelfModelCard />
-            </CollapsibleSection>
+            <TrainingSummaryCard
+              effectiveWorkout={d?.effectiveWorkout}
+              onOpenTraining={() => setTrainingOpen(true)}
+              onSwap={() => setTrainingOpen(true)}
+              onLogDifferent={() => setTrainingOpen(true)}
+            />
+            <WorthKnowingCard insights={d?.healthInsights ?? EMPTY_ARRAY} />
+
+            <View style={styles.healthDrillInRow}>
+              <TouchableOpacity onPress={() => setPatternsOpen(true)} style={[styles.drillInBtn, { backgroundColor: c.card }, shadow(isDark)]} activeOpacity={0.7}>
+                <Text style={[styles.drillInText, { color: c.text }]}>Patterns & experiments</Text>
+                <Text style={[styles.drillInChevron, { color: c.subtext }]}>›</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setHistoryOpen(true)} style={[styles.drillInBtn, { backgroundColor: c.card }, shadow(isDark)]} activeOpacity={0.7}>
+                <Text style={[styles.drillInText, { color: c.text }]}>Health history</Text>
+                <Text style={[styles.drillInChevron, { color: c.subtext }]}>›</Text>
+              </TouchableOpacity>
+            </View>
+
+            <TrainingScreen
+              visible={trainingOpen}
+              onClose={() => setTrainingOpen(false)}
+              hrv={health.hrv}
+              isDark={isDark}
+              recoveryBand={liveRecovery.recovery?.band ?? null}
+              recoveryScore={liveRecovery.recovery?.score ?? null}
+            />
+            <PatternsExperimentsScreen visible={patternsOpen} onClose={() => setPatternsOpen(false)} />
+            <HealthHistoryScreen
+              visible={historyOpen}
+              onClose={() => setHistoryOpen(false)}
+              recovery={currentRecovery}
+              composites={d?.healthComposites ?? EMPTY_ARRAY}
+              recoveryBuiltAt={liveRecovery.fetched ? undefined : (d?.fieldsBuiltAt?.recovery ?? d?.snapshotAt ?? d?.builtAt)}
+              health={health}
+              canonicalVo2={vo2Fact}
+              todayForecast={d?.todayForecast}
+              forecasts={d?.forecasts ?? EMPTY_ARRAY}
+              checkinHistoryInsights={checkinHistoryInsights}
+            />
           </>
         );
+      }
       case 'wealth':
         if (!d && briefing.loading) {
           return (<><SkeletonCard tall rows={4} /><SkeletonCard rows={5} /></>);
@@ -908,6 +929,15 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
   scroll: { flex: 1 },
   content: { paddingHorizontal: spacing.md, paddingBottom: spacing.xl },
+  // Health tab redesign (audit rec #4) — the two focused-destination entry
+  // points below Worth Knowing.
+  healthDrillInRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
+  drillInBtn: {
+    flex: 1, borderRadius: radius.md, padding: spacing.sm + 2,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
+  drillInText: { fontSize: 13, fontWeight: '600' },
+  drillInChevron: { fontSize: 16, fontWeight: '300' },
   // Anchored to the very top edge (y=0, behind the status bar) and full-bleed, so
   // the band tint covers the notch curve and fades down into the page.
   heroGlow: { position: 'absolute', top: 0, left: 0, right: 0, height: 440 },

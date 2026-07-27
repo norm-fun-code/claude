@@ -478,6 +478,26 @@ export interface BriefingData {
   };
   weather: Weather | null;
   workout: Workout;
+  // Raw backend/src/services/workout.js getEffectiveWorkout() shape — THE
+  // canonical "what's today's effective session" authority (manual override
+  // > recovery-based auto-downgrade > static weekly plan). Already shipped by
+  // routes/briefing.js (todayCommandCenter's plan-conflict guard consumes it
+  // server-side) but was never surfaced to the mobile client's own type until
+  // the Health tab redesign needed it for the Training summary card — reading
+  // this exact field (not re-deriving it) is what keeps Health and Today
+  // provably describing the same session (Health tab redesign, audit rec #4).
+  effectiveWorkout?: {
+    source: 'override' | 'auto_downgrade' | 'scheduled';
+    workoutId: string | null;
+    label: string;
+    duration?: string | null;
+    hrTarget?: string | null;
+    protein?: string | null;
+    isHard?: boolean;
+    scheduledWorkoutId?: string | null;
+    scheduledLabel?: string | null;
+    recoveryBand?: string | null;
+  } | null;
   calendar: CalendarEvent[];
   workBusy?: WorkBusyBlock[];
   financeSummary: string[];
