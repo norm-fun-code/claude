@@ -18,9 +18,15 @@ test('warmAndNotify forwards the briefing snapshot identity into the push payloa
     snapshotVersion: 1,
     builtAt: '2026-06-11T11:00:05.000Z',
     weather: { temp: 70, condition: 'Clear' },
+    // The prepare -> validate -> publish gate (audit fix, item 3) only
+    // publishes/pushes a draft whose OWN attempt is quality 'fresh' — a
+    // realistic stub of a genuinely fresh build, not just any brief object.
+    chiefBrief: { synthesis: 's', action: 'a', risk: 'r', move: 'm' },
+    chiefBriefQuality: { status: 'fresh' },
   };
   const orig = {
     build: briefingRoute.buildFreshBriefing,
+    publish: briefingRoute.publishBriefingDraft,
     tokens: devicesStore.listActiveTokens,
     deactivate: devicesStore.deactivate,
     recent: nudgesStore.recentlySentKeys,
@@ -30,6 +36,9 @@ test('warmAndNotify forwards the briefing snapshot identity into the push payloa
   };
   let captured = null;
   briefingRoute.buildFreshBriefing = async () => FAKE_BRIEF;
+  // publishBriefingDraft now awaits a real DB save (audit fix, item 4) — this
+  // is a pure unit test (no DB), so stub it exactly like buildFreshBriefing.
+  briefingRoute.publishBriefingDraft = async () => ({ id: 'stub-id', generated_at: new Date().toISOString() });
   devicesStore.listActiveTokens = async () => ['ExponentPushToken[test]'];
   devicesStore.deactivate = async () => {};
   nudgesStore.recentlySentKeys = async () => new Set();
@@ -48,6 +57,7 @@ test('warmAndNotify forwards the briefing snapshot identity into the push payloa
     assert.equal(captured.data.snapshotVersion, FAKE_BRIEF.snapshotVersion);
   } finally {
     briefingRoute.buildFreshBriefing = orig.build;
+    briefingRoute.publishBriefingDraft = orig.publish;
     devicesStore.listActiveTokens = orig.tokens;
     devicesStore.deactivate = orig.deactivate;
     nudgesStore.recentlySentKeys = orig.recent;

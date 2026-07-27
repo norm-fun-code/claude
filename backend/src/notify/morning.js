@@ -235,7 +235,14 @@ async function warmAndNotify(opts = {}) {
   const send = opts.send !== false;
   const automatic = opts.automatic === true && opts.force !== true;
 
-  if (!automatic) {
+  // opts.force (authenticated manual/diagnostic testing ONLY) is the one
+  // deliberate bypass of the quality gate below — eager build, eager
+  // publish, eager push, exactly as before. Every OTHER caller — automatic
+  // or manual/explicit, per the audit fix's "this exact quality gate must
+  // apply to... manual full rebuilds" requirement — goes through the SAME
+  // prepare -> validate -> publish lifecycle just below, differing only in
+  // whether the final sleep-readiness re-check (automatic-only) also runs.
+  if (opts.force === true) {
     let built = false;
     let briefing = null;
     try {
@@ -250,7 +257,7 @@ async function warmAndNotify(opts = {}) {
     return sendReadyPush(built, briefing, quality);
   }
 
-  // ── Automatic path: prepare -> validate -> publish ──────────────────────
+  // ── prepare -> validate -> publish (audit fix, items 3+4) ───────────────
   let draft = null;
   try {
     draft = await warmBriefing({ publish: false });
@@ -259,10 +266,16 @@ async function warmAndNotify(opts = {}) {
     return { built: false, sent: 0, skipped: 'draft_build_failed', quality: null };
   }
 
-  const gate = await finalMorningGate();
-  if (!gate.ready) {
-    console.log(`[morning] final readiness gate failed after preparing the draft (${gate.reason}) — discarding the draft; nothing published.`);
-    return { built: false, sent: 0, skipped: 'final_gate_failed', reason: gate.reason, quality: null };
+  // Final readiness re-check only applies to the AUTOMATIC trigger (closes
+  // the race where the user returns to bed while the expensive build ran) —
+  // a manual/explicit rebuild is the user asking right now; there is nothing
+  // to re-gate on sleep timing for that case, only on content quality below.
+  if (automatic) {
+    const gate = await finalMorningGate();
+    if (!gate.ready) {
+      console.log(`[morning] final readiness gate failed after preparing the draft (${gate.reason}) — discarding the draft; nothing published.`);
+      return { built: false, sent: 0, skipped: 'final_gate_failed', reason: gate.reason, quality: null };
+    }
   }
 
   // Fresh-before-publish invariant (audit fix): a draft the system already
@@ -274,7 +287,8 @@ async function warmAndNotify(opts = {}) {
   // The ONLY safe gate is checking quality BEFORE that call, not saving and
   // then trying to hide/delete a bad row after the fact. Nothing here is
   // persisted for a non-fresh draft — the retry ledger (scheduler.js) is what
-  // paces the next automatic attempt.
+  // paces the next automatic attempt; a manual caller sees this reflected in
+  // its build-job status instead (routes/briefing.js's build-job contract).
   const quality = draft?.chiefBriefQuality?.status ?? null;
   if (quality !== 'fresh') {
     console.log(`[morning] draft quality is ${quality || 'unknown'} — NOT publishing (never saved, never TTS-prewarmed, never pushed); a bounded retry can run later.`);
@@ -282,7 +296,16 @@ async function warmAndNotify(opts = {}) {
   }
 
   const { publishBriefingDraft } = require('../routes/briefing');
-  await publishBriefingDraft(draft);
+  try {
+    await publishBriefingDraft(draft);
+  } catch (err) {
+    // Persistence failure (audit fix, item 4): a fresh draft that failed to
+    // SAVE must not be treated as published — no push, no morning-complete
+    // marker (scheduler.js only marks the day done when built===true AND
+    // quality==='fresh', both of which this response now correctly denies).
+    console.error('[morning] publish failed — NOT sending push, NOT marking the day done:', err.message);
+    return { built: false, sent: 0, skipped: 'publish_failed', quality };
+  }
 
   if (!send) return { built: true, sent: 0, quality };
   return sendReadyPush(true, draft, quality);

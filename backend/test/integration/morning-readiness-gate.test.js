@@ -194,6 +194,31 @@ test('concurrent automatic triggers produce exactly one build (in-flight guard)'
   assert.equal(builtBoth, 1, 'exactly one attempt builds; the other cleanly skips');
 });
 
+test('required: a scheduler restart after sleep finalization catches up (no in-memory state required)', async () => {
+  stubAll({ present: false, days: [finalizedDay()] });
+  // Seed durable readiness state as if the stability observations happened
+  // BEFORE a process restart wiped every in-memory variable — the only thing
+  // that must survive is what's actually persisted in Postgres (sleep-readiness.js's
+  // sources.config.readiness). If restart-safety were broken, a freshly loaded
+  // module with zero in-process history would see this as "obs 1" and refuse.
+  await seedStableState();
+
+  // Simulate the restart itself: drop scheduler.js from Node's require cache
+  // and re-require it, so `_morningRoutineInFlight` and any other
+  // module-level variable starts from its true post-boot default — exactly
+  // what happens when the process actually restarts. (notify/morning.js and
+  // sleep-readiness.js are deliberately left cached — this test's stubs are
+  // set on those exact module objects; scheduler.js re-requires them by the
+  // same cached path, same as it would for any of its other dependencies
+  // that aren't part of what this test is proving restart-safe.)
+  delete require.cache[require.resolve('../../src/scheduler')];
+  const freshScheduler = require('../../src/scheduler');
+
+  const r = await freshScheduler.morningRoutine({ reason: 'watcher' });
+  assert.equal(r.built, true, 'a night finalized before a restart must still build on the first post-restart poll');
+  assert.equal(buildCount, 1);
+});
+
 test('external cron CANNOT bypass the gate — a not-ready night returns not_ready with no build', async () => {
   stubAll({ present: false, days: [finalizedDay()] }); // obs 1 → not ready
   const res = await request(app)

@@ -78,11 +78,31 @@ async function defaultSave(state) {
   }
 }
 
+// Reason codes a caller may pass to recordAttempt (item 6, reason-aware
+// retries). 'not_ready'/'lock_contention' are never actually recorded — see
+// scheduler.js's NO_ATTEMPT_SKIP_REASONS — but are listed here so callers and
+// tests share one vocabulary instead of inventing ad hoc strings per site.
+const REASON = Object.freeze({
+  QUALITY_DEGRADED: 'quality_degraded',       // generateChiefBrief returned degraded content
+  QUALITY_FAILED: 'quality_failed',           // generateChiefBrief returned no usable shape
+  PERSISTENCE_FAILED: 'persistence_failed',   // the draft was fresh but saveBriefing failed
+  PROVIDER_FAILED: 'provider_failed',         // the draft build itself threw (network/LLM outage)
+  FINAL_GATE_FAILED: 'final_gate_failed',     // late readiness re-check failed (not a generation issue)
+});
+
 /** Pure decision: given the persisted ledger state, is another automatic
  *  attempt allowed right now? Yesterday's (or any other day's) state can
- *  never gate today — a fresh day always starts with a clean allowance. */
-function evaluate(state, { today, now, cfg }) {
+ *  never gate today — a fresh day always starts with a clean allowance.
+ *  `currentFingerprint` (the sleep-readiness gate's OWN fingerprint for this
+ *  poll, when the caller has it) resets an obsolete hold: if new overnight
+ *  data has genuinely changed since the last recorded attempt, there's no
+ *  reason to keep waiting out a backoff computed against stale evidence —
+ *  the previous degraded/failed attempt was against a DIFFERENT snapshot. */
+function evaluate(state, { today, now, cfg, currentFingerprint = null }) {
   if (!state || state.day !== today) return { allowed: true, reason: 'first_attempt_today' };
+  if (currentFingerprint != null && state.fingerprint != null && currentFingerprint !== state.fingerprint) {
+    return { allowed: true, reason: 'fingerprint_changed' };
+  }
   if (state.attempts >= cfg.maxAttemptsPerDay) return { allowed: false, reason: 'max_attempts_reached' };
   const backoffMs = backoffForAttempts(state.attempts, cfg);
   const sinceLastMs = now - state.lastAttemptAt;
@@ -90,8 +110,8 @@ function evaluate(state, { today, now, cfg }) {
   return { allowed: true, reason: 'backoff_elapsed' };
 }
 
-/** @param {{ asOf?: Date, tz?: string, deps?: { load?: Function }, config?: Object }} [opts] */
-async function canAttempt({ asOf = new Date(), tz = process.env.TZ || 'America/New_York', deps = {}, config: overrides = {} } = {}) {
+/** @param {{ asOf?: Date, tz?: string, deps?: { load?: Function }, config?: Object, fingerprint?: string|null }} [opts] */
+async function canAttempt({ asOf = new Date(), tz = process.env.TZ || 'America/New_York', deps = {}, config: overrides = {}, fingerprint = null } = {}) {
   const cfg = config(overrides);
   const load = deps.load || defaultLoad;
   const today = localDay(asOf, tz);
@@ -101,13 +121,20 @@ async function canAttempt({ asOf = new Date(), tz = process.env.TZ || 'America/N
   } catch (e) {
     console.error('[morning-retry] state load failed (treating as fresh):', e.message);
   }
-  return evaluate(state, { today, now: asOf.getTime(), cfg });
+  return evaluate(state, { today, now: asOf.getTime(), cfg, currentFingerprint: fingerprint });
 }
 
-/** Record that an automatic attempt just happened (degraded/skipped/failed —
- *  NOT called for a successful fresh-and-published build, since the ledger
- *  only exists to pace RETRIES). Never throws. */
-async function recordAttempt({ asOf = new Date(), tz = process.env.TZ || 'America/New_York', deps = {} } = {}) {
+/** Record that a real generation attempt just happened and did NOT result in
+ *  a published fresh brief (degraded/failed/persistence-failed/provider-failed
+ *  — NOT called for a successful fresh-and-published build, and NOT called
+ *  for a hold that was never a generation attempt at all — not_ready, lock
+ *  contention, or a late final-readiness-gate failure; see scheduler.js's
+ *  NO_ATTEMPT_SKIP_REASONS). `reason` is one of the REASON codes above, kept
+ *  purely for diagnostics (the backoff math is unchanged by which reason
+ *  fired). `fingerprint`, when passed, lets a LATER call's `currentFingerprint`
+ *  detect that fresh overnight data has arrived and reset an obsolete hold.
+ *  Never throws. */
+async function recordAttempt({ asOf = new Date(), tz = process.env.TZ || 'America/New_York', deps = {}, reason = null, fingerprint = null } = {}) {
   const load = deps.load || defaultLoad;
   const save = deps.save || defaultSave;
   const today = localDay(asOf, tz);
@@ -118,9 +145,9 @@ async function recordAttempt({ asOf = new Date(), tz = process.env.TZ || 'Americ
     console.error('[morning-retry] state load failed (treating as fresh):', e.message);
   }
   const attempts = (prior && prior.day === today ? prior.attempts : 0) + 1;
-  const state = { day: today, attempts, lastAttemptAt: asOf.getTime() };
+  const state = { day: today, attempts, lastAttemptAt: asOf.getTime(), lastReason: reason, fingerprint };
   await save(state);
   return state;
 }
 
-module.exports = { canAttempt, recordAttempt, evaluate, config, backoffForAttempts, LEDGER_SOURCE_ID };
+module.exports = { canAttempt, recordAttempt, evaluate, config, backoffForAttempts, LEDGER_SOURCE_ID, REASON };

@@ -493,6 +493,84 @@ function createDiagnosticsRouter() {
     });
   }));
 
+  // Morning-lifecycle status (audit fix, item 8): ONE authenticated,
+  // secret-free response covering the whole build/publish pipeline, so a
+  // "why isn't my brief here" report is diagnosable without grepping
+  // production logs across five files. Every field here is decision-shaped
+  // metadata (states, counts, durations, reason codes) — never generated
+  // prose, tokens, or raw telemetry.
+  //   GET /api/diag/morning-status
+  router.get('/diag/morning-status', asyncHandler(async (req, res) => {
+    const scheduler = require('../scheduler');
+    const tz = process.env.TZ || 'America/New_York';
+    const configured = scheduler.eightSleepConfigured();
+
+    let readinessOut = { configured };
+    if (configured) {
+      const readiness = require('../intelligence/sleep-readiness');
+      const result = await readiness.getMorningSleepReadiness({ trigger: 'diagnostic' });
+      const { fingerprint, ...safeEvidence } = result.evidence;
+      readinessOut = {
+        configured, ready: result.ready, reason: result.reason,
+        evidenceTier: result.evidence.evidenceTier,
+        stableForMs: result.evidence.stableForMs, observations: result.evidence.observations,
+        wakeConfirmed: result.evidence.wakeConfirmed,
+        fingerprintPresent: fingerprint != null,
+        ...safeEvidence,
+      };
+    }
+
+    const morningRetryLedger = require('../intelligence/morning-retry-ledger');
+    let ledgerState = null;
+    try {
+      const src = await require('../store/sources').getSource(morningRetryLedger.LEDGER_SOURCE_ID);
+      ledgerState = src?.config?.ledger ?? null;
+    } catch { /* best-effort */ }
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    const attemptCount = ledgerState?.day === today ? (ledgerState.attempts ?? 0) : 0;
+    let nextRetryAt = null;
+    if (ledgerState?.day === today && attemptCount > 0) {
+      const cfg = morningRetryLedger.config();
+      const backoffMs = morningRetryLedger.backoffForAttempts(attemptCount, cfg);
+      nextRetryAt = new Date((ledgerState.lastAttemptAt ?? Date.now()) + backoffMs).toISOString();
+    }
+
+    const buildJobs = require('../store/morningBuildJobs');
+    const activeJob = await buildJobs.activeJobForDay(today, tz).catch(() => null);
+    const latestJob = await buildJobs.latestJobForDay(today, tz).catch(() => null);
+
+    const morningNotify = require('../notify/morning');
+    const latestBriefing = await morningNotify.latestDailyBriefing().catch(() => null);
+    const publishable = latestBriefing ? morningNotify.hasPublishableFreshBriefToday(latestBriefing) : false;
+
+    let lastPush = null;
+    try {
+      const nudgesStore = require('../store/nudges');
+      const recent = await nudgesStore.recentlySentKeys(1);
+      const pushKey = `morning_brief_push:${today}`;
+      lastPush = { sentToday: recent.has(pushKey) };
+    } catch { /* best-effort */ }
+
+    res.json({
+      readiness: readinessOut,
+      generationAttemptsToday: attemptCount,
+      lastAttemptReason: ledgerState?.day === today ? (ledgerState.lastReason ?? null) : null,
+      nextRetryAt,
+      activeBuild: activeJob ? { buildId: activeJob.id, state: activeJob.state, trigger: activeJob.trigger, attemptNumber: activeJob.attempt_number } : null,
+      lastBuild: latestJob ? {
+        buildId: latestJob.id, state: latestJob.state, trigger: latestJob.trigger,
+        attemptNumber: latestJob.attempt_number, qualityStatus: latestJob.quality_status,
+        reasonCodes: latestJob.reason_codes, updatedAt: latestJob.updated_at,
+      } : null,
+      lastPublication: latestBriefing ? {
+        generatedAt: latestBriefing.generated_at,
+        qualityStatus: latestBriefing.content?.chiefBriefQuality?.status ?? null,
+        publishableFreshToday: publishable,
+      } : null,
+      lastPush,
+    });
+  }));
+
   // Diagnostic: the canonical nightly context-tag history + a live
   // checkTemporalFraming probe — for tracing the temporal-grounding fix
   // (a historical context tag, e.g. late_meal, restated as a "tonight"

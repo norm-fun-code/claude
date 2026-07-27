@@ -7,8 +7,43 @@ const test = require('node:test');
 const { after } = test;
 const assert = require('node:assert/strict');
 const { closeDb } = require('./helpers');
+const llm = require('../../src/llm');
+const db = require('../../src/db');
 
-after(async () => { await closeDb(); });
+const TEST_MARKER = `no-post-cut-mutation-${Date.now()}`;
+const ORIG_GENERATE_TEXT = llm.generateText;
+
+// These tests are about buildFreshBriefing's PERSISTENCE/scheduling contract
+// (setImmediate timing, background-priming isolation), not chief-brief
+// generation quality — stub the LLM with a schema-valid, fresh-quality
+// response so the build actually persists (buildFreshBriefing's publish gate
+// refuses to save a failed/degraded draft — see routes/briefing.js).
+function stubFreshLlm() {
+  llm.generateText = async ({ system } = {}) => {
+    if (system && system.includes('chief of staff and data scientist')) {
+      return {
+        text: JSON.stringify({
+          chiefBrief: {
+            synthesis: `${TEST_MARKER} today is genuinely on track with a manageable, well-understood schedule, nothing urgent.`,
+            action: 'Block a short window this morning for the highest-leverage task on the list.',
+            risk: 'Meetings could crowd out the deep work window if nothing is protected today.',
+            move: 'Confirm the plan for the morning before the first meeting of the day starts.',
+            openQuestion: '',
+          },
+          morningFocus: 'Protect the first open block today for the one thing that actually moves things forward.',
+        }),
+        stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
+      };
+    }
+    return JSON.stringify({ quoteInsight: '', notionQuote: '', notionInsight: '' });
+  };
+}
+
+after(async () => {
+  llm.generateText = ORIG_GENERATE_TEXT;
+  await db.query(`DELETE FROM briefings WHERE content->'chiefBrief'->>'synthesis' LIKE $1`, [`%${TEST_MARKER}%`]);
+  await closeDb();
+});
 
 // buildFreshBriefing persists via a FIRE-AND-FORGET saveBriefing() call
 // (deliberate — the response itself is the source of truth for the caller;
@@ -29,6 +64,7 @@ async function waitForPersistedSnapshot(briefingsStore, snapshotId, { timeoutMs 
 
 test('the background-priming callback is scheduled (via setImmediate) but has NOT run by the time the caller gets the response back', async () => {
   const { buildFreshBriefing } = require('../../src/routes/briefing');
+  stubFreshLlm();
 
   // setImmediate callbacks always run in a LATER turn of the event loop than
   // the synchronous code that scheduled them — so capturing "was the
@@ -59,6 +95,7 @@ test('the background-priming callback is scheduled (via setImmediate) but has NO
 test('the persisted brief content is UNCHANGED immediately after buildFreshBriefing returns, even though background priming is about to run', async () => {
   const { buildFreshBriefing } = require('../../src/routes/briefing');
   const briefingsStore = require('../../src/store/briefings');
+  stubFreshLlm();
 
   const result = await buildFreshBriefing({ force: true });
   // saveBriefing() is fire-and-forget in the source, so poll briefly for the
@@ -105,6 +142,7 @@ test('a mutation that lands DURING primeNextBuildCycle does not alter the alread
   const sourcesStore = require('../../src/store/sources');
 
   await sourcesStore.registerSource({ id: 'eight_sleep', domain: 'health', displayName: 'Eight Sleep' }).catch(() => {});
+  stubFreshLlm();
 
   // 1) A real full build — persists a brief with fieldVersions stamped at cut time.
   const firstResult = await buildFreshBriefing({ force: true });

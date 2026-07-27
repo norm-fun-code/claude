@@ -11,6 +11,10 @@ export const API_TOKEN = process.env.EXPO_PUBLIC_API_TOKEN || '';
 
 export const BRIEFING_URL = `${API_BASE}/api/briefing`;
 export const BRIEFING_REBUILD_URL = `${API_BASE}/api/briefing/rebuild`;
+// Durable build-job status poll (morning lifecycle fix) — the client polls
+// THIS, never builtAt, to learn whether a triggered rebuild actually
+// succeeded. See backend routes/briefing.js's build-job contract.
+export const BRIEFING_REBUILD_STATUS_URL = `${API_BASE}/api/briefing/rebuild/status`;
 // Fast, scoped retry for just the Chief-of-Staff card (seconds, not the full
 // 60-90s rebuild) — see src/routes/briefing.js's chief-brief/rebuild route.
 export const CHIEF_BRIEF_REBUILD_URL = `${API_BASE}/api/briefing/chief-brief/rebuild`;

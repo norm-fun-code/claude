@@ -134,12 +134,15 @@ test('presenceEnd populated but telemetry too recent → no build', async () => 
   assert.equal(r.reason, 'telemetry_too_recent');
 });
 
-test('two observations past the 10-min stability floor are stable but NOT yet wake-confirmed', async () => {
+test('two observations past the 10-min stability floor are stable but NOT yet wake-confirmed (inferred path — no presenceEnd)', async () => {
   // This is the exact case that used to read "ready" and is the production bug:
   // ten-odd minutes of inactive/stable telemetry is only a floor, not proof the
   // night — as opposed to a bathroom trip or a provisional trend briefly holding
-  // still — is actually over.
-  const { deps, holder } = mkDeps({ present: false, days: [finalizedDay()] });
+  // still — is actually over. presenceEnd:null forces the INFERRED evidence
+  // tier (the API not supplying it at all) — the STRONG tier (presenceEnd
+  // available and old enough) is allowed to skip this hold; see the
+  // 'ready_strong_evidence' tests below for that path.
+  const { deps, holder } = mkDeps({ present: false, days: [finalizedDay({ presenceEnd: null })] });
   const r1 = await call(deps, T0);
   assert.equal(r1.ready, false);
   assert.equal(r1.evidence.observations, 1);
@@ -155,19 +158,20 @@ test('two observations past the 10-min stability floor are stable but NOT yet wa
   assert.equal(holder.state.observations, 2);
 });
 
-test('a genuinely finalized, continuously inactive night eventually becomes READY once wake-confirmed', async () => {
-  const { deps, holder } = mkDeps({ present: false, days: [finalizedDay()] });
+test('a genuinely finalized, continuously inactive night (inferred path — no presenceEnd) eventually becomes READY once wake-confirmed', async () => {
+  const { deps, holder } = mkDeps({ present: false, days: [finalizedDay({ presenceEnd: null })] });
   await call(deps, T0); // obs 1
   const r2 = await call(deps, at(11 * MIN)); // obs 2, stable but not yet wake-confirmed
   assert.equal(r2.ready, false);
   assert.equal(r2.reason, 'wake_not_confirmed');
+  assert.equal(r2.evidence.evidenceTier, 'inferred');
   // Same fingerprint continues to hold, now past the 30-min wake-confirmation window.
   const r3 = await call(deps, at(31 * MIN));
   assert.equal(r3.ready, true);
   assert.equal(r3.reason, 'ready');
   assert.equal(r3.evidence.wakeConfirmed, true);
+  assert.equal(r3.evidence.evidenceTier, 'inferred');
   assert.ok(r3.evidence.stableForMs >= CFG.wakeConfirmationMinMs);
-  assert.ok(r3.evidence.telemetryAgeMs >= CFG.telemetryMinAgeMs);
   assert.equal(holder.state.observations, 3);
 });
 
@@ -260,14 +264,14 @@ test('an API error must not advance stability (a blip cannot count as an observa
   assert.equal(rOk.ready, true);
 });
 
-test('a process restart does NOT turn one persisted observation into a false "stable" state', async () => {
+test('a process restart does NOT turn one persisted observation into a false "stable" state (inferred path — no presenceEnd)', async () => {
   // Simulate: obs 1 persisted before the restart.
   const persisted = { day: TODAY, fingerprint: null, observations: 0, firstStableAt: null };
-  const { deps, holder } = mkDeps({ present: false, days: [finalizedDay()], initialState: persisted });
+  const { deps, holder } = mkDeps({ present: false, days: [finalizedDay({ presenceEnd: null })], initialState: persisted });
   const r1 = await call(deps, T0); // obs 1, firstStableAt = T0
   assert.equal(r1.evidence.observations, 1);
   // "Restart": a brand-new deps object reading the SAME persisted holder state.
-  const afterRestart = mkDeps({ present: false, days: [finalizedDay()], initialState: holder.state });
+  const afterRestart = mkDeps({ present: false, days: [finalizedDay({ presenceEnd: null })], initialState: holder.state });
   // Immediately after restart (only 1 min later) → obs 2 but window NOT satisfied.
   const rSoon = await call(afterRestart.deps, at(1 * MIN));
   assert.equal(rSoon.evidence.observations, 2);
@@ -290,6 +294,43 @@ test("yesterday's stable state cannot satisfy today's readiness", async () => {
   assert.equal(r.ready, false, "a prior day's 9 observations must not carry into today");
   assert.equal(r.evidence.observations, 1);
   assert.equal(r.reason, 'insufficient_stability');
+});
+
+// ── Evidence tiers (audit fix — item 1) ──────────────────────────────────
+test('required: strong presenceEnd evidence starts the build within one poll after stability+telemetry-age requirements are met — no 30-min wait', async () => {
+  // presenceEnd populated the moment tracking ended (a real wake, not a
+  // pre-aged fixture) — the default 6-min poll cadence means obs 3 (12 min
+  // after wake) is the first poll where BOTH the 10-min stability floor and
+  // the 12-min telemetry-age floor are satisfied.
+  const wakeAt = T0;
+  const { deps, holder } = mkDeps({ present: false, days: [finalizedDay({ presenceEnd: wakeAt.toISOString() })] });
+  const r1 = await call(deps, at(0));
+  assert.equal(r1.ready, false, 'presenceEnd is only 0min old — not proof yet');
+  const r2 = await call(deps, at(6 * MIN));
+  assert.equal(r2.ready, false, 'only 6min stable/aged — below both floors');
+  const r3 = await call(deps, at(12 * MIN));
+  assert.equal(r3.ready, true, 'strong evidence (presenceEnd old enough + stable finalized trend) is sufficient on its own');
+  assert.equal(r3.reason, 'ready_strong_evidence');
+  assert.equal(r3.evidence.evidenceTier, 'strong');
+  assert.ok(r3.evidence.stableForMs < CFG.wakeConfirmationMinMs, 'must NOT have waited for the full 30-minute inferred-path hold');
+  assert.equal(holder.state.observations, 3);
+});
+
+test('required: a temporary bathroom absence (fingerprint keeps changing) never reaches strong evidence early, even with presenceEnd present', async () => {
+  const wakeAt = T0;
+  const { deps } = mkDeps({ present: false, days: [finalizedDay({ presenceEnd: wakeAt.toISOString(), sleepDuration: 7 * 3600 })] });
+  await call(deps, at(0));
+  // The trend keeps revising (still being written) for the next couple of
+  // polls — each one a NEW fingerprint, so stability never accrues even
+  // though presenceEnd itself would otherwise be old enough by poll 3.
+  deps.getTrends = async () => [finalizedDay({ presenceEnd: wakeAt.toISOString(), sleepDuration: 7.1 * 3600 })];
+  const r2 = await call(deps, at(6 * MIN));
+  assert.equal(r2.ready, false);
+  assert.equal(r2.evidence.observations, 1, 'changed fingerprint restarts the count');
+  deps.getTrends = async () => [finalizedDay({ presenceEnd: wakeAt.toISOString(), sleepDuration: 7.2 * 3600 })];
+  const r3 = await call(deps, at(12 * MIN));
+  assert.equal(r3.ready, false, 'still not stable — a fresh fingerprint every poll can never satisfy either evidence tier');
+  assert.equal(r3.evidence.observations, 1);
 });
 
 test('a trend for a DIFFERENT day (no today row) is not a finalized trend for today', async () => {

@@ -61,15 +61,24 @@ async function markMorningRan() {
   }
 }
 
-/** Did the morning routine already run today? Checks the dedup ledger. */
+/** Did the morning routine already run today? Checks the dedup ledger.
+ *  Tri-state (audit fix, item 7): a transient DB read failure is NEITHER
+ *  "ran" nor "didn't run" — it's unknown, and the old code's "assume it ran"
+ *  fail-safe against a duplicate push was ALSO a fail-closed against ever
+ *  running/retrying the morning routine that day (a single blip silently
+ *  skipped the whole day's brief). Returns { ran, error }: callers that only
+ *  care about "should I skip" check `.ran`, but on `.error` they must NOT
+ *  treat it as "ran" — they schedule a retry instead, relying on the
+ *  existing push-dedup key (morningPushKey) and publish idempotency
+ *  (morning.js's hasPublishableFreshBriefToday pre-check) to prevent an
+ *  actual duplicate if the marker genuinely was already set. */
 async function morningRanToday() {
   try {
     const keys = await nudgesStore.recentlySentKeys(1);
-    return keys.has(morningKey());
+    return { ran: keys.has(morningKey()), error: false };
   } catch (e) {
-    // On error, assume it ran so we don't risk a duplicate push.
-    console.error('[scheduler] morning marker check failed:', e.message);
-    return true;
+    console.error('[scheduler] morning marker check failed (treating as UNKNOWN, not "ran" — will retry):', e.message);
+    return { ran: false, error: true };
   }
 }
 
@@ -132,6 +141,41 @@ let _morningRoutineInFlight = false;
  * @param {{ reason?: string, force?: boolean, asOf?: Date }} [opts]
  * @returns {Promise<{ built: boolean, sent?: number, skipped?: string, reason?: string }>}
  */
+// Skip reasons that mean "no real generation attempt happened" — a hold like
+// this must NEVER consume a bounded retry attempt (audit fix, item 6): the
+// system wasn't ready to try, or another caller already owns the build, or a
+// late safety re-check aborted before generation even ran. Only a genuine
+// attempt that ran generation and came back non-fresh (or failed to persist)
+// should count against the daily attempt cap.
+const NO_ATTEMPT_SKIP_REASONS = new Set(['rebuild_in_progress', 'final_gate_failed']);
+
+/** Nonessential post-brief work (audit fix, item 2): anomaly watch, cross-
+ *  domain synthesis, experiment propose/autostart, and nudges all read
+ *  today's already-ingested data but do NOT feed the BrainSnapshot the brief
+ *  itself needs — buildFreshBriefing already runs its own analyze()/
+ *  crossContext()/consolidate() internally as part of cutting that snapshot
+ *  (see routes/briefing.js), so re-running them here BEFORE the brief was
+ *  pure duplicated work sitting on the user-facing critical path. Fired
+ *  without blocking the caller; each step is independently best-effort. */
+function runNonEssentialMorningWork(label) {
+  (async () => {
+    try { await watchMod.runWatch(); } catch (e) { console.error('[scheduler] watch:', e.message); }
+    try { await crossContextMod.generateCrossContext(); } catch (e) { console.error('[scheduler] crossContext:', e.message); }
+    try {
+      const p = await experimentsMod.proposeExperiments();
+      if (p.created) console.log(`[scheduler] proposed ${p.created} new experiment(s)`);
+      const started = await experimentsMod.autoStartExperiment();
+      if (started) console.log(`[scheduler] auto-started experiment: "${started.hypothesis}"`);
+    } catch (e) { console.error('[scheduler] experiments:', e.message); }
+    try { await runNudges({ suppressCheckin: true }); } catch (e) { console.error('[scheduler] nudge:', e.message); }
+    try {
+      const w = await wealthNudgesMod.runWealthNudges({});
+      if (w.sent > 0) console.log(`[scheduler] wealth nudges: sent=${w.sent}`);
+    } catch (e) { console.error('[scheduler] wealth nudges:', e.message); }
+    console.log(`[scheduler] post-brief housekeeping done (${label})`);
+  })().catch((e) => console.error('[scheduler] post-brief housekeeping error:', e.message));
+}
+
 async function morningRoutine({ reason = 'scheduled', force = false, asOf = new Date() } = {}) {
   if (_morningRoutineInFlight) {
     console.log(`[scheduler] morning routine already in flight — skipping duplicate trigger (${reason})`);
@@ -139,9 +183,14 @@ async function morningRoutine({ reason = 'scheduled', force = false, asOf = new 
   }
   _morningRoutineInFlight = true;
   try {
-    if (!force && await morningRanToday()) {
-      console.log(`[scheduler] morning already ran today — skipping (${reason})`);
-      return { built: false, skipped: 'already_ran_today' };
+    if (!force) {
+      const marker = await morningRanToday();
+      if (marker.error) {
+        console.log(`[scheduler] morning-marker lookup failed — treating as UNKNOWN, not skipping (${reason})`);
+      } else if (marker.ran) {
+        console.log(`[scheduler] morning already ran today — skipping (${reason})`);
+        return { built: false, skipped: 'already_ran_today' };
+      }
     }
 
     // A degraded automatic build (grounded-fallback/underfilled chief brief —
@@ -149,9 +198,19 @@ async function morningRoutine({ reason = 'scheduled', force = false, asOf = new 
     // day done (below), so without this check every ~6-minute automatic
     // trigger would re-attempt the full expensive build (ingest+analyze+Opus)
     // chasing the same degraded result. Bounded backoff/attempt cap instead —
-    // see intelligence/morning-retry-ledger.js.
+    // see intelligence/morning-retry-ledger.js. Gated on the CURRENT
+    // readiness fingerprint (when Eight Sleep is configured) so a genuinely
+    // new night's data resets an obsolete hold rather than waiting out a
+    // backoff computed against yesterday's failed attempt.
+    let currentFingerprint = null;
     if (!force) {
-      const attempt = await morningRetryLedger.canAttempt({ asOf });
+      if (eightSleepConfigured()) {
+        try {
+          const peek = await sleepReadiness.getMorningSleepReadiness({ asOf, trigger: `${reason}:fingerprint-peek` });
+          currentFingerprint = peek.evidence?.fingerprint ?? null;
+        } catch { /* non-critical — falls back to time-only backoff */ }
+      }
+      const attempt = await morningRetryLedger.canAttempt({ asOf, fingerprint: currentFingerprint });
       if (!attempt.allowed) {
         console.log(`[scheduler] morning retry backoff active — skipping (${reason}): ${attempt.reason}`);
         return { built: false, skipped: 'retry_backoff', reason: attempt.reason };
@@ -168,9 +227,18 @@ async function morningRoutine({ reason = 'scheduled', force = false, asOf = new 
     }
 
     console.log(`[scheduler] morning routine starting (trigger: ${reason})`);
-    // Refresh the data + intelligence first, so the briefing reflects today.
-    // For the Eight Sleep path this IS the one final ingest before the brief.
-    try { await ingestRun.runIngest(); } catch (e) { console.error('[scheduler] ingest:', e.message); }
+    // Critical path (audit fix, item 2): ONLY what's actually required to cut
+    // an accurate BrainSnapshot and generate the brief. Use the smallest
+    // existing TARGETED ingest (the same one routes/briefing.js's own
+    // buildFreshBriefing pre-cut step already uses) rather than a full
+    // all-connectors ingest — the brief only needs last night's Eight Sleep
+    // data to be current before the readiness revalidation below; every
+    // other connector's data is refreshed inside buildFreshBriefing itself
+    // (analyze/crossContext/consolidate) or by primeNextBuildCycle after
+    // publish. analyze()/watch()/crossContext()/experiments()/nudges()/
+    // wealthNudges() all moved OFF this path — see runNonEssentialMorningWork
+    // below, fired only AFTER the brief is durably published.
+    try { await ingestRun.runIngest({ only: 'eight_sleep_api' }); } catch (e) { console.error('[scheduler] ingest:', e.message); }
 
     // Revalidate the finalized snapshot AFTER the final ingest — a bed re-entry
     // during ingest (presence flips active) must abort the build, not race it.
@@ -183,30 +251,11 @@ async function morningRoutine({ reason = 'scheduled', force = false, asOf = new 
       }
     }
 
-    try { await analyzeMod.analyze(); } catch (e) { console.error('[scheduler] analyze:', e.message); }
-    // Anomaly watch on fresh overnight data — pushes "your HRV dropped" within the
-    // morning routine (runNudges has no anomaly builder). Deduped to one ping per
-    // metric per day, so a same-night HTTP ingest that already fired won't repeat.
-    try { await watchMod.runWatch(); } catch (e) { console.error('[scheduler] watch:', e.message); }
-    // Synthesize the day's cross-domain relationships into plain-language insights.
-    try { await crossContextMod.generateCrossContext(); } catch (e) { console.error('[scheduler] crossContext:', e.message); }
-    // Propose new experiments from fresh correlations, then auto-start one if the
-    // queue is empty — keeps the hypothesis loop self-sustaining.
-    try {
-      const p = await experimentsMod.proposeExperiments();
-      if (p.created) console.log(`[scheduler] proposed ${p.created} new experiment(s)`);
-      const started = await experimentsMod.autoStartExperiment();
-      if (started) console.log(`[scheduler] auto-started experiment: "${started.hypothesis}"`);
-    } catch (e) { console.error('[scheduler] experiments:', e.message); }
-    // Check-in reminder is suppressed here — it has its own 3pm schedule.
-    try { await runNudges({ suppressCheckin: true }); } catch (e) { console.error('[scheduler] nudge:', e.message); }
-    // Wealth threshold alerts: over-budget categories, new recurring charges.
-    try {
-      const w = await wealthNudgesMod.runWealthNudges({});
-      if (w.sent > 0) console.log(`[scheduler] wealth nudges: sent=${w.sent}`);
-    } catch (e) { console.error('[scheduler] wealth nudges:', e.message); }
     // Pre-build the briefing (warm the cache) and push "briefing ready", so the
     // app opens instantly with today's briefing instead of waiting to build it.
+    // buildFreshBriefing (called inside runMorningBriefing) already runs its
+    // own analyze()/crossContext()/consolidate() as part of cutting the
+    // snapshot — nothing above duplicates that.
     let briefResult = { built: false, sent: 0 };
     try {
       briefResult = await morningNotify.runMorningBriefing({});
@@ -227,12 +276,22 @@ async function morningRoutine({ reason = 'scheduled', force = false, asOf = new 
       || briefResult.skipped === 'already_built_today';
     if (reachedTerminalOutcome) {
       await markMorningRan();
-    } else if (!force) {
+      // Nonessential work runs AFTER the fresh brief is durably published —
+      // never blocks marking the day done or the response the watcher/cron
+      // caller sees.
+      runNonEssentialMorningWork(reason);
+    } else if (!force && !NO_ATTEMPT_SKIP_REASONS.has(briefResult.skipped)) {
       console.log(`[scheduler] morning routine did not reach a terminal outcome (built=${briefResult.built} quality=${briefResult.quality ?? 'n/a'} skipped=${briefResult.skipped ?? 'n/a'}) — NOT marking the day done; recording a retry attempt instead.`);
-      await morningRetryLedger.recordAttempt({ asOf });
+      const reason2 = briefResult.skipped === 'quality_not_fresh'
+        ? (briefResult.quality === 'failed' ? morningRetryLedger.REASON.QUALITY_FAILED : morningRetryLedger.REASON.QUALITY_DEGRADED)
+        : (briefResult.skipped === 'publish_failed' ? morningRetryLedger.REASON.PERSISTENCE_FAILED
+          : (briefResult.skipped === 'draft_build_failed' ? morningRetryLedger.REASON.PROVIDER_FAILED : (briefResult.skipped || 'unknown')));
+      await morningRetryLedger.recordAttempt({ asOf, reason: reason2, fingerprint: currentFingerprint });
+    } else if (!force) {
+      console.log(`[scheduler] morning routine held (${briefResult.skipped}) — not a generation attempt; retry ledger left untouched.`);
     }
     console.log('[scheduler] morning routine done');
-    return { built: !!briefResult.built, sent: briefResult.sent || 0, quality: briefResult.quality ?? null };
+    return { built: !!briefResult.built, sent: briefResult.sent || 0, quality: briefResult.quality ?? null, skipped: briefResult.skipped ?? null };
   } finally {
     _morningRoutineInFlight = false;
   }
@@ -267,7 +326,9 @@ function startMorningWatcher() {
 
   const tick = async () => {
     try {
-      if (await morningRanToday()) return;
+      const marker = await morningRanToday();
+      if (marker.ran) return;
+      if (marker.error) console.log('[scheduler] morning-marker lookup failed this poll — treating as unknown, will retry next poll');
       const now = new Date();
       const mins = now.getHours() * 60 + now.getMinutes();
       if (mins < pollStartHour * 60 + pollStartMinute) return; // too early to poll
@@ -437,8 +498,11 @@ function startJobs() {
     const now = new Date();
     const pastMorning = now.getHours() * 60 + now.getMinutes() >= hour * 60 + minute;
     if (pastMorning) {
-      morningRanToday().then((ran) => {
-        if (ran) return;
+      morningRanToday().then((marker) => {
+        if (marker.ran) return;
+        if (marker.error) {
+          console.log('[scheduler] morning-marker lookup failed at boot — proceeding with catch-up rather than silently skipping the day');
+        }
         console.log('[scheduler] booted after morning time with no run today — catching up');
         Promise.resolve().then(morningRoutine).catch((e) => console.error('[scheduler] catch-up error:', e.message));
       });

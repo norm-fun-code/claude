@@ -22,6 +22,7 @@ after(async () => {
   // them a moment to settle before closing the pool, so cleanup doesn't log
   // spurious "pool already ended" noise from work still in flight.
   await new Promise((r) => setTimeout(r, 1000));
+  await db.query(`DELETE FROM morning_build_jobs WHERE trigger = 'manual'`);
   await closeDb();
 });
 
@@ -34,9 +35,11 @@ test('POST /briefing/rebuild reports alreadyRunning when another session already
     assert.equal(rows[0].acquired, true, 'test setup: should be able to take the lock when nothing else holds it');
 
     const res = await request(app).post('/api/briefing/rebuild').set(authHeader());
-    assert.equal(res.status, 200);
-    assert.equal(res.body.started, false);
+    // Durable build-job contract (audit fix, item 5): 202 + a build id/state
+    // the client polls, never a bare {started:false}.
+    assert.equal(res.status, 202);
     assert.equal(res.body.alreadyRunning, true);
+    assert.ok('state' in res.body);
   } finally {
     await holder.query('SELECT pg_advisory_unlock($1)', [REBUILD_LOCK_ID]);
     holder.release();
@@ -45,8 +48,9 @@ test('POST /briefing/rebuild reports alreadyRunning when another session already
 
 test('POST /briefing/rebuild starts (and the lock becomes free again once the build settles) when uncontended', async () => {
   const res = await request(app).post('/api/briefing/rebuild').set(authHeader());
-  assert.equal(res.status, 200);
-  assert.equal(res.body.started, true);
+  assert.equal(res.status, 202);
+  assert.ok(res.body.buildId, 'a durable build id is returned so the client can poll status instead of comparing builtAt');
+  assert.equal(res.body.state, 'building');
 
   // The route now calls buildFreshBriefing() directly (no more loopback HTTP)
   // and releases the lock in a .finally() once that settles. In this test env

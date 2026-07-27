@@ -206,6 +206,10 @@ async function getMorningSleepReadiness({ asOf = new Date(), trigger = 'unknown'
     trigger, day: today, presence: 'unknown', presenceEndAvailable: false,
     hasFinalizedTrend: false, fingerprint: null, observations: 0,
     stableForMs: 0, telemetryAgeMs: null, wakeConfirmed: false, thresholds: th,
+    // 'strong' | 'inferred' | 'pending' — see the gate below. Reported even
+    // on a not-ready result so the diagnostic endpoint can show which tier
+    // the morning is currently building evidence toward.
+    evidenceTier: 'pending',
   };
   const done = (ready, reason) => ({ ready, reason, evidence });
 
@@ -294,11 +298,28 @@ async function getMorningSleepReadiness({ asOf = new Date(), trigger = 'unknown'
     // 4) Gates. presenceEnd age only applies when the API actually gives us one.
     const telemetryOk = telemetryAgeMs == null || telemetryAgeMs >= th.telemetryMinAgeMs;
     const stableOk = observations >= th.minObservations && stableForMs >= th.minStabilityMs;
-    // The actual "the night is genuinely over" gate — a longer, conservative
-    // hold on the SAME continuous-inactive-and-unchanged-fingerprint evidence
-    // stableOk already tracks. stableOk alone (the ~10-minute floor) is
-    // deliberately NOT sufficient — see thresholds()'s wakeConfirmationMinMs
-    // comment. Any active presence, new interval, or fingerprint change resets
+
+    // Two evidence tiers (audit fix — item 1): when the API actually supplies
+    // presenceEnd, its own age (telemetryOk) is DIRECT proof presence ended,
+    // not just an inference from a frozen fingerprint. Combined with a
+    // finalized, stable trend (stableOk — already ≥minObservations polls and
+    // ≥minStabilityMs), that is STRONG finalization evidence and does not
+    // also need the full conservative wakeConfirmationMinMs hold below — the
+    // build may start the very next poll after this tier becomes true. When
+    // presenceEnd is unavailable, stability alone is only ever an INFERENCE
+    // (a bathroom trip the Pod never reopens a session for, or a provisional
+    // trend simply sitting still, both satisfy stableOk on their own), so
+    // that weaker path keeps requiring the longer wakeConfirmationMinMs hold,
+    // exactly as before this fix.
+    const strongEvidence = snap.presenceEnd != null && telemetryOk && stableOk;
+    evidence.evidenceTier = strongEvidence ? 'strong' : (snap.presenceEnd == null ? 'inferred' : 'pending');
+
+    // The actual "the night is genuinely over" gate for the INFERRED path — a
+    // longer, conservative hold on the SAME continuous-inactive-and-unchanged-
+    // fingerprint evidence stableOk already tracks. stableOk alone (the
+    // ~10-minute floor) is deliberately NOT sufficient on its own for that
+    // weaker path — see thresholds()'s wakeConfirmationMinMs comment. Any
+    // active presence, new interval, or fingerprint change resets
     // stableForMs/observations above (via the fingerprint-continuity check),
     // so this gate is automatically re-suspended by the same mechanism that
     // already resets stability — nothing additional to wire up here.
@@ -306,6 +327,7 @@ async function getMorningSleepReadiness({ asOf = new Date(), trigger = 'unknown'
     evidence.wakeConfirmed = wakeConfirmed;
     if (!telemetryOk) return done(false, 'telemetry_too_recent');
     if (!stableOk) return done(false, 'insufficient_stability');
+    if (strongEvidence) return done(true, 'ready_strong_evidence');
     if (!wakeConfirmed) return done(false, 'wake_not_confirmed');
     return done(true, 'ready');
   } catch (e) {
@@ -322,7 +344,7 @@ async function getMorningSleepReadiness({ asOf = new Date(), trigger = 'unknown'
 function readinessLogLine(result, { pastCutoff = false, pastGiveup = false } = {}) {
   const e = result.evidence;
   const secs = (ms) => (ms == null ? 'n/a' : `${Math.round(ms / 1000)}s`);
-  return `[readiness] trigger=${e.trigger} ready=${result.ready} reason=${result.reason} `
+  return `[readiness] trigger=${e.trigger} ready=${result.ready} reason=${result.reason} tier=${e.evidenceTier} `
     + `presence=${e.presence} presenceEnd=${e.presenceEndAvailable} finalizedTrend=${e.hasFinalizedTrend} `
     + `telemetryAge=${secs(e.telemetryAgeMs)} stableFor=${secs(e.stableForMs)} obs=${e.observations} wakeConfirmed=${e.wakeConfirmed} `
     + `pastCutoff=${pastCutoff} pastGiveup=${pastGiveup}`;

@@ -51,7 +51,12 @@ async function seedPriorBriefing() {
 }
 
 after(async () => {
-  await db.query(`DELETE FROM briefings WHERE content->>'day' = $1 AND content->'chiefBrief'->>'synthesis' = 'prior'`, []).catch(() => {});
+  // Clean up BOTH the seeded "prior" row and the real fresh briefings this
+  // suite's own full builds persist (MARKER-tagged, including the second
+  // test's `${MARKER} 2` variant) — otherwise a MARKER-tagged row lingers as
+  // today's canonical briefing and pollutes any later test in the same run
+  // that assumes no fresh same-day brief exists.
+  await db.query(`DELETE FROM briefings WHERE content->'chiefBrief'->>'synthesis' = 'prior' OR content->'chiefBrief'->>'synthesis' LIKE $1`, [`${MARKER}%`]).catch(() => {});
   await closeDb();
 });
 

@@ -10,10 +10,12 @@ const assert = require('node:assert/strict');
 const request = require('supertest');
 const { buildTestApp, authHeader, closeDb } = require('./helpers');
 const db = require('../../src/db');
+const llm = require('../../src/llm');
 const { getEffectiveWorkout } = require('../../src/services/workout');
 
 const app = buildTestApp();
 const TZ = 'America/New_York';
+const TEST_MARKER = `cache-override-mutation-${Date.now()}`;
 
 function todayKey(tz = TZ) {
   return new Date().toLocaleDateString('en-CA', { timeZone: tz });
@@ -21,8 +23,11 @@ function todayKey(tz = TZ) {
 
 const WORKOUT_LABELS = { push: 'Push', pull: 'Pull', zone2: 'Zone 2', mobility: 'Mobility', intervals: 'Intervals', rest: 'Rest' };
 
+const ORIG_GENERATE_TEXT = llm.generateText;
 test.after(async () => {
+  llm.generateText = ORIG_GENERATE_TEXT;
   await db.query('DELETE FROM workout_overrides WHERE log_date = $1', [todayKey()]);
+  await db.query(`DELETE FROM briefings WHERE content->'chiefBrief'->>'synthesis' LIKE $1`, [`%${TEST_MARKER}%`]);
   await closeDb();
 });
 
@@ -31,6 +36,29 @@ test('a workout-override mutation after a full build changes the NEXT cache-hit 
 
   // Clean slate for today.
   await db.query('DELETE FROM workout_overrides WHERE log_date = $1', [todayKey()]);
+
+  // This test proves cache-hit workout-override behavior, not chief-brief
+  // generation — stub the LLM with a schema-valid, fresh-quality response so
+  // the full build actually persists (buildFreshBriefing's publish gate
+  // refuses to save a failed/degraded draft — see routes/briefing.js).
+  llm.generateText = async ({ system } = {}) => {
+    if (system && system.includes('chief of staff and data scientist')) {
+      return {
+        text: JSON.stringify({
+          chiefBrief: {
+            synthesis: `${TEST_MARKER} today is genuinely on track with a manageable, well-understood schedule, nothing urgent.`,
+            action: 'Block a short window this morning for the highest-leverage task on the list.',
+            risk: 'Meetings could crowd out the deep work window if nothing is protected today.',
+            move: 'Confirm the plan for the morning before the first meeting of the day starts.',
+            openQuestion: '',
+          },
+          morningFocus: 'Protect the first open block today for the one thing that actually moves things forward.',
+        }),
+        stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
+      };
+    }
+    return JSON.stringify({ quoteInsight: '', notionQuote: '', notionInsight: '' });
+  };
 
   // 1) A real full build — cuts a snapshot, persists it, stamps fieldVersions.
   const first = await buildFreshBriefing({ force: true });

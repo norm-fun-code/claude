@@ -2673,8 +2673,37 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   // only calls publishBriefingDraft() once that re-check still passes — never
   // "save then delete a premature row"; an unconfirmed draft is simply never
   // written anywhere.
+  //
+  // Quality gate BEFORE publish (audit fix, item 3): this used to publish
+  // unconditionally whenever publish=true — which is every manual rebuild
+  // (POST /briefing/rebuild), forced refresh (GET /briefing?refresh=1), and
+  // cache-miss GET /briefing, none of which passed publish=false. A build
+  // whose own attempt was missing/degraded (thisAttemptFresh false) could
+  // still be saved as the new canonical `daily` row — including the
+  // chiefBriefPending:true/chiefBrief:null shape when no fresh same-day prior
+  // existed to carry forward (the exact "first manual rebuild came back
+  // blank" production bug). The SAME thisAttemptFresh check that already
+  // decides whether to carry forward prior content (above) now also decides
+  // whether to publish at all: a degraded/pending attempt is recorded as a
+  // build attempt (the caller/build-job ledger sees it), never saved over the
+  // existing fresh canonical briefing (or written as a blank one when none
+  // existed yet).
   if (publish) {
-    await publishBriefingDraft(response);
+    if (thisAttemptFresh) {
+      try {
+        await publishBriefingDraft(response);
+      } catch (err) {
+        // Persistence failure (audit fix, item 4): publishBriefingDraft's
+        // save is now awaited and can throw. Never report this build as
+        // published — the caller (the manual-rebuild route's build-job
+        // status, or notify/morning.js) must see a retryable failure, not a
+        // silent success with an unconfirmed row.
+        console.error('[briefing build] publish failed — NOT marking as published (no push, no morning-complete marker):', err.message);
+        response.publishFailed = true;
+      }
+    } else {
+      console.log(`[briefing build] this attempt was ${response.chiefBriefQuality?.status ?? 'unknown'}-quality — NOT publishing as the canonical daily briefing (chiefBriefStale=${chiefBriefStale}, chiefBriefPending=${chiefBriefPending}); recorded as a build attempt only, existing canonical content (if any) is untouched.`);
+    }
   }
 
   return response;
@@ -2691,9 +2720,14 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
  */
 async function publishBriefingDraft(response) {
   // Persist the briefing for history, and capture today's data into the spine.
-  // Fire-and-forget: never let persistence failures affect the live response.
-  briefingsStore.saveBriefing({ kind: 'daily', content: response })
-    .catch((err) => console.error('[persist briefing] failed:', err.message));
+  // AWAITED (audit fix, item 4): every caller already writes
+  // `await publishBriefingDraft(...)` as though persistence had completed by
+  // the time it returns — actually awaiting the save is what makes that true.
+  // A failure here now PROPAGATES (throws) instead of being silently
+  // swallowed, so the caller (buildFreshBriefing / notify/morning.js's
+  // warmAndNotify / the manual-rebuild build-job) can correctly report a
+  // retryable failed build instead of a false "published" success.
+  const saved = await briefingsStore.saveBriefing({ kind: 'daily', content: response });
 
   // Pre-warm Chief's spoken narration so the first tap of "Listen" plays
   // instantly instead of waiting on synthesis. Fire-and-forget from THIS
@@ -2719,6 +2753,7 @@ async function publishBriefingDraft(response) {
   setImmediate(() => {
     primeNextBuildCycle().catch((err) => console.error('[prime next build] failed:', err.message));
   });
+  return saved;
 }
 
 /**
@@ -3121,15 +3156,35 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
   res.json({ ...content, todayCommandCenter, cached: false });
 }));
 
+// Durable build-job contract (audit fix, item 5): the mobile client used to
+// infer "the rebuild finished" purely from GET /briefing's `builtAt`
+// advancing past the trigger timestamp — a build that failed or came back
+// with a degraded/blank Chief Brief still advances `builtAt` on every
+// attempt, so a poll-by-timestamp client silently treated failure as
+// success. This returns 202 + a durable build-job id/state (see
+// store/morningBuildJobs.js, migration 061) that survives a process restart
+// or a different Railway instance answering the status poll — the client
+// polls GET /briefing/rebuild/status?buildId=..., never builtAt.
 router.post('/briefing/rebuild', asyncHandler(async (req, res) => {
-  const triggeredAt = new Date().toISOString();
+  const buildJobs = require('../store/morningBuildJobs');
+  const tz = process.env.TZ || 'America/New_York';
+  const day = buildJobs.localDay(new Date(), tz);
+
   const client = await require('../db').pool.connect();
   const { rows } = await client.query('SELECT pg_try_advisory_lock($1) AS acquired', [REBUILD_LOCK_ID]);
   if (!rows[0].acquired) {
     client.release();
-    return res.json({ started: false, alreadyRunning: true, triggeredAt });
+    // Reuse the existing advisory lock for mutual exclusion: another build
+    // (manual or automatic) already owns it — return ITS active job instead
+    // of quietly doing nothing, so the caller can still poll something real.
+    const active = await buildJobs.activeJobForDay(day, tz).catch(() => null);
+    if (active) return res.status(202).json({ buildId: active.id, state: active.state, alreadyRunning: true });
+    return res.status(202).json({ buildId: null, state: 'building', alreadyRunning: true });
   }
-  res.json({ started: true, triggeredAt });
+
+  const attemptNumber = (await buildJobs.attemptsToday(day, tz).catch(() => 0)) + 1;
+  const job = await buildJobs.createJob({ trigger: 'manual', state: 'building', attemptNumber, localDay: day, tz });
+  res.status(202).json({ buildId: job.id, state: job.state });
 
   const release = async () => {
     try { await client.query('SELECT pg_advisory_unlock($1)', [REBUILD_LOCK_ID]); } catch { /* connection may already be gone */ }
@@ -3137,11 +3192,63 @@ router.post('/briefing/rebuild', asyncHandler(async (req, res) => {
   };
 
   // Direct call — same process, no reason to round-trip through our own HTTP
-  // server. buildFreshBriefing already saves the result itself (see its own
-  // briefingsStore.saveBriefing call), so nothing further is needed here.
-  buildFreshBriefing({ force: true })
-    .catch((err) => console.error('[bg rebuild] failed:', err.message))
-    .finally(release);
+  // server. buildFreshBriefing itself now only calls publishBriefingDraft
+  // when this attempt's OWN quality is 'fresh' (see that function) — a
+  // degraded/failed/pending attempt is never saved as the canonical daily
+  // briefing, so the job below is marked 'ready' ONLY when that actually
+  // happened, never merely because the HTTP call didn't throw.
+  (async () => {
+    try {
+      const result = await buildFreshBriefing({ force: true });
+      const qualityStatus = result?.chiefBriefQuality?.status ?? null;
+      if (result?.publishFailed) {
+        await buildJobs.updateJob(job.id, {
+          state: 'failed', qualityStatus, snapshotId: result?.snapshotId ?? null,
+          errorMessage: 'persistence_failed — the draft was fresh but saving it did not succeed',
+        });
+      } else if (qualityStatus === 'fresh') {
+        const latest = await require('../store/briefings').latestBriefing('daily').catch(() => null);
+        await buildJobs.updateJob(job.id, {
+          state: 'ready', qualityStatus, snapshotId: result?.snapshotId ?? null,
+          publishedBriefingId: latest?.id ?? null,
+        });
+      } else {
+        await buildJobs.updateJob(job.id, {
+          state: 'failed', qualityStatus, snapshotId: result?.snapshotId ?? null,
+          reasonCodes: result?.chiefBriefQuality?.reasonCodes ?? [],
+        });
+      }
+    } catch (err) {
+      console.error('[bg rebuild] failed:', err.message);
+      await buildJobs.updateJob(job.id, { state: 'failed', errorMessage: err.message }).catch((e) => console.error('[bg rebuild] job update failed:', e.message));
+    } finally {
+      await release();
+    }
+  })();
+}));
+
+// Status poll for a build job (see POST /briefing/rebuild above). Returns
+// the specific job by id when given, or today's newest job otherwise — the
+// durable identity the mobile client polls instead of comparing `builtAt`.
+router.get('/briefing/rebuild/status', asyncHandler(async (req, res) => {
+  const buildJobs = require('../store/morningBuildJobs');
+  const { buildId } = req.query;
+  const job = buildId ? await buildJobs.getJob(String(buildId)) : await buildJobs.latestJobForDay();
+  if (!job) return res.status(404).json({ error: 'no_build_job', message: 'No build has been triggered today.' });
+  res.json({
+    buildId: job.id,
+    localDay: job.local_day,
+    trigger: job.trigger,
+    state: job.state,
+    attemptNumber: job.attempt_number,
+    snapshotId: job.snapshot_id,
+    qualityStatus: job.quality_status,
+    reasonCodes: job.reason_codes,
+    publishedBriefingId: job.published_briefing_id,
+    errorMessage: job.error_message,
+    createdAt: job.created_at,
+    updatedAt: job.updated_at,
+  });
 }));
 
   router.get('/briefing', asyncHandler(async (req, res) => {

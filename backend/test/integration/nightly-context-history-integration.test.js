@@ -40,10 +40,22 @@ function captureChiefPrompt(t) {
   llm.generateText = async ({ system, prompt }) => {
     if (system.includes('chief of staff and data scientist')) {
       capturedPrompt = prompt;
+      // Long enough to clear assessChiefBriefQuality's minimum-completeness
+      // bar (synthesis >= 12 words, action/risk/move >= 4 words) — the
+      // publish gate refuses to save a degraded/underfilled draft, so a
+      // single-letter placeholder here would leave nothing published and
+      // the scoped rebuild below would 409 with "no briefing built yet".
       return {
         text: JSON.stringify({
-          chiefBrief: { synthesis: 's', action: 'a', risk: 'r', move: 'm', openQuestion: '' },
-          morningFocus: 'f', urgentEmails: [],
+          chiefBrief: {
+            synthesis: 'Today is genuinely on track with a manageable, well-understood schedule and nothing urgent.',
+            action: 'Block a short window this morning for the highest-leverage task on the list.',
+            risk: 'Meetings could crowd out the deep work window if nothing is protected today.',
+            move: 'Confirm the plan for the morning before the first meeting of the day starts.',
+            openQuestion: '',
+          },
+          morningFocus: 'Protect the first open block today for the one thing that actually moves things forward.',
+          urgentEmails: [],
         }),
         stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
       };
@@ -63,6 +75,11 @@ function extractRecentContextTagsBlock(prompt) {
 
 afterEach(async () => {
   await db.query(`DELETE FROM metrics WHERE domain = 'context' AND metric = 'late_meal' AND ts >= now() - interval '10 days'`);
+  // This suite's real full build now persists a fresh 'daily' briefing under
+  // the new publish gate (routes/briefing.js) — clean it up so it doesn't
+  // linger as "today's canonical briefing" for a later test in the same run.
+  await db.query(`DELETE FROM briefings WHERE kind = 'daily' AND content->'chiefBrief'->>'synthesis' = $1`,
+    ['Today is genuinely on track with a manageable, well-understood schedule and nothing urgent.']);
 });
 after(async () => { await closeDb(); });
 

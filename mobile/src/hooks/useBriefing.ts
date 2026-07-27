@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BRIEFING_URL, BRIEFING_REBUILD_URL, CHIEF_BRIEF_REBUILD_URL, authHeaders, fetchWithTimeout } from '../config';
+import { BRIEFING_URL, BRIEFING_REBUILD_URL, BRIEFING_REBUILD_STATUS_URL, CHIEF_BRIEF_REBUILD_URL, authHeaders, fetchWithTimeout } from '../config';
 
 const API_URL = BRIEFING_URL;
 const CACHE_KEY = 'normos.briefing.v1';
@@ -628,26 +628,35 @@ export function useBriefing(): BriefingState {
     };
   }, []);
 
-  // Non-blocking rebuild: POST /api/briefing/rebuild returns in <1s (the actual
-  // rebuild runs as a localhost loopback on the server, bypassing Railway's proxy
-  // timeout). We then poll GET /api/briefing every 8s until builtAt is newer than
-  // the trigger timestamp, then set the data and stop polling.
+  // Non-blocking rebuild: POST /api/briefing/rebuild returns 202 + a durable
+  // build-job id/state immediately (the actual rebuild runs as a localhost
+  // loopback on the server, bypassing Railway's proxy timeout). We then poll
+  // GET /api/briefing/rebuild/status?buildId=... until the job reaches a
+  // terminal state — NEVER by comparing builtAt, which a failed/degraded
+  // attempt advances just as readily as a real success (the exact bug this
+  // replaces: a blank Chief Brief with a fresh builtAt used to read as
+  // "rebuild succeeded"). The last-known-good `data` is left untouched for
+  // the whole poll — only a job that reaches 'ready' replaces it.
   const triggerRebuild = useCallback(async () => {
     if (rebuilding) return;
     setRebuilding(true);
     setError(null);
     if (rebuildPollRef.current) clearTimeout(rebuildPollRef.current);
 
-    const triggeredAt = Date.now();
+    let buildId: string | null = null;
     try {
       const res = await fetchWithTimeout(
         BRIEFING_REBUILD_URL,
         { method: 'POST', headers: authHeaders() },
         10000
       );
-      if (!res.ok) {
+      // 202 is the durable-job contract's normal response (both a fresh
+      // trigger and "another build already owns this" carry a pollable id).
+      if (!res.ok && res.status !== 202) {
         throw new Error(`Server returned ${res.status}`);
       }
+      const json = await res.json().catch(() => ({} as { buildId?: string })) as { buildId?: string };
+      buildId = json.buildId ?? null;
     } catch (err: unknown) {
       setRebuilding(false);
       setError(err instanceof Error ? err.message : 'Rebuild trigger failed');
@@ -655,7 +664,7 @@ export function useBriefing(): BriefingState {
     }
 
     let attempts = 0;
-    const MAX_ATTEMPTS = 22; // ~180s max polling window
+    const MAX_ATTEMPTS = 36; // ~180s max polling window (5s cadence)
 
     const poll = async () => {
       if (attempts++ >= MAX_ATTEMPTS) {
@@ -664,24 +673,45 @@ export function useBriefing(): BriefingState {
         return;
       }
       try {
-        const res = await fetchWithTimeout(BRIEFING_URL, { headers: authHeaders() }, 12000);
+        const url = buildId
+          ? `${BRIEFING_REBUILD_STATUS_URL}?buildId=${encodeURIComponent(buildId)}`
+          : BRIEFING_REBUILD_STATUS_URL;
+        const res = await fetchWithTimeout(url, { headers: authHeaders() }, 12000);
         if (res.ok) {
-          const json: BriefingData = await res.json();
-          if (json.builtAt && new Date(json.builtAt).getTime() > triggeredAt) {
-            setData(json);
+          const status: { buildId?: string; state?: string } = await res.json();
+          if (!buildId && status.buildId) buildId = status.buildId;
+          if (status.state === 'ready') {
+            // The job published a genuinely fresh brief — fetch the actual
+            // content (the status poll itself is metadata-only).
+            const briefRes = await fetchWithTimeout(BRIEFING_URL, { headers: authHeaders() }, 12000);
+            if (briefRes.ok) {
+              const json: BriefingData = await briefRes.json();
+              setData(json);
+              AsyncStorage.setItem(CACHE_KEY, JSON.stringify(json)).catch(() => {});
+            }
             setRebuilding(false);
-            AsyncStorage.setItem(CACHE_KEY, JSON.stringify(json)).catch(() => {});
             return;
           }
+          if (status.state === 'failed') {
+            // A degraded/failed/unpersisted attempt — the existing `data`
+            // (last known good, or none) is left exactly as it was; never
+            // rendered as if this attempt had succeeded.
+            setRebuilding(false);
+            setError('Rebuild did not produce a usable brief — tap to try again.');
+            return;
+          }
+          // 'queued' | 'building' | 'retry_wait' | 'waiting_for_sleep' — keep polling.
         }
       } catch {
         // Ignore individual poll errors; next attempt will retry.
       }
-      rebuildPollRef.current = setTimeout(poll, 8000);
+      rebuildPollRef.current = setTimeout(poll, 5000);
     };
 
-    // First poll after 12s — rebuild needs at least ~10s to process external sources.
-    rebuildPollRef.current = setTimeout(poll, 12000);
+    // First poll after 5s — the status row exists immediately (created
+    // before the 202 response), unlike the old builtAt-diffing approach
+    // which had to wait out most of the build before a poll meant anything.
+    rebuildPollRef.current = setTimeout(poll, 5000);
   }, [rebuilding]);
 
   const [chiefBriefRefreshing, setChiefBriefRefreshing] = useState(false);
