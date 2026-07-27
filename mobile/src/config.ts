@@ -49,6 +49,10 @@ export const CHAT_HISTORY_URL = `${API_BASE}/api/chat/history`;
 export const CHAT_CLEAR_URL = `${API_BASE}/api/chat/clear`;
 export const CHAT_SAVE_URL = `${API_BASE}/api/chat/save`;
 export const CHAT_CONVERSATIONS_URL = `${API_BASE}/api/chat/conversations`;
+// Execute an action that needed explicit confirmation before it touched real
+// state (a workout swap, a new life chapter) — see chat/actionPolicy.js's
+// CONFIRM_REQUIRED_ACTIONS and routes/chat.js's POST /chat/confirm-action.
+export const CHAT_CONFIRM_ACTION_URL = `${API_BASE}/api/chat/confirm-action`;
 export const DEVICE_REGISTER_URL = `${API_BASE}/api/devices/register`;
 export const HIGHLIGHTS_URL = `${API_BASE}/api/highlights`;
 export const INSIGHT_DISMISS_URL = `${API_BASE}/api/insights/dismiss`;

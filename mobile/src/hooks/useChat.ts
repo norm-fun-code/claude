@@ -5,10 +5,13 @@ import {
   CHAT_CLEAR_URL,
   CHAT_SAVE_URL,
   CHAT_CONVERSATIONS_URL,
+  CHAT_CONFIRM_ACTION_URL,
   authHeaders,
   fetchWithTimeout,
 } from '../config';
 import { mapAskError, NETWORK_ERROR_MESSAGE } from '../lib/askError';
+import type { AskResponse, ProposedAction } from '../lib/askResponse';
+import { pendingConfirmations } from '../lib/askResponse';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -16,6 +19,15 @@ export interface ChatMessage {
   /** Set on a failed turn's assistant bubble — lets the UI offer a distinct
       "retry" affordance instead of treating it as a normal answer. */
   error?: boolean;
+  /** The structured AskResponse for this turn (assistant messages only) —
+      intent/evidence/uncertainties/proposedActions. Only carried on the
+      freshly-generated message (not reconstructed on reload from
+      /chat/history, which persists plain text only). */
+  askResponse?: AskResponse;
+  /** Actions from this turn still awaiting an explicit confirm tap — a live
+      view over askResponse.proposedActions that confirmAction() mutates
+      directly, so a confirmed card disappears without a full re-fetch. */
+  pendingActions?: ProposedAction[];
 }
 
 export interface Conversation {
@@ -87,7 +99,13 @@ export function useChat() {
         return;
       }
       lastFailedQuestionRef.current = null;
-      setMessages((prev) => [...prev, { role: 'assistant', content: json.answer || 'No answer.' }]);
+      const askResponse: AskResponse | undefined = json.askResponse;
+      setMessages((prev) => [...prev, {
+        role: 'assistant',
+        content: json.answer || 'No answer.',
+        askResponse,
+        pendingActions: askResponse ? pendingConfirmations(askResponse) : undefined,
+      }]);
     } catch {
       lastFailedQuestionRef.current = q;
       setMessages((prev) => [...prev, { role: 'assistant', content: NETWORK_ERROR_MESSAGE, error: true }]);
@@ -154,5 +172,31 @@ export function useChat() {
     }
   }, [loadConversations]);
 
-  return { messages, loading, conversations, send, retry, clear, save, open, remove, rename, loadConversations, loadHistory };
+  // Execute an action that needed explicit confirmation (a workout swap, a
+  // new life chapter — chat/actionPolicy.js's CONFIRM_REQUIRED_ACTIONS).
+  // Re-validates server-side against the same allowlist ask() itself uses;
+  // never claims success client-side before the mutation actually lands —
+  // the card only clears the action once the server confirms it executed.
+  const confirmAction = useCallback(async (messageIndex: number, action: ProposedAction) => {
+    try {
+      const res = await fetchWithTimeout(CHAT_CONFIRM_ACTION_URL, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ action: action.validatedPayload }),
+      }, 20000);
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) {
+        return { ok: false, message: json.message || 'Could not complete that action.' };
+      }
+      setMessages((prev) => prev.map((m, i) => {
+        if (i !== messageIndex || !m.pendingActions) return m;
+        return { ...m, pendingActions: m.pendingActions.filter((a) => a !== action) };
+      }));
+      return { ok: true, description: json.result?.description as string | undefined };
+    } catch {
+      return { ok: false, message: NETWORK_ERROR_MESSAGE };
+    }
+  }, []);
+
+  return { messages, loading, conversations, send, retry, clear, save, open, remove, rename, confirmAction, loadConversations, loadHistory };
 }

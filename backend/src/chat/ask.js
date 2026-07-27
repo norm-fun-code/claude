@@ -152,7 +152,7 @@ async function answerCommand(question, { history = [] } = {}) {
   let answer = await llm.generateText({ system, prompt, temperature: 0.2, maxTokens: 1100, fast: true });
   const actions = parseActions(answer);
   answer = answer.replace(/<action>[\s\S]*?<\/action>/gi, '').replace(/<rec>[\s\S]*?<\/rec>/i, '').trim();
-  return { answer, actions, action: actions[0] ?? null, questionEmbedding: null, sources: [] };
+  return { answer, actions, action: actions[0] ?? null, questionEmbedding: null, sources: [], claims: [], isCommand: true };
 }
 
 /**
@@ -906,6 +906,12 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
       url: d.url,
       similarity: d.similarity,
     })),
+    // EvidenceClaim v1 packet built above — the caller (routes/chat.js,
+    // routes/voice.js) projects this into the AskResponse contract's
+    // evidence[]/uncertainties[] via chat/askResponse.js. Never sent to the
+    // client as-is; see the ...clientResult destructure in routes/chat.js.
+    claims: factsForValidation.claims,
+    isCommand: false,
     ...(fastPathError ? { fastPathError } : {}),
     // Debug/diagnostic only — which claim checks fired and were neutralized,
     // by name (never the raw contradicting text or any claim value). Callers
@@ -931,7 +937,14 @@ const ACTION_ACTIVITIES = new Set([
  *  effect), so a hallucinated tag can never touch app state. */
 function validateAction(p) {
   if (!p || typeof p !== 'object') return null;
-  const type = String(p.type || '').trim();
+  // Accepts either the RAW input shape ({type: 'swap_workout', ...}, as
+  // parsed from the LLM's <action> tag) or this function's OWN output shape
+  // ({action: 'swap_workout', ...}) as the discriminator — i.e.
+  // validateAction is idempotent on its own output. This is what lets
+  // routes/chat.js's POST /chat/confirm-action safely re-validate a
+  // previously-proposed action's exact validatedPayload before executing
+  // it, without a second, parallel "already-validated" code path.
+  const type = String(p.type || p.action || '').trim();
   if (type === 'swap_workout' && ACTION_WORKOUTS.has(p.workoutId)) return { action: 'swap_workout', workoutId: p.workoutId };
   if (type === 'log_habit' && ACTION_HABITS.has(p.habit)) return { action: 'log_habit', habit: p.habit };
   if (type === 'log_activity' && p.activityType) {

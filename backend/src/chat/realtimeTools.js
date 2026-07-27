@@ -196,6 +196,7 @@ async function deepAsk({ question } = {}) {
   if (!question || !String(question).trim()) return { answer: '', sources: [] };
   const { ask } = require('./ask');
   const { executeAction } = require('./executeAction');
+  const { needsConfirmation } = require('./actionPolicy');
   const chatStore = require('../store/chat');
 
   const historyRows = await chatStore.recentMessages({ limit: 20 }).catch(() => []);
@@ -204,8 +205,14 @@ async function deepAsk({ question } = {}) {
     voice: true,
   });
 
+  // Same per-action consent policy as typed/dictated Ask (chat/actionPolicy.js):
+  // a meaningful action found INSIDE a deep_ask answer (as opposed to a
+  // direct execute_normos_action tool call the Realtime model made after
+  // verbally restating it) still needs the same confirm step — deep_ask must
+  // never become a way to bypass it.
   const executedList = [];
   for (const a of (result.actions ?? (result.action ? [result.action] : []))) {
+    if (needsConfirmation(a)) continue;
     executedList.push(await executeAction(a));
   }
 

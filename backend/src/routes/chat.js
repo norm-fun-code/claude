@@ -6,8 +6,10 @@
 // removing it from server.js.
 const express = require('express');
 const llm = require('../llm');
-const { ask } = require('../chat/ask');
+const { ask, validateAction } = require('../chat/ask');
 const { executeAction } = require('../chat/executeAction');
+const { needsConfirmation } = require('../chat/actionPolicy');
+const { buildAskResponse, currentSnapshotMeta } = require('../chat/askResponse');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { parseAndValidate } = require('../llm/parseJson');
 
@@ -36,12 +38,20 @@ function createChatRouter() {
 
     // The chief of staff DOES things: if the answer emitted inline action(s)
     // (natural language — "I switched to a walk", "log my cold shower", or a day
-    // recap that also gives tomorrow's context), execute them now. The prose
-    // already acknowledged them; this makes them real.
-    const executedList = [];
+    // recap that also gives tomorrow's context), execute them now — UNLESS the
+    // action is meaningful/cross-surface-visible enough to need an explicit
+    // confirm step first (chat/actionPolicy.js's per-action consent rule; see
+    // POST /chat/confirm-action below). The prose already acknowledged
+    // immediate ones; this makes them real.
+    const actionResults = [];
     for (const a of (result.actions ?? (result.action ? [result.action] : []))) {
-      executedList.push(await executeAction(a));
+      if (needsConfirmation(a)) {
+        actionResults.push({ action: a, executed: false, result: null });
+      } else {
+        actionResults.push({ action: a, executed: true, result: await executeAction(a) });
+      }
     }
+    const executedList = actionResults.filter((r) => r.executed).map((r) => r.result);
     const executed = executedList.find(Boolean) ?? null;
 
     // Append this turn so the next question remembers it. Pre-resolve the active
@@ -53,13 +63,41 @@ function createChatRouter() {
     chatStore.saveMessage({ role: 'assistant', content: result.answer, sources: result.sources ?? [], conversationId: convId })
       .catch((e) => console.error('[chat memory] save assistant failed:', e.message));
 
-    // Don't leak the raw embedding vector, the internal parsed actions, or the
-    // EvidenceClaim debug field to the client; surface executed-action
-    // summaries instead. `action` stays for back-compat (the first executed);
-    // `actions` is the full list. debugEvidence (which claim checks fired, if
-    // any — see chat/ask.js) is diagnostic-only, never shown in the normal UI.
-    const { questionEmbedding, action: _parsed, actions: _parsedActions, debugEvidence: _debugEvidence, ...clientResult } = result;
-    res.json({ ...clientResult, action: executed, actions: executedList.filter(Boolean) });
+    // The structured AskResponse contract (intent, evidence w/ source+
+    // confidence, uncertainties, action previews) — a pure projection of what
+    // ask() already computed, see chat/askResponse.js. Additive: existing
+    // fields (answer/sources/action/actions) are unchanged for back-compat.
+    const askResponse = buildAskResponse({
+      question, answer: result.answer, actionResults, claims: result.claims,
+      conversationId: convId, ...currentSnapshotMeta(),
+      isCommand: !!result.isCommand, debugEvidence: result.debugEvidence,
+    });
+
+    // Don't leak the raw embedding vector, the internal parsed actions, the
+    // EvidenceClaim debug field, or the raw claims packet to the client —
+    // askResponse above already curates the user-facing evidence/uncertainty
+    // view of them. `action`/`actions` stay for back-compat (executed only).
+    const { questionEmbedding, action: _parsed, actions: _parsedActions, debugEvidence: _debugEvidence, claims: _claims, isCommand: _isCommand, ...clientResult } = result;
+    res.json({ ...clientResult, action: executed, actions: executedList.filter(Boolean), askResponse });
+  }));
+
+  // Execute a previously-proposed action that required explicit confirmation
+  // (chat/actionPolicy.js's CONFIRM_REQUIRED_ACTIONS — e.g. a workout swap).
+  // Re-validates the payload against the SAME strict allowlist ask() itself
+  // uses (never trusts the client's shape), then runs it through the SAME
+  // executeAction() every other action path uses, so a confirmed action gets
+  // identical writes/invalidation to an immediately-executed one. Idempotent:
+  // the underlying store writes (setWorkoutOverride, createOrReplace) are
+  // already no-op-safe on a repeat call, so a double-tap can't double-apply.
+  router.post('/chat/confirm-action', asyncHandler(async (req, res) => {
+    const { action } = req.body || {};
+    const validated = validateAction(action);
+    if (!validated) return res.status(400).json({ error: 'invalid_action', message: 'That action is no longer valid — ask again to get a fresh preview.' });
+    const result = await executeAction(validated);
+    if (!result?.done) {
+      return res.status(422).json({ ok: false, error: 'execution_failed', message: result?.description || 'Could not complete that action.' });
+    }
+    res.json({ ok: true, result, ...currentSnapshotMeta() });
   }));
 
   // Read the persisted conversation (for the app to render prior turns on open).

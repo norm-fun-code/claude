@@ -8,6 +8,8 @@ const express = require('express');
 const voiceService = require('../services/voice');
 const { ask, looksLikeCommand } = require('../chat/ask');
 const { executeAction } = require('../chat/executeAction');
+const { needsConfirmation } = require('../chat/actionPolicy');
+const { buildAskResponse, currentSnapshotMeta } = require('../chat/askResponse');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { requireFields } = require('../middleware/validate');
 
@@ -47,10 +49,21 @@ function createVoiceRouter() {
       voice: true,
     });
     mark('llmMs');
-    const executedList = [];
+    // Same per-action consent policy as typed Ask (chat/actionPolicy.js): a
+    // meaningful, cross-surface-visible action (workout swap, life chapter)
+    // is proposed but not executed here — the mobile client shows a confirm
+    // card and calls POST /api/chat/confirm-action, the SAME endpoint the
+    // typed flow uses, so voice and text can never diverge on which actions
+    // need a tap-to-confirm.
+    const actionResults = [];
     for (const a of (result.actions ?? (result.action ? [result.action] : []))) {
-      executedList.push(await executeAction(a));
+      if (needsConfirmation(a)) {
+        actionResults.push({ action: a, executed: false, result: null });
+      } else {
+        actionResults.push({ action: a, executed: true, result: await executeAction(a) });
+      }
     }
+    const executedList = actionResults.filter((r) => r.executed).map((r) => r.result);
     const executed = executedList.find(Boolean) ?? null;
     mark('actionMs');
 
@@ -60,6 +73,12 @@ function createVoiceRouter() {
       .catch((e) => console.error('[voice chat] save user failed:', e.message));
     chatStore.saveMessage({ role: 'assistant', content: result.answer, sources: result.sources ?? [], conversationId: convId })
       .catch((e) => console.error('[voice chat] save assistant failed:', e.message));
+
+    const askResponse = buildAskResponse({
+      question, answer: result.answer, actionResults, claims: result.claims,
+      conversationId: convId, ...currentSnapshotMeta(),
+      isCommand: !!result.isCommand, debugEvidence: result.debugEvidence,
+    });
 
     // Speak the answer (trimmed as a safety cap; full text still returned).
     let audioOut = null;
@@ -97,6 +116,7 @@ function createVoiceRouter() {
       answer: result.answer,
       action: executed,
       actions: executedList.filter(Boolean),
+      askResponse,
       audio: audioOut?.data ?? null,
       audioMime: audioOut?.mime ?? null,
       timing,

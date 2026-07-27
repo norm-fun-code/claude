@@ -11,6 +11,7 @@ import {
   Keyboard,
   Platform,
   useColorScheme,
+  Alert,
 } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -27,6 +28,8 @@ import { API_BASE, CONSOLIDATE_URL, VOICE_ASK_URL, REALTIME_VOICE_ENABLED, authH
 import { voiceAvailable, ensureMicPermission, startRecording, stopRecording, playBase64, stopPlayback } from '../lib/voice';
 import { realtimeVoiceAvailable } from '../lib/realtimeVoice';
 import { TalkOverlay } from './TalkOverlay';
+import { buildAskSuggestions, type SnapData, type AskSuggestion } from '../lib/askSuggestions';
+import { intentLabel, type ProposedAction } from '../lib/askResponse';
 
 export interface AskOverlayHandle {
   /** Open the overlay, optionally pre-filling the input with a question.
@@ -49,78 +52,6 @@ interface Props {
   /** One-tap starter questions to seed when the FAB is tapped — same
       context-aware set the long-press-the-Ask-tab gesture uses. */
   contextStarters?: string[];
-}
-
-const FALLBACK_SUGGESTIONS = [
-  'Why was my focus lower last week?',
-  'What habits predict my best weeks?',
-  'What should I focus on this quarter?',
-  "Where am I losing the most sleep quality?",
-  "What's the highest-leverage thing I could change right now?",
-];
-
-// Minimal shape we need from the self-model snapshot.
-interface SnapData {
-  wellbeing?: Record<string, { cur: number | null; prior: number | null }>;
-  health?: Record<string, { cur: number | null; prior: number | null }>;
-  habits?: Record<string, { rate: number | null; label: string; scale?: number; streak?: number }>;
-  experiments?: { completed: unknown[]; running: Record<string, unknown>[] };
-  topFindings?: { title: string }[];
-}
-
-function buildSuggestions(snap: SnapData | null): string[] {
-  const out: string[] = [];
-  if (snap) {
-    const hrv = snap.health?.hrv;
-    const sleep = snap.health?.sleep_hours;
-    const energy = snap.wellbeing?.energy;
-    const mood = snap.wellbeing?.mood;
-
-    if (hrv?.cur != null && hrv.prior != null) {
-      const delta = hrv.cur - hrv.prior;
-      if (delta < -3) out.push(`My HRV dropped ${Math.abs(Math.round(delta))}ms vs last week — what's driving it down?`);
-      else if (delta > 3) out.push(`My HRV is up ${Math.round(delta)}ms this week — what changed?`);
-      else out.push(`My HRV is averaging ${Math.round(hrv.cur)}ms — how do I improve it further?`);
-    }
-
-    if (energy?.cur != null && mood?.cur != null) {
-      const gap = (mood.cur ?? 0) - (energy.cur ?? 0);
-      if (gap >= 0.75) out.push(`My energy (${energy.cur}/5) keeps lagging my mood (${mood.cur}/5) — what closes that gap?`);
-      else if (energy.cur < 3) out.push(`My energy has been ${energy.cur}/5 this week — what levers move it most?`);
-    }
-
-    if (sleep?.cur != null && sleep.cur < 7.5) {
-      out.push(`I'm averaging ${sleep.cur}h of sleep — what's the real impact on my recovery?`);
-    }
-
-    // Best streak habit
-    const habits = snap.habits ?? {};
-    const topStreak = Object.values(habits).filter((h) => (h.streak ?? 0) >= 3)
-      .sort((a, b) => (b.streak ?? 0) - (a.streak ?? 0))[0];
-    if (topStreak) out.push(`I've hit ${topStreak.label} for ${topStreak.streak} weeks straight — how has it moved my numbers?`);
-
-    // Most-slipping habit
-    const slipping = Object.values(habits).find((h) => !h.scale && h.rate != null && h.rate < 50);
-    if (slipping) {
-      const days = Math.round(((slipping.rate ?? 0) / 100) * 7);
-      out.push(`I only hit ${slipping.label} ${days}/7 days this week — what typically gets in the way?`);
-    }
-
-    // Top confirmed correlation
-    if (snap.topFindings?.length) out.push(`You confirmed: "${snap.topFindings[0].title}" — how should I act on that?`);
-
-    // Running experiment
-    const running = snap.experiments?.running ?? [];
-    if (running.length > 0 && running[0].hypothesis) {
-      out.push(`How is the "${running[0].hypothesis}" experiment tracking so far?`);
-    }
-  }
-
-  for (const s of FALLBACK_SUGGESTIONS) {
-    if (out.length >= 5) break;
-    if (!out.includes(s)) out.push(s);
-  }
-  return out.slice(0, 5);
 }
 
 const METRICS: Record<string, { label: string; source: string }> = {
@@ -171,7 +102,8 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
   const [question, setQuestion] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editTitle, setEditTitle] = useState('');
-  const { messages, loading, conversations, send, retry, clear, save, open: openConvo, remove, rename, loadConversations, loadHistory } = useChat();
+  const { messages, loading, conversations, send, retry, clear, save, open: openConvo, remove, rename, confirmAction, loadConversations, loadHistory } = useChat();
+  const [confirmingKey, setConfirmingKey] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const inputRef = useRef<TextInput>(null);
   const [kbHeight, setKbHeight] = useState(0);
@@ -363,15 +295,15 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: c.border }]}>
         {view === 'history' ? (
-          <Pressable onPress={() => setView('chat')} hitSlop={8}>
+          <Pressable onPress={() => setView('chat')} hitSlop={8} accessibilityRole="button" accessibilityLabel="Back to conversation">
             <Text style={[styles.headerBtn, { color: c.accent }]}>‹ Back</Text>
           </Pressable>
         ) : (
-          <Pressable onPress={showHistory} hitSlop={8}>
-            <Text style={[styles.headerBtn, { color: c.accent }]}>Saved</Text>
+          <Pressable onPress={showHistory} hitSlop={8} accessibilityRole="button" accessibilityLabel="Conversation history">
+            <Text style={[styles.headerBtn, { color: c.accent }]}>History</Text>
           </Pressable>
         )}
-        <Text style={[styles.title, { color: c.text }]}>{view === 'history' ? 'Saved' : 'Ask NormOS'}</Text>
+        <Text style={[styles.title, { color: c.text }]}>{view === 'history' ? 'History' : 'Ask NormOS'}</Text>
         {embedded ? (
           <View style={{ width: 44 }} />
         ) : (
@@ -385,7 +317,9 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
             <ScrollView style={styles.flex} contentContainerStyle={styles.threadContent} keyboardShouldPersistTaps="handled">
               {conversations.length === 0 ? (
                 <Text style={[styles.emptyHint, { color: c.subtext, marginTop: spacing.lg }]}>
-                  No saved conversations yet. Tap "Save" in a chat to keep it here.
+                  No saved conversations yet. Tap "Save" in a chat to keep it here. Deleting a
+                  conversation only removes this transcript — anything NormOS remembers about
+                  you (preferences, standing facts) stays intact.
                 </Text>
               ) : (
                 conversations.map((conv) => {
@@ -424,7 +358,26 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
                       >
                         <Text style={[styles.rowActionIcon, { color: c.subtext }]}>✏️</Text>
                       </Pressable>
-                      <Pressable onPress={() => remove(conv.id)} hitSlop={10} style={styles.rowAction} accessibilityLabel="Delete conversation">
+                      <Pressable
+                        onPress={() => {
+                          // Deletion is deliberate, not a stray tap: this only removes
+                          // the transcript, never any durable fact NormOS remembers
+                          // (preferences/standing facts live in a separate memory
+                          // system, untouched by conversation deletion).
+                          Alert.alert(
+                            'Delete conversation?',
+                            'This removes the transcript. Anything NormOS remembers about you stays intact.',
+                            [
+                              { text: 'Cancel', style: 'cancel' },
+                              { text: 'Delete', style: 'destructive', onPress: () => remove(conv.id) },
+                            ],
+                          );
+                        }}
+                        hitSlop={10}
+                        style={styles.rowAction}
+                        accessibilityRole="button"
+                        accessibilityLabel="Delete conversation"
+                      >
                         <Text style={[styles.rowActionIcon, { color: c.subtext }]}>🗑</Text>
                       </Pressable>
                     </View>
@@ -439,16 +392,25 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
                   <View style={styles.emptyState}>
                     <Text style={[styles.emptyTitle, { color: c.text }]}>Ask about your life</Text>
                     <Text style={[styles.emptyHint, { color: c.subtext }]}>
-                      Answered from your own data, habits, and library — and it remembers what you've discussed.
+                      Uses your connected data and current NormOS memory to answer, decide, and act.
                     </Text>
                     <View style={styles.suggestions}>
                       {/* Prefer the context-aware starters seeded by whichever tab this
                           was summoned from — they're the whole point of a per-screen
-                          mic. Only fall back to the generic snapshot-based list when
-                          none were passed in (e.g. opened plain from the Ask tab). */}
-                      {(starters.length > 0 ? starters : buildSuggestions(snapshot)).map((s) => (
-                        <Pressable key={s} onPress={() => submit(s)} style={[styles.chip, { borderColor: c.border, backgroundColor: c.card }]}>
-                          <Text style={[styles.chipText, { color: c.text }]} numberOfLines={2}>{s}</Text>
+                          mic. Only fall back to the generic snapshot-derived list when
+                          none were passed in (e.g. opened plain from the Ask tab). Every
+                          suggestion is recomputed from the CURRENT snapshot on each open
+                          (never cached), so one whose underlying condition no longer
+                          holds naturally stops being offered — see lib/askSuggestions.ts. */}
+                      {(starters.length > 0
+                        ? starters.map((s): AskSuggestion => ({ text: s, intent: 'understand' }))
+                        : buildAskSuggestions(snapshot)
+                      ).map((s) => (
+                        <Pressable key={s.text} onPress={() => submit(s.text)} style={[styles.chip, { borderColor: c.border, backgroundColor: c.card }]}>
+                          {starters.length === 0 && (
+                            <Text style={[styles.chipBadge, { color: c.accent, borderColor: c.accent }]}>{intentLabel(s.intent).toUpperCase()}</Text>
+                          )}
+                          <Text style={[styles.chipText, { color: c.text }]} numberOfLines={2}>{s.text}</Text>
                           <Text style={[styles.chipArrow, { color: c.subtext }]}>›</Text>
                         </Pressable>
                       ))}
@@ -458,7 +420,7 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
                         onPress={() => pickConversation(conversations[0].id)}
                         style={[styles.lastConvRow, { borderTopColor: c.border }]}
                       >
-                        <Text style={[styles.lastConvLabel, { color: c.subtext }]}>Last saved · </Text>
+                        <Text style={[styles.lastConvLabel, { color: c.subtext }]}>Continue last conversation · </Text>
                         <Text style={[styles.lastConvTitle, { color: c.accent }]} numberOfLines={1}>
                           {conversations[0].title || conversations[0].first_message || 'Conversation'}
                         </Text>
@@ -469,22 +431,62 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
                 )}
 
                 {messages.map((m, i) => (
-                  <Animated.View
-                    key={i}
-                    entering={FadeInDown.duration(220).springify().damping(18)}
-                    style={[
-                      styles.bubble,
-                      m.role === 'user'
-                        ? { backgroundColor: c.accentSoft, alignSelf: 'flex-end' }
-                        : { backgroundColor: 'transparent', alignSelf: 'stretch' },
-                    ]}
-                  >
-                    {m.role === 'user' ? (
-                      <Text style={[styles.userText, { color: c.text }]}>{m.content}</Text>
-                    ) : (
-                      <Markdown style={md}>{m.content}</Markdown>
-                    )}
-                  </Animated.View>
+                  <React.Fragment key={i}>
+                    <Animated.View
+                      entering={FadeInDown.duration(220).springify().damping(18)}
+                      style={[
+                        styles.bubble,
+                        m.role === 'user'
+                          ? { backgroundColor: c.accentSoft, alignSelf: 'flex-end' }
+                          : { backgroundColor: 'transparent', alignSelf: 'stretch' },
+                      ]}
+                    >
+                      {m.role === 'user' ? (
+                        <Text style={[styles.userText, { color: c.text }]}>{m.content}</Text>
+                      ) : (
+                        <Markdown style={md}>{m.content}</Markdown>
+                      )}
+                    </Animated.View>
+                    {/* Action preview + confirm card: a meaningful, cross-surface-
+                        visible mutation (a workout swap, a new life chapter — see
+                        backend/src/chat/actionPolicy.js) is proposed here, NOT
+                        already applied. Nothing changes until the user taps Confirm,
+                        and the card only clears once the server confirms the write
+                        actually succeeded. */}
+                    {m.role === 'assistant' && m.pendingActions?.map((pa) => {
+                      const key = `${i}:${pa.actionType}:${pa.title}`;
+                      return (
+                        <Animated.View
+                          key={key}
+                          entering={FadeInDown.duration(220).springify().damping(18)}
+                          style={[styles.actionCard, { backgroundColor: c.card, borderColor: c.accent }]}
+                        >
+                          <Text style={[styles.actionLabel, { color: c.subtext }]}>PROPOSED ACTION</Text>
+                          <Text style={[styles.actionTitle, { color: c.text }]}>{pa.title}</Text>
+                          {!!pa.preview && <Text style={[styles.actionPreview, { color: c.subtext }]}>{pa.preview}</Text>}
+                          <View style={styles.actionBtnRow}>
+                            <Pressable
+                              disabled={confirmingKey === key}
+                              onPress={async () => {
+                                setConfirmingKey(key);
+                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                                const outcome = await confirmAction(i, pa);
+                                setConfirmingKey(null);
+                                Haptics.notificationAsync(
+                                  outcome.ok ? Haptics.NotificationFeedbackType.Success : Haptics.NotificationFeedbackType.Error
+                                ).catch(() => {});
+                              }}
+                              style={[styles.actionConfirmBtn, { backgroundColor: c.accent, opacity: confirmingKey === key ? 0.6 : 1 }]}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Confirm: ${pa.title}`}
+                            >
+                              <Text style={styles.actionConfirmText}>{confirmingKey === key ? 'Applying…' : 'Confirm'}</Text>
+                            </Pressable>
+                          </View>
+                        </Animated.View>
+                      );
+                    })}
+                  </React.Fragment>
                 ))}
 
                 {!loading && messages.length > 0 && messages[messages.length - 1].role === 'assistant' && messages[messages.length - 1].error && (
@@ -615,35 +617,45 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
                     spellCheck
                   />
                   {showLiveEntry && !question.trim() && (
-                    <Pressable
-                      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); setTalkOpen(true); }}
-                      style={[styles.mic, { backgroundColor: withAlpha('#635BFF', 0.15), borderColor: withAlpha('#635BFF', 0.35) }]}
-                      accessibilityLabel="Talk to NormOS — live conversation"
-                    >
-                      <Ionicons name="radio-outline" size={17} color="#635BFF" />
-                    </Pressable>
+                    <View style={styles.micGroup}>
+                      <Pressable
+                        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); setTalkOpen(true); }}
+                        style={[styles.mic, { backgroundColor: withAlpha('#635BFF', 0.15), borderColor: withAlpha('#635BFF', 0.35) }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Talk — start a live voice conversation"
+                        accessibilityHint="Opens a full-screen live conversation where NormOS listens and replies out loud in real time."
+                      >
+                        <Ionicons name="radio-outline" size={17} color="#635BFF" />
+                      </Pressable>
+                      <Text style={[styles.micCaption, { color: c.subtext }]}>Talk</Text>
+                    </View>
                   )}
                   {voiceAvailable && !question.trim() && (
-                    <Pressable
-                      onPressIn={voicePressIn}
-                      onPressOut={voicePressOut}
-                      disabled={voiceState === 'thinking'}
-                      style={[styles.mic, {
-                        backgroundColor: voiceState === 'recording' ? '#FF6B6B' : withAlpha('#635BFF', 0.15),
-                        borderColor: voiceState === 'recording' ? '#FF6B6B' : withAlpha('#635BFF', 0.35),
-                      }]}
-                      accessibilityLabel={hadVoiceTurn ? 'Hold to continue' : 'Hold to speak'}
-                    >
-                      {voiceState === 'thinking' ? (
-                        <ActivityIndicator size="small" color={c.accent} />
-                      ) : (
-                        <Ionicons
-                          name={voiceState === 'recording' ? 'mic' : 'mic-outline'}
-                          size={17}
-                          color={voiceState === 'recording' ? '#fff' : '#635BFF'}
-                        />
-                      )}
-                    </Pressable>
+                    <View style={styles.micGroup}>
+                      <Pressable
+                        onPressIn={voicePressIn}
+                        onPressOut={voicePressOut}
+                        disabled={voiceState === 'thinking'}
+                        style={[styles.mic, {
+                          backgroundColor: voiceState === 'recording' ? '#FF6B6B' : withAlpha('#635BFF', 0.15),
+                          borderColor: voiceState === 'recording' ? '#FF6B6B' : withAlpha('#635BFF', 0.35),
+                        }]}
+                        accessibilityRole="button"
+                        accessibilityLabel={hadVoiceTurn ? 'Dictate — hold to continue speaking' : 'Dictate — hold to speak'}
+                        accessibilityHint="Press and hold to record; release to send your question as text, typed out from what you said."
+                      >
+                        {voiceState === 'thinking' ? (
+                          <ActivityIndicator size="small" color={c.accent} />
+                        ) : (
+                          <Ionicons
+                            name={voiceState === 'recording' ? 'mic' : 'mic-outline'}
+                            size={17}
+                            color={voiceState === 'recording' ? '#fff' : '#635BFF'}
+                          />
+                        )}
+                      </Pressable>
+                      <Text style={[styles.micCaption, { color: c.subtext }]}>Dictate</Text>
+                    </View>
                   )}
                   <Pressable onPress={() => submit(question)} style={[styles.send, { backgroundColor: question.trim() ? c.accent : c.border }]} disabled={!question.trim()}>
                     <Text style={styles.sendText}>↑</Text>
@@ -762,6 +774,10 @@ const styles = StyleSheet.create({
   lastConvTitle: { fontSize: 13, fontWeight: '600', flex: 1 },
   chipText: { fontSize: 14, fontWeight: '500', flex: 1, lineHeight: 20 },
   chipArrow: { fontSize: 20, fontWeight: '300', marginLeft: spacing.sm },
+  chipBadge: {
+    fontSize: 9, fontWeight: '800', letterSpacing: 0.6, borderWidth: 1,
+    borderRadius: radius.sm, paddingHorizontal: 5, paddingVertical: 2, marginRight: spacing.sm,
+  },
   bubble: { borderRadius: radius.md, paddingHorizontal: spacing.sm, paddingVertical: 6, marginTop: spacing.sm, maxWidth: '92%' },
   retryBtn: { alignSelf: 'flex-start', marginTop: spacing.xs, marginLeft: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: 7, borderRadius: radius.pill, borderWidth: 1 },
   retryBtnText: { fontSize: 13, fontWeight: '700' as const },
@@ -835,4 +851,16 @@ const styles = StyleSheet.create({
   dayBtnText: { fontSize: 13, fontWeight: '600' as const },
   startBtn: { paddingVertical: spacing.sm + 2, borderRadius: radius.md, alignItems: 'center' as const, marginTop: 2 },
   startBtnText: { color: '#FFF', fontSize: 15, fontWeight: '700' as const },
+  actionCard: {
+    alignSelf: 'stretch', marginTop: spacing.xs, marginLeft: spacing.sm, padding: spacing.md,
+    borderRadius: radius.md, borderWidth: 1.5, gap: 4,
+  },
+  actionLabel: { fontSize: 10, fontWeight: '700' as const, letterSpacing: 0.8 },
+  actionTitle: { fontSize: 15, fontWeight: '700' as const, lineHeight: 21 },
+  actionPreview: { fontSize: 13, lineHeight: 19 },
+  actionBtnRow: { flexDirection: 'row', marginTop: 4 },
+  actionConfirmBtn: { paddingHorizontal: spacing.lg, paddingVertical: 9, borderRadius: radius.md, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  actionConfirmText: { color: '#FFF', fontSize: 14, fontWeight: '700' as const },
+  micGroup: { alignItems: 'center', marginRight: 2 },
+  micCaption: { fontSize: 9, fontWeight: '600' as const, marginTop: 2 },
 });
