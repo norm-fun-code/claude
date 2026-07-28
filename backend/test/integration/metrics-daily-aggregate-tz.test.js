@@ -40,6 +40,14 @@ test('dailyAggregate buckets an evening-ET reading (past UTC midnight) on its OW
     to: '2026-07-09T04:00:00-04:00',
     agg: 'sum',
     tz: 'America/New_York',
+    // Scoped to this test's own unique source — dailyAggregate has no
+    // implicit source filter, so an unscoped query here would sum in
+    // whatever else the shared test DB happens to hold for health:steps in
+    // this date range (e.g. seed.js's ~90-day fixture, if it happens to
+    // cover 2026-07-08), silently inflating the expected 12000 total. That
+    // was the actual flake — nothing to do with the timezone bucketing this
+    // test exists to verify.
+    onlySource: SOURCE,
   });
 
   const filtered = rows.filter((r) => r.day.toISOString().startsWith('2026-07-08') || r.day.toISOString().startsWith('2026-07-09'));

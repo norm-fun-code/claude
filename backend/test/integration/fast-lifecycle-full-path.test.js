@@ -173,14 +173,29 @@ test('scenario 7c — a stale annotation about the (now-ended) fast does not rea
     category: 'brief_context', label: `${TEST_MARKER} 25 hour fast starting tonight through tomorrow`,
   });
 
-  let adjustCalls = 0;
+  // Captures PROMPT CONTENT rather than a bare call count: predict.js's
+  // annotations.overlapping(asOf, asOf) query is intentionally NOT scoped to
+  // this test's marker (that's real production behavior — any genuinely
+  // current annotation from anywhere should participate), so this shared
+  // Postgres table can legitimately carry OTHER overlapping rows left by
+  // concurrently-running or imperfectly-cleaned-up integration tests
+  // elsewhere in the suite. A bare "adjustCalls === 0" assertion was flaky
+  // for exactly that reason — it failed whenever some UNRELATED annotation
+  // triggered a context-adjust call. What this test actually needs to prove
+  // is narrower and marker-scoped: THIS test's own stale annotation must
+  // never be the thing that reaches the LLM, and THIS test's own fresh one
+  // must.
+  let adjustPrompts = [];
   llm.generateText = async ({ prompt } = {}) => {
-    adjustCalls += 1;
+    adjustPrompts.push(prompt);
     return JSON.stringify({ note: null, downgrade: false });
   };
   const { computeTodayForecast } = require('../../src/intelligence/predict');
   await computeTodayForecast({ recovery: { score: 70, band: 'green' }, asOf: now });
-  assert.equal(adjustCalls, 0, 'a stale (already-over) annotation must never reach the forecast context-adjustment call at all');
+  assert.ok(
+    !adjustPrompts.some((p) => p && p.includes(TEST_MARKER)),
+    'a stale (already-over) annotation must never reach the forecast context-adjustment call at all'
+  );
   await db.query(`DELETE FROM annotations WHERE id = $1`, [staleId]);
 
   // Fresh: recorded earlier today, still within today's window.
@@ -189,9 +204,12 @@ test('scenario 7c — a stale annotation about the (now-ended) fast does not rea
     startTs: freshStart.toISOString(), endTs: new Date(freshStart.getTime() + 25 * HOUR).toISOString(),
     category: 'brief_context', label: `${TEST_MARKER} 25 hour fast starting tonight through tomorrow`,
   });
-  adjustCalls = 0;
+  adjustPrompts = [];
   await computeTodayForecast({ recovery: { score: 70, band: 'green' }, asOf: now });
-  assert.ok(adjustCalls > 0, 'a genuinely current annotation must reach the forecast context-adjustment step');
+  assert.ok(
+    adjustPrompts.some((p) => p && p.includes(TEST_MARKER)),
+    'a genuinely current annotation must reach the forecast context-adjustment step'
+  );
 });
 
 // ── Scenario 8 — compiler outage cannot leave the raw note misreading as current ──
