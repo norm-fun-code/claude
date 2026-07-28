@@ -30,6 +30,7 @@ import { realtimeVoiceAvailable } from '../lib/realtimeVoice';
 import { TalkOverlay } from './TalkOverlay';
 import { buildAskSuggestions, type SnapData, type AskSuggestion } from '../lib/askSuggestions';
 import { intentLabel, type ProposedAction } from '../lib/askResponse';
+import { MemoryScreen } from './MemoryScreen';
 
 export interface AskOverlayHandle {
   /** Open the overlay, optionally pre-filling the input with a question.
@@ -95,7 +96,12 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [open, setOpen] = useState(false);
-  const [view, setView] = useState<'chat' | 'history'>('chat');
+  // 'memory' — product audit rec #6: a separate, first-class surface for
+  // durable structured knowledge (context_assertions/beliefs), distinct from
+  // 'history' (past Ask conversation transcripts). Neither view's delete/
+  // forget action touches the other's data — see MemoryScreen.tsx and
+  // useMemory.ts.
+  const [view, setView] = useState<'chat' | 'history' | 'memory'>('chat');
   const fabScale = useSharedValue(1);
   const fabAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: fabScale.value }] }));
   const [question, setQuestion] = useState('');
@@ -170,7 +176,7 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
 
   useImperativeHandle(ref, () => ({
     openWith(question?: string, starters?: string[]) {
-      setView('chat'); // never reopen on the Saved-history screen
+      setView('chat'); // never reopen on the History/Memory screen
       setOpen(true);
       setStarters(starters ?? []); // refresh per summon so stale context never lingers
       if (question) setQuestion(question);
@@ -293,16 +299,23 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
     <View style={[styles.sheet, { backgroundColor: c.background, paddingBottom: kbHeight }]}>
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: c.border }]}>
-        {view === 'history' ? (
+        {view === 'chat' ? (
+          <View style={styles.headerLeftGroup}>
+            <Pressable onPress={showHistory} hitSlop={8} accessibilityRole="button" accessibilityLabel="Conversation history">
+              <Text style={[styles.headerBtn, { color: c.accent }]}>History</Text>
+            </Pressable>
+            <Pressable onPress={() => setView('memory')} hitSlop={8} accessibilityRole="button" accessibilityLabel="What NormOS knows">
+              <Text style={[styles.headerBtn, { color: c.accent }]}>Memory</Text>
+            </Pressable>
+          </View>
+        ) : (
           <Pressable onPress={() => setView('chat')} hitSlop={8} accessibilityRole="button" accessibilityLabel="Back to conversation">
             <Text style={[styles.headerBtn, { color: c.accent }]}>‹ Back</Text>
           </Pressable>
-        ) : (
-          <Pressable onPress={showHistory} hitSlop={8} accessibilityRole="button" accessibilityLabel="Conversation history">
-            <Text style={[styles.headerBtn, { color: c.accent }]}>History</Text>
-          </Pressable>
         )}
-        <Text style={[styles.title, { color: c.text }]}>{view === 'history' ? 'History' : 'Ask NormOS'}</Text>
+        <Text style={[styles.title, { color: c.text }]}>
+          {view === 'history' ? 'History' : view === 'memory' ? 'Memory' : 'Ask NormOS'}
+        </Text>
         {embedded ? (
           <View style={{ width: 44 }} />
         ) : (
@@ -312,7 +325,9 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
         )}
       </View>
 
-          {view === 'history' ? (
+          {view === 'memory' ? (
+            <MemoryScreen />
+          ) : view === 'history' ? (
             <ScrollView style={styles.flex} contentContainerStyle={styles.threadContent} keyboardShouldPersistTaps="handled">
               {conversations.length === 0 ? (
                 <Text style={[styles.emptyHint, { color: c.subtext, marginTop: spacing.lg }]}>
@@ -761,6 +776,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   title: { fontSize: 18, fontWeight: '700', letterSpacing: -0.3 },
+  headerLeftGroup: { flexDirection: 'row', gap: spacing.md },
   headerBtn: { fontSize: 15, fontWeight: '600' },
   threadContent: { padding: spacing.md, paddingBottom: spacing.lg },
   emptyState: { paddingTop: spacing.lg, gap: spacing.sm },

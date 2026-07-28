@@ -102,6 +102,41 @@ async function getById(id) {
   return rows[0] ? mapRow(rows[0]) : null;
 }
 
+/** Recently retired (superseded/retracted/forgotten) assertions — the
+ *  audit-trail counterpart to getActive(). Nothing before this needed "give
+ *  me what's no longer active" (the resolver only ever reads active rows),
+ *  so this is a genuinely new read, not a duplicate of an existing one —
+ *  added for the Memory screen's collapsed "expired/superseded" area, which
+ *  must show retired facts as auditable history without ever making them
+ *  reasoning-eligible again (retired_at stays the single source of truth
+ *  for that; this is a read-only view over it). */
+async function getRecentlyRetired({ limit = 200, since = null } = {}) {
+  const { rows } = await query(
+    `SELECT * FROM context_assertions
+      WHERE retired_at IS NOT NULL
+        AND ($1::timestamptz IS NULL OR retired_at >= $1)
+      ORDER BY retired_at DESC
+      LIMIT $2`,
+    [since, limit]
+  );
+  return rows.map(mapRow);
+}
+
+/** Update ONLY the effective_end of an active assertion — "mark temporary /
+ *  set an expiration" for a currently-durable statement (a `preference`
+ *  assertion, which by context-resolver.js's isDurableAssertion never
+ *  expires on its own). Never touches a retired row. This is a narrow,
+ *  additive capability the schema already supports (effective_end has
+ *  always been a plain nullable timestamptz) — nothing before this needed
+ *  to set it on an existing row after the fact, only at compile time. */
+async function setEffectiveEnd(id, effectiveEnd, db = query) {
+  const { rowCount } = await db(
+    `UPDATE context_assertions SET effective_end = $2 WHERE id = $1 AND retired_at IS NULL`,
+    [id, effectiveEnd]
+  );
+  return rowCount > 0;
+}
+
 /** Rows -> camelCase, JSON-parsed shape used everywhere else in this layer. */
 function mapRow(r) {
   return {
@@ -130,4 +165,4 @@ function mapRow(r) {
   };
 }
 
-module.exports = { create, retire, getActive, getActiveOverlapping, getById, mapRow };
+module.exports = { create, retire, getActive, getActiveOverlapping, getById, getRecentlyRetired, setEffectiveEnd, mapRow };

@@ -57,6 +57,15 @@ export const CHAT_CONVERSATIONS_URL = `${API_BASE}/api/chat/conversations`;
 // state (a workout swap, a new life chapter) — see chat/actionPolicy.js's
 // CONFIRM_REQUIRED_ACTIONS and routes/chat.js's POST /chat/confirm-action.
 export const CHAT_CONFIRM_ACTION_URL = `${API_BASE}/api/chat/confirm-action`;
+// Memory (product audit rec #6 — separate History from durable Memory).
+// GET returns the categorized active/historical projection; the mutation
+// routes are built by string-interpolating off this base (see
+// backend/src/routes/memory.js), matching CHAT_CONVERSATIONS_URL's own
+// convention for its per-id sub-routes.
+export const MEMORY_URL = `${API_BASE}/api/memory`;
+// Belief-origin Memory items (Learned preferences & beliefs) reuse the
+// EXISTING beliefs management endpoint (BELIEFS_URL, defined below) — not a
+// duplicate concept, just the one other origin GET /memory aggregates.
 export const DEVICE_REGISTER_URL = `${API_BASE}/api/devices/register`;
 export const HIGHLIGHTS_URL = `${API_BASE}/api/highlights`;
 export const INSIGHT_DISMISS_URL = `${API_BASE}/api/insights/dismiss`;
