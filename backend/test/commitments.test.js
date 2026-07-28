@@ -229,13 +229,13 @@ test('parseActions captures a day recap AND a forward-looking note', () => {
 });
 
 test('parseActions drops exact duplicate tags', () => {
-  const text = '<action>{"type":"log_habit","habit":"coldShower"}</action>' +
-    '<action>{"type":"log_habit","habit":"coldShower"}</action>';
+  const text = '<action>{"type":"log_habit","habit":"exercise"}</action>' +
+    '<action>{"type":"log_habit","habit":"exercise"}</action>';
   assert.equal(parseActions(text).length, 1);
 });
 
 test('parseActions keeps two distinct habits', () => {
-  const text = '<action>{"type":"log_habit","habit":"coldShower"}</action>' +
+  const text = '<action>{"type":"log_habit","habit":"exercise"}</action>' +
     '<action>{"type":"log_habit","habit":"gratitude"}</action>';
   assert.equal(parseActions(text).length, 2);
 });

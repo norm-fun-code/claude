@@ -74,7 +74,6 @@ function createHabitsRouter() {
       morningTM: v.morning_tm === 1,
       afternoonTM: v.afternoon_tm === 1,
       gratitude: v.gratitude === 1,
-      coldShower: v.cold_shower === 1,
       exercise: v.exercise === 1,
       eatHealthy: Number.isFinite(v.eat_healthy) ? v.eat_healthy : null,
     });
@@ -161,7 +160,7 @@ Return ONLY valid JSON — no markdown, no explanation:
   // was logged with value >= 0.5. Covers the last 90 days.
   router.get('/habits/streaks', asyncHandler(async (req, res) => {
     const tz = process.env.TZ || 'America/New_York';
-    const HABIT_METRICS = ['morning_tm', 'afternoon_tm', 'cold_shower', 'gratitude', 'exercise'];
+    const HABIT_METRICS = ['morning_tm', 'afternoon_tm', 'gratitude', 'exercise'];
     const { rows } = await db.query(
       // to_char → a 'YYYY-MM-DD' STRING; a bare ::date came back as a JS Date
       // whose String() ("Thu Jul 02 2026 …") never matched today/yesterday, so
@@ -195,7 +194,6 @@ Return ONLY valid JSON — no markdown, no explanation:
       streaks: {
         morningTM:    computeStreak(byMetric['morning_tm'], { today, yesterday }),
         afternoonTM:  computeStreak(byMetric['afternoon_tm'], { today, yesterday }),
-        coldShower:   computeStreak(byMetric['cold_shower'], { today, yesterday }),
         gratitude:    computeStreak(byMetric['gratitude'], { today, yesterday }),
         exercise:     computeStreak(byMetric['exercise'], { today, yesterday }),
       },
@@ -207,7 +205,7 @@ Return ONLY valid JSON — no markdown, no explanation:
   router.get('/habits/history', asyncHandler(async (req, res) => {
     const tz = process.env.TZ || 'America/New_York';
     const days = Math.max(7, Math.min(Number(req.query.days) || 14, 60));
-    const HABIT_METRICS = ['morning_tm', 'afternoon_tm', 'cold_shower', 'gratitude', 'exercise'];
+    const HABIT_METRICS = ['morning_tm', 'afternoon_tm', 'gratitude', 'exercise'];
     const { rows } = await db.query(
       // to_char → a guaranteed 'YYYY-MM-DD' STRING. node-postgres parses a bare
       // ::date into a JS Date, whose String() is "Thu Jul 02 2026 …" — slicing
@@ -240,7 +238,6 @@ Return ONLY valid JSON — no markdown, no explanation:
       history: {
         morningTM: series('morning_tm'),
         afternoonTM: series('afternoon_tm'),
-        coldShower: series('cold_shower'),
         gratitude: series('gratitude'),
         exercise: series('exercise'),
       },

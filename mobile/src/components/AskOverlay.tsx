@@ -59,7 +59,6 @@ const METRICS: Record<string, { label: string; source: string }> = {
   'health:sleep_hours': { label: 'Sleep duration',   source: 'Eight Sleep & Apple Health' },
   'health:sleep_score': { label: 'Sleep score',      source: 'Eight Sleep & Apple Health' },
   'health:resting_hr':  { label: 'Resting HR',       source: 'Eight Sleep & Apple Health' },
-  'habits:cold_shower': { label: 'Cold shower',      source: 'Daily check-in' },
   'habits:exercise':    { label: 'Exercise',         source: 'Daily check-in' },
   'habits:eat_healthy': { label: 'Eating healthy',   source: 'Daily check-in' },
   'wellbeing:mood':     { label: 'Mood',             source: 'Daily check-in' },

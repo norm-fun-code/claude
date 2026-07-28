@@ -12,7 +12,6 @@ const BINARY = {
   morningTM: 'morning_tm',
   afternoonTM: 'afternoon_tm',
   gratitude: 'gratitude',
-  coldShower: 'cold_shower',
   exercise: 'exercise',
 };
 

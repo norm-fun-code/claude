@@ -79,7 +79,6 @@ function round(n, d = 2) {
 // exercise_minutes, steps as raw numbers) — those are outcomes of habits, not
 // the thing you set out to change. Habit levers are what you commit to for 14 days.
 const EXPERIMENT_LEVERS = new Set([
-  'habits:cold_shower',
   'habits:morning_tm',
   'habits:afternoon_tm',
   'habits:gratitude',

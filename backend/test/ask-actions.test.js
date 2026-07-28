@@ -13,8 +13,8 @@ test('rejects an out-of-enum workout id (no side effect from a hallucinated valu
 
 test('parses a habit log', () => {
   assert.deepEqual(
-    parseAction('Logged it.<action>{"type":"log_habit","habit":"coldShower"}</action>'),
-    { action: 'log_habit', habit: 'coldShower' }
+    parseAction('Logged it.<action>{"type":"log_habit","habit":"gratitude"}</action>'),
+    { action: 'log_habit', habit: 'gratitude' }
   );
 });
 

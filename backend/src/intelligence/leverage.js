@@ -46,7 +46,6 @@ const LEVERS = {
   'habits:exercise':     { ease: 0.6, more: 'keep the exercise habit', less: 'ease off exercise' },
   'habits:morning_tm':   { ease: 0.8, more: 'hold the morning meditation', less: 'drop the morning meditation' },
   'habits:afternoon_tm': { ease: 0.8, more: 'hold the afternoon meditation', less: 'drop the afternoon meditation' },
-  'habits:cold_shower':  { ease: 0.8, more: 'keep the cold showers', less: 'skip the cold showers' },
   'habits:gratitude':    { ease: 0.9, more: 'keep journaling gratitude', less: 'skip gratitude journaling' },
   'habits:eat_healthy':  { ease: 0.5, more: 'eat cleaner', less: 'loosen the diet' },
   'habits:habit_score':  { ease: 0.5, more: 'hit more of your daily habits', less: 'do fewer habits' },
@@ -54,7 +53,6 @@ const LEVERS = {
 
 // Habit label → canonical key (for habit_split findings that store display names).
 const HABIT_KEY = {
-  'Cold shower':        'habits:cold_shower',
   'Morning meditation': 'habits:morning_tm',
   'Morning TM':         'habits:morning_tm',
   'Afternoon meditation':'habits:afternoon_tm',

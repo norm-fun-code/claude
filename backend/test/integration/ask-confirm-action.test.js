@@ -115,7 +115,12 @@ test('required: an invalid/malformed confirm payload is rejected and never descr
 });
 
 test('a low-stakes action (log_habit) still executes immediately on the strength of the user\'s own statement — no confirm step, matching existing behavior', async () => {
-  mockLlmAnswer(`Done — logged your cold shower.\n<action>{"type":"log_habit","habit":"coldShower"}</action>`);
+  // 'exercise' (not 'gratitude'/'morningTM') deliberately — this writes a REAL
+  // habits row through the unmocked ingest pipeline, and other integration
+  // tests (consolidate-gather-parallel.test.js) assert exact aggregate rates
+  // for gratitude/morning_tm against the shared test DB; polluting either
+  // would make that test flaky depending on run order.
+  mockLlmAnswer(`Done — logged your exercise.\n<action>{"type":"log_habit","habit":"exercise"}</action>`);
   const res = await request(app).post('/api/chat').set(authHeader()).send({ question: HABIT_QUESTION });
   assert.equal(res.status, 200);
   assert.equal(res.body.action?.done, true, 'back-compat `action` reflects the immediately-executed result');

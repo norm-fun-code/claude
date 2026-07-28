@@ -172,12 +172,11 @@ function detectDeviceDataGap({ load, isRestDay }) {
 const EVENING_HABITS = [
   { metric: 'gratitude', label: 'Gratitude journal' },
   { metric: 'afternoon_tm', label: 'Afternoon TM' },
-  { metric: 'cold_shower', label: 'Cold shower' },
   { metric: 'exercise', label: 'Exercise' },
 ];
 
-// A dayContext note like "not feeling well, getting sick" means cold shower and
-// exercise aren't quiet wins to nag about tonight — they're actively bad advice.
+// A dayContext note like "not feeling well, getting sick" means exercise isn't
+// a quiet win to nag about tonight — it's actively bad advice.
 // Careful with ambiguous roots: "chills" (symptom) vs "chill" (relaxed/cold-out),
 // "flu" must be a whole word (not "influence"/"fluffy"), "ill" only as its own
 // word (not "chill"/"skill"/"still") — same lesson as MOOD_KEYWORDS.
@@ -191,13 +190,13 @@ function isSickDay(dayContext) {
 /** Pure: the evening-coded habits actually worth nudging tonight. On a rest day,
  *  "Exercise" isn't really open — there's no planned session to have done, so
  *  nagging about it is the same class of bug as grading steps against a
- *  training-day norm. On a sick day, cold shower AND exercise get the same
- *  treatment — neither is a "quick win before bed" while unwell. Split out
- *  from openEveningHabits so this rule is unit-testable without a DB. */
+ *  training-day norm. On a sick day, exercise gets the same treatment — it's
+ *  not a "quick win before bed" while unwell. Split out from openEveningHabits
+ *  so this rule is unit-testable without a DB. */
 function eveningHabitsToTrack(isRestDay, isSick = false) {
   const skip = new Set();
   if (isRestDay) skip.add('exercise');
-  if (isSick) { skip.add('exercise'); skip.add('cold_shower'); }
+  if (isSick) skip.add('exercise');
   return EVENING_HABITS.filter((h) => !skip.has(h.metric));
 }
 

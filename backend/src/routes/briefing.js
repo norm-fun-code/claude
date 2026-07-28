@@ -217,8 +217,8 @@ async function buildQuickChiefBriefContext(prior) {
           const vals = r.map((x) => Number(x.value)).filter(Number.isFinite);
           return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
         };
-        const binaryHabits = ['gratitude', 'morning_tm', 'afternoon_tm', 'cold_shower', 'exercise'];
-        const habitLabels = { gratitude: 'gratitude', morning_tm: 'morning meditation', afternoon_tm: 'afternoon meditation', cold_shower: 'cold shower', exercise: 'exercise', eat_healthy: 'eating well' };
+        const binaryHabits = ['gratitude', 'morning_tm', 'afternoon_tm', 'exercise'];
+        const habitLabels = { gratitude: 'gratitude', morning_tm: 'morning meditation', afternoon_tm: 'afternoon meditation', exercise: 'exercise', eat_healthy: 'eating well' };
         const [mood, energy, focus, ...habitAvgs] = await Promise.all([
           avg('wellbeing', 'mood'), avg('wellbeing', 'energy'), avg('wellbeing', 'focus'),
           ...binaryHabits.map((m) => avg('habits', m)),
@@ -1085,8 +1085,8 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     // habits are 0/1 (flag <60% adherence); eat_healthy is a 1–5 score, so it
     // needs its own threshold (flag when averaging below ~3/5) — checking it
     // against 0.6 like the binaries meant it could never flag.
-    const binaryHabits = ['gratitude', 'morning_tm', 'afternoon_tm', 'cold_shower', 'exercise'];
-    const habitLabels = { gratitude: 'gratitude', morning_tm: 'morning meditation', afternoon_tm: 'afternoon meditation', cold_shower: 'cold shower', exercise: 'exercise', eat_healthy: 'eating well' };
+    const binaryHabits = ['gratitude', 'morning_tm', 'afternoon_tm', 'exercise'];
+    const habitLabels = { gratitude: 'gratitude', morning_tm: 'morning meditation', afternoon_tm: 'afternoon meditation', exercise: 'exercise', eat_healthy: 'eating well' };
     // All 9 lookups (mood/energy/focus + 5 binary habits + eat_healthy) are
     // independent DB round-trips — batch them into one Promise.all instead of
     // 3 parallel + 6 serial awaits.

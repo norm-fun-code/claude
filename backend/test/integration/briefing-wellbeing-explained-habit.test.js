@@ -1,14 +1,13 @@
 // Live bug found via a product review: the Wisdom card moralized a slipping
-// cold-shower streak — "the slipping cold shower habit hints at where
-// patience with discomfort is wearing thin" — even though the SAME week's
-// day context/annotations already explained it: the user was sick and
-// skipped cold showers on doctor's-orders-common-sense grounds, not a
-// willpower lapse. wellbeingContext's "lagging habits" detector only ever
-// looked at the raw 7-day adherence average — it never checked whether a
-// documented reason already existed. It now cross-references recent
-// annotations + day-journal notes over the same 7-day window and suppresses
-// the "slipping" flag for a habit that's already explained in the user's
-// own words.
+// habit streak — "the slipping habit hints at where patience with discomfort
+// is wearing thin" — even though the SAME week's day context/annotations
+// already explained it: the user was sick and skipped it on doctor's-orders-
+// common-sense grounds, not a willpower lapse. wellbeingContext's "lagging
+// habits" detector only ever looked at the raw 7-day adherence average — it
+// never checked whether a documented reason already existed. It now
+// cross-references recent annotations + day-journal notes over the same
+// 7-day window and suppresses the "slipping" flag for a habit that's already
+// explained in the user's own words.
 const test = require('node:test');
 const { after } = test;
 const assert = require('node:assert/strict');
@@ -23,7 +22,7 @@ const app = buildTestApp();
 
 function stubCommon({ annotations = [], journal = [] }) {
   metricsStore.dailyAggregate = async ({ domain, metric }) => {
-    if (domain === 'habits' && metric === 'cold_shower') {
+    if (domain === 'habits' && metric === 'afternoon_tm') {
       // 1 of 7 days done -> ~14% adherence, well under the 60% "lagging" cutoff.
       return [{ day: 'd0', value: 1 }, { day: 'd1', value: 0 }, { day: 'd2', value: 0 }, { day: 'd3', value: 0 }, { day: 'd4', value: 0 }, { day: 'd5', value: 0 }, { day: 'd6', value: 0 }];
     }
@@ -68,7 +67,7 @@ after(async () => {
 
 test('a lagging habit already explained by a recent annotation is NOT flagged as "slipping"', async (t) => {
   stubCommon({
-    annotations: [{ label: 'Sick', note: 'Skipped cold shower this week, fighting off a cold', start_ts: new Date() }],
+    annotations: [{ label: 'Sick', note: 'Skipped afternoon meditation this week, fighting off a cold', start_ts: new Date() }],
     journal: [],
   });
   const getPrompt = captureWisdomPrompt(t);
@@ -78,7 +77,7 @@ test('a lagging habit already explained by a recent annotation is NOT flagged as
 
   const prompt = getPrompt();
   assert.ok(prompt, 'expected the wisdom LLM call to have fired');
-  assert.doesNotMatch(prompt, /slipping on[^\\n]*cold shower/, 'an explained dip must not be narrated as "slipping"');
+  assert.doesNotMatch(prompt, /slipping on[^\\n]*afternoon meditation/, 'an explained dip must not be narrated as "slipping"');
 });
 
 test('the SAME lagging habit with no explanation anywhere IS flagged as "slipping" (unchanged behavior)', async (t) => {
@@ -90,7 +89,7 @@ test('the SAME lagging habit with no explanation anywhere IS flagged as "slippin
 
   const prompt = getPrompt();
   assert.ok(prompt);
-  assert.match(prompt, /slipping on[^\n]*cold shower/, 'with no documented reason, the raw statistical flag must still fire');
+  assert.match(prompt, /slipping on[^\n]*afternoon meditation/, 'with no documented reason, the raw statistical flag must still fire');
 });
 
 test('an explanation for a DIFFERENT habit does not suppress this one (label-specific matching)', async (t) => {
@@ -105,5 +104,5 @@ test('an explanation for a DIFFERENT habit does not suppress this one (label-spe
 
   const prompt = getPrompt();
   assert.ok(prompt);
-  assert.match(prompt, /slipping on[^\n]*cold shower/, 'an unrelated habit\'s explanation must not suppress cold shower\'s own flag');
+  assert.match(prompt, /slipping on[^\n]*afternoon meditation/, 'an unrelated habit\'s explanation must not suppress this habit\'s own flag');
 });

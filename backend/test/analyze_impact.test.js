@@ -251,9 +251,8 @@ test('computeHabitHealthSplits: FDR correction runs across the COMPLETE tested f
   };
   try {
     const N = 42;
-    // 5 core habits, each structurally testable (>=5 per group).
+    // 4 core habits, each structurally testable (>=5 per group).
     const habits = {
-      'habits:cold_shower':  mkSeries(N, (i) => (i % 2 === 0 ? 1 : 0)),
       // morning_tm and afternoon_tm deliberately OVERLAP on i%6===0 (7 of the
       // 42 days) so the "both meditations" combo below also has >=MIN_N in
       // each group — otherwise it silently contributes 0 candidates instead
@@ -263,7 +262,7 @@ test('computeHabitHealthSplits: FDR correction runs across the COMPLETE tested f
       'habits:gratitude':    mkSeries(N, (i) => (i % 4 === 0 ? 1 : 0)),
       'habits:exercise':     mkSeries(N, (i) => (i % 4 === 1 ? 1 : 0)),
     };
-    // Exactly ONE real, clean signal: cold showers -> clearly higher HRV.
+    // Exactly ONE real, clean signal: morning meditation -> clearly higher HRV.
     const realOutcome = { 'health:hrv': mkSeries(N, (i) => (i % 2 === 0 ? 62 : 44) + (i % 5) * 0.1) };
     // Every OTHER outcome is a perfectly flat, zero-variance series — no habit
     // can show a real effect against it (pct=0, p=1), but it's still a fully
@@ -283,12 +282,12 @@ test('computeHabitHealthSplits: FDR correction runs across the COMPLETE tested f
     };
     a.computeHabitHealthSplits({ ...habits, ...realOutcome, ...flatOutcomes });
 
-    // 5 habits x 8 outcomes (same-day) + "both meditations" x 8 outcomes = 48
+    // 4 habits x 8 outcomes (same-day) + "both meditations" x 8 outcomes = 40
     // structurally-valid tests. Every single one — including the 7 flat,
     // never-individually-significant outcomes — must reach the FDR call.
     assert.ok(capturedLengths.length >= 1, 'benjaminiHochberg must have been called');
-    assert.equal(capturedLengths[0], 48,
-      `FDR must run over the full tested family (48 structurally-valid habit x outcome tests), got ${capturedLengths[0]}`);
+    assert.equal(capturedLengths[0], 40,
+      `FDR must run over the full tested family (40 structurally-valid habit x outcome tests), got ${capturedLengths[0]}`);
   } finally {
     stats.benjaminiHochberg = originalBH;
   }
@@ -349,7 +348,7 @@ test('observational split/correlation findings never use causal wording ("drives
 
   const tm = mkSeries(N, (i) => (i % 2 === 0 ? 1 : 0));
   const hrv = mkSeries(N, (i) => (i % 2 === 0 ? 60 : 45) + (i % 5) * 0.1);
-  const habitFindings = a.computeHabitHealthSplits({ 'habits:cold_shower': tm, 'health:hrv': hrv });
+  const habitFindings = a.computeHabitHealthSplits({ 'habits:morning_tm': tm, 'health:hrv': hrv });
   assert.ok(habitFindings.length > 0, 'sanity: expected at least one habit_split finding');
 
   const eat = mkSeries(N, (i) => (i % 2 === 0 ? 4 : 1));

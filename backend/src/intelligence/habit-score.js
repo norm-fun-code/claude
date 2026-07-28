@@ -8,7 +8,7 @@
 const db = require('../db');
 const metricsStore = require('../store/metrics');
 
-const BINARY_HABITS = ['morning_tm', 'afternoon_tm', 'gratitude', 'cold_shower', 'exercise'];
+const BINARY_HABITS = ['morning_tm', 'afternoon_tm', 'gratitude', 'exercise'];
 
 async function recomputeHabitScore(tz) {
   try {

@@ -719,7 +719,6 @@ function computeHabitConsistency(seriesByKey, opts = {}) {
     exercise: 'Exercise',
     morning_tm: 'Morning meditation',
     afternoon_tm: 'Afternoon meditation',
-    cold_shower: 'Cold shower',
     gratitude: 'Gratitude practice',
   };
   const WINDOW_DAYS = 14;
@@ -844,7 +843,6 @@ function computeHabitHealthSplits(seriesByKey, opts = {}) {
   const HABITS = {
     'habits:morning_tm':   'Morning meditation',
     'habits:afternoon_tm': 'Afternoon meditation',
-    'habits:cold_shower':  'Cold shower',
     'habits:gratitude':    'Gratitude practice',
     'habits:exercise':     'Exercise',
   };

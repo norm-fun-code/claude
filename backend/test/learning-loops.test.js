@@ -87,14 +87,14 @@ test('a refuted verdict also gates the habit_split path via HABIT_KEY normalizat
   const habitSplit = {
     type: 'habit_split',
     evidence: {
-      kind: 'habit_split', habit: 'Cold shower', outcome: 'health:hrv', pct: 0.26,
+      kind: 'habit_split', habit: 'Morning meditation', outcome: 'health:hrv', pct: 0.26,
       onMean: 58, offMean: 44, onN: 23, offN: 20,
     },
   };
   const baseline = rankActions([habitSplit]);
   assert.equal(baseline.length, 1, 'sanity: the split produces an action');
   const gated = rankActions([habitSplit], {
-    experimentVerdicts: { 'habits:cold_shower|health:hrv': 'refuted' },
+    experimentVerdicts: { 'habits:morning_tm|health:hrv': 'refuted' },
   });
   assert.equal(gated.length, 0, 'display-name habit bases must map back to canonical lever keys for gating');
 });

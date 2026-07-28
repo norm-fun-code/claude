@@ -26,7 +26,7 @@ async function loggedMetricsToday(domain, source) {
 // The fields each card needs for "fully logged" — reminder is silent only when
 // ALL are present, so a partially-filled card still nudges.
 const CHECKIN_FIELDS = ['mood', 'energy', 'focus'];
-const HABIT_FIELDS = ['morning_tm', 'afternoon_tm', 'gratitude', 'cold_shower', 'exercise', 'eat_healthy'];
+const HABIT_FIELDS = ['morning_tm', 'afternoon_tm', 'gratitude', 'exercise', 'eat_healthy'];
 
 /** Is the check-in FULLY logged today (mood + energy + focus)? Fail-safe: assume
  *  yes on error so a DB hiccup never nags. */

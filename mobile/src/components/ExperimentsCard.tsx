@@ -9,7 +9,6 @@ const METRIC_LABELS: Record<string, string> = {
   'health:sleep_hours': 'Sleep duration',
   'health:sleep_score': 'Sleep score',
   'health:resting_hr':  'Resting HR',
-  'habits:cold_shower': 'Cold shower',
   'habits:exercise':    'Exercise',
   'habits:eat_healthy': 'Eating healthy',
   'wellbeing:mood':     'Mood',

@@ -11,13 +11,12 @@ import { GratitudeReflection } from './GratitudeReflection';
 
 const HABITS_URL = `${API_BASE}/api/habits`;
 
-type Binary = 'morningTM' | 'afternoonTM' | 'gratitude' | 'coldShower' | 'exercise';
+type Binary = 'morningTM' | 'afternoonTM' | 'gratitude' | 'exercise';
 
 const HABITS: { key: Binary; label: string }[] = [
   { key: 'morningTM', label: 'Morning TM' },
   { key: 'afternoonTM', label: 'Afternoon TM' },
   { key: 'gratitude', label: 'Gratitude Journal' },
-  { key: 'coldShower', label: 'Cold Shower' },
   { key: 'exercise', label: 'Exercise' },
 ];
 
@@ -30,7 +29,6 @@ export function HabitsCard() {
     morningTM: false,
     afternoonTM: false,
     gratitude: false,
-    coldShower: false,
     exercise: false,
   });
   const [streaks, setStreaks] = useState<Record<string, number>>({});
@@ -54,7 +52,6 @@ export function HabitsCard() {
         morningTM: !!t.morningTM,
         afternoonTM: !!t.afternoonTM,
         gratitude: !!t.gratitude,
-        coldShower: !!t.coldShower,
         exercise: !!t.exercise,
       });
       if (Number.isFinite(t.eatHealthy)) setEatHealthy(t.eatHealthy);
@@ -92,7 +89,7 @@ export function HabitsCard() {
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active' && fetchDateRef.current !== todayLocal()) {
-        setChecked({ morningTM: false, afternoonTM: false, gratitude: false, coldShower: false, exercise: false });
+        setChecked({ morningTM: false, afternoonTM: false, gratitude: false, exercise: false });
         setEatHealthy(null);
         setSaved(false);
         setFailed(false);
@@ -121,14 +118,14 @@ export function HabitsCard() {
     }
   }
 
-  // Completion moment: checking the 5th habit earns a soft success chord and a
+  // Completion moment: checking the last habit earns a soft success chord and a
   // one-breath scale pulse on the card — a quiet ritual close, not confetti.
   const pulse = useRef(new Animated.Value(1)).current;
 
   function toggle(key: Binary) {
     const next = { ...checked, [key]: !checked[key] };
     const nextDone = Object.values(next).filter(Boolean).length;
-    if (nextDone === 5) {
+    if (nextDone === HABITS.length) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       Animated.sequence([
         Animated.spring(pulse, { toValue: 1.02, useNativeDriver: true, damping: 9, stiffness: 300 }),
@@ -221,7 +218,7 @@ export function HabitsCard() {
 
       <Pressable onPress={() => save()} style={[styles.save, { backgroundColor: saved ? c.accentSoft : c.accent }]}>
         <Text style={[styles.saveText, { color: saved ? c.accent : '#FFFFFF' }]}>
-          {failed ? 'Retry save' : saved ? `Saved · ${doneCount}/5 habits` : 'Save today'}
+          {failed ? 'Retry save' : saved ? `Saved · ${doneCount}/${HABITS.length} habits` : 'Save today'}
         </Text>
       </Pressable>
       {failed && (

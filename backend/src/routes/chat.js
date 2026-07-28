@@ -132,7 +132,6 @@ function createChatRouter() {
       { key: 'health:sleep_hours', label: 'Sleep duration (hours)' },
       { key: 'health:sleep_score', label: 'Sleep score (0-100)' },
       { key: 'health:resting_hr', label: 'Resting heart rate (bpm)' },
-      { key: 'habits:cold_shower', label: 'Cold shower (yes/no daily)' },
       { key: 'habits:exercise', label: 'Exercise (yes/no daily)' },
       { key: 'habits:eat_healthy', label: 'Eating healthy (1-5 daily score)' },
       { key: 'wellbeing:mood', label: 'Mood (1-10)' },

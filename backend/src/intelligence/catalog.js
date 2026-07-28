@@ -25,7 +25,6 @@ const CATALOG = {
   'habits:morning_tm': { label: 'Morning TM', goodWhen: 'up' },
   'habits:afternoon_tm': { label: 'Afternoon TM', goodWhen: 'up' },
   'habits:gratitude': { label: 'Gratitude journal', goodWhen: 'up' },
-  'habits:cold_shower': { label: 'Cold shower', goodWhen: 'up' },
   'habits:exercise': { label: 'Exercise (habit)', goodWhen: 'up' },
   'habits:exercise_time_of_day': { label: 'Exercise timing', goodWhen: null },
   'habits:eat_healthy': { label: 'Eating healthy', goodWhen: 'up' },

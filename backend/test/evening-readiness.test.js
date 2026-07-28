@@ -7,27 +7,23 @@ test('non-rest day tracks all evening habits, including Exercise', () => {
   assert.ok(habits.includes('exercise'));
   assert.ok(habits.includes('gratitude'));
   assert.ok(habits.includes('afternoon_tm'));
-  assert.ok(habits.includes('cold_shower'));
 });
 
 test('rest day excludes Exercise — there was no planned session to have done', () => {
   const habits = eveningHabitsToTrack(true).map((h) => h.metric);
   assert.ok(!habits.includes('exercise'));
-  // The rest of the stack is unaffected — a rest day doesn't excuse gratitude/TM/shower.
+  // The rest of the stack is unaffected — a rest day doesn't excuse gratitude/TM.
   assert.ok(habits.includes('gratitude'));
   assert.ok(habits.includes('afternoon_tm'));
-  assert.ok(habits.includes('cold_shower'));
 });
 
 // User report: logged "not feeling well, getting sick" 30 minutes before the
-// evening brief built, but it still nagged "Still open: Cold shower, Exercise —
-// quick wins before bed." A sick day should get the same treatment a rest day
-// gives exercise — extended to cold shower too, since neither is a good idea
-// while unwell.
-test('sick day excludes BOTH Exercise and Cold shower — neither is a quick win while unwell', () => {
+// evening brief built, but it still nagged "Still open: Exercise — a quick win
+// before bed." A sick day should get the same treatment a rest day gives
+// exercise, since it isn't a good idea while unwell.
+test('sick day excludes Exercise — not a quick win while unwell', () => {
   const habits = eveningHabitsToTrack(false, true).map((h) => h.metric);
   assert.ok(!habits.includes('exercise'));
-  assert.ok(!habits.includes('cold_shower'));
   assert.ok(habits.includes('gratitude'));
   assert.ok(habits.includes('afternoon_tm'));
 });

@@ -129,10 +129,10 @@ async function gatherHealth(d7, d35) {
 }
 
 async function gatherHabits(d7, d56) {
-  const BINARY = ['morning_tm', 'afternoon_tm', 'gratitude', 'cold_shower', 'exercise'];
+  const BINARY = ['morning_tm', 'afternoon_tm', 'gratitude', 'exercise'];
   const LABELS = {
     morning_tm: 'Morning TM', afternoon_tm: 'Afternoon TM', gratitude: 'Gratitude',
-    cold_shower: 'Cold shower', exercise: 'Exercise', eat_healthy: 'Eating well',
+    exercise: 'Exercise', eat_healthy: 'Eating well',
   };
   // Each binary habit's fetch plus the eat_healthy fetch are all independent —
   // parallelize instead of one round trip at a time.
