@@ -173,6 +173,23 @@ async function findBySnapshotId(kind, snapshotId) {
 }
 
 /**
+ * The EXACT briefing row by primary key, or null. The id-based counterpart to
+ * findBySnapshotId — used by publishBriefingDraft's post-save read-back
+ * verification (morning-notification lifecycle fix): after INSERTing a row,
+ * prove it is actually retrievable by its own id before treating publication
+ * as real, rather than trusting the in-memory draft/INSERT result as its own
+ * proof.
+ */
+async function findById(id) {
+  if (!id) return null;
+  const { rows } = await query(
+    `SELECT id, kind, generated_at, period_start, period_end, content FROM briefings WHERE id = $1`,
+    [id]
+  );
+  return rows[0] ?? null;
+}
+
+/**
  * The last `days` distinct CALENDAR days' chief-of-staff briefs, most recent
  * first, excluding today. Multiple manual rebuilds in one day each insert their
  * own row (no upsert), so this dedupes to the LATEST build per local day — the
@@ -216,6 +233,6 @@ async function todaysMorningBrief(tz = process.env.TZ || 'America/New_York') {
 }
 
 module.exports = {
-  saveBriefing, latestBriefing, listBriefings, findBySnapshotId, recentDailyBriefOpeners, todaysMorningBrief, blankTodaysOpenQuestion,
+  saveBriefing, latestBriefing, listBriefings, findBySnapshotId, findById, recentDailyBriefOpeners, todaysMorningBrief, blankTodaysOpenQuestion,
   isStructurallyUsableChiefBrief, isPublishableRow, latestPublishableDailyForLocalDay, resolveLastGoodChiefBrief,
 };

@@ -46,6 +46,23 @@ function stubAll({ buildDelayMs = 0 } = {}) {
   // routes/briefing.js): publish:false (the automatic morning path's prepare
   // step) must NOT persist — persistence only happens when the caller later
   // calls publishBriefingDraft (also stubbed below), exactly like production.
+  // Mirrors publishBriefingDraft's verified publication receipt contract
+  // (morning-notification lifecycle fix, item A) — real callers (warmAndNotify's
+  // force path reads response.publicationReceipt; its automatic path reads
+  // publishBriefingDraft's own return value) both need a receipt shaped like
+  // the real one, not just a bare save.
+  function receiptFor(content, saved) {
+    return {
+      briefingId: saved.id,
+      snapshotId: content.snapshotId ?? null,
+      snapshotVersion: content.snapshotVersion ?? null,
+      localDay: new Date().toLocaleDateString('en-CA'),
+      generatedAt: saved.generated_at,
+      builtAt: content.builtAt ?? null,
+      qualityStatus: content.chiefBriefQuality?.status ?? null,
+      readbackVerified: true,
+    };
+  }
   briefingRoute.buildFreshBriefing = async ({ publish = true } = {}) => {
     buildCount += 1;
     if (buildDelayMs) await new Promise((r) => setTimeout(r, buildDelayMs));
@@ -53,6 +70,7 @@ function stubAll({ buildDelayMs = 0 } = {}) {
       _test: 'ZZmorning',
       day: new Date().toISOString().slice(0, 10),
       builtAt: new Date().toISOString(),
+      snapshotId: `ZZmorning-snap-${buildCount}`,
       chiefBrief: { synthesis: 'ZZmorning test build', action: 'a', risk: 'r', move: 'm', openQuestion: '' },
       // A genuine automatic build always carries quality metadata (see
       // brain/claimValidator.js's assessChiefBriefQuality via generateChiefBrief) —
@@ -60,11 +78,15 @@ function stubAll({ buildDelayMs = 0 } = {}) {
       // not the separate quality-gating behavior covered in morning-lifecycle tests.
       chiefBriefQuality: { status: 'fresh', reasonCodes: [], fieldWordCounts: {}, fallbackFields: [], violatedChecks: [] },
     };
-    if (publish) await briefingsStore.saveBriefing({ kind: 'daily', content });
+    if (publish) {
+      const saved = await briefingsStore.saveBriefing({ kind: 'daily', content });
+      content.publicationReceipt = receiptFor(content, saved);
+    }
     return content;
   };
   briefingRoute.publishBriefingDraft = async (content) => {
-    await briefingsStore.saveBriefing({ kind: 'daily', content });
+    const saved = await briefingsStore.saveBriefing({ kind: 'daily', content });
+    return receiptFor(content, saved);
   };
 }
 
@@ -86,6 +108,11 @@ async function cleanup() {
     [tz]
   );
   await db.query(`DELETE FROM nudges WHERE dedup_key LIKE 'morning_brief_push:%' AND created_at >= now() - interval '1 hour'`);
+  // The automatic path now mints a durable morning_build_jobs row per
+  // attempt (item D) — clean those up too so this suite's real (unstubbed)
+  // job-store calls don't leave stray rows for other tests to trip over.
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  await db.query(`DELETE FROM morning_build_jobs WHERE local_day = $1`, [today]);
 }
 
 before(async () => { await cleanup(); });

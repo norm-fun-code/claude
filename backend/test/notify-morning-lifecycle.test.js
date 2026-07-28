@@ -12,6 +12,7 @@ const nudgesStore = require('../src/store/nudges');
 const expo = require('../src/notify/expo');
 const briefingRoute = require('../src/routes/briefing');
 const sleepReadiness = require('../src/intelligence/sleep-readiness');
+const buildJobsStore = require('../src/store/morningBuildJobs');
 
 function stubPushPlumbing() {
   devicesStore.listActiveTokens = async () => ['ExponentPushToken[test]'];
@@ -26,6 +27,18 @@ function stubPushPlumbing() {
   expo.sendPush = async () => ({ sent: 1, invalidTokens: [] });
 }
 
+// The automatic path now mints a durable morning_build_jobs row per attempt
+// (item D) — stubbed here too so this file's "all deps stubbed, no DB"
+// promise still holds; a real DB round-trip would both violate that and
+// leave stray rows other tests could trip over.
+function stubBuildJobsStore() {
+  buildJobsStore.attemptsToday = async () => 0;
+  buildJobsStore.createJob = async ({ trigger, state, attemptNumber, localDay } = {}) => (
+    { id: 'stub-job-id', local_day: localDay, trigger, state, attempt_number: attemptNumber }
+  );
+  buildJobsStore.updateJob = async () => null;
+}
+
 function withStubs(overrides, fn) {
   const orig = {
     build: briefingRoute.buildFreshBriefing,
@@ -37,10 +50,14 @@ function withStubs(overrides, fn) {
     mark: nudgesStore.markStatus,
     push: expo.sendPush,
     getReadiness: sleepReadiness.getMorningSleepReadiness,
+    attemptsToday: buildJobsStore.attemptsToday,
+    createJob: buildJobsStore.createJob,
+    updateJob: buildJobsStore.updateJob,
     EMAIL: process.env.EIGHT_SLEEP_EMAIL,
     PASSWORD: process.env.EIGHT_SLEEP_PASSWORD,
   };
   stubPushPlumbing();
+  stubBuildJobsStore();
   if (overrides.build) briefingRoute.buildFreshBriefing = overrides.build;
   if (overrides.publish) briefingRoute.publishBriefingDraft = overrides.publish;
   if (overrides.push) expo.sendPush = overrides.push;
@@ -64,6 +81,9 @@ function withStubs(overrides, fn) {
     nudgesStore.markStatus = orig.mark;
     expo.sendPush = orig.push;
     sleepReadiness.getMorningSleepReadiness = orig.getReadiness;
+    buildJobsStore.attemptsToday = orig.attemptsToday;
+    buildJobsStore.createJob = orig.createJob;
+    buildJobsStore.updateJob = orig.updateJob;
     if (orig.EMAIL === undefined) delete process.env.EIGHT_SLEEP_EMAIL; else process.env.EIGHT_SLEEP_EMAIL = orig.EMAIL;
     if (orig.PASSWORD === undefined) delete process.env.EIGHT_SLEEP_PASSWORD; else process.env.EIGHT_SLEEP_PASSWORD = orig.PASSWORD;
   });
@@ -79,6 +99,16 @@ const FRESH_DRAFT = {
 const DEGRADED_DRAFT = {
   ...FRESH_DRAFT,
   chiefBriefQuality: { status: 'degraded', reasonCodes: ['grounded_fallback_used'], fieldWordCounts: {}, fallbackFields: ['synthesis'], violatedChecks: [] },
+};
+
+// The verified publication receipt publishBriefingDraft returns once its
+// post-save read-back succeeds (morning-notification lifecycle fix, item A) —
+// warmAndNotify now requires this (never the in-memory draft alone) before
+// it will send a push.
+const FRESH_RECEIPT = {
+  briefingId: 'briefing-1', snapshotId: FRESH_DRAFT.snapshotId, snapshotVersion: FRESH_DRAFT.snapshotVersion,
+  localDay: '2026-06-11', generatedAt: '2026-06-11T11:00:06.000Z', builtAt: FRESH_DRAFT.builtAt,
+  qualityStatus: 'fresh', readbackVerified: true,
 };
 
 // Scenario 2 (audit fix — DEG task): quality is checked BEFORE publish, not
@@ -144,7 +174,7 @@ test('automatic path — a FRESH draft that clears the final gate publishes AND 
     eightSleep: true,
     build: async ({ publish } = {}) => { assert.equal(publish, false); return FRESH_DRAFT; },
     getReadiness: async () => ({ ready: true, reason: 'ready', evidence: { trigger: 'final_gate' } }),
-    publish: async (draft) => { publishCalls += 1; assert.equal(draft, FRESH_DRAFT); },
+    publish: async (draft) => { publishCalls += 1; assert.equal(draft, FRESH_DRAFT); return FRESH_RECEIPT; },
     push: async () => { pushCalls += 1; return { sent: 1, invalidTokens: [] }; },
   }, async () => {
     const res = await morning.warmAndNotify({ send: true, automatic: true });
@@ -169,7 +199,11 @@ test('scenario 12: force:true bypasses the lifecycle entirely — eager publish 
     build: async ({ publish } = {}) => {
       assert.equal(publish, true, 'force/manual path must NOT request an unpublished draft');
       publishCalledViaEagerBuild = true;
-      return FRESH_DRAFT;
+      // The real buildFreshBriefing attaches the verified receipt onto the
+      // response itself when its internal publishBriefingDraft call succeeds
+      // (morning-notification lifecycle fix, item A) — mirror that here so
+      // the force path has a receipt to push from.
+      return { ...FRESH_DRAFT, publicationReceipt: FRESH_RECEIPT };
     },
   }, async () => {
     const res = await morning.warmAndNotify({ send: true, automatic: true, force: true });

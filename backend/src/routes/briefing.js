@@ -2846,13 +2846,37 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
 }
 
 /**
+ * Thrown by publishBriefingDraft when the post-save read-back doesn't prove
+ * the exact row is retrievable/canonical-quality. Every existing caller
+ * already treats a thrown publishBriefingDraft as a retryable persistence
+ * failure (no push, no dedup marker, no morning-complete marker) — see
+ * buildFreshBriefing's catch below and notify/morning.js's warmAndNotify —
+ * so this reuses that same fail-closed path rather than needing new callers.
+ */
+class PublishReadbackError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = 'PublishReadbackError';
+    this.details = details;
+  }
+}
+
+/**
  * The "publish" half of the prepare -> validate -> publish lifecycle: persist
- * the briefing for history/spine, pre-warm Chief's spoken narration, and
- * schedule the next-build-cycle housekeeping. Split out of buildFreshBriefing
- * so the automatic morning path can build an unpublished draft, run its own
- * final readiness/quality check against it, and only invoke this once that
- * check still passes. Every other caller (manual rebuild, GET /api/briefing)
- * calls this immediately as part of buildFreshBriefing, exactly as before.
+ * the briefing for history/spine, prove the EXACT persisted row is actually
+ * retrievable and publishable (morning-notification lifecycle fix — a push
+ * must never reference a row that turns out missing/mismatched/degraded on
+ * read-back), pre-warm Chief's spoken narration, and schedule the
+ * next-build-cycle housekeeping. Split out of buildFreshBriefing so the
+ * automatic morning path can build an unpublished draft, run its own final
+ * readiness/quality check against it, and only invoke this once that check
+ * still passes. Every other caller (manual rebuild, GET /api/briefing) calls
+ * this immediately as part of buildFreshBriefing, exactly as before.
+ *
+ * @returns {Promise<{briefingId, snapshotId, snapshotVersion, localDay,
+ *   generatedAt, builtAt, qualityStatus, readbackVerified:true}>} the
+ *   verified publication receipt — the only thing proving this build is
+ *   safe to push a notification about (never the in-memory draft itself).
  */
 async function publishBriefingDraft(response) {
   // Persist the briefing for history, and capture today's data into the spine.
@@ -2864,6 +2888,35 @@ async function publishBriefingDraft(response) {
   // warmAndNotify / the manual-rebuild build-job) can correctly report a
   // retryable failed build instead of a false "published" success.
   const saved = await briefingsStore.saveBriefing({ kind: 'daily', content: response });
+
+  // Read-back verification: read the EXACT row back by its own primary key
+  // and prove it's the row we think we just wrote — never trust the INSERT
+  // (or the in-memory draft) as its own proof. This is what makes "ready"
+  // mean "the exact persisted row passed verification," not merely that
+  // generation or the INSERT returned.
+  const tz = response.timezone || process.env.TZ || 'America/New_York';
+  const todayLocal = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  const row = await briefingsStore.findById(saved.id);
+  const rowLocalDay = row ? new Date(row.generated_at).toLocaleDateString('en-CA', { timeZone: tz }) : null;
+
+  const problems = [];
+  if (!row) {
+    problems.push('row_not_found');
+  } else {
+    if (row.kind !== 'daily') problems.push('wrong_kind');
+    if (String(row.id) !== String(saved.id)) problems.push('id_mismatch');
+    if ((row.content?.snapshotId ?? null) !== (response.snapshotId ?? null)) problems.push('snapshot_id_mismatch');
+    if (rowLocalDay !== todayLocal) problems.push('local_day_mismatch');
+    if (!row.content?.chiefBrief) problems.push('missing_chief_brief');
+    if (row.content?.chiefBriefQuality?.status !== 'fresh') problems.push('quality_not_fresh');
+    if (!briefingsStore.isPublishableRow(row.content)) problems.push('not_publishable');
+  }
+  if (problems.length) {
+    throw new PublishReadbackError(
+      `publish read-back verification failed for briefing ${saved.id}: ${problems.join(', ')}`,
+      { briefingId: saved.id, problems }
+    );
+  }
 
   // Pre-warm Chief's spoken narration so the first tap of "Listen" plays
   // instantly instead of waiting on synthesis. Fire-and-forget from THIS
@@ -2889,7 +2942,23 @@ async function publishBriefingDraft(response) {
   setImmediate(() => {
     primeNextBuildCycle().catch((err) => console.error('[prime next build] failed:', err.message));
   });
-  return saved;
+
+  const receipt = {
+    briefingId: saved.id,
+    snapshotId: response.snapshotId ?? null,
+    snapshotVersion: response.snapshotVersion ?? null,
+    localDay: rowLocalDay,
+    generatedAt: saved.generated_at,
+    builtAt: response.builtAt ?? null,
+    qualityStatus: row.content.chiefBriefQuality?.status ?? null,
+    readbackVerified: true,
+  };
+  // Attach to the in-memory draft too, so a caller that only has `response`
+  // in hand (buildFreshBriefing's own publish=true callers, including the
+  // force/eager morning path) can still reach the verified receipt without
+  // this function's return value ever being threaded through them.
+  response.publicationReceipt = receipt;
+  return receipt;
 }
 
 /**
@@ -3427,6 +3496,29 @@ router.get('/briefing/rebuild/status', asyncHandler(async (req, res) => {
   });
 }));
 
+// Exact-snapshot retrieval (morning-notification lifecycle fix, item B): the
+// ONLY way a client resolves "the specific briefing a push notification
+// referenced" — never the latest cache, never a fresh LLM build, never a
+// substitute "latest daily" row. Reuses the SAME canonical publishability
+// selector (store/briefings.js's isPublishableRow) every other surface
+// already trusts rather than duplicating quality logic here.
+router.get('/briefing/by-snapshot/:snapshotId', asyncHandler(async (req, res) => {
+  const { snapshotId } = req.params;
+  const row = await briefingsStore.findBySnapshotId('daily', snapshotId);
+  if (!row || row.kind !== 'daily') {
+    return res.status(404).json({ error: 'not_found', snapshotId });
+  }
+  const content = row.content || {};
+  const qualityStatus = content.chiefBriefQuality?.status ?? null;
+  if (qualityStatus === 'degraded' || qualityStatus === 'failed') {
+    return res.status(409).json({ error: 'degraded', snapshotId, quality: qualityStatus });
+  }
+  if (!briefingsStore.isPublishableRow(content)) {
+    return res.status(409).json({ error: 'not_publishable', snapshotId });
+  }
+  res.json(content);
+}));
+
   router.get('/briefing', asyncHandler(async (req, res) => {
     const force = req.query.refresh === '1' || req.query.refresh === 'true';
     if (!force) return res.json(await buildFreshBriefing({ force: false }));
@@ -3452,7 +3544,7 @@ router.get('/briefing/rebuild/status', asyncHandler(async (req, res) => {
 }
 
 module.exports = {
-  createBriefingRouter, buildFreshBriefing, publishBriefingDraft, REBUILD_LOCK_ID,
+  createBriefingRouter, buildFreshBriefing, publishBriefingDraft, PublishReadbackError, REBUILD_LOCK_ID,
   // Exported for the timestamp-semantics + recovery-materiality regression tests.
   stampFields, recoveryMateriallyChanged, FULL_BUILD_FIELDS,
   // Exported so tests can prove primeNextBuildCycle runs standalone, AFTER

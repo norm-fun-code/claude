@@ -80,20 +80,32 @@ export function resolveChiefBriefState(
 
   // Positive evidence of work in progress is the ONLY thing that earns a
   // skeleton. An in-flight build outranks a stale 'failed' verdict from a
-  // previous attempt, so tapping Retry immediately shows progress.
-  if (refreshing || IN_FLIGHT_BUILD_STATES.has(String(buildState))) return 'initial_loading';
+  // previous attempt, so tapping Retry immediately shows progress — this
+  // check must run BEFORE the buildState/quality-failed checks below.
+  if (refreshing || IN_FLIGHT_BUILD_STATES.has(String(buildState))) {
+    return pendingTooLong ? 'failed_empty' : 'initial_loading';
+  }
 
   // Server truth that the build is over and produced nothing usable. This is
   // the case that used to pulse forever: HTTP 200, chiefBrief null, no error.
+  // Checked before the bare `pending` fallback below so a terminal failed
+  // job overrides a stale/contradictory pending flag.
   if (buildState === 'failed') return 'failed_empty';
   if (quality === 'degraded' || quality === 'failed') return 'failed_empty';
 
-  // No verdict available either way (a cached build predating the quality
-  // contract, or a status endpoint we couldn't reach) — fall back to a time
-  // bound so the skeleton can still never run forever.
-  if (pendingTooLong) return 'failed_empty';
+  // The server's own chiefBriefPending flag — a fresh build genuinely
+  // running right now, even before (or without) a job row — also earns a
+  // bounded skeleton.
+  if (pending) return pendingTooLong ? 'failed_empty' : 'initial_loading';
 
-  return 'initial_loading';
+  // Morning-notification lifecycle fix: absent ALL positive evidence of
+  // activity (no error, no in-flight buildState, no terminal failure, not
+  // even the server's own pending flag), there is nothing to wait for — show
+  // the honest unavailable/failed state immediately rather than an
+  // indefinite skeleton with no server-reported activity behind it. This is
+  // the exact production bug: "Built Xh ago" above a skeleton with no active
+  // job to explain it.
+  return 'failed_empty';
 }
 
 /** Pure: has a pending/loading state been showing long enough that the UI

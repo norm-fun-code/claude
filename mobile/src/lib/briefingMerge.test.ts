@@ -4,7 +4,7 @@
 //   node --experimental-strip-types --test src/lib/briefingMerge.test.ts
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeBriefingResponse, migrateV1Cache, isUsableChiefBrief } from './briefingMerge.ts';
+import { mergeBriefingResponse, migrateV1Cache, isUsableChiefBrief, isValidPushSnapshot } from './briefingMerge.ts';
 import type { BriefingData } from '../hooks/useBriefing.ts';
 
 const GOOD_BRIEF = { synthesis: 's', action: 'a', risk: 'r', move: 'm', openQuestion: '' };
@@ -233,4 +233,60 @@ test('required 6 — no existing wealthLanding to protect: an incoming null just
   const merged = mergeBriefingResponse(null, base({ chiefBrief: GOOD_BRIEF, wealthLanding: null }));
   assert.equal(merged.wealthLanding, null);
   assert.equal(merged.wealthLandingStale, undefined);
+});
+
+// ---------------------------------------------------------------------------
+// Morning-notification lifecycle fix (item C) — isValidPushSnapshot is the
+// pure decision function openFromPush uses to decide whether a
+// GET /briefing/by-snapshot/:snapshotId response is safe to display as the
+// exact briefing a tapped push notification referenced.
+// ---------------------------------------------------------------------------
+
+test('required: isValidPushSnapshot accepts a same-day response whose snapshotId matches the push', () => {
+  const content = base({ snapshotId: 'snap_abc', localDate: '2026-07-28' });
+  assert.equal(isValidPushSnapshot(content, 'snap_abc', '2026-07-28'), true);
+});
+
+test('required: isValidPushSnapshot rejects a mismatched snapshotId (never substitute a different briefing)', () => {
+  const content = base({ snapshotId: 'snap_other', localDate: '2026-07-28' });
+  assert.equal(isValidPushSnapshot(content, 'snap_abc', '2026-07-28'), false);
+});
+
+test('required 8: a previous-day notification cannot masquerade as today — a matching snapshotId from a PRIOR local day is rejected', () => {
+  const content = base({ snapshotId: 'snap_abc', localDate: '2026-07-27' });
+  assert.equal(isValidPushSnapshot(content, 'snap_abc', '2026-07-28'), false);
+});
+
+test('isValidPushSnapshot accepts a response with no localDate at all (older shape) as long as the snapshotId matches', () => {
+  const content = base({ snapshotId: 'snap_abc', localDate: undefined as unknown as string });
+  assert.equal(isValidPushSnapshot(content, 'snap_abc', '2026-07-28'), true);
+});
+
+test('isValidPushSnapshot is total — null/undefined content never throws, always rejects', () => {
+  assert.equal(isValidPushSnapshot(null, 'snap_abc', '2026-07-28'), false);
+  assert.equal(isValidPushSnapshot(undefined, 'snap_abc', '2026-07-28'), false);
+});
+
+// ---------------------------------------------------------------------------
+// required 4: cold launch with yesterday's cached payload plus today's push
+// opens today's exact briefing and never produces "Built 23h ago" + skeleton.
+// The end-to-end flow is: migrateV1Cache day-checks the cold-launch cache
+// (clearing snapshotAt/builtAt on a cross-day envelope so no stale age label
+// can render), then openFromPush's isValidPushSnapshot check accepts the
+// fresh same-day push response and replaces it outright.
+// ---------------------------------------------------------------------------
+test('required 4: a stale cross-day cached envelope is neutralized (no snapshotAt/builtAt survives) so it can never render "Built Xh ago" once the push-fetched content replaces it', () => {
+  const staleCache = base({
+    snapshotId: 'snap_yesterday', localDate: '2026-07-27',
+    snapshotAt: '2026-07-27T11:00:00.000Z', builtAt: '2026-07-27T11:00:05.000Z',
+  } as Partial<BriefingData>);
+  const dayChecked = migrateV1Cache(staleCache, '2026-07-28');
+  assert.equal(dayChecked?.chiefBrief, null);
+  assert.equal(dayChecked?.snapshotAt, undefined, 'no stale age label may survive the day-check');
+  assert.equal(dayChecked?.builtAt, undefined);
+
+  // The push's own fetched content is today's and matches the push's
+  // snapshotId — openFromPush accepts and replaces outright.
+  const pushed = base({ snapshotId: 'snap_today', localDate: '2026-07-28', chiefBrief: GOOD_BRIEF });
+  assert.equal(isValidPushSnapshot(pushed, 'snap_today', '2026-07-28'), true);
 });

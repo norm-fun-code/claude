@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BRIEFING_URL, BRIEFING_REBUILD_URL, BRIEFING_REBUILD_STATUS_URL, CHIEF_BRIEF_REBUILD_URL, authHeaders, fetchWithTimeout } from '../config';
+import { BRIEFING_URL, BRIEFING_REBUILD_URL, BRIEFING_REBUILD_STATUS_URL, BRIEFING_BY_SNAPSHOT_URL, CHIEF_BRIEF_REBUILD_URL, authHeaders, fetchWithTimeout } from '../config';
 import type { BuildJobState } from '../lib/chiefBriefState';
-import { mergeBriefingResponse, migrateV1Cache } from '../lib/briefingMerge';
+import { mergeBriefingResponse, migrateV1Cache, isValidPushSnapshot } from '../lib/briefingMerge';
 
 const API_URL = BRIEFING_URL;
 // v2 (Chief Brief regression fix): normos.briefing.v1 used to act as BOTH
@@ -641,6 +641,9 @@ export interface BriefingState {
   error: string | null;
   rebuilding: boolean;        // async rebuild in progress (fire-and-forget + polling)
   reload: () => void;         // pull the (already-warm) server cache instantly
+  // Resolve a tapped morning-briefing push to its EXACT persisted snapshot
+  // (morning-notification lifecycle fix) — never a generic reload.
+  openFromPush: (identity: { briefingId?: string | null; snapshotId?: string | null; localDay?: string | null; builtAt?: string | null }) => void;
   triggerRebuild: () => void; // non-blocking rebuild — responds in <1s, then polls
   chiefBriefRefreshing: boolean;    // scoped chief-brief-only retry in progress
   refreshChiefBrief: () => void;    // fast, scoped retry — seconds, not the full rebuild
@@ -679,6 +682,14 @@ export function useBriefing(): BriefingState {
   const lastOkRef = useRef(0);
   // Poll timer for async rebuild — cleared on unmount and on new rebuild start.
   const rebuildPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True while openFromPush is resolving a tapped notification's exact
+  // snapshot (morning-notification lifecycle fix, item C). fetchBriefing
+  // no-ops while this is set, so a concurrent generic fetch (e.g. the
+  // cold-launch hydration effect, which can start before or after a
+  // terminated-app notification tap is processed) can never race or
+  // overwrite the push-targeted result — openFromPush itself calls
+  // fetchBriefing as its OWN fallback once it's done, so nothing is lost.
+  const pushResolvingRef = useRef(false);
 
   // One cheap, best-effort read of today's durable build job — ONLY called
   // when a fetch came back with no Chief Brief, to answer the single question
@@ -722,6 +733,10 @@ export function useBriefing(): BriefingState {
   // ever does the cheap cache read (refresh-mechanism consolidation — see the
   // product review's "five refresh concepts is four too many").
   const fetchBriefing = useCallback(async () => {
+    // A push-targeted exact-snapshot resolution is in flight — it always
+    // wins; it calls fetchBriefing itself as its own fallback once resolved
+    // or given up on, so nothing here is lost by no-oping now.
+    if (pushResolvingRef.current) return;
     // Cancel any request already in flight; we only want the newest one.
     controllerRef.current?.abort();
     const controller = new AbortController();
@@ -784,6 +799,86 @@ export function useBriefing(): BriefingState {
       if (myReqId === reqIdRef.current) setLoading(false);
     }
   }, [probeBuildState]);
+
+  // Resolve a tapped "Your morning briefing is ready" notification to the
+  // EXACT persisted briefing it referenced (morning-notification lifecycle
+  // fix, item C) — never a generic reload, which used to show whatever
+  // stale/cached envelope happened to be on screen ("Built 23h ago" above an
+  // indefinite skeleton) instead of the fresh brief the push promised.
+  //
+  // Bounded short poll (1.5s between attempts, up to 15s total): the backend
+  // only ever sends this push AFTER its own read-back verification succeeds
+  // (see notify/morning.js's warmAndNotify + routes/briefing.js's
+  // publishBriefingDraft), so a 404/409 here should be rare and transient
+  // (replication/read-visibility lag) — never a reason to trigger a full
+  // LLM rebuild. If the exact snapshot never resolves, mismatches, or turns
+  // out to describe a PRIOR local day (a delayed push tapped late), this
+  // falls back to a normal current-day load instead of ever showing
+  // yesterday's content as if it were today's.
+  const openFromPush = useCallback(async (identity: {
+    briefingId?: string | null; snapshotId?: string | null; localDay?: string | null; builtAt?: string | null;
+  }) => {
+    const { snapshotId } = identity;
+    if (!snapshotId) return fetchBriefing();
+
+    pushResolvingRef.current = true;
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    const myReqId = ++reqIdRef.current;
+    setLoading(true);
+    setError(null);
+
+    const deadline = Date.now() + 15000;
+    let content: BriefingData | null = null;
+    while (Date.now() < deadline) {
+      try {
+        const res = await fetchWithTimeout(
+          `${BRIEFING_BY_SNAPSHOT_URL}/${encodeURIComponent(snapshotId)}`,
+          { method: 'GET', headers: authHeaders(), signal: controller.signal },
+          10000
+        );
+        if (res.ok) { content = await res.json(); break; }
+        // 404 (not found yet — read-visibility lag) / 409 (not yet
+        // publishable) are the only statuses worth a bounded retry; anything
+        // else, stop immediately rather than hammer a real error.
+        if (res.status !== 404 && res.status !== 409) break;
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          pushResolvingRef.current = false;
+          setLoading(false);
+          return;
+        }
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+
+    const todayLocalDate = new Date().toLocaleDateString('en-CA');
+    if (!isValidPushSnapshot(content, snapshotId, todayLocalDate)) {
+      pushResolvingRef.current = false;
+      setLoading(false);
+      return fetchBriefing();
+    }
+
+    const verified = content as BriefingData;
+    lastOkRef.current = Date.now();
+    // Atomic replace, not mergeBriefingResponse: this is a VERIFIED exact
+    // snapshot (proven via the by-snapshot endpoint's own publishability
+    // check), not an unverified generic response — the carry-forward
+    // protection mergeBriefingResponse exists for is the opposite problem
+    // (a generic response that might be WORSE than what's on screen).
+    setData(verified);
+    AsyncStorage.setItem(CACHE_KEY, JSON.stringify(verified)).catch(() => {});
+    if (verified.chiefBrief == null) {
+      probeBuildState(myReqId);
+    } else {
+      setBuildState(null);
+      setBuildFailure(null);
+    }
+    pushResolvingRef.current = false;
+    setLoading(false);
+  }, [fetchBriefing, probeBuildState]);
 
   // On open: hydrate instantly from the last saved briefing (survives app close),
   // then quietly refresh in the background. Pull-to-refresh forces a fresh fetch.
@@ -998,6 +1093,7 @@ export function useBriefing(): BriefingState {
     error,
     rebuilding,
     reload: fetchBriefing, // serve the warm morning cache instantly
+    openFromPush,                              // resolve a tapped morning-briefing push to its exact snapshot
     triggerRebuild,                           // preferred: non-blocking rebuild with polling
     chiefBriefRefreshing,
     refreshChiefBrief,

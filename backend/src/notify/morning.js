@@ -136,29 +136,58 @@ function morningPushKey(d = new Date()) {
   return `morning_brief_push:${d.toLocaleDateString('en-CA', { timeZone: tz })}`;
 }
 
-/** Send the "Good morning" ready push for an already-published `briefing`,
- *  honoring the once-per-day dedup key. Shared tail of warmAndNotify's two
- *  paths (automatic-published-fresh and manual/forced). */
-async function sendReadyPush(built, briefing, quality) {
+/**
+ * Structured, single-line, correlated lifecycle log for the morning
+ * publish/push pipeline (item F). `buildId`/`snapshotId` are the join keys a
+ * mobile-side log line (useBriefing.ts's openFromPush) stamps too — so the
+ * backend half (publish/readback/push) and the mobile half (tap/exact-fetch)
+ * of one morning's story can be correlated across both log streams without a
+ * new telemetry endpoint. Deliberately never logs private briefing text.
+ */
+function logMorningLifecycle(fields = {}) {
+  console.log('[morning:lifecycle]', JSON.stringify({
+    buildId: fields.buildId ?? null,
+    trigger: fields.trigger ?? null,
+    localDay: fields.localDay ?? null,
+    briefingId: fields.briefingId ?? null,
+    snapshotId: fields.snapshotId ?? null,
+    quality: fields.quality ?? null,
+    publishStarted: Boolean(fields.publishStarted),
+    publishSucceeded: Boolean(fields.publishSucceeded),
+    readbackVerified: Boolean(fields.readbackVerified),
+    pushSent: Boolean(fields.pushSent),
+    failureReason: fields.failureReason ?? null,
+  }));
+}
+
+/** Send the "Good morning" ready push for a VERIFIED publication `receipt`
+ *  (see publishBriefingDraft — never an in-memory draft treated as its own
+ *  proof), honoring the once-per-day dedup key. `content` is the same
+ *  attempt's full response object, read ONLY for cosmetic body text (e.g.
+ *  weather) — never for identifiers, which come exclusively from `receipt`.
+ *  Shared tail of warmAndNotify's two paths (automatic-published-fresh and
+ *  manual/forced). */
+async function sendReadyPush(receipt, content, quality) {
   const nudgesStore = require('../store/nudges');
   try {
     const recent = await nudgesStore.recentlySentKeys(1);
     if (recent.has(morningPushKey())) {
       console.log('[morning] brief-ready push already sent today — rebuilt content, skipping duplicate push');
-      return { built, sent: 0, skipped: 'already_pushed_today', quality };
+      return { built: true, sent: 0, skipped: 'already_pushed_today', quality };
     }
   } catch (e) {
     console.error('[morning] push-dedup check failed (proceeding):', e.message);
   }
 
   const tokens = await devicesStore.listActiveTokens();
-  if (tokens.length === 0) return { built, sent: 0, reason: 'no_devices', quality };
+  if (tokens.length === 0) return { built: true, sent: 0, reason: 'no_devices', quality };
 
-  // A touch of useful context in the body when we have it (e.g. weather/date).
+  // A touch of useful context in the body when we have it (e.g. weather/date)
+  // — cosmetic only, read from the unverified content, never from `receipt`.
   let body = 'Your morning briefing is ready — tap to start your day.';
   try {
-    const t = briefing?.weather?.temp;
-    const cond = briefing?.weather?.condition;
+    const t = content?.weather?.temp;
+    const cond = content?.weather?.condition;
     if (t != null && cond) body = `Your morning briefing is ready — ${Math.round(t)}° and ${String(cond).toLowerCase()}. Tap to start your day.`;
   } catch { /* keep default */ }
 
@@ -166,14 +195,16 @@ async function sendReadyPush(built, briefing, quality) {
     const r = await expo.sendPush(tokens, {
       title: 'Good morning ☀️',
       body,
-      // Carry the SAME snapshot reference the in-app brief was built with, so a
-      // push and the brief the user opens can be proven to describe one cut of
-      // state — not two independently-derived versions of "this morning."
+      // Every identifier here comes from the VERIFIED receipt (item A) — the
+      // mobile client resolves this EXACT persisted row via
+      // GET /briefing/by-snapshot/:snapshotId, never a generic reload.
       data: {
         type: 'morning_briefing',
-        snapshotId: briefing?.snapshotId ?? null,
-        snapshotAt: briefing?.snapshotAt ?? briefing?.builtAt ?? null,
-        snapshotVersion: briefing?.snapshotVersion ?? null,
+        briefingId: receipt?.briefingId ?? null,
+        snapshotId: receipt?.snapshotId ?? null,
+        snapshotVersion: receipt?.snapshotVersion ?? null,
+        localDay: receipt?.localDay ?? null,
+        builtAt: receipt?.builtAt ?? null,
       },
     });
     for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
@@ -193,10 +224,10 @@ async function sendReadyPush(built, briefing, quality) {
         console.error('[morning] push-dedup record failed:', e.message);
       }
     }
-    return { built, sent: r.sent, quality };
+    return { built: true, sent: r.sent, quality, receipt };
   } catch (err) {
     console.error('[morning] push failed:', err.message);
-    return { built, sent: 0, error: err.message, quality };
+    return { built: true, sent: 0, error: err.message, quality, receipt };
   }
 }
 
@@ -234,6 +265,8 @@ async function sendReadyPush(built, briefing, quality) {
 async function warmAndNotify(opts = {}) {
   const send = opts.send !== false;
   const automatic = opts.automatic === true && opts.force !== true;
+  const tz = process.env.TZ || 'America/New_York';
+  const buildJobs = require('../store/morningBuildJobs');
 
   // opts.force (authenticated manual/diagnostic testing ONLY) is the one
   // deliberate bypass of the quality gate below — eager build, eager
@@ -252,10 +285,48 @@ async function warmAndNotify(opts = {}) {
       console.error('[morning] briefing warm failed:', err.message);
     }
     const quality = briefing?.chiefBriefQuality?.status ?? null;
-    if (!send) return { built, sent: 0, quality };
-    if (!built) return { built, sent: 0, quality };
-    return sendReadyPush(built, briefing, quality);
+    const receipt = briefing?.publicationReceipt ?? null;
+    const logBase = {
+      trigger: opts.trigger || 'manual_force', quality,
+      briefingId: receipt?.briefingId, snapshotId: receipt?.snapshotId, localDay: receipt?.localDay,
+      publishStarted: built, publishSucceeded: Boolean(receipt), readbackVerified: Boolean(receipt?.readbackVerified),
+    };
+    if (!send) { logMorningLifecycle({ ...logBase, pushSent: false }); return { built, sent: 0, quality }; }
+    if (!built) { logMorningLifecycle({ ...logBase, pushSent: false, failureReason: 'warm_failed' }); return { built, sent: 0, quality }; }
+    // A fresh attempt whose OWN publish didn't produce a verified receipt
+    // (persistence failure, or read-back mismatch) must never be pushed —
+    // "built" here only ever meant "the generation call didn't throw", not
+    // "there's a verified row to reference."
+    if (!receipt) {
+      console.error('[morning] force build did not produce a verified publication receipt — NOT sending push.');
+      logMorningLifecycle({ ...logBase, pushSent: false, failureReason: 'publish_not_verified' });
+      return { built: false, sent: 0, skipped: 'publish_failed', quality };
+    }
+    const result = await sendReadyPush(receipt, briefing, quality);
+    logMorningLifecycle({ ...logBase, pushSent: (result.sent ?? 0) > 0, failureReason: result.error ?? null });
+    return result;
   }
+
+  // ── unify automatic builds through the same durable job ledger the manual
+  // rebuild endpoint already uses (item D) — the mobile status poll must
+  // never see "no job" for an automatic attempt that actually ran. Each
+  // automatic call is its own attempt row; "ready" is set ONLY after
+  // publishBriefingDraft's read-back verification succeeds below, never
+  // merely because generation or the INSERT returned.
+  let job = null;
+  const day = buildJobs.localDay(new Date(), tz);
+  if (automatic) {
+    try {
+      const attemptNumber = (await buildJobs.attemptsToday(day, tz)) + 1;
+      job = await buildJobs.createJob({ trigger: opts.trigger || 'scheduled', state: 'building', attemptNumber, localDay: day, tz });
+    } catch (err) {
+      console.error('[morning] failed to create automatic build-job row (continuing without one):', err.message);
+    }
+  }
+  const failJob = (errorMessage, extra = {}) => {
+    if (!job) return Promise.resolve();
+    return buildJobs.updateJob(job.id, { state: 'failed', errorMessage, ...extra }).catch((e) => console.error('[morning] job update failed:', e.message));
+  };
 
   // ── prepare -> validate -> publish (audit fix, items 3+4) ───────────────
   let draft = null;
@@ -263,6 +334,8 @@ async function warmAndNotify(opts = {}) {
     draft = await warmBriefing({ publish: false });
   } catch (err) {
     console.error('[morning] briefing draft build failed:', err.message);
+    await failJob(`draft_build_failed: ${err.message}`);
+    logMorningLifecycle({ buildId: job?.id, trigger: opts.trigger, localDay: day, publishStarted: false, failureReason: 'draft_build_failed' });
     return { built: false, sent: 0, skipped: 'draft_build_failed', quality: null };
   }
 
@@ -274,6 +347,8 @@ async function warmAndNotify(opts = {}) {
     const gate = await finalMorningGate();
     if (!gate.ready) {
       console.log(`[morning] final readiness gate failed after preparing the draft (${gate.reason}) — discarding the draft; nothing published.`);
+      await failJob(`final_gate_failed: ${gate.reason}`);
+      logMorningLifecycle({ buildId: job?.id, trigger: opts.trigger, localDay: day, publishStarted: false, failureReason: 'final_gate_failed' });
       return { built: false, sent: 0, skipped: 'final_gate_failed', reason: gate.reason, quality: null };
     }
   }
@@ -292,23 +367,53 @@ async function warmAndNotify(opts = {}) {
   const quality = draft?.chiefBriefQuality?.status ?? null;
   if (quality !== 'fresh') {
     console.log(`[morning] draft quality is ${quality || 'unknown'} — NOT publishing (never saved, never TTS-prewarmed, never pushed); a bounded retry can run later.`);
+    await failJob('quality_not_fresh', { qualityStatus: quality, snapshotId: draft?.snapshotId ?? null, reasonCodes: draft?.chiefBriefQuality?.reasonCodes ?? [] });
+    logMorningLifecycle({ buildId: job?.id, trigger: opts.trigger, localDay: day, quality, publishStarted: false, failureReason: 'quality_not_fresh' });
     return { built: false, sent: 0, skipped: 'quality_not_fresh', quality };
   }
 
   const { publishBriefingDraft } = require('../routes/briefing');
+  let receipt;
   try {
-    await publishBriefingDraft(draft);
+    receipt = await publishBriefingDraft(draft);
   } catch (err) {
-    // Persistence failure (audit fix, item 4): a fresh draft that failed to
-    // SAVE must not be treated as published — no push, no morning-complete
-    // marker (scheduler.js only marks the day done when built===true AND
-    // quality==='fresh', both of which this response now correctly denies).
+    // Persistence/read-back failure (audit fix, item 4; morning-notification
+    // lifecycle fix, item A): a fresh draft that failed to SAVE — or whose
+    // post-save read-back didn't verify — must not be treated as published —
+    // no push, no morning-complete marker (scheduler.js only marks the day
+    // done when built===true AND quality==='fresh', both of which this
+    // response now correctly denies), and the job stays retryable ('failed',
+    // never 'ready').
     console.error('[morning] publish failed — NOT sending push, NOT marking the day done:', err.message);
+    await failJob(err.message, { qualityStatus: quality, snapshotId: draft?.snapshotId ?? null });
+    logMorningLifecycle({ buildId: job?.id, trigger: opts.trigger, localDay: day, quality, snapshotId: draft?.snapshotId, publishStarted: true, publishSucceeded: false, readbackVerified: false, failureReason: err.message });
     return { built: false, sent: 0, skipped: 'publish_failed', quality };
   }
 
-  if (!send) return { built: true, sent: 0, quality };
-  return sendReadyPush(true, draft, quality);
+  // Only NOW — after the read-back verification inside publishBriefingDraft
+  // has proven the exact row is retrievable and publishable — may the job
+  // become "ready". This is what "ready" means: not that generation or the
+  // INSERT returned, but that the persisted row passed verification.
+  if (job) {
+    await buildJobs.updateJob(job.id, {
+      state: 'ready', qualityStatus: receipt.qualityStatus, snapshotId: receipt.snapshotId, publishedBriefingId: receipt.briefingId,
+    }).catch((err) => console.error('[morning] job update failed:', err.message));
+  }
+
+  if (!send) {
+    logMorningLifecycle({
+      buildId: job?.id, trigger: opts.trigger, localDay: receipt.localDay, briefingId: receipt.briefingId, snapshotId: receipt.snapshotId,
+      quality, publishStarted: true, publishSucceeded: true, readbackVerified: true, pushSent: false,
+    });
+    return { built: true, sent: 0, quality };
+  }
+  const result = await sendReadyPush(receipt, draft, quality);
+  logMorningLifecycle({
+    buildId: job?.id, trigger: opts.trigger, localDay: receipt.localDay, briefingId: receipt.briefingId, snapshotId: receipt.snapshotId,
+    quality, publishStarted: true, publishSucceeded: true, readbackVerified: true,
+    pushSent: (result.sent ?? 0) > 0, failureReason: result.error ?? result.skipped ?? null,
+  });
+  return result;
 }
 
 /** Push the "log your sleep" prompt (no brief is built — it waits for the log). */

@@ -258,7 +258,7 @@ async function morningRoutine({ reason = 'scheduled', force = false, asOf = new 
     // snapshot — nothing above duplicates that.
     let briefResult = { built: false, sent: 0 };
     try {
-      briefResult = await morningNotify.runMorningBriefing({});
+      briefResult = await morningNotify.runMorningBriefing({ trigger: reason });
       console.log(`[scheduler] morning briefing: built=${briefResult.built} pushed=${briefResult.sent} quality=${briefResult.quality ?? 'n/a'}`);
     } catch (e) { console.error('[scheduler] morning briefing:', e.message); }
     // The day is only "done" on a genuine terminal outcome: the sleep

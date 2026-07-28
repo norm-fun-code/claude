@@ -119,13 +119,41 @@ export function mergeBriefingResponse(existing: BriefingData | null, incoming: B
  *   (Today/Radar/weather are still useful to show instantly while a fresh
  *   fetch is in flight).
  */
+/**
+ * Pure: is this GET /briefing/by-snapshot/:snapshotId response valid to
+ * display as the EXACT briefing a tapped morning-notification push
+ * referenced (morning-notification lifecycle fix, item C)? Requires the
+ * response to carry the SAME snapshotId the push named, and — if it carries
+ * a localDate at all — that it's TODAY's, never a prior local day. A
+ * delayed push tapped late (after midnight) must never masquerade its
+ * content as today's; the caller falls back to a normal current-day load
+ * instead.
+ */
+export function isValidPushSnapshot(
+  content: BriefingData | null | undefined, snapshotId: string, todayLocalDate: string
+): content is BriefingData {
+  if (!content || content.snapshotId !== snapshotId) return false;
+  if (content.localDate && content.localDate !== todayLocalDate) return false;
+  return true;
+}
+
 export function migrateV1Cache(v1: BriefingData | null, todayLocalDate: string): BriefingData | null {
   if (!v1) return null;
   if (!isUsableChiefBrief(v1.chiefBrief) || v1.chiefBriefPending) {
     return { ...v1, chiefBrief: null, chiefBriefPending: true, chiefBriefStale: false };
   }
   if (v1.localDate && v1.localDate !== todayLocalDate) {
-    return { ...v1, chiefBrief: null, chiefBriefPending: true, chiefBriefStale: false };
+    // Morning-notification lifecycle fix: a stale envelope from a PRIOR local
+    // day must not carry forward a "Built Xh ago" timestamp alongside a
+    // nulled chiefBrief — that exact pairing is the production bug ("Built
+    // 23h ago" above an indefinite skeleton). snapshotAt/builtAt describe
+    // WHEN this now-discarded content was cut; once the content itself is
+    // being dropped for being a different day, its age has nothing left to
+    // honestly describe until a fresh fetch lands.
+    return {
+      ...v1, chiefBrief: null, chiefBriefPending: true, chiefBriefStale: false,
+      snapshotAt: undefined, builtAt: undefined,
+    };
   }
   return v1;
 }

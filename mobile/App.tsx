@@ -292,6 +292,23 @@ export default function App() {
       setTab('today');
       eveningBrief.refetch();
       health.refetch();
+    } else if (type === 'morning_briefing') {
+      // Morning-notification lifecycle fix: resolve the EXACT persisted
+      // briefing this push referenced (backend/src/notify/morning.js's
+      // verified publication receipt), never a generic reload — which used
+      // to show whatever stale/cached envelope happened to already be on
+      // screen ("Built 23h ago" above an indefinite skeleton) instead of the
+      // fresh brief the push promised. Works from a cold (terminated-app)
+      // launch too: openFromPush does its own fetch and doesn't depend on
+      // initial cache hydration having finished first.
+      setTab('today');
+      briefing.openFromPush({
+        briefingId: typeof data.briefingId === 'string' ? data.briefingId : null,
+        snapshotId: typeof data.snapshotId === 'string' ? data.snapshotId : null,
+        localDay: typeof data.localDay === 'string' ? data.localDay : null,
+        builtAt: typeof data.builtAt === 'string' ? data.builtAt : null,
+      });
+      health.refetch();
     } else {
       briefing.reload();
       health.refetch();

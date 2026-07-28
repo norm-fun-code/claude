@@ -8,9 +8,19 @@ test('a fresh brief with nothing in flight is "ready"', () => {
   assert.equal(resolveChiefBriefState({ brief: { synthesis: 's' }, pending: false, refreshing: false, error: false }), 'ready');
 });
 
-test('no brief ever loaded, nothing failed yet, is "initial_loading" — never a blank/empty card', () => {
+test('no brief ever loaded but the server says a build is genuinely pending is "initial_loading"', () => {
   assert.equal(resolveChiefBriefState({ brief: null, pending: true, refreshing: false, error: false }), 'initial_loading');
-  assert.equal(resolveChiefBriefState({ brief: null, pending: false, refreshing: false, error: false }), 'initial_loading');
+});
+
+// Morning-notification lifecycle fix: "no brief, no error, no pending, no
+// active job" used to fall through to 'initial_loading' by default — an
+// indefinite skeleton with zero server-reported evidence anything was
+// happening. This is the exact mobile-side half of the production bug
+// ("Built 23h ago" above a skeleton with no active job behind it). A
+// skeleton must only render when there's positive evidence of activity.
+test('required: no brief, no error, nothing pending, and no active job is "failed_empty" — never an indefinite skeleton with no activity behind it', () => {
+  assert.equal(resolveChiefBriefState({ brief: null, pending: false, refreshing: false, error: false }), 'failed_empty');
+  assert.equal(resolveChiefBriefState({ brief: null, pending: false, refreshing: false, error: false, buildState: null }), 'failed_empty');
 });
 
 test('a good brief plus an explicit refresh in flight keeps showing the last-good content ("refreshing_with_last_good"), never blanks it', () => {

@@ -15,6 +15,11 @@ export const BRIEFING_REBUILD_URL = `${API_BASE}/api/briefing/rebuild`;
 // THIS, never builtAt, to learn whether a triggered rebuild actually
 // succeeded. See backend routes/briefing.js's build-job contract.
 export const BRIEFING_REBUILD_STATUS_URL = `${API_BASE}/api/briefing/rebuild/status`;
+// Exact-snapshot retrieval (morning-notification lifecycle fix) — the ONLY
+// way to resolve "the specific briefing a push notification referenced".
+// Never the latest cache, never a fresh LLM build. See routes/briefing.js's
+// GET /briefing/by-snapshot/:snapshotId.
+export const BRIEFING_BY_SNAPSHOT_URL = `${API_BASE}/api/briefing/by-snapshot`;
 // Fast, scoped retry for just the Chief-of-Staff card (seconds, not the full
 // 60-90s rebuild) — see src/routes/briefing.js's chief-brief/rebuild route.
 export const CHIEF_BRIEF_REBUILD_URL = `${API_BASE}/api/briefing/chief-brief/rebuild`;
