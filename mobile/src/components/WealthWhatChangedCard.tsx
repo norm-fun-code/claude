@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, useColorScheme } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography, shadow, colors as themeColors } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { INSIGHT_DISMISS_URL, INSIGHT_UNDISMISS_URL, authHeaders, fetchWithTimeout } from '../config';
@@ -17,11 +18,11 @@ interface Props {
 // concern" hardcoded under a red action_required row).
 const SEVERITY_COLOR: Record<string, string> = {
   critical: themeColors.red,
-  action: '#FF9F0A',
+  action: themeColors.amber,
   review: '#E8B84B',
   explained: themeColors.green,
   on_track: themeColors.green,
-  unavailable: '#8E8E93',
+  unavailable: themeColors.subtext,
 };
 const SEVERITY_STATE_LABEL: Record<string, string> = {
   critical: 'Needs action',
@@ -39,7 +40,7 @@ function ChangeRow({ item, onChanged, c, isDark }: {
   const [dismissed, setDismissed] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const tint = SEVERITY_COLOR[item.severity] ?? c.subtext;
-  const secondary = isDark ? '#AEAEB2' : c.subtext;
+  const secondary = c.subtextStrong;
   const alreadyExplained = item.severity === 'explained';
   const stateLabel = confirmed ? 'Intentional' : (SEVERITY_STATE_LABEL[item.severity] ?? null);
 
@@ -56,7 +57,10 @@ function ChangeRow({ item, onChanged, c, isDark }: {
         method: 'POST', headers: authHeaders(),
         body: JSON.stringify({ key: item.dismissKey, title: item.title, amount, category, type: item.type }),
       }, 8000);
-      if (res.ok) { setConfirmed(true); onChanged(); }
+      if (res.ok) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setConfirmed(true); onChanged();
+      }
     } finally {
       setBusy(false);
     }

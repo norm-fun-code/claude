@@ -11,6 +11,7 @@ import { LineChart } from './viz/LineChart';
 import { useSeries } from '../hooks/useSeries';
 import { useContextHistory } from '../hooks/useContextHistory';
 import { RECOVERY_HISTORY_URL, SOURCES_FRESHNESS_URL, authHeaders, fetchWithTimeout } from '../config';
+import { deriveRecoveryPresentation } from '../lib/recoveryCardPresentation';
 
 interface StaleSource { source: string; label: string; ageDays: number }
 
@@ -113,30 +114,14 @@ function RecoveryCard({ recovery, composites = [], builtAt, highlight, onHighlig
   // band's cautionary look with a genuinely moderate score. Falls back to the
   // raw band (old 3-label behavior) for a cached reading with no
   // `presentation` field.
-  const tier = recovery.presentation?.tier;
-  const bandColor =
-    tier === 'ready' ? colors.green
-      : tier === 'solid_near_green' ? colors.warmGreen
-      : tier === 'moderate' ? colors.amber
-      : tier === 'low' ? colors.red
-      : recovery.band === 'green' ? colors.green
-      : recovery.band === 'yellow' ? colors.yellow
-      : recovery.band === 'red' ? colors.red
-      : c.subtext;
-  const bandLabel = recovery.presentation?.label ??
-    (recovery.band === 'green' ? 'Recovered'
-      : recovery.band === 'yellow' ? 'Moderate'
-      : recovery.band === 'red' ? 'Low'
-      : 'Recovery');
-  // The orb/arc take a gradient key (theme.ts bandGradient) — use the
-  // presentation tier's own gradient when available so a near-green score
-  // renders visually distinct from a genuinely moderate one.
-  const gradientKey = tier === 'solid_near_green' ? 'warmGreen' : tier === 'moderate' ? 'amber' : (recovery.band ?? 'neutral');
-  // A self-reported (no Eight Sleep) night is a subjective proxy, not a
-  // device measurement — say so plainly rather than let the score/band look
-  // as precise as a real reading (truth-and-evidence contract, audit
-  // priority #1: "Prefer categorical output such as 'Good · provisional'").
-  const displayBandLabel = recovery.proxy ? `${recovery.category ?? bandLabel} · provisional` : bandLabel;
+  // Centralized in lib/recoveryCardPresentation.ts (unit-tested) — a proxy
+  // (self-reported) reading is FORCED to the neutral gray color/gradient, and
+  // its label gets an explicit "· provisional" suffix. It must never render
+  // on the same red/amber/green scale a device-measured score does, matching
+  // HealthStateCard's treatment of the same `recovery.proxy` flag
+  // (design-system consolidation: provisional recovery must be visually
+  // distinct from bad recovery, not just a text suffix).
+  const { tier, bandColor, gradientKey, displayBandLabel } = deriveRecoveryPresentation(recovery, c);
 
   return (
     <View

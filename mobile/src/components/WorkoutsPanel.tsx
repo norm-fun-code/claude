@@ -475,7 +475,7 @@ function LogModal({
               <View style={logStyles.inputWrap}>
                 <Text style={[logStyles.inputLabel, { color: c.subtext }]}>Reps</Text>
                 <TextInput
-                  style={[logStyles.input, { color: c.text, borderColor: c.border, backgroundColor: isDark ? '#1C1C1A' : '#F9F8F6' }]}
+                  style={[logStyles.input, { color: c.text, borderColor: c.border, backgroundColor: c.inputBackground }]}
                   value={reps}
                   onChangeText={setReps}
                   keyboardType="number-pad"
@@ -486,7 +486,7 @@ function LogModal({
               <View style={logStyles.inputWrap}>
                 <Text style={[logStyles.inputLabel, { color: c.subtext }]}>Weight (lbs)</Text>
                 <TextInput
-                  style={[logStyles.input, { color: c.text, borderColor: c.border, backgroundColor: isDark ? '#1C1C1A' : '#F9F8F6' }]}
+                  style={[logStyles.input, { color: c.text, borderColor: c.border, backgroundColor: c.inputBackground }]}
                   value={weight}
                   onChangeText={setWeight}
                   keyboardType="decimal-pad"
@@ -630,7 +630,7 @@ function ExerciseRow({
       )}
 
       {cueOpen && exercise.cue && (
-        <View style={[exStyles.cueBox, { backgroundColor: isDark ? '#1C1C1A' : '#F9F8F6', borderColor: c.border }]}>
+        <View style={[exStyles.cueBox, { backgroundColor: c.inputBackground, borderColor: c.border }]}>
           <Text style={[exStyles.cueText, { color: c.subtext }]}>{exercise.cue}</Text>
         </View>
       )}
@@ -920,7 +920,7 @@ function AddExerciseModal({
               Not on today's plan? Add it here to log sets against it.
             </Text>
             <TextInput
-              style={[logStyles.input, { color: c.text, borderColor: c.border, backgroundColor: isDark ? '#1C1C1A' : '#F9F8F6', textAlign: 'left', marginBottom: spacing.md }]}
+              style={[logStyles.input, { color: c.text, borderColor: c.border, backgroundColor: c.inputBackground, textAlign: 'left', marginBottom: spacing.md }]}
               value={name}
               onChangeText={setName}
               placeholder="e.g. Chest Press"
@@ -1541,7 +1541,7 @@ function ActivityLogModal({
               <View style={logStyles.inputWrap}>
                 <Text style={[logStyles.inputLabel, { color: c.subtext }]}>Duration (min)</Text>
                 <TextInput
-                  style={[logStyles.input, { color: c.text, borderColor: c.border, backgroundColor: isDark ? '#1C1C1A' : '#F9F8F6' }]}
+                  style={[logStyles.input, { color: c.text, borderColor: c.border, backgroundColor: c.inputBackground }]}
                   value={duration}
                   onChangeText={setDuration}
                   keyboardType="number-pad"
@@ -1552,7 +1552,7 @@ function ActivityLogModal({
               <View style={[logStyles.inputWrap, { flex: 2 }]}>
                 <Text style={[logStyles.inputLabel, { color: c.subtext }]}>Note (optional)</Text>
                 <TextInput
-                  style={[logStyles.input, { color: c.text, borderColor: c.border, backgroundColor: isDark ? '#1C1C1A' : '#F9F8F6', textAlign: 'left' }]}
+                  style={[logStyles.input, { color: c.text, borderColor: c.border, backgroundColor: c.inputBackground, textAlign: 'left' }]}
                   value={note}
                   onChangeText={setNote}
                   placeholder="e.g. incline walk"

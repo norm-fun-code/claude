@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TextInput, Pressable, ScrollView, ActivityIndicator, Modal, useColorScheme, Alert } from 'react-native';
-import { getColors, spacing, radius, typography, shadow, withAlpha } from '../theme';
+import { getColors, spacing, radius, typography, shadow, withAlpha, colors as themeColors } from '../theme';
 import { useMemory, type MemoryItem, type MemoryCategory } from '../hooks/useMemory';
 
 const CATEGORY_LABEL: Record<MemoryCategory, string> = {
@@ -21,8 +21,8 @@ const CATEGORY_ORDER: MemoryCategory[] = [
 ];
 
 const STATE_COLOR: Record<string, string> = {
-  active: '#1D9E75', confirmed: '#1D9E75', supported: '#3B9EFF', hypothesis: '#8E8E93',
-  expired: '#8E8E93', superseded: '#8E8E93', retracted: '#8E8E93', retired: '#8E8E93',
+  active: themeColors.confirmedGreen, confirmed: themeColors.confirmedGreen, supported: '#3B9EFF', hypothesis: themeColors.subtext,
+  expired: themeColors.subtext, superseded: themeColors.subtext, retracted: themeColors.subtext, retired: themeColors.subtext,
 };
 
 const EXPIRE_PRESETS: { label: string; days: number }[] = [
@@ -82,7 +82,7 @@ function DetailSheet({ item, visible, onClose, onCorrect, onForget, onConfirm, o
                 onChangeText={setDraft}
                 placeholder="What should this say instead?"
                 placeholderTextColor={secondary}
-                style={[detailStyles.input, { color: c.text, borderColor: c.border, backgroundColor: isDark ? '#1C1C1A' : '#F9F8F6' }]}
+                style={[detailStyles.input, { color: c.text, borderColor: c.border, backgroundColor: c.inputBackground }]}
                 multiline
                 autoCorrect
                 spellCheck
@@ -117,7 +117,7 @@ function DetailSheet({ item, visible, onClose, onCorrect, onForget, onConfirm, o
               )}
               {item.actions.canConfirm && (
                 <Pressable onPress={onConfirm} hitSlop={6}>
-                  <Text style={[detailStyles.actionText, { color: '#1D9E75' }]}>Confirm</Text>
+                  <Text style={[detailStyles.actionText, { color: themeColors.confirmedGreen }]}>Confirm</Text>
                 </Pressable>
               )}
               {item.actions.canMarkTemporary && (
@@ -153,7 +153,7 @@ function DetailSheet({ item, visible, onClose, onCorrect, onForget, onConfirm, o
 export function MemoryScreen() {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
-  const secondary = isDark ? '#AEAEB2' : c.subtext;
+  const secondary = c.subtextStrong;
   const { active, historical, loading, loadError, load, correct, forget, confirm, markTemporary } = useMemory();
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<MemoryCategory | null>(null);

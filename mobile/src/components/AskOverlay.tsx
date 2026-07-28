@@ -24,7 +24,7 @@ import Animated, {
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import Markdown from 'react-native-markdown-display';
-import { getColors, spacing, radius, typography, shadow, withAlpha } from '../theme';
+import { getColors, spacing, radius, typography, shadow, withAlpha, layout } from '../theme';
 import { useChat } from '../hooks/useChat';
 import { API_BASE, CONSOLIDATE_URL, VOICE_ASK_URL, REALTIME_VOICE_ENABLED, authHeaders, fetchWithTimeout } from '../config';
 import { buildSessionContext, createSessionId, type VoiceTab, type VoiceSelection } from '../lib/voiceCoordinator';
@@ -718,7 +718,14 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
                       <Text style={[styles.micCaption, { color: c.subtext }]}>Dictate</Text>
                     </View>
                   )}
-                  <Pressable onPress={() => submit(question)} style={[styles.send, { backgroundColor: question.trim() ? c.accent : c.border }]} disabled={!question.trim()}>
+                  <Pressable
+                    onPress={() => submit(question)}
+                    style={[styles.send, { backgroundColor: question.trim() ? c.accent : c.border }]}
+                    disabled={!question.trim()}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Send message"
+                  >
                     <Text style={styles.sendText}>↑</Text>
                   </Pressable>
                 </View>
@@ -768,7 +775,7 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
             fabScale.value = withSpring(1, { damping: 10, stiffness: 300 });
             voicePressOut(); // no-ops if the long-press never started a recording
           }}
-          style={[styles.fabWrap, { bottom: bottomInset + 70 }]}
+          style={[styles.fabWrap, { bottom: bottomInset + layout.fabBottomGap }]}
           accessibilityLabel="Ask NormOS — tap to open, hold to talk"
           accessibilityRole="button"
         >
@@ -807,11 +814,12 @@ const styles = StyleSheet.create({
   fabWrap: {
     position: 'absolute',
     right: spacing.md,
+    zIndex: 20,
   },
   fab: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: layout.fabSize,
+    height: layout.fabSize,
+    borderRadius: radius.xl,
     alignItems: 'center',
     justifyContent: 'center',
   },

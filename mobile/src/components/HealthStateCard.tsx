@@ -21,7 +21,7 @@ const STATE_COLOR: Record<string, string> = {
   'Solid — near green': themeColors.warmGreen,
   'Proceed with care': themeColors.yellow,
   Recover: themeColors.red,
-  Provisional: '#8E8E93',
+  Provisional: themeColors.subtext,
 };
 
 /**
@@ -61,7 +61,7 @@ function HealthStateCard({ recovery, effectiveWorkout, highlight, onHighlightLay
           <Text style={[styles.stateLabel, { color: tint }]}>{state.stateLabel}</Text>
           <Text style={[styles.decision, { color: c.text }]}>{state.decision}</Text>
           <View style={styles.sourceRow}>
-            <View style={[styles.sourceDot, { backgroundColor: state.isProvisional ? '#8E8E93' : tint }]} />
+            <View style={[styles.sourceDot, { backgroundColor: state.isProvisional ? c.subtext : tint }]} />
             <Text style={[styles.sourceText, { color: c.subtext }]}>
               {state.sourceLabel}{state.isProvisional ? ' · provisional' : ''}
             </Text>

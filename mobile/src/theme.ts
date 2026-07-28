@@ -26,6 +26,21 @@ export const colors = {
   // Brief hero card's own identity, not a shared semantic-status color.
   purple: '#A78BFA',
   hero: '#1C1C1E',                  // dark surface for hero cards (BriefCard etc.)
+  // A second, distinct "confirmed/learned" green — used by Beliefs/Memory/
+  // Workouts for a "this is settled, not just currently positive" meaning,
+  // deliberately different from the on-track `green` above. Named here so
+  // it's a real token instead of a magic value independently copy-pasted
+  // into each of those files.
+  confirmedGreen: '#1D9E75',
+  // A bumped-legibility dark-mode secondary text color — used where the
+  // standard `subtextDark` reads too faint against a pure-black background
+  // for a given block of body copy.
+  subtextStrong: '#AEAEB2',
+  // Shared light/dark input-field background pair (text inputs, editable
+  // rows) — distinct from `card`/`cardDark` so an editable surface reads as
+  // subtly different from a static card.
+  inputBackground: '#F9F8F6',
+  inputBackgroundDark: '#1C1C1A',
   // Dark mode
   backgroundDark: '#000000',
   cardDark: '#1C1C1E',
@@ -89,6 +104,10 @@ export function glow(color: string, intensity = 0.5, r = 20) {
 }
 
 export const spacing = {
+  // Sits between xs(4) and sm(8) — the common "tight" gap/padding value
+  // (pill/chip internals, compact icon rows) that was previously scattered
+  // as a raw `6` across a dozen components.
+  xxs: 6,
   xs: 4,
   sm: 8,
   md: 16,
@@ -103,6 +122,47 @@ export const radius = {
   lg: 20,
   xl: 26,
   pill: 999,
+};
+
+// Minimum interactive-element sizing (iOS HIG: 44x44pt minimum tap target)
+// and the handful of icon-container diameters that already recur 2-3x each
+// across the app as independently-copy-pasted magic numbers (FAB/orb-scale
+// controls, section-header emoji tiles, mid-size icon buttons).
+export const sizes = {
+  minTouchTarget: 44,
+  iconTile: 30,   // SectionHeader's emoji tile
+  iconMd: 40,     // step buttons, orb core, etc.
+  iconLg: 52,     // FAB, forecast icon, voice control buttons
+  orb: 96,        // TalkOverlay's voice orb — the largest icon-like element
+};
+
+// Animation durations/easing + spring presets — consolidates the dozen+
+// independently-chosen duration values found across components into a
+// small named scale. Components remain free to use raw Animated/Reanimated
+// APIs; this just gives them one shared vocabulary to reach for instead of
+// re-guessing a number each time.
+export const motion = {
+  fast: 180,
+  base: 320,
+  slow: 550,
+  springSnappy: { damping: 22, stiffness: 280 },
+  springGentle: { damping: 15, stiffness: 220 },
+};
+
+// Layout constants tying the floating Ask/voice FAB to the bottom tab bar —
+// named here (instead of only in a code comment) so the two components that
+// must agree on this clearance (TabBar's height, AskOverlay's FAB position)
+// reference one source instead of independently-hardcoded numbers that can
+// silently drift apart.
+export const layout = {
+  fabSize: sizes.iconLg,
+  // Vertical gap from the safe-area bottom inset to the FAB's own bottom
+  // edge — chosen so the FAB's top edge clears the tab bar's top edge by
+  // ~60pt across supported iPhone sizes (see AskOverlay.tsx's fabWrap).
+  fabBottomGap: 70,
+  // The small drag-handle bar every hand-rolled bottom sheet in the app
+  // independently redraws at the same 36x4/radius-2 dimensions.
+  sheetHandle: { width: 36, height: 4, borderRadius: 2 },
 };
 
 // The brand's signature gradient — used on primary CTAs and accents.
@@ -208,6 +268,7 @@ export function getColors(isDark: boolean) {
     border: isDark ? colors.borderDark : colors.border,
     text: isDark ? colors.textDark : colors.text,
     subtext: isDark ? colors.subtextDark : colors.subtext,
+    subtextStrong: isDark ? colors.subtextStrong : colors.subtext,
     accent: colors.accent,
     accentSoft: isDark ? 'rgba(99,91,255,0.2)' : colors.accentSoft,
     green: colors.green,
@@ -216,6 +277,32 @@ export function getColors(isDark: boolean) {
     warmGreen: colors.warmGreen,
     amber: colors.amber,
     purple: colors.purple,
+    confirmedGreen: colors.confirmedGreen,
     hero: colors.hero,
+    inputBackground: isDark ? colors.inputBackgroundDark : colors.inputBackground,
   };
+}
+
+// ── Semantic status contract ────────────────────────────────────────────
+// One shared vocabulary for "what kind of thing is this fact," applied
+// consistently to dots, headlines, metric deltas, cards, pills, and detail
+// sheets — see individual card severity maps (WealthPostureCard,
+// HealthStateCard, RadarSection's radarPresentation.ts, etc.) for domain-
+// specific tiers layered ON TOP of this; this is the base 5-way contract
+// those richer maps should resolve down to, not a replacement for them.
+//   positive — on track / confirmed good
+//   watch    — worth watching, provisional, or moderate (never alarming)
+//   critical — genuinely needs attention
+//   info     — neutral intelligence, navigation, or action (not a verdict)
+//   neutral  — secondary, unavailable, stale, or disabled
+export type SemanticStatus = 'positive' | 'watch' | 'critical' | 'info' | 'neutral';
+
+export function statusColor(status: SemanticStatus, c: ReturnType<typeof getColors>): string {
+  switch (status) {
+    case 'positive': return c.green;
+    case 'watch': return c.amber;
+    case 'critical': return c.red;
+    case 'info': return c.purple;
+    default: return c.subtext;
+  }
 }

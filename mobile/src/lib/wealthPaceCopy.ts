@@ -6,6 +6,7 @@
 // directly — this project's test runner (`node --experimental-strip-types`)
 // only strips TS types, it cannot transform JSX.
 import type { WealthLanding } from '../hooks/useBriefing';
+import { formatMoney as money } from './format.ts';
 
 export type PaceComparison = NonNullable<NonNullable<WealthLanding['numbers']['mtdDiscretionary']>['comparison']>;
 
@@ -18,11 +19,6 @@ export const PACE_COPY: Record<string, string> = {
   above_typical: 'above typical pace',
   well_above_typical: 'well above typical pace',
 };
-
-function money(n: number | null | undefined): string {
-  if (n == null) return '—';
-  return (n < 0 ? '-$' : '$') + Math.round(Math.abs(n)).toLocaleString('en-US');
-}
 
 export function paceLine(cmp: PaceComparison): string {
   const label = PACE_COPY[cmp.paceLabel] ?? 'near typical pace';

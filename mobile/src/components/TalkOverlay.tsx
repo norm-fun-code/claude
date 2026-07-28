@@ -304,7 +304,7 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted, sessionContext,
                 l.role === 'user'
                   ? { backgroundColor: c.accentSoft, alignSelf: 'flex-end' }
                   : l.receipt
-                    ? { backgroundColor: withAlpha('#34C759', 0.12), alignSelf: 'flex-start' }
+                    ? { backgroundColor: withAlpha(c.green, 0.12), alignSelf: 'flex-start' }
                     : { backgroundColor: 'transparent', alignSelf: 'stretch' },
               ]}
             >
@@ -314,15 +314,15 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted, sessionContext,
         </ScrollView>
 
         {error && (
-          <View style={[styles.banner, { backgroundColor: withAlpha('#FF3B30', 0.1) }]}>
+          <View style={[styles.banner, { backgroundColor: withAlpha(c.red, 0.1) }]}>
             <View style={styles.bannerTextCol}>
-              <Text style={[styles.bannerText, { color: '#FF3B30' }]}>{error}</Text>
+              <Text style={[styles.bannerText, { color: c.red }]}>{error}</Text>
               {state !== 'fallback_available' && (
-                <Text style={[styles.bannerHint, { color: '#FF3B30' }]}>You can still use the regular mic in Ask.</Text>
+                <Text style={[styles.bannerHint, { color: c.red }]}>You can still use the regular mic in Ask.</Text>
               )}
             </View>
             <Pressable onPress={connect} hitSlop={8}>
-              <Text style={[styles.bannerRetry, { color: '#FF3B30' }]}>Retry</Text>
+              <Text style={[styles.bannerRetry, { color: c.red }]}>Retry</Text>
             </Pressable>
           </View>
         )}
@@ -341,7 +341,7 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted, sessionContext,
                 onPressIn={fallbackMicPressIn}
                 onPressOut={fallbackMicPressOut}
                 disabled={!voiceAvailable || fallbackBusy}
-                style={[styles.endBtn, { backgroundColor: fallbackRecording ? '#FF3B30' : c.accent, opacity: fallbackBusy ? 0.5 : 1 }]}
+                style={[styles.endBtn, { backgroundColor: fallbackRecording ? c.red : c.accent, opacity: fallbackBusy ? 0.5 : 1 }]}
                 accessibilityLabel="Hold to talk"
                 accessibilityRole="button"
               >
@@ -365,7 +365,14 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted, sessionContext,
                 autoCorrect
                 spellCheck
               />
-              <Pressable onPress={submitText} style={[styles.sendBtn, { backgroundColor: textInput.trim() ? c.accent : c.border }]} disabled={!textInput.trim()}>
+              <Pressable
+                onPress={submitText}
+                style={[styles.sendBtn, { backgroundColor: textInput.trim() ? c.accent : c.border }]}
+                disabled={!textInput.trim()}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Send message"
+              >
                 <Text style={styles.sendBtnText}>↑</Text>
               </Pressable>
               <Pressable onPress={() => setTextMode(false)} hitSlop={8} style={{ marginLeft: spacing.sm }}>
@@ -374,13 +381,13 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted, sessionContext,
             </View>
           ) : (
             <View style={styles.controlsRow}>
-              <Pressable onPress={toggleMute} style={[styles.controlBtn, { backgroundColor: muted ? withAlpha('#FF3B30', 0.12) : c.card, borderColor: c.border }]}>
-                <Ionicons name={muted ? 'mic-off' : 'mic'} size={20} color={muted ? '#FF3B30' : c.text} />
+              <Pressable onPress={toggleMute} style={[styles.controlBtn, { backgroundColor: muted ? withAlpha(c.red, 0.12) : c.card, borderColor: c.border }]}>
+                <Ionicons name={muted ? 'mic-off' : 'mic'} size={20} color={muted ? c.red : c.text} />
               </Pressable>
               <Pressable onPress={() => setTextMode(true)} style={[styles.controlBtn, { backgroundColor: c.card, borderColor: c.border }]}>
                 <Ionicons name="keypad-outline" size={20} color={c.text} />
               </Pressable>
-              <Pressable onPress={endSession} style={[styles.endBtn, { backgroundColor: '#FF3B30' }]}>
+              <Pressable onPress={endSession} style={[styles.endBtn, { backgroundColor: c.red }]}>
                 <Ionicons name="close" size={22} color="#fff" />
               </Pressable>
             </View>

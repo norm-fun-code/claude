@@ -11,6 +11,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   useColorScheme,
+  type NativeSyntheticEvent,
+  type TextLayoutEventData,
 } from 'react-native';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
@@ -51,6 +53,45 @@ function streakLabel(streak: number): string {
   if (streak <= 0) return '';
   if (streak === 1) return '1 wk';
   return `${streak} wks`;
+}
+
+const GOAL_TITLE_COLLAPSED_LINES = 2;
+
+// Long goal titles get silently clipped by numberOfLines with no way to read
+// the rest — this makes truncation tap-to-expand, mirroring CommitmentsCard's
+// pattern (onTextLayout reports the true wrapped line count, not a guess).
+function GoalTitle({ title, color, accentColor }: { title: string; color: string; accentColor: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+  const canExpand = expanded || truncated;
+
+  const handleLayout = (e: NativeSyntheticEvent<TextLayoutEventData>) => {
+    if (!expanded && e.nativeEvent.lines.length > GOAL_TITLE_COLLAPSED_LINES) setTruncated(true);
+  };
+
+  return (
+    <TouchableOpacity
+      style={styles.goalTitleWrap}
+      activeOpacity={canExpand ? 0.6 : 1}
+      onPress={() => { if (canExpand) setExpanded((v) => !v); }}
+      disabled={!canExpand}
+      accessibilityRole={canExpand ? 'button' : undefined}
+      accessibilityLabel={canExpand ? `Goal: ${title}` : undefined}
+      accessibilityHint={canExpand ? (expanded ? 'Double tap to collapse' : 'Double tap to expand') : undefined}
+      accessibilityState={canExpand ? { expanded } : undefined}
+    >
+      <Text
+        style={[styles.goalTitle, { color }]}
+        numberOfLines={expanded ? undefined : GOAL_TITLE_COLLAPSED_LINES}
+        onTextLayout={handleLayout}
+      >
+        {title}
+      </Text>
+      {truncated && (
+        <Text style={[styles.moreLess, { color: accentColor }]}>{expanded ? 'Less' : 'More'}</Text>
+      )}
+    </TouchableOpacity>
+  );
 }
 
 function SelfModelCard() {
@@ -185,10 +226,17 @@ function SelfModelCard() {
             ) : (
               goals.map((g) => (
                 <View key={g.id} style={styles.goalRow}>
-                  <TouchableOpacity onPress={() => completeGoal(g.id)} hitSlop={6} style={styles.goalCheck}>
+                  <TouchableOpacity
+                    onPress={() => completeGoal(g.id)}
+                    hitSlop={12}
+                    style={styles.goalCheck}
+                    accessibilityRole="checkbox"
+                    accessibilityLabel={`Mark "${g.title}" complete`}
+                    accessibilityState={{ checked: false }}
+                  >
                     <View style={[styles.checkbox, { borderColor: c.subtext }]} />
                   </TouchableOpacity>
-                  <Text style={[styles.goalTitle, { color: c.text }]} numberOfLines={2}>{g.title}</Text>
+                  <GoalTitle title={g.title} color={c.text} accentColor={c.accent} />
                   {g.targetDate && (
                     <Text style={[styles.goalDate, { color: c.subtext }]}>
                       {new Date(g.targetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
@@ -332,10 +380,12 @@ const styles = StyleSheet.create({
   sectionTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.xs },
   addGoalBtn: { fontSize: 13, fontWeight: '600' },
   emptyGoals: { fontSize: 12, fontStyle: 'italic', lineHeight: 17 },
-  goalRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginBottom: 6 },
-  goalCheck: { padding: 2 },
+  goalRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.xs, marginBottom: 6 },
+  goalCheck: { padding: 2, marginTop: 1 },
   checkbox: { width: 16, height: 16, borderRadius: 4, borderWidth: 1.5 },
-  goalTitle: { fontSize: 13, fontWeight: '500', flex: 1 },
+  goalTitleWrap: { flex: 1 },
+  goalTitle: { fontSize: 13, fontWeight: '500' },
+  moreLess: { fontSize: 11, fontWeight: '700', marginTop: 2 },
   goalDate: { fontSize: 11 },
   findingRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.xs, marginBottom: 4 },
   findingBullet: { fontSize: 13, fontWeight: '700', marginTop: 1 },

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, Modal, StyleSheet, TouchableOpacity, useColorScheme } from 'react-native';
 import { getColors, spacing, radius } from '../theme';
 import { LineChart, type ContextNote } from './viz/LineChart';
+import SheetHandle from './SheetHandle';
 
 interface Session { date: string; e1rm: number; volume: number; reps: number; topWeight: number; topReps: number }
 export interface Prog {
@@ -53,7 +54,7 @@ export function WorkoutProgressionDetail({ prog, visible, onClose }: { prog: Pro
       <View style={styles.overlay}>
         <TouchableOpacity style={StyleSheet.absoluteFill} onPress={onClose} activeOpacity={1} />
         <View style={[styles.sheet, { backgroundColor: c.card }]}>
-          <View style={[styles.handle, { backgroundColor: c.border }]} />
+          <SheetHandle color={c.border} />
           <View style={styles.header}>
             <Text style={[styles.title, { color: c.text }]} numberOfLines={1}>{prog.exercise}</Text>
             <TouchableOpacity onPress={onClose} hitSlop={12}><Text style={[styles.close, { color: c.subtext }]}>✕</Text></TouchableOpacity>
@@ -121,8 +122,7 @@ function Stat({ label, value, valueColor, c }: { label: string; value: string; v
 
 const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end' },
-  sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: spacing.lg, paddingBottom: spacing.xl + 10 },
-  handle: { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: spacing.md },
+  sheet: { borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.lg, paddingBottom: spacing.xl + 10 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.xs },
   title: { fontSize: 20, fontWeight: '700', letterSpacing: -0.3, flex: 1, marginRight: spacing.sm },
   close: { fontSize: 16 },

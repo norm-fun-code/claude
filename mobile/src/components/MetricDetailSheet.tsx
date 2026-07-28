@@ -3,10 +3,11 @@ import {
   View, Text, Modal, TouchableOpacity, ActivityIndicator,
   StyleSheet, useColorScheme,
 } from 'react-native';
-import { getColors, spacing, radius, typography } from '../theme';
+import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { METRICS_HISTORY_URL, authHeaders, fetchWithTimeout } from '../config';
 import { LineChart } from './viz/LineChart';
 import { useContextHistory } from '../hooks/useContextHistory';
+import SheetHandle from './SheetHandle';
 
 // Continuous signals render as lines; cumulative counts stay as bars.
 const BAR_METRICS = new Set(['steps', 'active_energy']);
@@ -203,8 +204,8 @@ export function MetricDetailSheet({
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.overlay}>
         <TouchableOpacity style={StyleSheet.absoluteFill} onPress={onClose} activeOpacity={1} />
-        <View style={[styles.sheet, { backgroundColor: c.card }]}>
-          <View style={[styles.handle, { backgroundColor: c.border }]} />
+        <View style={[styles.sheet, { backgroundColor: c.card }, shadow(isDark, 'bar')]}>
+          <SheetHandle color={c.border} />
 
           <View style={styles.header}>
             <Text style={[styles.title, { color: c.text }]}>{label}</Text>
@@ -353,12 +354,9 @@ export function MetricDetailSheet({
 const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end' },
   sheet: {
-    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg,
     padding: spacing.lg, paddingBottom: spacing.xl + 10,
-    shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 20,
-    shadowOffset: { width: 0, height: -4 }, elevation: 16,
   },
-  handle: { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: spacing.md },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md },
   title: { fontSize: 20, fontWeight: '700', letterSpacing: -0.3 },
   closeBtn: { fontSize: 16 },

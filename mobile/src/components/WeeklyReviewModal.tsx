@@ -3,6 +3,7 @@ import { Modal, View, Text, StyleSheet, Pressable, ScrollView, useColorScheme } 
 import { getColors, spacing, radius } from '../theme';
 import { WeeklyIntentionsCard } from './WeeklyIntentionsCard';
 import type { WeeklyReview } from '../hooks/useBriefing';
+import SheetHandle from './SheetHandle';
 
 interface Props {
   visible: boolean;
@@ -24,7 +25,7 @@ export function WeeklyReviewModal({ visible, onClose, review }: Props) {
     <Modal visible={visible} animationType="slide" presentationStyle="formSheet" onRequestClose={onClose}>
       <View style={[styles.sheet, { backgroundColor: c.background }]}>
         <View style={styles.handleWrap}>
-          <View style={[styles.handle, { backgroundColor: c.border }]} />
+          <SheetHandle color={c.border} style={{ marginBottom: 0 }} />
         </View>
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           <Text style={[styles.title, { color: c.text }]}>Weekly Review</Text>
@@ -41,7 +42,6 @@ export function WeeklyReviewModal({ visible, onClose, review }: Props) {
 const styles = StyleSheet.create({
   sheet: { flex: 1, paddingHorizontal: spacing.lg },
   handleWrap: { alignItems: 'center', paddingTop: spacing.sm, paddingBottom: spacing.xs },
-  handle: { width: 36, height: 4, borderRadius: 2 },
   scroll: { paddingBottom: spacing.xl },
   title: { fontSize: 22, fontWeight: '700', marginBottom: spacing.md },
   doneBtn: {

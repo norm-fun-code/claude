@@ -2,6 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { bandGradient, glow, FONTS } from '../theme';
+import { useReducedMotion } from '../lib/useReducedMotion';
+
+// Fixed-diameter circular container with overflow:hidden — the single
+// biggest Dynamic Type risk in the app (a scaled-up score/unit/label can
+// clip against the orb's own edge). Capped rather than disabled, so
+// accessibility text sizes still get SOME extra size.
+const MAX_FONT_SCALE = 1.3;
 
 interface Props {
   /** Animated 0–100 score (counts up, shows "/ 100"). Ignored if `grade` is set. */
@@ -24,6 +31,7 @@ export function RecoveryOrb({ score, grade, band, size = 100, label }: Props) {
   const colors = bandGradient[band || 'neutral'] || bandGradient.neutral;
   const target = Math.max(0, Math.round(score ?? 0));
   const [display, setDisplay] = useState(0);
+  const reducedMotion = useReducedMotion();
 
   const scale = useRef(new Animated.Value(0.86)).current;
   const opacity = useRef(new Animated.Value(0)).current;
@@ -35,7 +43,11 @@ export function RecoveryOrb({ score, grade, band, size = 100, label }: Props) {
   // Slow breathing — a barely-perceptible 4s in / 4s out oscillation that makes
   // the orb read as alive rather than printed. Starts after the entrance spring
   // settles; ±1.5% is deliberate (ambient presence, never a distraction).
+  // Reduce Motion: this is exactly the kind of continuous/ambient animation
+  // that setting exists to suppress — skip it entirely rather than just
+  // shortening it.
   useEffect(() => {
+    if (reducedMotion) return;
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(breath, { toValue: 1.015, duration: 4000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
@@ -44,7 +56,7 @@ export function RecoveryOrb({ score, grade, band, size = 100, label }: Props) {
     );
     const t = setTimeout(() => loop.start(), 900);
     return () => { clearTimeout(t); loop.stop(); };
-  }, [breath]);
+  }, [breath, reducedMotion]);
 
   useEffect(() => {
     Animated.parallel([
@@ -92,14 +104,14 @@ export function RecoveryOrb({ score, grade, band, size = 100, label }: Props) {
           style={[StyleSheet.absoluteFill, { borderRadius: r, borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)' }]}
         />
         {grade != null ? (
-          <Text style={[styles.score, { fontSize: Math.round(size * 0.5) }]}>{grade}</Text>
+          <Text style={[styles.score, { fontSize: Math.round(size * 0.5) }]} maxFontSizeMultiplier={MAX_FONT_SCALE}>{grade}</Text>
         ) : (
           <>
-            <Text style={[styles.score, { fontSize: Math.round(size * 0.32) }]}>{display}</Text>
-            <Text style={styles.unit}>/ 100</Text>
+            <Text style={[styles.score, { fontSize: Math.round(size * 0.32) }]} maxFontSizeMultiplier={MAX_FONT_SCALE}>{display}</Text>
+            <Text style={styles.unit} maxFontSizeMultiplier={MAX_FONT_SCALE}>/ 100</Text>
           </>
         )}
-        {label ? <Text style={styles.label}>{label}</Text> : null}
+        {label ? <Text style={styles.label} maxFontSizeMultiplier={MAX_FONT_SCALE}>{label}</Text> : null}
       </LinearGradient>
     </Animated.View>
   );
@@ -107,7 +119,10 @@ export function RecoveryOrb({ score, grade, band, size = 100, label }: Props) {
 
 const styles = StyleSheet.create({
   orb: { alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  score: { color: '#FFFFFF', fontFamily: FONTS.displayHeavy, fontWeight: '800', letterSpacing: -1, marginBottom: -3 },
+  // tabular-nums: the score animates via count-up (see the tick() effect
+  // above) — without fixed-width digits the number visibly jitters/resizes
+  // as it counts, inside a fixed-diameter circle where that's most visible.
+  score: { color: '#FFFFFF', fontFamily: FONTS.displayHeavy, fontWeight: '800', letterSpacing: -1, marginBottom: -3, fontVariant: ['tabular-nums'] },
   unit: { color: 'rgba(255,255,255,0.82)', fontSize: 10.5, fontWeight: '700' },
   label: { color: '#FFFFFF', fontSize: 9.5, fontWeight: '800', letterSpacing: 0.8, marginTop: 2, textTransform: 'uppercase' },
 });

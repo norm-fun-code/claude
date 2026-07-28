@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, useColorScheme, Alert } from 'react-native';
-import { getColors, spacing, radius, typography, shadow } from '../theme';
+import { getColors, spacing, radius, typography, shadow, colors as themeColors } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { BELIEFS_URL, authHeaders, fetchWithTimeout } from '../config';
 
@@ -22,10 +22,10 @@ const STATUS_LABEL: Record<Belief['status'], string> = {
   retired: 'Retired',
 };
 const STATUS_COLOR: Record<Belief['status'], string> = {
-  confirmed: '#1D9E75',
+  confirmed: themeColors.confirmedGreen,
   supported: '#3B9EFF',
-  hypothesis: '#8E8E93',
-  retired: '#8E8E93',
+  hypothesis: themeColors.subtext,
+  retired: themeColors.subtext,
 };
 
 function BeliefRow({ belief, onChanged, c, isDark }: {
@@ -84,7 +84,7 @@ function BeliefRow({ belief, onChanged, c, isDark }: {
           <TextInput
             value={draft}
             onChangeText={setDraft}
-            style={[styles.input, { color: c.text, borderColor: c.border, backgroundColor: isDark ? '#1C1C1A' : '#F9F8F6' }]}
+            style={[styles.input, { color: c.text, borderColor: c.border, backgroundColor: c.inputBackground }]}
             multiline
             autoCorrect
             spellCheck
@@ -105,7 +105,7 @@ function BeliefRow({ belief, onChanged, c, isDark }: {
             <View style={styles.actionsRow}>
               {belief.status !== 'confirmed' && (
                 <TouchableOpacity onPress={() => act('/confirm', 'POST')} disabled={busy} hitSlop={6}>
-                  <Text style={[styles.actionText, { color: '#1D9E75' }]}>Confirm</Text>
+                  <Text style={[styles.actionText, { color: themeColors.confirmedGreen }]}>Confirm</Text>
                 </TouchableOpacity>
               )}
               <TouchableOpacity onPress={() => setEditing(true)} disabled={busy} hitSlop={6}>

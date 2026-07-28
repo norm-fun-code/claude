@@ -3,6 +3,8 @@ import { View, Text, StyleSheet, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, typography, shadow, colors as themeColors, FONTS } from '../theme';
 import type { WealthLanding } from '../hooks/useBriefing';
 import { paceLine, driverLine } from '../lib/wealthPaceCopy';
+import { formatMoney as money } from '../lib/format';
+import { SkeletonCard } from './viz/Skeleton';
 
 interface Props {
   landing: WealthLanding | null | undefined;
@@ -15,17 +17,12 @@ interface Props {
 // never red, since it hasn't been confirmed as a real issue.
 const SEVERITY_COLOR: Record<string, string> = {
   critical: themeColors.red,
-  action: '#FF9F0A',
+  action: themeColors.amber,
   review: '#E8B84B',
   explained: themeColors.green,
   on_track: themeColors.green,
-  unavailable: '#8E8E93',
+  unavailable: themeColors.subtext,
 };
-
-function money(n: number | null | undefined): string {
-  if (n == null) return '—';
-  return (n < 0 ? '-$' : '$') + Math.round(Math.abs(n)).toLocaleString('en-US');
-}
 
 /**
  * Wealth redesign (audit rec #5; severity/reliability cleanup) — the ONE
@@ -43,20 +40,17 @@ function WealthPostureCard({ landing }: Props) {
   const [hidden, setHidden] = React.useState(false);
 
   if (!landing) {
-    return (
-      <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
-        <Text style={[styles.postureLabel, { color: c.subtext }]}>Loading…</Text>
-      </View>
-    );
+    // A pulsing skeleton (not bare "Loading…" text) so this never reads as
+    // blank/failed content while the Wealth landing projection is in flight.
+    return <SkeletonCard rows={4} isDark={isDark} tall />;
   }
 
   const tint = SEVERITY_COLOR[landing.severity] ?? c.subtext;
   const { numbers, sourceHealth } = landing;
   const mask = (s: string) => (hidden ? '••••' : s);
   // Secondary body text bumped for dark-mode legibility (audit item 6) —
-  // scoped to this card rather than the shared theme.subtext, which other
-  // surfaces already rely on at its current weight.
-  const secondary = isDark ? '#AEAEB2' : c.subtext;
+  // theme.ts's named `subtextStrong` token, not a local magic value.
+  const secondary = c.subtextStrong;
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>

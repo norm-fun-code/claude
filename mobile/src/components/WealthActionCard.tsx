@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, useColorScheme } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { INSIGHT_DISMISS_URL, INSIGHT_UNDISMISS_URL, authHeaders, fetchWithTimeout } from '../config';
@@ -47,7 +48,10 @@ function WealthActionCard({ action, dataIncomplete, onAsk, onChanged }: Props) {
         // recorded once here.
         body: JSON.stringify({ key: action.dismissKey, title: action.title, detail: action.detail, kind: action.kind }),
       }, 8000);
-      if (res.ok) { setConfirmed(true); setLastConfirmedKey(action.dismissKey); onChanged(); }
+      if (res.ok) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setConfirmed(true); setLastConfirmedKey(action.dismissKey); onChanged();
+      }
     } finally {
       setBusy(false);
     }
@@ -69,7 +73,7 @@ function WealthActionCard({ action, dataIncomplete, onAsk, onChanged }: Props) {
 
   if (dataIncomplete) return null;
 
-  const secondary = isDark ? '#AEAEB2' : c.subtext;
+  const secondary = c.subtextStrong;
   const critical = action?.kind === 'cash_critical';
 
   if (!action || confirmed) {

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, useColorScheme } from 'react-native';
 import { SectionHeader } from './SectionHeader';
+import { ExpandableText } from './ExpandableText';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { EXPERIMENTS_URL, authHeaders } from '../config';
 
@@ -157,9 +158,9 @@ function ExperimentsCard() {
         return (
           <View key={exp.id} style={[styles.row, { borderTopColor: c.border }]}>
             <View style={styles.rowTop}>
-              <Text style={[styles.hypothesis, { color: c.text }]} numberOfLines={2}>
-                {exp.hypothesis}
-              </Text>
+              <View style={styles.hypothesisWrap}>
+                <ExpandableText text={exp.hypothesis} style={[styles.hypothesis, { color: c.text }]} accentColor={c.accent} a11yPrefix="Hypothesis" />
+              </View>
               <View style={styles.rowRight}>
                 {isProposed && (
                   <View style={[styles.badge, { backgroundColor: isDark ? 'rgba(255,159,10,0.22)' : '#FFF3E0' }]}>
@@ -194,9 +195,7 @@ function ExperimentsCard() {
             </Text>
 
             {isProposed && exp.protocol && (
-              <Text style={[styles.protocol, { color: c.subtext }]} numberOfLines={3}>
-                {exp.protocol}
-              </Text>
+              <ExpandableText text={exp.protocol} collapsedLines={3} style={[styles.protocol, { color: c.subtext }]} accentColor={c.accent} a11yPrefix="Protocol" />
             )}
 
             {isProposed && (
@@ -222,9 +221,7 @@ function ExperimentsCard() {
             )}
 
             {exp.protocol && isActive && (
-              <Text style={[styles.protocol, { color: c.subtext }]} numberOfLines={2}>
-                {exp.protocol}
-              </Text>
+              <ExpandableText text={exp.protocol} collapsedLines={2} style={[styles.protocol, { color: c.subtext }]} accentColor={c.accent} a11yPrefix="Protocol" />
             )}
 
             {isActive && (
@@ -256,7 +253,8 @@ const styles = StyleSheet.create({
   rowTop: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing.sm },
   rowRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexShrink: 0 },
   dismiss: { fontSize: 20, lineHeight: 20, fontWeight: '300' },
-  hypothesis: { fontSize: 14, fontWeight: '600', lineHeight: 20, flex: 1 },
+  hypothesisWrap: { flex: 1 },
+  hypothesis: { fontSize: 14, fontWeight: '600', lineHeight: 20 },
   badge: { borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start' },
   badgeText: { fontSize: 11, fontWeight: '700' },
   meta: { fontSize: 12, lineHeight: 17 },

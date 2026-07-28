@@ -6,16 +6,12 @@ import { getColors, spacing, radius, typography, colors as themeColors } from '.
 import { useSeries } from '../hooks/useSeries';
 import { METRICS_HISTORY_URL } from '../config';
 import type { WealthLanding } from '../hooks/useBriefing';
+import { formatMoney as money } from '../lib/format';
 
 interface Props {
   visible: boolean;
   onClose: () => void;
   landing: WealthLanding | null | undefined;
-}
-
-function money(n: number | null | undefined): string {
-  if (n == null) return '—';
-  return (n < 0 ? '-$' : '$') + Math.round(Math.abs(n)).toLocaleString('en-US');
 }
 
 function Section({ title, children, c }: { title: string; children: React.ReactNode; c: ReturnType<typeof getColors> }) {
@@ -42,7 +38,7 @@ export function WealthExploreScreen({ visible, onClose, landing }: Props) {
   const nwSeries = useSeries(visible ? `${METRICS_HISTORY_URL}?metric=net_worth&days=90` : null);
 
   const numbers = landing?.numbers;
-  const secondary = isDark ? '#AEAEB2' : c.subtext;
+  const secondary = c.subtextStrong;
 
   return (
     <FullScreenSheet visible={visible} title="Explore" onClose={onClose}>
@@ -134,7 +130,11 @@ export function WealthExploreScreen({ visible, onClose, landing }: Props) {
           </View>
         ))}
         {landing?.sourceHealth.qualification ? (
-          <Text style={[styles.detail, { color: themeColors.yellow, marginTop: spacing.xs }]}>{landing.sourceHealth.qualification}</Text>
+          // Muted, not a warning color — matches WealthPostureCard's
+          // treatment of the same field. Staleness is a freshness note,
+          // not itself bad news; missing/stale data must not read as poor
+          // performance.
+          <Text style={[styles.detail, { color: secondary, fontStyle: 'italic', marginTop: spacing.xs }]}>{landing.sourceHealth.qualification}</Text>
         ) : null}
       </Section>
     </FullScreenSheet>

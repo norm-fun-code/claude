@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { getColors, spacing, radius } from '../theme';
 import { HabitsCard } from './HabitsCard';
+import SheetHandle from './SheetHandle';
 
 interface Props {
   visible: boolean;
@@ -28,7 +29,7 @@ export function HabitsModal({ visible, onClose }: Props) {
       >
         {/* Drag handle */}
         <View style={styles.handleWrap}>
-          <View style={[styles.handle, { backgroundColor: c.border }]} />
+          <SheetHandle color={c.border} style={{ marginBottom: 0 }} />
         </View>
 
         <ScrollView
@@ -52,7 +53,6 @@ export function HabitsModal({ visible, onClose }: Props) {
 const styles = StyleSheet.create({
   sheet: { flex: 1, paddingHorizontal: spacing.lg },
   handleWrap: { alignItems: 'center', paddingTop: spacing.sm, paddingBottom: spacing.xs },
-  handle: { width: 36, height: 4, borderRadius: 2 },
   scroll: { paddingBottom: spacing.xl },
   doneBtn: {
     width: '100%',

@@ -9,6 +9,7 @@ import Animated, {
 import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { CHECKIN_URL, CHECKIN_TODAY_URL, authHeaders, fetchWithTimeout, localDateStr } from '../config';
+import SheetHandle from './SheetHandle';
 
 interface Props {
   visible: boolean;
@@ -156,7 +157,7 @@ export function CheckinModal({ visible, onClose }: Props) {
       >
         {/* Drag handle */}
         <View style={styles.handleWrap}>
-          <View style={[styles.handle, { backgroundColor: c.border }]} />
+          <SheetHandle color={c.border} style={{ marginBottom: 0 }} />
         </View>
 
         {/* Progress dots */}
@@ -225,7 +226,10 @@ export function CheckinModal({ visible, onClose }: Props) {
                           setScores(next);
                           submit(next, noteRef.current);
                         }}
-                        hitSlop={4}
+                        hitSlop={12}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Rate ${n} of 5`}
+                        accessibilityState={{ selected: scores[key] === n }}
                       >
                         <View style={[
                           styles.miniDot,
@@ -257,7 +261,6 @@ export function CheckinModal({ visible, onClose }: Props) {
 const styles = StyleSheet.create({
   sheet: { flex: 1, paddingHorizontal: spacing.lg },
   handleWrap: { alignItems: 'center', paddingTop: spacing.sm, paddingBottom: spacing.xs },
-  handle: { width: 36, height: 4, borderRadius: 2 },
   progressRow: { flexDirection: 'row', gap: 6, justifyContent: 'center', marginBottom: spacing.xl },
   progressDot: { width: 24, height: 4, borderRadius: 2 },
   stepWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 60 },

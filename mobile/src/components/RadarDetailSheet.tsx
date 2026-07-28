@@ -6,6 +6,7 @@ import {
 import { getColors, spacing, radius } from '../theme';
 import { presentationForAttentionClass } from '../lib/radarPresentation';
 import type { RadarCard } from '../hooks/useBriefing';
+import SheetHandle from './SheetHandle';
 
 interface Props {
   card: RadarCard | null;
@@ -103,7 +104,7 @@ export function RadarDetailSheet({ card, onClose, onOpenDestination, onDismiss, 
             accessibilityViewIsModal
           >
             <View {...panResponder.panHandlers} style={styles.handleWrap}>
-              <View style={[styles.handle, { backgroundColor: c.border }]} />
+              <SheetHandle color={c.border} style={{ marginBottom: 0 }} />
             </View>
             <ScrollView
               contentContainerStyle={[styles.scroll, { paddingBottom: spacing.lg + bottomInset }]}
@@ -190,7 +191,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   handleWrap: { alignItems: 'center', paddingTop: spacing.sm, paddingBottom: spacing.xs, minHeight: 28 },
-  handle: { width: 36, height: 4, borderRadius: 2 },
   scroll: { paddingTop: spacing.xs },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.sm, marginBottom: spacing.xs },
   statusDot: { width: 7, height: 7, borderRadius: 4 },

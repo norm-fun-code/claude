@@ -162,7 +162,7 @@ export function AnnotationsCard({ inline = false }: AnnotationsProps = {}) {
               ))}
             </ScrollView>
             <TextInput
-              style={[styles.labelInput, { color: c.text, borderColor: c.border, backgroundColor: isDark ? '#1C1C1A' : '#F9F8F6' }]}
+              style={[styles.labelInput, { color: c.text, borderColor: c.border, backgroundColor: c.inputBackground }]}
               value={label}
               onChangeText={setLabel}
               placeholder="e.g. Work trip to NYC"

@@ -32,6 +32,9 @@ export function GradientButton({ label, onPress, gradient = accentGradient, styl
         onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onPress(); }}
         onPressIn={() => press(0.97)}
         onPressOut={() => press(1)}
+        accessibilityRole="button"
+        accessibilityLabel={loading ? `${label}, loading` : label}
+        accessibilityState={{ disabled: inert, busy: loading }}
       >
         <LinearGradient
           colors={gradient}
@@ -41,7 +44,7 @@ export function GradientButton({ label, onPress, gradient = accentGradient, styl
         >
           {loading
             ? <ActivityIndicator size="small" color="#fff" />
-            : <Text style={[styles.label, size === 'md' && styles.labelMd]}>{label}</Text>}
+            : <Text style={[styles.label, size === 'md' && styles.labelMd]} allowFontScaling maxFontSizeMultiplier={1.5}>{label}</Text>}
         </LinearGradient>
       </Pressable>
     </Animated.View>

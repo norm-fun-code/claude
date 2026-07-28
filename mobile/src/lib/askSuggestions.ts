@@ -13,6 +13,8 @@
 // the overlay opens (never cached), so a suggestion whose underlying
 // condition no longer holds (the gap closed, the streak broke) naturally
 // stops being generated rather than lingering as a stale/resolved question.
+import { formatMoney } from './format.ts';
+
 export type AskSuggestionIntent = 'understand' | 'decide' | 'act';
 
 export interface AskSuggestion {
@@ -95,8 +97,7 @@ export function buildAskSuggestions(snap: SnapData | null): AskSuggestion[] {
     // spending on track with my plan?" filler in SAFE_FALLBACKS below.
     const wealth = snap.wealth;
     if (wealth?.spendingMtd != null) {
-      const mtd = Math.round(wealth.spendingMtd).toLocaleString('en-US');
-      out.push({ text: `I've spent $${mtd} in discretionary spending so far this month — how does that compare to my usual pace?`, intent: 'understand' });
+      out.push({ text: `I've spent ${formatMoney(wealth.spendingMtd)} in discretionary spending so far this month — how does that compare to my usual pace?`, intent: 'understand' });
     }
     if (wealth?.netWorth != null && wealth?.netWorthPrev != null && wealth.netWorthPrev !== 0) {
       const pctChange = Math.round(((wealth.netWorth - wealth.netWorthPrev) / Math.abs(wealth.netWorthPrev)) * 100);
