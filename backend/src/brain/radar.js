@@ -90,7 +90,6 @@ const WEALTH_EVIDENCE_ITEMS = {
   net_worth_path: (e) => [
     { label: 'Current', value: fmtMoney(e.current) },
     { label: 'Monthly change', value: fmtMoney(e.monthlyChange) },
-    { label: 'Projected year-end', value: fmtMoney(e.projected) },
   ],
   investments: (e) => [
     { label: 'Portfolio value', value: fmtMoney(e.totalValue) },

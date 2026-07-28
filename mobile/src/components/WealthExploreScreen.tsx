@@ -42,6 +42,7 @@ export function WealthExploreScreen({ visible, onClose, landing }: Props) {
   const nwSeries = useSeries(visible ? `${METRICS_HISTORY_URL}?metric=net_worth&days=90` : null);
 
   const numbers = landing?.numbers;
+  const secondary = isDark ? '#AEAEB2' : c.subtext;
 
   return (
     <FullScreenSheet visible={visible} title="Explore" onClose={onClose}>
@@ -53,12 +54,17 @@ export function WealthExploreScreen({ visible, onClose, landing }: Props) {
           </View>
         ) : null}
         {numbers?.netWorth?.trend ? (
-          <Text style={[styles.detail, { color: c.subtext }]}>
-            Trending {numbers.netWorth.trend.direction} ~{money(Math.abs(numbers.netWorth.trend.monthlyChange))}/mo — projected {money(numbers.netWorth.trend.projectedYearEnd)} by year-end.
+          <Text style={[styles.detail, { color: secondary }]}>
+            {/* Factual trend only — no year-end extrapolation. Market
+                movement, transfers, equity comp, and irregular cash flows
+                make a linear projection of a short trailing slope
+                misleading, not just optimistic. See plan pace below for
+                progress against the actual stated plan instead. */}
+            Trending {numbers.netWorth.trend.direction} ~{money(Math.abs(numbers.netWorth.trend.monthlyChange))}/mo over the last ~4 months.
           </Text>
         ) : null}
         {numbers?.planPace ? (
-          <Text style={[styles.detail, { color: c.subtext }]}>
+          <Text style={[styles.detail, { color: secondary }]}>
             {numbers.planPace.ahead ? 'Ahead of' : 'Behind'} plan pace by {money(Math.abs(numbers.planPace.delta))} ({numbers.planPace.pctYearElapsed}% through the year).
           </Text>
         ) : null}
@@ -70,16 +76,17 @@ export function WealthExploreScreen({ visible, onClose, landing }: Props) {
             <Text style={[styles.detail, { color: c.text }]}>
               Savings rate (30d): <Text style={{ fontWeight: '700' }}>{numbers.savingsRate.ratePct}%</Text>
             </Text>
-            <Text style={[styles.detail, { color: c.subtext }]}>
+            <Text style={[styles.detail, { color: secondary }]}>
               {money(numbers.savingsRate.income)} income vs {money(numbers.savingsRate.spending)} spending over the last {numbers.savingsRate.windowDays} days.
             </Text>
           </>
         ) : (
-          <Text style={[styles.detail, { color: c.subtext }]}>Not enough income data yet this window.</Text>
+          <Text style={[styles.detail, { color: secondary }]}>Not enough income data yet this window.</Text>
         )}
         {numbers?.cashBuffer ? (
-          <Text style={[styles.detail, { color: numbers.cashBuffer.thin ? themeColors.yellow : c.subtext }]}>
-            Cash buffer: {money(numbers.cashBuffer.amount)}{numbers.cashBuffer.thin ? ' — thin against upcoming bills.' : ''}
+          <Text style={[styles.detail, { color: numbers.cashBuffer.critical ? themeColors.red : (numbers.cashBuffer.thin ? themeColors.yellow : secondary) }]}>
+            Cash buffer: {money(numbers.cashBuffer.amount)}
+            {numbers.cashBuffer.critical ? ' — won’t cover upcoming bills.' : (numbers.cashBuffer.thin ? ' — thin against upcoming bills.' : '')}
           </Text>
         ) : null}
       </Section>
@@ -93,11 +100,11 @@ export function WealthExploreScreen({ visible, onClose, landing }: Props) {
         {(landing?.spendingDetail ?? []).map((row) => (
           <View key={row.category} style={styles.catRow}>
             <Text style={[styles.catName, { color: c.text }]}>{row.category}</Text>
-            <Text style={[styles.catAmount, { color: c.subtext }]}>{money(row.amount)}</Text>
+            <Text style={[styles.catAmount, { color: secondary }]}>{money(row.amount)}</Text>
           </View>
         ))}
         {!landing?.spendingDetail?.length ? (
-          <Text style={[styles.detail, { color: c.subtext }]}>No categorized spending yet this month.</Text>
+          <Text style={[styles.detail, { color: secondary }]}>No categorized spending yet this month.</Text>
         ) : null}
       </Section>
 

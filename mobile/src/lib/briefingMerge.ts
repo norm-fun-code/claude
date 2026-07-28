@@ -11,7 +11,7 @@
 // server already applies this rule when constructing a response, but a
 // stale/poisoned client cache (written before this fix, or by a future
 // regression) needs the SAME protection applied again on the client.
-import type { BriefingData, ChiefBrief } from '../hooks/useBriefing';
+import type { BriefingData, ChiefBrief, WealthLanding } from '../hooks/useBriefing';
 
 /** Pure: does this ChiefBrief have the minimum shape to actually show
  *  something? Mirrors backend store/briefings.js's
@@ -32,6 +32,26 @@ function isLastGoodCandidate(data: BriefingData | null | undefined): boolean {
   return Boolean(data) && !data!.chiefBriefPending && isUsableChiefBrief(data!.chiefBrief);
 }
 
+/** Pure: is this a usable Wealth landing projection worth displaying?
+ *  Mirrors the shape backend/src/services/wealth-landing.js always returns
+ *  when it successfully builds one (a `severity` field is always present). */
+function isUsableWealthLanding(w: WealthLanding | null | undefined): w is WealthLanding {
+  return Boolean(w) && typeof w === 'object' && typeof (w as WealthLanding).severity === 'string';
+}
+
+/** Carry forward the last-good Wealth landing projection when `incoming`
+ *  transiently lacks one (e.g. a scoped rebuild response that doesn't touch
+ *  wealth, or a Monarch call that briefly failed) — the exact same
+ *  last-good-survives-a-transient-gap protection Chief Brief already gets.
+ *  Applied on top of whichever base object the caller already built (either
+ *  `incoming` as-is, or the Chief-Brief-protected merge below) so it's
+ *  layer-independent. */
+function withWealthLandingProtected(base: BriefingData, incoming: BriefingData, existing: BriefingData | null): BriefingData {
+  if (isUsableWealthLanding(incoming.wealthLanding)) return base;
+  if (!existing || !isUsableWealthLanding(existing.wealthLanding)) return base;
+  return { ...base, wealthLanding: existing.wealthLanding, wealthLandingStale: true };
+}
+
 /**
  * The one merge point for every incoming briefing payload.
  *
@@ -47,19 +67,22 @@ function isLastGoodCandidate(data: BriefingData | null | undefined): boolean {
  *   the content itself stays put.
  */
 export function mergeBriefingResponse(existing: BriefingData | null, incoming: BriefingData): BriefingData {
-  if (isLastGoodCandidate(incoming)) return incoming;
-  if (existing == null || !isLastGoodCandidate(existing)) return incoming;
+  if (isLastGoodCandidate(incoming)) return withWealthLandingProtected(incoming, incoming, existing);
+  if (existing == null || !isLastGoodCandidate(existing)) return withWealthLandingProtected(incoming, incoming, existing);
   const lastGood: BriefingData = existing;
 
   // Same-local-day only — a previous-day Chief Brief must never masquerade
   // as today's. Both sides carry `localDate` on any build since the Context
   // Understanding Layer; if either is missing (a very old cache), fail
-  // closed and don't carry forward rather than risk a cross-day leak.
+  // closed and don't carry forward rather than risk a cross-day leak. Note:
+  // this same-day gate is Chief-Brief-specific — Wealth's last-good
+  // protection below applies regardless of day (net worth doesn't reset at
+  // midnight).
   if (!lastGood.localDate || !incoming.localDate || lastGood.localDate !== incoming.localDate) {
-    return incoming;
+    return withWealthLandingProtected(incoming, incoming, existing);
   }
 
-  return {
+  const merged: BriefingData = {
     ...incoming,
     chiefBrief: lastGood.chiefBrief,
     morningFocus: lastGood.morningFocus,
@@ -79,6 +102,7 @@ export function mergeBriefingResponse(existing: BriefingData | null, incoming: B
     chiefBriefAttempt: incoming.chiefBriefAttempt ?? null,
     chiefBriefQuality: incoming.chiefBriefQuality ?? null,
   };
+  return withWealthLandingProtected(merged, incoming, existing);
 }
 
 /**

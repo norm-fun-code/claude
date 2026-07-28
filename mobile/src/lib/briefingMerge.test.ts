@@ -196,3 +196,41 @@ test('e2e — cold-launch hydration from a merged-safe cache, then a degraded ba
   assert.equal(afterDegradedRefresh.chiefBriefStale, true, 'failed-attempt status is shown non-destructively');
   assert.equal(afterDegradedRefresh.chiefBriefPending, false);
 });
+
+// ── Wealth severity/reliability cleanup, required 6: last-good Wealth data survives a transient refresh/failure ──
+const GOOD_LANDING = { severity: 'on_track', summary: 'On track', numbers: {}, whatChanged: [], recommendedAction: null, sourceHealth: { configured: true, healthy: true }, spendingDetail: [] };
+
+test('required 6 — a transient response with no wealthLanding keeps the last-good Wealth data visible (marked stale), never flips to "disconnected"', () => {
+  const existing = base({ chiefBrief: GOOD_BRIEF, wealthLanding: GOOD_LANDING as never });
+  const incoming = base({ chiefBrief: GOOD_BRIEF, wealthLanding: null });
+  const merged = mergeBriefingResponse(existing, incoming);
+  assert.deepEqual(merged.wealthLanding, GOOD_LANDING, 'last-good Wealth data must survive a response that transiently lacks it');
+  assert.equal(merged.wealthLandingStale, true);
+});
+
+test('required 6 — a good incoming wealthLanding always wins and clears the stale flag', () => {
+  const existing = base({ chiefBrief: GOOD_BRIEF, wealthLanding: GOOD_LANDING as never });
+  const NEW_LANDING = { ...GOOD_LANDING, summary: 'On track · 1 to review', severity: 'review' };
+  const incoming = base({ chiefBrief: GOOD_BRIEF, wealthLanding: NEW_LANDING as never });
+  const merged = mergeBriefingResponse(existing, incoming);
+  assert.deepEqual(merged.wealthLanding, NEW_LANDING);
+  assert.equal(merged.wealthLandingStale, undefined);
+});
+
+test('required 6 — wealthLanding protection is independent of the Chief Brief same-day gate (a stale/failed Chief Brief refresh still protects Wealth)', () => {
+  const existing = base({ chiefBrief: GOOD_BRIEF, wealthLanding: GOOD_LANDING as never, localDate: '2026-07-26' });
+  // A cross-day incoming response with a degraded Chief Brief AND no
+  // wealthLanding — Chief Brief correctly gets dropped (previous-day rule),
+  // but Wealth's own last-good protection has no such day restriction.
+  const incoming = base({ chiefBrief: null, chiefBriefPending: true, wealthLanding: null, localDate: '2026-07-27' });
+  const merged = mergeBriefingResponse(existing, incoming);
+  assert.equal(merged.chiefBrief, null, 'cross-day Chief Brief correctly does not carry forward');
+  assert.deepEqual(merged.wealthLanding, GOOD_LANDING, 'Wealth last-good has no same-day restriction — net worth does not reset at midnight');
+  assert.equal(merged.wealthLandingStale, true);
+});
+
+test('required 6 — no existing wealthLanding to protect: an incoming null just passes through, no crash', () => {
+  const merged = mergeBriefingResponse(null, base({ chiefBrief: GOOD_BRIEF, wealthLanding: null }));
+  assert.equal(merged.wealthLanding, null);
+  assert.equal(merged.wealthLandingStale, undefined);
+});

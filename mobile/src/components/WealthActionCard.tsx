@@ -2,7 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
-import { INSIGHT_DISMISS_URL, authHeaders, fetchWithTimeout } from '../config';
+import { INSIGHT_DISMISS_URL, INSIGHT_UNDISMISS_URL, authHeaders, fetchWithTimeout } from '../config';
 import type { WealthRecommendedAction } from '../hooks/useBriefing';
 
 interface Props {
@@ -28,6 +28,11 @@ function WealthActionCard({ action, dataIncomplete, onAsk, onChanged }: Props) {
   const c = getColors(isDark);
   const [busy, setBusy] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+  // Kept only so a just-confirmed explanation can be undone from the empty
+  // "No action needed" state this same session (severity/reliability
+  // cleanup, item 3: undo/revise) — once the card re-derives from a fresh
+  // `action` prop there's nothing left to point the undo at, by design.
+  const [lastConfirmedKey, setLastConfirmedKey] = useState<string | null>(null);
 
   const confirmIntentional = useCallback(async () => {
     if (!action?.dismissKey) return;
@@ -35,37 +40,70 @@ function WealthActionCard({ action, dataIncomplete, onAsk, onChanged }: Props) {
     try {
       const res = await fetchWithTimeout(INSIGHT_DISMISS_URL, {
         method: 'POST', headers: authHeaders(),
-        body: JSON.stringify({ key: action.dismissKey, title: action.title }),
+        // `detail`/`kind` give the persisted explanation the same
+        // category/window context WealthWhatChangedCard's own "This was
+        // intentional" sends — Ask/Today/future Wealth builds all read the
+        // same dismissed_insights row, so the explanation only needs to be
+        // recorded once here.
+        body: JSON.stringify({ key: action.dismissKey, title: action.title, detail: action.detail, kind: action.kind }),
       }, 8000);
-      if (res.ok) { setConfirmed(true); onChanged(); }
+      if (res.ok) { setConfirmed(true); setLastConfirmedKey(action.dismissKey); onChanged(); }
     } finally {
       setBusy(false);
     }
   }, [action, onChanged]);
 
+  const undoLast = useCallback(async () => {
+    if (!lastConfirmedKey) return;
+    setBusy(true);
+    try {
+      const res = await fetchWithTimeout(INSIGHT_UNDISMISS_URL, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ key: lastConfirmedKey }),
+      }, 8000);
+      if (res.ok) { setConfirmed(false); setLastConfirmedKey(null); onChanged(); }
+    } finally {
+      setBusy(false);
+    }
+  }, [lastConfirmedKey, onChanged]);
+
   if (dataIncomplete) return null;
+
+  const secondary = isDark ? '#AEAEB2' : c.subtext;
+  const critical = action?.kind === 'cash_critical';
 
   if (!action || confirmed) {
     return (
       <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
         <SectionHeader emoji="✓" title="Recommended action" tint="green" />
-        <Text style={[styles.noneText, { color: c.subtext }]}>No action needed — nothing here requires a decision right now.</Text>
+        <Text style={[styles.noneText, { color: secondary }]}>No action needed — nothing here requires a decision right now.</Text>
+        {lastConfirmedKey ? (
+          <TouchableOpacity onPress={undoLast} disabled={busy} hitSlop={8} style={styles.secondaryBtn} accessibilityRole="button" accessibilityLabel="Undo, this was not intentional">
+            <Text style={[styles.secondaryText, { color: secondary }]}>Undo — not intentional</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
     );
   }
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
-      <SectionHeader emoji="!" title="Recommended action" tint="gold" />
-      <Text style={[styles.title, { color: c.text }]}>{action.title}</Text>
-      {action.detail ? <Text style={[styles.detail, { color: c.subtext }]}>{action.detail}</Text> : null}
+      <SectionHeader emoji="!" title="Recommended action" tint={critical ? 'red' : 'gold'} />
+      <Text style={[styles.title, { color: c.text }]} allowFontScaling>{action.title}</Text>
+      {action.detail ? <Text style={[styles.detail, { color: secondary }]} allowFontScaling>{action.detail}</Text> : null}
       <View style={styles.buttonsRow}>
-        <TouchableOpacity onPress={() => onAsk(action.askPrompt)} style={[styles.primaryBtn, { backgroundColor: c.accent }]} activeOpacity={0.85}>
+        <TouchableOpacity
+          onPress={() => onAsk(action.askPrompt)} style={[styles.primaryBtn, { backgroundColor: c.accent }]}
+          activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Ask about this"
+        >
           <Text style={styles.primaryBtnText}>Ask about this</Text>
         </TouchableOpacity>
         {action.dismissKey ? (
-          <TouchableOpacity onPress={confirmIntentional} disabled={busy} hitSlop={8} style={styles.secondaryBtn}>
-            <Text style={[styles.secondaryText, { color: c.subtext }]}>This was intentional</Text>
+          <TouchableOpacity
+            onPress={confirmIntentional} disabled={busy} hitSlop={8} style={styles.secondaryBtn}
+            accessibilityRole="button" accessibilityLabel="This was intentional"
+          >
+            <Text style={[styles.secondaryText, { color: secondary }]}>This was intentional</Text>
           </TouchableOpacity>
         ) : null}
       </View>
@@ -82,7 +120,7 @@ const styles = StyleSheet.create({
   primaryBtn: { borderRadius: radius.md, paddingVertical: spacing.sm, paddingHorizontal: spacing.md },
   primaryBtnText: { color: '#FFF', fontSize: 14, fontWeight: '700' },
   secondaryText: { fontSize: 13, fontWeight: '600', textDecorationLine: 'underline' },
-  secondaryBtn: {},
+  secondaryBtn: { minHeight: 32, justifyContent: 'center' },
 });
 
 const WealthActionCardMemo = React.memo(WealthActionCard);

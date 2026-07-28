@@ -60,6 +60,9 @@ export const CHAT_CONFIRM_ACTION_URL = `${API_BASE}/api/chat/confirm-action`;
 export const DEVICE_REGISTER_URL = `${API_BASE}/api/devices/register`;
 export const HIGHLIGHTS_URL = `${API_BASE}/api/highlights`;
 export const INSIGHT_DISMISS_URL = `${API_BASE}/api/insights/dismiss`;
+// Undo a dismissal/explanation ("This was intentional" can be revised) —
+// backend/src/routes/engagement.js's POST /insights/undismiss.
+export const INSIGHT_UNDISMISS_URL = `${API_BASE}/api/insights/undismiss`;
 export const CONSOLIDATE_URL = `${API_BASE}/api/consolidate`;
 export const SLEEP_TODAY_URL = `${API_BASE}/api/sleep/today`;
 export const HABITS_STREAKS_URL = `${API_BASE}/api/habits/streaks`;

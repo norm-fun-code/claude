@@ -4,32 +4,71 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  derivePosture, rankForWhatChanged, applyWealthDismissals, consolidateRelatedCategories,
+  itemSeverity, deriveSeverity, summaryLabel, rankForWhatChanged, applyWealthDismissals, consolidateRelatedCategories,
   REACTIVATE_MULTIPLIER,
 } = require('../src/services/wealth-landing');
 
-// ── required 6: a strong savings rate cannot receive an alarm/needs-attention label ──
-test('required 6: data-complete + no action_required + no watch items -> on_track, never action_needed/worth_watching, regardless of how strong savings look', () => {
-  const posture = derivePosture({ dataComplete: true, actionRequiredCount: 0, watchCount: 0, planAheadMaterial: false });
-  assert.equal(posture, 'on_track');
-  assert.notEqual(posture, 'action_needed');
-  assert.notEqual(posture, 'worth_watching');
+// ── severity/reliability cleanup: deterministic severity contract ──
+test('required 6: data-complete + no unresolved items -> on_track, never action/critical, regardless of how strong savings look', () => {
+  const severity = deriveSeverity({ dataComplete: true, itemSeverities: [], cashCritical: false, planBehindMaterial: false });
+  assert.equal(severity, 'on_track');
+  assert.notEqual(severity, 'action');
+  assert.notEqual(severity, 'critical');
 });
 
-test('data incomplete always wins, even if nothing else is wrong', () => {
-  assert.equal(derivePosture({ dataComplete: false, actionRequiredCount: 0, watchCount: 0, planAheadMaterial: true }), 'data_incomplete');
+test('data incomplete always wins (unavailable), even if nothing else is wrong', () => {
+  assert.equal(deriveSeverity({ dataComplete: false, itemSeverities: [], cashCritical: false, planBehindMaterial: true }), 'unavailable');
 });
 
-test('a real action_required item forces action_needed even when materially ahead of plan', () => {
-  assert.equal(derivePosture({ dataComplete: true, actionRequiredCount: 1, watchCount: 0, planAheadMaterial: true }), 'action_needed');
+test('a real critical cash signal forces critical even when the plan is ahead', () => {
+  assert.equal(deriveSeverity({ dataComplete: true, itemSeverities: [], cashCritical: true, planBehindMaterial: false }), 'critical');
 });
 
-test('ahead_of_plan only applies once action_needed is ruled out', () => {
-  assert.equal(derivePosture({ dataComplete: true, actionRequiredCount: 0, watchCount: 0, planAheadMaterial: true }), 'ahead_of_plan');
+test('an item-level action severity forces overall action', () => {
+  assert.equal(deriveSeverity({ dataComplete: true, itemSeverities: ['action'], cashCritical: false, planBehindMaterial: false }), 'action');
 });
 
-test('worth_watching applies when nothing is action_required or ahead of plan, but something is watch-class', () => {
-  assert.equal(derivePosture({ dataComplete: true, actionRequiredCount: 0, watchCount: 1, planAheadMaterial: false }), 'worth_watching');
+test('a materially behind plan alone forces action (plan trajectory is a required severity input)', () => {
+  assert.equal(deriveSeverity({ dataComplete: true, itemSeverities: [], cashCritical: false, planBehindMaterial: true }), 'action');
+});
+
+test('review applies when nothing rises to action/critical, but something is unconfirmed/watch-class', () => {
+  assert.equal(deriveSeverity({ dataComplete: true, itemSeverities: ['review'], cashCritical: false, planBehindMaterial: false }), 'review');
+});
+
+test('an explained item alone (no other unresolved issue) never keeps the summary above on_track', () => {
+  assert.equal(deriveSeverity({ dataComplete: true, itemSeverities: ['explained', 'explained'], cashCritical: false, planBehindMaterial: false }), 'on_track');
+});
+
+// ── item-level severity: percent-above-usual alone must never drive severity ──
+test('an unconfirmed spending_spike (not yet persistent) is "review", never "action", no matter how large the % is', () => {
+  const spike = { attentionClass: 'action_required', reasonCode: 'spending_spike', evidence: { impactDollars: 5000 } };
+  assert.equal(itemSeverity(spike), 'review');
+});
+
+test('a persistent, material over_budget item is "action"', () => {
+  const overBudget = { attentionClass: 'action_required', reasonCode: 'over_budget', evidence: { impactDollars: 400 } };
+  assert.equal(itemSeverity(overBudget), 'action');
+});
+
+test('a persistent over_budget item below the material dollar floor stays "review"', () => {
+  const tiny = { attentionClass: 'action_required', reasonCode: 'over_budget', evidence: { impactDollars: 50 } };
+  assert.equal(itemSeverity(tiny), 'review');
+});
+
+test('an explainedBy-annotated item is always "explained", even if it was action_required before softening', () => {
+  const explained = { attentionClass: 'watch', explainedBy: { merchant: 'Amex', amount: 600, day: '2026-07-01' } };
+  assert.equal(itemSeverity(explained), 'explained');
+});
+
+test('a plain watch item (net worth decline, no explanation) is "review"', () => {
+  const watch = { attentionClass: 'watch', reasonCode: 'net_worth_decline' };
+  assert.equal(itemSeverity(watch), 'review');
+});
+
+test('a positive/informational item is "on_track"', () => {
+  assert.equal(itemSeverity({ attentionClass: 'positive' }), 'on_track');
+  assert.equal(itemSeverity({ attentionClass: 'informational' }), 'on_track');
 });
 
 // ── required 7: tiny-baseline percentage spikes don't outrank materially larger dollar changes ──
@@ -141,4 +180,44 @@ test('required 11: rankForWhatChanged + slice(0,3) pattern never exceeds 3 — v
   const whatChanged = [...nonInformational, ...informational].slice(0, 3);
   assert.equal(whatChanged.length, 3);
   assert.ok(whatChanged.every((i) => i.attentionClass === 'action_required'), 'with 5 action_required candidates available, all 3 slots go to them before any informational filler');
+});
+
+// ── required: red is reserved for a real configured risk ──
+test('required: critical is NEVER reached from item-level action/review alone, no matter how many — only cashCritical or an item-level critical does', () => {
+  const manyActionItems = Array.from({ length: 6 }, () => 'action');
+  const severity = deriveSeverity({ dataComplete: true, itemSeverities: manyActionItems, cashCritical: false, planBehindMaterial: false });
+  assert.equal(severity, 'action', 'six unresolved action items still cap out at "action", never escalate to "critical" on volume alone');
+  const withRealDanger = deriveSeverity({ dataComplete: true, itemSeverities: manyActionItems, cashCritical: true, planBehindMaterial: false });
+  assert.equal(withRealDanger, 'critical', 'a real configured cash risk is what actually earns critical/red');
+});
+
+// ── required: summary severity always agrees with child exception states ──
+test('required: summaryLabel/deriveSeverity never disagree with the child severities that produced them', () => {
+  const cases = [
+    { itemSeverities: [], expect: 'on_track' },
+    { itemSeverities: ['on_track', 'explained'], expect: 'on_track' },
+    { itemSeverities: ['review'], expect: 'review' },
+    { itemSeverities: ['on_track', 'review', 'explained'], expect: 'review' },
+    { itemSeverities: ['action', 'review'], expect: 'action' },
+    { itemSeverities: ['action', 'explained', 'review'], expect: 'action' },
+  ];
+  for (const { itemSeverities, expect } of cases) {
+    const severity = deriveSeverity({ dataComplete: true, itemSeverities, cashCritical: false, planBehindMaterial: false });
+    assert.equal(severity, expect, `itemSeverities=${JSON.stringify(itemSeverities)}`);
+    // The summary is a pure function of the SAME severity + counts — never
+    // an independently-generated string that could drift from the badges
+    // rendered on each child row.
+    const actionCount = itemSeverities.filter((s) => s === 'action' || s === 'critical').length;
+    const reviewCount = itemSeverities.filter((s) => s === 'review').length;
+    const summary = summaryLabel(severity, { actionCount, reviewCount });
+    if (severity === 'action') assert.match(summary, /action needed/i);
+    if (severity === 'review') assert.match(summary, /review/i);
+    if (severity === 'on_track') assert.match(summary, /on track/i);
+  }
+});
+
+test('required: unavailable always wins the summary label regardless of child severities (source data isn\'t trustworthy enough to grade)', () => {
+  const severity = deriveSeverity({ dataComplete: false, itemSeverities: ['action', 'critical'], cashCritical: true, planBehindMaterial: true });
+  assert.equal(severity, 'unavailable');
+  assert.match(summaryLabel(severity, { actionCount: 2, reviewCount: 0 }), /incomplete/i);
 });

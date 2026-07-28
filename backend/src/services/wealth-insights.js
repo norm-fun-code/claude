@@ -65,9 +65,12 @@ const NET_WORTH_MIN_MONTHLY_TO_SURFACE = 50;
 const NET_WORTH_MILESTONE_MONTHLY = 1000;
 
 /**
- * The canonical net-worth direction/trend: a 120-day linear fit (Wealthfront
- * "Path" style), projected to year-end. THE ONE net-worth-trend authority —
- * extracted so wealth-landing.js's posture card and net_worth_path both read
+ * The canonical net-worth direction/trend: a 120-day linear fit, reported as
+ * a factual $/mo change only — deliberately NOT extrapolated to year-end
+ * (see severity/reliability cleanup: market movement, transfers, equity
+ * comp, and irregular cash flows make a linear projection of a short
+ * trailing slope misleading). THE ONE net-worth-trend authority — extracted
+ * so wealth-landing.js's severity/posture card and net_worth_path both read
  * the identical number instead of three independent windows/methods
  * (this function's own former inline version, briefing.js's legacy 23-day-
  * average-vs-latest `wealth.netWorthChange`, and consolidate.js's self-model
@@ -81,16 +84,17 @@ async function computeNetWorthTrend({ now = new Date() } = {}) {
   const nw = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'net_worth', from, to: now, agg: 'avg', excludeSource: 'seed' });
   const series = nw.map((r) => ({ day: r.day, value: Number(r.value) })).filter((p) => Number.isFinite(p.value));
   if (series.length < 8) return null;
-  // Fit against real calendar days → a true per-day slope.
+  // Fit against real calendar days → a true per-day slope. Deliberately no
+  // year-end (or any) extrapolation from this slope — market movement,
+  // transfers, equity comp, and irregular cash flows make a linear
+  // projection of a short trailing window misleading, not just optimistic.
   const fit = stats.fitByDay(series);
   const current = series[series.length - 1].value;
   const perDay = fit && fit.slope != null ? fit.slope : 0;
-  const daysToYearEnd = Math.max(0, (new Date(now.getFullYear(), 11, 31) - now) / 864e5);
-  const projected = current + perDay * daysToYearEnd;
   const monthlyChange = perDay * 30;
   if (Math.abs(monthlyChange) < NET_WORTH_MIN_MONTHLY_TO_SURFACE) return null;
   return {
-    current, projected, monthlyChange,
+    current, monthlyChange,
     direction: monthlyChange >= 0 ? 'growing' : 'declining',
     // A declining trend is a real, if slow-moving, concern worth watching
     // rather than an emergency — material only past a higher dollar bar.
@@ -365,20 +369,24 @@ async function buildWealthInsights() {
     console.error('[wealth-insights] subscriptions failed:', err.message);
   }
 
-  // 1c) Net-worth trajectory — project the trend to year-end (Wealthfront "Path"
-  // style), so you see where you're heading at the current rate.
+  // 1c) Net-worth trajectory — the FACTUAL trailing trend only (current
+  // value, direction, $/mo change over the window). Deliberately no
+  // year-end extrapolation: market movement, transfers, equity comp, and
+  // irregular cash flows make a linear projection of a short trailing slope
+  // misleading, not just optimistic. See numbers.planPace (wealth-landing.js)
+  // for progress against the user's actual stated plan instead.
   try {
     const trend = await computeNetWorthTrend();
     if (trend) {
-      const { current, projected, monthlyChange, direction: dir, milestone } = trend;
+      const { current, monthlyChange, direction: dir, milestone } = trend;
       insights.push({
         type: 'net_worth_path',
         tone: monthlyChange >= 0 ? 'win' : 'watch',
         title: `Net worth ${dir} ~${fmt(Math.abs(monthlyChange))}/mo`,
         detail:
-          `Based on your 4-month trend, net worth is ${dir} about ${fmt(Math.abs(monthlyChange))}/month — ` +
-          `on track for roughly ${fmt(projected)} by year-end (now ${fmt(current)}). A projection from trend, not a guarantee.`,
-        evidence: { kind: 'net_worth_path', current: Math.round(current), projected: Math.round(projected), monthlyChange: Math.round(monthlyChange) },
+          `Based on your 4-month trend, net worth is ${dir} about ${fmt(Math.abs(monthlyChange))}/month ` +
+          `(now ${fmt(current)}).`,
+        evidence: { kind: 'net_worth_path', current: Math.round(current), monthlyChange: Math.round(monthlyChange) },
         ...(monthlyChange >= 0
           ? (milestone
               ? { attentionClass: 'positive', material: true, timeSensitive: false, actionable: false, direction: 'positive', reasonCode: 'net_worth_growth_milestone' }

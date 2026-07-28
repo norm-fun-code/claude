@@ -557,14 +557,28 @@ export default function App() {
         // projection (backend/src/services/wealth-landing.js); nothing here
         // recomputes spending/savings-rate/pace/net-worth-direction.
         const landing = d?.wealthLanding ?? null;
+        // The disconnected CTA must come ONLY from the canonical source-
+        // health authority (landing.sourceHealth.configured), never be
+        // inferred from "no landing yet" — that inference is exactly what
+        // caused a connected Monarch to briefly flash "Connect Monarch"
+        // while the first real response was still loading. A landing with
+        // configured:false really is disconnected; a null landing while the
+        // very first fetch is in flight is not — that's the skeleton case
+        // above, or (after briefingMerge.ts's protection) simply never
+        // happens once a good response has ever been seen this session.
+        const sourceDisconnected = landing != null && landing.sourceHealth.configured === false;
+        const neverLoaded = !landing && !briefing.loading;
         const askAboutFinances = (question: string) => { setPendingAskQ(question); setTab('ask'); };
         return (
           <>
+            {d?.wealthLandingStale ? (
+              <Text style={[styles.wealthStaleNote, { color: c.subtext }]}>Showing last known data — updating…</Text>
+            ) : null}
             <WealthPostureCard landing={landing} />
             <WealthWhatChangedCard items={landing?.whatChanged ?? EMPTY_ARRAY} onChanged={() => briefing.reload()} />
             <WealthActionCard
               action={landing?.recommendedAction ?? null}
-              dataIncomplete={landing?.posture === 'data_incomplete'}
+              dataIncomplete={landing?.severity === 'unavailable'}
               onAsk={askAboutFinances}
               onChanged={() => briefing.reload()}
             />
@@ -579,7 +593,7 @@ export default function App() {
               </TouchableOpacity>
             </View>
             <WealthExploreScreen visible={wealthExploreOpen} onClose={() => setWealthExploreOpen(false)} landing={landing} />
-            {!landing && (
+            {(sourceDisconnected || neverLoaded) && (
               <EmptyNote c={c} text="Connect Monarch to see net worth, spending, and cashflow." />
             )}
           </>
@@ -972,6 +986,7 @@ const styles = StyleSheet.create({
   },
   drillInText: { fontSize: 13, fontWeight: '600' },
   drillInChevron: { fontSize: 16, fontWeight: '300' },
+  wealthStaleNote: { fontSize: 12, fontStyle: 'italic', marginBottom: spacing.sm },
   // Anchored to the very top edge (y=0, behind the status bar) and full-bleed, so
   // the band tint covers the notch curve and fades down into the page.
   heroGlow: { position: 'absolute', top: 0, left: 0, right: 0, height: 440 },

@@ -7,19 +7,18 @@ interface Props {
   landing: WealthLanding | null | undefined;
 }
 
-const POSTURE_LABEL: Record<string, string> = {
-  on_track: 'On track',
-  ahead_of_plan: 'Ahead of plan',
-  worth_watching: 'Worth watching',
-  action_needed: 'Action needed',
-  data_incomplete: 'Data incomplete',
-};
-const POSTURE_COLOR: Record<string, string> = {
+// Severity contract (backend/src/services/wealth-landing.js) — red is
+// reserved for `critical` (a real, configured danger) only. `action` gets a
+// distinct amber-orange so it never reads as the same alarm level as a
+// genuine risk; `review` gets a softer amber for "unusual, unconfirmed" —
+// never red, since it hasn't been confirmed as a real issue.
+const SEVERITY_COLOR: Record<string, string> = {
+  critical: themeColors.red,
+  action: '#FF9F0A',
+  review: '#E8B84B',
+  explained: themeColors.green,
   on_track: themeColors.green,
-  ahead_of_plan: themeColors.purple,
-  worth_watching: themeColors.yellow,
-  action_needed: themeColors.red,
-  data_incomplete: '#8E8E93',
+  unavailable: '#8E8E93',
 };
 
 function money(n: number | null | undefined): string {
@@ -28,13 +27,14 @@ function money(n: number | null | undefined): string {
 }
 
 /**
- * Wealth redesign (audit rec #5) — the ONE dominant, premium "financial
- * posture" card that leads the Wealth landing page. State is deterministic
- * and server-computed (backend/src/services/wealth-landing.js's
- * derivePosture) — never LLM-generated decoration, never re-derived here.
- * Shows only the smallest useful set of supporting numbers, each with an
- * explicit period label so MTD/rolling-30d/plan-pace/net-worth are never
- * placed beside each other without saying which is which.
+ * Wealth redesign (audit rec #5; severity/reliability cleanup) — the ONE
+ * dominant, premium "financial posture" card that leads the Wealth landing
+ * page. Severity and the summary line are deterministic and server-computed
+ * (backend/src/services/wealth-landing.js's deriveSeverity/summaryLabel) —
+ * never LLM-generated decoration, never re-derived here. Shows only the
+ * smallest useful set of supporting numbers, each with an explicit period
+ * label so MTD/rolling-30d/plan-pace/net-worth are never placed beside each
+ * other without saying which is which.
  */
 function WealthPostureCard({ landing }: Props) {
   const isDark = useColorScheme() === 'dark';
@@ -49,59 +49,64 @@ function WealthPostureCard({ landing }: Props) {
     );
   }
 
-  const tint = POSTURE_COLOR[landing.posture] ?? c.subtext;
-  const label = POSTURE_LABEL[landing.posture] ?? 'Unknown';
+  const tint = SEVERITY_COLOR[landing.severity] ?? c.subtext;
   const { numbers, sourceHealth } = landing;
   const mask = (s: string) => (hidden ? '••••' : s);
+  // Secondary body text bumped for dark-mode legibility (audit item 6) —
+  // scoped to this card rather than the shared theme.subtext, which other
+  // surfaces already rely on at its current weight.
+  const secondary = isDark ? '#AEAEB2' : c.subtext;
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <View style={styles.headRow}>
         <View style={[styles.dot, { backgroundColor: tint }]} />
-        <Text style={[styles.postureLabel, { color: tint }]}>{label}</Text>
+        <Text style={[styles.postureLabel, { color: tint }]} accessibilityRole="header">{landing.summary}</Text>
       </View>
 
       {sourceHealth.qualification ? (
-        <Text style={[styles.qualification, { color: c.subtext }]}>{sourceHealth.qualification}</Text>
+        <Text style={[styles.qualification, { color: secondary }]}>{sourceHealth.qualification}</Text>
       ) : null}
 
-      <View style={styles.numbersWrap} onTouchEnd={() => setHidden((h) => !h)}>
+      <View style={styles.numbersWrap} onTouchEnd={() => setHidden((h) => !h)} accessibilityRole="button" accessibilityLabel={hidden ? 'Show amounts' : 'Hide amounts'} accessibilityHint="Double tap to toggle privacy mask">
         {numbers.mtdDiscretionary ? (
           <View style={styles.numberRow}>
-            <Text style={[styles.numberLabel, { color: c.subtext }]}>Discretionary spend (MTD)</Text>
-            <Text style={[styles.numberValue, { color: c.text }]}>{mask(money(numbers.mtdDiscretionary.amount))}</Text>
+            <Text style={[styles.numberLabel, { color: secondary }]}>Discretionary spend (MTD)</Text>
+            <Text style={[styles.numberValue, { color: c.text }]} allowFontScaling>{mask(money(numbers.mtdDiscretionary.amount))}</Text>
           </View>
         ) : null}
         {numbers.savingsRate ? (
           <View style={styles.numberRow}>
-            <Text style={[styles.numberLabel, { color: c.subtext }]}>Savings rate (30d)</Text>
-            <Text style={[styles.numberValue, { color: numbers.savingsRate.healthy ? themeColors.green : themeColors.red }]}>
+            <Text style={[styles.numberLabel, { color: secondary }]}>Savings rate (30d)</Text>
+            <Text style={[styles.numberValue, { color: numbers.savingsRate.healthy ? themeColors.green : themeColors.red }]} allowFontScaling>
               {mask(`${numbers.savingsRate.ratePct}%`)}
             </Text>
           </View>
         ) : null}
         {numbers.planPace ? (
           <View style={styles.numberRow}>
-            <Text style={[styles.numberLabel, { color: c.subtext }]}>Pace vs. plan ({numbers.planPace.pctYearElapsed}% through year)</Text>
-            <Text style={[styles.numberValue, { color: numbers.planPace.ahead ? themeColors.green : c.text }]}>
+            <Text style={[styles.numberLabel, { color: secondary }]}>Pace vs. plan ({numbers.planPace.pctYearElapsed}% through year)</Text>
+            <Text style={[styles.numberValue, { color: numbers.planPace.ahead ? themeColors.green : c.text }]} allowFontScaling>
               {mask(`${numbers.planPace.ahead ? '+' : ''}${money(numbers.planPace.delta)}`)}
             </Text>
           </View>
         ) : null}
         {numbers.netWorth && numbers.netWorth.trend?.material ? (
           <View style={styles.numberRow}>
-            <Text style={[styles.numberLabel, { color: c.subtext }]}>Net worth ({numbers.netWorth.trend.direction} trend)</Text>
-            <Text style={[styles.numberValue, { color: c.text }]}>{mask(money(numbers.netWorth.amount))}</Text>
+            <Text style={[styles.numberLabel, { color: secondary }]}>Net worth ({numbers.netWorth.trend.direction} trend)</Text>
+            <Text style={[styles.numberValue, { color: c.text }]} allowFontScaling>{mask(money(numbers.netWorth.amount))}</Text>
           </View>
         ) : null}
-        {numbers.cashBuffer && numbers.cashBuffer.thin ? (
+        {numbers.cashBuffer && (numbers.cashBuffer.thin || numbers.cashBuffer.critical) ? (
           <View style={styles.numberRow}>
-            <Text style={[styles.numberLabel, { color: c.subtext }]}>Cash buffer</Text>
-            <Text style={[styles.numberValue, { color: themeColors.yellow }]}>{mask(money(numbers.cashBuffer.amount))}</Text>
+            <Text style={[styles.numberLabel, { color: secondary }]}>Cash buffer</Text>
+            <Text style={[styles.numberValue, { color: numbers.cashBuffer.critical ? themeColors.red : themeColors.yellow }]} allowFontScaling>
+              {mask(money(numbers.cashBuffer.amount))}
+            </Text>
           </View>
         ) : null}
       </View>
-      <Text style={[styles.hint, { color: c.subtext }]}>{hidden ? 'tap to show' : 'tap to hide'}</Text>
+      <Text style={[styles.hint, { color: secondary }]}>{hidden ? 'tap to show' : 'tap to hide'}</Text>
     </View>
   );
 }

@@ -61,16 +61,27 @@ function createEngagementRouter() {
     res.json(await runNudges({ force, send: !dryRun }));
   }));
 
-  // Dismiss a "What The Data Shows" insight by its stable key — stays gone across
-  // rebuilds (e.g. a recurring car payment flagged for "review"). POST { key, title }.
+  // Dismiss/explain a "What The Data Shows" insight by its stable key — stays
+  // gone across rebuilds (e.g. a recurring car payment flagged for "review",
+  // or a category confirmed "This was intentional"). POST { key, title }.
   // `amount` (optional) — the $ evidence behind a wealth insight at dismiss
   // time, so wealth-landing.js's "materially new evidence" reactivation
   // check has a real number to compare a future recurrence against.
+  // `category`/`type`/`detail` (optional) — the structured explanation
+  // context (severity/reliability cleanup, item 3: "This was intentional"
+  // persists a structured explanation against the exact anomaly/category,
+  // not a bare local dismissal) — read back by dismissedContextByKey() and
+  // consumed identically by Wealth, Today, and Ask.
   router.post('/insights/dismiss', asyncHandler(async (req, res) => {
-    const { key, title = null, amount = null } = req.body || {};
+    const { key, title = null, amount = null, category = null, type = null, detail = null } = req.body || {};
     if (!requireFields(req.body, ['key'], res)) return;
-    const context = typeof amount === 'number' && Number.isFinite(amount) ? { amount } : null;
-    await require('../store/dismissedInsights').dismiss(key, title, context);
+    const context = {
+      ...(typeof amount === 'number' && Number.isFinite(amount) ? { amount } : {}),
+      ...(typeof category === 'string' && category ? { category } : {}),
+      ...(typeof type === 'string' && type ? { type } : {}),
+      ...(typeof detail === 'string' && detail ? { detail } : {}),
+    };
+    await require('../store/dismissedInsights').dismiss(key, title, Object.keys(context).length ? context : null);
     res.json({ ok: true, dismissed: key });
   }));
 

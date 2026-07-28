@@ -286,14 +286,28 @@ function snippet(text, n = 400) {
   return text.length > n ? `${text.slice(0, n)}…` : text;
 }
 
-/** Pure: assemble the prompt from retrieved context. Exported for testing. */
+/** Pure: assemble the prompt from retrieved context. Exported for testing.
+ *  Filters through the SAME dismissal (with reactivation) + "explained"
+ *  annotation pipeline the Wealth tab and Today's radar read — otherwise
+ *  Ask would keep citing a spending spike the user already marked "This was
+ *  intentional" (severity/reliability cleanup, item 3: one explanation,
+ *  every surface, including Ask). */
 async function wealthContext() {
   try {
     const { buildWealthInsights } = require('../services/wealth-insights');
-    const insights = await buildWealthInsights();
-    if (!insights || !insights.length) return null;
+    const wealthLanding = require('../services/wealth-landing');
+    const dismissedInsights = require('../store/dismissedInsights');
+    const [insightsRaw, dismissedKeys, dismissedContext] = await Promise.all([
+      buildWealthInsights(),
+      dismissedInsights.dismissedKeys(),
+      dismissedInsights.dismissedContextByKey(),
+    ]);
+    if (!insightsRaw || !insightsRaw.length) return null;
+    const filtered = wealthLanding.applyWealthDismissals(insightsRaw, dismissedKeys, dismissedContext);
+    const insights = await wealthLanding.annotateExplainedSpikes(filtered, new Date());
+    if (!insights.length) return null;
     return 'WEALTH DASHBOARD (live computed insights — use these numbers, they are current):\n' +
-      insights.slice(0, 8).map((i) => `- [${i.type}] ${i.title}${i.detail ? ` — ${i.detail}` : ''}`).join('\n');
+      insights.slice(0, 8).map((i) => `- [${i.type}] ${i.title}${i.detail ? ` — ${i.detail}` : ''}${i.explainedBy ? ' (already explained by the user)' : ''}`).join('\n');
   } catch (err) {
     console.error('[chat] wealthContext failed:', err.message);
     return null;
@@ -1031,7 +1045,7 @@ function parseAction(text) {
 }
 
 module.exports = {
-  ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot, recoveryContext,
+  ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot, recoveryContext, wealthContext,
   parseAction, parseActions, looksLikeCommand, validateAction,
   // Exported for regression tests (see test/ask-generation.test.js) — not
   // used by any other production call site.

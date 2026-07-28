@@ -155,13 +155,22 @@ export interface Wealth {
   sourceSyncedAt?: string | null;
 }
 
-// Wealth redesign (audit rec #5) — the ONE canonical Wealth landing-page
-// projection (backend/src/services/wealth-landing.js). The Wealth tab reads
-// ONLY this shape; every number here is already fully derived server-side
-// (posture, savings rate, plan pace, net-worth direction, ranking,
-// materiality, dismissal/reactivation) — the client must never recompute
-// any of it.
-export type WealthPosture = 'on_track' | 'ahead_of_plan' | 'worth_watching' | 'action_needed' | 'data_incomplete';
+// Wealth redesign (audit rec #5; severity/reliability cleanup) — the ONE
+// canonical Wealth landing-page projection (backend/src/services/
+// wealth-landing.js). The Wealth tab reads ONLY this shape; every number
+// here is already fully derived server-side (severity, savings rate, plan
+// pace, net-worth direction, ranking, materiality, dismissal/reactivation)
+// — the client must never recompute any of it.
+//
+// Deterministic severity contract, shared by the summary, exception rows,
+// Today radar, and Recommended Action:
+//   critical    — credible urgent financial risk requiring immediate action
+//   action      — meaningful unresolved issue with a concrete action
+//   review      — unusual activity worth confirming, not yet confirmed
+//   explained   — anomaly already explained (auto or user-confirmed)
+//   on_track    — no material unresolved issue
+//   unavailable — source data stale/incomplete/disconnected
+export type WealthSeverity = 'critical' | 'action' | 'review' | 'explained' | 'on_track' | 'unavailable';
 
 export interface WealthChangeCard {
   dismissKey?: string;
@@ -169,13 +178,14 @@ export interface WealthChangeCard {
   title: string;
   detail: string | null;
   attentionClass: 'action_required' | 'watch' | 'positive' | 'informational';
+  severity: WealthSeverity;
   actionable: boolean;
   evidence: Record<string, unknown> | null;
   explainedBy: { merchant: string; amount: number; day: string } | null;
 }
 
 export interface WealthRecommendedAction {
-  kind: 'adjust_pace' | 'review_budget' | 'review_transaction' | 'move_cash' | 'review';
+  kind: 'adjust_pace' | 'review_budget' | 'review_transaction' | 'move_cash' | 'cash_critical' | 'review';
   title: string;
   detail: string | null;
   dismissKey?: string | null;
@@ -184,16 +194,20 @@ export interface WealthRecommendedAction {
 
 export interface WealthLanding {
   asOf: string;
-  posture: WealthPosture;
+  severity: WealthSeverity;
+  summary: string;
   numbers: {
     mtdDiscretionary: { amount: number } | null;
     savingsRate: { ratePct: number; income: number; spending: number; windowDays: number; healthy: boolean } | null;
     netWorth: {
       amount: number; asOf: string | null;
-      trend: { monthlyChange: number; direction: 'growing' | 'declining'; material: boolean; projectedYearEnd: number } | null;
+      // No projected year-end figure — see wealth-landing.js's comment: a
+      // linear extrapolation of a short trailing slope is misleading, not
+      // just optimistic. Use numbers.planPace for progress vs. the plan.
+      trend: { monthlyChange: number; direction: 'growing' | 'declining'; material: boolean } | null;
     } | null;
     planPace: { planLiquidAtPace: number; delta: number; ahead: boolean; pctYearElapsed: number } | null;
-    cashBuffer: { amount: number; thin: boolean } | null;
+    cashBuffer: { amount: number; thin: boolean; critical: boolean } | null;
   };
   whatChanged: WealthChangeCard[];
   recommendedAction: WealthRecommendedAction | null;
@@ -594,6 +608,11 @@ export interface BriefingData {
   crossContextInsights?: Insight[];
   wealthInsights?: Insight[];
   wealthLanding?: WealthLanding | null;
+  // True when `wealthLanding` was carried forward from a prior response
+  // (briefingMerge.ts) because the incoming response transiently lacked it —
+  // never a signal that the DATA itself is stale, only that this particular
+  // fetch didn't refresh it.
+  wealthLandingStale?: boolean;
   healthInsights?: Insight[];
   recovery?: Recovery | null;
   healthComposites?: HealthComposite[];

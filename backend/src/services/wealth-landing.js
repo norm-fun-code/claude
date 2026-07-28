@@ -54,6 +54,87 @@ const RELATED_CATEGORY_GROUPS = {
 
 const TIER_RANK = { action_required: 0, watch: 1, positive: 2, informational: 3 };
 
+// ── Wealth severity contract (severity/reliability cleanup) ──
+// One deterministic severity per insight and for the overall Wealth summary,
+// shared by the Wealth tab, Today's radar candidate, and Recommended Action —
+// derived ONLY from fields other modules already compute (attentionClass,
+// explainedBy, reasonCode, evidence dollars, cashflow-lookahead, plan pace).
+// Never a second materiality model, never LLM-chosen.
+//
+//   critical    — credible urgent financial risk requiring immediate action
+//   action      — meaningful unresolved issue with a concrete action
+//   review      — unusual activity worth confirming, not yet a confirmed issue
+//   explained   — anomaly already explained (auto-matched, or user-confirmed
+//                 "This was intentional")
+//   on_track    — no material unresolved issue
+//   unavailable — source data stale/incomplete/disconnected
+
+// A budget/pace problem only rises to "action" (not just "review") once it's
+// a CONFIRMED, PERSISTENT issue (over budget / pacing over budget / spending
+// more than earned) — a single-month spending spike that hasn't recurred is
+// "worth confirming" (review), not yet a decision to make. This is why
+// "percent above usual" alone must never drive severity: a spending_spike
+// insight can carry a huge % and still only be a review-tier unconfirmed
+// anomaly until it's either persistent or explained.
+const PERSISTENT_ACTION_REASON_CODES = new Set(['over_budget', 'pacing_over_budget', 'overspending_30d']);
+// Below this dollar size, even a persistent issue doesn't rise above
+// "review" — material dollar size is a required severity input.
+const ACTION_DOLLAR_FLOOR = 300;
+// A plan-pace shortfall below this is ordinary month-to-month noise, not a
+// severity-relevant trajectory problem.
+const PLAN_BEHIND_MATERIAL_FLOOR = 2000;
+
+/** Per-insight severity — pure, derived from fields wealth-insights.js
+ *  already attaches to every insight (never re-detected here). */
+function itemSeverity(insight) {
+  if (insight.explainedBy) return 'explained';
+  if (insight.attentionClass === 'action_required') {
+    const impact = insight.evidence?.impactDollars ?? insight.evidence?.actual ?? 0;
+    if (PERSISTENT_ACTION_REASON_CODES.has(insight.reasonCode) && impact >= ACTION_DOLLAR_FLOOR) return 'action';
+    return 'review'; // e.g. an unconfirmed spending_spike — worth confirming, not yet a decision
+  }
+  if (insight.attentionClass === 'watch') return 'review';
+  return 'on_track'; // positive / informational
+}
+
+/**
+ * Overall Wealth summary severity — computed FROM the child items' own
+ * severities (never independently generated), plus the two whole-picture
+ * signals no single insight carries: a genuinely critical cash position
+ * (bills exceeding the buffer, or an already-negative buffer) and a
+ * materially-behind financial plan. Priority order, each precondition
+ * excluding the ones above it:
+ *   1. unavailable — source data incomplete/stale/disconnected
+ *   2. critical    — real, configured financial danger (cash), or an
+ *                     item-level critical
+ *   3. action       — at least one unresolved item needs a decision, or the
+ *                      plan trajectory is materially off
+ *   4. review       — at least one unresolved item is worth confirming
+ *   5. on_track     — everything unresolved has been explained, or nothing
+ *                      is wrong (summary is computed from unresolved
+ *                      children only — an explained item never keeps the
+ *                      summary elevated)
+ */
+function deriveSeverity({ dataComplete, itemSeverities = [], cashCritical = false, planBehindMaterial = false }) {
+  if (!dataComplete) return 'unavailable';
+  if (cashCritical || itemSeverities.includes('critical')) return 'critical';
+  if (itemSeverities.includes('action') || planBehindMaterial) return 'action';
+  if (itemSeverities.includes('review')) return 'review';
+  return 'on_track';
+}
+
+/** Deterministic, non-LLM summary line — computed from the SAME counts the
+ *  severity itself was computed from, so the top-level line can never
+ *  disagree with its own children (e.g. "On track" while a red exception
+ *  sits below it). */
+function summaryLabel(severity, { actionCount = 0, reviewCount = 0 } = {}) {
+  if (severity === 'unavailable') return 'Data incomplete';
+  if (severity === 'critical') return 'Action needed';
+  if (severity === 'action') return actionCount > 1 ? `Action needed · ${actionCount} items` : 'Action needed';
+  if (severity === 'review') return reviewCount > 1 ? `On track · ${reviewCount} categories to review` : 'On track · 1 to review';
+  return 'On track';
+}
+
 /** Pure: does `day` (a Date or 'YYYY-MM-DD') fall in the same calendar month
  *  as `asOf`, in UTC terms (matches how spendTransactions buckets days). */
 function isCurrentMonth(day, asOf) {
@@ -167,28 +248,6 @@ function applyWealthDismissals(insights, dismissedKeys, dismissedContext) {
     });
 }
 
-/**
- * Deterministic posture — evidence-backed, never LLM-generated. Checked in
- * this exact priority order (each state's precondition excludes the ones
- * above it, so exactly one applies):
- *   1. data_incomplete  — Monarch unhealthy; every other number is unreliable
- *   2. action_needed    — a real action_required item exists (overspend,
- *                          over/pacing-over budget, a still-unexplained spike)
- *   3. ahead_of_plan     — a financial plan exists and net worth is
- *                          materially ahead of the pro-rated pace
- *   4. worth_watching    — a watch-class item exists (net-worth decline,
- *                          an explained-but-still-notable spike) with no
- *                          action required
- *   5. on_track          — default: healthy, nothing to flag
- */
-function derivePosture({ dataComplete, actionRequiredCount, watchCount, planAheadMaterial }) {
-  if (!dataComplete) return 'data_incomplete';
-  if (actionRequiredCount > 0) return 'action_needed';
-  if (planAheadMaterial) return 'ahead_of_plan';
-  if (watchCount > 0) return 'worth_watching';
-  return 'on_track';
-}
-
 /** Rank for "What Changed": action_required > watch > positive >
  *  informational (acceptance criteria's "urgent > materially off-plan >
  *  positive progress > informational"), preserving each tier's existing
@@ -215,16 +274,22 @@ function toChangeCard(ins) {
     title: ins.title,
     detail: ins.detail,
     attentionClass: ins.attentionClass,
+    severity: ins.severity,
     actionable: Boolean(ins.actionable),
     evidence: ins.evidence || null,
     explainedBy: ins.explainedBy || null,
   };
 }
 
-/** One safe, deterministic recommended action from the highest-priority
- *  action_required item — never manufactured when nothing warrants it. */
-function deriveRecommendedAction(actionRequiredItems, cashflowThin) {
-  const top = actionRequiredItems[0];
+/** One safe, deterministic recommended action — driven ONLY by items whose
+ *  own severity actually rose to 'action' or 'critical' (never a raw
+ *  attentionClass:'action_required' item that severity downgraded to
+ *  'review' — that's exactly the old contradiction where an item labeled
+ *  "Not a concern" still drove a red recommended action). `cashCritical`
+ *  (a real, configured danger) takes priority over the softer `cashflowThin`
+ *  heads-up when both are true. Never manufactured when nothing warrants it. */
+function deriveRecommendedAction(actionableItems, cashflowThin, cashCritical) {
+  const top = actionableItems[0];
   if (top) {
     const dismissKey = top.dismissKey;
     if (top.reasonCode === 'overspending_30d') {
@@ -246,6 +311,13 @@ function deriveRecommendedAction(actionRequiredItems, cashflowThin) {
       };
     }
     return { kind: 'review', title: top.title, detail: top.detail, dismissKey, askPrompt: top.title };
+  }
+  if (cashCritical) {
+    return {
+      kind: 'cash_critical', title: 'Cash buffer won’t cover upcoming bills',
+      detail: 'Upcoming recurring bills exceed your current cash buffer — move cash or delay a bill before it hits.',
+      dismissKey: null, askPrompt: 'My cash buffer looks like it will go negative before upcoming bills clear — what should I do?',
+    };
   }
   if (cashflowThin) {
     return {
@@ -292,6 +364,12 @@ async function buildWealthLandingProjection({ asOf = new Date(), tz = process.en
 
   let cashflowThin = false;
   let cashBuffer = null;
+  // A REAL configured risk (bills exceed the buffer, or the buffer is
+  // already negative) — stricter than `thin`, and the only source-level
+  // signal severe enough to earn 'critical' on its own. Reuses the SAME
+  // computeCashflowLookahead() output `thin` already reads; no new
+  // detection.
+  let cashCritical = false;
   try {
     const monarchWealth = require('./monarch-wealth');
     if (monarchWealth.isConfigured()) {
@@ -305,6 +383,7 @@ async function buildWealthLandingProjection({ asOf = new Date(), tz = process.en
         const look = computeCashflowLookahead({ streams, accounts: accountsData?.accounts || [], asOf });
         cashflowThin = look.thin;
         cashBuffer = look.cashBuffer;
+        cashCritical = look.cashBuffer != null && (look.cashBuffer < 0 || look.totalUpcoming > look.cashBuffer);
       }
     }
   } catch { /* best-effort — cash buffer is an optional posture-card number */ }
@@ -329,24 +408,33 @@ async function buildWealthLandingProjection({ asOf = new Date(), tz = process.en
   } catch { /* best-effort — plan pace is optional, only shown when a plan exists */ }
 
   // Dismissal-aware (with reactivation) -> explain single-transaction
-  // spikes -> consolidate related categories -> rank for "What Changed".
+  // spikes -> consolidate related categories -> rank for "What Changed" ->
+  // stamp each with its severity (the summary is computed FROM these, never
+  // independently — required so an item can never disagree with the
+  // top-level line).
   const dismissFiltered = applyWealthDismissals(insightsRaw, dismissedKeys, dismissedContext);
   const explained = await annotateExplainedSpikes(dismissFiltered, asOf);
   const consolidated = consolidateRelatedCategories(explained);
   const ranked = rankForWhatChanged(consolidated);
   const nonInformational = ranked.filter((i) => i.attentionClass !== 'informational');
   const informational = ranked.filter((i) => i.attentionClass === 'informational');
-  const whatChanged = [...nonInformational, ...informational].slice(0, 3).map(toChangeCard);
+  const rankedWithSeverity = [...nonInformational, ...informational].map((i) => ({ ...i, severity: itemSeverity(i) }));
+  const whatChanged = rankedWithSeverity.slice(0, 3).map(toChangeCard);
 
-  const actionRequiredItems = ranked.filter((i) => i.attentionClass === 'action_required');
-  const watchCount = ranked.filter((i) => i.attentionClass === 'watch').length;
+  const itemSeverities = rankedWithSeverity.map((i) => i.severity);
+  const actionCount = itemSeverities.filter((s) => s === 'action' || s === 'critical').length;
+  const reviewCount = itemSeverities.filter((s) => s === 'review').length;
+  // "Ahead of plan" stays a POSITIVE FACT shown alongside the numbers
+  // (numbers.planPace below) — it never elevates severity. Only a material
+  // shortfall does, since that's an unresolved issue.
   const planAheadMaterial = Boolean(planPace && planPace.ahead && Math.abs(planPace.delta) >= 1000);
+  const planBehindMaterial = Boolean(planPace && !planPace.ahead && Math.abs(planPace.delta) >= PLAN_BEHIND_MATERIAL_FLOOR);
 
-  const posture = derivePosture({
-    dataComplete, actionRequiredCount: actionRequiredItems.length, watchCount, planAheadMaterial,
-  });
+  const severity = deriveSeverity({ dataComplete, itemSeverities, cashCritical, planBehindMaterial });
+  const summary = summaryLabel(severity, { actionCount, reviewCount });
 
-  const recommendedAction = posture === 'data_incomplete' ? null : deriveRecommendedAction(actionRequiredItems, cashflowThin);
+  const actionableItems = rankedWithSeverity.filter((i) => i.severity === 'action' || i.severity === 'critical');
+  const recommendedAction = severity === 'unavailable' ? null : deriveRecommendedAction(actionableItems, cashflowThin, cashCritical);
 
   // Current-month category breakdown for the Spending drill-in — reuses the
   // exact same query/dedup wealth-insights.js's spike detector reads, just
@@ -364,7 +452,8 @@ async function buildWealthLandingProjection({ asOf = new Date(), tz = process.en
 
   return {
     asOf: asOf.toISOString(),
-    posture,
+    severity,
+    summary,
     numbers: {
       mtdDiscretionary: spendingMtd != null ? { amount: Math.round(spendingMtd) } : null,
       savingsRate: savingsRate ? {
@@ -374,13 +463,17 @@ async function buildWealthLandingProjection({ asOf = new Date(), tz = process.en
       netWorth: netWorthRow ? {
         amount: Math.round(Number(netWorthRow.value)),
         asOf: netWorthRow.ts ? new Date(netWorthRow.ts).toISOString() : null,
+        // No `projectedYearEnd` — a linear extrapolation of a short trailing
+        // slope is misleading (market movement, transfers, equity comp, and
+        // irregular cash flows are lumpy); only the factual trend itself is
+        // reported. See numbers.planPace for progress vs. the actual plan.
         trend: netWorthTrend ? {
           monthlyChange: Math.round(netWorthTrend.monthlyChange), direction: netWorthTrend.direction,
-          material: netWorthTrend.material, projectedYearEnd: Math.round(netWorthTrend.projected),
+          material: netWorthTrend.material,
         } : null,
       } : null,
       planPace,
-      cashBuffer: cashBuffer != null ? { amount: Math.round(cashBuffer), thin: cashflowThin } : null,
+      cashBuffer: cashBuffer != null ? { amount: Math.round(cashBuffer), thin: cashflowThin, critical: cashCritical } : null,
     },
     whatChanged,
     recommendedAction,
@@ -397,6 +490,7 @@ async function buildWealthLandingProjection({ asOf = new Date(), tz = process.en
 module.exports = {
   buildWealthLandingProjection,
   // Exported for tests / reuse — pure helpers, no I/O.
-  derivePosture, rankForWhatChanged, applyWealthDismissals, consolidateRelatedCategories,
-  REACTIVATE_MULTIPLIER, EXPLAINS_SPIKE_SHARE,
+  itemSeverity, deriveSeverity, summaryLabel,
+  rankForWhatChanged, applyWealthDismissals, consolidateRelatedCategories, annotateExplainedSpikes,
+  REACTIVATE_MULTIPLIER, EXPLAINS_SPIKE_SHARE, ACTION_DOLLAR_FLOOR, PLAN_BEHIND_MATERIAL_FLOOR,
 };

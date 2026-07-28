@@ -129,7 +129,7 @@ test('required 5: when Monarch has never synced (no configured sources), posture
     return;
   }
   const landing = await buildWealthLandingProjection({ asOf: new Date(), tz: TZ });
-  assert.equal(landing.posture, 'data_incomplete');
+  assert.equal(landing.severity, 'unavailable');
   assert.ok(landing.sourceHealth.qualification, 'expected a non-null, user-visible qualification string');
   assert.match(landing.sourceHealth.qualification, /incomplete|out of date/i);
 });
@@ -140,7 +140,7 @@ test('required 10: with no material wealth data at all, recommendedAction is nul
   // buildWealthInsights() naturally returns few/no insights, so there is
   // nothing to force action_needed.
   const landing = await buildWealthLandingProjection({ asOf: new Date(), tz: TZ });
-  if (landing.posture !== 'action_needed' && landing.posture !== 'data_incomplete') {
+  if (landing.severity !== 'action' && landing.severity !== 'critical' && landing.severity !== 'unavailable') {
     assert.equal(landing.recommendedAction, null, '"No action needed" must be an explicit null, not an empty-but-truthy placeholder');
   }
   // The contract itself: recommendedAction is either null or has a kind+askPrompt.

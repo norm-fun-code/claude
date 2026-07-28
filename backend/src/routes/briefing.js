@@ -2335,7 +2335,19 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
       const dismissedInsights = require('../store/dismissedInsights');
       dismissedKeysSet = await dismissedInsights.dismissedKeys();
       insights = dismissedInsights.applyDismissals(insights, dismissedKeysSet);
-      wealthInsights = dismissedInsights.applyDismissals(wealthInsights, dismissedKeysSet);
+      // wealthInsights specifically uses wealth-landing.js's REACTIVATION-AWARE
+      // filter (+ single-transaction "explained" annotation) — the same
+      // pipeline the Wealth tab reads — so a category marked "This was
+      // intentional" stops warning on Today's radar too, not just on Wealth
+      // (severity/reliability cleanup, item 3: one dismissal, every surface).
+      // The plain applyDismissals() above is fine for non-wealth findings,
+      // which have no comparable dollar-evidence reactivation rule.
+      const wealthLanding = require('../services/wealth-landing');
+      const dismissedContext = await dismissedInsights.dismissedContextByKey();
+      wealthInsights = await wealthLanding.annotateExplainedSpikes(
+        wealthLanding.applyWealthDismissals(wealthInsights, dismissedKeysSet, dismissedContext),
+        new Date()
+      );
       healthInsights = dismissedInsights.applyDismissals(healthInsights, dismissedKeysSet);
       crossContextInsights = dismissedInsights.applyDismissals(crossContextInsights, dismissedKeysSet);
     } catch (err) {
