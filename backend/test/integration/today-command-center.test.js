@@ -251,13 +251,14 @@ test('scenario 7 — committing a long ACTION preserves the FULL text (detail), 
 });
 
 // ── 8. A same-day meaningful mutation appears under Since This Morning ────
-test('scenario 8 — an attention-log row created AFTER snapshotAt appears in sinceMorning', async (t) => {
+test('scenario 8 — an attention-log row created AFTER snapshotAt, carrying approved user-facing content, appears in sinceMorning with that content (never the internal reason)', async (t) => {
   const snapshotAt = new Date(Date.now() - 3600e3); // snapshot cut 1h ago
   const eventKey = `${MARKER}-since-1`;
   await db.query(
-    `INSERT INTO attention_log (event_key, source, domain, type, subject, disposition, reason, scores, gates, delivered, delivery_state, created_at)
-     VALUES ($1, 'test', 'wealth', 'transaction_anomaly', 'test-subject', 'add_to_brief', $2, '{}'::jsonb, '{}'::jsonb, false, 'stored', now())`,
-    [eventKey, `${MARKER} A new transaction needs a look.`]
+    `INSERT INTO attention_log (event_key, source, domain, type, subject, disposition, reason, scores, gates, delivered, delivery_state, created_at, user_title, user_detail)
+     VALUES ($1, 'test', 'wealth', 'transaction_anomaly', 'test-subject', 'add_to_brief', $2, '{"value":0.42}'::jsonb, '{"brief_default":true}'::jsonb, false, 'stored', now(), $3, $4)`,
+    [eventKey, `${MARKER} value 0.42 is real but below the interrupt/offer bar — deferred to the next briefing`,
+      `${MARKER} A new transaction needs a look`, `${MARKER} A $340 charge at an unfamiliar merchant posted this afternoon.`]
   );
   t.after(async () => { await db.query(`DELETE FROM attention_log WHERE event_key = $1`, [eventKey]); });
 
@@ -266,9 +267,12 @@ test('scenario 8 — an attention-log row created AFTER snapshotAt appears in si
     chiefBrief: { synthesis: 's', action: 'a', risk: 'r' }, chiefBriefStale: false, chiefBriefPending: false, chiefBriefQuality: { status: 'fresh' },
     forecasts: [], todayForecast: null, healthInsights: [], wealthInsights: [], weeklyReview: null, wealth: null, recovery: null,
   });
-  assert.ok(tcc.sinceMorning.some((s) => s.stableId === eventKey), 'a post-snapshot attention-log row must appear in sinceMorning');
+  assert.ok(tcc.sinceMorning.some((s) => s.stableId === eventKey), 'a post-snapshot attention-log row with approved content must appear in sinceMorning');
   const item = tcc.sinceMorning.find((s) => s.stableId === eventKey);
   assert.equal(item.destination, 'wealth');
+  assert.equal(item.summary, `${MARKER} A new transaction needs a look`, 'summary must be the approved user_title, never the internal reason');
+  assert.equal(item.detail, `${MARKER} A $340 charge at an unfamiliar merchant posted this afternoon.`);
+  assert.doesNotMatch(item.summary, /interrupt\/offer bar|deferred to the next briefing|value 0\.\d/, 'the internal decision reason must never leak into the user-facing summary');
 });
 
 // ── 9. A mutation already included in snapshotAt is not repeated ───────────

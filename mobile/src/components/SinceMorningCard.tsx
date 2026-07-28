@@ -29,7 +29,12 @@ function SinceMorningCard({ items, onNavigate }: Props) {
           hitSlop={4}
         >
           <View style={[styles.dot, { backgroundColor: c.accent }]} />
-          <Text style={[styles.summary, { color: c.text }]} numberOfLines={2}>{item.summary}</Text>
+          <View style={styles.textCol}>
+            <Text style={[styles.summary, { color: c.text }]} numberOfLines={2}>{item.summary}</Text>
+            {item.detail ? (
+              <Text style={[styles.detail, { color: c.subtext }]} numberOfLines={2}>{item.detail}</Text>
+            ) : null}
+          </View>
         </Pressable>
       ))}
     </View>
@@ -47,7 +52,9 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
   },
   dot: { width: 6, height: 6, borderRadius: 3, marginTop: 7 },
-  summary: { ...typography.body, fontSize: 14, lineHeight: 20, flex: 1 },
+  textCol: { flex: 1 },
+  summary: { ...typography.body, fontSize: 14, lineHeight: 20 },
+  detail: { ...typography.body, fontSize: 12, lineHeight: 16, marginTop: 2 },
 });
 
 const SinceMorningCardMemo = React.memo(SinceMorningCard);

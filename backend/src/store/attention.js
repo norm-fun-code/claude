@@ -34,18 +34,30 @@ const MAX_DELIVERY_ATTEMPTS = Number(process.env.ATTENTION_MAX_DELIVERY_ATTEMPTS
 const SURFACED_DISPOSITIONS = ['notify_now', 'offer_action', 'auto_act'];
 const BUDGET_DISPOSITIONS = ['notify_now', 'offer_action', 'auto_act'];
 
+// The event's own title/body — the SAME copy already approved for direct
+// user display (it's what a push notification would show) — persisted
+// alongside the internal reason/scores/gates audit fields. Blank/whitespace-
+// only counts as "no approved content" (NULL), never an empty-string card.
+function approvedUserFacing(event) {
+  const title = event?.title != null ? String(event.title).trim() : '';
+  const body = event?.body != null ? String(event.body).trim() : '';
+  return { userTitle: title || null, userDetail: body || null };
+}
+
 function insertRow(client, { event, decision, key, deliveryState, delivered, deliveredChannel, reservedAt = false }) {
+  const { userTitle, userDetail } = approvedUserFacing(event);
   return client.query(
     `INSERT INTO attention_log
        (event_key, source, domain, type, subject, disposition, reason, scores, gates,
-        delivered, delivered_channel, delivery_state, reserved_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,${reservedAt ? 'now()' : 'NULL'})
+        delivered, delivered_channel, delivery_state, reserved_at, user_title, user_detail)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,${reservedAt ? 'now()' : 'NULL'},$13,$14)
      RETURNING id`,
     [
       key, event.source, event.domain, event.type, event.subject,
       decision.disposition, decision.reason,
       JSON.stringify(decision.scores || {}), JSON.stringify(decision.gates || {}),
       delivered, deliveredChannel, deliveryState,
+      userTitle, userDetail,
     ]
   ).then((r) => r.rows[0]?.id ?? null);
 }
@@ -340,8 +352,53 @@ async function pendingForBrief({ tz = process.env.TZ || 'America/New_York', limi
   }
 }
 
+/**
+ * User-visible post-snapshot changes for Today's "Since This Morning" card —
+ * a NARROWLY NAMED SIBLING to pendingForBrief(), not a reuse of it (see the
+ * "Since This Morning" leak fix). pendingForBrief() feeds the chief-brief
+ * LLM PROMPT as raw context the model is instructed to interpret/reword —
+ * that stays exactly as-is (the chief-brief pipeline's `reason` usage is a
+ * safe, internal, LLM-mediated use, not a raw UI render). This function
+ * feeds an actual UI surface directly, so it is strict about what leaves the
+ * ledger:
+ *   - only rows carrying BOTH user_title and user_detail — the event's own
+ *     already-approved-for-display copy (see insertRow's approvedUserFacing);
+ *     a row with only the internal `reason` audit string is excluded, not
+ *     downgraded into prose here — "fix the data contract, not the string."
+ *   - never a commitment_due row: commitment completion is an audit/belief
+ *     signal (routes/commitments.js's stampCommitmentOutcome) already
+ *     reflected in the commitments UI itself, not a second Since-This-
+ *     Morning addendum. (Structurally these are always disposition
+ *     'notify_now' today, which the disposition filter below already
+ *     excludes — this is a second, explicit guard against that ever
+ *     changing silently.)
+ *   - `since` is compared against created_at ONLY — never outcome_at — so a
+ *     completion/outcome stamp on an OLDER row (which updates outcome_at,
+ *     never created_at) can never make that older event look newly-occurred.
+ */
+async function sinceMorningForUser({ since, limit = 8 } = {}) {
+  if (!since) return [];
+  try {
+    const { rows } = await query(
+      `SELECT event_key, domain, type, subject, user_title, user_detail, created_at
+         FROM attention_log
+        WHERE disposition IN ('add_to_brief','ask_question')
+          AND type != 'commitment_due'
+          AND user_title IS NOT NULL AND user_detail IS NOT NULL
+          AND created_at > $1
+        ORDER BY created_at DESC
+        LIMIT $2`,
+      [new Date(since), limit]
+    );
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
 module.exports = {
   record, reserveDelivery, finalizeDelivery,
   recentKeys, budgetUsedToday, criticalUsedToday, everSeen, stampOutcome, outcomeCounts, pendingForBrief,
+  sinceMorningForUser,
   ATTENTION_DELIVERY_LOCK, RESERVATION_TTL_MS, MAX_DELIVERY_ATTEMPTS,
 };

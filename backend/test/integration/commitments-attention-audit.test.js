@@ -83,3 +83,49 @@ test('marking a commitment done records an audit-only "completed" outcome', asyn
   const outcome = await pollOutcome(String(c.id));
   assert.equal(outcome, 'completed');
 });
+
+// "Since This Morning" leak fix — required tests 1, 2, and the route-level/
+// real-Postgres proof (through the resulting Today payload, not just a
+// mocked store call). Reproduces the exact reported flow: a Zone 2
+// commitment reminder fired earlier today (seeding a real audited
+// attention_log row, same as the production runner does), the user marks it
+// done, and Today's command center must show NO "Since This Morning" card
+// for it — the commitment list itself already reflects the completion.
+test('required 1+2+7: marking a Zone 2 commitment complete stamps completed in the attention ledger AND produces no Since This Morning card, verified through the real Today payload', async () => {
+  await cleanup();
+  const { buildTodayCommandCenter } = require('../../src/brain/todayCommandCenter');
+  const { fromCommitmentDue } = require('../../src/intelligence/events');
+  const { eventKey } = require('../../src/intelligence/attention');
+  const attentionStore = require('../../src/store/attention');
+
+  const c = await commitmentsStore.create({ title: 'Zone 2 walk', source: 'manual' });
+  createdIds.push(c.id);
+  const snapshotAt = new Date(Date.now() - 30 * 60 * 1000); // brief snapshot cut 30m ago
+  const firedEvent = fromCommitmentDue({ commitment: c, asOf: new Date(snapshotAt.getTime() - 5 * 60 * 1000) });
+  await attentionStore.record({
+    event: firedEvent,
+    decision: { disposition: 'notify_now', reason: 'commitment reminder (runner-owned delivery; audited for outcome learning)', scores: { value: 0.6 }, gates: { audit_only: true } },
+    delivered: true, deliveredChannel: 'push',
+  });
+  const key = eventKey(firedEvent);
+
+  // The reminder fired BEFORE the morning snapshot in this fixture, so it
+  // would be excluded by the since-filter regardless — the point of this
+  // test is that completing it (a POST-snapshot action) creates nothing NEW
+  // that appears in Since This Morning either.
+  const res = await request(app).post(`/api/commitments/${c.id}/done`).set(authHeader());
+  assert.equal(res.status, 200);
+  const outcome = await pollOutcome(String(c.id));
+  assert.equal(outcome, 'completed', 'requirement 1: the outcome stamp must still land');
+
+  const { rows } = await db.query(`SELECT disposition, created_at FROM attention_log WHERE event_key = $1`, [key]);
+  assert.equal(rows[0]?.disposition, 'notify_now', 'a commitment firing is never disposition add_to_brief/ask_question — structurally ineligible for Since This Morning');
+
+  const tcc = await buildTodayCommandCenter({
+    snapshotId: 'snap-commit-done', snapshotVersion: 3, snapshotAt: snapshotAt.toISOString(), builtAt: new Date().toISOString(),
+    chiefBrief: { synthesis: 's', action: 'a', risk: 'r' }, chiefBriefStale: false, chiefBriefPending: false, chiefBriefQuality: { status: 'fresh' },
+    forecasts: [], todayForecast: null, healthInsights: [], wealthInsights: [], weeklyReview: null, wealth: null, recovery: null,
+  });
+  assert.ok(!tcc.sinceMorning.some((s) => s.stableId === key), 'requirement 2: completing a commitment must never produce a Since This Morning card for it');
+  assert.ok(!JSON.stringify(tcc.sinceMorning).includes('Zone 2'), 'the commitment completion must not surface anywhere in Since This Morning — the commitments list already shows it');
+});

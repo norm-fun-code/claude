@@ -387,7 +387,13 @@ export interface TodayRisk {
 export interface SinceMorningItem {
   stableId: string;
   occurredAt: string | null;
+  // Both are the event's own explicitly-approved user-facing copy (never the
+  // Attention Policy's internal decision reason/scores/gates — see backend
+  // brain/todayCommandCenter.js's buildSinceMorning + store/attention.js's
+  // sinceMorningForUser). summary = what changed; detail = why it matters /
+  // the supporting fact.
   summary: string;
+  detail: string;
   destination: string;
 }
 

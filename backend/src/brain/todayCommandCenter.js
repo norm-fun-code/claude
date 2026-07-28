@@ -78,16 +78,26 @@ function findRiskEvidence({ forecasts, todayForecast, healthInsights }) {
  *  every row was already judged add_to_brief/ask_question-worthy by the
  *  existing judge()/dispatch() pipeline; this just reads the ones that
  *  postdate the snapshot this response is otherwise built from, so a
- *  same-day mutation the snapshot ALREADY reflects is never re-shown as new. */
-async function buildSinceMorning({ tz, snapshotAt }) {
+ *  same-day mutation the snapshot ALREADY reflects is never re-shown as new.
+ *
+ *  Reads store/attention.js's sinceMorningForUser() — a DEDICATED, narrowly
+ *  scoped query distinct from pendingForBrief() (which still feeds the
+ *  chief-brief LLM prompt, unchanged) — never the internal `reason` field.
+ *  A row with no approved user-facing content (see insertRow's
+ *  approvedUserFacing in store/attention.js) is excluded by that query
+ *  entirely, not papered over with the internal decision explanation: an
+ *  event the Attention Policy judged worth deferring to the brief but that
+ *  never got real user copy simply has nothing to show on Today. */
+async function buildSinceMorning({ snapshotAt }) {
   if (!snapshotAt) return [];
   try {
     const attentionStore = require('../store/attention');
-    const rows = await attentionStore.pendingForBrief({ tz, since: new Date(snapshotAt), limit: 8 });
+    const rows = await attentionStore.sinceMorningForUser({ since: snapshotAt, limit: 8 });
     return rows.map((r) => ({
       stableId: r.event_key,
       occurredAt: r.created_at ? new Date(r.created_at).toISOString() : null,
-      summary: r.reason || `${r.domain} ${r.type}: ${r.subject}`,
+      summary: r.user_title,
+      detail: r.user_detail,
       destination: domainToDestination(r.domain),
     }));
   } catch (err) {
@@ -252,7 +262,7 @@ async function buildTodayCommandCenter(input) {
       }
     : null;
 
-  const sinceMorning = await buildSinceMorning({ tz, snapshotAt });
+  const sinceMorning = await buildSinceMorning({ snapshotAt });
   // "On My Radar" — server-ranked replacement for the old fixed three-tile
   // preview row (see brain/radar.js). Never computed from wealth/recovery/
   // weeklyReview alone; always dedup'd against the risk ALREADY built above
