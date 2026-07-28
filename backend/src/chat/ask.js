@@ -297,17 +297,30 @@ async function wealthContext() {
     const { buildWealthInsights } = require('../services/wealth-insights');
     const wealthLanding = require('../services/wealth-landing');
     const dismissedInsights = require('../store/dismissedInsights');
-    const [insightsRaw, dismissedKeys, dismissedContext] = await Promise.all([
+    const { computeDiscretionaryMatchedPace } = require('../services/wealth-pace');
+    const [insightsRaw, dismissedKeys, dismissedContext, pace] = await Promise.all([
       buildWealthInsights(),
       dismissedInsights.dismissedKeys(),
       dismissedInsights.dismissedContextByKey(),
+      computeDiscretionaryMatchedPace({ asOf: new Date() }).catch(() => null),
     ]);
-    if (!insightsRaw || !insightsRaw.length) return null;
     const filtered = wealthLanding.applyWealthDismissals(insightsRaw, dismissedKeys, dismissedContext);
     const insights = await wealthLanding.annotateExplainedSpikes(filtered, new Date());
-    if (!insights.length) return null;
-    return 'WEALTH DASHBOARD (live computed insights — use these numbers, they are current):\n' +
-      insights.slice(0, 8).map((i) => `- [${i.type}] ${i.title}${i.detail ? ` — ${i.detail}` : ''}${i.explainedBy ? ' (already explained by the user)' : ''}`).join('\n');
+    // Matched-pace line — same coverage-tier discipline as the Wealth tab: no
+    // line at all when there isn't enough history for an honest comparison.
+    let paceLine = null;
+    if (pace && pace.medianBaseline != null) {
+      const label = { below_typical: 'below', near_typical: 'near', above_typical: 'above', well_above_typical: 'well above' }[pace.paceLabel] || pace.paceLabel;
+      const pctPart = pace.vsMedian?.pct != null ? ` (${Math.abs(pace.vsMedian.pct)}%)` : '';
+      paceLine = `Discretionary spend is $${pace.currentAmount} MTD — ${label} typical pace${pctPart}, vs. a ${pace.coverageTier === 'typical' ? 'typical' : 'recent'}-pace median of $${pace.medianBaseline} (based on ${pace.monthsUsed} comparable prior months).`;
+      if (pace.drivers?.length) {
+        paceLine += ' Driven by ' + pace.drivers.map((d) => `${d.category} (+$${d.excessDollars})`).join(' and ') + '.';
+      }
+    }
+    if (!insights.length && !paceLine) return null;
+    const lines = insights.slice(0, 8).map((i) => `- [${i.type}] ${i.title}${i.detail ? ` — ${i.detail}` : ''}${i.explainedBy ? ' (already explained by the user)' : ''}`);
+    if (paceLine) lines.unshift(`- [spending_pace] ${paceLine}`);
+    return 'WEALTH DASHBOARD (live computed insights — use these numbers, they are current):\n' + lines.join('\n');
   } catch (err) {
     console.error('[chat] wealthContext failed:', err.message);
     return null;
@@ -690,6 +703,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     commitmentsResult,
     rawRecoveryResult,
     spendingMtdResult,
+    spendingPaceResult,
   ] = await Promise.allSettled([
     findingsStore.listFindings({ status: 'open' }),
     annotationsStore.listAnnotations({ from: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000), limit: 20 }),
@@ -728,6 +742,12 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     // over the WEALTH DASHBOARD prose block.
     financial
       ? require('../brain/snapshot').canonicalSpendingMtd(new Date(), process.env.TZ || 'America/New_York').catch(() => null)
+      : Promise.resolve(null),
+    // Matched-pace baseline — the SAME function wealth-landing.js/
+    // brain/snapshot.js call, so "is my spending unusual this month?" is
+    // checked against the identical median/label every other surface reads.
+    financial
+      ? require('../services/wealth-pace').computeDiscretionaryMatchedPace({ asOf: new Date(), tz: process.env.TZ || 'America/New_York' }).catch(() => null)
       : Promise.resolve(null),
   ]);
 
@@ -772,6 +792,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
   const rawRecovery = rawRecoveryResult.status === 'fulfilled' ? rawRecoveryResult.value : null;
   const commitmentsForFacts = commitmentsResult.status === 'fulfilled' ? (commitmentsResult.value || []) : [];
   const spendingMtd = spendingMtdResult.status === 'fulfilled' ? spendingMtdResult.value : null;
+  const spendingPace = spendingPaceResult.status === 'fulfilled' ? spendingPaceResult.value : null;
   // Fetched once, used both for "TODAY'S PLANNED WORKOUT" in the system
   // prompt below AND for the effective-workout claim here — so an answer
   // that prescribes the scheduled session after recovery/a swap already
@@ -787,7 +808,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     goals: (snapshot?.goals || []).map((g) => ({ title: g.title })), // active-status goals are always open
     commitments: commitmentsForFacts,
     experiments: experimentsResult.status === 'fulfilled' ? experimentsResult.value : [],
-    wealth: spendingMtd != null ? { spendingMtd } : null,
+    wealth: spendingMtd != null ? { spendingMtd, spendingPace } : null,
     resolvedContext,
   });
   factsForValidation.claims = buildEvidenceClaims(factsForValidation);

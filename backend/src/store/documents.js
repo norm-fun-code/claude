@@ -272,6 +272,51 @@ async function spendTransactions({ days = 120 } = {}) {
   return rows.map((r) => ({ day: r.day, merchant: r.merchant, amount: Number(r.amount), category: r.category }));
 }
 
+/**
+ * Category spend for an ARBITRARY [fromYmd, toYmd] local-date range (both
+ * inclusive) — monthlyCategorySpend only supports whole calendar months.
+ * Powers the discretionary matched-pace baseline's per-category "driver"
+ * breakdown, which needs a PARTIAL month (day 1 through the elapsed-fraction-
+ * matched day) compared against the same partial window in prior months, not
+ * a full month total. Same DISTINCT ON dedup as monthlyCategorySpend/
+ * spendTransactions (two importers can momentarily write the same
+ * transaction as two documents), and the same date-only comparison style as
+ * pruneDocuments (`occurred_at::date`), since Monarch transactions carry a
+ * calendar date with no meaningful time-of-day to anchor a timestamptz to.
+ */
+async function categorySpendInRange({ fromYmd, toYmd }) {
+  const { rows } = await query(
+    `WITH deduped AS (
+       SELECT DISTINCT ON (
+                occurred_at::date,
+                lower(coalesce(metadata->>'merchant','')),
+                metadata->>'amount',
+                lower(coalesce(metadata->>'account',''))
+              )
+              occurred_at,
+              COALESCE(NULLIF(metadata->>'category', ''), 'Uncategorized') AS category,
+              (metadata->>'amount')::numeric AS amount
+         FROM documents
+        WHERE source = 'monarch'
+          AND occurred_at::date >= $1::date
+          AND occurred_at::date <= $2::date
+          AND metadata ? 'amount'
+        ORDER BY occurred_at::date,
+                 lower(coalesce(metadata->>'merchant','')),
+                 metadata->>'amount',
+                 lower(coalesce(metadata->>'account','')),
+                 occurred_at
+     )
+     SELECT category, SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) AS spend
+       FROM deduped
+      GROUP BY 1
+      HAVING SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) > 0
+      ORDER BY 2 DESC`,
+    [fromYmd, toYmd]
+  );
+  return rows.map((r) => ({ category: r.category, spend: Number(r.spend) }));
+}
+
 // Reconcile a re-synced window against the source's current truth: delete
 // documents in [from, to] for this source/domain whose external_id is NOT in the
 // freshly-fetched set. This is how a transaction moved to a different month (or
@@ -305,6 +350,7 @@ module.exports = {
   randomHighlights,
   monthlyCategorySpend,
   spendTransactions,
+  categorySpendInRange,
   listWithoutEmbedding,
   setEmbedding,
   countMissingEmbeddings,

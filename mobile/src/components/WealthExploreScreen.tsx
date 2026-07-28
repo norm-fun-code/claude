@@ -97,6 +97,22 @@ export function WealthExploreScreen({ visible, onClose, landing }: Props) {
             Discretionary MTD: <Text style={{ fontWeight: '700' }}>{money(numbers.mtdDiscretionary.amount)}</Text> (excludes rent/mortgage)
           </Text>
         ) : null}
+        {numbers?.mtdDiscretionary?.comparison ? (
+          <>
+            <Text style={[styles.detail, { color: secondary }]}>
+              Compared against the median spend through the same point in {numbers.mtdDiscretionary.comparison.monthsUsed} of the last {numbers.mtdDiscretionary.comparison.monthsConsidered} months
+              {numbers.mtdDiscretionary.comparison.coverageTier === 'recent' ? ' (recent pace — fewer comparable months than usual)' : ''}
+              : <Text style={{ fontWeight: '700' }}>{money(numbers.mtdDiscretionary.comparison.medianBaseline)}</Text>.
+            </Text>
+            {numbers.mtdDiscretionary.comparison.previousMonthAmount != null ? (
+              <Text style={[styles.detail, { color: secondary }]}>
+                Last month through the same point: {money(numbers.mtdDiscretionary.comparison.previousMonthAmount)}.
+              </Text>
+            ) : null}
+          </>
+        ) : (numbers?.mtdDiscretionary ? (
+          <Text style={[styles.detail, { color: secondary }]}>Not enough comparable month history yet for a typical-pace comparison.</Text>
+        ) : null)}
         {(landing?.spendingDetail ?? []).map((row) => (
           <View key={row.category} style={styles.catRow}>
             <Text style={[styles.catName, { color: c.text }]}>{row.category}</Text>

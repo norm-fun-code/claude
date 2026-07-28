@@ -197,7 +197,25 @@ export interface WealthLanding {
   severity: WealthSeverity;
   summary: string;
   numbers: {
-    mtdDiscretionary: { amount: number } | null;
+    mtdDiscretionary: {
+      amount: number;
+      // Matched-pace baseline — how this MTD figure compares to the median of
+      // the same elapsed-fraction-of-month spend across trailing complete
+      // months. null whenever there isn't enough comparable history (fewer
+      // than 3 eligible months) — never a manufactured "typical" baseline.
+      comparison: {
+        coverageTier: 'typical' | 'recent' | 'insufficient';
+        monthsUsed: number;
+        monthsConsidered: number;
+        medianBaseline: number;
+        vsMedian: { dollars: number; pct: number | null };
+        paceLabel: 'below_typical' | 'near_typical' | 'above_typical' | 'well_above_typical';
+        previousMonthAmount: number | null;
+        vsPreviousMonth: { dollars: number; pct: number | null } | null;
+        drivers: { category: string; currentAmount: number; matchedMedian: number; excessDollars: number; pct: number | null }[];
+        monthsBreakdown: { monthsAgo: number; ym: string; matchedDay: number; amount: number; eligible: boolean }[];
+      } | null;
+    } | null;
     savingsRate: { ratePct: number; income: number; spending: number; windowDays: number; healthy: boolean } | null;
     netWorth: {
       amount: number; asOf: string | null;

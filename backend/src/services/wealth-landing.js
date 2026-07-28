@@ -336,6 +336,7 @@ function deriveRecommendedAction(actionableItems, cashflowThin, cashCritical) {
  */
 async function buildWealthLandingProjection({ asOf = new Date(), tz = process.env.TZ || 'America/New_York', wealthInsights: providedInsights = null } = {}) {
   const { canonicalSpendingMtd } = require('../brain/snapshot');
+  const { computeDiscretionaryMatchedPace } = require('./wealth-pace');
 
   // A caller that already resolved the SAME authority this request (e.g.
   // briefing.js's full build, which threads its BrainSnapshot-resolved raw
@@ -347,10 +348,15 @@ async function buildWealthLandingProjection({ asOf = new Date(), tz = process.en
     ? Promise.resolve(providedInsights)
     : wealthInsightsMod.buildWealthInsights().catch(() => []);
 
-  const [insightsRaw, spendingMtd, netWorthRow, savingsRate, netWorthTrend, sources, dismissedKeys, dismissedContext] =
+  const [insightsRaw, spendingMtd, spendingPace, netWorthRow, savingsRate, netWorthTrend, sources, dismissedKeys, dismissedContext] =
     await Promise.all([
       insightsPromise,
       canonicalSpendingMtd(asOf, tz).catch(() => null),
+      // Matched-pace baseline (median of the same elapsed-fraction-of-month
+      // spend across trailing complete months) — reuses canonicalSpendingMtd
+      // internally for the current-month figure, so it can never disagree
+      // with `spendingMtd` above.
+      computeDiscretionaryMatchedPace({ asOf, tz }).catch(() => null),
       metricsStore.latest({ domain: 'wealth', metric: 'net_worth' }).catch(() => null),
       wealthInsightsMod.computeSavingsRate({ now: asOf }).catch(() => null),
       wealthInsightsMod.computeNetWorthTrend({ now: asOf }).catch(() => null),
@@ -455,7 +461,24 @@ async function buildWealthLandingProjection({ asOf = new Date(), tz = process.en
     severity,
     summary,
     numbers: {
-      mtdDiscretionary: spendingMtd != null ? { amount: Math.round(spendingMtd) } : null,
+      // amount is the EXACT canonical MTD total, unchanged by this
+      // projection's `comparison` block — the same number every surface
+      // (Ask, briefing, Today) already reads via canonicalSpendingMtd.
+      mtdDiscretionary: spendingMtd != null ? {
+        amount: Math.round(spendingMtd),
+        comparison: spendingPace && spendingPace.medianBaseline != null ? {
+          coverageTier: spendingPace.coverageTier,
+          monthsUsed: spendingPace.monthsUsed,
+          monthsConsidered: spendingPace.monthsConsidered,
+          medianBaseline: spendingPace.medianBaseline,
+          vsMedian: spendingPace.vsMedian,
+          paceLabel: spendingPace.paceLabel,
+          previousMonthAmount: spendingPace.previousMonthAmount,
+          vsPreviousMonth: spendingPace.vsPreviousMonth,
+          drivers: spendingPace.drivers,
+          monthsBreakdown: spendingPace.monthsBreakdown,
+        } : null,
+      } : null,
       savingsRate: savingsRate ? {
         ratePct: savingsRate.ratePct, income: savingsRate.income, spending: savingsRate.spending,
         windowDays: savingsRate.windowDays, healthy: savingsRate.positive,

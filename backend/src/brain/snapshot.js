@@ -153,7 +153,7 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
   // parallel, not one-at-a-time).
   const [
     workoutRead, goalsRead, intentionRead, commitmentsRead,
-    wealthInsightsRead, spendingRead, findingsRead, experimentsRead,
+    wealthInsightsRead, spendingRead, spendingPaceRead, findingsRead, experimentsRead,
     contextRead, calendarRead, sourceHealthRead, resolvedContextRead,
     nightlyContextHistoryRead,
   ] = await Promise.all([
@@ -163,6 +163,11 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
     want.commitments ? read('commitments', () => require('../store/commitments').listActive({ limit: 20 }), []) : skip([]),
     want.wealth ? read('wealth', () => require('../services/wealth-insights').buildWealthInsights(), []) : skip([]),
     want.wealth ? read('spendingMtd', () => canonicalSpendingMtd(asOf, tz), null) : skip(null),
+    // Matched-pace baseline (median of the same elapsed-fraction-of-month
+    // spend across trailing complete months) — the SAME function
+    // wealth-landing.js/ask.js call, so this can never disagree with the
+    // Wealth tab or a cited Ask answer.
+    want.wealth ? read('spendingPace', () => require('../services/wealth-pace').computeDiscretionaryMatchedPace({ asOf, tz }), null) : skip(null),
     want.findings ? read('findings', () => require('../store/findings').listFindings({ status: 'open', limit: 40 }), []) : skip([]),
     want.experiments ? read('experiments', () => require('../store/experiments').listExperiments(), []) : skip([]),
     want.eligibleContext ? read('eligibleContext', async () => {
@@ -210,7 +215,7 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
     }))
     : skip(null);
 
-  const wealth = { insights: wealthInsightsRead.value || [], spendingMtd: spendingRead.value ?? null };
+  const wealth = { insights: wealthInsightsRead.value || [], spendingMtd: spendingRead.value ?? null, spendingPace: spendingPaceRead.value ?? null };
 
   // ── Truthful provenance: a 5-state freshness model ────────────────────────
   // 'unavailable' used to mean two very different things at once — "the
@@ -440,6 +445,17 @@ function canonicalFactsFrom({ recovery, effectiveWorkout, trainingOutcome, forec
     // uses); the legacy shapes are accepted so a caller that already has a
     // structured wealth object still lines up.
     spendingTotalMonth: wealth?.spendingMtd ?? wealth?.monthToDate?.total ?? wealth?.spendMTD ?? null,
+    // Matched-pace baseline (services/wealth-pace.js) — how the MTD total
+    // above compares to the median of the same elapsed-fraction-of-month
+    // spend across trailing complete months. null (not just an absent field)
+    // whenever there isn't enough history to trust a comparison — never a
+    // manufactured "typical" from too little data.
+    spendingPaceVsTypical: wealth?.spendingPace?.medianBaseline != null ? {
+      dollars: wealth.spendingPace.vsMedian?.dollars ?? null,
+      pct: wealth.spendingPace.vsMedian?.pct ?? null,
+      label: wealth.spendingPace.paceLabel ?? null,
+      monthsUsed: wealth.spendingPace.monthsUsed ?? 0,
+    } : null,
     // The Context Understanding Layer's canonical projection (see
     // intelligence/context-resolver.js) — passed through verbatim (not
     // flattened) so brain/claimValidator.js's checkResolvedContextConflicts

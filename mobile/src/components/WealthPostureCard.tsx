@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, typography, shadow, colors as themeColors, FONTS } from '../theme';
 import type { WealthLanding } from '../hooks/useBriefing';
+import { paceLine, driverLine } from '../lib/wealthPaceCopy';
 
 interface Props {
   landing: WealthLanding | null | undefined;
@@ -70,9 +71,23 @@ function WealthPostureCard({ landing }: Props) {
 
       <View style={styles.numbersWrap} onTouchEnd={() => setHidden((h) => !h)} accessibilityRole="button" accessibilityLabel={hidden ? 'Show amounts' : 'Hide amounts'} accessibilityHint="Double tap to toggle privacy mask">
         {numbers.mtdDiscretionary ? (
-          <View style={styles.numberRow}>
-            <Text style={[styles.numberLabel, { color: secondary }]}>Discretionary spend (MTD)</Text>
-            <Text style={[styles.numberValue, { color: c.text }]} allowFontScaling>{mask(money(numbers.mtdDiscretionary.amount))}</Text>
+          <View style={styles.paceBlock}>
+            <View style={styles.numberRow}>
+              <Text style={[styles.numberLabel, { color: secondary }]}>Discretionary spend (MTD)</Text>
+              <Text style={[styles.numberValue, { color: c.text }]} allowFontScaling>{mask(money(numbers.mtdDiscretionary.amount))}</Text>
+            </View>
+            {numbers.mtdDiscretionary.comparison ? (
+              <>
+                <Text style={[styles.paceLine, { color: secondary }]} allowFontScaling>
+                  {mask(paceLine(numbers.mtdDiscretionary.comparison))}
+                </Text>
+                {driverLine(numbers.mtdDiscretionary.comparison.drivers) ? (
+                  <Text style={[styles.paceLine, { color: secondary }]} allowFontScaling>
+                    {mask(driverLine(numbers.mtdDiscretionary.comparison.drivers)!)}
+                  </Text>
+                ) : null}
+              </>
+            ) : null}
           </View>
         ) : null}
         {numbers.savingsRate ? (
@@ -121,6 +136,8 @@ const styles = StyleSheet.create({
   numberRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
   numberLabel: { ...typography.caption, fontSize: 13, flex: 1, marginRight: spacing.sm },
   numberValue: { ...typography.subtitle, fontSize: 17, fontWeight: '700' },
+  paceBlock: { gap: 2 },
+  paceLine: { ...typography.caption, fontSize: 12.5 },
   hint: { ...typography.caption, fontSize: 11, marginTop: spacing.sm, textAlign: 'right' },
 });
 
