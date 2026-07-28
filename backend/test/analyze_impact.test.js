@@ -122,6 +122,41 @@ test('computeAnomalies: labels a prior-day standout "yesterday", not "today"', (
   assert.doesNotMatch(moodF.detail, /\btoday\b/);
 });
 
+// Matches the task's own worked example: active energy 211 vs a ~30-day
+// baseline of ~552 — a realistic baseline needs enough day-to-day spread
+// to clear stats.baselineAnomaly's MIN_CV flat-baseline guard (a
+// perfectly, or near-perfectly, constant baseline is discarded).
+test('computeAnomalies: evidence carries date/unit/anomalyKey for the "What explains this?" contract', () => {
+  const energy = mkSeries(31, (i) => (i === 30 ? 211 : (i % 2 ? 500 : 605)), '2026-06-27T12:00:00');
+  const findings = a.computeAnomalies({ 'health:active_energy': energy });
+  const f = findings.find((x) => x.evidence.metric === 'health:active_energy');
+  assert.ok(f, 'expected an active_energy anomaly');
+  assert.equal(f.evidence.date, energy[30].day);
+  assert.equal(f.evidence.unit, 'kcal');
+  assert.equal(f.evidence.anomalyKey, `anomaly:health:active_energy:${energy[30].day}`);
+});
+
+test('computeAnomalies: anomalyKey is stable across independent reruns over the same series (not tied to a findings row id)', () => {
+  const energy = mkSeries(31, (i) => (i === 30 ? 211 : (i % 2 ? 500 : 605)), '2026-06-27T12:00:00');
+  const run1 = a.computeAnomalies({ 'health:active_energy': energy });
+  const run2 = a.computeAnomalies({ 'health:active_energy': energy });
+  const key1 = run1.find((x) => x.evidence.metric === 'health:active_energy').evidence.anomalyKey;
+  const key2 = run2.find((x) => x.evidence.metric === 'health:active_energy').evidence.anomalyKey;
+  assert.ok(key1);
+  assert.equal(key1, key2);
+});
+
+test('computeAnomalies: a metric with no registered unit (e.g. sleep_score) gets a null unit, not a crash or placeholder', () => {
+  const score = mkSeries(31, (i) => (i === 30 ? 40 : (i % 2 ? 65 : 90)), '2026-06-27T12:00:00');
+  // sleep_score is a NIGHT_METRIC — pass an explicit `today` matching the
+  // series' own last day, else the real-clock stale-Pod-reading guard
+  // (see the "stale Pod HRV/RHR" tests above) discards it as an old reading.
+  const findings = a.computeAnomalies({ 'health:sleep_score': score }, { today: score[30].day });
+  const f = findings.find((x) => x.evidence.metric === 'health:sleep_score');
+  assert.ok(f);
+  assert.equal(f.evidence.unit, null);
+});
+
 test('computeActivityImpact: flags an exercise type that costs next-day recovery', () => {
   const N = 40;
   const cycle = ['zone2', 'pull', 'intervals', 'push', 'zone2'];

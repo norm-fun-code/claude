@@ -120,7 +120,19 @@ function naiveToUtcIso(naiveStr, tz) {
  * with — e.g. calendar/free-busy queries, annotation lookback windows.
  */
 function localDayBoundsUtc(tz = 'UTC', now = new Date()) {
-  const ymd = now.toLocaleDateString('en-CA', { timeZone: tz });
+  return localDayBoundsForYmd(tz, now.toLocaleDateString('en-CA', { timeZone: tz }));
+}
+
+/**
+ * UTC instants for the start/end of an EXPLICIT local calendar date
+ * ("YYYY-MM-DD") in a given timezone — the same primitive localDayBoundsUtc
+ * uses for "today", exposed directly for callers that already have a
+ * specific date string to bind to (e.g. an anomaly's own local observation
+ * date) rather than "now". Binding to this instead of re-deriving a date
+ * from free-text wording is what keeps an answer given today anchored to
+ * the day it actually describes.
+ */
+function localDayBoundsForYmd(tz, ymd) {
   // Anchor the whole second, then add .999ms after conversion —
   // naiveToUtcIso's offset math loses sub-second precision when
   // milliseconds are baked into the input string.
@@ -177,5 +189,5 @@ function localDateStr(tz = 'UTC', now = new Date()) {
 
 module.exports = {
   formatDate, formatMonthDay, daysBetween, addDays, dayAnchorTs, safeDate, toMinutesSinceMidnight,
-  naiveToUtcIso, localDayBoundsUtc, localMonthStartUtc, localMonthKeyStartUtc, localDateStr,
+  naiveToUtcIso, localDayBoundsUtc, localDayBoundsForYmd, localMonthStartUtc, localMonthKeyStartUtc, localDateStr,
 };

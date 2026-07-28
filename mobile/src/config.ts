@@ -66,6 +66,10 @@ export const MEMORY_URL = `${API_BASE}/api/memory`;
 // Belief-origin Memory items (Learned preferences & beliefs) reuse the
 // EXISTING beliefs management endpoint (BELIEFS_URL, defined below) — not a
 // duplicate concept, just the one other origin GET /memory aggregates.
+// "What explains this?" anomaly-context loop — base URL; per-anomaly
+// mutation routes are built by string-interpolating the anomaly key off
+// this base (see backend/src/routes/anomalyContext.js).
+export const ANOMALY_CONTEXT_URL = `${API_BASE}/api/anomaly-context`;
 export const DEVICE_REGISTER_URL = `${API_BASE}/api/devices/register`;
 export const HIGHLIGHTS_URL = `${API_BASE}/api/highlights`;
 export const INSIGHT_DISMISS_URL = `${API_BASE}/api/insights/dismiss`;
