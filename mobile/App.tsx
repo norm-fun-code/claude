@@ -856,6 +856,10 @@ export default function App() {
             embedded
             initialQuestion={pendingAskQ}
             bottomInset={bottomInset}
+            activeTab="ask"
+            snapshotId={d?.snapshotId ?? null}
+            snapshotVersion={d?.snapshotVersion ?? null}
+            onVoiceActionExecuted={() => { briefing.reload(); health.refetch(); }}
           />
         ) : (
           <ScrollView
@@ -942,6 +946,17 @@ export default function App() {
         hideFab={tab === 'ask'}
         contextStarters={askContextStarters}
         bottomInset={bottomInset}
+        activeTab={tab === 'today' || tab === 'health' || tab === 'wealth' || tab === 'wisdom' ? tab : 'ask'}
+        snapshotId={d?.snapshotId ?? null}
+        snapshotVersion={d?.snapshotVersion ?? null}
+        // A bare tab-level default selection: being on Health with no more
+        // specific tap yet is still enough context for "why is this
+        // yellow?" to resolve against today's recovery (chat/voiceContext.js
+        // resolves 'recovery'/'today' the same way regardless of who asked
+        // for it). Per-card tap-to-select (a specific commitment/insight)
+        // is documented as follow-up work — see the task's final report.
+        voiceSelection={tab === 'health' ? { kind: 'recovery', id: 'today' } : null}
+        onVoiceActionExecuted={() => { briefing.reload(); health.refetch(); }}
       />
       <TabBar
         active={tab}

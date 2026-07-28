@@ -52,10 +52,13 @@ import {
   authHeaders,
   fetchWithTimeout,
 } from '../config';
-import { decideSpokenTurn } from './realtimeTurnGate';
+import { decideSpokenTurn, isStaleTurn } from './realtimeTurnGate';
 import { createBargeInGate, BargeInGate } from './bargeInGate';
+import { decideFallback, type RealtimeFailureCode } from './realtimeFallback';
+import { shouldStopForAppState, type AppStateStatus } from './voiceAppState';
+import type { VoiceSessionContext } from './voiceCoordinator';
 
-export type RealtimeState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'executing' | 'error';
+export type RealtimeState = 'idle' | 'connecting' | 'reconnecting' | 'listening' | 'thinking' | 'speaking' | 'executing' | 'fallback_available' | 'error';
 
 export interface RealtimeHandlers {
   onStateChange?: (state: RealtimeState) => void;
@@ -66,6 +69,18 @@ export interface RealtimeHandlers {
    *  look across your history…" as a UI cue while it resolves). */
   onToolStart?: (name: string) => void;
   onError?: (message: string) => void;
+  /** Reconnect attempts (network blips, a dropped connection) are exhausted
+   *  or the failure was never retryable to begin with — the session is
+   *  giving up on Realtime for good this time. The caller should offer the
+   *  inline push-to-talk fallback within the SAME overlay, not just show an
+   *  error and point at a different screen. */
+  onFallbackAvailable?: (code: RealtimeFailureCode) => void;
+  /** A validated action actually executed (or was denied/needed
+   *  confirmation) — the caller should render this as a distinct receipt
+   *  line ("✓ Marked done"), not fold it into the ordinary transcript, and
+   *  should refresh whatever surfaces that action affects from the central
+   *  brain (the SAME canonical stores every other surface reads). */
+  onActionResult?: (description: string) => void;
   /** Fires once a turn has actually been persisted to the shared Ask thread
    *  (or was already persisted server-side by deep_ask) — the right moment
    *  for a caller to resync its own copy of that thread, as opposed to
@@ -159,6 +174,18 @@ export class RealtimeVoiceSession {
    *  data-channel event handler so a message that finishes resolving AFTER
    *  the user ended the session never touches a torn-down dc/pc. */
   private stopped = false;
+  /** Monotonic counter, incremented on every new accepted turn AND on a
+   *  barge-in — a tool call issued during turn N whose result arrives after
+   *  the turn has moved on (interrupted, or superseded by a new one) is
+   *  stale and must be dropped rather than rendered/acted on (see
+   *  realtimeTurnGate.ts's isStaleTurn, and the barge-in requirement that an
+   *  interrupted response's action must never still execute). */
+  private turnId = 0;
+  /** How many automatic reconnect attempts this session has made — feeds
+   *  realtimeFallback.ts's decideFallback so retrying is bounded and quick,
+   *  never an indefinite silent retry loop. */
+  private reconnectAttempts = 0;
+  private lastSessionContext: VoiceSessionContext | undefined;
 
   constructor(handlers: RealtimeHandlers = {}) {
     this.handlers = handlers;
@@ -173,7 +200,8 @@ export class RealtimeVoiceSession {
    *  Throws with `.fallback === true` when the caller should fall back to
    *  the old push-to-talk path (Realtime disabled, OpenAI not configured, or
    *  the mint call itself failed) rather than showing a hard error. */
-  async start(): Promise<void> {
+  async start(context?: VoiceSessionContext): Promise<void> {
+    this.lastSessionContext = context;
     if (!realtimeVoiceAvailable) {
       // Defensive only — the UI hides its entry point via this same flag, so
       // this path shouldn't be reachable in practice.
@@ -185,9 +213,15 @@ export class RealtimeVoiceSession {
     this.startedAt = Date.now();
     this.setState('connecting');
 
+    // The unified voice-session contract (chat/voiceCoordinator.ts) — active
+    // tab, local clock, snapshot identity, and a selected card/insight/
+    // commitment/workout, if any. Reuses the client's own sessionId across a
+    // reconnect (see startWithRetry) so /tool, /turn, /metric calls all
+    // correlate under one id even across a retry.
+    const body = context ? { ...context, sessionId: context.sessionId || this.sessionId || undefined } : {};
     let session: { sessionId: string; clientSecret: string; model: string; language?: string };
     try {
-      const res = await fetchWithTimeout(REALTIME_SESSION_URL, { method: 'POST', headers: authHeaders(), body: '{}' }, 15000);
+      const res = await fetchWithTimeout(REALTIME_SESSION_URL, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) }, 15000);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         // The backend already classified WHY the mint failed (see routes/
@@ -243,9 +277,10 @@ export class RealtimeVoiceSession {
       };
 
       pc.onconnectionstatechange = () => {
-        if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-          this.handlers.onError?.('Connection lost.');
+        if ((pc.connectionState === 'failed' || pc.connectionState === 'disconnected') && !this.stopped) {
           logMetric(this.sessionId!, 'reconnect', undefined, { state: pc.connectionState });
+          this.teardownPeer();
+          void this.retryOrFallback('connection_lost');
         }
       };
 
@@ -288,6 +323,57 @@ export class RealtimeVoiceSession {
     }
   }
 
+  /** Public entry point TalkOverlay should call instead of start() directly —
+   *  wraps it with the bounded, quick automatic-reconnect policy
+   *  (realtimeFallback.ts's decideFallback): a transient failure retries a
+   *  couple of times within a few seconds, never sits silently for a long
+   *  time, and once attempts are exhausted (or the failure was never
+   *  retryable) transitions to 'fallback_available' and fires
+   *  onFallbackAvailable so the caller can offer inline push-to-talk in the
+   *  SAME overlay. */
+  async startWithRetry(context?: VoiceSessionContext): Promise<void> {
+    this.reconnectAttempts = 0;
+    try {
+      await this.start(context);
+    } catch (err: any) {
+      await this.retryOrFallback(err?.code || 'network_failure');
+    }
+  }
+
+  private async retryOrFallback(code: RealtimeFailureCode): Promise<void> {
+    if (this.stopped) return;
+    const decision = decideFallback(code, this.reconnectAttempts);
+    if (decision.action === 'reconnecting') {
+      this.reconnectAttempts = decision.attempt;
+      this.setState('reconnecting');
+      logMetric(this.sessionId || 'unminted', 'reconnect_attempt', undefined, { attempt: decision.attempt, code });
+      await new Promise((r) => setTimeout(r, decision.delayMs));
+      if (this.stopped) return;
+      try {
+        await this.start(this.lastSessionContext);
+      } catch (err: any) {
+        await this.retryOrFallback(err?.code || code);
+      }
+      return;
+    }
+    // Exhausted or non-retryable — expose the fallback rather than sitting
+    // in a terminal error state with no way forward from this same overlay.
+    this.setState('fallback_available');
+    logMetric(this.sessionId || 'unminted', 'fallback', undefined, { code, attempts: this.reconnectAttempts });
+    this.handlers.onFallbackAvailable?.(code);
+  }
+
+  /** TalkOverlay forwards RN AppState transitions here — backgrounding (or
+   *  the brief iOS 'inactive' transition) stops the session outright so it
+   *  can never keep running with no visible UI (the zombie-mic risk this
+   *  closes). A subsequent foreground is always a fresh start() call from
+   *  the caller, never a silent resume of this instance. */
+  handleAppStateChange(nextStatus: AppStateStatus) {
+    if (shouldStopForAppState(nextStatus) && !this.stopped) {
+      this.stop();
+    }
+  }
+
   /** Close whatever WebRTC state exists without touching turn/UI state — the
    *  shared cleanup both stop() and a failed/aborted start() call into, so
    *  there is exactly one place that knows how to release the mic/peer. */
@@ -311,6 +397,7 @@ export class RealtimeVoiceSession {
     // PREVIOUS turn's, and the stale `turnPersisted=true` from the last turn
     // would suppress persisting this one entirely.
     this.resetTurn();
+    this.turnId += 1;
     this.turnUserText = text;
     this.turnUserFinal = true; // typed text is final immediately (no transcription round trip)
     this.dc.send(JSON.stringify({
@@ -342,6 +429,7 @@ export class RealtimeVoiceSession {
   interrupt() {
     if (!this.dc || this.dc.readyState !== 'open') return;
     this.dc.send(JSON.stringify({ type: 'response.cancel' }));
+    this.turnId += 1; // any tool call issued for the interrupted response is now stale
     if (this.sessionId) logMetric(this.sessionId, 'interruption', undefined, { manual: true });
   }
 
@@ -458,6 +546,7 @@ export class RealtimeVoiceSession {
   private cancelAssistantResponse() {
     if (this.stopped || !this.dc || this.dc.readyState !== 'open') return;
     this.dc.send(JSON.stringify({ type: 'response.cancel' }));
+    this.turnId += 1; // any tool call issued for the interrupted response is now stale
     if (this.sessionId) logMetric(this.sessionId, 'interruption', undefined, { auto: true });
   }
 
@@ -495,6 +584,7 @@ export class RealtimeVoiceSession {
       return;
     }
 
+    this.turnId += 1; // a genuinely new accepted turn — any tool call from a prior turn is now stale
     this.turnUserText = decision.transcript;
     this.turnUserFinal = true;
     this.handlers.onTranscript?.('user', decision.transcript, true);
@@ -545,13 +635,18 @@ export class RealtimeVoiceSession {
     let args: Record<string, unknown> = {};
     try { args = call.argsText ? JSON.parse(call.argsText) : {}; } catch { /* malformed args -> empty object, tool validates */ }
 
+    // Capture the turn this call belongs to BEFORE the network round trip —
+    // if a barge-in or a new turn advances turnId while this is in flight,
+    // the result is stale (required: barge-in must not let an interrupted
+    // response's action still execute) and must be dropped below.
+    const issuedTurnId = this.turnId;
     this.setState('executing');
     this.handlers.onToolStart?.(call.name);
     if (call.name === 'deep_ask') this.turnUsedDeepAsk = true;
 
     let output: unknown;
     try {
-      const res = await postJson(REALTIME_TOOL_URL, { sessionId: this.sessionId, name: call.name, arguments: args }, 30000);
+      const res = await postJson(REALTIME_TOOL_URL, { sessionId: this.sessionId, name: call.name, arguments: args, turnId: String(issuedTurnId) }, 30000);
       output = res.result;
     } catch (err: any) {
       output = { error: err?.message || 'tool failed' };
@@ -562,6 +657,14 @@ export class RealtimeVoiceSession {
     // not just before it, or this dereferences a dc that teardownPeer()
     // already nulled out.
     if (this.stopped || !this.dc) return;
+    if (isStaleTurn(issuedTurnId, this.turnId)) {
+      console.warn(`[voice] dropping stale tool-call result for turn ${issuedTurnId} (current turn ${this.turnId})`);
+      return;
+    }
+    if (call.name === 'execute_normos_action' || call.name === 'complete_commitment') {
+      const description = (output as any)?.description;
+      if (typeof description === 'string' && description) this.handlers.onActionResult?.(description);
+    }
     if (this.dc.readyState === 'open') {
       this.dc.send(JSON.stringify({
         type: 'conversation.item.create',

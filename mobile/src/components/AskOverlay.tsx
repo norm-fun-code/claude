@@ -12,6 +12,8 @@ import {
   Platform,
   useColorScheme,
   Alert,
+  AppState,
+  type AppStateStatus as RNAppStateStatus,
 } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -25,6 +27,7 @@ import Markdown from 'react-native-markdown-display';
 import { getColors, spacing, radius, typography, shadow, withAlpha } from '../theme';
 import { useChat } from '../hooks/useChat';
 import { API_BASE, CONSOLIDATE_URL, VOICE_ASK_URL, REALTIME_VOICE_ENABLED, authHeaders, fetchWithTimeout } from '../config';
+import { buildSessionContext, createSessionId, type VoiceTab, type VoiceSelection } from '../lib/voiceCoordinator';
 import { voiceAvailable, ensureMicPermission, startRecording, stopRecording, playBase64, stopPlayback } from '../lib/voice';
 import { realtimeVoiceAvailable } from '../lib/realtimeVoice';
 import { TalkOverlay } from './TalkOverlay';
@@ -53,6 +56,19 @@ interface Props {
   /** One-tap starter questions to seed when the FAB is tapped — same
       context-aware set the long-press-the-Ask-tab gesture uses. */
   contextStarters?: string[];
+  /** The unified voice-session contract's inputs (chat/voiceCoordinator.ts)
+   *  — which tab the user is on, the briefing snapshot they're looking at,
+   *  and a specific card/insight/commitment they've selected, if any. Sent
+   *  on every push-to-talk and Realtime session so "why is this yellow" /
+   *  "mark this done" bind to a stable canonical record, never guessed from
+   *  text. All optional — omitting them just means no selection context. */
+  activeTab?: VoiceTab;
+  snapshotId?: string | null;
+  snapshotVersion?: number | null;
+  voiceSelection?: VoiceSelection | null;
+  /** A voice-driven action actually executed — the caller should refresh
+   *  whatever canonical surfaces (briefing/health/etc) that action affects. */
+  onVoiceActionExecuted?: (description: string) => void;
 }
 
 const METRICS: Record<string, { label: string; source: string }> = {
@@ -92,7 +108,7 @@ function fmtDate(iso: string | null): string {
 // Global "Ask NormOS" command bar: a floating button on every tab that opens a
 // full conversation sheet. Save the current thread to the sidebar, browse saved
 // ones, resume, or delete — all backed by the persistent server history.
-export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverlay({ bottomInset = 0, embedded = false, initialQuestion, hideFab = false, contextStarters }, ref) {
+export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverlay({ bottomInset = 0, embedded = false, initialQuestion, hideFab = false, contextStarters, activeTab = 'ask', snapshotId = null, snapshotVersion = null, voiceSelection = null, onVoiceActionExecuted }, ref) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [open, setOpen] = useState(false);
@@ -132,6 +148,19 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
   const [talkOpen, setTalkOpen] = useState(false);
   const showLiveEntry = REALTIME_VOICE_ENABLED && realtimeVoiceAvailable;
 
+  // One stable sessionId per mount of this overlay — every push-to-talk turn
+  // and the live Talk session correlate under it (backend's realtimeMetrics
+  // ledger, the voice idempotency cache). Rebuilt fresh (not memoized) at
+  // each call site below so `localDateTime` is always the actual current
+  // moment, not a stale value captured at mount.
+  const voiceSessionIdRef = useRef(createSessionId());
+  function currentSessionContext() {
+    return buildSessionContext({
+      tab: activeTab, snapshotId, snapshotVersion, selection: voiceSelection,
+      sessionId: voiceSessionIdRef.current,
+    });
+  }
+
   async function voicePressIn() {
     if (voiceState !== 'idle') return;
     if (!(await ensureMicPermission())) return;
@@ -152,13 +181,16 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
       const res = await fetchWithTimeout(VOICE_ASK_URL, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ audio: rec.base64, mime: rec.mime }),
+        body: JSON.stringify({ audio: rec.base64, mime: rec.mime, ...currentSessionContext() }),
       }, 90000);
       if (!res.ok) throw new Error(`Server ${res.status}`);
       const data = await res.json();
       // The server persisted both turns to the shared thread — re-sync the view.
       await loadHistory();
-      if (data.action?.done) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      if (data.action?.done) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        if (data.action.description) onVoiceActionExecuted?.(data.action.description);
+      }
       if (data.audio) playBase64(data.audio, data.audioMime || 'audio/wav').catch(() => {});
       setHadVoiceTurn(true);
       setVoiceState('idle');
@@ -187,6 +219,21 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
   useEffect(() => {
     if (embedded && initialQuestion) setQuestion(initialQuestion);
   }, [embedded, initialQuestion]);
+
+  // Backgrounding mid-recording (or mid-reply-playback) previously left
+  // nothing to notice — the mic/playback simply kept running with no
+  // visible UI. Stop both on background/inactive, the same rule
+  // voiceAppState.ts's shouldStopForAppState encodes for the live Talk
+  // session, applied here to the push-to-talk path.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next: RNAppStateStatus) => {
+      if (next !== 'background' && next !== 'inactive') return;
+      if (voiceState === 'recording') { stopRecording().catch(() => {}); setVoiceState('idle'); }
+      stopPlayback().catch(() => {});
+    });
+    return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceState]);
 
   useEffect(() => {
     // The global quick-ask instance stays mounted (closed) app-wide — don't
@@ -687,6 +734,8 @@ export const AskOverlay = forwardRef<AskOverlayHandle, Props>(function AskOverla
       visible={talkOpen}
       onClose={() => { setTalkOpen(false); loadHistory(); }}
       onTurnCompleted={loadHistory}
+      sessionContext={talkOpen ? currentSessionContext() : undefined}
+      onActionExecuted={onVoiceActionExecuted}
     />
   );
 

@@ -16,9 +16,17 @@ const { recomputeHabitScore } = require('../intelligence/habit-score');
 const { recordUserContext } = require('../intelligence/context-input');
 const { VALID_WORKOUT_IDS, setWorkoutOverride } = require('../services/workout');
 
-async function executeAction(routed) {
+// `ctx.now` is the REFERENCE time a temporal statement ("last night", "this
+// morning") should resolve against — the moment the user actually spoke,
+// not necessarily the moment this HTTP request lands (a long-running voice
+// session's turn can arrive slightly after the utterance). Callers that
+// know the session's local timestamp (the voice coordinator's session
+// context) should pass it; callers that don't (typed Ask, the confirm-action
+// route) get the same "now" behavior as before this parameter existed.
+async function executeAction(routed, ctx = {}) {
   const tz = process.env.TZ || 'America/New_York';
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+  const now = ctx.now instanceof Date && !Number.isNaN(ctx.now.getTime()) ? ctx.now : new Date();
+  const today = now.toLocaleDateString('en-CA', { timeZone: tz });
   try {
     if (routed.action === 'swap_workout' && VALID_WORKOUT_IDS.has(routed.workoutId)) {
       // Transactional Brain Invalidation (audit recommendation #2), item 4:
@@ -131,12 +139,12 @@ async function executeAction(routed) {
       // executeNormosAction/deepAsk both call this same executeAction())
       // reach ResolvedContext, not just the raw annotations table.
       await recordUserContext({
-        rawText: text, source: 'ask_add_context', tz,
+        rawText: text, source: 'ask_add_context', tz, now,
         writeInTransaction: (client, db) => annotationsStore.createAnnotation({
           category: 'brief_context',
           label: text.slice(0, 200),
-          startTs: new Date(),
-          endTs: new Date(Date.now() + 24 * 3600 * 1000),
+          startTs: now,
+          endTs: new Date(now.getTime() + 24 * 3600 * 1000),
         }, db),
         getSourceAnnotationId: (written) => written?.id ?? null,
       });
@@ -144,15 +152,31 @@ async function executeAction(routed) {
     }
     if (routed.action === 'log_day_context' && routed.text) {
       const text = String(routed.text);
-      const entryDate = new Date().toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD local
+      const entryDate = now.toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD local
       await recordUserContext({
-        rawText: text, source: 'voice_day_context', tz,
+        rawText: text, source: 'voice_day_context', tz, now,
         writeInTransaction: (client, db) => dayJournalStore.create({ text: text.slice(0, 4000), entryDate, source: 'voice' }, db),
       });
       return { done: true, description: 'Logged today\'s context — I\'ll factor it into your briefs and remember it.' };
     }
+    if (routed.action === 'complete_commitment' && routed.commitmentId != null) {
+      // Idempotent by construction — markDone's UPDATE only matches rows
+      // still `status <> 'done'`, so a retried/duplicated call is a safe
+      // no-op the second time (row is null, not re-graded/re-invalidated).
+      const row = await commitmentsStore.markDone(routed.commitmentId, { at: now });
+      if (!row) {
+        const existing = await commitmentsStore.getById(routed.commitmentId).catch(() => null);
+        return {
+          done: false,
+          description: existing
+            ? `"${existing.title}" is already marked done.`
+            : "I couldn't find that commitment.",
+        };
+      }
+      return { done: true, description: `Marked "${row.title}" done.` };
+    }
     if (routed.action === 'set_reminder' && routed.text) {
-      const { dueAt } = commitmentsStore.resolveReminderTime(routed.at, new Date());
+      const { dueAt } = commitmentsStore.resolveReminderTime(routed.at, now);
       await commitmentsStore.create({ title: String(routed.text).slice(0, 200), source: 'voice', dueAt });
       // Same process runs the scheduler, so arm a precise timer for near-term
       // reminders — they land on the minute instead of waiting for the poll.

@@ -183,22 +183,63 @@ async function searchPersonalLibrary({ query: q } = {}) {
   };
 }
 
+// ---- get_selected_context ------------------------------------------------
+// Re-resolves whatever the user is currently looking at (bound at session
+// start from the session-context contract's `selection`, and re-resolvable
+// here on demand so a mutation mid-session — e.g. marking a commitment done
+// — is reflected on the NEXT question about the same selection instead of
+// narrating the stale value baked into the system prompt at mint time).
+async function getSelectedContext({ kind, id } = {}) {
+  const { resolveSelection } = require('./voiceContext');
+  const resolved = await resolveSelection({ kind, id });
+  return resolved.found
+    ? { found: true, summary: resolved.summary }
+    : { found: false, summary: null };
+}
+
 // ---- execute_normos_action --------------------------------------------
 // Reuses chat/ask.js's OWN validated-action allowlist verbatim — the exact
 // same set typed and push-to-talk Ask already execute today. No new
 // mutation surface: every action here is an internal, reversible write to
 // the user's own data (habit/checkin/weight/reminder/etc.); none reach an
 // external system, so this tool cannot become an unreviewed external-write
-// path. The Realtime session's own instructions (routes/realtime.js) tell
-// the model to confirm the specific values conversationally before calling
-// this — the same "acknowledge, then act" pattern the text/voice Ask path
-// already uses, just spoken instead of a single response.
-async function executeNormosAction(args) {
+// path.
+//
+// Confirmation parity fix: this direct tool path used to execute ANY
+// validated action unconditionally — including swap_workout/add_chapter,
+// which chat/actionPolicy.js's needsConfirmation() requires an explicit
+// confirm step for everywhere else in the app (typed Ask's confirm-card,
+// deepAsk() below). A spoken restatement ("I'll swap you to Zone 2") is
+// conversational agreement, not the confirm step the policy requires — so a
+// confirmation-required action now returns a `needsConfirmation` envelope
+// instead of executing, and only actually runs once the model calls this
+// AGAIN with `confirmed: true` for that exact action (never inferred from
+// the user merely continuing to talk).
+//
+// Idempotency: keyed by (sessionId, turnId, action type + args) so a
+// network retry or a duplicate model tool-call for the SAME turn can never
+// double-execute (e.g. double-log a habit, double-swap a workout).
+async function executeNormosAction(args, sessionCtx = {}) {
   const { validateAction } = require('./ask');
   const { executeAction } = require('./executeAction');
-  const validated = validateAction(args);
+  const { needsConfirmation, describeAction } = require('./actionPolicy');
+  const idempotency = require('./voiceIdempotency');
+
+  const { confirmed, ...actionArgs } = args || {};
+  const validated = validateAction(actionArgs);
   if (!validated) return { done: false, description: 'That action was not recognized or was missing required fields.' };
-  const result = await executeAction(validated);
+
+  if (needsConfirmation(validated) && confirmed !== true) {
+    const { title, preview } = describeAction(validated);
+    return { done: false, needsConfirmation: true, title, preview, description: `This needs confirmation: ${title}. Ask the user to confirm, then call execute_normos_action again with confirmed:true for this exact action.` };
+  }
+
+  const key = idempotency.keyFor({
+    sessionId: sessionCtx.sessionId, turnId: sessionCtx.turnId,
+    action: validated.action, argsHash: idempotency.hashArgs(validated),
+  });
+  const { result, fromCache } = await idempotency.once(key, () => executeAction(validated, { now: sessionCtx.now }));
+  if (fromCache) console.warn(`[realtime action] duplicate call for key=${key} — returning cached result, not re-executing`);
   return result ?? { done: false, description: 'No matching action handler.' };
 }
 
@@ -207,7 +248,7 @@ async function executeNormosAction(args) {
 // reasoning) for anything beyond what the fast-path tools above can answer
 // from already-loaded session context. Persists both turns to the SAME
 // shared Ask conversation as every other surface (voice.js, chat.js).
-async function deepAsk({ question } = {}) {
+async function deepAsk({ question } = {}, sessionCtx = {}) {
   if (!question || !String(question).trim()) return { answer: '', sources: [] };
   const { ask } = require('./ask');
   const { executeAction } = require('./executeAction');
@@ -228,7 +269,7 @@ async function deepAsk({ question } = {}) {
   const executedList = [];
   for (const a of (result.actions ?? (result.action ? [result.action] : []))) {
     if (needsConfirmation(a)) continue;
-    executedList.push(await executeAction(a));
+    executedList.push(await executeAction(a, { now: sessionCtx.now }));
   }
 
   const convId = await chatStore.ensureActiveConversation();
@@ -292,6 +333,15 @@ const TOOL_SCHEMAS = [
     },
   },
   {
+    type: 'function', name: 'get_selected_context',
+    description: "Re-check what the user is currently looking at (the SELECTED CONTEXT you were given at the start of this session, e.g. a recovery card, a specific commitment, or a specific insight) — call this if they ask a follow-up like \"why?\" or \"what changed?\" after you've already executed an action, to make sure you're not describing a stale value. Pass the same kind/id you were told about at session start.",
+    parameters: {
+      type: 'object',
+      properties: { kind: { type: 'string', description: 'recovery | commitment | insight | workout | entity' }, id: { type: 'string' } },
+      required: ['kind', 'id'], additionalProperties: false,
+    },
+  },
+  {
     type: 'function', name: 'search_personal_library',
     description: "Search the user's saved highlights/notes/books (Readwise, Notion, journal) for relevant ideas.",
     parameters: {
@@ -305,7 +355,10 @@ const TOOL_SCHEMAS = [
     description:
       'Take a concrete, already-supported app action the user just told you to do (log a habit, swap today\'s workout, log mood/energy/focus, log weight, log gratitude, set a reminder, log/add day context, add a life chapter). ' +
       'ALWAYS restate what you are about to do in one short sentence before calling this, so the user can correct you if you misheard. Only call for a clear statement of fact/intent, never for a question. ' +
-      'Pass EXACTLY one action shaped like: {"type":"swap_workout","workoutId":"push|pull|zone2|mobility|intervals|rest"} | {"type":"log_habit","habit":"morningTM|afternoonTM|gratitude|coldShower|exercise"} | {"type":"log_activity","activityType":"...","durationMin":number,"label":"...","noWatch":boolean} | {"type":"log_checkin","mood":1-5,"energy":1-5,"focus":1-5} | {"type":"log_weight","weightLb":number} | {"type":"log_gratitude_text","text":"..."} | {"type":"add_context","text":"..."} | {"type":"log_day_context","text":"..."} | {"type":"set_reminder","text":"...","at":"YYYY-MM-DDTHH:MM or null"} | {"type":"add_chapter","kind":"pregnancy|countdown|note","label":"...","keyDate":"YYYY-MM-DD or null","keyDateLabel":"..."}',
+      'Pass EXACTLY one action shaped like: {"type":"swap_workout","workoutId":"push|pull|zone2|mobility|intervals|rest"} | {"type":"log_habit","habit":"morningTM|afternoonTM|gratitude|coldShower|exercise"} | {"type":"log_activity","activityType":"...","durationMin":number,"label":"...","noWatch":boolean} | {"type":"log_checkin","mood":1-5,"energy":1-5,"focus":1-5} | {"type":"log_weight","weightLb":number} | {"type":"log_gratitude_text","text":"..."} | {"type":"add_context","text":"..."} | {"type":"log_day_context","text":"..."} | {"type":"set_reminder","text":"...","at":"YYYY-MM-DDTHH:MM or null"} | {"type":"add_chapter","kind":"pregnancy|countdown|note","label":"...","keyDate":"YYYY-MM-DD or null","keyDateLabel":"..."} | {"type":"complete_commitment","commitmentId":number} (use the id from the SELECTED CONTEXT or from get_active_goals_and_commitments — never guess an id). ' +
+      'A workout swap or a new life chapter requires confirmation: if the result says needsConfirmation, say the preview text aloud, then call this AGAIN with confirmed:true (and the SAME action fields) only once the user clearly agrees — do not treat a simple "yeah"/"sure"/continuing to talk as agreement unless you just asked specifically. ' +
+      'A statement to forget/retract something you noted earlier ("no, forget that", "that\'s not right", "never mind") should be passed as add_context with the retraction stated plainly — the same pipeline that recorded it also retires it. ' +
+      'A statement about a specific past time ("last night", "this morning") should use add_context/log_day_context with that wording intact — the backend resolves it relative to the actual moment you\'re in, not the server clock.',
     parameters: {
       type: 'object',
       properties: {
@@ -315,6 +368,7 @@ const TOOL_SCHEMAS = [
         mood: { type: 'number' }, energy: { type: 'number' }, focus: { type: 'number' },
         weightLb: { type: 'number' }, text: { type: 'string' }, at: { type: 'string' },
         kind: { type: 'string' }, keyDate: { type: 'string' }, keyDateLabel: { type: 'string' },
+        commitmentId: { type: 'number' }, confirmed: { type: 'boolean' },
       },
       required: ['type'], additionalProperties: false,
     },
@@ -338,6 +392,7 @@ const HANDLERS = {
   get_current_recovery: getCurrentRecovery,
   get_active_goals_and_commitments: getActiveGoalsAndCommitments,
   get_recent_findings: getRecentFindings,
+  get_selected_context: getSelectedContext,
   search_beliefs: searchBeliefs,
   query_metric: queryMetric,
   search_personal_library: searchPersonalLibrary,
@@ -345,15 +400,22 @@ const HANDLERS = {
   deep_ask: deepAsk,
 };
 
+// Handlers that mutate state or need the session's turn identity for
+// idempotency/temporal binding — these receive `(args, sessionCtx)`, not
+// just `(args)`. Every other tool is a pure read and ignores a second arg.
+const SESSION_AWARE = new Set(['execute_normos_action', 'deep_ask']);
+
 const TOOL_NAMES = new Set(Object.keys(HANDLERS));
 
 /** Run a tool by name. Throws for an unknown name — routes/realtime.js
  *  catches this and returns a 400, so an unlisted name never silently no-ops
- *  its way into looking like success. */
-async function runTool(name, args = {}) {
+ *  its way into looking like success.
+ *  @param {object} [sessionCtx] - {sessionId, turnId, now} — threaded into
+ *    idempotency keys and temporal resolution for mutating tools only. */
+async function runTool(name, args = {}, sessionCtx = {}) {
   const handler = HANDLERS[name];
   if (!handler) throw new Error(`unknown tool: ${name}`);
-  return handler(args || {});
+  return SESSION_AWARE.has(name) ? handler(args || {}, sessionCtx) : handler(args || {});
 }
 
 module.exports = { TOOL_SCHEMAS, TOOL_NAMES, runTool };

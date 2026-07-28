@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Modal, ScrollView, TextInput, useColorScheme, Keyboard, Platform } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Modal, ScrollView, TextInput, useColorScheme, Keyboard, Platform, AppState, type AppStateStatus as RNAppStateStatus } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -13,6 +13,9 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography, withAlpha, glow } from '../theme';
 import { RealtimeVoiceSession, RealtimeState, realtimeVoiceAvailable } from '../lib/realtimeVoice';
+import type { VoiceSessionContext } from '../lib/voiceCoordinator';
+import { voiceAvailable, ensureMicPermission, startRecording, stopRecording, playBase64 } from '../lib/voice';
+import { VOICE_ASK_URL, authHeaders, fetchWithTimeout } from '../config';
 
 interface Props {
   visible: boolean;
@@ -20,17 +23,27 @@ interface Props {
   /** Called whenever a turn completes, so a caller showing its own copy of
    *  the shared thread (e.g. AskOverlay's typed view) can resync. */
   onTurnCompleted?: () => void;
+  /** The unified voice-session contract (active tab, snapshot identity,
+   *  selection) — built once by the caller (AskOverlay) and sent on every
+   *  session mint, so "why is this yellow" / "mark this done" resolve
+   *  against a stable, canonical record instead of guessing from text. */
+  sessionContext?: VoiceSessionContext;
+  /** A voice action actually executed — the caller should refresh whatever
+   *  canonical surfaces that action type affects (briefing/health/etc). */
+  onActionExecuted?: (description: string) => void;
 }
 
-interface TranscriptLine { role: 'user' | 'assistant'; text: string; }
+interface TranscriptLine { role: 'user' | 'assistant'; text: string; receipt?: boolean; }
 
 const STATE_COPY: Record<RealtimeState, string> = {
   idle: '',
   connecting: 'Connecting…',
+  reconnecting: 'Reconnecting…',
   listening: 'Listening',
   thinking: 'Thinking…',
   speaking: 'Speaking — tap to interrupt',
   executing: 'One sec…',
+  fallback_available: 'Live voice unavailable — using regular mic',
   error: '',
 };
 
@@ -85,7 +98,7 @@ function PresenceOrb({ state, accent }: { state: RealtimeState; accent: string }
   );
 }
 
-export function TalkOverlay({ visible, onClose, onTurnCompleted }: Props) {
+export function TalkOverlay({ visible, onClose, onTurnCompleted, sessionContext, onActionExecuted }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const sessionRef = useRef<RealtimeVoiceSession | null>(null);
@@ -96,6 +109,8 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted }: Props) {
   const [textMode, setTextMode] = useState(false);
   const [textInput, setTextInput] = useState('');
   const [toolLabel, setToolLabel] = useState<string | null>(null);
+  const [fallbackRecording, setFallbackRecording] = useState(false);
+  const [fallbackBusy, setFallbackBusy] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   // KeyboardAvoidingView doesn't reliably push content above the keyboard
   // inside a pageSheet Modal on iOS (confirmed broken here) — AskOverlay hit
@@ -110,6 +125,23 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted }: Props) {
       sessionRef.current?.stop();
       sessionRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  // Backgrounding (or the brief iOS 'inactive' transition) must stop the
+  // live session outright — previously nothing here noticed at all, a real
+  // zombie-mic risk. Forwards the raw RN status into the pure
+  // shouldStopForAppState decision (voiceAppState.ts) via the session's own
+  // handleAppStateChange, which also covers the fallback recording below.
+  useEffect(() => {
+    if (!visible) return;
+    const sub = AppState.addEventListener('change', (next: RNAppStateStatus) => {
+      sessionRef.current?.handleAppStateChange(next as any);
+      if (next === 'background' || next === 'inactive') {
+        if (fallbackRecording) { stopRecording().catch(() => {}); setFallbackRecording(false); }
+      }
+    });
+    return () => sub.remove();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
@@ -159,21 +191,61 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted }: Props) {
       // save actually happens.
       onTurnPersisted: () => onTurnCompleted?.(),
       onToolStart: (name) => setToolLabel(name === 'deep_ask' ? 'Let me look across your history…' : 'Checking…'),
+      onActionResult: (description) => {
+        setLines((prev) => [...prev, { role: 'assistant', text: `✓ ${description}`, receipt: true }]);
+        onActionExecuted?.(description);
+      },
       onError: (msg) => setError(msg),
+      // Reconnect attempts are exhausted (or the failure was never
+      // retryable) — offer the inline push-to-talk fallback in THIS same
+      // overlay instead of a dead end pointing at a different screen.
+      onFallbackAvailable: (code) => setError(messageForErrorCode(code)),
     });
     sessionRef.current = session;
 
     try {
-      await session.start();
-    } catch (err: any) {
-      setState('error');
-      // A specific message for what actually went wrong, not one generic
-      // string for every failure mode. The old push-to-talk mic is a safe
-      // fallback for every one of these codes (see the banner below) —
-      // that's a fixed fact of this feature's design, not something that
-      // varies per error, so it isn't tracked as separate state.
-      setError(messageForErrorCode(err?.code));
+      // startWithRetry (not start()) so a transient failure gets a couple of
+      // quick, bounded automatic attempts before falling back — never a
+      // silent 60-second wait, and never a dead end.
+      await session.startWithRetry(sessionContext);
+    } catch {
+      // startWithRetry never throws for a retryable failure (it resolves
+      // into 'fallback_available' instead) — reaching here means something
+      // genuinely unexpected happened; fall back the same way.
+      setState('fallback_available');
+      setError(DEFAULT_ERROR_MESSAGE);
     }
+  }
+
+  async function fallbackMicPressIn() {
+    if (!voiceAvailable || fallbackBusy) return;
+    const ok = await ensureMicPermission();
+    if (!ok) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const started = await startRecording();
+    if (started) setFallbackRecording(true);
+  }
+
+  async function fallbackMicPressOut() {
+    if (!fallbackRecording) return;
+    setFallbackRecording(false);
+    const rec = await stopRecording();
+    if (!rec) return;
+    setFallbackBusy(true);
+    try {
+      const res = await fetchWithTimeout(VOICE_ASK_URL, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ audio: rec.base64, mime: rec.mime, ...(sessionContext || {}) }),
+      }, 90000);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return;
+      setLines((prev) => [...prev, { role: 'user', text: data.question || '' }]);
+      if (data.action?.description) onActionExecuted?.(data.action.description);
+      setLines((prev) => [...prev, { role: 'assistant', text: data.answer || '' }]);
+      onTurnCompleted?.();
+      if (data.audio) playBase64(data.audio, data.audioMime).catch(() => {});
+    } catch { /* best-effort — the fallback stays available for another try */ }
+    finally { setFallbackBusy(false); }
   }
 
   function endSession() {
@@ -228,13 +300,15 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted }: Props) {
               key={i}
               entering={FadeInDown.duration(180).springify().damping(18)}
               style={[
-                styles.bubble,
+                l.receipt ? styles.receiptChip : styles.bubble,
                 l.role === 'user'
                   ? { backgroundColor: c.accentSoft, alignSelf: 'flex-end' }
-                  : { backgroundColor: 'transparent', alignSelf: 'stretch' },
+                  : l.receipt
+                    ? { backgroundColor: withAlpha('#34C759', 0.12), alignSelf: 'flex-start' }
+                    : { backgroundColor: 'transparent', alignSelf: 'stretch' },
               ]}
             >
-              <Text style={[md.body, { color: c.text }]}>{l.text}</Text>
+              <Text style={[md.body, { color: l.receipt ? '#1F9254' : c.text, fontWeight: l.receipt ? '600' : undefined }]}>{l.text}</Text>
             </Animated.View>
           ))}
         </ScrollView>
@@ -243,7 +317,9 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted }: Props) {
           <View style={[styles.banner, { backgroundColor: withAlpha('#FF3B30', 0.1) }]}>
             <View style={styles.bannerTextCol}>
               <Text style={[styles.bannerText, { color: '#FF3B30' }]}>{error}</Text>
-              <Text style={[styles.bannerHint, { color: '#FF3B30' }]}>You can still use the regular mic in Ask.</Text>
+              {state !== 'fallback_available' && (
+                <Text style={[styles.bannerHint, { color: '#FF3B30' }]}>You can still use the regular mic in Ask.</Text>
+              )}
             </View>
             <Pressable onPress={connect} hitSlop={8}>
               <Text style={[styles.bannerRetry, { color: '#FF3B30' }]}>Retry</Text>
@@ -259,7 +335,23 @@ export function TalkOverlay({ visible, onClose, onTurnCompleted }: Props) {
         </View>
 
         <View style={[styles.controls, { borderTopColor: c.border }]}>
-          {textMode ? (
+          {state === 'fallback_available' ? (
+            <View style={styles.controlsRow}>
+              <Pressable
+                onPressIn={fallbackMicPressIn}
+                onPressOut={fallbackMicPressOut}
+                disabled={!voiceAvailable || fallbackBusy}
+                style={[styles.endBtn, { backgroundColor: fallbackRecording ? '#FF3B30' : c.accent, opacity: fallbackBusy ? 0.5 : 1 }]}
+                accessibilityLabel="Hold to talk"
+                accessibilityRole="button"
+              >
+                <Ionicons name={fallbackRecording ? 'radio-button-on' : 'mic'} size={26} color="#fff" />
+              </Pressable>
+              <Pressable onPress={endSession} style={[styles.controlBtn, { backgroundColor: c.card, borderColor: c.border }]}>
+                <Ionicons name="close" size={20} color={c.text} />
+              </Pressable>
+            </View>
+          ) : textMode ? (
             <View style={[styles.textRow, { borderColor: c.border, backgroundColor: c.card }]}>
               <TextInput
                 style={[styles.textInput, { color: c.text }]}
@@ -317,6 +409,7 @@ const styles = StyleSheet.create({
   threadContent: { padding: spacing.md, paddingBottom: spacing.lg, flexGrow: 1 },
   hint: { fontSize: 14, textAlign: 'center', marginTop: spacing.xl },
   bubble: { borderRadius: radius.md, paddingHorizontal: spacing.sm, paddingVertical: 6, marginTop: spacing.sm, maxWidth: '92%' },
+  receiptChip: { borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 5, marginTop: spacing.sm, maxWidth: '92%' },
   banner: { marginHorizontal: spacing.md, borderRadius: radius.md, padding: spacing.sm, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   bannerTextCol: { flex: 1, gap: 2 },
   bannerText: { fontSize: 13, fontWeight: '600' },

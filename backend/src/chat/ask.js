@@ -1007,6 +1007,11 @@ function validateAction(p) {
     const at = typeof p.at === 'string' && p.at.trim() ? p.at.trim() : null;
     return { action: 'set_reminder', text: String(p.text).slice(0, 200), at };
   }
+  if (type === 'complete_commitment' && p.commitmentId != null) {
+    const commitmentId = Number(p.commitmentId);
+    if (!Number.isInteger(commitmentId) || commitmentId <= 0) return null;
+    return { action: 'complete_commitment', commitmentId, commitmentTitle: p.commitmentTitle ? String(p.commitmentTitle).slice(0, 200) : null };
+  }
   if (type === 'add_chapter' && p.label && String(p.label).trim()) {
     return {
       action: 'add_chapter',

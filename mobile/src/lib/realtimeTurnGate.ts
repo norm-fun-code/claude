@@ -48,3 +48,17 @@ export function decideSpokenTurn(
   }
   return { kind: 'accepted', transcript };
 }
+
+/**
+ * A tool-call result, transcript delta, or response event tagged with an
+ * older turnId than the CURRENT turn is stale — the turn it belonged to was
+ * cancelled (barge-in) or superseded before it resolved. realtimeVoice.ts
+ * increments its own turnId on every new accepted user turn and stamps it
+ * onto every tool call it issues; a stale event must be dropped rather than
+ * rendered or executed, so a cancelled response can never surface a late
+ * tool-call receipt or transcript fragment as if it were current, and a
+ * barge-in can never let the interrupted response's action still land.
+ */
+export function isStaleTurn(eventTurnId: number, currentTurnId: number): boolean {
+  return eventTurnId < currentTurnId;
+}

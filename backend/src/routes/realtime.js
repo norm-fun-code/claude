@@ -39,14 +39,18 @@ const PERSONA = process.env.REALTIME_PERSONA_STYLE ||
  * Every read is fail-soft: a missing store just narrows the package, never
  * blocks the session from minting.
  *
- * @returns {{ durable: string, current: string, today: string, yesterday: string }}
+ * @param {{kind:string,id:string}|null} [opts.selection] - the unified voice
+ *   coordinator's selection contract (chat/voiceContext.js resolves it) —
+ *   what the user was looking at when they opened this session.
+ * @returns {{ durable: string, current: string, today: string, yesterday: string, selected: string|null }}
  */
-async function buildContextPackage({ now = new Date() } = {}) {
+async function buildContextPackage({ now = new Date(), selection = null } = {}) {
   const tz = process.env.TZ || 'America/New_York';
   const today = now.toLocaleDateString('en-CA', { timeZone: tz });
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000).toLocaleDateString('en-CA', { timeZone: tz });
 
-  const [beliefs, goals, chapters, commitments, intention, briefing, recovery, recentJournal] = await Promise.all([
+  const { resolveSelection, describeSelection } = require('../chat/voiceContext');
+  const [beliefs, goals, chapters, commitments, intention, briefing, recovery, recentJournal, resolvedSelection] = await Promise.all([
     require('../store/beliefs').listActive({ limit: 12 }).catch(() => []),
     require('../store/goals').listGoals({ status: 'active' }).catch(() => []),
     require('../store/lifeChapters').listActive().catch(() => []),
@@ -62,6 +66,7 @@ async function buildContextPackage({ now = new Date() } = {}) {
     // Only the last ~2 days, and only surfaced with an explicit today/yesterday
     // label below — never as undated "current" context.
     require('../store/dayJournal').recent({ days: 2, limit: 4 }).catch(() => []),
+    resolveSelection(selection).catch(() => ({ found: false, summary: null })),
   ]);
 
   // The canonical effective workout — the SAME selector the Health tab, the
@@ -128,7 +133,9 @@ async function buildContextPackage({ now = new Date() } = {}) {
     current.push(`${label} (${d}) they noted: "${String(e.text || '').slice(0, 200)}"`);
   }
 
-  return { durable: durable.join('\n\n'), current: current.join('\n'), today, yesterday };
+  const selected = describeSelection(resolvedSelection);
+
+  return { durable: durable.join('\n\n'), current: current.join('\n'), today, yesterday, selected };
 }
 
 /** Assemble the full system prompt from the persona + the temporal contract +
@@ -143,6 +150,11 @@ function composeInstructions(pkg) {
   const sections = [PERSONA, temporalRules];
   if (pkg.durable) sections.push(`WHAT IS DURABLY TRUE ABOUT THIS PERSON (timeless — never call this "today"):\n${pkg.durable}`);
   if (pkg.current) sections.push(`CURRENT / DATED CONTEXT (the ONLY things you may call today/yesterday):\n${pkg.current}`);
+  // What the user was actually looking at when they opened this session — a
+  // stable, server-resolved canonical fact (chat/voiceContext.js), never
+  // reconstructed from what they say. Answer a bare "why is this yellow?" /
+  // "what caused this?" / "mark this done" against THIS, not a guess.
+  if (pkg.selected) sections.push(`SELECTED CONTEXT (what the user is currently looking at on screen):\n${pkg.selected}`);
   return sections.join('\n\n');
 }
 
@@ -160,12 +172,30 @@ function createRealtimeRouter() {
       return res.status(503).json({ error: 'openai_not_configured', fallback: true });
     }
 
-    const pkg = await buildContextPackage();
+    // The unified voice-session contract (all conversational entry points —
+    // Realtime, push-to-talk — send this same shape): what tab the user is
+    // on, their local clock, the BrainSnapshot id they last saw, and a
+    // specific card/insight/commitment/workout they've selected, if any.
+    // None of this is trusted as FACT — `selection` is just a pointer the
+    // server resolves itself (chat/voiceContext.js) before it ever reaches
+    // the model.
+    const body = req.body || {};
+    const t0 = Date.now();
+    const localDateTime = typeof body.localDateTime === 'string' ? new Date(body.localDateTime) : new Date();
+    const now = Number.isNaN(localDateTime.getTime()) ? new Date() : localDateTime;
+    const selection = body.selection && typeof body.selection === 'object'
+      ? { kind: String(body.selection.kind || ''), id: body.selection.id != null ? String(body.selection.id) : null }
+      : null;
+
+    const pkg = await buildContextPackage({ now, selection });
     const instructions = composeInstructions(pkg);
 
     let session;
     try {
-      session = await realtimeService.createEphemeralSession({ instructions, tools: TOOL_SCHEMAS });
+      session = await realtimeService.createEphemeralSession({
+        instructions, tools: TOOL_SCHEMAS,
+        language: typeof body.language === 'string' ? body.language : undefined,
+      });
     } catch (err) {
       const reason = err.reason || 'session_mint_failed';
       // Full diagnostic detail server-side only (stage, HTTP status from
@@ -175,10 +205,15 @@ function createRealtimeRouter() {
         `[realtime session] mint failed: reason=${reason} providerStatus=${err.providerStatus ?? 'n/a'} ` +
         `providerCode=${err.providerCode ?? 'n/a'} providerType=${err.providerType ?? 'n/a'} message=${err.message}`
       );
+      await realtimeMetrics.logEvent({ sessionId: body.sessionId || 'unminted', type: 'fallback', meta: { reason } }).catch(() => {});
       return res.status(502).json({ error: reason, fallback: true });
     }
 
-    const sessionId = crypto.randomUUID();
+    // Reuse the client's own sessionId when it already generated one (so
+    // /tool, /turn, /metric calls for this session correlate under a single
+    // id from the very first event), else mint one here.
+    const sessionId = typeof body.sessionId === 'string' && body.sessionId ? body.sessionId : crypto.randomUUID();
+    await realtimeMetrics.logEvent({ sessionId, type: 'session_setup', valueMs: Date.now() - t0, meta: { activeTab: body.activeTab || null } }).catch(() => {});
     res.json({
       sessionId,
       clientSecret: session.clientSecret,
@@ -198,13 +233,13 @@ function createRealtimeRouter() {
   // this backend never sees the call arrive — the client posts it here,
   // gets the result, and sends it back to OpenAI over that same channel).
   router.post('/voice/realtime/tool', asyncHandler(async (req, res) => {
-    const { sessionId, name, arguments: args } = req.body || {};
+    const { sessionId, name, arguments: args, turnId } = req.body || {};
     if (!sessionId || !name) return res.status(400).json({ error: 'sessionId and name required' });
     if (!TOOL_NAMES.has(name)) return res.status(400).json({ error: `unknown tool: ${name}` });
 
     const t0 = Date.now();
     try {
-      const result = await runTool(name, args || {});
+      const result = await runTool(name, args || {}, { sessionId, turnId, now: new Date() });
       const valueMs = Date.now() - t0;
       // Awaited (not fire-and-forget): logEvent is itself fail-soft (never
       // throws), and the insert is a single fast round trip — awaiting it
@@ -227,15 +262,25 @@ function createRealtimeRouter() {
   // turn with no tool at all) — a deep_ask turn already persists itself
   // (chat/realtimeTools.js's deepAsk), so the client must not call this for
   // those or the turn would be saved twice.
+  //
+  // Idempotency: keyed by (sessionId, turnId) so a client retry (e.g. after a
+  // dropped response) can never write the same turn to History twice — a
+  // structural guard, not just a documented client contract.
   router.post('/voice/realtime/turn', asyncHandler(async (req, res) => {
-    const { question, answer } = req.body || {};
+    const { question, answer, turnId, sessionId } = req.body || {};
     if (!question || !answer) return res.status(400).json({ error: 'question and answer required' });
     const chatStore = require('../store/chat');
-    const convId = await chatStore.ensureActiveConversation();
-    await Promise.all([
-      chatStore.saveMessage({ role: 'user', content: String(question).slice(0, 4000), conversationId: convId }),
-      chatStore.saveMessage({ role: 'assistant', content: String(answer).slice(0, 4000), conversationId: convId }),
-    ]);
+    const idempotency = require('../chat/voiceIdempotency');
+    const key = idempotency.keyFor({ sessionId, turnId, action: 'persist_turn', argsHash: idempotency.hashArgs({ question, answer }) });
+    const { fromCache } = await idempotency.once(key, async () => {
+      const convId = await chatStore.ensureActiveConversation();
+      await Promise.all([
+        chatStore.saveMessage({ role: 'user', content: String(question).slice(0, 4000), conversationId: convId }),
+        chatStore.saveMessage({ role: 'assistant', content: String(answer).slice(0, 4000), conversationId: convId }),
+      ]);
+      return true;
+    });
+    if (fromCache) console.warn(`[realtime turn] duplicate persist for key=${key} — not re-saved`);
     res.json({ ok: true });
   }));
 
@@ -246,7 +291,14 @@ function createRealtimeRouter() {
   router.post('/voice/realtime/metric', asyncHandler(async (req, res) => {
     const { sessionId, type, valueMs, meta } = req.body || {};
     if (!sessionId || !type) return res.status(400).json({ error: 'sessionId and type required' });
-    const ALLOWED = new Set(['connect', 'first_audio', 'interruption', 'error', 'reconnect']);
+    // Extended for the fast-path architecture's required instrumentation:
+    // session_setup/first_transcript/first_audio/turn_total (latency),
+    // fallback/reconnect_attempt (resilience), alongside the original
+    // connect/first_audio/interruption/error/reconnect set.
+    const ALLOWED = new Set([
+      'connect', 'first_audio', 'interruption', 'error', 'reconnect',
+      'session_setup', 'first_transcript', 'turn_total', 'fallback', 'reconnect_attempt',
+    ]);
     if (!ALLOWED.has(type)) return res.status(400).json({ error: `unknown metric type: ${type}` });
     await realtimeMetrics.logEvent({ sessionId, type, valueMs, meta });
     res.json({ ok: true });

@@ -166,6 +166,14 @@ async function applyCompletionCorrections(rows) {
  *  back to effectively-open (see applyCompletionCorrections). For the card,
  *  and the ONE canonical read every other surface (BrainSnapshot, Ask,
  *  realtime, action ranking) shares. */
+/** Fetch one commitment by id, or null. Used to bind a voice reference
+ *  ("mark this done") to the exact stable row a selection points at, rather
+ *  than re-deriving "this" from free text. */
+async function getById(id) {
+  const { rows } = await query(`SELECT * FROM commitments WHERE id = $1`, [id]);
+  return rows[0] ?? null;
+}
+
 async function listActive({ limit = 20 } = {}) {
   const [{ rows: openRows }, doneRows] = await Promise.all([
     query(
@@ -325,6 +333,7 @@ module.exports = {
   deriveActionTitle,
   isReminderDue,
   create,
+  getById,
   listActive,
   todaySummary,
   markDone,

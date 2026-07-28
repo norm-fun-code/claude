@@ -38,10 +38,18 @@ const DEFAULT_TRANSCRIBE_LANGUAGE = process.env.REALTIME_TRANSCRIBE_LANGUAGE || 
  * allowlist — session.update on the client can still adjust turn-taking, but
  * the tool set and base instructions are set here, server-side.
  *
- * @param {{ instructions: string, tools: Array<object>, voice?: string, model?: string }} opts
- * @returns {Promise<{ clientSecret: string, expiresAt: number|null, model: string, voice: string }>}
+ * `language` lets an individual session request a non-default transcription
+ * language (the unified voice-session contract's `language` field) — falls
+ * back to DEFAULT_TRANSCRIBE_LANGUAGE (still 'en' unless overridden by env)
+ * when omitted, so the phantom-noise mitigation this locks in place stays
+ * the default behavior for every caller that doesn't explicitly ask for a
+ * different language.
+ *
+ * @param {{ instructions: string, tools: Array<object>, voice?: string, model?: string, language?: string }} opts
+ * @returns {Promise<{ clientSecret: string, expiresAt: number|null, model: string, voice: string, language: string }>}
  */
-async function createEphemeralSession({ instructions, tools = [], voice = DEFAULT_VOICE, model = DEFAULT_MODEL } = {}) {
+async function createEphemeralSession({ instructions, tools = [], voice = DEFAULT_VOICE, model = DEFAULT_MODEL, language } = {}) {
+  const transcribeLanguage = typeof language === 'string' && language.trim() ? language.trim() : DEFAULT_TRANSCRIBE_LANGUAGE;
   const timeoutMs = Number(process.env.REALTIME_SESSION_TIMEOUT_MS || 10000);
   const payload = {
     session: {
@@ -65,7 +73,7 @@ async function createEphemeralSession({ instructions, tools = [], voice = DEFAUL
           // transcriptGuard.ts's pre-response validation.
           transcription: {
             model: process.env.REALTIME_TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe',
-            language: DEFAULT_TRANSCRIBE_LANGUAGE,
+            language: transcribeLanguage,
           },
           // near_field assumes the mic is close to the speaker's mouth (a phone
           // held/worn during the call, not a conference-room far mic) — the
@@ -123,7 +131,7 @@ async function createEphemeralSession({ instructions, tools = [], voice = DEFAUL
     expiresAt: data?.expires_at ?? data?.client_secret?.expires_at ?? null,
     model,
     voice,
-    language: DEFAULT_TRANSCRIBE_LANGUAGE,
+    language: transcribeLanguage,
   };
 }
 

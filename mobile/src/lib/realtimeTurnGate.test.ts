@@ -3,6 +3,7 @@
 // via: node --experimental-strip-types --test src/lib/realtimeTurnGate.test.ts
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { isStaleTurn } from './realtimeTurnGate.ts';
 import { decideSpokenTurn } from './realtimeTurnGate.ts';
 
 test('rejects the exact お願いします。 reproduction, with a delete target and a content-free log line', () => {
@@ -91,4 +92,15 @@ test('language/duration options pass through to the underlying classifier', () =
   const tooShort = decideSpokenTurn('item-l3', 'Thanks', new Set(), { speechDurationMs: 40 });
   assert.equal(tooShort.kind, 'rejected');
   if (tooShort.kind === 'rejected') assert.equal(tooShort.result.reason, 'too_short_duration');
+});
+
+test('required: barge-in — a tool-call result tagged with an OLDER turnId than the current turn is stale and must be dropped', () => {
+  // Simulates: turn 1 issues a tool call, the user barges in (turn advances
+  // to 2) before it resolves, the tool call's late result arrives tagged
+  // with turnId 1 — it must never be rendered or executed as if current.
+  assert.equal(isStaleTurn(1, 2), true);
+});
+
+test('a tool-call result tagged with the CURRENT turnId is not stale', () => {
+  assert.equal(isStaleTurn(2, 2), false);
 });

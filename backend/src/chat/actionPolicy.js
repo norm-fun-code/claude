@@ -17,6 +17,7 @@
 const IMMEDIATE_ACTIONS = new Set([
   'log_habit', 'log_activity', 'log_checkin', 'log_weight',
   'log_gratitude_text', 'add_context', 'log_day_context', 'set_reminder',
+  'complete_commitment',
 ]);
 
 // Meaningful, cross-surface-visible mutations: a workout swap changes what
@@ -76,6 +77,8 @@ function describeAction(action) {
       return { title: "Log today's context", preview: (action.text || '').length > 140 ? `${action.text.slice(0, 140)}…` : (action.text || '') };
     case 'set_reminder':
       return { title: 'Set reminder', preview: action.text || '' };
+    case 'complete_commitment':
+      return { title: 'Mark commitment done', preview: action.commitmentTitle ? `Marks "${action.commitmentTitle}" done.` : 'Marks the selected commitment done.' };
     default:
       return { title: action.action, preview: '' };
   }
