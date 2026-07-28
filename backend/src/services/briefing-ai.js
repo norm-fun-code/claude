@@ -221,7 +221,7 @@ function buildChiefBriefPrompt(emailData, currentDay, workoutPlan, calendarEvent
   return `${selfModel ? selfModel + '\n\n---\n\n' : ''}Today is ${currentDay}, ${todayDateStr}. Anchor ALL timing to this date: a dated context note below (shown as "[Weekday, Mon D] …") describes the day in its bracket, and any "tonight"/"today"/"tomorrow" wording in it has ALREADY been rewritten to read correctly as of today — relay it as written, never re-cast a past note's event as happening tonight or tomorrow.
 ${dayOffContext ? `\nDAY CONTEXT: ${dayOffContext}\n` : ''}
 Today's workout: ${workoutPlan.type}${workoutPlan.duration ? ` (${workoutPlan.duration})` : ''}
-${workoutPlan.autoSwapNote ? `${workoutPlan.autoSwapNote}\n` : ''}${recoveryContext ? `Recovery status: ${recoveryContext}` : ''}
+${workoutPlan.autoSwapNote ? `${workoutPlan.autoSwapNote}\n` : ''}${recoveryContext ? `Recovery status: ${recoveryContext}\nUse the presentation label above (e.g. "Solid — near green") to describe how the user is doing, not the raw canonical band alone — a "Solid — near green" reading is NOT under-recovered and does not call for reduced intensity or "keep it easy" language on its own; only recommend scaling back if another signal in this brief (sleep debt, training-load spike, illness, self-report) independently supports it.` : ''}
 ${experimentsContext ? `\nONGOING SELF-EXPERIMENTS (mention only when genuinely relevant to today's topic — never force it in, never claim more than what's stated, and never describe a flagged-stalled one as actively tracking):\n${experimentsContext}\n` : ''}
 
 Today's calendar (personal — usually light):

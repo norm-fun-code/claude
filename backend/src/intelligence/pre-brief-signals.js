@@ -132,7 +132,12 @@ function buildSignals({
     }
   }
 
-  // Recovery outlier — score < 50 (red / lower-yellow band)
+  // Recovery outlier — score < 50. This is a proactive-question trigger, a
+  // separate concern from the presentation tier (recoveryPresentation.js):
+  // 50 sits inside the canonical yellow band (40-62) and the "moderate"
+  // presentation tier (40-54), not "red" or a "lower-yellow" band as this
+  // comment previously (incorrectly) said. The numeric gate itself is
+  // unrelated to presentation and is left unchanged.
   if (recovery?.score != null && recovery.score < 50) {
     const severity = 0.9 - (recovery.score / 100) * 0.4; // lower = more severe
     signals.push({

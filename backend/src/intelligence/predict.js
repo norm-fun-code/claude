@@ -21,6 +21,8 @@ function fmtHM(hours) {
 }
 
 const round1 = (n) => Math.round(n * 10) / 10;
+const { canonicalBand } = require('./recoveryThresholds');
+const { recoveryPresentation } = require('./recoveryPresentation');
 
 /**
  * Predict today's GRADE from overnight recovery + sleep debt + training load.
@@ -49,13 +51,15 @@ function predictCapacity(s = {}) {
   const { recoveryScore, hrvSubScore, sleepHours, sleepDebtHours, acwrBand } = s;
   if (recoveryScore == null || !Number.isFinite(recoveryScore)) return null;
 
-  // These grade cutoffs are the single source of truth for the day's recovery
-  // band. recovery.js recoveryBand() mirrors them so the Health-tab workout zone
-  // matches this grade exactly — keep them in sync.
-  let grade, band, headline;
-  if (recoveryScore >= 63)      { grade = 'A'; band = 'green';  headline = 'Full send'; }
-  else if (recoveryScore >= 40) { grade = 'B'; band = 'yellow'; headline = 'Hit your essentials'; }
-  else                          { grade = 'C'; band = 'red';    headline = 'Keep the streak alive'; }
+  // The grade's band comes from recoveryThresholds.js's canonicalBand() — the
+  // single authoritative source for the 63/40 cutoffs — so this grade and the
+  // Health-tab workout zone (recovery.js recoveryBand()) can never drift out
+  // of sync again.
+  const band = canonicalBand(recoveryScore);
+  let grade, headline;
+  if (band === 'green')       { grade = 'A'; headline = 'Full send'; }
+  else if (band === 'yellow') { grade = 'B'; headline = 'Hit your essentials'; }
+  else                        { grade = 'C'; headline = 'Keep the streak alive'; }
 
   // Name the real drivers behind the grade.
   const drivers = [];
@@ -81,7 +85,16 @@ function predictCapacity(s = {}) {
   }
   if (sleepDebtHours != null && sleepDebtHours >= 1 && grade !== 'C') rx.push('Protect an earlier bedtime tonight.');
 
-  return { grade, band, headline, detail: driverClause.trim(), prescription: rx.join(' ') };
+  // Presentation tier/label for cross-surface agreement with Health/Ask/
+  // voice (recoveryPresentation.js) — additive; grade/band/headline/
+  // prescription above are unchanged so this stays a pure addition.
+  const riskFlags = [];
+  if (sleepDebtHours != null && sleepDebtHours >= 5) riskFlags.push('sleep_debt');
+  if (acwrBand === 'high') riskFlags.push('load_spike');
+  if (hrvSubScore != null && hrvSubScore < 30) riskFlags.push('hrv_depressed');
+  const presentation = recoveryPresentation(recoveryScore, { band, riskFlags });
+
+  return { grade, band, headline, detail: driverClause.trim(), prescription: rx.join(' '), presentation };
 }
 
 const WEEKDAY = (d) => d.toLocaleDateString('en-US', { weekday: 'long' });
@@ -197,7 +210,7 @@ function forecastTomorrow({ recoveryScore, acwrBand, sleepDebtHours, hardSession
   if (easy) proj += 4;
 
   proj = Math.max(0, Math.min(100, proj));
-  const band = proj >= 63 ? 'green' : proj >= 40 ? 'yellow' : 'red';
+  const band = canonicalBand(proj);
   const leans = band === 'green' ? 'green' : band === 'yellow' ? 'moderate' : 'low';
   const dragStr = drags.length <= 1 ? drags.join('')
     : `${drags.slice(0, -1).join(', ')} and ${drags[drags.length - 1]}`;
@@ -209,7 +222,8 @@ function forecastTomorrow({ recoveryScore, acwrBand, sleepDebtHours, hardSession
     : 'The swing factor is tonight: hit your sleep need and this likely rebounds a band.';
   // More confident at the extremes; a mid projection is genuinely a coin-flip.
   const confidence = Math.round((Math.abs(proj - 51) / 51) * 40 + 45); // 45–85
-  return { band, projectedScore: Math.round(proj), detail, lever, confidence };
+  const presentation = recoveryPresentation(proj, { band });
+  return { band, projectedScore: Math.round(proj), detail, lever, confidence, presentation };
 }
 
 /**

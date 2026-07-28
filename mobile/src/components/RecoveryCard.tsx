@@ -107,16 +107,31 @@ function RecoveryCard({ recovery, composites = [], builtAt, highlight, onHighlig
   if (!recovery || recovery.score == null) return null;
 
 
+  // Centralized presentation (recoveryPresentation.js) drives the label,
+  // color, and orb/arc gradient — a near-green score (tier 'solid_near_green')
+  // gets its own reassuring color instead of sharing the plain 'yellow'
+  // band's cautionary look with a genuinely moderate score. Falls back to the
+  // raw band (old 3-label behavior) for a cached reading with no
+  // `presentation` field.
+  const tier = recovery.presentation?.tier;
   const bandColor =
-    recovery.band === 'green' ? colors.green
+    tier === 'ready' ? colors.green
+      : tier === 'solid_near_green' ? colors.warmGreen
+      : tier === 'moderate' ? colors.amber
+      : tier === 'low' ? colors.red
+      : recovery.band === 'green' ? colors.green
       : recovery.band === 'yellow' ? colors.yellow
       : recovery.band === 'red' ? colors.red
       : c.subtext;
-  const bandLabel =
-    recovery.band === 'green' ? 'Recovered'
+  const bandLabel = recovery.presentation?.label ??
+    (recovery.band === 'green' ? 'Recovered'
       : recovery.band === 'yellow' ? 'Moderate'
       : recovery.band === 'red' ? 'Low'
-      : 'Recovery';
+      : 'Recovery');
+  // The orb/arc take a gradient key (theme.ts bandGradient) — use the
+  // presentation tier's own gradient when available so a near-green score
+  // renders visually distinct from a genuinely moderate one.
+  const gradientKey = tier === 'solid_near_green' ? 'warmGreen' : tier === 'moderate' ? 'amber' : (recovery.band ?? 'neutral');
   // A self-reported (no Eight Sleep) night is a subjective proxy, not a
   // device measurement — say so plainly rather than let the score/band look
   // as precise as a real reading (truth-and-evidence contract, audit
@@ -133,9 +148,9 @@ function RecoveryCard({ recovery, composites = [], builtAt, highlight, onHighlig
       <View style={styles.scoreRow}>
         <View style={{ width: 104, height: 104, alignItems: 'center', justifyContent: 'center' }}>
           <View style={{ position: 'absolute' }}>
-            <ProgressArc score={recovery.score} band={recovery.band} size={104} />
+            <ProgressArc score={recovery.score} band={gradientKey} size={104} />
           </View>
-          <RecoveryOrb score={recovery.score} band={recovery.band} size={84} />
+          <RecoveryOrb score={recovery.score} band={gradientKey} size={84} />
         </View>
         <View style={styles.scoreMeta}>
           <Text style={[styles.band, { color: bandColor }]}>{displayBandLabel}</Text>

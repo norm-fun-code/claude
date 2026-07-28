@@ -4,6 +4,8 @@
 // returns numbers/findings, so it's fully unit-testable. The orchestrator
 // (analyze.js) feeds it the same per-metric series it already loads.
 const stats = require('./stats');
+const { canonicalBand } = require('./recoveryThresholds');
+const { recoveryPresentation } = require('./recoveryPresentation');
 
 // HRV and resting HR are autonomic recovery signals read overnight from
 // Eight Sleep — source-locked here (and everywhere else that reads them for
@@ -182,13 +184,22 @@ function recoveryScore(seriesByKey, opts = {}) {
   return { score, parts, inputs: keys.length };
 }
 
-/** Band + guidance for a recovery score, à la Whoop's red/yellow/green.
- *  Thresholds are kept IDENTICAL to predict.js predictCapacity's A/B/C grade
- *  (A ≥67 = green, B ≥50 = yellow, C <50 = red) so the Today-tab day grade and
- *  the Health-tab workout zone never disagree. Keep these in sync. */
+/** Canonical band + guidance for a recovery score, à la Whoop's red/yellow/
+ *  green. The band thresholds are NOT owned here — they're the single
+ *  authoritative constants in recoveryThresholds.js (GREEN_MIN=63,
+ *  YELLOW_MIN=40), imported below so predict.js's predictCapacity A/B/C
+ *  grade and every other consumer can never drift out of sync with this
+ *  function again. This return value (band + guidance) is the CANONICAL
+ *  three-band contract — it drives training logic, forecasting, validation,
+ *  and historical data, and must never be redefined based on presentation
+ *  concerns. For the finer user-facing presentation tier (e.g. a near-green
+ *  59 reading as reassuring rather than alarming), see
+ *  recoveryPresentation.js's recoveryPresentation() — additive, built on top
+ *  of this function's own band, never a replacement for it. */
 function recoveryBand(score) {
-  if (score >= 63) return { band: 'green',  guidance: "Green — your body's ready. Full intensity is appropriate today." };
-  if (score >= 40) return { band: 'yellow', guidance: 'Moderate — solid foundation. Push if you feel good, but watch your exertion.' };
+  const band = canonicalBand(score);
+  if (band === 'green') return { band, guidance: "Green — your body's ready. Full intensity is appropriate today." };
+  if (band === 'yellow') return { band, guidance: 'Moderate — solid foundation. Push if you feel good, but watch your exertion.' };
   return { band: 'red', guidance: 'Low — under-recovered. Keep it easy today: mobility or a walk, and protect tonight\'s sleep.' };
 }
 
@@ -484,28 +495,36 @@ function computeHealthComposites(seriesByKey, opts = {}) {
   // autonomic recovery (HRV) can read "ready" while muscle/connective tissue is
   // still catching up.
   const load = trainingLoad(seriesByKey, opts);
+  const sleep = seriesByKey['health:sleep_hours'];
 
-  // Recovery score
+  // Recovery score. The caveat/caution language a recovery finding may carry
+  // is generalized behind recoveryPresentation()'s riskFlags mechanism (this
+  // was previously a single green+high-load special case inline here) — any
+  // of the task's allowed independent canonical signals can add caution to
+  // an otherwise-reassuring solid_near_green read, but a bare score never
+  // does on its own.
   const rec = recoveryScore(seriesByKey, opts);
   if (rec) {
-    const { band, guidance } = recoveryBand(rec.score);
-    let detail = guidance;
-    if (band === 'green' && load && load.band === 'high') {
-      detail += ` One caveat: your training load is spiking (ACWR ${load.acwr}) — keep today controlled rather than all-out, so recovery keeps pace with the load.`;
-    }
+    const { band } = recoveryBand(rec.score);
+    const riskFlags = [];
+    if (load && load.band === 'high') riskFlags.push('load_spike');
+    const debtCheck = sleepDebt(sleep, opts);
+    if (debtCheck && debtCheck.debtHours >= 5) riskFlags.push('sleep_debt');
+    if (rec.parts.hrv != null && rec.parts.hrv < 30) riskFlags.push('hrv_depressed');
+    if (rec.parts.restingHr != null && rec.parts.restingHr < 30) riskFlags.push('rhr_elevated');
+    const presentation = recoveryPresentation(rec.score, { band, riskFlags });
     findings.push({
       type: 'recovery',
       domains: ['health'],
-      title: `Recovery ${rec.score}/100 — ${band}`,
-      detail,
+      title: `Recovery ${rec.score}/100 — ${presentation.label}`,
+      detail: presentation.guidance,
       confidence: rec.inputs >= 3 ? 0.9 : 0.7,
-      evidence: { auto: true, kind: 'recovery', score: rec.score, band, parts: rec.parts, acwr: load ? load.acwr : null },
+      evidence: { auto: true, kind: 'recovery', score: rec.score, band, parts: rec.parts, acwr: load ? load.acwr : null, presentation },
     });
   }
 
   // Sleep balance — see sleepBalance7() for why this is used instead of Eight
   // Sleep's raw sleep_debt API field.
-  const sleep = seriesByKey['health:sleep_hours'];
   const sleepNeedSeries = seriesByKey['health:sleep_need'];
   const eightSleepNeed = latest(sleepNeedSeries);
   const lastNight = sleep ? latest(sleep) : null;
@@ -719,12 +738,17 @@ async function liveSelfReport(metricsStore, from60, todayLocal) {
         ? 'A so-so night by your own rating — keep intensity sensible and don’t force a hard session.'
         : 'You rated it a rough night — keep today easy (mobility or a walk) and protect tonight’s sleep.';
   const hStr = Number.isFinite(hours) && hours > 0 ? `, ~${fmtHM(hours)}` : '';
+  // Presentation tier/label/color for cross-surface agreement (Health card,
+  // Today, brief, Ask, voice) — the proxy's OWN hedged detail text above
+  // stays authoritative for this reading (it already reflects the data being
+  // self-reported rather than device-measured), this is additive.
+  const presentation = recoveryPresentation(proxy.score, { band });
   return {
     // parts intentionally omitted — see selfReportRecovery's doc comment;
     // `category` (+ `proxy: true`) is the honest categorical summary a
     // consumer should render ("Good · provisional"), never split into
     // manufactured "quality"/"duration" percentile-looking sub-scores.
-    score: proxy.score, band, category: proxy.category,
+    score: proxy.score, band, category: proxy.category, presentation,
     detail: `${proxyGuidance} Based on your self-reported sleep (${Math.round(quality)}/5${hStr}) — no Eight Sleep reading last night.`,
     source: 'self_report', proxy: true, rawHrv: null, rawRhr: null,
     quality: Math.round(quality), hours: Number.isFinite(hours) ? hours : null,
@@ -802,6 +826,7 @@ async function liveRecoveryUncached() {
   const rec = recoveryScore(seriesByKey);
   if (!rec) return null;
   const { band, guidance } = recoveryBand(rec.score);
+  const presentation = recoveryPresentation(rec.score, { band });
 
   // If the user trained meaningfully in the last 2 days, note that suppressed
   // recovery is expected — avoids alarming a healthy athlete. Counts both logged
@@ -843,7 +868,7 @@ async function liveRecoveryUncached() {
     }
   } catch { /* non-critical */ }
 
-  return { score: rec.score, band, parts: rec.parts, detail: guidance + workoutNote, rawHrv, rawRhr };
+  return { score: rec.score, band, parts: rec.parts, detail: guidance + workoutNote, rawHrv, rawRhr, presentation };
 }
 
 // liveRecovery() is called from several independent request paths in one
@@ -983,6 +1008,7 @@ async function recoveryHistory({ days = 30 } = {}) {
 module.exports = {
   recoveryScore,
   recoveryBand,
+  recoveryPresentation,
   sleepDebt,
   sleepBalance7,
   sleepConsistency,

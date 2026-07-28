@@ -4,9 +4,9 @@
 // the "today's state" hero's label/decision/explanation. Pure, no I/O, no new
 // authority: every input here already comes from an existing canonical source
 // (App.tsx's `liveRecovery` hook and `d.effectiveWorkout`), never recomputed.
-import type { Recovery } from '../hooks/useBriefing';
+import type { Recovery, RecoveryPresentation } from '../hooks/useBriefing';
 
-export type HealthStateLabel = 'Ready' | 'Proceed with care' | 'Recover' | 'Provisional';
+export type HealthStateLabel = 'Ready' | 'Solid — near green' | 'Proceed with care' | 'Recover' | 'Provisional';
 export type TrainingDecision = 'Train as planned' | 'Reduce intensity' | 'Recovery only' | 'Rest';
 
 export interface EffectiveWorkoutFact {
@@ -32,10 +32,26 @@ export interface HealthStateResult {
   sourceLabel: 'Eight Sleep' | 'Self-reported' | 'Unavailable';
 }
 
-/** Pure: does this decision reduce to "just rest" vs "train, but easier"? */
-function decisionFor(band: Recovery['band'], workoutId: string | null | undefined): TrainingDecision {
-  if (band === 'red') return workoutId === 'rest' ? 'Rest' : 'Recovery only';
-  if (band === 'yellow') return 'Reduce intensity';
+type Tier = RecoveryPresentation['tier'] | null;
+
+/** Canonical-band fallback for a Recovery reading with no `presentation`
+ *  field (an older cached briefing, or a build predating this field) — maps
+ *  band alone onto a tier, conservatively treating the whole yellow range as
+ *  'moderate' (matches this function's pre-presentation behavior) rather
+ *  than assuming a near-green read it can't actually confirm. */
+function fallbackTier(band: Recovery['band']): Tier {
+  if (band === 'green') return 'ready';
+  if (band === 'yellow') return 'moderate';
+  if (band === 'red') return 'low';
+  return null;
+}
+
+/** Pure: does this decision reduce to "just rest" vs "train, but easier"?
+ *  A bare solid_near_green tier (a near-green score, e.g. 59) never reduces
+ *  intensity on its own — only 'moderate' and 'low' do. */
+function decisionFor(tier: Tier, workoutId: string | null | undefined): TrainingDecision {
+  if (tier === 'low') return workoutId === 'rest' ? 'Rest' : 'Recovery only';
+  if (tier === 'moderate') return 'Reduce intensity';
   return 'Train as planned';
 }
 
@@ -63,13 +79,14 @@ export function resolveHealthState(
   }
 
   const band = recovery.band;
+  const tier: Tier = recovery.presentation?.tier ?? fallbackTier(band);
   const isProxy = Boolean(recovery.proxy);
 
   // A self-reported reading is a subjective proxy, not a device measurement —
   // the state itself must read as provisional regardless of how good the
   // self-report was, never "Ready"/"Recovered" with device-level confidence.
   if (isProxy) {
-    const decision = decisionFor(band, workoutId);
+    const decision = decisionFor(tier, workoutId);
     return {
       stateLabel: 'Provisional',
       decision,
@@ -79,16 +96,22 @@ export function resolveHealthState(
     };
   }
 
-  const decision = decisionFor(band, workoutId);
+  const decision = decisionFor(tier, workoutId);
   let stateLabel: HealthStateLabel;
   let explanation: string;
-  if (band === 'green') {
+  if (tier === 'ready') {
     stateLabel = 'Ready';
     explanation = `Recovery is green (${recovery.score}) — ${workoutLabel} as planned.`;
-  } else if (band === 'yellow') {
+  } else if (tier === 'solid_near_green') {
+    // A near-green score (e.g. 59) — canonically still 'yellow', but never
+    // presented as under-recovered or told to reduce intensity on its own.
+    stateLabel = 'Solid — near green';
+    explanation = recovery.presentation?.guidance
+      ?? `Solid readiness (${recovery.score}) — train as planned if you feel good; no automatic need to scale back.`;
+  } else if (tier === 'moderate') {
     stateLabel = 'Proceed with care';
     explanation = `Recovery is moderate (${recovery.score}) — dial back intensity today.`;
-  } else if (band === 'red') {
+  } else if (tier === 'low') {
     stateLabel = 'Recover';
     explanation = effectiveWorkout?.source === 'auto_downgrade'
       ? `Recovery is low (${recovery.score}) — ${effectiveWorkout.scheduledLabel ?? 'today’s session'} was swapped for ${workoutLabel}.`

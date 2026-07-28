@@ -254,11 +254,28 @@ export interface BriefSignal {
   blocks?: BriefSignalBlock[];
 }
 
+// Centralized presentation semantics (backend intelligence/recoveryPresentation.js)
+// — the single source every surface (Health, Today, workout pill, Chief
+// Brief, Ask, voice) renders from, so a near-green score (e.g. 59) never
+// reads as alarming just because it shares recovery.band's canonical
+// 'yellow' value with a genuinely moderate day. `band` here is the SAME
+// canonical value as Recovery.band — never redefine or recompute it,
+// always read it from this object (or Recovery.band directly).
+export interface RecoveryPresentation {
+  tier: 'ready' | 'solid_near_green' | 'moderate' | 'low';
+  label: string;
+  color: 'green' | 'warmGreen' | 'amber' | 'red';
+  band: 'green' | 'yellow' | 'red';
+  guidance: string;
+  riskFlags: string[];
+}
+
 export interface Recovery {
   score: number | null;
   band: 'green' | 'yellow' | 'red' | null;
   parts: Record<string, number>;
   detail: string | null;
+  presentation?: RecoveryPresentation | null;
   rawHrv?: number | null;
   rawRhr?: number | null;
   // True when this reading is a SUBJECTIVE self-report proxy (no Eight Sleep
@@ -351,6 +368,7 @@ export interface TodayForecast {
     headline: string;
     detail: string;
     prescription: string;
+    presentation?: RecoveryPresentation | null;
   } | null;
   sleepDebt: {
     debtHours: number;
@@ -363,6 +381,7 @@ export interface TodayForecast {
     detail: string;
     lever: string;
     confidence: number;
+    presentation?: RecoveryPresentation | null;
     // Set only when something you said about today/tomorrow (voice or typed)
     // was relevant enough to add a caveat — most days this is absent.
     contextNote?: string;

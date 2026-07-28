@@ -11,6 +11,14 @@ export const colors = {
   green: '#34C759',                 // iOS systemGreen
   yellow: '#FF9F0A',                // iOS systemYellow
   red: '#FF3B30',                   // iOS systemRed
+  // Recovery presentation tiers (backend intelligence/recoveryPresentation.js)
+  // — a near-green score (55-62, canonically still 'yellow') gets its own
+  // warm green/lime so it visually reads as reassuring, not identical to a
+  // score of 40. `amber` aliases `yellow` (the "moderate" tier, 40-54, is the
+  // same canonical yellow color as before) — named separately so presentation
+  // consumers reference the semantic tier color, not the raw band color.
+  warmGreen: '#8BC34A',
+  amber: '#FF9F0A',
   // Same violet as tileTint.violet below — the ONE canonical "ready/new
   // artifact" purple (used by RadarSection/RadarDetailSheet's 'ready'
   // status). Deliberately distinct from BriefCard's own hardcoded #A89CFF —
@@ -34,6 +42,11 @@ export const bandGradient: Record<string, [string, string]> = {
   yellow: ['#FFC44D', '#F59E0B'],
   red: ['#FF8478', '#EF4444'],
   neutral: ['#B7B7C2', '#7C7C88'],
+  // Recovery presentation tiers — 'warmGreen' (near-green, 55-62) reads as
+  // reassuring rather than sharing 'yellow's cautionary gradient; 'amber'
+  // aliases 'yellow' (the 'moderate' tier, 40-54, keeps the original look).
+  warmGreen: ['#C6E88A', '#8BC34A'],
+  amber: ['#FFC44D', '#F59E0B'],
 };
 
 // Overlay a hex color at a given alpha. Used for the tinted "app-icon" tiles
@@ -200,6 +213,8 @@ export function getColors(isDark: boolean) {
     green: colors.green,
     yellow: colors.yellow,
     red: colors.red,
+    warmGreen: colors.warmGreen,
+    amber: colors.amber,
     purple: colors.purple,
     hero: colors.hero,
   };

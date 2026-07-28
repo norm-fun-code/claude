@@ -21,8 +21,15 @@ function TodayForecastCard({ forecast }: Props) {
   const tmr = forecast?.tomorrow;
   if (!cap && !debt) return null;
 
-  const bandColor = (b?: string) =>
-    b === 'green' ? c.green : b === 'yellow' ? c.yellow : b === 'red' ? c.red : c.subtext;
+  // Prefer the centralized presentation tier's color (recoveryPresentation.js)
+  // over the raw band — a near-green tomorrow-lean or today's-grade reads as
+  // reassuring, not identical to a genuinely moderate one.
+  const bandColor = (b?: string, tier?: string | null) =>
+    tier === 'solid_near_green' ? c.warmGreen
+      : tier === 'moderate' ? c.amber
+      : b === 'green' ? c.green : b === 'yellow' ? c.yellow : b === 'red' ? c.red : c.subtext;
+  const gradientKeyFor = (b?: string, tier?: string | null) =>
+    tier === 'solid_near_green' ? 'warmGreen' : tier === 'moderate' ? 'amber' : b;
 
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
@@ -30,7 +37,7 @@ function TodayForecastCard({ forecast }: Props) {
 
       {cap && (
         <View style={styles.gradeRow}>
-          <RecoveryOrb grade={cap.grade} band={cap.band} size={62} />
+          <RecoveryOrb grade={cap.grade} band={gradientKeyFor(cap.band, cap.presentation?.tier)} size={62} />
           <View style={styles.gradeBody}>
             <Text style={[styles.headline, { color: c.text }]}>{cap.headline}</Text>
             {!!cap.detail && <Text style={[styles.detail, { color: c.subtext }]}>{cap.detail}</Text>}
@@ -52,7 +59,7 @@ function TodayForecastCard({ forecast }: Props) {
       {tmr ? (
         <View style={[styles.debtRow, { borderTopColor: c.border }]}>
           <View style={styles.tmrHead}>
-            <View style={[styles.tmrDot, { backgroundColor: bandColor(tmr.band) }]} />
+            <View style={[styles.tmrDot, { backgroundColor: bandColor(tmr.band, tmr.presentation?.tier) }]} />
             <Text style={[styles.debtLabel, { color: c.subtext, marginBottom: 0 }]}>TOMORROW'S LEAN</Text>
             {tmr.confidence != null && (
               <Text style={[styles.tmrConf, { color: c.subtext }]}>{tmr.confidence}% confidence</Text>

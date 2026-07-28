@@ -18,6 +18,7 @@ interface Props {
 
 const STATE_COLOR: Record<string, string> = {
   Ready: themeColors.green,
+  'Solid — near green': themeColors.warmGreen,
   'Proceed with care': themeColors.yellow,
   Recover: themeColors.red,
   Provisional: '#8E8E93',
@@ -41,7 +42,11 @@ function HealthStateCard({ recovery, effectiveWorkout, highlight, onHighlightLay
   const tint = STATE_COLOR[state.stateLabel] ?? c.subtext;
 
   const score = recovery?.score ?? null;
-  const band = recovery?.proxy ? null : (recovery?.band ?? null);
+  const tier = recovery?.proxy ? null : (recovery?.presentation?.tier ?? null);
+  const band = recovery?.proxy ? null
+    : tier === 'solid_near_green' ? 'warmGreen'
+    : tier === 'moderate' ? 'amber'
+    : (recovery?.band ?? null);
 
   return (
     <View

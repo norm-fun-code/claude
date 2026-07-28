@@ -1235,7 +1235,17 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   try {
     recovery = await require('../intelligence/recovery').liveRecovery();
     if (recovery?.score != null) {
-      recoveryContext = `score ${recovery.score}/100 (${recovery.band ?? 'unknown'} band)`;
+      // Lead with the centralized presentation label (recoveryPresentation.js),
+      // not the bare canonical band — a near-green score (e.g. 59) is
+      // canonically "yellow" for training-logic purposes, but presented to
+      // the user as "Solid — near green". Feeding the LLM only the raw band
+      // let it independently editorialize a near-green score as
+      // "under-recovered", contradicting every other surface (Health, Today,
+      // Ask, voice) that already reads it as reassuring.
+      const presLabel = recovery.presentation?.label;
+      recoveryContext = presLabel
+        ? `score ${recovery.score}/100 — ${presLabel} (canonical band: ${recovery.band ?? 'unknown'})`
+        : `score ${recovery.score}/100 (${recovery.band ?? 'unknown'} band)`;
       // rawHrv/rawRhr are actual measurements (ms / bpm), not the 0-100 score components.
       if (recovery.rawHrv != null) recoveryContext += `, HRV ${Math.round(recovery.rawHrv)}ms`;
       if (recovery.rawRhr != null) recoveryContext += `, RHR ${Math.round(recovery.rawRhr)}bpm`;

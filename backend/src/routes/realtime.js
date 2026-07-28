@@ -106,7 +106,11 @@ async function buildContextPackage({ now = new Date() } = {}) {
   // Recovery is recomputed live from the latest sleep data, so it's genuinely
   // "today's" whenever present.
   if (recovery?.band) {
-    current.push(`TODAY (${today}) — recovery: ${recovery.band}${recovery.score != null ? ` (${recovery.score})` : ''}`);
+    // Lead with the centralized presentation label (recoveryPresentation.js),
+    // not the bare canonical band — a near-green score read as plain "yellow"
+    // invited voice to independently editorialize "under-recovered".
+    const presLabel = recovery.presentation?.label ? ` (${recovery.presentation.label})` : '';
+    current.push(`TODAY (${today}) — recovery: ${recovery.band}${presLabel}${recovery.score != null ? ` — score ${recovery.score}` : ''}`);
   }
   // The effective workout is inherently today's plan (override > auto-downgrade
   // > scheduled), resolved by the canonical selector — not the raw schedule.

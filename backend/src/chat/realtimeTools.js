@@ -70,7 +70,17 @@ async function getTodayContext() {
 async function getCurrentRecovery() {
   const r = await require('../intelligence/recovery').liveRecovery().catch(() => null);
   if (!r) return { available: false };
-  return { available: true, score: r.score ?? null, band: r.band ?? null, detail: snippet(r.detail, 300) };
+  // `label`/`guidance` are the centralized presentation (recoveryPresentation.js)
+  // — voice should describe the user's day using these, not improvise its own
+  // framing from the bare canonical `band` (a near-green score read as
+  // "yellow" alone invites an under-recovered framing that isn't warranted).
+  return {
+    available: true,
+    score: r.score ?? null,
+    band: r.band ?? null,
+    label: r.presentation?.label ?? null,
+    detail: snippet(r.detail, 300),
+  };
 }
 
 // ---- get_active_goals_and_commitments ------------------------------------

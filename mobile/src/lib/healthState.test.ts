@@ -54,3 +54,44 @@ test('a self-reported proxy still carries a real decision, just labeled provisio
   const r = resolveHealthState(SELF_REPORT_GOOD, { source: 'scheduled', workoutId: 'push', label: 'Push' });
   assert.equal(r.decision, 'Train as planned');
 });
+
+// Recovery presentation fix — a near-green score (55-62, canonically still
+// 'yellow') must render as "Solid — near green" and never reduce intensity
+// on its own, unlike a genuinely moderate score in the same canonical band.
+const NEAR_GREEN = {
+  score: 59, band: 'yellow' as const, parts: {}, detail: 'x', rawHrv: 45, rawRhr: 55,
+  presentation: {
+    tier: 'solid_near_green' as const, label: 'Solid — near green', color: 'warmGreen' as const,
+    band: 'yellow' as const,
+    guidance: 'Solid readiness. Train as planned if you feel good; no automatic need to scale back.',
+    riskFlags: [],
+  },
+};
+const MODERATE_WITH_PRESENTATION = {
+  score: 48, band: 'yellow' as const, parts: {}, detail: 'x',
+  presentation: {
+    tier: 'moderate' as const, label: 'Moderate', color: 'amber' as const, band: 'yellow' as const,
+    guidance: 'Moderate — solid foundation. Push if you feel good, but watch your exertion.', riskFlags: [],
+  },
+};
+
+test('required: a near-green score (59, canonical yellow) renders "Solid — near green" and trains as planned, not reduced intensity', () => {
+  const r = resolveHealthState(NEAR_GREEN, { source: 'scheduled', workoutId: 'push', label: 'Push' });
+  assert.equal(r.stateLabel, 'Solid — near green');
+  assert.equal(r.decision, 'Train as planned');
+  assert.equal(r.isProvisional, false);
+  assert.doesNotMatch(r.explanation, /dial back/i);
+  assert.doesNotMatch(r.explanation, /under-?recovered/i);
+});
+
+test('a genuinely moderate score (48) with an explicit presentation field still reduces intensity', () => {
+  const r = resolveHealthState(MODERATE_WITH_PRESENTATION, { source: 'scheduled', workoutId: 'push', label: 'Push' });
+  assert.equal(r.stateLabel, 'Proceed with care');
+  assert.equal(r.decision, 'Reduce intensity');
+});
+
+test('a cached Recovery reading with no `presentation` field falls back conservatively to the whole yellow band reducing intensity (pre-fix behavior), never assumes near-green', () => {
+  const r = resolveHealthState(YELLOW, { source: 'scheduled', workoutId: 'push', label: 'Push' });
+  assert.equal(r.stateLabel, 'Proceed with care');
+  assert.equal(r.decision, 'Reduce intensity');
+});

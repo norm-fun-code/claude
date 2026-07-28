@@ -324,8 +324,15 @@ async function recoveryContext() {
     const { liveRecovery } = require('../intelligence/recovery');
     const r = await liveRecovery();
     if (!r || r.score == null) return null;
-    return 'RECOVERY TODAY (live computed — use this exact number, it is current):\n' +
-      `- Score: ${Math.round(r.score)}/100 (${r.band})${r.detail ? ` — ${r.detail}` : ''}`;
+    // Surface the centralized presentation label (recoveryPresentation.js)
+    // alongside the canonical band, not just the band — otherwise the LLM
+    // sees a bare "yellow" for a near-green 59 and independently invents its
+    // own "under-recovered" framing instead of the reassuring "Solid — near
+    // green" read every other surface (Health, Today, brief) uses.
+    const presLabel = r.presentation?.label ? ` [${r.presentation.label}]` : '';
+    return 'RECOVERY TODAY (live computed — use this exact number and label, it is current):\n' +
+      `- Score: ${Math.round(r.score)}/100 (${r.band})${presLabel}${r.detail ? ` — ${r.detail}` : ''}\n` +
+      '- Use the label in brackets, not the raw band, when describing how the user is doing — e.g. a near-green score is "solid readiness", never "under-recovered".';
   } catch (err) {
     console.error('[chat] recoveryContext failed:', err.message);
     return null;
