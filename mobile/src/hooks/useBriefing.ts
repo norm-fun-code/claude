@@ -155,6 +155,56 @@ export interface Wealth {
   sourceSyncedAt?: string | null;
 }
 
+// Wealth redesign (audit rec #5) — the ONE canonical Wealth landing-page
+// projection (backend/src/services/wealth-landing.js). The Wealth tab reads
+// ONLY this shape; every number here is already fully derived server-side
+// (posture, savings rate, plan pace, net-worth direction, ranking,
+// materiality, dismissal/reactivation) — the client must never recompute
+// any of it.
+export type WealthPosture = 'on_track' | 'ahead_of_plan' | 'worth_watching' | 'action_needed' | 'data_incomplete';
+
+export interface WealthChangeCard {
+  dismissKey?: string;
+  type: string;
+  title: string;
+  detail: string | null;
+  attentionClass: 'action_required' | 'watch' | 'positive' | 'informational';
+  actionable: boolean;
+  evidence: Record<string, unknown> | null;
+  explainedBy: { merchant: string; amount: number; day: string } | null;
+}
+
+export interface WealthRecommendedAction {
+  kind: 'adjust_pace' | 'review_budget' | 'review_transaction' | 'move_cash' | 'review';
+  title: string;
+  detail: string | null;
+  dismissKey?: string | null;
+  askPrompt: string;
+}
+
+export interface WealthLanding {
+  asOf: string;
+  posture: WealthPosture;
+  numbers: {
+    mtdDiscretionary: { amount: number } | null;
+    savingsRate: { ratePct: number; income: number; spending: number; windowDays: number; healthy: boolean } | null;
+    netWorth: {
+      amount: number; asOf: string | null;
+      trend: { monthlyChange: number; direction: 'growing' | 'declining'; material: boolean; projectedYearEnd: number } | null;
+    } | null;
+    planPace: { planLiquidAtPace: number; delta: number; ahead: boolean; pctYearElapsed: number } | null;
+    cashBuffer: { amount: number; thin: boolean } | null;
+  };
+  whatChanged: WealthChangeCard[];
+  recommendedAction: WealthRecommendedAction | null;
+  sourceHealth: {
+    configured: boolean; healthy: boolean; freshestHoursAgo: number | null;
+    rows: { id: string; hoursAgo: number | null; isStale: boolean; lastError: string | null }[];
+    qualification: string | null;
+  };
+  spendingDetail: { category: string; amount: number }[];
+}
+
 export interface Alert {
   source: string;
   severity: 'warn' | 'high';
@@ -537,6 +587,7 @@ export interface BriefingData {
   insights: Insight[];
   crossContextInsights?: Insight[];
   wealthInsights?: Insight[];
+  wealthLanding?: WealthLanding | null;
   healthInsights?: Insight[];
   recovery?: Recovery | null;
   healthComposites?: HealthComposite[];

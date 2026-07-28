@@ -63,10 +63,14 @@ function createEngagementRouter() {
 
   // Dismiss a "What The Data Shows" insight by its stable key — stays gone across
   // rebuilds (e.g. a recurring car payment flagged for "review"). POST { key, title }.
+  // `amount` (optional) — the $ evidence behind a wealth insight at dismiss
+  // time, so wealth-landing.js's "materially new evidence" reactivation
+  // check has a real number to compare a future recurrence against.
   router.post('/insights/dismiss', asyncHandler(async (req, res) => {
-    const { key, title = null } = req.body || {};
+    const { key, title = null, amount = null } = req.body || {};
     if (!requireFields(req.body, ['key'], res)) return;
-    await require('../store/dismissedInsights').dismiss(key, title);
+    const context = typeof amount === 'number' && Number.isFinite(amount) ? { amount } : null;
+    await require('../store/dismissedInsights').dismiss(key, title, context);
     res.json({ ok: true, dismissed: key });
   }));
 

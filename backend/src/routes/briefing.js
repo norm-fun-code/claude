@@ -873,6 +873,19 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
       console.error('[todayCommandCenter] cache-hit build failed:', err.message);
     }
 
+    // Wealth redesign (audit rec #5) — the one canonical Wealth landing
+    // projection, recomputed fresh on EVERY cache-hit serve (cheap — metric
+    // aggregates + a couple of small store reads, no LLM), same design
+    // choice as todayCommandCenter above: the Wealth tab must never show a
+    // posture/action computed from a stale cached cut when the underlying
+    // data has moved since.
+    let wealthLanding = cachedContent.wealthLanding ?? null;
+    try {
+      wealthLanding = await require('../services/wealth-landing').buildWealthLandingProjection({ tz: cachedContent.timezone || process.env.TZ || 'America/New_York' });
+    } catch (err) {
+      console.error('[wealthLanding] cache-hit build failed:', err.message);
+    }
+
     // Unambiguous displayed-content-vs-attempt-state contract (Chief Brief
     // regression fix, requirement #7) — computed from whatever cachedContent
     // ended up holding above (untouched cache, or merged repair/recovery
@@ -896,7 +909,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     // Always serve the cache — never block the client on a 60-90s rebuild.
     // `stale: true` signals the app to show a "Rebuild briefing" button.
     return {
-      ...cachedContent, weeklyGoals, weeklyReview, chiefBriefGoalsStale, todayCommandCenter,
+      ...cachedContent, weeklyGoals, weeklyReview, chiefBriefGoalsStale, todayCommandCenter, wealthLanding,
       ...contractFields, cached: true, stale: isStale, cachedAgeMin: Math.round(ageMin),
     };
   }
@@ -1340,6 +1353,11 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
       errors.push({ service: 'wealth_insights', error: err.message });
     }
   }
+  // Captured here (before the dismissal filter below reassigns `wealthInsights`
+  // to the plain-dismissed display array) so wealthLanding's own materiality-
+  // aware reactivation logic (applyWealthDismissals) sees the RAW insights —
+  // and so it never triggers a second buildWealthInsights() call for this build.
+  const wealthInsightsRawForLanding = wealthInsights;
 
   // Hoisted out of the try block below (not just locals of the pre-brief-
   // signals computation) — bindOpenQuestionInstance (after chief-brief
@@ -2724,6 +2742,16 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     signals,
   };
 
+  // Wealth redesign (audit rec #5): ONE canonical Wealth landing projection,
+  // built once here and reused as-is by the Wealth tab — no second,
+  // independently-derived posture/pace/savings-rate on the client.
+  try {
+    response.wealthLanding = await require('../services/wealth-landing').buildWealthLandingProjection({ tz: response.timezone, wealthInsights: wealthInsightsRawForLanding });
+  } catch (err) {
+    console.error('[wealthLanding] full build failed:', err.message);
+    response.wealthLanding = null;
+  }
+
   // Today command-center projection (Today-tab redesign): ONE server-owned
   // selection over data already assembled above — no second snapshot, no new
   // LLM call, no mobile-side derivation. See brain/todayCommandCenter.js.
@@ -3219,6 +3247,13 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
   // chiefBrief/goalsWeekStart — everything else (forecasts, insights,
   // wealth, recovery) is carried forward from `prior.content` unchanged,
   // same as the rest of `content` above.
+  let wealthLanding = prior.content.wealthLanding ?? null;
+  try {
+    wealthLanding = await require('../services/wealth-landing').buildWealthLandingProjection({ tz: process.env.TZ || 'America/New_York' });
+  } catch (err) {
+    console.error('[wealthLanding] scoped rebuild failed:', err.message);
+  }
+
   let todayCommandCenter = prior.content.todayCommandCenter ?? null;
   try {
     // This path doesn't already fetch dismissedKeys() anywhere else (it only
@@ -3243,7 +3278,7 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
     console.error('[todayCommandCenter] scoped rebuild build failed:', err.message);
   }
 
-  return { content, todayCommandCenter };
+  return { content, todayCommandCenter, wealthLanding };
 }
 
 function createBriefingRouter({ port }) {
@@ -3281,8 +3316,8 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
   if (!prior?.content) {
     return res.status(409).json({ error: 'no briefing built yet — load the briefing first' });
   }
-  const { content, todayCommandCenter } = await performScopedChiefBriefRebuild(prior);
-  res.json({ ...content, todayCommandCenter, cached: false });
+  const { content, todayCommandCenter, wealthLanding } = await performScopedChiefBriefRebuild(prior);
+  res.json({ ...content, todayCommandCenter, wealthLanding, cached: false });
 }));
 
 // Durable build-job contract (audit fix, item 5): the mobile client used to

@@ -26,6 +26,12 @@ export interface SnapData {
   habits?: Record<string, { rate: number | null; label: string; scale?: number; streak?: number }>;
   experiments?: { completed: unknown[]; running: Record<string, unknown>[] };
   topFindings?: { title: string }[];
+  // Wealth redesign (audit rec #5) — the self-model snapshot's own wealth
+  // scalars (backend/src/intelligence/consolidate.js's gatherWealth()), the
+  // SAME canonical netWorth/spendingMtd figures the Wealth tab shows. Used
+  // to make one suggestion fact-driven instead of the generic "Is my
+  // spending on track?" filler — never recomputed here, just read.
+  wealth?: { netWorth: number | null; netWorthPrev: number | null; spendingMtd: number | null };
 }
 
 // Always-valid regardless of current data — no presupposed fact, no
@@ -83,6 +89,20 @@ export function buildAskSuggestions(snap: SnapData | null): AskSuggestion[] {
     const hypothesis = running[0]?.hypothesis;
     if (running.length > 0 && typeof hypothesis === 'string') {
       out.push({ text: `How is the "${hypothesis}" experiment tracking so far?`, intent: 'understand' });
+    }
+
+    // Wealth redesign (audit rec #5) — fact-driven, not the generic "Is my
+    // spending on track with my plan?" filler in SAFE_FALLBACKS below.
+    const wealth = snap.wealth;
+    if (wealth?.spendingMtd != null) {
+      const mtd = Math.round(wealth.spendingMtd).toLocaleString('en-US');
+      out.push({ text: `I've spent $${mtd} in discretionary spending so far this month — how does that compare to my usual pace?`, intent: 'understand' });
+    }
+    if (wealth?.netWorth != null && wealth?.netWorthPrev != null && wealth.netWorthPrev !== 0) {
+      const pctChange = Math.round(((wealth.netWorth - wealth.netWorthPrev) / Math.abs(wealth.netWorthPrev)) * 100);
+      if (Math.abs(pctChange) >= 1) {
+        out.push({ text: `My net worth is ${pctChange >= 0 ? 'up' : 'down'} ${Math.abs(pctChange)}% vs 30 days ago — what's driving that?`, intent: 'understand' });
+      }
     }
   }
 

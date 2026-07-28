@@ -36,15 +36,16 @@ import { getColors, spacing, shadow, radius, FONTS } from './src/theme';
 
 import { Header } from './src/components/Header';
 import { TabBar, TabKey, TABS } from './src/components/TabBar';
-import { WealthCard } from './src/components/WealthCard';
-import { InsightsCard } from './src/components/InsightsCard';
+import { WealthPostureCard } from './src/components/WealthPostureCard';
+import { WealthWhatChangedCard } from './src/components/WealthWhatChangedCard';
+import { WealthActionCard } from './src/components/WealthActionCard';
+import { WealthExploreScreen } from './src/components/WealthExploreScreen';
 import { AskOverlay, type AskOverlayHandle } from './src/components/AskOverlay';
 import { CheckinModal } from './src/components/CheckinModal';
 import { WeeklyReviewModal } from './src/components/WeeklyReviewModal';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NightContextCard } from './src/components/NightContextCard';
 import { SleepCheckInCard } from './src/components/SleepCheckInCard';
-import { GradientButton } from './src/components/GradientButton';
 import { HealthStateCard } from './src/components/HealthStateCard';
 import { HealthCard } from './src/components/HealthCard';
 import { TrainingSummaryCard } from './src/components/TrainingSummaryCard';
@@ -218,6 +219,7 @@ export default function App() {
   const [trainingRefreshGen, setTrainingRefreshGen] = useState(0);
   const [patternsOpen, setPatternsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [wealthExploreOpen, setWealthExploreOpen] = useState(false);
   const [pendingAskQ, setPendingAskQ] = useState('');
   const dailyLog = useDailyLogStatus();
   const commitments = useCommitments();
@@ -359,10 +361,13 @@ export default function App() {
     await briefing.refreshChiefBrief();
   }, [briefing]);
 
-  // Fired once by whichever Health/Wealth card matches radarAnchor's
-  // entityType/entityId (RecoveryCard / InsightsCard's onHighlightLayout) —
-  // scrolls the shared ScrollView straight to it and consumes the anchor so
-  // a later, unrelated visit to the tab doesn't keep re-scrolling.
+  // Fired once by whichever Health card matches radarAnchor's
+  // entityType/entityId (RecoveryCard's onHighlightLayout) — scrolls the
+  // shared ScrollView straight to it and consumes the anchor so a later,
+  // unrelated visit to the tab doesn't keep re-scrolling. Wealth redesign
+  // (audit rec #5): the Wealth tab's "What Changed" list no longer supports
+  // this highlight/scroll — it's capped at 3 items, all visible without
+  // scrolling, so a Radar deep-link into Wealth just opens the tab.
   const onRadarAnchorLayout = useCallback((y: number) => {
     scrollRef.current?.scrollTo({ y: Math.max(0, y - spacing.md), animated: true });
     setRadarAnchor(null);
@@ -540,38 +545,46 @@ export default function App() {
           </>
         );
       }
-      case 'wealth':
+      case 'wealth': {
         if (!d && briefing.loading) {
           return (<><SkeletonCard tall rows={4} /><SkeletonCard rows={5} /></>);
         }
+        // Wealth redesign (audit rec #5): one dominant posture card, at most
+        // three ranked developments, one recommended action (or an explicit
+        // "no action needed"), then a compact Explore entry point for
+        // secondary reporting — NOT a miniature financial-reporting app.
+        // Every number comes from d.wealthLanding, the ONE canonical
+        // projection (backend/src/services/wealth-landing.js); nothing here
+        // recomputes spending/savings-rate/pace/net-worth-direction.
+        const landing = d?.wealthLanding ?? null;
+        const askAboutFinances = (question: string) => { setPendingAskQ(question); setTab('ask'); };
         return (
           <>
-            <GradientButton
-              label="Ask about my finances"
-              onPress={() => { setPendingAskQ('Walk me through my wealth dashboard and financial plan'); setTab('ask'); }}
-              style={styles.wealthAskBtn}
+            <WealthPostureCard landing={landing} />
+            <WealthWhatChangedCard items={landing?.whatChanged ?? EMPTY_ARRAY} onChanged={() => briefing.reload()} />
+            <WealthActionCard
+              action={landing?.recommendedAction ?? null}
+              dataIncomplete={landing?.posture === 'data_incomplete'}
+              onAsk={askAboutFinances}
+              onChanged={() => briefing.reload()}
             />
-            <WealthCard wealth={d?.wealth ?? null} />
-            {/* Asset Mix (structural allocation bar + top holdings) was removed
-                (product review): "that's Monarch's job" — NormOS's edge is
-                synthesis, not re-rendering a source app with fewer features.
-                The allocation/concentration INSIGHT (a data-driven bullet, not
-                a mirror dashboard) still surfaces here via wealthInsights when
-                something's actually worth flagging (e.g. real concentration risk).
-                The generic market-scoreboard + Claude-written market-brief
-                cards were removed too: unpersonalized content, and the brief
-                cost a real LLM call on every briefing build for something with
-                no connection to this user's data. */}
-            <InsightsCard
-              insights={d?.wealthInsights ?? EMPTY_ARRAY}
-              highlightTitle={radarAnchor?.entityType === 'wealthInsight' ? radarAnchor.entityId : null}
-              onHighlightLayout={onRadarAnchorLayout}
-            />
-            {!d?.wealth && (
+            <View style={styles.healthDrillInRow}>
+              <TouchableOpacity onPress={() => setWealthExploreOpen(true)} style={[styles.drillInBtn, { backgroundColor: c.card }, shadow(isDark)]} activeOpacity={0.7}>
+                <Text style={[styles.drillInText, { color: c.text }]}>Explore</Text>
+                <Text style={[styles.drillInChevron, { color: c.subtext }]}>›</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => askAboutFinances('Walk me through my wealth dashboard and financial plan')} style={[styles.drillInBtn, { backgroundColor: c.card }, shadow(isDark)]} activeOpacity={0.7}>
+                <Text style={[styles.drillInText, { color: c.text }]}>Ask about my finances</Text>
+                <Text style={[styles.drillInChevron, { color: c.subtext }]}>›</Text>
+              </TouchableOpacity>
+            </View>
+            <WealthExploreScreen visible={wealthExploreOpen} onClose={() => setWealthExploreOpen(false)} landing={landing} />
+            {!landing && (
               <EmptyNote c={c} text="Connect Monarch to see net worth, spending, and cashflow." />
             )}
           </>
         );
+      }
       case 'wisdom':
         if (!d && briefing.loading) {
           return (<><SkeletonCard tall rows={3} /><SkeletonCard rows={4} /></>);
@@ -1014,8 +1027,4 @@ const styles = StyleSheet.create({
   // real bug. This is a general scroll-clearance fix, not a RadarSection-only
   // patch, since ANY tab's last item can land in the same spot.
   footer: { height: spacing.xxl + spacing.md },
-  wealthAskBtn: {
-    marginTop: spacing.sm,
-    marginBottom: spacing.md,
-  },
 });

@@ -57,6 +57,86 @@ const LUMP_SUM = new Set(['Rent', 'Mortgage', 'Rent & Utilities']);
 const fmt = (n) => '$' + Math.round(n).toLocaleString('en-US');
 const pct = (n) => Math.round(n) + '%';
 
+// A growing trend only rises to a genuine Radar-worthy milestone at a
+// meaningfully higher bar than "worth mentioning in the Wealth tab at all"
+// ($50/mo, below) — a general, value-based threshold, not tied to any
+// specific number seen in production.
+const NET_WORTH_MIN_MONTHLY_TO_SURFACE = 50;
+const NET_WORTH_MILESTONE_MONTHLY = 1000;
+
+/**
+ * The canonical net-worth direction/trend: a 120-day linear fit (Wealthfront
+ * "Path" style), projected to year-end. THE ONE net-worth-trend authority —
+ * extracted so wealth-landing.js's posture card and net_worth_path both read
+ * the identical number instead of three independent windows/methods
+ * (this function's own former inline version, briefing.js's legacy 23-day-
+ * average-vs-latest `wealth.netWorthChange`, and consolidate.js's self-model
+ * 30-60-day-average) silently disagreeing with each other.
+ *
+ * Returns null when there isn't enough history (&lt;8 daily points) or the
+ * trend is too small to be worth surfacing at all (&lt;$50/mo either direction).
+ */
+async function computeNetWorthTrend({ now = new Date() } = {}) {
+  const from = new Date(now.getTime() - 120 * 864e5);
+  const nw = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'net_worth', from, to: now, agg: 'avg', excludeSource: 'seed' });
+  const series = nw.map((r) => ({ day: r.day, value: Number(r.value) })).filter((p) => Number.isFinite(p.value));
+  if (series.length < 8) return null;
+  // Fit against real calendar days → a true per-day slope.
+  const fit = stats.fitByDay(series);
+  const current = series[series.length - 1].value;
+  const perDay = fit && fit.slope != null ? fit.slope : 0;
+  const daysToYearEnd = Math.max(0, (new Date(now.getFullYear(), 11, 31) - now) / 864e5);
+  const projected = current + perDay * daysToYearEnd;
+  const monthlyChange = perDay * 30;
+  if (Math.abs(monthlyChange) < NET_WORTH_MIN_MONTHLY_TO_SURFACE) return null;
+  return {
+    current, projected, monthlyChange,
+    direction: monthlyChange >= 0 ? 'growing' : 'declining',
+    // A declining trend is a real, if slow-moving, concern worth watching
+    // rather than an emergency — material only past a higher dollar bar.
+    material: monthlyChange >= 0 ? monthlyChange >= NET_WORTH_MILESTONE_MONTHLY : Math.abs(monthlyChange) >= 300,
+    milestone: monthlyChange >= NET_WORTH_MILESTONE_MONTHLY,
+  };
+}
+
+/**
+ * The canonical trailing-30-day savings rate: (income - spending) / income.
+ * Extracted so the Wealth landing projection (wealth-landing.js) can read
+ * the SAME number the savings_rate insight card is built from, rather than
+ * a client (or another server module) independently re-deriving it from raw
+ * income/spending metrics — exactly the "mobile must not recalculate
+ * savings rate" requirement, satisfied by giving every caller ONE place to
+ * ask. Returns null when there's no real income to divide by (same
+ * MIN_SPEND gate the insight card uses).
+ *
+ * Same window as the Net Worth card's rolling-30-days figures — truncated
+ * `from` AND an explicit `to: now` upper bound, so this can never silently
+ * disagree with the Net Worth card computed in the same request.
+ */
+async function computeSavingsRate({ now = new Date() } = {}) {
+  const from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  from.setUTCHours(0, 0, 0, 0);
+  const to = now;
+  const sumOf = async (metric) => {
+    const rows = await metricsStore.dailyAggregate({ domain: 'wealth', metric, from, to, agg: 'sum', excludeSource: 'seed' });
+    return rows.reduce((a, r) => a + Number(r.value || 0), 0);
+  };
+  const [income, spending] = await Promise.all([sumOf('income'), sumOf('spending')]);
+  if (income < MIN_SPEND) return null;
+  const rate = (income - spending) / income; // can be negative (overspending)
+  const ratePct = Math.round(rate * 100);
+  const positive = rate >= 0;
+  return {
+    income: Math.round(income), spending: Math.round(spending), ratePct, positive,
+    windowDays: 30,
+    // Same semantic contract every insight below carries — a healthy or
+    // strong positive rate is never 'action_required'/'watch', regardless
+    // of how high the percentage is (a savings rate cannot be simultaneously
+    // "28%" and "needs attention").
+    attentionClass: positive ? 'informational' : 'action_required',
+  };
+}
+
 /**
  * Build wealth insight lines. Returns [{ type, title, detail }].
  *  - "vs usual": current-month category spend vs the avg of prior full months.
@@ -69,23 +149,9 @@ async function buildWealthInsights() {
   // (income − spending) / income over the trailing 30 days. Only surfaced when
   // there's real income to divide by.
   try {
-    // Same window as the Net Worth card's rolling-30-days figures (server.js) —
-    // truncated `from` AND an explicit `to: now` upper bound. Without the upper
-    // bound this used to sum in any stray post-dated/pending transaction row,
-    // producing a spending total (and savings rate) that silently disagreed
-    // with the Net Worth card computed in the same request.
-    const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    from.setUTCHours(0, 0, 0, 0);
-    const to = new Date();
-    const sumOf = async (metric) => {
-      const rows = await metricsStore.dailyAggregate({ domain: 'wealth', metric, from, to, agg: 'sum', excludeSource: 'seed' });
-      return rows.reduce((a, r) => a + Number(r.value || 0), 0);
-    };
-    const [income, spending] = await Promise.all([sumOf('income'), sumOf('spending')]);
-    if (income >= MIN_SPEND) {
-      const rate = (income - spending) / income; // can be negative (overspending)
-      const ratePct = Math.round(rate * 100);
-      const positive = rate >= 0;
+    const sr = await computeSavingsRate();
+    if (sr) {
+      const { income, spending, ratePct, positive } = sr;
       insights.push({
         type: 'savings_rate',
         tone: positive ? 'win' : 'watch',
@@ -103,13 +169,13 @@ async function buildWealthInsights() {
         // never Radar) until a real novelty signal exists to justify more.
         // A NEGATIVE rate (spending more than earned) is the one genuinely
         // actionable fact this insight can produce.
-        attentionClass: positive ? 'informational' : 'action_required',
+        attentionClass: sr.attentionClass,
         material: !positive,
         timeSensitive: !positive,
         actionable: !positive,
         direction: positive ? 'positive' : 'negative',
         reasonCode: positive ? 'savings_rate_healthy' : 'overspending_30d',
-        evidence: { kind: 'savings_rate', income: Math.round(income), spending: Math.round(spending), ratePct, windowDays: 30 },
+        evidence: { kind: 'savings_rate', income, spending, ratePct, windowDays: 30 },
       });
     }
   } catch (err) {
@@ -302,40 +368,23 @@ async function buildWealthInsights() {
   // 1c) Net-worth trajectory — project the trend to year-end (Wealthfront "Path"
   // style), so you see where you're heading at the current rate.
   try {
-    const from = new Date(Date.now() - 120 * 864e5);
-    const nw = await metricsStore.dailyAggregate({ domain: 'wealth', metric: 'net_worth', from, agg: 'avg', excludeSource: 'seed' });
-    const series = nw.map((r) => ({ day: r.day, value: Number(r.value) })).filter((p) => Number.isFinite(p.value));
-    if (series.length >= 8) {
-      // Fit against real calendar days → a true per-day slope.
-      const fit = stats.fitByDay(series);
-      const current = series[series.length - 1].value;
-      const perDay = fit && fit.slope != null ? fit.slope : 0;
-      const daysToYearEnd = Math.max(0, (new Date(new Date().getFullYear(), 11, 31) - new Date()) / 864e5);
-      const projected = current + perDay * daysToYearEnd;
-      const monthlyChange = perDay * 30;
-      if (Math.abs(monthlyChange) >= 50) {
-        const dir = monthlyChange >= 0 ? 'growing' : 'declining';
-        // A growing trend only rises to a genuine Radar-worthy milestone at a
-        // meaningfully higher bar than "worth mentioning in the Wealth tab at
-        // all" ($50/mo) — a general, value-based threshold, not tied to any
-        // specific number seen in production. A declining trend is a real,
-        // if slow-moving, concern worth watching rather than an emergency.
-        const MILESTONE_MONTHLY = 1000;
-        insights.push({
-          type: 'net_worth_path',
-          tone: monthlyChange >= 0 ? 'win' : 'watch',
-          title: `Net worth ${dir} ~${fmt(Math.abs(monthlyChange))}/mo`,
-          detail:
-            `Based on your 4-month trend, net worth is ${dir} about ${fmt(Math.abs(monthlyChange))}/month — ` +
-            `on track for roughly ${fmt(projected)} by year-end (now ${fmt(current)}). A projection from trend, not a guarantee.`,
-          evidence: { kind: 'net_worth_path', current: Math.round(current), projected: Math.round(projected), monthlyChange: Math.round(monthlyChange) },
-          ...(monthlyChange >= 0
-            ? (monthlyChange >= MILESTONE_MONTHLY
-                ? { attentionClass: 'positive', material: true, timeSensitive: false, actionable: false, direction: 'positive', reasonCode: 'net_worth_growth_milestone' }
-                : { attentionClass: 'informational', material: false, timeSensitive: false, actionable: false, direction: 'positive', reasonCode: 'net_worth_trend' })
-            : { attentionClass: 'watch', material: Math.abs(monthlyChange) >= 300, timeSensitive: false, actionable: true, direction: 'negative', reasonCode: 'net_worth_decline' }),
-        });
-      }
+    const trend = await computeNetWorthTrend();
+    if (trend) {
+      const { current, projected, monthlyChange, direction: dir, milestone } = trend;
+      insights.push({
+        type: 'net_worth_path',
+        tone: monthlyChange >= 0 ? 'win' : 'watch',
+        title: `Net worth ${dir} ~${fmt(Math.abs(monthlyChange))}/mo`,
+        detail:
+          `Based on your 4-month trend, net worth is ${dir} about ${fmt(Math.abs(monthlyChange))}/month — ` +
+          `on track for roughly ${fmt(projected)} by year-end (now ${fmt(current)}). A projection from trend, not a guarantee.`,
+        evidence: { kind: 'net_worth_path', current: Math.round(current), projected: Math.round(projected), monthlyChange: Math.round(monthlyChange) },
+        ...(monthlyChange >= 0
+          ? (milestone
+              ? { attentionClass: 'positive', material: true, timeSensitive: false, actionable: false, direction: 'positive', reasonCode: 'net_worth_growth_milestone' }
+              : { attentionClass: 'informational', material: false, timeSensitive: false, actionable: false, direction: 'positive', reasonCode: 'net_worth_trend' })
+          : { attentionClass: 'watch', material: Math.abs(monthlyChange) >= 300, timeSensitive: false, actionable: true, direction: 'negative', reasonCode: 'net_worth_decline' }),
+      });
     }
   } catch (err) {
     console.error('[wealth-insights] net-worth path failed:', err.message);
@@ -505,4 +554,4 @@ async function buildWealthInsights() {
   return deduped;
 }
 
-module.exports = { buildWealthInsights };
+module.exports = { buildWealthInsights, computeSavingsRate, computeNetWorthTrend };

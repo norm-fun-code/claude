@@ -20,12 +20,19 @@ function dismissKey(insight) {
   return `${type}|${title}`;
 }
 
-async function dismiss(key, title = null) {
+/** `context` — optional evidence snapshot at dismiss time (e.g. `{amount}` for
+ *  a wealth insight), so a caller can later decide whether a recurrence is
+ *  materially new evidence rather than the same fact restated. Only written
+ *  on first dismissal (ON CONFLICT DO NOTHING matches the existing dedup
+ *  semantics — re-dismissing an already-dismissed key is a no-op, not an
+ *  update, so an un-suppressed-then-re-dismissed insight keeps ITS original
+ *  context until explicitly undismissed first). */
+async function dismiss(key, title = null, context = null) {
   if (!key) return;
   await query(
-    `INSERT INTO dismissed_insights (dismiss_key, title) VALUES ($1, $2)
+    `INSERT INTO dismissed_insights (dismiss_key, title, context) VALUES ($1, $2, $3::jsonb)
        ON CONFLICT (dismiss_key) DO NOTHING`,
-    [key, title]
+    [key, title, context ? JSON.stringify(context) : null]
   );
 }
 
@@ -51,6 +58,21 @@ async function listDismissed() {
   return rows;
 }
 
+/** Map of dismiss_key -> context (only rows that have one), for the wealth
+ *  "materially new evidence" reactivation check. Fail-safe: empty map on
+ *  error, same posture as dismissedKeys() — a store hiccup must fail toward
+ *  "not yet dismissed" data being visible, never toward silently hiding it. */
+async function dismissedContextByKey() {
+  try {
+    const { rows } = await query(
+      `SELECT dismiss_key, context FROM dismissed_insights WHERE context IS NOT NULL`
+    );
+    return new Map(rows.map((r) => [r.dismiss_key, r.context]));
+  } catch {
+    return new Map();
+  }
+}
+
 /** Annotate each insight with its stable dismissKey and drop any that are
  *  dismissed. `dismissed` is the Set from dismissedKeys(). */
 function applyDismissals(insights, dismissed) {
@@ -60,4 +82,4 @@ function applyDismissals(insights, dismissed) {
     .filter((i) => !dismissed.has(i.dismissKey));
 }
 
-module.exports = { dismissKey, dismiss, undismiss, dismissedKeys, listDismissed, applyDismissals };
+module.exports = { dismissKey, dismiss, undismiss, dismissedKeys, listDismissed, applyDismissals, dismissedContextByKey };

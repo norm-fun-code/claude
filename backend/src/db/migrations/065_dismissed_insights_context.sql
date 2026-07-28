@@ -1,0 +1,13 @@
+-- Wealth redesign (audit rec #5) — "intentional/dismissed anomalies stay
+-- suppressed until materially new evidence appears." dismissKey strips
+-- dollar amounts/percentages by design (a recurring insight's amount drifts
+-- month to month without breaking suppression), which means today there is
+-- no way to tell "dismissed a $200 spike" apart from "dismissed a $2,000
+-- spike" — so a category dismissed once stays silent forever, however much
+-- bigger the real number gets later. `context` stores the evidence NormOS
+-- had at dismiss time (currently just the wealth $ amount) so a caller can
+-- compare a new occurrence against it and decide whether it's materially
+-- new evidence, not just the same fact restated. NULL for every existing
+-- row and every non-wealth dismissal — this is additive, read only where a
+-- caller explicitly wants the reactivation check (wealth-landing.js).
+ALTER TABLE dismissed_insights ADD COLUMN IF NOT EXISTS context JSONB;
