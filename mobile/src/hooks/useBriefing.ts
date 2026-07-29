@@ -3,6 +3,7 @@ import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BRIEFING_URL, BRIEFING_REBUILD_URL, BRIEFING_REBUILD_STATUS_URL, BRIEFING_BY_SNAPSHOT_URL, CHIEF_BRIEF_REBUILD_URL, authHeaders, fetchWithTimeout } from '../config';
 import type { BuildJobState } from '../lib/chiefBriefState';
+import { resolvePendingSince } from '../lib/chiefBriefState';
 import { mergeBriefingResponse, migrateV1Cache, isValidPushSnapshot } from '../lib/briefingMerge';
 
 const API_URL = BRIEFING_URL;
@@ -14,6 +15,14 @@ const API_URL = BRIEFING_URL;
 // migrateV1Cache for one-time recovery of an already-poisoned v1 cache.
 const CACHE_KEY = 'normos.briefing.v2';
 const CACHE_KEY_V1 = 'normos.briefing.v1';
+// Bug report: "it builds the brief, I close the app, reopen it, and nothing
+// is there" — persisted so the "give up after 45s and offer Retry" fail-safe
+// (chiefBriefState.ts's hasBeenPendingTooLong) survives an app close/reopen.
+// BriefCard remounts on every relaunch (and every tab switch), so a
+// component-local "first render with no brief" timestamp got a fresh 45
+// seconds on every single reopen — the fail-safe could never fire across the
+// one action a waiting user is most likely to take. See resolvePendingSince.
+const PENDING_SINCE_KEY = 'normos.chiefBrief.pendingSince.v1';
 
 export interface WeatherHour {
   time: string;
@@ -725,6 +734,10 @@ export interface BriefingState {
   buildState: BuildJobState;
   // Safe, non-prose diagnostics for the failure the card explains.
   buildFailure: { reasonCodes: string[] | null; persistenceFailed: boolean } | null;
+  // Durable (survives app close/reopen) epoch-ms anchor for "how long have we
+  // had no Chief Brief" — see chiefBriefState.ts's hasBeenPendingTooLong/
+  // resolvePendingSince. null while a brief is present.
+  pendingSince: number | null;
 }
 
 export function useBriefing(): BriefingState {
@@ -741,6 +754,9 @@ export function useBriefing(): BriefingState {
   // flight (the automatic morning path doesn't mint job rows).
   const [buildState, setBuildState] = useState<BuildJobState>(null);
   const [buildFailure, setBuildFailure] = useState<{ reasonCodes: string[] | null; persistenceFailed: boolean } | null>(null);
+  // Durable anchor for "how long have we had no Chief Brief to show" — see
+  // PENDING_SINCE_KEY above and chiefBriefState.ts's resolvePendingSince.
+  const [pendingSince, setPendingSince] = useState<number | null>(null);
   // Aborts any prior in-flight request when a new one starts, so foregrounding
   // can't leave two briefing fetches racing to setData (stale-data flash).
   const controllerRef = useRef<AbortController | null>(null);
@@ -1005,6 +1021,39 @@ export function useBriefing(): BriefingState {
     };
   }, [fetchBriefing]);
 
+  // Durable "how long have we had no Chief Brief" anchor (see PENDING_SINCE_KEY
+  // above). Reacts to `data?.chiefBrief` so it's re-evaluated after every
+  // fetch/rebuild/push-resolution path that can set `data`, without needing to
+  // duplicate this logic at each of those call sites. Idempotent when brief
+  // stays absent across repeated polls: resolvePendingSince reuses the
+  // already-stored timestamp for the same local day rather than resetting it.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const hasBrief = data?.chiefBrief != null;
+      if (hasBrief) {
+        if (!cancelled) setPendingSince(null);
+        AsyncStorage.removeItem(PENDING_SINCE_KEY).catch(() => {});
+        return;
+      }
+      const tz = data?.timezone || 'America/New_York';
+      const todayLocalDate = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+      let stored: { day: string; ts: number } | null = null;
+      try {
+        const raw = await AsyncStorage.getItem(PENDING_SINCE_KEY);
+        if (raw) stored = JSON.parse(raw);
+      } catch {
+        stored = null; // corrupt entry — treat as none, re-anchor fresh below
+      }
+      const ts = resolvePendingSince(stored, false, todayLocalDate, Date.now());
+      if (!cancelled) setPendingSince(ts);
+      AsyncStorage.setItem(PENDING_SINCE_KEY, JSON.stringify({ day: todayLocalDate, ts })).catch(() => {});
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [data?.chiefBrief, data?.timezone]);
+
   // When the app returns to the foreground, quietly freshen the briefing so a
   // refresh that iOS suspended on backgrounding doesn't leave stale data. The
   // 'active' event is chatty (Control Center, Face ID, share sheets…), so
@@ -1180,5 +1229,6 @@ export function useBriefing(): BriefingState {
     refreshChiefBrief,
     buildState,
     buildFailure,
+    pendingSince,
   };
 }

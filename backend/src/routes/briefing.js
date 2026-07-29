@@ -3503,8 +3503,22 @@ router.post('/briefing/rebuild', asyncHandler(async (req, res) => {
 router.get('/briefing/rebuild/status', asyncHandler(async (req, res) => {
   const buildJobs = require('../store/morningBuildJobs');
   const { buildId } = req.query;
-  const job = buildId ? await buildJobs.getJob(String(buildId)) : await buildJobs.latestJobForDay();
+  let job = buildId ? await buildJobs.getJob(String(buildId)) : await buildJobs.latestJobForDay();
   if (!job) return res.status(404).json({ error: 'no_build_job', message: 'No build has been triggered today.' });
+  // Bug report ("it builds the brief, I close the app, reopen it, and
+  // nothing is there"): a job can be orphaned "in flight" forever if the
+  // process that owned it crashed before ever marking it terminal — the
+  // client's own 45s give-up timer is a UI-side bound, but the SERVER
+  // reporting "still building" indefinitely is what fed that timer bad
+  // evidence in the first place. Durably resolve a genuinely stale one to
+  // 'failed' here so every future poll (and activeJobForDay's "is a build
+  // already running" check) sees the honest terminal state, not a zombie.
+  if (buildJobs.isJobStale(job)) {
+    job = (await buildJobs.updateJob(job.id, {
+      state: 'failed',
+      errorMessage: 'stale_in_flight — no update received within the expected build window; treating as abandoned',
+    }).catch((e) => { console.error('[briefing status] failed to resolve stale build job:', e.message); return null; })) || job;
+  }
   res.json({
     buildId: job.id,
     localDay: job.local_day,

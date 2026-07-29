@@ -96,6 +96,30 @@ async function activeJobForDay(day = null, tz) {
   return rows[0] ?? null;
 }
 
+const IN_FLIGHT_STATES = new Set(['waiting_for_sleep', 'queued', 'building', 'retry_wait']);
+
+// Real builds finish in well under this window (ingest + analyze + one LLM
+// call). Bug report ("it builds the brief, I close the app, reopen it, and
+// nothing is there") traced partly to this: if the process that owns a job
+// crashes (OOM, hard redeploy, an escaped exception outside the JS try/catch
+// paths that otherwise always mark a job terminal) between creating it and
+// finishing, the row is orphaned in an "in flight" state forever — and
+// `updated_at` never advances again, unlike a genuinely still-running build's.
+const STALE_IN_FLIGHT_MS = 15 * 60 * 1000;
+
+/** Pure: is this in-flight-looking job actually just an abandoned row from a
+ *  process that died mid-build, rather than a build genuinely still running?
+ *  Judged ONLY by staleness of its own last update — never by state alone,
+ *  since a legitimately slow build (or one waiting out `retry_wait`'s
+ *  backoff) must not be misdiagnosed as orphaned. */
+function isJobStale(job, nowMs = Date.now(), thresholdMs = STALE_IN_FLIGHT_MS) {
+  if (!job || !IN_FLIGHT_STATES.has(job.state)) return false;
+  const updated = new Date(job.updated_at).getTime();
+  if (!Number.isFinite(updated)) return false;
+  return nowMs - updated >= thresholdMs;
+}
+
 module.exports = {
   VALID_STATES, localDay, createJob, updateJob, getJob, latestJobForDay, attemptsToday, activeJobForDay,
+  IN_FLIGHT_STATES, STALE_IN_FLIGHT_MS, isJobStale,
 };

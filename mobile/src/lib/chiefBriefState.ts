@@ -118,6 +118,34 @@ export function hasBeenPendingTooLong(pendingSinceMs: number | null, nowMs: numb
   return nowMs - pendingSinceMs >= thresholdMs;
 }
 
+/** Durable "when did we first have no brief to show" anchor (bug report:
+ *  "it builds the brief, I close the app, reopen it, and nothing is there").
+ *  hasBeenPendingTooLong's 45s bound is worthless if what feeds it resets
+ *  every time BriefCard remounts — and it DOES remount on every app
+ *  close/reopen (and every tab switch), so a component-local "first render
+ *  with no brief" timestamp gives every relaunch a fresh 45 seconds of
+ *  skeleton, no matter how long the wait has actually been. This is the
+ *  single source of truth instead: persisted across relaunches (the caller
+ *  is responsible for actually persisting `stored`/reading it back — this
+ *  function is pure), and re-anchored only when the calendar day changes
+ *  (a stale skeleton timer from yesterday must never suppress today's).
+ *  `stored` is whatever was last persisted (or null/undefined the first time
+ *  this device has ever asked); `todayLocalDate` is an 'en-CA' (YYYY-MM-DD)
+ *  string in the SAME canonical timezone the rest of this hook already uses
+ *  for day comparisons. Returns null when a brief is present (nothing to
+ *  anchor), otherwise the epoch-ms timestamp to persist and to feed
+ *  hasBeenPendingTooLong. */
+export function resolvePendingSince(
+  stored: { day: string; ts: number } | null | undefined,
+  hasBrief: boolean,
+  todayLocalDate: string,
+  nowMs: number
+): number | null {
+  if (hasBrief) return null;
+  if (stored && stored.day === todayLocalDate) return stored.ts;
+  return nowMs;
+}
+
 export interface ChiefBriefFailureInput {
   quality?: 'fresh' | 'degraded' | 'failed' | null;
   buildState?: BuildJobState;

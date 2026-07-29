@@ -817,6 +817,7 @@ export default function App() {
                     error={Boolean(briefing.error)}
                     buildState={briefing.buildState}
                     buildFailure={briefing.buildFailure}
+                    pendingSince={briefing.pendingSince}
                   />
                 </CollapsibleSection>
               </AnimatedEntry>
@@ -836,6 +837,7 @@ export default function App() {
                   error={Boolean(briefing.error)}
                   buildState={briefing.buildState}
                   buildFailure={briefing.buildFailure}
+                  pendingSince={briefing.pendingSince}
                 />
               </AnimatedEntry>
             )}

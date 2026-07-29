@@ -2,7 +2,7 @@
 //   node --experimental-strip-types --test src/lib/chiefBriefState.test.ts
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveChiefBriefState, hasBeenPendingTooLong, describeChiefBriefFailure } from './chiefBriefState.ts';
+import { resolveChiefBriefState, hasBeenPendingTooLong, describeChiefBriefFailure, resolvePendingSince } from './chiefBriefState.ts';
 
 test('a fresh brief with nothing in flight is "ready"', () => {
   assert.equal(resolveChiefBriefState({ brief: { synthesis: 's' }, pending: false, refreshing: false, error: false }), 'ready');
@@ -169,4 +169,58 @@ test('underfilled reason codes read as degraded even without an explicit quality
     describeChiefBriefFailure({ reasonCodes: ['synthesis_underfilled'] }),
     describeChiefBriefFailure({ quality: 'degraded' })
   );
+});
+
+// ---------------------------------------------------------------------------
+// Bug report: "it builds the brief, I close the app, reopen the app, and
+// nothing is there." Root cause: hasBeenPendingTooLong's 45s bound was fed by
+// a component-local "first render with no brief" timestamp that reset on
+// every BriefCard remount — which happens on every app close/reopen (and
+// every tab switch), so the skeleton fail-safe could never actually fire
+// across the one action a waiting user is most likely to take.
+// resolvePendingSince is the durable (AsyncStorage-backed, via useBriefing.ts)
+// replacement anchor these tests cover.
+// ---------------------------------------------------------------------------
+
+test('required: a brief present clears the anchor (nothing to time-bound)', () => {
+  assert.equal(resolvePendingSince({ day: '2026-07-29', ts: 1_000 }, true, '2026-07-29', 50_000), null);
+  assert.equal(resolvePendingSince(null, true, '2026-07-29', 50_000), null);
+});
+
+test('required: no brief and nothing stored yet anchors fresh at "now"', () => {
+  assert.equal(resolvePendingSince(null, false, '2026-07-29', 12_345), 12_345);
+});
+
+test('required: no brief and a same-day stored anchor is REUSED, not reset — this is the exact fix for the relaunch bug', () => {
+  const stored = { day: '2026-07-29', ts: 1_000 };
+  // Simulates the app being closed and reopened 5 minutes later, same day,
+  // still no brief: the anchor must be the ORIGINAL ts, not "now".
+  assert.equal(resolvePendingSince(stored, false, '2026-07-29', 1_000 + 5 * 60_000), 1_000);
+});
+
+test('required: a stored anchor from a DIFFERENT calendar day is discarded and re-anchored fresh', () => {
+  const stored = { day: '2026-07-28', ts: 1_000 };
+  assert.equal(resolvePendingSince(stored, false, '2026-07-29', 99_999), 99_999);
+});
+
+test('end-to-end: repeated relaunches while a build genuinely stays pending eventually cross the 45s threshold instead of resetting every time', () => {
+  const day = '2026-07-29';
+  let stored: { day: string; ts: number } | null = null;
+  // Relaunch 1: nothing stored yet — anchors at t=0.
+  // Non-null: resolvePendingSince(_, hasBrief: false, ...) always returns a
+  // number, never null (only the `hasBrief === true` branch returns null).
+  let ts = resolvePendingSince(stored, false, day, 0)!;
+  stored = { day, ts };
+  assert.equal(hasBeenPendingTooLong(ts, 0), false);
+  // Relaunch 2, 20s later: still no brief — must reuse t=0, not reset to 20s.
+  ts = resolvePendingSince(stored, false, day, 20_000)!;
+  stored = { day, ts };
+  assert.equal(ts, 0);
+  assert.equal(hasBeenPendingTooLong(ts, 20_000), false);
+  // Relaunch 3, 50s after the ORIGINAL anchor: now past the 45s threshold —
+  // the old mount-local bug would have reset the clock on every relaunch and
+  // never reached this.
+  ts = resolvePendingSince(stored, false, day, 50_000)!;
+  assert.equal(ts, 0);
+  assert.equal(hasBeenPendingTooLong(ts, 50_000), true);
 });

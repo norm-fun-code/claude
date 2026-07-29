@@ -292,3 +292,41 @@ test('required: concurrent automatic + manual triggers publish and push at most 
   const pushRows = await db.query(`SELECT * FROM nudges WHERE dedup_key LIKE 'morning_brief_push:%'`);
   assert.ok(pushRows.rows.length <= 1, 'at most one morning-ready push may be recorded across the race');
 });
+
+// Bug report: "it builds the brief, I close the app, reopen it, and nothing
+// is there." A job whose owning process crashed mid-build is left "building"
+// forever — updated_at never advances again — which fed the mobile client
+// false "still in flight" evidence indefinitely. GET /briefing/rebuild/status
+// must recognize a genuinely stale in-flight job and durably resolve it to
+// 'failed', not keep reporting it as still running.
+test('required: a build job orphaned mid-build (stale "building" row) is durably resolved to failed by the status poll, not reported as in-flight forever', async () => {
+  await cleanup();
+  const day = today();
+  const job = await buildJobs.createJob({ trigger: 'scheduled', state: 'building', attemptNumber: 1, localDay: day, tz: TZ });
+  // Simulate a process crash: back-date updated_at well past the stale
+  // window without going through updateJob (which always sets it to now()).
+  await db.query(`UPDATE morning_build_jobs SET updated_at = now() - interval '20 minutes' WHERE id = $1`, [job.id]);
+
+  const res = await request(app).get('/api/briefing/rebuild/status').query({ buildId: job.id }).set(authHeader());
+  assert.equal(res.status, 200);
+  assert.equal(res.body.state, 'failed', 'a stale in-flight job must be reported as failed, not building');
+  assert.match(res.body.errorMessage || '', /stale_in_flight/);
+
+  // Durable, not just an in-response patch: a second poll (or activeJobForDay,
+  // which the manual-rebuild race depends on) must see the same resolved
+  // state from the database, not re-derive "still building" from the row.
+  const persisted = await buildJobs.getJob(job.id);
+  assert.equal(persisted.state, 'failed');
+  const active = await buildJobs.activeJobForDay(day, TZ);
+  assert.equal(active, null, 'the resolved job must no longer read as "active" to a new trigger');
+});
+
+test('a genuinely recent "building" job is left untouched by the status poll — must not be misdiagnosed as abandoned', async () => {
+  await cleanup();
+  const day = today();
+  const job = await buildJobs.createJob({ trigger: 'scheduled', state: 'building', attemptNumber: 1, localDay: day, tz: TZ });
+
+  const res = await request(app).get('/api/briefing/rebuild/status').query({ buildId: job.id }).set(authHeader());
+  assert.equal(res.status, 200);
+  assert.equal(res.body.state, 'building', 'a build only just started must still read as in-flight');
+});

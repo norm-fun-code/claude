@@ -73,6 +73,9 @@ interface Props {
   buildState?: BuildJobState;
   // Safe, non-prose diagnostics used to explain WHY there's no brief.
   buildFailure?: { reasonCodes: string[] | null; persistenceFailed: boolean } | null;
+  // Durable (survives app close/reopen) anchor for "how long have we had no
+  // brief" — see useBriefing.ts and chiefBriefState.ts's resolvePendingSince.
+  pendingSince?: number | null;
 }
 
 // THE ACTION is the one always-structured beat left on Today (see risk prop
@@ -216,7 +219,7 @@ function BriefSkeleton() {
   );
 }
 
-function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsStale, onRefresh, refreshing, snapshotId, risk, error, buildState, buildFailure }: Props) {
+function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsStale, onRefresh, refreshing, snapshotId, risk, error, buildState, buildFailure, pendingSince }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   // The card renders whatever content it's given, verbatim (Chief Brief
@@ -237,21 +240,25 @@ function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsSt
   // Last-resort time bound on the skeleton, for when the server gives us NO
   // verdict either way (a cached build predating the quality contract, or an
   // unreachable status endpoint). Without this a skeleton could still run
-  // forever in exactly the cases we can't diagnose. Starts the clock the
-  // first time we render with no brief, and resets once one arrives.
-  const [noBriefSince, setNoBriefSince] = useState<number | null>(null);
-  const [tooLong, setTooLong] = useState(false);
+  // forever in exactly the cases we can't diagnose.
+  //
+  // `pendingSince` comes from useBriefing's AsyncStorage-backed anchor, NOT a
+  // component-local timestamp — this component remounts on every tab switch
+  // AND on every app close/reopen (see the bug report this fixed: "it builds
+  // the brief, I close the app, reopen it, and nothing is there"), so a
+  // mount-local "first render with no brief" timestamp gave every single
+  // relaunch a fresh 45 seconds of skeleton and could never actually reach
+  // the honest failed/Retry state. See useBriefing.ts and
+  // chiefBriefState.ts's resolvePendingSince.
+  const [tooLong, setTooLong] = useState(() => hasBeenPendingTooLong(pendingSince ?? null, Date.now()));
   useEffect(() => {
-    if (brief) { setNoBriefSince(null); setTooLong(false); return; }
-    setNoBriefSince((prev) => prev ?? Date.now());
-  }, [brief]);
-  useEffect(() => {
-    if (brief || noBriefSince == null) return;
+    if (brief || pendingSince == null) { setTooLong(false); return; }
+    setTooLong(hasBeenPendingTooLong(pendingSince, Date.now()));
     // Re-evaluate on a timer rather than assuming a re-render will happen —
     // nothing else necessarily changes while we sit in the loading state.
-    const id = setInterval(() => setTooLong(hasBeenPendingTooLong(noBriefSince, Date.now())), 5_000);
+    const id = setInterval(() => setTooLong(hasBeenPendingTooLong(pendingSince, Date.now())), 5_000);
     return () => clearInterval(id);
-  }, [brief, noBriefSince]);
+  }, [brief, pendingSince]);
 
   const cardState = resolveChiefBriefState({
     brief,
