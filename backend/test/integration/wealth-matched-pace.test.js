@@ -270,6 +270,18 @@ test('required: identity between Wealth (wealth-landing), BrainSnapshot, and Ask
 // body every call, so the patched stub is picked up) to prove the real
 // production call sites now resolve it exactly once.
 test('required: buildWealthLandingProjection does NOT recompute matched-pace when a caller already resolved it (spendingPace param)', async (t) => {
+  const source = `${TAG}-dedupe1`;
+  t.after(async () => { await db.query(`DELETE FROM metrics WHERE source = $1`, [source]); });
+
+  // Needs real current-month + trailing-month coverage so the projection's
+  // mtdDiscretionary.comparison block is actually populated (non-null) —
+  // otherwise the assertion below has nothing to compare against.
+  await seedAggregateMonth(source, 2026, 7, ELAPSED_DAYS, 300);
+  for (let monthsAgo = 1; monthsAgo <= 6; monthsAgo++) {
+    const { y, m, matchedDay } = targetForMonthsAgo(monthsAgo);
+    await seedAggregateMonth(source, y, m, matchedDay, 150);
+  }
+
   const wealthPaceMod = require('../../src/services/wealth-pace');
   const original = wealthPaceMod.computeDiscretionaryMatchedPace;
   let calls = 0;
@@ -277,6 +289,7 @@ test('required: buildWealthLandingProjection does NOT recompute matched-pace whe
   t.after(() => { wealthPaceMod.computeDiscretionaryMatchedPace = original; });
 
   const already = await original({ asOf: ASOF, tz: TZ });
+  assert.ok(already.medianBaseline != null, 'sanity: this scenario must produce a real comparison');
   calls = 0; // reset — only count calls made BY buildWealthLandingProjection below
 
   const landing = await buildWealthLandingProjection({ asOf: ASOF, tz: TZ, spendingPace: already });
