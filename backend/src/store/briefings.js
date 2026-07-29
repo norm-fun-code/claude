@@ -1,6 +1,14 @@
 // Persisted briefings/reviews (daily | weekly | quarterly narratives).
 const { query } = require('../db');
 
+// briefings.id is a UUID column (see migrations/001_init.sql). A malformed
+// value (e.g. GET /briefing/weekly-review?id=999999999 — an array index or
+// truncated id from a stale client) must read as "not found", not a raw
+// Postgres "invalid input syntax for type uuid" error surfacing as a 500 —
+// exactly the "never substitute, never 500, just 404" contract the weekly-
+// review route's own tests require.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 async function saveBriefing({ kind = 'daily', content, periodStart = null, periodEnd = null }) {
   const { rows } = await query(
     `INSERT INTO briefings (kind, content, period_start, period_end)
@@ -181,7 +189,7 @@ async function findBySnapshotId(kind, snapshotId) {
  * proof.
  */
 async function findById(id) {
-  if (!id) return null;
+  if (!id || !UUID_RE.test(String(id))) return null;
   const { rows } = await query(
     `SELECT id, kind, generated_at, period_start, period_end, content FROM briefings WHERE id = $1`,
     [id]
