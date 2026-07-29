@@ -3558,11 +3558,14 @@ router.post('/briefing/rebuild', asyncHandler(async (req, res) => {
       active = await buildJobs.activeJobForDay(day, tz).catch(() => null);
     }
     if (active) return res.status(202).json({ buildId: active.id, state: active.state, alreadyRunning: true });
-    // Still no owner found — the lock holder hasn't written its row yet, or
-    // died between acquiring the lock and inserting it. Never fabricate a
-    // buildId: null "active build" the client would poll indefinitely;
-    // report a typed, retryable state instead.
-    return res.status(202).json({ buildId: null, state: 'lock_contended', retryable: true });
+    // Still no owner job row found — the lock IS genuinely held by someone
+    // else (alreadyRunning stays true, honestly reflecting that), but we
+    // have no concrete id to hand back: either its row hasn't been written
+    // yet, or the lock is held by something that never mints one (e.g. a
+    // raw advisory-lock hold). Never fabricate a buildId: null "active
+    // build" framed as pollable — `retryable: true` tells the client to
+    // retry the trigger shortly rather than poll a null id forever.
+    return res.status(202).json({ buildId: null, state: 'lock_contended', alreadyRunning: true, retryable: true });
   }
 
   const attemptNumber = (await buildJobs.attemptsToday(day, tz).catch(() => 0)) + 1;
