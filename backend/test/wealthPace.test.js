@@ -55,16 +55,31 @@ test('dayKeyUtc anchors to UTC midnight of the local Y-M-D string, matching the 
   assert.equal(dayKeyUtc(2028, 2, 29).toISOString(), '2028-02-29T00:00:00.000Z', 'leap day anchors correctly');
 });
 
-test('required: paceLabelFor bands — below/near/above/well-above typical pace', () => {
-  assert.equal(paceLabelFor(1000, 0.5), 'below_typical');
-  assert.equal(paceLabelFor(100, 1.05), 'near_typical');
-  assert.equal(paceLabelFor(1000, 1.2), 'above_typical');
-  assert.equal(paceLabelFor(2000, 1.5), 'well_above_typical');
+// Wealth matched-pace audit: SYMMETRIC 5-band scheme — within +/-10% is
+// "in_line"; 10-20% either side is "slightly_*"; beyond 20% either side is
+// "comfortably_below" / "comfortably_above". Replaces the old asymmetric
+// scheme (a single "below_typical" bucket cut at -10%, but a separate
+// "well_above_typical" tier on the high side only past +35%) — that
+// asymmetry, and the missing "slightly below" bucket specifically, is what
+// let an 11%-below month render as "comfortably below pace": there was no
+// finer label for the copy layer to reach for.
+test('required: paceLabelFor bands — symmetric in_line/slightly/comfortably on both sides', () => {
+  assert.equal(paceLabelFor(1000, 0.5), 'comfortably_below', '50% below -> comfortably below (>20% past typical)');
+  assert.equal(paceLabelFor(1000, 0.89), 'slightly_below', '11% below -> slightly below (10-20% past typical)');
+  assert.equal(paceLabelFor(100, 1.05), 'in_line', 'within +/-10% -> in line with typical');
+  assert.equal(paceLabelFor(1000, 1.15), 'slightly_above', '15% above -> slightly above (10-20% past typical)');
+  assert.equal(paceLabelFor(2000, 1.5), 'comfortably_above', '50% above -> comfortably above (>20% past typical)');
 });
 
-test('required: a dollar swing smaller than PACE_MIN_DOLLARS reads as near-typical regardless of ratio', () => {
+test('required: 11% below typical renders "slightly_below", never "comfortably_below" (the exact reported production bug)', () => {
+  // medianBaseline $9,337, currentAmount $8,272 -> ratio ~0.886, ~11% below.
+  const ratio = 8272 / 9337;
+  assert.equal(paceLabelFor(8272 - 9337, ratio), 'slightly_below');
+});
+
+test('required: a dollar swing smaller than PACE_MIN_DOLLARS reads as in-line regardless of ratio', () => {
   assert.ok(Math.abs(30) < PACE_MIN_DOLLARS);
-  assert.equal(paceLabelFor(30, 5.0), 'near_typical', 'a huge ratio against a tiny dollar amount is still noise, not a real pace signal');
+  assert.equal(paceLabelFor(30, 5.0), 'in_line', 'a huge ratio against a tiny dollar amount is still noise, not a real pace signal');
 });
 
 test('required: zero or tiny baselines hide the percentage comparison', () => {

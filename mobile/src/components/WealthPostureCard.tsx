@@ -91,7 +91,6 @@ function WealthPostureCard({ landing, onViewExceptions }: Props) {
             {comparison ? (
               <Text style={[styles.paceLine, { color: secondary }]} allowFontScaling>
                 {mask(paceLine(comparison))}
-                {comparison.coverageTier === 'recent' ? ' · provisional' : ''}
               </Text>
             ) : null}
             {comparison && driverLine(comparison.drivers) ? (

@@ -233,12 +233,12 @@ const UNHEALTHY_SAVINGS = { healthy: false };
 const PLAN_AHEAD = { ahead: true };
 const PLAN_BEHIND = { ahead: false };
 
-test('required: a healthy overall position (below-typical pace, healthy savings, plan ahead) produces a positive conclusion, never amber/cautionary — even conceptually alongside unrelated category exceptions', () => {
-  const comparison = { paceLabel: 'below_typical', coverageTier: 'typical' };
+test('required: a healthy overall position (comfortably-below-typical pace, healthy savings, plan ahead) produces a positive conclusion, never amber/cautionary — even conceptually alongside unrelated category exceptions', () => {
+  const comparison = { paceLabel: 'comfortably_below', coverageTier: 'typical' };
   const result = derivePositionConclusion({
     comparison, coverageTier: 'typical', savingsRate: HEALTHY_SAVINGS, planPace: PLAN_AHEAD, dataComplete: true,
   });
-  assert.match(result.headline, /comfortably below pace/i);
+  assert.match(result.headline, /comfortably below typical/i);
   assert.equal(result.provisional, false);
   // The function signature itself has no itemSeverities/exceptionCount
   // parameter — this assertion documents that omission is intentional, not
@@ -246,20 +246,34 @@ test('required: a healthy overall position (below-typical pace, healthy savings,
   assert.equal(derivePositionConclusion.length, 1);
 });
 
-test('required: well-above-typical spending pace produces a negative conclusion regardless of healthy savings/plan', () => {
-  const comparison = { paceLabel: 'well_above_typical', coverageTier: 'typical' };
+// The exact reported production bug: an 11%-below month must render
+// "slightly below typical", never "comfortably below" — the old code
+// picked "comfortably" off of unrelated corroborating signals, not the
+// actual pace magnitude.
+test('required: an 11%-below (slightly_below) month never renders "comfortably below", even with healthy corroborating signals', () => {
+  const comparison = { paceLabel: 'slightly_below', coverageTier: 'typical' };
   const result = derivePositionConclusion({
     comparison, coverageTier: 'typical', savingsRate: HEALTHY_SAVINGS, planPace: PLAN_AHEAD, dataComplete: true,
   });
-  assert.match(result.headline, /well above pace/i);
+  assert.match(result.headline, /slightly below typical/i);
+  assert.doesNotMatch(result.headline, /comfortably/i, 'a merely-slight deviation must never be reported as "comfortably" below typical');
+  assert.equal(result.provisional, false);
 });
 
-test('required: above-typical pace combined with unhealthy savings/plan produces a mixed-signal caution, not a false positive', () => {
-  const comparison = { paceLabel: 'above_typical', coverageTier: 'typical' };
+test('required: comfortably-above-typical spending pace produces a negative conclusion regardless of healthy savings/plan', () => {
+  const comparison = { paceLabel: 'comfortably_above', coverageTier: 'typical' };
+  const result = derivePositionConclusion({
+    comparison, coverageTier: 'typical', savingsRate: HEALTHY_SAVINGS, planPace: PLAN_AHEAD, dataComplete: true,
+  });
+  assert.match(result.headline, /well above typical/i);
+});
+
+test('required: slightly-above-typical pace combined with unhealthy savings/plan produces a mixed-signal caution, not a false positive', () => {
+  const comparison = { paceLabel: 'slightly_above', coverageTier: 'typical' };
   const result = derivePositionConclusion({
     comparison, coverageTier: 'typical', savingsRate: UNHEALTHY_SAVINGS, planPace: PLAN_BEHIND, dataComplete: true,
   });
-  assert.match(result.headline, /above pace/i);
+  assert.match(result.headline, /above typical/i);
   assert.match(result.headline, /mixed/i);
 });
 
@@ -277,21 +291,30 @@ test('required: fewer than 3 eligible trailing months (no comparison) falls back
   assert.match(noHistory.headline, /not enough/i);
 });
 
-test('required: 3-5 eligible months ("recent" coverage) is a real comparison but still labeled provisional, distinct from full "typical" (6-12 month) confidence', () => {
-  const comparison = { paceLabel: 'near_typical', coverageTier: 'recent' };
-  const recent = derivePositionConclusion({ comparison, coverageTier: 'recent', savingsRate: HEALTHY_SAVINGS, planPace: PLAN_AHEAD, dataComplete: true });
-  assert.equal(recent.provisional, true);
-
+// Wealth matched-pace audit: the coverage system was tightened from a
+// 3-tier scheme (insufficient <3 / recent 3-5 / typical 6-12) to a 2-tier
+// floor (insufficient <6 / typical 6-13) — there is no longer a "recent"
+// middle tier the real code ever produces; MIN_COMPARABLE_MONTHS=6 means
+// fewer than 6 eligible months now suppresses the comparison entirely
+// (comparison: null; see the "insufficient" fallback test above). This
+// test instead documents the defense-in-depth: only the exact string
+// "typical" is ever treated as non-provisional, so any other coverageTier
+// value a future caller might pass still defaults to provisional.
+test('required: only "typical" (6-13 eligible month) coverage is non-provisional; any other coverageTier value defaults to provisional (defense-in-depth)', () => {
+  const comparison = { paceLabel: 'in_line', coverageTier: 'typical' };
   const typical = derivePositionConclusion({ comparison, coverageTier: 'typical', savingsRate: HEALTHY_SAVINGS, planPace: PLAN_AHEAD, dataComplete: true });
   assert.equal(typical.provisional, false);
+
+  const unexpectedTier = derivePositionConclusion({ comparison, coverageTier: 'insufficient', savingsRate: HEALTHY_SAVINGS, planPace: PLAN_AHEAD, dataComplete: true });
+  assert.equal(unexpectedTier.provisional, true);
 });
 
 test('required: incomplete source data produces an explicitly approximate conclusion, distinct from a genuine spending-pace read', () => {
   const result = derivePositionConclusion({
-    comparison: { paceLabel: 'below_typical', coverageTier: 'typical' }, coverageTier: 'typical',
+    comparison: { paceLabel: 'comfortably_below', coverageTier: 'typical' }, coverageTier: 'typical',
     savingsRate: HEALTHY_SAVINGS, planPace: PLAN_AHEAD, dataComplete: false,
   });
   assert.equal(result.provisional, true);
   assert.match(result.headline, /incomplete/i);
-  assert.doesNotMatch(result.headline, /below pace/i, 'must not assert a confident pace read against data known to be incomplete');
+  assert.doesNotMatch(result.headline, /below typical/i, 'must not assert a confident pace read against data known to be incomplete');
 });

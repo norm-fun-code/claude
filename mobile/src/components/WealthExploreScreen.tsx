@@ -87,7 +87,7 @@ export function WealthExploreScreen({ visible, onClose, landing }: Props) {
         ) : null}
       </Section>
 
-      <Section title="Spending (this month)" c={c}>
+      <Section title="Discretionary spending (this month)" c={c}>
         {numbers?.mtdDiscretionary ? (
           <Text style={[styles.detail, { color: c.text }]}>
             Discretionary MTD: <Text style={{ fontWeight: '700' }}>{money(numbers.mtdDiscretionary.amount)}</Text> (excludes rent/mortgage)
@@ -97,7 +97,6 @@ export function WealthExploreScreen({ visible, onClose, landing }: Props) {
           <>
             <Text style={[styles.detail, { color: secondary }]}>
               Compared against the median spend through the same point in {numbers.mtdDiscretionary.comparison.monthsUsed} of the last {numbers.mtdDiscretionary.comparison.monthsConsidered} months
-              {numbers.mtdDiscretionary.comparison.coverageTier === 'recent' ? ' (recent pace — fewer comparable months than usual)' : ''}
               : <Text style={{ fontWeight: '700' }}>{money(numbers.mtdDiscretionary.comparison.medianBaseline)}</Text>.
             </Text>
             {numbers.mtdDiscretionary.comparison.previousMonthAmount != null ? (

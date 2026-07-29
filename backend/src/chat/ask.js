@@ -314,9 +314,16 @@ async function wealthContext(pacePromise) {
     // line at all when there isn't enough history for an honest comparison.
     let paceLine = null;
     if (pace && pace.medianBaseline != null) {
-      const label = { below_typical: 'below', near_typical: 'near', above_typical: 'above', well_above_typical: 'well above' }[pace.paceLabel] || pace.paceLabel;
+      // Wealth matched-pace audit: symmetric 5-band label set — a month
+      // reaching this line only ever has coverageTier 'typical' now (see
+      // MIN_COMPARABLE_MONTHS), so there's no "recent"-pace fallback wording
+      // left to choose between.
+      const label = {
+        comfortably_below: 'comfortably below', slightly_below: 'slightly below', in_line: 'in line with',
+        slightly_above: 'slightly above', comfortably_above: 'well above',
+      }[pace.paceLabel] || pace.paceLabel;
       const pctPart = pace.vsMedian?.pct != null ? ` (${Math.abs(pace.vsMedian.pct)}%)` : '';
-      paceLine = `Discretionary spend is $${pace.currentAmount} MTD — ${label} typical pace${pctPart}, vs. a ${pace.coverageTier === 'typical' ? 'typical' : 'recent'}-pace median of $${pace.medianBaseline} (based on ${pace.monthsUsed} comparable prior months).`;
+      paceLine = `Discretionary spend is $${pace.currentAmount} MTD — ${label} typical pace${pctPart}, vs. a typical-pace median of $${pace.medianBaseline} (based on ${pace.monthsUsed} comparable prior months).`;
       if (pace.drivers?.length) {
         paceLine += ' Driven by ' + pace.drivers.map((d) => `${d.category} (+$${d.excessDollars})`).join(' and ') + '.';
       }

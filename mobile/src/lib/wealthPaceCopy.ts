@@ -13,15 +13,22 @@ export type PaceComparison = NonNullable<NonNullable<WealthLanding['numbers']['m
 // Exact calm-language phrases the product requires — never "needs attention"
 // for a spending-pace reading, and never a manufactured percentage against a
 // too-small baseline (server already sets pct to null in that case).
+// Wealth matched-pace audit: SYMMETRIC 5-band scheme — within +/-10% of
+// typical is "in_line"; 10-20% either side is "slightly_*"; beyond 20%
+// either side is "comfortably_*". Replaces the old asymmetric 4-band scheme
+// (below_typical/near_typical/above_typical/well_above_typical), whose
+// missing "slightly below" bucket let an 11%-below month read as
+// "comfortably below" — see backend/src/services/wealth-pace.js.
 export const PACE_COPY: Record<string, string> = {
-  below_typical: 'below typical pace',
-  near_typical: 'near typical pace',
-  above_typical: 'above typical pace',
-  well_above_typical: 'well above typical pace',
+  comfortably_below: 'comfortably below typical pace',
+  slightly_below: 'slightly below typical pace',
+  in_line: 'in line with typical pace',
+  slightly_above: 'slightly above typical pace',
+  comfortably_above: 'well above typical pace',
 };
 
 export function paceLine(cmp: PaceComparison): string {
-  const label = PACE_COPY[cmp.paceLabel] ?? 'near typical pace';
+  const label = PACE_COPY[cmp.paceLabel] ?? PACE_COPY.in_line;
   const pctPart = cmp.vsMedian.pct != null ? `${Math.abs(cmp.vsMedian.pct)}% ` : '';
   let line = `${pctPart}${label}`;
   if (cmp.vsPreviousMonth) {

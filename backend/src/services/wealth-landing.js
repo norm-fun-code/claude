@@ -338,7 +338,23 @@ function deriveRecommendedAction(actionableItems, cashflowThin, cashCritical) {
 // healthy trajectory with unrelated category exceptions must still produce a
 // calm, positive conclusion; the exceptions surface separately as the
 // secondary "N categories stand out" affordance.
-const PACE_TONE = { below_typical: 'positive', near_typical: 'neutral', above_typical: 'caution', well_above_typical: 'negative' };
+// Wealth matched-pace audit: the headline wording is now driven DIRECTLY by
+// the pace label's own magnitude (comfortably/slightly below or above,
+// in-line) — never by an unrelated corroborating/conflicting SIGNAL COUNT.
+// That was the actual root cause of an 11%-below month reading "comfortably
+// below pace": the old code chose "comfortably" whenever OTHER signals
+// (savings rate, plan pace) happened to agree with the direction, entirely
+// independent of how far below typical the pace actually was. Corroborating/
+// conflicting signals still qualify the headline (e.g. "though other
+// signals are mixed"), but they never change WHICH magnitude word is used.
+const PACE_TONE = { comfortably_below: 'positive', slightly_below: 'positive', in_line: 'neutral', slightly_above: 'caution', comfortably_above: 'negative' };
+const PACE_MAGNITUDE_PHRASE = {
+  comfortably_below: 'comfortably below typical',
+  slightly_below: 'slightly below typical',
+  in_line: 'in line with typical',
+  slightly_above: 'slightly above typical',
+  comfortably_above: 'running well above typical',
+};
 
 /** Pure: the household's overall monthly-position headline + whether it
  *  should be labeled "provisional" (comparison history too thin to be
@@ -354,32 +370,43 @@ function derivePositionConclusion({ comparison, coverageTier, savingsRate, planP
 
   if (!comparison) {
     // No matched-pace comparison at all (either no MTD spend recorded yet,
-    // or fewer than 3 eligible trailing months) — fall back to savings/plan
-    // alone, always provisional since the pace half of the picture is missing.
+    // or fewer than MIN_COMPARABLE_MONTHS eligible trailing months — Wealth
+    // matched-pace audit: this floor is now 6, not 3) — fall back to
+    // savings/plan alone, always provisional since the pace half of the
+    // picture is missing. Explicitly says "historical comparison
+    // unavailable" rather than implying a thin-but-real comparison exists.
     if (savingsPositive === true && conflicting === 0) {
-      return { headline: 'Savings and plan pace look healthy so far this month', provisional: true };
+      return { headline: 'Savings and plan pace look healthy so far this month — historical spending comparison unavailable', provisional: true };
     }
     if (conflicting > 0) {
-      return { headline: 'A few financial signals are off pace this month', provisional: true };
+      return { headline: 'A few financial signals are off pace this month — historical spending comparison unavailable', provisional: true };
     }
-    return { headline: 'Not enough spending history yet for a confident monthly read', provisional: true };
+    return { headline: 'Not enough spending history yet for a confident monthly read — historical comparison unavailable', provisional: true };
   }
 
   const paceTone = PACE_TONE[comparison.paceLabel] || 'neutral';
+  const magnitude = PACE_MAGNITUDE_PHRASE[comparison.paceLabel] || 'in line with typical';
   let headline;
   if (paceTone === 'negative') {
-    headline = 'Spending is running well above pace';
+    headline = `Discretionary spending is ${magnitude}`;
   } else if (paceTone === 'caution') {
-    headline = conflicting > 0 ? 'Spending is running above pace, and other signals are mixed' : 'Spending is running a bit above pace';
+    headline = conflicting > 0
+      ? `Discretionary spending is ${magnitude}, and other signals are mixed`
+      : `Discretionary spending is ${magnitude}`;
   } else if (paceTone === 'positive') {
-    headline = corroborating > 0 && conflicting === 0 ? 'Spending is comfortably below pace' : 'Spending is below pace';
+    headline = conflicting > 0
+      ? `Discretionary spending is ${magnitude}, though other signals are mixed`
+      : `Discretionary spending is ${magnitude}`;
   } else {
-    headline = conflicting > 0 ? 'Spending is close to typical pace, though other signals are mixed' : 'Spending is tracking close to typical pace';
+    headline = conflicting > 0
+      ? 'Discretionary spending is close to typical pace, though other signals are mixed'
+      : 'Discretionary spending is in line with typical pace';
   }
-  // "recent" coverage (3-5 eligible months) is a real comparison, just a
-  // thinner one than "typical" (6-12) — label it provisional rather than
-  // asserting the same confidence as a fully-seasoned baseline.
-  return { headline, provisional: coverageTier === 'recent' };
+  // "typical" (6-13 eligible months) is the only tier that still produces a
+  // comparison at all now (see MIN_COMPARABLE_MONTHS) — never provisional
+  // for reaching that bar; still provisional if the caller passes anything
+  // else (defense-in-depth against a future coverageTier value).
+  return { headline, provisional: coverageTier !== 'typical' };
 }
 
 /**
@@ -541,6 +568,18 @@ async function buildWealthLandingProjection({
     savingsRate, planPace, dataComplete,
   });
 
+  // Wealth matched-pace audit: the headline MTD dollar amount and the
+  // comparison sitting right under it must be THE SAME NUMBER, not two
+  // independently-computed figures that happen to usually agree. Prefer
+  // spendingPace.currentAmount (discretionarySpend.js's canonical, versioned,
+  // document-derived total — already computed above for the comparison
+  // itself) over the older metrics-table canonicalSpendingMtd; fall back to
+  // the latter only when the account has no Monarch documents at all yet
+  // (computeDiscretionaryMatchedPace's currentAmount is null in that case),
+  // so a genuinely stale/legacy metrics figure never masquerades as the
+  // "current" figure the comparison is measured against.
+  const mtdAmount = spendingPace?.currentAmount ?? (spendingMtd != null ? Math.round(spendingMtd) : null);
+
   return {
     asOf: asOf.toISOString(),
     severity,
@@ -548,11 +587,8 @@ async function buildWealthLandingProjection({
     positionConclusion,
     exceptionCount,
     numbers: {
-      // amount is the EXACT canonical MTD total, unchanged by this
-      // projection's `comparison` block — the same number every surface
-      // (Ask, briefing, Today) already reads via canonicalSpendingMtd.
-      mtdDiscretionary: spendingMtd != null ? {
-        amount: Math.round(spendingMtd),
+      mtdDiscretionary: mtdAmount != null ? {
+        amount: mtdAmount,
         comparison: paceComparison,
       } : null,
       savingsRate: savingsRate ? {

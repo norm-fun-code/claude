@@ -3,10 +3,21 @@
 // of, never instead of, the canonical discretionary-spending rule.
 //
 // Reuses (never redefines):
-//   - brain/snapshot.js's canonicalSpendingMtd — the exact current MTD total.
+//   - services/discretionarySpend.js's discretionaryBreakdown — THE single
+//     canonical predicate for "what counts as discretionary spend in this
+//     date range", applied identically to the current month, the previous
+//     month, and every historical month in the median pool. Wealth
+//     matched-pace audit: this module used to sum the metrics table's
+//     `wealth:spending_discretionary` row for historical months — those
+//     rows carry whichever exclusion-rule version was live the day they
+//     were written, with no marker to tell an old-definition row from a
+//     current one, so a stale-definition month could silently sit in the
+//     median pool and skew it. Computing every month LIVE from the
+//     canonical `documents` transaction corpus removes that risk by
+//     construction — there is no stored total to go stale.
 //   - connectors/monarch.js's isFixedCategory/isInternalTransfer — the same
-//     exclusion rules (rent/mortgage, transfers/CC-payments) applied to the
-//     per-category "driver" breakdown below.
+//     exclusion rules, applied by discretionarySpend.js and, separately,
+//     to the per-category "driver" breakdown below.
 //   - intelligence/stats.js's median — the aggregation itself (median, not
 //     mean, so one vacation/annual-purchase month can't masquerade as
 //     "typical").
@@ -29,12 +40,26 @@ const CATEGORY_EXCESS_DOLLAR_FLOOR = 100;
 const MIN_MEANINGFUL_BASELINE = 150;
 // A dollar swing smaller than this is noise, not a pace worth labeling.
 const PACE_MIN_DOLLARS = 50;
-// Within +/-10% of the median reads as "near typical pace."
+// Language-threshold audit: within +/-10% of the median reads as "in line
+// with typical." 10-20% either side reads as "slightly" below/above;
+// beyond 20% either side reads as "comfortably" below / a caution-worthy
+// amount above. Deliberately SYMMETRIC — the old asymmetric bands (a
+// single "below_typical" bucket for anything past -10%, but a separate
+// 35%-cut "well_above" tier only on the high side) were the actual root
+// cause of an 11%-below month rendering "comfortably below pace": there
+// was no "slightly below" label for the copy layer to reach for at all.
 const PACE_NEAR_BAND = 0.10;
-// 10%-35% above the median reads as "above typical pace"; beyond that,
-// "well above typical pace."
-const PACE_ABOVE_BAND = 0.35;
+const PACE_FAR_BAND = 0.20;
 const MAX_DRIVERS = 2;
+// Coverage floor (Wealth matched-pace audit): fewer than this many
+// comparable trailing months and the percentage/median comparison is
+// suppressed entirely — never a "recent, provisional" comparison from too
+// thin a sample. See computeDiscretionaryMatchedPace's coverageTier.
+const MIN_COMPARABLE_MONTHS = 6;
+// Recompute/backfill window (Wealth matched-pace audit): at least 13
+// trailing months, so a 12-month "same month last year" comparison is
+// always in reach once the account has that much history.
+const DEFAULT_MONTHS_BACK = 13;
 
 /** Y/M/D integers for `asOf`'s LOCAL calendar date in `tz` — the one place
  *  this module reads a wall-clock moment; every other function below works
@@ -91,17 +116,21 @@ function dayKeyUtc(y, m, d) {
   return new Date(`${ymdStr(y, m, d)}T00:00:00Z`);
 }
 
-/** Qualitative pace label. Deliberately NOT a severity/color decision —
- *  wealth-landing.js's deriveSeverity already combines spending pace with
- *  savings rate, plan pace, and cash into ONE overall severity; this label is
- *  descriptive context sitting inside that same card, never an independent
- *  warning of its own. */
+/** Qualitative pace label — SYMMETRIC 5-band scheme (Wealth matched-pace
+ *  audit): within +/-10% is 'in_line'; 10-20% either side is 'slightly_*';
+ *  beyond 20% either side is 'comfortably_below' / 'comfortably_above'.
+ *  Deliberately NOT a severity/color decision — wealth-landing.js's
+ *  deriveSeverity already combines spending pace with savings rate, plan
+ *  pace, and cash into ONE overall severity; this label is descriptive
+ *  context sitting inside that same card, never an independent warning of
+ *  its own. */
 function paceLabelFor(dollars, ratio) {
-  if (Math.abs(dollars) < PACE_MIN_DOLLARS) return 'near_typical';
-  if (ratio <= 1 - PACE_NEAR_BAND) return 'below_typical';
-  if (ratio < 1 + PACE_NEAR_BAND) return 'near_typical';
-  if (ratio < 1 + PACE_ABOVE_BAND) return 'above_typical';
-  return 'well_above_typical';
+  if (Math.abs(dollars) < PACE_MIN_DOLLARS) return 'in_line';
+  if (ratio <= 1 - PACE_FAR_BAND) return 'comfortably_below';
+  if (ratio < 1 - PACE_NEAR_BAND) return 'slightly_below';
+  if (ratio <= 1 + PACE_NEAR_BAND) return 'in_line';
+  if (ratio < 1 + PACE_FAR_BAND) return 'slightly_above';
+  return 'comfortably_above';
 }
 
 /** Percentage difference vs. a baseline, or null when the baseline is zero
@@ -118,60 +147,75 @@ function pctOrNull(dollars, baseline) {
  * MEDIAN of the same elapsed-fraction-of-month spend in each of the trailing
  * `monthsBack` complete months (only months with full transaction coverage
  * for their own matched window count toward the median), plus the top
- * categories driving any material excess.
+ * categories driving any material excess. Current, previous, and every
+ * historical month are computed through the SAME canonical predicate
+ * (discretionarySpend.js's discretionaryBreakdown) — never a mix of a
+ * metrics-table figure for one side and a transaction-derived figure for
+ * the other.
  */
-async function computeDiscretionaryMatchedPace({ asOf = new Date(), tz = process.env.TZ || 'America/New_York', monthsBack = 12 } = {}) {
-  const metricsStore = require('../store/metrics');
+async function computeDiscretionaryMatchedPace({ asOf = new Date(), tz = process.env.TZ || 'America/New_York', monthsBack = DEFAULT_MONTHS_BACK } = {}) {
   const documents = require('../store/documents');
-  const { canonicalSpendingMtd } = require('../brain/snapshot');
+  const { discretionaryBreakdown, earliestMonarchDocumentDate } = require('./discretionarySpend');
   const { median } = require('../intelligence/stats');
   const { isInternalTransfer, isFixedCategory } = require('../connectors/monarch');
 
-  const currentAmount = await canonicalSpendingMtd(asOf, tz);
   const { y, m, d: elapsedDays } = localYmd(tz, asOf);
   const daysInCurrentMonth = daysInMonth(y, m);
+  const earliestDate = await earliestMonarchDocumentDate();
+  const currentMonthStartYmd = ymdStr(y, m, 1);
+  const todayYmd = ymdStr(y, m, elapsedDays);
 
   const empty = {
-    currentAmount: currentAmount != null ? Math.round(currentAmount) : null,
+    currentAmount: null,
     asOf: asOf.toISOString(), elapsedDays, daysInCurrentMonth,
     monthsConsidered: 0, monthsUsed: 0, coverageTier: 'insufficient',
     medianBaseline: null, vsMedian: null, paceLabel: null,
     previousMonthAmount: null, vsPreviousMonth: null, drivers: [], monthsBreakdown: [],
   };
-  // No discretionary spend recorded yet this month at all — could mean
-  // genuinely nothing spent, or the source hasn't synced this month yet.
-  // Either way there's nothing honest to compare against — omit rather than
-  // invent a $0 pace (never interpret missing transactions as zero spending).
-  if (currentAmount == null) return empty;
+  // No Monarch transaction data at all yet, or none as of this month's
+  // start — could mean genuinely nothing spent, or the source hasn't
+  // synced this month yet. Either way there's nothing honest to compare
+  // against — omit rather than invent a $0 pace (never interpret missing
+  // transactions as zero spending).
+  if (earliestDate == null || earliestDate > currentMonthStartYmd) return empty;
+
+  const currentBreakdown = await discretionaryBreakdown({ fromYmd: currentMonthStartYmd, toYmd: todayYmd });
+  const currentAmount = currentBreakdown.discretionaryTotal;
 
   const monthsBreakdown = [];
   for (let monthsAgo = 1; monthsAgo <= monthsBack; monthsAgo++) {
     const target = monthOffset(y, m, monthsAgo);
     const targetDaysInMonth = daysInMonth(target.y, target.m);
     const matchedDay = matchedDayOfMonth(elapsedDays, daysInCurrentMonth, targetDaysInMonth);
-    const from = dayKeyUtc(target.y, target.m, 1);
-    const to = dayKeyUtc(target.y, target.m, matchedDay);
-    // eslint-disable-next-line no-await-in-loop -- each iteration's range depends only on constants computed above; sequential is simplest and this runs at most 12 times.
-    const rows = await metricsStore.dailyAggregate({
-      domain: 'wealth', metric: 'spending_discretionary', from, to, agg: 'sum', excludeSource: 'seed', tz,
+    const fromYmd = ymdStr(target.y, target.m, 1);
+    const toYmd = ymdStr(target.y, target.m, matchedDay);
+    // eslint-disable-next-line no-await-in-loop -- each iteration's range depends only on constants computed above; sequential is simplest and this runs at most DEFAULT_MONTHS_BACK times.
+    const breakdown = await discretionaryBreakdown({ fromYmd, toYmd });
+    // Coverage floor: the account must have had Monarch data flowing
+    // BEFORE this window started. A missing document for a day can't be
+    // told apart from "genuinely no spending that day" any other way, so
+    // eligibility is gated on window-start vs. the earliest-ever document
+    // date, never on a zero-filled/absent-row heuristic — never treat a
+    // real coverage gap as a genuine $0 month.
+    const eligible = earliestDate <= fromYmd;
+    monthsBreakdown.push({
+      monthsAgo, ym: `${target.y}-${pad2(target.m)}`, matchedDay,
+      amount: breakdown.discretionaryTotal, eligible,
+      totalEconomicSpend: breakdown.totalEconomicSpend,
+      fixedExcluded: breakdown.fixedExcluded, transfersExcluded: breakdown.transfersExcluded,
+      source: breakdown.source, definitionVersion: breakdown.definitionVersion,
     });
-    const amount = rows.reduce((a, r) => a + Number(r.value || 0), 0);
-    // The daily sync writes a zero-filled row for every day it tracks (see
-    // monarch-mcp-sync.js) — so a PRESENT row can be trusted even at $0, but
-    // a MISSING row for a day inside the matched window means the account
-    // wasn't yet connected / that day never synced: a real gap, not a quiet
-    // day. Never treat a gap as $0 spend — require every day present.
-    const eligible = rows.length >= matchedDay;
-    monthsBreakdown.push({ monthsAgo, ym: `${target.y}-${pad2(target.m)}`, matchedDay, amount, eligible });
   }
 
   const eligibleAmounts = monthsBreakdown.filter((mo) => mo.eligible).map((mo) => mo.amount);
   const monthsUsed = eligibleAmounts.length;
-  // Coverage safeguard: 6-12 eligible months -> "typical pace"; 3-5 ->
-  // "recent pace"; fewer than 3 -> omit the historical comparison entirely
-  // rather than invent certainty from too little history.
-  const coverageTier = monthsUsed >= 6 ? 'typical' : monthsUsed >= 3 ? 'recent' : 'insufficient';
-  const medianBaseline = monthsUsed >= 3 ? median(eligibleAmounts) : null;
+  // Coverage safeguard (Wealth matched-pace audit, tightened): fewer than
+  // MIN_COMPARABLE_MONTHS (6) eligible months -> suppress the comparison
+  // ENTIRELY (never a "recent, provisional" percentage from too thin a
+  // sample) — the caller shows a neutral "historical comparison
+  // unavailable" state instead. 6-13 eligible months -> "typical".
+  const coverageTier = monthsUsed >= MIN_COMPARABLE_MONTHS ? 'typical' : 'insufficient';
+  const medianBaseline = monthsUsed >= MIN_COMPARABLE_MONTHS ? median(eligibleAmounts) : null;
 
   let vsMedian = null;
   let paceLabel = null;
@@ -198,9 +242,8 @@ async function computeDiscretionaryMatchedPace({ asOf = new Date(), tz = process
   let drivers = [];
   if (medianBaseline != null && vsMedian && vsMedian.dollars >= CATEGORY_EXCESS_DOLLAR_FLOOR) {
     const eligibleMonths = monthsBreakdown.filter((mo) => mo.eligible);
-    const todayYmd = ymdStr(y, m, elapsedDays);
     const [currentCats, ...historicalCats] = await Promise.all([
-      documents.categorySpendInRange({ fromYmd: ymdStr(y, m, 1), toYmd: todayYmd }),
+      documents.categorySpendInRange({ fromYmd: currentMonthStartYmd, toYmd: todayYmd }),
       ...eligibleMonths.map((mo) => {
         const target = monthOffset(y, m, mo.monthsAgo);
         return documents.categorySpendInRange({
@@ -242,6 +285,15 @@ async function computeDiscretionaryMatchedPace({ asOf = new Date(), tz = process
     monthsConsidered: monthsBreakdown.length, monthsUsed, coverageTier,
     medianBaseline: medianBaseline != null ? Math.round(medianBaseline) : null,
     vsMedian, paceLabel, previousMonthAmount, vsPreviousMonth, drivers, monthsBreakdown,
+    // Auditable current-month breakdown (Wealth matched-pace audit,
+    // requirement 1-4): total economic spend, the fixed/transfer
+    // exclusions with categories/amounts, and the resulting discretionary
+    // total — the SAME shape as each monthsBreakdown entry, so the current
+    // month and every historical month can be reconciled side by side.
+    totalEconomicSpend: currentBreakdown.totalEconomicSpend,
+    fixedExcluded: currentBreakdown.fixedExcluded,
+    transfersExcluded: currentBreakdown.transfersExcluded,
+    definitionVersion: currentBreakdown.definitionVersion,
   };
 }
 
@@ -250,5 +302,5 @@ module.exports = {
   // Pure helpers exported for unit testing without a database.
   localYmd, daysInMonth, monthOffset, matchedDayOfMonth, dayKeyUtc, paceLabelFor, pctOrNull,
   CATEGORY_MIN_SPEND, CATEGORY_EXCESS_DOLLAR_FLOOR, MIN_MEANINGFUL_BASELINE,
-  PACE_MIN_DOLLARS, PACE_NEAR_BAND, PACE_ABOVE_BAND, MAX_DRIVERS,
+  PACE_MIN_DOLLARS, PACE_NEAR_BAND, PACE_FAR_BAND, MIN_COMPARABLE_MONTHS, DEFAULT_MONTHS_BACK, MAX_DRIVERS,
 };

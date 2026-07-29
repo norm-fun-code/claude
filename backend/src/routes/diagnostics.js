@@ -571,6 +571,50 @@ function createDiagnosticsRouter() {
     });
   }));
 
+  // Wealth matched-pace audit: the full monthly reconciliation behind the
+  // Discretionary spending MTD card — current month, previous month, and
+  // every trailing eligible month, each broken down into total economic
+  // spend, the fixed-housing exclusion (with categories/amounts), the
+  // internal-transfer exclusion, and the resulting discretionary total, all
+  // computed live through the SAME canonical predicate (services/
+  // discretionarySpend.js). Exposes only decision-shaped numbers/category
+  // names already visible elsewhere in the app (Wealth tab category
+  // breakdowns) — never raw transaction rows, merchants, or account
+  // identifiers.
+  //   GET /api/diag/wealth-pace
+  router.get('/diag/wealth-pace', asyncHandler(async (req, res) => {
+    const { computeDiscretionaryMatchedPace } = require('../services/wealth-pace');
+    const { DISCRETIONARY_DEFINITION_VERSION, earliestMonarchDocumentDate } = require('../services/discretionarySpend');
+    const tz = process.env.TZ || 'America/New_York';
+    const pace = await computeDiscretionaryMatchedPace({ asOf: new Date(), tz });
+    const earliestDocumentDate = await earliestMonarchDocumentDate().catch(() => null);
+    res.json({
+      definitionVersion: DISCRETIONARY_DEFINITION_VERSION,
+      earliestMonarchDocumentDate: earliestDocumentDate,
+      currentMonth: {
+        amount: pace.currentAmount,
+        totalEconomicSpend: pace.totalEconomicSpend,
+        fixedExcluded: pace.fixedExcluded,
+        transfersExcluded: pace.transfersExcluded,
+        elapsedDays: pace.elapsedDays,
+        daysInCurrentMonth: pace.daysInCurrentMonth,
+      },
+      monthsConsidered: pace.monthsConsidered,
+      monthsUsed: pace.monthsUsed,
+      coverageTier: pace.coverageTier,
+      medianBaseline: pace.medianBaseline,
+      vsMedian: pace.vsMedian,
+      paceLabel: pace.paceLabel,
+      previousMonthAmount: pace.previousMonthAmount,
+      vsPreviousMonth: pace.vsPreviousMonth,
+      drivers: pace.drivers,
+      // Per-month reconciliation: matched window, total economic spend,
+      // fixed/transfer exclusions, resulting discretionary amount, source,
+      // and eligibility (row coverage vs. earliestMonarchDocumentDate).
+      monthsBreakdown: pace.monthsBreakdown,
+    });
+  }));
+
   // Diagnostic: the canonical nightly context-tag history + a live
   // checkTemporalFraming probe — for tracing the temporal-grounding fix
   // (a historical context tag, e.g. late_meal, restated as a "tonight"

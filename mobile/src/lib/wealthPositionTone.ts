@@ -12,10 +12,17 @@ import { colors as themeColors } from '../theme.ts';
 // since the backend intentionally returns prose, not a second severity
 // enum, to keep this conclusion a single readable sentence rather than
 // another taxonomy.
+//
+// Wealth matched-pace audit: the real headline wording changed from
+// "Spending is <adjective> pace" to "Discretionary spending is <adjective>
+// typical" (only the neutral in_line case still says "...typical pace" /
+// "...typical pace, though other signals are mixed") — match on "typical",
+// not "pace", for the comparison-based cases so this doesn't silently fall
+// through to the neutral color for the common case.
 export function positionTone(headline: string): string {
-  if (/well above pace/i.test(headline)) return themeColors.red;
-  if (/above pace|off pace|mixed/i.test(headline)) return themeColors.amber;
-  if (/below pace|healthy/i.test(headline)) return themeColors.green;
+  if (/well above typical/i.test(headline)) return themeColors.red;
+  if (/above typical|off pace|mixed/i.test(headline)) return themeColors.amber;
+  if (/below typical|healthy/i.test(headline)) return themeColors.green;
   return themeColors.subtext;
 }
 

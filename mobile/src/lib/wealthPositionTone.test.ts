@@ -6,24 +6,32 @@ import assert from 'node:assert/strict';
 import { positionTone, compactMoney } from './wealthPositionTone.ts';
 import { colors as themeColors } from '../theme.ts';
 
-test('required: a healthy below-pace headline reads green, never amber/red', () => {
-  assert.equal(positionTone('Spending is comfortably below pace'), themeColors.green);
-  assert.equal(positionTone('Savings and plan pace look healthy so far this month'), themeColors.green);
+test('required: a healthy below-typical headline reads green, never amber/red', () => {
+  assert.equal(positionTone('Discretionary spending is comfortably below typical'), themeColors.green);
+  assert.equal(positionTone('Discretionary spending is slightly below typical'), themeColors.green);
+  assert.equal(positionTone('Savings and plan pace look healthy so far this month — historical spending comparison unavailable'), themeColors.green);
 });
 
-test('required: a well-above-pace headline reads red', () => {
-  assert.equal(positionTone('Spending is running well above pace'), themeColors.red);
+test('required: a well-above-typical headline reads red', () => {
+  assert.equal(positionTone('Discretionary spending is running well above typical'), themeColors.red);
 });
 
-test('required: an above-pace or mixed-signal headline reads amber, not red', () => {
-  assert.equal(positionTone('Spending is running a bit above pace'), themeColors.amber);
-  assert.equal(positionTone('Spending is running above pace, and other signals are mixed'), themeColors.amber);
-  assert.equal(positionTone('A few financial signals are off pace this month'), themeColors.amber);
+test('required: an above-typical or mixed-signal headline reads amber, not red', () => {
+  assert.equal(positionTone('Discretionary spending is slightly above typical'), themeColors.amber);
+  assert.equal(positionTone('Discretionary spending is slightly above typical, and other signals are mixed'), themeColors.amber);
+  assert.equal(positionTone('A few financial signals are off pace this month — historical spending comparison unavailable'), themeColors.amber);
 });
 
-test('required: a neutral/near-typical headline reads the neutral subtext color, not amber', () => {
-  assert.equal(positionTone('Spending is tracking close to typical pace'), themeColors.subtext);
-  assert.equal(positionTone('Not enough spending history yet for a confident monthly read'), themeColors.subtext);
+test('required: a neutral/in-line headline reads the neutral subtext color, not amber', () => {
+  assert.equal(positionTone('Discretionary spending is in line with typical pace'), themeColors.subtext);
+  assert.equal(positionTone('Not enough spending history yet for a confident monthly read — historical comparison unavailable'), themeColors.subtext);
+});
+
+test('required: the exact reported production bug — an 11%-below (slightly_below) headline never reads the same as a genuinely comfortably-below one, but both still read green', () => {
+  const slightly = positionTone('Discretionary spending is slightly below typical');
+  const comfortably = positionTone('Discretionary spending is comfortably below typical');
+  assert.equal(slightly, themeColors.green);
+  assert.equal(comfortably, themeColors.green);
 });
 
 test('compactMoney formats large amounts as "$X.XK"/"$X.XXM" without changing the underlying value', () => {
