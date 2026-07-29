@@ -26,6 +26,27 @@ export function positionTone(headline: string): string {
   return themeColors.subtext;
 }
 
+// Wealth/evening hardening pass: the backend now returns a typed semantic
+// tone (positionConclusion.tone — positive|neutral|caution|negative|
+// unavailable, derived directly from wealth-landing.js's paceTone, the same
+// source the headline prose reads from) instead of leaving mobile to guess
+// the color by regex-matching the headline text. A prose wording change can
+// no longer silently change the rendered color. `positionTone(headline)`
+// above is kept ONLY as a fallback for a landing payload cached before this
+// field existed (see WealthPostureCard.tsx).
+export type PositionTone = 'positive' | 'neutral' | 'caution' | 'negative' | 'unavailable';
+export function colorForPositionTone(tone: PositionTone | undefined | null): string {
+  switch (tone) {
+    case 'positive': return themeColors.green;
+    case 'caution': return themeColors.amber;
+    case 'negative': return themeColors.red;
+    case 'unavailable': return themeColors.subtext;
+    case 'neutral':
+    default:
+      return themeColors.subtext;
+  }
+}
+
 // Compact display formatting ONLY (never a derivation — same number, fewer
 // digits) for the compact-metrics row, matching the target copy's "+$77.8K"
 // style rather than a full "$77,800".

@@ -3,13 +3,20 @@ import { View, Text, StyleSheet, TouchableOpacity, useColorScheme } from 'react-
 import * as Haptics from 'expo-haptics';
 import { getColors, spacing, typography, radius } from '../theme';
 import { useThemePref } from '../theme-pref';
+import { DEFAULT_CANONICAL_TZ, canonicalHour } from '../lib/canonicalDay';
 
 interface Props {
   date: string;
+  // Cross-day lifecycle hardening pass: the SAME canonical (home-base)
+  // timezone `date` above was computed in — never the phone's own physical
+  // timezone. Defaults to the same DEFAULT_CANONICAL_TZ useCanonicalDay
+  // falls back to before any briefing payload has loaded, so the two can
+  // never disagree even during that brief startup window.
+  tz?: string;
 }
 
-function getGreeting(): string {
-  const hour = new Date().getHours();
+function getGreeting(tz: string): string {
+  const hour = canonicalHour(new Date(), tz);
   if (hour < 12) return 'Good morning, Norm';
   if (hour < 17) return 'Good afternoon, Norm';
   return 'Good evening, Norm';
@@ -18,7 +25,7 @@ function getGreeting(): string {
 const THEME_ICON = { system: '🌗', light: '☀️', dark: '🌙' } as const;
 const THEME_LABEL = { system: 'Auto', light: 'Light', dark: 'Dark' } as const;
 
-export function Header({ date }: Props) {
+export function Header({ date, tz = DEFAULT_CANONICAL_TZ }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const { pref, cycle } = useThemePref();
@@ -26,7 +33,7 @@ export function Header({ date }: Props) {
   return (
     <View style={styles.container}>
       <View style={styles.textCol}>
-        <Text style={[styles.greeting, { color: c.text }]}>{getGreeting()}</Text>
+        <Text style={[styles.greeting, { color: c.text }]}>{getGreeting(tz)}</Text>
         <Text style={[styles.date, { color: c.subtext }]}>{date}</Text>
       </View>
       <TouchableOpacity

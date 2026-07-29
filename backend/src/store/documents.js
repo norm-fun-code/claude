@@ -193,45 +193,35 @@ async function randomHighlights({ limit = 5, favoritesOnly = false, exclude = []
 }
 
 /**
- * Monthly spend per category from Monarch transaction documents. Spend is the
- * sum of negative amounts (money out), returned positive. Grouped by calendar
- * month (YYYY-MM) for the trailing `months` window. Powers wealth insights.
+ * Monthly spend per category from Monarch transaction documents. Spend is
+ * the NET of every transaction in the category (a positive refund/credit in
+ * the same expense category nets its total down — Monarch's own Reports
+ * convention, and the SAME refund-netting connectors/monarch.js's
+ * reconcileWealthFlows applies to the canonical wealth:spending_discretionary
+ * metric), returned positive when the category is a genuine net spend.
+ * Grouped by calendar month (YYYY-MM) for the trailing `months` window.
+ * Powers wealth insights.
+ *
+ * Wealth matched-pace hardening pass: no read-time DISTINCT-ON dedup here —
+ * storage already guarantees uniqueness per (source, external_id) via
+ * upsertDocument's ON CONFLICT, and cross-importer overlap for the same
+ * real-world transaction is reconciled at WRITE time (monarch-mcp-sync.js's
+ * `reconcile`/pruneDocuments), never by collapsing rows that merely SHARE a
+ * date/merchant/amount/account — two genuinely separate same-day purchases
+ * of the same amount at the same merchant must both count.
  */
 async function monthlyCategorySpend({ months = 4 } = {}) {
-  // De-dup at read time: two Monarch importers (CSV + live MCP) can both write
-  // source='monarch' under different external_id schemes, so the same transaction
-  // momentarily exists as two documents (it self-corrects once a sync re-prunes).
-  // DISTINCT ON a transaction signature (day + merchant + amount + account)
-  // collapses those duplicates so a category can never double-count. Split
-  // children keep DIFFERENT amounts, so they're preserved (counted once each).
   const { rows } = await query(
-    `WITH deduped AS (
-       SELECT DISTINCT ON (
-                occurred_at::date,
-                lower(coalesce(metadata->>'merchant','')),
-                metadata->>'amount',
-                lower(coalesce(metadata->>'account',''))
-              )
-              occurred_at,
-              COALESCE(NULLIF(metadata->>'category', ''), 'Uncategorized') AS category,
-              (metadata->>'amount')::numeric AS amount
-         FROM documents
-        WHERE source = 'monarch'
-          AND occurred_at >= date_trunc('month', now()) - ($1::int - 1) * interval '1 month'
-          AND occurred_at <= now()
-          AND metadata ? 'amount'
-        ORDER BY occurred_at::date,
-                 lower(coalesce(metadata->>'merchant','')),
-                 metadata->>'amount',
-                 lower(coalesce(metadata->>'account','')),
-                 occurred_at
-     )
-     SELECT to_char(date_trunc('month', occurred_at), 'YYYY-MM') AS month,
-            category,
-            SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) AS spend
-       FROM deduped
+    `SELECT to_char(date_trunc('month', occurred_at), 'YYYY-MM') AS month,
+            COALESCE(NULLIF(metadata->>'category', ''), 'Uncategorized') AS category,
+            -SUM((metadata->>'amount')::numeric) AS spend
+       FROM documents
+      WHERE source = 'monarch'
+        AND occurred_at >= date_trunc('month', now()) - ($1::int - 1) * interval '1 month'
+        AND occurred_at <= now()
+        AND metadata ? 'amount'
       GROUP BY 1, 2
-      HAVING SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) > 0
+      HAVING -SUM((metadata->>'amount')::numeric) > 0
       ORDER BY 1 DESC, 3 DESC`,
     [months]
   );
@@ -278,43 +268,59 @@ async function spendTransactions({ days = 120 } = {}) {
  * Powers the discretionary matched-pace baseline's per-category "driver"
  * breakdown, which needs a PARTIAL month (day 1 through the elapsed-fraction-
  * matched day) compared against the same partial window in prior months, not
- * a full month total. Same DISTINCT ON dedup as monthlyCategorySpend/
- * spendTransactions (two importers can momentarily write the same
- * transaction as two documents), and the same date-only comparison style as
- * pruneDocuments (`occurred_at::date`), since Monarch transactions carry a
- * calendar date with no meaningful time-of-day to anchor a timestamptz to.
+ * a full month total.
+ *
+ * Wealth matched-pace hardening pass: spend is the NET of every transaction
+ * in the category — a positive refund/credit in the same expense category
+ * nets its total down (Monarch's own Reports convention; same semantics as
+ * monthlyCategorySpend and connectors/monarch.js's reconcileWealthFlows). No
+ * read-time DISTINCT-ON dedup: storage already guarantees uniqueness per
+ * (source, external_id) via upsertDocument's ON CONFLICT, and cross-importer
+ * overlap is reconciled at WRITE time (monarch-mcp-sync.js's
+ * `reconcile`/pruneDocuments) — collapsing rows that merely share a
+ * date/merchant/amount/account would wrongly drop two genuinely separate
+ * same-day purchases of the same amount at the same merchant.
  */
 async function categorySpendInRange({ fromYmd, toYmd }) {
   const { rows } = await query(
-    `WITH deduped AS (
-       SELECT DISTINCT ON (
-                occurred_at::date,
-                lower(coalesce(metadata->>'merchant','')),
-                metadata->>'amount',
-                lower(coalesce(metadata->>'account',''))
-              )
-              occurred_at,
-              COALESCE(NULLIF(metadata->>'category', ''), 'Uncategorized') AS category,
-              (metadata->>'amount')::numeric AS amount
-         FROM documents
-        WHERE source = 'monarch'
-          AND occurred_at::date >= $1::date
-          AND occurred_at::date <= $2::date
-          AND metadata ? 'amount'
-        ORDER BY occurred_at::date,
-                 lower(coalesce(metadata->>'merchant','')),
-                 metadata->>'amount',
-                 lower(coalesce(metadata->>'account','')),
-                 occurred_at
-     )
-     SELECT category, SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) AS spend
-       FROM deduped
+    `SELECT COALESCE(NULLIF(metadata->>'category', ''), 'Uncategorized') AS category,
+            -SUM((metadata->>'amount')::numeric) AS spend
+       FROM documents
+      WHERE source = 'monarch'
+        AND occurred_at::date >= $1::date
+        AND occurred_at::date <= $2::date
+        AND metadata ? 'amount'
       GROUP BY 1
-      HAVING SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) > 0
+      HAVING -SUM((metadata->>'amount')::numeric) > 0
       ORDER BY 2 DESC`,
     [fromYmd, toYmd]
   );
   return rows.map((r) => ({ category: r.category, spend: Number(r.spend) }));
+}
+
+/**
+ * Raw per-transaction (day, category, amount) rows across a single bounding
+ * [fromYmd, toYmd] window — the ONE query wealth-pace.js's matched-pace
+ * baseline uses to resolve its ~14 current/historical windows in one round
+ * trip instead of one query per window. Callers fetch the UNION of every
+ * window they need in a single call (spanning the earliest fromYmd to the
+ * latest toYmd across all windows) and then slice/classify/aggregate the
+ * returned rows in memory per window — see
+ * services/discretionarySpend.js's batchDiscretionaryBreakdown.
+ */
+async function rawSpendRowsInRange({ fromYmd, toYmd }) {
+  const { rows } = await query(
+    `SELECT occurred_at::date::text AS day,
+            COALESCE(NULLIF(metadata->>'category', ''), 'Uncategorized') AS category,
+            (metadata->>'amount')::numeric AS amount
+       FROM documents
+      WHERE source = 'monarch'
+        AND occurred_at::date >= $1::date
+        AND occurred_at::date <= $2::date
+        AND metadata ? 'amount'`,
+    [fromYmd, toYmd]
+  );
+  return rows.map((r) => ({ day: r.day, category: r.category, amount: Number(r.amount) }));
 }
 
 // Reconcile a re-synced window against the source's current truth: delete
@@ -351,6 +357,7 @@ module.exports = {
   monthlyCategorySpend,
   spendTransactions,
   categorySpendInRange,
+  rawSpendRowsInRange,
   listWithoutEmbedding,
   setEmbedding,
   countMissingEmbeddings,

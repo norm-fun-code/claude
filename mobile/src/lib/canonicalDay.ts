@@ -23,6 +23,18 @@ function partsInTz(now: Date, tz: string): { hour: number; minute: number; secon
   return { hour, minute: get('minute'), second: get('second') };
 }
 
+/** Pure: the wall-clock hour (0-23) in `tz`, as of `now` — the SAME
+ *  canonical-timezone instant `canonicalLocalDate` derives the date string
+ *  from. Header/greeting hardening: a greeting computed from the device's
+ *  own physical timezone while the date next to it is computed from the
+ *  canonical (home-base) timezone can disagree (e.g. "Good evening" next to
+ *  a date that's already tomorrow in the canonical zone, or vice versa, for
+ *  a phone that has traveled) — both must be derived from this one function
+ *  in the same zone. */
+export function canonicalHour(now: Date, tz: string = DEFAULT_CANONICAL_TZ): number {
+  return partsInTz(now, tz).hour;
+}
+
 /** Pure: milliseconds from `now` until the next local-midnight boundary in
  *  `tz` — computed from the wall-clock time-of-day in that zone (never raw
  *  UTC-offset arithmetic, which breaks across DST transitions), plus a small

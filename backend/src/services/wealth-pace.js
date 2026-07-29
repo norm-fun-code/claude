@@ -154,14 +154,13 @@ function pctOrNull(dollars, baseline) {
  * the other.
  */
 async function computeDiscretionaryMatchedPace({ asOf = new Date(), tz = process.env.TZ || 'America/New_York', monthsBack = DEFAULT_MONTHS_BACK } = {}) {
-  const documents = require('../store/documents');
-  const { discretionaryBreakdown, earliestMonarchDocumentDate } = require('./discretionarySpend');
+  const { batchDiscretionaryBreakdown, earliestMonarchDocumentDate } = require('./discretionarySpend');
   const { median } = require('../intelligence/stats');
-  const { isInternalTransfer, isFixedCategory } = require('../connectors/monarch');
+  const coverageIntervals = require('./coverageIntervals');
+  const sourcesStore = require('../store/sources');
 
   const { y, m, d: elapsedDays } = localYmd(tz, asOf);
   const daysInCurrentMonth = daysInMonth(y, m);
-  const earliestDate = await earliestMonarchDocumentDate();
   const currentMonthStartYmd = ymdStr(y, m, 1);
   const todayYmd = ymdStr(y, m, elapsedDays);
 
@@ -172,6 +171,32 @@ async function computeDiscretionaryMatchedPace({ asOf = new Date(), tz = process
     medianBaseline: null, vsMedian: null, paceLabel: null,
     previousMonthAmount: null, vsPreviousMonth: null, drivers: [], monthsBreakdown: [],
   };
+
+  // Every current + historical window this call needs, resolved together —
+  // Wealth matched-pace hardening pass, efficiency requirement: ONE bounded
+  // transaction query covers the full set (batchDiscretionaryBreakdown),
+  // replacing what used to be one discretionaryBreakdown query PER window
+  // (up to 14 sequential round trips on every cache serve). earliestDate and
+  // the source's coverage-interval record are independent single-row
+  // lookups, fetched in parallel with the batch query rather than adding to
+  // its critical path.
+  const monthTargets = [];
+  const windowSpecs = [{ key: 'current', fromYmd: currentMonthStartYmd, toYmd: todayYmd }];
+  for (let monthsAgo = 1; monthsAgo <= monthsBack; monthsAgo++) {
+    const target = monthOffset(y, m, monthsAgo);
+    const targetDaysInMonth = daysInMonth(target.y, target.m);
+    const matchedDay = matchedDayOfMonth(elapsedDays, daysInCurrentMonth, targetDaysInMonth);
+    const fromYmd = ymdStr(target.y, target.m, 1);
+    const toYmd = ymdStr(target.y, target.m, matchedDay);
+    monthTargets.push({ monthsAgo, target, matchedDay, fromYmd, toYmd });
+    windowSpecs.push({ key: `h${monthsAgo}`, fromYmd, toYmd });
+  }
+
+  const [earliestDate, breakdowns, sourceRow] = await Promise.all([
+    earliestMonarchDocumentDate(),
+    batchDiscretionaryBreakdown(windowSpecs),
+    sourcesStore.getSource('monarch'),
+  ]);
   // No Monarch transaction data at all yet, or none as of this month's
   // start — could mean genuinely nothing spent, or the source hasn't
   // synced this month yet. Either way there's nothing honest to compare
@@ -179,28 +204,37 @@ async function computeDiscretionaryMatchedPace({ asOf = new Date(), tz = process
   // transactions as zero spending).
   if (earliestDate == null || earliestDate > currentMonthStartYmd) return empty;
 
-  const currentBreakdown = await discretionaryBreakdown({ fromYmd: currentMonthStartYmd, toYmd: todayYmd });
+  const currentBreakdown = breakdowns.current;
   const currentAmount = currentBreakdown.discretionaryTotal;
 
+  // Coverage floor: a historical month is only eligible if its ENTIRE
+  // matched window is provably covered by a real sync, not merely "the
+  // account's earliest-ever document is before this window started" (a
+  // failed backfill or a gap between two disjoint imports can leave a real
+  // hole inside an otherwise-old account). Prefer the genuine coverage-
+  // interval record; fall back to the earliest-document heuristic only for
+  // a source that hasn't recorded any coverage intervals yet (accounts
+  // that haven't re-synced since this tracking shipped) — see the final
+  // report's disclosed-limitations section.
+  const coverageSet = sourceRow?.config?.coverageIntervals;
+  const hasCoverageRecord = Array.isArray(coverageSet) && coverageSet.length > 0;
+
   const monthsBreakdown = [];
-  for (let monthsAgo = 1; monthsAgo <= monthsBack; monthsAgo++) {
-    const target = monthOffset(y, m, monthsAgo);
-    const targetDaysInMonth = daysInMonth(target.y, target.m);
-    const matchedDay = matchedDayOfMonth(elapsedDays, daysInCurrentMonth, targetDaysInMonth);
-    const fromYmd = ymdStr(target.y, target.m, 1);
-    const toYmd = ymdStr(target.y, target.m, matchedDay);
-    // eslint-disable-next-line no-await-in-loop -- each iteration's range depends only on constants computed above; sequential is simplest and this runs at most DEFAULT_MONTHS_BACK times.
-    const breakdown = await discretionaryBreakdown({ fromYmd, toYmd });
-    // Coverage floor: the account must have had Monarch data flowing
-    // BEFORE this window started. A missing document for a day can't be
-    // told apart from "genuinely no spending that day" any other way, so
-    // eligibility is gated on window-start vs. the earliest-ever document
-    // date, never on a zero-filled/absent-row heuristic — never treat a
-    // real coverage gap as a genuine $0 month.
-    const eligible = earliestDate <= fromYmd;
+  for (const mt of monthTargets) {
+    const breakdown = breakdowns[`h${mt.monthsAgo}`];
+    const eligible = hasCoverageRecord
+      ? coverageIntervals.isFullyCovered(coverageSet, mt.fromYmd, mt.toYmd)
+      : earliestDate <= mt.fromYmd;
     monthsBreakdown.push({
-      monthsAgo, ym: `${target.y}-${pad2(target.m)}`, matchedDay,
+      monthsAgo: mt.monthsAgo, ym: `${mt.target.y}-${pad2(mt.target.m)}`, matchedDay: mt.matchedDay,
       amount: breakdown.discretionaryTotal, eligible,
+      // Reconciliation report (Wealth matched-pace hardening pass): which
+      // eligibility check actually decided this month, and the gross/refund
+      // split behind its discretionary total — see discretionarySpend.js's
+      // breakdownFromRows doc comment for the exact reconciliation identity.
+      coverageVerdict: hasCoverageRecord ? 'coverage_record' : 'earliest_document_fallback',
+      discretionaryGrossPurchases: breakdown.discretionaryGrossPurchases,
+      discretionaryRefundsNetted: breakdown.discretionaryRefundsNetted,
       totalEconomicSpend: breakdown.totalEconomicSpend,
       fixedExcluded: breakdown.fixedExcluded, transfersExcluded: breakdown.transfersExcluded,
       source: breakdown.source, definitionVersion: breakdown.definitionVersion,
@@ -242,22 +276,17 @@ async function computeDiscretionaryMatchedPace({ asOf = new Date(), tz = process
   let drivers = [];
   if (medianBaseline != null && vsMedian && vsMedian.dollars >= CATEGORY_EXCESS_DOLLAR_FLOOR) {
     const eligibleMonths = monthsBreakdown.filter((mo) => mo.eligible);
-    const [currentCats, ...historicalCats] = await Promise.all([
-      documents.categorySpendInRange({ fromYmd: currentMonthStartYmd, toYmd: todayYmd }),
-      ...eligibleMonths.map((mo) => {
-        const target = monthOffset(y, m, mo.monthsAgo);
-        return documents.categorySpendInRange({
-          fromYmd: ymdStr(target.y, target.m, 1), toYmd: ymdStr(target.y, target.m, mo.matchedDay),
-        });
-      }),
-    ]);
-    const clean = (rows) => rows.filter((r) => !isInternalTransfer(r.category) && !isFixedCategory(r.category));
-    const currentByCat = new Map(clean(currentCats).map((r) => [r.category, r.spend]));
+    // Reuse the SAME batch breakdown resolved above — discretionaryByCategory
+    // already excludes transfers/fixed via discretionarySpend.js's classify(),
+    // so no extra query (and no separate transfer/fixed filtering) is needed
+    // here at all.
+    const currentByCat = new Map(currentBreakdown.discretionaryByCategory.map((r) => [r.category, r.amount]));
     const histByCat = new Map(); // category -> [amounts across eligible months]
-    for (const rows of historicalCats.map(clean)) {
+    for (const mo of eligibleMonths) {
+      const rows = breakdowns[`h${mo.monthsAgo}`].discretionaryByCategory;
       for (const r of rows) {
         if (!histByCat.has(r.category)) histByCat.set(r.category, []);
-        histByCat.get(r.category).push(r.spend);
+        histByCat.get(r.category).push(r.amount);
       }
     }
     const candidates = [];
@@ -291,6 +320,8 @@ async function computeDiscretionaryMatchedPace({ asOf = new Date(), tz = process
     // total — the SAME shape as each monthsBreakdown entry, so the current
     // month and every historical month can be reconciled side by side.
     totalEconomicSpend: currentBreakdown.totalEconomicSpend,
+    discretionaryGrossPurchases: currentBreakdown.discretionaryGrossPurchases,
+    discretionaryRefundsNetted: currentBreakdown.discretionaryRefundsNetted,
     fixedExcluded: currentBreakdown.fixedExcluded,
     transfersExcluded: currentBreakdown.transfersExcluded,
     definitionVersion: currentBreakdown.definitionVersion,

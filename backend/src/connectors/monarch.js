@@ -331,7 +331,8 @@ function mapTransactions(records = [], opts = {}) {
     const tags = field(rec, ['tags']);
     const original = field(rec, ['original statement', 'originalstatement', 'notes']);
 
-    flowTxns.push({ date: day, amount, category, categoryType: field(rec, ['category type', 'categorytype']) });
+    const categoryType = field(rec, ['category type', 'categorytype']);
+    flowTxns.push({ date: day, amount, category, categoryType });
 
     // Prefer Monarch's stable transaction id (from the API) as the document
     // identity: it survives edits to date/category/amount, so recategorizing or
@@ -351,7 +352,14 @@ function mapTransactions(records = [], opts = {}) {
       url: null,
       content: [merchant, category, `$${amount}`, account].filter(Boolean).join(' — '),
       occurredAt: day,
-      metadata: { amount, category, account, tags, merchant },
+      // Wealth matched-pace hardening pass: preserve the classification
+      // evidence used at sync time (categoryType — Monarch's own transfer/
+      // income signal when the export carries one) alongside the existing
+      // fields, so the canonical universe can be audited/re-classified
+      // without re-fetching. pending is left null here — CSV exports carry
+      // no such field at all (unlike the MCP path, which asks Monarch
+      // directly) — never fabricated.
+      metadata: { amount, category, account, tags, merchant, categoryType: categoryType || null, pending: null },
     });
   }
 
@@ -563,7 +571,22 @@ module.exports = {
       ...mapBalances(balanceRecords).metrics,
     ]);
 
-    return { metrics, documents, config: { processed }, summary };
+    // Wealth matched-pace hardening pass: a CSV export's own transaction
+    // date range is the honest coverage claim this run can make — NOT "the
+    // account has a document somewhere before this date" (the old
+    // eligibility proxy), and never a wider window than what was actually
+    // in the file(s) just processed. Sparse/partial exports (a file that
+    // skips days) will therefore genuinely under-cover, which is correct:
+    // this connector has no way to distinguish "no transactions that day"
+    // from "the file just didn't include it". Only emitted when this run
+    // actually processed new/changed transaction rows.
+    let coverage = null;
+    if (txnRecords.length > 0) {
+      const days = txnRecords.map((r) => parseDay(field(r, ['date']))).filter(Boolean).sort();
+      if (days.length > 0) coverage = { source: SOURCE, from: days[0], to: days[days.length - 1] };
+    }
+
+    return { metrics, documents, config: { processed }, summary, coverage };
   },
 
   // exported for unit testing
@@ -579,6 +602,8 @@ module.exports = {
   isFixedCategory,
   isExcludedIncome,
   isNonIncomePositive,
+  fixedCategories,
+  transferCategories,
   // the single authoritative wealth-flow calculation, shared by every path
   reconcileWealthFlows,
   classifyTransaction,

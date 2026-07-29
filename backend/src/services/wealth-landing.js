@@ -361,7 +361,7 @@ const PACE_MAGNITUDE_PHRASE = {
  *  confident, not "unavailable" — that's `dataComplete`/severity's job). */
 function derivePositionConclusion({ comparison, coverageTier, savingsRate, planPace, dataComplete }) {
   if (!dataComplete) {
-    return { headline: 'Recent data may be incomplete — take this month’s read as approximate', provisional: true };
+    return { headline: 'Recent data may be incomplete — take this month’s read as approximate', provisional: true, tone: 'unavailable' };
   }
   const savingsPositive = savingsRate ? savingsRate.healthy : null;
   const planPositive = planPace ? planPace.ahead : null;
@@ -375,13 +375,15 @@ function derivePositionConclusion({ comparison, coverageTier, savingsRate, planP
     // savings/plan alone, always provisional since the pace half of the
     // picture is missing. Explicitly says "historical comparison
     // unavailable" rather than implying a thin-but-real comparison exists.
+    // `tone` is always 'unavailable' here too — there is no pace-derived
+    // magnitude to color by, regardless of how the headline prose reads.
     if (savingsPositive === true && conflicting === 0) {
-      return { headline: 'Savings and plan pace look healthy so far this month — historical spending comparison unavailable', provisional: true };
+      return { headline: 'Savings and plan pace look healthy so far this month — historical spending comparison unavailable', provisional: true, tone: 'unavailable' };
     }
     if (conflicting > 0) {
-      return { headline: 'A few financial signals are off pace this month — historical spending comparison unavailable', provisional: true };
+      return { headline: 'A few financial signals are off pace this month — historical spending comparison unavailable', provisional: true, tone: 'unavailable' };
     }
-    return { headline: 'Not enough spending history yet for a confident monthly read — historical comparison unavailable', provisional: true };
+    return { headline: 'Not enough spending history yet for a confident monthly read — historical comparison unavailable', provisional: true, tone: 'unavailable' };
   }
 
   const paceTone = PACE_TONE[comparison.paceLabel] || 'neutral';
@@ -406,7 +408,14 @@ function derivePositionConclusion({ comparison, coverageTier, savingsRate, planP
   // comparison at all now (see MIN_COMPARABLE_MONTHS) — never provisional
   // for reaching that bar; still provisional if the caller passes anything
   // else (defense-in-depth against a future coverageTier value).
-  return { headline, provisional: coverageTier !== 'typical' };
+  //
+  // Wealth/evening hardening pass: `tone` is the typed semantic color
+  // (positive|neutral|caution|negative|unavailable) derived DIRECTLY from
+  // paceTone — the same source the headline prose above reads from — so a
+  // future prose wording change can never silently change the rendered
+  // color again (mobile no longer regex-matches the headline text to guess
+  // a color; it renders this enum directly).
+  return { headline, provisional: coverageTier !== 'typical', tone: paceTone };
 }
 
 /**

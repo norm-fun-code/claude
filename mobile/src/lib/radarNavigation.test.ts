@@ -12,11 +12,15 @@ test('resolveRadarNavigation: review surface opens the weekly-review modal, no t
 });
 
 test('required: review surface threads reviewId/weekStart through to the canonical openWeeklyReview action, never dropping them', () => {
+  // Weekly-review UUID hardening pass: backend/src/store/briefings.js's `id`
+  // is a Postgres UUID string, not a number — this fixture uses a realistic
+  // UUID rather than 42 so the test can't pass against a stale numeric type.
+  const REVIEW_ID = 'a1b2c3d4-e5f6-4789-8abc-def012345678';
   const dest: RadarDestination = {
-    surface: 'review', entityType: 'weeklyReview', entityId: '42', reviewId: 42, weekStart: '2026-07-20',
+    surface: 'review', entityType: 'weeklyReview', entityId: REVIEW_ID, reviewId: REVIEW_ID, weekStart: '2026-07-20',
     anchor: null, snapshotId: null, fallbackRoute: 'review',
   };
-  assert.deepEqual(resolveRadarNavigation(dest), { kind: 'review', reviewId: 42, weekStart: '2026-07-20' });
+  assert.deepEqual(resolveRadarNavigation(dest), { kind: 'review', reviewId: REVIEW_ID, weekStart: '2026-07-20' });
 });
 
 test('resolveRadarNavigation: wealth surface with an entityId carries a real anchor, not just a tab switch', () => {

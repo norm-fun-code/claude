@@ -446,9 +446,14 @@ async function runEveningHealthBrief(opts = {}) {
     }
   }
   // Recent gratitude reflections feed the evening presence beat — what you wrote
-  // in the habit stack gets reflected back instead of being write-only.
+  // in the habit stack gets reflected back instead of being write-only. Bounded
+  // to the trailing week of `day` (this function's own canonical local "today")
+  // so a real gap in logging correctly yields nothing to reflect, rather than
+  // resurrecting a months-old entry and presenting it as tonight's reflection.
   try {
-    signals.gratitude = await require('../store/gratitudeLogs').recent(5);
+    const { addDays } = require('../util/date');
+    const sinceYmd = addDays(day, -7).toISOString().slice(0, 10);
+    signals.gratitude = await require('../store/gratitudeLogs').recent(5, { sinceYmd });
   } catch (err) {
     console.error('[evening-brief] gratitude fetch failed:', err.message);
     signals.gratitude = [];

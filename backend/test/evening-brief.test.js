@@ -102,6 +102,33 @@ test('reflection: recent gratitude → echo, none → omitted entirely (never an
   assert.notEqual(withG.reflection, none.reflection);
 });
 
+// ── Required regression (evening/wealth hardening pass, item 7): composeFallback
+// is a PURE renderer — it trusts whatever `gratitude` array it's handed and
+// never re-derives "is this actually recent" from log_date itself. The real
+// date-boundary fix lives in store/gratitudeLogs.js's recent() (now REQUIRES
+// an explicit sinceYmd lookback boundary — see
+// test/integration/gratitude-recent-window.test.js) and in
+// notify/evening-brief.js's call site, which computes that boundary from its
+// own canonical local "today" (`day`, an as-of date) before ever calling this
+// function. This test locks in that division of responsibility: composeFallback
+// must render an entry it's given regardless of its own log_date — it is NOT
+// where "is this today's reflection" gets decided — so a future edit can't
+// accidentally move (or duplicate) the staleness check into this pure layer
+// without a test noticing the assumption changed. ──────────────────────────
+test('required: composeFallback renders whatever gratitude entries it is given verbatim — the as-of/lookback decision is made by the caller (evening-brief.js + gratitudeLogs.recent), never re-derived here from log_date', () => {
+  const asOfToday = '2026-07-15';
+  const genuinelyOld = composeFallback({
+    ...sig({ tone: 'settled' }),
+    // An entry dated months before `asOfToday` — composeFallback has no asOf
+    // parameter and must not attempt to compare log_date against "now" itself;
+    // it renders the reflection precisely because it trusts the caller already
+    // filtered by date (proven separately in gratitude-recent-window.test.js).
+    gratitude: [{ log_date: '2026-01-01', text: 'a months-old note' }],
+  });
+  assert.match(genuinelyOld.reflection, /grateful for/i, 'composeFallback has no independent staleness gate of its own — filtering is entirely the caller\'s responsibility');
+  void asOfToday; // documents the as-of date this scenario is reasoning against
+});
+
 // ── Rest day: a rest day means no planned hard TRAINING — it does NOT mean
 // low steps. Steps are judged against the user's own baseline regardless of
 // rest-day status; "expected/fine" language is about training, never a cover

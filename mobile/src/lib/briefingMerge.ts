@@ -53,10 +53,113 @@ function withWealthLandingProtected(base: BriefingData, incoming: BriefingData, 
 }
 
 /**
+ * Pure: is this GET /briefing/by-snapshot/:snapshotId response valid to
+ * display as the EXACT briefing a tapped morning-notification push
+ * referenced (morning-notification lifecycle fix, item C)? Requires the
+ * response to carry the SAME snapshotId the push named, and — if it carries
+ * a localDate at all — that it's TODAY's, never a prior local day. A
+ * delayed push tapped late (after midnight) must never masquerade its
+ * content as today's; the caller falls back to a normal current-day load
+ * instead.
+ */
+export function isValidPushSnapshot(
+  content: BriefingData | null | undefined, snapshotId: string, todayLocalDate: string
+): content is BriefingData {
+  if (!content || content.snapshotId !== snapshotId) return false;
+  if (content.localDate && content.localDate !== todayLocalDate) return false;
+  return true;
+}
+
+// Cross-day lifecycle hardening pass — DAY-INDEPENDENT allowlist (the
+// INVERSE of the old DAY_BOUND_FIELDS enumeration). Rather than hand-
+// maintaining "what's day-bound" (an incomplete list is exactly how
+// `workout` escaped the old enumeration and kept leaking across midnight),
+// this hand-maintains "what's SAFE to carry across a day boundary" —
+// everything else on BriefingData is treated as day-bound content and
+// cleared by default. A newly added field to BriefingData is therefore
+// safe-by-default (cleared until someone deliberately reviews it and adds it
+// here), never leaked-by-default.
+const DAY_INDEPENDENT_FIELDS = new Set<string>([
+  // Wealth — genuinely day-independent (net worth / discretionary spend
+  // don't reset at local midnight the way Wisdom/Today/recovery do).
+  'wealth', 'wealthLanding', 'wealthLandingStale', 'wealthInsights', 'financeSummary',
+  // Weekly-cadence data — bound to a week, not a day.
+  'weeklyGoals', 'weeklyReview',
+  'experiments',
+  // Response/version bookkeeping — not day-bound CONTENT. The day-identity
+  // subset of these (localDate, dayState, contentLocalDate, snapshotAt,
+  // builtAt) is always explicitly re-set by the caller right after
+  // sanitizing, so leaving them in the allowlist just avoids the generic
+  // clear pass fighting that explicit override.
+  'localDate', 'timezone', 'currentLocalDate', 'contentLocalDate', 'dayState',
+  'snapshotId', 'snapshotVersion', 'fieldsBuiltAt', 'fieldVersions',
+  'cached', 'cachedAgeMin', 'stale', 'errors',
+  // Chief Brief identity/attempt bookkeeping — every caller here always
+  // overwrites these explicitly too (chiefBrief: null, chiefBriefPending:
+  // true, ...); listed so the generic pass doesn't clear them to a
+  // non-standard empty shape before that explicit override lands.
+  'chiefBrief', 'chiefBriefStale', 'chiefBriefPending', 'chiefBriefQuality',
+  'chiefBriefProvenance', 'chiefBriefAttempt', 'morningFocus',
+  'goalsWeekStart', 'chiefBriefGoalsStale',
+]);
+
+/** Generic day-boundary sanitizer: every field NOT in DAY_INDEPENDENT_FIELDS
+ *  is cleared to its type-appropriate empty value (array -> [], string ->
+ *  '', anything else -> null). This is THE ONE day-bound projection every
+ *  caller in this file routes through, so Today, Brief, Radar, recovery,
+ *  workout, effectiveWorkout, forecasts, calendar, weather, and daily alerts
+ *  are all cleared identically, by construction, rather than by a
+ *  hand-maintained per-field list that can silently miss one. */
+function sanitizeDayBoundFields(v: BriefingData): BriefingData {
+  const cleared: Record<string, unknown> = {};
+  const src = v as unknown as Record<string, unknown>;
+  for (const key of Object.keys(src)) {
+    const current = src[key];
+    if (DAY_INDEPENDENT_FIELDS.has(key)) { cleared[key] = current; continue; }
+    cleared[key] = Array.isArray(current) ? [] : typeof current === 'string' ? '' : null;
+  }
+  return cleared as unknown as BriefingData;
+}
+
+/** True when `data` describes a LOCAL day other than `todayLocalDate` — the
+ *  one day-identity check that must run BEFORE any Chief-Brief-usability
+ *  branching (cross-day lifecycle hardening pass, defect 1: checking
+ *  usability/pending FIRST let a `{chiefBrief:null, chiefBriefPending:true}`
+ *  prior-day payload short-circuit past this check entirely). A missing
+ *  `localDate` (a very old cache, predating the Context Understanding Layer)
+ *  is treated as "can't tell, leave alone" — the existing, deliberate
+ *  fail-open posture for that specific legacy-shape case, unchanged here. */
+function isPriorDay(data: BriefingData, todayLocalDate: string): boolean {
+  return Boolean(data.localDate) && data.localDate !== todayLocalDate;
+}
+
+/** True when `incoming` is explicitly flagged by the SERVER as describing a
+ *  day other than the live day at response time. Primary signal is
+ *  `dayState` (backend routes/briefing.js always computes `currentLocalDate`
+ *  live and derives `dayState` by comparing it against the content's own
+ *  day, on every response — cache-hit or fresh-build). Falls back to
+ *  comparing `localDate` against `currentLocalDate` directly when `dayState`
+ *  itself is absent (an old cached response shape from before every
+ *  response carried it). Deliberately never consults a client-side clock —
+ *  this decision can never disagree with what the server just said about
+ *  its own response. */
+function isIncomingPriorDay(incoming: BriefingData): boolean {
+  if (incoming.dayState) return incoming.dayState === 'previous_day';
+  return Boolean(incoming.localDate) && Boolean(incoming.currentLocalDate) && incoming.localDate !== incoming.currentLocalDate;
+}
+
+/**
  * The one merge point for every incoming briefing payload.
  *
- * - When `incoming` carries a publishable Chief Brief (or there's no
- *   existing last-good card to protect), `incoming` is authoritative as-is.
+ * - Day identity is resolved FIRST (cross-day lifecycle hardening pass,
+ *   defect 2): a response the server itself flagged `dayState:
+ *   'previous_day'` is sanitized (every day-bound field cleared) before any
+ *   Chief-Brief-usability branching runs — it can never repopulate stale
+ *   fields just because its (previous day's) Chief Brief happens to look
+ *   usable and non-pending.
+ * - Otherwise: when `incoming` carries a publishable Chief Brief (or there's
+ *   no existing last-good card to protect), `incoming` is authoritative
+ *   as-is.
  * - When `incoming` has no usable Chief Brief but `existing` does — AND
  *   `existing` describes the SAME local day as `incoming` (never carry
  *   yesterday's content forward as today's) — retain `existing`'s Chief
@@ -67,6 +170,18 @@ function withWealthLandingProtected(base: BriefingData, incoming: BriefingData, 
  *   the content itself stays put.
  */
 export function mergeBriefingResponse(existing: BriefingData | null, incoming: BriefingData): BriefingData {
+  if (isIncomingPriorDay(incoming)) {
+    // Our current in-memory state may already describe the SAME live day
+    // the server just reported (e.g. a scoped chief-brief-retry response
+    // raced a fuller update that already landed) — that existing state is
+    // strictly better information than a previous_day response, so keep it
+    // outright rather than downgrading to a freshly-sanitized (blanker)
+    // previous_day payload.
+    if (existing && incoming.currentLocalDate && existing.localDate === incoming.currentLocalDate) {
+      return existing;
+    }
+    return withWealthLandingProtected(sanitizeDayBoundFields(incoming), incoming, existing);
+  }
   if (isLastGoodCandidate(incoming)) return withWealthLandingProtected(incoming, incoming, existing);
   if (existing == null || !isLastGoodCandidate(existing)) return withWealthLandingProtected(incoming, incoming, existing);
   const lastGood: BriefingData = existing;
@@ -106,70 +221,28 @@ export function mergeBriefingResponse(existing: BriefingData | null, incoming: B
 }
 
 /**
- * Cache migration (v1 -> v2): recover a structurally valid same-day Chief
- * Brief from an already-poisoned v1 cache (one written by the pre-fix
- * client, which could have persisted `chiefBrief: null` over a previously
- * good card). `todayLocalDate` is the caller's own YYYY-MM-DD so this never
- * needs Date.now() internally (kept pure/testable).
+ * Cache migration (v1 -> v2, and every subsequent cold-launch cache load —
+ * despite the name this runs on every load, not just a one-time v1->v2
+ * migration): recover a structurally valid same-day Chief Brief from an
+ * already-poisoned cache (one written by a pre-fix client, which could have
+ * persisted `chiefBrief: null` over a previously good card), AND sanitize
+ * every day-bound field when the cached payload is from a PRIOR local day.
  *
- * - A structurally usable, same-day cached Chief Brief survives (marked
- *   stale/last_good — it's not a live fetch result).
- * - A null/degraded/pending cached Chief Brief, or one from a PRIOR day, is
- *   dropped — the rest of the cached payload survives untouched either way
- *   (Today/Radar/weather are still useful to show instantly while a fresh
- *   fetch is in flight).
+ * - Day identity is resolved FIRST (cross-day lifecycle hardening pass,
+ *   defect 1) — a cached payload from a prior local day is always
+ *   sanitized via `sanitizeDayBoundFields`, regardless of what its own
+ *   chiefBrief/chiefBriefPending happen to look like. This is what makes a
+ *   `{localDate: yesterday, chiefBrief: null, chiefBriefPending: true, ...
+ *   rest of yesterday's fields still populated}` cache correctly clear
+ *   everything instead of short-circuiting on the "unusable/pending"
+ *   check before the day check ever ran.
+ * - Only once the cached payload is confirmed to be describing TODAY does
+ *   the (day-independent) "is the cached Chief Brief itself usable" check
+ *   apply.
  */
-/**
- * Pure: is this GET /briefing/by-snapshot/:snapshotId response valid to
- * display as the EXACT briefing a tapped morning-notification push
- * referenced (morning-notification lifecycle fix, item C)? Requires the
- * response to carry the SAME snapshotId the push named, and — if it carries
- * a localDate at all — that it's TODAY's, never a prior local day. A
- * delayed push tapped late (after midnight) must never masquerade its
- * content as today's; the caller falls back to a normal current-day load
- * instead.
- */
-export function isValidPushSnapshot(
-  content: BriefingData | null | undefined, snapshotId: string, todayLocalDate: string
-): content is BriefingData {
-  if (!content || content.snapshotId !== snapshotId) return false;
-  if (content.localDate && content.localDate !== todayLocalDate) return false;
-  return true;
-}
-
-// Cross-day lifecycle fix — every field this app's own architecture treats
-// as day-bound (Wisdom, Today plan, calendar, weather, forecasts, recovery/
-// training guidance, Radar-feeding insights). Explicit allowlist, NOT this
-// set: fields absent here are left untouched across a day boundary because
-// they're genuinely day-independent (Wealth, weekly goals/review) — see the
-// backend's identical-in-spirit DAY_INDEPENDENT_ALLOWLIST philosophy in
-// routes/briefing.js. Kept as a deliberate enumeration (not "everything
-// except an allowlist") so adding a new day-bound field to BriefingData is a
-// visible, intentional decision here, not a silent gap.
-const DAY_BOUND_FIELDS = [
-  'date', 'quote', 'quoteInsight', 'dailyQuote', 'notionQuote', 'notionInsight',
-  'notionPageTitle', 'notionText', 'relevantHighlight', 'wellbeingTheme',
-  'calendar', 'workBusy', 'todayForecast', 'forecasts', 'todayCommandCenter',
-  'recovery', 'effectiveWorkout', 'weather',
-  'insights', 'crossContextInsights', 'healthInsights', 'healthComposites',
-  'signals', 'alerts', 'urgentEmails', 'leverageActions', 'goalsWeekStart',
-] as const;
-
-function clearDayBoundFields(v: BriefingData): BriefingData {
-  const cleared: Record<string, unknown> = { ...v };
-  for (const key of DAY_BOUND_FIELDS) {
-    const current = (v as unknown as Record<string, unknown>)[key];
-    cleared[key] = Array.isArray(current) ? [] : typeof current === 'string' ? '' : null;
-  }
-  return cleared as unknown as BriefingData;
-}
-
 export function migrateV1Cache(v1: BriefingData | null, todayLocalDate: string): BriefingData | null {
   if (!v1) return null;
-  if (!isUsableChiefBrief(v1.chiefBrief) || v1.chiefBriefPending) {
-    return { ...v1, chiefBrief: null, chiefBriefPending: true, chiefBriefStale: false };
-  }
-  if (v1.localDate && v1.localDate !== todayLocalDate) {
+  if (isPriorDay(v1, todayLocalDate)) {
     // Morning-notification lifecycle fix: a stale envelope from a PRIOR local
     // day must not carry forward a "Built Xh ago" timestamp alongside a
     // nulled chiefBrief — that exact pairing is the production bug ("Built
@@ -177,18 +250,15 @@ export function migrateV1Cache(v1: BriefingData | null, todayLocalDate: string):
     // WHEN this now-discarded content was cut; once the content itself is
     // being dropped for being a different day, its age has nothing left to
     // honestly describe until a fresh fetch lands.
-    //
-    // Cross-day lifecycle fix (defect 1): this used to null ONLY chiefBrief
-    // while leaving quote/Notion/calendar/weather/forecasts/recovery from
-    // the prior day fully intact — exactly the "still shows Tuesday's
-    // Wisdom on Wednesday" production bug. Every day-bound field is cleared
-    // the same way now; day-independent fields (Wealth, weekly goals/
-    // review — anything not in DAY_BOUND_FIELDS) survive untouched.
-    return clearDayBoundFields({
-      ...v1, chiefBrief: null, chiefBriefPending: true, chiefBriefStale: false,
+    return {
+      ...sanitizeDayBoundFields(v1),
+      chiefBrief: null, chiefBriefPending: true, chiefBriefStale: false,
       snapshotAt: undefined, builtAt: undefined,
       dayState: 'previous_day', contentLocalDate: v1.localDate,
-    });
+    };
+  }
+  if (!isUsableChiefBrief(v1.chiefBrief) || v1.chiefBriefPending) {
+    return { ...v1, chiefBrief: null, chiefBriefPending: true, chiefBriefStale: false };
   }
   return v1;
 }

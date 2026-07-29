@@ -1,9 +1,9 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, useColorScheme } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Pressable, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, typography, shadow, colors as themeColors, FONTS } from '../theme';
 import type { WealthLanding } from '../hooks/useBriefing';
 import { paceLine, driverLine } from '../lib/wealthPaceCopy';
-import { positionTone, compactMoney } from '../lib/wealthPositionTone';
+import { positionTone, colorForPositionTone, compactMoney } from '../lib/wealthPositionTone';
 import { formatMoney as money } from '../lib/format';
 import { SkeletonCard } from './viz/Skeleton';
 
@@ -47,7 +47,10 @@ function WealthPostureCard({ landing, onViewExceptions }: Props) {
   // Backward compatible with a landing payload cached before positionConclusion
   // existed — falls back to the old deterministic summary line, never a blank.
   const headline = positionConclusion?.headline ?? landing.summary;
-  const tone = positionTone(headline);
+  // Wealth/evening hardening pass: render the backend's typed tone directly
+  // — never re-derive the color by matching the headline's wording — falling
+  // back to the regex matcher only for a payload cached before `tone` existed.
+  const tone = positionConclusion?.tone ? colorForPositionTone(positionConclusion.tone) : positionTone(headline);
 
   const comparison = numbers.mtdDiscretionary?.comparison ?? null;
   const compactMetrics: { label: string; tone?: string }[] = [];
@@ -82,7 +85,14 @@ function WealthPostureCard({ landing, onViewExceptions }: Props) {
         <Text style={[styles.qualification, { color: secondary }]}>{sourceHealth.qualification}</Text>
       ) : null}
 
-      <View onTouchEnd={() => setHidden((h) => !h)} accessibilityRole="button" accessibilityLabel={hidden ? 'Show amounts' : 'Hide amounts'} accessibilityHint="Double tap to toggle privacy mask">
+      <Pressable
+        onPress={() => setHidden((h) => !h)}
+        hitSlop={8}
+        style={styles.privacyToggle}
+        accessibilityRole="button"
+        accessibilityLabel={hidden ? 'Show amounts' : 'Hide amounts'}
+        accessibilityHint="Toggle privacy mask"
+      >
         {numbers.mtdDiscretionary ? (
           <View style={styles.paceBlock}>
             <Text style={[styles.primaryAmount, { color: c.text }]} allowFontScaling>
@@ -108,7 +118,7 @@ function WealthPostureCard({ landing, onViewExceptions }: Props) {
             ))}
           </View>
         ) : null}
-      </View>
+      </Pressable>
       <Text style={[styles.hint, { color: secondary }]}>{hidden ? 'tap to show' : 'tap to hide'}</Text>
 
       {exceptionCount != null && exceptionCount > 0 ? (
@@ -137,6 +147,7 @@ const styles = StyleSheet.create({
   qualification: { ...typography.caption, fontSize: 13, marginTop: spacing.xs, fontStyle: 'italic' },
   primaryAmount: { fontFamily: FONTS.display, fontSize: 28, fontWeight: '700', letterSpacing: -0.4, marginTop: spacing.md },
   primaryAmountLabel: { fontSize: 14, fontWeight: '600' },
+  privacyToggle: { minHeight: 44, justifyContent: 'center' },
   paceBlock: { gap: 2 },
   paceLine: { ...typography.caption, fontSize: 12.5, marginTop: 2 },
   metricsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.md },

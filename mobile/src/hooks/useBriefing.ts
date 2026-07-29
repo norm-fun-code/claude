@@ -5,6 +5,8 @@ import { BRIEFING_URL, BRIEFING_REBUILD_URL, BRIEFING_REBUILD_STATUS_URL, BRIEFI
 import type { BuildJobState } from '../lib/chiefBriefState';
 import { resolvePendingSince } from '../lib/chiefBriefState';
 import { mergeBriefingResponse, migrateV1Cache, isValidPushSnapshot } from '../lib/briefingMerge';
+import type { RebuildIdentity } from '../lib/rebuildResume';
+import { resolveResumeDecision, isValidReadyResult, classifyTriggerResponse } from '../lib/rebuildResume';
 
 const API_URL = BRIEFING_URL;
 // v2 (Chief Brief regression fix): normos.briefing.v1 used to act as BOTH
@@ -23,6 +25,16 @@ const CACHE_KEY_V1 = 'normos.briefing.v1';
 // seconds on every single reopen — the fail-safe could never fire across the
 // one action a waiting user is most likely to take. See resolvePendingSince.
 const PENDING_SINCE_KEY = 'normos.chiefBrief.pendingSince.v1';
+// Rebuild resumability hardening pass: the durable client-side identity of
+// an in-flight (or last-known) rebuild — persisted the instant a rebuild is
+// ACCEPTED (never merely requested), so a close/reopen or a foregrounding
+// resumes polling this EXACT job instead of guessing at "the latest job for
+// today" (the server-side fallback triggerRebuild/pollBuild deliberately
+// never rely on for this). `buildId: null` is itself a meaningful persisted
+// state — "the trigger hit lock_contended and must be retried", never
+// treated as a pollable id. Cleared only once an exact terminal result
+// (ready — handled — or failed) has actually been processed.
+const REBUILD_STATE_KEY = 'normos.rebuild.active.v1';
 
 export interface WeatherHour {
   time: string;
@@ -52,7 +64,6 @@ export interface Workout {
   duration: string | null;
   hrTarget: string | null;
   protein: string;
-  hrvNote: string;
 }
 
 export interface CalendarEvent {
@@ -136,7 +147,7 @@ export interface WeeklyReview {
   // never by headline text or array position. Optional so a review cached
   // from before these fields existed still renders (falls back to opening
   // whatever's already in the payload).
-  id?: number;
+  id?: string;
   weekStart?: string;
 }
 
@@ -219,7 +230,7 @@ export interface WealthLanding {
   // See backend/src/services/wealth-landing.js's derivePositionConclusion.
   // Optional so a landing payload cached from before this field existed
   // still renders (falls back to `summary`).
-  positionConclusion?: { headline: string; provisional: boolean };
+  positionConclusion?: { headline: string; provisional: boolean; tone?: 'positive' | 'neutral' | 'caution' | 'negative' | 'unavailable' };
   // Count of unresolved per-category exceptions (action + review severities)
   // — the same counts summary/severity were computed from, so the secondary
   // "N categories stand out" affordance can never disagree with them.
@@ -507,7 +518,7 @@ export interface RadarDestination {
   // action's identity, threaded straight through from the review row
   // (backend/src/brain/radar.js's weeklyReviewCandidate) rather than
   // re-derived from entityId/headline text.
-  reviewId?: number | null;
+  reviewId?: string | null;
   weekStart?: string | null;
 }
 
@@ -1098,49 +1109,85 @@ export function useBriefing(): BriefingState {
   // replaces: a blank Chief Brief with a fresh builtAt used to read as
   // "rebuild succeeded"). The last-known-good `data` is left untouched for
   // the whole poll — only a job that reaches 'ready' replaces it.
-  const triggerRebuild = useCallback(async () => {
-    if (rebuilding) return;
-    setRebuilding(true);
-    setError(null);
-    // A build we just asked for IS in flight — clear any prior failure verdict
-    // immediately so the card shows progress rather than the old failure while
-    // the first status poll is still 5s out.
-    setBuildState('building');
-    setBuildFailure(null);
-    if (rebuildPollRef.current) clearTimeout(rebuildPollRef.current);
-
-    let buildId: string | null = null;
-    try {
-      const res = await fetchWithTimeout(
-        BRIEFING_REBUILD_URL,
-        { method: 'POST', headers: authHeaders() },
-        10000
-      );
-      // 202 is the durable-job contract's normal response (both a fresh
-      // trigger and "another build already owns this" carry a pollable id).
-      if (!res.ok && res.status !== 202) {
-        throw new Error(`Server returned ${res.status}`);
-      }
-      const json = await res.json().catch(() => ({} as { buildId?: string })) as { buildId?: string };
-      buildId = json.buildId ?? null;
-    } catch (err: unknown) {
-      setRebuilding(false);
-      setBuildState(null); // never leave a phantom 'building' after a failed trigger
-      setError(err instanceof Error ? err.message : 'Rebuild trigger failed');
-      return;
+  // Persist (or clear, when `null`) the durable rebuild identity — the ONE
+  // write path every caller below routes through, so `REBUILD_STATE_KEY`
+  // can never drift from what's actually being polled in memory.
+  const persistRebuildIdentity = useCallback((identity: RebuildIdentity | null) => {
+    if (identity) {
+      AsyncStorage.setItem(REBUILD_STATE_KEY, JSON.stringify(identity)).catch(() => {});
+    } else {
+      AsyncStorage.removeItem(REBUILD_STATE_KEY).catch(() => {});
     }
+  }, []);
 
+  // Fetch the EXACT published result for a 'ready' job via its snapshotId
+  // (the same by-snapshot primitive openFromPush uses), validated against
+  // the job's own localDay — never a generic GET /briefing, which can
+  // return whatever the server's current cache state happens to be
+  // (potentially a different, concurrently-triggered build, or — across a
+  // midnight race — a different local day's content entirely). Falls back
+  // to a generic fetch only if the status response carries no snapshotId at
+  // all (an older server shape), still validated the same way. Returns the
+  // merged BriefingData on success, or null if the exact result could not
+  // be verified (the caller must NOT treat that as success).
+  const resolveReadyBuild = useCallback(async (status: { snapshotId?: string | null; localDay?: string | null }): Promise<BriefingData | null> => {
+    let content: BriefingData | null = null;
+    if (status.snapshotId) {
+      const res = await fetchWithTimeout(
+        `${BRIEFING_BY_SNAPSHOT_URL}/${encodeURIComponent(status.snapshotId)}`,
+        { headers: authHeaders() },
+        12000
+      ).catch(() => null);
+      if (res?.ok) content = await res.json().catch(() => null);
+    } else {
+      const res = await fetchWithTimeout(BRIEFING_URL, { headers: authHeaders() }, 12000).catch(() => null);
+      if (res?.ok) content = await res.json().catch(() => null);
+    }
+    if (!content) return null;
+    // Validate the result actually belongs to this job's day AND carries a
+    // usable Chief Brief — a 'ready' job whose fetched content somehow
+    // fails either check must never be reported as a successful rebuild.
+    const tzForComparison = content.timezone || 'America/New_York';
+    const expectedDay = status.localDay || new Date().toLocaleDateString('en-CA', { timeZone: tzForComparison });
+    if (!isValidReadyResult(content, expectedDay)) return null;
+    let merged: BriefingData = content;
+    setData((prev) => { merged = mergeBriefingResponse(prev, content as BriefingData); return merged; });
+    AsyncStorage.setItem(CACHE_KEY, JSON.stringify(merged)).catch(() => {});
+    return merged;
+  }, []);
+
+  // The poll loop itself — parameterized so BOTH a fresh trigger and a
+  // resumed (persisted-identity) rebuild share the exact same logic.
+  // Distinguishes "still building" (state present, not yet terminal) from
+  // "the poll REQUEST itself failed" (network/server error reaching the
+  // status endpoint) — the latter now surfaces a Retry affordance after a
+  // short bounded streak instead of being silently retried for the full
+  // ~180s window, per the hardening pass's "surface repeated poll failures
+  // promptly" requirement. last-known-good `data` is left untouched for the
+  // whole poll — only a verified 'ready' result ever replaces it.
+  const pollBuild = useCallback((buildIdIn: string | null, localDay: string) => {
+    let buildId = buildIdIn;
     let attempts = 0;
+    let consecutiveFailures = 0;
     const MAX_ATTEMPTS = 36; // ~180s max polling window (5s cadence)
+    const MAX_CONSECUTIVE_FAILURES = 3; // ~15-20s of genuinely unreachable status endpoint
+
+    const finish = () => {
+      setRebuilding(false);
+      persistRebuildIdentity(null);
+    };
 
     const poll = async () => {
       if (attempts++ >= MAX_ATTEMPTS) {
         setRebuilding(false);
-        // Stop claiming a build is in flight once we've given up watching it —
-        // otherwise the card would keep showing a skeleton indefinitely, the
-        // exact failure mode this whole contract exists to prevent.
+        // Stop claiming a build is in flight once we've given up watching it
+        // — otherwise the card would keep showing a skeleton indefinitely.
+        // Deliberately does NOT clear the persisted identity: the server-
+        // side build may still be running/finish later, and the next
+        // resume (reopen/foreground) should immediately re-check it exactly
+        // once rather than silently losing track of it.
         setBuildState(null);
-        setError('Rebuild timed out — try again or check the server');
+        setError('Rebuild is taking longer than expected — it will keep resolving in the background; reopen to check again, or tap to try a fresh one.');
         return;
       }
       try {
@@ -1148,54 +1195,175 @@ export function useBriefing(): BriefingState {
           ? `${BRIEFING_REBUILD_STATUS_URL}?buildId=${encodeURIComponent(buildId)}`
           : BRIEFING_REBUILD_STATUS_URL;
         const res = await fetchWithTimeout(url, { headers: authHeaders() }, 12000);
-        if (res.ok) {
-          const status: { buildId?: string; state?: string; reasonCodes?: string[]; errorMessage?: string | null } = await res.json();
-          if (!buildId && status.buildId) buildId = status.buildId;
-          setBuildState((status.state as BuildJobState) ?? null);
-          if (status.state === 'ready') {
-            // The job published a genuinely fresh brief — fetch the actual
-            // content (the status poll itself is metadata-only). Still
-            // merged (not a raw setData) for consistency — a 'ready' job's
-            // own chiefBrief is always usable, so the merge is a no-op here,
-            // but going through the SAME merge point everywhere means there
-            // is exactly one place this rule can ever be implemented.
-            const briefRes = await fetchWithTimeout(BRIEFING_URL, { headers: authHeaders() }, 12000);
-            if (briefRes.ok) {
-              const json: BriefingData = await briefRes.json();
-              let merged: BriefingData = json;
-              setData((prev) => { merged = mergeBriefingResponse(prev, json); return merged; });
-              AsyncStorage.setItem(CACHE_KEY, JSON.stringify(merged)).catch(() => {});
-            }
-            setBuildFailure(null);
-            setRebuilding(false);
-            return;
-          }
-          if (status.state === 'failed') {
-            // A degraded/failed/unpersisted attempt — the existing `data`
-            // (last known good, or none) is left exactly as it was; never
-            // rendered as if this attempt had succeeded. The card reads
-            // buildState/buildFailure to explain WHY rather than spinning.
-            setBuildFailure({
-              reasonCodes: Array.isArray(status.reasonCodes) ? status.reasonCodes : null,
-              persistenceFailed: typeof status.errorMessage === 'string' && status.errorMessage.includes('persistence_failed'),
-            });
-            setRebuilding(false);
-            setError('Rebuild did not produce a usable brief — tap to try again.');
-            return;
-          }
-          // 'queued' | 'building' | 'retry_wait' | 'waiting_for_sleep' — keep polling.
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        consecutiveFailures = 0;
+        const status: { buildId?: string; localDay?: string; snapshotId?: string; state?: string; reasonCodes?: string[]; errorMessage?: string | null } = await res.json();
+        if (!buildId && status.buildId) {
+          buildId = status.buildId;
+          persistRebuildIdentity({ buildId, localDay, startedAt: Date.now() });
         }
+        setBuildState((status.state as BuildJobState) ?? null);
+        if (status.state === 'ready') {
+          const merged = await resolveReadyBuild(status);
+          if (merged) {
+            setBuildFailure(null);
+            finish();
+            return;
+          }
+          // The job claims 'ready' but its exact result could not be
+          // verified (missing/invalid snapshot, wrong day, no usable brief)
+          // — never report success for an unverified result. Treat as a
+          // failed retrieval, distinct from the job's own build failure.
+          setBuildFailure({ reasonCodes: ['exact_result_unverifiable'], persistenceFailed: false });
+          setError('The rebuild finished but its result could not be verified — tap to try again.');
+          finish();
+          return;
+        }
+        if (status.state === 'failed') {
+          // A degraded/failed/unpersisted attempt — the existing `data`
+          // (last known good, or none) is left exactly as it was; never
+          // rendered as if this attempt had succeeded. The card reads
+          // buildState/buildFailure to explain WHY rather than spinning.
+          setBuildFailure({
+            reasonCodes: Array.isArray(status.reasonCodes) ? status.reasonCodes : null,
+            persistenceFailed: typeof status.errorMessage === 'string' && status.errorMessage.includes('persistence_failed'),
+          });
+          setError('Rebuild did not produce a usable brief — tap to try again.');
+          finish();
+          return;
+        }
+        // 'queued' | 'building' | 'retry_wait' | 'waiting_for_sleep' — keep polling.
       } catch {
-        // Ignore individual poll errors; next attempt will retry.
+        // The POLL REQUEST failed (not "still building") — count a distinct
+        // failure streak so a genuinely unreachable server surfaces Retry
+        // within seconds, never silently swallowed for the full timeout
+        // window the way a normal "still building" cadence is.
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          setRebuilding(false);
+          setError('Lost connection while checking the rebuild — tap to retry.');
+          // Keep the persisted identity: the build itself may well still be
+          // running server-side even though polling from this device is
+          // currently failing (e.g. the phone just lost network) — the next
+          // resume should pick the exact same job back up, not abandon it.
+          return;
+        }
       }
       rebuildPollRef.current = setTimeout(poll, 5000);
     };
 
+    setRebuilding(true);
+    setBuildState((prev) => prev ?? 'building');
+    if (rebuildPollRef.current) clearTimeout(rebuildPollRef.current);
     // First poll after 5s — the status row exists immediately (created
     // before the 202 response), unlike the old builtAt-diffing approach
     // which had to wait out most of the build before a poll meant anything.
-    rebuildPollRef.current = setTimeout(poll, 5000);
-  }, [rebuilding]);
+    // A RESUMED poll (buildId already known) checks immediately instead —
+    // no reason to wait 5s to learn about a job that may have already
+    // finished while the app was closed.
+    if (buildIdIn) { poll(); } else { rebuildPollRef.current = setTimeout(poll, 5000); }
+  }, [persistRebuildIdentity, resolveReadyBuild]);
+
+  const triggerRebuild = useCallback(async () => {
+    if (rebuilding) return;
+    setRebuilding(true);
+    setError(null);
+    // A build we just asked for IS in flight — clear any prior failure verdict
+    // immediately so the card shows progress rather than the old failure while
+    // the trigger call is still in flight.
+    setBuildState('building');
+    setBuildFailure(null);
+    if (rebuildPollRef.current) clearTimeout(rebuildPollRef.current);
+
+    const tz = data?.timezone || 'America/New_York';
+    const localDay = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+
+    // Bounded retry-the-TRIGGER loop for lock_contended responses (buildId:
+    // null, retryable: true) — a null build id must never be handed to
+    // pollBuild as though it were a real job; the correct response to
+    // contention is to retry the POST itself shortly, not poll nothing.
+    const MAX_TRIGGER_ATTEMPTS = 4;
+    for (let attempt = 1; attempt <= MAX_TRIGGER_ATTEMPTS; attempt++) {
+      let json: { buildId?: string | null; state?: string; alreadyRunning?: boolean; retryable?: boolean } = {};
+      try {
+        const res = await fetchWithTimeout(BRIEFING_REBUILD_URL, { method: 'POST', headers: authHeaders() }, 10000);
+        // 202 is the durable-job contract's normal response (both a fresh
+        // trigger and "another build already owns this" carry a pollable id).
+        if (!res.ok && res.status !== 202) throw new Error(`Server returned ${res.status}`);
+        json = await res.json().catch(() => ({}));
+      } catch (err: unknown) {
+        setRebuilding(false);
+        setBuildState(null); // never leave a phantom 'building' after a failed trigger
+        setError(err instanceof Error ? err.message : 'Rebuild trigger failed');
+        persistRebuildIdentity(null);
+        return;
+      }
+
+      const outcome = classifyTriggerResponse(json);
+      if (outcome.kind === 'poll') {
+        // Fresh trigger, or an already-running job we're adopting — either
+        // way, a real pollable id.
+        persistRebuildIdentity({ buildId: outcome.buildId, localDay, startedAt: Date.now() });
+        pollBuild(outcome.buildId, localDay);
+        return;
+      }
+
+      if (outcome.kind === 'retry' && attempt < MAX_TRIGGER_ATTEMPTS) {
+        // lock_contended with no id yet — persist the "must retry" marker
+        // (survives a close/reopen mid-retry) and back off briefly before
+        // asking again, rather than ever polling a null id.
+        persistRebuildIdentity({ buildId: null, localDay, startedAt: Date.now() });
+        await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+        continue;
+      }
+
+      // Exhausted retries with still no id — honest failure, never a
+      // fabricated "building" state.
+      setRebuilding(false);
+      setBuildState(null);
+      setError('Another rebuild is already in progress — try again in a moment.');
+      persistRebuildIdentity(null);
+      return;
+    }
+  }, [rebuilding, data?.timezone, persistRebuildIdentity, pollBuild]);
+
+  // Rebuild resumability hardening pass: on mount (cold launch, or a fresh
+  // remount), resume any rebuild identity persisted from before the app
+  // closed — never silently lose track of an in-flight build, and never
+  // start a brand-new one while an equivalent job may already be running.
+  // Runs once; `pollBuild`/`triggerRebuild` are stable across renders
+  // (their own deps are refs/callbacks), so this intentionally does not
+  // re-run on every data change.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(REBUILD_STATE_KEY);
+        if (!raw || cancelled) return;
+        const identity: RebuildIdentity = JSON.parse(raw);
+        const tz = data?.timezone || 'America/New_York';
+        const todayLocalDay = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+        const decision = resolveResumeDecision(identity, todayLocalDay);
+        if (decision.kind === 'discard') {
+          await AsyncStorage.removeItem(REBUILD_STATE_KEY);
+          return;
+        }
+        if (cancelled) return;
+        if (decision.kind === 'poll') {
+          pollBuild(decision.buildId, identity.localDay);
+        } else {
+          // A persisted "must retry the trigger" marker (lock_contended) —
+          // resume by retrying the trigger itself, never by polling nothing.
+          triggerRebuild();
+        }
+      } catch {
+        // Corrupt persisted state — never resume from garbage.
+        AsyncStorage.removeItem(REBUILD_STATE_KEY).catch(() => {});
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally mount-only; see comment above.
+  }, []);
 
   const [chiefBriefRefreshing, setChiefBriefRefreshing] = useState(false);
 

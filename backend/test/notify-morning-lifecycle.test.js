@@ -186,6 +186,57 @@ test('automatic path — a FRESH draft that clears the final gate publishes AND 
   });
 });
 
+// Rebuild resumability hardening pass, required test 9: automatic
+// (scheduled/watcher-triggered) builds now get the SAME heartbeat proof-of-
+// life manual builds already have (POST /briefing/rebuild's background
+// IIFE) — previously only the manual path called touchHeartbeat, so a hung
+// automatic build had no updated_at signal short of isJobStale's 15-minute
+// default. global.setInterval/clearInterval are intercepted (not awaited in
+// real time — 20s is too slow for a unit test) to prove the interval is
+// actually started with the job's heartbeat callback, and cleared once the
+// build settles.
+test('required 9: an automatic build starts a 20s heartbeat interval against its own job id, and clears it once the build succeeds', async () => {
+  const origSetInterval = global.setInterval;
+  const origClearInterval = global.clearInterval;
+  const origTouchHeartbeat = buildJobsStore.touchHeartbeat;
+  let intervalCallback = null;
+  let intervalDelay = null;
+  const intervalHandle = { fake: true };
+  const clearedHandles = [];
+  let heartbeatCalls = 0;
+  let heartbeatJobId = null;
+  global.setInterval = (fn, delay) => { intervalCallback = fn; intervalDelay = delay; return intervalHandle; };
+  global.clearInterval = (handle) => { clearedHandles.push(handle); };
+  buildJobsStore.touchHeartbeat = async (id) => { heartbeatCalls += 1; heartbeatJobId = id; };
+  try {
+    await withStubs({
+      eightSleep: true,
+      build: async ({ publish } = {}) => { assert.equal(publish, false); return FRESH_DRAFT; },
+      getReadiness: async () => ({ ready: true, reason: 'ready', evidence: { trigger: 'final_gate' } }),
+      publish: async () => FRESH_RECEIPT,
+      push: async () => ({ sent: 1, invalidTokens: [] }),
+    }, async () => {
+      const res = await morning.warmAndNotify({ send: true, automatic: true });
+      assert.equal(res.built, true, 'sanity: the build actually succeeded');
+      // Manually fire the (intercepted) interval once, BEFORE touchHeartbeat
+      // is restored below — the real interval was never actually running in
+      // wall-clock time (20s is too slow for a unit test), so this is the
+      // only way to observe what its callback does.
+      assert.ok(intervalCallback, 'a heartbeat interval was actually started for an automatic build with a real job row');
+      intervalCallback();
+    });
+  } finally {
+    global.setInterval = origSetInterval;
+    global.clearInterval = origClearInterval;
+    buildJobsStore.touchHeartbeat = origTouchHeartbeat;
+  }
+
+  assert.equal(intervalDelay, 20000, 'heartbeat cadence must match the manual-rebuild contract (20s)');
+  assert.equal(heartbeatCalls, 1, 'the interval callback touches the heartbeat');
+  assert.equal(heartbeatJobId, 'stub-job-id', 'the heartbeat is scoped to this build\'s own job id');
+  assert.ok(clearedHandles.includes(intervalHandle), 'the interval must be cleared once the build settles — never left running past the request');
+});
+
 // Scenario 12: manual authenticated force:true diagnostics must keep bypassing
 // the entire prepare/validate/publish lifecycle — eager build, eager publish,
 // eager push, exactly like before this refactor.

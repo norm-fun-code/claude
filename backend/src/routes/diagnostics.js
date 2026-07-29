@@ -584,16 +584,32 @@ function createDiagnosticsRouter() {
   //   GET /api/diag/wealth-pace
   router.get('/diag/wealth-pace', asyncHandler(async (req, res) => {
     const { computeDiscretionaryMatchedPace } = require('../services/wealth-pace');
-    const { DISCRETIONARY_DEFINITION_VERSION, earliestMonarchDocumentDate } = require('../services/discretionarySpend');
+    const { definitionVersion, earliestMonarchDocumentDate } = require('../services/discretionarySpend');
+    const { canonicalSpendingMtd } = require('../brain/snapshot');
     const tz = process.env.TZ || 'America/New_York';
-    const pace = await computeDiscretionaryMatchedPace({ asOf: new Date(), tz });
-    const earliestDocumentDate = await earliestMonarchDocumentDate().catch(() => null);
+    const asOf = new Date();
+    const [pace, earliestDocumentDate, legacyMetricsMtd] = await Promise.all([
+      computeDiscretionaryMatchedPace({ asOf, tz }),
+      earliestMonarchDocumentDate().catch(() => null),
+      // Wealth matched-pace hardening pass: the pre-audit `metrics` table's
+      // wealth:spending_discretionary daily sum — the "existing canonical
+      // metric" this diagnostic compares the new transaction-derived total
+      // against, so a divergence between the two is surfaced explicitly
+      // rather than silently trusted.
+      canonicalSpendingMtd(asOf, tz).catch(() => null),
+    ]);
+    const legacyMetricsRounded = legacyMetricsMtd != null ? Math.round(legacyMetricsMtd) : null;
+    const variance = pace.currentAmount != null && legacyMetricsRounded != null
+      ? { dollars: pace.currentAmount - legacyMetricsRounded, pct: legacyMetricsRounded !== 0 ? Math.round(((pace.currentAmount - legacyMetricsRounded) / legacyMetricsRounded) * 100) : null }
+      : null;
     res.json({
-      definitionVersion: DISCRETIONARY_DEFINITION_VERSION,
+      definitionVersion: definitionVersion(),
       earliestMonarchDocumentDate: earliestDocumentDate,
       currentMonth: {
         amount: pace.currentAmount,
         totalEconomicSpend: pace.totalEconomicSpend,
+        discretionaryGrossPurchases: pace.discretionaryGrossPurchases,
+        discretionaryRefundsNetted: pace.discretionaryRefundsNetted,
         fixedExcluded: pace.fixedExcluded,
         transfersExcluded: pace.transfersExcluded,
         elapsedDays: pace.elapsedDays,
@@ -609,9 +625,19 @@ function createDiagnosticsRouter() {
       vsPreviousMonth: pace.vsPreviousMonth,
       drivers: pace.drivers,
       // Per-month reconciliation: matched window, total economic spend,
-      // fixed/transfer exclusions, resulting discretionary amount, source,
-      // and eligibility (row coverage vs. earliestMonarchDocumentDate).
+      // gross purchases / refunds netted, fixed/transfer exclusions,
+      // resulting discretionary amount, source, and eligibility (which
+      // coverage check decided it — coverage_record when the source has a
+      // proven sync interval, earliest_document_fallback otherwise).
       monthsBreakdown: pace.monthsBreakdown,
+      // Comparison against the existing (pre-audit) canonical metric — the
+      // `metrics` table's `wealth:spending_discretionary` daily sum for the
+      // current month — with any variance surfaced rather than hidden.
+      legacyCanonicalMetric: {
+        source: 'metrics.wealth:spending_discretionary',
+        amount: legacyMetricsRounded,
+        variance,
+      },
     });
   }));
 

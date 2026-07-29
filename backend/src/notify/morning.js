@@ -323,7 +323,19 @@ async function warmAndNotify(opts = {}) {
       console.error('[morning] failed to create automatic build-job row (continuing without one):', err.message);
     }
   }
+  // Rebuild resumability hardening pass: automatic (scheduled/watcher-
+  // triggered) builds now get the SAME heartbeat proof-of-life manual builds
+  // already have (POST /briefing/rebuild's background IIFE) — without this,
+  // a hung automatic build had no updated_at signal short of
+  // isJobStale's 15-minute default, and the mobile client had no way to
+  // distinguish "still genuinely working" from "silently died" for the one
+  // trigger path (the morning scheduler) that runs with nobody watching.
+  // Cleared at every exit: failJob (all failure returns) and right after the
+  // job is marked 'ready' below (both success returns happen after that).
+  let heartbeatInterval = job ? setInterval(() => buildJobs.touchHeartbeat(job.id), 20000) : null;
+  const clearHeartbeat = () => { if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; } };
   const failJob = (errorMessage, extra = {}) => {
+    clearHeartbeat();
     if (!job) return Promise.resolve();
     return buildJobs.updateJob(job.id, { state: 'failed', errorMessage, ...extra }).catch((e) => console.error('[morning] job update failed:', e.message));
   };
@@ -399,6 +411,7 @@ async function warmAndNotify(opts = {}) {
       state: 'ready', qualityStatus: receipt.qualityStatus, snapshotId: receipt.snapshotId, publishedBriefingId: receipt.briefingId,
     }).catch((err) => console.error('[morning] job update failed:', err.message));
   }
+  clearHeartbeat();
 
   if (!send) {
     logMorningLifecycle({

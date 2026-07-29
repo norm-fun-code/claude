@@ -8,7 +8,7 @@
 import type { RadarDestination } from '../hooks/useBriefing';
 
 export type RadarNavigationResult =
-  | { kind: 'review'; reviewId: number | null; weekStart: string | null }
+  | { kind: 'review'; reviewId: string | null; weekStart: string | null }
   | { kind: 'tab'; tab: 'health' | 'wealth'; anchor: { entityType: string | null; entityId: string } | null }
   | { kind: 'fallback'; tab: string };
 

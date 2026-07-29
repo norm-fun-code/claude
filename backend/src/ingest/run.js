@@ -18,7 +18,7 @@ async function runConnector(c, { full = false } = {}) {
       config: source?.config ?? {},
     };
 
-    const { metrics = [], documents = [], config, reconcile } = (await c.sync(ctx)) || {};
+    const { metrics = [], documents = [], config, reconcile, coverage } = (await c.sync(ctx)) || {};
     const written = await insertMetrics(metrics);
     let docs = 0;
     for (const doc of documents) {
@@ -30,6 +30,22 @@ async function runConnector(c, { full = false } = {}) {
     // fresh set is already persisted and only stale rows are removed.
     let pruned = 0;
     if (reconcile) pruned = await pruneDocuments(reconcile);
+    // Wealth matched-pace hardening pass: a connector that just attested
+    // real coverage for a date range (Monarch's CSV/MCP sync — see
+    // coverage's own doc comments) has that range merged into the source's
+    // tracked coverage intervals (services/coverageIntervals.js), read by
+    // discretionarySpend.js to gate historical-month eligibility on PROVEN
+    // coverage rather than "there's a document somewhere before this date".
+    if (coverage?.from && coverage?.to) {
+      try {
+        const { addInterval } = require('../services/coverageIntervals');
+        const src = await getSource(coverage.source || c.id);
+        const merged = addInterval(src?.config?.coverageIntervals, coverage.from, coverage.to);
+        await updateConfig(coverage.source || c.id, { coverageIntervals: merged });
+      } catch (err) {
+        console.error(`[ingest] ${c.id} coverage-interval update failed:`, err.message);
+      }
+    }
     // Persist any cursor/state the connector wants to remember for next run.
     if (config) await updateConfig(c.id, config);
     await markSync(c.id);

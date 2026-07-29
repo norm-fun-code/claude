@@ -54,3 +54,36 @@ test('a workout plan that never sets autoSwapNote at all (undefined) is handled 
   assert.match(prompt, /Today's workout: Rest/);
   assert.doesNotMatch(prompt, /AUTOMATICALLY swapped/);
 });
+
+// Hardening pass, item 6: the hardcoded "Green=train as planned |
+// Yellow=downgrade intensity | Red=mobility/walk only" guidance
+// (workoutPromptShape's old hrvNote field) contradicted the centralized
+// near-green presentation (intelligence/recoveryPresentation.js) — a score
+// of 59 is canonically yellow but must NOT automatically read as "downgrade
+// intensity." The field is now deleted entirely (it was never actually
+// interpolated into the prompt template — recoveryContext already carries
+// the correct presentation-tier guidance), so no prompt built from any
+// workout plan shape can ever reintroduce that contradiction.
+test('required: no chief-brief prompt can contain the deleted hardcoded HRV downgrade guidance, for any workout plan shape', () => {
+  const shapes = [
+    { type: 'Push', duration: '~45 min', hrTarget: '150', protein: '40g', autoSwapNote: null },
+    { type: 'Mobility', duration: '20–30 min + an easy walk', autoSwapNote: 'NOTE: swapped from Push to Mobility.' },
+    { type: 'Rest', duration: null },
+  ];
+  for (const workoutPlan of shapes) {
+    assert.equal('hrvNote' in workoutPlan, false, 'the prompt-facing workout shape must not carry an hrvNote field at all');
+    const prompt = callWithWorkoutPlan(workoutPlan);
+    assert.doesNotMatch(prompt, /Green=train as planned/);
+    assert.doesNotMatch(prompt, /Yellow=downgrade intensity/);
+    assert.doesNotMatch(prompt, /Red=mobility\/walk only/);
+  }
+});
+
+test('required: workoutPromptShape() (routes/briefing.js) and getWorkout() (services/workout.js) no longer return an hrvNote field', () => {
+  const { workoutPromptShape } = require('../src/routes/briefing');
+  const { getWorkout } = require('../src/services/workout');
+  const shaped = workoutPromptShape({ label: 'Push', duration: '~45 min', hrTarget: '150', protein: '40g', source: 'scheduled' });
+  assert.equal('hrvNote' in shaped, false);
+  const scheduled = getWorkout('Monday');
+  assert.equal('hrvNote' in scheduled, false);
+});

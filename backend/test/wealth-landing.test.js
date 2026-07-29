@@ -318,3 +318,51 @@ test('required: incomplete source data produces an explicitly approximate conclu
   assert.match(result.headline, /incomplete/i);
   assert.doesNotMatch(result.headline, /below typical/i, 'must not assert a confident pace read against data known to be incomplete');
 });
+
+// ── Wealth/evening hardening pass: typed semantic tone, not headline regex ──
+test('required: positionConclusion returns a typed tone (positive|neutral|caution|negative|unavailable) derived from the SAME source as the headline, so a prose wording change can never silently change the color', () => {
+  const below = derivePositionConclusion({
+    comparison: { paceLabel: 'comfortably_below', coverageTier: 'typical' }, coverageTier: 'typical',
+    savingsRate: HEALTHY_SAVINGS, planPace: PLAN_AHEAD, dataComplete: true,
+  });
+  assert.equal(below.tone, 'positive');
+
+  const above = derivePositionConclusion({
+    comparison: { paceLabel: 'comfortably_above', coverageTier: 'typical' }, coverageTier: 'typical',
+    savingsRate: HEALTHY_SAVINGS, planPace: PLAN_AHEAD, dataComplete: true,
+  });
+  assert.equal(above.tone, 'negative');
+
+  const slightlyAbove = derivePositionConclusion({
+    comparison: { paceLabel: 'slightly_above', coverageTier: 'typical' }, coverageTier: 'typical',
+    savingsRate: { healthy: false }, planPace: { ahead: false }, dataComplete: true,
+  });
+  assert.equal(slightlyAbove.tone, 'caution');
+
+  const inLine = derivePositionConclusion({
+    comparison: { paceLabel: 'in_line', coverageTier: 'typical' }, coverageTier: 'typical',
+    savingsRate: HEALTHY_SAVINGS, planPace: PLAN_AHEAD, dataComplete: true,
+  });
+  assert.equal(inLine.tone, 'neutral');
+
+  const noComparison = derivePositionConclusion({
+    comparison: null, coverageTier: 'insufficient', savingsRate: HEALTHY_SAVINGS, planPace: PLAN_AHEAD, dataComplete: true,
+  });
+  assert.equal(noComparison.tone, 'unavailable');
+
+  const incomplete = derivePositionConclusion({
+    comparison: { paceLabel: 'comfortably_below', coverageTier: 'typical' }, coverageTier: 'typical',
+    savingsRate: HEALTHY_SAVINGS, planPace: PLAN_AHEAD, dataComplete: false,
+  });
+  assert.equal(incomplete.tone, 'unavailable');
+
+  // The exact reported concern: a prose-wording-only change to the headline
+  // (mixed-signal qualifier appended) must not change the tone — the tone
+  // tracks paceLabel, never the presence/absence of a qualifying clause.
+  const mixedSignalStillPositive = derivePositionConclusion({
+    comparison: { paceLabel: 'comfortably_below', coverageTier: 'typical' }, coverageTier: 'typical',
+    savingsRate: { healthy: false }, planPace: PLAN_AHEAD, dataComplete: true,
+  });
+  assert.notEqual(mixedSignalStillPositive.headline, below.headline, 'sanity: the prose really did change');
+  assert.equal(mixedSignalStillPositive.tone, 'positive', 'the wording change must not change the color');
+});

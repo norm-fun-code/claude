@@ -161,6 +161,17 @@ function txnToDocument(t) {
       account: t.account,
       merchant: t.merchant,
       original: t.original_statement,
+      // Wealth matched-pace hardening pass: preserve the raw classification
+      // evidence the reconciler used at sync time — category_type is
+      // Monarch's own authoritative transfer/income signal (classifyTransaction's
+      // preferred signal over the name-based heuristic), and pending
+      // captures whether Monarch itself still considers this transaction
+      // provisional (distinct from, and a stronger signal than, the
+      // date>today future-dated heuristic every path already applies).
+      // Both are null when the MCP transaction object doesn't carry them,
+      // never fabricated.
+      categoryType: t.category_type ?? null,
+      pending: typeof t.pending === 'boolean' ? t.pending : null,
     },
   };
 }
@@ -343,7 +354,17 @@ async function syncViaMcp(ctx) {
   const keepExternalIds = documents.map((d) => d.externalId);
   const reconcile = { source: SOURCE, domain: 'wealth', from: startDate, to: endDate, keepExternalIds };
 
-  return { metrics, documents, reconcile };
+  // Wealth matched-pace hardening pass: this run just attested real
+  // coverage for [startDate, endDate] — GetTransactions was actually called
+  // for this window (even if a given day within it had zero transactions,
+  // that's still a genuine "we checked and there was nothing" fact, not a
+  // gap). ingest/run.js merges this into the account's tracked coverage
+  // intervals (coverageIntervals.js), which the matched-pace baseline uses
+  // to gate historical-month eligibility on PROVEN coverage instead of
+  // "there's a document somewhere before this date".
+  const coverage = { source: SOURCE, from: startDate, to: endDate };
+
+  return { metrics, documents, reconcile, coverage };
 }
 
 module.exports = {

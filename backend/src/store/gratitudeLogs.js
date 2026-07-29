@@ -23,13 +23,26 @@ async function upsert({ logDate, text }) {
 
 // Most recent entries, newest first, for the evening reflection. Excludes empty
 // rows defensively (text is NOT NULL, but guards against whitespace-only saves).
-async function recent(days = 5) {
+//
+// Wealth/evening hardening pass: this used to be `recent(days=5)` with NO date
+// boundary at all — "5 most recent" meant the 5 most recent rows EVER, however
+// old. If nothing had been logged in months, a months-old entry got presented
+// in tonight's "presence beat" reflection with no indication it wasn't from
+// today (notify/evening-brief.js's prompt frames it as "recent gratitude
+// notes" and asks the model to echo it back as if fresh). `sinceYmd` is now
+// REQUIRED — the caller passes its own canonical local "today" minus a lookback
+// window (evening-brief.js), so a genuine gap in logging correctly produces NO
+// rows (the brief's existing "no gratitude notes" path) instead of resurrecting
+// old text.
+async function recent(limit = 5, { sinceYmd } = {}) {
+  if (!sinceYmd) throw new Error('gratitudeLogs.recent requires sinceYmd (the canonical local lookback boundary)');
   const { rows } = await query(
     `SELECT log_date, text FROM gratitude_logs
      WHERE btrim(text) <> ''
+       AND log_date >= $2::date
      ORDER BY log_date DESC
      LIMIT $1`,
-    [days]
+    [limit, sinceYmd]
   );
   return rows;
 }

@@ -17,7 +17,7 @@ function base(overrides: Partial<BriefingData> = {}): BriefingData {
     chiefBriefStale: false,
     chiefBriefPending: false,
     weather: null,
-    workout: { day: 'Mon', type: 'Pull', duration: null, hrTarget: null, protein: '', hrvNote: '' },
+    workout: { day: 'Mon', type: 'Pull', duration: null, hrTarget: null, protein: '' },
     calendar: [],
     financeSummary: [],
     quoteInsight: '',
@@ -386,4 +386,74 @@ test('cross-day: a SAME-day v1 cache is untouched (dayState/contentLocalDate not
   const today = base({ chiefBrief: GOOD_BRIEF, localDate: '2026-07-29', quote: 'q', quoteInsight: 'qi' });
   const migrated = migrateV1Cache(today, '2026-07-29');
   assert.deepEqual(migrated, today);
+});
+
+// ---------------------------------------------------------------------------
+// Hardening pass, required test 1: the EXACT literal reproduction from the
+// bug report — a prior-day cache shaped {localDate: yesterday,
+// chiefBrief: null, chiefBriefPending: true, ...rest of yesterday's fields
+// still populated} must clear every day-bound field, not short-circuit past
+// the day check because chiefBrief already looks "unusable/pending".
+// ---------------------------------------------------------------------------
+test('required 1 (hardening): a prior-day cache with chiefBrief:null AND chiefBriefPending:true still clears all day-bound fields (does not short-circuit on the unusable/pending check before the day check)', () => {
+  const tuesday = base({
+    localDate: '2026-07-28',
+    chiefBrief: null,
+    chiefBriefPending: true,
+    date: 'Tuesday, July 28, 2026',
+    quote: 'Tuesday quote', quoteInsight: 'Tuesday insight',
+    calendar: [{ title: 'Tuesday meeting', startTime: null, endTime: null, allDay: false, location: null, description: null }],
+    recovery: { score: 70, band: 'green' } as unknown as BriefingData['recovery'],
+    effectiveWorkout: { source: 'scheduled', workoutId: 'w1', label: 'Pull' } as unknown as BriefingData['effectiveWorkout'],
+    workout: { day: 'Tue', type: 'Pull', duration: '45m', hrTarget: '140', protein: '150g' },
+    todayCommandCenter: { snapshotId: 'tuesday-snap' } as unknown as BriefingData['todayCommandCenter'],
+    forecasts: [{ title: 'f', detail: null, probability: null, status: null }],
+    weather: { temp: 68 } as unknown as BriefingData['weather'],
+  });
+  const migrated = migrateV1Cache(tuesday, '2026-07-29');
+  assert.equal(migrated?.chiefBrief, null);
+  assert.equal(migrated?.chiefBriefPending, true);
+  assert.equal(migrated?.date, '', 'date cleared');
+  assert.equal(migrated?.quote, '', 'quote cleared');
+  assert.equal(migrated?.quoteInsight, '', 'quoteInsight cleared');
+  assert.deepEqual(migrated?.calendar, [], 'calendar cleared');
+  assert.equal(migrated?.recovery, null, 'recovery cleared');
+  assert.equal(migrated?.effectiveWorkout, null, 'effectiveWorkout cleared');
+  assert.equal(migrated?.workout, null, 'workout cleared');
+  assert.equal(migrated?.todayCommandCenter, null, 'todayCommandCenter cleared');
+  assert.deepEqual(migrated?.forecasts, [], 'forecasts cleared');
+  assert.equal(migrated?.weather, null, 'weather cleared');
+  assert.equal(migrated?.dayState, 'previous_day');
+  assert.equal(migrated?.contentLocalDate, '2026-07-28');
+});
+
+// ---------------------------------------------------------------------------
+// Hardening pass, required test 2: an incoming response the SERVER flagged
+// dayState: 'previous_day' must never repopulate stale day-bound fields,
+// even though its own chiefBrief looks structurally usable and non-pending.
+// ---------------------------------------------------------------------------
+test('required 2 (hardening): an incoming dayState:previous_day response cannot repopulate stale fields, even with a structurally usable chiefBrief', () => {
+  const existing = null; // cold state — nothing cached yet
+  const incoming = base({
+    localDate: '2026-07-28', currentLocalDate: '2026-07-29', dayState: 'previous_day',
+    chiefBrief: GOOD_BRIEF, chiefBriefPending: false, // looks perfectly usable
+    quote: 'Tuesday quote', calendar: [{ title: 'Tuesday meeting', startTime: null, endTime: null, allDay: false, location: null, description: null }],
+    recovery: { score: 70, band: 'green' } as unknown as BriefingData['recovery'],
+  });
+  const merged = mergeBriefingResponse(existing, incoming);
+  assert.equal(merged.chiefBrief, GOOD_BRIEF, 'the day-check does not touch chiefBrief content itself for an incoming-only merge — day-independence is enforced via chiefBriefPending/dayState, not by discarding a structurally valid brief object');
+  assert.equal(merged.dayState, 'previous_day');
+  assert.equal(merged.quote, '', 'quote cleared — must never repopulate from a previous_day response');
+  assert.deepEqual(merged.calendar, [], 'calendar cleared');
+  assert.equal(merged.recovery, null, 'recovery cleared');
+});
+
+test('required 2b (hardening): a previous_day response cannot downgrade in-memory state that already reflects the live day the server just reported', () => {
+  const existing = base({ localDate: '2026-07-29', chiefBrief: GOOD_BRIEF, quote: 'fresh today quote' });
+  const incoming = base({
+    localDate: '2026-07-28', currentLocalDate: '2026-07-29', dayState: 'previous_day',
+    chiefBrief: null, chiefBriefPending: true, quote: '',
+  });
+  const merged = mergeBriefingResponse(existing, incoming);
+  assert.equal(merged, existing, 'existing already-current state is strictly better than a previous_day response and must be kept outright');
 });

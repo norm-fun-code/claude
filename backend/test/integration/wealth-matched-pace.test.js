@@ -14,13 +14,14 @@
 const test = require('node:test');
 const { after } = test;
 const assert = require('node:assert/strict');
+const request = require('supertest');
 const db = require('../../src/db');
-const { closeDb } = require('./helpers');
+const { closeDb, buildTestApp } = require('./helpers');
 const metricsStore = require('../../src/store/metrics');
 const sourcesStore = require('../../src/store/sources');
 const documentsStore = require('../../src/store/documents');
 const { computeDiscretionaryMatchedPace, monthOffset, daysInMonth, matchedDayOfMonth } = require('../../src/services/wealth-pace');
-const { DISCRETIONARY_DEFINITION_VERSION } = require('../../src/services/discretionarySpend');
+const { definitionVersion } = require('../../src/services/discretionarySpend');
 const { buildWealthLandingProjection } = require('../../src/services/wealth-landing');
 const { buildBrainSnapshot, canonicalFacts } = require('../../src/brain/snapshot');
 
@@ -171,6 +172,78 @@ test('required: a real gap in the account\'s own transaction history (no Monarch
   assert.equal(gapMonth.amount, 90, 'the computed amount is still reported for auditability, even though it is excluded from the median');
 });
 
+test('required: an explicit coverage-interval gap suppresses eligibility even when the account\'s earliest-ever document long predates the window', async (t) => {
+  const prefix = `${TAG}-covgap`;
+  cleanupDocsAfter(t, prefix);
+
+  const originalSource = await sourcesStore.getSource('monarch');
+  const originalCoverage = originalSource?.config?.coverageIntervals ?? null;
+  t.after(async () => { await sourcesStore.updateConfig('monarch', { coverageIntervals: originalCoverage }); });
+
+  await seedMonthSpend(`${prefix}-cur`, 2026, 7, 1, 200);
+  for (let monthsAgo = 1; monthsAgo <= 6; monthsAgo++) {
+    const { y, m } = targetForMonthsAgo(monthsAgo);
+    await seedMonthSpend(`${prefix}-h${monthsAgo}`, y, m, 1, 180);
+  }
+
+  const gap = targetForMonthsAgo(3);
+  const gapFromYmd = ymd(gap.y, gap.m, 1);
+  const gapToYmd = ymd(gap.y, gap.m, gap.matchedDay);
+  const sixMonthsAgo = targetForMonthsAgo(6);
+  const oneMonthAgo = targetForMonthsAgo(1);
+  const coverageStart = ymd(sixMonthsAgo.y, sixMonthsAgo.m, 1);
+  const coverageEnd = ymd(oneMonthAgo.y, oneMonthAgo.m, oneMonthAgo.matchedDay);
+  const shiftDay = (ymdStr, delta) => {
+    const d = new Date(`${ymdStr}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + delta);
+    return d.toISOString().slice(0, 10);
+  };
+  // Coverage attests real sync history tightly bracketing the 6 seeded
+  // months (so months 7-13, with no seeded data AND no coverage record,
+  // correctly stay ineligible for lack of proof either way), but with a
+  // genuine hole right where the 3rd trailing month's own window sits —
+  // proving the coverage-interval check (not merely "is there a document
+  // anywhere before this point") is what gates eligibility.
+  await sourcesStore.updateConfig('monarch', {
+    coverageIntervals: [
+      { from: coverageStart, to: shiftDay(gapFromYmd, -1) },
+      { from: shiftDay(gapToYmd, 1), to: coverageEnd },
+    ],
+  });
+
+  const pace = await computeDiscretionaryMatchedPace({ asOf: ASOF, tz: TZ });
+  assert.equal(pace.monthsUsed, 5, 'the coverage-gap month is excluded even though 6 months of documents were seeded');
+  const gapMonth = pace.monthsBreakdown.find((mo) => mo.monthsAgo === 3);
+  assert.equal(gapMonth.eligible, false, 'a genuine sync gap inside this window suppresses eligibility despite real data both before and after it');
+  for (const monthsAgo of [1, 2, 4, 5, 6]) {
+    const mo = pace.monthsBreakdown.find((x) => x.monthsAgo === monthsAgo);
+    assert.equal(mo.eligible, true, `month ${monthsAgo} is fully outside the gap and stays eligible`);
+  }
+  for (const monthsAgo of [7, 8, 9, 10, 11, 12, 13]) {
+    const mo = pace.monthsBreakdown.find((x) => x.monthsAgo === monthsAgo);
+    assert.equal(mo.eligible, false, `month ${monthsAgo} has neither seeded data nor a coverage record, so it stays ineligible`);
+  }
+});
+
+test('required: resolving the current month + every historical window costs exactly ONE batched transaction query, never one query per window', async (t) => {
+  const prefix = `${TAG}-qcount`;
+  cleanupDocsAfter(t, prefix);
+
+  await seedMonthSpend(`${prefix}-cur`, 2026, 7, 1, 200);
+  for (let monthsAgo = 1; monthsAgo <= 13; monthsAgo++) {
+    const { y, m } = targetForMonthsAgo(monthsAgo);
+    await seedMonthSpend(`${prefix}-h${monthsAgo}`, y, m, 1, 180);
+  }
+
+  const original = documentsStore.rawSpendRowsInRange;
+  let calls = 0;
+  documentsStore.rawSpendRowsInRange = async (...args) => { calls++; return original(...args); };
+  t.after(() => { documentsStore.rawSpendRowsInRange = original; });
+
+  await computeDiscretionaryMatchedPace({ asOf: ASOF, tz: TZ, monthsBack: 13 });
+  assert.equal(calls, 1, 'the current month + all 13 historical windows must resolve via exactly one batched query, not one per window');
+});
+
 test('required: a stale legacy metrics-table row can no longer contaminate the median — historical months are computed ONLY from documents, so a leftover metrics-table figure with no backing transactions is simply invisible', async (t) => {
   const prefix = `${TAG}-legacy`;
   cleanupDocsAfter(t, prefix);
@@ -200,19 +273,38 @@ test('required: a stale legacy metrics-table row can no longer contaminate the m
   assert.equal(legacyMonth.amount, 0, 'with zero documents in its window, its computed discretionary amount is 0 — the $9,000 legacy figure is never read at all');
 });
 
-test('required: duplicate-source transactions (two importers writing the same purchase twice) are never double-counted', async (t) => {
-  const prefix = `${TAG}-dup`;
+test('required: two legitimately separate same-day purchases (same date/merchant/amount/account, distinct external_ids) both count', async (t) => {
+  const prefix = `${TAG}-legitdup`;
   cleanupDocsAfter(t, prefix);
 
-  // Two documents, same calendar date/merchant/amount/account but different
-  // external_ids — exactly documents.categorySpendInRange's DISTINCT ON key
-  // (occurred_at::date, merchant, amount, account) — must collapse to ONE
-  // $75 transaction, not $150.
+  // Wealth matched-pace hardening pass: date+merchant+amount+account is NOT a
+  // valid dedup key — a shopper who buys two identical $75 items at the same
+  // store on the same day must see $150, not $75. Distinct external_ids mean
+  // these are two genuinely separate transactions.
   await seedDoc({ externalId: `${prefix}-a`, occurredAt: ymd(2026, 7, 1), category: 'General Merchandise', amount: '-75', merchant: 'Acme Store', account: 'checking' });
   await seedDoc({ externalId: `${prefix}-b`, occurredAt: ymd(2026, 7, 1), category: 'General Merchandise', amount: '-75', merchant: 'Acme Store', account: 'checking' });
 
   const breakdown = await require('../../src/services/discretionarySpend').discretionaryBreakdown({ fromYmd: '2026-07-01', toYmd: '2026-07-01' });
-  assert.equal(breakdown.discretionaryTotal, 75, 'the duplicate-looking second document must not double the total');
+  assert.equal(breakdown.discretionaryTotal, 150, 'two legitimately distinct same-day purchases must both count');
+});
+
+test('required: duplicate-importer copies of the SAME transaction (same source+external_id) are deduplicated at storage and counted once', async (t) => {
+  const prefix = `${TAG}-importerdup`;
+  cleanupDocsAfter(t, prefix);
+
+  // Wealth matched-pace hardening pass: importer overlap is reconciled at
+  // WRITE time via upsertDocument's ON CONFLICT (source, external_id) — the
+  // same real-world transaction synced twice (e.g. a re-run backfill) must
+  // upsert in place, never create a second document.
+  const externalId = `${prefix}-a`;
+  await seedDoc({ externalId, occurredAt: ymd(2026, 7, 1), category: 'General Merchandise', amount: '-75', merchant: 'Acme Store', account: 'checking' });
+  await seedDoc({ externalId, occurredAt: ymd(2026, 7, 1), category: 'General Merchandise', amount: '-75', merchant: 'Acme Store', account: 'checking' });
+
+  const { rows } = await db.query(`SELECT count(*)::int AS n FROM documents WHERE source='monarch' AND external_id = $1`, [externalId]);
+  assert.equal(rows[0].n, 1, 'the second sync of the same external_id must upsert, not insert a second row');
+
+  const breakdown = await require('../../src/services/discretionarySpend').discretionaryBreakdown({ fromYmd: '2026-07-01', toYmd: '2026-07-01' });
+  assert.equal(breakdown.discretionaryTotal, 75, 'a re-synced duplicate of the same transaction must count once');
 });
 
 test('required: rent/housing is excluded from BOTH the current month\'s and every historical month\'s discretionary total, never just the current one', async (t) => {
@@ -275,7 +367,8 @@ test('required: a full 13-month backfill (the recompute/backfill window) produce
   assert.equal(pace.monthsConsidered, 13, 'DEFAULT_MONTHS_BACK is 13 — a "same month last year" comparison is always in reach once history goes back that far');
   assert.equal(pace.monthsUsed, 13, 'every one of the 13 backfilled months is eligible');
   assert.equal(pace.coverageTier, 'typical');
-  assert.ok(pace.monthsBreakdown.every((mo) => mo.definitionVersion === DISCRETIONARY_DEFINITION_VERSION), 'every historical month reports the SAME canonical definition version as the current month');
+  assert.ok(pace.monthsBreakdown.every((mo) => mo.definitionVersion === definitionVersion()), 'every historical month reports the SAME canonical definition version as the current month');
+  assert.equal(pace.definitionVersion, definitionVersion(), 'the current month reports the same canonical definition version too');
 });
 
 test('required: the exact reported production bug — an 11%-below-typical month renders "slightly_below", never "comfortably_below"', async (t) => {
@@ -473,4 +566,32 @@ test('required: ask.js resolves matched-pace exactly once per financial question
     llm.embed = originalEmbed;
   }
   assert.equal(calls, 1, 'a single financial Ask question must resolve matched-pace exactly once, not once for the prompt and once for claim validation');
+});
+
+test('required: GET /api/diag/wealth-pace reconciles the displayed MTD against the pre-audit canonical metric, surfacing any variance rather than hiding it', async (t) => {
+  const prefix = `${TAG}-reconcile`;
+  cleanupDocsAfter(t, prefix);
+  t.after(async () => { await db.query(`DELETE FROM metrics WHERE source = $1`, [prefix]); });
+  await sourcesStore.registerSource({ id: prefix, domain: 'wealth', displayName: 'wealth-pace reconciliation test' }).catch(() => {});
+
+  // Refund-netting reproduction: a $100 purchase and a $30 refund in the
+  // same category nets to $70 — the NEW canonical transaction-derived
+  // total. A stale legacy metrics-table row for the same month still says
+  // $100 (as if written before the refund-netting fix), so the two must
+  // disagree by exactly $30, and the endpoint must say so explicitly.
+  await seedDoc({ externalId: `${prefix}-purchase`, occurredAt: ymd(2026, 7, 1), category: 'Clothing', amount: '-100' });
+  await seedDoc({ externalId: `${prefix}-refund`, occurredAt: ymd(2026, 7, 2), category: 'Clothing', amount: '30' });
+  await metricsStore.insertMetrics([
+    { ts: new Date('2026-07-01T00:00:00Z'), domain: 'wealth', metric: 'spending_discretionary', value: 100, source: prefix },
+  ]);
+
+  const app = buildTestApp();
+  const res = await request(app)
+    .get('/api/diag/wealth-pace')
+    .set('Authorization', `Bearer ${process.env.NORMOS_ADMIN_TOKEN}`);
+  assert.equal(res.status, 200);
+  assert.ok('legacyCanonicalMetric' in res.body, 'the reconciliation report must always include the comparison, even when there is nothing to compare against');
+  assert.ok('definitionVersion' in res.body);
+  assert.ok('discretionaryGrossPurchases' in res.body.currentMonth);
+  assert.ok('discretionaryRefundsNetted' in res.body.currentMonth);
 });

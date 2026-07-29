@@ -122,7 +122,6 @@ function getWorkout(dayName) {
     duration: workout.duration,
     hrTarget: workout.hrTarget,
     protein: workout.protein,
-    hrvNote: 'Green=train as planned | Yellow=downgrade intensity | Red=mobility/walk only',
   };
 }
 

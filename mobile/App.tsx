@@ -78,7 +78,9 @@ import { selectTodayCommandCenter } from './src/lib/todayCommandCenter';
 import { resolveRadarNavigation } from './src/lib/radarNavigation';
 import { nextScrollY } from './src/lib/scrollRestore';
 import type { RadarCard, WeeklyReview } from './src/hooks/useBriefing';
-import { resolveWeeklyReviewSource } from './src/lib/openWeeklyReview';
+import { resolveWeeklyReviewSource, isValidReviewId } from './src/lib/openWeeklyReview';
+import { serializeWeeklyReviewCache, deserializeWeeklyReviewCache, WEEKLY_REVIEW_CACHE_STORAGE_KEY } from './src/lib/weeklyReviewCache';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WORKOUT_OVERRIDE_URL, CHIEF_BRIEF_REBUILD_URL, INSIGHT_DISMISS_URL, WEEKLY_REVIEW_URL, authHeaders, fetchWithTimeout } from './src/config';
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
 import { useCommitments } from './src/hooks/useCommitments';
@@ -237,12 +239,23 @@ export default function App() {
   const [weeklyReviewLoading, setWeeklyReviewLoading] = useState(false);
   const [weeklyReviewError, setWeeklyReviewError] = useState<string | null>(null);
   const weeklyReviewCache = useRef<Map<string, WeeklyReview>>(new Map());
+  // Weekly-review UUID hardening pass: hydrate the in-session cache from a
+  // bounded AsyncStorage snapshot on mount, so a review already fetched in a
+  // prior session (e.g. from a push tap) can still be reopened offline or
+  // after the app was terminated, instead of always needing a fresh network
+  // fetch. Best-effort — a failed/missing read just leaves the cache empty,
+  // the same starting state as before this feature existed.
+  useEffect(() => {
+    AsyncStorage.getItem(WEEKLY_REVIEW_CACHE_STORAGE_KEY)
+      .then((raw) => { weeklyReviewCache.current = deserializeWeeklyReviewCache(raw); })
+      .catch(() => {});
+  }, []);
   const weeklyReviewFetchSeq = useRef(0);
   // The identity of the most recently REQUESTED review — captured even when
   // the fetch fails (so weeklyReviewOverride is still null) — so Retry can
   // re-issue the exact same request rather than losing which review a
   // failed fetch was even for.
-  const weeklyReviewLastRequest = useRef<{ reviewId: number | null; weekStart: string | null }>({ reviewId: null, weekStart: null });
+  const weeklyReviewLastRequest = useRef<{ reviewId: string | null; weekStart: string | null }>({ reviewId: null, weekStart: null });
   // Health tab redesign (audit rec #4) — the three focused drill-ins, opened
   // as full-screen sheets rather than a new bottom-navigation tab.
   const [trainingOpen, setTrainingOpen] = useState(false);
@@ -312,7 +325,7 @@ export default function App() {
   // independently deciding how to open a review. Never regenerates the
   // review; identifies it by stable id/weekStart, never by title text or
   // array position (see src/lib/openWeeklyReview.ts's pure decision logic).
-  const openWeeklyReview = useCallback(({ reviewId = null, weekStart = null }: { reviewId?: number | null; weekStart?: string | null; origin: string }) => {
+  const openWeeklyReview = useCallback(({ reviewId = null, weekStart = null }: { reviewId?: string | null; weekStart?: string | null; origin: string }) => {
     // Prevents duplicate screens from rapid repeated taps — a second call
     // while one is already open/loading is a no-op, not a stacked modal.
     if (weeklyReviewOpen || weeklyReviewLoading) return;
@@ -345,6 +358,10 @@ export default function App() {
         if (!res.ok) throw new Error(`status_${res.status}`);
         const json = await res.json();
         weeklyReviewCache.current.set(source.cacheKey, json);
+        // Best-effort persist (bounded retention — see weeklyReviewCache.ts)
+        // so this exact review can be honestly reopened offline later, even
+        // across an app restart.
+        AsyncStorage.setItem(WEEKLY_REVIEW_CACHE_STORAGE_KEY, serializeWeeklyReviewCache(weeklyReviewCache.current)).catch(() => {});
         setWeeklyReviewOverride(json);
         setWeeklyReviewLoading(false);
       })
@@ -403,9 +420,17 @@ export default function App() {
       // opens the EXACT review the notification promised via the same
       // canonical action every other entry point uses — never whatever
       // happens to be "latest" if another week's review has since generated.
+      //
+      // Weekly-review UUID hardening pass: backend/src/store/briefings.js's
+      // `id` is a Postgres UUID STRING, never a number — the old `typeof
+      // data.reviewId === 'number'` gate always evaluated false against a
+      // real push payload, silently discarding the exact identity and
+      // falling back to weekStart every single time. Validate the incoming
+      // string is genuinely UUID-shaped (isValidReviewId) before trusting
+      // it, rather than accepting any arbitrary string.
       setTab('today');
       openWeeklyReview({
-        reviewId: typeof data.reviewId === 'number' ? data.reviewId : null,
+        reviewId: isValidReviewId(data.reviewId) ? data.reviewId : null,
         weekStart: typeof data.weekStart === 'string' ? data.weekStart : null,
         origin: 'push',
       });
@@ -629,13 +654,23 @@ export default function App() {
         // `liveRecovery` is the SAME canonical authority the old landing page
         // used; `d.effectiveWorkout` is backend getEffectiveWorkout()'s own
         // shape (routes/briefing.js), never re-derived on the client.
-        const currentRecovery = liveRecovery.fetched ? liveRecovery.recovery : (liveRecovery.recovery ?? d?.recovery);
+        // Cross-day lifecycle hardening pass: `d?.recovery`/`d?.effectiveWorkout`
+        // are cached-payload fields already neutralized by briefingMerge.ts's
+        // day-bound sanitizer when the payload is from a prior local day, but
+        // `isContentCurrentDay` (the SAME contract Wisdom already gates on)
+        // is applied here too as defense-in-depth — never fall back to a
+        // cached prior-day recovery/workout reading just because the live
+        // fetch hasn't landed yet.
+        const currentRecovery = liveRecovery.fetched
+          ? liveRecovery.recovery
+          : (liveRecovery.recovery ?? (isContentCurrentDay ? d?.recovery : null));
+        const currentEffectiveWorkout = isContentCurrentDay ? d?.effectiveWorkout : null;
         return (
           <>
             <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={onSleepLogged} />
             <HealthStateCard
               recovery={currentRecovery}
-              effectiveWorkout={d?.effectiveWorkout}
+              effectiveWorkout={currentEffectiveWorkout}
               highlight={radarAnchor?.entityType === 'recovery'}
               onHighlightLayout={onRadarAnchorLayout}
             />
@@ -645,7 +680,7 @@ export default function App() {
                 are visible without a second tap. */}
             <HealthCard health={health} canonicalVo2={vo2Fact} />
             <TrainingSummaryCard
-              effectiveWorkout={d?.effectiveWorkout}
+              effectiveWorkout={currentEffectiveWorkout}
               refreshKey={trainingRefreshGen}
               onOpenTraining={() => setTrainingOpen(true)}
               onSwap={() => setTrainingOpen(true)}
@@ -683,8 +718,8 @@ export default function App() {
               recovery={currentRecovery}
               composites={d?.healthComposites ?? EMPTY_ARRAY}
               recoveryBuiltAt={liveRecovery.fetched ? undefined : (d?.fieldsBuiltAt?.recovery ?? d?.snapshotAt ?? d?.builtAt)}
-              todayForecast={d?.todayForecast}
-              forecasts={d?.forecasts ?? EMPTY_ARRAY}
+              todayForecast={isContentCurrentDay ? d?.todayForecast : null}
+              forecasts={isContentCurrentDay ? (d?.forecasts ?? EMPTY_ARRAY) : EMPTY_ARRAY}
               checkinHistoryInsights={checkinHistoryInsights}
             />
           </>
@@ -1036,7 +1071,7 @@ export default function App() {
                 field — that field can legitimately be yesterday's while a
                 fresh rebuild is still in flight, and rendering it directly
                 is exactly how "Tuesday" survived into Wednesday afternoon. */}
-            <Header date={today} />
+            <Header date={today} tz={canonicalDay.tz} />
             <AnimatedEntry key={tab} delay={0} distance={6} style={styles.titleRow}>
               <View>
                 <Text style={[styles.tabTitle, { color: c.text }]}>{tabTitle}</Text>

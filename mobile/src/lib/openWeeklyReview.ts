@@ -8,20 +8,34 @@
 //
 // Extracted out of App.tsx so this decision is unit-testable without an RN
 // renderer (this repo's mobile test stack only runs pure .ts modules).
+// Weekly-review UUID hardening pass: backend/src/store/briefings.js's `id`
+// is a Postgres UUID string (never a number) — a numeric id here would
+// silently discard the real identity at every boundary that used to gate on
+// `typeof reviewId === 'number'`. `weekStart` remains a legacy fallback ONLY
+// for when an id genuinely wasn't supplied, never a substitute for a real id.
 export interface WeeklyReviewIdentity {
-  reviewId?: number | string | null;
+  reviewId?: string | null;
   weekStart?: string | null;
 }
 
 export interface WeeklyReviewLike {
-  id?: number | string | null;
+  id?: string | null;
   weekStart?: string | null;
 }
 
 export type WeeklyReviewSource =
   | { kind: 'current' }
   | { kind: 'cached'; cacheKey: string }
-  | { kind: 'fetch'; cacheKey: string; query: { id: number | string } | { weekStart: string } };
+  | { kind: 'fetch'; cacheKey: string; query: { id: string } | { weekStart: string } };
+
+// Same UUID shape backend/src/store/briefings.js's UUID_RE validates —
+// boundaries (a push-notification payload, a deep link) must validate an
+// incoming reviewId against this before trusting it as a real identity,
+// rather than passing an arbitrary string straight through to a fetch.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function isValidReviewId(id: unknown): id is string {
+  return typeof id === 'string' && UUID_RE.test(id);
+}
 
 /** The cache/query key for a given identity — `null` when there's no
  *  identity to key on (the "just show whatever's current" case). */
@@ -35,12 +49,23 @@ export function weeklyReviewCacheKey({ reviewId, weekStart }: WeeklyReviewIdenti
  *  already satisfy this request? True when no identity was requested at
  *  all (the plain "open whatever's current" entry points — Today's since-
  *  morning card, Weekly Focus), or when the requested id/weekStart matches
- *  current's own id/weekStart exactly. */
+ *  current's own id/weekStart exactly.
+ *
+ *  Weekly-review UUID hardening pass: when a reviewId IS given, it is the
+ *  ONLY identity that can satisfy the request — weekStart is a legacy
+ *  fallback used ONLY when no id was supplied at all, never a secondary
+ *  match path once an id has been given. Previously, a request carrying
+ *  BOTH a reviewId and a weekStart (exactly what the weekly-review push
+ *  payload carries) could satisfy via a matching weekStart even when the
+ *  reviewId did NOT match current — silently substituting whatever review
+ *  happens to be in memory for that week (e.g. one regenerated after the
+ *  push was sent) instead of honestly fetching the EXACT review the push
+ *  promised. */
 export function currentSatisfies(current: WeeklyReviewLike | null | undefined, identity: WeeklyReviewIdentity): boolean {
   if (!current) return false;
   const { reviewId, weekStart } = identity;
   if (reviewId == null && weekStart == null) return true;
-  if (reviewId != null && current.id != null && String(current.id) === String(reviewId)) return true;
+  if (reviewId != null) return current.id != null && String(current.id) === String(reviewId);
   if (weekStart != null && current.weekStart != null && current.weekStart === weekStart) return true;
   return false;
 }

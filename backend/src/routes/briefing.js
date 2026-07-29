@@ -26,7 +26,7 @@ const openQuestionsStore = require('../store/openQuestions');
 const { computeCalendarLoad } = require('../intelligence/calendar-load');
 
 /** Today's plan for the chief-brief prompt, shaped like getWorkout()'s
- *  { type, duration, hrTarget, protein, hrvNote } — but resolved through
+ *  { type, duration, hrTarget, protein } — but resolved through
  *  getEffectiveWorkout so BOTH a manual day-swap (workout_overrides) AND an
  *  automatic recovery-based downgrade (red recovery band swaps a scheduled
  *  hard session to Mobility, same as the Health tab shows) are reflected
@@ -68,7 +68,6 @@ function workoutPromptShape(eff) {
     duration: eff.duration ?? null,
     hrTarget: eff.hrTarget ?? null,
     protein: eff.protein ?? null,
-    hrvNote: 'Green=train as planned | Yellow=downgrade intensity | Red=mobility/walk only',
     autoSwapNote,
   };
 }
@@ -112,6 +111,140 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 // share the exact same lock — a manual rebuild in flight and an automatic
 // trigger firing at the same moment must not both proceed.
 const REBUILD_LOCK_ID = 727002;
+
+// Cross-day lifecycle hardening pass: the canonical "morning cutoff" — the
+// same scheduled hour/minute the automatic morning routine targets
+// (scheduler.js's SCHEDULE_HOUR/SCHEDULE_MINUTE), plus a grace window so a
+// same-day build that's merely running a few minutes late doesn't trigger a
+// redundant self-heal racing the scheduled one. Only used to decide whether
+// GET /briefing should self-heal a missing current-day brief instead of
+// waiting indefinitely for the user to notice and press Rebuild.
+const MORNING_RECOVERY_GRACE_MIN = 30;
+function localHourMinute(now, tz) {
+  const fmt = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
+  const parts = fmt.formatToParts(now);
+  const get = (t) => Number(parts.find((p) => p.type === t)?.value ?? '0');
+  let hour = get('hour');
+  if (hour === 24) hour = 0; // some ICU implementations render midnight as "24"
+  return { hour, minute: get('minute') };
+}
+function pastMorningCutoff(now, tz) {
+  const { hour, minute } = localHourMinute(now, tz);
+  const cutoffHour = Number(process.env.SCHEDULE_HOUR) || 8;
+  const cutoffMinute = Number(process.env.SCHEDULE_MINUTE) || 30;
+  const nowMin = hour * 60 + minute;
+  const cutoffMin = cutoffHour * 60 + cutoffMinute + MORNING_RECOVERY_GRACE_MIN;
+  return nowMin >= cutoffMin;
+}
+
+/**
+ * Cross-day lifecycle hardening pass — self-healing GET /briefing: when the
+ * morning cutoff has passed and no publishable current-day brief exists,
+ * enqueue exactly one durable recovery build instead of requiring the user
+ * to discover and press Rebuild before today's data can exist. Reuses the
+ * SAME advisory lock (REBUILD_LOCK_ID) and build-job ledger
+ * (store/morningBuildJobs.js) POST /briefing/rebuild uses, so a self-heal
+ * attempt can never race a concurrent manual or scheduled build — whichever
+ * gets there first wins the lock, and this quietly no-ops (the caller
+ * already checked activeJobForDay; the lock-acquire below closes the
+ * remaining race window). Fire-and-forget: the build itself runs after this
+ * function returns the new job's id (or an existing one), never blocking
+ * the GET response it was called from.
+ */
+const MAX_SELF_HEAL_ATTEMPTS_PER_DAY = 3;
+
+async function triggerRecoveryBuildIfNeeded(todayLocalDay, tz) {
+  const buildJobs = require('../store/morningBuildJobs');
+  let active = null;
+  try {
+    active = await buildJobs.activeJobForDay(todayLocalDay, tz);
+  } catch (err) {
+    console.error('[briefing self-heal] activeJobForDay check failed:', err.message);
+    return null; // fail closed — never guess, never double-trigger on an unknown state
+  }
+  if (active) return active.id;
+
+  // Safety valve: if every attempt today (scheduled, manual, and prior
+  // self-heals combined) has already failed this many times, stop
+  // auto-retrying on every single page load — a genuinely broken pipeline
+  // must surface as an honest failed state, not hammer the LLM/build
+  // pipeline indefinitely. The user's own manual Rebuild button still works
+  // regardless of this cap.
+  try {
+    const attempts = await buildJobs.attemptsToday(todayLocalDay, tz);
+    if (attempts >= MAX_SELF_HEAL_ATTEMPTS_PER_DAY) return null;
+  } catch (err) {
+    console.error('[briefing self-heal] attemptsToday check failed:', err.message);
+    return null;
+  }
+
+  const client = await require('../db').pool.connect();
+  const { rows } = await client.query('SELECT pg_try_advisory_lock($1) AS acquired', [REBUILD_LOCK_ID]);
+  if (!rows[0].acquired) {
+    // Someone else (a manual rebuild, or the scheduler) already owns the
+    // lock right now — never start a second concurrent build. The next
+    // GET a few seconds later will see that build's job row via
+    // activeJobForDay above once it's been inserted.
+    client.release();
+    return null;
+  }
+
+  const release = async () => {
+    try { await client.query('SELECT pg_advisory_unlock($1)', [REBUILD_LOCK_ID]); } catch { /* connection may already be gone */ }
+    try { client.release(); } catch { /* already released */ }
+  };
+
+  let job;
+  try {
+    // Re-check now that the lock is held — closes the race between the
+    // activeJobForDay read above and actually acquiring the lock.
+    const activeAfterLock = await buildJobs.activeJobForDay(todayLocalDay, tz).catch(() => null);
+    if (activeAfterLock) { await release(); return activeAfterLock.id; }
+    const attemptNumber = (await buildJobs.attemptsToday(todayLocalDay, tz).catch(() => 0)) + 1;
+    job = await buildJobs.createJob({ trigger: 'self_heal', state: 'building', attemptNumber, localDay: todayLocalDay, tz });
+  } catch (err) {
+    console.error('[briefing self-heal] job creation failed:', err.message);
+    await release();
+    return null;
+  }
+
+  // Same heartbeat + terminal-state contract as POST /briefing/rebuild's
+  // background IIFE (durable build-job ledger, item D) — an automatic
+  // self-heal attempt must be indistinguishable, from the client's polling
+  // point of view, from a manual one.
+  (async () => {
+    const heartbeat = setInterval(() => buildJobs.touchHeartbeat(job.id), 20000);
+    try {
+      const result = await buildFreshBriefing({ force: true });
+      const qualityStatus = result?.chiefBriefQuality?.status ?? null;
+      if (result?.publishFailed) {
+        await buildJobs.updateJob(job.id, {
+          state: 'failed', qualityStatus, snapshotId: result?.snapshotId ?? null,
+          errorMessage: 'persistence_failed — the draft was fresh but saving it did not succeed',
+        });
+      } else if (qualityStatus === 'fresh') {
+        const latest = await require('../store/briefings').latestBriefing('daily').catch(() => null);
+        await buildJobs.updateJob(job.id, {
+          state: 'ready', qualityStatus, snapshotId: result?.snapshotId ?? null,
+          publishedBriefingId: latest?.id ?? null,
+        });
+      } else {
+        await buildJobs.updateJob(job.id, {
+          state: 'failed', qualityStatus, snapshotId: result?.snapshotId ?? null,
+          reasonCodes: result?.chiefBriefQuality?.reasonCodes ?? [],
+        });
+      }
+    } catch (err) {
+      console.error('[briefing self-heal] recovery build failed:', err.message);
+      await buildJobs.updateJob(job.id, { state: 'failed', errorMessage: err.message }).catch((e) => console.error('[briefing self-heal] job update failed:', e.message));
+    } finally {
+      clearInterval(heartbeat);
+      await release();
+    }
+  })();
+
+  return job.id;
+}
 
 // recoveryMateriallyChanged now lives in intelligence/recovery.js (it's used
 // there too, by the ingestion path — see store/metrics.js's insertMetrics —
@@ -957,12 +1090,34 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     // header/greeting from currentLocalDate (or its own live clock), never
     // from `date`/content — see mobile Header/useCanonicalDay.
     const dayState = (cachedContent.localDate ?? null) === todayLocalDay ? 'current' : 'previous_day';
+
+    // Self-healing GET (cross-day lifecycle hardening pass): "no publishable
+    // current-day briefing exists" is exactly cachedContent.chiefBrief being
+    // null at this point — the recovery-scan block above already searched
+    // for ANY usable today-row and substituted it in if one existed, so a
+    // null chiefBrief here means genuinely nothing publishable for today is
+    // on record yet (whether because `prior` is from a previous day, or
+    // today's own row never finished/failed). Past the morning cutoff, don't
+    // make the user discover and press Rebuild — enqueue exactly one durable
+    // recovery build (deduped via the SAME advisory lock + job ledger a
+    // manual/scheduled build already uses) and hand back its id so the
+    // client can poll it immediately, same as a manual rebuild.
+    let recoveryBuildId = null;
+    if (cachedContent.chiefBrief == null && pastMorningCutoff(new Date(), tz)) {
+      try {
+        recoveryBuildId = await triggerRecoveryBuildIfNeeded(todayLocalDay, tz);
+      } catch (err) {
+        console.error('[briefing self-heal] trigger failed:', err.message);
+      }
+    }
+
     return {
       ...cachedContent, weeklyGoals, weeklyReview, chiefBriefGoalsStale, todayCommandCenter, wealthLanding,
       ...contractFields, cached: true, stale: isStale || dayState === 'previous_day', cachedAgeMin: Math.round(ageMin),
       currentLocalDate: todayLocalDay,
       contentLocalDate: cachedContent.localDate ?? null,
       dayState,
+      recoveryBuildId,
     };
   }
 
@@ -3733,4 +3888,6 @@ module.exports = {
   primeNextBuildCycle,
   workoutPromptShape, TRACKED_CACHE_FIELDS, REGISTRY_TO_BRIEF_FIELD,
   dateOnly,
+  // Cross-day lifecycle hardening pass — self-healing GET /briefing.
+  pastMorningCutoff, triggerRecoveryBuildIfNeeded, MORNING_RECOVERY_GRACE_MIN,
 };
