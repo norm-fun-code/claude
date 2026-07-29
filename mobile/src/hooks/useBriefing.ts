@@ -196,6 +196,18 @@ export interface WealthLanding {
   asOf: string;
   severity: WealthSeverity;
   summary: string;
+  // Wealth hierarchy redesign — the household's overall monthly trajectory
+  // (spending pace + savings rate + plan pace + data completeness),
+  // deliberately independent of `severity`/`exceptionCount` above: a healthy
+  // trajectory must read as healthy even when a category or two stands out.
+  // See backend/src/services/wealth-landing.js's derivePositionConclusion.
+  // Optional so a landing payload cached from before this field existed
+  // still renders (falls back to `summary`).
+  positionConclusion?: { headline: string; provisional: boolean };
+  // Count of unresolved per-category exceptions (action + review severities)
+  // — the same counts summary/severity were computed from, so the secondary
+  // "N categories stand out" affordance can never disagree with them.
+  exceptionCount?: number;
   numbers: {
     mtdDiscretionary: {
       amount: number;

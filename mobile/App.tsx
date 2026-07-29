@@ -378,13 +378,14 @@ export default function App() {
     await briefing.refreshChiefBrief();
   }, [briefing]);
 
-  // Fired once by whichever Health card matches radarAnchor's
-  // entityType/entityId (RecoveryCard's onHighlightLayout) — scrolls the
-  // shared ScrollView straight to it and consumes the anchor so a later,
-  // unrelated visit to the tab doesn't keep re-scrolling. Wealth redesign
-  // (audit rec #5): the Wealth tab's "What Changed" list no longer supports
-  // this highlight/scroll — it's capped at 3 items, all visible without
-  // scrolling, so a Radar deep-link into Wealth just opens the tab.
+  // Fired once by whichever Health/Wealth card matches radarAnchor's
+  // entityType/entityId (RecoveryCard's / WealthWhatChangedCard's
+  // onHighlightLayout) — scrolls the shared ScrollView straight to it and
+  // consumes the anchor so a later, unrelated visit to the tab doesn't keep
+  // re-scrolling. Wealth's "Worth a look" card is capped at 3 items (all
+  // visible without further scrolling once the card is in view), so its
+  // highlight target is the whole card rather than a single row — see
+  // WealthWhatChangedCard's highlight/onHighlightLayout props.
   const onRadarAnchorLayout = useCallback((y: number) => {
     scrollRef.current?.scrollTo({ y: Math.max(0, y - spacing.md), animated: true });
     setRadarAnchor(null);
@@ -591,8 +592,16 @@ export default function App() {
             {d?.wealthLandingStale ? (
               <Text style={[styles.wealthStaleNote, { color: c.subtext }]}>Showing last known data — updating…</Text>
             ) : null}
-            <WealthPostureCard landing={landing} />
-            <WealthWhatChangedCard items={landing?.whatChanged ?? EMPTY_ARRAY} onChanged={() => briefing.reload()} />
+            <WealthPostureCard
+              landing={landing}
+              onViewExceptions={landing?.whatChanged?.length ? () => setRadarAnchor({ entityType: 'wealthInsight', entityId: null }) : undefined}
+            />
+            <WealthWhatChangedCard
+              items={landing?.whatChanged ?? EMPTY_ARRAY}
+              onChanged={() => briefing.reload()}
+              highlight={radarAnchor?.entityType === 'wealthInsight'}
+              onHighlightLayout={onRadarAnchorLayout}
+            />
             <WealthActionCard
               action={landing?.recommendedAction ?? null}
               dataIncomplete={landing?.severity === 'unavailable'}

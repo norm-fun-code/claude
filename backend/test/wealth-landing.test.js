@@ -5,6 +5,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   itemSeverity, deriveSeverity, summaryLabel, rankForWhatChanged, applyWealthDismissals, consolidateRelatedCategories,
+  derivePositionConclusion,
   REACTIVATE_MULTIPLIER,
 } = require('../src/services/wealth-landing');
 
@@ -220,4 +221,77 @@ test('required: unavailable always wins the summary label regardless of child se
   const severity = deriveSeverity({ dataComplete: false, itemSeverities: ['action', 'critical'], cashCritical: true, planBehindMaterial: true });
   assert.equal(severity, 'unavailable');
   assert.match(summaryLabel(severity, { actionCount: 2, reviewCount: 0 }), /incomplete/i);
+});
+
+// ── Wealth hierarchy redesign: derivePositionConclusion (required regression tests) ──
+// The overall monthly-position headline is deliberately computed WITHOUT any
+// per-category severity/exceptionCount input — a healthy trajectory must
+// read as healthy even when categories stand out below it, so these tests
+// never pass itemSeverities/exceptions to derivePositionConclusion at all.
+const HEALTHY_SAVINGS = { healthy: true };
+const UNHEALTHY_SAVINGS = { healthy: false };
+const PLAN_AHEAD = { ahead: true };
+const PLAN_BEHIND = { ahead: false };
+
+test('required: a healthy overall position (below-typical pace, healthy savings, plan ahead) produces a positive conclusion, never amber/cautionary — even conceptually alongside unrelated category exceptions', () => {
+  const comparison = { paceLabel: 'below_typical', coverageTier: 'typical' };
+  const result = derivePositionConclusion({
+    comparison, coverageTier: 'typical', savingsRate: HEALTHY_SAVINGS, planPace: PLAN_AHEAD, dataComplete: true,
+  });
+  assert.match(result.headline, /comfortably below pace/i);
+  assert.equal(result.provisional, false);
+  // The function signature itself has no itemSeverities/exceptionCount
+  // parameter — this assertion documents that omission is intentional, not
+  // an oversight: category exceptions can never influence this headline.
+  assert.equal(derivePositionConclusion.length, 1);
+});
+
+test('required: well-above-typical spending pace produces a negative conclusion regardless of healthy savings/plan', () => {
+  const comparison = { paceLabel: 'well_above_typical', coverageTier: 'typical' };
+  const result = derivePositionConclusion({
+    comparison, coverageTier: 'typical', savingsRate: HEALTHY_SAVINGS, planPace: PLAN_AHEAD, dataComplete: true,
+  });
+  assert.match(result.headline, /well above pace/i);
+});
+
+test('required: above-typical pace combined with unhealthy savings/plan produces a mixed-signal caution, not a false positive', () => {
+  const comparison = { paceLabel: 'above_typical', coverageTier: 'typical' };
+  const result = derivePositionConclusion({
+    comparison, coverageTier: 'typical', savingsRate: UNHEALTHY_SAVINGS, planPace: PLAN_BEHIND, dataComplete: true,
+  });
+  assert.match(result.headline, /above pace/i);
+  assert.match(result.headline, /mixed/i);
+});
+
+test('required: fewer than 3 eligible trailing months (no comparison) falls back to savings/plan and is always provisional', () => {
+  const healthyFallback = derivePositionConclusion({
+    comparison: null, coverageTier: 'insufficient', savingsRate: HEALTHY_SAVINGS, planPace: PLAN_AHEAD, dataComplete: true,
+  });
+  assert.equal(healthyFallback.provisional, true);
+  assert.match(healthyFallback.headline, /healthy/i);
+
+  const noHistory = derivePositionConclusion({
+    comparison: null, coverageTier: 'insufficient', savingsRate: null, planPace: null, dataComplete: true,
+  });
+  assert.equal(noHistory.provisional, true);
+  assert.match(noHistory.headline, /not enough/i);
+});
+
+test('required: 3-5 eligible months ("recent" coverage) is a real comparison but still labeled provisional, distinct from full "typical" (6-12 month) confidence', () => {
+  const comparison = { paceLabel: 'near_typical', coverageTier: 'recent' };
+  const recent = derivePositionConclusion({ comparison, coverageTier: 'recent', savingsRate: HEALTHY_SAVINGS, planPace: PLAN_AHEAD, dataComplete: true });
+  assert.equal(recent.provisional, true);
+
+  const typical = derivePositionConclusion({ comparison, coverageTier: 'typical', savingsRate: HEALTHY_SAVINGS, planPace: PLAN_AHEAD, dataComplete: true });
+  assert.equal(typical.provisional, false);
+});
+
+test('required: incomplete source data produces an explicitly approximate conclusion, distinct from a genuine spending-pace read', () => {
+  const result = derivePositionConclusion({
+    comparison: { paceLabel: 'below_typical', coverageTier: 'typical' }, coverageTier: 'typical',
+    savingsRate: HEALTHY_SAVINGS, planPace: PLAN_AHEAD, dataComplete: false,
+  });
+  assert.equal(result.provisional, true);
+  assert.match(result.headline, /incomplete/i);
+  assert.doesNotMatch(result.headline, /below pace/i, 'must not assert a confident pace read against data known to be incomplete');
 });

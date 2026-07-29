@@ -3,12 +3,21 @@ import { View, Text, StyleSheet, TouchableOpacity, useColorScheme } from 'react-
 import * as Haptics from 'expo-haptics';
 import { getColors, spacing, radius, typography, shadow, colors as themeColors } from '../theme';
 import { SectionHeader } from './SectionHeader';
+import { ExpandableText } from './ExpandableText';
 import { INSIGHT_DISMISS_URL, INSIGHT_UNDISMISS_URL, authHeaders, fetchWithTimeout } from '../config';
 import type { WealthChangeCard } from '../hooks/useBriefing';
 
 interface Props {
   items: WealthChangeCard[];
   onChanged: () => void;
+  // Deep-link scroll target (same pattern as RecoveryCard's highlight/
+  // onHighlightLayout) — set when either a Radar wealth-insight card or the
+  // Wealth posture card's "N categories stand out" affordance wants this
+  // card scrolled into view. Rows are capped at 3 and all visible without
+  // further scrolling once the card itself is in view, so highlighting the
+  // whole card (not a single row) is a precise enough deep-link target.
+  highlight?: boolean;
+  onHighlightLayout?: (y: number) => void;
 }
 
 // Severity contract (backend/src/services/wealth-landing.js) — the row's
@@ -116,7 +125,9 @@ function ChangeRow({ item, onChanged, c, isDark }: {
         <View style={[styles.dot, { backgroundColor: tint }]} />
         <Text style={[styles.title, { color: c.text }]}>{item.title}</Text>
       </View>
-      {item.detail ? <Text style={[styles.detail, { color: secondary }]}>{item.detail}</Text> : null}
+      {item.detail ? (
+        <ExpandableText text={item.detail} collapsedLines={1} style={[styles.detail, { color: secondary }]} accentColor={tint} a11yPrefix={item.title} />
+      ) : null}
       {stateLabel ? <Text style={[styles.stateLabel, { color: tint }]}>{stateLabel}</Text> : null}
       {!alreadyExplained && !confirmed && item.dismissKey ? (
         <View style={styles.actionsRow}>
@@ -138,22 +149,27 @@ function ChangeRow({ item, onChanged, c, isDark }: {
 }
 
 /**
- * Wealth redesign (audit rec #5) — "What Changed": at most three ranked
- * developments (backend/src/services/wealth-landing.js already ranks,
- * consolidates, and caps this at 3 — this is pure presentation, no
- * client-side re-ranking or re-deriving). Dismissing sends the insight's own
- * $ evidence along so a materially larger recurrence can resurface later
- * (the "materially new evidence" reactivation rule) instead of staying
- * silenced forever.
+ * Wealth hierarchy redesign — "Worth a look": at most three ranked
+ * per-category exceptions (backend/src/services/wealth-landing.js already
+ * ranks, consolidates, and caps this at 3 — this is pure presentation, no
+ * client-side re-ranking or re-deriving). Renamed from "What Changed" and
+ * kept visually subordinate to WealthPostureCard's overall position —
+ * these are secondary exceptions, never the headline. Dismissing sends the
+ * insight's own $ evidence along so a materially larger recurrence can
+ * resurface later (the "materially new evidence" reactivation rule) instead
+ * of staying silenced forever.
  */
-function WealthWhatChangedCard({ items, onChanged }: Props) {
+function WealthWhatChangedCard({ items, onChanged, highlight, onHighlightLayout }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   if (!items.length) return null;
 
   return (
-    <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
-      <SectionHeader emoji="↗" title="What changed" tint="accent" />
+    <View
+      style={[styles.card, { backgroundColor: c.card }, shadow(isDark), highlight && { borderWidth: 2, borderColor: c.accent }]}
+      onLayout={highlight && onHighlightLayout ? (e) => onHighlightLayout(e.nativeEvent.layout.y) : undefined}
+    >
+      <SectionHeader emoji="↗" title="Worth a look" tint="accent" />
       {items.map((item, i) => (
         <ChangeRow key={item.dismissKey || `${item.type}-${i}`} item={item} onChanged={onChanged} c={c} isDark={isDark} />
       ))}

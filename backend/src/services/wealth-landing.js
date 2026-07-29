@@ -329,6 +329,59 @@ function deriveRecommendedAction(actionableItems, cashflowThin, cashCritical) {
   return null;
 }
 
+// ── Overall financial-position conclusion (Wealth hierarchy redesign) ──
+// Deliberately independent of `itemSeverities`/`severity` above: those are a
+// per-category exception count, this is the household's overall monthly
+// trajectory (spending pace, savings rate, plan pace). Mixing the two is
+// exactly the bug this redesign fixes — "On track · 2 categories to review"
+// let two amber exceptions read as if the whole position were shaky. A
+// healthy trajectory with unrelated category exceptions must still produce a
+// calm, positive conclusion; the exceptions surface separately as the
+// secondary "N categories stand out" affordance.
+const PACE_TONE = { below_typical: 'positive', near_typical: 'neutral', above_typical: 'caution', well_above_typical: 'negative' };
+
+/** Pure: the household's overall monthly-position headline + whether it
+ *  should be labeled "provisional" (comparison history too thin to be
+ *  confident, not "unavailable" — that's `dataComplete`/severity's job). */
+function derivePositionConclusion({ comparison, coverageTier, savingsRate, planPace, dataComplete }) {
+  if (!dataComplete) {
+    return { headline: 'Recent data may be incomplete — take this month’s read as approximate', provisional: true };
+  }
+  const savingsPositive = savingsRate ? savingsRate.healthy : null;
+  const planPositive = planPace ? planPace.ahead : null;
+  const corroborating = [savingsPositive, planPositive].filter((v) => v === true).length;
+  const conflicting = [savingsPositive, planPositive].filter((v) => v === false).length;
+
+  if (!comparison) {
+    // No matched-pace comparison at all (either no MTD spend recorded yet,
+    // or fewer than 3 eligible trailing months) — fall back to savings/plan
+    // alone, always provisional since the pace half of the picture is missing.
+    if (savingsPositive === true && conflicting === 0) {
+      return { headline: 'Savings and plan pace look healthy so far this month', provisional: true };
+    }
+    if (conflicting > 0) {
+      return { headline: 'A few financial signals are off pace this month', provisional: true };
+    }
+    return { headline: 'Not enough spending history yet for a confident monthly read', provisional: true };
+  }
+
+  const paceTone = PACE_TONE[comparison.paceLabel] || 'neutral';
+  let headline;
+  if (paceTone === 'negative') {
+    headline = 'Spending is running well above pace';
+  } else if (paceTone === 'caution') {
+    headline = conflicting > 0 ? 'Spending is running above pace, and other signals are mixed' : 'Spending is running a bit above pace';
+  } else if (paceTone === 'positive') {
+    headline = corroborating > 0 && conflicting === 0 ? 'Spending is comfortably below pace' : 'Spending is below pace';
+  } else {
+    headline = conflicting > 0 ? 'Spending is close to typical pace, though other signals are mixed' : 'Spending is tracking close to typical pace';
+  }
+  // "recent" coverage (3-5 eligible months) is a real comparison, just a
+  // thinner one than "typical" (6-12) — label it provisional rather than
+  // asserting the same confidence as a fully-seasoned baseline.
+  return { headline, provisional: coverageTier === 'recent' };
+}
+
 /**
  * The canonical Wealth landing-page projection. Cheap (metric aggregates +
  * a couple of small store reads, no LLM) — safe to recompute on every
@@ -448,6 +501,7 @@ async function buildWealthLandingProjection({
 
   const severity = deriveSeverity({ dataComplete, itemSeverities, cashCritical, planBehindMaterial });
   const summary = summaryLabel(severity, { actionCount, reviewCount });
+  const exceptionCount = actionCount + reviewCount;
 
   const actionableItems = rankedWithSeverity.filter((i) => i.severity === 'action' || i.severity === 'critical');
   const recommendedAction = severity === 'unavailable' ? null : deriveRecommendedAction(actionableItems, cashflowThin, cashCritical);
@@ -466,28 +520,40 @@ async function buildWealthLandingProjection({
       .slice(0, 10);
   } catch { /* best-effort — the Spending drill-in degrades to empty, not a crash */ }
 
+  // Built once, shared by numbers.mtdDiscretionary.comparison AND
+  // derivePositionConclusion below — the overall headline can never disagree
+  // with the comparison line rendered right under it.
+  const paceComparison = spendingPace && spendingPace.medianBaseline != null ? {
+    coverageTier: spendingPace.coverageTier,
+    monthsUsed: spendingPace.monthsUsed,
+    monthsConsidered: spendingPace.monthsConsidered,
+    medianBaseline: spendingPace.medianBaseline,
+    vsMedian: spendingPace.vsMedian,
+    paceLabel: spendingPace.paceLabel,
+    previousMonthAmount: spendingPace.previousMonthAmount,
+    vsPreviousMonth: spendingPace.vsPreviousMonth,
+    drivers: spendingPace.drivers,
+    monthsBreakdown: spendingPace.monthsBreakdown,
+  } : null;
+
+  const positionConclusion = derivePositionConclusion({
+    comparison: paceComparison, coverageTier: spendingPace?.coverageTier ?? null,
+    savingsRate, planPace, dataComplete,
+  });
+
   return {
     asOf: asOf.toISOString(),
     severity,
     summary,
+    positionConclusion,
+    exceptionCount,
     numbers: {
       // amount is the EXACT canonical MTD total, unchanged by this
       // projection's `comparison` block — the same number every surface
       // (Ask, briefing, Today) already reads via canonicalSpendingMtd.
       mtdDiscretionary: spendingMtd != null ? {
         amount: Math.round(spendingMtd),
-        comparison: spendingPace && spendingPace.medianBaseline != null ? {
-          coverageTier: spendingPace.coverageTier,
-          monthsUsed: spendingPace.monthsUsed,
-          monthsConsidered: spendingPace.monthsConsidered,
-          medianBaseline: spendingPace.medianBaseline,
-          vsMedian: spendingPace.vsMedian,
-          paceLabel: spendingPace.paceLabel,
-          previousMonthAmount: spendingPace.previousMonthAmount,
-          vsPreviousMonth: spendingPace.vsPreviousMonth,
-          drivers: spendingPace.drivers,
-          monthsBreakdown: spendingPace.monthsBreakdown,
-        } : null,
+        comparison: paceComparison,
       } : null,
       savingsRate: savingsRate ? {
         ratePct: savingsRate.ratePct, income: savingsRate.income, spending: savingsRate.spending,
@@ -523,7 +589,7 @@ async function buildWealthLandingProjection({
 module.exports = {
   buildWealthLandingProjection,
   // Exported for tests / reuse — pure helpers, no I/O.
-  itemSeverity, deriveSeverity, summaryLabel,
+  itemSeverity, deriveSeverity, summaryLabel, derivePositionConclusion,
   rankForWhatChanged, applyWealthDismissals, consolidateRelatedCategories, annotateExplainedSpikes,
   REACTIVATE_MULTIPLIER, EXPLAINS_SPIKE_SHARE, ACTION_DOLLAR_FLOOR, PLAN_BEHIND_MATERIAL_FLOOR,
 };
