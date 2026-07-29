@@ -161,8 +161,13 @@ function staleWealthSyncCandidate({ wealthInsights, wealth }) {
  *  headline (distinct from the card's generic "ready" headline below). */
 function weeklyReviewCandidate({ weeklyReview }) {
   if (!weeklyReview?.headline) return null;
+  // Stable identity, preferring the persisted row's own id, then its
+  // canonical weekStart, then generatedAt — NEVER the headline (visible
+  // title text) or array position, per the canonical openWeeklyReview
+  // contract (mobile identifies/fetches the exact review by this value).
+  const stableId = weeklyReview.id ?? weeklyReview.weekStart ?? weeklyReview.generatedAt ?? null;
   return {
-    domain: 'review', dedupeTopic: 'weekly_review', sourceId: weeklyReview.generatedAt || weeklyReview.headline,
+    domain: 'review', dedupeTopic: 'weekly_review', sourceId: stableId ?? 'weekly_review',
     attentionClass: 'ready', material: false, timeSensitive: false,
     headline: 'Your weekly review is ready',
     whyNow: weeklyReview.headline,
@@ -170,7 +175,8 @@ function weeklyReviewCandidate({ weeklyReview }) {
     asOf: weeklyReview.generatedAt || null,
     actionLabel: 'Read the 3-minute review',
     destination: {
-      surface: 'review', entityType: 'weeklyReview', entityId: weeklyReview.generatedAt || null,
+      surface: 'review', entityType: 'weeklyReview', entityId: stableId,
+      reviewId: weeklyReview.id ?? null, weekStart: weeklyReview.weekStart ?? null,
       anchor: null, snapshotId: null, fallbackRoute: 'review',
     },
   };

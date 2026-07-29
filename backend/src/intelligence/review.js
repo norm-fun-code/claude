@@ -405,7 +405,7 @@ async function runReview({ asOf = new Date(), persist = true } = {}) {
     const saved = persist
       ? await briefingsStore.saveBriefing({ kind: 'weekly', content, periodStart: fallbackCtx.periodStart, periodEnd: fallbackCtx.periodEnd })
       : null;
-    return { ...content, id: saved?.id, generatedAt: saved?.generated_at };
+    return { ...content, id: saved?.id, generatedAt: saved?.generated_at, weekStart: fallbackCtx.periodStart };
   }
   const { system: baseSystem, prompt } = composeReview(ctx);
 
@@ -472,7 +472,7 @@ async function runReview({ asOf = new Date(), persist = true } = {}) {
       kind: 'weekly', content, periodStart: ctx.periodStart, periodEnd: ctx.periodEnd,
     });
   }
-  return { ...content, id: saved?.id, generatedAt: saved?.generated_at };
+  return { ...content, id: saved?.id, generatedAt: saved?.generated_at, weekStart: ctx.periodStart };
 }
 
 module.exports = {

@@ -20,6 +20,9 @@ export const BRIEFING_REBUILD_STATUS_URL = `${API_BASE}/api/briefing/rebuild/sta
 // Never the latest cache, never a fresh LLM build. See routes/briefing.js's
 // GET /briefing/by-snapshot/:snapshotId.
 export const BRIEFING_BY_SNAPSHOT_URL = `${API_BASE}/api/briefing/by-snapshot`;
+// Exact weekly-review retrieval by stable id or weekStart (canonical
+// openWeeklyReview action) — see routes/briefing.js's GET /briefing/weekly-review.
+export const WEEKLY_REVIEW_URL = `${API_BASE}/api/briefing/weekly-review`;
 // Fast, scoped retry for just the Chief-of-Staff card (seconds, not the full
 // 60-90s rebuild) — see src/routes/briefing.js's chief-brief/rebuild route.
 export const CHIEF_BRIEF_REBUILD_URL = `${API_BASE}/api/briefing/chief-brief/rebuild`;

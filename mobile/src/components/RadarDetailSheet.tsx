@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import {
   Modal, View, Text, StyleSheet, Pressable, ScrollView, useColorScheme,
-  Animated, PanResponder, Dimensions, AccessibilityInfo,
+  Animated, PanResponder, Dimensions, AccessibilityInfo, Platform,
 } from 'react-native';
 import { getColors, spacing, radius } from '../theme';
 import { presentationForAttentionClass } from '../lib/radarPresentation';
@@ -65,6 +65,22 @@ export function RadarDetailSheet({ card, onClose, onOpenDestination, onDismiss, 
     Animated.timing(translateY, { toValue: MAX_SHEET_HEIGHT, duration: 180, useNativeDriver: true }).start(() => after?.());
   };
 
+  // Modal-collision fix: presenting a second native Modal (e.g. the weekly
+  // review) in the SAME tick as this Modal's `visible` flips to false is
+  // unreliable — the JS slide-out animation finishing does not mean the
+  // underlying native modal has actually finished dismissing, so iOS can
+  // silently drop the second `present` call. Instead of opening the
+  // destination directly from the JS animation callback, stash it here and
+  // let the Modal's own `onDismiss` (fires once the native dismissal has
+  // truly completed) trigger it. `pendingDestination` is cleared as soon as
+  // it's consumed, from whichever path fires first, so it's never double-run.
+  const pendingDestination = useRef<RadarCard | null>(null);
+  const consumePendingDestination = () => {
+    const pending = pendingDestination.current;
+    pendingDestination.current = null;
+    if (pending) onOpenDestination(pending);
+  };
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -83,11 +99,23 @@ export function RadarDetailSheet({ card, onClose, onOpenDestination, onDismiss, 
   ).current;
 
   const handleClose = () => closeAnimated(onClose);
-  const handleOpenDestination = () => { if (card) closeAnimated(() => onOpenDestination(card)); };
+  // Close normally (same path as the Close button) and let the Modal's
+  // onDismiss fire the actual navigation once the native dismiss is truly
+  // done — see pendingDestination above. Modal's onDismiss is iOS-only, so
+  // on Android (no cross-modal native-transition collision in practice) the
+  // JS animation callback itself is the trigger instead.
+  const handleOpenDestination = () => {
+    if (!card) return;
+    pendingDestination.current = card;
+    closeAnimated(() => {
+      onClose();
+      if (Platform.OS !== 'ios') consumePendingDestination();
+    });
+  };
   const handleDismiss = () => { if (card) closeAnimated(() => onDismiss(card)); };
 
   return (
-    <Modal visible={visible} animationType="none" transparent onRequestClose={handleClose}>
+    <Modal visible={visible} animationType="none" transparent onRequestClose={handleClose} onDismiss={consumePendingDestination}>
       {card && (
         <View style={styles.root}>
           <Pressable

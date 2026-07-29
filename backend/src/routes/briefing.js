@@ -845,7 +845,10 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
         // at generation time. A real review always has a specific punchy headline.
         // Suppress the broken record so the card hides rather than rendering raw JSON.
         if (contentObj?.headline !== 'Weekly review') {
-          weeklyReview = { ...contentObj, generatedAt: wr.generated_at };
+          // id/weekStart: stable identity for the canonical openWeeklyReview
+          // action (mobile) — the SAME row this payload's narrative came
+          // from, never re-derived from title text or array position.
+          weeklyReview = { ...contentObj, generatedAt: wr.generated_at, id: wr.id, weekStart: wr.period_start };
         }
       }
     } catch (err) {
@@ -2404,7 +2407,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
       // 'Weekly review' is the exact fallback headline when extractJson fails —
       // a real review always has a specific punchy headline. Suppress the broken record.
       if (contentObj?.headline !== 'Weekly review') {
-        weeklyReview = { ...contentObj, generatedAt: wr.generated_at };
+        weeklyReview = { ...contentObj, generatedAt: wr.generated_at, id: wr.id, weekStart: wr.period_start };
       }
     }
   } catch (err) {
@@ -3524,6 +3527,25 @@ router.get('/briefing/rebuild/status', asyncHandler(async (req, res) => {
 // substitute "latest daily" row. Reuses the SAME canonical publishability
 // selector (store/briefings.js's isPublishableRow) every other surface
 // already trusts rather than duplicating quality logic here.
+// The canonical openWeeklyReview mobile action's server-side counterpart —
+// fetches the EXACT weekly review by stable id (preferred) or weekStart
+// (fallback), never by title text or array position. Used whenever a
+// caller (push notification, a stale cached Today payload) doesn't already
+// have the review inline and needs to fetch it directly, without
+// regenerating it (regeneration is a separate, explicit weekly cron/manual
+// action — this route only ever reads what's already persisted).
+router.get('/briefing/weekly-review', asyncHandler(async (req, res) => {
+  const { id, weekStart } = req.query;
+  if (!id && !weekStart) return res.status(400).json({ error: 'missing_identifier' });
+  const row = id
+    ? await briefingsStore.findById(id)
+    : await briefingsStore.findWeeklyReviewByWeekStart(weekStart);
+  if (!row || row.kind !== 'weekly') {
+    return res.status(404).json({ error: 'not_found', id: id ?? null, weekStart: weekStart ?? null });
+  }
+  res.json({ ...row.content, generatedAt: row.generated_at, id: row.id, weekStart: row.period_start });
+}));
+
 router.get('/briefing/by-snapshot/:snapshotId', asyncHandler(async (req, res) => {
   const { snapshotId } = req.params;
   const row = await briefingsStore.findBySnapshotId('daily', snapshotId);

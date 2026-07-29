@@ -190,6 +190,26 @@ async function findById(id) {
 }
 
 /**
+ * The weekly-review row whose period_start matches `weekStart` exactly, or
+ * null. Used by the canonical openWeeklyReview mobile action's weekStart
+ * fallback path (identity by stable ID is preferred; this covers a cached
+ * client that only ever stored the week it was showing, or a push payload
+ * from before `reviewId` existed). If a week was regenerated more than once,
+ * the most recent run wins — the same "latest per period" rule
+ * listBriefings/latestBriefing already use elsewhere.
+ */
+async function findWeeklyReviewByWeekStart(weekStart) {
+  if (!weekStart) return null;
+  const { rows } = await query(
+    `SELECT id, kind, generated_at, period_start, period_end, content FROM briefings
+      WHERE kind = 'weekly' AND period_start::date = $1::date
+      ORDER BY generated_at DESC LIMIT 1`,
+    [weekStart]
+  );
+  return rows[0] ?? null;
+}
+
+/**
  * The last `days` distinct CALENDAR days' chief-of-staff briefs, most recent
  * first, excluding today. Multiple manual rebuilds in one day each insert their
  * own row (no upsert), so this dedupes to the LATEST build per local day — the
@@ -233,6 +253,7 @@ async function todaysMorningBrief(tz = process.env.TZ || 'America/New_York') {
 }
 
 module.exports = {
-  saveBriefing, latestBriefing, listBriefings, findBySnapshotId, findById, recentDailyBriefOpeners, todaysMorningBrief, blankTodaysOpenQuestion,
+  saveBriefing, latestBriefing, listBriefings, findBySnapshotId, findById, findWeeklyReviewByWeekStart,
+  recentDailyBriefOpeners, todaysMorningBrief, blankTodaysOpenQuestion,
   isStructurallyUsableChiefBrief, isPublishableRow, latestPublishableDailyForLocalDay, resolveLastGoodChiefBrief,
 };

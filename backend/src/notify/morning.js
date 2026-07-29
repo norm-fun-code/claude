@@ -535,10 +535,15 @@ async function runWeeklyReviewWithPush(opts = {}) {
     : 'Your weekly review is ready — see how the week went and what to focus on.';
 
   try {
+    // reviewId/weekStart: the canonical mobile openWeeklyReview action's
+    // identity — so tapping the notification fetches this EXACT review
+    // (never the latest-at-tap-time, and never a regeneration) even if
+    // another week's review has since been generated.
+    const weekStartIso = review?.weekStart ? new Date(review.weekStart).toISOString().slice(0, 10) : null;
     const r = await expo.sendPush(tokens, {
       title: 'Your weekly review is ready 📊',
       body,
-      data: { type: 'weekly_review' },
+      data: { type: 'weekly_review', reviewId: review?.id ?? null, weekStart: weekStartIso },
     });
     for (const dead of r.invalidTokens) await devicesStore.deactivate(dead);
     return { generated: true, sent: r.sent };

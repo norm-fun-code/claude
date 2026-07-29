@@ -122,6 +122,13 @@ export interface WeeklyReview {
   focus?: string[];
   metrics?: { label: string; thisWeek: number; lastWeek: number | null; change: number | null; goodWhen: string | null }[];
   generatedAt?: string;
+  // Stable identity (backend/src/store/briefings.js's persisted row) — the
+  // canonical openWeeklyReview action fetches/identifies a review by these,
+  // never by headline text or array position. Optional so a review cached
+  // from before these fields existed still renders (falls back to opening
+  // whatever's already in the payload).
+  id?: number;
+  weekStart?: string;
 }
 
 export interface Wealth {
@@ -486,6 +493,12 @@ export interface RadarDestination {
   anchor: string | null;
   snapshotId: string | null;
   fallbackRoute: string;
+  // Present only when surface === 'review' — the canonical openWeeklyReview
+  // action's identity, threaded straight through from the review row
+  // (backend/src/brain/radar.js's weeklyReviewCandidate) rather than
+  // re-derived from entityId/headline text.
+  reviewId?: number | null;
+  weekStart?: string | null;
 }
 
 // "On My Radar" — server-ranked replacement for the old fixed three-tile

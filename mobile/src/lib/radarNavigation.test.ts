@@ -8,7 +8,15 @@ import type { RadarDestination } from '../hooks/useBriefing.ts';
 
 test('resolveRadarNavigation: review surface opens the weekly-review modal, no tab switch', () => {
   const dest: RadarDestination = { surface: 'review', entityType: 'weeklyReview', entityId: 'x', anchor: null, snapshotId: null, fallbackRoute: 'review' };
-  assert.deepEqual(resolveRadarNavigation(dest), { kind: 'review' });
+  assert.deepEqual(resolveRadarNavigation(dest), { kind: 'review', reviewId: null, weekStart: null });
+});
+
+test('required: review surface threads reviewId/weekStart through to the canonical openWeeklyReview action, never dropping them', () => {
+  const dest: RadarDestination = {
+    surface: 'review', entityType: 'weeklyReview', entityId: '42', reviewId: 42, weekStart: '2026-07-20',
+    anchor: null, snapshotId: null, fallbackRoute: 'review',
+  };
+  assert.deepEqual(resolveRadarNavigation(dest), { kind: 'review', reviewId: 42, weekStart: '2026-07-20' });
 });
 
 test('resolveRadarNavigation: wealth surface with an entityId carries a real anchor, not just a tab switch', () => {

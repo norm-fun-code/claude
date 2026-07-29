@@ -75,8 +75,9 @@ import { PlanConflictCard } from './src/components/PlanConflictCard';
 import { selectTodayCommandCenter } from './src/lib/todayCommandCenter';
 import { resolveRadarNavigation } from './src/lib/radarNavigation';
 import { nextScrollY } from './src/lib/scrollRestore';
-import type { RadarCard } from './src/hooks/useBriefing';
-import { WORKOUT_OVERRIDE_URL, CHIEF_BRIEF_REBUILD_URL, INSIGHT_DISMISS_URL, authHeaders, fetchWithTimeout } from './src/config';
+import type { RadarCard, WeeklyReview } from './src/hooks/useBriefing';
+import { resolveWeeklyReviewSource } from './src/lib/openWeeklyReview';
+import { WORKOUT_OVERRIDE_URL, CHIEF_BRIEF_REBUILD_URL, INSIGHT_DISMISS_URL, WEEKLY_REVIEW_URL, authHeaders, fetchWithTimeout } from './src/config';
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
 import { useCommitments } from './src/hooks/useCommitments';
 
@@ -202,6 +203,22 @@ export default function App() {
   // tapping the "Weekly review is ready" preview rather than rendering the
   // full review/goals card inline on Today.
   const [weeklyReviewOpen, setWeeklyReviewOpen] = useState(false);
+  // Weekly-review CTA fix: when the requested review isn't the one already
+  // in the briefing payload, `weeklyReviewOverride` holds the fetched
+  // review (null = render d?.weeklyReview as before). Session-scoped cache
+  // (never persisted) so re-opening the same non-current review within a
+  // session doesn't re-fetch; `weeklyReviewFetchSeq` guards a slow/retried
+  // fetch from clobbering a newer one.
+  const [weeklyReviewOverride, setWeeklyReviewOverride] = useState<WeeklyReview | null>(null);
+  const [weeklyReviewLoading, setWeeklyReviewLoading] = useState(false);
+  const [weeklyReviewError, setWeeklyReviewError] = useState<string | null>(null);
+  const weeklyReviewCache = useRef<Map<string, WeeklyReview>>(new Map());
+  const weeklyReviewFetchSeq = useRef(0);
+  // The identity of the most recently REQUESTED review — captured even when
+  // the fetch fails (so weeklyReviewOverride is still null) — so Retry can
+  // re-issue the exact same request rather than losing which review a
+  // failed fetch was even for.
+  const weeklyReviewLastRequest = useRef<{ reviewId: number | null; weekStart: string | null }>({ reviewId: null, weekStart: null });
   // Health tab redesign (audit rec #4) — the three focused drill-ins, opened
   // as full-screen sheets rather than a new bottom-navigation tab.
   const [trainingOpen, setTrainingOpen] = useState(false);
@@ -265,6 +282,70 @@ export default function App() {
     wealth: { label: 'Rebuild briefing', busy: briefing.rebuilding, run: briefing.triggerRebuild },
   };
 
+  // The canonical weekly-review action (weekly-review CTA fix) — every entry
+  // point (On My Radar, Today's "ready for you" card, Weekly Focus, the
+  // weekly-review push notification) converges here rather than each one
+  // independently deciding how to open a review. Never regenerates the
+  // review; identifies it by stable id/weekStart, never by title text or
+  // array position (see src/lib/openWeeklyReview.ts's pure decision logic).
+  const openWeeklyReview = useCallback(({ reviewId = null, weekStart = null }: { reviewId?: number | null; weekStart?: string | null; origin: string }) => {
+    // Prevents duplicate screens from rapid repeated taps — a second call
+    // while one is already open/loading is a no-op, not a stacked modal.
+    if (weeklyReviewOpen || weeklyReviewLoading) return;
+    weeklyReviewLastRequest.current = { reviewId, weekStart };
+    const current = d?.weeklyReview ?? null;
+    const source = resolveWeeklyReviewSource(current, { reviewId, weekStart }, (key) => weeklyReviewCache.current.has(key));
+    if (source.kind === 'current') {
+      setWeeklyReviewOverride(null);
+      setWeeklyReviewError(null);
+      setWeeklyReviewOpen(true);
+      return;
+    }
+    if (source.kind === 'cached') {
+      setWeeklyReviewOverride(weeklyReviewCache.current.get(source.cacheKey) ?? null);
+      setWeeklyReviewError(null);
+      setWeeklyReviewOpen(true);
+      return;
+    }
+    // A genuine fetch is needed — loading state shown only now, never for
+    // the already-in-hand cases above.
+    const seq = ++weeklyReviewFetchSeq.current;
+    setWeeklyReviewOverride(null);
+    setWeeklyReviewError(null);
+    setWeeklyReviewLoading(true);
+    setWeeklyReviewOpen(true);
+    const qs = 'id' in source.query ? `id=${encodeURIComponent(String(source.query.id))}` : `weekStart=${encodeURIComponent(source.query.weekStart)}`;
+    fetchWithTimeout(`${WEEKLY_REVIEW_URL}?${qs}`, { headers: authHeaders() }, 10000)
+      .then(async (res) => {
+        if (seq !== weeklyReviewFetchSeq.current) return; // superseded by a newer request
+        if (!res.ok) throw new Error(`status_${res.status}`);
+        const json = await res.json();
+        weeklyReviewCache.current.set(source.cacheKey, json);
+        setWeeklyReviewOverride(json);
+        setWeeklyReviewLoading(false);
+      })
+      .catch(() => {
+        if (seq !== weeklyReviewFetchSeq.current) return;
+        setWeeklyReviewLoading(false);
+        setWeeklyReviewError('Could not load this review.');
+      });
+  }, [weeklyReviewOpen, weeklyReviewLoading, d]);
+
+  const retryWeeklyReview = useCallback(() => {
+    const identity = weeklyReviewLastRequest.current;
+    setWeeklyReviewOpen(false);
+    setWeeklyReviewError(null);
+    // Let the close commit before immediately reopening — same reasoning as
+    // the Radar-sheet modal-collision fix (see RadarDetailSheet.tsx).
+    setTimeout(() => openWeeklyReview({ ...identity, origin: 'retry' }), 0);
+  }, [openWeeklyReview]);
+
+  const closeWeeklyReview = useCallback(() => {
+    setWeeklyReviewOpen(false);
+    setWeeklyReviewError(null);
+    setWeeklyReviewLoading(false);
+  }, []);
+
   // Tapping the morning "briefing ready" push should load the cache the server
   // already warmed at 8:30 — instant, not a 15-40s forced rebuild. Health still
   // refreshes from the device.
@@ -292,6 +373,18 @@ export default function App() {
       setTab('today');
       eveningBrief.refetch();
       health.refetch();
+    } else if (type === 'weekly_review') {
+      // Weekly-review CTA fix: the push carries reviewId/weekStart
+      // (backend/src/notify/morning.js's runWeeklyReviewWithPush) so this
+      // opens the EXACT review the notification promised via the same
+      // canonical action every other entry point uses — never whatever
+      // happens to be "latest" if another week's review has since generated.
+      setTab('today');
+      openWeeklyReview({
+        reviewId: typeof data.reviewId === 'number' ? data.reviewId : null,
+        weekStart: typeof data.weekStart === 'string' ? data.weekStart : null,
+        origin: 'push',
+      });
     } else if (type === 'morning_briefing') {
       // Morning-notification lifecycle fix: resolve the EXACT persisted
       // briefing this push referenced (backend/src/notify/morning.js's
@@ -323,10 +416,10 @@ export default function App() {
   // opens the dedicated weekly-review modal instead of a tab switch, since
   // there's no standalone Review tab.
   const navigateFromToday = useCallback((destination: string) => {
-    if (destination === 'review') { setWeeklyReviewOpen(true); return; }
+    if (destination === 'review') { openWeeklyReview({ origin: 'today_since_morning' }); return; }
     if (destination === 'health' || destination === 'wealth') { setTab(destination); return; }
     // 'today' (or anything unrecognized) — already there, no-op.
-  }, []);
+  }, [openWeeklyReview]);
 
   // "On My Radar" (Today Part 4): the card that's currently open in the
   // full-detail sheet (null when closed). `radarAnchor` is the typed deep-
@@ -345,10 +438,10 @@ export default function App() {
   const openRadarDestination = useCallback((card: RadarCard) => {
     setRadarDetailCard(null);
     const nav = resolveRadarNavigation(card.destination);
-    if (nav.kind === 'review') { setWeeklyReviewOpen(true); return; }
+    if (nav.kind === 'review') { openWeeklyReview({ reviewId: nav.reviewId, weekStart: nav.weekStart, origin: 'radar' }); return; }
     if (nav.kind === 'tab') { setRadarAnchor(nav.anchor); setTab(nav.tab); return; }
     setTab(nav.tab as TabKey);
-  }, []);
+  }, [openWeeklyReview]);
 
   const dismissRadarCard = useCallback((card: RadarCard) => {
     setRadarDetailCard(null);
@@ -793,8 +886,11 @@ export default function App() {
             {weeklyReviewOpen && (
               <WeeklyReviewModal
                 visible={weeklyReviewOpen}
-                onClose={() => setWeeklyReviewOpen(false)}
-                review={d?.weeklyReview ?? null}
+                onClose={closeWeeklyReview}
+                review={weeklyReviewOverride ?? d?.weeklyReview ?? null}
+                loading={weeklyReviewLoading}
+                error={weeklyReviewError}
+                onRetry={retryWeeklyReview}
               />
             )}
             <RadarDetailSheet

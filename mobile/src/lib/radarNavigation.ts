@@ -8,7 +8,7 @@
 import type { RadarDestination } from '../hooks/useBriefing';
 
 export type RadarNavigationResult =
-  | { kind: 'review' }
+  | { kind: 'review'; reviewId: number | null; weekStart: string | null }
   | { kind: 'tab'; tab: 'health' | 'wealth'; anchor: { entityType: string | null; entityId: string } | null }
   | { kind: 'fallback'; tab: string };
 
@@ -16,9 +16,14 @@ export type RadarNavigationResult =
  *  non-empty `entityId` becomes an anchor for the destination tab to
  *  highlight/scroll to (RecoveryCard / InsightsCard's highlight props in
  *  App.tsx) — absent, it degrades to a plain tab switch (the closest
- *  relevant section, never a crash or silent no-op). */
+ *  relevant section, never a crash or silent no-op). For `review`,
+ *  reviewId/weekStart thread straight through to the canonical
+ *  openWeeklyReview action so it fetches/identifies the EXACT review this
+ *  Radar card was built from, never whatever happens to be "current" later. */
 export function resolveRadarNavigation(destination: RadarDestination): RadarNavigationResult {
-  if (destination.surface === 'review') return { kind: 'review' };
+  if (destination.surface === 'review') {
+    return { kind: 'review', reviewId: destination.reviewId ?? null, weekStart: destination.weekStart ?? null };
+  }
   if (destination.surface === 'health' || destination.surface === 'wealth') {
     return {
       kind: 'tab',
