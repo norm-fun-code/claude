@@ -137,6 +137,33 @@ export function isValidPushSnapshot(
   return true;
 }
 
+// Cross-day lifecycle fix — every field this app's own architecture treats
+// as day-bound (Wisdom, Today plan, calendar, weather, forecasts, recovery/
+// training guidance, Radar-feeding insights). Explicit allowlist, NOT this
+// set: fields absent here are left untouched across a day boundary because
+// they're genuinely day-independent (Wealth, weekly goals/review) — see the
+// backend's identical-in-spirit DAY_INDEPENDENT_ALLOWLIST philosophy in
+// routes/briefing.js. Kept as a deliberate enumeration (not "everything
+// except an allowlist") so adding a new day-bound field to BriefingData is a
+// visible, intentional decision here, not a silent gap.
+const DAY_BOUND_FIELDS = [
+  'date', 'quote', 'quoteInsight', 'dailyQuote', 'notionQuote', 'notionInsight',
+  'notionPageTitle', 'notionText', 'relevantHighlight', 'wellbeingTheme',
+  'calendar', 'workBusy', 'todayForecast', 'forecasts', 'todayCommandCenter',
+  'recovery', 'effectiveWorkout', 'weather',
+  'insights', 'crossContextInsights', 'healthInsights', 'healthComposites',
+  'signals', 'alerts', 'urgentEmails', 'leverageActions', 'goalsWeekStart',
+] as const;
+
+function clearDayBoundFields(v: BriefingData): BriefingData {
+  const cleared: Record<string, unknown> = { ...v };
+  for (const key of DAY_BOUND_FIELDS) {
+    const current = (v as unknown as Record<string, unknown>)[key];
+    cleared[key] = Array.isArray(current) ? [] : typeof current === 'string' ? '' : null;
+  }
+  return cleared as unknown as BriefingData;
+}
+
 export function migrateV1Cache(v1: BriefingData | null, todayLocalDate: string): BriefingData | null {
   if (!v1) return null;
   if (!isUsableChiefBrief(v1.chiefBrief) || v1.chiefBriefPending) {
@@ -150,10 +177,18 @@ export function migrateV1Cache(v1: BriefingData | null, todayLocalDate: string):
     // WHEN this now-discarded content was cut; once the content itself is
     // being dropped for being a different day, its age has nothing left to
     // honestly describe until a fresh fetch lands.
-    return {
+    //
+    // Cross-day lifecycle fix (defect 1): this used to null ONLY chiefBrief
+    // while leaving quote/Notion/calendar/weather/forecasts/recovery from
+    // the prior day fully intact — exactly the "still shows Tuesday's
+    // Wisdom on Wednesday" production bug. Every day-bound field is cleared
+    // the same way now; day-independent fields (Wealth, weekly goals/
+    // review — anything not in DAY_BOUND_FIELDS) survive untouched.
+    return clearDayBoundFields({
       ...v1, chiefBrief: null, chiefBriefPending: true, chiefBriefStale: false,
       snapshotAt: undefined, builtAt: undefined,
-    };
+      dayState: 'previous_day', contentLocalDate: v1.localDate,
+    });
   }
   return v1;
 }

@@ -492,9 +492,17 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   let priorIsToday = false;
   try {
     prior = await briefingsStore.latestBriefing('daily');
-    if (prior?.generated_at) {
-      const localDate = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: tz });
-      priorIsToday = localDate(prior.generated_at) === localDate(new Date());
+    if (prior) {
+      // Same content-localDate-over-generated_at fix as the cache-hit
+      // branch's chiefBriefNeedsRecovery below: a scoped rebuild's row can
+      // have a fresh generated_at while its content still self-reports a
+      // prior day, and priorIsToday gates the Wisdom daily-lock (quote/
+      // Notion/highlight) — trusting generated_at alone could lock TODAY's
+      // Wisdom selection onto yesterday's content.
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+      const priorDay = prior.content?.localDate
+        ?? (prior.generated_at ? new Date(prior.generated_at).toLocaleDateString('en-CA', { timeZone: tz }) : null);
+      priorIsToday = priorDay === today;
     }
   } catch (err) {
     console.error('[briefing prior] read failed:', err.message);
@@ -551,7 +559,20 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     // day's content silently masquerading as today's, and never reaching
     // past today into an even-older day either).
     const todayLocalDay = new Date().toLocaleDateString('en-CA', { timeZone: tz });
-    const priorLocalDay = prior.generated_at ? new Date(prior.generated_at).toLocaleDateString('en-CA', { timeZone: tz }) : null;
+    // Cross-day identity fix: a row's WALL-CLOCK insert time (generated_at)
+    // and its CONTENT's own self-reported day (cachedContent.localDate) can
+    // disagree — a scoped chief-brief-only rebuild persists a NEW row (fresh
+    // generated_at) while carrying its content.localDate forward from an
+    // even older prior (see performScopedChiefBriefRebuild's content
+    // object). Trusting generated_at alone let such a row's now-mislabeled
+    // chiefBrief sail through this recovery check untouched — it never
+    // looked "needing recovery" because generated_at said "today" even
+    // though the content itself still described yesterday. The content's
+    // own localDate is the authoritative signal; generated_at is only a
+    // fallback for rows that pre-date the Context Understanding Layer and
+    // never got a localDate stamped at all.
+    const priorLocalDay = cachedContent.localDate
+      ?? (prior.generated_at ? new Date(prior.generated_at).toLocaleDateString('en-CA', { timeZone: tz }) : null);
     const chiefBriefNeedsRecovery = priorLocalDay !== todayLocalDay || !briefingsStore.isPublishableRow(cachedContent);
     // Set only when a recovery actually swaps in an OLDER row's chiefBrief —
     // carries THAT row's own builtAt/snapshotId for chiefBriefProvenance
@@ -925,9 +946,23 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
 
     // Always serve the cache — never block the client on a 60-90s rebuild.
     // `stale: true` signals the app to show a "Rebuild briefing" button.
+    // currentLocalDate/contentLocalDate/dayState (cross-day lifecycle fix):
+    // the explicit, authoritative day-identity contract every response
+    // carries — currentLocalDate is ALWAYS live (computed this instant,
+    // never derived from cached content), contentLocalDate is whatever day
+    // cachedContent's day-bound fields (chiefBrief, quote, Notion, weather,
+    // calendar, forecasts, recovery, Today plan) actually describe, and
+    // dayState is the client's single source of truth for whether it's safe
+    // to render those fields as "today's". The client must render its
+    // header/greeting from currentLocalDate (or its own live clock), never
+    // from `date`/content — see mobile Header/useCanonicalDay.
+    const dayState = (cachedContent.localDate ?? null) === todayLocalDay ? 'current' : 'previous_day';
     return {
       ...cachedContent, weeklyGoals, weeklyReview, chiefBriefGoalsStale, todayCommandCenter, wealthLanding,
-      ...contractFields, cached: true, stale: isStale, cachedAgeMin: Math.round(ageMin),
+      ...contractFields, cached: true, stale: isStale || dayState === 'previous_day', cachedAgeMin: Math.round(ageMin),
+      currentLocalDate: todayLocalDay,
+      contentLocalDate: cachedContent.localDate ?? null,
+      dayState,
     };
   }
 
@@ -2826,6 +2861,13 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     response.errors = errors;
   }
 
+  // Cross-day lifecycle contract (see the cache-hit branch's identical
+  // fields): a fresh build is, by construction, always FOR today — no
+  // cross-day ambiguity is possible here the way it is for a cached serve.
+  response.currentLocalDate = response.localDate ?? null;
+  response.contentLocalDate = response.localDate ?? null;
+  response.dayState = 'current';
+
   // publish=false (the automatic morning path's prepare step) returns the
   // built-but-UNPUBLISHED draft here: no persistence, no TTS prewarm, no
   // next-cycle priming. The caller (notify/morning.js's warmAndNotify) runs
@@ -3091,6 +3133,31 @@ async function primeNextBuildCycle() {
 }
 async function performScopedChiefBriefRebuild(prior, opts = {}) {
   const { repairReason = null } = opts;
+
+  // Stale-day guard (cross-day lifecycle fix) — moved to the very TOP,
+  // before any context assembly or the LLM call: this function recuts ONLY
+  // the chief brief and always carries `date`/`localDate`/`snapshotId`/
+  // `snapshotAt` forward unchanged from `prior.content` (see the `content`
+  // object further down) — correct when `prior` is genuinely today's
+  // snapshot, but a scoped rebuild's whole premise ("just reword, the rest
+  // of today's snapshot is still valid") is false once the calendar day has
+  // rolled over since `prior` was built. Previously this was checked only
+  // AFTER paying for the full context assembly + LLM call, then silently
+  // discarding the result — wasting the LLM call and leaving the caller with
+  // no signal that a full rebuild (not a retry of this same scoped path) was
+  // actually required. Short-circuiting here means the manual endpoint can
+  // return an immediate, typed 409 instead of a slow, silent no-op.
+  const staleDayTz = process.env.TZ || 'America/New_York';
+  const staleDayToday = localDateStr(staleDayTz, new Date());
+  const staleDayContentDate = prior.content?.localDate ?? null;
+  if (staleDayContentDate && staleDayContentDate !== staleDayToday) {
+    console.error(`[chief-brief rebuild] prior.content.localDate=${staleDayContentDate} does not match today=${staleDayToday} — a scoped rebuild cannot safely recut a stale day's snapshot; a full rebuild is required. Skipping generation entirely.`);
+    return {
+      content: null, todayCommandCenter: null, wealthLanding: null,
+      staleDay: true, currentLocalDate: staleDayToday, contentLocalDate: staleDayContentDate,
+    };
+  }
+
   const ctx = await buildQuickChiefBriefContext(prior);
 
   // Canonical facts for the claim validator — same authorities as the full
@@ -3216,25 +3283,6 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
     }
   }
 
-  // Stale-day guard: this function recuts ONLY the chief brief and always
-  // carries `date`/`localDate`/`snapshotId`/`snapshotAt` forward unchanged
-  // from `prior.content` (see the `content` object below) — a deliberate
-  // choice when `prior` is genuinely today's snapshot, since re-deriving
-  // recovery/workout/wealth/forecast just to reword prose would be wasteful.
-  // But if the full daily build hasn't succeeded since a PRIOR calendar day,
-  // `prior.content` is actually yesterday's, and that carry-forward silently
-  // mislabels a brand-new, correctly-"fresh"-quality generation as today's
-  // while it's still stamped with yesterday's date/snapshot identity — the
-  // exact bug this guard closes. A scoped rebuild's premise ("just reword,
-  // the rest of today's snapshot is still valid") is false once the day has
-  // rolled over, so it must decline rather than publish under a wrong date.
-  const openQuestionsTzForStaleCheck = process.env.TZ || 'America/New_York';
-  const todayKeyForStaleCheck = localDateStr(openQuestionsTzForStaleCheck, new Date());
-  const staleDay = Boolean(prior.content?.localDate) && prior.content.localDate !== todayKeyForStaleCheck;
-  if (staleDay) {
-    console.error(`[chief-brief rebuild] prior.content.localDate=${prior.content.localDate} does not match today=${todayKeyForStaleCheck} — a scoped rebuild cannot safely recut a stale day's snapshot; a full rebuild is required. Discarding this attempt's generation.`);
-  }
-
   // Fresh-before-replace invariant (audit fix) — identical contract to the
   // full build (see that call site's comment): this rebuild's OWN chiefBrief
   // only ships when its OWN quality is fresh. A degraded scoped rebuild must
@@ -3247,15 +3295,11 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
   // here: it trusts `prior`'s OWN quality stamp, not whether prior's content
   // is actually usable, which is exactly what let a SECOND consecutive
   // failed repair delete an already-carried-forward good brief).
-  // A stale day forces this false regardless of this attempt's own quality —
-  // see the guard above.
-  const thisAttemptFresh = !staleDay && chiefResult.chiefBrief != null && chiefResult.chiefBriefQuality?.status === 'fresh';
+  const thisAttemptFresh = chiefResult.chiefBrief != null && chiefResult.chiefBriefQuality?.status === 'fresh';
   const lastGood = thisAttemptFresh ? null : await briefingsStore.resolveLastGoodChiefBrief(prior, { tz: process.env.TZ || 'America/New_York' });
   const chiefBriefStale = !thisAttemptFresh && lastGood != null;
   const errors = Array.isArray(prior.content.errors) ? prior.content.errors.filter((e) => e.service !== 'chiefBrief') : [];
-  if (staleDay) {
-    errors.push({ service: 'chiefBrief', error: `scoped rebuild skipped: prior content is from ${prior.content.localDate}, not today (${todayKeyForStaleCheck}) — a full rebuild is required` });
-  } else if (chiefBriefStale) {
+  if (chiefBriefStale) {
     console.error('[chief-brief rebuild] this attempt was missing or degraded quality — keeping the existing good card unchanged.');
     errors.push({ service: 'chiefBrief', error: 'this rebuild attempt was missing or degraded quality; the existing good brief was left unchanged' });
   }
@@ -3326,6 +3370,11 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
     snapshotId: prior.content.snapshotId ?? null,
     // Only the chief brief + morningFocus were actually re-derived now.
     fieldsBuiltAt: stampFields(prior.content.fieldsBuiltAt, ['chiefBrief', 'morningFocus'], rebuildNow),
+    // Always 'current': the stale-day guard at the top of this function
+    // already returned early if prior.content.localDate didn't match today.
+    currentLocalDate: staleDayToday,
+    contentLocalDate: prior.content.localDate ?? null,
+    dayState: 'current',
   };
 
   // Never insert a new row on a non-fresh attempt (Chief Brief regression
@@ -3459,7 +3508,21 @@ router.post('/briefing/chief-brief/rebuild', asyncHandler(async (req, res) => {
   if (!prior?.content) {
     return res.status(409).json({ error: 'no briefing built yet — load the briefing first' });
   }
-  const { content, todayCommandCenter, wealthLanding } = await performScopedChiefBriefRebuild(prior);
+  const result = await performScopedChiefBriefRebuild(prior);
+  // Typed escalation signal (cross-day lifecycle fix): the scoped path
+  // declined BEFORE running any generation because prior's content is from
+  // a previous local day — a scoped reword can't safely stand in for a real
+  // rebuild. The client's recoverTodaysBriefing() escalates to
+  // POST /briefing/rebuild exactly once on this response, instead of
+  // treating a 200 as "retried, nothing changed" (the original bug report).
+  if (result.staleDay) {
+    return res.status(409).json({
+      error: 'full_rebuild_required',
+      currentLocalDate: result.currentLocalDate,
+      contentLocalDate: result.contentLocalDate,
+    });
+  }
+  const { content, todayCommandCenter, wealthLanding } = result;
   res.json({ ...content, todayCommandCenter, wealthLanding, cached: false });
 }));
 
@@ -3484,9 +3547,22 @@ router.post('/briefing/rebuild', asyncHandler(async (req, res) => {
     // Reuse the existing advisory lock for mutual exclusion: another build
     // (manual or automatic) already owns it — return ITS active job instead
     // of quietly doing nothing, so the caller can still poll something real.
-    const active = await buildJobs.activeJobForDay(day, tz).catch(() => null);
+    // Race: the lock can be acquired by another request microseconds before
+    // its own job row is actually INSERTed — a bare `buildId: null` here
+    // used to masquerade as a valid "building" job the client would poll
+    // forever with nothing to identify. Retry briefly (the INSERT is a
+    // single fast query) rather than fabricate an unidentified build.
+    let active = await buildJobs.activeJobForDay(day, tz).catch(() => null);
+    for (let attempt = 0; !active && attempt < 4; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      active = await buildJobs.activeJobForDay(day, tz).catch(() => null);
+    }
     if (active) return res.status(202).json({ buildId: active.id, state: active.state, alreadyRunning: true });
-    return res.status(202).json({ buildId: null, state: 'building', alreadyRunning: true });
+    // Still no owner found — the lock holder hasn't written its row yet, or
+    // died between acquiring the lock and inserting it. Never fabricate a
+    // buildId: null "active build" the client would poll indefinitely;
+    // report a typed, retryable state instead.
+    return res.status(202).json({ buildId: null, state: 'lock_contended', retryable: true });
   }
 
   const attemptNumber = (await buildJobs.attemptsToday(day, tz).catch(() => 0)) + 1;
@@ -3505,6 +3581,11 @@ router.post('/briefing/rebuild', asyncHandler(async (req, res) => {
   // briefing, so the job below is marked 'ready' ONLY when that actually
   // happened, never merely because the HTTP call didn't throw.
   (async () => {
+    // Real build heartbeat: touch updated_at every 20s while the build is
+    // actually in flight, so isJobStale's staleness window can eventually
+    // be judged against genuine proof-of-life rather than only "time since
+    // creation" (see morningBuildJobs.touchHeartbeat's own comment).
+    const heartbeat = setInterval(() => buildJobs.touchHeartbeat(job.id), 20000);
     try {
       const result = await buildFreshBriefing({ force: true });
       const qualityStatus = result?.chiefBriefQuality?.status ?? null;
@@ -3529,6 +3610,7 @@ router.post('/briefing/rebuild', asyncHandler(async (req, res) => {
       console.error('[bg rebuild] failed:', err.message);
       await buildJobs.updateJob(job.id, { state: 'failed', errorMessage: err.message }).catch((e) => console.error('[bg rebuild] job update failed:', e.message));
     } finally {
+      clearInterval(heartbeat);
       await release();
     }
   })();

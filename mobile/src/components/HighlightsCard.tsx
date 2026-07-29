@@ -21,12 +21,25 @@ interface Highlight {
   favorite: boolean;
 }
 
+interface HighlightsCardProps {
+  // Cross-day lifecycle fix: the canonical local date (YYYY-MM-DD), passed
+  // by the parent's useCanonicalDay. This component previously took no
+  // props at all, so React.memo's shallow-equal check trivially always
+  // passed and it never re-rendered from the parent — its one `load(false)`
+  // effect ran once on mount and never again, so a Wisdom tab left mounted
+  // overnight kept showing yesterday's locked set indefinitely. Re-fetching
+  // whenever this prop changes (day rollover, or a fresh foreground into a
+  // new day) asks the server for THAT day's locked set — server-side
+  // day-locking (see the comment below) still keeps it static within a day.
+  canonicalLocalDate: string;
+}
+
 // "From Your Library" — Readwise highlights for the Wisdom tab. DAY-LOCKED: the
 // server picks the day's set on the first request and returns the same set all
 // day (across devices and pull-to-refresh), like the Notion page and daily
 // quote. Tap "Next" to flip through them; "New set ↻" (or paging past the end)
 // asks the server for a fresh set via ?refresh=1.
-function HighlightsCard() {
+function HighlightsCard({ canonicalLocalDate }: HighlightsCardProps) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -55,8 +68,8 @@ function HighlightsCard() {
   }, []);
 
   useEffect(() => {
-    load(false); // today's locked set
-  }, [load]);
+    load(false); // today's (canonicalLocalDate's) locked set
+  }, [load, canonicalLocalDate]);
 
   const next = () => {
     if (idx < highlights.length - 1) setIdx(idx + 1);

@@ -53,6 +53,20 @@ async function updateJob(id, patch = {}) {
   return rows[0] ?? null;
 }
 
+/** Heartbeat: touch `updated_at` on an in-flight job with no other field
+ *  change, so isJobStale (below) can distinguish "still genuinely running"
+ *  from "orphaned — the process that owned it died mid-build" using a much
+ *  tighter window than STALE_IN_FLIGHT_MS would otherwise safely allow.
+ *  Never throws — a missed heartbeat must not crash the build it's
+ *  reporting on; the next heartbeat (or the coarser STALE_IN_FLIGHT_MS
+ *  fallback) recovers. */
+async function touchHeartbeat(id) {
+  if (!id) return;
+  try {
+    await query(`UPDATE morning_build_jobs SET updated_at = now() WHERE id = $1 AND state IN ('waiting_for_sleep', 'queued', 'building', 'retry_wait')`, [id]);
+  } catch { /* best-effort */ }
+}
+
 async function getJob(id) {
   if (!id) return null;
   const { rows } = await query(`SELECT * FROM morning_build_jobs WHERE id = $1`, [id]);
@@ -121,5 +135,5 @@ function isJobStale(job, nowMs = Date.now(), thresholdMs = STALE_IN_FLIGHT_MS) {
 
 module.exports = {
   VALID_STATES, localDay, createJob, updateJob, getJob, latestJobForDay, attemptsToday, activeJobForDay,
-  IN_FLIGHT_STATES, STALE_IN_FLIGHT_MS, isJobStale,
+  IN_FLIGHT_STATES, STALE_IN_FLIGHT_MS, isJobStale, touchHeartbeat,
 };

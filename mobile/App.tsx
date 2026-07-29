@@ -32,6 +32,7 @@ import { useEveningBrief } from './src/hooks/useEveningBrief';
 import { useHealthData } from './src/hooks/useHealthData';
 import { useRecovery } from './src/hooks/useRecovery';
 import { usePushRegistration } from './src/hooks/usePushRegistration';
+import { useCanonicalDay } from './src/hooks/useCanonicalDay';
 import * as Haptics from 'expo-haptics';
 import { getColors, spacing, shadow, radius, FONTS } from './src/theme';
 
@@ -526,13 +527,23 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [radarAnchor]);
 
-  const today = new Date().toLocaleDateString('en-US', {
+  // Cross-day lifecycle fix: the ONE canonical "what day is it right now"
+  // — anchored to the backend's home-base timezone (the latest known
+  // `briefing.data.timezone`, defaulting to America/New_York before any
+  // payload has loaded), never the device's physical timezone and never a
+  // cached content payload's own `date`/`localDate`. Updates on foreground
+  // and at the next local-day boundary — see useCanonicalDay.
+  const canonicalDay = useCanonicalDay(briefing.data?.timezone || undefined);
+  const todayLocalDate = canonicalDay.localDate;
+  const today = new Date(`${todayLocalDate}T12:00:00`).toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   });
-  // YYYY-MM-DD, device-local — comparable against BriefingData.localDate to
-  // tell genuinely current content apart from a carried-over cached build
-  // from a prior day (see WisdomListenCard's `stale` prop below).
-  const todayLocalDate = new Date().toLocaleDateString('en-CA');
+  // Authoritative day-identity contract (backend routes/briefing.js): true
+  // exactly when the currently-loaded content actually describes today —
+  // false for a carried-over previous-day cache/serve, in which case
+  // day-bound cards (Wisdom, Today plan, forecasts, recovery) must show an
+  // honest "preparing" state rather than yesterday's content unlabeled.
+  const isContentCurrentDay = (briefing.data?.dayState ?? (briefing.data?.localDate ? (briefing.data.localDate === todayLocalDate ? 'current' : 'previous_day') : 'current')) === 'current';
 
   const tabTitle = TABS.find((t) => t.key === tab)?.label ?? '';
 
@@ -749,18 +760,30 @@ export default function App() {
           <>
             <WisdomListenCard
               hasContent={Boolean(
-                (d?.quote && d?.quoteInsight) || (d?.notionQuote && d?.notionInsight) || d?.relevantHighlight?.content
+                isContentCurrentDay && ((d?.quote && d?.quoteInsight) || (d?.notionQuote && d?.notionInsight) || d?.relevantHighlight?.content)
               )}
               snapshotId={d?.snapshotId}
-              stale={Boolean(d?.localDate) && d?.localDate !== todayLocalDate}
+              stale={!isContentCurrentDay}
             />
-            {d?.quote && d?.quoteInsight && <QuoteCard quote={d.quote} insight={d.quoteInsight} />}
-            {d?.notionText && d?.notionInsight && (
-              <NotionCard pageTitle={d?.notionPageTitle ?? ''} notionText={d.notionText} quote={d?.notionQuote} insight={d.notionInsight} />
+            {/* Cross-day lifecycle fix: Tuesday's quote/Notion/highlight must
+                never render as Wednesday's Wisdom. isContentCurrentDay is
+                the single source of truth (backend dayState, or a local
+                fallback comparison) — when it's false, an honest
+                "preparing" note replaces the stale cards entirely rather
+                than showing yesterday's content unlabeled. */}
+            {isContentCurrentDay ? (
+              <>
+                {d?.quote && d?.quoteInsight && <QuoteCard quote={d.quote} insight={d.quoteInsight} />}
+                {d?.notionText && d?.notionInsight && (
+                  <NotionCard pageTitle={d?.notionPageTitle ?? ''} notionText={d.notionText} quote={d?.notionQuote} insight={d.notionInsight} />
+                )}
+                {/* Semantically matched highlight — surfaced based on your wellbeing patterns */}
+                <LibraryCard highlight={d?.relevantHighlight ?? null} wellbeingTheme={d?.wellbeingTheme} />
+              </>
+            ) : (
+              <EmptyNote c={c} text="Today's Wisdom is still being prepared — check back shortly." />
             )}
-            {/* Semantically matched highlight — surfaced based on your wellbeing patterns */}
-            <LibraryCard highlight={d?.relevantHighlight ?? null} wellbeingTheme={d?.wellbeingTheme} />
-            <HighlightsCard />
+            <HighlightsCard canonicalLocalDate={todayLocalDate} />
           </>
         );
       case 'ask':
@@ -1008,7 +1031,12 @@ export default function App() {
             // This RN 0.71+ prop does exactly that on iOS.
             automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
           >
-            <Header date={d?.date ?? today} />
+            {/* Cross-day lifecycle fix: the header ALWAYS describes now (the
+                canonical clock), never the loaded content's own `date`
+                field — that field can legitimately be yesterday's while a
+                fresh rebuild is still in flight, and rendering it directly
+                is exactly how "Tuesday" survived into Wednesday afternoon. */}
+            <Header date={today} />
             <AnimatedEntry key={tab} delay={0} distance={6} style={styles.titleRow}>
               <View>
                 <Text style={[styles.tabTitle, { color: c.text }]}>{tabTitle}</Text>

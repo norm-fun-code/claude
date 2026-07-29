@@ -334,3 +334,56 @@ test('required: comparing against the SNAPSHOT\'S OWN canonical timezone (the fi
   const canonicalLocalDate = STRADDLING_INSTANT.toLocaleDateString('en-CA', { timeZone: content.timezone || 'America/New_York' });
   assert.equal(isValidPushSnapshot(content, 'snap_today', canonicalLocalDate), true, 'the fix — comparing against the snapshot\'s own canonical zone — accepts it correctly');
 });
+
+// ---------------------------------------------------------------------------
+// Cross-day lifecycle fix (defect 1): a prior-day cache's ENTIRE day-bound
+// envelope — not just chiefBrief — must be neutralized on migration. This
+// replaces the old assumption (test 8/8c above) that only chiefBrief needed
+// checking; Tuesday's quote/Notion/highlight/calendar/weather/forecasts/
+// recovery must never render as Wednesday's content.
+// ---------------------------------------------------------------------------
+test('cross-day: a previous-day v1 cache has its FULL day-bound envelope cleared, not just chiefBrief', () => {
+  const tuesday = base({
+    chiefBrief: GOOD_BRIEF, localDate: '2026-07-28',
+    date: 'Tuesday, July 28, 2026',
+    quote: 'A quote', quoteInsight: 'An insight',
+    notionQuote: 'Notion quote', notionInsight: 'Notion insight', notionText: 'body', notionPageTitle: 'Page',
+    relevantHighlight: { title: 't', author: 'a', content: 'c', url: null },
+    calendar: [{ title: 'Meeting', startTime: null, endTime: null, allDay: false, location: null, description: null }],
+    weather: { temp: 70 } as unknown as BriefingData['weather'],
+    forecasts: [{ title: 'f', detail: null, probability: null, status: null }],
+    insights: [{ type: 'anomaly', title: 'x', detail: null, confidence: null }],
+  });
+  const migrated = migrateV1Cache(tuesday, '2026-07-29');
+  assert.equal(migrated?.chiefBrief, null, 'chiefBrief cleared');
+  assert.equal(migrated?.quote, '', 'quote cleared');
+  assert.equal(migrated?.quoteInsight, '', 'quoteInsight cleared');
+  assert.equal(migrated?.notionQuote, '', 'notionQuote cleared');
+  assert.equal(migrated?.relevantHighlight, null, 'relevantHighlight cleared');
+  assert.deepEqual(migrated?.calendar, [], 'calendar cleared');
+  assert.equal(migrated?.weather, null, 'weather cleared');
+  assert.deepEqual(migrated?.forecasts, [], 'forecasts cleared');
+  assert.deepEqual(migrated?.insights, [], 'insights cleared');
+  assert.equal(migrated?.dayState, 'previous_day');
+  assert.equal(migrated?.contentLocalDate, '2026-07-28');
+});
+
+test('cross-day: day-INDEPENDENT fields (Wealth, weekly review/goals) survive the same migration untouched', () => {
+  const GOOD_LANDING_2 = { severity: 'on_track', summary: 'On track', numbers: {}, whatChanged: [], recommendedAction: null, sourceHealth: { configured: true, healthy: true }, spendingDetail: [] };
+  const tuesday = base({
+    chiefBrief: GOOD_BRIEF, localDate: '2026-07-28',
+    wealth: { netWorth: 100 } as unknown as BriefingData['wealth'],
+    wealthLanding: GOOD_LANDING_2 as never,
+    weeklyReview: { headline: 'Great week' } as unknown as BriefingData['weeklyReview'],
+  });
+  const migrated = migrateV1Cache(tuesday, '2026-07-29');
+  assert.deepEqual(migrated?.wealth, { netWorth: 100 }, 'Wealth survives cross-day — net worth does not reset at midnight');
+  assert.deepEqual(migrated?.wealthLanding, GOOD_LANDING_2);
+  assert.deepEqual(migrated?.weeklyReview, { headline: 'Great week' });
+});
+
+test('cross-day: a SAME-day v1 cache is untouched (dayState/contentLocalDate not force-set)', () => {
+  const today = base({ chiefBrief: GOOD_BRIEF, localDate: '2026-07-29', quote: 'q', quoteInsight: 'qi' });
+  const migrated = migrateV1Cache(today, '2026-07-29');
+  assert.deepEqual(migrated, today);
+});

@@ -597,6 +597,17 @@ export interface BriefingData {
   // local midnight, and comparing against the wrong zone can reject a
   // genuinely current snapshot (or, in principle, accept a stale one).
   timezone?: string;
+  // Cross-day lifecycle contract (backend routes/briefing.js): currentLocalDate
+  // is ALWAYS live (computed at response time, never derived from cached
+  // content); contentLocalDate is whatever day this payload's day-bound
+  // fields (chiefBrief, quote, Notion, weather, calendar, forecasts,
+  // recovery, Today plan) actually describe — same value as `localDate`
+  // above, duplicated under an explicit name for this contract. dayState is
+  // the single source of truth for whether it's safe to render those fields
+  // as "today's": 'current' | 'previous_day'.
+  currentLocalDate?: string;
+  contentLocalDate?: string | null;
+  dayState?: 'current' | 'previous_day';
   morningFocus?: string;
   chiefBrief?: ChiefBrief | null;
   // True when the chiefBrief above is carried over from a prior build (this
@@ -1190,11 +1201,27 @@ export function useBriefing(): BriefingState {
   // Fast, scoped retry for just the Chief-of-Staff card — POST responds
   // directly in a few seconds (no polling needed, unlike triggerRebuild's
   // 60-90s full build) since the server only recomputes that one section.
+  // Cross-day lifecycle fix: this is recoverTodaysBriefing()'s core —
+  // the scoped endpoint now returns a typed 409 (full_rebuild_required)
+  // instead of a silent no-op when the server's last snapshot is from a
+  // previous local day (a scoped reword can't safely stand in for a real
+  // rebuild). This escalates to the full rebuild exactly once, automatically
+  // — the user taps one Retry button and gets whichever repair is actually
+  // required, never a "nothing happened" 200 with an unusable stale card.
   const refreshChiefBrief = useCallback(async () => {
     if (chiefBriefRefreshing) return;
     setChiefBriefRefreshing(true);
     try {
       const res = await fetchWithTimeout(CHIEF_BRIEF_REBUILD_URL, { method: 'POST', headers: authHeaders() }, 20000);
+      if (res.status === 409) {
+        const body = await res.json().catch(() => ({} as { error?: string }));
+        if (body?.error === 'full_rebuild_required') {
+          setChiefBriefRefreshing(false);
+          triggerRebuild();
+          return;
+        }
+        throw new Error('no briefing built yet — load the briefing first');
+      }
       if (!res.ok) throw new Error(`Server ${res.status}`);
       const json: BriefingData = await res.json();
       // Non-destructive merge (Chief Brief regression fix): a failed scoped
@@ -1215,7 +1242,7 @@ export function useBriefing(): BriefingState {
     } finally {
       setChiefBriefRefreshing(false);
     }
-  }, [chiefBriefRefreshing]);
+  }, [chiefBriefRefreshing, triggerRebuild]);
 
   return {
     data,

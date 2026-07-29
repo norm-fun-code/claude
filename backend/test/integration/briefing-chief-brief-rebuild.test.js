@@ -18,7 +18,7 @@ const WEATHER_MARKER = { condition: `untouched-${Date.now()}` };
 
 const OLD_BUILT_AT = '2020-01-01T00:00:00.000Z';
 
-async function seedPriorBriefing() {
+async function seedPriorBriefing(overrides = {}) {
   const content = {
     day: new Date().toISOString().slice(0, 10),
     builtAt: OLD_BUILT_AT,
@@ -27,6 +27,7 @@ async function seedPriorBriefing() {
     weather: WEATHER_MARKER,
     leverageActions: [{ title: 'Sleep earlier', detail: 'HRV trends up on early nights' }],
     forecasts: [{ title: 'Savings goal', detail: 'behind pace', status: 'at_risk' }],
+    ...overrides,
   };
   const { rows } = await db.query(
     `INSERT INTO briefings (kind, content) VALUES ('daily', $1) RETURNING id`,
@@ -105,4 +106,29 @@ test('a scoped rebuild that STILL fails after its retry keeps the existing card 
     res.body.builtAt, OLD_BUILT_AT,
     'builtAt must still advance even when the retry fails — otherwise a failed retry looks identical to the tap doing nothing at all'
   );
+});
+
+// ---------------------------------------------------------------------------
+// Cross-day lifecycle fix — the scoped rebuild must decline BEFORE the LLM
+// call when prior.content.localDate is a previous day, returning a typed
+// 409 the client escalates to a full rebuild on. Previously this only
+// discovered the stale day AFTER paying for generation, then silently
+// discarded the result while still returning 200.
+// ---------------------------------------------------------------------------
+test('POST /api/briefing/chief-brief/rebuild returns 409 full_rebuild_required for a previous-day snapshot WITHOUT calling the LLM', async (t) => {
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  await seedPriorBriefing({ localDate: yesterday });
+
+  let llmCalled = false;
+  const original = llm.generateText;
+  t.after(() => { llm.generateText = original; });
+  llm.generateText = async () => { llmCalled = true; return { text: '{}', stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8' }; };
+
+  const res = await request(app).post('/api/briefing/chief-brief/rebuild').set(authHeader()).timeout(15000);
+
+  assert.equal(res.status, 409);
+  assert.equal(res.body.error, 'full_rebuild_required');
+  assert.equal(res.body.contentLocalDate, yesterday);
+  assert.ok(res.body.currentLocalDate && res.body.currentLocalDate !== yesterday);
+  assert.equal(llmCalled, false, 'a stale-day scoped rebuild must decline BEFORE any generation call, not discard its result after');
 });
