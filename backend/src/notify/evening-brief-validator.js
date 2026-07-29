@@ -110,6 +110,21 @@ function fieldEntries(result) {
   return CHECKED_FIELDS.map((f) => [f, typeof result?.[f] === 'string' ? result[f] : '']);
 }
 
+/** Evening-brief redesign — reflection must be empty unless a recent
+ *  gratitude note genuinely exists; an LLM that invents a generic "name one
+ *  thing you're grateful for" prompt anyway (in violation of the SYSTEM
+ *  prompt's hard rule) gets neutralized back to the fallback's already-empty
+ *  string, the same "replace wholesale" pattern every other check uses. */
+function checkUnearnedReflection(result, facts) {
+  const text = typeof result?.reflection === 'string' ? result.reflection.trim() : '';
+  if (!text) return [];
+  if ((facts?.gratitude || []).length) return [];
+  return [{
+    check: 'unearned_reflection', field: 'reflection', text,
+    message: 'reflection is non-empty but no recent gratitude note was given — an invented reflection is not genuine presence',
+  }];
+}
+
 /**
  * Project the evening brief's own `signals` object into the SAME canonical
  * facts shape brain/snapshot.js's canonicalFactsFrom produces for Chief
@@ -164,6 +179,7 @@ function validateEveningBriefClaims(result, facts) {
     ...checkWorkoutCompletionOverclaim(fields, evidenceFacts),
     ...checkCompletion(fields, evidenceFacts),
     ...checkResolvedContextConflicts(fields, evidenceFacts),
+    ...checkUnearnedReflection(result, facts),
   ];
 }
 

@@ -22,7 +22,11 @@ const commas = (n) => (n != null ? Math.round(n).toLocaleString('en-US') : null)
 
 const TONE_HEADLINE = {
   settled: "You're settled — wind down easy",
-  mild: 'Mild load — wind down for real',
+  // Softened per audit: a single mildly-off-baseline signal isn't the same
+  // confidence tier as a genuinely elevated combined read — the old
+  // "Mild load — wind down for real" overstated what one noisy daytime
+  // metric actually supports.
+  mild: "A touch off baseline — an easy wind-down works",
   elevated: "Your body's still spending — protect tonight",
   unknown: 'Wind down — soft read tonight',
 };
@@ -36,7 +40,7 @@ const TONE_HEADLINE = {
 const MEANINGFUL_SLEEP_DEBT_HOURS = -2;
 
 function composeFallback({
-  autonomic, load, openHabits, gratitude = [], training = null, isRestDay = false,
+  autonomic, load, openHabits, letGoHabits = [], gratitude = [], training = null, isRestDay = false,
   tomorrowFirstEvent = null, tomorrowIsDayOff = false, tomorrowHoliday = null,
   checkin = null, dataGap = null, sleepBalance = null,
 }) {
@@ -63,11 +67,15 @@ function composeFallback({
       );
     }
     const lead = bits.join(', ');
+    // Evidence-calibrated, hedged language — daytime HRV/RHR is noisy, and a
+    // single mildly-off-baseline signal (tone === 'mild') is not the same
+    // confidence tier as a genuinely elevated combined read. Never claim
+    // certainty ("pays off by morning") the tone signal doesn't support.
     const read =
       tone === 'elevated'
-        ? "your body's still spending — a genuine wind-down banks tomorrow's recovery."
+        ? "your body's still spending — a genuine wind-down may help you head into tomorrow from a better place."
         : tone === 'mild'
-        ? "mild sympathetic load — wind down for real tonight and it pays off by morning."
+        ? "one signal's a touch outside your norm — an easy wind-down is a reasonable finish to the day."
         : "your system looks settled — you've got room to relax or do something restorative.";
     readiness = lead ? `${lead.charAt(0).toUpperCase() + lead.slice(1)} — ${read}` : read;
   }
@@ -128,12 +136,22 @@ function composeFallback({
       ? "You're carrying a sleep deficit over the last week — tonight's a good night to actually catch up."
       : tone === 'settled'
         ? 'Hold your bedtime window and tomorrow opens from a good place.'
-        : 'Lights down on time tonight is the single biggest lever on tomorrow — protect the bedtime window.';
+        : 'Lights down on time tonight is a solid lever for tomorrow — protect the bedtime window.';
     tomorrow = `${dayOffNote}${advice}`;
   }
 
+  // "Tonight" — only genuinely night-compatible, still-open habits (see
+  // evening-readiness.js's classifyOpenHabits), and framed as optional/
+  // restorative rather than another obligation — never "quick wins."
   const habits = openHabits.length
-    ? `Still open: ${openHabits.join(', ')} — quick wins before bed.`
+    ? `If it helps: ${openHabits.join(', ')} — worth a moment before bed, no pressure either way.`
+    : '';
+  // "Let go" — still-open habits that have missed their natural window or
+  // would compete with actually winding down (a missed afternoon meditation,
+  // an unstarted workout at this hour) — released explicitly, not silently
+  // dropped and not nagged about as if they were still achievable tonight.
+  const letGo = letGoHabits.length
+    ? `Let go of ${letGoHabits.join(' and ')} for today — nothing lost, just not tonight.`
     : '';
 
   // Deterministic plan-vs-actual line so the day-close ledger survives an LLM
@@ -162,13 +180,16 @@ function composeFallback({
     }
   }
 
-  // Presence beat — the mindfulness counterpart to the body read. The LLM pass
-  // writes the nuanced version; this deterministic path keeps it graceful if the
-  // model is down: a soft echo when there's a recent gratitude note, a gentle
-  // invite otherwise.
+  // Presence beat — the mindfulness counterpart to the body read, but ONLY
+  // when genuinely specific to the actual day: an optional, restorative echo
+  // of a real recent gratitude note. No note means no reflection at all —
+  // a generic "name one thing you're grateful for" invite is another
+  // obligation dressed up as presence, not something a person who was
+  // actually listening would say, so it's omitted entirely rather than
+  // manufactured.
   const reflection = gratitude.length
     ? 'Carry what you were grateful for today into tomorrow — that thread matters as much as the numbers.'
-    : 'Before sleep, name one thing you’re grateful for — a small close that steadies the day.';
+    : '';
 
   return {
     tone: tone || 'unknown',
@@ -178,11 +199,12 @@ function composeFallback({
     plan,
     tomorrow,
     habits,
+    letGo,
     reflection,
     signals: {
       hrv, hrvBaseline, rhr, rhrBaseline,
       steps: load.steps, stepsBaseline: load.stepsBaseline, activeEnergy: load.activeEnergy,
-      openHabits, dataGap, sleepDebtHours,
+      openHabits, letGoHabits, dataGap, sleepDebtHours,
     },
   };
 }
@@ -213,6 +235,19 @@ const SYSTEM =
   'the planned session was not marked complete, and separately note what was actually logged. Only ' +
   'call the planned session "done"/"completed" when the ground truth below explicitly says it was ' +
   'completed; never infer completion from an unrelated activity, however similar in duration or effort. ' +
+  '(5) Never label a signal as "load" or "stress" merely because ONE metric (HRV OR resting HR, not ' +
+  'both) is mildly outside baseline — treat the autonomic tone label given below as the combined, ' +
+  'confidence-aware read it already is, and match your language\'s confidence to it: a "mild" tone ' +
+  'is ONE signal being a little off, not a confirmed problem — use hedged words ("may help", ' +
+  '"reasonable", "worth protecting") rather than declarative claims ("pays off by morning", "the ' +
+  'single biggest lever"); reserve firmer language for a genuinely "elevated" tone. ' +
+  '(6) The "reflection" field must be empty ("") unless a recent gratitude note is actually given below ' +
+  '— never invent a generic "name one thing you\'re grateful for" prompt; that is an obligation, not ' +
+  'presence, and a manufactured reflection is worse than none. ' +
+  '(7) Habits listed as "still worth tonight" are optional and restorative only — frame them as things ' +
+  'that MAY help, never as tasks owed. Habits listed as "better let go" have already missed their window ' +
+  'or would compete with actually winding down — frame releasing them as a deliberate, fine choice, not ' +
+  'a miss; never re-frame a "let go" habit as an urgent quick win. ' +
   'Return ONLY valid JSON.';
 
 function commitmentsLine(commitments) {
@@ -230,7 +265,7 @@ function commitmentsLine(commitments) {
 
 function buildPrompt(signals) {
   const {
-    autonomic: a, load: l, openHabits, gratitude = [], morningPlan = null, training = null,
+    autonomic: a, load: l, openHabits, letGoHabits = [], gratitude = [], morningPlan = null, training = null,
     commitments = null, dayContext = '', isRestDay = false,
     tomorrowFirstEvent = null, tomorrowIsDayOff = false, tomorrowHoliday = null,
     checkin = null, dataGap = null, sleepBalance = null,
@@ -258,7 +293,9 @@ function buildPrompt(signals) {
     dataGap
       ? `DATA QUALITY FLAG: ${dataGap} Say this plainly in "today" (or "readiness" if more natural) — don't grade the day against these numbers as if they're real, and don't invent a health explanation for the dip.`
       : null,
-    openHabits.length ? `Evening habits still open: ${openHabits.join(', ')}` : 'Evening habits: all logged',
+    openHabits.length ? `Habits still worth doing tonight (calm/restorative, optional): ${openHabits.join(', ')}` : null,
+    letGoHabits.length ? `Habits better let go tonight (missed their window or would compete with winding down — do NOT frame these as quick wins): ${letGoHabits.join(', ')}` : null,
+    !openHabits.length && !letGoHabits.length ? 'Evening habits: all logged' : null,
     training
       ? `Planned session today: ${training.planned ?? '(none)'} — ${
           training.completed
@@ -293,8 +330,9 @@ Write the evening wind-down brief as JSON with EXACTLY these string fields:
   "today": "ONE sentence closing the loop on today's movement (steps/energy), judged ONLY against the step baseline line above — if no baseline was given, just state the number neutrally, never 'high'/'low'/'lighter'. Separately, if today was a scheduled rest day, you may note that no structured training happened, but that is a statement about TRAINING, not about steps — never use the rest day to describe substantial or baseline-or-above steps as light, low, or lighter. Empty string if no data.",
   "plan": "ONE sentence grading the day against what was asked of it — this morning's plan AND any commitments the user made today (see the commitments line). The honest ledger, not a lecture: credit what they kept (session done, commitments honored) plainly; name what slipped without guilt and without re-issuing the instruction — the day is over. On a rest day, there was no session to grade — do not treat the rest itself as a miss, and do not describe steps/movement as a hard workout when no session was logged. Prefer concrete evidence (planned session done/not, commitments kept/open, steps vs norm, today's check-in and what the user told you about their day). Empty string only if there's genuinely nothing to grade.",
   "tomorrow": "ONE sentence: the bedtime/wind-down lever for tonight, grounded in the sleep-balance and autonomic-tone lines above, recent sleep, and tomorrow's ACTUAL requirements. If tomorrow's first commitment is early, make the bedtime push concrete and specific to that (e.g. 'a 7:30 start tomorrow — get down by 10:30'), not generic. If tomorrow is a day off, you may say so factually, but never use it as a reason the wind-down can be looser — a free day is not evidence reduced sleep is harmless. If the user has genuinely late plans of their own tonight (see 'what the user told you about today'), you may acknowledge that tradeoff honestly without endorsing it. Do not cite a recovery score.",
-  "habits": "ONE short nudge listing the still-open evening habits, or empty string if none.",
-  "reflection": "ONE sentence — the presence beat that closes the day, the mindfulness counterpart to the body read above. If recent gratitude notes are present, gently echo their theme in your own words (never quote verbatim, never list them like a report) so the reflection lands as something a person who was listening would say. If none are present, warmly invite one line of gratitude before bed. Keep it human and unforced; empty string only if anything here would feel hollow."
+  "habits": "ONE short line naming the still-open habits worth doing tonight, framed as optional/restorative ('if it helps'), never as tasks owed or 'quick wins'. Empty string if none.",
+  "letGo": "ONE short line explicitly releasing the still-open habits that have missed their window or would compete with winding down — a deliberate, fine choice, not a miss or something to catch up on tonight. Empty string if none.",
+  "reflection": "ONE sentence — the presence beat, ONLY when a recent gratitude note is actually given above: gently echo its theme in your own words (never quote verbatim, never list them like a report). If no gratitude notes are given, this MUST be an empty string — never invent a generic 'name one thing you're grateful for' prompt; an unearned reflection reads as another obligation, not presence."
 }`;
 }
 
@@ -302,7 +340,7 @@ function validate(parsed) {
   if (!parsed || typeof parsed !== 'object') return null;
   const s = (k) => (typeof parsed[k] === 'string' ? parsed[k].trim() : '');
   if (!s('headline') || !s('readiness')) return null; // the two load-bearing fields
-  return { headline: s('headline'), readiness: s('readiness'), today: s('today'), plan: s('plan'), tomorrow: s('tomorrow'), habits: s('habits'), reflection: s('reflection') };
+  return { headline: s('headline'), readiness: s('readiness'), today: s('today'), plan: s('plan'), tomorrow: s('tomorrow'), habits: s('habits'), letGo: s('letGo'), reflection: s('reflection') };
 }
 
 async function composeEveningBrief(signals) {

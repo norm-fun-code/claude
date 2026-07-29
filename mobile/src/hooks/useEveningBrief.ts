@@ -12,6 +12,7 @@ export interface EveningBrief {
   plan?: string;
   tomorrow: string;
   habits: string;
+  letGo?: string;
   reflection?: string;
   signals: {
     hrv: number | null;
@@ -22,6 +23,7 @@ export interface EveningBrief {
     stepsBaseline: number | null;
     activeEnergy: number | null;
     openHabits: string[];
+    letGoHabits?: string[];
   };
   day: string;
   builtAt?: string;

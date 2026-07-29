@@ -200,8 +200,51 @@ function eveningHabitsToTrack(isRestDay, isSick = false) {
   return EVENING_HABITS.filter((h) => !skip.has(h.metric));
 }
 
-/** Which evening-coded habits are still unlogged today. */
-async function openEveningHabits({ tz = process.env.TZ || 'America/New_York', isRestDay = false, isSick = false } = {}) {
+// Evening-brief redesign: a genuine bedtime/wind-down cutoff concept — an
+// explicit, testable time check rather than an assumption baked silently
+// into habit classification. The evening brief's own schedule (9:30pm,
+// see scheduler.js) always runs past this, but a manually-triggered rebuild
+// earlier in the evening should reason about "still worth doing tonight"
+// differently than the standard run.
+const WINDDOWN_CUTOFF_MINUTES = 21 * 60; // 9:00pm local
+
+function minutesSinceMidnightLocal(date, tz) {
+  const local = date.toLocaleTimeString('en-US', { timeZone: tz, hour12: false });
+  const [h, m] = local.split(':').map(Number);
+  return h * 60 + (m || 0);
+}
+
+/** Pure: is `asOf` at or past the wind-down cutoff in `tz`? */
+function isPastWindDownCutoff(asOf = new Date(), tz = process.env.TZ || 'America/New_York') {
+  return minutesSinceMidnightLocal(asOf, tz) >= WINDDOWN_CUTOFF_MINUTES;
+}
+
+// Calm, restorative, genuinely compatible with winding down — worth a gentle
+// optional nudge even late. Everything else still open this late has either
+// missed its natural window (a meditation session meant for the afternoon)
+// or actively competes with winding down (exercise) — nagging about those at
+// night reads as pressure, not help, so they're released instead.
+const NIGHT_COMPATIBLE_HABITS = new Set(['gratitude']);
+
+/**
+ * Split still-open evening habits into what's genuinely worth doing tonight
+ * (night-compatible, or simply not yet past the wind-down cutoff) vs. what's
+ * better let go until tomorrow rather than framed as an urgent "quick win."
+ * Pure — unit-testable without a DB or a real clock.
+ */
+function classifyOpenHabits(openHabits, { pastCutoff }) {
+  const tonight = [];
+  const letGo = [];
+  for (const h of openHabits) {
+    if (NIGHT_COMPATIBLE_HABITS.has(h.metric) || !pastCutoff) tonight.push(h.label);
+    else letGo.push(h.label);
+  }
+  return { tonight, letGo };
+}
+
+/** Which evening-coded habits are still unlogged today, split into
+ *  {tonight, letGo} — see classifyOpenHabits above. */
+async function openEveningHabits({ tz = process.env.TZ || 'America/New_York', isRestDay = false, isSick = false, asOf = new Date() } = {}) {
   const { rows } = await query(
     `SELECT metric, value FROM metrics
       WHERE domain = 'habits'
@@ -209,7 +252,8 @@ async function openEveningHabits({ tz = process.env.TZ || 'America/New_York', is
     [tz]
   );
   const done = new Set(rows.filter((r) => Number(r.value) >= 0.5).map((r) => r.metric));
-  return eveningHabitsToTrack(isRestDay, isSick).filter((h) => !done.has(h.metric)).map((h) => h.label);
+  const stillOpen = eveningHabitsToTrack(isRestDay, isSick).filter((h) => !done.has(h.metric));
+  return classifyOpenHabits(stillOpen, { pastCutoff: isPastWindDownCutoff(asOf, tz) });
 }
 
 /** Today's self-reported check-in (mood/energy/focus), if logged — the evening
@@ -249,21 +293,25 @@ async function recentSleepSeries({ tz, days = 10 } = {}) {
 }
 
 /** Gather everything the evening brief composer needs. */
-async function gatherEvening({ tz, isRestDay = false, isSick = false } = {}) {
-  const [autonomic, load, openHabits, checkin, sleepSeries] = await Promise.all([
+async function gatherEvening({ tz, isRestDay = false, isSick = false, asOf = new Date() } = {}) {
+  const [autonomic, load, habitsSplit, checkin, sleepSeries] = await Promise.all([
     autonomicRead({ tz }),
     todayLoad({ tz }),
-    openEveningHabits({ tz, isRestDay, isSick }),
+    openEveningHabits({ tz, isRestDay, isSick, asOf }),
     todayCheckin({ tz }),
     recentSleepSeries({ tz }),
   ]);
   const { sleepBalance7 } = require('./recovery');
   const sleepBalance = sleepBalance7(sleepSeries.sleepHours, sleepSeries.sleepNeed);
-  return { autonomic, load, openHabits, checkin, sleepBalance };
+  // openHabits = genuinely worth doing tonight (calm/restorative, or simply
+  // not yet past the wind-down cutoff); letGoHabits = better released than
+  // nagged about this late — see classifyOpenHabits's doc comment.
+  return { autonomic, load, openHabits: habitsSplit.tonight, letGoHabits: habitsSplit.letGo, checkin, sleepBalance };
 }
 
 module.exports = {
   autonomicRead, todayLoad, todayCheckin, openEveningHabits, eveningHabitsToTrack,
+  isPastWindDownCutoff, classifyOpenHabits,
   gatherEvening, dayWindow, detectDeviceDataGap, isSickDay, recentSleepSeries,
   // Exported for direct, date-parameterized regression testing — todayLoad()
   // itself is hard-wired to literal wall-clock "today" (dayWindow() reads

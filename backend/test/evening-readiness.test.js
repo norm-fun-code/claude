@@ -1,6 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { eveningHabitsToTrack, detectDeviceDataGap, isSickDay } = require('../src/intelligence/evening-readiness');
+const {
+  eveningHabitsToTrack, detectDeviceDataGap, isSickDay,
+  isPastWindDownCutoff, classifyOpenHabits,
+} = require('../src/intelligence/evening-readiness');
 
 test('non-rest day tracks all evening habits, including Exercise', () => {
   const habits = eveningHabitsToTrack(false).map((h) => h.metric);
@@ -93,4 +96,56 @@ test('detectDeviceDataGap stays quiet on a genuinely normal day', () => {
     isRestDay: false,
   });
   assert.equal(flag, null);
+});
+
+// ── Evening brief redesign: wind-down cutoff + TONIGHT vs LET GO split ─────
+
+test('isPastWindDownCutoff: true at/after 9:00pm local, false before it', () => {
+  assert.equal(isPastWindDownCutoff(new Date('2026-07-29T21:00:00-04:00'), 'America/New_York'), true);
+  assert.equal(isPastWindDownCutoff(new Date('2026-07-29T23:30:00-04:00'), 'America/New_York'), true);
+  assert.equal(isPastWindDownCutoff(new Date('2026-07-29T20:59:00-04:00'), 'America/New_York'), false);
+  assert.equal(isPastWindDownCutoff(new Date('2026-07-29T14:00:00-04:00'), 'America/New_York'), false);
+});
+
+test('required: a missed afternoon meditation late at night is released to LET GO, not framed as a quick win', () => {
+  const openHabits = [{ metric: 'afternoon_tm', label: 'Afternoon TM' }];
+  const { tonight, letGo } = classifyOpenHabits(openHabits, { pastCutoff: true });
+  assert.deepEqual(tonight, []);
+  assert.deepEqual(letGo, ['Afternoon TM']);
+});
+
+test('required: exercise past the wind-down cutoff is released to LET GO — it competes with winding down, never an urgent quick win', () => {
+  const openHabits = [{ metric: 'exercise', label: 'Exercise' }];
+  const { tonight, letGo } = classifyOpenHabits(openHabits, { pastCutoff: true });
+  assert.deepEqual(tonight, []);
+  assert.deepEqual(letGo, ['Exercise']);
+});
+
+test('gratitude stays genuinely worth doing tonight even past the wind-down cutoff — calm and restorative, not competing with sleep', () => {
+  const openHabits = [{ metric: 'gratitude', label: 'Gratitude journal' }];
+  const { tonight, letGo } = classifyOpenHabits(openHabits, { pastCutoff: true });
+  assert.deepEqual(tonight, ['Gratitude journal']);
+  assert.deepEqual(letGo, []);
+});
+
+test('before the wind-down cutoff, all still-open habits are genuinely reachable tonight — none released yet', () => {
+  const openHabits = [
+    { metric: 'afternoon_tm', label: 'Afternoon TM' },
+    { metric: 'exercise', label: 'Exercise' },
+    { metric: 'gratitude', label: 'Gratitude journal' },
+  ];
+  const { tonight, letGo } = classifyOpenHabits(openHabits, { pastCutoff: false });
+  assert.deepEqual(tonight.sort(), ['Afternoon TM', 'Exercise', 'Gratitude journal'].sort());
+  assert.deepEqual(letGo, []);
+});
+
+test('a mixed still-open list splits correctly: gratitude stays TONIGHT, the rest move to LET GO past cutoff', () => {
+  const openHabits = [
+    { metric: 'gratitude', label: 'Gratitude journal' },
+    { metric: 'afternoon_tm', label: 'Afternoon TM' },
+    { metric: 'exercise', label: 'Exercise' },
+  ];
+  const { tonight, letGo } = classifyOpenHabits(openHabits, { pastCutoff: true });
+  assert.deepEqual(tonight, ['Gratitude journal']);
+  assert.deepEqual(letGo.sort(), ['Afternoon TM', 'Exercise'].sort());
 });

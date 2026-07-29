@@ -45,6 +45,48 @@ test('open evening habits are listed; none → empty string', () => {
   assert.equal(none.habits, '');
 });
 
+// ── Required regression: evidence language must respect claim confidence —
+// a "mild" tone is ONE signal a touch off baseline, not a confirmed problem,
+// and must never read as more certain than that (no "pays off by morning",
+// no declarative "load"/"stress" claim). HRV essentially at baseline plus a
+// modest ~3bpm RHR elevation is exactly the combination the point-threshold
+// classifier (evening-readiness.js's autonomicRead) scores as 'mild', not
+// 'elevated' — this test proves the fallback prose for that exact tone is
+// hedged, not overconfident. ─────────────────────────────────────────────
+test('required: HRV at baseline + modestly elevated RHR (mild tone) reads hedged, never overconfident', () => {
+  const c = composeFallback(sig({ tone: 'mild', hrv: 42, hrvBaseline: 42, rhr: 58, rhrBaseline: 55 }));
+  assert.match(c.readiness, /touch outside your norm|reasonable/i);
+  assert.doesNotMatch(c.readiness, /pays off by morning/i);
+  assert.doesNotMatch(c.readiness, /\bload\b|\bstress\b/i);
+});
+
+test('required: mild-tone headline names ONE signal off baseline, not a confirmed problem', () => {
+  const c = composeFallback(sig({ tone: 'mild', hrv: 42, hrvBaseline: 42, rhr: 58, rhrBaseline: 55 }));
+  assert.match(c.headline, /touch off baseline/i);
+  assert.doesNotMatch(c.headline, /wind down for real/i);
+});
+
+test('required: elevated tone (genuinely confirmed combined read) is allowed firmer, but still hedged, language', () => {
+  const c = composeFallback(sig({ tone: 'elevated', hrv: 30, hrvBaseline: 42, rhr: 63, rhrBaseline: 55 }));
+  assert.match(c.readiness, /may help/i);
+  assert.doesNotMatch(c.readiness, /pays off by morning|single biggest lever/i);
+});
+
+// ── Required regression: still-open habits split into TONIGHT vs LET GO —
+// see evening-readiness.js's classifyOpenHabits/isPastWindDownCutoff. This
+// module only renders whatever split it's given; the classification itself
+// is covered in evening-readiness.test.js. ──────────────────────────────
+test('required: letGo habits render as a deliberate release, never as a missed quick win', () => {
+  const c = composeFallback({ ...sig({ tone: 'settled' }, {}, []), letGoHabits: ['Afternoon TM', 'Exercise'] });
+  assert.match(c.letGo, /let go of afternoon tm and exercise/i);
+  assert.doesNotMatch(c.letGo, /quick win|hurry|catch up/i);
+});
+
+test('required: no letGo habits → empty string, no phantom "let go" beat', () => {
+  const c = composeFallback(sig({ tone: 'settled' }, {}, []));
+  assert.equal(c.letGo, '');
+});
+
 test('signals are passed through for the card chips', () => {
   const c = composeFallback(sig({ tone: 'mild', hrv: 38, hrvBaseline: 42, rhr: 58, rhrBaseline: 55 }, { steps: 12000 }));
   assert.equal(c.signals.hrv, 38);
@@ -52,11 +94,11 @@ test('signals are passed through for the card chips', () => {
   assert.equal(c.signals.steps, 12000);
 });
 
-test('reflection: recent gratitude → echo, none → invite', () => {
+test('reflection: recent gratitude → echo, none → omitted entirely (never an invented prompt)', () => {
   const withG = composeFallback({ ...sig({ tone: 'settled' }), gratitude: [{ log_date: '2026-07-01', text: 'a quiet morning' }] });
   assert.match(withG.reflection, /grateful for/i);
   const none = composeFallback(sig({ tone: 'settled' }));
-  assert.match(none.reflection, /grateful/i);
+  assert.equal(none.reflection, '');
   assert.notEqual(withG.reflection, none.reflection);
 });
 

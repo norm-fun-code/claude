@@ -21,13 +21,15 @@ const TONE_BAND: Record<EveningTone, keyof typeof bandGradient> = {
 };
 
 // Same tinted mini-tile beat language as the morning BriefCard, so the two
-// hero briefs speak one design system on the same Today screen.
-const BLOCKS: { key: keyof Pick<EveningBrief, 'today' | 'plan' | 'tomorrow' | 'habits'>; label: string; emoji: string; tint: string }[] = [
+// hero briefs speak one design system on the same Today screen. TODAY/PLAN
+// are the "how did today land" half of the brief; TONIGHT (tomorrow's
+// bedtime lever + any genuinely night-compatible habit) and LET GO (habits
+// deliberately released, never framed as missed quick wins) render as their
+// own sections below, not as more rows in this list — see the render body.
+const BLOCKS: { key: keyof Pick<EveningBrief, 'today' | 'plan'>; label: string; emoji: string; tint: string }[] = [
   { key: 'today', label: 'TODAY', emoji: '👣', tint: '#3B9EFF' },
   // Day-close ledger — this morning's plan graded against what actually happened.
   { key: 'plan', label: 'PLAN VS ACTUAL', emoji: '🎯', tint: '#5AE89A' },
-  { key: 'tomorrow', label: 'SET UP TOMORROW', emoji: '🌙', tint: '#A78BFA' },
-  { key: 'habits', label: 'STILL OPEN', emoji: '✅', tint: '#FFC44D' },
 ];
 
 function Chip({ label, value }: { label: string; value: string }) {
@@ -49,10 +51,19 @@ function EveningBriefCard({ brief }: Props) {
   const [g1, g2] = bandGradient[band];
   const s = brief.signals || ({} as EveningBrief['signals']);
 
+  // Steps are NOT chipped here — the "today" block below already states the
+  // exact count and how it compares to baseline in prose; repeating it as a
+  // chip is the steps-shown-twice bug this redesign fixes. Chips stay to the
+  // body-tone signals (HRV/RHR) the prose reads FROM but doesn't restate as
+  // raw numbers.
   const chips: { label: string; value: string }[] = [];
   if (s.hrv != null) chips.push({ label: s.hrvBaseline != null ? `HRV · norm ${Math.round(s.hrvBaseline)}` : 'HRV', value: `${Math.round(s.hrv)}ms` });
   if (s.rhr != null) chips.push({ label: s.rhrBaseline != null ? `RHR · norm ${Math.round(s.rhrBaseline)}` : 'RHR', value: `${Math.round(s.rhr)}` });
-  if (s.steps != null) chips.push({ label: 'steps', value: Math.round(s.steps).toLocaleString() });
+
+  const tonightText = (brief.tomorrow || '').trim();
+  const stillWorthText = (brief.habits || '').trim();
+  const letGoText = (brief.letGo || '').trim();
+  const hasTonight = !!(tonightText || stillWorthText);
 
   return (
     <View style={[styles.card, glow(g1, 0.2, 24)]}>
@@ -110,8 +121,43 @@ function EveningBriefCard({ brief }: Props) {
         </View>
       ))}
 
+      {/* TONIGHT — the bedtime lever (brief.tomorrow) plus any genuinely
+          night-compatible still-open habit (brief.habits — evening-readiness.js
+          already filtered this to calm/restorative ones only), merged into one
+          "what's worth doing before bed" beat rather than two separate rows. */}
+      {hasTonight ? (
+        <View style={styles.beat}>
+          <View style={[styles.beatTile, { backgroundColor: withAlpha('#A78BFA', 0.16), borderColor: withAlpha('#A78BFA', 0.28) }]}>
+            <Text style={styles.beatEmoji}>🌙</Text>
+          </View>
+          <View style={styles.beatBody}>
+            <Text style={[styles.blockLabel, { color: '#A78BFA' }]}>TONIGHT</Text>
+            {!!tonightText && <Text style={styles.blockText}>{tonightText}</Text>}
+            {!!stillWorthText && <Text style={[styles.blockText, tonightText ? styles.blockTextStacked : null]}>{stillWorthText}</Text>}
+          </View>
+        </View>
+      ) : null}
+
+      {/* LET GO — habits that missed their window or would compete with winding
+          down tonight, framed as a deliberate release rather than an unfinished
+          "quick win" — calmer, muted styling on purpose (not another to-do). */}
+      {!!letGoText && (
+        <View style={styles.beat}>
+          <View style={[styles.beatTile, { backgroundColor: withAlpha('#8FA98C', 0.14), borderColor: withAlpha('#8FA98C', 0.24) }]}>
+            <Text style={styles.beatEmoji}>🍃</Text>
+          </View>
+          <View style={styles.beatBody}>
+            <Text style={[styles.blockLabel, { color: '#8FA98C' }]}>LET GO</Text>
+            <Text style={styles.blockText}>{letGoText}</Text>
+          </View>
+        </View>
+      )}
+
       {/* Presence beat — the mindfulness counterpart to the body read. Set apart
-          from the somatic blocks with its own quiet styling. */}
+          from the somatic blocks with its own quiet styling. Omitted entirely
+          (not just hidden) when there's no genuine gratitude note to echo — see
+          evening-brief.js's composeFallback/validate: an invented "name one
+          thing you're grateful for" prompt is not rendered here on purpose. */}
       {(brief.reflection || '').trim() ? (
         <View style={styles.reflection}>
           <View style={styles.beat}>
@@ -178,6 +224,7 @@ const styles = StyleSheet.create({
   beatBody: { flex: 1 },
   blockLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.0, color: 'rgba(255,255,255,0.55)', marginBottom: 4 },
   blockText: { ...typography.body, color: '#fff', fontSize: 14, lineHeight: 22 },
+  blockTextStacked: { marginTop: 4, color: 'rgba(255,255,255,0.72)' },
   reflection: {
     marginTop: spacing.xs,
     paddingTop: spacing.md,
