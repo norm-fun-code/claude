@@ -45,6 +45,20 @@ const { computeCalendarLoad } = require('../intelligence/calendar-load');
  *  build's single BrainSnapshot, the cache-hit refresh) can reuse that ONE
  *  read instead of calling getEffectiveWorkout a second time just to get this
  *  shape. */
+// briefings.period_start is TIMESTAMPTZ (migrations/001_init.sql), so the pg
+// driver hands back a JS Date — serializing it raw via res.json() produces a
+// full ISO timestamp ('2026-07-06T00:00:00.000Z'), not the plain YYYY-MM-DD
+// weekStart string every OTHER weekStart producer in this codebase uses
+// (store/intentions.js's weekStart(), intelligence/review.js's periodStart).
+// Every route that surfaces a weekly review's week identity must agree on
+// this exact format — openWeeklyReview's mobile cache-key matching and the
+// weekly-review route's own regression tests both compare it as a plain date.
+function dateOnly(d) {
+  if (d == null) return null;
+  const iso = d instanceof Date ? d.toISOString() : new Date(d).toISOString();
+  return iso.slice(0, 10);
+}
+
 function workoutPromptShape(eff) {
   const autoSwapNote = eff.source === 'auto_downgrade'
     ? `NOTE: today's session was AUTOMATICALLY swapped from the scheduled ${eff.scheduledLabel} to ${eff.label} because last night's recovery came in ${eff.recoveryBand}. This already happened — it is not a suggestion — and it was the correct, protective call. If training comes up, acknowledge the swap plainly (e.g. "already eased off to ${eff.label} given ${eff.recoveryBand} recovery — right call") and do NOT tell the user to scale back, modify, or go easier on the ORIGINAL ${eff.scheduledLabel} session, since that is no longer today's plan.`
@@ -848,7 +862,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
           // id/weekStart: stable identity for the canonical openWeeklyReview
           // action (mobile) — the SAME row this payload's narrative came
           // from, never re-derived from title text or array position.
-          weeklyReview = { ...contentObj, generatedAt: wr.generated_at, id: wr.id, weekStart: wr.period_start };
+          weeklyReview = { ...contentObj, generatedAt: wr.generated_at, id: wr.id, weekStart: dateOnly(wr.period_start) };
         }
       }
     } catch (err) {
@@ -2407,7 +2421,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
       // 'Weekly review' is the exact fallback headline when extractJson fails —
       // a real review always has a specific punchy headline. Suppress the broken record.
       if (contentObj?.headline !== 'Weekly review') {
-        weeklyReview = { ...contentObj, generatedAt: wr.generated_at, id: wr.id, weekStart: wr.period_start };
+        weeklyReview = { ...contentObj, generatedAt: wr.generated_at, id: wr.id, weekStart: dateOnly(wr.period_start) };
       }
     }
   } catch (err) {
@@ -3557,7 +3571,7 @@ router.get('/briefing/weekly-review', asyncHandler(async (req, res) => {
   if (!row || row.kind !== 'weekly') {
     return res.status(404).json({ error: 'not_found', id: id ?? null, weekStart: weekStart ?? null });
   }
-  res.json({ ...row.content, generatedAt: row.generated_at, id: row.id, weekStart: row.period_start });
+  res.json({ ...row.content, generatedAt: row.generated_at, id: row.id, weekStart: dateOnly(row.period_start) });
 }));
 
 router.get('/briefing/by-snapshot/:snapshotId', asyncHandler(async (req, res) => {
@@ -3610,4 +3624,5 @@ module.exports = {
   // already-persisted brief.
   primeNextBuildCycle,
   workoutPromptShape, TRACKED_CACHE_FIELDS, REGISTRY_TO_BRIEF_FIELD,
+  dateOnly,
 };

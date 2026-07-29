@@ -7,7 +7,7 @@
 // field. Both helpers are pure — tested here directly.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { stampFields, recoveryMateriallyChanged, FULL_BUILD_FIELDS } = require('../src/routes/briefing');
+const { stampFields, recoveryMateriallyChanged, FULL_BUILD_FIELDS, dateOnly } = require('../src/routes/briefing');
 
 // ── stampFields: scoped rebuild only touches its own fields ──────────────────
 test('a full build stamps every field at one snapshot time', () => {
@@ -70,4 +70,23 @@ test('a proxy<->real transition is material (it changes how the forecast tempers
 test('identical recovery is not material', () => {
   const r = { score: 60, band: 'yellow', proxy: false };
   assert.equal(recoveryMateriallyChanged(r, { ...r }), false);
+});
+
+// ── dateOnly: weekly-review CI fix — briefings.period_start is TIMESTAMPTZ,
+// so pg hands back a JS Date; serializing it raw produces a full ISO
+// timestamp instead of the plain YYYY-MM-DD every other weekStart producer
+// (store/intentions.js's weekStart()) uses. Required regression for the
+// exact CI failure: expected '2026-07-06', actual '2026-07-06T00:00:00.000Z'.
+test('required: dateOnly formats a Date (as returned by pg for a TIMESTAMPTZ column) as plain YYYY-MM-DD', () => {
+  assert.equal(dateOnly(new Date('2026-07-06T00:00:00.000Z')), '2026-07-06');
+});
+
+test('dateOnly accepts an ISO string or anything Date-parseable, not just a Date instance', () => {
+  assert.equal(dateOnly('2026-07-06T00:00:00.000Z'), '2026-07-06');
+  assert.equal(dateOnly('2026-07-06'), '2026-07-06');
+});
+
+test('dateOnly is null-safe — a review with no period_start must not throw', () => {
+  assert.equal(dateOnly(null), null);
+  assert.equal(dateOnly(undefined), null);
 });
