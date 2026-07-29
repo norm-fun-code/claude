@@ -260,3 +260,75 @@ test('required: identity between Wealth (wealth-landing), BrainSnapshot, and Ask
   assert.equal(facts.spendingPaceVsTypical.dollars, direct.vsMedian.dollars, 'the Ask/Chief-Brief claim-validation fact must be the identical value too');
   assert.equal(facts.spendingPaceVsTypical.label, direct.paceLabel);
 });
+
+// Product-audit hardening pass, item 4: computeDiscretionaryMatchedPace runs
+// up to 12 sequential historical aggregate queries — previously BOTH
+// buildBrainSnapshot AND buildWealthLandingProjection independently invoked
+// it for the SAME logical "build a fresh morning brief" request. These tests
+// instrument the actual exported function (monkey-patched on the wealth-pace
+// module, which wealth-landing.js re-requires fresh inside its own function
+// body every call, so the patched stub is picked up) to prove the real
+// production call sites now resolve it exactly once.
+test('required: buildWealthLandingProjection does NOT recompute matched-pace when a caller already resolved it (spendingPace param)', async (t) => {
+  const wealthPaceMod = require('../../src/services/wealth-pace');
+  const original = wealthPaceMod.computeDiscretionaryMatchedPace;
+  let calls = 0;
+  wealthPaceMod.computeDiscretionaryMatchedPace = async (...args) => { calls += 1; return original(...args); };
+  t.after(() => { wealthPaceMod.computeDiscretionaryMatchedPace = original; });
+
+  const already = await original({ asOf: ASOF, tz: TZ });
+  calls = 0; // reset — only count calls made BY buildWealthLandingProjection below
+
+  const landing = await buildWealthLandingProjection({ asOf: ASOF, tz: TZ, spendingPace: already });
+  assert.equal(calls, 0, 'a provided spendingPace must be reused as-is, never recomputed');
+  assert.equal(landing.numbers.mtdDiscretionary.comparison.paceLabel, already.paceLabel);
+});
+
+test('required: buildWealthLandingProjection DOES compute matched-pace itself when no caller has resolved it yet (backward compatible)', async (t) => {
+  const wealthPaceMod = require('../../src/services/wealth-pace');
+  const original = wealthPaceMod.computeDiscretionaryMatchedPace;
+  let calls = 0;
+  wealthPaceMod.computeDiscretionaryMatchedPace = async (...args) => { calls += 1; return original(...args); };
+  t.after(() => { wealthPaceMod.computeDiscretionaryMatchedPace = original; });
+
+  await buildWealthLandingProjection({ asOf: ASOF, tz: TZ });
+  assert.equal(calls, 1, 'with no spendingPace provided, the projection must still compute its own (existing callers are unaffected)');
+});
+
+test('required: one logical "build a fresh morning brief" (BrainSnapshot + Wealth landing reusing its value) resolves matched-pace exactly once', async (t) => {
+  const wealthPaceMod = require('../../src/services/wealth-pace');
+  const original = wealthPaceMod.computeDiscretionaryMatchedPace;
+  let calls = 0;
+  wealthPaceMod.computeDiscretionaryMatchedPace = async (...args) => { calls += 1; return original(...args); };
+  t.after(() => { wealthPaceMod.computeDiscretionaryMatchedPace = original; });
+
+  const snapshot = await buildBrainSnapshot({ asOf: ASOF, tz: TZ, include: { calendar: false } });
+  assert.equal(calls, 1, 'sanity: BrainSnapshot itself resolves it exactly once');
+
+  // Mirrors routes/briefing.js's fresh-build wiring: reuse BrainSnapshot's
+  // already-resolved value instead of letting the projection recompute it.
+  await buildWealthLandingProjection({ asOf: ASOF, tz: TZ, spendingPace: snapshot.wealth.value.spendingPace });
+  assert.equal(calls, 1, 'the full build must not trigger a SECOND invocation for the same logical request');
+});
+
+test('required: ask.js resolves matched-pace exactly once per financial question (wealthContext + claim-validation facts share one Promise)', async (t) => {
+  const wealthPaceMod = require('../../src/services/wealth-pace');
+  const original = wealthPaceMod.computeDiscretionaryMatchedPace;
+  let calls = 0;
+  wealthPaceMod.computeDiscretionaryMatchedPace = async (...args) => { calls += 1; return original(...args); };
+  t.after(() => { wealthPaceMod.computeDiscretionaryMatchedPace = original; });
+
+  const llm = require('../../src/llm');
+  const originalGenerateText = llm.generateText;
+  const originalEmbed = llm.embed;
+  llm.embed = async () => [null];
+  llm.generateText = async () => 'Your discretionary spending looks about typical this month.';
+  try {
+    const { ask } = require('../../src/chat/ask');
+    await ask('How is my spending pace this month compared to usual?', { history: [] });
+  } finally {
+    llm.generateText = originalGenerateText;
+    llm.embed = originalEmbed;
+  }
+  assert.equal(calls, 1, 'a single financial Ask question must resolve matched-pace exactly once, not once for the prompt and once for claim validation');
+});

@@ -5,7 +5,7 @@
 // (analyze.js) feeds it the same per-metric series it already loads.
 const stats = require('./stats');
 const { canonicalBand } = require('./recoveryThresholds');
-const { recoveryPresentation } = require('./recoveryPresentation');
+const { recoveryPresentation, deriveRiskFlags } = require('./recoveryPresentation');
 
 // HRV and resting HR are autonomic recovery signals read overnight from
 // Eight Sleep — source-locked here (and everywhere else that reads them for
@@ -506,12 +506,13 @@ function computeHealthComposites(seriesByKey, opts = {}) {
   const rec = recoveryScore(seriesByKey, opts);
   if (rec) {
     const { band } = recoveryBand(rec.score);
-    const riskFlags = [];
-    if (load && load.band === 'high') riskFlags.push('load_spike');
     const debtCheck = sleepDebt(sleep, opts);
-    if (debtCheck && debtCheck.debtHours >= 5) riskFlags.push('sleep_debt');
-    if (rec.parts.hrv != null && rec.parts.hrv < 30) riskFlags.push('hrv_depressed');
-    if (rec.parts.restingHr != null && rec.parts.restingHr < 30) riskFlags.push('rhr_elevated');
+    const riskFlags = deriveRiskFlags({
+      sleepDebtHours: debtCheck?.debtHours ?? null,
+      loadBand: load?.band ?? null,
+      hrvSubScore: rec.parts.hrv,
+      restingHrSubScore: rec.parts.restingHr,
+    });
     const presentation = recoveryPresentation(rec.score, { band, riskFlags });
     findings.push({
       type: 'recovery',
@@ -825,8 +826,24 @@ async function liveRecoveryUncached() {
 
   const rec = recoveryScore(seriesByKey);
   if (!rec) return null;
-  const { band, guidance } = recoveryBand(rec.score);
-  const presentation = recoveryPresentation(rec.score, { band });
+  const { band } = recoveryBand(rec.score);
+  // Risk flags on the LIVE path — previously this computed none at all, the
+  // one gap in the "same subset everywhere" contract that mattered most:
+  // this is the exact function the Health card, Ask (chat/ask.js's
+  // recoveryContext), and realtime voice (get_current_recovery) all read
+  // through, so a near-green score's one legitimate caution mechanism
+  // (recoveryPresentation.js's riskFlags) never had a chance to fire for any
+  // of those surfaces before now. load_spike is intentionally NOT computed
+  // here — ACWR/training-load banding needs data this fast, live-only path
+  // deliberately doesn't fetch (see this function's own doc comment); it IS
+  // covered by computeHealthComposites (the nightly findings path) above.
+  const debtCheck = sleepDebt(seriesByKey['health:sleep_hours']);
+  const riskFlags = deriveRiskFlags({
+    sleepDebtHours: debtCheck?.debtHours ?? null,
+    hrvSubScore: rec.parts.hrv,
+    restingHrSubScore: rec.parts.restingHr,
+  });
+  const presentation = recoveryPresentation(rec.score, { band, riskFlags });
 
   // If the user trained meaningfully in the last 2 days, note that suppressed
   // recovery is expected — avoids alarming a healthy athlete. Counts both logged
@@ -868,7 +885,13 @@ async function liveRecoveryUncached() {
     }
   } catch { /* non-critical */ }
 
-  return { score: rec.score, band, parts: rec.parts, detail: guidance + workoutNote, rawHrv, rawRhr, presentation };
+  // `detail` now reads the CENTRALIZED presentation guidance (with the
+  // riskFlags just computed above), not the plain 3-band recoveryBand()
+  // text — this is the field Ask (chat/ask.js's recoveryContext) and voice
+  // (chat/realtimeTools.js's getCurrentRecovery) actually surface, so a
+  // near-green score now gets the same "no automatic need to scale back"
+  // framing there that the Health card already showed via `presentation`.
+  return { score: rec.score, band, parts: rec.parts, detail: presentation.guidance + workoutNote, rawHrv, rawRhr, presentation };
 }
 
 // liveRecovery() is called from several independent request paths in one

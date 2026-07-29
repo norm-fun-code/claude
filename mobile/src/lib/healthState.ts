@@ -101,7 +101,8 @@ export function resolveHealthState(
   let explanation: string;
   if (tier === 'ready') {
     stateLabel = 'Ready';
-    explanation = `Recovery is green (${recovery.score}) — ${workoutLabel} as planned.`;
+    explanation = recovery.presentation?.guidance
+      ?? `Recovery is green (${recovery.score}) — ${workoutLabel} as planned.`;
   } else if (tier === 'solid_near_green') {
     // A near-green score (e.g. 59) — canonically still 'yellow', but never
     // presented as under-recovered or told to reduce intensity on its own.
@@ -110,7 +111,13 @@ export function resolveHealthState(
       ?? `Solid readiness (${recovery.score}) — train as planned if you feel good; no automatic need to scale back.`;
   } else if (tier === 'moderate') {
     stateLabel = 'Proceed with care';
-    explanation = `Recovery is moderate (${recovery.score}) — dial back intensity today.`;
+    // Was a hardcoded "dial back intensity today" here — contradicted the
+    // backend's own moderate guidance ("Push if you feel good, but watch
+    // your exertion"). Now prefers the SAME centralized field the
+    // solid_near_green branch above already reads, so Health never
+    // improvises language the server-side presentation contract doesn't say.
+    explanation = recovery.presentation?.guidance
+      ?? `Recovery is moderate (${recovery.score}) — watch your exertion today.`;
   } else if (tier === 'low') {
     stateLabel = 'Recover';
     explanation = effectiveWorkout?.source === 'auto_downgrade'

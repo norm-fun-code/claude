@@ -144,19 +144,69 @@ test('required 8: existing recovery calculations and historical scores remain un
   assert.equal(typeof recoveryHistory, 'function');
 });
 
-test('required 8 (part): predictCapacity\'s grade/band/headline/prescription are unchanged; presentation is additive only', () => {
+test('required 8 (part): predictCapacity\'s grade/band are unchanged by the near-green headline/prescription fix; presentation is additive', () => {
   const r58 = predictCapacity({ recoveryScore: 58 });
-  assert.equal(r58.grade, 'B');
+  assert.equal(r58.grade, 'B', 'canonical internal grade must stay B — only the display copy changes for near-green');
   assert.equal(r58.band, 'yellow');
-  assert.equal(r58.headline, 'Hit your essentials');
   assert.ok(r58.presentation);
   assert.equal(r58.presentation.tier, 'solid_near_green');
 
   const r80 = predictCapacity({ recoveryScore: 80 });
   assert.equal(r80.grade, 'A');
+  assert.equal(r80.headline, 'Full send', 'A-day headline is untouched by the near-green fix');
   assert.equal(r80.presentation.tier, 'ready');
 
   const r30 = predictCapacity({ recoveryScore: 30 });
   assert.equal(r30.grade, 'C');
+  assert.equal(r30.headline, 'Keep the streak alive', 'C-day headline is untouched by the near-green fix');
   assert.equal(r30.presentation.tier, 'low');
+});
+
+// Product-audit hardening pass — a near-green B-day (58, solid_near_green
+// tier) must no longer retain the genuinely-moderate B-day's "Hit your
+// essentials" restrictive language. This directly supersedes the assertion
+// this test file used to make (headline unchanged for 58) — that WAS the bug.
+test('required: a near-green B-day (58) gets the canonical near-green headline/prescription, not "Hit your essentials"', () => {
+  const nearGreen = predictCapacity({ recoveryScore: 58 });
+  assert.equal(nearGreen.grade, 'B');
+  assert.notEqual(nearGreen.headline, 'Hit your essentials');
+  assert.match(nearGreen.headline, /near green/i);
+  assert.doesNotMatch(nearGreen.prescription, /Hit your essentials/i);
+  assert.match(nearGreen.prescription, /train roughly as planned/i);
+  assert.doesNotMatch(nearGreen.prescription, /dial back/i);
+  assert.doesNotMatch(nearGreen.prescription, /under-?recovered/i);
+
+  // A genuinely moderate B-day (48, moderate tier) keeps the existing,
+  // more measured language — this fix is scoped to near-green only.
+  const moderate = predictCapacity({ recoveryScore: 48 });
+  assert.equal(moderate.grade, 'B');
+  assert.equal(moderate.headline, 'Hit your essentials');
+  assert.match(moderate.prescription, /Hit your essentials/i);
+});
+
+test('required: a near-green B-day with a genuine independent risk (training load spike) still gets caution appended', () => {
+  const withRisk = predictCapacity({ recoveryScore: 58, acwrBand: 'high' });
+  assert.match(withRisk.headline, /near green/i);
+  assert.match(withRisk.prescription, /Zone 2/i, 'the load-spike caution line must still appear — a real risk signal is not suppressed');
+});
+
+test('required: Health (liveRecovery-shaped detail) and Today (predictCapacity) render the SAME near-green guidance for the same score, not contradictory ones', () => {
+  const { deriveRiskFlags } = require('../src/intelligence/recoveryPresentation');
+  const score = 59;
+  const band = canonicalBand(score);
+  const riskFlags = deriveRiskFlags({});
+  const healthPresentation = recoveryPresentation(score, { band, riskFlags });
+  const todayCapacity = predictCapacity({ recoveryScore: score });
+
+  // Today's prescription is now sourced from the SAME near-green copy
+  // Health's presentation.guidance carries — both say "no automatic need
+  // to scale back" and neither says "Hit your essentials".
+  assert.match(healthPresentation.guidance, /no automatic need to scale back/i);
+  assert.match(todayCapacity.prescription, /no automatic need to scale back/i);
+  assert.doesNotMatch(todayCapacity.prescription, /Hit your essentials/i);
+});
+
+test('required: predictCapacity now checks restingHrSubScore for risk flags — previously silently dropped relative to the nightly findings path', () => {
+  const withDepressedRhr = predictCapacity({ recoveryScore: 58, restingHrSubScore: 20 });
+  assert.ok(withDepressedRhr.presentation.riskFlags.includes('rhr_elevated'));
 });

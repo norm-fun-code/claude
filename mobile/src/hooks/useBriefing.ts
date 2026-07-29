@@ -554,6 +554,15 @@ export interface BriefingData {
   // or a carried-over cached build from a prior day (e.g. Wisdom after
   // midnight, before the next rebuild has landed) and label it honestly.
   localDate?: string;
+  // The canonical IANA timezone `localDate` above was computed in (backend
+  // routes/briefing.js's `response.timezone`, always process.env.TZ — the
+  // app owner's home-base zone, never the phone's). Push-snapshot validation
+  // (briefingMerge.ts's isValidPushSnapshot) must compare "is this still
+  // today" using THIS zone, not the phone's current physical timezone — a
+  // phone that's traveled to a different zone than home has a different
+  // local midnight, and comparing against the wrong zone can reject a
+  // genuinely current snapshot (or, in principle, accept a stale one).
+  timezone?: string;
   morningFocus?: string;
   chiefBrief?: ChiefBrief | null;
   // True when the chiefBrief above is carried over from a prior build (this
@@ -891,7 +900,13 @@ export function useBriefing(): BriefingState {
       await new Promise((resolve) => setTimeout(resolve, 1500));
     }
 
-    const todayLocalDate = new Date().toLocaleDateString('en-CA');
+    // Compare "is this still today" against the CANONICAL timezone this
+    // snapshot's own localDate was computed in (content.timezone), never the
+    // phone's raw current clock — a phone in a different timezone than the
+    // app's home-base zone (mid-flight, traveling) has a different local
+    // midnight, and the two would disagree near either zone's boundary.
+    const tzForComparison = content?.timezone || 'America/New_York';
+    const todayLocalDate = new Date().toLocaleDateString('en-CA', { timeZone: tzForComparison });
     if (!isValidPushSnapshot(content, snapshotId, todayLocalDate)) {
       pushResolvingRef.current = false;
       setLoading(false);
@@ -932,8 +947,12 @@ export function useBriefing(): BriefingState {
           // yesterday's — without this check it would render as today's
           // Chief Brief with no staleness signal for however long the
           // network fetch takes.
-          const todayLocalDate = new Date().toLocaleDateString('en-CA');
-          const dayChecked = migrateV1Cache(JSON.parse(cachedV2), todayLocalDate);
+          const parsedV2: BriefingData = JSON.parse(cachedV2);
+          // Compare against the CACHED build's own canonical timezone (the
+          // zone `localDate` on this exact cached payload was computed in),
+          // not the phone's current clock — see openFromPush above for why.
+          const todayLocalDate = new Date().toLocaleDateString('en-CA', { timeZone: parsedV2?.timezone || 'America/New_York' });
+          const dayChecked = migrateV1Cache(parsedV2, todayLocalDate);
           if (dayChecked && !cancelled) setData(dayChecked);
         } else {
           // One-time v1 -> v2 migration (Chief Brief regression fix): an
@@ -944,7 +963,7 @@ export function useBriefing(): BriefingState {
           const cachedV1Raw = await AsyncStorage.getItem(CACHE_KEY_V1);
           if (cachedV1Raw) {
             const v1: BriefingData = JSON.parse(cachedV1Raw);
-            const todayLocalDate = new Date().toLocaleDateString('en-CA');
+            const todayLocalDate = new Date().toLocaleDateString('en-CA', { timeZone: v1?.timezone || 'America/New_York' });
             const migrated = migrateV1Cache(v1, todayLocalDate);
             if (migrated && !cancelled) setData(migrated);
             AsyncStorage.removeItem(CACHE_KEY_V1).catch(() => {});

@@ -290,3 +290,47 @@ test('required 4: a stale cross-day cached envelope is neutralized (no snapshotA
   const pushed = base({ snapshotId: 'snap_today', localDate: '2026-07-28', chiefBrief: GOOD_BRIEF });
   assert.equal(isValidPushSnapshot(pushed, 'snap_today', '2026-07-28'), true);
 });
+
+// ---------------------------------------------------------------------------
+// Product-audit hardening pass, item 5: exact-snapshot day validation must
+// compare against the CANONICAL timezone the backend computed `localDate` in
+// (content.timezone, always the app's home-base TZ), never the phone's own
+// current physical timezone — a traveling phone's "today" can disagree with
+// the backend's near either zone's local midnight. useBriefing.ts's
+// openFromPush/migrateV1Cache call sites now derive `todayLocalDate` via
+// `new Date().toLocaleDateString('en-CA', { timeZone: content.timezone })`
+// instead of the phone's bare clock — these tests exercise the real Intl
+// API against a fixed instant to prove the two zones genuinely disagree at
+// this moment, then prove isValidPushSnapshot behaves correctly once given
+// the canonical-timezone-derived date instead of the phone's own.
+// ---------------------------------------------------------------------------
+
+// 04:30 UTC on July 28, 2026 — this exact instant is already "tomorrow" in
+// the app's home-base zone (America/New_York, EDT = UTC-4) but still
+// "yesterday evening" in a phone that has traveled to America/Los_Angeles
+// (PDT = UTC-7). A genuinely realistic mid-flight/travel scenario, not a
+// contrived edge case.
+const STRADDLING_INSTANT = new Date('2026-07-28T04:30:00.000Z');
+
+test('required: a phone in a different timezone than the app\'s canonical TZ disagrees on "today" right at this instant (proves the bug scenario is real)', () => {
+  const canonicalDay = STRADDLING_INSTANT.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const phoneDay = STRADDLING_INSTANT.toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+  assert.equal(canonicalDay, '2026-07-28');
+  assert.equal(phoneDay, '2026-07-27');
+  assert.notEqual(canonicalDay, phoneDay, 'sanity: the two zones must genuinely disagree at this instant for the test to mean anything');
+});
+
+test('required: comparing against the PHONE\'S OWN timezone (the old bug) wrongly rejects a genuinely current snapshot', () => {
+  // Backend built this snapshot "today" in ITS canonical zone (New York).
+  const content = base({ snapshotId: 'snap_today', localDate: '2026-07-28', timezone: 'America/New_York' } as Partial<BriefingData>);
+  const phoneLocalDate = STRADDLING_INSTANT.toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+  // The bug: validating against the phone's own current zone instead of the
+  // canonical one the snapshot was built in.
+  assert.equal(isValidPushSnapshot(content, 'snap_today', phoneLocalDate), false, 'demonstrates the bug — a genuinely current snapshot gets wrongly rejected');
+});
+
+test('required: comparing against the SNAPSHOT\'S OWN canonical timezone (the fix) correctly accepts the same genuinely current snapshot', () => {
+  const content = base({ snapshotId: 'snap_today', localDate: '2026-07-28', timezone: 'America/New_York' } as Partial<BriefingData>);
+  const canonicalLocalDate = STRADDLING_INSTANT.toLocaleDateString('en-CA', { timeZone: content.timezone || 'America/New_York' });
+  assert.equal(isValidPushSnapshot(content, 'snap_today', canonicalLocalDate), true, 'the fix — comparing against the snapshot\'s own canonical zone — accepts it correctly');
+});

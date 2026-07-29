@@ -32,6 +32,11 @@ export const VOICE_TRANSCRIBE_URL = `${API_BASE}/api/voice/transcribe`;
 // tool calls, persist transcripts, and log latency (never audio).
 export const REALTIME_SESSION_URL = `${API_BASE}/api/voice/realtime/session`;
 export const REALTIME_TOOL_URL = `${API_BASE}/api/voice/realtime/tool`;
+// Server-authoritative barge-in: fired the instant the client's own turn
+// counter advances (new accepted turn, interrupt, or confirmed barge-in) so
+// the backend can reject a still-in-flight mutating tool call from an older,
+// now-superseded turn BEFORE it commits, not just hide its result after.
+export const REALTIME_TURN_ADVANCE_URL = `${API_BASE}/api/voice/realtime/turn-advance`;
 export const REALTIME_TURN_URL = `${API_BASE}/api/voice/realtime/turn`;
 export const REALTIME_METRIC_URL = `${API_BASE}/api/voice/realtime/metric`;
 // OpenAI's own WebRTC SDP-exchange endpoint — the mobile client POSTs its SDP

@@ -22,7 +22,7 @@ function fmtHM(hours) {
 
 const round1 = (n) => Math.round(n * 10) / 10;
 const { canonicalBand } = require('./recoveryThresholds');
-const { recoveryPresentation } = require('./recoveryPresentation');
+const { recoveryPresentation, deriveRiskFlags, NEAR_GREEN_HEADLINE, NEAR_GREEN_PRESCRIPTION } = require('./recoveryPresentation');
 
 /**
  * Predict today's GRADE from overnight recovery + sleep debt + training load.
@@ -43,23 +43,45 @@ const { recoveryPresentation } = require('./recoveryPresentation');
  * @param {object} s
  * @param {number} s.recoveryScore   0–100 composite (required)
  * @param {number} [s.hrvSubScore]   recovery.parts.hrv, 0–100 vs personal baseline
+ * @param {number} [s.restingHrSubScore] recovery.parts.restingHr, 0–100 vs personal baseline
  * @param {number} [s.sleepHours]    last night's hours
  * @param {number} [s.sleepDebtHours] accumulated debt (Eight Sleep personalized)
  * @param {string} [s.acwrBand]      'high' | 'optimal' | 'low' (training load)
  */
 function predictCapacity(s = {}) {
-  const { recoveryScore, hrvSubScore, sleepHours, sleepDebtHours, acwrBand } = s;
+  const { recoveryScore, hrvSubScore, restingHrSubScore, sleepHours, sleepDebtHours, acwrBand } = s;
   if (recoveryScore == null || !Number.isFinite(recoveryScore)) return null;
 
   // The grade's band comes from recoveryThresholds.js's canonicalBand() — the
   // single authoritative source for the 63/40 cutoffs — so this grade and the
   // Health-tab workout zone (recovery.js recoveryBand()) can never drift out
-  // of sync again.
+  // of sync again. The grade itself (A/B/C) is UNCHANGED by the near-green
+  // fix below — it stays the canonical ceiling other code keys off; only the
+  // user-facing headline/prescription for a near-green B-day changes.
   const band = canonicalBand(recoveryScore);
-  let grade, headline;
-  if (band === 'green')       { grade = 'A'; headline = 'Full send'; }
-  else if (band === 'yellow') { grade = 'B'; headline = 'Hit your essentials'; }
-  else                        { grade = 'C'; headline = 'Keep the streak alive'; }
+  let grade;
+  if (band === 'green') grade = 'A';
+  else if (band === 'yellow') grade = 'B';
+  else grade = 'C';
+
+  // Presentation tier — computed BEFORE headline/prescription so a
+  // near-green (solid_near_green) B-day can get its own canonical copy
+  // instead of sharing the genuinely-moderate B-day's more restrictive
+  // template. Risk flags now come from the SAME shared derivation
+  // liveRecovery/computeHealthComposites use (recoveryPresentation.js's
+  // deriveRiskFlags) — previously this function never checked
+  // restingHrSubScore at all, the one flag it silently dropped relative to
+  // the nightly findings path.
+  const riskFlags = deriveRiskFlags({
+    sleepDebtHours, loadBand: acwrBand, hrvSubScore, restingHrSubScore,
+  });
+  const presentation = recoveryPresentation(recoveryScore, { band, riskFlags });
+  const nearGreen = presentation?.tier === 'solid_near_green';
+
+  let headline;
+  if (band === 'green') headline = 'Full send';
+  else if (band === 'yellow') headline = nearGreen ? NEAR_GREEN_HEADLINE : 'Hit your essentials';
+  else headline = 'Keep the streak alive';
 
   // Name the real drivers behind the grade.
   const drivers = [];
@@ -71,28 +93,29 @@ function predictCapacity(s = {}) {
   if (sleepDebtHours != null && sleepDebtHours >= 1) drivers.push(`${fmtHM(sleepDebtHours)} sleep debt`);
   const driverClause = drivers.length ? `${drivers.join(', ')}. ` : '';
 
-  // Prescription: how to play the day at this grade.
+  // Prescription: how to play the day at this grade. A near-green B-day's
+  // BASE line comes from recoveryPresentation.js's NEAR_GREEN_PRESCRIPTION
+  // (no automatic scale-back) instead of the genuinely-moderate B-day's
+  // "Hit your essentials" line — but a real independent risk (elevated
+  // training load, meaningful sleep debt) still adds its own caution
+  // sentence on top, exactly as it would for any other grade. That's not a
+  // contradiction: recoveryPresentation.js's own model is "a bare near-green
+  // score never warrants caution on its own, but a genuine risk signal
+  // still may."
   const rx = [];
   if (grade === 'A') {
     rx.push('Go for the full stack — your hardest work, every habit, and a hard session if you planned one. Days like this are where you bank progress.');
     if (acwrBand === 'high') rx.push('One caution: your training load is already spiking, so keep the intensity smart.');
   } else if (grade === 'B') {
-    rx.push('Hit your essentials: most habits, a real (not max-effort) workout, and your important work in the morning. Consistency beats heroics.');
+    rx.push(nearGreen
+      ? NEAR_GREEN_PRESCRIPTION
+      : 'Hit your essentials: most habits, a real (not max-effort) workout, and your important work in the morning. Consistency beats heroics.');
     if (acwrBand === 'high') rx.push('Training load is elevated — favor Zone 2 over intensity today.');
   } else {
     rx.push('Don\'t aim for zero — aim for anything that compounds: a 10-minute walk, one meditation, a single habit checked. That\'s still a win.');
     rx.push('Protect tonight\'s sleep and tomorrow rebounds.');
   }
   if (sleepDebtHours != null && sleepDebtHours >= 1 && grade !== 'C') rx.push('Protect an earlier bedtime tonight.');
-
-  // Presentation tier/label for cross-surface agreement with Health/Ask/
-  // voice (recoveryPresentation.js) — additive; grade/band/headline/
-  // prescription above are unchanged so this stays a pure addition.
-  const riskFlags = [];
-  if (sleepDebtHours != null && sleepDebtHours >= 5) riskFlags.push('sleep_debt');
-  if (acwrBand === 'high') riskFlags.push('load_spike');
-  if (hrvSubScore != null && hrvSubScore < 30) riskFlags.push('hrv_depressed');
-  const presentation = recoveryPresentation(recoveryScore, { band, riskFlags });
 
   return { grade, band, headline, detail: driverClause.trim(), prescription: rx.join(' '), presentation };
 }
@@ -306,6 +329,7 @@ async function computeTodayForecast({ recovery = null, asOf = new Date(), effect
   const capacity = predictCapacity({
     recoveryScore: rec.score,
     hrvSubScore: rec.parts?.hrv ?? null,
+    restingHrSubScore: rec.parts?.restingHr ?? null,
     sleepHours,
     sleepDebtHours,
     acwrBand,

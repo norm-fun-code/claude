@@ -2768,7 +2768,19 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   // built once here and reused as-is by the Wealth tab — no second,
   // independently-derived posture/pace/savings-rate on the client.
   try {
-    response.wealthLanding = await require('../services/wealth-landing').buildWealthLandingProjection({ tz: response.timezone, wealthInsights: wealthInsightsRawForLanding });
+    response.wealthLanding = await require('../services/wealth-landing').buildWealthLandingProjection({
+      tz: response.timezone,
+      wealthInsights: wealthInsightsRawForLanding,
+      // Reuse the SAME matched-pace value BrainSnapshot already resolved
+      // above (buildBrainSnapshot -> computeDiscretionaryMatchedPace) —
+      // previously this triggered a second, independent up-to-12-query
+      // computation for the same build. Only pass an explicit value (even a
+      // legitimate `null`) when BrainSnapshot itself succeeded — if it
+      // failed entirely, leave this `undefined` so the projection still
+      // computes its own pace fresh rather than being forced permanently
+      // null by a failure in an unrelated part of the build.
+      ...(brainSnapshot ? { spendingPace: brainSnapshot.wealth?.value?.spendingPace ?? null } : {}),
+    });
   } catch (err) {
     console.error('[wealthLanding] full build failed:', err.message);
     response.wealthLanding = null;

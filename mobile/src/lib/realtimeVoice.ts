@@ -46,6 +46,7 @@ try {
 import {
   REALTIME_SESSION_URL,
   REALTIME_TOOL_URL,
+  REALTIME_TURN_ADVANCE_URL,
   REALTIME_TURN_URL,
   REALTIME_METRIC_URL,
   REALTIME_CALLS_URL,
@@ -123,6 +124,20 @@ async function postJson(url: string, body: unknown, timeoutMs = 15000) {
 
 function logMetric(sessionId: string, type: string, valueMs?: number, meta?: Record<string, unknown>) {
   postJson(REALTIME_METRIC_URL, { sessionId, type, valueMs, meta }, 8000).catch(() => {});
+}
+
+// Server-authoritative barge-in: tells the backend the instant this
+// session's own turn counter advances, so it can reject a still-in-flight
+// mutating tool call from an older, now-superseded turn BEFORE it commits —
+// not just hide the result client-side after the fact (isStaleTurn below
+// still does that too, as a client-side UI concern, but it can no longer be
+// the ONLY thing standing between a barge-in and an unwanted mutation).
+// Fire-and-forget: never blocks the caller (interrupt/barge-in must feel
+// instant), but issued synchronously at the same point `turnId` itself
+// advances, not batched or debounced, so the network hop is the only delay.
+function notifyTurnAdvance(sessionId: string | null, turnId: number) {
+  if (!sessionId) return;
+  postJson(REALTIME_TURN_ADVANCE_URL, { sessionId, turnId: String(turnId) }, 5000).catch(() => {});
 }
 
 /**
@@ -398,6 +413,7 @@ export class RealtimeVoiceSession {
     // would suppress persisting this one entirely.
     this.resetTurn();
     this.turnId += 1;
+    notifyTurnAdvance(this.sessionId, this.turnId);
     this.turnUserText = text;
     this.turnUserFinal = true; // typed text is final immediately (no transcription round trip)
     this.dc.send(JSON.stringify({
@@ -430,6 +446,7 @@ export class RealtimeVoiceSession {
     if (!this.dc || this.dc.readyState !== 'open') return;
     this.dc.send(JSON.stringify({ type: 'response.cancel' }));
     this.turnId += 1; // any tool call issued for the interrupted response is now stale
+    notifyTurnAdvance(this.sessionId, this.turnId);
     if (this.sessionId) logMetric(this.sessionId, 'interruption', undefined, { manual: true });
   }
 
@@ -547,6 +564,7 @@ export class RealtimeVoiceSession {
     if (this.stopped || !this.dc || this.dc.readyState !== 'open') return;
     this.dc.send(JSON.stringify({ type: 'response.cancel' }));
     this.turnId += 1; // any tool call issued for the interrupted response is now stale
+    notifyTurnAdvance(this.sessionId, this.turnId);
     if (this.sessionId) logMetric(this.sessionId, 'interruption', undefined, { auto: true });
   }
 
@@ -585,6 +603,7 @@ export class RealtimeVoiceSession {
     }
 
     this.turnId += 1; // a genuinely new accepted turn — any tool call from a prior turn is now stale
+    notifyTurnAdvance(this.sessionId, this.turnId);
     this.turnUserText = decision.transcript;
     this.turnUserFinal = true;
     this.handlers.onTranscript?.('user', decision.transcript, true);
@@ -658,7 +677,24 @@ export class RealtimeVoiceSession {
     // already nulled out.
     if (this.stopped || !this.dc) return;
     if (isStaleTurn(issuedTurnId, this.turnId)) {
-      console.warn(`[voice] dropping stale tool-call result for turn ${issuedTurnId} (current turn ${this.turnId})`);
+      // The backend's realtimeTurnAuthority check (see chat/realtimeTools.js)
+      // rechecks authorization immediately before a mutation commits — if it
+      // rejected this call, `output.cancelled` is set and NOTHING was
+      // written, so it's safe to just drop the result. But a cancellation
+      // can still race in AFTER the mutation already committed (e.g. the
+      // barge-in and the write landed on the backend within the same
+      // instant) — in that case the write is real and must be reported
+      // honestly, not silently swallowed as if it never happened.
+      const cancelled = !!(output as any)?.cancelled;
+      console.warn(`[voice] tool result for stale turn ${issuedTurnId} (current turn ${this.turnId}) — ${cancelled ? 'not executed, dropping' : 'already committed, reporting'}`);
+      if (!cancelled) {
+        const description = (output as any)?.description;
+        if (typeof description === 'string' && description) this.handlers.onActionResult?.(description);
+      }
+      // Either way, this turn's own conversational context is gone (a
+      // barge-in/new-turn already superseded it) — never forward
+      // function_call_output/response.create for a turn OpenAI itself has
+      // moved past.
       return;
     }
     if (call.name === 'execute_normos_action' || call.name === 'complete_commitment') {

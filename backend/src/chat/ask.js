@@ -292,17 +292,21 @@ function snippet(text, n = 400) {
  *  Ask would keep citing a spending spike the user already marked "This was
  *  intentional" (severity/reliability cleanup, item 3: one explanation,
  *  every surface, including Ask). */
-async function wealthContext() {
+// `pacePromise` — the SAME in-flight matched-pace computation the caller
+// (ask()) already started (and also awaits directly for claim-validation
+// facts) — passed in rather than computed here, so a financial question
+// resolves computeDiscretionaryMatchedPace's up-to-12-query calculation
+// exactly ONCE, not once per consumer.
+async function wealthContext(pacePromise) {
   try {
     const { buildWealthInsights } = require('../services/wealth-insights');
     const wealthLanding = require('../services/wealth-landing');
     const dismissedInsights = require('../store/dismissedInsights');
-    const { computeDiscretionaryMatchedPace } = require('../services/wealth-pace');
     const [insightsRaw, dismissedKeys, dismissedContext, pace] = await Promise.all([
       buildWealthInsights(),
       dismissedInsights.dismissedKeys(),
       dismissedInsights.dismissedContextByKey(),
-      computeDiscretionaryMatchedPace({ asOf: new Date() }).catch(() => null),
+      pacePromise,
     ]);
     const filtered = wealthLanding.applyWealthDismissals(insightsRaw, dismissedKeys, dismissedContext);
     const insights = await wealthLanding.annotateExplainedSpikes(filtered, new Date());
@@ -689,6 +693,14 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
   // the user is physically waiting to hear a reply.
   const personal = isPersonalQuestion(question);
   const financial = isFinancialQuestion(question);
+  // Matched-pace baseline (up to 12 sequential historical aggregate
+  // queries) — resolved ONCE here and reused by both wealthContext() (prompt
+  // construction) and spendingPaceResult (claim-validation facts) below,
+  // which previously each independently called computeDiscretionaryMatchedPace,
+  // doubling the cost for every financial question.
+  const pacePromise = financial
+    ? require('../services/wealth-pace').computeDiscretionaryMatchedPace({ asOf: new Date(), tz: process.env.TZ || 'America/New_York' }).catch(() => null)
+    : Promise.resolve(null);
   const [
     findingsResult,
     annotationsResult,
@@ -712,7 +724,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     require('../store/selfModel').latestModelText(),
     require('../store/lifeChapters').listActive(),
     financial
-      ? Promise.all([wealthContext(), require('../services/financial-plan').buildPlanContext().catch(() => null)])
+      ? Promise.all([wealthContext(pacePromise), require('../services/financial-plan').buildPlanContext().catch(() => null)])
       : Promise.resolve(null),
     // Recent daily context the user has talked to NormOS about — the narrative
     // subjective signal that makes "why was I tired last week?" answerable with
@@ -743,12 +755,11 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     financial
       ? require('../brain/snapshot').canonicalSpendingMtd(new Date(), process.env.TZ || 'America/New_York').catch(() => null)
       : Promise.resolve(null),
-    // Matched-pace baseline — the SAME function wealth-landing.js/
-    // brain/snapshot.js call, so "is my spending unusual this month?" is
-    // checked against the identical median/label every other surface reads.
-    financial
-      ? require('../services/wealth-pace').computeDiscretionaryMatchedPace({ asOf: new Date(), tz: process.env.TZ || 'America/New_York' }).catch(() => null)
-      : Promise.resolve(null),
+    // Matched-pace baseline — the SAME resolved promise wealthContext() above
+    // reuses (pacePromise, defined before this Promise.allSettled), not a
+    // second independent invocation, so "is my spending unusual this month?"
+    // is checked against the identical median/label every other surface reads.
+    pacePromise,
   ]);
 
   const findings = findingsResult.status === 'fulfilled' ? findingsResult.value : [];

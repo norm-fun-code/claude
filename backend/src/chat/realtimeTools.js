@@ -219,11 +219,24 @@ async function getSelectedContext({ kind, id } = {}) {
 // Idempotency: keyed by (sessionId, turnId, action type + args) so a
 // network retry or a duplicate model tool-call for the SAME turn can never
 // double-execute (e.g. double-log a habit, double-swap a workout).
+//
+// Turn authority (barge-in hardening): the client-side `isStaleTurn` check
+// in mobile/src/lib/realtimeVoice.ts runs AFTER this request has already
+// resolved — by itself it can only hide a result, never prevent a write
+// that already committed. `realtimeTurnAuthority.isTurnAuthorized` is
+// rechecked here, immediately before `executeAction` runs (inside the same
+// idempotency-guarded closure, as close to the write as this call gets), so
+// a turn superseded by a later barge-in/accepted-turn — reported via
+// POST /voice/realtime/turn-advance — is rejected before it ever mutates
+// anything, not just after. A rejection is tagged `cancelled: true` so the
+// client can tell "never executed" apart from "executed, but the result
+// arrived after the turn moved on" and report each honestly.
 async function executeNormosAction(args, sessionCtx = {}) {
   const { validateAction } = require('./ask');
   const { executeAction } = require('./executeAction');
   const { needsConfirmation, describeAction } = require('./actionPolicy');
   const idempotency = require('./voiceIdempotency');
+  const turnAuthority = require('./realtimeTurnAuthority');
 
   const { confirmed, ...actionArgs } = args || {};
   const validated = validateAction(actionArgs);
@@ -238,7 +251,12 @@ async function executeNormosAction(args, sessionCtx = {}) {
     sessionId: sessionCtx.sessionId, turnId: sessionCtx.turnId,
     action: validated.action, argsHash: idempotency.hashArgs(validated),
   });
-  const { result, fromCache } = await idempotency.once(key, () => executeAction(validated, { now: sessionCtx.now }));
+  const { result, fromCache } = await idempotency.once(key, () => {
+    if (!turnAuthority.isTurnAuthorized(sessionCtx.sessionId, sessionCtx.turnId)) {
+      return { done: false, cancelled: true, description: 'This turn was superseded before the action executed — not run.' };
+    }
+    return executeAction(validated, { now: sessionCtx.now });
+  });
   if (fromCache) console.warn(`[realtime action] duplicate call for key=${key} — returning cached result, not re-executing`);
   return result ?? { done: false, description: 'No matching action handler.' };
 }
@@ -266,9 +284,19 @@ async function deepAsk({ question } = {}, sessionCtx = {}) {
   // direct execute_normos_action tool call the Realtime model made after
   // verbally restating it) still needs the same confirm step — deep_ask must
   // never become a way to bypass it.
+  //
+  // Turn authority: deep_ask can take several seconds (a real RAG call), the
+  // exact window a barge-in is most likely to land in — recheck authorization
+  // immediately before each embedded action executes, same guard as
+  // execute_normos_action above.
+  const turnAuthority = require('./realtimeTurnAuthority');
   const executedList = [];
   for (const a of (result.actions ?? (result.action ? [result.action] : []))) {
     if (needsConfirmation(a)) continue;
+    if (!turnAuthority.isTurnAuthorized(sessionCtx.sessionId, sessionCtx.turnId)) {
+      executedList.push({ done: false, cancelled: true, description: 'This turn was superseded before the action executed — not run.' });
+      continue;
+    }
     executedList.push(await executeAction(a, { now: sessionCtx.now }));
   }
 

@@ -334,7 +334,10 @@ function deriveRecommendedAction(actionableItems, cashflowThin, cashCritical) {
  * a couple of small store reads, no LLM) — safe to recompute on every
  * request, same design choice as todayCommandCenter.
  */
-async function buildWealthLandingProjection({ asOf = new Date(), tz = process.env.TZ || 'America/New_York', wealthInsights: providedInsights = null } = {}) {
+async function buildWealthLandingProjection({
+  asOf = new Date(), tz = process.env.TZ || 'America/New_York',
+  wealthInsights: providedInsights = null, spendingPace: providedSpendingPace = undefined,
+} = {}) {
   const { canonicalSpendingMtd } = require('../brain/snapshot');
   const { computeDiscretionaryMatchedPace } = require('./wealth-pace');
 
@@ -348,15 +351,22 @@ async function buildWealthLandingProjection({ asOf = new Date(), tz = process.en
     ? Promise.resolve(providedInsights)
     : wealthInsightsMod.buildWealthInsights().catch(() => []);
 
+  // Matched-pace baseline (median of the same elapsed-fraction-of-month
+  // spend across trailing complete months): up to 12 sequential historical
+  // aggregate queries, easily the most expensive single call in this
+  // projection. A caller that already resolved it this request (briefing.js's
+  // full build, via BrainSnapshot) passes it in via `spendingPace` — same
+  // "resolve each authority exactly once" pattern as `wealthInsights` above —
+  // so a fresh brief build no longer recomputes it a second time.
+  const pacePromise = providedSpendingPace !== undefined
+    ? Promise.resolve(providedSpendingPace)
+    : computeDiscretionaryMatchedPace({ asOf, tz }).catch(() => null);
+
   const [insightsRaw, spendingMtd, spendingPace, netWorthRow, savingsRate, netWorthTrend, sources, dismissedKeys, dismissedContext] =
     await Promise.all([
       insightsPromise,
       canonicalSpendingMtd(asOf, tz).catch(() => null),
-      // Matched-pace baseline (median of the same elapsed-fraction-of-month
-      // spend across trailing complete months) — reuses canonicalSpendingMtd
-      // internally for the current-month figure, so it can never disagree
-      // with `spendingMtd` above.
-      computeDiscretionaryMatchedPace({ asOf, tz }).catch(() => null),
+      pacePromise,
       metricsStore.latest({ domain: 'wealth', metric: 'net_worth' }).catch(() => null),
       wealthInsightsMod.computeSavingsRate({ now: asOf }).catch(() => null),
       wealthInsightsMod.computeNetWorthTrend({ now: asOf }).catch(() => null),

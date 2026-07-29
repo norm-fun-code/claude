@@ -23,6 +23,19 @@ const BASE_GUIDANCE = Object.freeze({
   low: "Low — under-recovered. Keep it easy today: mobility or a walk, and protect tonight's sleep.",
 });
 
+// Canonical display headline/prescription for the near-green tier —
+// predict.js's Today forecast consumes THESE for a solid_near_green day
+// instead of its own B-grade "Hit your essentials" template, which used the
+// same restrictive language for a genuinely moderate (40-54) score AND a
+// near-green (55-62) one even though the internal grade (B) doesn't
+// distinguish them. The canonical grade is UNCHANGED (still 'B') — only the
+// user-facing copy for this specific tier now comes from here, so Health and
+// Today can never describe the same near-green day with materially
+// different restrictiveness again.
+const NEAR_GREEN_HEADLINE = 'Near green — train roughly as planned';
+const NEAR_GREEN_PRESCRIPTION =
+  "Train roughly as planned: your essentials, a real workout, and your important work in the morning. You're close enough to fully recovered that there's no automatic need to scale back — let how you feel be the final call.";
+
 // The only independent canonical signals allowed to add cautionary language
 // to an otherwise-reassuring near-green (solid_near_green) tier. A bare score
 // in that tier never triggers caution on its own — only one of these.
@@ -37,6 +50,38 @@ const RISK_FLAGS = Object.freeze({
 
 function describeRiskFlag(flag) {
   return RISK_FLAGS[flag] || null;
+}
+
+/**
+ * ONE shared derivation of recovery risk flags from already-computed
+ * canonical inputs — the single place threshold/flag-selection logic lives,
+ * so liveRecovery/computeHealthComposites/predictCapacity/Ask/voice can
+ * never check a different SUBSET of flags for the same underlying signals
+ * again (previously: predictCapacity never checked rhr_elevated, and the
+ * live path — the one Ask/voice/the Health card actually read — computed no
+ * risk flags at all, so a near-green score's one legitimate caution
+ * mechanism silently never fired for those surfaces).
+ *
+ * Each input is a value the CALLER already computed via its own existing
+ * canonical source (sleepDebt()/sleepBalance7(), ACWR banding, the recovery
+ * score's own hrv/restingHr subscores) — this function only owns the
+ * threshold logic, not signal computation itself, so it doesn't force every
+ * caller onto one sleep-debt model.
+ *
+ * @param {object} [inputs]
+ * @param {number} [inputs.sleepDebtHours]
+ * @param {string} [inputs.loadBand] 'high' | 'optimal' | 'low'
+ * @param {number} [inputs.hrvSubScore] 0-100 vs personal baseline
+ * @param {number} [inputs.restingHrSubScore] 0-100 vs personal baseline
+ * @returns {string[]} zero or more RISK_FLAGS keys
+ */
+function deriveRiskFlags({ sleepDebtHours, loadBand, hrvSubScore, restingHrSubScore } = {}) {
+  const flags = [];
+  if (loadBand === 'high') flags.push('load_spike');
+  if (sleepDebtHours != null && sleepDebtHours >= 5) flags.push('sleep_debt');
+  if (hrvSubScore != null && hrvSubScore < 30) flags.push('hrv_depressed');
+  if (restingHrSubScore != null && restingHrSubScore < 30) flags.push('rhr_elevated');
+  return flags;
 }
 
 /**
@@ -82,6 +127,9 @@ function recoveryPresentation(score, { band, riskFlags = [] } = {}) {
 module.exports = {
   BASE_GUIDANCE,
   RISK_FLAGS,
+  NEAR_GREEN_HEADLINE,
+  NEAR_GREEN_PRESCRIPTION,
   describeRiskFlag,
+  deriveRiskFlags,
   recoveryPresentation,
 };

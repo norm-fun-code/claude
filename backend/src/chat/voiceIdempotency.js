@@ -17,18 +17,25 @@
 const MAX_ENTRIES = 2000;
 const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes — well beyond any real turn
 
-const entries = new Map(); // key -> { result, expiresAt }
+// key -> { state: 'pending', promise } while fn() is in flight, or
+// key -> { state: 'done', result, expiresAt } once it has resolved.
+const entries = new Map();
 
 function sweep(now) {
   if (entries.size <= MAX_ENTRIES) return;
   for (const [key, v] of entries) {
-    if (v.expiresAt <= now) entries.delete(key);
+    if (v.state === 'done' && v.expiresAt <= now) entries.delete(key);
   }
   // Still over budget after expiry sweep (all entries genuinely live) —
-  // drop the oldest (Map preserves insertion order) rather than grow unbounded.
-  while (entries.size > MAX_ENTRIES) {
-    const oldestKey = entries.keys().next().value;
-    entries.delete(oldestKey);
+  // drop the oldest (Map preserves insertion order) rather than grow
+  // unbounded. Skip anything still pending — evicting an in-flight entry
+  // would make a not-yet-arrived concurrent caller miss the join and
+  // double-execute fn().
+  if (entries.size > MAX_ENTRIES) {
+    for (const [key, v] of entries) {
+      if (entries.size <= MAX_ENTRIES) break;
+      if (v.state === 'done') entries.delete(key);
+    }
   }
 }
 
@@ -39,6 +46,12 @@ function sweep(now) {
  * envelope so callers can log/skip side effects accordingly. A call that
  * THROWS is not cached — a genuine failure should be retryable.
  *
+ * Concurrency-safe: the in-flight Promise is registered in `entries`
+ * SYNCHRONOUSLY, before `fn()` is awaited, so two calls issued back-to-back
+ * for the same key (no `await` between them) both see the same pending
+ * entry and join the same Promise — `fn()` runs exactly once. A rejected
+ * call removes its entry so every joiner (and the caller itself) can retry.
+ *
  * @param {string} key
  * @param {() => Promise<T>} fn
  * @param {number} [ttlMs]
@@ -47,13 +60,30 @@ function sweep(now) {
 async function once(key, fn, ttlMs = DEFAULT_TTL_MS) {
   const now = Date.now();
   const hit = entries.get(key);
-  if (hit && hit.expiresAt > now) {
-    return { result: hit.result, fromCache: true };
+  if (hit) {
+    if (hit.state === 'done' && hit.expiresAt > now) {
+      return { result: hit.result, fromCache: true };
+    }
+    if (hit.state === 'pending') {
+      const result = await hit.promise;
+      return { result, fromCache: true };
+    }
   }
-  const result = await fn();
-  entries.set(key, { result, expiresAt: now + ttlMs });
-  sweep(now);
-  return { result, fromCache: false };
+
+  const promise = Promise.resolve().then(fn);
+  entries.set(key, { state: 'pending', promise });
+  try {
+    const result = await promise;
+    entries.set(key, { state: 'done', result, expiresAt: now + ttlMs });
+    sweep(now);
+    return { result, fromCache: false };
+  } catch (err) {
+    // Only remove the entry if it's still OUR pending marker — a slower
+    // stale check could otherwise clobber a newer entry for the same key.
+    const current = entries.get(key);
+    if (current && current.state === 'pending' && current.promise === promise) entries.delete(key);
+    throw err;
+  }
 }
 
 /** Build a stable dedup key from a turn/session/action identity. Pure. */

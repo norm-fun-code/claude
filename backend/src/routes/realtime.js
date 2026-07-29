@@ -256,6 +256,23 @@ function createRealtimeRouter() {
     }
   }));
 
+  // Server-authoritative barge-in: the client calls this the INSTANT its own
+  // turn counter advances — a newly accepted spoken/typed turn, an explicit
+  // interrupt, or a barge-in the duration-gate confirmed (mobile/src/lib/
+  // realtimeVoice.ts, every `this.turnId += 1` site) — fire-and-forget, not
+  // awaited before the client moves on, but issued as early as possible so
+  // the window between "user barges in" and "backend knows the old turn is
+  // superseded" is as small as this network hop allows. `execute_normos_action`/
+  // `deep_ask` recheck `realtimeTurnAuthority.isTurnAuthorized` against
+  // whatever this endpoint has recorded immediately before committing a
+  // mutation — this is the write side of that check.
+  router.post('/voice/realtime/turn-advance', asyncHandler(async (req, res) => {
+    const { sessionId, turnId } = req.body || {};
+    if (!sessionId || turnId == null) return res.status(400).json({ error: 'sessionId and turnId required' });
+    require('../chat/realtimeTurnAuthority').advanceTurn(sessionId, turnId);
+    res.json({ ok: true });
+  }));
+
   // Persist a completed turn to the SAME shared Ask conversation every other
   // surface writes to. Only for turns the CLIENT resolved itself (a fast-path
   // tool call + the model's own spoken answer, or a plain conversational
