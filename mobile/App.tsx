@@ -19,6 +19,7 @@ import {
   NativeScrollEvent,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import * as Updates from 'expo-updates';
 import { AnimatedEntry } from './src/components/AnimatedEntry';
 
 // NormOS follows the system appearance by default; a stored user override
@@ -149,6 +150,28 @@ export default function App() {
   // a stored Light/Dark override applies.
   const [themeReady, setThemeReady] = useState(false);
   useEffect(() => { loadThemePref().then(() => setThemeReady(true)); }, []);
+
+  // OTA fixes otherwise sit undelivered: expo-updates only checks+downloads on
+  // cold start and applies on the NEXT cold start, so a published fix silently
+  // needs two relaunches before it's visible. Check-fetch-reload once here,
+  // during the cold-open welcome cover, so a pending update applies within the
+  // same launch instead of requiring the user to force-quit twice.
+  useEffect(() => {
+    if (!Updates.isEnabled) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { isAvailable } = await Updates.checkForUpdateAsync();
+        if (!isAvailable || cancelled) return;
+        await Updates.fetchUpdateAsync();
+        if (!cancelled) await Updates.reloadAsync();
+      } catch {
+        // Best-effort — network hiccup or no update server reachable; the
+        // default background check on next launch will retry.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const [tab, setTab] = useState<TabKey>('today');
   // All tabs share ONE ScrollView (only its contents swap), so switching tabs
