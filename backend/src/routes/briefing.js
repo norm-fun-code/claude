@@ -3216,6 +3216,25 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
     }
   }
 
+  // Stale-day guard: this function recuts ONLY the chief brief and always
+  // carries `date`/`localDate`/`snapshotId`/`snapshotAt` forward unchanged
+  // from `prior.content` (see the `content` object below) — a deliberate
+  // choice when `prior` is genuinely today's snapshot, since re-deriving
+  // recovery/workout/wealth/forecast just to reword prose would be wasteful.
+  // But if the full daily build hasn't succeeded since a PRIOR calendar day,
+  // `prior.content` is actually yesterday's, and that carry-forward silently
+  // mislabels a brand-new, correctly-"fresh"-quality generation as today's
+  // while it's still stamped with yesterday's date/snapshot identity — the
+  // exact bug this guard closes. A scoped rebuild's premise ("just reword,
+  // the rest of today's snapshot is still valid") is false once the day has
+  // rolled over, so it must decline rather than publish under a wrong date.
+  const openQuestionsTzForStaleCheck = process.env.TZ || 'America/New_York';
+  const todayKeyForStaleCheck = localDateStr(openQuestionsTzForStaleCheck, new Date());
+  const staleDay = Boolean(prior.content?.localDate) && prior.content.localDate !== todayKeyForStaleCheck;
+  if (staleDay) {
+    console.error(`[chief-brief rebuild] prior.content.localDate=${prior.content.localDate} does not match today=${todayKeyForStaleCheck} — a scoped rebuild cannot safely recut a stale day's snapshot; a full rebuild is required. Discarding this attempt's generation.`);
+  }
+
   // Fresh-before-replace invariant (audit fix) — identical contract to the
   // full build (see that call site's comment): this rebuild's OWN chiefBrief
   // only ships when its OWN quality is fresh. A degraded scoped rebuild must
@@ -3228,11 +3247,15 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
   // here: it trusts `prior`'s OWN quality stamp, not whether prior's content
   // is actually usable, which is exactly what let a SECOND consecutive
   // failed repair delete an already-carried-forward good brief).
-  const thisAttemptFresh = chiefResult.chiefBrief != null && chiefResult.chiefBriefQuality?.status === 'fresh';
+  // A stale day forces this false regardless of this attempt's own quality —
+  // see the guard above.
+  const thisAttemptFresh = !staleDay && chiefResult.chiefBrief != null && chiefResult.chiefBriefQuality?.status === 'fresh';
   const lastGood = thisAttemptFresh ? null : await briefingsStore.resolveLastGoodChiefBrief(prior, { tz: process.env.TZ || 'America/New_York' });
   const chiefBriefStale = !thisAttemptFresh && lastGood != null;
   const errors = Array.isArray(prior.content.errors) ? prior.content.errors.filter((e) => e.service !== 'chiefBrief') : [];
-  if (chiefBriefStale) {
+  if (staleDay) {
+    errors.push({ service: 'chiefBrief', error: `scoped rebuild skipped: prior content is from ${prior.content.localDate}, not today (${todayKeyForStaleCheck}) — a full rebuild is required` });
+  } else if (chiefBriefStale) {
     console.error('[chief-brief rebuild] this attempt was missing or degraded quality — keeping the existing good card unchanged.');
     errors.push({ service: 'chiefBrief', error: 'this rebuild attempt was missing or degraded quality; the existing good brief was left unchanged' });
   }
