@@ -15,6 +15,7 @@
 const express = require('express');
 const { withTimeout } = require('../util/async');
 const { localDayBoundsUtc, localDateStr } = require('../util/date');
+const { envInt } = require('../util/env');
 const { fetchCalendarEvents, fetchWorkBusyBlocks } = require('../services/calendar');
 const { fetchRandomNotionPage, fetchNotionQuotes } = require('../services/notion');
 const { fetchRandomQuote } = require('../services/googleDoc');
@@ -130,8 +131,11 @@ function localHourMinute(now, tz) {
 }
 function pastMorningCutoff(now, tz) {
   const { hour, minute } = localHourMinute(now, tz);
-  const cutoffHour = Number(process.env.SCHEDULE_HOUR) || 8;
-  const cutoffMinute = Number(process.env.SCHEDULE_MINUTE) || 30;
+  // envInt, not `Number(...) || default` — SCHEDULE_HOUR=0 (midnight) or
+  // SCHEDULE_MINUTE=0 (on the hour) are legitimate configs that `0 || 8`
+  // would silently discard in favor of the default.
+  const cutoffHour = envInt('SCHEDULE_HOUR', 8);
+  const cutoffMinute = envInt('SCHEDULE_MINUTE', 30);
   const nowMin = hour * 60 + minute;
   const cutoffMin = cutoffHour * 60 + cutoffMinute + MORNING_RECOVERY_GRACE_MIN;
   return nowMin >= cutoffMin;

@@ -13,6 +13,7 @@ const llm = require('../llm');
 const { fetchWorkBusyBlocks } = require('../services/calendar');
 const realtimeService = require('../services/realtime');
 const { asyncHandler } = require('../middleware/asyncHandler');
+const { envInt } = require('../util/env');
 const { requireAdminToken } = require('../middleware/adminAuth');
 
 function createDiagnosticsRouter() {
@@ -438,10 +439,12 @@ function createDiagnosticsRouter() {
     const { msUntil } = require('../scheduler');
     const enabled = process.env.ENABLE_SCHEDULER === 'true';
     const tz = process.env.TZ || '(not set — server uses system/UTC)';
-    const hour = Number(process.env.SCHEDULE_HOUR) || 8;
-    const minute = Number(process.env.SCHEDULE_MINUTE) || 30;
-    const checkinH = Number(process.env.CHECKIN_REMINDER_HOUR) || 15;
-    const eveningReminderH = Number(process.env.EVENING_REMINDER_HOUR) || 21;
+    // envInt, not `Number(...) || default` — an hour/minute of 0 is a
+    // legitimate config that `0 || default` would silently discard.
+    const hour = envInt('SCHEDULE_HOUR', 8);
+    const minute = envInt('SCHEDULE_MINUTE', 30);
+    const checkinH = envInt('CHECKIN_REMINDER_HOUR', 15);
+    const eveningReminderH = envInt('EVENING_REMINDER_HOUR', 21);
 
     const nextMs = (h, m) => {
       try { return msUntil(h, m); } catch { return null; }

@@ -20,6 +20,7 @@ const nudgesStore = require('./store/nudges');
 const { pool } = require('./db');
 const sleepReadiness = require('./intelligence/sleep-readiness');
 const morningRetryLedger = require('./intelligence/morning-retry-ledger');
+const { envInt } = require('./util/env');
 
 /** Is the Eight Sleep auto-sync configured (creds present)? */
 function eightSleepConfigured() {
@@ -479,8 +480,11 @@ function schedulerState() {
 }
 
 function startJobs() {
-  const hour = Number(process.env.SCHEDULE_HOUR) || 8;       // default 8am
-  const minute = Number(process.env.SCHEDULE_MINUTE) || 30;  // default :30
+  // envInt, not `Number(...) || default` — SCHEDULE_HOUR=0 (midnight) or
+  // SCHEDULE_MINUTE=0 (on the hour) are legitimate configs that `0 || 8`
+  // would silently discard in favor of the default.
+  const hour = envInt('SCHEDULE_HOUR', 8);       // default 8am
+  const minute = envInt('SCHEDULE_MINUTE', 30);  // default :30
 
   if (eightSleepConfigured()) {
     // Data-driven: fire when last night's Eight Sleep session syncs (with a
