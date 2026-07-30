@@ -312,7 +312,10 @@ async function rawSpendRowsInRange({ fromYmd, toYmd }) {
   const { rows } = await query(
     `SELECT occurred_at::date::text AS day,
             COALESCE(NULLIF(metadata->>'category', ''), 'Uncategorized') AS category,
-            (metadata->>'amount')::numeric AS amount
+            (metadata->>'amount')::numeric AS amount,
+            external_id,
+            lower(coalesce(metadata->>'merchant', '')) AS merchant,
+            lower(coalesce(metadata->>'account', '')) AS account
        FROM documents
       WHERE source = 'monarch'
         AND occurred_at::date >= $1::date
@@ -320,7 +323,38 @@ async function rawSpendRowsInRange({ fromYmd, toYmd }) {
         AND metadata ? 'amount'`,
     [fromYmd, toYmd]
   );
-  return rows.map((r) => ({ day: r.day, category: r.category, amount: Number(r.amount) }));
+  return dedupeCanonicalPairs(rows).map((r) => ({ day: r.day, category: r.category, amount: Number(r.amount) }));
+}
+
+// Production incident (Wealth double-counting): a write-time reconcile gap
+// can leave the SAME real transaction stored under two external_id schemes
+// — the current Monarch MCP sync's canonical `monarch:<digits>` id, and a
+// stale id from an older write path (a bare content-hash or legacy id,
+// never re-pruned). Collapsing rows that merely SHARE a day/category/
+// amount/merchant/account is unsafe in general — discretionarySpend.js's
+// own tests require two genuinely separate same-day purchases at the same
+// merchant to both count — so this ONLY drops a non-canonical row when a
+// CANONICAL sibling exists for the IDENTICAL fingerprint; a fingerprint
+// match with no canonical id in the group (the legitimate-duplicate case)
+// is left completely alone. This is a defensive read-time safety net for
+// exactly this failure shape reappearing before the next admin cleanup
+// (POST /api/admin/cleanup-duplicate-transactions) runs — it does not fix
+// the underlying reconcile gap itself.
+const CANONICAL_EXTERNAL_ID = /^monarch:\d+$/;
+function dedupeCanonicalPairs(rows) {
+  const groups = new Map();
+  for (const r of rows) {
+    const key = `${r.day}|${r.category}|${r.amount}|${r.merchant}|${r.account}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  const out = [];
+  for (const group of groups.values()) {
+    const hasCanonical = group.some((r) => CANONICAL_EXTERNAL_ID.test(r.external_id || ''));
+    const hasNonCanonical = group.some((r) => !CANONICAL_EXTERNAL_ID.test(r.external_id || ''));
+    out.push(...(hasCanonical && hasNonCanonical ? group.filter((r) => CANONICAL_EXTERNAL_ID.test(r.external_id || '')) : group));
+  }
+  return out;
 }
 
 // Reconcile a re-synced window against the source's current truth: delete
@@ -358,6 +392,7 @@ module.exports = {
   spendTransactions,
   categorySpendInRange,
   rawSpendRowsInRange,
+  dedupeCanonicalPairs,
   listWithoutEmbedding,
   setEmbedding,
   countMissingEmbeddings,

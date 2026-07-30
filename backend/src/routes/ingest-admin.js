@@ -24,7 +24,7 @@ function createIngestAdminRouter() {
   // the general app token — /weather, /ingest/metrics, and /import/monarch stay
   // on the normal gate since they're routine data flow, not admin actions. See
   // src/middleware/adminAuth.js.
-  router.use(['/admin/reset-demo', '/admin/recompute-wealth', '/admin/review-run', '/ingest/run'], requireAdminToken);
+  router.use(['/admin/reset-demo', '/admin/recompute-wealth', '/admin/review-run', '/admin/cleanup-duplicate-transactions', '/ingest/run'], requireAdminToken);
 
   // Standalone weather — so the Today card can show/refresh weather on its own,
   // fast, without waiting on the full LLM briefing. Cached briefly in-memory so
@@ -105,6 +105,71 @@ function createIngestAdminRouter() {
   router.post('/admin/review-run', asyncHandler(async (req, res) => {
     const { runReview } = require('../intelligence/review');
     res.json(await runReview());
+  }));
+
+  // One-time remediation for the Wealth double-counting production incident:
+  // the SAME real transaction ended up stored as TWO `documents` rows under
+  // different external_id schemes — one written by the current Monarch MCP
+  // sync (`monarch:<numeric-id>`, the canonical/current scheme) and one
+  // stale row from an older write path (a bare content-hash or legacy id,
+  // no "monarch:" prefix) that reconcile/prune should have removed but
+  // didn't. discretionarySpend.js's aggregation deliberately never
+  // deduplicates by day/merchant/amount (a prior fix protects two
+  // genuinely separate same-day purchases at the same merchant from being
+  // collapsed), so every such pair silently doubled its category's spend.
+  //
+  // Deliberately narrow: only deletes a NON-canonical row when a canonical
+  // `monarch:<digits>` sibling exists with the IDENTICAL occurred_at date,
+  // category, amount, merchant, and account — a standalone transaction
+  // that merely shares those fields with nothing else is never touched,
+  // and a genuine same-day/same-amount duplicate purchase is only removed
+  // if it also happens to collide with a canonical-scheme id (vanishingly
+  // unlikely for anything that isn't actually the same transaction).
+  // Defaults to a dry run (reports what WOULD be deleted); pass
+  // ?apply=1 to actually delete.
+  router.post('/admin/cleanup-duplicate-transactions', asyncHandler(async (req, res) => {
+    const apply = req.query.apply === '1' || req.query.apply === 'true';
+    const findDuplicatesSql = `
+      WITH tagged AS (
+        SELECT id, external_id, occurred_at::date::text AS day,
+               metadata->>'category' AS category,
+               (metadata->>'amount')::numeric AS amount,
+               lower(coalesce(metadata->>'merchant', '')) AS merchant,
+               lower(coalesce(metadata->>'account', '')) AS account,
+               (external_id ~ '^monarch:[0-9]+$') AS is_canonical
+          FROM documents
+         WHERE source = 'monarch' AND external_id IS NOT NULL
+      ),
+      dupe_keys AS (
+        SELECT day, category, amount, merchant, account
+          FROM tagged
+         GROUP BY day, category, amount, merchant, account
+        HAVING count(*) FILTER (WHERE is_canonical) >= 1
+           AND count(*) FILTER (WHERE NOT is_canonical) >= 1
+      )
+      SELECT t.id, t.external_id, t.day, t.category, t.amount, t.merchant, t.account
+        FROM tagged t
+        JOIN dupe_keys k USING (day, category, amount, merchant, account)
+       WHERE NOT t.is_canonical
+       ORDER BY t.day, t.category`;
+    const { rows: toDelete } = await db.query(findDuplicatesSql);
+    const totalAmount = Math.round(toDelete.reduce((a, r) => a - Number(r.amount), 0) * 100) / 100;
+
+    let deleted = 0;
+    if (apply && toDelete.length) {
+      const { rowCount } = await db.query(
+        `DELETE FROM documents WHERE id = ANY($1::uuid[])`,
+        [toDelete.map((r) => r.id)]
+      );
+      deleted = rowCount;
+    }
+    res.json({
+      apply,
+      candidateCount: toDelete.length,
+      candidateTotalAmount: totalAmount,
+      deleted,
+      candidates: toDelete,
+    });
   }));
 
   // Monarch CSV upload: POST the raw CSV body (transactions OR balances export).
