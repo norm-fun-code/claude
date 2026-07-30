@@ -148,6 +148,20 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
     : await read('recovery', () => require('../intelligence/recovery').liveRecovery());
   const recoveryVal = recoveryRead.value;
 
+  // Matched-pace baseline (median of the same elapsed-fraction-of-month
+  // spend across trailing complete months) — kicked off HERE, before the
+  // fan-out below, because buildWealthInsights() (the 'wealth' read) now
+  // needs its resolved categoryBreakdown to compute per-category "vs usual"
+  // spikes — see wealth-insights.js's `spendingPace` param doc comment for
+  // why: it used to run an independent baseline query in parallel with this
+  // one and could silently disagree with it for the same category/month.
+  // Reading it into its own promise here (rather than inline in the
+  // Promise.all below) lets the 'wealth' read await it without blocking
+  // every other unrelated fan-out entry.
+  const spendingPacePromise = want.wealth
+    ? require('../services/wealth-pace').computeDiscretionaryMatchedPace({ asOf, tz })
+    : Promise.resolve(null);
+
   // effectiveWorkout depends on recovery.band; fan out ALL independent sections
   // concurrently alongside it (voice-latency: independent authority reads run in
   // parallel, not one-at-a-time).
@@ -161,13 +175,19 @@ async function buildBrainSnapshot({ asOf = new Date(), tz = DEFAULT_TZ, recovery
     want.goals ? read('goals', () => require('../store/goals').listGoals({ status: 'active' }), []) : skip([]),
     want.weeklyIntention ? read('weeklyIntention', () => require('../store/intentions').currentIntention()) : skip(null),
     want.commitments ? read('commitments', () => require('../store/commitments').listActive({ limit: 20 }), []) : skip([]),
-    want.wealth ? read('wealth', () => require('../services/wealth-insights').buildWealthInsights(), []) : skip([]),
+    want.wealth ? read('wealth', async () => {
+      // Never let a pace failure fail the 'wealth' read itself —
+      // buildWealthInsights() degrades gracefully to its own fallback
+      // baseline when spendingPace is null (see its doc comment). The
+      // 'spendingPace' read below reports the failure on its own field.
+      const spendingPace = await spendingPacePromise.catch(() => null);
+      return require('../services/wealth-insights').buildWealthInsights({ spendingPace });
+    }, []) : skip([]),
     want.wealth ? read('spendingMtd', () => canonicalSpendingMtd(asOf, tz), null) : skip(null),
-    // Matched-pace baseline (median of the same elapsed-fraction-of-month
-    // spend across trailing complete months) — the SAME function
-    // wealth-landing.js/ask.js call, so this can never disagree with the
-    // Wealth tab or a cited Ask answer.
-    want.wealth ? read('spendingPace', () => require('../services/wealth-pace').computeDiscretionaryMatchedPace({ asOf, tz }), null) : skip(null),
+    // The SAME computeDiscretionaryMatchedPace() call the 'wealth' read
+    // above just consumed — reused, not recomputed, so this can never
+    // disagree with the Wealth tab or a cited Ask answer.
+    want.wealth ? read('spendingPace', () => spendingPacePromise, null) : skip(null),
     want.findings ? read('findings', () => require('../store/findings').listFindings({ status: 'open', limit: 40 }), []) : skip([]),
     want.experiments ? read('experiments', () => require('../store/experiments').listExperiments(), []) : skip([]),
     want.eligibleContext ? read('eligibleContext', async () => {

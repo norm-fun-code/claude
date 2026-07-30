@@ -430,26 +430,31 @@ async function buildWealthLandingProjection({
   const { canonicalSpendingMtd } = require('../brain/snapshot');
   const { computeDiscretionaryMatchedPace } = require('./wealth-pace');
 
-  // A caller that already resolved the SAME authority this request (e.g.
-  // briefing.js's full build, which threads its BrainSnapshot-resolved raw
-  // insights through here) passes them in via `wealthInsights` so this
-  // projection never triggers a second buildWealthInsights() call for the
-  // same build — the exact "resolve each authority exactly once" invariant
-  // BrainSnapshot exists to guarantee (see brain/snapshot.js).
-  const insightsPromise = Array.isArray(providedInsights)
-    ? Promise.resolve(providedInsights)
-    : wealthInsightsMod.buildWealthInsights().catch(() => []);
-
   // Matched-pace baseline (median of the same elapsed-fraction-of-month
   // spend across trailing complete months): up to 12 sequential historical
   // aggregate queries, easily the most expensive single call in this
   // projection. A caller that already resolved it this request (briefing.js's
   // full build, via BrainSnapshot) passes it in via `spendingPace` — same
-  // "resolve each authority exactly once" pattern as `wealthInsights` above —
-  // so a fresh brief build no longer recomputes it a second time.
+  // "resolve each authority exactly once" pattern as `wealthInsights` below —
+  // so a fresh brief build no longer recomputes it a second time. Resolved
+  // BEFORE insightsPromise below because a fresh buildWealthInsights() call
+  // now needs its categoryBreakdown (see wealth-insights.js's `spendingPace`
+  // param) so the "Worth a look" spike cards can never disagree with the top
+  // card's "Driven by X" line for the same category/month again.
   const pacePromise = providedSpendingPace !== undefined
     ? Promise.resolve(providedSpendingPace)
     : computeDiscretionaryMatchedPace({ asOf, tz }).catch(() => null);
+
+  // A caller that already resolved the SAME authority this request (e.g.
+  // briefing.js's full build, which threads its BrainSnapshot-resolved raw
+  // insights through here) passes them in via `wealthInsights` so this
+  // projection never triggers a second buildWealthInsights() call for the
+  // same build — the exact "resolve each authority exactly once" invariant
+  // BrainSnapshot exists to guarantee (see brain/snapshot.js). Only a FRESH
+  // call (providedInsights not given) needs to await pacePromise first.
+  const insightsPromise = Array.isArray(providedInsights)
+    ? Promise.resolve(providedInsights)
+    : pacePromise.then((spendingPace) => wealthInsightsMod.buildWealthInsights({ spendingPace })).catch(() => []);
 
   const [insightsRaw, spendingMtd, spendingPace, netWorthRow, savingsRate, netWorthTrend, sources, dismissedKeys, dismissedContext] =
     await Promise.all([

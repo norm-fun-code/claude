@@ -297,13 +297,18 @@ function snippet(text, n = 400) {
 // facts) — passed in rather than computed here, so a financial question
 // resolves computeDiscretionaryMatchedPace's up-to-12-query calculation
 // exactly ONCE, not once per consumer.
-async function wealthContext(pacePromise) {
+async function wealthContext(pacePromise = Promise.resolve(null)) {
   try {
     const { buildWealthInsights } = require('../services/wealth-insights');
     const wealthLanding = require('../services/wealth-landing');
     const dismissedInsights = require('../store/dismissedInsights');
+    // buildWealthInsights() needs the resolved pace's categoryBreakdown to
+    // compute per-category "vs usual" spikes (see wealth-insights.js's
+    // `spendingPace` param doc comment) — so it can never disagree with the
+    // paceLine computed from this SAME `pace` a few lines below, or with the
+    // Wealth tab's "Driven by X" line, which reads the identical function.
     const [insightsRaw, dismissedKeys, dismissedContext, pace] = await Promise.all([
-      buildWealthInsights(),
+      Promise.resolve(pacePromise).then((spendingPace) => buildWealthInsights({ spendingPace })).catch(() => []),
       dismissedInsights.dismissedKeys(),
       dismissedInsights.dismissedContextByKey(),
       pacePromise,

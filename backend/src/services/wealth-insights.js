@@ -146,7 +146,7 @@ async function computeSavingsRate({ now = new Date() } = {}) {
  *  - "vs usual": current-month category spend vs the avg of prior full months.
  *  - "vs budget": current-month actual vs Monarch's planned amount per category.
  */
-async function buildWealthInsights() {
+async function buildWealthInsights({ spendingPace = null } = {}) {
   const insights = [];
 
   // 0) Savings rate — the single most important personal-finance number:
@@ -222,100 +222,132 @@ async function buildWealthInsights() {
     return ` Still, that's within your ${fmt(l.budget)} budget so far.`;
   };
 
-  // 1) Spend vs your usual, from stored transactions.
-  let rows = [];
-  try {
-    // Exclude internal transfers / card payments so the category breakdown
-    // matches the spending metric (which already excludes them). Filtered here
-    // rather than in the store helper so diagnostics can still see raw rows.
-    rows = (await documents.monthlyCategorySpend({ months: 4 }))
-      .filter((r) => !isInternalTransfer(r.category));
-  } catch (err) {
-    console.error('[wealth-insights] category spend failed:', err.message);
-  }
-
-  if (rows.length) {
-    const months = [...new Set(rows.map((r) => r.month))].sort(); // ascending
-    const current = months[months.length - 1];
-    const priorMonths = months.slice(0, -1);
-
-    // The current month is partial (e.g. day 1 of June). Comparing its
-    // run-rate against FULL prior months would flag everything as "down" early
-    // and exaggerate spikes late. So project the current month to a full-month
-    // equivalent by day-of-month, and only trust the projection once enough of
-    // the month has elapsed that the run-rate is meaningful.
-    const now = new Date();
-    const currentIsThisMonth =
-      current === `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const dayOfMonth = now.getDate();
-    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    const projFactor = currentIsThisMonth ? daysInMonth / dayOfMonth : 1;
-    // Need ~a week of data before a run-rate projection is worth surfacing.
-    const projectionReliable = !currentIsThisMonth || dayOfMonth >= 7;
-
-    // category -> { current, priors: [] }
-    const byCat = new Map();
-    for (const r of rows) {
-      const slot = byCat.get(r.category) || { current: 0, priors: [] };
-      if (r.month === current) slot.current = r.spend;
-      else if (priorMonths.includes(r.month)) slot.priors.push(r.spend);
-      byCat.set(r.category, slot);
+  // 1) Spend vs your usual — ALWAYS from wealth-pace.js's categoryBreakdown,
+  // the one canonical "current vs. matched-elapsed-fraction historical
+  // median" figure per category (see computeDiscretionaryMatchedPace). This
+  // module used to run its own INDEPENDENT baseline here (a mean of trailing
+  // full calendar months vs. a run-rate-projected current month, via
+  // documents.monthlyCategorySpend) — a second, incompatible definition of
+  // "usual" for the exact same category/month that the top Wealth card's
+  // "Driven by X" line already explains with wealth-pace's median. The two
+  // would silently disagree (e.g. "Driven by Clothing +$2,852" up top vs.
+  // "Clothing: $3,125 more than usual" in this list, for the same month) —
+  // never two independently-computed baselines for the same fact on one
+  // screen again. `spendingPace` is the SAME resolved
+  // computeDiscretionaryMatchedPace() result the caller (wealth-landing.js)
+  // already computed for the top card — passed in, never recomputed, so
+  // there is exactly one query path and exactly one number.
+  if (spendingPace && spendingPace.coverageTier === 'typical' && Array.isArray(spendingPace.categoryBreakdown)) {
+    const candidates = spendingPace.categoryBreakdown.filter((c) => !LUMP_SUM.has(c.category));
+    for (const s of candidates.slice(0, 3)) {
+      const pctSuffix = s.pct != null ? ` (${pct(s.pct)} above usual)` : '';
+      insights.push({
+        type: 'spending_pattern',
+        tone: 'watch',
+        category: s.category,
+        title: `${s.category}: ${fmt(s.excessDollars)} more than usual${pctSuffix}`,
+        // Trend vs the user's own history (matched to the same elapsed
+        // fraction of the month, so no "on pace for" projection is needed —
+        // the comparison is already apples-to-apples) PLUS, when Monarch has
+        // a budget for the category, where that trend lands against the
+        // budget — the two reads the user actually cares about, on one card.
+        detail:
+          `You've spent ${fmt(s.currentAmount)} on ${s.category} so far this month — about ${fmt(s.excessDollars)} more than your typical ${fmt(s.matchedMedian)} by this point in the month.` +
+          budgetClause(s.category),
+        // excessDollars is the actual dollar overage (current - matched
+        // median), NOT the percentage — a small-base/huge-% spike and a
+        // large-base/modest-% one can be comparably real dollar impacts, but
+        // ranking by raw percentage alone makes the small-base one look far
+        // more urgent than it is (product review finding). Callers should
+        // rank/select by this, not by re-parsing the title string.
+        evidence: { kind: 'spending_pattern', category: s.category, current: s.currentAmount, matchedMedian: s.matchedMedian, impactDollars: s.excessDollars },
+        // Already gated by wealth-pace.js's CATEGORY_MIN_SPEND +
+        // CATEGORY_EXCESS_DOLLAR_FLOOR — every entry that reaches this line
+        // is a real, dollar-material deviation from the user's own matched
+        // history, worth acting on now.
+        attentionClass: 'action_required', material: true, timeSensitive: true, actionable: true,
+        direction: 'negative', reasonCode: 'spending_spike',
+      });
+    }
+  } else {
+    // Degraded fallback whenever there's no USABLE matched-pace category
+    // breakdown — either no spendingPace at all (Monarch not configured, or
+    // the pace computation errored), or a real spendingPace whose
+    // coverageTier is 'insufficient' (fewer than wealth-pace's
+    // MIN_COMPARABLE_MONTHS=6 eligible historical months, e.g. a newer
+    // account) — wealth-pace deliberately returns an empty categoryBreakdown
+    // in that case rather than inventing a median from too thin a sample.
+    // Never used alongside a real, sufficient-coverage spendingPace, so this
+    // can't disagree with the top card. Coarser than wealth-pace's matched-
+    // elapsed-fraction median (a plain mean of up to 3 trailing full months
+    // vs. a projected current month), but better than showing nothing for an
+    // account with real transaction history and no 6-month pace baseline yet.
+    let rows = [];
+    try {
+      // Exclude internal transfers / card payments so the category breakdown
+      // matches the spending metric (which already excludes them). Filtered
+      // here rather than in the store helper so diagnostics can still see
+      // raw rows.
+      rows = (await documents.monthlyCategorySpend({ months: 4 }))
+        .filter((r) => !isInternalTransfer(r.category));
+    } catch (err) {
+      console.error('[wealth-insights] category spend failed:', err.message);
     }
 
-    const spikes = [];
-    for (const [category, s] of byCat) {
-      // Lump-sum categories (rent, mortgage) get a direct budget comparison in
-      // the budget-pacing section below — a run-rate projection from a single
-      // early-month payment produces an absurd "on pace for $25k" figure.
-      if (LUMP_SUM.has(category)) continue;
-      if (!s.priors.length) continue;
-      const avg = s.priors.reduce((a, b) => a + b, 0) / s.priors.length;
-      if (avg < MIN_SPEND) continue;
-      // Project the partial month to a full-month run-rate for a fair compare.
-      const projected = s.current * projFactor;
-      if (projected < MIN_SPEND) continue;
-      const ratio = projected / avg;
-      if (ratio >= SPIKE_RATIO && projected - avg >= SPIKE_DOLLARS) {
-        spikes.push({ category, current: s.current, projected, avg, over: pct((ratio - 1) * 100) });
+    if (rows.length) {
+      const months = [...new Set(rows.map((r) => r.month))].sort(); // ascending
+      const current = months[months.length - 1];
+      const priorMonths = months.slice(0, -1);
+
+      const now = new Date();
+      const currentIsThisMonth =
+        current === `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const dayOfMonth = now.getDate();
+      const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      const projFactor = currentIsThisMonth ? daysInMonth / dayOfMonth : 1;
+      const projectionReliable = !currentIsThisMonth || dayOfMonth >= 7;
+
+      const byCat = new Map();
+      for (const r of rows) {
+        const slot = byCat.get(r.category) || { current: 0, priors: [] };
+        if (r.month === current) slot.current = r.spend;
+        else if (priorMonths.includes(r.month)) slot.priors.push(r.spend);
+        byCat.set(r.category, slot);
       }
-    }
-    // Only surface run-rate spikes once the month is far enough along to trust.
-    if (projectionReliable) {
-      // Biggest dollar overages first, top 3.
-      spikes.sort((a, b) => (b.projected - b.avg) - (a.projected - a.avg));
-      const projected = currentIsThisMonth && projFactor > 1.05;
-      for (const s of spikes.slice(0, 3)) {
-        const impactDollars = Math.round(s.projected - s.avg);
-        const vsUsual = projected
-          ? `You've spent ${fmt(s.current)} on ${s.category} so far this month — on pace for about ${fmt(s.projected)}, roughly ${s.over} above your recent average of ${fmt(s.avg)}.`
-          : `You've spent ${fmt(s.current)} on ${s.category} this month — about ${s.over} more than your recent average of ${fmt(s.avg)}.`;
-        // Dollar-first title, percentage as secondary context — and OMITTED
-        // below SMALL_BASELINE_FOR_PCT, where it's mostly a tiny-denominator
-        // artifact (e.g. "Clothing trending 400% above your usual" from a
-        // $100 avg reads as far more alarming than the $400 it actually is).
-        const pctSuffix = s.avg >= SMALL_BASELINE_FOR_PCT ? ` (${s.over} above usual)` : '';
-        insights.push({
-          type: 'spending_pattern',
-          tone: 'watch',
-          category: s.category,
-          title: `${s.category}: ${fmt(impactDollars)} more than usual${pctSuffix}`,
-          // Trend vs the user's own history PLUS, when Monarch has a budget for
-          // the category, where that trend lands against the budget — the two
-          // reads the user actually cares about, on one card.
-          detail: vsUsual + budgetClause(s.category),
-          // impactDollars is the actual dollar overage (projected - avg), NOT the
-          // percentage — a $576/460% spike (small base, huge %) and a $527/47%
-          // one are comparably real dollar impacts, but ranking by raw percentage
-          // alone makes the small-base one look far more urgent than it is
-          // (product review finding). Callers should rank/select by this, not
-          // by re-parsing "over" out of the title string.
-          evidence: { kind: 'spending_pattern', category: s.category, current: Math.round(s.current), projected: Math.round(s.projected), avg: Math.round(s.avg), impactDollars },
-          // Already gated by SPIKE_RATIO + SPIKE_DOLLARS above — every spike
-          // that reaches this line is a real, dollar-material deviation from
-          // the user's own recent history, worth acting on now.
-          attentionClass: 'action_required', material: true, timeSensitive: true, actionable: true,
-          direction: 'negative', reasonCode: 'spending_spike',
-        });
+
+      const spikes = [];
+      for (const [category, s] of byCat) {
+        if (LUMP_SUM.has(category)) continue;
+        if (!s.priors.length) continue;
+        const avg = s.priors.reduce((a, b) => a + b, 0) / s.priors.length;
+        if (avg < MIN_SPEND) continue;
+        const projected = s.current * projFactor;
+        if (projected < MIN_SPEND) continue;
+        const ratio = projected / avg;
+        if (ratio >= SPIKE_RATIO && projected - avg >= SPIKE_DOLLARS) {
+          spikes.push({ category, current: s.current, projected, avg, over: pct((ratio - 1) * 100) });
+        }
+      }
+      if (projectionReliable) {
+        spikes.sort((a, b) => (b.projected - b.avg) - (a.projected - a.avg));
+        const projected = currentIsThisMonth && projFactor > 1.05;
+        for (const s of spikes.slice(0, 3)) {
+          const impactDollars = Math.round(s.projected - s.avg);
+          const vsUsual = projected
+            ? `You've spent ${fmt(s.current)} on ${s.category} so far this month — on pace for about ${fmt(s.projected)}, roughly ${s.over} above your recent average of ${fmt(s.avg)}.`
+            : `You've spent ${fmt(s.current)} on ${s.category} this month — about ${s.over} more than your recent average of ${fmt(s.avg)}.`;
+          const pctSuffix = s.avg >= SMALL_BASELINE_FOR_PCT ? ` (${s.over} above usual)` : '';
+          insights.push({
+            type: 'spending_pattern',
+            tone: 'watch',
+            category: s.category,
+            title: `${s.category}: ${fmt(impactDollars)} more than usual${pctSuffix}`,
+            detail: vsUsual + budgetClause(s.category),
+            evidence: { kind: 'spending_pattern', category: s.category, current: Math.round(s.current), projected: Math.round(s.projected), avg: Math.round(s.avg), impactDollars },
+            attentionClass: 'action_required', material: true, timeSensitive: true, actionable: true,
+            direction: 'negative', reasonCode: 'spending_spike',
+          });
+        }
       }
     }
   }

@@ -23,6 +23,7 @@ const documentsStore = require('../../src/store/documents');
 const { computeDiscretionaryMatchedPace, monthOffset, daysInMonth, matchedDayOfMonth } = require('../../src/services/wealth-pace');
 const { definitionVersion } = require('../../src/services/discretionarySpend');
 const { buildWealthLandingProjection } = require('../../src/services/wealth-landing');
+const { buildWealthInsights } = require('../../src/services/wealth-insights');
 const { buildBrainSnapshot, canonicalFacts } = require('../../src/brain/snapshot');
 
 const TZ = 'America/New_York';
@@ -438,6 +439,98 @@ test('required: category drivers — an elevated category is named with correct 
   assert.ok(!categories.includes('Groceries'), 'a $10 excess is not material enough to be a driver');
   assert.ok(!categories.includes('Transfer'), 'a transfer is never discretionary spending, however large');
   assert.ok(!categories.includes('Rent'), 'a fixed housing payment is never a discretionary driver');
+});
+
+// Production bug report: the top Wealth card's "Driven by Clothing +$2,852"
+// and the "Worth a look" spike list's "Clothing: $3,125 more than usual" (for
+// the exact SAME category/month) disagreed, because wealth-insights.js used
+// to compute its own INDEPENDENT baseline (a mean of trailing full calendar
+// months vs. a projected current month, via documents.monthlyCategorySpend)
+// instead of reading wealth-pace.js's matched-elapsed-fraction median. These
+// tests prove buildWealthInsights({spendingPace}) now reads the identical
+// per-category figures computeDiscretionaryMatchedPace already resolved —
+// never a second, independently-computed number for the same fact.
+test('required: buildWealthInsights({spendingPace}) reports the EXACT SAME current/median/excess figures as wealth-pace.js\'s drivers for the same category — the reported "double counted" bug', async (t) => {
+  const prefix = `${TAG}-crosssurface`;
+  cleanupDocsAfter(t, prefix);
+
+  for (let monthsAgo = 1; monthsAgo <= 6; monthsAgo++) {
+    const { y, m } = targetForMonthsAgo(monthsAgo);
+    await seedDoc({ externalId: `${prefix}-clothing-${monthsAgo}`, occurredAt: ymd(y, m, 1), category: 'Clothing', amount: '-110' });
+  }
+  await seedDoc({ externalId: `${prefix}-clothing-cur`, occurredAt: ymd(2026, 7, 1), category: 'Clothing', amount: '-3235' });
+
+  const pace = await computeDiscretionaryMatchedPace({ asOf: ASOF, tz: TZ });
+  const [driver] = pace.drivers;
+  assert.equal(driver.category, 'Clothing');
+
+  const insights = await buildWealthInsights({ spendingPace: pace });
+  const spike = insights.find((i) => i.type === 'spending_pattern' && i.category === 'Clothing');
+  assert.ok(spike, 'expected a spending_pattern card for Clothing');
+
+  // The whole point: these must be the IDENTICAL numbers, not two baselines
+  // that happen to be close.
+  assert.equal(spike.evidence.current, driver.currentAmount);
+  assert.equal(spike.evidence.matchedMedian, driver.matchedMedian);
+  assert.equal(spike.evidence.impactDollars, driver.excessDollars);
+  assert.match(spike.title, new RegExp(`\\$${driver.excessDollars.toLocaleString('en-US')} more than usual`));
+});
+
+test('required: a per-category spike still surfaces via categoryBreakdown even when the OVERALL month is not elevated enough to name top-card drivers', async (t) => {
+  const prefix = `${TAG}-catonly`;
+  cleanupDocsAfter(t, prefix);
+
+  // Entertainment spikes (+$200, a real per-category driver) but Groceries
+  // drops by almost as much (-$150) in the SAME month, so the OVERALL total
+  // only moves $50 — below CATEGORY_EXCESS_DOLLAR_FLOOR($100), so top-card
+  // drivers stays empty — yet Entertainment alone must still be visible to
+  // wealth-insights via categoryBreakdown, which is computed independently
+  // of whether the overall month is elevated.
+  for (let monthsAgo = 1; monthsAgo <= 6; monthsAgo++) {
+    const { y, m } = targetForMonthsAgo(monthsAgo);
+    await seedDoc({ externalId: `${prefix}-ent-${monthsAgo}`, occurredAt: ymd(y, m, 1), category: 'Entertainment', amount: '-50' });
+    await seedDoc({ externalId: `${prefix}-grc-${monthsAgo}`, occurredAt: ymd(y, m, 1), category: 'Groceries', amount: '-500' });
+  }
+  await seedDoc({ externalId: `${prefix}-ent-cur`, occurredAt: ymd(2026, 7, 1), category: 'Entertainment', amount: '-250' });
+  await seedDoc({ externalId: `${prefix}-grc-cur`, occurredAt: ymd(2026, 7, 1), category: 'Groceries', amount: '-350' });
+
+  const pace = await computeDiscretionaryMatchedPace({ asOf: ASOF, tz: TZ });
+  assert.equal(pace.currentAmount, 600);
+  assert.equal(pace.medianBaseline, 550);
+  assert.equal(pace.vsMedian.dollars, 50, 'sanity: a $50 overall move must NOT be elevated enough to name drivers');
+  assert.deepEqual(pace.drivers, [], 'the overall month is not elevated enough for top-card drivers');
+  const entRow = pace.categoryBreakdown.find((c) => c.category === 'Entertainment');
+  assert.ok(entRow, 'but categoryBreakdown must still carry the real Entertainment spike');
+  assert.equal(entRow.excessDollars, 200);
+
+  const insights = await buildWealthInsights({ spendingPace: pace });
+  const spike = insights.find((i) => i.type === 'spending_pattern' && i.category === 'Entertainment');
+  assert.ok(spike, 'a per-category spike must surface even though nothing is named as a top-card driver');
+  assert.equal(spike.evidence.impactDollars, 200);
+});
+
+test('required: when wealth-pace coverage is insufficient (a newer account), buildWealthInsights degrades to its own fallback rather than surfacing nothing', async (t) => {
+  const prefix = `${TAG}-degraded`;
+  cleanupDocsAfter(t, prefix);
+
+  // Only 2 eligible historical months -> coverageTier 'insufficient' ->
+  // wealth-pace's categoryBreakdown is deliberately empty (never invents a
+  // median from too thin a sample) — buildWealthInsights must fall back to
+  // its own (coarser) monthlyCategorySpend-based check instead of silently
+  // showing nothing for an account with real spending history.
+  for (let monthsAgo = 1; monthsAgo <= 2; monthsAgo++) {
+    const { y, m } = targetForMonthsAgo(monthsAgo);
+    await seedMonthSpend(`${prefix}-h${monthsAgo}`, y, m, 1, 100, 'Taxi & Ride Shares');
+  }
+  await seedMonthSpend(`${prefix}-cur`, 2026, 7, 1, 500, 'Taxi & Ride Shares');
+
+  const pace = await computeDiscretionaryMatchedPace({ asOf: ASOF, tz: TZ });
+  assert.equal(pace.coverageTier, 'insufficient');
+  assert.deepEqual(pace.categoryBreakdown, []);
+
+  const insights = await buildWealthInsights({ spendingPace: pace });
+  const spike = insights.find((i) => i.type === 'spending_pattern' && i.category === 'Taxi & Ride Shares');
+  assert.ok(spike, 'the degraded fallback must still catch an obvious spike when wealth-pace has too little history to compare against');
 });
 
 test('required: America/New_York DST boundaries — spring-forward (March) and fall-back (November) still include day 1 of the month', async (t) => {

@@ -169,7 +169,7 @@ async function computeDiscretionaryMatchedPace({ asOf = new Date(), tz = process
     asOf: asOf.toISOString(), elapsedDays, daysInCurrentMonth,
     monthsConsidered: 0, monthsUsed: 0, coverageTier: 'insufficient',
     medianBaseline: null, vsMedian: null, paceLabel: null,
-    previousMonthAmount: null, vsPreviousMonth: null, drivers: [], monthsBreakdown: [],
+    previousMonthAmount: null, vsPreviousMonth: null, drivers: [], categoryBreakdown: [], monthsBreakdown: [],
   };
 
   // Every current + historical window this call needs, resolved together —
@@ -269,12 +269,24 @@ async function computeDiscretionaryMatchedPace({ asOf = new Date(), tz = process
     vsPreviousMonth = { dollars, pct: pctOrNull(dollars, prevMonth.amount) };
   }
 
-  // Drivers: which categories account for the excess above the matched
-  // historical median — only computed when spending is materially above
-  // pace and there's a real baseline to explain it against. Never manufactured
-  // when nothing meaningful is elevated.
+  // Category breakdown: EVERY category's current spend vs. the median of
+  // that SAME category across the same matched-elapsed-fraction historical
+  // windows already resolved above — the one canonical "vs your usual"
+  // figure per category/month, computed whenever there's enough matched-
+  // window coverage to trust a median at all (coverageTier === 'typical'),
+  // independent of whether the OVERALL month happens to be running over
+  // pace. This is deliberately the single source every consumer that needs
+  // a per-category "how much more than usual" figure reads from — including
+  // wealth-insights.js's spending_pattern spike cards (see its buildWealthInsights
+  // `spendingPace` param) — so the same category/month is never explained by
+  // two independently-computed baselines on the same screen (the Wealth
+  // hardening audit's regression: the top card's "Driven by Clothing +$2,852"
+  // and the "Worth a look" list's "Clothing: $3,125 more than usual" used to
+  // disagree because wealth-insights.js computed its own mean-of-3-full-months
+  // baseline from documents.monthlyCategorySpend instead of reading this).
+  let categoryBreakdown = [];
   let drivers = [];
-  if (medianBaseline != null && vsMedian && vsMedian.dollars >= CATEGORY_EXCESS_DOLLAR_FLOOR) {
+  if (coverageTier === 'typical') {
     const eligibleMonths = monthsBreakdown.filter((mo) => mo.eligible);
     // Reuse the SAME batch breakdown resolved above — discretionaryByCategory
     // already excludes transfers/fixed via discretionarySpend.js's classify(),
@@ -306,14 +318,22 @@ async function computeDiscretionaryMatchedPace({ asOf = new Date(), tz = process
       });
     }
     candidates.sort((a, b) => b.excessDollars - a.excessDollars);
-    drivers = candidates.slice(0, MAX_DRIVERS);
+    categoryBreakdown = candidates;
+    // "Drivers" (the top card's "Driven by X and Y" line) only names names
+    // when the OVERALL month is materially above pace — never implying "the
+    // month is over because of X" when the month isn't actually over at all.
+    // categoryBreakdown above stays available regardless, for surfaces (like
+    // wealth-insights.js) that flag a per-category spike on its own terms.
+    if (medianBaseline != null && vsMedian && vsMedian.dollars >= CATEGORY_EXCESS_DOLLAR_FLOOR) {
+      drivers = candidates.slice(0, MAX_DRIVERS);
+    }
   }
 
   return {
     currentAmount: Math.round(currentAmount), asOf: asOf.toISOString(), elapsedDays, daysInCurrentMonth,
     monthsConsidered: monthsBreakdown.length, monthsUsed, coverageTier,
     medianBaseline: medianBaseline != null ? Math.round(medianBaseline) : null,
-    vsMedian, paceLabel, previousMonthAmount, vsPreviousMonth, drivers, monthsBreakdown,
+    vsMedian, paceLabel, previousMonthAmount, vsPreviousMonth, drivers, categoryBreakdown, monthsBreakdown,
     // Auditable current-month breakdown (Wealth matched-pace audit,
     // requirement 1-4): total economic spend, the fixed/transfer
     // exclusions with categories/amounts, and the resulting discretionary

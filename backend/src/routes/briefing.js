@@ -949,7 +949,13 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
       try {
         const wtz = process.env.TZ || 'America/New_York';
         const { canonicalSpendingMtd } = require('../brain/snapshot');
-        const [insights] = await Promise.all([buildWealthInsights(), canonicalSpendingMtd(new Date(), wtz)]);
+        // Resolve pace FIRST — buildWealthInsights() needs its
+        // categoryBreakdown to compute per-category "vs usual" spikes (see
+        // wealth-insights.js's `spendingPace` param) so this cache-hit
+        // refresh can never disagree with a full build's numbers.
+        const spendingPace = await require('../services/wealth-pace')
+          .computeDiscretionaryMatchedPace({ asOf: new Date(), tz: wtz }).catch(() => null);
+        const [insights] = await Promise.all([buildWealthInsights({ spendingPace }), canonicalSpendingMtd(new Date(), wtz)]);
         cachedContent.wealthInsights = insights;
         cachedContent.fieldsBuiltAt = stampFields(cachedContent.fieldsBuiltAt, ['wealthInsights']);
       } catch (e) { console.error('[briefing cache] wealth recompute failed:', e.message); }
@@ -1564,7 +1570,13 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
       workout = workoutPromptShape(effectiveWorkoutRaw);
     } catch { workout = workoutPromptShape({ label: 'Rest', source: 'scheduled', isHard: false }); }
     try {
-      wealthInsights = await buildWealthInsights();
+      // Resolve pace FIRST — buildWealthInsights() needs its
+      // categoryBreakdown for per-category "vs usual" spikes (see
+      // wealth-insights.js's `spendingPace` param) so this no-BrainSnapshot
+      // fallback path can never disagree with a normal build's numbers.
+      const spendingPace = await require('../services/wealth-pace')
+        .computeDiscretionaryMatchedPace({ tz: factsTz }).catch(() => null);
+      wealthInsights = await buildWealthInsights({ spendingPace });
     } catch (err) {
       console.error('[wealthInsights] failed:', err.message);
       errors.push({ service: 'wealth_insights', error: err.message });
