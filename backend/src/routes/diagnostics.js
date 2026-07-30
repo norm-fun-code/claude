@@ -967,6 +967,54 @@ function createDiagnosticsRouter() {
     res.json({ days, count: txns.length, topTransactions: sorted, byCategory });
   }));
 
+  // Diagnostic: raw, unaggregated `documents` rows for a category/window —
+  // reveals whether an inflated category total (e.g. a Wealth tab figure
+  // that reads roughly double what it should) is caused by genuine
+  // duplicate rows for the SAME real-world transaction under different
+  // external_ids (two importers, or a pending->posted id change never
+  // pruned), as opposed to a computation bug. `documentsStore.spendTransactions`
+  // and every discretionary/matched-pace query dedup differently (or not at
+  // all — see discretionarySpend.js's doc comment on why), so comparing THIS
+  // raw list against those aggregates is how to tell the two failure modes
+  // apart from data alone, not guesswork.
+  //   GET /api/diag/raw-transactions?category=Clothing&fromYmd=2026-07-01&toYmd=2026-07-31
+  router.get('/diag/raw-transactions', asyncHandler(async (req, res) => {
+    const { category, fromYmd, toYmd } = req.query;
+    if (!fromYmd || !toYmd) return res.status(400).json({ error: 'fromYmd and toYmd (YYYY-MM-DD) are required' });
+    const { rows } = await db.query(
+      `SELECT external_id, occurred_at::date::text AS day,
+              metadata->>'category' AS category, (metadata->>'amount')::numeric AS amount,
+              metadata->>'merchant' AS merchant, metadata->>'account' AS account,
+              metadata->>'original' AS original, metadata->>'pending' AS pending
+         FROM documents
+        WHERE source = 'monarch'
+          AND occurred_at::date >= $1::date AND occurred_at::date <= $2::date
+          AND ($3::text IS NULL OR metadata->>'category' = $3)
+        ORDER BY day, merchant, amount`,
+      [fromYmd, toYmd, category || null]
+    );
+    // Group by the fields that identify "the same real transaction" to a
+    // human (day/merchant/amount/account) so true duplicates — two rows here
+    // with DIFFERENT external_id — are obvious at a glance, without assuming
+    // that grouping is safe to act on automatically (two genuinely distinct
+    // same-day/same-amount purchases are possible; see the ONE place that
+    // matters, discretionarySpend.js, for why this reads never auto-collapse).
+    const groups = new Map();
+    for (const r of rows) {
+      const key = `${r.day}|${(r.merchant || '').toLowerCase()}|${r.amount}|${(r.account || '').toLowerCase()}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    }
+    const possibleDuplicates = [...groups.values()].filter((g) => g.length > 1);
+    res.json({
+      fromYmd, toYmd, category: category || null,
+      count: rows.length,
+      total: Math.round(rows.reduce((a, r) => a - Number(r.amount), 0) * 100) / 100,
+      rows,
+      possibleDuplicateGroups: possibleDuplicates,
+    });
+  }));
+
   // Quick smoke-test for the work calendar free/busy integration.
   // Returns the raw busy blocks for today — useful for verifying GOOGLE_WORK_CALENDAR_ID is correct.
   router.get('/debug/work-calendar', asyncHandler(async (req, res) => {
