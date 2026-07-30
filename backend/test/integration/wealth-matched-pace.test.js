@@ -661,6 +661,54 @@ test('required: ask.js resolves matched-pace exactly once per financial question
   assert.equal(calls, 1, 'a single financial Ask question must resolve matched-pace exactly once, not once for the prompt and once for claim validation');
 });
 
+// Production bug report (recurrence): the no-BrainSnapshot fallback branch
+// in routes/briefing.js (used whenever buildBrainSnapshot() itself throws)
+// resolves its OWN local spendingPace to build wealthInsights, but that
+// value was never threaded through to the later buildWealthLandingProjection()
+// call — which only received an explicit `spendingPace` when BrainSnapshot
+// had succeeded. With no BrainSnapshot, the projection fell back to
+// resolving a SECOND, independent computeDiscretionaryMatchedPace() call of
+// its own, reopening the exact "Driven by Clothing +$X" vs "Clothing: $Y
+// more than usual" disagreement ff66565 was meant to close for good. This
+// proves the fallback path now reuses one spendingPace end to end, exactly
+// like the already-covered BrainSnapshot-present path above.
+test('required: a fresh full build whose BrainSnapshot assembly fails still resolves matched-pace exactly once, and wealthLanding drivers agree with wealthInsights for the same category', async (t) => {
+  const prefix = `${TAG}-nosnapshot`;
+  cleanupDocsAfter(t, prefix);
+
+  for (let monthsAgo = 1; monthsAgo <= 6; monthsAgo++) {
+    const { y, m } = targetForMonthsAgo(monthsAgo);
+    await seedDoc({ externalId: `${prefix}-clothing-${monthsAgo}`, occurredAt: ymd(y, m, 1), category: 'Clothing', amount: '-110' });
+  }
+  await seedDoc({ externalId: `${prefix}-clothing-cur`, occurredAt: ymd(2026, 7, 1), category: 'Clothing', amount: '-3235' });
+
+  const snapshotMod = require('../../src/brain/snapshot');
+  const originalBuildBrainSnapshot = snapshotMod.buildBrainSnapshot;
+  snapshotMod.buildBrainSnapshot = async () => { throw new Error('forced BrainSnapshot failure (test)'); };
+
+  const wealthPaceMod = require('../../src/services/wealth-pace');
+  const originalComputePace = wealthPaceMod.computeDiscretionaryMatchedPace;
+  let calls = 0;
+  wealthPaceMod.computeDiscretionaryMatchedPace = async (...args) => { calls += 1; return originalComputePace(...args); };
+
+  t.after(() => {
+    snapshotMod.buildBrainSnapshot = originalBuildBrainSnapshot;
+    wealthPaceMod.computeDiscretionaryMatchedPace = originalComputePace;
+  });
+
+  const { buildFreshBriefing } = require('../../src/routes/briefing');
+  const result = await buildFreshBriefing({ force: true, publish: false });
+
+  assert.equal(calls, 1, 'the no-BrainSnapshot fallback must resolve matched-pace exactly once, never a second independent call for wealthLanding');
+
+  const driver = result.wealthLanding.numbers.mtdDiscretionary.comparison.drivers.find((d) => d.category === 'Clothing');
+  assert.ok(driver, 'expected Clothing to be named a top-card driver');
+  const spike = result.wealthLanding.whatChanged.find((c) => c.evidence?.category === 'Clothing');
+  assert.ok(spike, 'expected a "Worth a look" card for Clothing');
+
+  assert.equal(spike.evidence.impactDollars, driver.excessDollars, 'top-card driver and Worth-a-look spike must report the IDENTICAL dollar figure for the same category/month');
+});
+
 test('required: GET /api/diag/wealth-pace reconciles the displayed MTD against the pre-audit canonical metric, surfacing any variance rather than hiding it', async (t) => {
   const prefix = `${TAG}-reconcile`;
   cleanupDocsAfter(t, prefix);

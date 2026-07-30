@@ -1642,12 +1642,30 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   // identity to compare chiefBrief text against, without a second resolve.
   let effectiveWorkoutRaw = null;
   let wealthInsights = [];
+  // Wealth double-counting fix, part 2: the ONE spendingPace value that
+  // produced `wealthInsights` above, threaded through to
+  // buildWealthLandingProjection() below (see wealthInsightsRawForLanding)
+  // instead of letting it resolve a SECOND, independent
+  // computeDiscretionaryMatchedPace() call of its own. Before this, the
+  // no-BrainSnapshot fallback branch below computed its own local
+  // `spendingPace` to build `wealthInsights` but never surfaced it outside
+  // this block — the later wealthLanding call (which only received a
+  // `spendingPace` when `brainSnapshot` existed) silently recomputed a
+  // second, independent pace query whenever brainSnapshot was null. Two
+  // separately-resolved live queries for the same "current vs. matched
+  // history" fact can disagree (e.g. a transaction sync landing between the
+  // two reads), which is exactly how the top card's "Driven by Clothing
+  // +$X" and the "Worth a look" spike's "Clothing: $Y more than usual" can
+  // show two different dollar figures for the same category/month again —
+  // the reappearance of the bug ff66565 was meant to close for good.
+  let spendingPaceForLanding = null;
   if (brainSnapshot) {
     effectiveWorkoutRaw = brainSnapshot.effectiveWorkout.value ?? { label: 'Rest', source: 'scheduled' };
     workout = brainSnapshot.effectiveWorkout.value
       ? workoutPromptShape(brainSnapshot.effectiveWorkout.value)
       : workoutPromptShape({ label: 'Rest', source: 'scheduled', isHard: false });
     wealthInsights = brainSnapshot.wealth.value?.insights ?? [];
+    spendingPaceForLanding = brainSnapshot.wealth.value?.spendingPace ?? null;
   } else {
     try {
       effectiveWorkoutRaw = await getEffectiveWorkout({ tz: factsTz });
@@ -1661,6 +1679,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
       const spendingPace = await require('../services/wealth-pace')
         .computeDiscretionaryMatchedPace({ tz: factsTz }).catch(() => null);
       wealthInsights = await buildWealthInsights({ spendingPace });
+      spendingPaceForLanding = spendingPace;
     } catch (err) {
       console.error('[wealthInsights] failed:', err.message);
       errors.push({ service: 'wealth_insights', error: err.message });
@@ -3099,15 +3118,21 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     response.wealthLanding = await require('../services/wealth-landing').buildWealthLandingProjection({
       tz: response.timezone,
       wealthInsights: wealthInsightsRawForLanding,
-      // Reuse the SAME matched-pace value BrainSnapshot already resolved
-      // above (buildBrainSnapshot -> computeDiscretionaryMatchedPace) —
-      // previously this triggered a second, independent up-to-12-query
-      // computation for the same build. Only pass an explicit value (even a
-      // legitimate `null`) when BrainSnapshot itself succeeded — if it
-      // failed entirely, leave this `undefined` so the projection still
-      // computes its own pace fresh rather than being forced permanently
-      // null by a failure in an unrelated part of the build.
-      ...(brainSnapshot ? { spendingPace: brainSnapshot.wealth?.value?.spendingPace ?? null } : {}),
+      // The SAME matched-pace value that already produced
+      // wealthInsightsRawForLanding above (whichever branch resolved it —
+      // BrainSnapshot, or the no-BrainSnapshot fallback's own local query) —
+      // never a second, independent computeDiscretionaryMatchedPace() call.
+      // Passing `undefined` here (rather than an explicit value, even
+      // `null`) previously meant "BrainSnapshot failed, so let the
+      // projection resolve its own pace fresh" — but the fallback branch
+      // above ALSO resolves a real spendingPace value of its own to build
+      // wealthInsights, and that value was never threaded through. The
+      // projection's second, independent query could then disagree with
+      // the one wealthInsights was actually built from — the top card's
+      // "Driven by X" and the "Worth a look" spike's "X more than usual"
+      // showing two different dollar figures for the same category/month,
+      // the exact bug ff66565 was meant to close for good.
+      spendingPace: spendingPaceForLanding,
     });
   } catch (err) {
     console.error('[wealthLanding] full build failed:', err.message);

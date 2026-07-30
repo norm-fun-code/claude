@@ -790,6 +790,13 @@ export function useBriefing(): BriefingState {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rebuilding, setRebuilding] = useState(false);
+  // Mirrors `rebuilding` for the foreground AppState handler below, which
+  // needs the CURRENT value inside a listener registered once — state alone
+  // would close over whatever `rebuilding` was at registration time.
+  const rebuildingRef = useRef(false);
+  useEffect(() => {
+    rebuildingRef.current = rebuilding;
+  }, [rebuilding]);
   // Server truth about whether a build is ACTUALLY running right now, so the
   // Chief Brief card can tell "still working" apart from "finished and
   // failed". Without this the card could only infer in-flight from the
@@ -1099,22 +1106,6 @@ export function useBriefing(): BriefingState {
     };
   }, [data?.chiefBrief, data?.timezone]);
 
-  // When the app returns to the foreground, quietly freshen the briefing so a
-  // refresh that iOS suspended on backgrounding doesn't leave stale data. The
-  // 'active' event is chatty (Control Center, Face ID, share sheets…), so
-  // throttle to avoid firing a 45s-capable request on every trivial transition.
-  useEffect(() => {
-    const FOREGROUND_THROTTLE_MS = 60000;
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state !== 'active') return;
-      // Skip only if we recently SUCCEEDED. If the last fetch was interrupted
-      // (e.g. refreshed then locked the phone), lastOkRef is stale so we recover.
-      if (Date.now() - lastOkRef.current < FOREGROUND_THROTTLE_MS) return;
-      fetchBriefing(); // abort-and-replace handles any interrupted request
-    });
-    return () => sub.remove();
-  }, [fetchBriefing]);
-
   // Clean up poll timer on unmount so it can't fire after the component is gone.
   useEffect(() => {
     return () => {
@@ -1349,43 +1340,77 @@ export function useBriefing(): BriefingState {
     }
   }, [rebuilding, data?.timezone, persistRebuildIdentity, pollBuild]);
 
-  // Rebuild resumability hardening pass: on mount (cold launch, or a fresh
-  // remount), resume any rebuild identity persisted from before the app
-  // closed — never silently lose track of an in-flight build, and never
-  // start a brand-new one while an equivalent job may already be running.
-  // Runs once; `pollBuild`/`triggerRebuild` are stable across renders
-  // (their own deps are refs/callbacks), so this intentionally does not
-  // re-run on every data change.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(REBUILD_STATE_KEY);
-        if (!raw || cancelled) return;
-        const identity: RebuildIdentity = JSON.parse(raw);
-        const tz = data?.timezone || 'America/New_York';
-        const todayLocalDay = new Date().toLocaleDateString('en-CA', { timeZone: tz });
-        const decision = resolveResumeDecision(identity, todayLocalDay);
-        if (decision.kind === 'discard') {
-          await AsyncStorage.removeItem(REBUILD_STATE_KEY);
-          return;
-        }
-        if (cancelled) return;
-        if (decision.kind === 'poll') {
-          pollBuild(decision.buildId, identity.localDay);
-        } else {
-          // A persisted "must retry the trigger" marker (lock_contended) —
-          // resume by retrying the trigger itself, never by polling nothing.
-          triggerRebuild();
-        }
-      } catch {
-        // Corrupt persisted state — never resume from garbage.
-        AsyncStorage.removeItem(REBUILD_STATE_KEY).catch(() => {});
+  // Rebuild resumability hardening pass, extended by the foreground-resume
+  // gap fix below: resume any rebuild identity persisted from before —
+  // never silently lose track of an in-flight build, and never start a
+  // brand-new one while an equivalent job may already be running. Shared by
+  // both the mount effect (cold launch/fresh remount) and the foreground
+  // AppState handler, because a persisted identity can be left un-resumed
+  // WITHOUT a full app relaunch: pollBuild's setTimeout poll chain is
+  // suspended while the app is backgrounded (RN pauses JS timers), and a
+  // poll that bailed early (lost-connection streak, or the ~180s max-attempts
+  // window elapsing) deliberately leaves the persisted identity in place —
+  // it explicitly never resumes on its own, by design, in either case. Before
+  // this fix, only a cold relaunch ever re-checked it, so foregrounding an
+  // app that had been backgrounded mid-poll could leave the UI stuck showing
+  // stale/failed state indefinitely even after the server-side build had
+  // long since finished successfully.
+  const resumePersistedRebuild = useCallback(async () => {
+    if (rebuildingRef.current) return; // already actively polling — nothing to resume
+    try {
+      const raw = await AsyncStorage.getItem(REBUILD_STATE_KEY);
+      if (!raw) return;
+      const identity: RebuildIdentity = JSON.parse(raw);
+      const tz = data?.timezone || 'America/New_York';
+      const todayLocalDay = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+      const decision = resolveResumeDecision(identity, todayLocalDay);
+      if (decision.kind === 'discard') {
+        await AsyncStorage.removeItem(REBUILD_STATE_KEY);
+        return;
       }
-    })();
-    return () => { cancelled = true; };
+      if (decision.kind === 'poll') {
+        pollBuild(decision.buildId, identity.localDay);
+      } else {
+        // A persisted "must retry the trigger" marker (lock_contended) —
+        // resume by retrying the trigger itself, never by polling nothing.
+        triggerRebuild();
+      }
+    } catch {
+      // Corrupt persisted state — never resume from garbage.
+      AsyncStorage.removeItem(REBUILD_STATE_KEY).catch(() => {});
+    }
+  }, [data?.timezone, pollBuild, triggerRebuild]);
+
+  // Mount-time resume (cold launch / fresh remount). Runs once; deliberately
+  // not re-run on every data change — see resumePersistedRebuild's own deps
+  // for why it stays stable enough across renders for this to be safe.
+  useEffect(() => {
+    resumePersistedRebuild();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally mount-only; see comment above.
   }, []);
+
+  // When the app returns to the foreground, ALWAYS re-check for a rebuild
+  // this device gave up watching (the exact gap described above) before
+  // falling back to a plain throttled refresh — a persisted identity here
+  // means real, possibly-already-finished server work this device lost track
+  // of, and that must never wait on the 60s throttle below. The generic
+  // freshen (for cases with no in-flight rebuild at all, e.g. iOS suspended a
+  // plain fetch while backgrounding) keeps its own throttle since it's not
+  // recovering anything time-sensitive. The 'active' event is chatty (Control
+  // Center, Face ID, share sheets…), but resumePersistedRebuild no-ops
+  // instantly (one AsyncStorage read) when there's nothing to resume.
+  useEffect(() => {
+    const FOREGROUND_THROTTLE_MS = 60000;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      resumePersistedRebuild();
+      // Skip only if we recently SUCCEEDED. If the last fetch was interrupted
+      // (e.g. refreshed then locked the phone), lastOkRef is stale so we recover.
+      if (Date.now() - lastOkRef.current < FOREGROUND_THROTTLE_MS) return;
+      fetchBriefing(); // abort-and-replace handles any interrupted request
+    });
+    return () => sub.remove();
+  }, [fetchBriefing, resumePersistedRebuild]);
 
   const [chiefBriefRefreshing, setChiefBriefRefreshing] = useState(false);
 
