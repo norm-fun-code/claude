@@ -19,6 +19,7 @@ const ADMIN_PATHS = [
   '/admin/reset-demo',
   '/admin/recompute-wealth',
   '/admin/review-run',
+  '/admin/cleanup-duplicate-transactions',
   '/ingest/run',
 ];
 
