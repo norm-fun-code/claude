@@ -436,7 +436,8 @@ function createDiagnosticsRouter() {
   // Scheduler health check — shows whether the scheduler is enabled and when
   // the morning routine will next fire (helps diagnose missing 8:30am briefings).
   router.get('/diag/scheduler', (req, res) => {
-    const { msUntil } = require('../scheduler');
+    const scheduler = require('../scheduler');
+    const { msUntil } = scheduler;
     const enabled = process.env.ENABLE_SCHEDULER === 'true';
     const tz = process.env.TZ || '(not set — server uses system/UTC)';
     // envInt, not `Number(...) || default` — an hour/minute of 0 is a
@@ -451,13 +452,32 @@ function createDiagnosticsRouter() {
     };
     const toWallClock = (ms) => ms == null ? null : new Date(Date.now() + ms).toISOString();
 
+    // Wake-aware mode (July 30 2026 incident hardening): when Eight Sleep is
+    // configured, the morning routine does NOT fire at SCHEDULE_HOUR/MINUTE
+    // at all — it's driven entirely by sleep-readiness (startMorningWatcher).
+    // Reporting a fixed nextFireAt here used to read as "the brief is
+    // scheduled for 8:30am" when in fact SCHEDULE_HOUR/MINUTE has zero effect
+    // on the morning routine in this mode — actively misleading during an
+    // incident investigation. Report the true trigger mechanism instead.
+    const wakeAware = scheduler.eightSleepConfigured();
+    const morningJob = wakeAware
+      ? {
+          mode: 'wake_aware',
+          scheduleHourMinuteIgnored: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} (SCHEDULE_HOUR/SCHEDULE_MINUTE has NO effect on the morning routine while Eight Sleep is configured)`,
+          pollIntervalMin: Number(process.env.EIGHT_SLEEP_POLL_MIN) || 6,
+          pollStart: `${String(Number(process.env.EIGHT_SLEEP_POLL_START_HOUR) || 6).padStart(2, '0')}:${String(Number(process.env.EIGHT_SLEEP_POLL_START_MINUTE) || 30).padStart(2, '0')}`,
+          giveUpAt: `${String(Number(process.env.EIGHT_SLEEP_GIVEUP_HOUR) || 12).padStart(2, '0')}:${String(Number(process.env.EIGHT_SLEEP_GIVEUP_MINUTE) || 0).padStart(2, '0')}`,
+          hint: 'See GET /api/diag/sleep-readiness for the live wake-readiness decision that actually gates this.',
+        }
+      : { mode: 'fixed_clock', configured: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`, nextFireAt: toWallClock(nextMs(hour, minute)) };
+
     res.json({
       enabled,
       tz,
       now: new Date().toISOString(),
       serverTime: new Date().toLocaleString('en-US', { timeZone: process.env.TZ || 'UTC' }),
       jobs: {
-        morning:         { configured: `${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`, nextFireAt: toWallClock(nextMs(hour, minute)) },
+        morning: morningJob,
         checkinAfternoon:{ configured: `${String(checkinH).padStart(2,'0')}:00`, nextFireAt: toWallClock(nextMs(checkinH, 0)) },
         eveningReminder: { configured: `${String(eveningReminderH).padStart(2,'0')}:00`, nextFireAt: toWallClock(nextMs(eveningReminderH, 0)) },
       },
@@ -465,6 +485,8 @@ function createDiagnosticsRouter() {
         ? 'Set ENABLE_SCHEDULER=true in Railway env vars to enable the morning routine.'
         : tz.includes('not set')
         ? 'TZ is not set — scheduler fires at UTC times. Set TZ=America/New_York if you want Eastern times.'
+        : wakeAware
+        ? 'Scheduler is active in wake-aware mode — the morning brief is gated by sleep-readiness, not a fixed clock time.'
         : 'Scheduler is active.',
     });
   });
@@ -571,6 +593,99 @@ function createDiagnosticsRouter() {
         publishableFreshToday: publishable,
       } : null,
       lastPush,
+    });
+  }));
+
+  // Morning incident report (July 30 2026 incident hardening, section 8):
+  // the complete, structured, admin-only reconstruction of one local day's
+  // morning-build lifecycle — every job row (trigger/attempt/state/phase/
+  // quality tier/reason codes/publish tier/push result), the retry ledger,
+  // the live readiness decision, production identity (commit/boot/scheduler
+  // leadership), the current-day publishable brief's identity, device count,
+  // and push outcome. This is what section 1's "prove the exact incident
+  // timeline from persisted state" requires — /diag/morning-status (above)
+  // only ever showed the LATEST job/attempt; this shows the full day's
+  // history so a run of failed attempts (or a job interrupted by a
+  // deployment) is visible as a sequence, not just its last row.
+  // Deliberately excludes: generated briefing prose, credentials/tokens, raw
+  // health telemetry, or any other private context — every field here is
+  // decision-shaped metadata already safe for /diag/morning-status.
+  //   GET /api/diag/morning-incident?day=YYYY-MM-DD  (defaults to today)
+  router.get('/diag/morning-incident', asyncHandler(async (req, res) => {
+    const scheduler = require('../scheduler');
+    const tz = process.env.TZ || 'America/New_York';
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.day || '')) ? req.query.day : new Date().toLocaleDateString('en-CA', { timeZone: tz });
+
+    const commit = process.env.RAILWAY_GIT_COMMIT_SHA || process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT_SHA || 'unknown';
+    const production = {
+      commit: commit === 'unknown' ? 'unknown' : commit.slice(0, 7),
+      bootedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+      scheduler: scheduler.schedulerState(),
+      eightSleepConfigured: scheduler.eightSleepConfigured(),
+    };
+
+    let readinessOut = { configured: production.eightSleepConfigured };
+    if (production.eightSleepConfigured) {
+      const readiness = require('../intelligence/sleep-readiness');
+      const result = await readiness.getMorningSleepReadiness({ trigger: 'incident_report' }).catch((e) => ({ ready: false, reason: 'readiness_error', evidence: { evidenceTier: null, error: e.message } }));
+      const { fingerprint, ...safeEvidence } = result.evidence || {};
+      readinessOut = { configured: true, ready: result.ready, reason: result.reason, ...safeEvidence, fingerprintPresent: fingerprint != null };
+    }
+
+    const morningRetryLedger = require('../intelligence/morning-retry-ledger');
+    let ledger = null;
+    try {
+      const src = await require('../store/sources').getSource(morningRetryLedger.LEDGER_SOURCE_ID);
+      ledger = src?.config?.ledger?.day === day ? src.config.ledger : null;
+    } catch { /* best-effort */ }
+
+    const buildJobs = require('../store/morningBuildJobs');
+    const jobs = await buildJobs.jobsForDay(day, tz).catch(() => []);
+    const jobsOut = jobs.map((j) => ({
+      buildId: j.id, trigger: j.trigger, attemptNumber: j.attempt_number,
+      state: j.state, phase: j.phase, phaseHistory: j.phase_history,
+      qualityStatus: j.quality_status, publishTier: j.publish_tier,
+      reasonCodes: j.reason_codes, snapshotId: j.snapshot_id,
+      publishedBriefingId: j.published_briefing_id, errorMessage: j.error_message,
+      leaseOwner: j.lease_owner, leaseExpiresAt: j.lease_expires_at,
+      correlationId: j.correlation_id, pushResult: j.push_result,
+      createdAt: j.created_at, updatedAt: j.updated_at,
+    }));
+
+    const briefingsStoreMod = require('../store/briefings');
+    const morningNotify = require('../notify/morning');
+    const { isPublishableTier, tierForStoredContent } = require('../brain/publishTier');
+    const latestBriefing = await morningNotify.latestDailyBriefing().catch(() => null);
+    const latestBriefingLocalDay = latestBriefing ? new Date(latestBriefing.generated_at).toLocaleDateString('en-CA', { timeZone: tz }) : null;
+    const currentDayPublishableBrief = (latestBriefing && latestBriefingLocalDay === day && briefingsStoreMod.isPublishableRow(latestBriefing.content))
+      ? {
+          briefingId: latestBriefing.id, generatedAt: latestBriefing.generated_at,
+          snapshotId: latestBriefing.content?.snapshotId ?? null,
+          publishTier: tierForStoredContent(latestBriefing.content),
+        }
+      : null;
+
+    let push = { sentToday: false };
+    let deviceCount = null;
+    try {
+      const nudgesStore = require('../store/nudges');
+      const recent = await nudgesStore.recentlySentKeys(1);
+      push = { sentToday: recent.has(`morning_brief_push:${day}`) };
+    } catch { /* best-effort */ }
+    try {
+      deviceCount = (await require('../store/devices').listActiveTokens()).length;
+    } catch { /* best-effort */ }
+
+    res.json({
+      day,
+      production,
+      readiness: readinessOut,
+      retryLedger: ledger ? { attempts: ledger.attempts ?? 0, lastReason: ledger.lastReason ?? null, fingerprint: ledger.fingerprint != null } : { attempts: 0, lastReason: null },
+      jobs: jobsOut,
+      currentDayPublishableBrief,
+      currentDayPublishable: isPublishableTier(currentDayPublishableBrief?.publishTier ?? null),
+      push,
+      deviceCount,
     });
   }));
 

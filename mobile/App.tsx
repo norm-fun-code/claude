@@ -919,6 +919,9 @@ export default function App() {
                   buildState={briefing.buildState}
                   buildFailure={briefing.buildFailure}
                   pendingSince={briefing.pendingSince}
+                  publishTier={d?.publishTier}
+                  morningReadinessState={d?.morningReadinessState}
+                  morningReadinessReason={d?.morningReadinessReason}
                 />
               </AnimatedEntry>
             )}

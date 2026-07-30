@@ -6,7 +6,7 @@
 // instead of reporting "still building" indefinitely.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { isJobStale, STALE_IN_FLIGHT_MS, IN_FLIGHT_STATES } = require('../src/store/morningBuildJobs');
+const { isJobStale, STALE_IN_FLIGHT_MS, IN_FLIGHT_STATES, isJobAbandoned } = require('../src/store/morningBuildJobs');
 
 const job = (state, updatedAgoMs) => ({
   id: 'job-1',
@@ -44,4 +44,34 @@ test('total and safe: null/malformed input never throws', () => {
   assert.equal(isJobStale(null), false);
   assert.equal(isJobStale({ state: 'building', updated_at: 'not-a-date' }), false);
   assert.equal(isJobStale({ state: 'building' }), false);
+});
+
+// Deployment-safe recovery (July 30 2026 incident hardening, section 5):
+// isJobAbandoned is the lease-based replacement for waiting out the 15-minute
+// STALE_IN_FLIGHT_MS window — a job with an expired lease is abandoned the
+// moment the lease passes, not 15 minutes later.
+const leaseJob = (state, { leaseExpiresAgoMs = null, updatedAgoMs = 0 } = {}) => ({
+  id: 'job-1',
+  state,
+  updated_at: new Date(Date.now() - updatedAgoMs).toISOString(),
+  lease_expires_at: leaseExpiresAgoMs == null ? null : new Date(Date.now() - leaseExpiresAgoMs).toISOString(),
+});
+
+test('required: a job with an unexpired lease is not abandoned, regardless of updated_at', () => {
+  assert.equal(isJobAbandoned(leaseJob('building', { leaseExpiresAgoMs: -30_000 })), false);
+});
+
+test('required: a job whose lease has expired IS abandoned immediately — no 15-minute wait', () => {
+  assert.equal(isJobAbandoned(leaseJob('building', { leaseExpiresAgoMs: 1000 })), true);
+});
+
+test('required: a legacy job with no lease (predates migration 068) falls back to the old updated_at staleness check', () => {
+  assert.equal(isJobAbandoned(leaseJob('building', { leaseExpiresAgoMs: null, updatedAgoMs: STALE_IN_FLIGHT_MS + 1000 })), true);
+  assert.equal(isJobAbandoned(leaseJob('building', { leaseExpiresAgoMs: null, updatedAgoMs: 0 })), false);
+});
+
+test('required: a terminal job (ready/failed/interrupted) is never "abandoned" regardless of lease state', () => {
+  assert.equal(isJobAbandoned(leaseJob('ready', { leaseExpiresAgoMs: 1000 })), false);
+  assert.equal(isJobAbandoned(leaseJob('failed', { leaseExpiresAgoMs: 1000 })), false);
+  assert.equal(isJobAbandoned(leaseJob('interrupted', { leaseExpiresAgoMs: 1000 })), false);
 });

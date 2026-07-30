@@ -25,6 +25,7 @@ const { getEffectiveWorkout } = require('../services/workout');
 const { suppressAnsweredOpenQuestion, bindOpenQuestionInstance, formatAnsweredQuestionsContext } = require('../intelligence/open-question-policy');
 const openQuestionsStore = require('../store/openQuestions');
 const { computeCalendarLoad } = require('../intelligence/calendar-load');
+const { derivePublishTier, isPublishableTier, tierRank, tierForStoredContent } = require('../brain/publishTier');
 
 /** Today's plan for the chief-brief prompt, shaped like getWorkout()'s
  *  { type, duration, hrTarget, protein } — but resolved through
@@ -141,6 +142,54 @@ function pastMorningCutoff(now, tz) {
   return nowMin >= cutoffMin;
 }
 
+function eightSleepConfiguredForSelfHeal() {
+  return Boolean(process.env.EIGHT_SLEEP_EMAIL && process.env.EIGHT_SLEEP_PASSWORD);
+}
+
+/**
+ * July 30 2026 incident fix (section 3): the self-healing GET below used to
+ * gate self-heal ONLY on pastMorningCutoff — a pure SCHEDULE_HOUR/MINUTE
+ * clock check that has nothing to do with whether Eight Sleep wake-readiness
+ * has actually been confirmed. In wake-aware mode that meant a still-asleep
+ * user's first post-cutoff GET could trigger a build before the night was
+ * finalized (the exact thing sleep-readiness.js exists to prevent) AND,
+ * separately, a genuinely-past-cutoff-but-still-pending morning had no way
+ * to say "waiting for sleep data" — the client just saw "stale"/no brief, as
+ * though something had silently broken instead of the server deliberately
+ * waiting.
+ *
+ * When Eight Sleep isn't configured, behavior is unchanged (pure clock
+ * cutoff). When it IS configured, eligibility derives ENTIRELY from
+ * sleep-readiness.js's getMorningSleepReadiness() — no SCHEDULE_HOUR grace
+ * window layered on top: the moment readiness is confirmed, self-heal is
+ * eligible immediately, and while it's still pending this returns an
+ * explicit `waiting_for_sleep_data` state (with the real reason code) so the
+ * caller can tell the client the truth instead of a generic failure.
+ * `deps.getMorningSleepReadiness` / `deps.eightSleepConfigured` are injectable
+ * (mirroring sleep-readiness.js's own `deps` convention) purely so regression
+ * tests can exercise both branches deterministically without real Eight
+ * Sleep credentials or network calls.
+ * @returns {Promise<{shouldTrigger: boolean, waitingForSleepData: boolean, reason: string|null}>}
+ */
+async function selfHealDecision(now, tz, deps = {}) {
+  const configured = deps.eightSleepConfigured ? deps.eightSleepConfigured() : eightSleepConfiguredForSelfHeal();
+  if (!configured) {
+    return { shouldTrigger: pastMorningCutoff(now, tz), waitingForSleepData: false, reason: null };
+  }
+  const readiness = require('../intelligence/sleep-readiness');
+  const getReadiness = deps.getMorningSleepReadiness || readiness.getMorningSleepReadiness;
+  let result;
+  try {
+    result = await getReadiness({ asOf: now, trigger: 'self_heal_check', tz });
+  } catch (err) {
+    console.error('[briefing self-heal] readiness check failed (fail closed — not triggering):', err.message);
+    return { shouldTrigger: false, waitingForSleepData: true, reason: 'readiness_error' };
+  }
+  try { console.log(readiness.readinessLogLine(result)); } catch { /* best-effort logging only */ }
+  if (result.ready) return { shouldTrigger: true, waitingForSleepData: false, reason: result.reason };
+  return { shouldTrigger: false, waitingForSleepData: true, reason: result.reason };
+}
+
 /**
  * Cross-day lifecycle hardening pass — self-healing GET /briefing: when the
  * morning cutoff has passed and no publishable current-day brief exists,
@@ -205,8 +254,18 @@ async function triggerRecoveryBuildIfNeeded(todayLocalDay, tz) {
     const activeAfterLock = await buildJobs.activeJobForDay(todayLocalDay, tz).catch(() => null);
     if (activeAfterLock) { await release(); return activeAfterLock.id; }
     const attemptNumber = (await buildJobs.attemptsToday(todayLocalDay, tz).catch(() => 0)) + 1;
-    job = await buildJobs.createJob({ trigger: 'self_heal', state: 'building', attemptNumber, localDay: todayLocalDay, tz });
+    job = await buildJobs.createJob({ trigger: 'self_heal', state: 'building', attemptNumber, localDay: todayLocalDay, tz, leaseOwner: buildJobs.PROCESS_LEASE_OWNER });
   } catch (err) {
+    // Postgres unique_violation (23505) on idx_morning_build_jobs_one_active_per_day
+    // (migration 068) — a concurrent creator (another replica, or a request
+    // that raced past the activeJobForDay checks above) already inserted the
+    // day's active job in the gap between our checks and this INSERT. Adopt
+    // that job rather than reporting a hard failure — never a duplicate build.
+    if (err.code === '23505') {
+      const adopted = await buildJobs.activeJobForDay(todayLocalDay, tz).catch(() => null);
+      await release();
+      return adopted?.id ?? null;
+    }
     console.error('[briefing self-heal] job creation failed:', err.message);
     await release();
     return null;
@@ -217,7 +276,7 @@ async function triggerRecoveryBuildIfNeeded(todayLocalDay, tz) {
   // self-heal attempt must be indistinguishable, from the client's polling
   // point of view, from a manual one.
   (async () => {
-    const heartbeat = setInterval(() => buildJobs.touchHeartbeat(job.id), 20000);
+    const heartbeat = setInterval(() => buildJobs.touchHeartbeat(job.id, { leaseOwner: buildJobs.PROCESS_LEASE_OWNER }), 20000);
     try {
       const result = await buildFreshBriefing({ force: true });
       const qualityStatus = result?.chiefBriefQuality?.status ?? null;
@@ -226,10 +285,14 @@ async function triggerRecoveryBuildIfNeeded(todayLocalDay, tz) {
           state: 'failed', qualityStatus, snapshotId: result?.snapshotId ?? null,
           errorMessage: 'persistence_failed — the draft was fresh but saving it did not succeed',
         });
-      } else if (qualityStatus === 'fresh') {
+      } else if (isPublishableTier(result?.publishTier)) {
+        // grounded_usable now maps to 'ready' too (three-tier contract,
+        // brain/publishTier.js) — a schema-valid-but-underfilled attempt is
+        // a successful recovery, not a failure, exactly the July 30 gap.
         const latest = await require('../store/briefings').latestBriefing('daily').catch(() => null);
         await buildJobs.updateJob(job.id, {
           state: 'ready', qualityStatus, snapshotId: result?.snapshotId ?? null,
+          publishTier: result?.publishTier ?? null,
           publishedBriefingId: latest?.id ?? null,
         });
       } else {
@@ -1113,9 +1176,24 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     // manual/scheduled build already uses) and hand back its id so the
     // client can poll it immediately, same as a manual rebuild.
     let recoveryBuildId = null;
-    if (cachedContent.chiefBrief == null && pastMorningCutoff(new Date(), tz)) {
+    // Explicit tri-state the client can render honestly instead of a generic
+    // "stale"/failure look: null (no gap, or gap not yet evaluated this
+    // request), 'ready' (a recovery build was triggered/adopted), or
+    // 'waiting_for_sleep_data' (Eight Sleep is configured and the night
+    // genuinely isn't finalized yet — see selfHealDecision above).
+    let morningReadinessState = null;
+    let morningReadinessReason = null;
+    if (cachedContent.chiefBrief == null) {
       try {
-        recoveryBuildId = await triggerRecoveryBuildIfNeeded(todayLocalDay, tz);
+        const decision = await selfHealDecision(new Date(), tz);
+        if (decision.shouldTrigger) {
+          recoveryBuildId = await triggerRecoveryBuildIfNeeded(todayLocalDay, tz);
+          morningReadinessState = 'ready';
+          morningReadinessReason = decision.reason;
+        } else if (decision.waitingForSleepData) {
+          morningReadinessState = 'waiting_for_sleep_data';
+          morningReadinessReason = decision.reason;
+        }
       } catch (err) {
         console.error('[briefing self-heal] trigger failed:', err.message);
       }
@@ -1128,6 +1206,8 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
       contentLocalDate: cachedContent.localDate ?? null,
       dayState,
       recoveryBuildId,
+      morningReadinessState,
+      morningReadinessReason,
     };
   }
 
@@ -2833,9 +2913,27 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   // instead of trusting prior's own quality stamp — never a stale cross-day
   // fallback either (yesterday's numbers/dates reading as today's is its own
   // kind of wrong).
-  const thisAttemptFresh = geminiResult?.chiefBrief != null && geminiResult?.chiefBriefQuality?.status === 'fresh';
-  const lastGood = thisAttemptFresh ? null : await briefingsStore.resolveLastGoodChiefBrief(prior, { tz: process.env.TZ || 'America/New_York' });
-  const chiefBriefStale = !thisAttemptFresh && lastGood != null;
+  // Three-tier publishability (July 30 2026 incident hardening, see
+  // brain/publishTier.js): a merely-thin-but-safe ('grounded_usable') attempt
+  // is now publishable, not just a literal 'fresh' one — the exact gap that
+  // let a schema-valid-but-underfilled morning build vanish entirely instead
+  // of shipping a deterministic, factually-safe brief.
+  const publishTier = derivePublishTier(geminiResult?.chiefBriefQuality);
+  const rawAttemptPublishable = geminiResult?.chiefBrief != null && isPublishableTier(publishTier);
+  // Never-downgrade invariant (section 2): folded in HERE, not just at the
+  // later persistence gate — a grounded_usable attempt must not become
+  // THIS RESPONSE'S displayed content either when today's canonical row is
+  // already premium_fresh. Without this, the persistence gate alone would
+  // correctly leave the DB row untouched but this in-memory response would
+  // still show the new, WORSE content to whoever triggered this build —
+  // the exact "existing fresh card must survive a degraded rebuild" contract.
+  const existingPublishedTierForDay = priorIsToday && p ? tierForStoredContent(p) : null;
+  const wouldDowngradeToday = rawAttemptPublishable
+    && existingPublishedTierForDay != null
+    && tierRank(existingPublishedTierForDay) > tierRank(publishTier);
+  const thisAttemptPublishable = rawAttemptPublishable && !wouldDowngradeToday;
+  const lastGood = thisAttemptPublishable ? null : await briefingsStore.resolveLastGoodChiefBrief(prior, { tz: process.env.TZ || 'America/New_York' });
+  const chiefBriefStale = !thisAttemptPublishable && lastGood != null;
   if (chiefBriefStale) {
     console.error('[briefing build] this build\'s own chiefBrief was missing or degraded quality — carrying forward today\'s existing good brief instead.');
     errors.push({ service: 'chiefBrief', error: 'this build\'s attempt was missing or degraded quality; showing the existing good brief from earlier today' });
@@ -2847,8 +2945,8 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   // though the DB row (and every OTHER cached build) was already updated by
   // POST /briefing/context's atomic retirement. geminiResult.chiefBrief (the
   // fresh path) was already suppression-checked above right after generation.
-  let finalChiefBrief = thisAttemptFresh ? geminiResult.chiefBrief : (chiefBriefStale ? lastGood.chiefBrief : null);
-  if (!thisAttemptFresh && finalChiefBrief?.openQuestion) {
+  let finalChiefBrief = thisAttemptPublishable ? geminiResult.chiefBrief : (chiefBriefStale ? lastGood.chiefBrief : null);
+  if (!thisAttemptPublishable && finalChiefBrief?.openQuestion) {
     try {
       const openQuestionsTz = process.env.TZ || 'America/New_York';
       finalChiefBrief = await suppressAnsweredOpenQuestion(finalChiefBrief, {
@@ -2868,7 +2966,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   if (chiefBriefPending && geminiResult?.chiefBrief != null) {
     console.error(`[briefing build] this build's chiefBrief was ${geminiResult?.chiefBriefQuality?.status ?? 'unknown'}-quality and no good same-day card exists to carry forward — reporting pending, not shipping degraded prose.`);
   }
-  const finalMorningFocus = thisAttemptFresh
+  const finalMorningFocus = thisAttemptPublishable
     ? (geminiResult.morningFocus || '')
     : (chiefBriefStale ? (lastGood.morningFocus || '') : '');
 
@@ -2881,7 +2979,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   // claims may describe an EARLIER week's weekStart. Comparing the two
   // gives an honest, explicit flag instead of two surfaces silently
   // disagreeing with no way for the user to tell why.
-  const goalsWeekStart = thisAttemptFresh
+  const goalsWeekStart = thisAttemptPublishable
     ? (weeklyGoals?.current?.weekStart ?? null)
     : (chiefBriefStale ? (lastGood.goalsWeekStart ?? null) : null);
   const chiefBriefGoalsStale = Boolean(
@@ -2951,6 +3049,13 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     // be mistaken for a successful fresh build (see hasPublishableFreshBriefToday
     // in notify/morning.js). null only for builds that predate this contract.
     chiefBriefQuality: geminiResult?.chiefBriefQuality ?? null,
+    // The authoritative 3-tier publishability contract (brain/publishTier.js)
+    // derived from chiefBriefQuality above — 'premium_fresh' | 'grounded_usable'
+    // | 'hard_failed'. Reflects THIS build's own attempt, same scope as
+    // chiefBriefQuality. Mobile uses this (not chiefBriefQuality.status
+    // directly) to decide whether to show a "Simplified brief" qualifier —
+    // never labeled premium/fresh for a grounded_usable publish.
+    publishTier: thisAttemptPublishable ? publishTier : (chiefBriefStale ? tierForStoredContent(lastGood) : null),
     weather,
     workout,
     // Raw getEffectiveWorkout() shape, persisted alongside the prompt-text
@@ -3051,18 +3156,29 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   // unconditionally whenever publish=true — which is every manual rebuild
   // (POST /briefing/rebuild), forced refresh (GET /briefing?refresh=1), and
   // cache-miss GET /briefing, none of which passed publish=false. A build
-  // whose own attempt was missing/degraded (thisAttemptFresh false) could
+  // whose own attempt was missing/degraded (thisAttemptPublishable false) could
   // still be saved as the new canonical `daily` row — including the
   // chiefBriefPending:true/chiefBrief:null shape when no fresh same-day prior
   // existed to carry forward (the exact "first manual rebuild came back
-  // blank" production bug). The SAME thisAttemptFresh check that already
+  // blank" production bug). The SAME thisAttemptPublishable check that already
   // decides whether to carry forward prior content (above) now also decides
   // whether to publish at all: a degraded/pending attempt is recorded as a
   // build attempt (the caller/build-job ledger sees it), never saved over the
   // existing fresh canonical briefing (or written as a blank one when none
   // existed yet).
+  // Never-downgrade invariant: already folded into thisAttemptPublishable
+  // above (wouldDowngradeToday) so a later same-day attempt that lands at a
+  // LOWER publish tier than what's already canonical for today (e.g. an
+  // earlier build already published premium_fresh, and a later automatic
+  // retry only manages grounded_usable) neither becomes this response's
+  // displayed content NOR overwrites the persisted row — this attempt is
+  // still recorded as a build attempt (via the job ledger), just not shown
+  // or published over something better. Kept as a distinct named boolean
+  // here only so the log message below can say WHICH reason applied.
+  const wouldDowngrade = wouldDowngradeToday;
+
   if (publish) {
-    if (thisAttemptFresh) {
+    if (thisAttemptPublishable) {
       try {
         await publishBriefingDraft(response);
       } catch (err) {
@@ -3074,8 +3190,10 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
         console.error('[briefing build] publish failed — NOT marking as published (no push, no morning-complete marker):', err.message);
         response.publishFailed = true;
       }
+    } else if (wouldDowngrade) {
+      console.log(`[briefing build] this attempt was publishable (${publishTier}) but today's canonical briefing is already ${existingPublishedTierForDay} — NOT downgrading; recorded as a build attempt only.`);
     } else {
-      console.log(`[briefing build] this attempt was ${response.chiefBriefQuality?.status ?? 'unknown'}-quality — NOT publishing as the canonical daily briefing (chiefBriefStale=${chiefBriefStale}, chiefBriefPending=${chiefBriefPending}); recorded as a build attempt only, existing canonical content (if any) is untouched.`);
+      console.log(`[briefing build] this attempt was ${response.chiefBriefQuality?.status ?? 'unknown'}-quality (${publishTier}) — NOT publishing as the canonical daily briefing (chiefBriefStale=${chiefBriefStale}, chiefBriefPending=${chiefBriefPending}); recorded as a build attempt only, existing canonical content (if any) is untouched.`);
     }
   }
 
@@ -3085,9 +3203,9 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   Object.assign(response, buildChiefBriefContract({
     chiefBrief: response.chiefBrief,
     source: chiefBriefStale ? 'last_good' : 'fresh',
-    localDate: thisAttemptFresh ? response.localDate : (lastGood?.localDate ?? response.localDate),
-    builtAt: thisAttemptFresh ? response.builtAt : (lastGood?.builtAt ?? null),
-    snapshotId: thisAttemptFresh ? response.snapshotId : (lastGood?.snapshotId ?? null),
+    localDate: thisAttemptPublishable ? response.localDate : (lastGood?.localDate ?? response.localDate),
+    builtAt: thisAttemptPublishable ? response.builtAt : (lastGood?.builtAt ?? null),
+    snapshotId: thisAttemptPublishable ? response.snapshotId : (lastGood?.snapshotId ?? null),
     attemptState: attemptStateFromQuality(geminiResult?.chiefBriefQuality?.status ?? null, geminiResult?.chiefBrief != null),
     attemptedAt: response.builtAt,
     reasonCodes: geminiResult?.chiefBriefQuality?.reasonCodes ?? [],
@@ -3160,7 +3278,7 @@ async function publishBriefingDraft(response) {
     if ((row.content?.snapshotId ?? null) !== (response.snapshotId ?? null)) problems.push('snapshot_id_mismatch');
     if (rowLocalDay !== todayLocal) problems.push('local_day_mismatch');
     if (!row.content?.chiefBrief) problems.push('missing_chief_brief');
-    if (row.content?.chiefBriefQuality?.status !== 'fresh') problems.push('quality_not_fresh');
+    if (!isPublishableTier(row.content?.publishTier ?? derivePublishTier(row.content?.chiefBriefQuality))) problems.push('quality_not_publishable');
     if (!briefingsStore.isPublishableRow(row.content)) problems.push('not_publishable');
   }
   if (problems.length) {
@@ -3466,9 +3584,16 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
   // here: it trusts `prior`'s OWN quality stamp, not whether prior's content
   // is actually usable, which is exactly what let a SECOND consecutive
   // failed repair delete an already-carried-forward good brief).
-  const thisAttemptFresh = chiefResult.chiefBrief != null && chiefResult.chiefBriefQuality?.status === 'fresh';
-  const lastGood = thisAttemptFresh ? null : await briefingsStore.resolveLastGoodChiefBrief(prior, { tz: process.env.TZ || 'America/New_York' });
-  const chiefBriefStale = !thisAttemptFresh && lastGood != null;
+  const scopedPublishTier = derivePublishTier(chiefResult.chiefBriefQuality);
+  const rawScopedAttemptPublishable = chiefResult.chiefBrief != null && isPublishableTier(scopedPublishTier);
+  // Never-downgrade invariant, folded into content-selection here too (same
+  // reasoning as the full build's identical fix): `prior` IS today's own
+  // canonical row for this function, so its tier is the direct comparison.
+  const scopedExistingTier = tierForStoredContent(prior.content);
+  const scopedWouldDowngrade = rawScopedAttemptPublishable && tierRank(scopedExistingTier) > tierRank(scopedPublishTier);
+  const thisAttemptPublishable = rawScopedAttemptPublishable && !scopedWouldDowngrade;
+  const lastGood = thisAttemptPublishable ? null : await briefingsStore.resolveLastGoodChiefBrief(prior, { tz: process.env.TZ || 'America/New_York' });
+  const chiefBriefStale = !thisAttemptPublishable && lastGood != null;
   const errors = Array.isArray(prior.content.errors) ? prior.content.errors.filter((e) => e.service !== 'chiefBrief') : [];
   if (chiefBriefStale) {
     console.error('[chief-brief rebuild] this attempt was missing or degraded quality — keeping the existing good card unchanged.');
@@ -3480,8 +3605,8 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
   // in-memory object can predate the answer even though the DB row was
   // already updated. chiefResult.chiefBrief (the fresh path) was already
   // suppression-checked above right after generation.
-  let finalChiefBrief = thisAttemptFresh ? chiefResult.chiefBrief : (chiefBriefStale ? lastGood.chiefBrief : null);
-  if (!thisAttemptFresh && finalChiefBrief?.openQuestion) {
+  let finalChiefBrief = thisAttemptPublishable ? chiefResult.chiefBrief : (chiefBriefStale ? lastGood.chiefBrief : null);
+  if (!thisAttemptPublishable && finalChiefBrief?.openQuestion) {
     try {
       const openQuestionsTz = process.env.TZ || 'America/New_York';
       finalChiefBrief = await suppressAnsweredOpenQuestion(finalChiefBrief, {
@@ -3498,14 +3623,14 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
   if (chiefBriefPending && chiefResult.chiefBrief != null) {
     console.error(`[chief-brief rebuild] this attempt was ${chiefResult.chiefBriefQuality?.status ?? 'unknown'}-quality and no good same-day card exists to carry forward — reporting pending, not shipping degraded prose.`);
   }
-  const finalMorningFocus = thisAttemptFresh
+  const finalMorningFocus = thisAttemptPublishable
     ? (chiefResult.morningFocus || '')
     : (chiefBriefStale ? (lastGood.morningFocus || '') : '');
 
   // Same explicit goal-period identity as the full build (see that call
   // site's identical comment) — ctx.goalsWeekStart is the LIVE current week
   // (buildQuickChiefBriefContext just fetched it for this request).
-  const goalsWeekStart = thisAttemptFresh
+  const goalsWeekStart = thisAttemptPublishable
     ? (ctx.goalsWeekStart ?? null)
     : (chiefBriefStale ? (lastGood.goalsWeekStart ?? null) : null);
   const chiefBriefGoalsStale = Boolean(
@@ -3524,6 +3649,7 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
     // See the full build's identical field for the contract — always this
     // rebuild's OWN attempt, never the carried-forward card.
     chiefBriefQuality: chiefResult.chiefBriefQuality ?? null,
+    publishTier: thisAttemptPublishable ? scopedPublishTier : (chiefBriefStale ? (lastGood?.publishTier ?? derivePublishTier(lastGood?.chiefBriefQuality)) : null),
     errors,
     // builtAt = response PRODUCTION time, and stays the client's "rebuild
     // finished" poll signal (mobile useBriefing polls until builtAt advances),
@@ -3559,14 +3685,21 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
   // publish updated content; a failed one leaves the previously-published
   // row completely untouched and only records the attempt in the durable
   // ledger below (never in the briefings table).
+  // Never-downgrade invariant: already folded into thisAttemptPublishable
+  // above (scopedWouldDowngrade) — identical to the full build's identical
+  // fix. A repair attempt that only reaches grounded_usable neither becomes
+  // this response's content nor overwrites a same-day row that's already
+  // premium_fresh.
   let persistenceFailed = false;
-  if (thisAttemptFresh) {
+  if (thisAttemptPublishable) {
     try {
       await briefingsStore.saveBriefing({ kind: 'daily', content });
     } catch (err) {
       console.error('[chief-brief rebuild] save failed:', err.message);
       persistenceFailed = true;
     }
+  } else if (scopedWouldDowngrade) {
+    console.log(`[chief-brief rebuild] this attempt was publishable (${scopedPublishTier}) but the existing row is already ${scopedExistingTier} — NOT downgrading; recorded as a build attempt only.`);
   } else {
     console.log(`[chief-brief rebuild] this attempt was ${chiefResult.chiefBriefQuality?.status ?? 'unknown'}-quality — NOT publishing as a new canonical daily row (chiefBriefStale=${chiefBriefStale}); the existing published content is untouched.`);
   }
@@ -3582,7 +3715,7 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
     try {
       await require('../store/chiefBriefRepairLedger').recordAttempt({
         repairReason,
-        succeeded: thisAttemptFresh,
+        succeeded: thisAttemptPublishable,
         contextKey: repairReason === 'goals_stale' ? (ctx.goalsWeekStart ?? null) : null,
         reasonCodes: chiefResult.chiefBriefQuality?.reasonCodes ?? [],
       });
@@ -3598,7 +3731,7 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
     chiefBrief: finalChiefBrief,
     source: chiefBriefStale ? 'last_good' : 'fresh',
     localDate: content.localDate ?? null,
-    builtAt: thisAttemptFresh ? rebuildNow : (lastGood?.builtAt ?? null),
+    builtAt: thisAttemptPublishable ? rebuildNow : (lastGood?.builtAt ?? null),
     snapshotId: content.snapshotId ?? null,
     attemptState: attemptStateFromQuality(chiefResult.chiefBriefQuality?.status ?? null, chiefResult.chiefBrief != null),
     attemptedAt: rebuildNow,
@@ -3740,7 +3873,7 @@ router.post('/briefing/rebuild', asyncHandler(async (req, res) => {
   }
 
   const attemptNumber = (await buildJobs.attemptsToday(day, tz).catch(() => 0)) + 1;
-  const job = await buildJobs.createJob({ trigger: 'manual', state: 'building', attemptNumber, localDay: day, tz });
+  const job = await buildJobs.createJob({ trigger: 'manual', state: 'building', attemptNumber, localDay: day, tz, leaseOwner: buildJobs.PROCESS_LEASE_OWNER });
   res.status(202).json({ buildId: job.id, state: job.state });
 
   const release = async () => {
@@ -3755,11 +3888,12 @@ router.post('/briefing/rebuild', asyncHandler(async (req, res) => {
   // briefing, so the job below is marked 'ready' ONLY when that actually
   // happened, never merely because the HTTP call didn't throw.
   (async () => {
-    // Real build heartbeat: touch updated_at every 20s while the build is
-    // actually in flight, so isJobStale's staleness window can eventually
-    // be judged against genuine proof-of-life rather than only "time since
-    // creation" (see morningBuildJobs.touchHeartbeat's own comment).
-    const heartbeat = setInterval(() => buildJobs.touchHeartbeat(job.id), 20000);
+    // Real build heartbeat: renews both updated_at AND the deployment-safe
+    // lease (lease_expires_at) every 20s while the build is actually in
+    // flight — a killed process's job becomes detectably abandoned within
+    // one missed renewal (~LEASE_DURATION_MS), not 15 minutes (see
+    // morningBuildJobs.touchHeartbeat/isJobAbandoned).
+    const heartbeat = setInterval(() => buildJobs.touchHeartbeat(job.id, { leaseOwner: buildJobs.PROCESS_LEASE_OWNER }), 20000);
     try {
       const result = await buildFreshBriefing({ force: true });
       const qualityStatus = result?.chiefBriefQuality?.status ?? null;
@@ -3768,10 +3902,14 @@ router.post('/briefing/rebuild', asyncHandler(async (req, res) => {
           state: 'failed', qualityStatus, snapshotId: result?.snapshotId ?? null,
           errorMessage: 'persistence_failed — the draft was fresh but saving it did not succeed',
         });
-      } else if (qualityStatus === 'fresh') {
+      } else if (isPublishableTier(result?.publishTier)) {
+        // grounded_usable now maps to 'ready' too (three-tier contract,
+        // brain/publishTier.js) — a schema-valid-but-underfilled attempt is
+        // a successful manual rebuild, not a failure, exactly the July 30 gap.
         const latest = await require('../store/briefings').latestBriefing('daily').catch(() => null);
         await buildJobs.updateJob(job.id, {
           state: 'ready', qualityStatus, snapshotId: result?.snapshotId ?? null,
+          publishTier: result?.publishTier ?? null,
           publishedBriefingId: latest?.id ?? null,
         });
       } else {
@@ -3861,8 +3999,20 @@ router.get('/briefing/by-snapshot/:snapshotId', asyncHandler(async (req, res) =>
   }
   const content = row.content || {};
   const qualityStatus = content.chiefBriefQuality?.status ?? null;
-  if (qualityStatus === 'degraded' || qualityStatus === 'failed') {
-    return res.status(409).json({ error: 'degraded', snapshotId, quality: qualityStatus });
+  // Three-tier publishability (July 30 2026 incident hardening, section 2):
+  // both premium_fresh AND grounded_usable are publishable current-day
+  // briefs and must resolve here — a tapped "ready" push for a grounded
+  // fallback build must not 409 just because it wasn't full editorial
+  // quality. tierForStoredContent handles legacy rows with no quality stamp
+  // at all (backward-compat: real content + no quality info = premium_fresh,
+  // same convention as hasPublishableFreshBriefToday) — only skipped
+  // entirely when there's no chiefBrief at all, so that case falls through
+  // to the isPublishableRow check below and reports the more accurate
+  // 'not_publishable' rather than 'degraded' for "nothing here yet".
+  if (content.chiefBrief != null) {
+    if (!isPublishableTier(tierForStoredContent(content))) {
+      return res.status(409).json({ error: 'degraded', snapshotId, quality: qualityStatus });
+    }
   }
   if (!briefingsStore.isPublishableRow(content)) {
     return res.status(409).json({ error: 'not_publishable', snapshotId });
@@ -3906,4 +4056,6 @@ module.exports = {
   dateOnly,
   // Cross-day lifecycle hardening pass — self-healing GET /briefing.
   pastMorningCutoff, triggerRecoveryBuildIfNeeded, MORNING_RECOVERY_GRACE_MIN,
+  // Wake-aware self-heal (July 30 2026 incident hardening, section 3).
+  selfHealDecision,
 };

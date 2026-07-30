@@ -62,6 +62,44 @@ async function markMorningRan() {
   }
 }
 
+/** Local-week (Sunday, YYYY-MM-DD) dedup key for the wake-aware weekly-review
+ *  push — see startMorningWatcher's tick, which now fires this on Sundays
+ *  once wake-readiness is confirmed instead of scheduleWeekly's old fixed
+ *  clock time (July 30 2026 incident hardening, section 3: no push should
+ *  fire on a fixed clock time while Eight Sleep is configured and the user
+ *  may still be asleep — the "your weekly review is ready" push is a
+ *  notification just like the morning brief's, so it deserves the same
+ *  wake-readiness gate, not just the chief brief). */
+function weeklyReviewKey(d = new Date()) {
+  const tz = process.env.TZ || 'America/New_York';
+  const local = new Date(d.toLocaleString('en-US', { timeZone: tz }));
+  const sunday = new Date(local);
+  sunday.setDate(local.getDate() - local.getDay());
+  return `weekly_review_push:${sunday.toISOString().slice(0, 10)}`;
+}
+
+async function weeklyReviewRanThisWeek() {
+  try {
+    const keys = await nudgesStore.recentlySentKeys(8);
+    return keys.has(weeklyReviewKey());
+  } catch (e) {
+    console.error('[scheduler] weekly-review marker check failed (treating as UNKNOWN, will retry):', e.message);
+    return false;
+  }
+}
+
+async function markWeeklyReviewRan() {
+  try {
+    const id = await nudgesStore.recordNudge({
+      dedupKey: weeklyReviewKey(), title: 'weekly review ran', body: '',
+      basis: { type: 'weekly_review_marker' }, status: 'sent',
+    });
+    if (id != null) await nudgesStore.markStatus(id, 'sent');
+  } catch (e) {
+    console.error('[scheduler] weekly-review marker failed:', e.message);
+  }
+}
+
 /** Did the morning routine already run today? Checks the dedup ledger.
  *  Tri-state (audit fix, item 7): a transient DB read failure is NEITHER
  *  "ran" nor "didn't run" — it's unknown, and the old code's "assume it ran"
@@ -269,8 +307,22 @@ async function morningRoutine({ reason = 'scheduled', force = false, asOf = new 
     // DEGRADED) must NOT burn the once-a-day marker — record the attempt in
     // the retry ledger instead so a later automatic trigger can try again,
     // bounded by its own backoff/attempt cap.
+    // Three-tier publishability (July 30 2026 incident hardening): a
+    // grounded_usable publish (safe, complete, but underfilled or a
+    // deterministic fallback — see brain/publishTier.js) is ALSO a genuine
+    // terminal success, not just a literal 'fresh'/premium_fresh one — the
+    // exact gap that made an automatic build which came back schema-valid-
+    // but-thin retry forever (bounded only by the retry ledger's attempt
+    // cap) instead of being recognized as "today is done."
+    const { isPublishableTier, derivePublishTier } = require('./brain/publishTier');
+    // Fall back to deriving a tier from the bare `quality` status when a
+    // caller doesn't stamp `publishTier` explicitly (e.g. a legacy/stubbed
+    // runMorningBriefing return shape) — mirrors publishTier.js's own
+    // backward-compatibility convention rather than silently treating an
+    // untagged 'fresh'/'degraded' result as unpublishable.
+    const effectiveTier = briefResult.publishTier ?? derivePublishTier(briefResult.quality ? { status: briefResult.quality, reasonCodes: [] } : null);
     const reachedTerminalOutcome = briefResult.sleepCheckIn === true
-      || (briefResult.built === true && briefResult.quality === 'fresh')
+      || (briefResult.built === true && isPublishableTier(effectiveTier))
       // A fresh brief already existed for today (built by a concurrent manual
       // rebuild, or an earlier automatic trigger this same morning) — the day
       // genuinely IS done, even though THIS call didn't do the building.
@@ -283,7 +335,7 @@ async function morningRoutine({ reason = 'scheduled', force = false, asOf = new 
       runNonEssentialMorningWork(reason);
     } else if (!force && !NO_ATTEMPT_SKIP_REASONS.has(briefResult.skipped)) {
       console.log(`[scheduler] morning routine did not reach a terminal outcome (built=${briefResult.built} quality=${briefResult.quality ?? 'n/a'} skipped=${briefResult.skipped ?? 'n/a'}) — NOT marking the day done; recording a retry attempt instead.`);
-      const reason2 = briefResult.skipped === 'quality_not_fresh'
+      const reason2 = briefResult.skipped === 'quality_not_publishable'
         ? (briefResult.quality === 'failed' ? morningRetryLedger.REASON.QUALITY_FAILED : morningRetryLedger.REASON.QUALITY_DEGRADED)
         : (briefResult.skipped === 'publish_failed' ? morningRetryLedger.REASON.PERSISTENCE_FAILED
           : (briefResult.skipped === 'draft_build_failed' ? morningRetryLedger.REASON.PROVIDER_FAILED : (briefResult.skipped || 'unknown')));
@@ -327,10 +379,34 @@ function startMorningWatcher() {
 
   const tick = async () => {
     try {
+      const now = new Date();
+      // Wake-aware weekly review (Sunday only): fires once wake-readiness is
+      // confirmed instead of a fixed clock time — checked BEFORE the
+      // morning-ran early-return below so a morning that already published
+      // earlier doesn't block the week's one review push. Independent
+      // dedup key (weeklyReviewKey) so this only ever fires once per week
+      // regardless of poll cadence.
+      if (now.getDay() === 0) {
+        try {
+          const ranThisWeek = await weeklyReviewRanThisWeek();
+          if (!ranThisWeek) {
+            const readiness = await sleepReadiness.getMorningSleepReadiness({ asOf: now, trigger: 'weekly-review-watcher' });
+            if (readiness.ready) {
+              const r = await morningNotify.runWeeklyReviewWithPush({});
+              if (r.generated) {
+                await markWeeklyReviewRan();
+                console.log(`[scheduler] wake-aware weekly review sent (sent=${r.sent ?? 0})`);
+              }
+            }
+          }
+        } catch (e) {
+          console.error('[scheduler] wake-aware weekly review check failed:', e.message);
+        }
+      }
+
       const marker = await morningRanToday();
       if (marker.ran) return;
       if (marker.error) console.log('[scheduler] morning-marker lookup failed this poll — treating as unknown, will retry next poll');
-      const now = new Date();
       const mins = now.getHours() * 60 + now.getMinutes();
       if (mins < pollStartHour * 60 + pollStartMinute) return; // too early to poll
 
@@ -480,6 +556,27 @@ function schedulerState() {
 }
 
 function startJobs() {
+  // Deployment-safe startup recovery (July 30 2026 incident hardening,
+  // section 5): production restarted mid-morning near the wake-readiness
+  // transition on July 30 — any build job the OLD process owned when it was
+  // killed is left in a non-terminal state (waiting_for_sleep/queued/
+  // building/retry_wait) with a lease that process can no longer renew.
+  // Inspect today's local-day jobs once at boot and mark any job whose lease
+  // has already expired 'interrupted' — this ALSO frees today's local_day
+  // from idx_morning_build_jobs_one_active_per_day (migration 068), since
+  // 'interrupted' isn't one of the indexed in-flight states, so the very
+  // next self-heal check (GET /briefing) or automatic trigger (the watcher's
+  // first tick, ~30s after boot) can immediately create a fresh recovery
+  // attempt instead of waiting out the old 15-minute STALE_IN_FLIGHT_MS
+  // window to notice the old job was never coming back. Best-effort: a
+  // failure here must never prevent the scheduler's other jobs from
+  // starting.
+  require('./store/morningBuildJobs').recoverInterruptedJobs().then((recovered) => {
+    if (recovered.length) {
+      console.log(`[scheduler] startup recovery: marked ${recovered.length} abandoned build job(s) 'interrupted' (${recovered.map((j) => `${j.id}:${j.trigger}`).join(', ')})`);
+    }
+  }).catch((e) => console.error('[scheduler] startup recovery scan failed:', e.message));
+
   // envInt, not `Number(...) || default` — SCHEDULE_HOUR=0 (midnight) or
   // SCHEDULE_MINUTE=0 (on the hour) are legitimate configs that `0 || 8`
   // would silently discard in favor of the default.
@@ -512,9 +609,15 @@ function startJobs() {
       });
     }
   }
-  // Weekly review generates Sunday morning (weekday 0), 10 min after the daily
-  // routine's ingest/analyze, and pushes "your weekly review is ready".
-  scheduleWeekly(0, hour, minute + 10, () => morningNotify.runWeeklyReviewWithPush({}));
+  // Weekly review: Sunday morning, 10 min after the daily routine's
+  // ingest/analyze, pushing "your weekly review is ready". Fixed clock time
+  // is only safe when there's no wake-readiness signal to defer to — with
+  // Eight Sleep configured, startMorningWatcher's tick (above) fires this
+  // instead, once wake-readiness is actually confirmed, so this notification
+  // gets the identical "don't wake the user" guarantee as the morning brief.
+  if (!eightSleepConfigured()) {
+    scheduleWeekly(0, hour, minute + 10, () => morningNotify.runWeeklyReviewWithPush({}));
+  }
   // Afternoon check-in reminder (3pm) — only pushes if you haven't logged your
   // mood/energy/focus yet (you can't meaningfully rate the day at 8am).
   const checkinHour = Number(process.env.CHECKIN_REMINDER_HOUR) || 15; // 3pm

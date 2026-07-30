@@ -81,10 +81,14 @@ afterEach(async () => {
 });
 after(async () => { await closeDb(); });
 
-// Required test 5 & 7: a first-ever build (no prior fresh brief at all) whose
-// generation is degraded must never be persisted as the canonical daily
-// briefing — the API must expose an honest build-status, not a blank row.
-test('required: a first-ever build with no usable generation is never persisted as the canonical briefing; the build-job status reports it honestly', async () => {
+// (July 30 2026 incident hardening — supersedes the old "must never be
+// persisted" premise) a first-ever build (no prior fresh brief at all)
+// whose generation is merely underfilled (schema-valid, no claim violation)
+// is grounded_usable under the 3-tier contract and DOES publish — the exact
+// gap that produced the July 30 incident: this content used to vanish
+// entirely (job 'failed', no briefing row) instead of shipping a safe,
+// if-thin, real brief.
+test('required (superseded): a first-ever underfilled-but-safe build publishes as grounded_usable; the build-job status reports it honestly', async () => {
   await cleanup();
   stubLlm(degradedLlmResponse);
 
@@ -103,19 +107,20 @@ test('required: a first-ever build with no usable generation is never persisted 
     await new Promise((r2) => setTimeout(r2, 200));
   }
   assert.ok(job, 'the job must reach a terminal state');
-  assert.equal(job.state, 'failed', 'a degraded attempt with no fresh prior to carry forward must fail the job, not "ready"');
-  assert.equal(job.publishedBriefingId, null, 'no briefing was ever published for this failed attempt');
+  assert.equal(job.state, 'ready', 'an underfilled-but-safe attempt is grounded_usable — a genuine publish, not a failure');
+  assert.ok(job.publishedBriefingId, 'the grounded_usable brief was published and referenced by this job');
 
   const after1 = await db.query(`SELECT count(*)::int AS n FROM briefings`);
-  assert.equal(after1.rows[0].n, before.rows[0].n, 'no new briefings row was inserted for the degraded attempt');
+  assert.equal(after1.rows[0].n, before.rows[0].n + 1, 'exactly one new briefings row was inserted for the grounded_usable attempt');
 });
 
-// Required test 4 & 9: a degraded first candidate followed by a fresh
-// job-level retry publishes ONLY the fresh candidate — proving the manual
-// rebuild's "builtAt advanced" trap can no longer read as success (the
-// degraded attempt's job is failed even though buildFreshBriefing itself
-// always stamps a fresh builtAt on every attempt).
-test('required: a degraded first candidate followed by a fresh retry publishes only the fresh candidate; job state (not builtAt) is the truth', async () => {
+// (July 30 2026 incident hardening — supersedes the old "publishes ONLY the
+// fresh candidate" premise) a grounded_usable first candidate DOES publish
+// (job1 'ready'), but a subsequent premium_fresh retry is a strictly BETTER
+// tier and correctly overwrites it (never-downgrade only blocks a WORSE
+// attempt from replacing a better one, never the reverse) — job state (not
+// builtAt) remains the truth about which candidate is actually canonical.
+test('required (superseded): a grounded_usable first candidate publishes, and a fresh retry (a strictly better tier) replaces it; job state (not builtAt) is the truth', async () => {
   await cleanup();
 
   stubLlm(degradedLlmResponse);
@@ -129,12 +134,13 @@ test('required: a degraded first candidate followed by a fresh retry publishes o
       await new Promise((r2) => setTimeout(r2, 200));
     }
   }
-  assert.equal(job1.state, 'failed');
+  assert.equal(job1.state, 'ready', 'an underfilled-but-safe candidate is grounded_usable — it publishes');
+  assert.ok(job1.publishedBriefingId);
 
   stubLlm(freshLlmResponse);
   const res2 = await request(app).post('/api/briefing/rebuild').set(authHeader());
   assert.equal(res2.status, 202);
-  assert.notEqual(res2.body.buildId, res1.body.buildId, 'a retry is a NEW job row, not a mutation of the failed one');
+  assert.notEqual(res2.body.buildId, res1.body.buildId, 'a retry is a NEW job row, not a mutation of the prior one');
   let job2 = null;
   { const deadline = Date.now() + 15000;
     while (Date.now() < deadline) {
@@ -147,16 +153,24 @@ test('required: a degraded first candidate followed by a fresh retry publishes o
   assert.ok(job2.publishedBriefingId, 'a ready job references the briefing row it published');
   assert.equal(job2.attemptNumber, 2, 'the retry is recorded as attempt 2 for today, not a fresh count');
 
-  // The canonical daily briefing is the FRESH one, never the degraded one.
+  // The canonical daily briefing is the FRESH (premium) one — a strictly
+  // better tier correctly supersedes the earlier grounded_usable candidate.
   const latest = await briefingsStore.latestBriefing('daily');
   assert.equal(latest.id, job2.publishedBriefingId);
+  assert.equal(latest.content.publishTier, 'premium_fresh');
   assert.match(latest.content.chiefBrief.synthesis, new RegExp(TEST_MARKER));
   assert.doesNotMatch(latest.content.chiefBrief.synthesis, /too short/);
 });
 
-// Required test 6: if EVERY generation attempt fails, the previously-good
-// brief is left completely untouched, and the job is failed/retryable.
-test('required: when all generation attempts fail, the previous good brief remains intact and the job becomes failed', async () => {
+// (July 30 2026 incident hardening — supersedes the old "job becomes
+// failed" premise) if a later attempt only reaches a LOWER tier than what's
+// already canonical (premium_fresh already published; the retry is merely
+// grounded_usable), the never-downgrade invariant leaves the existing good
+// brief completely untouched — AND, since a genuinely publishable brief
+// exists for today (the untouched one), the job correctly reports 'ready'
+// (not 'failed': nothing actually needs retrying — today's brief is fine),
+// referencing the SAME existing row rather than a new one.
+test('required (superseded): a same-or-lower-tier retry never downgrades an existing premium brief; the job reports ready against the UNCHANGED existing row', async () => {
   await cleanup();
   // Seed an existing fresh brief for today.
   stubLlm(freshLlmResponse);
@@ -172,7 +186,10 @@ test('required: when all generation attempts fail, the previous good brief remai
   assert.equal(seedJob.state, 'ready');
   const goodBriefingId = seedJob.publishedBriefingId;
 
-  // Now every subsequent attempt degrades.
+  const before = await db.query(`SELECT count(*)::int AS n FROM briefings`);
+
+  // Now a subsequent attempt only reaches grounded_usable — strictly worse
+  // than the already-published premium_fresh.
   stubLlm(degradedLlmResponse);
   const retryRes = await request(app).post('/api/briefing/rebuild').set(authHeader());
   let retryJob = null;
@@ -183,12 +200,15 @@ test('required: when all generation attempts fail, the previous good brief remai
       await new Promise((r2) => setTimeout(r2, 200));
     }
   }
-  assert.equal(retryJob.state, 'failed', 'a degraded retry must fail its OWN job even though a good prior exists');
+  assert.equal(retryJob.state, 'ready', 'a genuinely publishable brief exists for today (the untouched premium one) — nothing needs retrying');
+  assert.equal(retryJob.publishedBriefingId, goodBriefingId, 'the job references the SAME existing row — never a new, worse one');
 
-  // The good brief is untouched — still the latest canonical row, byte-identical.
+  // The good brief is untouched — still the latest canonical row, byte-identical, and NO new row was inserted.
   const latest = await briefingsStore.latestBriefing('daily');
   assert.equal(latest.id, goodBriefingId);
   assert.match(latest.content.chiefBrief.synthesis, /genuinely on track/);
+  const after1 = await db.query(`SELECT count(*)::int AS n FROM briefings`);
+  assert.equal(after1.rows[0].n, before.rows[0].n, 'the never-downgrade invariant must not insert any new row for the worse attempt');
 });
 
 // Required test 8: a persistence failure (the draft itself was fresh, but

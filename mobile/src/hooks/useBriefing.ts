@@ -639,6 +639,15 @@ export interface BriefingData {
   // describes this build's own attempt, never a carried-forward card (see
   // chiefBriefStale) — null on a cached build that predates this contract.
   chiefBriefQuality?: { status?: 'fresh' | 'degraded' | 'failed'; [key: string]: unknown } | null;
+  // The authoritative 3-tier publishability contract (backend
+  // brain/publishTier.js) — 'premium_fresh' | 'grounded_usable' |
+  // 'hard_failed' (hard_failed never actually reaches the client: a
+  // hard-failed attempt is never published). 'grounded_usable' means the
+  // content is fully safe and complete but was assembled from a
+  // deterministic canonical fallback (provider refusal/timeout/malformed
+  // output) or is genuinely underfilled prose — the client shows a subtle
+  // "Simplified brief" qualifier for this tier, never labeling it premium.
+  publishTier?: 'premium_fresh' | 'grounded_usable' | 'hard_failed' | null;
   // The local week (Sunday, YYYY-MM-DD — see backend store/intentions.js's
   // weekStart()) whose goals chiefBrief's completion claims actually
   // describe. Compare against weeklyGoals.current.weekStart to know
@@ -671,6 +680,19 @@ export interface BriefingData {
     reasonCodes: string[];
     persistenceFailed: boolean;
   } | null;
+  // July 30 2026 incident hardening (section 3): explicit tri-state from the
+  // self-healing GET's wake-aware decision (routes/briefing.js's
+  // selfHealDecision) — 'waiting_for_sleep_data' means the server is
+  // DELIBERATELY holding the morning build until Eight Sleep's night
+  // finalizes, not that anything failed. Never render the generic
+  // stale/failure copy when this is set — see chiefBriefState.ts's
+  // describeWaitingForSleepData.
+  morningReadinessState?: 'ready' | 'waiting_for_sleep_data' | null;
+  morningReadinessReason?: string | null;
+  // Set when the self-healing GET (or the automatic path) enqueued/adopted a
+  // recovery build job for today — the durable build-job id to poll, same
+  // contract as POST /briefing/rebuild's response.
+  recoveryBuildId?: string | null;
   experiments?: {
     completed: CompletedExperiment[];
     running: RunningExperiment[];

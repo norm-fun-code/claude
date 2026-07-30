@@ -437,8 +437,23 @@ function checkWorkoutCompletionOverclaim(fields, facts) {
 }
 
 // ── Goal & commitment completion ─────────────────────────────────────────────
+// July 30 2026 incident hardening: the original pattern required the
+// auxiliary and completion verb to be DIRECTLY adjacent ("is done"), so an
+// intensifier like "is fully done"/"is now complete"/"was already finished"
+// slipped past undetected — invisible before this fix because ANY degraded
+// result was discarded regardless of whether its specific violation was
+// caught, but a real gap now that a merely-underfilled degraded result can
+// publish as grounded_usable. The optional filler group tolerates ONE common
+// intensifier between them (a bounded, explicit allowlist — never a bare
+// `\w+`, which would risk absorbing a NEGATION like "not"/"never" and
+// flipping a correct "is not yet done" into a false positive).
+const COMPLETION_FILLER = '(?:fully|totally|completely|finally|already|now|officially|technically|essentially|basically|actually|really|just|all)';
 const COMPLETION_VERB_RE =
-  /\b(?:is|are|was|were|has been|have been)\s+(?:done|complete|completed|finished|closed(?:\s+out)?|delivered|wrapped(?:\s+up)?|shipped)\b|\bchecked (?:it |that |this )?off\b|\bcrossed (?:it |that |this )?off\b|\bclosed (?:it|that|this) out\b/i;
+  new RegExp(
+    `\\b(?:is|are|was|were|has been|have been)(?:\\s+${COMPLETION_FILLER}){0,2}\\s+(?:done|complete|completed|finished|closed(?:\\s+out)?|delivered|wrapped(?:\\s+up)?|shipped)\\b` +
+    `|\\bchecked (?:it |that |this )?off\\b|\\bcrossed (?:it |that |this )?off\\b|\\bclosed (?:it|that|this) out\\b`,
+    'i'
+  );
 const COMPLETION_OVERLAP_THRESHOLD = 0.6;
 
 function checkCompletion(fields, facts) {

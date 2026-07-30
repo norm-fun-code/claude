@@ -109,21 +109,27 @@ test('scenario 7a — a chiefBrief claiming "currently fasting" is neutralized b
   const now = new Date();
 
   // Ended yesterday (a prior calendar day) — the false "currently fasting"
-  // claim must be neutralized, which (per the audit fix, item B) means it
-  // can no longer ship as a displayable chiefBrief at all: a neutralized
-  // field falls back to claimValidator.js's deterministic
-  // groundedFallbackSentence(), which is itself degraded-quality prose and
-  // must never be shown as if it were a completed brief. With no fresh
-  // same-day prior seeded in this test, the correct outcome is an explicit
-  // PENDING state (chiefBrief: null), not a fallback sentence that merely
-  // happens not to say "fasting".
+  // claim must be neutralized. July 30 2026 incident hardening (supersedes
+  // the old "must report pending" premise): a successfully neutralized
+  // contradiction is FACTUALLY SAFE (the false claim itself never ships —
+  // that's still non-negotiable), and under the 3-tier publishability
+  // contract (brain/publishTier.js) that makes it grounded_usable, not
+  // hard_failed — it publishes with the neutralized/grounded-fallback text,
+  // never as an empty pending state. Only an UNRESOLVED contradiction
+  // (survives neutralization) would still report pending/hard_failed.
   const endedId = await seedFastAssertion(endedFastWindow(now));
   stubChiefBriefClaimingCurrentFast();
   const { buildFreshBriefing } = require('../../src/routes/briefing');
   const endedResult = await buildFreshBriefing({ force: true });
-  assert.equal(endedResult?.chiefBrief, null, 'a degraded/neutralized attempt with no fresh prior must report pending, not ship fallback prose');
-  assert.equal(endedResult?.chiefBriefPending, true);
+  assert.ok(endedResult?.chiefBrief, 'a successfully neutralized contradiction is safe — it must publish as grounded_usable, not report pending');
+  assert.equal(endedResult?.chiefBriefPending, false);
   assert.equal(endedResult?.chiefBriefQuality?.status, 'degraded');
+  assert.equal(endedResult?.publishTier, 'grounded_usable');
+  assert.doesNotMatch(
+    JSON.stringify(endedResult?.chiefBrief),
+    /currently fasting|25 hours/i,
+    'the false "currently fasting" claim itself must never appear — only the neutralized/grounded text may ship'
+  );
   assert.ok(
     endedResult?.chiefBriefQuality?.violatedChecks?.includes('episodic_state_overclaim'),
     `expected the original violated check to survive in safe diagnostics; got: ${JSON.stringify(endedResult?.chiefBriefQuality)}`

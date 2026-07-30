@@ -500,8 +500,18 @@ async function chiefBriefAttempt(prompt, attemptLabel, { maxTokens, correlationI
 // (matched by word-overlap against the goal's own text, not just its exact
 // title), so "the valuation presentation is finished" is caught even though
 // it doesn't repeat the goal's exact wording.
+// July 30 2026 incident hardening: mirrors claimValidator.js's identical
+// widening — tolerates ONE common intensifier between the auxiliary and the
+// completion verb ("is fully done") via a bounded, explicit allowlist, never
+// a bare `\w+` (which would risk absorbing a negation and flagging a
+// correct "is not yet done" as a false positive).
+const COMPLETION_FILLER = '(?:fully|totally|completely|finally|already|now|officially|technically|essentially|basically|actually|really|just|all)';
 const COMPLETION_VERB_RE =
-  /\b(?:is|are|was|were|has been|have been)\s+(?:done|complete|completed|finished|closed(?:\s+out)?|delivered|wrapped(?:\s+up)?|shipped)\b|\bchecked (?:it |that |this )?off\b|\bcrossed (?:it |that |this )?off\b|\bclosed (?:it|that|this) out\b/i;
+  new RegExp(
+    `\\b(?:is|are|was|were|has been|have been)(?:\\s+${COMPLETION_FILLER}){0,2}\\s+(?:done|complete|completed|finished|closed(?:\\s+out)?|delivered|wrapped(?:\\s+up)?|shipped)\\b` +
+    `|\\bchecked (?:it |that |this )?off\\b|\\bcrossed (?:it |that |this )?off\\b|\\bclosed (?:it|that|this) out\\b`,
+    'i'
+  );
 
 const GOAL_STOPWORDS = new Set([
   'the', 'a', 'an', 'to', 'of', 'for', 'and', 'is', 'are', 'was', 'were', 'with',
@@ -675,12 +685,36 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
     neutralizedFields: [], correlationId, failedAttempt: reasonCode,
   });
 
+  // Wealth-hardening/morning-incident fix: a hard generation failure (refusal,
+  // or both attempts exhausted) used to return EMPTY_CHIEF — chiefBrief:null —
+  // making the ENTIRE brief unavailable even though canonical, already-
+  // validated facts (recovery, effective workout) were sitting right there.
+  // deterministicChiefBrief assembles a fully grounded, non-LLM brief from
+  // exactly those facts (the same primitive that already backstops a single
+  // blank field mid-pipeline) — this is what converts "the provider refused/
+  // timed out" into a publishable grounded_usable brief instead of total
+  // unavailability. Returns null (never fabricates) when snapshotFacts itself
+  // isn't trustworthy — that case correctly stays hard_failed below.
+  const { deterministicChiefBrief } = require('../brain/publishTier');
+  const hardFailureFallback = (reasonCode) => {
+    const chiefBrief = deterministicChiefBrief(snapshotFacts);
+    if (!chiefBrief) return { ...EMPTY_CHIEF, chiefBriefQuality: FAILED_QUALITY(reasonCode) };
+    return {
+      morningFocus: '', chiefBrief, urgentEmails: [],
+      chiefBriefQuality: {
+        status: 'degraded', reasonCodes: [reasonCode, 'grounded_fallback_used'], fieldWordCounts: {},
+        fallbackFields: ['synthesis', 'action', 'risk', 'move'], violatedChecks: [], neutralizedFields: [],
+        correlationId, failedAttempt: reasonCode,
+      },
+    };
+  };
+
   let result = firstResult;
   let successMaxTokens = initialMaxTokens;
   if (!result) {
     if (firstFailure === 'refusal') {
       console.error(`[briefing-ai] chief-brief refused — not retrying the identical request. [correlationId=${correlationId}]`);
-      return { ...EMPTY_CHIEF, chiefBriefQuality: FAILED_QUALITY('refusal') };
+      return hardFailureFallback('refusal');
     }
     const retryMaxTokens = firstFailure === 'max_tokens' ? chiefBumpedMaxTokens(initialMaxTokens) : initialMaxTokens;
     const { result: secondResult } =
@@ -688,7 +722,7 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
     result = secondResult;
     successMaxTokens = retryMaxTokens;
   }
-  if (!result) return { ...EMPTY_CHIEF, chiefBriefQuality: FAILED_QUALITY('generation_failed') };
+  if (!result) return hardFailureFallback('generation_failed');
 
   // ── Semantic guards ────────────────────────────────────────────────────
   // (1) Goal completion: weekly_intentions.goals[].achieved is the SOLE

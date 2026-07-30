@@ -273,13 +273,22 @@ test('a second automatic trigger after the routine already ran today is skipped'
 // once-a-day morning marker. A later trigger must not see "already ran
 // today" — it must instead be held by the bounded retry-backoff ledger
 // (intelligence/morning-retry-ledger.js), never re-attempting on every poll.
-test('scenario 4: a degraded automatic build does not create the completed-day marker; a later trigger is held by retry backoff, not "already ran today"', async () => {
+test('scenario 4: a hard_failed automatic build does not create the completed-day marker; a later trigger is held by retry backoff, not "already ran today"', async () => {
   stubAll({ present: false, days: [finalizedDay()] });
   await seedStableState();
-  morningNotify.runMorningBriefing = async () => { calls.push('brief'); buildCount += 1; return { built: true, sent: 0, quality: 'degraded' }; };
+  // A genuinely hard_failed outcome (an unresolved factual contradiction —
+  // see brain/publishTier.js) — distinct from a merely-underfilled
+  // grounded_usable build, which DOES now mark the day done (see the
+  // superseded assertion in morning-build-lifecycle.test.js). Matches the
+  // real shape warmAndNotify actually returns for this case: built:false,
+  // skipped:'quality_not_publishable'.
+  morningNotify.runMorningBriefing = async () => {
+    calls.push('brief'); buildCount += 1;
+    return { built: false, sent: 0, quality: 'degraded', skipped: 'quality_not_publishable', publishTier: 'hard_failed' };
+  };
 
   const first = await scheduler.morningRoutine({ reason: 'watcher' });
-  assert.equal(first.built, true);
+  assert.equal(first.built, false);
   assert.equal(first.quality, 'degraded');
 
   const second = await scheduler.morningRoutine({ reason: 'watcher' });
@@ -298,8 +307,8 @@ test('scenario 5: a bounded later retry can publish once quality becomes fresh, 
   morningNotify.runMorningBriefing = async () => {
     calls.push('brief'); buildCount += 1; call += 1;
     return call === 1
-      ? { built: true, sent: 0, quality: 'degraded' }
-      : { built: true, sent: 1, quality: 'fresh' };
+      ? { built: false, sent: 0, quality: 'degraded', skipped: 'quality_not_publishable', publishTier: 'hard_failed' }
+      : { built: true, sent: 1, quality: 'fresh', publishTier: 'premium_fresh' };
   };
 
   const first = await scheduler.morningRoutine({ reason: 'watcher' });

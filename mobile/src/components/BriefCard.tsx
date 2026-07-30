@@ -9,7 +9,7 @@ import type { ChiefBrief } from '../hooks/useBriefing';
 import { BRIEFING_CONTEXT_URL, BRIEFING_AUDIO_URL, BRIEFING_ACTION_COMMIT_URL, BRIEFING_ACTION_ALTERNATES_URL, VOICE_TRANSCRIBE_URL, authHeaders, fetchWithTimeout } from '../config';
 import { voiceAvailable, ensureMicPermission, startRecording, stopRecording } from '../lib/voice';
 import { useBriefAudio } from '../hooks/useBriefAudio';
-import { resolveChiefBriefState, hasBeenPendingTooLong, describeChiefBriefFailure, type BuildJobState } from '../lib/chiefBriefState';
+import { resolveChiefBriefState, hasBeenPendingTooLong, describeChiefBriefFailure, describeWaitingForSleepData, type BuildJobState } from '../lib/chiefBriefState';
 
 interface Props {
   brief: ChiefBrief | null | undefined;
@@ -76,6 +76,21 @@ interface Props {
   // Durable (survives app close/reopen) anchor for "how long have we had no
   // brief" — see useBriefing.ts and chiefBriefState.ts's resolvePendingSince.
   pendingSince?: number | null;
+  // Explicit tri-state from the self-healing GET (routes/briefing.js's
+  // selfHealDecision) — 'waiting_for_sleep_data' means the server is
+  // DELIBERATELY holding the build for Eight Sleep finalization, not that
+  // anything failed (July 30 2026 incident hardening, section 3/6). Never
+  // shown as a generic failure when set.
+  morningReadinessState?: 'ready' | 'waiting_for_sleep_data' | null;
+  morningReadinessReason?: string | null;
+  // The authoritative 3-tier publishability contract (backend
+  // brain/publishTier.js) — 'grounded_usable' means this IS a real, factually
+  // safe, complete brief (never routed through the failure copy), but it was
+  // assembled from a deterministic canonical fallback or was otherwise
+  // underfilled prose, so it's labeled honestly rather than looking
+  // identical to a full premium build (July 30 2026 incident hardening,
+  // section 2 — "never labeled premium/fresh").
+  publishTier?: 'premium_fresh' | 'grounded_usable' | 'hard_failed' | null;
 }
 
 // THE ACTION is the one always-structured beat left on Today (see risk prop
@@ -219,7 +234,7 @@ function BriefSkeleton() {
   );
 }
 
-function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsStale, onRefresh, refreshing, snapshotId, risk, error, buildState, buildFailure, pendingSince }: Props) {
+function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsStale, onRefresh, refreshing, snapshotId, risk, error, buildState, buildFailure, pendingSince, publishTier, morningReadinessState, morningReadinessReason }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   // The card renders whatever content it's given, verbatim (Chief Brief
@@ -558,6 +573,14 @@ function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsSt
       {!stale && cardState === 'failed_with_last_good' && (
         <Text style={styles.staleNote}>Couldn't refresh — tap ↻ to retry</Text>
       )}
+      {/* Honest tier label (July 30 2026 incident hardening, section 2/6):
+          a grounded_usable brief is real and safe to read — never routed
+          through failure copy — but must never look indistinguishable from
+          a full premium build. Suppressed alongside the two amber notes
+          above so at most one qualifier note ever shows at once. */}
+      {!stale && cardState !== 'failed_with_last_good' && brief && publishTier === 'grounded_usable' && (
+        <Text style={styles.staleNote}>Simplified brief — today's numbers, briefly stated</Text>
+      )}
       {/* The "references an earlier week's goals" warning is gone —
           NormOS now detects and repairs this itself (one automatic scoped
           chief-brief rebuild server-side, see routes/briefing.js's cache-hit
@@ -647,21 +670,36 @@ function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsSt
         </>
       ) : cardState === 'failed_empty' ? (
         <AnimatedEntry delay={60} distance={10}>
-          {/* Never an indefinite "Finishing…" — the last attempt genuinely
-              failed and there is no content to fall back to, so say so and
-              offer a deliberate, user-initiated retry (never auto-retried by
-              a timer or by re-renders/polling). */}
-          <Text style={styles.failedEmptyText}>Couldn't put together today's brief.</Text>
-          <Text style={styles.failedEmptyReason}>{failureReason}</Text>
+          {/* Never an indefinite "Finishing…" — say what's actually
+              happening and offer a deliberate, user-initiated retry (never
+              auto-retried by a timer or by re-renders/polling).
+              waiting_for_sleep_data is NOT a failure — the server is
+              deliberately holding the build for Eight Sleep finalization
+              (July 30 2026 incident hardening) — so it gets its own honest
+              header/copy instead of "Couldn't put together today's brief."
+              A manual tap still bypasses the sleep-readiness wait. */}
+          {morningReadinessState === 'waiting_for_sleep_data' ? (
+            <>
+              <Text style={styles.failedEmptyText}>Finishing last night's sleep data.</Text>
+              <Text style={styles.failedEmptyReason}>{describeWaitingForSleepData(morningReadinessReason)}</Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.failedEmptyText}>Couldn't put together today's brief.</Text>
+              <Text style={styles.failedEmptyReason}>{failureReason}</Text>
+            </>
+          )}
           {onRefresh && (
             <Pressable
               onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onRefresh(); }}
               disabled={refreshing}
               style={styles.retryBtn}
               accessibilityRole="button"
-              accessibilityLabel="Retry"
+              accessibilityLabel={morningReadinessState === 'waiting_for_sleep_data' ? 'Build now' : 'Retry'}
             >
-              {refreshing ? <ActivityIndicator size="small" color="#A89CFF" /> : <Text style={styles.retryBtnText}>Retry</Text>}
+              {refreshing ? <ActivityIndicator size="small" color="#A89CFF" /> : (
+                <Text style={styles.retryBtnText}>{morningReadinessState === 'waiting_for_sleep_data' ? 'Build now' : 'Retry'}</Text>
+              )}
             </Pressable>
           )}
         </AnimatedEntry>

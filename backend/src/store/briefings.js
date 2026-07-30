@@ -142,6 +142,12 @@ async function resolveLastGoodChiefBrief(prior, { tz = process.env.TZ || 'Americ
     builtAt: content.builtAt ?? null,
     snapshotId: content.snapshotId ?? null,
     localDate: today,
+    // The carried-forward row's own publish tier (brain/publishTier.js) —
+    // legacy rows that predate this contract fall back to deriving it from
+    // their chiefBriefQuality at the call site (never assumed premium_fresh
+    // here, to keep this module free of a require cycle on brain/publishTier).
+    publishTier: content.publishTier ?? null,
+    chiefBriefQuality: content.chiefBriefQuality ?? null,
   });
   if (priorDay === today && isPublishableRow(prior.content)) return shape(prior.content);
   const row = await latestPublishableDailyForLocalDay(today, { tz });

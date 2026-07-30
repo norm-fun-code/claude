@@ -101,6 +101,15 @@ const DEGRADED_DRAFT = {
   chiefBriefQuality: { status: 'degraded', reasonCodes: ['grounded_fallback_used'], fieldWordCounts: {}, fallbackFields: ['synthesis'], violatedChecks: [] },
 };
 
+// A degraded draft whose contradiction was NOT successfully neutralized —
+// brain/publishTier.js's derivePublishTier treats this (and only this) kind
+// of 'degraded' as hard_failed, never publishable regardless of how complete
+// the surrounding prose is.
+const UNSAFE_DEGRADED_DRAFT = {
+  ...FRESH_DRAFT,
+  chiefBriefQuality: { status: 'degraded', reasonCodes: ['unresolved_claim_violation'], fieldWordCounts: {}, fallbackFields: [], violatedChecks: ['recovery_cause'] },
+};
+
 // The verified publication receipt publishBriefingDraft returns once its
 // post-save read-back succeeds (morning-notification lifecycle fix, item A) —
 // warmAndNotify now requires this (never the in-memory draft alone) before
@@ -110,34 +119,62 @@ const FRESH_RECEIPT = {
   localDay: '2026-06-11', generatedAt: '2026-06-11T11:00:06.000Z', builtAt: FRESH_DRAFT.builtAt,
   qualityStatus: 'fresh', readbackVerified: true,
 };
+const GROUNDED_RECEIPT = { ...FRESH_RECEIPT, briefingId: 'briefing-2', qualityStatus: 'degraded' };
 
-// Scenario 2 (audit fix — DEG task): quality is checked BEFORE publish, not
-// after. A degraded (grounded-fallback) draft must never be published,
-// TTS-prewarmed, or pushed — the production bug was exactly the opposite of
-// this: publishBriefingDraft() ran unconditionally, THEN quality was
-// checked, so a draft the system already knew was degraded (the literal
-// "Recovery is green at 81 today." fallback) still landed on the app. See
-// notify/morning.js's warmAndNotify doc comment for the full fresh-before-
-// publish invariant.
-test('scenario 2: automatic path — a degraded (grounded-fallback) draft is NEVER published, TTS-prewarmed, or pushed', async () => {
+// Scenario 2 (July 30 2026 incident hardening — superseding the OLD
+// all-or-nothing DEG-task assertion): a merely-underfilled/grounded-fallback
+// 'degraded' draft is now PUBLISHABLE at the grounded_usable tier (brain/
+// publishTier.js) — this is the exact July 30 gap: an automatic build that
+// came back schema-valid-but-thin used to be silently discarded entirely
+// (no publish, no push, no fallback), which is precisely what produced
+// "Couldn't put together today's brief" despite a perfectly safe synthesis
+// being available. Required test 20: "no longer assert that every
+// degraded-but-safe draft must be discarded — distinguish grounded usable
+// from unsafe/failed."
+test('scenario 2 (superseded): automatic path — a merely-underfilled/grounded-fallback degraded draft PUBLISHES at grounded_usable and sends the ready push', async () => {
   let publishCalls = 0;
   let pushCalls = 0;
   await withStubs({
-    eightSleep: false, // no Eight Sleep configured -> finalMorningGate is a pass-through
+    eightSleep: false,
     build: async ({ publish } = {}) => {
       assert.equal(publish, false, 'automatic path must request an UNPUBLISHED draft');
       return DEGRADED_DRAFT;
+    },
+    publish: async (draft) => { publishCalls += 1; assert.equal(draft, DEGRADED_DRAFT); return GROUNDED_RECEIPT; },
+    push: async () => { pushCalls += 1; return { sent: 1, invalidTokens: [] }; },
+  }, async () => {
+    const res = await morning.warmAndNotify({ send: true, automatic: true });
+    assert.equal(res.built, true, 'a grounded_usable brief IS a completed morning experience — it must publish');
+    assert.equal(res.sent, 1, 'a grounded_usable publish is still eligible for the once-daily "ready" push');
+    assert.equal(res.quality, 'degraded');
+    assert.equal(res.publishTier, 'grounded_usable');
+    assert.equal(publishCalls, 1);
+    assert.equal(pushCalls, 1);
+  });
+});
+
+// The genuinely UNSAFE case — a contradiction that survived neutralization —
+// must still never publish, exactly like before. This is what actually stays
+// hard_failed under the new contract.
+test('required: automatic path — a degraded draft with an unresolved factual contradiction is hard_failed and is NEVER published, TTS-prewarmed, or pushed', async () => {
+  let publishCalls = 0;
+  let pushCalls = 0;
+  await withStubs({
+    eightSleep: false,
+    build: async ({ publish } = {}) => {
+      assert.equal(publish, false);
+      return UNSAFE_DEGRADED_DRAFT;
     },
     publish: async () => { publishCalls += 1; },
     push: async () => { pushCalls += 1; return { sent: 1, invalidTokens: [] }; },
   }, async () => {
     const res = await morning.warmAndNotify({ send: true, automatic: true });
-    assert.equal(res.built, false, 'nothing is published — a degraded draft must never ship as if it were a completed brief');
-    assert.equal(res.sent, 0, 'no "ready" push for a degraded build');
-    assert.equal(res.skipped, 'quality_not_fresh');
+    assert.equal(res.built, false, 'a factual contradiction must never publish, regardless of how complete the surrounding prose is');
+    assert.equal(res.sent, 0);
+    assert.equal(res.skipped, 'quality_not_publishable');
     assert.equal(res.quality, 'degraded');
-    assert.equal(publishCalls, 0, 'publishBriefingDraft must never be called for a degraded draft — no save, no TTS prewarm');
-    assert.equal(pushCalls, 0, 'sendPush must never be called for a degraded build');
+    assert.equal(publishCalls, 0, 'publishBriefingDraft must never be called for a hard_failed draft — no save, no TTS prewarm');
+    assert.equal(pushCalls, 0, 'sendPush must never be called for a hard_failed build');
   });
 });
 

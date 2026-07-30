@@ -180,8 +180,10 @@ test('required: a persistence failure (saveBriefing throws) never produces a rec
   assert.equal(rows[0].n, 0, 'no row may exist after a persistence failure');
 });
 
-// ── required 10: degraded/thin Chief Briefs are never pushed (automatic path, real DB) ──
-test('required: a degraded automatic build is never published, never creates a ready job, and is never pushed', async () => {
+// ── required 10 (superseded — July 30 2026 incident hardening, section 2/7): an
+// underfilled-but-safe (grounded_usable) automatic build IS published, reaches
+// "ready", and IS pushed — the exact July 30 gap this task closes. ──
+test('required (superseded): an underfilled-but-safe automatic build publishes as grounded_usable, reaches ready, and IS pushed exactly once', async () => {
   await cleanup();
   stubLlm(() => chiefMeta(JSON.stringify({
     chiefBrief: { synthesis: `${TEST_MARKER} too short`, action: 'a', risk: 'r', move: 'm', openQuestion: '' },
@@ -192,13 +194,58 @@ test('required: a degraded automatic build is never published, never creates a r
   expo.sendPush = async () => { sendCount += 1; return { sent: 1, invalidTokens: [] }; };
 
   const result = await morning.runMorningBriefing({ send: true, trigger: 'watcher' });
-  assert.equal(result.sent, 0);
-  assert.equal(sendCount, 0, 'a degraded build must never be pushed');
+  assert.equal(result.sent, 1, 'a grounded_usable build is eligible for the once-daily ready push');
+  assert.equal(sendCount, 1);
+  assert.equal(result.publishTier, 'grounded_usable');
 
   const job = await buildJobs.latestJobForDay(today(), TZ);
   assert.ok(job);
-  assert.equal(job.state, 'failed', 'a degraded attempt must not reach "ready"');
-  assert.equal(job.published_briefing_id, null);
+  assert.equal(job.state, 'ready', 'a grounded_usable attempt IS a completed, publishable morning build');
+  assert.ok(job.published_briefing_id);
+});
+
+// The genuinely UNSAFE case — a confident goal-completion claim that
+// survives the semantic-correction retry and gets deterministically
+// neutralized (real claim-validation path, same fixture pattern as
+// deg-degraded-brief-regression.test.js's DEG 10) still ends up
+// grounded_usable (the neutralized/rewritten text is safe) — proving the
+// REPLACEMENT publishes rather than the raw contradiction. A true
+// hard_failed case (no chiefBrief at all) is covered by the "no chief brief"
+// path elsewhere; this test proves neutralization's OUTPUT is what ships,
+// never the model's raw false claim.
+test('required: a confident-but-false goal-completion claim is neutralized before publishing — the raw contradiction is never pushed', async () => {
+  await cleanup();
+  const intentionsStore = require('../../src/store/intentions');
+  await intentionsStore.saveIntention({ goals: [{ text: `${TEST_MARKER} Finish the Q3 database migration project`, achieved: false }] });
+  try {
+    stubLlm(() => chiefMeta(JSON.stringify({
+      chiefBrief: {
+        synthesis: `${TEST_MARKER} the Q3 database migration project is fully done and shipped`,
+        action: FULL_ACTION, risk: FULL_RISK, move: FULL_MOVE, openQuestion: '',
+      },
+      morningFocus: FULL_MORNING_FOCUS,
+    })));
+    let sendCount = 0;
+    let capturedBody = null;
+    devicesStore.listActiveTokens = async () => ['ExponentPushToken[ZZreadback]'];
+    expo.sendPush = async (_tokens, msg) => { sendCount += 1; capturedBody = msg; return { sent: 1, invalidTokens: [] }; };
+
+    const result = await morning.runMorningBriefing({ send: true, trigger: 'watcher' });
+    // The neutralized result is safe (no surviving contradiction) — it
+    // publishes as grounded_usable and IS pushed, but the raw false claim
+    // text must never appear anywhere, including in the push itself.
+    assert.equal(result.sent, 1);
+    assert.equal(sendCount, 1);
+    assert.doesNotMatch(JSON.stringify(capturedBody), /is fully done and shipped/, 'the push payload must never carry the raw contradiction');
+
+    const job = await buildJobs.latestJobForDay(today(), TZ);
+    assert.ok(job);
+    assert.equal(job.state, 'ready');
+    const row = await briefingsStore.findById(job.published_briefing_id);
+    assert.doesNotMatch(row.content.chiefBrief.synthesis, /is fully done and shipped/, 'the persisted row must contain the neutralized rewrite, never the raw contradiction');
+  } finally {
+    await db.query(`DELETE FROM weekly_intentions WHERE week_start = $1`, [intentionsStore.weekStart()]);
+  }
 });
 
 // ── required 11: the exact-snapshot endpoint never builds and never substitutes a different briefing ──
@@ -226,10 +273,27 @@ test('required: GET /briefing/by-snapshot/:snapshotId returns only the exact row
   }
 });
 
-test('required: GET /briefing/by-snapshot/:snapshotId 409s on a degraded-quality row', async () => {
+// July 30 2026 incident hardening (section 2) — supersedes the old
+// all-or-nothing assertion: a merely-underfilled degraded row is
+// grounded_usable, a publishable tier, and must resolve 200, not 409 — a
+// tapped "ready" push for a grounded fallback build must reach its content.
+test('required (superseded): GET /briefing/by-snapshot/:snapshotId resolves 200 for a grounded_usable (underfilled but safe) row', async () => {
   await cleanup();
   const content = freshContent({
     chiefBriefQuality: { status: 'degraded', reasonCodes: ['synthesis_underfilled'], fieldWordCounts: {}, fallbackFields: ['synthesis'], violatedChecks: [] },
+    publishTier: 'grounded_usable',
+  });
+  await briefingsStore.saveBriefing({ kind: 'daily', content });
+
+  const res = await request(app).get(`/api/briefing/by-snapshot/${content.snapshotId}`).set(authHeader());
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.publishTier, 'grounded_usable');
+});
+
+test('required: GET /briefing/by-snapshot/:snapshotId 409s on a hard_failed row (unresolved factual contradiction)', async () => {
+  await cleanup();
+  const content = freshContent({
+    chiefBriefQuality: { status: 'degraded', reasonCodes: ['unresolved_claim_violation'], fieldWordCounts: {}, fallbackFields: [], violatedChecks: ['recovery_cause'] },
   });
   await briefingsStore.saveBriefing({ kind: 'daily', content });
 

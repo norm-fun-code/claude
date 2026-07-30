@@ -65,19 +65,27 @@ function hasDisplayableBriefToday(latest, opts = {}) {
 
 /**
  * Pure: was today's brief a GOOD build — same local calendar day, a real
- * chiefBrief, AND (per brain/claimValidator.js's assessChiefBriefQuality)
- * quality status 'fresh', not 'degraded' or 'failed'? Rows saved before this
- * quality contract existed carry no chiefBriefQuality at all — treated as
- * fresh for backward compatibility (they predate the contract, not the bar).
- * THIS is the only predicate allowed to suppress the automatic morning
- * routine, burn the once-a-day "ready" push, or skip a bounded retry.
- * @param {{ generated_at: string|Date, content?: { chiefBrief?: any, chiefBriefQuality?: { status?: string } } }|null} latest
+ * chiefBrief, AND (per brain/publishTier.js's derivePublishTier, built on
+ * brain/claimValidator.js's assessChiefBriefQuality) at PUBLISH_TIER
+ * PREMIUM_FRESH or GROUNDED_USABLE, not HARD_FAILED? Name kept for backward
+ * compatibility with existing call sites (routes/briefing.js,
+ * diagnostics.js, scheduler.js) even though the bar is now "publishable",
+ * not literally 'fresh' — a July 30 2026 incident fix: a merely-underfilled
+ * grounded_usable brief IS a completed morning experience, and must suppress
+ * a redundant automatic retry / be eligible for the once-a-day push exactly
+ * like a premium one, never be treated as "nothing built yet". Rows saved
+ * before this quality contract existed carry no chiefBriefQuality/publishTier
+ * at all — treated as publishable for backward compatibility (they predate
+ * the contract, not the bar). THIS is the only predicate allowed to suppress
+ * the automatic morning routine, burn the once-a-day "ready" push, or skip a
+ * bounded retry.
+ * @param {{ generated_at: string|Date, content?: { chiefBrief?: any, chiefBriefQuality?: { status?: string }, publishTier?: string } }|null} latest
  * @param {{ now?: Date, tz?: string }} [opts]
  */
 function hasPublishableFreshBriefToday(latest, opts = {}) {
   if (!hasDisplayableBriefToday(latest, opts)) return false;
-  const quality = latest.content?.chiefBriefQuality;
-  return quality == null || quality.status === 'fresh';
+  const { isPublishableTier, tierForStoredContent } = require('../brain/publishTier');
+  return isPublishableTier(tierForStoredContent(latest.content));
 }
 
 /** The newest daily briefing row ({ generated_at, content, ... }), or null. */
@@ -167,20 +175,20 @@ function logMorningLifecycle(fields = {}) {
  *  weather) — never for identifiers, which come exclusively from `receipt`.
  *  Shared tail of warmAndNotify's two paths (automatic-published-fresh and
  *  manual/forced). */
-async function sendReadyPush(receipt, content, quality) {
+async function sendReadyPush(receipt, content, quality, publishTier = null) {
   const nudgesStore = require('../store/nudges');
   try {
     const recent = await nudgesStore.recentlySentKeys(1);
     if (recent.has(morningPushKey())) {
       console.log('[morning] brief-ready push already sent today — rebuilt content, skipping duplicate push');
-      return { built: true, sent: 0, skipped: 'already_pushed_today', quality };
+      return { built: true, sent: 0, skipped: 'already_pushed_today', quality, publishTier };
     }
   } catch (e) {
     console.error('[morning] push-dedup check failed (proceeding):', e.message);
   }
 
   const tokens = await devicesStore.listActiveTokens();
-  if (tokens.length === 0) return { built: true, sent: 0, reason: 'no_devices', quality };
+  if (tokens.length === 0) return { built: true, sent: 0, reason: 'no_devices', quality, publishTier };
 
   // A touch of useful context in the body when we have it (e.g. weather/date)
   // — cosmetic only, read from the unverified content, never from `receipt`.
@@ -223,11 +231,23 @@ async function sendReadyPush(receipt, content, quality) {
       } catch (e) {
         console.error('[morning] push-dedup record failed:', e.message);
       }
+      return { built: true, sent: r.sent, quality, receipt, publishTier };
     }
-    return { built: true, sent: r.sent, quality, receipt };
+    // Zero-send outcomes distinctly recorded (item 7): every registered
+    // device's token was invalid (provider rejected all of them) vs a
+    // provider-side send failure are different failure modes for an
+    // incident report to distinguish — neither burns the dedup key above,
+    // so either is independently retryable without another expensive brief
+    // generation (the publication itself already succeeded).
+    const allInvalid = r.invalidTokens.length >= tokens.length && tokens.length > 0;
+    return {
+      built: true, sent: 0, quality, receipt, publishTier,
+      reason: allInvalid ? 'all_tokens_invalid' : 'zero_send',
+      invalidTokenCount: r.invalidTokens.length,
+    };
   } catch (err) {
     console.error('[morning] push failed:', err.message);
-    return { built: true, sent: 0, error: err.message, quality, receipt };
+    return { built: true, sent: 0, error: err.message, quality, receipt, publishTier };
   }
 }
 
@@ -250,14 +270,16 @@ async function sendReadyPush(receipt, content, quality) {
  *   - A final-readiness failure discards the draft entirely — no visible
  *     daily briefing, no TTS prewarm, no "ready" push, no morning marker
  *     (the caller sees built:false, skipped:'final_gate_failed').
- *   - A degraded/failed QUALITY draft is likewise discarded — NEVER
- *     published, saved, TTS-prewarmed, or pushed (built:false,
- *     skipped:'quality_not_fresh', quality:<status>). The existing fresh
- *     Chief Brief (if any) already on `briefings` is left completely
- *     untouched — this function never even attempts to save over it.
- *   - Only a FRESH draft is published and (if `send`) triggers the "ready"
- *     push. `quality` is always reported so the caller (scheduler.js) can
- *     record a bounded retry attempt instead of burning the once-a-day
+ *   - A hard_failed-tier draft (brain/publishTier.js) is likewise discarded —
+ *     NEVER published, saved, TTS-prewarmed, or pushed (built:false,
+ *     skipped:'quality_not_publishable', quality:<status>). The existing
+ *     canonical Chief Brief (if any) already on `briefings` is left
+ *     completely untouched — this function never even attempts to save
+ *     over it.
+ *   - A premium_fresh OR grounded_usable draft is published and (if `send`)
+ *     triggers the "ready" push. `quality`/`publishTier` are always
+ *     reported so the caller (scheduler.js) can record a bounded retry
+ *     attempt instead of burning the once-a-day
  *     morning marker.
  * `opts.force` (manual authenticated diagnostics only) bypasses all of this,
  * exactly as before: eager build, eager publish, eager push.
@@ -302,7 +324,9 @@ async function warmAndNotify(opts = {}) {
       logMorningLifecycle({ ...logBase, pushSent: false, failureReason: 'publish_not_verified' });
       return { built: false, sent: 0, skipped: 'publish_failed', quality };
     }
-    const result = await sendReadyPush(receipt, briefing, quality);
+    const { derivePublishTier: forcedDerivePublishTier } = require('../brain/publishTier');
+    const forcedTier = briefing?.publishTier ?? forcedDerivePublishTier(briefing?.chiefBriefQuality);
+    const result = await sendReadyPush(receipt, briefing, quality, forcedTier);
     logMorningLifecycle({ ...logBase, pushSent: (result.sent ?? 0) > 0, failureReason: result.error ?? null });
     return result;
   }
@@ -318,7 +342,7 @@ async function warmAndNotify(opts = {}) {
   if (automatic) {
     try {
       const attemptNumber = (await buildJobs.attemptsToday(day, tz)) + 1;
-      job = await buildJobs.createJob({ trigger: opts.trigger || 'scheduled', state: 'building', attemptNumber, localDay: day, tz });
+      job = await buildJobs.createJob({ trigger: opts.trigger || 'scheduled', state: 'building', attemptNumber, localDay: day, tz, leaseOwner: buildJobs.PROCESS_LEASE_OWNER });
     } catch (err) {
       console.error('[morning] failed to create automatic build-job row (continuing without one):', err.message);
     }
@@ -332,7 +356,7 @@ async function warmAndNotify(opts = {}) {
   // trigger path (the morning scheduler) that runs with nobody watching.
   // Cleared at every exit: failJob (all failure returns) and right after the
   // job is marked 'ready' below (both success returns happen after that).
-  let heartbeatInterval = job ? setInterval(() => buildJobs.touchHeartbeat(job.id), 20000) : null;
+  let heartbeatInterval = job ? setInterval(() => buildJobs.touchHeartbeat(job.id, { leaseOwner: buildJobs.PROCESS_LEASE_OWNER }), 20000) : null;
   const clearHeartbeat = () => { if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; } };
   const failJob = (errorMessage, extra = {}) => {
     clearHeartbeat();
@@ -376,12 +400,23 @@ async function warmAndNotify(opts = {}) {
   // persisted for a non-fresh draft — the retry ledger (scheduler.js) is what
   // paces the next automatic attempt; a manual caller sees this reflected in
   // its build-job status instead (routes/briefing.js's build-job contract).
+  // Three-tier publishability (July 30 2026 incident hardening, see
+  // brain/publishTier.js): a grounded_usable draft (safe but underfilled, or
+  // a deterministic fallback assembled after a provider refusal/timeout/
+  // malformed-output — see briefing-ai.js's hardFailureFallback) now
+  // publishes too, exactly closing the gap that produced the July 30
+  // incident: an automatic build came back schema-valid-but-thin
+  // ('degraded'/'quality_degraded' in the old binary gate) and NOTHING
+  // published, no push, no fallback — the user saw "Couldn't put together
+  // today's brief" despite a perfectly safe synthesis being available.
   const quality = draft?.chiefBriefQuality?.status ?? null;
-  if (quality !== 'fresh') {
-    console.log(`[morning] draft quality is ${quality || 'unknown'} — NOT publishing (never saved, never TTS-prewarmed, never pushed); a bounded retry can run later.`);
-    await failJob('quality_not_fresh', { qualityStatus: quality, snapshotId: draft?.snapshotId ?? null, reasonCodes: draft?.chiefBriefQuality?.reasonCodes ?? [] });
-    logMorningLifecycle({ buildId: job?.id, trigger: opts.trigger, localDay: day, quality, publishStarted: false, failureReason: 'quality_not_fresh' });
-    return { built: false, sent: 0, skipped: 'quality_not_fresh', quality };
+  const { derivePublishTier, isPublishableTier } = require('../brain/publishTier');
+  const draftTier = draft?.publishTier ?? derivePublishTier(draft?.chiefBriefQuality);
+  if (!isPublishableTier(draftTier)) {
+    console.log(`[morning] draft quality is ${quality || 'unknown'} (${draftTier}) — NOT publishing (never saved, never TTS-prewarmed, never pushed); a bounded retry can run later.`);
+    await failJob('quality_not_publishable', { qualityStatus: quality, snapshotId: draft?.snapshotId ?? null, reasonCodes: draft?.chiefBriefQuality?.reasonCodes ?? [] });
+    logMorningLifecycle({ buildId: job?.id, trigger: opts.trigger, localDay: day, quality, publishStarted: false, failureReason: 'quality_not_publishable' });
+    return { built: false, sent: 0, skipped: 'quality_not_publishable', quality };
   }
 
   const { publishBriefingDraft } = require('../routes/briefing');
@@ -409,6 +444,7 @@ async function warmAndNotify(opts = {}) {
   if (job) {
     await buildJobs.updateJob(job.id, {
       state: 'ready', qualityStatus: receipt.qualityStatus, snapshotId: receipt.snapshotId, publishedBriefingId: receipt.briefingId,
+      publishTier: draftTier,
     }).catch((err) => console.error('[morning] job update failed:', err.message));
   }
   clearHeartbeat();
@@ -418,9 +454,9 @@ async function warmAndNotify(opts = {}) {
       buildId: job?.id, trigger: opts.trigger, localDay: receipt.localDay, briefingId: receipt.briefingId, snapshotId: receipt.snapshotId,
       quality, publishStarted: true, publishSucceeded: true, readbackVerified: true, pushSent: false,
     });
-    return { built: true, sent: 0, quality };
+    return { built: true, sent: 0, quality, publishTier: draftTier };
   }
-  const result = await sendReadyPush(receipt, draft, quality);
+  const result = await sendReadyPush(receipt, draft, quality, draftTier);
   logMorningLifecycle({
     buildId: job?.id, trigger: opts.trigger, localDay: receipt.localDay, briefingId: receipt.briefingId, snapshotId: receipt.snapshotId,
     quality, publishStarted: true, publishSucceeded: true, readbackVerified: true,

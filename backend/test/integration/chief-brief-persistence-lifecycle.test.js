@@ -25,6 +25,7 @@ const { SNAPSHOT_VERSION } = require('../../src/brain/snapshot');
 
 const app = buildTestApp();
 const MARKER = `cb-lifecycle-${Date.now()}`;
+const TZ = 'America/New_York';
 
 function todayIso() {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
@@ -59,6 +60,17 @@ async function cleanupAllTagged() {
     `DELETE FROM briefings WHERE kind = 'daily' AND content->>'testMarker' = $1`,
     [MARKER]
   ).catch(() => {});
+  // July 30 2026 incident hardening: a grounded_usable full/scoped rebuild
+  // (previously always discarded, now genuinely publishes — see
+  // brain/publishTier.js) can leave a REAL, untagged row for TODAY behind —
+  // the real production pipeline never stamps testMarker, so the
+  // marker-scoped delete above misses it. Clean up any same-day row
+  // regardless of marker so it can never bleed into a LATER test in this
+  // file that assumes no same-day row exists yet.
+  await db.query(
+    `DELETE FROM briefings WHERE kind = 'daily' AND (generated_at AT TIME ZONE $1)::date = (now() AT TIME ZONE $1)::date`,
+    [TZ]
+  ).catch(() => {});
 }
 
 function degradedChiefMock() {
@@ -66,6 +78,24 @@ function degradedChiefMock() {
     if (system.includes('chief of staff and data scientist')) {
       return {
         text: JSON.stringify({ chiefBrief: { synthesis: 'short', action: 'a', risk: 'r', move: 'm', openQuestion: '' }, morningFocus: 'short' }),
+        stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
+      };
+    }
+    return JSON.stringify({ quoteInsight: '', notionQuote: '', notionInsight: '' });
+  };
+}
+
+// A genuinely hard_failed mock (July 30 2026 incident hardening): missing a
+// REQUIRED field entirely, not merely underfilled — assessChiefBriefQuality
+// classifies this 'failed' (missingRequired), which derivePublishTier always
+// treats as hard_failed regardless of reasonCodes. Distinct from
+// degradedChiefMock's 'short' fixture, which is schema-VALID-but-thin and is
+// now grounded_usable (a real, publishable tier) under the 3-tier contract.
+function hardFailedChiefMock() {
+  return async ({ system }) => {
+    if (system.includes('chief of staff and data scientist')) {
+      return {
+        text: JSON.stringify({ chiefBrief: { synthesis: 'incomplete', risk: 'r', move: 'm', openQuestion: '' }, morningFocus: 'x' }),
         stopReason: 'end_turn', requestId: 'test-req', model: 'claude-opus-4-8',
       };
     }
@@ -186,8 +216,35 @@ test('scenario 4 — latest row pending/null but an earlier same-day row is publ
   assert.equal(res.body.chiefBriefPending, false);
 });
 
-// ── 5. No valid same-day row: honest failed/pending response ──
-test('scenario 5 — no valid same-day row exists at all: GET /briefing returns an honest pending response, never fabricated content', async (t) => {
+// ── 5. (July 30 2026 incident hardening — supersedes the old "must stay
+// pending" premise) No valid same-day row + a shape-invalid generation that
+// exhausts every retry attempt: this is now the exact provider-hard-failure
+// path briefing-ai.js's hardFailureFallback exists for — it recovers via a
+// deterministic brief assembled from canonical BrainSnapshot facts
+// (brain/publishTier.js's deterministicChiefBrief) and publishes as
+// grounded_usable, rather than leaving the morning experience empty. ──
+test('scenario 5 — no valid same-day row exists and generation is shape-invalid on every attempt: recovers via the deterministic grounded fallback and publishes', async (t) => {
+  t.after(cleanupAllTagged);
+  await seedRow({ chiefBrief: null, chiefBriefPending: true, chiefBriefQuality: { status: 'failed' } });
+
+  llm.generateText = hardFailedChiefMock();
+  t.after(() => { delete llm.generateText; });
+
+  const res = await request(app).get('/api/briefing').query({ refresh: '1' }).set(authHeader()).timeout(20000);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.ok(res.body.chiefBrief, 'a shape-invalid generation must recover via the deterministic grounded fallback, never leave the morning empty');
+  assert.equal(res.body.chiefBriefPending, false);
+  assert.equal(res.body.publishTier, 'grounded_usable');
+  assert.ok(
+    res.body.chiefBriefQuality?.reasonCodes?.includes('grounded_fallback_used'),
+    'the fallback must be labeled as such in diagnostics, never indistinguishable from real generation'
+  );
+});
+
+// ── 5b. (July 30 2026 incident hardening) No valid same-day row + a
+// schema-valid-but-underfilled attempt: it IS published as grounded_usable,
+// never discarded — the exact July 30 gap this task closes. ──
+test('scenario 5b — no valid same-day row exists but the attempt is schema-valid-but-underfilled: it publishes as grounded_usable, not pending', async (t) => {
   t.after(cleanupAllTagged);
   await seedRow({ chiefBrief: null, chiefBriefPending: true, chiefBriefQuality: { status: 'failed' } });
 
@@ -196,10 +253,10 @@ test('scenario 5 — no valid same-day row exists at all: GET /briefing returns 
 
   const res = await request(app).get('/api/briefing').query({ refresh: '1' }).set(authHeader()).timeout(20000);
   assert.equal(res.status, 200, JSON.stringify(res.body));
-  assert.equal(res.body.chiefBrief, null);
-  assert.equal(res.body.chiefBriefPending, true);
-  assert.equal(res.body.chiefBriefProvenance, null, 'no content is being shown, so provenance must be null');
-  assert.ok(['degraded', 'failed'].includes(res.body.chiefBriefAttempt?.state));
+  assert.ok(res.body.chiefBrief, 'an underfilled-but-safe attempt is grounded_usable — it must publish, not stay pending');
+  assert.equal(res.body.chiefBriefPending, false);
+  assert.equal(res.body.publishTier, 'grounded_usable');
+  assert.equal(res.body.chiefBriefProvenance?.source, 'fresh');
 });
 
 // ── 6. A prior-day good row is not returned as today's brief ──

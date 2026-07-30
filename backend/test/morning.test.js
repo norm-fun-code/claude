@@ -95,7 +95,15 @@ test('a FRESH-quality build counts as publishable', () => {
   assert.equal(hasPublishableFreshBriefToday(latest, { now: at, tz: TZ }), true);
 });
 
-test('a DEGRADED build (grounded-fallback / underfilled) does NOT count as publishable, even though it is displayable', () => {
+// July 30 2026 incident hardening (section 2/required test 20): a
+// grounded-fallback/underfilled 'degraded' build is now GROUNDED_USABLE
+// under the 3-tier publishability contract (brain/publishTier.js) — a real,
+// factually-safe, complete brief, just not full editorial quality. It DOES
+// count as a successful morning build now: the exact July 30 gap was this
+// case being treated as "nothing built", which silently burned no slot but
+// also shipped nothing and pushed nothing, forever retrying the same
+// degraded result. Superseding the old DEG-task assertion of the same name.
+test('a grounded-fallback/underfilled DEGRADED build DOES count as publishable (grounded_usable) — no longer discarded as "nothing built"', () => {
   const at = new Date('2026-07-14T12:03:00.000Z');
   const latest = {
     generated_at: at.toISOString(),
@@ -105,7 +113,24 @@ test('a DEGRADED build (grounded-fallback / underfilled) does NOT count as publi
     },
   };
   assert.equal(hasDisplayableBriefToday(latest, { now: at, tz: TZ }), true, 'still has something to show');
-  assert.equal(hasPublishableFreshBriefToday(latest, { now: at, tz: TZ }), false, 'must not count as a successful fresh morning build');
+  assert.equal(hasPublishableFreshBriefToday(latest, { now: at, tz: TZ }), true, 'a grounded_usable build IS a completed, publishable morning brief');
+});
+
+// The genuinely UNSAFE case — a factual contradiction that survived
+// neutralization — is the ONLY 'degraded' status that stays hard_failed and
+// must never count as publishable, distinguishing grounded-usable-but-safe
+// from unsafe/failed (required test 20).
+test('a DEGRADED build with an unresolved factual contradiction does NOT count as publishable — the one degraded case that stays hard_failed', () => {
+  const at = new Date('2026-07-14T12:03:00.000Z');
+  const latest = {
+    generated_at: at.toISOString(),
+    content: {
+      chiefBrief: { synthesis: 'x' },
+      chiefBriefQuality: { status: 'degraded', reasonCodes: ['unresolved_claim_violation'], violatedChecks: ['recovery_cause'] },
+    },
+  };
+  assert.equal(hasDisplayableBriefToday(latest, { now: at, tz: TZ }), true, 'still has something to show');
+  assert.equal(hasPublishableFreshBriefToday(latest, { now: at, tz: TZ }), false, 'a surviving factual contradiction must never count as a successful morning build');
 });
 
 test('a FAILED build does NOT count as publishable', () => {

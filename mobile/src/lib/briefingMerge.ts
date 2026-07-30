@@ -92,13 +92,14 @@ const DAY_INDEPENDENT_FIELDS = new Set<string>([
   // sanitizing, so leaving them in the allowlist just avoids the generic
   // clear pass fighting that explicit override.
   'localDate', 'timezone', 'currentLocalDate', 'contentLocalDate', 'dayState',
+  'morningReadinessState', 'morningReadinessReason', 'recoveryBuildId',
   'snapshotId', 'snapshotVersion', 'fieldsBuiltAt', 'fieldVersions',
   'cached', 'cachedAgeMin', 'stale', 'errors',
   // Chief Brief identity/attempt bookkeeping — every caller here always
   // overwrites these explicitly too (chiefBrief: null, chiefBriefPending:
   // true, ...); listed so the generic pass doesn't clear them to a
   // non-standard empty shape before that explicit override lands.
-  'chiefBrief', 'chiefBriefStale', 'chiefBriefPending', 'chiefBriefQuality',
+  'chiefBrief', 'chiefBriefStale', 'chiefBriefPending', 'chiefBriefQuality', 'publishTier',
   'chiefBriefProvenance', 'chiefBriefAttempt', 'morningFocus',
   'goalsWeekStart', 'chiefBriefGoalsStale',
 ]);
@@ -216,6 +217,7 @@ export function mergeBriefingResponse(existing: BriefingData | null, incoming: B
     // happened (a failed refresh really did fail).
     chiefBriefAttempt: incoming.chiefBriefAttempt ?? null,
     chiefBriefQuality: incoming.chiefBriefQuality ?? null,
+    publishTier: lastGood.publishTier ?? null,
   };
   return withWealthLandingProtected(merged, incoming, existing);
 }

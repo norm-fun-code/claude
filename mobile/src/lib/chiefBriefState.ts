@@ -29,10 +29,17 @@ export type ChiefBriefState =
  *  which does not mint job rows, so absence here is NOT evidence of a build
  *  being in flight. */
 export type BuildJobState =
-  | 'waiting_for_sleep' | 'queued' | 'building' | 'retry_wait' | 'ready' | 'failed' | null;
+  | 'waiting_for_sleep' | 'queued' | 'building' | 'retry_wait' | 'ready' | 'failed' | 'interrupted' | null;
 
 /** Build-job states that mean work is genuinely still happening server-side. */
 const IN_FLIGHT_BUILD_STATES = new Set<string>(['waiting_for_sleep', 'queued', 'building', 'retry_wait']);
+
+/** The authoritative 3-tier publishability contract (backend
+ *  brain/publishTier.js). 'grounded_usable' still means there's a REAL,
+ *  factually-safe brief to render — never a failure state — but the card
+ *  labels it honestly ("Simplified brief") instead of looking identical to a
+ *  full premium build (July 30 2026 incident hardening, section 2). */
+export type PublishTier = 'premium_fresh' | 'grounded_usable' | 'hard_failed' | null;
 
 export interface ChiefBriefStateInput {
   /** The brief object itself (or null/undefined if none has ever loaded). */
@@ -89,8 +96,13 @@ export function resolveChiefBriefState(
   // Server truth that the build is over and produced nothing usable. This is
   // the case that used to pulse forever: HTTP 200, chiefBrief null, no error.
   // Checked before the bare `pending` fallback below so a terminal failed
-  // job overrides a stale/contradictory pending flag.
-  if (buildState === 'failed') return 'failed_empty';
+  // job overrides a stale/contradictory pending flag. 'interrupted' (a
+  // deployment killed the process mid-build — see morningBuildJobs.js's
+  // recoverInterruptedJobs) is ALSO terminal from this client's point of
+  // view: the next attempt is a NEW job row, so waiting on this one further
+  // is never correct — show the failed state (with its own distinct copy,
+  // see describeChiefBriefFailure) and a working Retry, same as 'failed'.
+  if (buildState === 'failed' || buildState === 'interrupted') return 'failed_empty';
   if (quality === 'degraded' || quality === 'failed') return 'failed_empty';
 
   // The server's own chiefBriefPending flag — a fresh build genuinely
@@ -160,20 +172,80 @@ export interface ChiefBriefFailureInput {
  *  brief — so the card can say what happened instead of pulsing. Deliberately
  *  maps to fixed copy rather than echoing raw reason codes or any model text:
  *  reason codes are diagnostics for logs, not UI, and the whole point of the
- *  quality gate is that unusable generated prose never reaches the screen. */
+ *  quality gate is that unusable generated prose never reaches the screen.
+ *
+ *  July 30 2026 incident hardening (section 6): six required, mutually
+ *  distinct reasons a user can actually act on or at least understand,
+ *  replacing the old generic five-branch fallback that collapsed every
+ *  failure into "didn't produce a usable brief":
+ *    provider temporarily unavailable / sleep data still finalizing /
+ *    validation repair exhausted / save-or-read-back failed / deployment
+ *    interrupted (automatically retrying) / exact published result could
+ *    not be verified. Every branch here is REACHED ONLY for a genuinely
+ *    hard_failed attempt — a merely-underfilled or fallback-assembled
+ *    'grounded_usable' brief is a real, renderable brief now (see
+ *    BriefCard's "Simplified brief" label), never routed through this
+ *    failure copy at all. */
 export function describeChiefBriefFailure(
   { quality, buildState, reasonCodes, persistenceFailed }: ChiefBriefFailureInput = {}
 ): string {
-  if (persistenceFailed) return "The brief was written but couldn't be saved.";
   const codes = Array.isArray(reasonCodes) ? reasonCodes : [];
-  if (codes.some((c) => typeof c === 'string' && c.startsWith('provider'))) {
+  const has = (needle: string) => codes.some((c) => typeof c === 'string' && c.includes(needle));
+
+  // Deployment interrupted mid-build (backend morningBuildJobs.js's
+  // recoverInterruptedJobs) — the OLD process died; a new attempt starts
+  // automatically on the next trigger, this is not a dead end.
+  if (buildState === 'interrupted') {
+    return 'A deployment interrupted the last build. Retrying automatically — tap Retry to try again right now.';
+  }
+  // Save/read-back failure: generation succeeded but persisting (or proving
+  // the exact saved row) failed — distinct from a provider/generation issue.
+  if (persistenceFailed || has('persistence_failed') || has('readback') || has('read_back')) {
+    return "The brief was written but its exact published copy couldn't be verified. Retrying is safe — nothing was lost.";
+  }
+  // Provider refusal/timeout/malformed output.
+  if (has('provider') || has('refusal') || has('timeout') || has('generation_failed')) {
     return "The writing step didn't respond. Nothing was lost — retrying usually clears it.";
   }
-  if (quality === 'failed' || buildState === 'failed') {
+  // Sleep data still finalizing (Eight Sleep wake-readiness gate) — the
+  // build never even started; not a failure, a deliberate wait.
+  if (has('not_ready') || has('session_active') || has('no_finalized_trend') || has('telemetry_too_recent')
+      || has('insufficient_stability') || has('wake_not_confirmed') || has('readiness_error')) {
+    return "Still finalizing last night's sleep data before building today's brief.";
+  }
+  // A factual contradiction survived neutralization — the correction/repair
+  // loop ran out of attempts rather than ship something untrustworthy.
+  if (has('unresolved_claim_violation') || has('validation') || quality === 'failed' || buildState === 'failed') {
     return "The last build finished, but the write-up didn't come back usable.";
   }
-  if (quality === 'degraded' || codes.some((c) => typeof c === 'string' && c.includes('underfilled'))) {
+  // Merely underfilled/thin (no contradiction, no missing field) — reached
+  // here only in the rare case a grounded_usable draft's carry-forward
+  // ALSO came up empty (e.g. a legacy cached shape with no content at all).
+  // A real grounded_usable publish normally never reaches this function at
+  // all — it renders normally with the "Simplified brief" label instead.
+  if (quality === 'degraded' || has('underfilled')) {
     return "The last build came back too thin to trust, so it wasn't published.";
   }
   return "The last build didn't produce a usable brief.";
+}
+
+/** Pure: honest copy for the server's explicit `waiting_for_sleep_data`
+ *  morning-readiness state (see routes/briefing.js's selfHealDecision) — the
+ *  server is DELIBERATELY waiting for last night's sleep tracking to
+ *  finalize before it will even attempt a build. Never the generic "Briefing
+ *  is stale" copy, which reads as an unexplained failure. */
+export function describeWaitingForSleepData(reason?: string | null): string {
+  switch (reason) {
+    case 'session_active':
+      return "Still tracking — looks like you're still in bed.";
+    case 'no_finalized_trend':
+      return "No finalized sleep data yet for last night.";
+    case 'wake_not_confirmed':
+    case 'insufficient_stability':
+      return "Confirming you're actually awake before building today's brief.";
+    case 'telemetry_too_recent':
+      return "Sleep tracking just ended — confirming it's really finalized.";
+    default:
+      return "Waiting for last night's sleep data to finalize before building today's brief.";
+  }
 }
