@@ -11,6 +11,7 @@ const request = require('supertest');
 const { buildTestApp, authHeader, closeDb } = require('./helpers');
 const db = require('../../src/db');
 const llm = require('../../src/llm');
+const { localDateStr, addDays } = require('../../src/util/date');
 
 const app = buildTestApp();
 const MARKER = `quick-rebuild prior marker ${Date.now()}`;
@@ -37,7 +38,16 @@ async function seedPriorBriefing(overrides = {}) {
 }
 
 after(async () => {
-  await db.query(`DELETE FROM briefings WHERE content->'chiefBrief'->>'synthesis' IN ($1, $2)`, [MARKER, 'quick fresh synthesis']);
+  // The "successful scoped rebuild" test below overwrites the row's
+  // synthesis with FRESH's full text ('quick fresh synthesis with plenty of
+  // real words...'), not the bare 'quick fresh synthesis' prefix — an exact
+  // IN() match here missed it and leaked a same-day 'daily' row into every
+  // later test run that scans for "today's" briefing (e.g.
+  // audio-routes.test.js), so match by prefix instead.
+  await db.query(
+    `DELETE FROM briefings WHERE content->'chiefBrief'->>'synthesis' = $1 OR content->'chiefBrief'->>'synthesis' LIKE $2`,
+    [MARKER, 'quick fresh synthesis%']
+  );
   await closeDb();
 });
 
@@ -116,7 +126,14 @@ test('a scoped rebuild that STILL fails after its retry keeps the existing card 
 // discarded the result while still returning 200.
 // ---------------------------------------------------------------------------
 test('POST /api/briefing/chief-brief/rebuild returns 409 full_rebuild_required for a previous-day snapshot WITHOUT calling the LLM', async (t) => {
-  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  // Must mirror performScopedChiefBriefRebuild's own stale-day comparison
+  // exactly (staleDayTz = process.env.TZ || 'America/New_York', compared via
+  // localDateStr) — a plain UTC `Date.now() - 24h` "yesterday" collides with
+  // "today" in that timezone during the ~4-5hr window where the UTC calendar
+  // date has already rolled over but the America/New_York one hasn't yet,
+  // making the seeded fixture indistinguishable from today's own snapshot.
+  const staleDayTz = process.env.TZ || 'America/New_York';
+  const yesterday = localDateStr(staleDayTz, addDays(new Date(), -1));
   await seedPriorBriefing({ localDate: yesterday });
 
   let llmCalled = false;

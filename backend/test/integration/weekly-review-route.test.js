@@ -17,7 +17,16 @@ const app = buildTestApp();
 const TEST_MARKER = `weekly-review-route-${Date.now()}`;
 
 after(async () => {
-  await db.query(`DELETE FROM briefings WHERE content->>'headline' LIKE $1`, [`${TEST_MARKER}%`]);
+  // Two distinct fixture shapes get seeded in this file: weekly reviews
+  // (marked via content.headline, see reviewContent() below) and the one
+  // "coincidental id" test's plain daily row (marked via content.snapshotId
+  // instead, since a daily briefing has no headline field at all) — both
+  // must be swept or the daily row leaks into every later test run that
+  // scans for "today's" daily briefing (e.g. audio-routes.test.js).
+  await db.query(
+    `DELETE FROM briefings WHERE content->>'headline' LIKE $1 OR content->>'snapshotId' LIKE $1`,
+    [`${TEST_MARKER}%`]
+  );
   await closeDb();
 });
 

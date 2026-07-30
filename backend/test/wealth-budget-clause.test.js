@@ -62,7 +62,13 @@ test('trend card gains a budget clause when under-budget but pacing over', async
   const insights = await buildWealthInsights();
   const trend = insights.find((i) => i.type === 'spending_pattern' && i.category === 'Taxi & Ride Shares');
   assert.ok(trend, 'expected a spending_pattern card for Taxi & Ride Shares');
-  assert.match(trend.detail, /above your recent average/, 'keeps the vs-usual read');
+  // wealth-insights.js picks between two vs-usual phrasings ("so far this
+  // month — on pace for... above" vs "this month — about N% more than")
+  // depending on how far the real calendar day is into the month (the
+  // run-rate projection factor) — not something this test stubs, so assert
+  // on whichever phrasing is live rather than pinning one and going flaky
+  // across the month boundary.
+  assert.match(trend.detail, /(?:above|more than) your recent average/, 'keeps the vs-usual read');
   assert.match(trend.detail, /\$2,000 budget/, 'adds the budget figure');
   assert.match(trend.detail, /on pace to finish about 20% over/, 'states budget pace');
 });
