@@ -5,7 +5,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  resolveResumeDecision, isValidReadyResult, classifyTriggerResponse, MAX_RESUME_AGE_MS,
+  resolveResumeDecision, isValidReadyResult, classifyTriggerResponse, recoveryBuildIdentityFromResponse,
+  adoptRecoveryBuildFromResponse, MAX_RESUME_AGE_MS,
   type RebuildIdentity,
 } from './rebuildResume.ts';
 
@@ -86,4 +87,62 @@ test('required 6: lock_contended (buildId:null, retryable:true) means retry the 
 test('no buildId and not retryable is an honest give-up, never fabricated as pollable', () => {
   assert.deepEqual(classifyTriggerResponse({ buildId: null, retryable: false }), { kind: 'give_up' });
   assert.deepEqual(classifyTriggerResponse({}), { kind: 'give_up' });
+});
+
+// ── recoveryBuildIdentityFromResponse ──
+
+test('self-healing GET recoveryBuildId is adopted as the exact persisted job for the live local day', () => {
+  assert.deepEqual(
+    recoveryBuildIdentityFromResponse({
+      recoveryBuildId: 'recovery_123',
+      localDate: '2026-07-29',
+      currentLocalDate: '2026-07-30',
+    }, 1234),
+    { buildId: 'recovery_123', localDay: '2026-07-30', startedAt: 1234 }
+  );
+});
+
+test('self-healing response without a real build id is not represented as pollable work', () => {
+  assert.equal(recoveryBuildIdentityFromResponse({
+    recoveryBuildId: null,
+    currentLocalDate: '2026-07-30',
+  }), null);
+  assert.equal(recoveryBuildIdentityFromResponse({
+    recoveryBuildId: 'recovery_123',
+  }), null);
+});
+
+test('self-healing GET persists the exact identity before starting the existing poller', async () => {
+  const events: string[] = [];
+  const adopted = await adoptRecoveryBuildFromResponse(
+    {
+      recoveryBuildId: 'recovery_123',
+      localDate: '2026-07-29',
+      currentLocalDate: '2026-07-30',
+    },
+    async (identity) => {
+      events.push(`persist:${identity.buildId}:${identity.localDay}`);
+    },
+    (buildId, localDay) => {
+      events.push(`poll:${buildId}:${localDay}`);
+    },
+    1234
+  );
+
+  assert.equal(adopted, true);
+  assert.deepEqual(events, [
+    'persist:recovery_123:2026-07-30',
+    'poll:recovery_123:2026-07-30',
+  ]);
+});
+
+test('self-healing response with no build does not persist or start a poll', async () => {
+  let calls = 0;
+  const adopted = await adoptRecoveryBuildFromResponse(
+    { recoveryBuildId: null, currentLocalDate: '2026-07-30' },
+    async () => { calls += 1; },
+    () => { calls += 1; }
+  );
+  assert.equal(adopted, false);
+  assert.equal(calls, 0);
 });

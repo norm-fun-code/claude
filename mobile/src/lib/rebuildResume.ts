@@ -13,6 +13,45 @@ export interface RebuildIdentity {
   startedAt: number;
 }
 
+interface RecoveryBuildResponse {
+  recoveryBuildId?: string | null;
+  currentLocalDate?: string | null;
+  localDate?: string | null;
+}
+
+/**
+ * Converts the self-healing GET /briefing contract into the exact durable
+ * identity used by manual rebuilds. `currentLocalDate` wins over `localDate`:
+ * a previous-day cached envelope can legitimately enqueue a recovery job for
+ * the live day, and the returned job must be polled as today's work.
+ */
+export function recoveryBuildIdentityFromResponse(
+  response: RecoveryBuildResponse,
+  now: number = Date.now()
+): RebuildIdentity | null {
+  const buildId = response.recoveryBuildId || null;
+  const localDay = response.currentLocalDate || response.localDate || null;
+  if (!buildId || !localDay) return null;
+  return { buildId, localDay, startedAt: now };
+}
+
+/** Persist and begin following a self-heal job using the same identity/poller
+ * contract as a manually-triggered rebuild. Persistence deliberately
+ * completes first so closing the app immediately after the GET cannot lose
+ * the job the server already started. */
+export async function adoptRecoveryBuildFromResponse(
+  response: RecoveryBuildResponse,
+  persist: (identity: RebuildIdentity) => Promise<void>,
+  poll: (buildId: string, localDay: string) => void,
+  now: number = Date.now()
+): Promise<boolean> {
+  const identity = recoveryBuildIdentityFromResponse(response, now);
+  if (!identity?.buildId) return false;
+  await persist(identity);
+  poll(identity.buildId, identity.localDay);
+  return true;
+}
+
 // A persisted identity older than this (well past any real build or
 // retry-wait window) can no longer mean anything useful to resume.
 export const MAX_RESUME_AGE_MS = 6 * 60 * 60 * 1000;
