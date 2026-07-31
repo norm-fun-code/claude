@@ -13,17 +13,15 @@
 //
 // EvidenceClaim v1 (audit recommendation): the 3 hard-rule checks above are
 // evening-brief-specific and stay exactly as they were. ADDED on top: the
-// SAME shared, cross-surface completion/resolved-context checks Chief Brief
-// runs (brain/claimValidator.js's checkCompletion/checkResolvedContextConflicts)
-// — so "plan" (which grades today's commitments/session against what was
-// asked of it) can never describe a still-open commitment as done, or cite a
-// context item the user has since retracted/corrected, using the exact same
-// canonical evidence and the exact same deterministic rules Chief Brief and
-// Ask are held to. See buildEveningEvidenceFacts below for how the evening
-// brief's own `signals` object is projected into that shared fact shape.
+// SAME shared, cross-surface semantic pipeline Chief Brief and Ask run
+// (brain/claimValidator.js's validateClaims) — so "plan" can never describe a
+// still-open commitment as done, retracted context cannot reappear, and exact
+// HRV/RHR values must match typed evidence. See buildEveningEvidenceFacts
+// below for how the evening brief's `signals` object is projected into that
+// shared fact shape.
 'use strict';
 
-const { checkCompletion, checkResolvedContextConflicts, checkWorkoutCompletionOverclaim } = require('../brain/claimValidator');
+const { validateClaims } = require('../brain/claimValidator');
 const { buildEvidenceClaims } = require('../brain/evidenceClaim');
 
 const LIGHT_WORDS_RE = /\blight(?:er)?\b|\blow(?:er)?\b|\bminimal(?:ly)?\b|\bbarely (?:any )?moved\b|\bnot much movement\b/i;
@@ -129,9 +127,9 @@ function checkUnearnedReflection(result, facts) {
  * Project the evening brief's own `signals` object into the SAME canonical
  * facts shape brain/snapshot.js's canonicalFactsFrom produces for Chief
  * Brief/Ask — only the parts evening-brief prose can actually reference
- * (goals, commitments, resolvedContext; deliberately NOT recovery/spending/
- * forecast, which the evening brief never cites — see its own SYSTEM
- * prompt's "never call it recovery" rule). Every input here is itself
+ * (goals, commitments, resolvedContext, training outcome, and exact daytime
+ * HRV/RHR observations; deliberately NOT recovery/spending/forecast, which
+ * the evening brief never cites). Every input here is itself
  * already canonical: `signals.evidenceGoals`/`signals.resolvedContext` are
  * fetched straight from store/goals and context-resolver.js by
  * runEveningHealthBrief (see notify/evening-brief.js), never derived from
@@ -155,10 +153,29 @@ function buildEveningEvidenceFacts(signals) {
   ];
   const resolvedContext = signals?.resolvedContext || null;
   const trainingOutcome = signals?.trainingOutcome || null;
+  const autonomic = signals?.autonomic || {};
   const facts = {
     goals, commitments, resolvedContext,
     plannedWorkoutCompleted: trainingOutcome?.plannedWorkoutCompleted ?? null,
     effectiveWorkoutLabel: trainingOutcome?.plannedWorkoutLabel ?? null,
+    observedMetrics: [
+      ...(Number.isFinite(autonomic.hrv) ? [{
+        metric: 'hrv', value: autonomic.hrv, unit: 'ms', window: 'daytime',
+        role: 'current', evidenceRef: 'intelligence/evening-readiness.autonomicRead',
+      }] : []),
+      ...(Number.isFinite(autonomic.hrvBaseline) ? [{
+        metric: 'hrv', value: autonomic.hrvBaseline, unit: 'ms', window: 'daytime',
+        role: 'baseline', evidenceRef: 'intelligence/evening-readiness.autonomicRead',
+      }] : []),
+      ...(Number.isFinite(autonomic.rhr) ? [{
+        metric: 'resting_hr', value: autonomic.rhr, unit: 'bpm', window: 'daytime',
+        role: 'current', evidenceRef: 'intelligence/evening-readiness.autonomicRead',
+      }] : []),
+      ...(Number.isFinite(autonomic.rhrBaseline) ? [{
+        metric: 'resting_hr', value: autonomic.rhrBaseline, unit: 'bpm', window: 'daytime',
+        role: 'baseline', evidenceRef: 'intelligence/evening-readiness.autonomicRead',
+      }] : []),
+    ],
   };
   facts.claims = buildEvidenceClaims(facts);
   return facts;
@@ -176,9 +193,9 @@ function validateEveningBriefClaims(result, facts) {
     ...checkRestDayStepsMislabeled(fields, facts),
     ...checkStepsDescribedAsWorkout(fields, facts),
     ...checkDayOffUsedAsSleepPermission(fields),
-    ...checkWorkoutCompletionOverclaim(fields, evidenceFacts),
-    ...checkCompletion(fields, evidenceFacts),
-    ...checkResolvedContextConflicts(fields, evidenceFacts),
+    // The one shared semantic pipeline used by Chief Brief and Ask. This now
+    // covers completion/context/workout rules plus exact HRV/RHR claims.
+    ...validateClaims(fields, evidenceFacts),
     ...checkUnearnedReflection(result, facts),
   ];
 }

@@ -193,6 +193,29 @@ function buildEvidenceClaims(facts, meta = {}) {
       evidenceTier: EVIDENCE_TIER.DIRECT_OBSERVATION,
     }));
   }
+
+  // ── Exact observed physiology ───────────────────────────────────────────
+  // Surfaces may cite these raw numbers (for example, Evening Brief's
+  // daytime HRV/RHR versus baseline and Ask's overnight HRV/RHR). Keeping
+  // them as explicit claims closes the old gap where the derived recovery
+  // score was evidence-backed but the exact inputs shown beside it were not.
+  for (const metric of facts.observedMetrics || []) {
+    if (!metric?.metric || !Number.isFinite(metric.value) || !metric.unit) continue;
+    const window = metric.window || 'current';
+    const role = metric.role || 'current';
+    claims.push(makeClaim({
+      ...base,
+      claimType: CLAIM_TYPE.FACT,
+      subject: `metric:${metric.metric}:${window}`,
+      predicate: role,
+      value: { amount: metric.value, unit: metric.unit },
+      evidenceRefs: [metric.evidenceRef || 'store/metrics.dailyAggregatePreferSource'],
+      observedFrom: metric.observedFrom ?? null,
+      observedTo: metric.observedTo ?? null,
+      evidenceTier: EVIDENCE_TIER.DIRECT_OBSERVATION,
+      confidence: metric.confidence ?? null,
+    }));
+  }
   // Recovery CAUSE is the one place a FACT-tier subject (recovery) pairs with
   // ASSOCIATION-tier claims about what's driving it — every eligible driver
   // is its own claim, OBSERVATIONAL language only (never "causes"/"drives"),

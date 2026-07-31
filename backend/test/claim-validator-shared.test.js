@@ -11,6 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   validateClaims, neutralizeClaimsGeneric, checkAssociationOverclaim,
+  checkObservedMetricNumbers,
 } = require('../src/brain/claimValidator');
 const { buildEvidenceClaims } = require('../src/brain/evidenceClaim');
 
@@ -30,6 +31,48 @@ test('validateClaims is silent on a clean field list', () => {
   const facts = { recoveryBand: 'green' };
   const violations = validateClaims([['answer', 'Recovery is green today — good day to push a bit harder.']], facts);
   assert.deepEqual(violations, []);
+});
+
+test('exact HRV/RHR values must match an EvidenceClaim, including current and baseline values', () => {
+  const facts = {
+    claims: buildEvidenceClaims({
+      observedMetrics: [
+        { metric: 'hrv', value: 45, unit: 'ms', window: 'daytime', role: 'current' },
+        { metric: 'hrv', value: 50, unit: 'ms', window: 'daytime', role: 'baseline' },
+        { metric: 'resting_hr', value: 54, unit: 'bpm', window: 'daytime', role: 'current' },
+        { metric: 'resting_hr', value: 52, unit: 'bpm', window: 'daytime', role: 'baseline' },
+      ],
+    }),
+  };
+  const clean = checkObservedMetricNumbers([
+    ['readiness', 'HRV averaged 45 ms vs your 50 ms norm; resting HR was 54 bpm vs 52 bpm.'],
+  ], facts);
+  assert.deepEqual(clean, []);
+
+  const wrong = checkObservedMetricNumbers([
+    ['readiness', 'HRV averaged 62 ms and resting HR was 71 bpm.'],
+  ], facts);
+  assert.equal(wrong.length, 2);
+  assert.ok(wrong.every((v) => v.check === 'observed_metric_value'));
+  assert.ok(wrong.every((v) => v.severity === 'high'));
+
+  const swapped = checkObservedMetricNumbers([
+    ['readiness', 'HRV averaged 50 ms vs your 45 ms norm; resting HR was 52 bpm vs 54 bpm.'],
+  ], facts);
+  assert.equal(swapped.length, 4, 'valid values attached to the wrong current/baseline role are still contradictions');
+});
+
+test('observed-metric validation is precision-first when claims or units are absent', () => {
+  assert.deepEqual(checkObservedMetricNumbers([['answer', 'HRV felt better today.']], { claims: [] }), []);
+  const facts = {
+    claims: buildEvidenceClaims({
+      observedMetrics: [{ metric: 'hrv', value: 45, unit: 'ms', window: 'overnight', role: 'current' }],
+    }),
+  };
+  assert.deepEqual(
+    checkObservedMetricNumbers([['answer', 'My recovery score was 59 and HRV looked normal.']], facts),
+    [],
+  );
 });
 
 test('checkAssociationOverclaim fires only when BOTH an overclaim verb AND a weak-evidence claim subject appear together', () => {

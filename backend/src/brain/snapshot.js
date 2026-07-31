@@ -427,6 +427,28 @@ function canonicalFactsFrom({ recovery, effectiveWorkout, trainingOutcome, forec
     recoveryScore: r?.score ?? null,
     recoveryBand: r?.band ?? null,
     recoveryProxy: r?.proxy ?? false,
+    // Exact overnight physiology values exposed by liveRecovery(). These are
+    // user-facing facts in Ask/voice, so they must travel in the same typed
+    // EvidenceClaim packet as the derived recovery score/band instead of
+    // existing only as unvalidated prompt prose.
+    observedMetrics: [
+      ...(Number.isFinite(r?.rawHrv) ? [{
+        metric: 'hrv',
+        value: r.rawHrv,
+        unit: 'ms',
+        window: 'overnight',
+        role: 'current',
+        evidenceRef: 'intelligence/recovery.liveRecovery',
+      }] : []),
+      ...(Number.isFinite(r?.rawRhr) ? [{
+        metric: 'resting_hr',
+        value: r.rawRhr,
+        unit: 'bpm',
+        window: 'overnight',
+        role: 'current',
+        evidenceRef: 'intelligence/recovery.liveRecovery',
+      }] : []),
+    ],
     // The ONLY annotations eligible to explain TODAY's recovery number —
     // purpose:'health', temporally aligned to the exact overnight window
     // that produced the reading (see routes/briefing.js's recoveryDriversContext

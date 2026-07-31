@@ -14,7 +14,7 @@ const { buildBrainSnapshot, realtimeTodayContext, canonicalFacts, canonicalFacts
 // ── Deterministic fixture ────────────────────────────────────────────────────
 const ASOF = new Date('2026-06-11T14:30:00.000Z'); // a fixed instant
 const TZ = 'America/New_York';                       // injected, not process.env.TZ
-const RECOVERY = { score: 41, band: 'red', proxy: false, parts: {}, detail: {} };
+const RECOVERY = { score: 41, band: 'red', proxy: false, rawHrv: 39, rawRhr: 57, parts: {}, detail: {} };
 const EFFECTIVE_WORKOUT = {
   source: 'auto_downgrade', workoutId: 'mobility', label: 'Mobility',
   isHard: false, scheduledWorkoutId: 'push', scheduledLabel: 'Push', recoveryBand: 'red',
@@ -97,6 +97,10 @@ test('a single snapshot yields identical recovery/workout/goal/commitment/spendi
   // Spot the canonical values themselves.
   assert.equal(fromSnap.recoveryBand, 'red');
   assert.equal(fromSnap.recoveryScore, 41);
+  assert.deepEqual(fromSnap.observedMetrics.map((m) => [m.metric, m.value, m.unit]), [
+    ['hrv', 39, 'ms'],
+    ['resting_hr', 57, 'bpm'],
+  ]);
   assert.equal(fromSnap.effectiveWorkoutLabel, 'Mobility');
   assert.equal(fromSnap.effectiveWorkoutSource, 'auto_downgrade');
   assert.equal(fromSnap.forecastGrade, 'B-');

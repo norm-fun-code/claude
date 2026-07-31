@@ -145,6 +145,46 @@ test('buildEveningEvidenceFacts flattens signals.commitments {done,open,skipped}
   assert.ok(Array.isArray(facts.claims), 'the EvidenceClaim packet is attached too');
 });
 
+test('Evening Brief and Ask reject the same unsupported physiology number from their shared claim pipeline', () => {
+  const signals = {
+    autonomic: { hrv: 45, hrvBaseline: 50, rhr: 54, rhrBaseline: 52 },
+    evidenceGoals: [],
+    commitments: {},
+  };
+  const eveningFacts = buildEveningEvidenceFacts(signals);
+  const wrongSentence = 'HRV averaged 62 ms and resting HR was 71 bpm today.';
+
+  const eveningViolations = validateEveningBriefClaims(
+    { today: '', plan: '', tomorrow: '', readiness: wrongSentence },
+    signals,
+  );
+  const { validateClaims } = require('../src/brain/claimValidator');
+  const askViolations = validateClaims([['answer', wrongSentence]], eveningFacts);
+
+  assert.equal(
+    eveningViolations.filter((v) => v.check === 'observed_metric_value').length,
+    2,
+  );
+  assert.equal(
+    askViolations.filter((v) => v.check === 'observed_metric_value').length,
+    2,
+  );
+});
+
+test('Evening Brief accepts exact current and baseline physiology values', () => {
+  const signals = {
+    autonomic: { hrv: 45, hrvBaseline: 50, rhr: 54, rhrBaseline: 52 },
+  };
+  const result = {
+    today: '',
+    plan: '',
+    tomorrow: '',
+    readiness: 'HRV averaged 45 ms vs your 50 ms norm; resting HR was 54 bpm vs 52 bpm.',
+  };
+  const violations = validateEveningBriefClaims(result, signals);
+  assert.ok(!violations.some((v) => v.check === 'observed_metric_value'));
+});
+
 test('validateEveningBriefClaims catches "plan" describing a still-open commitment as done', () => {
   const signals = { evidenceGoals: [], commitments: { done: [], open: [{ title: 'Call the accountant' }], skipped: [] }, resolvedContext: null };
   const result = { today: '', plan: 'Call the accountant is done — nice follow-through today.', tomorrow: '', readiness: '' };

@@ -58,6 +58,40 @@ test('buildEvidenceClaims: a proxy recovery reading gets lower confidence than a
   assert.ok(proxy.confidence < real.confidence);
 });
 
+test('buildEvidenceClaims: exact observed physiology carries value, unit, window, and canonical evidence ref', () => {
+  const claims = buildEvidenceClaims({
+    observedMetrics: [
+      {
+        metric: 'hrv', value: 41, unit: 'ms', window: 'overnight', role: 'current',
+        evidenceRef: 'intelligence/recovery.liveRecovery',
+      },
+      {
+        metric: 'resting_hr', value: 54, unit: 'bpm', window: 'daytime', role: 'baseline',
+        evidenceRef: 'intelligence/evening-readiness.autonomicRead',
+      },
+    ],
+  });
+  const hrv = claims.find((c) => c.subject === 'metric:hrv:overnight');
+  const rhr = claims.find((c) => c.subject === 'metric:resting_hr:daytime');
+  assert.deepEqual(hrv.value, { amount: 41, unit: 'ms' });
+  assert.equal(hrv.predicate, 'current');
+  assert.deepEqual(hrv.evidenceRefs, ['intelligence/recovery.liveRecovery']);
+  assert.equal(hrv.evidenceTier, EVIDENCE_TIER.DIRECT_OBSERVATION);
+  assert.deepEqual(rhr.value, { amount: 54, unit: 'bpm' });
+  assert.equal(rhr.predicate, 'baseline');
+});
+
+test('buildEvidenceClaims: malformed observed metrics never create evidence', () => {
+  const claims = buildEvidenceClaims({
+    observedMetrics: [
+      { metric: 'hrv', value: null, unit: 'ms' },
+      { metric: 'hrv', value: Number.NaN, unit: 'ms' },
+      { metric: 'resting_hr', value: 54 },
+    ],
+  });
+  assert.ok(!claims.some((c) => c.subject.startsWith('metric:')));
+});
+
 test('buildEvidenceClaims: eligible recovery drivers become OBSERVATIONAL ASSOCIATION claims, never assertive', () => {
   const claims = buildEvidenceClaims({ recoveryDrivers: ['drank wine last night', 'a hard training session'] });
   const associations = claims.filter((c) => c.claimType === CLAIM_TYPE.ASSOCIATION);

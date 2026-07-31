@@ -53,6 +53,17 @@ function recoveryCauseUnknownClaim() {
   });
 }
 
+function overnightHrvClaim() {
+  return makeClaim({
+    claimType: CLAIM_TYPE.FACT,
+    subject: 'metric:hrv:overnight',
+    predicate: 'current',
+    value: { amount: 41, unit: 'ms' },
+    evidenceRefs: ['intelligence/recovery.liveRecovery'],
+    evidenceTier: EVIDENCE_TIER.DIRECT_OBSERVATION,
+  });
+}
+
 test('required: evidence[] never dumps every retrieved fact — only claims relevant to the question/answer are selected', () => {
   const claims = [recoveryBandClaim(), unrelatedGoalClaim()];
   const selected = selectRelevantEvidence(claims, { question: 'why is my recovery low today?', answer: 'Your recovery band is green today.' });
@@ -77,6 +88,19 @@ test('claimToEvidence marks an expired claim "stale"', () => {
   });
   const ev = claimToEvidence(claim, { asOf: new Date('2026-01-01') });
   assert.equal(ev.freshness, 'stale');
+});
+
+test('AskResponse renders an exact physiology claim with its window, unit, and source', () => {
+  const claim = overnightHrvClaim();
+  const selected = selectRelevantEvidence([claim], {
+    question: 'what was my HRV overnight?',
+    answer: 'Your overnight HRV was 41 ms.',
+  });
+  assert.equal(selected.length, 1);
+  const evidence = claimToEvidence(selected[0]);
+  assert.equal(evidence.statement, 'Overnight HRV value: 41 ms');
+  assert.equal(evidence.displayValue, '41 ms');
+  assert.equal(evidence.source, 'intelligence/recovery.liveRecovery');
 });
 
 test('required: an UNKNOWN-type claim never becomes fabricated evidence — it is excluded from evidence[] and surfaced as an honest uncertainty instead', () => {

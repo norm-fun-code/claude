@@ -85,6 +85,17 @@ function describeClaim(claim) {
     if (predicate === 'todayGrade') return { statement: `Today's forecast grade: ${value}`, displayValue: value };
     if (predicate === 'tomorrowBand') return { statement: `Tomorrow's forecast band: ${value}`, displayValue: value };
   }
+  if (subject.startsWith('metric:')) {
+    const [, metric, window] = subject.split(':');
+    const label = metric === 'resting_hr' ? 'Resting HR' : metric.toUpperCase();
+    const role = predicate === 'baseline' ? 'baseline' : 'value';
+    const amount = value?.amount;
+    const unit = value?.unit || '';
+    return {
+      statement: `${window === 'daytime' ? 'Daytime ' : 'Overnight '}${label} ${role}: ${amount} ${unit}`.trim(),
+      displayValue: amount == null ? null : `${amount} ${unit}`.trim(),
+    };
+  }
   if (subject === 'calendar' && predicate === 'localDate') {
     return { statement: `Today's date: ${value}`, displayValue: value };
   }

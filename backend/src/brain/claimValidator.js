@@ -110,6 +110,85 @@ function checkRecoveryScore(fields, facts) {
   return violations;
 }
 
+// ── Exact observed physiology ───────────────────────────────────────────────
+// HRV/RHR numbers are rendered directly in Evening Brief and may be cited by
+// Ask. They are distinct from the derived recovery score and therefore need
+// their own deterministic check. Only unit-qualified values are inspected,
+// which keeps this precision-first: an unrelated "54" cannot be mistaken for
+// physiology, while "54 bpm" or "41 ms" in the relevant metric context must
+// match one of the current/baseline EvidenceClaims available to the surface.
+const OBSERVED_METRIC_TOLERANCE = 1.1; // display rounding to whole ms/bpm
+const HRV_CONTEXT_RE = /\bhrv\b/i;
+const RHR_CONTEXT_RE = /\brhr\b|\bresting (?:heart rate|hr)\b/i;
+
+function observedMetricClaims(facts, metric) {
+  return (facts?.claims || []).filter((claim) =>
+    claim?.claimType === 'fact'
+    && String(claim.subject || '').startsWith(`metric:${metric}:`)
+    && Number.isFinite(claim.value?.amount)
+  );
+}
+
+function checkObservedMetricNumbers(fields, facts) {
+  const hrvClaims = observedMetricClaims(facts, 'hrv');
+  const rhrClaims = observedMetricClaims(facts, 'resting_hr');
+  if (!hrvClaims.length && !rhrClaims.length) return [];
+
+  const violations = [];
+  for (const [field, text] of fields) {
+    for (const sentence of splitIntoSentences(text)) {
+      const checks = [
+        { metric: 'hrv', claims: hrvClaims, context: HRV_CONTEXT_RE, unit: 'ms' },
+        { metric: 'resting_hr', claims: rhrClaims, context: RHR_CONTEXT_RE, unit: 'bpm' },
+      ];
+      for (const check of checks) {
+        if (!check.claims.length || !check.context.test(sentence)) continue;
+        const valueRe = new RegExp(`\\b(\\d+(?:\\.\\d+)?)\\s*${check.unit}\\b`, 'gi');
+        const matches = [...sentence.matchAll(valueRe)];
+        for (let i = 0; i < matches.length; i++) {
+          const match = matches[i];
+          const cited = Number(match[1]);
+          // Bind a value to its semantic role when the prose identifies it.
+          // "45 ms vs your 50 ms norm" means current=45, baseline=50; merely
+          // accepting either authorized number anywhere would let the model
+          // swap those two facts and still pass validation.
+          const previousEnd = i > 0 ? matches[i - 1].index + matches[i - 1][0].length : 0;
+          const nextStart = i + 1 < matches.length ? matches[i + 1].index : sentence.length;
+          // Do not let a baseline label from an earlier metric/clause leak
+          // forward (for example, "...50 ms norm; resting HR was 54 bpm").
+          const before = sentence.slice(previousEnd, match.index).split(/[;,.!?]/).pop() || '';
+          const after = sentence.slice(match.index + match[0].length, nextStart);
+          const role = /\b(?:baseline|norm|usual|typical)\b/i.test(before)
+            || /\bvs\.?\b/i.test(before)
+            || /\b(?:baseline|norm|usual|typical)\b/i.test(after)
+            ? 'baseline'
+            : 'current';
+          const roleClaims = check.claims.filter((claim) => claim.predicate === role);
+          const authorized = roleClaims.some(
+            (claim) => Math.abs(Number(claim.value.amount) - cited) <= OBSERVED_METRIC_TOLERANCE
+          );
+          if (!authorized) {
+            violations.push({
+              check: 'observed_metric_value',
+              field,
+              sentence,
+              severity: 'high',
+              expected: roleClaims.map((claim) => ({
+                role: claim.predicate,
+                value: claim.value.amount,
+                unit: claim.value.unit,
+              })),
+              actual: { metric: check.metric, role, value: cited, unit: check.unit },
+              message: `cites ${check.metric} ${role} as ${cited} ${check.unit}, but that value is not present in the canonical evidence packet`,
+            });
+          }
+        }
+      }
+    }
+  }
+  return violations;
+}
+
 // ── Recovery causation ───────────────────────────────────────────────────────
 // A causal recovery sentence ("recovery dipped because of the wine last
 // night") must name a driver present in facts.recoveryDrivers — annotations
@@ -997,6 +1076,7 @@ function validateClaims(fields, facts) {
   return [
     ...checkRecoveryBand(fields, facts),
     ...checkRecoveryScore(fields, facts),
+    ...checkObservedMetricNumbers(fields, facts),
     ...checkRecoveryCause(fields, facts),
     ...checkEffectiveWorkout(fields, facts),
     ...checkRestFramingAgainstEffectiveWorkout(fields, facts),
@@ -1344,6 +1424,7 @@ module.exports = {
   validateClaims, neutralizeClaimsGeneric, checkAssociationOverclaim, checkCausalLanguage,
   // Exposed for focused unit tests:
   checkRecoveryBand, checkRecoveryScore, checkRecoveryCause, checkEffectiveWorkout,
+  checkObservedMetricNumbers,
   checkRestFramingAgainstEffectiveWorkout, checkHardWorkoutAgainstRestOverride, findPlanConflict,
   checkWorkoutCompletionOverclaim,
   checkCompletion, checkExperiments, checkSpending, checkForecast, checkCurrentDate, briefFields,
