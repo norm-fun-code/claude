@@ -75,6 +75,7 @@ import { RadarSection } from './src/components/RadarSection';
 import { RadarDetailSheet } from './src/components/RadarDetailSheet';
 import { PlanConflictCard } from './src/components/PlanConflictCard';
 import { selectTodayCommandCenter } from './src/lib/todayCommandCenter';
+import { canonicalActionDate, planConflictResolution, type PlanConflictResolution } from './src/lib/todayActionState';
 import { resolveRadarNavigation } from './src/lib/radarNavigation';
 import { nextScrollY } from './src/lib/scrollRestore';
 import type { RadarCard, WeeklyReview } from './src/hooks/useBriefing';
@@ -508,17 +509,30 @@ export default function App() {
   // todayForecast already), then resyncs the chief brief against it via the
   // existing scoped-rebuild flow (briefing.refreshChiefBrief, the identical
   // request the manual ↻ button makes) — never a second, parallel mechanism.
-  const resolvePlanConflict = useCallback(async (workoutId: string | null) => {
-    const date = new Date().toLocaleDateString('en-CA');
+  const resolvePlanConflict = useCallback(async (workoutId: string | null): Promise<PlanConflictResolution> => {
+    // The plan is keyed to the briefing's canonical/home timezone. A phone
+    // that is travelling must never write an override for a neighboring day.
+    const date = canonicalActionDate(new Date(), d?.timezone);
     try {
-      await fetchWithTimeout(
+      const res = await fetchWithTimeout(
         WORKOUT_OVERRIDE_URL,
         { method: 'POST', headers: authHeaders(), body: JSON.stringify({ date, workoutId }) },
         10000
       );
-    } catch { /* best-effort — refreshChiefBrief below still runs and will reflect whatever the server has */ }
-    await briefing.refreshChiefBrief();
-  }, [briefing]);
+      const body = await res.json().catch(() => null);
+      if (!res.ok || body?.ok !== true) {
+        return planConflictResolution(res.status >= 400 && res.status < 500 ? 'rejected' : 'unknown', false);
+      }
+    } catch {
+      return planConflictResolution('unknown', false);
+    }
+    // The canonical override committed. Rebuild copy is a separate operation:
+    // report a delayed rewrite honestly instead of pretending the plan change
+    // failed, and reload the live server projection either way.
+    const briefRefreshed = await briefing.refreshChiefBrief();
+    briefing.reload();
+    return planConflictResolution('confirmed', briefRefreshed);
+  }, [briefing, d?.timezone]);
 
   // Fired once by whichever Health/Wealth card matches radarAnchor's
   // entityType/entityId (RecoveryCard's / WealthWhatChangedCard's
@@ -929,7 +943,12 @@ export default function App() {
                 hides when nothing is outstanding. */}
             {commitments.commitments.length > 0 && (
               <AnimatedEntry delay={10}>
-                <CommitmentsCard commitments={commitments.commitments} onResolve={commitments.resolve} />
+                <CommitmentsCard
+                  commitments={commitments.commitments}
+                  onResolve={commitments.resolve}
+                  resolvingIds={commitments.resolvingIds}
+                  error={commitments.resolveError}
+                />
               </AnimatedEntry>
             )}
             {/* Alerts — operational/source-health warnings ("something

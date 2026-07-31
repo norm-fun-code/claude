@@ -2,10 +2,11 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, shadow } from '../theme';
 import type { PlanConflict } from '../hooks/useBriefing';
+import type { PlanConflictResolution } from '../lib/todayActionState';
 
 interface Props {
   conflict: PlanConflict;
-  onResolve: (workoutId: string | null) => Promise<void> | void;
+  onResolve: (workoutId: string | null) => Promise<PlanConflictResolution> | PlanConflictResolution;
 }
 
 // Today Part 1's compact resolution state: rendered ONLY when the server's
@@ -19,12 +20,17 @@ export function PlanConflictCard({ conflict, onResolve }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
 
   const handlePress = async (optionId: string, workoutId: string | null) => {
     if (resolvingId) return;
     setResolvingId(optionId);
+    setMessage(null);
     try {
-      await onResolve(workoutId);
+      const result = await onResolve(workoutId);
+      if (result.message) setMessage(result.message);
+    } catch {
+      setMessage('Couldn’t update today’s plan. Nothing was changed — try again.');
     } finally {
       setResolvingId(null);
     }
@@ -51,6 +57,7 @@ export function PlanConflictCard({ conflict, onResolve }: Props) {
           </Pressable>
         ))}
       </View>
+      {message ? <Text style={[styles.message, { color: c.subtext }]} accessibilityRole="alert">{message}</Text> : null}
     </View>
   );
 }
@@ -65,4 +72,5 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.sm, paddingVertical: spacing.sm,
   },
   optionText: { fontSize: 14, fontWeight: '700' },
+  message: { fontSize: 12, lineHeight: 17, marginTop: spacing.sm },
 });

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, useColorScheme, type NativeSyntheticEvent, type TextLayoutEventData } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, useColorScheme, type NativeSyntheticEvent, type TextLayoutEventData } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { SectionHeader } from './SectionHeader';
@@ -18,7 +18,9 @@ export function canExpandCommitment(commitment: Pick<Commitment, 'detail'>, titl
 
 interface Props {
   commitments: Commitment[];
-  onResolve: (id: number, how: 'done' | 'skip') => void;
+  onResolve: (id: number, how: 'done' | 'skip') => Promise<boolean> | boolean;
+  resolvingIds?: number[];
+  error?: string | null;
 }
 
 // Relative due-time chip: "6:00 PM" today, "Tomorrow 9 AM", "Overdue", or
@@ -40,7 +42,7 @@ function dueLabel(due: string | null): { text: string; overdue: boolean } | null
   return { text: `${day} ${time}`, overdue: false };
 }
 
-function Row({ c: commitment, colors, onResolve }: { c: Commitment; colors: ReturnType<typeof getColors>; onResolve: Props['onResolve'] }) {
+function Row({ c: commitment, colors, onResolve, resolving }: { c: Commitment; colors: ReturnType<typeof getColors>; onResolve: Props['onResolve']; resolving: boolean }) {
   const due = dueLabel(commitment.due_at);
   const [expanded, setExpanded] = useState(false);
   // Whether the title actually overflows COLLAPSED_LINES when collapsed —
@@ -52,6 +54,13 @@ function Row({ c: commitment, colors, onResolve }: { c: Commitment; colors: Retu
 
   const handleTitleLayout = (e: NativeSyntheticEvent<TextLayoutEventData>) => {
     if (!expanded && e.nativeEvent.lines.length > COLLAPSED_LINES) setTitleTruncated(true);
+  };
+
+  const resolve = async (how: 'done' | 'skip') => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const succeeded = await onResolve(commitment.id, how);
+    if (succeeded) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    else Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
   };
 
   return (
@@ -89,20 +98,22 @@ function Row({ c: commitment, colors, onResolve }: { c: Commitment; colors: Retu
       </View>
       <View style={styles.actions}>
         <TouchableOpacity
-          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onResolve(commitment.id, 'skip'); }}
+          onPress={() => { void resolve('skip'); }}
+          disabled={resolving}
           hitSlop={8}
-          style={[styles.actionBtn, { borderColor: colors.border }]}
+          style={[styles.actionBtn, { borderColor: colors.border, opacity: resolving ? 0.55 : 1 }]}
           accessibilityLabel="Skip"
         >
-          <Ionicons name="close" size={17} color={colors.subtext} />
+          {resolving ? <ActivityIndicator size="small" color={colors.subtext} /> : <Ionicons name="close" size={17} color={colors.subtext} />}
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); onResolve(commitment.id, 'done'); }}
+          onPress={() => { void resolve('done'); }}
+          disabled={resolving}
           hitSlop={8}
-          style={[styles.actionBtn, styles.doneBtn]}
+          style={[styles.actionBtn, styles.doneBtn, { opacity: resolving ? 0.55 : 1 }]}
           accessibilityLabel="Mark done"
         >
-          <Ionicons name="checkmark" size={17} color="#fff" />
+          {resolving ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="checkmark" size={17} color="#fff" />}
         </TouchableOpacity>
       </View>
     </View>
@@ -111,7 +122,7 @@ function Row({ c: commitment, colors, onResolve }: { c: Commitment; colors: Retu
 
 // Live follow-through: what you said you'd do, still open. Self-hides when empty
 // (nothing outstanding is the good state, not an empty box).
-function CommitmentsCard({ commitments, onResolve }: Props) {
+function CommitmentsCard({ commitments, onResolve, resolvingIds = [], error = null }: Props) {
   const isDark = useColorScheme() === 'dark';
   const colors = getColors(isDark);
   if (!commitments || commitments.length === 0) return null;
@@ -123,10 +134,11 @@ function CommitmentsCard({ commitments, onResolve }: Props) {
         {commitments.map((c, i) => (
           <React.Fragment key={c.id}>
             {i > 0 && <View style={[styles.divider, { backgroundColor: colors.border }]} />}
-            <Row c={c} colors={colors} onResolve={onResolve} />
+            <Row c={c} colors={colors} onResolve={onResolve} resolving={resolvingIds.includes(c.id)} />
           </React.Fragment>
         ))}
       </View>
+      {error ? <Text style={[styles.error, { color: colors.red }]} accessibilityRole="alert">{error}</Text> : null}
     </View>
   );
 }
@@ -167,6 +179,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   doneBtn: { backgroundColor: '#34C759', borderColor: '#34C759' },
+  error: { fontSize: 12, lineHeight: 17, marginTop: spacing.sm },
 });
 
 const CommitmentsCardMemo = React.memo(CommitmentsCard);

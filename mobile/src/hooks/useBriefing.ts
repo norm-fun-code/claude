@@ -772,7 +772,7 @@ export interface BriefingState {
   openFromPush: (identity: { briefingId?: string | null; snapshotId?: string | null; localDay?: string | null; builtAt?: string | null }) => void;
   triggerRebuild: () => void; // non-blocking rebuild — responds in <1s, then polls
   chiefBriefRefreshing: boolean;    // scoped chief-brief-only retry in progress
-  refreshChiefBrief: () => void;    // fast, scoped retry — seconds, not the full rebuild
+  refreshChiefBrief: () => Promise<boolean>;    // fast, scoped retry — seconds, not the full rebuild
   // Today's durable build-job state, when one is known — lets the Chief Brief
   // card distinguish "a build is genuinely running" from "a build finished and
   // failed", instead of treating every empty-brief-without-a-fetch-error as
@@ -1471,8 +1471,8 @@ export function useBriefing(): BriefingState {
   // rebuild). This escalates to the full rebuild exactly once, automatically
   // — the user taps one Retry button and gets whichever repair is actually
   // required, never a "nothing happened" 200 with an unusable stale card.
-  const refreshChiefBrief = useCallback(async () => {
-    if (!chiefBriefRefreshGateRef.current.tryEnter()) return;
+  const refreshChiefBrief = useCallback(async (): Promise<boolean> => {
+    if (!chiefBriefRefreshGateRef.current.tryEnter()) return false;
     setChiefBriefRefreshing(true);
     try {
       const res = await fetchWithTimeout(CHIEF_BRIEF_REBUILD_URL, { method: 'POST', headers: authHeaders() }, 20000);
@@ -1481,7 +1481,7 @@ export function useBriefing(): BriefingState {
         if (body?.error === 'full_rebuild_required') {
           setChiefBriefRefreshing(false);
           triggerRebuild();
-          return;
+          return false;
         }
         throw new Error('no briefing built yet — load the briefing first');
       }
@@ -1499,8 +1499,14 @@ export function useBriefing(): BriefingState {
       // failure verdict; one that didn't leaves the card to explain why from
       // this attempt's own chiefBriefQuality (already in `merged`).
       if (merged?.chiefBrief != null) { setBuildState(null); setBuildFailure(null); }
+      // A 200 that carried forward an old/degraded card is not a successfully
+      // refreshed brief. Callers that performed a real mutation use this
+      // distinction to acknowledge the write without falsely claiming its
+      // explanatory copy already caught up.
+      return Boolean(json.chiefBrief && !json.chiefBriefStale && json.chiefBriefQuality?.status === 'fresh');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Chief-brief refresh failed');
+      return false;
     } finally {
       chiefBriefRefreshGateRef.current.leave();
       setChiefBriefRefreshing(false);
