@@ -354,30 +354,37 @@ test('DEG 7: the original violated check name survives in chiefBriefQuality diag
 // 8. The scheduler retries rejected drafts according to the bounded stepped
 // schedule (5min / 15min / 30min).
 test('DEG 8: the retry ledger applies a bounded STEPPED backoff (5min, 15min, 30min) across successive attempts', async () => {
-  const base = Date.now();
+  // Keep this virtual timeline safely within ONE explicit local day. The old
+  // Date.now()-based fixture intermittently began near midnight in New York;
+  // its final "20 minutes later" check then legitimately crossed into a new
+  // day, where the durable ledger is supposed to reset and allow an attempt.
+  // That made a real scheduling invariant look like a flaky failure.
+  await cleanupLedgerAndMarkers();
+  const tz = 'America/New_York';
+  const base = Date.parse('2026-07-30T16:00:00.000Z'); // noon ET
   const asOf = (offsetMs) => new Date(base + offsetMs);
 
   // Attempt 1 recorded -> next retry (attempt 2) must wait ~5 minutes.
-  await morningRetryLedger.recordAttempt({ asOf: asOf(0) });
-  let decision = await morningRetryLedger.canAttempt({ asOf: asOf(4 * MIN) });
+  await morningRetryLedger.recordAttempt({ asOf: asOf(0), tz });
+  let decision = await morningRetryLedger.canAttempt({ asOf: asOf(4 * MIN), tz });
   assert.equal(decision.allowed, false, 'before the 5-minute first-retry step elapses, another attempt must not be allowed');
-  decision = await morningRetryLedger.canAttempt({ asOf: asOf(6 * MIN) });
+  decision = await morningRetryLedger.canAttempt({ asOf: asOf(6 * MIN), tz });
   assert.equal(decision.allowed, true, 'after the 5-minute first-retry step elapses, a retry must be allowed');
 
   // Attempt 2 recorded -> next retry (attempt 3) must wait ~15 minutes.
-  await morningRetryLedger.recordAttempt({ asOf: asOf(6 * MIN) });
-  decision = await morningRetryLedger.canAttempt({ asOf: asOf(6 * MIN + 10 * MIN) });
+  await morningRetryLedger.recordAttempt({ asOf: asOf(6 * MIN), tz });
+  decision = await morningRetryLedger.canAttempt({ asOf: asOf(6 * MIN + 10 * MIN), tz });
   assert.equal(decision.allowed, false, 'before the 15-minute second-retry step elapses, another attempt must not be allowed');
-  decision = await morningRetryLedger.canAttempt({ asOf: asOf(6 * MIN + 16 * MIN) });
+  decision = await morningRetryLedger.canAttempt({ asOf: asOf(6 * MIN + 16 * MIN), tz });
   assert.equal(decision.allowed, true, 'after the 15-minute second-retry step elapses, a retry must be allowed');
 
   // Attempt 3 recorded -> next retry (attempt 4, past the configured steps)
   // must reuse the LAST step (~30 minutes), not grow unbounded.
   const t3 = base + 6 * MIN + 16 * MIN;
-  await morningRetryLedger.recordAttempt({ asOf: new Date(t3) });
-  decision = await morningRetryLedger.canAttempt({ asOf: new Date(t3 + 20 * MIN) });
+  await morningRetryLedger.recordAttempt({ asOf: new Date(t3), tz });
+  decision = await morningRetryLedger.canAttempt({ asOf: new Date(t3 + 20 * MIN), tz });
   assert.equal(decision.allowed, false, 'before the 30-minute later-retry step elapses, another attempt must not be allowed');
-  decision = await morningRetryLedger.canAttempt({ asOf: new Date(t3 + 31 * MIN) });
+  decision = await morningRetryLedger.canAttempt({ asOf: new Date(t3 + 31 * MIN), tz });
   assert.equal(decision.allowed, true, 'after the 30-minute later-retry step elapses, a retry must be allowed');
 });
 
