@@ -4,7 +4,7 @@
 //   2. Long-term recall — each user question is embedded, so a NEW question can
 //      semantically retrieve RELEVANT PAST conversations from any point in
 //      history ("last time you asked about X, here's what we concluded").
-const { query } = require('../db');
+const { query, withTransaction } = require('../db');
 
 function toVectorLiteral(embedding) {
   if (!embedding || !Array.isArray(embedding)) return null;
@@ -49,6 +49,69 @@ async function saveMessage({ role, content, sources = [], embedding = null, conv
     );
   }
   return rows[0] ?? null;
+}
+
+/**
+ * Persist a complete conversational turn atomically. A user-visible Ask or
+ * voice answer is not complete until both halves are in History; the old
+ * routes launched two independent fire-and-forget saveMessage() calls after
+ * replying. A process restart, transient DB error, or first insert failure
+ * could therefore leave a question without its answer (or neither) while the
+ * app had already acted as though the turn was saved.
+ *
+ * The advisory lock is intentionally tiny and local to this one-user app: it
+ * only serializes creation/selection of the single active conversation while
+ * this transaction is open. It avoids the partial unique-index race between
+ * two near-simultaneous text/voice turns without adding a second authority.
+ */
+async function saveTurn({ question, answer, sources = [], embedding = null, conversationId = null }) {
+  if (!String(question ?? '').trim()) throw new Error('question is required');
+  if (!String(answer ?? '').trim()) throw new Error('answer is required');
+  return withTransaction(async (client) => {
+    let convId = conversationId;
+    if (convId == null) {
+      await client.query(`SELECT pg_advisory_xact_lock($1)`, [7_042_026]);
+      const { rows: activeRows } = await client.query(
+        `SELECT id FROM conversations WHERE is_active LIMIT 1 FOR UPDATE`
+      );
+      if (activeRows[0]) {
+        convId = activeRows[0].id;
+      } else {
+        const { rows: createdRows } = await client.query(
+          `INSERT INTO conversations (is_active) VALUES (true) RETURNING id`
+        );
+        convId = createdRows[0]?.id ?? null;
+      }
+    }
+    if (convId == null) throw new Error('could not resolve active conversation');
+
+    const [userInsert, assistantInsert] = await Promise.all([
+      client.query(
+        `INSERT INTO chat_messages (role, content, sources, embedding, conversation_id)
+         VALUES ('user', $1, '[]'::jsonb, $2::vector, $3) RETURNING id, created_at`,
+        [String(question), toVectorLiteral(embedding), convId]
+      ),
+      client.query(
+        `INSERT INTO chat_messages (role, content, sources, embedding, conversation_id)
+         VALUES ('assistant', $1, $2::jsonb, NULL::vector, $3) RETURNING id, created_at`,
+        [String(answer), JSON.stringify(sources), convId]
+      ),
+    ]);
+    // Keep the existing title semantics (the first user message titles the
+    // thread) while touching the conversation exactly once for the pair.
+    await client.query(
+      `UPDATE conversations
+          SET updated_at = now(),
+              title = CASE WHEN title IS NULL OR title = '' THEN $2 ELSE title END
+        WHERE id = $1`,
+      [convId, deriveTitle(question)]
+    );
+    return {
+      conversationId: convId,
+      user: userInsert.rows[0] ?? null,
+      assistant: assistantInsert.rows[0] ?? null,
+    };
+  });
 }
 
 /** Most recent `limit` turns OF THE ACTIVE THREAD, oldest-first, for prompt
@@ -211,7 +274,7 @@ async function clearMessages() {
 }
 
 module.exports = {
-  saveMessage,
+  saveMessage, saveTurn,
   recentMessages,
   searchSimilarTurns,
   unembeddedQuestions,

@@ -290,11 +290,10 @@ function createRealtimeRouter() {
     const idempotency = require('../chat/voiceIdempotency');
     const key = idempotency.keyFor({ sessionId, turnId, action: 'persist_turn', argsHash: idempotency.hashArgs({ question, answer }) });
     const { fromCache } = await idempotency.once(key, async () => {
-      const convId = await chatStore.ensureActiveConversation();
-      await Promise.all([
-        chatStore.saveMessage({ role: 'user', content: String(question).slice(0, 4000), conversationId: convId }),
-        chatStore.saveMessage({ role: 'assistant', content: String(answer).slice(0, 4000), conversationId: convId }),
-      ]);
+      await chatStore.saveTurn({
+        question: String(question).slice(0, 4000),
+        answer: String(answer).slice(0, 4000),
+      });
       return true;
     });
     if (fromCache) console.warn(`[realtime turn] duplicate persist for key=${key} — not re-saved`);

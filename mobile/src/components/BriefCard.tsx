@@ -9,6 +9,7 @@ import type { ChiefBrief } from '../hooks/useBriefing';
 import { BRIEFING_CONTEXT_URL, BRIEFING_AUDIO_URL, BRIEFING_ACTION_COMMIT_URL, BRIEFING_ACTION_ALTERNATES_URL, VOICE_TRANSCRIBE_URL, authHeaders, fetchWithTimeout } from '../config';
 import { voiceAvailable, ensureMicPermission, startRecording, stopRecording } from '../lib/voice';
 import { useBriefAudio } from '../hooks/useBriefAudio';
+import { isNarrationBusy, narrationButtonLabel } from '../lib/narrationStatus';
 import { resolveChiefBriefState, hasBeenPendingTooLong, describeChiefBriefFailure, describeWaitingForSleepData, type BuildJobState } from '../lib/chiefBriefState';
 
 interface Props {
@@ -550,15 +551,9 @@ function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsSt
               style={styles.listenBtn}
               accessibilityRole="button"
               accessibilityLabel={audioState === 'playing' ? 'Stop narration' : 'Listen to this morning\'s brief'}
-              accessibilityState={{ busy: audioState === 'loading' || audioState === 'preparing', disabled: audioState === 'loading' || audioState === 'preparing' }}
+              accessibilityState={{ busy: isNarrationBusy(audioState) }}
             >
-              {audioState === 'loading' || audioState === 'preparing' ? (
-                <ActivityIndicator size="small" color="#A89CFF" />
-              ) : (
-                <Text style={styles.listenText}>
-                  {audioState === 'playing' ? '◼ Stop' : audioState === 'error' ? 'Unavailable' : '▶ Listen'}
-                </Text>
-              )}
+              <Text style={styles.listenText}>{narrationButtonLabel(audioState)}</Text>
             </Pressable>
           )}
         </View>

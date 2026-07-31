@@ -1,11 +1,12 @@
 import React from 'react';
-import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { spacing, radius, typography, glow, bandGradient, withAlpha } from '../theme';
 import type { EveningBrief, EveningTone } from '../hooks/useEveningBrief';
 import { EVENING_BRIEF_AUDIO_URL } from '../config';
 import { voiceAvailable } from '../lib/voice';
 import { useBriefAudio } from '../hooks/useBriefAudio';
+import { isNarrationBusy, narrationButtonLabel } from '../lib/narrationStatus';
 
 interface Props {
   brief: EveningBrief | null | undefined;
@@ -79,16 +80,10 @@ function EveningBriefCard({ brief }: Props) {
             style={styles.listenBtn}
             accessibilityRole="button"
             accessibilityLabel={audioState === 'playing' ? 'Stop narration' : 'Listen to tonight\'s wind-down brief'}
-            accessibilityState={{ busy: audioState === 'loading' || audioState === 'preparing', disabled: audioState === 'loading' || audioState === 'preparing' }}
-          >
-            {audioState === 'loading' || audioState === 'preparing' ? (
-              <ActivityIndicator size="small" color="#A78BFA" />
-            ) : (
-              <Text style={styles.listenText}>
-                {audioState === 'playing' ? '◼ Stop' : audioState === 'error' ? 'Unavailable' : '▶ Listen'}
-              </Text>
-            )}
-          </Pressable>
+            accessibilityState={{ busy: isNarrationBusy(audioState) }}
+            >
+              <Text style={styles.listenText}>{narrationButtonLabel(audioState)}</Text>
+            </Pressable>
         )}
       </View>
 

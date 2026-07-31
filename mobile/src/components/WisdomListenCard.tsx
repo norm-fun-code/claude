@@ -1,10 +1,11 @@
 import React from 'react';
-import { View, Text, StyleSheet, Pressable, ActivityIndicator, useColorScheme } from 'react-native';
+import { View, Text, StyleSheet, Pressable, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, shadow, withAlpha } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { WISDOM_AUDIO_URL } from '../config';
 import { voiceAvailable } from '../lib/voice';
 import { useBriefAudio } from '../hooks/useBriefAudio';
+import { isNarrationBusy, narrationButtonLabel } from '../lib/narrationStatus';
 
 interface Props {
   // Whether today's Wisdom actually has anything to narrate — mirrors the
@@ -41,12 +42,9 @@ function WisdomListenCard({ hasContent, snapshotId, stale }: Props) {
 
   if (!voiceAvailable || !hasContent) return null;
 
-  // "Not found" (the displayed snapshot genuinely isn't on the server —
-  // stale cache pointing at a superseded/garbage id) reads differently from
-  // "Unavailable" (the content exists but narration itself failed) — see
-  // useBriefAudio's BriefAudioErrorKind.
-  const errorLabel = errorKind === 'not_found' ? 'Not found' : 'Unavailable';
-
+  // "Not found" (the displayed snapshot genuinely isn't on the server)
+  // reads differently from a transient TTS failure, which renders an
+  // immediate "Try again" affordance through narrationButtonLabel().
   return (
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <View style={styles.row}>
@@ -57,15 +55,11 @@ function WisdomListenCard({ hasContent, snapshotId, stale }: Props) {
           style={[styles.listenBtn, { borderColor: withAlpha(GOLD, 0.4) }]}
           accessibilityRole="button"
           accessibilityLabel={audioState === 'playing' ? 'Stop narration' : "Listen to this wisdom"}
-          accessibilityState={{ busy: audioState === 'loading' || audioState === 'preparing', disabled: audioState === 'loading' || audioState === 'preparing' }}
+          accessibilityState={{ busy: isNarrationBusy(audioState) }}
         >
-          {audioState === 'loading' || audioState === 'preparing' ? (
-            <ActivityIndicator size="small" color={GOLD} />
-          ) : (
-            <Text style={[styles.listenText, { color: GOLD }]}>
-              {audioState === 'playing' ? '◼ Stop' : audioState === 'error' ? errorLabel : '▶ Listen'}
-            </Text>
-          )}
+          <Text style={[styles.listenText, { color: GOLD }]}>
+            {narrationButtonLabel(audioState, errorKind)}
+          </Text>
         </Pressable>
       </View>
       <Text style={[styles.subtext, { color: c.subtext }]}>

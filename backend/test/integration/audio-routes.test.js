@@ -87,6 +87,35 @@ test('GET /api/briefing/audio returns the base64+mime contract for today\'s chie
   assert.ok(Buffer.from(res.body.audio, 'base64').length > 0);
 });
 
+test('GET /api/briefing/audio narrationStatus=1 returns Preparing immediately on a cold cache, then Ready from that same shared job', async () => {
+  let releaseSynthesis;
+  voiceService.synthesize = async () => {
+    await new Promise((resolve) => { releaseSynthesis = resolve; });
+    return { audio: Buffer.from('status-ready-audio'), mime: 'audio/wav' };
+  };
+  await seedDaily({ chiefBrief: { synthesis: 'Async status route marker.', action: 'a', risk: 'r' } });
+
+  const first = await request(app).get('/api/briefing/audio').query({ narrationStatus: '1' }).set(authHeader());
+  assert.equal(first.status, 202);
+  assert.equal(first.body.status, 'preparing');
+  assert.equal(typeof first.body.retryAfterMs, 'number');
+
+  // Polling before completion stays truthful and must not create a second TTS
+  // job for this cache key.
+  const second = await request(app).get('/api/briefing/audio').query({ narrationStatus: '1' }).set(authHeader());
+  assert.equal(second.status, 202);
+  for (let i = 0; i < 20 && !releaseSynthesis; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(typeof releaseSynthesis, 'function', 'the first status request must have queued the shared TTS job');
+  releaseSynthesis();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  const ready = await request(app).get('/api/briefing/audio').query({ narrationStatus: '1' }).set(authHeader());
+  assert.equal(ready.status, 200);
+  assert.equal(Buffer.from(ready.body.audio, 'base64').toString('utf8'), 'status-ready-audio');
+});
+
 test('GET /api/evening-brief/audio returns the base64+mime contract for tonight\'s evening brief', async () => {
   stubSynthesize();
   await seedEvening();

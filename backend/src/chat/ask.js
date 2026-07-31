@@ -162,13 +162,20 @@ async function answerCommand(question, { history = [] } = {}) {
  */
 async function personalSnapshot() {
   const lines = { goals: [], metrics: [], intentions: [] };
+  // These independent selectors used to wait for each other before metric
+  // context even began. Start them together; a missing optional source must
+  // never delay the rest of a user's answer.
+  const [goalsResult, intentionsResult, keysResult] = await Promise.allSettled([
+    require('../store/goals').listGoals({ status: 'active' }),
+    intentionsStore.recentIntentions({ days: 30 }),
+    metricsStore.listMetricKeys(),
+  ]);
 
-  // Active goals (what the user is steering toward) — via the canonical store
-  // selector (store/goals.listGoals), NOT an ad-hoc SQL query, so Ask can't drift
-  // from the goal set every other surface reads.
-  try {
-    const goals = await require('../store/goals').listGoals({ status: 'active' });
-    lines.goals = (goals || [])
+  if (goalsResult.status === 'fulfilled') {
+    // Active goals (what the user is steering toward) — via the canonical store
+    // selector (store/goals.listGoals), NOT an ad-hoc SQL query, so Ask can't drift
+    // from the goal set every other surface reads.
+    lines.goals = (goalsResult.value || [])
       .slice()
       .sort((a, b) => {
         // target_date ascending, NULLs last — matches the prior ORDER BY.
@@ -177,16 +184,8 @@ async function personalSnapshot() {
         return ad - bd;
       })
       .slice(0, 12);
-  } catch {
-    /* goals optional */
   }
-
-  // Recent weekly intentions (the Sunday check-in): life context + focus goals.
-  try {
-    lines.intentions = await intentionsStore.recentIntentions({ days: 30 });
-  } catch {
-    /* intentions optional */
-  }
+  if (intentionsResult.status === 'fulfilled') lines.intentions = intentionsResult.value || [];
 
   // Recent trend per tracked metric: last 7d avg vs the prior 7d. Uses the SAME
   // canonical aggregation the realtime voice tool and the rest of the app use —
@@ -197,14 +196,10 @@ async function personalSnapshot() {
   // same metric than the voice tool did — the exact class of "two surfaces, one
   // fact, two answers" divergence the state layer exists to eliminate.
   try {
-    const keys = await metricsStore.listMetricKeys();
+    const keys = keysResult.status === 'fulfilled' ? keysResult.value : [];
     const now = Date.now();
     const d7 = new Date(now - 7 * 864e5);
     const d14 = new Date(now - 14 * 864e5);
-    const avg = (rows) => {
-      const v = rows.map((r) => Number(r.value)).filter(Number.isFinite);
-      return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
-    };
     // HRV/resting-HR are source-locked to overnight Eight Sleep readings —
     // the SAME lock recovery.js applies for every recovery-comparable read —
     // so Ask's "recent trend" for these two metrics can never silently blend
@@ -212,17 +207,19 @@ async function personalSnapshot() {
     // disagrees with the Health tab's overnight-anchored one (source-distinct
     // HRV, truth-and-evidence contract, audit priority #1).
     const { RECOVERY_SOURCE_LOCK } = require('../intelligence/recovery');
-    for (const { domain, metric } of keys.filter(({ domain, metric }) => cat.isTracked(domain, metric)).slice(0, 25)) {
-      const agg = cat.aggFor(metric);
-      const sources = RECOVERY_SOURCE_LOCK[`${domain}:${metric}`] ?? null;
-      const [recent, prior] = await Promise.all([
-        metricsStore.dailyAggregatePreferSource({ domain, metric, from: d7, agg, sources }),
-        metricsStore.dailyAggregatePreferSource({ domain, metric, from: d14, to: d7, agg, sources }),
-      ]);
-      const r = avg(recent);
-      const p = avg(prior);
-      if (r == null) continue;
-      lines.metrics.push({ domain, metric, recent: r, prior: p });
+    const requests = keys
+      .filter(({ domain, metric }) => cat.isTracked(domain, metric))
+      .slice(0, 25)
+      .map(({ domain, metric }) => ({
+        domain,
+        metric,
+        agg: cat.aggFor(metric),
+        sources: RECOVERY_SOURCE_LOCK[`${domain}:${metric}`] ?? null,
+      }));
+    const trends = await metricsStore.recentMetricTrends(requests, { from: d14, splitAt: d7 });
+    for (const trend of trends) {
+      if (trend.recent == null) continue;
+      lines.metrics.push(trend);
     }
   } catch {
     /* metrics optional */
@@ -351,21 +348,24 @@ async function wealthContext(pacePromise = Promise.resolve(null)) {
 async function recoveryContext() {
   try {
     const { liveRecovery } = require('../intelligence/recovery');
-    const r = await liveRecovery();
-    if (!r || r.score == null) return null;
-    // Surface the centralized presentation label (recoveryPresentation.js)
-    // alongside the canonical band, not just the band — otherwise the LLM
-    // sees a bare "yellow" for a near-green 59 and independently invents its
-    // own "under-recovered" framing instead of the reassuring "Solid — near
-    // green" read every other surface (Health, Today, brief) uses.
-    const presLabel = r.presentation?.label ? ` [${r.presentation.label}]` : '';
-    return 'RECOVERY TODAY (live computed — use this exact number and label, it is current):\n' +
-      `- Score: ${Math.round(r.score)}/100 (${r.band})${presLabel}${r.detail ? ` — ${r.detail}` : ''}\n` +
-      '- Use the label in brackets, not the raw band, when describing how the user is doing — e.g. a near-green score is "solid readiness", never "under-recovered".';
+    return recoveryContextFrom(await liveRecovery());
   } catch (err) {
     console.error('[chat] recoveryContext failed:', err.message);
     return null;
   }
+}
+
+function recoveryContextFrom(r) {
+  if (!r || r.score == null) return null;
+  // Surface the centralized presentation label (recoveryPresentation.js)
+  // alongside the canonical band, not just the band — otherwise the LLM
+  // sees a bare "yellow" for a near-green 59 and independently invents its
+  // own "under-recovered" framing instead of the reassuring "Solid — near
+  // green" read every other surface (Health, Today, brief) uses.
+  const presLabel = r.presentation?.label ? ` [${r.presentation.label}]` : '';
+  return 'RECOVERY TODAY (live computed — use this exact number and label, it is current):\n' +
+    `- Score: ${Math.round(r.score)}/100 (${r.band})${presLabel}${r.detail ? ` — ${r.detail}` : ''}\n` +
+    '- Use the label in brackets, not the raw band, when describing how the user is doing — e.g. a near-green score is "solid readiness", never "under-recovered".';
 }
 
 function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [], snapshot = null, experiments = [], pastConversations = [], wealthInsights = null, recoveryInsight = null, dayContext = [], resolvedContextSummary = '', voice = false }) {
@@ -705,6 +705,14 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
   // the user is physically waiting to hear a reply.
   const personal = isPersonalQuestion(question);
   const financial = isFinancialQuestion(question);
+  // Start these canonical reads before the broad context fan-out. The same
+  // resolved values are used in the prompt and EvidenceClaim packet below;
+  // no late, second effective-workout or recovery fetch may disagree with
+  // what the model was shown.
+  const recoveryPromise = personal
+    ? require('../intelligence/recovery').liveRecovery().catch(() => null)
+    : Promise.resolve(null);
+  const effectiveWorkoutPromise = require('../services/workout').getEffectiveWorkout().catch(() => null);
   // Matched-pace baseline (up to 12 sequential historical aggregate
   // queries) — resolved ONCE here and reused by both wealthContext() (prompt
   // construction) and spendingPaceResult (claim-validation facts) below,
@@ -728,6 +736,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     rawRecoveryResult,
     spendingMtdResult,
     spendingPaceResult,
+    effectiveWorkoutResult,
   ] = await Promise.allSettled([
     findingsStore.listFindings({ status: 'open' }),
     annotationsStore.listAnnotations({ from: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000), limit: 20 }),
@@ -745,7 +754,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     // The real, canonically-computed recovery score — same source as the Health
     // tab and the voice tool's get_current_recovery — so a personal/health
     // question cites the true number instead of the model inferring one.
-    personal ? recoveryContext() : Promise.resolve(null),
+    personal ? recoveryPromise.then(recoveryContextFrom) : Promise.resolve(null),
     // Context Understanding Layer: the SAME canonical selectors Chief Brief
     // and realtime voice read (harden pass, item 2) — 'general' purpose
     // since Ask fields arbitrary questions, not one fixed domain.
@@ -759,7 +768,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     // prompt string — liveRecovery() is TTL-cached (see intelligence/recovery.js),
     // so this is a cache hit alongside the recoveryContext() call above, not a
     // second real computation.
-    personal ? require('../intelligence/recovery').liveRecovery().catch(() => null) : Promise.resolve(null),
+    recoveryPromise,
     // Canonical month-to-date discretionary spend — the SAME rule
     // brain/snapshot.js's canonicalFacts uses — so a cited spending figure is
     // checked against the real number, not left to the model's own arithmetic
@@ -772,6 +781,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     // second independent invocation, so "is my spending unusual this month?"
     // is checked against the identical median/label every other surface reads.
     pacePromise,
+    effectiveWorkoutPromise,
   ]);
 
   const findings = findingsResult.status === 'fulfilled' ? findingsResult.value : [];
@@ -821,8 +831,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
   // that prescribes the scheduled session after recovery/a swap already
   // overrode it away gets caught the same way Chief Brief's
   // checkEffectiveWorkout already catches it.
-  let effectiveWorkout = null;
-  try { effectiveWorkout = await require('../services/workout').getEffectiveWorkout(); } catch { /* non-critical */ }
+  const effectiveWorkout = effectiveWorkoutResult.status === 'fulfilled' ? effectiveWorkoutResult.value : null;
   const { canonicalFactsFrom } = require('../brain/snapshot');
   const { buildEvidenceClaims } = require('../brain/evidenceClaim');
   const factsForValidation = canonicalFactsFrom({
@@ -1101,7 +1110,7 @@ function parseAction(text) {
 }
 
 module.exports = {
-  ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot, recoveryContext, wealthContext,
+  ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot, recoveryContext, recoveryContextFrom, wealthContext,
   parseAction, parseActions, looksLikeCommand, validateAction,
   // Exported for regression tests (see test/ask-generation.test.js) — not
   // used by any other production call site.

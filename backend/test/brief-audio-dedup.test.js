@@ -13,7 +13,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const db = require('../src/db');
 const voiceService = require('../src/services/voice');
-const { audioFor } = require('../src/services/brief-audio');
+const { audioFor, requestAudio } = require('../src/services/brief-audio');
 
 const ORIGINAL_QUERY = db.query;
 const ORIGINAL_SYNTH = voiceService.synthesize;
@@ -24,9 +24,26 @@ test.afterEach(() => {
 
 function stubDb({ cacheHit = null } = {}) {
   const inserts = [];
+  const stored = new Map();
+  let initialCacheHit = cacheHit;
   db.query = async (sql, params) => {
-    if (/SELECT audio, mime FROM tts_audio/.test(sql)) return { rows: cacheHit ? [cacheHit] : [] };
-    if (/INSERT INTO tts_audio/.test(sql)) { inserts.push(params); return { rows: [] }; }
+    if (/SELECT audio, mime FROM tts_audio/.test(sql)) {
+      const cached = stored.get(params[0]);
+      if (cached) return { rows: [cached] };
+      // A supplied fixture represents one pre-existing row, not a cache hit
+      // for every key requested by the test.
+      if (initialCacheHit) {
+        const hit = initialCacheHit;
+        initialCacheHit = null;
+        return { rows: [hit] };
+      }
+      return { rows: [] };
+    }
+    if (/INSERT INTO tts_audio/.test(sql)) {
+      inserts.push(params);
+      stored.set(params[0], { audio: params[1], mime: params[2] });
+      return { rows: [] };
+    }
     if (/DELETE FROM tts_audio/.test(sql)) return { rows: [] };
     throw new Error(`unexpected query: ${sql}`);
   };
@@ -73,6 +90,33 @@ test('a failed synthesize() does not poison later calls for the same script', as
   const result = await audioFor('brief', content, '2026-07-10');
   assert.equal(calls, 2, 'the retry after a failure must reach synthesize() again, not hang on a stale in-flight entry');
   assert.deepEqual(result, { audio: Buffer.from('wav-bytes'), mime: 'audio/wav' });
+});
+
+test('requestAudio returns a fast preparing status on a cold cache, shares the job across polls, then reports the cached result', async () => {
+  stubDb();
+  let release;
+  let calls = 0;
+  voiceService.synthesize = async () => {
+    calls++;
+    await new Promise((resolve) => { release = resolve; });
+    return { audio: Buffer.from('ready-after-status'), mime: 'audio/wav' };
+  };
+  const content = { chiefBrief: { synthesis: 'Status flow synthesis.' } };
+  const first = await requestAudio('brief', content, '2026-07-24');
+  assert.equal(first.status, 'preparing');
+  const second = await requestAudio('brief', content, '2026-07-24');
+  assert.equal(second.status, 'preparing');
+  for (let i = 0; i < 10 && !release; i++) await new Promise((resolve) => setTimeout(resolve, 1));
+  assert.equal(calls, 1, 'status polls must reuse one synthesis job');
+  release();
+  let ready;
+  for (let i = 0; i < 20; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    ready = await requestAudio('brief', content, '2026-07-24');
+    if (ready.status === 'ready') break;
+  }
+  assert.equal(ready.status, 'ready');
+  assert.deepEqual(ready.audio, Buffer.from('ready-after-status'));
 });
 
 // ── Wisdom kind: same shared audioFor()/cache/dedup machinery, must never

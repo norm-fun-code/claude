@@ -64,14 +64,10 @@ test('POST /api/chat: first call truncated at max_tokens, retry succeeds at the 
   assert.equal(callCount, 2, 'exactly one retry — two attempts total');
   assert.deepEqual(capturedMaxTokens, [8192, 16384], 'retry uses the larger ceiling, never the same insufficient limit');
 
-  // A successful turn IS saved (the save calls in routes/chat.js are
-  // fire-and-forget after ask() resolves) — poll briefly since they're not
-  // awaited by the response.
-  let saved = 0;
-  for (let i = 0; i < 20 && saved === 0; i++) {
-    await new Promise((r) => setTimeout(r, 50));
-    saved = await messageCountFor(HEART_QUESTION);
-  }
+  // Ticket 9: the 200 is not sent until the complete user+assistant turn
+  // committed. This must be true synchronously; polling would hide the old
+  // fire-and-forget failure mode where a process restart lost history.
+  const saved = await messageCountFor(HEART_QUESTION);
   assert.equal(saved, 1, 'the successful turn was persisted to chat history');
 });
 

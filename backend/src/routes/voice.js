@@ -107,12 +107,13 @@ function createVoiceRouter() {
     const executed = executedList.find(Boolean) ?? null;
     mark('actionMs');
 
-    // Persist to the shared thread (same as the typed /api/chat path).
-    const convId = await chatStore.ensureActiveConversation();
-    chatStore.saveMessage({ role: 'user', content: question, embedding: result.questionEmbedding ?? null, conversationId: convId })
-      .catch((e) => console.error('[voice chat] save user failed:', e.message));
-    chatStore.saveMessage({ role: 'assistant', content: result.answer, sources: result.sources ?? [], conversationId: convId })
-      .catch((e) => console.error('[voice chat] save assistant failed:', e.message));
+    // Keep voice and typed Ask on the same transactional History contract.
+    // Do not claim the voice turn is recorded until both messages commit.
+    const persisted = await chatStore.saveTurn({
+      question, answer: result.answer, embedding: result.questionEmbedding ?? null,
+      sources: result.sources ?? [],
+    });
+    const convId = persisted.conversationId;
 
     const askResponse = buildAskResponse({
       question, answer: result.answer, actionResults, claims: result.claims,

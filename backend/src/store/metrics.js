@@ -225,6 +225,112 @@ async function dailyAggregatePreferSource({ domain, metric, from, to, agg = 'avg
   return rows;
 }
 
+/**
+ * Resolve recent-vs-prior trends for many metrics with ONE bounded database
+ * read. Ask used to call dailyAggregatePreferSource twice *serially* for each
+ * tracked metric (up to 25), which meant an otherwise ordinary question could
+ * spend dozens of database round trips assembling context before it even
+ * reached the model. The query below reads the common 14-day window once;
+ * JavaScript then applies the exact same per-day source-priority and
+ * aggregation semantics as dailyAggregatePreferSource().
+ *
+ * This intentionally returns the average of the selected DAILY aggregates.
+ * That is the historical Ask contract: for example, a daily steps `sum` is
+ * averaged across days rather than summing fourteen days into one number.
+ *
+ * @param {Array<{domain:string, metric:string, agg?:'avg'|'min'|'max'|'sum', sources?:string[]|null}>} requests
+ * @param {object} window
+ * @param {Date|string} window.from start of the prior window (normally now-14d)
+ * @param {Date|string} window.splitAt start of the recent window (normally now-7d)
+ * @param {Date|string|null} [window.to] optional upper bound
+ * @returns {Promise<Array<{domain:string, metric:string, recent:number|null, prior:number|null}>>}
+ */
+async function recentMetricTrends(requests, { from, splitAt, to = null, tz = process.env.TZ || 'America/New_York' } = {}) {
+  const clean = (requests || [])
+    .filter((r) => r?.domain && r?.metric)
+    .map((r) => ({
+      domain: String(r.domain),
+      metric: String(r.metric),
+      agg: ['avg', 'min', 'max', 'sum'].includes(r.agg) ? r.agg : 'avg',
+      sources: Array.isArray(r.sources) && r.sources.length ? r.sources.map(String) : null,
+    }));
+  if (!clean.length) return [];
+
+  // `requested` is parameterized arrays rather than a dynamically composed
+  // VALUES list, so a metric name can never alter SQL. We calculate all four
+  // allowed per-day aggregate functions together, then select the requested
+  // one in JS. That keeps this one query while retaining catalog.aggFor()'s
+  // per-metric choice.
+  const { rows } = await query(
+    `WITH requested AS (
+       SELECT * FROM unnest($1::text[], $2::text[]) AS r(domain, metric)
+     )
+     SELECT date_trunc('day', m.ts AT TIME ZONE $6) AS day,
+            m.domain, m.metric, m.source,
+            CASE WHEN m.ts >= $4 THEN 'recent' ELSE 'prior' END AS window,
+            avg(m.value) AS avg_value,
+            min(m.value) AS min_value,
+            max(m.value) AS max_value,
+            sum(m.value) AS sum_value
+      FROM metrics m
+      JOIN requested r ON r.domain = m.domain AND r.metric = m.metric
+      WHERE m.ts >= $3
+        AND ($5::timestamptz IS NULL OR m.ts <= $5)
+      GROUP BY day, m.domain, m.metric, m.source, window
+      ORDER BY day ASC`,
+    [clean.map((r) => r.domain), clean.map((r) => r.metric), from, splitAt, to, tz]
+  );
+
+  const byMetric = new Map();
+  for (const row of rows) {
+    const key = `${row.domain}\u0000${row.metric}`;
+    const list = byMetric.get(key) || [];
+    list.push(row);
+    byMetric.set(key, list);
+  }
+  const priorityFor = (source) => {
+    if (source === 'eight_sleep') return 1;
+    if (source === 'apple_health') return 2;
+    if (source === 'eight_sleep_baseline') return 3;
+    return 4;
+  };
+  const avg = (values) => {
+    const finite = values.map(Number).filter(Number.isFinite);
+    return finite.length ? finite.reduce((sum, value) => sum + value, 0) / finite.length : null;
+  };
+  return clean.map((request) => {
+    const allRows = byMetric.get(`${request.domain}\u0000${request.metric}`) || [];
+    const perDay = new Map();
+    for (const row of allRows) {
+      if (request.sources && !request.sources.includes(row.source)) continue;
+      // The boundary can fall mid-local-day. Keep the two request windows
+      // separate here, exactly as the former pair of aggregate queries did.
+      const dayKey = `${row.window}:${new Date(row.day).getTime()}`;
+      const list = perDay.get(dayKey) || [];
+      list.push(row);
+      perDay.set(dayKey, list);
+    }
+    const recent = [];
+    const prior = [];
+    for (const sourceRows of perDay.values()) {
+      const bestPriority = Math.min(...sourceRows.map((row) => priorityFor(row.source)));
+      // Deliberately retain all same-priority sources, matching
+      // dailyAggregatePreferSource's SQL join semantics exactly.
+      const selected = sourceRows.filter((row) => priorityFor(row.source) === bestPriority);
+      for (const row of selected) {
+        const target = row.window === 'recent' ? recent : prior;
+        target.push(row[`${request.agg}_value`]);
+      }
+    }
+    return {
+      domain: request.domain,
+      metric: request.metric,
+      recent: avg(recent),
+      prior: avg(prior),
+    };
+  });
+}
+
 // listMetricKeys() has no WHERE clause — a full-table DISTINCT scan that gets
 // slower forever as `metrics` grows, unlike every other query in this file
 // (all bounded by a `ts >=` range on the indexed column). What it returns —
@@ -250,4 +356,4 @@ async function listMetricKeys() {
   return rows;
 }
 
-module.exports = { insertMetrics, getSeries, latest, dailyAggregate, dailyAggregatePreferSource, listMetricKeys };
+module.exports = { insertMetrics, getSeries, latest, dailyAggregate, dailyAggregatePreferSource, recentMetricTrends, listMetricKeys };

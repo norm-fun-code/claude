@@ -65,6 +65,39 @@ function contentDayFor(target, tz) {
   return target?.content?.localDate || new Date(target.generated_at).toLocaleDateString('en-CA', { timeZone: tz });
 }
 
+/**
+ * Respond with a warm narration immediately, or a compact status for a cold
+ * one. The renderer owns the exact same cached job on every poll, so this
+ * never waits for provider work inside a long-held HTTP request. `202` means
+ * work is genuinely in progress; `503` means the last attempt failed and a
+ * later tap/poll is a real retry, not a misleading permanent "Unavailable".
+ */
+async function sendAudioStatus(res, kind, content, day, { asynchronous = false } = {}) {
+  // Older installed clients expect a single long-poll response. Keep that
+  // contract for them while the current mobile client opts into the truthful
+  // status flow via ?narrationStatus=1 below. This is compatibility, not a
+  // second architecture: both paths share the exact cache/job function.
+  if (!asynchronous) {
+    try {
+      const out = await briefAudio.audioFor(kind, content, day, { source: 'foreground' });
+      if (!out) return res.status(404).json({ error: 'nothing_to_narrate', message: 'This brief has nothing to read aloud.' });
+      return res.json({ audio: out.audio.toString('base64'), mime: out.mime });
+    } catch (ttsErr) {
+      console.error(`[${kind} audio] TTS failed:`, ttsErr.message);
+      return res.status(502).json({ error: 'tts_failed', message: 'Narration is temporarily unavailable.' });
+    }
+  }
+  const out = await briefAudio.requestAudio(kind, content, day, { source: 'foreground' });
+  if (out.status === 'ready') return res.json({ audio: out.audio.toString('base64'), mime: out.mime });
+  if (out.status === 'empty') return res.status(404).json({ error: 'nothing_to_narrate', message: 'This brief has nothing to read aloud.' });
+  if (out.status === 'failed') {
+    return res.status(503).json({
+      error: 'tts_failed', message: 'Narration is temporarily unavailable.', retryAfterMs: out.retryAfterMs,
+    });
+  }
+  return res.status(202).json({ status: 'preparing', retryAfterMs: out.retryAfterMs });
+}
+
 function createAudioRouter() {
   const router = express.Router();
 
@@ -99,19 +132,7 @@ function createAudioRouter() {
           : { error: 'no_brief', message: 'No briefing to narrate yet.' }
       );
     }
-    let out;
-    try {
-      out = await briefAudio.audioFor('brief', target.content, contentDayFor(target, tz), { source: 'foreground' });
-    } catch (ttsErr) {
-      console.error('[briefing audio] TTS failed:', ttsErr.message);
-      return res.status(502).json({ error: 'tts_failed', message: 'Narration is temporarily unavailable.' });
-    }
-    if (!out) return res.status(404).json({ error: 'nothing_to_narrate', message: 'This brief has nothing to read aloud.' });
-    // Return base64 JSON (not a raw stream) so the client fetches it with normal
-    // auth headers and plays from a local file — the same path the voice reply
-    // uses and proven to work. Streaming the URL through expo-av dropped the
-    // Authorization header on iOS and 401'd.
-    res.json({ audio: out.audio.toString('base64'), mime: out.mime });
+    return sendAudioStatus(res, 'brief', target.content, contentDayFor(target, tz), { asynchronous: req.query.narrationStatus === '1' });
   }));
 
   // Spoken narration of tonight's evening wind-down brief — same cache-per-content
@@ -133,15 +154,7 @@ function createAudioRouter() {
     const latest = await briefingsStore.latestBriefing('evening');
     const isToday = latest?.content?.day === day;
     if (!latest?.content || !isToday) return res.status(404).json({ error: 'no_brief', message: 'No wind-down brief to narrate yet.' });
-    let out;
-    try {
-      out = await briefAudio.audioFor('evening', latest.content, day, { source: 'foreground' }); // isToday above already guarantees latest.content.day === day
-    } catch (ttsErr) {
-      console.error('[evening audio] TTS failed:', ttsErr.message);
-      return res.status(502).json({ error: 'tts_failed', message: 'Narration is temporarily unavailable.' });
-    }
-    if (!out) return res.status(404).json({ error: 'nothing_to_narrate', message: 'This brief has nothing to read aloud.' });
-    res.json({ audio: out.audio.toString('base64'), mime: out.mime });
+    return sendAudioStatus(res, 'evening', latest.content, day, { asynchronous: req.query.narrationStatus === '1' }); // isToday above already guarantees latest.content.day === day
   }));
 
   // Spoken narration of today's Wisdom tab (quote, selected Notion passage,
@@ -162,15 +175,7 @@ function createAudioRouter() {
           : { error: 'no_brief', message: 'No briefing to narrate yet.' }
       );
     }
-    let out;
-    try {
-      out = await briefAudio.audioFor('wisdom', target.content, contentDayFor(target, tz), { source: 'foreground' });
-    } catch (ttsErr) {
-      console.error('[wisdom audio] TTS failed:', ttsErr.message);
-      return res.status(502).json({ error: 'tts_failed', message: 'Narration is temporarily unavailable.' });
-    }
-    if (!out) return res.status(404).json({ error: 'nothing_to_narrate', message: "Today's Wisdom has nothing to read aloud yet." });
-    res.json({ audio: out.audio.toString('base64'), mime: out.mime });
+    return sendAudioStatus(res, 'wisdom', target.content, contentDayFor(target, tz), { asynchronous: req.query.narrationStatus === '1' });
   }));
 
   return router;

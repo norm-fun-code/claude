@@ -37,6 +37,12 @@ function scriptFor(kind, content) {
 // covers the SAME cache key (same kind+day+content) — see the gate below for
 // the cross-key (e.g. brief vs. wisdom) case.
 const inFlight = new Map(); // cacheKey -> Promise<{audio,mime}>
+// A short failed-job cooldown prevents a polling client from starting a new
+// expensive TTS call every second while a provider is demonstrably down. It
+// is deliberately process-local and brief: this is status UX, not a second
+// durable cache; the next user tap is always a genuine retry after cooldown.
+const recentFailures = new Map(); // cacheKey -> { retryAt: number }
+const FAILURE_COOLDOWN_MS = Number(process.env.TTS_FAILURE_COOLDOWN_MS) || 10_000;
 
 // ── Process-wide TTS serialization gate ─────────────────────────────────
 // At most ONE call into voiceService.synthesize() may be in flight at any
@@ -79,6 +85,52 @@ function releaseGate() {
   else gateLocked = false;
 }
 
+function audioDescriptor(kind, content, day) {
+  const script = scriptFor(kind, content);
+  if (!script) return null;
+  // Key on provider + model + voice too, not just the script — changing
+  // NORMOS_TTS_PROVIDER, the configured model, or the voice must regenerate,
+  // never silently serve audio narrated by a different provider/voice than
+  // what's currently configured.
+  const ttsConfig = ttsProvider.describeConfig();
+  const hash = crypto.createHash('sha1')
+    .update(`${ttsConfig.primary}\n${ttsConfig.model}\n${ttsConfig.voice}\n${script}`)
+    .digest('hex').slice(0, 10);
+  return { script, ttsConfig, cacheKey: `${kind}:${day}:${hash}` };
+}
+
+async function cachedAudioFor(kind, content, day) {
+  const descriptor = audioDescriptor(kind, content, day);
+  if (!descriptor) return { status: 'empty' };
+  const { rows } = await db.query(`SELECT audio, mime FROM tts_audio WHERE cache_key = $1`, [descriptor.cacheKey]);
+  if (rows[0]) return { status: 'ready', audio: rows[0].audio, mime: rows[0].mime };
+  const failure = recentFailures.get(descriptor.cacheKey);
+  if (failure && failure.retryAt > Date.now()) {
+    return { status: 'failed', retryAfterMs: Math.max(0, failure.retryAt - Date.now()) };
+  }
+  if (failure) recentFailures.delete(descriptor.cacheKey);
+  return { status: 'missing', descriptor };
+}
+
+/**
+ * Return immediately with a factual narration state. A cold cache is queued
+ * in the background and represented as `preparing`, rather than holding a
+ * mobile fetch open for a full provider deadline and then pretending a
+ * timeout is permanent. The caller polls this same function; no duplicate
+ * synthesis starts because audioFor() shares the per-cache-key in-flight job.
+ */
+async function requestAudio(kind, content, day, { source = 'foreground' } = {}) {
+  const cached = await cachedAudioFor(kind, content, day);
+  if (cached.status === 'ready' || cached.status === 'empty' || cached.status === 'failed') return cached;
+  // Deliberately consume the rejection here: the HTTP request already got an
+  // honest 202; the next poll sees either a cache hit or the short retryable
+  // failure state. No unhandled Promise may take down the process.
+  audioFor(kind, content, day, { source }).catch((err) => {
+    console.error(`[brief audio] queued synthesis failed kind=${kind} day=${day}: ${err.message}`);
+  });
+  return { status: 'preparing', retryAfterMs: 1_250 };
+}
+
 /** Generate (or reuse) a brief's narration audio; returns { audio, mime } or null.
  * @param {object} [opts]
  * @param {'foreground'|'prewarm'} [opts.source] — 'foreground' (default) is a
@@ -88,23 +140,9 @@ function releaseGate() {
  */
 async function audioFor(kind, content, day, { source = 'foreground' } = {}) {
   const start = Date.now();
-  const script = scriptFor(kind, content);
-  if (!script) return null;
-  // Key on provider + model + voice too, not just the script — changing
-  // NORMOS_TTS_PROVIDER, the configured model, or the voice must regenerate,
-  // never silently serve audio narrated by a different provider/voice than
-  // what's currently configured (audit fix: "include provider/model/voice/
-  // script hash in cache identity so configuration changes cannot serve
-  // incompatible stale audio"). ttsConfig reflects the CONFIGURED primary —
-  // if the primary fails and a fallback provider actually serves this
-  // request, the audio is still cached under the configured-primary's key
-  // (consistent with how this cache already treats Gemini's own two
-  // candidate models as interchangeable under one key).
-  const ttsConfig = ttsProvider.describeConfig();
-  const hash = crypto.createHash('sha1')
-    .update(`${ttsConfig.primary}\n${ttsConfig.model}\n${ttsConfig.voice}\n${script}`)
-    .digest('hex').slice(0, 10);
-  const cacheKey = `${kind}:${day}:${hash}`;
+  const descriptor = audioDescriptor(kind, content, day);
+  if (!descriptor) return null;
+  const { script, ttsConfig, cacheKey } = descriptor;
   const { rows } = await db.query(`SELECT audio, mime FROM tts_audio WHERE cache_key = $1`, [cacheKey]);
   if (rows[0]) {
     console.log(`[brief audio] cache HIT kind=${kind} day=${day} source=${source} elapsedMs=${Date.now() - start}`);
@@ -138,11 +176,13 @@ async function audioFor(kind, content, day, { source = 'foreground' } = {}) {
          ON CONFLICT (cache_key) DO NOTHING`,
         [cacheKey, audio, mime]
       );
+      recentFailures.delete(cacheKey);
       // Prune stale narrations so the table never grows past a handful of rows.
       db.query(`DELETE FROM tts_audio WHERE created_at < now() - interval '7 days'`).catch(() => {});
       console.log(`[brief audio] synthesis SUCCESS kind=${kind} day=${day} source=${source} job=${jobId} provider=${provider || 'unknown'} model=${model || 'unknown'} queueWaitMs=${queueWaitMs} elapsedMs=${Date.now() - start}`);
       return { audio, mime };
     } catch (err) {
+      recentFailures.set(cacheKey, { retryAt: Date.now() + FAILURE_COOLDOWN_MS });
       console.error(`[brief audio] synthesis FAILED kind=${kind} day=${day} source=${source} job=${jobId} queueWaitMs=${queueWaitMs} elapsedMs=${Date.now() - start}: ${err.message}`);
       throw err;
     } finally {
@@ -171,4 +211,7 @@ async function prewarmDaily(content) {
   await prewarm('brief', content, day);
 }
 
-module.exports = { audioFor, prewarm, prewarmDaily };
+module.exports = {
+  audioFor, cachedAudioFor, requestAudio, prewarm, prewarmDaily,
+  FAILURE_COOLDOWN_MS,
+};

@@ -54,14 +54,14 @@ function createChatRouter() {
     const executedList = actionResults.filter((r) => r.executed).map((r) => r.result);
     const executed = executedList.find(Boolean) ?? null;
 
-    // Append this turn so the next question remembers it. Pre-resolve the active
-    // thread once (the two saves run concurrently, so this avoids both racing to
-    // create it). Store the question embedding for long-term semantic recall.
-    const convId = await chatStore.ensureActiveConversation();
-    chatStore.saveMessage({ role: 'user', content: question, embedding: result.questionEmbedding ?? null, conversationId: convId })
-      .catch((e) => console.error('[chat memory] save user failed:', e.message));
-    chatStore.saveMessage({ role: 'assistant', content: result.answer, sources: result.sources ?? [], conversationId: convId })
-      .catch((e) => console.error('[chat memory] save assistant failed:', e.message));
+    // A turn is only successful once History has both sides. saveTurn() uses a
+    // transaction rather than the old fire-and-forget pair, so the next Ask
+    // reliably has the context this response just created.
+    const persisted = await chatStore.saveTurn({
+      question, answer: result.answer, embedding: result.questionEmbedding ?? null,
+      sources: result.sources ?? [],
+    });
+    const convId = persisted.conversationId;
 
     // The structured AskResponse contract (intent, evidence w/ source+
     // confidence, uncertainties, action previews) — a pure projection of what

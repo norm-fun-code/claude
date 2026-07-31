@@ -300,11 +300,10 @@ async function deepAsk({ question } = {}, sessionCtx = {}) {
     executedList.push(await executeAction(a, { now: sessionCtx.now }));
   }
 
-  const convId = await chatStore.ensureActiveConversation();
-  chatStore.saveMessage({ role: 'user', content: question, embedding: result.questionEmbedding ?? null, conversationId: convId })
-    .catch((e) => console.error('[realtime deep_ask] save user failed:', e.message));
-  chatStore.saveMessage({ role: 'assistant', content: result.answer, sources: result.sources ?? [], conversationId: convId })
-    .catch((e) => console.error('[realtime deep_ask] save assistant failed:', e.message));
+  await chatStore.saveTurn({
+    question, answer: result.answer, embedding: result.questionEmbedding ?? null,
+    sources: result.sources ?? [],
+  });
 
   return {
     answer: result.answer,

@@ -25,8 +25,9 @@ import * as Haptics from 'expo-haptics';
 import { authHeaders, fetchWithTimeout } from '../config';
 import { voiceAvailable, playBase64, claimOwnership, releaseIfOwner } from '../lib/voice';
 import { createRequestGuard, classifyFirstAttemptFailure } from '../lib/playbackOwnership';
+import { isNarrationBusy, type NarrationState } from '../lib/narrationStatus';
 
-export type BriefAudioState = 'idle' | 'loading' | 'preparing' | 'playing' | 'error';
+export type BriefAudioState = NarrationState;
 // Distinguishes WHY toggle() landed in 'error', so the UI can tell "there's
 // nothing here to narrate" (the displayed content — a stale cached snapshot,
 // or no brief at all yet — genuinely doesn't exist server-side) apart from
@@ -57,6 +58,8 @@ const DEFAULT_TIMEOUT_MS = 55000;
 // again, while still keeping the total worst-case wait bounded (well short
 // of "several minutes").
 const POLL_TIMEOUT_MS = 20000;
+const PREPARING_POLL_LIMIT = 36; // 45 seconds at the server-suggested ~1.25s interval
+const DEFAULT_RETRY_AFTER_MS = 1250;
 
 /**
  * @param url the brief-audio endpoint to fetch (BRIEFING_AUDIO_URL,
@@ -119,7 +122,16 @@ export function useBriefAudio(url: string, timeoutMs = DEFAULT_TIMEOUT_MS, snaps
       safeSetState('idle');
       return;
     }
-    if (loadingRef.current) return; // already in flight — a second tap is a no-op, not a duplicate request
+    if (loadingRef.current) {
+      // A second tap while a cold narration is being assembled is an explicit
+      // cancellation, not a dead button. Invalidate synchronously so a late
+      // poll can never begin playback after the person changed their mind.
+      abortRef.current?.abort();
+      guard.begin();
+      loadingRef.current = false;
+      safeSetState('idle');
+      return;
+    }
     loadingRef.current = true;
     setErrorKind(null); // a fresh attempt starts clean — a prior error's kind must not linger into this one
 
@@ -131,18 +143,25 @@ export function useBriefAudio(url: string, timeoutMs = DEFAULT_TIMEOUT_MS, snaps
 
     Haptics.selectionAsync();
     safeSetState('loading');
-    const requestUrl = snapshotId ? `${url}${url.includes('?') ? '&' : '?'}snapshotId=${encodeURIComponent(snapshotId)}` : url;
+    const queryParts = ['narrationStatus=1'];
+    if (snapshotId) queryParts.push(`snapshotId=${encodeURIComponent(snapshotId)}`);
+    const requestUrl = `${url}${url.includes('?') ? '&' : '?'}${queryParts.join('&')}`;
 
     // One fetch-then-play attempt, bounded by `attemptTimeoutMs`. Returns
     // 'ok' on success (or a benign no-op) and 'stale' when this request has
     // been superseded/unmounted mid-flight; throws for a genuine failure
     // (bad status, no audio, playback failure) OR a client-side timeout
     // (AbortError) — the caller distinguishes which.
-    const attempt = async (attemptTimeoutMs: number): Promise<'ok' | 'stale'> => {
+    const attempt = async (attemptTimeoutMs: number): Promise<'ok' | 'stale' | 'preparing'> => {
       const controller = new AbortController();
       abortRef.current = controller;
       const res = await fetchWithTimeout(requestUrl, { headers: authHeaders(), signal: controller.signal }, attemptTimeoutMs);
       if (isStale()) return 'stale';
+      if (res.status === 202) {
+        const body = await res.json().catch(() => ({}));
+        if (body?.status === 'preparing') return 'preparing';
+        throw new Error('invalid narration preparation response');
+      }
       if (!res.ok) {
         // Read the machine-readable {error, message} body (see
         // routes/audio.js) so the outer catch can classify WHY this failed —
@@ -181,10 +200,37 @@ export function useBriefAudio(url: string, timeoutMs = DEFAULT_TIMEOUT_MS, snaps
       return 'ok';
     };
 
+    const waitForPoll = (ms: number) => new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, ms);
+      const signal = abortRef.current?.signal;
+      if (!signal) return;
+      const abort = () => {
+        clearTimeout(timer);
+        const err = new Error('Narration preparation cancelled');
+        err.name = 'AbortError';
+        reject(err);
+      };
+      if (signal.aborted) abort();
+      else signal.addEventListener('abort', abort, { once: true });
+    });
+
     try {
       try {
-        const result = await attempt(timeoutMs);
+        let result = await attempt(timeoutMs);
         if (result === 'stale') return;
+        // The backend immediately acknowledges a cold cache with 202 and
+        // continues synthesis in its shared job. Poll a factual status rather
+        // than holding one 55s request open. This keeps the control honest:
+        // Preparing while work exists, Try again after an actual failure.
+        let polls = 0;
+        while (result === 'preparing') {
+          safeSetState('preparing');
+          if (polls++ >= PREPARING_POLL_LIMIT) throw new Error('Narration preparation timed out');
+          await waitForPoll(DEFAULT_RETRY_AFTER_MS);
+          if (isStale()) return;
+          result = await attempt(POLL_TIMEOUT_MS);
+          if (result === 'stale') return;
+        }
       } catch (err: any) {
         const outcome = classifyFirstAttemptFailure(err?.name, isStale());
         if (outcome === 'stale') return;
@@ -203,8 +249,17 @@ export function useBriefAudio(url: string, timeoutMs = DEFAULT_TIMEOUT_MS, snaps
         // (including its own timeout), that propagates to the outer catch
         // below and becomes a genuine terminal error — never a silent loop.
         safeSetState('preparing');
-        const result = await attempt(POLL_TIMEOUT_MS);
+        let result = await attempt(POLL_TIMEOUT_MS);
         if (result === 'stale') return;
+        let polls = 0;
+        while (result === 'preparing') {
+          safeSetState('preparing');
+          if (polls++ >= PREPARING_POLL_LIMIT) throw new Error('Narration preparation timed out');
+          await waitForPoll(DEFAULT_RETRY_AFTER_MS);
+          if (isStale()) return;
+          result = await attempt(POLL_TIMEOUT_MS);
+          if (result === 'stale') return;
+        }
       }
     } catch (err: any) {
       if (isStale()) return;
@@ -233,5 +288,5 @@ export function useBriefAudio(url: string, timeoutMs = DEFAULT_TIMEOUT_MS, snaps
     }
   }
 
-  return { state, errorKind, toggle, voiceAvailable };
+  return { state, errorKind, toggle, voiceAvailable, busy: isNarrationBusy(state) };
 }
