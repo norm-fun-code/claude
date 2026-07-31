@@ -47,14 +47,15 @@ test('migrateWithLock(): two callers racing for the SAME lock never run migratio
 
 test('migrateWithLock(): a migration failure still releases the advisory lock (never leaks a held lock on error)', async () => {
   const fs = require('fs');
+  const os = require('os');
   const path = require('path');
-  const migrationsDir = path.join(__dirname, '..', '..', 'src', 'db', 'migrations');
+  const migrationsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'normos-broken-migration-'));
   const brokenFile = path.join(migrationsDir, '999_test_broken_migration_lock_release.sql');
   fs.writeFileSync(brokenFile, 'THIS IS NOT VALID SQL;;;');
   try {
-    await assert.rejects(() => migrateWithLock());
+    await assert.rejects(() => migrateWithLock({ migrationsDir }));
   } finally {
-    fs.unlinkSync(brokenFile);
+    fs.rmSync(migrationsDir, { recursive: true, force: true });
     // Also clean up any partial schema_migrations tracking row, if the
     // (rolled-back) transaction somehow left one — it shouldn't, since
     // migrate.js wraps each migration in withTransaction, but this keeps

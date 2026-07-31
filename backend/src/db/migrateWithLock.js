@@ -24,7 +24,7 @@ const MIGRATION_LOCK_ID = 727002;
  * wedge this either. Throws (never swallows) on a migration failure so the
  * caller can refuse to start serving traffic.
  */
-async function migrateWithLock({ lockTimeoutMs = 60000 } = {}) {
+async function migrateWithLock({ lockTimeoutMs = 60000, migrationsDir } = {}) {
   const lockClient = await pool.connect();
   try {
     const timeoutMs = Math.max(1, Math.floor(Number(lockTimeoutMs) || 60000));
@@ -33,7 +33,7 @@ async function migrateWithLock({ lockTimeoutMs = 60000 } = {}) {
     await lockClient.query(`SET lock_timeout = '${timeoutMs}ms'`);
     await lockClient.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_ID]);
     try {
-      await runMigrations();
+      await runMigrations({ migrationsDir });
     } finally {
       await lockClient.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_ID]).catch((err) => {
         console.error('[migrateWithLock] failed to release the migration advisory lock (connection is being closed regardless):', err.message);

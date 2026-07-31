@@ -8,12 +8,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
-const MIGRATIONS_DIR = path.join(REPO_ROOT, 'src', 'db', 'migrations');
-const BROKEN_MIGRATION = path.join(MIGRATIONS_DIR, '999_test_boot_never_listens.sql');
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -56,16 +55,18 @@ function runServer(port, extraEnv = {}) {
 }
 
 test('node server.js: a migration failure exits nonzero and NEVER starts listening on the port', async () => {
-  fs.writeFileSync(BROKEN_MIGRATION, 'THIS IS NOT VALID SQL;;;');
+  const migrationsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'normos-boot-migration-'));
+  const brokenMigration = path.join(migrationsDir, '999_test_boot_never_listens.sql');
+  fs.writeFileSync(brokenMigration, 'THIS IS NOT VALID SQL;;;');
   const port = await freePort();
   try {
-    const result = await runServer(port);
+    const result = await runServer(port, { NORMOS_MIGRATIONS_DIR: migrationsDir });
     assert.equal(result.timedOut, false, 'the process must exit on its own, not keep running (which would mean it started listening)');
     assert.equal(result.code, 1, `expected exit code 1, got ${result.code}. stderr:\n${result.stderr}`);
     assert.doesNotMatch(result.stdout, /NormOS backend running/, 'the "server is up" log line must never print on a failed migration');
     assert.match(result.stderr, /FATAL.*migration failed/i);
   } finally {
-    fs.unlinkSync(BROKEN_MIGRATION);
+    fs.rmSync(migrationsDir, { recursive: true, force: true });
     const { pool } = require('../../src/db');
     await pool.query(`DELETE FROM schema_migrations WHERE name = '999_test_boot_never_listens.sql'`);
     await pool.end();

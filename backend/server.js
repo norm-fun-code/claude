@@ -49,7 +49,9 @@ const app = createApp({ bootTime: BOOT_TIME, port: PORT });
  * half-migrated) schema.
  */
 async function boot() {
-  await migrateWithLock();
+  // The directory override is a test seam for boot-failure coverage. Normal
+  // deploys leave it unset and always use the checked-in migrations directory.
+  await migrateWithLock({ migrationsDir: process.env.NORMOS_MIGRATIONS_DIR || undefined });
 
   const server = app.listen(PORT, () => {
     console.log(`NormOS backend running on http://localhost:${PORT}`);

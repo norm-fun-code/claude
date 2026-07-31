@@ -267,7 +267,7 @@ async function recentMetricTrends(requests, { from, splitAt, to = null, tz = pro
      )
      SELECT date_trunc('day', m.ts AT TIME ZONE $6) AS day,
             m.domain, m.metric, m.source,
-            CASE WHEN m.ts >= $4 THEN 'recent' ELSE 'prior' END AS window,
+            CASE WHEN m.ts >= $4 THEN 'recent' ELSE 'prior' END AS period_bucket,
             avg(m.value) AS avg_value,
             min(m.value) AS min_value,
             max(m.value) AS max_value,
@@ -276,7 +276,7 @@ async function recentMetricTrends(requests, { from, splitAt, to = null, tz = pro
       JOIN requested r ON r.domain = m.domain AND r.metric = m.metric
       WHERE m.ts >= $3
         AND ($5::timestamptz IS NULL OR m.ts <= $5)
-      GROUP BY day, m.domain, m.metric, m.source, window
+      GROUP BY day, m.domain, m.metric, m.source, period_bucket
       ORDER BY day ASC`,
     [clean.map((r) => r.domain), clean.map((r) => r.metric), from, splitAt, to, tz]
   );
@@ -305,7 +305,7 @@ async function recentMetricTrends(requests, { from, splitAt, to = null, tz = pro
       if (request.sources && !request.sources.includes(row.source)) continue;
       // The boundary can fall mid-local-day. Keep the two request windows
       // separate here, exactly as the former pair of aggregate queries did.
-      const dayKey = `${row.window}:${new Date(row.day).getTime()}`;
+      const dayKey = `${row.period_bucket}:${new Date(row.day).getTime()}`;
       const list = perDay.get(dayKey) || [];
       list.push(row);
       perDay.set(dayKey, list);
@@ -318,7 +318,7 @@ async function recentMetricTrends(requests, { from, splitAt, to = null, tz = pro
       // dailyAggregatePreferSource's SQL join semantics exactly.
       const selected = sourceRows.filter((row) => priorityFor(row.source) === bestPriority);
       for (const row of selected) {
-        const target = row.window === 'recent' ? recent : prior;
+        const target = row.period_bucket === 'recent' ? recent : prior;
         target.push(row[`${request.agg}_value`]);
       }
     }

@@ -23,19 +23,19 @@ async function appliedSet() {
   return new Set(rows.map((r) => r.name));
 }
 
-async function runMigrations() {
+async function runMigrations({ migrationsDir = MIGRATIONS_DIR } = {}) {
   await ensureTable();
   const applied = await appliedSet();
 
   const files = fs
-    .readdirSync(MIGRATIONS_DIR)
+    .readdirSync(migrationsDir)
     .filter((f) => f.endsWith('.sql'))
     .sort();
 
   let count = 0;
   for (const file of files) {
     if (applied.has(file)) continue;
-    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8');
+    const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
     process.stdout.write(`Applying ${file} ... `);
     await withTransaction(async (client) => {
       await client.query(sql);
