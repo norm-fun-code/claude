@@ -338,9 +338,9 @@ function trainingLoad(seriesByKey, { acuteDays = 7, chronicDays = 28, minChronic
   // acute:chronic sweet-spot model is a useful heuristic, but the specific 1.5
   // cutoff has been substantially critiqued. Frame it as a load spike to manage,
   // not a clinical risk score.
-  if (acwr > 1.5) { band = 'high'; note = 'Load has jumped sharply above your recent norm. Big week-over-week spikes tend to outpace tissue adaptation, so favor an easier day or two before loading up again.'; }
-  else if (acwr < 0.8) { band = 'low'; note = 'Training load has dropped below your norm — fine for recovery, but fitness may erode if sustained.'; }
-  else { band = 'optimal'; note = 'Training load is in the productive sweet spot relative to your recent norm.'; }
+  if (acwr > 1.5) { band = 'high'; note = 'Load has jumped sharply above your recent norm. That can be harder to absorb than a steady build; consider an easier day or two if your recovery or how you feel also points that way.'; }
+  else if (acwr < 0.8) { band = 'low'; note = 'Training load is below your recent norm. That may be intentional recovery or lower activity; no change is needed if it is planned.'; }
+  else { band = 'optimal'; note = 'Training load is close to your recent range.'; }
 
   return {
     acwr: Math.round(acwr * 100) / 100,
@@ -357,15 +357,12 @@ function trainingLoad(seriesByKey, { acuteDays = 7, chronicDays = 28, minChronic
 // ---------------------------------------------------------------------------
 
 /**
- * Multi-signal under-recovery (overreaching) synthesis — the gestalt a coach
- * actually watches, which no single card captures. Individual findings flag a low
- * recovery score, a load spike, or a sleep deficit in ISOLATION; the meaningful
- * pattern is when they stack. The strongest single marker is parasympathetic
- * withdrawal — HRV falling AND resting HR rising together — and when that sits on
- * top of a training-load spike and a sleep deficit, it's early non-functional
- * overreaching: the moment to deload before it turns into injury, illness, or
- * burnout. Fires only when ≥2 signals point the same way. Returns one finding or
- * null. `load` is the already-computed trainingLoad() result (may be null).
+ * Multi-signal recovery-change synthesis. Individual findings flag a low recovery
+ * score, a load spike, or a sleep deficit in isolation; this one says when two or
+ * more inputs changed together. It intentionally does not diagnose overreaching,
+ * illness, or a mechanism: these are observational trends, not a clinical test.
+ * Fires only when ≥2 signals point the same way. Returns one finding or null.
+ * `load` is the already-computed trainingLoad() result (may be null).
  */
 function strainSynthesis(seriesByKey, { load = null } = {}) {
   const hrv = seriesByKey['health:hrv'];
@@ -375,12 +372,12 @@ function strainSynthesis(seriesByKey, { load = null } = {}) {
 
   const signals = [];
 
-  // 1. HRV declining week-over-week — parasympathetic withdrawal.
+  // 1. HRV declining week-over-week.
   const hrvT = stats.trendStats(hrv || [], 7);
   if (hrvT && hrvT.pctChange != null && hrvT.pctChange <= -0.06) {
     signals.push({ key: 'hrv', text: `HRV down ${Math.round(Math.abs(hrvT.pctChange) * 100)}% vs last week`, w: Math.min(1, Math.abs(hrvT.pctChange) / 0.2) });
   }
-  // 2. Resting HR rising week-over-week — sympathetic dominance / strain / illness.
+  // 2. Resting HR rising week-over-week.
   const rhrT = stats.trendStats(rhr || [], 7);
   if (rhrT && rhrT.pctChange != null && rhrT.pctChange >= 0.04) {
     signals.push({ key: 'rhr', text: `resting HR up ${Math.round(rhrT.pctChange * 100)}% vs last week`, w: Math.min(1, rhrT.pctChange / 0.12) });
@@ -402,21 +399,24 @@ function strainSynthesis(seriesByKey, { load = null } = {}) {
 
   if (signals.length < 2) return null;
 
-  // HRV down + RHR up together is the strongest single indicator — call it out.
+  // HRV down + RHR up gives a more coherent recovery-change observation than
+  // either metric alone, but it still does not identify a cause.
   const autonomicPair = signals.some((s) => s.key === 'hrv') && signals.some((s) => s.key === 'rhr');
   const severity = Math.min(1, (signals.length / 4) * 0.6 + (autonomicPair ? 0.3 : 0) + Math.max(...signals.map((s) => s.w)) * 0.1);
   const lead = autonomicPair
-    ? 'HRV is falling while resting HR climbs — the classic parasympathetic-withdrawal signature of accumulating fatigue.'
-    : 'Several recovery signals are trending the wrong way at once.';
+    ? 'HRV is trending down while resting HR is trending up. Together, that is a change from your recent baseline — not a diagnosis.'
+    : 'Several recovery inputs have moved in a less favorable direction. This is a change from your recent baseline — not a diagnosis.';
 
   return {
     type: 'strain',
     domains: ['health'],
-    title: `Under-recovery building — ${signals.length} signals trending down`,
-    detail: `${lead} Right now: ${signals.map((s) => s.text).join(', ')}. This is what early overreaching looks like. Take 1–2 deliberately easy days (Zone 2 or mobility, not intensity), protect sleep, and let HRV climb back to baseline before loading up again.`,
-    confidence: Math.min(0.9, 0.55 + 0.1 * signals.length),
+    title: `Recovery signals worth watching — ${signals.length} changes`,
+    detail: `${lead} Right now: ${signals.map((s) => s.text).join(', ')}. Keep today’s plan flexible; if you feel off, choosing easier work and protecting sleep is reasonable.`,
+    confidence: Math.min(0.75, 0.45 + 0.08 * signals.length),
     evidence: {
       auto: true, kind: 'strain', signals: signals.map((s) => s.key),
+      evidenceTier: 'direct_observation',
+      uncertainty: 'The combined trend does not identify a cause or diagnose overreaching.',
       severity: Math.round(severity * 100) / 100,
       hrvPct: hrvT?.pctChange != null ? Math.round(hrvT.pctChange * 1000) / 1000 : null,
       rhrPct: rhrT?.pctChange != null ? Math.round(rhrT.pctChange * 1000) / 1000 : null,

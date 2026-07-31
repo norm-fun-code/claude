@@ -49,14 +49,25 @@ function baseEvent(overrides) {
  *  `cfg` is the metric's WATCHED config. */
 function fromHealthAnomaly({ cfg, a, asOf, title, body }) {
   // |z| of 2.2 (the existing THRESHOLD) maps to magnitude ~0.5; scale so a
-  // truly extreme reading (|z|~4.4, the CRITICAL_ALLOWLIST's practical range)
-  // approaches 1.0, without a hard ceiling that clips still-meaningful spikes.
+  // truly extreme reading (|z|~4.4) approaches 1.0, without a hard ceiling
+  // that clips still-meaningful spikes.
   const magnitude = Math.min(1, Math.abs(a.z) / 4.4);
+  // This event proves a current metric is unusual relative to this person's
+  // baseline; it does not establish why. More baseline nights make that
+  // comparison sturdier, but it remains an observation rather than a clinical
+  // assessment. An extreme anomaly can still be timely enough for a normal
+  // push, but never receives the quiet-hours-bypassing "critical" label.
+  const baselineN = Number(a.n) || 0;
+  const confidence = baselineN >= 24 ? 0.75 : baselineN >= 16 ? 0.7 : 0.6;
   return baseEvent({
     source: 'watch_health', domain: 'health', type: 'anomaly', subject: cfg.metric,
     title, body, observedAt: asOf,
-    signal: { magnitude, confidence: 0.85, novelty: null },
-    critical: Math.abs(a.z) >= 3.5,
+    signal: { magnitude, confidence, novelty: null },
+    // A non-critical alert must clear the normal interrupt bar. Reserve a
+    // higher urgency for a genuinely extreme personal-baseline departure;
+    // that still does not convert the event into a diagnosis or an emergency.
+    urgencyHint: magnitude >= 0.85 ? 0.9 : null,
+    critical: false,
   });
 }
 

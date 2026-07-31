@@ -29,32 +29,35 @@ const { localDayBoundsUtc } = require('../util/date');
 const NIGHT = ['eight_sleep', 'eight_sleep_baseline'];
 const ES = ['eight_sleep'];
 
-// The metrics worth interrupting a day for, each with the BAD direction (the one
-// that signals strain/illness/under-recovery) and a one-line "what to do".
+// The metrics worth surfacing when they are sharply unusual for this person.
+// A one-night device outlier is a direct observation, not a diagnosis and not
+// enough evidence to name its cause. Keep the wording to the observation and a
+// conditional next step; recoveryPresentation() remains the authority for any
+// broader training guidance.
 const WATCHED = [
   {
     metric: 'hrv', sources: NIGHT, bad: 'down',
     title: 'Your HRV dropped',
     label: 'HRV', unit: 'ms',
-    guidance: 'Your nervous system is strained — keep today easy and protect tonight’s sleep.',
+    guidance: 'One low reading does not explain why it changed. Check how you feel before changing today’s plan.',
   },
   {
     metric: 'resting_hr', sources: NIGHT, bad: 'up',
     title: 'Resting HR is up',
     label: 'Resting HR', unit: 'bpm',
-    guidance: 'Elevated resting HR can mean incomplete recovery or oncoming illness — ease off and hydrate.',
+    guidance: 'One elevated reading does not identify a cause. Treat it as something to watch alongside how you feel.',
   },
   {
     metric: 'sleep_score', sources: ES, bad: 'down',
     title: 'Rough night',
     label: 'Sleep score', unit: '',
-    guidance: 'Expect lower focus this afternoon — lighten the load and aim for an earlier bedtime tonight.',
+    guidance: 'A single low score does not predict your whole day. Give yourself some margin if lower energy shows up.',
   },
   {
     metric: 'respiratory_rate', sources: NIGHT, bad: 'up',
     title: 'Breathing rate elevated',
     label: 'Respiratory rate', unit: '/min', decimals: 1,
-    guidance: 'A raised overnight breathing rate is an early illness/strain signal — watch it and rest.',
+    guidance: 'One elevated reading does not identify a cause. Treat it as something to watch alongside how you feel.',
   },
 ];
 
@@ -78,6 +81,22 @@ function dayKey(d = new Date()) {
 function fmtValue(v, cfg) {
   if (cfg.decimals != null) return v.toFixed(cfg.decimals);
   return String(Math.round(v));
+}
+
+/**
+ * Render a baseline anomaly as a fact plus a deliberately calibrated next
+ * step. This pure formatter is kept here (next to the watched-metric config)
+ * so push, dry-run, and tests cannot drift into different certainty levels.
+ */
+function formatHealthAnomalyBody({ cfg, anomaly, context = '' }) {
+  const dir = anomaly.z < 0 ? 'below' : 'above';
+  const pctDiff = anomaly.baselineMean !== 0
+    ? Math.round(Math.abs((anomaly.latest - anomaly.baselineMean) / anomaly.baselineMean) * 100)
+    : null;
+  const valStr = `${fmtValue(anomaly.latest, cfg)}${cfg.unit}`;
+  const baseStr = `${fmtValue(anomaly.baselineMean, cfg)}${cfg.unit}`;
+  const pctClause = pctDiff != null ? `${pctDiff}% ${dir} ` : `${dir} `;
+  return `${cfg.label} is ${valStr} — ${pctClause}your 30-day norm (${baseStr}).${context} ${cfg.guidance}`;
 }
 
 /** Active life-context labels overlapping yesterday→now, e.g. "travel", "late night".
@@ -164,15 +183,8 @@ async function runWatch(opts = {}) {
   if (!best) return { generated: 0, sent: 0 };
 
   const { cfg, a } = best;
-  const dir = a.z < 0 ? 'below' : 'above';
-  const pctDiff = a.baselineMean !== 0
-    ? Math.round(Math.abs((a.latest - a.baselineMean) / a.baselineMean) * 100)
-    : null;
-  const valStr = `${fmtValue(a.latest, cfg)}${cfg.unit}`;
-  const baseStr = `${fmtValue(a.baselineMean, cfg)}${cfg.unit}`;
-  const pctClause = pctDiff != null ? `${pctDiff}% ${dir} ` : `${dir} `;
   const ctx = await contextNote();
-  const body = `${cfg.label} is ${valStr} — ${pctClause}your 30-day norm (${baseStr}).${ctx} ${cfg.guidance}`;
+  const body = formatHealthAnomalyBody({ cfg, anomaly: a, context: ctx });
 
   const event = require('./events').fromHealthAnomaly({ cfg, a, asOf, title: cfg.title, body });
   const { dispatchEvent } = require('../notify/dispatch');
@@ -223,7 +235,7 @@ async function watchWellbeing({ mood, energy, focus, asOf = new Date(), send = t
   };
 }
 
-module.exports = { runWatch, watchWellbeing, qualifies, WATCHED, THRESHOLD, LOW_CUTOFF };
+module.exports = { runWatch, watchWellbeing, qualifies, WATCHED, THRESHOLD, LOW_CUTOFF, formatHealthAnomalyBody };
 
 // CLI: `node src/intelligence/watch.js [--force] [--dry-run]`
 if (require.main === module) {

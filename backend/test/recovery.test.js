@@ -89,10 +89,13 @@ test('trainingLoad: spike flagged high, steady is optimal', () => {
   const load = r.trainingLoad({ 'health:active_energy': series(vals) });
   assert.equal(load.band, 'high');
   assert.ok(load.acwr > 1.5);
+  assert.match(load.note, /if your recovery or how you feel/i);
+  assert.doesNotMatch(load.note, /injury|tissue adaptation/i);
 
   const steadyVals = new Array(28).fill(300);
   const steady = r.trainingLoad({ 'health:active_energy': series(steadyVals) });
   assert.equal(steady.band, 'optimal');
+  assert.equal(steady.note, 'Training load is close to your recent range.');
 });
 
 test('sleep surplus: slept MORE than Eight Sleep need → surplus, not debt', () => {
@@ -139,14 +142,19 @@ test('computeHealthComposites: emits findings with evidence', () => {
   }
 });
 
-test('strainSynthesis: HRV down + RHR up together fires an autonomic-pair warning', () => {
+test('strainSynthesis: paired recovery changes remain observational, not an overreaching diagnosis', () => {
   const hrv = series(Array.from({ length: 14 }, (_, i) => 60 - i * 1.2)); // falling
   const rhr = series(Array.from({ length: 14 }, (_, i) => 50 + i * 0.6)); // rising
   const f = r.strainSynthesis({ 'health:hrv': hrv, 'health:resting_hr': rhr });
   assert.ok(f, 'expected a strain finding');
   assert.equal(f.type, 'strain');
   assert.deepEqual(f.evidence.signals.sort(), ['hrv', 'rhr']);
-  assert.match(f.detail, /parasympathetic|overreaching/i);
+  assert.match(f.title, /worth watching/i);
+  assert.match(f.detail, /not a diagnosis/i);
+  assert.doesNotMatch(f.detail, /parasympathetic|overreaching|let HRV climb/i);
+  assert.equal(f.evidence.evidenceTier, 'direct_observation');
+  assert.match(f.evidence.uncertainty, /does not identify a cause/i);
+  assert.ok(f.confidence < 0.7, 'two trends should not present as a high-confidence diagnosis');
   assert.ok(f.evidence.severity > 0 && f.evidence.severity <= 1);
 });
 

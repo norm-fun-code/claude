@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { qualifies, WATCHED, THRESHOLD } = require('../src/intelligence/watch');
+const { qualifies, WATCHED, THRESHOLD, formatHealthAnomalyBody } = require('../src/intelligence/watch');
 
 test('down-metric (HRV) fires only on a sharp DROP', () => {
   assert.equal(qualifies('down', -2.5), true);   // HRV cratered → ping
@@ -34,4 +34,16 @@ test('every watched metric declares a valid bad direction and guidance', () => {
     assert.ok(Array.isArray(cfg.sources) && cfg.sources.length, `${cfg.metric} has sources`);
   }
   assert.ok(THRESHOLD >= 2, 'interruption bar is at least 2 sigma');
+});
+
+test('health anomaly copy stays observational and does not turn one device reading into a diagnosis', () => {
+  const cfg = WATCHED.find((c) => c.metric === 'resting_hr');
+  const body = formatHealthAnomalyBody({
+    cfg,
+    anomaly: { latest: 62, baselineMean: 54, z: 3, n: 30 },
+    context: ' You logged: late night.',
+  });
+  assert.match(body, /62bpm.*15% above.*30-day norm \(54bpm\)/i);
+  assert.match(body, /does not identify a cause/i);
+  assert.doesNotMatch(body, /oncoming illness|nervous system|strained|ease off and hydrate/i);
 });
