@@ -267,7 +267,13 @@ async function recentMetricTrends(requests, { from, splitAt, to = null, tz = pro
      )
      SELECT date_trunc('day', m.ts AT TIME ZONE $6) AS day,
             m.domain, m.metric, m.source,
-            CASE WHEN m.ts >= $4 THEN 'recent' ELSE 'prior' END AS period_bucket,
+            -- Half-open windows: prior is [from, splitAt], recent is
+            -- (splitAt, to] — the instant AT splitAt belongs to the OLDER
+            -- window (it's the boundary "7 days ago" reading, not yet part
+            -- of "the last 7 days"). A >= here would double-count that one
+            -- row into 'recent', skewing its average toward 'prior' — see
+            -- test/integration/metrics-recent-trends.test.js.
+            CASE WHEN m.ts > $4 THEN 'recent' ELSE 'prior' END AS period_bucket,
             avg(m.value) AS avg_value,
             min(m.value) AS min_value,
             max(m.value) AS max_value,
