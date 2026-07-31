@@ -174,9 +174,10 @@ function parseExtractedStatements(parsed) {
 
 /**
  * LLM pass over the last couple of days' journal entries: anything durable
- * the user stated becomes a user_statement belief. Gated to only run when
- * fresh entries exist (so a quiet day costs zero LLM calls), and the model
- * sees existing statements so re-runs don't re-extract rephrased duplicates.
+ * the user stated became a user_statement belief. This remains as a legacy
+ * repair helper only; production no longer calls it. User statements now
+ * compile directly to context_assertions at write time, while beliefs remain
+ * reserved for learned action/outcome policies.
  */
 async function extractStatementBeliefs() {
   const dayJournal = require('../store/dayJournal');
@@ -214,7 +215,7 @@ async function extractStatementBeliefs() {
  * action or a future explicit pathway), and upsertBelief won't resurrect a
  * retired row. Fail-soft per source so one bad ledger can't sink consolidate.
  */
-async function promoteBeliefs({ extractStatements = true } = {}) {
+async function promoteBeliefs({ extractStatements = false } = {}) {
   const results = { promoted: 0, errors: [] };
 
   try {
@@ -240,8 +241,8 @@ async function promoteBeliefs({ extractStatements = true } = {}) {
     results.errors.push(`attention_outcomes: ${err.message}`);
   }
 
-  // The one LLM step — optional so ledger-only promotion stays cheap and
-  // deterministic for callers/tests that don't want a model call.
+  // Legacy repair only. New user statements must NEVER enter beliefs: their
+  // authoritative write path is recordUserContext -> context_assertions.
   if (extractStatements) {
     try {
       const r = await extractStatementBeliefs();

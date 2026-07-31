@@ -21,6 +21,7 @@ const { pool } = require('./db');
 const sleepReadiness = require('./intelligence/sleep-readiness');
 const morningRetryLedger = require('./intelligence/morning-retry-ledger');
 const { envInt } = require('./util/env');
+const { drainContextCompilationJobs } = require('./intelligence/context-compilation-outbox');
 
 /** Is the Eight Sleep auto-sync configured (creds present)? */
 function eightSleepConfigured() {
@@ -498,8 +499,28 @@ async function releaseLeaderLock() {
 const LEADER_RETRY_MS = Number(process.env.SCHEDULER_LEADER_RETRY_MS) || 30000;
 let leaderRetryTimer = null;
 let jobsStarted = false;
+let contextCompilationWorkerStarted = false;
+
+// Context compilation repairs a committed user write; it is deliberately not
+// coupled to the optional morning-notification scheduler. `claimNext()` uses
+// SELECT ... FOR UPDATE SKIP LOCKED, so every process may run this tiny worker
+// safely while exactly one of them owns any one retry job.
+function startContextCompilationWorker() {
+  if (contextCompilationWorkerStarted) return;
+  contextCompilationWorkerStarted = true;
+  const tick = () => {
+    drainContextCompilationJobs({ limit: 3 }).then((results) => {
+      if (results.length) console.log(`[scheduler] context compilation retries: ${results.length}`);
+    }).catch((e) => console.error('[scheduler] context compilation retries:', e.message));
+  };
+  setInterval(tick, 60 * 1000);
+  setTimeout(tick, 15 * 1000);
+}
 
 function start() {
+  // This repair worker is necessary for memory correctness even when the
+  // operator intentionally turns off scheduled pushes/brief generation.
+  startContextCompilationWorker();
   if (process.env.ENABLE_SCHEDULER !== 'true') {
     console.log('[scheduler] disabled — set ENABLE_SCHEDULER=true to enable the morning routine');
     return false;
@@ -552,6 +573,7 @@ function schedulerState() {
     isLeader: !!leaderClient,
     jobsStarted,
     awaitingLeadership: !!leaderRetryTimer,
+    contextCompilationWorkerStarted,
   };
 }
 

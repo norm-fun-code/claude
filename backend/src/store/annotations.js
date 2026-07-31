@@ -176,14 +176,20 @@ function buildAnnotationUpdate({ label, category, id }) {
  *  visible on the very next read). Returns false if there was nothing to
  *  update. Does NOT invalidate itself — see createAnnotation's doc comment;
  *  the caller invalidates 'annotation_retirement' after this resolves. */
-async function updateAnnotation(id, { label, category } = {}) {
+async function updateAnnotation(id, { label, category } = {}, db = query) {
   const built = buildAnnotationUpdate({ label, category, id });
   if (!built) return false;
-  await query(built.sql, built.params);
-  return true;
+  const guardedSql = built.sql.replace(/ WHERE id = /, ' WHERE retired_at IS NULL AND id = ');
+  const { rowCount } = await db(guardedSql, built.params);
+  return rowCount > 0;
+}
+
+async function getActiveById(id, db = query) {
+  const { rows } = await db(`SELECT * FROM annotations WHERE id = $1 AND retired_at IS NULL`, [id]);
+  return rows[0] ?? null;
 }
 
 module.exports = {
-  createAnnotation, listAnnotations, overlapping, buildAnnotationUpdate, updateAnnotation,
+  createAnnotation, listAnnotations, overlapping, buildAnnotationUpdate, updateAnnotation, getActiveById,
   retireAnnotation, endOfTomorrowET,
 };

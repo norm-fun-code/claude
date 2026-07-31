@@ -54,6 +54,23 @@ async function retire(id, reason = null, db = query) {
   return rowCount > 0;
 }
 
+/** Retire every structured assertion compiled from one raw annotation. This
+ * makes annotation deletion/correction authoritative across all consumers;
+ * leaving these rows active was the duplicate-memory path the audit found. */
+async function retireBySourceAnnotation(sourceAnnotationId, reason = null, db = query) {
+  const { rows } = await db(
+    `UPDATE context_assertions
+        SET retired_at = now(), retired_reason = $2
+      WHERE source_annotation_id = $1 AND retired_at IS NULL
+      RETURNING id`,
+    [sourceAnnotationId, reason]
+  );
+  for (const row of rows) {
+    await require('./contextRelations').retireBySourceAssertion(row.id, reason ? `source annotation retired: ${reason}` : 'source annotation retired', db);
+  }
+  return rows.length;
+}
+
 /** Active (non-retired) assertions, optionally filtered by domain and a
  *  recorded_at/effective window. Used by the resolver to build
  *  ResolvedContext, and by the compiler's correction/supersession matching
@@ -165,4 +182,4 @@ function mapRow(r) {
   };
 }
 
-module.exports = { create, retire, getActive, getActiveOverlapping, getById, getRecentlyRetired, setEffectiveEnd, mapRow };
+module.exports = { create, retire, retireBySourceAnnotation, getActive, getActiveOverlapping, getById, getRecentlyRetired, setEffectiveEnd, mapRow };

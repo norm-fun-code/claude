@@ -187,7 +187,7 @@ test('a transaction genuinely dated "tomorrow" (local) is still excluded as pend
       { id: 't2', date: '2026-08-01', amount: -9999, category: 'Groceries' }, // tomorrow, local — pending
     ],
   });
-  const { metrics } = await monarchMcpSync.syncViaMcp({ now });
+  const { metrics } = await monarchMcpSync.syncViaMcp({ now, tz: 'America/New_York' });
   const spending = metricsByDay(metrics, 'spending');
   assert.equal(spending.get('2026-07-31'), 40, 'today\'s (local) settled transaction counts');
   assert.equal(spending.get('2026-08-01'), undefined, 'a locally-future transaction must be excluded even though UTC has already rolled to that date');

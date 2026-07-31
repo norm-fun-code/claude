@@ -436,15 +436,14 @@ async function consolidate({ kind = 'nightly' } = {}) {
   const d30 = new Date(now - 30 * DAY);
   const d56 = new Date(now - 56 * DAY);
 
-  // Promote feedback signals into durable beliefs BEFORE gathering, so
-  // tonight's model reflects today's dismissals/statements. Fail-soft: the
-  // model still builds if promotion errors (it logs its own per-source errors).
-  // The LLM statement-extraction step runs ONLY on the scheduled nightly (and
-  // manual CLI) consolidation — the kind:'briefing' call inside a briefing
-  // rebuild is documented as no-LLM and must stay fast, so it promotes from
-  // the ledgers only.
+  // Promote learned feedback-policy signals BEFORE gathering, so tonight's
+  // model reflects today's dismissals and outcomes. User statements do not
+  // enter `beliefs`: their only authority is ContextAssertions written at
+  // capture time (or the durable compilation outbox if the provider is down).
+  // This holds for *every* consolidation kind, so a nightly rebuild cannot
+  // quietly recreate the retired `user_statement` authority.
   try {
-    const promo = await require('./beliefs').promoteBeliefs({ extractStatements: kind !== 'briefing' });
+    const promo = await require('./beliefs').promoteBeliefs();
     if (promo.errors.length) console.error('[consolidate] belief promotion issues:', promo.errors.join('; '));
   } catch (err) {
     console.error('[consolidate] belief promotion failed:', err.message);

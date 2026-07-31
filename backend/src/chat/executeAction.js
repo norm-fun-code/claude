@@ -117,11 +117,18 @@ async function executeAction(routed, ctx = {}) {
       return { done: true, description: 'Logged your gratitude reflection for today.' };
     }
     if (routed.action === 'add_chapter' && routed.label) {
-      const { replaced } = await lifeChaptersStore.createOrReplace({
-        kind: ['pregnancy', 'countdown', 'note'].includes(routed.kind) ? routed.kind : 'note',
-        label: String(routed.label).slice(0, 120),
-        keyDate: routed.keyDate || null,
-        keyDateLabel: routed.keyDateLabel || null,
+      const kind = ['pregnancy', 'countdown', 'note'].includes(routed.kind) ? routed.kind : 'note';
+      const label = String(routed.label).slice(0, 120);
+      // A life chapter is a durable user fact. The chapter table remains the
+      // feature-specific scheduling/display projection, while the canonical
+      // statement is compiled through the same assertion path as every other
+      // user correction or context entry.
+      const { replaced } = await recordUserContext({
+        rawText: `${label}${routed.keyDate ? ` (${routed.keyDateLabel || 'date'}: ${routed.keyDate})` : ''}`,
+        source: 'life_chapter', tz, now,
+        writeInTransaction: (client, transactionDb) => lifeChaptersStore.createOrReplace({
+          kind, label, keyDate: routed.keyDate || null, keyDateLabel: routed.keyDateLabel || null,
+        }, transactionDb),
       });
       return {
         done: true,

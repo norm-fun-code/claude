@@ -178,7 +178,7 @@ function txnToDocument(t) {
 
 // --- the actual MCP pull ------------------------------------------------------
 
-async function syncViaMcp(ctx) {
+async function syncViaMcp(ctx = {}) {
   // Make sure the shared 'monarch' source row exists (FK for metrics/docs).
   await registerSource({ id: SOURCE, domain: 'wealth', displayName: 'Monarch (CSV import)' });
 
@@ -186,6 +186,11 @@ async function syncViaMcp(ctx) {
   // production) — see localToday's comment for why "today" must be
   // explicitly parameterizable to test the UTC-vs-local boundary directly.
   const now = ctx.now ? new Date(ctx.now) : new Date();
+  // The caller may provide the account/user timezone for an explicit sync.
+  // Production keeps the configured server timezone as the default, but this
+  // avoids silently borrowing the test host's (or a background worker's)
+  // timezone when a caller is evaluating a pinned clock.
+  const tz = ctx.tz || process.env.TZ || 'America/New_York';
 
   // Incremental window: 35-day lookback from last sync (45 on first run) so
   // late recategorizations in Monarch reach our stored docs/metrics.
@@ -194,7 +199,7 @@ async function syncViaMcp(ctx) {
     ? new Date(new Date(ctx.lastSyncAt).getTime() - lookbackDays * DAY)
     : new Date(now.getTime() - 45 * DAY);
   const startDate = ymd(since);
-  const endDate = localToday(process.env.TZ || 'America/New_York', now);
+  const endDate = localToday(tz, now);
   const today = endDate;
 
   const metrics = [];
@@ -264,7 +269,7 @@ async function syncViaMcp(ctx) {
     categoryType: t?.category_type || t?.categoryType,
   }));
   const { byDay: flowsByDay, expenseTxns, incomeTxns } = reconcileWealthFlows(normTxns, {
-    incomeCategoryNames: incomeCats, today, tz: process.env.TZ || 'America/New_York',
+    incomeCategoryNames: incomeCats, today, tz,
   });
   const expSrc = new Map([...flowsByDay].map(([d, b]) => [d, b.spending]));
   const discretionaryByDay = new Map([...flowsByDay].map(([d, b]) => [d, b.discretionary]));
@@ -381,7 +386,7 @@ module.exports = {
     // Once-per-day guard: runIngest() fires on every briefing rebuild; don't
     // re-pull Monarch all day. A `full` run (ctx.lastSyncAt === null) proceeds.
     if (ctx.lastSyncAt) {
-      const tz = process.env.TZ || 'America/New_York';
+      const tz = ctx.tz || process.env.TZ || 'America/New_York';
       const localDay = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: tz });
       if (localDay(ctx.lastSyncAt) === localDay(new Date())) {
         return { metrics: [], documents: [] };

@@ -21,6 +21,7 @@ const { openQuestionFingerprint, openQuestionTopicKey } = require('../intelligen
 const contextAssertionsStore = require('../store/contextAssertions');
 const { compileUserContext, persistCompiledContext } = require('../intelligence/context-compiler');
 const { withTransaction } = require('../db');
+const { recordUserContext } = require('../intelligence/context-input');
 
 function createAnnotationsRouter() {
   const router = express.Router();
@@ -28,14 +29,16 @@ function createAnnotationsRouter() {
   router.post('/annotations', asyncHandler(async (req, res) => {
     const { startTs, endTs, category, label, note } = req.body || {};
     if (!requireFields(req.body, ['startTs', 'category', 'label'], res)) return;
-    const { id } = await annotationsStore.createAnnotation({ startTs, endTs, category, label, note });
-    // Transactional Brain Invalidation (audit recommendation #2): the store
-    // no longer invalidates itself (see its doc comment) — this write has no
-    // surrounding transaction (a single INSERT already commits atomically on
-    // its own), so invalidating right after it resolves is "strictly after
-    // commit" same as the transactional call sites below.
-    if (id) await require('../brain/invalidation').bumpDurable('annotation_retirement');
-    res.json({ id });
+    // A manual annotation is user context, not a second raw-only memory path.
+    // Persist its audit row and compiled assertion(s) through the same shared
+    // transaction Ask, voice, and check-ins use; a provider outage records a
+    // durable retry job rather than silently losing structured meaning.
+    const written = await recordUserContext({
+      rawText: String(label).trim(), source: 'manual_annotation',
+      writeInTransaction: (client, db) => annotationsStore.createAnnotation({ startTs, endTs, category, label, note }, db),
+      getSourceAnnotationId: (annotation) => annotation?.id ?? null,
+    });
+    res.json({ id: written?.id ?? null });
   }));
 
   router.get('/annotations', asyncHandler(async (req, res) => {
@@ -58,34 +61,45 @@ function createAnnotationsRouter() {
   router.delete('/annotations/:id', asyncHandler(async (req, res) => {
     const id = req.params.id;
     if (!id || typeof id !== 'string' || id.length < 8) return res.status(400).json({ error: 'invalid id' });
-    const { query } = require('../db');
-    const { rowCount } = await query('DELETE FROM annotations WHERE id = $1', [id]);
-    // Equivalent-path gap (Transactional Brain Invalidation, audit
-    // recommendation #2, item 5): a deleted annotation changes eligible
-    // context exactly like a retirement does, but this route never
-    // invalidated at all before — every OTHER mutation path here now does.
-    if (rowCount > 0) await require('../brain/invalidation').bumpDurable('annotation_retirement');
+    const outcome = await withTransaction(async (client) => {
+      const db = (text, params) => client.query(text, params);
+      const retiredAnnotation = await annotationsStore.retireAnnotation(id, 'deleted by user', db);
+      if (!retiredAnnotation) return { retiredAnnotation: false, retiredAssertions: 0 };
+      const retiredAssertions = await contextAssertionsStore.retireBySourceAnnotation(id, 'source annotation deleted by user', db);
+      await require('../store/contextCompilationJobs').cancelForSourceAnnotation(id, db);
+      return { retiredAnnotation, retiredAssertions };
+    });
+    if (outcome.retiredAnnotation) await require('../brain/invalidation').bumpDurable('annotation_retirement');
+    if (outcome.retiredAssertions) await require('../brain/invalidation').bumpDurable('context_assertion_change');
     res.json({ ok: true });
   }));
 
-  // Edits the SAME row in place (not a new insert) — every downstream reader
-  // (analyze.js's health-anomaly "Context: ..." labeling, the briefing's
-  // annotationsContext, wealth-insights' spend-context filter) queries the
-  // annotations table live on each build, so a correction here is picked up by
-  // the very next read with no separate propagation step needed.
+  // Edits keep the annotation's stable ID, but they retire every assertion
+  // compiled from its previous text and recompile the replacement atomically.
+  // Without this, the UI showed the correction while Ask/briefing still read
+  // the old assertion — two authorities for the same user statement.
   router.patch('/annotations/:id', asyncHandler(async (req, res) => {
     const id = req.params.id;
     if (!id || typeof id !== 'string' || id.length < 8) return res.status(400).json({ error: 'invalid id' });
     const { label, category } = req.body || {};
     if (label != null && !label.trim()) return res.status(400).json({ error: 'label cannot be blank' });
     if (label == null && category == null) return res.status(400).json({ error: 'label or category required' });
-    const updated = await annotationsStore.updateAnnotation(id, { label, category });
+    const existing = await annotationsStore.getActiveById(id);
+    if (!existing) return res.status(404).json({ error: 'not found' });
+    const nextLabel = label == null ? existing.label : label;
+    const updated = await recordUserContext({
+      rawText: String(nextLabel).trim(), source: 'manual_annotation_correction',
+      contextChangedInTransaction: true,
+      writeInTransaction: async (client, db) => {
+        const changed = await annotationsStore.updateAnnotation(id, { label, category }, db);
+        if (!changed) throw new Error('annotation update lost its active row');
+        await contextAssertionsStore.retireBySourceAnnotation(id, 'source annotation corrected by user', db);
+        await require('../store/contextCompilationJobs').cancelForSourceAnnotation(id, db);
+        return { id };
+      },
+      getSourceAnnotationId: (annotation) => annotation?.id ?? null,
+    });
     if (!updated) return res.status(400).json({ error: 'nothing to update' });
-    // Transactional Brain Invalidation (audit recommendation #2): the store no
-    // longer invalidates itself (see its doc comment) — a single UPDATE
-    // already commits atomically on its own, so invalidating right after it
-    // resolves is "strictly after commit."
-    await require('../brain/invalidation').bumpDurable('annotation_retirement');
     res.json({ ok: true });
   }));
 
@@ -305,7 +319,7 @@ function createAnnotationsRouter() {
       }
     }
 
-    let id, eventKind, retiredAnnotationId;
+    let id, eventKind, retiredAnnotationId, retiredAssertionCount = 0;
     // Atomic: any durable "answered, don't ask again" ledger row
     // (signal_answers for calendar_load — store/signalAnswers.js;
     // answered_open_questions for the chief brief's one question —
@@ -333,8 +347,34 @@ function createAnnotationsRouter() {
         }, db);
       }
       const result = await annotationsStore.createAnnotation(annotationPayload, db);
+      if (result.retiredAnnotationId) {
+        // A retraction that retires its raw annotation must retire the
+        // compiled assertion(s) in this same transaction. Otherwise
+        // ResolvedContext could continue to surface the thing the user just
+        // explicitly withdrew.
+        retiredAssertionCount = await contextAssertionsStore.retireBySourceAnnotation(
+          result.retiredAnnotationId,
+          'source annotation retracted by user',
+          db
+        );
+        await require('../store/contextCompilationJobs').cancelForSourceAnnotation(result.retiredAnnotationId, db);
+      }
       if (compiled.assertions.length) {
         await persistCompiledContext(compiled, { sourceAnnotationId: result.id, db });
+      } else if (compiled.failed) {
+        // Generic brief-context answers must not become a second permanent
+        // raw-only path when the compiler provider is temporarily down. The
+        // identity-bearing path returned above before opening this
+        // transaction, so this is only the safe fail-open case where saving
+        // the user's own words is still useful.
+        await require('../store/contextCompilationJobs').enqueue({
+          sourceAnnotationId: result.id,
+          rawText: answer.trim(),
+          source: 'briefing_context',
+          question: question || null,
+          timezone: tz,
+          recordedAt: nowTs,
+        }, db);
       }
       if (isOpenQuestionAnswer) {
         await openQuestionsStore.recordAnswered({
@@ -379,7 +419,7 @@ function createAnnotationsRouter() {
     if (id) {
       await require('../brain/invalidation').bumpDurable('annotation_retirement');
     }
-    if (compiled.assertions.length) {
+    if (compiled.assertions.length || retiredAssertionCount) {
       await require('../brain/invalidation').bumpDurable('context_assertion_change');
     }
     if (retiredAnnotationId) {

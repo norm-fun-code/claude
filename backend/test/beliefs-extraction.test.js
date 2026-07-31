@@ -1,10 +1,8 @@
 // User-statement extraction — the one LLM step in the learning layer. The
-// audit's sharpest finding: things the user TELLS the system (corrections,
-// standing preferences, constraints) decayed out of a 14-day rolling window;
-// two weeks later NormOS had forgotten them. extractStatementBeliefs() runs
-// nightly over fresh journal entries and promotes anything durable into the
-// beliefs store. These tests pin the pure parsing/sanitization and the
-// gating; the LLM itself is stubbed.
+// Legacy user-statement extraction. New production writes compile directly
+// into context_assertions at capture time; this helper remains only to repair
+// old data, never as a nightly competing memory authority. These tests pin
+// its parsing/sanitization plus that production promotion does not invoke it.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { parseExtractedStatements, buildExtractPrompt } = require('../src/intelligence/beliefs');
@@ -84,5 +82,27 @@ test('extractStatementBeliefs: an unparseable LLM response degrades to zero extr
     dayJournal.recent = origRecent;
     llm.generateText = origGen;
     beliefsStore.listActive = origList;
+  }
+});
+
+test('normal belief promotion never re-extracts user statements from raw journal text', async () => {
+  const dayJournal = require('../src/store/dayJournal');
+  const dismissed = require('../src/store/dismissedInsights');
+  const attention = require('../src/store/attention');
+  const originalRecent = dayJournal.recent;
+  const originalDismissed = dismissed.listDismissed;
+  const originalOutcomes = attention.outcomeCounts;
+  let journalRead = false;
+  dayJournal.recent = async () => { journalRead = true; return []; };
+  dismissed.listDismissed = async () => [];
+  attention.outcomeCounts = async () => [];
+  try {
+    const result = await require('../src/intelligence/beliefs').promoteBeliefs();
+    assert.equal(result.errors.length, 0);
+    assert.equal(journalRead, false, 'raw journal text is not a second production memory write path');
+  } finally {
+    dayJournal.recent = originalRecent;
+    dismissed.listDismissed = originalDismissed;
+    attention.outcomeCounts = originalOutcomes;
   }
 });

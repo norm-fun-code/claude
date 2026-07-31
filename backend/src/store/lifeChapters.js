@@ -3,15 +3,15 @@
 // intelligence/chapters.js for the derived, auto-advancing phrasing.
 const { query } = require('../db');
 
-async function listActive() {
-  const { rows } = await query(
+async function listActive(db = query) {
+  const { rows } = await db(
     `SELECT * FROM life_chapters WHERE active = true ORDER BY key_date ASC NULLS LAST, created_at ASC LIMIT 8`
   );
   return rows;
 }
 
-async function create({ kind = 'countdown', label, keyDate = null, keyDateLabel = null, notes = null }) {
-  const { rows } = await query(
+async function create({ kind = 'countdown', label, keyDate = null, keyDateLabel = null, notes = null }, db = query) {
+  const { rows } = await db(
     `INSERT INTO life_chapters (kind, label, key_date, key_date_label, notes)
      VALUES ($1, $2, $3, $4, $5) RETURNING *`,
     [kind, label, keyDate, keyDateLabel, notes]
@@ -26,19 +26,19 @@ async function create({ kind = 'countdown', label, keyDate = null, keyDateLabel 
  * same normalized label otherwise — by deactivating the old row first.
  * Returns { chapter, replaced } so callers can phrase "updated" vs "remembered".
  */
-async function createOrReplace(input) {
+async function createOrReplace(input, db = query) {
   const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
-  const existing = await listActive();
+  const existing = await listActive(db);
   const matches = existing.filter((ch) =>
     input.kind === 'pregnancy' ? ch.kind === 'pregnancy' : norm(ch.label) === norm(input.label)
   );
-  for (const ch of matches) await deactivate(ch.id);
-  const chapter = await create(input);
+  for (const ch of matches) await deactivate(ch.id, db);
+  const chapter = await create(input, db);
   return { chapter, replaced: matches.length > 0 };
 }
 
-async function deactivate(id) {
-  const { rowCount } = await query(
+async function deactivate(id, db = query) {
+  const { rowCount } = await db(
     `UPDATE life_chapters SET active = false, updated_at = now() WHERE id = $1`,
     [id]
   );

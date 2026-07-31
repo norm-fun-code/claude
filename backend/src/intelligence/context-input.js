@@ -42,7 +42,7 @@ const { compileUserContext, persistCompiledContext } = require('./context-compil
  *   never be passed here). Defaults to always-null, the safe choice.
  * @returns {Promise<T>} whatever writeInTransaction returned.
  */
-async function recordUserContext({ rawText, source, question = null, tz = process.env.TZ || 'America/New_York', now = new Date(), writeInTransaction, getSourceAnnotationId = () => null }) {
+async function recordUserContext({ rawText, source, question = null, tz = process.env.TZ || 'America/New_York', now = new Date(), writeInTransaction, getSourceAnnotationId = () => null, contextChangedInTransaction = false }) {
   const text = String(rawText || '').trim();
   const contextAssertionsStore = require('../store/contextAssertions');
   const { withTransaction } = require('../db');
@@ -65,17 +65,39 @@ async function recordUserContext({ rawText, source, question = null, tz = proces
   const result = await withTransaction(async (client) => {
     const db = (queryText, params) => client.query(queryText, params);
     const written = await writeInTransaction(client, db);
-    if (compiled.assertions.length) {
-      await persistCompiledContext(compiled, { sourceAnnotationId: getSourceAnnotationId(written) ?? null, db });
+    const sourceAnnotationId = getSourceAnnotationId(written) ?? null;
+    // createAnnotation can retire the one raw statement an explicit
+    // retraction unambiguously names. Retire that statement's compiled
+    // authority in the SAME transaction too; otherwise the annotation UI
+    // says “forgotten” while Ask/briefs still receive its assertion.
+    const retiredAssertionCount = written?.retiredAnnotationId
+      ? await contextAssertionsStore.retireBySourceAnnotation(
+          written.retiredAnnotationId,
+          'source annotation retracted by user',
+          db
+        )
+      : 0;
+    if (written?.retiredAnnotationId) {
+      await require('../store/contextCompilationJobs').cancelForSourceAnnotation(written.retiredAnnotationId, db);
     }
-    return written;
+    if (compiled.assertions.length) {
+      await persistCompiledContext(compiled, { sourceAnnotationId, db });
+    } else if (compiled.failed && text) {
+      // The raw write is already in this transaction. Persist a durable retry
+      // job alongside it so a transient model outage cannot strand the fact
+      // as a raw annotation/journal entry forever.
+      await require('../store/contextCompilationJobs').enqueue({
+        sourceAnnotationId, rawText: text, source, question, timezone: tz, recordedAt: now,
+      }, db);
+    }
+    return { written, sourceAnnotationId, retiredAssertionCount };
   });
 
   // Invalidation strictly AFTER commit, and only because we got here at all
   // — a rejected transaction throws out of the `await` above, so this line
   // is unreached on rollback (same discipline as routes/annotations.js's
   // POST /briefing/context — see persistCompiledContext's doc comment).
-  if (compiled.assertions.length) {
+  if (compiled.assertions.length || contextChangedInTransaction || result.retiredAssertionCount) {
     await require('../brain/invalidation').bumpDurable('context_assertion_change');
   }
   // Transactional Brain Invalidation (audit recommendation #2): when
@@ -86,10 +108,10 @@ async function recordUserContext({ rawText, source, question = null, tz = proces
   // after commit. A caller whose write targets a different table (e.g.
   // log_day_context's dayJournalStore.create) omits getSourceAnnotationId and
   // this is correctly skipped.
-  if (getSourceAnnotationId(result) != null) {
+  if (result.sourceAnnotationId != null) {
     await require('../brain/invalidation').bumpDurable('annotation_retirement');
   }
-  return result;
+  return result.written;
 }
 
 module.exports = { recordUserContext };
