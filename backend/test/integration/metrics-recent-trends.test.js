@@ -27,7 +27,9 @@ test.after(async () => {
 });
 
 test('recentMetricTrends returns recent and prior daily aggregates from one shared window without mixing a lower-priority source', async () => {
-  const now = new Date();
+  // A fixed mid-day instant keeps the 7d boundary independent of when the
+  // suite happens to run (and of a local-midnight/DST boundary).
+  const now = new Date('2026-07-15T16:00:00.000Z');
   // Include the current instant plus the preceding 13 days: with splitAt at
   // now-7d that creates seven rows in each half-open comparison window.
   for (let day = 0; day <= 13; day++) {
