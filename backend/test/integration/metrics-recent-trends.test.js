@@ -28,7 +28,9 @@ test.after(async () => {
 
 test('recentMetricTrends returns recent and prior daily aggregates from one shared window without mixing a lower-priority source', async () => {
   const now = new Date();
-  for (let day = 1; day <= 13; day++) {
+  // Include the current instant plus the preceding 13 days: with splitAt at
+  // now-7d that creates seven rows in each half-open comparison window.
+  for (let day = 0; day <= 13; day++) {
     const ts = new Date(now.getTime() - day * 24 * 60 * 60 * 1000);
     const expected = day < 7 ? 60 : 40;
     await db.query(

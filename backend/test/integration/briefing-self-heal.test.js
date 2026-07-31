@@ -183,6 +183,12 @@ test('required: GET /briefing self-heals — a previous-day cached brief past th
     `DELETE FROM briefings WHERE kind = 'daily' AND (generated_at AT TIME ZONE $2)::date = $1::date`,
     [day, TZ]
   );
+  // This is a route-level precondition, not shared application state: clear
+  // every prior build ledger entry for this one test day so an earlier test's
+  // retry-cap fixture cannot make this route appear to have declined to queue
+  // a recovery build. The integration suite is serial, and teardown restores
+  // the same clean slate for later files.
+  await db.query(`DELETE FROM morning_build_jobs WHERE local_day = $1`, [day]);
 
   const staleDay = '2020-01-01'; // unambiguously a "previous day"
   const saved = await briefingsStore.saveBriefing({
@@ -199,7 +205,11 @@ test('required: GET /briefing self-heals — a previous-day cached brief past th
     if (oldHour === undefined) delete process.env.SCHEDULE_HOUR; else process.env.SCHEDULE_HOUR = oldHour;
     if (oldMinute === undefined) delete process.env.SCHEDULE_MINUTE; else process.env.SCHEDULE_MINUTE = oldMinute;
     await db.query(`DELETE FROM briefings WHERE id = $1`, [saved.id]);
-    await db.query(`DELETE FROM morning_build_jobs WHERE local_day = $1 AND trigger = 'self_heal'`, [day]);
+    await db.query(`DELETE FROM morning_build_jobs WHERE local_day = $1`, [day]);
+    await db.query(
+      `DELETE FROM briefings WHERE kind = 'daily' AND (generated_at AT TIME ZONE $2)::date = $1::date`,
+      [day, TZ]
+    );
   });
 
   const res = await request(app).get('/api/briefing').set(authHeader());

@@ -99,12 +99,16 @@ test('scenario 1 — todayCommandCenter carries the SAME snapshot identity as th
 
 // ── 2. A rest-day state cannot produce a conflicting hard-workout action ───
 test('scenario 2 — an ACTION prescribing the scheduled session when today is overridden to rest is caught by the real effective-workout validator', async (t) => {
-  const today = todayIso();
-  const original = await workoutService.getEffectiveWorkout({ tz: 'America/New_York' });
-  await workoutService.setWorkoutOverride({ date: today, workoutId: 'rest' });
-  t.after(async () => { await workoutService.setWorkoutOverride({ date: today, workoutId: null }); });
+  // Use a known Thursday (Push), not wall-clock "today". This regression is
+  // about an override diverging from a scheduled workout, so it must not turn
+  // into a meaningless Rest-vs-Rest assertion every Friday.
+  const asOf = new Date('2026-07-30T16:00:00.000Z');
+  const date = '2026-07-30';
+  const original = await workoutService.getEffectiveWorkout({ asOf, tz: 'America/New_York', band: null });
+  await workoutService.setWorkoutOverride({ date, workoutId: 'rest' });
+  t.after(async () => { await workoutService.setWorkoutOverride({ date, workoutId: null }); });
 
-  const overridden = await workoutService.getEffectiveWorkout({ tz: 'America/New_York' });
+  const overridden = await workoutService.getEffectiveWorkout({ asOf, tz: 'America/New_York', band: null });
   assert.equal(overridden.source, 'override');
   assert.equal(overridden.label, 'Rest');
   assert.notEqual(overridden.scheduledLabel, overridden.label, 'the override must actually diverge from the schedule for this scenario to mean anything');
