@@ -1,12 +1,14 @@
 // Registers this device for proactive nudges: asks for notification permission,
 // gets the Expo push token, and hands it to the backend so NormOS can reach out
 // at the right moment (the "7am text"). Safe no-op on simulators / web.
-import { useEffect, useRef } from 'react';
-import { Platform } from 'react-native';
+import { useCallback, useEffect, useRef } from 'react';
+import { AppState, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
-import { DEVICE_REGISTER_URL, authHeaders } from '../config';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DEVICE_REGISTER_URL, authHeaders, fetchWithTimeout } from '../config';
+import { acknowledgePushRegistration } from '../lib/pushRegistration';
 
 // The EAS projectId, required by getExpoPushTokenAsync on SDK 49+. EAS injects
 // it into the manifest at build time; fall back to an explicit env override for
@@ -63,27 +65,56 @@ async function registerForPush(): Promise<string | null> {
  */
 export function usePushRegistration(onNotificationTap?: (data: Record<string, unknown>) => void) {
   const registered = useRef(false);
+  const registrationInFlight = useRef(false);
   const tapCb = useRef(onNotificationTap);
   tapCb.current = onNotificationTap;
 
-  useEffect(() => {
-    if (registered.current) return;
-    registered.current = true;
-
-    (async () => {
-      try {
-        const pushToken = await registerForPush();
-        if (!pushToken) return;
-        await fetch(DEVICE_REGISTER_URL, {
+  const registerDevice = useCallback(async () => {
+    // Critically, `registered` only becomes true AFTER the backend returns a
+    // 2xx acknowledgement. The previous eager assignment made one transient
+    // offline/500/timeout failure permanently disable push for the whole app
+    // session, which is why morning notifications could disappear silently.
+    if (registered.current || registrationInFlight.current) return;
+    registrationInFlight.current = true;
+    try {
+      const pushToken = await registerForPush();
+      if (!pushToken) return;
+      const result = await acknowledgePushRegistration({
+        pushToken,
+        storage: AsyncStorage,
+        post: () => fetchWithTimeout(DEVICE_REGISTER_URL, {
           method: 'POST',
           headers: authHeaders(),
           body: JSON.stringify({ pushToken, platform: Platform.OS, label: Device.modelName }),
-        });
-      } catch {
-        // Non-fatal: nudges are an enhancement, not required for the app to work.
+        }, 10_000),
+      });
+      if (result === 'acknowledged' || result === 'alreadyAcknowledged') {
+        registered.current = true;
+      } else {
+        console.warn('[push] device registration was not acknowledged; will retry when the app returns to foreground');
       }
-    })();
+    } catch {
+      // Preserve the retry path: no 2xx acknowledgement means no terminal
+      // state. A foreground transition retries after connectivity recovers.
+      console.warn('[push] device registration failed; will retry when the app returns to foreground');
+    } finally {
+      registrationInFlight.current = false;
+    }
   }, []);
+
+  useEffect(() => { void registerDevice(); }, [registerDevice]);
+
+  // React Native does not expose a dependable cross-platform connectivity
+  // event without another native dependency. Foreground is the reliable
+  // availability boundary we already observe everywhere else in the app: it
+  // retries a previous transport/5xx/deadline failure without prompting again
+  // when the user returns after Wi-Fi/cellular recovers.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void registerDevice();
+    });
+    return () => sub.remove();
+  }, [registerDevice]);
 
   useEffect(() => {
     const sub = Notifications.addNotificationResponseReceivedListener((response) => {
