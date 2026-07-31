@@ -3,6 +3,11 @@
 // credential. https://docs.expo.dev/push-notifications/sending-notifications/
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const CHUNK = 100; // Expo accepts up to 100 messages per request
+const { fetchWithTimeout } = require('../util/async');
+
+function pushTimeoutMs() {
+  return Math.max(1_000, Number(process.env.EXPO_PUSH_TIMEOUT_MS) || 10_000);
+}
 
 function isExpoPushToken(t) {
   return typeof t === 'string' && /^ExponentPushToken\[.+\]$|^ExpoPushToken\[.+\]$/.test(t);
@@ -27,11 +32,11 @@ async function sendPush(tokens, { title, body, data = {} }) {
 
   for (const group of chunk(valid, CHUNK)) {
     const messages = group.map((to) => ({ to, title, body, data, sound: 'default' }));
-    const res = await fetch(EXPO_PUSH_URL, {
+    const res = await fetchWithTimeout(EXPO_PUSH_URL, {
       method: 'POST',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
       body: JSON.stringify(messages),
-    });
+    }, pushTimeoutMs(), 'Expo push');
     if (!res.ok) {
       throw new Error(`Expo push failed: ${res.status} ${await res.text().catch(() => '')}`);
     }
@@ -49,4 +54,4 @@ async function sendPush(tokens, { title, body, data = {} }) {
   return { ok: true, sent: valid.length, tickets, invalidTokens };
 }
 
-module.exports = { sendPush, isExpoPushToken };
+module.exports = { sendPush, isExpoPushToken, pushTimeoutMs };

@@ -38,6 +38,22 @@ test('getTrends returns real data when present', async () => {
   assert.equal(days.length, 1);
 });
 
+test('getTrends uses a cancellable transport deadline', async () => {
+  let signal = null;
+  global.fetch = async (_url, opts) => {
+    signal = opts.signal;
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => ({ days: [] }),
+      text: async () => '',
+    };
+  };
+  await getTrends({ token: 't', userId: 'u', from: '2026-07-01', to: '2026-07-05' });
+  assert.ok(signal instanceof AbortSignal, 'Eight Sleep requests must have a transport-abort signal');
+});
+
 test('getIntervalPresent throws when the 200 response has no "interval" key at all', async () => {
   stubFetch(200, { unexpected: true });
   await assert.rejects(() => getIntervalPresent('t', 'u'), /unexpected shape/);

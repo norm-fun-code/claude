@@ -10,6 +10,7 @@ const AUTH_URL = 'https://auth-api.8slp.net/v1/tokens';
 const CLIENT_API_URL = 'https://client-api.8slp.net/v1';
 const KNOWN_CLIENT_ID = '0894c7f33bb94800a03f1f4df13a4f38';
 const KNOWN_CLIENT_SECRET = 'f0954a3ed5763ba3d06834c73731a32f15f168f47d4f164751275def86db0c76';
+const { fetchWithTimeout } = require('../util/async');
 
 const HEADERS = {
   'content-type': 'application/json',
@@ -17,9 +18,17 @@ const HEADERS = {
   accept: 'application/json',
 };
 
+// The morning readiness gate and final ingest both depend on this API. A
+// hanging socket used to hold the job indefinitely, which looked in the app
+// exactly like a rebuild that spun forever. Keep the deadline finite so the
+// caller can fail closed, record the real reason, and retry on its next poll.
+function requestTimeoutMs() {
+  return Math.max(1_000, Number(process.env.EIGHT_SLEEP_API_TIMEOUT_MS) || 15_000);
+}
+
 /** Authenticate; returns { token, userId, expiresAt(ms epoch) }. Throws on failure. */
 async function login(email, password) {
-  const res = await fetch(AUTH_URL, {
+  const res = await fetchWithTimeout(AUTH_URL, {
     method: 'POST',
     headers: HEADERS,
     body: JSON.stringify({
@@ -29,7 +38,7 @@ async function login(email, password) {
       username: email,
       password,
     }),
-  });
+  }, requestTimeoutMs(), 'Eight Sleep auth');
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     const err = new Error(`Eight Sleep auth failed: ${res.status} ${res.statusText} ${body.slice(0, 200)}`);
@@ -43,9 +52,9 @@ async function login(email, password) {
 
 /** Resolve the userId from /users/me when the token response didn't include it. */
 async function resolveUserId(token) {
-  const res = await fetch(`${CLIENT_API_URL}/users/me`, {
+  const res = await fetchWithTimeout(`${CLIENT_API_URL}/users/me`, {
     headers: { ...HEADERS, authorization: `Bearer ${token}` },
-  });
+  }, requestTimeoutMs(), 'Eight Sleep user lookup');
   if (!res.ok) throw new Error(`Eight Sleep /users/me failed: ${res.status}`);
   const json = await res.json();
   return json?.user?.userId || json?.userId || null;
@@ -61,9 +70,9 @@ async function getTrends({ token, userId, from, to, tz = 'America/New_York' }) {
     'include-all-sessions': 'true',
     'model-version': 'v2',
   });
-  const res = await fetch(`${CLIENT_API_URL}/users/${userId}/trends?${params}`, {
+  const res = await fetchWithTimeout(`${CLIENT_API_URL}/users/${userId}/trends?${params}`, {
     headers: { ...HEADERS, authorization: `Bearer ${token}` },
-  });
+  }, requestTimeoutMs(), 'Eight Sleep trends');
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     const err = new Error(`Eight Sleep trends failed: ${res.status} ${res.statusText} ${body.slice(0, 200)}`);
@@ -86,9 +95,9 @@ async function getTrends({ token, userId, from, to, tz = 'America/New_York' }) {
  *  Returns true if the session is still running, false if done or unknown.
  *  Eight Sleep returns 404 (or an interval with no endTs) when no session is active. */
 async function getIntervalPresent(token, userId) {
-  const res = await fetch(`${CLIENT_API_URL}/users/${userId}/intervals/present`, {
+  const res = await fetchWithTimeout(`${CLIENT_API_URL}/users/${userId}/intervals/present`, {
     headers: { ...HEADERS, authorization: `Bearer ${token}` },
-  });
+  }, requestTimeoutMs(), 'Eight Sleep presence');
   if (res.status === 404) return false;
   if (!res.ok) {
     const err = new Error(`Eight Sleep present failed: ${res.status}`);

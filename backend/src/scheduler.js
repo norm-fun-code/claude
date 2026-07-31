@@ -22,13 +22,12 @@ const sleepReadiness = require('./intelligence/sleep-readiness');
 const morningRetryLedger = require('./intelligence/morning-retry-ledger');
 const { envInt } = require('./util/env');
 const { drainContextCompilationJobs } = require('./intelligence/context-compilation-outbox');
+const { naiveToUtcIso, localDateStr } = require('./util/date');
 
 /** Is the Eight Sleep auto-sync configured (creds present)? */
 function eightSleepConfigured() {
   return Boolean(process.env.EIGHT_SLEEP_EMAIL && process.env.EIGHT_SLEEP_PASSWORD);
 }
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Local (TZ-aware) YYYY-MM-DD — toISOString() would give UTC and roll the date
  *  over at the wrong hour for the morning marker. Explicitly resolves via the
@@ -36,8 +35,20 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  *  the OS-level TZ env var happens to be set — an unenforced assumption that
  *  silently breaks the morning-routine dedup boundary if it's ever unset). */
 function localDateKey(d = new Date()) {
-  const tz = process.env.TZ || 'America/New_York';
-  return d.toLocaleDateString('en-CA', { timeZone: tz });
+  return localDateStr(process.env.TZ || 'America/New_York', d);
+}
+
+/** Wall-clock parts in NormOS's configured timezone, never the host timezone.
+ * Railway can run the process in UTC even when the user's configured day is
+ * America/New_York, so Date#getHours()/getDay() is not a valid scheduler clock. */
+function localClock(d = new Date(), tz = process.env.TZ || 'America/New_York') {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(d);
+  const get = (type) => Number(parts.find((p) => p.type === type)?.value);
+  const ymd = `${String(get('year')).padStart(4, '0')}-${String(get('month')).padStart(2, '0')}-${String(get('day')).padStart(2, '0')}`;
+  return { ymd, hour: get('hour'), minute: get('minute'), weekday: new Date(`${ymd}T12:00:00Z`).getUTCDay() };
 }
 
 /** Per-day dedup key so the morning routine runs at most once per calendar day,
@@ -72,10 +83,9 @@ async function markMorningRan() {
  *  notification just like the morning brief's, so it deserves the same
  *  wake-readiness gate, not just the chief brief). */
 function weeklyReviewKey(d = new Date()) {
-  const tz = process.env.TZ || 'America/New_York';
-  const local = new Date(d.toLocaleString('en-US', { timeZone: tz }));
-  const sunday = new Date(local);
-  sunday.setDate(local.getDate() - local.getDay());
+  const { ymd, weekday } = localClock(d);
+  const sunday = new Date(`${ymd}T12:00:00Z`);
+  sunday.setUTCDate(sunday.getUTCDate() - weekday);
   return `weekly_review_push:${sunday.toISOString().slice(0, 10)}`;
 }
 
@@ -122,32 +132,73 @@ async function morningRanToday() {
   }
 }
 
-/** ms from now until the next HH:MM (local), optionally restricted to a weekday (0=Sun). */
-function msUntil(hour, minute, weekday = null) {
-  const now = new Date();
-  const next = new Date(now);
-  next.setHours(hour, minute, 0, 0);
-  if (next <= now) next.setDate(next.getDate() + 1);
-  if (weekday != null) {
-    while (next.getDay() !== weekday) next.setDate(next.getDate() + 1);
+/**
+ * Return the next occurrence of HH:MM in the configured timezone. Recompute
+ * from the calendar date rather than adding 24h/7d: those durations are wrong
+ * on daylight-saving transitions. `naiveToUtcIso` also gives the sensible
+ * first-valid-wall-clock behavior for a rare configured time in a DST gap.
+ */
+function nextScheduledAt(hour, minute, weekday = null, { now = new Date(), tz = process.env.TZ || 'America/New_York' } = {}) {
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23 || !Number.isInteger(minute) || minute < 0 || minute > 59) {
+    throw new Error(`Invalid scheduler time: ${hour}:${minute}`);
   }
-  return next - now;
+  if (weekday != null && (!Number.isInteger(weekday) || weekday < 0 || weekday > 6)) {
+    throw new Error(`Invalid scheduler weekday: ${weekday}`);
+  }
+
+  const start = localClock(now, tz);
+  const calendar = new Date(`${start.ymd}T12:00:00Z`);
+  for (let offset = 0; offset <= 8; offset += 1) {
+    const day = new Date(calendar);
+    day.setUTCDate(day.getUTCDate() + offset);
+    const ymd = day.toISOString().slice(0, 10);
+    const dayWeekday = day.getUTCDay();
+    if (weekday != null && dayWeekday !== weekday) continue;
+    const target = new Date(naiveToUtcIso(`${ymd}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`, tz));
+    if (target > now) return target;
+  }
+  throw new Error('Could not calculate next scheduled run');
+}
+
+/** ms from now until the next HH:MM (local), optionally restricted to a weekday (0=Sun). */
+function msUntil(hour, minute, weekday = null, opts = {}) {
+  const now = opts.now || new Date();
+  return nextScheduledAt(hour, minute, weekday, { ...opts, now }) - now;
 }
 
 function scheduleDaily(hour, minute, fn) {
-  const tick = () => {
-    Promise.resolve().then(fn).catch((e) => console.error('[scheduler] job error:', e.message));
-    setTimeout(tick, DAY_MS); // same time tomorrow
+  const arm = () => {
+    const delay = msUntil(hour, minute);
+    return setTimeout(async () => {
+      try {
+        await Promise.resolve().then(fn);
+      } catch (e) {
+        console.error('[scheduler] job error:', e.message);
+      } finally {
+        // Re-evaluate the next wall-clock occurrence only AFTER this run
+        // settles. This prevents a slow job from overlapping itself and keeps
+        // 08:30 at 08:30 after DST, rather than 07:30/09:30.
+        arm();
+      }
+    }, delay);
   };
-  setTimeout(tick, msUntil(hour, minute));
+  return arm();
 }
 
 function scheduleWeekly(weekday, hour, minute, fn) {
-  const tick = () => {
-    Promise.resolve().then(fn).catch((e) => console.error('[scheduler] job error:', e.message));
-    setTimeout(tick, 7 * DAY_MS);
+  const arm = () => {
+    const delay = msUntil(hour, minute, weekday);
+    return setTimeout(async () => {
+      try {
+        await Promise.resolve().then(fn);
+      } catch (e) {
+        console.error('[scheduler] job error:', e.message);
+      } finally {
+        arm();
+      }
+    }, delay);
   };
-  setTimeout(tick, msUntil(hour, minute, weekday));
+  return arm();
 }
 
 // In-flight guard: morningRoutine is reachable from ~5 call sites (the daily
@@ -368,6 +419,7 @@ let giveupLoggedDay = null;
  * be understood, rather than guessing and building anyway.
  */
 function startMorningWatcher() {
+  const tz = process.env.TZ || 'America/New_York';
   const pollMin = Number(process.env.EIGHT_SLEEP_POLL_MIN) || 6;
   // Rate-limit guard against pointless overnight polling — the readiness gate,
   // not this floor, is what actually decides when to build.
@@ -378,16 +430,23 @@ function startMorningWatcher() {
   const giveupHour = Number(process.env.EIGHT_SLEEP_GIVEUP_HOUR) || 12;
   const giveupMinute = Number(process.env.EIGHT_SLEEP_GIVEUP_MINUTE) || 0;
 
+  let watcherInFlight = false;
   const tick = async () => {
+    if (watcherInFlight) {
+      console.log('[scheduler] morning watcher tick already in flight — skipping overlap');
+      return;
+    }
+    watcherInFlight = true;
     try {
       const now = new Date();
+      const clock = localClock(now, tz);
       // Wake-aware weekly review (Sunday only): fires once wake-readiness is
       // confirmed instead of a fixed clock time — checked BEFORE the
       // morning-ran early-return below so a morning that already published
       // earlier doesn't block the week's one review push. Independent
       // dedup key (weeklyReviewKey) so this only ever fires once per week
       // regardless of poll cadence.
-      if (now.getDay() === 0) {
+      if (clock.weekday === 0) {
         try {
           const ranThisWeek = await weeklyReviewRanThisWeek();
           if (!ranThisWeek) {
@@ -408,7 +467,7 @@ function startMorningWatcher() {
       const marker = await morningRanToday();
       if (marker.ran) return;
       if (marker.error) console.log('[scheduler] morning-marker lookup failed this poll — treating as unknown, will retry next poll');
-      const mins = now.getHours() * 60 + now.getMinutes();
+      const mins = clock.hour * 60 + clock.minute;
       if (mins < pollStartHour * 60 + pollStartMinute) return; // too early to poll
 
       if (mins >= giveupHour * 60 + giveupMinute) {
@@ -431,6 +490,8 @@ function startMorningWatcher() {
       if (result.built) console.log(`[scheduler] watcher built the morning brief (sent=${result.sent})`);
     } catch (e) {
       console.error('[scheduler] watcher tick error:', e.message);
+    } finally {
+      watcherInFlight = false;
     }
   };
 
@@ -619,7 +680,8 @@ function startJobs() {
     // still re-arm). If we boot past 8:30am and today's routine hasn't run, run it
     // now. The per-day marker keeps repeated restarts from re-pushing.
     const now = new Date();
-    const pastMorning = now.getHours() * 60 + now.getMinutes() >= hour * 60 + minute;
+    const clock = localClock(now);
+    const pastMorning = clock.hour * 60 + clock.minute >= hour * 60 + minute;
     if (pastMorning) {
       morningRanToday().then((marker) => {
         if (marker.ran) return;
@@ -642,14 +704,14 @@ function startJobs() {
   }
   // Afternoon check-in reminder (3pm) — only pushes if you haven't logged your
   // mood/energy/focus yet (you can't meaningfully rate the day at 8am).
-  const checkinHour = Number(process.env.CHECKIN_REMINDER_HOUR) || 15; // 3pm
-  const checkinMinute = Number(process.env.CHECKIN_REMINDER_MINUTE) || 0;
+  const checkinHour = envInt('CHECKIN_REMINDER_HOUR', 15); // 3pm
+  const checkinMinute = envInt('CHECKIN_REMINDER_MINUTE', 0);
   scheduleDaily(checkinHour, checkinMinute, () => runCheckinReminder({}));
   // Evening analyze + consolidate (9:30pm) — captures the day's check-in and habits
   // data, then rebuilds the self-model so every voice surface starts tomorrow
   // fully informed about who this person is.
-  const analyzeEveningHour = Number(process.env.ANALYZE_EVENING_HOUR) || 21;
-  const analyzeEveningMinute = Number(process.env.ANALYZE_EVENING_MINUTE) || 30;
+  const analyzeEveningHour = envInt('ANALYZE_EVENING_HOUR', 21);
+  const analyzeEveningMinute = envInt('ANALYZE_EVENING_MINUTE', 30);
   scheduleDaily(analyzeEveningHour, analyzeEveningMinute, async () => {
     try { await analyzeMod.analyze(); } catch (e) { console.error('[scheduler] evening analyze:', e.message); }
     try { await crossContextMod.generateCrossContext(); } catch (e) { console.error('[scheduler] evening crossContext:', e.message); }
@@ -682,8 +744,8 @@ function startJobs() {
   // check-in, habits, "tell me about your day") landing within 5 minutes of each
   // other; merged into one that names whichever pieces are still open
   // (notification-load review). Only pushes if at least one is outstanding.
-  const eveningReminderHour = Number(process.env.EVENING_REMINDER_HOUR) || 21; // 9pm
-  const eveningReminderMinute = Number(process.env.EVENING_REMINDER_MINUTE) || 0;
+  const eveningReminderHour = envInt('EVENING_REMINDER_HOUR', 21); // 9pm
+  const eveningReminderMinute = envInt('EVENING_REMINDER_MINUTE', 0);
   scheduleDaily(eveningReminderHour, eveningReminderMinute, () => runEveningReminder({}));
 
   // Commitment follow-through — the time-aware nudge. Unlike the fixed-time jobs
@@ -718,7 +780,8 @@ function startJobs() {
 }
 
 module.exports = {
-  start, msUntil, morningRoutine, morningRanToday, markMorningRan, localDateKey,
+  start, msUntil, nextScheduledAt, localClock, scheduleDaily, scheduleWeekly,
+  morningRoutine, morningRanToday, markMorningRan, localDateKey,
   eightSleepConfigured,
   tryBecomeLeader, releaseLeaderLock, schedulerState,
 };

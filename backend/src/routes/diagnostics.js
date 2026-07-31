@@ -445,7 +445,9 @@ function createDiagnosticsRouter() {
     const hour = envInt('SCHEDULE_HOUR', 8);
     const minute = envInt('SCHEDULE_MINUTE', 30);
     const checkinH = envInt('CHECKIN_REMINDER_HOUR', 15);
+    const checkinM = envInt('CHECKIN_REMINDER_MINUTE', 0);
     const eveningReminderH = envInt('EVENING_REMINDER_HOUR', 21);
+    const eveningReminderM = envInt('EVENING_REMINDER_MINUTE', 0);
 
     const nextMs = (h, m) => {
       try { return msUntil(h, m); } catch { return null; }
@@ -478,8 +480,8 @@ function createDiagnosticsRouter() {
       serverTime: new Date().toLocaleString('en-US', { timeZone: process.env.TZ || 'UTC' }),
       jobs: {
         morning: morningJob,
-        checkinAfternoon:{ configured: `${String(checkinH).padStart(2,'0')}:00`, nextFireAt: toWallClock(nextMs(checkinH, 0)) },
-        eveningReminder: { configured: `${String(eveningReminderH).padStart(2,'0')}:00`, nextFireAt: toWallClock(nextMs(eveningReminderH, 0)) },
+        checkinAfternoon:{ configured: `${String(checkinH).padStart(2,'0')}:${String(checkinM).padStart(2,'0')}`, nextFireAt: toWallClock(nextMs(checkinH, checkinM)) },
+        eveningReminder: { configured: `${String(eveningReminderH).padStart(2,'0')}:${String(eveningReminderM).padStart(2,'0')}`, nextFireAt: toWallClock(nextMs(eveningReminderH, eveningReminderM)) },
       },
       hint: !enabled
         ? 'Set ENABLE_SCHEDULER=true in Railway env vars to enable the morning routine.'
