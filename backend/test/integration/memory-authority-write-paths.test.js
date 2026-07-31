@@ -32,6 +32,14 @@ afterEach(async () => {
   llm.generateText = originalGenerateText;
   await db.query(`DELETE FROM context_compilation_jobs WHERE raw_text LIKE $1`, [`${MARKER}%`]);
   await db.query(`DELETE FROM context_relations WHERE source_assertion_id IN (SELECT id FROM context_assertions WHERE raw_text LIKE $1)`, [`${MARKER}%`]);
+  // A correction/retraction may compile a replacement that points at the
+  // original assertion through supersedes_assertion_id. Clear that test-only
+  // link before deleting the rows, preserving the FK's real production guard.
+  await db.query(
+    `UPDATE context_assertions SET supersedes_assertion_id = NULL
+      WHERE supersedes_assertion_id IN (SELECT id FROM context_assertions WHERE raw_text LIKE $1)`,
+    [`${MARKER}%`]
+  );
   await db.query(`DELETE FROM context_assertions WHERE raw_text LIKE $1`, [`${MARKER}%`]);
   await db.query(`DELETE FROM annotations WHERE label LIKE $1`, [`${MARKER}%`]);
   await db.query(`DELETE FROM day_journal WHERE text LIKE $1`, [`${MARKER}%`]);
