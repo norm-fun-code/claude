@@ -11,12 +11,19 @@ const documents = require('../src/store/documents');
 const metricsStore = require('../src/store/metrics');
 const monarchWealth = require('../src/services/monarch-wealth');
 
-// Current calendar month (YYYY-MM) so the spike math treats it as the partial
-// "current" month and projects a run-rate — independent of the day we run on.
-function currentMonth(d = new Date()) {
+// Fixed mid-month instant (day 15) — buildWealthInsights's degraded fallback
+// path deliberately suppresses ALL spike cards during the first 6 days of a
+// real calendar month (a 1-2 day run-rate projection is too noisy to trust:
+// day 2 of a 31-day month projects a 15.5x run-rate off a single purchase —
+// see wealth-insights.js's projectionReliable). Pinning `now` keeps these
+// tests exercising the "reliable" branch regardless of which day this suite
+// actually runs on, instead of going spuriously red for the first week of
+// every real calendar month (the exact failure this fixes).
+const NOW = new Date('2026-07-15T16:00:00Z');
+function currentMonth(d = NOW) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
-function monthsBack(n, d = new Date()) {
+function monthsBack(n, d = NOW) {
   const x = new Date(d.getFullYear(), d.getMonth() - n, 1);
   return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`;
 }
@@ -59,7 +66,7 @@ test('trend card gains a budget clause when under-budget but pacing over', async
       { category: 'Taxi & Ride Shares', budget: 2000, actual: 442, remaining: 1558, pace: 1.2, overBudget: false },
     ],
   });
-  const insights = await buildWealthInsights();
+  const insights = await buildWealthInsights({ now: NOW });
   const trend = insights.find((i) => i.type === 'spending_pattern' && i.category === 'Taxi & Ride Shares');
   assert.ok(trend, 'expected a spending_pattern card for Taxi & Ride Shares');
   // wealth-insights.js picks between two vs-usual phrasings ("so far this
@@ -79,7 +86,7 @@ test('trend card notes when the trend is still within budget', async () => {
       { category: 'Taxi & Ride Shares', budget: 5000, actual: 442, remaining: 4558, pace: 0.9, overBudget: false },
     ],
   });
-  const insights = await buildWealthInsights();
+  const insights = await buildWealthInsights({ now: NOW });
   const trend = insights.find((i) => i.type === 'spending_pattern' && i.category === 'Taxi & Ride Shares');
   assert.ok(trend);
   assert.match(trend.detail, /within your \$5,000 budget/, 'reassures it is inside budget');
@@ -87,7 +94,7 @@ test('trend card notes when the trend is still within budget', async () => {
 
 test('trend card has no budget clause when the category has no budget', async () => {
   stub({ pacingLines: [] }); // Monarch has no budget for this category
-  const insights = await buildWealthInsights();
+  const insights = await buildWealthInsights({ now: NOW });
   const trend = insights.find((i) => i.type === 'spending_pattern' && i.category === 'Taxi & Ride Shares');
   assert.ok(trend);
   assert.doesNotMatch(trend.detail, /budget/, 'no budget mention when none exists');
@@ -99,7 +106,7 @@ test('over-budget category shows the dedicated over_budget card, not a duplicate
       { category: 'Taxi & Ride Shares', budget: 300, actual: 442, remaining: -142, pace: 5.7, overBudget: true },
     ],
   });
-  const insights = await buildWealthInsights();
+  const insights = await buildWealthInsights({ now: NOW });
   const over = insights.find((i) => i.type === 'over_budget' && i.category === 'Taxi & Ride Shares');
   const trend = insights.find((i) => i.type === 'spending_pattern' && i.category === 'Taxi & Ride Shares');
   assert.ok(over, 'expected an over_budget card');

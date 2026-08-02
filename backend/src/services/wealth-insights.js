@@ -146,7 +146,7 @@ async function computeSavingsRate({ now = new Date() } = {}) {
  *  - "vs usual": current-month category spend vs the avg of prior full months.
  *  - "vs budget": current-month actual vs Monarch's planned amount per category.
  */
-async function buildWealthInsights({ spendingPace = null } = {}) {
+async function buildWealthInsights({ spendingPace = null, now = new Date() } = {}) {
   const insights = [];
 
   // 0) Savings rate — the single most important personal-finance number:
@@ -299,7 +299,6 @@ async function buildWealthInsights({ spendingPace = null } = {}) {
       const current = months[months.length - 1];
       const priorMonths = months.slice(0, -1);
 
-      const now = new Date();
       const currentIsThisMonth =
         current === `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
       const dayOfMonth = now.getDate();

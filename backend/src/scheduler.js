@@ -74,6 +74,19 @@ async function markMorningRan() {
   }
 }
 
+/** Pure: should the wake-aware weekly-review watcher fire on THIS tick?
+ *  (Aug 2 2026 incident.) The caller has already confirmed it's Sunday and
+ *  the review hasn't run yet this week — this only decides the readiness
+ *  half: fire the moment Eight Sleep wake-readiness confirms, OR once the
+ *  SAME give-up cutoff the daily morning brief uses has passed. Without the
+ *  give-up half, a day with zero Eight Sleep observations (no ring reading
+ *  at all — e.g. a self-report-only night) never confirms readiness, and
+ *  the week's one review would silently never generate, with nothing to
+ *  retry it and no manual "Build now" equivalent surfaced anywhere. */
+function shouldRunWeeklyReview({ readinessReady, pastGiveup }) {
+  return Boolean(readinessReady || pastGiveup);
+}
+
 /** Local-week (Sunday, YYYY-MM-DD) dedup key for the wake-aware weekly-review
  *  push — see startMorningWatcher's tick, which now fires this on Sundays
  *  once wake-readiness is confirmed instead of scheduleWeekly's old fixed
@@ -446,16 +459,30 @@ function startMorningWatcher() {
       // earlier doesn't block the week's one review push. Independent
       // dedup key (weeklyReviewKey) so this only ever fires once per week
       // regardless of poll cadence.
+      //
+      // Give-up fallback (Aug 2 2026 incident): on a day with no Eight
+      // Sleep reading at all (0 observations — e.g. a self-reported-only
+      // night), wake-readiness never becomes true, and unlike the daily
+      // brief below this branch had no cutoff — the week's one review
+      // silently never generated, all day, with nothing to retry it and no
+      // manual "Build now" equivalent surfaced anywhere. The review only
+      // needs the day's data cut cleanly, not a finalized Eight Sleep
+      // trend the way the morning brief's narrative does, so past the SAME
+      // giveupHour/giveupMinute cutoff the daily brief already uses, build
+      // it anyway rather than waiting on a signal that may never arrive.
       if (clock.weekday === 0) {
         try {
           const ranThisWeek = await weeklyReviewRanThisWeek();
           if (!ranThisWeek) {
+            const weeklyMins = clock.hour * 60 + clock.minute;
+            const pastWeeklyGiveup = weeklyMins >= giveupHour * 60 + giveupMinute;
             const readiness = await sleepReadiness.getMorningSleepReadiness({ asOf: now, trigger: 'weekly-review-watcher' });
-            if (readiness.ready) {
+            if (shouldRunWeeklyReview({ readinessReady: readiness.ready, pastGiveup: pastWeeklyGiveup })) {
               const r = await morningNotify.runWeeklyReviewWithPush({});
               if (r.generated) {
                 await markWeeklyReviewRan();
-                console.log(`[scheduler] wake-aware weekly review sent (sent=${r.sent ?? 0})`);
+                const via = readiness.ready ? 'wake-aware' : 'give-up';
+                console.log(`[scheduler] ${via} weekly review sent (sent=${r.sent ?? 0})`);
               }
             }
           }
@@ -784,4 +811,5 @@ module.exports = {
   morningRoutine, morningRanToday, markMorningRan, localDateKey,
   eightSleepConfigured,
   tryBecomeLeader, releaseLeaderLock, schedulerState,
+  shouldRunWeeklyReview,
 };
