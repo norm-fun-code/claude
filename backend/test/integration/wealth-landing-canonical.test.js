@@ -38,7 +38,13 @@ test('required 1: wealth-landing.numbers.mtdDiscretionary, canonicalSpendingMtd,
   const monthStart = localMonthFirstKeyTs(asOf);
   await metricsStore.insertMetrics([
     { ts: monthStart, domain: 'wealth', metric: 'spending_discretionary', value: 321.55, source: SOURCE },
-    { ts: new Date(monthStart.getTime() + 3 * 864e5), domain: 'wealth', metric: 'spending_discretionary', value: 78.45, source: SOURCE },
+    // Pinned to `asOf` itself (never monthStart + a fixed day offset) so
+    // this row is always within the MTD window regardless of which day of
+    // the month the suite happens to run on — a fixed "+3 days" landed in
+    // the FUTURE relative to `asOf` whenever the real month is only 1-3
+    // days old (e.g. Aug 2), silently dropping this row from the sum and
+    // failing the >= 400 assertion below.
+    { ts: asOf, domain: 'wealth', metric: 'spending_discretionary', value: 78.45, source: SOURCE },
   ]);
 
   const direct = await canonicalSpendingMtd(asOf, TZ);

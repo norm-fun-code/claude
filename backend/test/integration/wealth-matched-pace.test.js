@@ -676,11 +676,22 @@ test('required: a fresh full build whose BrainSnapshot assembly fails still reso
   const prefix = `${TAG}-nosnapshot`;
   cleanupDocsAfter(t, prefix);
 
+  // Unlike every other test in this file, this one exercises
+  // buildFreshBriefing() directly — the real production route function,
+  // which always resolves "now" from the real clock (it takes no asOf
+  // override) — so seeded months must anchor to the ACTUAL current month,
+  // never the fixed July-2026 anchor targetForMonthsAgo/ASOF use elsewhere.
+  // A hardcoded anchor silently seeded the wrong months the moment this
+  // suite ran in any month other than July 2026 (e.g. August), leaving the
+  // real "current month" with zero seeded Clothing spend and no driver.
+  const realNow = new Date();
+  const realMonthAnchor = (monthsAgo) => monthOffset(realNow.getFullYear(), realNow.getMonth() + 1, monthsAgo);
+
   for (let monthsAgo = 1; monthsAgo <= 6; monthsAgo++) {
-    const { y, m } = targetForMonthsAgo(monthsAgo);
+    const { y, m } = realMonthAnchor(monthsAgo);
     await seedDoc({ externalId: `${prefix}-clothing-${monthsAgo}`, occurredAt: ymd(y, m, 1), category: 'Clothing', amount: '-110' });
   }
-  await seedDoc({ externalId: `${prefix}-clothing-cur`, occurredAt: ymd(2026, 7, 1), category: 'Clothing', amount: '-3235' });
+  await seedDoc({ externalId: `${prefix}-clothing-cur`, occurredAt: ymd(realNow.getFullYear(), realNow.getMonth() + 1, 1), category: 'Clothing', amount: '-3235' });
 
   const snapshotMod = require('../../src/brain/snapshot');
   const originalBuildBrainSnapshot = snapshotMod.buildBrainSnapshot;
