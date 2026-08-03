@@ -291,8 +291,11 @@ export default function App() {
   // button (see tabRefresh below) and BriefCard's own scoped ↻.
   const onRefresh = useCallback(() => {
     health.refetch();
-    if (tab === 'health') liveRecovery.refetch();
-    else briefing.reload();
+    // liveRecovery also backs the Today tab's SleepCheckInCard (not just
+    // Health's recovery card), so Today's pull-to-refresh must refresh it
+    // too — it's the same cheap, no-LLM endpoint either way.
+    liveRecovery.refetch();
+    if (tab !== 'health') briefing.reload();
   }, [briefing, health, liveRecovery, tab]);
 
   const d = briefing.data;
