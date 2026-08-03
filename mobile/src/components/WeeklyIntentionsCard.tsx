@@ -354,6 +354,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     minHeight: 72,
+    // Capped so a long entry scrolls WITHIN the box (native TextInput
+    // behavior keeps the cursor visible as you type past this height)
+    // instead of growing unbounded — an unbounded multiline input outgrows
+    // the one-time keyboard-avoidance scroll that fires when it's first
+    // focused, so the actively-typed line ends up hidden under the
+    // keyboard with no further auto-scroll to reveal it.
+    maxHeight: 140,
     textAlignVertical: 'top',
   },
   failed: { ...typography.caption, color: '#C0392B', marginTop: spacing.sm },
