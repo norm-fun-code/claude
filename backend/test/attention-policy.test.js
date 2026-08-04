@@ -315,6 +315,21 @@ function checkinEvent(overrides = {}) {
   });
 }
 
+// Live bug: tapping the "10-second check-in" push (from a terminated app)
+// did nothing — no navigation to the check-in modal, just a silent reload.
+// notify/dispatch.js's sendPush stamps the push payload's data.key from
+// THIS eventKey() output, never from the raw nudge candidate's own key
+// (nudges.js's checkinReminder() key: `checkin:${day}`, which never reaches
+// the client at all once routed through the generic attention-policy
+// dispatch path). mobile/App.tsx's onNotificationTap must match THIS exact
+// format — pinned here so the two can never silently drift apart again the
+// way they did the first time.
+test('required: eventKey() for a checkin_missing event is the exact format mobile/App.tsx\'s onNotificationTap matches on ("wellbeing:checkin_missing:...") — never the raw nudge candidate key ("checkin:...")', () => {
+  const key = eventKey(checkinEvent());
+  assert.match(key, /^wellbeing:checkin_missing:/, `push data.key must start with "wellbeing:checkin_missing:" for the mobile client's routing to fire; got: ${key}`);
+  assert.ok(!key.startsWith('checkin:'), 'the raw nudge-candidate key format is never what actually reaches the push payload');
+});
+
 test('1. an incomplete 3pm check-in produces notify_now', () => {
   const d = judge(checkinEvent(), baseContext());
   assert.equal(d.disposition, 'notify_now');
