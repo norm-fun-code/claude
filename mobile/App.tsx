@@ -868,6 +868,15 @@ export default function App() {
             {/* Sleep check-in — only when there's no Pod reading to fill the
                 gap. Leads when present so logging sleep is the first action. */}
             <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={onSleepLogged} />
+            {/* Last night's context (melatonin, alcohol, late meal, TM, stress,
+                etc.) — self-hides once submitted for the day (or on days
+                without anything to log). Distinct from SleepCheckInCard above:
+                that one asks how you slept when there's no device reading;
+                this one asks WHY, every day, regardless of whether there's a
+                Pod reading. Built and wired to the backend but never actually
+                rendered anywhere — restored to lead the Today tab alongside
+                the sleep check-in. */}
+            <NightContextCard />
             {/* Evening wind-down brief — leads in the evening (self-hides
                 during the day and when no brief is built) and already
                 implements the "plan vs. actual, not the morning action
