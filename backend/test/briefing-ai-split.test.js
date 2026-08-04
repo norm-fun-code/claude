@@ -288,6 +288,59 @@ test('CHIEF_SYSTEM forbids inventing sensory/emotional detail or altering a name
   assert.match(capturedSystem, /investor update kickoff/);
 });
 
+// Live bug: Wisdom said "mood, energy, and focus all sitting steady this
+// week" while the SAME day's Chief Brief said "focus is down 26% and mood
+// down 29% — five days running." Both draw from real data, but Wisdom only
+// ever received wellbeingContext — a coarse 7-day AVERAGE level (low/ok/high)
+// that can read "ok" even mid-decline, since an average absorbs a drop that
+// happened partway through the week. The Chief Brief gets the accurate
+// picture from continuityContext (the "PERSISTENT ISSUES" ledger — see
+// routes/briefing.js's streaks/continuityContext, sourced from
+// analyze.js's computeTrends), which Wisdom never received at all. Confirms
+// generateWisdomInsights now threads continuityContext into the prompt, and
+// the system prompt tells the model to treat it as authoritative over the
+// coarse average.
+test('generateWisdomInsights receives continuityContext and the prompt instructs it to defer to real trend/duration data over the coarse wellbeing average', async () => {
+  let capturedPrompt = null;
+  llm.generateText = async ({ system, prompt }) => {
+    if (system.includes('reflective "wisdom" section')) { capturedPrompt = prompt; return WISDOM_JSON; }
+    return chiefMeta(CHIEF_JSON);
+  };
+  await generateWisdomInsights(
+    'some notion text',
+    'a quote',
+    'mood ok; energy ok; focus ok',
+    '- Focus down 26% vs your 7d norm (worsening) — open 5 days running\n- Mood down 29% vs your 7d norm (worsening) — open 5 days running'
+  );
+  assert.ok(capturedPrompt);
+  assert.match(capturedPrompt, /Focus down 26%/, 'the persistent-findings block must actually reach the prompt');
+  assert.match(capturedPrompt, /open 5 days running/);
+});
+
+test('generateWisdomInsights omits the findings block entirely when continuityContext is empty (never a stray empty section)', async () => {
+  let capturedPrompt = null;
+  llm.generateText = async ({ system, prompt }) => {
+    if (system.includes('reflective "wisdom" section')) { capturedPrompt = prompt; return WISDOM_JSON; }
+    return chiefMeta(CHIEF_JSON);
+  };
+  await generateWisdomInsights('some notion text', 'a quote', 'mood ok');
+  assert.ok(capturedPrompt);
+  assert.doesNotMatch(capturedPrompt, /Ongoing findings/);
+});
+
+test('WISDOM_SYSTEM tells the model the wellbeing average can look "steady" mid-decline, and to defer to Ongoing findings instead', async () => {
+  let capturedSystem = null;
+  llm.generateText = async ({ system }) => {
+    if (system.includes('reflective "wisdom" section')) { capturedSystem = system; return WISDOM_JSON; }
+    return chiefMeta(CHIEF_JSON);
+  };
+  await generateWisdomInsights('notion text', 'quote', 'mood ok');
+  assert.ok(capturedSystem);
+  assert.match(capturedSystem, /coarse 7-day AVERAGE level/);
+  assert.match(capturedSystem, /Never call mood\/energy\/focus "steady,"/);
+  assert.match(capturedSystem, /Ongoing findings/);
+});
+
 test('generateBriefing runs chief and wisdom calls concurrently, not serially', async () => {
   const order = [];
   llm.generateText = async ({ system }) => {

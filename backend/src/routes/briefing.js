@@ -2415,7 +2415,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
       ),
       wisdomAlreadyLocked
         ? Promise.resolve(null)
-        : withTimeout(generateWisdomInsights(notionTextForBrief, quoteData.quote, wellbeingContext), LLM_TIMEOUT, 'gemini_wisdom'),
+        : withTimeout(generateWisdomInsights(notionTextForBrief, quoteData.quote, wellbeingContext, continuityContext), LLM_TIMEOUT, 'gemini_wisdom'),
     ]);
 
     let chiefResult = null;

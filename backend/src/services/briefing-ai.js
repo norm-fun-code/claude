@@ -120,7 +120,7 @@ const WISDOM_SYSTEM =
   '}\n\n' +
   'Rules:\n' +
   '- notionQuote: pick a self-contained, meaningful line — never a title, never an intro that trails off (e.g. "Rather than trying to find someone who will:"). If the best idea spans a sentence, quote the whole sentence.\n' +
-  '- quoteInsight / notionInsight: first sentence draws out the core idea as lived wisdom. Second sentence makes the connection to their actual data explicit — name the specific state or pattern that makes this quote land right now (e.g. "energy running low this week makes this idea about sustainable effort particularly timely" or "with recovery in the yellow band and cold shower adherence slipping this week, this hits differently"). If wellbeing data shows "no recent check-in data", return empty string for BOTH quoteInsight and notionInsight — a quote with no data connection is not shown. Connect through their wellbeing/health state (mood/energy/focus, recovery band, habits) — speak in plain human terms (low/ok/high, settled/slipping), like a friend who noticed, NEVER a raw number or "X/5" — that reads clinical, not like someone who actually knows them. Do NOT reference their calendar, specific tasks, schedule, "today", or their job/profession. Do NOT cite any dollar amount, net-worth figure, or financial percentage here — even if the quote is about money, make the connection qualitative (e.g. "the optionality you\'re building"), never with a computed number.';
+  '- quoteInsight / notionInsight: first sentence draws out the core idea as lived wisdom. Second sentence makes the connection to their actual data explicit — name the specific state or pattern that makes this quote land right now (e.g. "energy running low this week makes this idea about sustainable effort particularly timely" or "with recovery in the yellow band and cold shower adherence slipping this week, this hits differently"). If wellbeing data shows "no recent check-in data", return empty string for BOTH quoteInsight and notionInsight — a quote with no data connection is not shown. Connect through their wellbeing/health state (mood/energy/focus, recovery band, habits) — speak in plain human terms (low/ok/high, settled/slipping), like a friend who noticed, NEVER a raw number or "X/5" — that reads clinical, not like someone who actually knows them. CRITICAL — the "Recent wellbeing" line is a coarse 7-day AVERAGE level only (low/ok/high); it can read "ok" even while a metric has been sharply declining all week, because an average absorbs a mid-week drop. Never call mood/energy/focus "steady," "holding," or similar on the strength of that average alone — check "Ongoing findings" (when present) for the real direction and duration first, and if it flags a decline, say so honestly (e.g. "with focus sliding for a few days now") instead of the contradicting "steady" framing. Do NOT reference their calendar, specific tasks, schedule, "today", or their job/profession. Do NOT cite any dollar amount, net-worth figure, or financial percentage here — even if the quote is about money, make the connection qualitative (e.g. "the optionality you\'re building"), never with a computed number.';
 
 function buildChiefBriefPrompt(emailData, currentDay, workoutPlan, calendarEvents, wellbeingContext = '', annotationsContext = '', recoveryContext = '', experimentsContext = '', selfModel = '', leverageContext = '', workBusyBlocks = [], strengthContext = '', spendingContext = '', continuityContext = '', cashflowContext = '', progressContext = '', weeklyGoalsContext = '', chaptersContext = '', dayOffContext = '', attentionContext = '', openGoals = [], recoveryDriversContext = '', calendarSourcesAvailable = { workBusy: true, calendar: true }, answeredQuestionsContext = '', classifiedOverrides = [], nightlyContextHistoryContext = '') {
   // Input size wasn't the timeout cause (the proven Apps Script sends 15K/email
@@ -240,14 +240,15 @@ ${answeredQuestionsContext ? `ALREADY ANSWERED TODAY (do NOT set openQuestion to
 ${emailSection}`;
 }
 
-function buildWisdomPrompt(notionText, quote, wellbeingContext = '') {
+function buildWisdomPrompt(notionText, quote, wellbeingContext = '', continuityContext = '') {
   return `Today's quote/principle:
 "${quote}"
 
 Today's Notion wisdom:
 ${notionText}
 
-Recent wellbeing (last 7 days): ${wellbeingContext || 'no recent check-in data'}`;
+Recent wellbeing (last 7 days): ${wellbeingContext || 'no recent check-in data'}
+${continuityContext ? `\nOngoing findings (persistent trends the system has already tracked — these describe DIRECTION and DURATION, which the wellbeing summary above does not; treat as authoritative over it for anything they both cover):\n${continuityContext}` : ''}`;
 }
 
 const EMPTY_CHIEF = { morningFocus: '', chiefBrief: null, urgentEmails: [] };
@@ -875,8 +876,8 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
  * caller once today's quote/Notion pair is already day-locked (see file header) —
  * the biggest single latency/cost win here is not calling this at all.
  */
-async function generateWisdomInsights(notionText, quote, wellbeingContext = '') {
-  const prompt = buildWisdomPrompt(notionText, quote, wellbeingContext);
+async function generateWisdomInsights(notionText, quote, wellbeingContext = '', continuityContext = '') {
+  const prompt = buildWisdomPrompt(notionText, quote, wellbeingContext, continuityContext);
 
   let text = '';
   try {
