@@ -63,6 +63,53 @@ function netWorthMilestoneInsight({ monthlyChange = 1500, current = 240000 } = {
   };
 }
 
+// The two real shapes services/wealth-insights.js's spending_pattern evidence
+// can take — see wealth-pace.js's coverageTier: 'typical' (6+ months
+// history, the common case) carries matchedMedian and NO projected field;
+// the degraded fallback (newer accounts) carries avg/projected instead.
+function spendingSpikeInsight({ category = 'Entertainment & Recreation', current = 442, matchedMedian, avg, projected } = {}) {
+  const evidence = { kind: 'spending_pattern', category, current };
+  if (matchedMedian != null) evidence.matchedMedian = matchedMedian;
+  if (avg != null) evidence.avg = avg;
+  if (projected != null) evidence.projected = projected;
+  evidence.impactDollars = current - (matchedMedian ?? avg ?? 0);
+  return {
+    type: 'spending_pattern', tone: 'watch', category,
+    title: `${category}: $${evidence.impactDollars} more than usual`,
+    detail: `${category} is running well above your usual pace this month.`,
+    attentionClass: 'action_required', material: true, timeSensitive: true, actionable: true,
+    direction: 'negative', reasonCode: 'spending_spike',
+    evidence, asOf: '2026-08-03T12:00:00Z',
+  };
+}
+
+// ── Aug 2026 incident: "Usual average"/"Projected" rendered literal "$NaN" ──
+test('required — spending_pattern evidence never renders "$NaN": canonical matched-pace shape (matchedMedian, no projected)', () => {
+  const cards = buildRadarCards({
+    wealthInsights: [spendingSpikeInsight({ current: 442, matchedMedian: 60 })],
+    weeklyReview: null, recovery: null, chiefBrief: null, risk: null, snapshotId: 'snap_x',
+  });
+  const card = cards[0];
+  assert.ok(Array.isArray(card.evidenceItems));
+  const text = JSON.stringify(card.evidenceItems);
+  assert.doesNotMatch(text, /NaN/, `evidence items must never render "$NaN": ${text}`);
+  const usual = card.evidenceItems.find((i) => i.label === 'Usual average');
+  assert.equal(usual.value, '$60', 'canonical shape\'s matchedMedian must be read as the usual-average figure');
+  assert.ok(!card.evidenceItems.some((i) => i.label === 'Projected'), 'the canonical matched-pace shape has no run-rate projection — the row must be omitted, not shown as $NaN');
+});
+
+test('required — spending_pattern evidence never renders "$NaN": degraded fallback shape (avg/projected)', () => {
+  const cards = buildRadarCards({
+    wealthInsights: [spendingSpikeInsight({ current: 442, avg: 186, projected: 442 })],
+    weeklyReview: null, recovery: null, chiefBrief: null, risk: null, snapshotId: 'snap_x',
+  });
+  const card = cards[0];
+  const text = JSON.stringify(card.evidenceItems);
+  assert.doesNotMatch(text, /NaN/, `evidence items must never render "$NaN": ${text}`);
+  assert.equal(card.evidenceItems.find((i) => i.label === 'Usual average').value, '$186');
+  assert.equal(card.evidenceItems.find((i) => i.label === 'Projected').value, '$442');
+});
+
 // ── Required regression 1+2: a strong/on-track savings rate never becomes a material alert, for arbitrary values ──
 test('required 1/2 — a positive savings rate (arbitrary %, arbitrary title) never produces a material/action_required Radar card', () => {
   for (const ratePct of [5, 19, 20, 28, 41, 63]) {

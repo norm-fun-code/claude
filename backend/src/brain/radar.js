@@ -50,7 +50,17 @@ function overlapRatio(text, phrase) {
   return common / pw.size;
 }
 
-const fmtMoney = (n) => (n < 0 ? '-$' + Math.round(Math.abs(n)).toLocaleString('en-US') : '$' + Math.round(n).toLocaleString('en-US'));
+// Defensive against a future evidence-shape drift between the two
+// spending_pattern producers (see the comment above WEALTH_EVIDENCE_ITEMS
+// below) — Math.round(undefined) is NaN, and NaN.toLocaleString() renders
+// the literal string "NaN", producing a "$NaN" evidence row that shipped to
+// production undetected until this exact bug (Aug 2026: 'Usual average'/
+// 'Projected' reading '$NaN' whenever the canonical matched-pace evidence
+// shape, which has no `avg`/`projected` fields, reached this formatter).
+const fmtMoney = (n) => {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return '—';
+  return n < 0 ? '-$' + Math.round(Math.abs(n)).toLocaleString('en-US') : '$' + Math.round(n).toLocaleString('en-US');
+};
 
 // Short, purpose-written "why now" copy keyed by the wealth insight's own
 // `reasonCode` — structured metadata the producer (wealth-insights.js)
@@ -78,11 +88,24 @@ const WEALTH_EVIDENCE_ITEMS = {
     { label: 'Saved', value: `${e.ratePct}%` },
     { label: 'Window', value: `${e.windowDays} days` },
   ],
-  spending_pattern: (e) => [
-    { label: e.category || 'This month', value: `${fmtMoney(e.current)} so far` },
-    { label: 'Usual average', value: fmtMoney(e.avg) },
-    { label: 'Projected', value: fmtMoney(e.projected) },
-  ],
+  // wealth-insights.js's spending_pattern evidence has TWO distinct shapes
+  // depending on which producer built it (see its own module comment):
+  // the canonical matched-pace path (coverageTier 'typical', 6+ months of
+  // history — the common case) carries `matchedMedian` and no `projected`
+  // at all (it's already an apples-to-apples same-elapsed-fraction
+  // comparison, not a run-rate projection); the degraded fallback (newer
+  // accounts with too little history) carries `avg`/`projected` instead.
+  // This used to unconditionally read `e.avg`/`e.projected` — always
+  // undefined on the (now-primary) canonical shape, rendering "$NaN" for
+  // both rows in production.
+  spending_pattern: (e) => {
+    const items = [
+      { label: e.category || 'This month', value: `${fmtMoney(e.current)} so far` },
+      { label: 'Usual average', value: fmtMoney(e.matchedMedian ?? e.avg) },
+    ];
+    if (typeof e.projected === 'number') items.push({ label: 'Projected', value: fmtMoney(e.projected) });
+    return items;
+  },
   budget_pacing: (e) => [
     { label: e.category || 'Budget', value: `${fmtMoney(e.actual)} of ${fmtMoney(e.budget)}` },
     { label: 'Pace', value: `${Math.round(e.pace * 100)}% of expected` },
