@@ -31,6 +31,12 @@
 'use strict';
 
 const CATEGORY_MIN_SPEND = 50;
+// A category's matched-window MEDIAN must clear this before the category can
+// be called a spike at all — see the guard in computeDiscretionaryMatchedPace
+// for why comparing against a ~$0 baseline is meaningless rather than merely
+// noisy. Mirrors the degraded fallback path's own `avg < MIN_SPEND` skip
+// (wealth-insights.js), which the canonical path was missing.
+const CATEGORY_MIN_BASELINE = 50;
 // A category must contribute at least this many dollars of excess above its
 // own matched-pace median to be named a "driver" — mirrors wealth-insights.js's
 // SPIKE_DOLLARS convention (dollar-impact discipline over raw percentage).
@@ -310,6 +316,18 @@ async function computeDiscretionaryMatchedPace({ asOf = new Date(), tz = process
       const amounts = histByCat.get(category) || [];
       const padded = [...amounts, ...Array(Math.max(0, eligibleMonths.length - amounts.length)).fill(0)];
       const catMedian = median(padded) ?? 0;
+      // A category whose matched-window median is essentially zero has no
+      // comparable history in THIS window — calling that a "spike" compares
+      // against an empty denominator and manufactures alarm out of nothing
+      // ("$101 more than usual", usual = $0). This bites hardest in the
+      // first days of a month, when the matched window is only 1-3 days
+      // long and nearly every category's median is $0, so every ordinary
+      // purchase reads as a spike. The degraded fallback path already had
+      // the equivalent guard (wealth-insights.js's `avg < MIN_SPEND`
+      // skip); the canonical path was missing it, which is exactly how a
+      // $101 Entertainment charge on Aug 3 surfaced as a Radar card
+      // against a $0 baseline. Self-resolves as the month fills in.
+      if (catMedian < CATEGORY_MIN_BASELINE) continue;
       const excessDollars = Math.round(currentSpend - catMedian);
       if (excessDollars < CATEGORY_EXCESS_DOLLAR_FLOOR) continue;
       candidates.push({
@@ -352,6 +370,6 @@ module.exports = {
   computeDiscretionaryMatchedPace,
   // Pure helpers exported for unit testing without a database.
   localYmd, daysInMonth, monthOffset, matchedDayOfMonth, dayKeyUtc, paceLabelFor, pctOrNull,
-  CATEGORY_MIN_SPEND, CATEGORY_EXCESS_DOLLAR_FLOOR, MIN_MEANINGFUL_BASELINE,
+  CATEGORY_MIN_SPEND, CATEGORY_MIN_BASELINE, CATEGORY_EXCESS_DOLLAR_FLOOR, MIN_MEANINGFUL_BASELINE,
   PACE_MIN_DOLLARS, PACE_NEAR_BAND, PACE_FAR_BAND, MIN_COMPARABLE_MONTHS, DEFAULT_MONTHS_BACK, MAX_DRIVERS,
 };

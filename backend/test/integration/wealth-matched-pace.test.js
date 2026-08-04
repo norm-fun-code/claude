@@ -20,7 +20,7 @@ const { closeDb, buildTestApp } = require('./helpers');
 const metricsStore = require('../../src/store/metrics');
 const sourcesStore = require('../../src/store/sources');
 const documentsStore = require('../../src/store/documents');
-const { computeDiscretionaryMatchedPace, monthOffset, daysInMonth, matchedDayOfMonth } = require('../../src/services/wealth-pace');
+const { computeDiscretionaryMatchedPace, monthOffset, daysInMonth, matchedDayOfMonth, CATEGORY_MIN_BASELINE } = require('../../src/services/wealth-pace');
 const { definitionVersion } = require('../../src/services/discretionarySpend');
 const { buildWealthLandingProjection } = require('../../src/services/wealth-landing');
 const { buildWealthInsights } = require('../../src/services/wealth-insights');
@@ -439,6 +439,42 @@ test('required: category drivers — an elevated category is named with correct 
   assert.ok(!categories.includes('Groceries'), 'a $10 excess is not material enough to be a driver');
   assert.ok(!categories.includes('Transfer'), 'a transfer is never discretionary spending, however large');
   assert.ok(!categories.includes('Rent'), 'a fixed housing payment is never a discretionary driver');
+});
+
+// Production bug (Aug 3 2026): a Radar card read "Entertainment & Recreation
+// … $101 so far / Usual average $0". Early in a month the matched window is
+// only 1-3 days long, so nearly every category's matched median is $0 — and
+// with no minimum-baseline guard, any ordinary purchase over the excess floor
+// became a "spike" measured against an empty denominator. The degraded
+// fallback path already had the equivalent guard (`avg < MIN_SPEND`); the
+// canonical matched-pace path did not.
+test('required: a category with an effectively-zero matched median is never called a spike — no "$X more than usual" against a $0 baseline', async (t) => {
+  const prefix = `${TAG}-zerobaseline`;
+  cleanupDocsAfter(t, prefix);
+
+  // Six eligible months of real history, but this category was never bought
+  // in ANY of their matched windows -> median $0.
+  for (let monthsAgo = 1; monthsAgo <= 6; monthsAgo++) {
+    const { y, m } = targetForMonthsAgo(monthsAgo);
+    await seedDoc({ externalId: `${prefix}-base-${monthsAgo}`, occurredAt: ymd(y, m, 1), category: 'Groceries', amount: '-400' });
+  }
+  // Current month: one $101 charge in a category with no comparable history,
+  // plus the usual Groceries so the month itself still computes normally.
+  await seedDoc({ externalId: `${prefix}-ent-cur`, occurredAt: ymd(2026, 7, 1), category: 'Entertainment & Recreation', amount: '-101' });
+  await seedDoc({ externalId: `${prefix}-grc-cur`, occurredAt: ymd(2026, 7, 1), category: 'Groceries', amount: '-400' });
+
+  const pace = await computeDiscretionaryMatchedPace({ asOf: ASOF, tz: TZ });
+  const zeroBaseline = pace.categoryBreakdown.find((c) => c.category === 'Entertainment & Recreation');
+  assert.equal(zeroBaseline, undefined, `a $0 matched median is not a comparable baseline — the category must be omitted entirely, got: ${JSON.stringify(zeroBaseline)}`);
+  assert.ok(
+    !pace.drivers.some((d) => d.category === 'Entertainment & Recreation'),
+    'nor may it be named as a top-card driver'
+  );
+  // Every surviving category must carry a baseline that is actually
+  // comparable — never a $0/near-$0 denominator.
+  for (const c of pace.categoryBreakdown) {
+    assert.ok(c.matchedMedian >= CATEGORY_MIN_BASELINE, `${c.category} survived with matchedMedian=${c.matchedMedian}, below the comparability floor`);
+  }
 });
 
 // Production bug report: the top Wealth card's "Driven by Clothing +$2,852"
