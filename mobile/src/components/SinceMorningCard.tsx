@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet, useColorScheme } from 'react-native';
 import { getColors, spacing, radius, typography, shadow } from '../theme';
 import type { SinceMorningItem } from '../hooks/useBriefing';
+import { ExpandableText } from './ExpandableText';
 
 interface Props {
   items: SinceMorningItem[];
@@ -22,20 +23,27 @@ function SinceMorningCard({ items, onNavigate }: Props) {
     <View style={[styles.card, { backgroundColor: c.card }, shadow(isDark)]}>
       <Text style={[styles.header, { color: c.subtext }]}>SINCE THIS MORNING</Text>
       {items.map((item) => (
-        <Pressable
-          key={item.stableId}
-          onPress={() => onNavigate(item.destination)}
-          style={styles.row}
-          hitSlop={4}
-        >
+        <View key={item.stableId} style={styles.row}>
           <View style={[styles.dot, { backgroundColor: c.accent }]} />
           <View style={styles.textCol}>
-            <Text style={[styles.summary, { color: c.text }]} numberOfLines={2}>{item.summary}</Text>
+            {/* Summary navigates (the row's original behavior); detail is a
+                separate tap target that expands in place instead — the two
+                were previously one Pressable that only ever navigated, so a
+                truncated detail line had no way to be read in full. */}
+            <Pressable onPress={() => onNavigate(item.destination)} hitSlop={4}>
+              <Text style={[styles.summary, { color: c.text }]} numberOfLines={2}>{item.summary}</Text>
+            </Pressable>
             {item.detail ? (
-              <Text style={[styles.detail, { color: c.subtext }]} numberOfLines={2}>{item.detail}</Text>
+              <ExpandableText
+                text={item.detail}
+                collapsedLines={2}
+                style={[styles.detail, { color: c.subtext }]}
+                accentColor={c.accent}
+                a11yPrefix={item.summary}
+              />
             ) : null}
           </View>
-        </Pressable>
+        </View>
       ))}
     </View>
   );
