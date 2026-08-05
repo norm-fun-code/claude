@@ -17,12 +17,13 @@ interface Props {
   onRetry?: () => void;
 }
 
-// The Today redesign moves the full weekly-focus checklist + weekly-review
-// narrative OFF the primary Today scroll (per the product contract: "no
-// weekly-review essay remains in the primary Today flow") into their own
-// dedicated destination — reached by tapping the "Weekly review is ready"
-// preview. This reuses WeeklyIntentionsCard UNCHANGED (same data, same goal-
-// toggle/save behavior); only WHERE it renders changed, not what it shows.
+// This modal is the destination for the "Weekly review is ready" Radar
+// card / push notification — a focused, full-screen read of the AI-generated
+// narrative the moment it's freshly available. WeeklyIntentionsCard itself
+// (goals checklist + collapsed last-week retrospective) ALSO renders
+// directly on the Today scroll now, so this modal's content is intentionally
+// the same card reused, not a second, different one — tapping in here is a
+// deliberate "read it now, full screen" path, not the only way to reach it.
 export function WeeklyReviewModal({ visible, onClose, review, loading, error, onRetry }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);

@@ -45,6 +45,7 @@ import { WealthExploreScreen } from './src/components/WealthExploreScreen';
 import { AskOverlay, type AskOverlayHandle } from './src/components/AskOverlay';
 import { CheckinModal } from './src/components/CheckinModal';
 import { WeeklyReviewModal } from './src/components/WeeklyReviewModal';
+import { WeeklyIntentionsCard } from './src/components/WeeklyIntentionsCard';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NightContextCard } from './src/components/NightContextCard';
 import { SleepCheckInCard } from './src/components/SleepCheckInCard';
@@ -979,6 +980,19 @@ export default function App() {
                 <AlertCard alerts={d.alerts} />
               </AnimatedEntry>
             )}
+            {/* THIS WEEK'S FOCUS — previously reachable only by tapping into
+                the "Weekly review is ready" Radar card / WeeklyReviewModal,
+                which meant checking a goal off required opening a sheet just
+                to see the checklist. Restored to the Today scroll directly
+                (WeeklyIntentionsCard's own saved-state view already leads
+                with "This week's focus" and keeps last week's retrospective
+                as an in-place collapsed toggle — nothing else changed about
+                what it shows or how goals are saved/toggled, only that it's
+                visible without clicking in). The Radar entry point / modal
+                still exist for the AI-generated narrative when one's ready. */}
+            <AnimatedEntry delay={25}>
+              <WeeklyIntentionsCard review={d?.weeklyReview ?? null} />
+            </AnimatedEntry>
             {/* SINCE THIS MORNING — only genuine post-snapshot changes (see
                 todayCommandCenter.sinceMorning); self-hides when empty. */}
             <AnimatedEntry delay={30}>
