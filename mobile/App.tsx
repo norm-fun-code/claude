@@ -932,6 +932,7 @@ export default function App() {
                     buildState={briefing.buildState}
                     buildFailure={briefing.buildFailure}
                     pendingSince={briefing.pendingSince}
+                    awaitingFirstFetch={!briefing.fetched}
                   />
                 </CollapsibleSection>
               </AnimatedEntry>
@@ -952,6 +953,7 @@ export default function App() {
                   buildState={briefing.buildState}
                   buildFailure={briefing.buildFailure}
                   pendingSince={briefing.pendingSince}
+                  awaitingFirstFetch={!briefing.fetched}
                   publishTier={d?.publishTier}
                   morningReadinessState={d?.morningReadinessState}
                   morningReadinessReason={d?.morningReadinessReason}

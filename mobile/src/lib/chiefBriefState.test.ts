@@ -224,3 +224,48 @@ test('end-to-end: repeated relaunches while a build genuinely stays pending even
   assert.equal(ts, 0);
   assert.equal(hasBeenPendingTooLong(ts, 50_000), true);
 });
+
+// Production incident (Aug 5 2026): a brief was built, published and pushed
+// at 7:35am; the server had a publishable row available continuously all day
+// (verified via /api/diag/daily-briefing-rows — all 10 of that day's stored
+// rows were publishable). Opening the app at 2:55pm still showed the hard
+// "Couldn't put together today's brief." failure. Cause: `pendingSince` is
+// deliberately DURABLE across relaunches and re-anchors only on a new
+// calendar day, so once any briefless moment occurred early that morning,
+// `pendingTooLong` stayed true for the rest of the day. On the later cold
+// launch the cached payload hydrated first (chiefBrief null, pending true —
+// briefingMerge.ts's migrateV1Cache), and the card resolved straight to
+// failed_empty BEFORE the in-flight first fetch had returned anything.
+test('required: no brief + hours-old pendingTooLong, but the first fetch of this session has NOT come back yet -> loading, never a claimed failure', () => {
+  const state = resolveChiefBriefState({
+    brief: null, pending: true, refreshing: false, error: false,
+    quality: null, buildState: null,
+    pendingTooLong: true, // anchored hours earlier the same day
+    awaitingFirstFetch: true,
+  });
+  assert.equal(state, 'initial_loading');
+});
+
+test('required: awaitingFirstFetch does NOT mask a real fetch error from this session', () => {
+  const state = resolveChiefBriefState({
+    brief: null, pending: true, refreshing: false, error: true,
+    quality: null, buildState: null, pendingTooLong: true, awaitingFirstFetch: true,
+  });
+  assert.equal(state, 'failed_empty', 'a genuine error observed this session must still surface');
+});
+
+test('required: once the first fetch HAS come back and there is still nothing, the honest failed state returns', () => {
+  const state = resolveChiefBriefState({
+    brief: null, pending: true, refreshing: false, error: false,
+    quality: null, buildState: null, pendingTooLong: true, awaitingFirstFetch: false,
+  });
+  assert.equal(state, 'failed_empty', 'pendingTooLong must still escalate once we have actually heard from the server');
+});
+
+test('required: awaitingFirstFetch never overrides content we already have', () => {
+  const state = resolveChiefBriefState({
+    brief: { synthesis: 'x' }, pending: false, refreshing: false, error: false,
+    quality: null, buildState: null, pendingTooLong: true, awaitingFirstFetch: true,
+  });
+  assert.equal(state, 'ready', 'a hydrated last-good brief still renders immediately');
+});

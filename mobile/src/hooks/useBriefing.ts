@@ -784,6 +784,13 @@ export interface BriefingState {
   // had no Chief Brief" — see chiefBriefState.ts's hasBeenPendingTooLong/
   // resolvePendingSince. null while a brief is present.
   pendingSince: number | null;
+  /** False until the FIRST fetch of this app session has come back (success or
+   *  handled failure). Distinct from `loading`, which flips on every later
+   *  refresh too. BriefCard needs "have we heard from the server AT ALL yet
+   *  this session" so it never renders a hard failure derived purely from a
+   *  hydrated cache plus an hours-old durable pendingSince — see
+   *  chiefBriefState.ts's awaitingFirstFetch. */
+  fetched: boolean;
 }
 
 export function useBriefing(): BriefingState {
@@ -799,6 +806,8 @@ export function useBriefing(): BriefingState {
   }
   const briefingDataCoordinator = briefingDataCoordinatorRef.current;
   const [loading, setLoading] = useState(false);
+  // See BriefingState.fetched — session-scoped, never persisted.
+  const [fetched, setFetched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rebuilding, setRebuilding] = useState(false);
   // Mirrors `rebuilding` for the foreground AppState handler below, which
@@ -941,6 +950,7 @@ export function useBriefing(): BriefingState {
       // Ignore a stale response that a newer request has superseded.
       if (myReqId !== reqIdRef.current) return;
       lastOkRef.current = Date.now(); // mark a real success for the foreground throttle
+      setFetched(true);
       // Non-destructive merge (Chief Brief regression fix): a response with
       // no usable Chief Brief must never overwrite an existing same-day
       // last-good one — see mergeBriefingResponse. Applies identically to
@@ -973,6 +983,9 @@ export function useBriefing(): BriefingState {
       if (myReqId !== reqIdRef.current) return;
       const message = err instanceof Error ? err.message : 'Unknown error';
       setError(message);
+      // A failed attempt is still an answer from this session — the card must
+      // be free to show its honest error state rather than an endless skeleton.
+      setFetched(true);
     } finally {
       // Only the latest request controls the spinner.
       if (myReqId === reqIdRef.current) setLoading(false);
@@ -1048,6 +1061,7 @@ export function useBriefing(): BriefingState {
 
     const verified = content as BriefingData;
     lastOkRef.current = Date.now();
+    setFetched(true);
     // Atomic replace, not mergeBriefingResponse: this is a VERIFIED exact
     // snapshot (proven via the by-snapshot endpoint's own publishability
     // check), not an unverified generic response — the carry-forward
@@ -1526,5 +1540,6 @@ export function useBriefing(): BriefingState {
     buildState,
     buildFailure,
     pendingSince,
+    fetched,
   };
 }

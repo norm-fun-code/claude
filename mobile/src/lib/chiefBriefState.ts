@@ -62,6 +62,19 @@ export interface ChiefBriefStateInput {
    *  longer honest? Only consulted when neither `quality` nor `buildState`
    *  can settle it (see hasBeenPendingTooLong). */
   pendingTooLong?: boolean;
+  /** True until the FIRST fetch of this app session has come back. `pendingSince`
+   *  (and therefore `pendingTooLong`) is deliberately DURABLE across relaunches
+   *  and re-anchors only when the calendar day changes — so once any briefless
+   *  moment happens early in the day, `pendingTooLong` stays true for the rest
+   *  of that day. On a later cold launch the cached payload hydrates first
+   *  (chiefBrief null, pending true — see briefingMerge.ts's migrateV1Cache),
+   *  which made the card render the hard "Couldn't put together today's brief"
+   *  failure INSTANTLY, before the in-flight first fetch had returned anything.
+   *  Reported in production: a brief was built, published and pushed at 7:35am,
+   *  the server had it available continuously, and opening the app at 2:55pm
+   *  still showed the failure state. Until we've actually heard back from the
+   *  server once, we do not know there's a failure — so don't claim one. */
+  awaitingFirstFetch?: boolean;
 }
 
 /** Pure, total, deterministic — never throws, always returns exactly one of
@@ -70,7 +83,7 @@ export interface ChiefBriefStateInput {
  *  a stale-but-present brief is never blanked out just because a rebuild is
  *  in flight or the last one failed. */
 export function resolveChiefBriefState(
-  { brief, pending, refreshing, error, quality, buildState, pendingTooLong }: ChiefBriefStateInput
+  { brief, pending, refreshing, error, quality, buildState, pendingTooLong, awaitingFirstFetch }: ChiefBriefStateInput
 ): ChiefBriefState {
   if (brief) {
     if (refreshing) return 'refreshing_with_last_good';
@@ -84,6 +97,14 @@ export function resolveChiefBriefState(
 
   // ---- No content to show. The question is only: is one still coming? ----
   if (error) return 'failed_empty';
+
+  // We have not heard back from the server even ONCE this session, so every
+  // signal below is stale — carried over from a hydrated cache and a durable
+  // `pendingSince` anchored hours ago (see awaitingFirstFetch's own comment).
+  // Claiming a failure here asserts something we have not actually observed;
+  // the honest state is "still loading". Checked AFTER `error` so a genuine
+  // fetch failure this session still surfaces immediately.
+  if (awaitingFirstFetch) return 'initial_loading';
 
   // Positive evidence of work in progress is the ONLY thing that earns a
   // skeleton. An in-flight build outranks a stale 'failed' verdict from a

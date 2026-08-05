@@ -77,6 +77,10 @@ interface Props {
   // Durable (survives app close/reopen) anchor for "how long have we had no
   // brief" — see useBriefing.ts and chiefBriefState.ts's resolvePendingSince.
   pendingSince?: number | null;
+  /** False until this session's first fetch has come back — see
+   *  chiefBriefState.ts's awaitingFirstFetch for why the card must not
+   *  claim a failure before then. */
+  awaitingFirstFetch?: boolean;
   // Explicit tri-state from the self-healing GET (routes/briefing.js's
   // selfHealDecision) — 'waiting_for_sleep_data' means the server is
   // DELIBERATELY holding the build for Eight Sleep finalization, not that
@@ -235,7 +239,7 @@ function BriefSkeleton() {
   );
 }
 
-function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsStale, onRefresh, refreshing, snapshotId, risk, error, buildState, buildFailure, pendingSince, publishTier, morningReadinessState, morningReadinessReason }: Props) {
+function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsStale, onRefresh, refreshing, snapshotId, risk, error, buildState, buildFailure, pendingSince, awaitingFirstFetch, publishTier, morningReadinessState, morningReadinessReason }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
   // The card renders whatever content it's given, verbatim (Chief Brief
@@ -284,6 +288,7 @@ function BriefCard({ brief: rawBrief, fallback, stale, pending, quality, goalsSt
     quality: quality?.status as 'fresh' | 'degraded' | 'failed' | undefined,
     buildState,
     pendingTooLong: tooLong,
+    awaitingFirstFetch,
   });
   // One short, honest sentence about what went wrong — never raw reason codes
   // and never generated prose (the whole point of the quality gate is that
