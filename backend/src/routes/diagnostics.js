@@ -697,6 +697,70 @@ function createDiagnosticsRouter() {
   // spend, the fixed-housing exclusion (with categories/amounts), the
   // internal-transfer exclusion, and the resulting discretionary total, all
   // computed live through the SAME canonical predicate (services/
+  // Row-level view of today's stored daily briefing rows and the EXACT
+  // publishability verdict each one gets — the ground truth behind "a brief
+  // was published and pushed this morning, but the app still says
+  // 'Couldn't put together today's brief'". The serve path picks what to
+  // show via store/briefings.js's isPublishableRow + the cache-hit recovery
+  // scan (latestPublishableDailyForLocalDay), both of which are pure
+  // functions of these fields — so seeing them per row is what tells a
+  // "nothing was ever published" failure apart from a "something WAS
+  // published but the serve path rejects it" one. Deliberately reports
+  // whether a chiefBrief exists and its shape, never the generated prose.
+  //   GET /api/diag/daily-briefing-rows?limit=40&day=YYYY-MM-DD
+  router.get('/diag/daily-briefing-rows', asyncHandler(async (req, res) => {
+    const briefingsStore = require('../store/briefings');
+    const { tierForStoredContent, isPublishableTier } = require('../brain/publishTier');
+    const tz = process.env.TZ || 'America/New_York';
+    const limit = Math.min(Number(req.query.limit) || 40, 200);
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.day || '')) ? req.query.day : null;
+    const rows = await briefingsStore.listBriefings({ kind: 'daily', limit });
+    const dayOf = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: tz });
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    const scoped = day ? rows.filter((r) => dayOf(r.generated_at) === day) : rows;
+    const view = scoped.map((r) => {
+      const c = r.content || {};
+      const cb = c.chiefBrief;
+      return {
+        id: r.id,
+        generatedAt: r.generated_at,
+        generatedAtLocalDay: dayOf(r.generated_at),
+        contentLocalDate: c.localDate ?? null,
+        // The two fields isPublishableRow() is a pure function of.
+        chiefBriefPending: c.chiefBriefPending ?? null,
+        chiefBriefPresent: cb != null,
+        chiefBriefFields: cb && typeof cb === 'object'
+          ? { synthesis: Boolean(cb.synthesis), action: Boolean(cb.action), risk: Boolean(cb.risk), move: Boolean(cb.move) }
+          : null,
+        // THE verdict the serve path and the recovery scan both use.
+        isPublishableRow: briefingsStore.isPublishableRow(c),
+        chiefBriefStale: c.chiefBriefStale ?? null,
+        qualityStatus: c.chiefBriefQuality?.status ?? null,
+        publishTier: c.publishTier ?? null,
+        tierForStoredContent: tierForStoredContent(c),
+        tierIsPublishable: isPublishableTier(tierForStoredContent(c)),
+        snapshotId: c.snapshotId ?? null,
+        snapshotVersion: c.snapshotVersion ?? null,
+        builtAt: c.builtAt ?? null,
+      };
+    });
+    // What the cache-hit recovery scan would actually resolve right now.
+    const lastGoodRow = await briefingsStore.latestPublishableDailyForLocalDay(today, { tz }).catch(() => null);
+    res.json({
+      today,
+      tz,
+      currentSnapshotVersion: require('../brain/snapshot').SNAPSHOT_VERSION,
+      scannedRows: rows.length,
+      returnedRows: view.length,
+      todayRowCount: rows.filter((r) => dayOf(r.generated_at) === today).length,
+      todayPublishableRowCount: rows.filter((r) => dayOf(r.generated_at) === today && briefingsStore.isPublishableRow(r.content)).length,
+      recoveryScanResolvesTo: lastGoodRow
+        ? { id: lastGoodRow.id, generatedAt: lastGoodRow.generated_at, snapshotId: lastGoodRow.content?.snapshotId ?? null }
+        : null,
+      rows: view,
+    });
+  }));
+
   // discretionarySpend.js). Exposes only decision-shaped numbers/category
   // names already visible elsewhere in the app (Wealth tab category
   // breakdowns) — never raw transaction rows, merchants, or account
