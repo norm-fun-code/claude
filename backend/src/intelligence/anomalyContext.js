@@ -34,6 +34,42 @@ const { localDayBoundsForYmd, localDateStr } = require('../util/date');
 
 const DEFAULT_TZ = process.env.TZ || 'America/New_York';
 
+/**
+ * Metrics whose reading is WAKE-DATED: the value stamped with today's date
+ * actually describes LAST NIGHT (resting HR, HRV, sleep stages, respiratory
+ * rate — see analyze.js's NIGHT_METRICS, reused here rather than
+ * redefined). What explains such a reading is the behavior of the PRECEDING
+ * evening, not of the date the reading carries.
+ */
+const { NIGHT_METRICS } = require('./analyze');
+
+function isWakeDatedMetric(metric) {
+  return NIGHT_METRICS.has(String(metric || ''));
+}
+
+/**
+ * The window in which an already-recorded explanation counts as covering
+ * this anomaly.
+ *
+ * For an ordinary same-day metric that's just the observation day. For a
+ * WAKE-DATED metric it must also include the previous local day, because
+ * the cause happened the night before the reading: telling Ask "boys night,
+ * drank a lot" on the evening of Aug 5 explains the resting-HR spike
+ * stamped Aug 6. Searching only Aug 6 found nothing, so the app asked
+ * "anything unusual about Thursday, August 6?" about something it had
+ * already been told — the exact reported bug.
+ *
+ * Pure and exported so the boundary is unit-testable without a database.
+ */
+function explanatoryBoundsFor(evidence, tz = DEFAULT_TZ) {
+  const bounds = localDayBoundsForYmd(tz, evidence.date);
+  if (!isWakeDatedMetric(evidence.metric)) return bounds;
+  // One millisecond before local midnight is the previous local day — DST
+  // safe, since the ymd is re-derived in `tz` rather than by subtracting 24h.
+  const prevYmd = localDateStr(tz, new Date(bounds.start.getTime() - 1));
+  return { start: localDayBoundsForYmd(tz, prevYmd).start, end: bounds.end };
+}
+
 /** An observation date is fresh enough to ask about only if it's today or
  *  yesterday in the user's local timezone — an older reading means the
  *  underlying data pipeline stalled or this is a backfilled/incomplete day,
@@ -69,7 +105,7 @@ function cardStatus(row) {
 }
 
 async function fetchOverlapping(evidence, tz) {
-  const bounds = localDayBoundsForYmd(tz, evidence.date);
+  const bounds = explanatoryBoundsFor(evidence, tz);
   return contextAssertionsStore.getActiveOverlapping(bounds.start, bounds.end, {
     domains: Array.isArray(evidence.domains) && evidence.domains.length ? evidence.domains : null,
   });
@@ -208,6 +244,8 @@ async function forgetAnomalyContext({ anomalyKey }) {
 module.exports = {
   isFreshEnough,
   isEligibleForQuestion,
+  explanatoryBoundsFor,
+  isWakeDatedMetric,
   ensureAnomalyContextCard,
   answerAnomalyContext,
   markNothingUnusual,
