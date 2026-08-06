@@ -697,6 +697,83 @@ function createDiagnosticsRouter() {
   // spend, the fixed-housing exclusion (with categories/amounts), the
   // internal-transfer exclusion, and the resulting discretionary total, all
   // computed live through the SAME canonical predicate (services/
+  // State of the automatic scoped Chief Brief repair ledger, plus whether
+  // each repair's TRIGGER CONDITION is still true right now. A repair that
+  // keeps "succeeding" without clearing its own condition re-fires forever
+  // (once per cooldown), and each one is a full LLM call sitting in the
+  // user's critical path on GET /briefing — which is what leaves the app on
+  // a loading skeleton. This says which reason is looping and whether the
+  // condition actually cleared. Read-only: no repair is triggered here.
+  //   GET /api/diag/chief-brief-repair-state
+  router.get('/diag/chief-brief-repair-state', asyncHandler(async (req, res) => {
+    const ledgerStore = require('../store/chiefBriefRepairLedger');
+    const briefingsStore = require('../store/briefings');
+    const tz = process.env.TZ || 'America/New_York';
+
+    const reasons = ['goals_stale', 'plan_conflict'];
+    const ledger = {};
+    for (const r of reasons) {
+      const prior = await ledgerStore.lastAttempt(r).catch(() => null);
+      ledger[r] = prior
+        ? {
+            succeeded: prior.succeeded,
+            attemptedAt: prior.attempted_at,
+            minutesAgo: Math.round((Date.now() - new Date(prior.attempted_at).getTime()) / 60000),
+            contextKey: prior.context_key,
+            reasonCodes: prior.reason_codes ?? null,
+            eligibleNow: ledgerStore.isEligible({ prior, cooldownMs: 10 * 60 * 1000 }),
+          }
+        : null;
+    }
+
+    // Are the trigger conditions still true for the CURRENT canonical row?
+    const prior = await briefingsStore.latestBriefing('daily').catch(() => null);
+    const c = prior?.content ?? {};
+    let trainingDayStillInvalid = null;
+    let trainingDayDetail = null;
+    try {
+      if (c.chiefBrief) {
+        const { resolveTrainingDayState, validateTrainingDayContent } = require('../brain/trainingDayState');
+        const tds = resolveTrainingDayState({ effectiveWorkout: c.effectiveWorkout });
+        const v = validateTrainingDayContent(tds, {
+          synthesis: c.chiefBrief.synthesis, action: c.chiefBrief.action,
+          risk: c.chiefBrief.risk, move: c.chiefBrief.move,
+        });
+        trainingDayStillInvalid = !v.valid;
+        trainingDayDetail = { state: tds, violations: v.violations ?? v.reasons ?? null };
+      }
+    } catch (err) { trainingDayDetail = { error: err.message }; }
+
+    let currentWeekStart = null;
+    try {
+      const cur = await require('../store/intentions').currentIntention();
+      currentWeekStart = cur?.weekStart ?? cur?.week_start ?? null;
+    } catch { /* best-effort */ }
+    const normWeek = (w) => (w == null ? null : (w instanceof Date ? w.toISOString().slice(0, 10) : String(w).slice(0, 10)));
+
+    res.json({
+      now: new Date().toISOString(),
+      tz,
+      ledger,
+      canonicalRow: {
+        id: prior?.id ?? null,
+        generatedAt: prior?.generated_at ?? null,
+        publishTier: c.publishTier ?? null,
+        qualityStatus: c.chiefBriefQuality?.status ?? null,
+        chiefBriefPresent: c.chiefBrief != null,
+      },
+      conditions: {
+        goalsStaleFlagOnRow: c.chiefBriefGoalsStale ?? null,
+        rowGoalsWeekStart: normWeek(c.goalsWeekStart),
+        currentWeekStart: normWeek(currentWeekStart),
+        goalsStaleStillTrue: normWeek(c.goalsWeekStart) != null && normWeek(currentWeekStart) != null
+          && normWeek(c.goalsWeekStart) !== normWeek(currentWeekStart),
+        trainingDayStillInvalid,
+        trainingDayDetail,
+      },
+    });
+  }));
+
   // Row-level view of today's stored daily briefing rows and the EXACT
   // publishability verdict each one gets — the ground truth behind "a brief
   // was published and pushed this morning, but the app still says
