@@ -54,13 +54,19 @@ test('speechStopped() with no pending timer is a safe no-op', () => {
 });
 
 test('a second speechStarted() before the gate elapses restarts the timer against the newer callback', async () => {
-  const gate = createBargeInGate(30);
+  // Margins are deliberately wide: this asserts ORDERING (the superseded
+  // callback never fires), not timing precision. The original 30ms gate with
+  // a 10ms wait raced the event-loop scheduler — a loaded CI runner could
+  // overshoot 30ms during that "well before" wait, letting the first gate
+  // elapse and flipping the assertion. Flaked CI this way with no relation
+  // to the change under test.
+  const gate = createBargeInGate(300);
   let firstFired = false;
   let secondFired = false;
   gate.speechStarted(() => { firstFired = true; });
-  await wait(10); // well before the first gate would elapse
+  await wait(20); // well before the first 300ms gate could elapse, even under load
   gate.speechStarted(() => { secondFired = true; });
-  await wait(60);
+  await wait(600);
   assert.equal(firstFired, false, 'the first (superseded) callback must never fire');
   assert.equal(secondFired, true, 'the second (current) callback must fire');
 });

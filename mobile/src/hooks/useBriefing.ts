@@ -936,11 +936,21 @@ export function useBriefing(): BriefingState {
     setError(null);
 
     try {
+      // 45s, not the usual 15s: GET /briefing is normally an instant cached
+      // read, but it can legitimately run an automatic scoped chief-brief
+      // repair inline (routes/briefing.js's goals_stale / plan_conflict
+      // paths) — a repair that MUST complete before serving, since the whole
+      // point is not shipping a stale cross-week goal claim as current. That
+      // adds one LLM call. At 15s those serves timed out, the abort was
+      // swallowed, and the app showed no brief at all even though a good one
+      // existed. The repair is cooldown-gated to at most once per 10 minutes
+      // per reason (store/chiefBriefRepairLedger.js), so this longer deadline
+      // applies to a rare request, not the common instant path.
       const response = await fetchWithTimeout(API_URL, {
         method: 'GET',
         headers: authHeaders(),
         signal: controller.signal,
-      }, 15000);
+      }, 45000);
 
       if (!response.ok) {
         throw new Error(`Server returned ${response.status}`);
