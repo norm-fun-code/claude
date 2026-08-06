@@ -1128,7 +1128,16 @@ function createDiagnosticsRouter() {
       `SELECT external_id, occurred_at::date::text AS day,
               metadata->>'category' AS category, (metadata->>'amount')::numeric AS amount,
               metadata->>'merchant' AS merchant, metadata->>'account' AS account,
-              metadata->>'original' AS original, metadata->>'pending' AS pending
+              metadata->>'original' AS original, metadata->>'pending' AS pending,
+              -- Writer fingerprint: WHEN the row was written, and WHICH keys the
+              -- writer set. connectors/monarch.js's mapTransactions (CSV/import
+              -- path) stores a tags key; monarch-mcp-sync.js's txnToDocument
+              -- stores original instead. That difference identifies which code
+              -- path created a given duplicate, and ingested_at correlates it
+              -- to a specific connector run.
+              ingested_at,
+              (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(metadata) AS k) AS metadata_keys,
+              domain
          FROM documents
         WHERE source = 'monarch'
           AND occurred_at::date >= $1::date AND occurred_at::date <= $2::date
