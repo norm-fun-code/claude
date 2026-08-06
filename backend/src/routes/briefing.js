@@ -114,6 +114,34 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 // trigger firing at the same moment must not both proceed.
 const REBUILD_LOCK_ID = 727002;
 
+// Concurrent-duplicate collapse for the automatic scoped Chief Brief
+// repairs. store/chiefBriefRepairLedger.js's cooldown only starts once
+// recordAttempt() runs, which is at the END of performScopedChiefBriefRebuild
+// — AFTER its LLM call. Every request arriving during that multi-second
+// window therefore also sees "eligible" and starts its OWN full rebuild. The
+// app fires several near-simultaneous requests whenever it opens (mount
+// fetch + foreground refresh + poll), so one app open produced a burst:
+// 7 scoped rebuilds in ~25s in production, each an LLM call and a new
+// briefings row, and each making this serve slow enough to blow the client's
+// deadline.
+//
+// Callers share the SAME in-flight promise rather than skipping the repair:
+// skipping would serve unrepaired content, which is exactly what the
+// repair-before-serve contract forbids (a stale cross-week goal claim must
+// never be presented as current). So every concurrent caller still awaits a
+// completed repair and still applies it — there is just one rebuild instead
+// of N. Single-process by design, same as REBUILD_LOCK_ID's intent.
+const scopedRepairsInFlight = new Map();
+
+function runScopedRepairDeduped(prior, repairReason) {
+  const existing = scopedRepairsInFlight.get(repairReason);
+  if (existing) return existing;
+  const p = performScopedChiefBriefRebuild(prior, { repairReason })
+    .finally(() => scopedRepairsInFlight.delete(repairReason));
+  scopedRepairsInFlight.set(repairReason, p);
+  return p;
+}
+
 // Cross-day lifecycle hardening pass: the canonical "morning cutoff" — the
 // same scheduled hour/minute the automatic morning routine targets
 // (scheduler.js's SCHEDULE_HOUR/SCHEDULE_MINUTE), plus a grace window so a
@@ -854,7 +882,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
           contextKey: weeklyGoals?.current?.weekStart ?? null, cooldownMs: REPAIR_COOLDOWN_MS,
         });
         if (eligible) {
-          const repaired = await performScopedChiefBriefRebuild(prior, { repairReason: 'goals_stale' });
+          const repaired = await runScopedRepairDeduped(prior, 'goals_stale');
           Object.assign(cachedContent, repaired.content);
           chiefBriefGoalsStale = Boolean(cachedContent.chiefBriefGoalsStale);
         }
@@ -998,7 +1026,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
           const repairLedger = require('../store/chiefBriefRepairLedger');
           const eligible = await repairLedger.eligibleForRepair('plan_conflict', { cooldownMs: REPAIR_COOLDOWN_MS });
           if (eligible) {
-            const repaired = await performScopedChiefBriefRebuild(prior, { repairReason: 'plan_conflict' });
+            const repaired = await runScopedRepairDeduped(prior, 'plan_conflict');
             Object.assign(cachedContent, repaired.content);
           }
         }
