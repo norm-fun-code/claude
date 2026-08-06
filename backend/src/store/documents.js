@@ -202,30 +202,49 @@ async function randomHighlights({ limit = 5, favoritesOnly = false, exclude = []
  * Grouped by calendar month (YYYY-MM) for the trailing `months` window.
  * Powers wealth insights.
  *
- * Wealth matched-pace hardening pass: no read-time DISTINCT-ON dedup here —
- * storage already guarantees uniqueness per (source, external_id) via
- * upsertDocument's ON CONFLICT, and cross-importer overlap for the same
- * real-world transaction is reconciled at WRITE time (monarch-mcp-sync.js's
- * `reconcile`/pruneDocuments), never by collapsing rows that merely SHARE a
- * date/merchant/amount/account — two genuinely separate same-day purchases
- * of the same amount at the same merchant must both count.
+ * Applies dedupeCanonicalPairs — the SAME narrow guard rawSpendRowsInRange
+ * uses. This function previously assumed write-time reconciliation
+ * (monarch-mcp-sync.js's `reconcile`/pruneDocuments) guaranteed one row per
+ * real transaction. Production has now violated that assumption twice: every
+ * transaction stored once as `monarch:<id>` and once under a bare content
+ * hash, which made every figure sourced from here read exactly double (the
+ * Wealth "Explore" breakdown showed Rent $11,390 against the true $5,695).
+ * Deduping here is NOT a blanket collapse of rows sharing
+ * date/merchant/amount/account — two genuinely separate same-day purchases at
+ * the same merchant still both count. It only drops a non-canonical row when
+ * a canonical `monarch:<digits>` twin exists for the identical fingerprint.
  */
 async function monthlyCategorySpend({ months = 4 } = {}) {
+  // Row-level read (not a SQL GROUP BY) so the duplicate guard can run before
+  // aggregation — summing first would bake the doubled totals in.
   const { rows } = await query(
-    `SELECT to_char(date_trunc('month', occurred_at), 'YYYY-MM') AS month,
+    `SELECT occurred_at::date::text AS day,
             COALESCE(NULLIF(metadata->>'category', ''), 'Uncategorized') AS category,
-            -SUM((metadata->>'amount')::numeric) AS spend
+            (metadata->>'amount')::numeric AS amount,
+            external_id,
+            lower(coalesce(metadata->>'merchant', '')) AS merchant,
+            lower(coalesce(metadata->>'account', '')) AS account
        FROM documents
       WHERE source = 'monarch'
         AND occurred_at >= date_trunc('month', now()) - ($1::int - 1) * interval '1 month'
         AND occurred_at <= now()
-        AND metadata ? 'amount'
-      GROUP BY 1, 2
-      HAVING -SUM((metadata->>'amount')::numeric) > 0
-      ORDER BY 1 DESC, 3 DESC`,
+        AND metadata ? 'amount'`,
     [months]
   );
-  return rows.map((r) => ({ month: r.month, category: r.category, spend: Number(r.spend) }));
+  const byMonthCategory = new Map();
+  for (const r of dedupeCanonicalPairs(rows)) {
+    const key = `${String(r.day).slice(0, 7)}\u0000${r.category}`;
+    byMonthCategory.set(key, (byMonthCategory.get(key) ?? 0) - Number(r.amount));
+  }
+  return [...byMonthCategory.entries()]
+    .map(([key, spend]) => {
+      const [month, category] = key.split('\u0000');
+      return { month, category, spend };
+    })
+    // Same contract as the previous HAVING/ORDER BY: net-positive spend only,
+    // newest month first, largest category first.
+    .filter((r) => r.spend > 0)
+    .sort((a, b) => (a.month === b.month ? b.spend - a.spend : (a.month < b.month ? 1 : -1)));
 }
 
 /**
@@ -282,20 +301,31 @@ async function spendTransactions({ days = 120 } = {}) {
  * same-day purchases of the same amount at the same merchant.
  */
 async function categorySpendInRange({ fromYmd, toYmd }) {
+  // Row-level read then dedupe then aggregate — same reasoning as
+  // monthlyCategorySpend: aggregating in SQL first would bake in the doubled
+  // totals produced by duplicate documents for one real transaction.
   const { rows } = await query(
-    `SELECT COALESCE(NULLIF(metadata->>'category', ''), 'Uncategorized') AS category,
-            -SUM((metadata->>'amount')::numeric) AS spend
+    `SELECT occurred_at::date::text AS day,
+            COALESCE(NULLIF(metadata->>'category', ''), 'Uncategorized') AS category,
+            (metadata->>'amount')::numeric AS amount,
+            external_id,
+            lower(coalesce(metadata->>'merchant', '')) AS merchant,
+            lower(coalesce(metadata->>'account', '')) AS account
        FROM documents
       WHERE source = 'monarch'
         AND occurred_at::date >= $1::date
         AND occurred_at::date <= $2::date
-        AND metadata ? 'amount'
-      GROUP BY 1
-      HAVING -SUM((metadata->>'amount')::numeric) > 0
-      ORDER BY 2 DESC`,
+        AND metadata ? 'amount'`,
     [fromYmd, toYmd]
   );
-  return rows.map((r) => ({ category: r.category, spend: Number(r.spend) }));
+  const byCategory = new Map();
+  for (const r of dedupeCanonicalPairs(rows)) {
+    byCategory.set(r.category, (byCategory.get(r.category) ?? 0) - Number(r.amount));
+  }
+  return [...byCategory.entries()]
+    .map(([category, spend]) => ({ category, spend }))
+    .filter((r) => r.spend > 0)
+    .sort((a, b) => b.spend - a.spend);
 }
 
 /**
