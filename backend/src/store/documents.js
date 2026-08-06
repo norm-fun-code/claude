@@ -371,6 +371,71 @@ async function rawSpendRowsInRange({ fromYmd, toYmd }) {
 // (POST /api/admin/cleanup-duplicate-transactions) runs — it does not fix
 // the underlying reconcile gap itself.
 const CANONICAL_EXTERNAL_ID = /^monarch:\d+$/;
+
+/** The identity of a real-world transaction for duplicate purposes:
+ *  day + category + amount + merchant + account, normalized. Shared by the
+ *  read-time guard and the import-time guard so "the same transaction" means
+ *  exactly one thing. */
+function transactionFingerprint({ day, category, amount, merchant, account }) {
+  const num = Number(amount);
+  return [
+    String(day ?? '').slice(0, 10),
+    String(category ?? ''),
+    Number.isFinite(num) ? num.toFixed(2) : String(amount ?? ''),
+    String(merchant ?? '').trim().toLowerCase(),
+    String(account ?? '').trim().toLowerCase(),
+  ].join('|');
+}
+
+/**
+ * Fingerprints of transactions already stored under the CANONICAL
+ * `monarch:<id>` scheme in a date range. The CSV/import path has no Monarch
+ * transaction id, so mapTransactions falls back to a content hash — an id
+ * that can never collide with the canonical one, which is how an automated
+ * re-import silently created a second copy of every transaction already
+ * synced from the API (203 rows in one batch, doubling every Wealth total).
+ */
+async function canonicalMonarchFingerprints({ fromYmd, toYmd }) {
+  const { rows } = await query(
+    `SELECT occurred_at::date::text AS day,
+            COALESCE(NULLIF(metadata->>'category', ''), 'Uncategorized') AS category,
+            (metadata->>'amount')::numeric AS amount,
+            metadata->>'merchant' AS merchant,
+            metadata->>'account' AS account
+       FROM documents
+      WHERE source = 'monarch'
+        AND external_id ~ '^monarch:[0-9]+$'
+        AND occurred_at::date >= $1::date AND occurred_at::date <= $2::date
+        AND metadata ? 'amount'`,
+    [fromYmd, toYmd]
+  );
+  return new Set(rows.map(transactionFingerprint));
+}
+
+/**
+ * Pure: drop import documents that merely restate a transaction already held
+ * under the canonical id scheme. Only NON-canonical (hash-id) docs are ever
+ * dropped — a doc carrying a real `monarch:<id>` is always kept, since
+ * upsertDocument will correctly update the existing row by primary key.
+ */
+function withoutAlreadyCanonical(documents, canonicalFingerprints) {
+  if (!canonicalFingerprints || canonicalFingerprints.size === 0) return { kept: documents, skipped: 0 };
+  const kept = [];
+  let skipped = 0;
+  for (const doc of documents) {
+    const isCanonical = CANONICAL_EXTERNAL_ID.test(doc.externalId || '');
+    const fp = transactionFingerprint({
+      day: doc.occurredAt,
+      category: doc.metadata?.category,
+      amount: doc.metadata?.amount,
+      merchant: doc.metadata?.merchant,
+      account: doc.metadata?.account,
+    });
+    if (!isCanonical && canonicalFingerprints.has(fp)) { skipped++; continue; }
+    kept.push(doc);
+  }
+  return { kept, skipped };
+}
 function dedupeCanonicalPairs(rows) {
   const groups = new Map();
   for (const r of rows) {
@@ -423,6 +488,9 @@ module.exports = {
   categorySpendInRange,
   rawSpendRowsInRange,
   dedupeCanonicalPairs,
+  transactionFingerprint,
+  canonicalMonarchFingerprints,
+  withoutAlreadyCanonical,
   listWithoutEmbedding,
   setEmbedding,
   countMissingEmbeddings,

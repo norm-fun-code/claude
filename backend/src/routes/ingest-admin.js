@@ -185,13 +185,39 @@ function createIngestAdminRouter() {
     }
     await sourcesStore.registerSource({ id: 'monarch', domain: 'wealth', displayName: 'Monarch (CSV import)' });
     const written = await metricsStore.insertMetrics(metrics);
+
+    // A Monarch CSV export carries no transaction id, so mapTransactions
+    // falls back to a content hash — an external_id that can never collide
+    // with the `monarch:<id>` rows the API sync already wrote. Re-importing a
+    // period therefore inserted a SECOND copy of every transaction already
+    // held, and unlike the API sync this path runs no reconcile/prune to undo
+    // it. That is exactly how 203 duplicate rows appeared in one batch and
+    // doubled every Wealth category total. Skip any hash-id document whose
+    // transaction is already stored canonically; rows genuinely new to us
+    // still import normally.
+    let skippedDuplicates = 0;
+    let toWrite = documents;
+    const days = documents.map((d) => String(d.occurredAt ?? '').slice(0, 10)).filter(Boolean).sort();
+    if (days.length) {
+      try {
+        const canonical = await documentsStore.canonicalMonarchFingerprints({
+          fromYmd: days[0], toYmd: days[days.length - 1],
+        });
+        ({ kept: toWrite, skipped: skippedDuplicates } = documentsStore.withoutAlreadyCanonical(documents, canonical));
+      } catch (err) {
+        // Best-effort: on a lookup failure import everything rather than drop
+        // data — the read-time guard still keeps totals correct.
+        console.error('[import/monarch] duplicate pre-check failed, importing all rows:', err.message);
+      }
+    }
+
     let docs = 0;
-    for (const doc of documents) {
+    for (const doc of toWrite) {
       if (await documentsStore.upsertDocument(doc)) docs++;
     }
     await sourcesStore.markSync('monarch');
     const summary = await analyze();
-    res.json({ kind, rows, metrics: written, documents: docs, analyzed: summary || null });
+    res.json({ kind, rows, metrics: written, documents: docs, skippedDuplicates, analyzed: summary || null });
   }));
 
   return router;
