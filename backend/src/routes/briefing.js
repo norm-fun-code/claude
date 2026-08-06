@@ -114,6 +114,38 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 // trigger firing at the same moment must not both proceed.
 const REBUILD_LOCK_ID = 727002;
 
+// Automatic scoped-repair loop protection, in-process half. The durable
+// half is store/chiefBriefRepairLedger.js's cooldown; this guards the window
+// BEFORE that ledger row is written (it's recorded at the END of
+// performScopedChiefBriefRebuild, after the LLM call), during which a burst
+// of concurrent requests would each see "eligible" and each start their own
+// full rebuild.
+const repairsInFlight = new Set();
+
+/**
+ * Run an automatic scoped Chief Brief repair WITHOUT blocking the response.
+ *
+ * These repairs used to be awaited inline on the cache-hit serve — the path
+ * that is supposed to be an instant cached read, and the one the mobile
+ * client hits on every open/foreground with a bounded fetch timeout. A
+ * repair is a full LLM rebuild (seconds to tens of seconds), so whenever one
+ * fired the serve blew past the client's deadline and the app rendered no
+ * brief at all, even though a perfectly good published brief already existed
+ * (observed in production Aug 5-6 2026). The repair's actual purpose is
+ * fixing the STORED text for other consumers (Ask/voice/notifications) — the
+ * render-time guards already keep THIS response safe either way — so it
+ * belongs in the background, not in the request's critical path. The next
+ * serve picks up the repaired row.
+ */
+function startBackgroundChiefBriefRepair(prior, repairReason) {
+  if (repairsInFlight.has(repairReason)) return;
+  repairsInFlight.add(repairReason);
+  Promise.resolve()
+    .then(() => performScopedChiefBriefRebuild(prior, { repairReason }))
+    .catch((err) => console.error(`[briefing cache] background ${repairReason} repair failed:`, err.message))
+    .finally(() => repairsInFlight.delete(repairReason));
+}
+
 // Cross-day lifecycle hardening pass: the canonical "morning cutoff" — the
 // same scheduled hour/minute the automatic morning routine targets
 // (scheduler.js's SCHEDULE_HOUR/SCHEDULE_MINUTE), plus a grace window so a
@@ -854,9 +886,12 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
           contextKey: weeklyGoals?.current?.weekStart ?? null, cooldownMs: REPAIR_COOLDOWN_MS,
         });
         if (eligible) {
-          const repaired = await performScopedChiefBriefRebuild(prior, { repairReason: 'goals_stale' });
-          Object.assign(cachedContent, repaired.content);
-          chiefBriefGoalsStale = Boolean(cachedContent.chiefBriefGoalsStale);
+          // Fire-and-forget — see startBackgroundChiefBriefRepair. This
+          // response keeps reporting chiefBriefGoalsStale:true, which is the
+          // honest state until the repair actually lands (the UI already
+          // renders that as an explicit "these goals are from a different
+          // week" qualifier rather than silently disagreeing).
+          startBackgroundChiefBriefRepair(prior, 'goals_stale');
         }
       } catch (err) {
         console.error('[briefing cache] automatic goals-staleness repair failed:', err.message);
@@ -998,8 +1033,10 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
           const repairLedger = require('../store/chiefBriefRepairLedger');
           const eligible = await repairLedger.eligibleForRepair('plan_conflict', { cooldownMs: REPAIR_COOLDOWN_MS });
           if (eligible) {
-            const repaired = await performScopedChiefBriefRebuild(prior, { repairReason: 'plan_conflict' });
-            Object.assign(cachedContent, repaired.content);
+            // Fire-and-forget — see startBackgroundChiefBriefRepair. The
+            // render-time training-day guard (below//mobile) already keeps
+            // this response safe; this repair exists to fix the STORED copy.
+            startBackgroundChiefBriefRepair(prior, 'plan_conflict');
           }
         }
       } catch (err) {

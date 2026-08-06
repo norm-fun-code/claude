@@ -46,19 +46,36 @@ async function lastAttempt(repairReason) {
 }
 
 /**
- * Is a new automatic repair attempt allowed right now? Mirrors the
- * pre-existing in-content cooldown check: no prior attempt (or a prior
- * SUCCESS) is always eligible; a prior FAILURE is eligible again once
- * `contextKey` has moved on (e.g. the week rolled over) or `cooldownMs` has
- * elapsed since it failed — the same loop-protection contract as before,
- * just durable and out-of-band from the published content.
+ * Is a new automatic repair attempt allowed right now?
+ *
+ * The cooldown applies to EVERY prior attempt, success or failure. It used
+ * to exempt successes (`if (!prior || prior.succeeded) return true`), on the
+ * assumption that a successful repair fixes the underlying condition and so
+ * won't re-trigger. In production it does re-trigger: a repair can "succeed"
+ * (it produced a valid brief) without the triggering condition actually
+ * clearing — the training-day contract still fails, or the goal week is
+ * still mismatched. The condition is re-evaluated on the very next cache
+ * serve, the ledger says "last attempt succeeded, go ahead", and a full
+ * scoped LLM rebuild fires AGAIN. Every subsequent request repeats it:
+ * observed in production as 7 rebuilds in 3 minutes while the user sat on a
+ * loading card (Aug 6 2026), each one a fresh LLM call and a new briefings
+ * row, and each one making GET /briefing slow enough to blow the mobile
+ * client's fetch timeout so no brief ever rendered.
+ *
+ * A repair that just ran is therefore NOT retried until `cooldownMs` has
+ * elapsed regardless of outcome. `contextKey` remains the deliberate escape
+ * hatch: a genuinely NEW context (e.g. the week rolled over, so this is a
+ * different problem than the one just attempted) is eligible immediately.
  */
-async function eligibleForRepair(repairReason, { contextKey = null, cooldownMs = 10 * 60 * 1000 } = {}) {
-  const prior = await lastAttempt(repairReason);
-  if (!prior || prior.succeeded) return true;
+function isEligible({ prior, contextKey = null, cooldownMs = 10 * 60 * 1000, now = Date.now() } = {}) {
+  if (!prior) return true;
   const normalizedKey = normalizeContextKey(contextKey);
   if (normalizedKey != null && prior.context_key !== normalizedKey) return true;
-  return (Date.now() - new Date(prior.attempted_at).getTime()) > cooldownMs;
+  return (now - new Date(prior.attempted_at).getTime()) > cooldownMs;
 }
 
-module.exports = { recordAttempt, lastAttempt, eligibleForRepair, localDay };
+async function eligibleForRepair(repairReason, { contextKey = null, cooldownMs = 10 * 60 * 1000 } = {}) {
+  return isEligible({ prior: await lastAttempt(repairReason), contextKey, cooldownMs });
+}
+
+module.exports = { recordAttempt, lastAttempt, eligibleForRepair, isEligible, localDay };

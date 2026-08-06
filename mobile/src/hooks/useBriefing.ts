@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BRIEFING_URL, BRIEFING_REBUILD_URL, BRIEFING_REBUILD_STATUS_URL, BRIEFING_BY_SNAPSHOT_URL, CHIEF_BRIEF_REBUILD_URL, authHeaders, fetchWithTimeout } from '../config';
+import { BRIEFING_URL, BRIEFING_REBUILD_URL, BRIEFING_REBUILD_STATUS_URL, BRIEFING_BY_SNAPSHOT_URL, CHIEF_BRIEF_REBUILD_URL, authHeaders, fetchWithTimeout, isTimeoutError } from '../config';
 import type { BuildJobState } from '../lib/chiefBriefState';
 import { resolvePendingSince } from '../lib/chiefBriefState';
 import { migrateV1Cache, isValidPushSnapshot } from '../lib/briefingMerge';
@@ -978,6 +978,17 @@ export function useBriefing(): BriefingState {
         setBuildFailure(null);
       }
     } catch (err: unknown) {
+      // Our OWN deadline firing is a real, reportable failure — not a
+      // supersede. Without this it fell into the AbortError branch below and
+      // was swallowed: no data, no error, and (with awaitingFirstFetch) an
+      // endless skeleton. GET /briefing running long is exactly the case
+      // this hits, so it must surface as a retryable error instead.
+      if (isTimeoutError(err)) {
+        if (myReqId !== reqIdRef.current) return;
+        setError('Timed out loading your briefing — tap to retry.');
+        setFetched(true);
+        return;
+      }
       // An aborted request isn't a real error — a newer one took over.
       if (err instanceof Error && err.name === 'AbortError') return;
       if (myReqId !== reqIdRef.current) return;

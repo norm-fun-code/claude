@@ -161,7 +161,15 @@ export async function fetchWithTimeout(
   timeoutMs = 20000
 ): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // OUR deadline firing and the CALLER aborting both surface as an
+  // indistinguishable AbortError from fetch(). Callers treat a caller-abort
+  // as "a newer request superseded me, stay quiet" — so an un-flagged
+  // timeout got silently swallowed too, leaving the UI with no data, no
+  // error, and no way to tell it had failed (observed in production as a
+  // brief card stuck loading forever while GET /briefing ran long). Track
+  // which one fired and re-tag the timeout so callers can tell them apart.
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
   // Chain caller's signal so EITHER their abort OR our timeout cancels the request.
   const { signal: callerSignal, ...restOptions } = options as RequestInit & { signal?: AbortSignal };
   if (callerSignal) {
@@ -169,7 +177,23 @@ export async function fetchWithTimeout(
   }
   try {
     return await fetch(url, { ...restOptions, signal: controller.signal });
+  } catch (err) {
+    if (timedOut && err instanceof Error && err.name === 'AbortError') {
+      const e = new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+      e.name = TIMEOUT_ERROR_NAME;
+      throw e;
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Marks an error thrown by fetchWithTimeout's OWN deadline, as opposed to a
+ *  caller-initiated abort (which callers deliberately swallow). */
+export const TIMEOUT_ERROR_NAME = 'FetchTimeoutError';
+
+/** True when this error is fetchWithTimeout's own deadline firing. */
+export function isTimeoutError(err: unknown): boolean {
+  return err instanceof Error && err.name === TIMEOUT_ERROR_NAME;
 }
