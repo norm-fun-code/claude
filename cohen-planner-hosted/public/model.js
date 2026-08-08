@@ -190,15 +190,16 @@ function run(p,rets){
     if(sub){au+=p.suburbAutoBoost*inf;ins+=p.suburbInsBoost*inf;ut+=p.suburbUtilBoost*inf;tr*=.4}
     for(const kb of kids){if(yr<kb)continue;const a=yr-kb,c=kidCost(a);gr+=c.g*inf;di+=c.d*inf;sh+=c.s*inf;md+=c.m*inf;mi+=c.x*inf;en+=c.e*inf;va+=c.v*inf}
     const liv=gr+di+sh+va+au+ins+mi+en+ch+md+tr+ut;
+    // Childcare — a single flat monthly rate from birth through the year before yeshiva
+    // starts (previously modeled 3 separate phases: nanny hourly rate at birth, nanny
+    // hourly through a configurable end-age, then daycare-or-continued-nanny depending on
+    // birth order — collapsed since the phase distinctions added complexity without
+    // changing what actually mattered: a monthly childcare cost until school starts).
     let cc=0;
     for(let ki=0;ki<kids.length;ki++){
-      const kb=kids[ki],am2=(yr-kb)*12,ne=p.nannyEndAge*12;
+      const kb=kids[ki],a=yr-kb;
       const startAge=ki===0?p.kid1YeshivaStartAge:p.yeshivaStartAge;
-      const ys=startAge*12;
-      if(yr===kb)cc+=p.nannyHourlyRate*9*p.nannyDaysPerWeek*26;
-      else if(am2>0&&am2<=ne)cc+=p.nannyHourlyRate*9*p.nannyDaysPerWeek*52;
-      else if(am2>ne&&am2<ys&&ki===0)cc+=p.daycareMonthly*12;
-      else if(am2>ne&&am2<ys&&ki>0)cc+=p.nannyHourlyRate*9*p.nannyDaysPerWeek*52;
+      if(a>=0&&a<startAge)cc+=(p.childcareMonthly??2800)*12;
     }
     tC+=cc;
     let tu=0;

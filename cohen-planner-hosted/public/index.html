@@ -458,7 +458,7 @@ const COLORS=['#ff6b6b','#ffd43b','#ff922b','#e64980','#20c997','#845ef7','#339a
 const D={
   planStartYear:2026,
   kid1Birth:2027,kid2Birth:2030,kid3Birth:2034,kid4Birth:2037,numKids:3,
-  nannyEndAge:1.5,nannyHourlyRate:30,nannyDaysPerWeek:4,daycareMonthly:2800,
+  childcareMonthly:2800,
   tuitionInflation:.035,yeshivaStartAge:2,yeshivaEndAge:17,kid1YeshivaStartAge:3,
   startingLiquid:1100000,nycRent:5500,
   // Norm — total comp (cash+stock combined; both are taxed identically as ordinary
@@ -550,6 +550,14 @@ function migrateP(raw){
         : cashBase*(1+growth)**(i-4)+stockBase;
     }
     m=out;
+  }
+  // Nanny + daycare -> a single flat childcare rate. Use the old daycareMonthly figure
+  // as the carry-forward value (it's already a monthly rate representing steady-state
+  // ongoing care), rather than the nanny hourly rate which only applied for a shorter
+  // early window — not an exact reproduction of the old 3-phase cost (that's the point
+  // of the simplification), just a reasonable single number to start from.
+  if(m.childcareMonthly===undefined&&(m.daycareMonthly!==undefined||m.nannyHourlyRate!==undefined)){
+    m={...m,childcareMonthly:m.daycareMonthly??Math.round((m.nannyHourlyRate??30)*9*(m.nannyDaysPerWeek??4)*52/12)};
   }
   return m;
 }
@@ -1027,6 +1035,10 @@ function toggleSection(key){_collapsedSections.has(key)?_collapsedSections.delet
 
 function buildControls(){
   const s=(l,k,mn,mx,st,fn)=>`<div class="sr"><div class="sh"><span class="sl">${l}</span><span class="sv" id="v_${k}">${fn?fn(P[k]):P[k]}</span></div><input type="range" id="s_${k}" min="${mn}" max="${mx}" step="${st}" value="${P[k]}" oninput="U('${k}',this.value)"></div>`;
+  // Free-typed dollar amount (vs. a slider) — for fields where the exact number matters
+  // more than quick relative adjustment. Commits on blur/Enter, not per-keystroke, so
+  // partial input while typing ("5","50","500"...) doesn't trigger a render each time.
+  const sTxt=(l,k)=>`<div class="sr"><div class="sh"><span class="sl">${l}</span></div><input type="text" inputmode="numeric" id="s_${k}" value="${fmtF(P[k])}" onchange="UTxt('${k}',this.value,this)" onkeydown="if(event.key==='Enter')this.blur()" style="width:100%;padding:6px 9px;border:1px solid var(--bd);border-radius:6px;background:var(--s1);color:var(--tx);font-family:'SF Mono',monospace;font-size:11px;outline:none"></div>`;
   const ST=(label,key,body)=>{const c=_collapsedSections.has(key);return`<div class="st" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;user-select:none" onclick="toggleSection('${key}')"><span>${label}</span><span style="font-size:9px;color:var(--t3);opacity:.6">${c?'▶':'▼'}</span></div>${c?'':body}`};
   const sy=P.planStartYear||2026;
   let h=`<div style="font-size:10px;font-weight:700;margin-bottom:8px">⚙️ Parameters</div>`;
@@ -1056,7 +1068,7 @@ function buildControls(){
   h+=ST('👶 Kids','kids',kidsBody);
 
   // Childcare
-  const childcareBody=s('Nanny until age','nannyEndAge',.5,3,.5,v=>v+' yrs')+s('Nanny $/hr','nannyHourlyRate',20,45,1,v=>'$'+v)+s('Nanny days/wk','nannyDaysPerWeek',2,5,1)+s('Daycare $/mo','daycareMonthly',1500,4500,100,v=>'$'+v.toLocaleString())+s('Kid 1 yeshiva start','kid1YeshivaStartAge',2,5,1,v=>v+' (uses daycare)')+s('Kids 2+ yeshiva start','yeshivaStartAge',2,5,1,v=>v+' (no daycare)');
+  const childcareBody=s('Childcare $/mo','childcareMonthly',1000,6000,100,v=>'$'+v.toLocaleString())+s('Kid 1 yeshiva start','kid1YeshivaStartAge',2,5,1,v=>v+' yrs old')+s('Kids 2+ yeshiva start','yeshivaStartAge',2,5,1,v=>v+' yrs old');
   h+=ST('🍼 Childcare','childcare',childcareBody);
 
   // Tuition
@@ -1068,7 +1080,7 @@ function buildControls(){
 
   // Norm income
   let normBody='';
-  for(let i=0;i<11;i++){const yr=sy+i;normBody+=s(yr+' total comp','normTCY'+i,150000,800000,5000,fmtF)}
+  for(let i=0;i<11;i++){const yr=sy+i;normBody+=sTxt(yr+' total comp','normTCY'+i)}
   normBody+=s('Comp growth ('+(sy+11)+'+)','normGrowth',0,.04,.005,v=>(v*100).toFixed(1)+'%');
   normBody+=s('401k employee','pretax401k',0,30500,500,fmtF)+s('Benefits pre-tax','pretaxBenefits',0,15000,200,fmtF);
   normBody+=`<div id="norm_preview" style="font-size:7.5px;color:var(--t3);margin:1px 0 4px;font-style:italic"></div>`;
@@ -1168,9 +1180,10 @@ async function confirmRollForward(overlay,curYear,nextYear){
   showToast(`✓ Rolled forward to ${nextYear}`,'green');
 }
 
-const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,nannyEndAge:v=>v+' yrs',nannyHourlyRate:v=>'$'+v,nannyDaysPerWeek:null,daycareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normTCY0:fmtF,normTCY1:fmtF,normTCY2:fmtF,normTCY3:fmtF,normTCY4:fmtF,normTCY5:fmtF,normTCY6:fmtF,normTCY7:fmtF,normTCY8:fmtF,normTCY9:fmtF,normTCY10:fmtF,normGrowth:v=>(v*100).toFixed(1)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo'};
+const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,childcareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normTCY0:fmtF,normTCY1:fmtF,normTCY2:fmtF,normTCY3:fmtF,normTCY4:fmtF,normTCY5:fmtF,normTCY6:fmtF,normTCY7:fmtF,normTCY8:fmtF,normTCY9:fmtF,normTCY10:fmtF,normGrowth:v=>(v*100).toFixed(1)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo'};
 
 function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'+key);const fn=SF[key];if(el&&fn)el.textContent=fn(P[key]);else if(el)el.textContent=P[key];if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear')buildControls();activeScenarioIdx=-1;render();savePlannerState()}
+function UTxt(key,val,el){const num=Math.max(0,parseFloat(String(val).replace(/[^0-9.-]/g,''))||0);P[key]=num;if(el)el.value=fmtF(num);activeScenarioIdx=-1;render();savePlannerState()}
 
 function loadScenario(i){P={...D,...scenarios[i].params};activeScenarioIdx=i;buildControls();render();savePlannerState()}
 

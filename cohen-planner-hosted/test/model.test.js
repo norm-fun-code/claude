@@ -155,7 +155,7 @@ describe('run()', () => {
     ...BASE,
     taxInflation: 0.025,
     kid1Birth: 2027, kid2Birth: 2030, kid3Birth: 2034, numKids: 3,
-    nannyEndAge: 1.5, nannyHourlyRate: 30, nannyDaysPerWeek: 4, daycareMonthly: 2800,
+    childcareMonthly: 2800,
     tuitionInflation: 0.035, yeshivaStartAge: 2, yeshivaEndAge: 17, kid1YeshivaStartAge: 3,
     startingLiquid: 1100000, nycRent: 5500,
     normTCY0: 477000, normTCY1: 422000, normTCY2: 428000, normTCY3: 423000,
@@ -236,7 +236,7 @@ describe('runMonteCarlo()', () => {
   const P_MC = {
     planStartYear: 2026, taxInflation: 0,
     kid1Birth: 2027, numKids: 1,
-    nannyEndAge: 1.5, nannyHourlyRate: 30, nannyDaysPerWeek: 4, daycareMonthly: 2800,
+    childcareMonthly: 2800,
     tuitionInflation: 0.035, yeshivaStartAge: 2, yeshivaEndAge: 17, kid1YeshivaStartAge: 3,
     startingLiquid: 1100000, nycRent: 5500,
     normTCY0: 477000, normTCY1: 422000, normTCY2: 428000, normTCY3: 423000,
