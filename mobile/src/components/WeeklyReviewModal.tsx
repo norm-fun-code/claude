@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, useColorScheme } from 'react-native';
+import { Modal, View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, useColorScheme, Platform } from 'react-native';
 import { getColors, spacing, radius } from '../theme';
 import { WeeklyIntentionsCard } from './WeeklyIntentionsCard';
 import type { WeeklyReview } from '../hooks/useBriefing';
@@ -34,7 +34,21 @@ export function WeeklyReviewModal({ visible, onClose, review, loading, error, on
         <View style={styles.handleWrap}>
           <SheetHandle color={c.border} style={{ marginBottom: 0 }} />
         </View>
-        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        {/* The card this renders (WeeklyIntentionsCard) contains the focus-goal
+            inputs and the free-text "what's going on this week" box, both of
+            which sit low in the sheet — so the keyboard covered exactly what
+            was being typed, with no way to scroll it into view. The main Today
+            scroll (App.tsx) already sets automaticallyAdjustKeyboardInsets;
+            this Modal has its OWN ScrollView, which never inherited it.
+            keyboardShouldPersistTaps keeps Save/Done tappable while the
+            keyboard is still up (otherwise the first tap only dismisses it). */}
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          showsVerticalScrollIndicator={false}
+          automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+        >
           <Text style={[styles.title, { color: c.text }]}>Weekly Review</Text>
           {loading ? (
             <View style={styles.centerBlock} accessibilityRole="text" accessibilityLabel="Loading your weekly review">
