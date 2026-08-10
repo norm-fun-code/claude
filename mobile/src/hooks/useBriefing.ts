@@ -7,7 +7,7 @@ import { resolvePendingSince } from '../lib/chiefBriefState';
 import { migrateV1Cache, isValidPushSnapshot } from '../lib/briefingMerge';
 import { applyFetchedBriefingResponse, createBriefingDataCoordinator, createImmediateRequestGate } from '../lib/briefingLifecycle';
 import type { RebuildIdentity } from '../lib/rebuildResume';
-import { resolveResumeDecision, isValidReadyResult, classifyTriggerResponse } from '../lib/rebuildResume';
+import { resolveResumeDecision, isValidReadyResult, classifyTriggerResponse, adoptRecoveryBuildFromResponse } from '../lib/rebuildResume';
 
 const API_URL = BRIEFING_URL;
 // v2 (Chief Brief regression fix): normos.briefing.v1 used to act as BOTH
@@ -1461,6 +1461,46 @@ export function useBriefing(): BriefingState {
       AsyncStorage.removeItem(REBUILD_STATE_KEY).catch(() => {});
     }
   }, [data?.timezone, pollBuild, triggerRebuild]);
+
+  // Self-heal handoff. When GET /briefing finds no publishable brief for
+  // today it enqueues a recovery build server-side and hands back its id
+  // (BriefingData.recoveryBuildId) precisely so the client can follow it.
+  // adoptRecoveryBuildFromResponse existed, documented and unit-tested, but
+  // was never actually called from here — so the server started the work and
+  // the app never learned it finished. The brief only appeared on the next
+  // foreground or pull-to-refresh, which is the reported "it gets built, then
+  // takes ages to show up". Adopt it with the same persist+poll contract a
+  // manual rebuild uses; the id guard stops one job being adopted twice.
+  const adoptedRecoveryRef = useRef<string | null>(null);
+  useEffect(() => {
+    const id = data?.recoveryBuildId;
+    if (!id || rebuildingRef.current || adoptedRecoveryRef.current === id) return;
+    adoptedRecoveryRef.current = id;
+    void adoptRecoveryBuildFromResponse(
+      data as { recoveryBuildId?: string | null; currentLocalDate?: string | null; localDate?: string | null },
+      async (identity) => { persistRebuildIdentity(identity); },
+      pollBuild
+    ).catch(() => { /* best-effort — the bounded re-check below still covers it */ });
+  }, [data?.recoveryBuildId, data, persistRebuildIdentity, pollBuild]);
+
+  // Bounded re-check while there is genuinely NOTHING to show. Outside of an
+  // in-flight rebuild the hook only fetches on mount, foreground (throttled)
+  // and pull-to-refresh — so a brief that lands while the user is sitting on
+  // the screen is never noticed, and the card keeps showing the stale/waiting
+  // state until they background the app or pull down. This ticks only in that
+  // empty state, stops the moment a brief arrives, and gives up after ~15
+  // minutes rather than polling forever.
+  useEffect(() => {
+    if (data?.chiefBrief) return;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 20; // ~15 min at 45s
+    const id = setInterval(() => {
+      if (attempts++ >= MAX_ATTEMPTS) { clearInterval(id); return; }
+      if (rebuildingRef.current) return; // the rebuild poller already owns this
+      fetchBriefing();
+    }, 45_000);
+    return () => clearInterval(id);
+  }, [data?.chiefBrief, fetchBriefing]);
 
   // Mount-time resume (cold launch / fresh remount). Runs once; deliberately
   // not re-run on every data change — see resumePersistedRebuild's own deps
