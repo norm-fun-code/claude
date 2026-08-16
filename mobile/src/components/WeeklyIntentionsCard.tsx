@@ -12,6 +12,7 @@ import { getColors, spacing, radius, typography, shadow } from '../theme';
 import { SectionHeader } from './SectionHeader';
 import { INTENTIONS_URL, INTENTIONS_CURRENT_URL, INTENTIONS_RESULTS_URL, authHeaders, fetchWithTimeout, localTz } from '../config';
 import { WeeklyReview } from '../hooks/useBriefing';
+import { reviewPeriodLabel } from '../lib/reviewPeriodLabel';
 
 type PriorGoal = { text: string; achieved: boolean };
 
@@ -168,8 +169,17 @@ function WeeklyIntentionsCard({ review = null }: Props = {}) {
 
   // Condensed retrospective — headline, a short narrative, and the top couple of
   // wins/watch-outs. The full review (all bullets) lives in the weekly email.
+  // Which week this review actually covers. Without it the narrative's "the
+  // week's alcohol nights…" reads as the CURRENT week when the card is opened
+  // on a Monday — the review of the week just ended is what's on screen, but
+  // nothing on it said so. Same explicit-period contract the goals block above
+  // already satisfies via weekOfLabel.
+  const reviewPeriod = hasReview ? reviewPeriodLabel(review!.weekStart ?? null, ET_TZ) : null;
   const reviewBlock = hasReview ? (
     <View style={styles.priorBox}>
+      {reviewPeriod && (
+        <Text style={[styles.weekOfLabel, { color: c.subtext }]}>{reviewPeriod}</Text>
+      )}
       <Text style={[styles.reviewHeadline, { color: c.text }]}>{review!.headline}</Text>
       {review!.narrative ? (
         <Text style={[styles.reviewNarrative, { color: c.subtext }]}>{review!.narrative}</Text>
