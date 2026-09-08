@@ -393,7 +393,12 @@ async function precedentContext() {
       'PRECEDENT — SIMILAR PAST MORNINGS (retrieved from the metrics spine; every date below is real and checkable):',
       `- Today matches ${p.count} past mornings (${p.earliest} to ${p.latest}), each at least ${Math.round(p.evidence.minSimilarity * 100)}% similar on overnight readings.`,
       `- What makes today distinctive: ${p.state.map((s) => `${s.label} ${s.direction} usual${s.value == null ? '' : ` (${s.value})`}`).join(', ')}.`,
-      `- Closest matches: ${p.precedents.slice(0, 5).map((d) => `${d.day} (${d.similarity}%${d.nextDayDelta == null ? '' : `, next-day recovery ${d.nextDayDelta > 0 ? '+' : ''}${d.nextDayDelta}`})`).join('; ')}.`,
+      // Context is what makes a match a real precedent rather than a numeric
+      // coincidence — an empty list means nothing was RECORDED about that
+      // night, which is not the same as the night having been uneventful, so
+      // it is rendered as "no context recorded" and never as "a quiet night".
+      `- Last night's recorded context: ${p.context.length ? p.context.join(', ') : 'none recorded (absence of a record, not evidence the night was uneventful)'}.`,
+      `- Closest matches: ${p.precedents.slice(0, 5).map((d) => `${d.day} (${d.similarity}%${d.context?.length ? `, ${d.context.join('/')}` : ''}${d.nextDayDelta == null ? '' : `, next-day recovery ${d.nextDayDelta > 0 ? '+' : ''}${d.nextDayDelta}`})`).join('; ')}.`,
     ];
     if (p.comparison) {
       lines.push(

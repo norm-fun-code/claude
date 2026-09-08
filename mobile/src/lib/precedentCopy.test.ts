@@ -19,6 +19,7 @@ import {
   comparisonLines,
   methodNote,
   closestWithOutcome,
+  contextPhrase,
   COMPARISON_CAVEAT,
   type Precedent,
 } from './precedentCopy.ts';
@@ -35,9 +36,10 @@ function precedent(over: Partial<Precedent> = {}): Precedent {
       { key: 'health:hrv', label: 'HRV', z: -1.8, value: 38, direction: 'below' },
       { key: 'health:sleep_hours', label: 'Sleep', z: -1.2, value: 5.6, direction: 'below' },
     ],
+    context: [],
     precedents: [
-      { day: '2026-08-29', similarity: 96, sharedFeatures: 4, recovery: 54, nextDayDelta: -6, load: 910 },
-      { day: '2026-07-20', similarity: 92, sharedFeatures: 4, recovery: 57, nextDayDelta: 7, load: 180 },
+      { day: '2026-08-29', similarity: 96, sharedFeatures: 4, recovery: 54, nextDayDelta: -6, load: 910, context: ['Drinking'] },
+      { day: '2026-07-20', similarity: 92, sharedFeatures: 4, recovery: 57, nextDayDelta: 7, load: 180, context: [] },
     ],
     comparison: null,
     evidence: {
@@ -143,7 +145,17 @@ test('the method note states the window and baseline, so the card is auditable',
 test('the closest match is only offered when that day actually has an outcome', () => {
   assert.equal(closestWithOutcome(precedent())!.day, '2026-08-29');
   const noOutcomes = precedent({
-    precedents: [{ day: '2026-08-29', similarity: 96, sharedFeatures: 4, recovery: 54, nextDayDelta: null, load: 910 }],
+    precedents: [{ day: '2026-08-29', similarity: 96, sharedFeatures: 4, recovery: 54, nextDayDelta: null, load: 910, context: [] }],
   });
   assert.equal(closestWithOutcome(noOutcomes), null);
+});
+
+test('context reads as a phrase, and an unrecorded night makes no claim at all', () => {
+  assert.equal(contextPhrase(['Drinking']), 'after drinking');
+  assert.equal(contextPhrase(['Drinking', 'Late meal']), 'after drinking and late meal');
+  assert.equal(contextPhrase(['Drinking', 'Travel', 'Stress']), 'after drinking, travel and stress');
+  // The important one: nothing recorded is NOT "a quiet night". Returning null
+  // makes the card render nothing rather than assert an absence it cannot know.
+  assert.equal(contextPhrase([]), null);
+  assert.equal(contextPhrase(undefined), null);
 });

@@ -369,6 +369,27 @@ as agreement. Retrieved days are then split by what was actually *done* — the
 day's own active energy, at the median of that precedent set — and compared on
 what happened next (next-day recovery movement).
 
+**Life context** joins the vector alongside the numbers, so a match is "a
+morning like this one" rather than "a morning with these readings". The flags
+come from `weeklyLedger` over the precedent window — the same
+retirement/negation/supersession-aware ledger the weekly review renders from,
+tagged with the same `CAUSE_CONCEPTS` vocabulary `claimValidator` uses — so a
+retracted "actually I didn't go out" can never mark a night as drinking. A
+night is aligned to the morning it *produced* (`nightOf` + 1), matching where
+the overnight readings actually came from.
+
+These are **asymmetric** binary features, and that choice is what makes them
+safe to include. As ordinary binaries, nearly every pair of nights would agree
+on "no alcohol, no travel, no illness…" — eight free zeros diluting the real
+physiological differences and inflating every similarity score. Asymmetric
+treatment excludes a concept when it is absent from *both* nights, so context
+can only separate days that genuinely differ and never manufactures agreement.
+It also gets the epistemics right for free: "nothing was recorded" and "none of
+these happened" behave identically against another quiet night, and both
+correctly fail to match a night known to have involved drinking. Context
+mismatches are excluded from the shared-feature count, which gates
+comparability on shared *measurements*, not differences.
+
 The gates are the feature. Each one blocks a specific way of being wrong:
 a candidate needs ≥3 shared features to be *comparable* at all; ≥0.8 similarity
 to be a precedent; ≥5 precedents before anything is said; ≥3 days in each arm

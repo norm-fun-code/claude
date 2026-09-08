@@ -58,7 +58,37 @@ const FEATURE_SPEC = [
   // by shifting health:active_energy one day forward, so it is genuinely a
   // prior observation rather than same-day leakage.
   { key: 'prev:active_energy', label: 'Yesterday’s load', weight: 0.6, kind: 'numeric' },
+
+  // What was actually GOING ON the night before — the difference between "a
+  // morning with these numbers" and "a morning like this one". Drawn from the
+  // SAME canonical concept vocabulary claimValidator and the weekly ledger
+  // use (context-semantics.js's CAUSE_CONCEPTS), never a parallel keyword list
+  // of this module's own, and via the SAME retirement/negation/supersession-
+  // aware ledger, so a retracted "actually I didn't go out" can never make a
+  // day look like a drinking night.
+  //
+  // These are ASYMMETRIC binary features, which is the whole reason they can
+  // be included safely. With ordinary binary features, the overwhelming
+  // majority of night pairs would agree on "no alcohol, no travel, no
+  // illness…" — eight free zeros that dilute the real physiological
+  // differences and push every unlike pair's similarity up. Asymmetric
+  // treatment (see gowerDistance) excludes a concept entirely when it is
+  // absent from BOTH days, so context can only ever separate days that
+  // genuinely differ, never manufacture agreement between days that don't.
+  { key: 'ctx:alcohol', label: 'Drinking', weight: 0.8, kind: 'asymmetric' },
+  { key: 'ctx:illness', label: 'Illness', weight: 0.8, kind: 'asymmetric' },
+  { key: 'ctx:travel', label: 'Travel', weight: 0.6, kind: 'asymmetric' },
+  { key: 'ctx:late_meal', label: 'Late meal', weight: 0.6, kind: 'asymmetric' },
+  { key: 'ctx:stress', label: 'Stress', weight: 0.6, kind: 'asymmetric' },
+  { key: 'ctx:hard_training', label: 'Hard session', weight: 0.6, kind: 'asymmetric' },
+  { key: 'ctx:medication', label: 'Medication', weight: 0.6, kind: 'asymmetric' },
+  { key: 'ctx:room_conditions', label: 'Room conditions', weight: 0.6, kind: 'asymmetric' },
 ];
+
+/** The `ctx:` feature keys, in spec order — used to project a night's concept
+ *  tags into vector fields and back into display labels. */
+const CONTEXT_FEATURES = FEATURE_SPEC.filter((f) => f.kind === 'asymmetric');
+const CONTEXT_LABELS = Object.fromEntries(CONTEXT_FEATURES.map((f) => [f.key, f.label]));
 
 // --- Gates. Each one exists to stop a specific way of being wrong. --------
 
@@ -171,6 +201,25 @@ function gowerDistance(a, b, spec = FEATURE_SPEC) {
   for (const f of spec) {
     const av = a?.[f.key];
     const bv = b?.[f.key];
+    // ASYMMETRIC binary (presence/absence): a concept absent from BOTH nights
+    // carries no information that they are alike — almost every pair of nights
+    // agrees on "no illness", and counting those as agreement would drown out
+    // the physiological differences that actually distinguish them. Excluded
+    // from numerator AND denominator, so context only ever separates.
+    if (f.kind === 'asymmetric') {
+      const ap = av === true;
+      const bp = bv === true;
+      if (!ap && !bp) continue;
+      num += f.weight * (ap === bp ? 0 : 1);
+      den += f.weight;
+      // Deliberately NOT counted toward sharedCount. That count gates
+      // COMPARABILITY — "do we have enough of the same measurements on both
+      // days to judge them at all" — and a context concept present on one
+      // night and absent from the other is a difference, not a shared
+      // measurement. Counting it would let two days that share only two real
+      // readings clear the gate on the strength of a mismatch.
+      continue;
+    }
     if (av == null || bv == null) continue;
     let d;
     if (f.kind === 'binary') {
@@ -278,6 +327,46 @@ function splitByLever(precedents, { leverByDay, outcomeByDay, minArm = MIN_ARM, 
 }
 
 /**
+ * Project weekly-ledger episodes onto the MORNINGS they bear on.
+ *
+ * The alignment is the subtle part. weeklyLedger's `episodeDateFor` already
+ * groups a physical night under its evening's calendar date — a 12:30am
+ * Thursday drink belongs to "Wednesday night", not to Thursday. The overnight
+ * readings that define a morning D (HRV, resting HR, sleep) come from the
+ * night of D-1 into D. So the episode dated D-1 is exactly the context for
+ * morning D, and that is the shift applied here.
+ *
+ * A night with no episode contributes no flags at all. Under the asymmetric
+ * treatment in gowerDistance that is the correct epistemics for free: "we were
+ * told nothing about that night" and "that night had none of these things"
+ * behave identically when compared against another quiet night, and both
+ * correctly fail to match a night we DO know involved drinking.
+ *
+ * @param {Array<{nightOf: string, concepts?: string[]}>} episodes exactly the
+ *   shape weeklyLedger's groupIntoEpisodes returns.
+ * @returns {Record<string, Record<string, true>>} morning -> { 'ctx:alcohol': true, ... }
+ */
+function contextFlagsByDay(episodes) {
+  const out = {};
+  for (const ep of episodes || []) {
+    if (!ep?.nightOf) continue;
+    const morning = addDays(ep.nightOf, 1);
+    for (const concept of ep.concepts || []) {
+      const key = `ctx:${concept}`;
+      if (!CONTEXT_LABELS[key]) continue; // outside the canonical vocabulary
+      (out[morning] ||= {})[key] = true;
+    }
+  }
+  return out;
+}
+
+/** Human labels for the context concepts present on one day's vector, in
+ *  FEATURE_SPEC order so the same night always reads the same way. */
+function contextLabels(vector) {
+  return CONTEXT_FEATURES.filter((f) => vector?.[f.key] === true).map((f) => f.label);
+}
+
+/**
  * The features that make today distinctive, most extreme first — the honest
  * answer to "similar HOW?". Reports the real observed value alongside the
  * z-score so the reader can sanity-check the claim against their own memory
@@ -353,6 +442,10 @@ function buildPrecedent({ today, vectorsByDay, rawByDay = {}, recoveryByDay = {}
     earliest: days[0],
     latest: days[days.length - 1],
     state: describeState(todayVector, rawByDay[today]),
+    // What was going on last night, in the same canonical vocabulary the rest
+    // of the app explains anomalies with. Empty means nothing was recorded —
+    // stated as absence of information, never as "a quiet night".
+    context: contextLabels(todayVector),
     precedents: precedents.map((p) => ({
       day: p.day,
       similarity: Math.round(p.similarity * 100),
@@ -360,6 +453,10 @@ function buildPrecedent({ today, vectorsByDay, rawByDay = {}, recoveryByDay = {}
       recovery: Number.isFinite(recoveryByDay[p.day]) ? Math.round(recoveryByDay[p.day]) : null,
       nextDayDelta: Number.isFinite(outcomeByDay[p.day]) ? Math.round(outcomeByDay[p.day] * 10) / 10 : null,
       load: Number.isFinite(leverByDay[p.day]) ? Math.round(leverByDay[p.day]) : null,
+      // Why that morning looked the way it did — the single most useful thing
+      // to show beside a date, and what turns "Aug 5" into "Aug 5, after
+      // drinking".
+      context: contextLabels(vectorsByDay[p.day]),
     })),
     comparison,
     evidence: {
@@ -369,6 +466,7 @@ function buildPrecedent({ today, vectorsByDay, rawByDay = {}, recoveryByDay = {}
       withOutcome: withOutcome.length,
       leverMetric: 'health:active_energy',
       outcomeMetric: 'recovery next day',
+      contextConcepts: CONTEXT_FEATURES.map((f) => f.label),
     },
   };
 }
@@ -394,10 +492,20 @@ async function computePrecedent({ today = null, tz = process.env.TZ || 'America/
   const { localDateStr } = require('../util/date');
   const asOf = today || localDateStr(tz);
 
+  // Anchored to `asOf`, NOT to now. The `?day=` parameter is documented as
+  // what makes this endpoint verifiable by hand, and a now-anchored window
+  // silently breaks that: asking about a day three months back would read a
+  // window ending today and beginning three months AFTER the day in question,
+  // returning nothing and looking like "no precedent" rather than a bug.
+  // For the production path (asOf === today) this is the identical window.
+  //
   // Pull enough lead-in that the OLDEST candidate day still has a full
   // trailing baseline to be z-scored against — otherwise the earliest weeks
-  // of the window would silently drop out of the candidate pool.
-  const from = new Date(Date.now() - (days + BASELINE_DAYS + 5) * 864e5);
+  // of the window would silently drop out of the candidate pool. Nothing after
+  // asOf can leak into the result: causalZScores only ever looks backward, and
+  // buildPrecedent discards any candidate that is not strictly before asOf.
+  const asOfMs = new Date(`${asOf}T12:00:00Z`).getTime();
+  const from = new Date(asOfMs - (days + BASELINE_DAYS + 5) * 864e5);
   // Same day-keying as intelligence/recovery.js's recoveryHistory, deliberately
   // character-for-character: dailyAggregatePreferSource returns each bucket as
   // a local-midnight timestamp, and both modules must turn that into the same
@@ -456,12 +564,40 @@ async function computePrecedent({ today = null, tz = process.env.TZ || 'America/
     }
   }
 
+  // Life context — what was actually GOING ON each night, from the SAME
+  // canonical, retirement/negation/supersession-aware ledger the weekly review
+  // renders from. buildWeeklyLedger's name says "weekly" but its parameters are
+  // an arbitrary date range; running it over the precedent window reuses that
+  // one vetted eligibility pipeline rather than reading annotations raw here,
+  // which is what keeps a retracted "actually I didn't go out" from ever
+  // marking a night as drinking.
+  let contextByDay = {};
+  try {
+    const { buildWeeklyLedger } = require('./weeklyLedger');
+    const ledger = await buildWeeklyLedger({ periodStart: from, periodEnd: new Date(), tz });
+    contextByDay = contextFlagsByDay(ledger?.episodes);
+  } catch (err) {
+    // Context is an enrichment, never a prerequisite: a ledger failure must
+    // degrade the card to physiology-only, not remove it. Under the asymmetric
+    // treatment that degradation is safe — with no flags on any day, every
+    // context feature drops out of every comparison.
+    console.error('[precedent] context ledger failed:', err.message);
+  }
+  for (const [day, flags] of Object.entries(contextByDay)) {
+    if (vectorsByDay[day]) Object.assign(vectorsByDay[day], flags);
+  }
+
   // Outcome series: the canonical recovery history, never a re-derivation.
   // recoveryHistory returns { ts, value, proxy } rows, where ts is that local
   // day anchored at midday UTC — so the ISO date prefix IS the local day key
   // the rest of this module uses.
   const recovery = require('./recovery');
-  const history = await recovery.recoveryHistory({ days: days + 2 });
+  // recoveryHistory counts back from NOW, so a historical asOf needs the extra
+  // span between the two — otherwise a `?day=` query would return precedents
+  // with every outcome missing, which reads as "no outcome was recorded"
+  // rather than "this window was never fetched".
+  const daysSinceAsOf = Math.max(0, Math.round((Date.now() - asOfMs) / 864e5));
+  const history = await recovery.recoveryHistory({ days: days + daysSinceAsOf + 2 });
   const recoveryByDay = {};
   for (const r of history || []) {
     const d = String(r.ts).slice(0, 10);
@@ -515,6 +651,8 @@ module.exports = {
   rankPrecedents,
   splitByLever,
   describeState,
+  contextFlagsByDay,
+  contextLabels,
   addDays,
   FEATURE_SPEC,
   MIN_PRECEDENTS,

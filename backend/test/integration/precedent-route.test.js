@@ -26,9 +26,19 @@ const NIGHT_SOURCE = 'eight_sleep';
 const SOURCE = `test-precedent-${Date.now()}`;
 const TAG = SOURCE;
 const TZ = 'America/New_York';
-// A fixed "today" so the seeded history is deterministic rather than relative
-// to whenever CI happens to run.
-const TODAY = '2026-09-08';
+// A fixed "today", deliberately set well into the PAST rather than to the real
+// current day.
+//
+// Two reasons, both learned the hard way. The engine now reads its window
+// relative to `asOf`, so a historical date is a first-class query — and it is
+// the only way to be sure the seeded history is the ONLY history in range.
+// Sibling integration tests write annotations dated "now" ("I was feeling
+// sick"), and the precedent engine legitimately treats a night's recorded
+// context as part of what makes a morning similar. A test anchored on the real
+// today therefore fails not because the engine is wrong but because another
+// test's leftover row correctly changed the answer. Anchoring here puts the
+// whole window somewhere no other test writes.
+const TODAY = '2025-06-11';
 
 function addDays(dateStr, n) {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -45,6 +55,11 @@ function tsFor(day) {
 
 after(async () => {
   await db.query(`DELETE FROM metrics WHERE metadata->>'testTag' = $1`, [TAG]);
+  // Annotations too, and by PREFIX rather than this run's exact tag: a test
+  // that fails partway through never reaches its own inline cleanup, and a
+  // stray context row left in the window silently changes the next run's
+  // answer (which is exactly how this suite first went red).
+  await db.query(`DELETE FROM annotations WHERE label LIKE 'test-precedent-%'`);
   await db.query(`DELETE FROM sources WHERE id = $1`, [SOURCE]);
   await closeDb();
 });
@@ -163,4 +178,83 @@ test('GET /api/precedent serves a repeat request from cache without recomputing'
   assert.equal(second.status, 200);
   assert.deepEqual(second.body, first.body);
   assert.ok(Date.now() - started < 1000, 'a cache hit must not re-run the 160-day scan');
+});
+
+test('a recorded night changes what counts as a precedent, end to end', async () => {
+  // The behaviour this proves is the one that broke the test above when it
+  // happened by accident: a night's recorded context is part of what makes a
+  // morning similar. Here it is asserted deliberately, through the real
+  // annotation → weeklyLedger → Gower path, not a unit stub.
+  //
+  // Physiology is identical across every seeded morning, so context is the
+  // ONLY thing that can move the answer.
+  const metricsStore = require('../../src/store/metrics');
+  const sourcesStore = require('../../src/store/sources');
+  await sourcesStore.registerSource({ id: SOURCE, domain: 'health', displayName: 'Precedent route test' });
+  await sourcesStore.registerSource({ id: NIGHT_SOURCE, domain: 'health', displayName: 'Eight Sleep' });
+
+  const anchor = '2025-01-15'; // a second quiet window, disjoint from TODAY's
+  const meta = { testTag: TAG };
+  const rows = [];
+  for (let i = 150; i >= 0; i--) {
+    const day = addDays(anchor, -i);
+    const rough = i % 10 === 0;
+    const w = ((i * 7) % 5) * 0.4;
+    rows.push(
+      { ts: tsFor(day), domain: 'health', metric: 'hrv', value: rough ? 38 + w * 0.2 : 62 + w, source: NIGHT_SOURCE, metadata: meta },
+      { ts: tsFor(day), domain: 'health', metric: 'resting_hr', value: rough ? 60 - w * 0.1 : 51 + w * 0.2, source: NIGHT_SOURCE, metadata: meta },
+      { ts: tsFor(day), domain: 'health', metric: 'sleep_hours', value: rough ? 5.6 + w * 0.05 : 7.5 + w * 0.1, source: SOURCE, metadata: meta },
+      { ts: tsFor(day), domain: 'health', metric: 'active_energy', value: i % 2 === 0 ? 200 + w * 5 : 900 + w * 10, source: SOURCE, metadata: meta }
+    );
+  }
+  await metricsStore.insertMetrics(rows);
+
+  const ask = (day) => request(app)
+    .get('/api/precedent').query({ day, days: '160', fresh: '1' })
+    .set(authHeader()).set('X-Time-Zone', TZ);
+
+  const before = await ask(anchor);
+  assert.ok(before.body.precedent, 'the planted pattern must be found before any context exists');
+  assert.deepEqual(before.body.precedent.context, [],
+    'a window with nothing recorded reports NO context, never "a quiet night"');
+  const baseline = before.body.precedent.count;
+
+  // One drinking night, the evening BEFORE the anchor morning — so it is the
+  // context for that morning's overnight readings, not for its own date. And
+  // one on a single CANDIDATE morning, so exactly one past day shares it.
+  const twin = addDays(anchor, -30); // a planted rough morning
+  await db.query(
+    `INSERT INTO annotations (start_ts, end_ts, category, label, note)
+     VALUES ($1, $2, 'brief_context', $3, 'had several drinks last night'),
+            ($4, $5, 'brief_context', $6, 'had several drinks last night')`,
+    [
+      `${addDays(anchor, -1)}T23:30:00Z`, `${anchor}T02:00:00Z`, `${TAG}-drinks`,
+      `${addDays(twin, -1)}T23:30:00Z`, `${twin}T02:00:00Z`, `${TAG}-drinks`,
+    ]
+  );
+
+  const after = await ask(anchor);
+  const p = after.body.precedent;
+  assert.ok(p);
+  assert.deepEqual(p.context, ['Drinking'],
+    'the night before the anchor morning must attach to THAT morning, not to its own date');
+
+  // The guarantee worth pinning is about RANKING, not about a count crossing a
+  // threshold: among mornings whose readings are alike, the one that shares
+  // today's context must rank strictly above the ones that do not. That holds
+  // regardless of where the similarity cutoff happens to fall.
+  const twinRow = p.precedents.find((x) => x.day === twin);
+  assert.ok(twinRow, 'the morning that shares today’s context must be retrieved');
+  assert.deepEqual(twinRow.context, ['Drinking'], 'each precedent carries its own night’s context');
+  const sober = p.precedents.filter((x) => x.day !== twin);
+  assert.ok(sober.length > 0, 'the comparison needs sober mornings to rank against');
+  assert.ok(
+    sober.every((x) => x.similarity < twinRow.similarity),
+    `a matching night must outrank every sober one (twin ${twinRow.similarity}%, best sober ${Math.max(...sober.map((x) => x.similarity))}%)`
+  );
+  assert.equal(p.precedents[0].day, twin, 'and it must lead the list');
+  assert.ok(sober.every((x) => x.context.length === 0),
+    'mornings with nothing recorded report no context rather than a claim of quiet');
+
+  await db.query(`DELETE FROM annotations WHERE label = $1`, [`${TAG}-drinks`]);
 });

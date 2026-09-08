@@ -28,6 +28,9 @@ export interface PrecedentDay {
   recovery: number | null;
   nextDayDelta: number | null;
   load: number | null;
+  /** What was going on that night ("Drinking", "Travel"). Empty means nothing
+   *  was recorded — never rendered as a claim that the night was quiet. */
+  context: string[];
 }
 
 export interface PrecedentArm {
@@ -49,6 +52,8 @@ export interface Precedent {
   earliest: string;
   latest: string;
   state: PrecedentStateItem[];
+  /** Last night's recorded context, same vocabulary as each precedent's. */
+  context: string[];
   precedents: PrecedentDay[];
   comparison: PrecedentComparison | null;
   evidence: {
@@ -58,6 +63,7 @@ export interface Precedent {
     withOutcome: number;
     leverMetric: string;
     outcomeMetric: string;
+    contextConcepts?: string[];
   };
 }
 
@@ -168,6 +174,22 @@ export const COMPARISON_CAVEAT =
  *  card is auditable rather than magical. */
 export function methodNote(p: Precedent, timeZone: string): string {
   return `Matched on your overnight readings against a ${p.evidence.baselineDays}-day rolling baseline, from ${formatWindow(p, timeZone)}.`;
+}
+
+/**
+ * "after drinking and a late meal" — the context of one night, as a phrase that
+ * can sit inside a sentence.
+ *
+ * Returns null for an empty list rather than a stand-in like "a quiet night".
+ * Nothing recorded means nothing is known about that night, which is not the
+ * same claim, and the card must not upgrade one into the other.
+ */
+export function contextPhrase(context: string[] | undefined): string | null {
+  const items = (context || []).filter(Boolean).map((c) => c.toLowerCase());
+  if (!items.length) return null;
+  if (items.length === 1) return `after ${items[0]}`;
+  const last = items[items.length - 1];
+  return `after ${items.slice(0, -1).join(', ')} and ${last}`;
 }
 
 /** The closest single precedent, for the card's most concrete line. Returns

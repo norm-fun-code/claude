@@ -11,6 +11,7 @@ import {
   formatDelta,
   formatWindow,
   closestWithOutcome,
+  contextPhrase,
   COMPARISON_CAVEAT,
   type Precedent,
 } from '../lib/precedentCopy';
@@ -52,6 +53,7 @@ function PrecedentCard({ precedent }: Props) {
   const arms = comparisonLines(precedent.comparison);
   const closest = closestWithOutcome(precedent);
   const summary = stateSummary(precedent.state);
+  const todayContext = precedent.context ?? [];
   const accent = tileTint.violet;
 
   const deltaColor = (direction: 'up' | 'down' | 'flat') =>
@@ -75,6 +77,18 @@ function PrecedentCard({ precedent }: Props) {
         </View>
 
         {summary ? <Text style={[styles.summary, { color: c.text }]}>{summary}</Text> : null}
+        {/* What was going on last night. Rendered only when something was
+            actually recorded — an unrecorded night says nothing here rather
+            than asserting it was quiet. */}
+        {todayContext.length > 0 && (
+          <View style={styles.chipRow}>
+            {todayContext.map((tag) => (
+              <View key={tag} style={[styles.chip, { backgroundColor: withAlpha(accent, isDark ? 0.22 : 0.13) }]}>
+                <Text style={[styles.chipText, { color: accent }]}>{tag.toUpperCase()}</Text>
+              </View>
+            ))}
+          </View>
+        )}
 
         {arms ? (
           <View style={[styles.comparison, { borderTopColor: c.border }]}>
@@ -93,7 +107,9 @@ function PrecedentCard({ precedent }: Props) {
         ) : closest ? (
           <View style={[styles.comparison, { borderTopColor: c.border }]}>
             <Text style={[styles.closest, { color: c.subtext }]}>
-              Closest match {formatDay(closest.day, ET_TZ)} ({closest.similarity}% similar) — recovery moved{' '}
+              Closest match {formatDay(closest.day, ET_TZ)}
+              {contextPhrase(closest.context) ? `, ${contextPhrase(closest.context)}` : ''} (
+              {closest.similarity}% similar) — recovery moved{' '}
               <Text style={{ color: closest.nextDayDelta! >= 0 ? c.green : c.red, fontWeight: '700' }}>
                 {formatDelta(closest.nextDayDelta!)}
               </Text>{' '}
@@ -158,7 +174,14 @@ function PrecedentCard({ precedent }: Props) {
           </View>
           {precedent.precedents.map((p) => (
             <View key={p.day} style={[styles.tableRow, { borderBottomColor: c.border }]}>
-              <Text style={[styles.tdDay, { color: c.text }]}>{formatDay(p.day, ET_TZ)}</Text>
+              <View style={styles.tdDayCell}>
+                <Text style={[styles.tdDay, { color: c.text }]}>{formatDay(p.day, ET_TZ)}</Text>
+                {p.context?.length > 0 && (
+                  <Text style={[styles.tdContext, { color: c.subtext }]} numberOfLines={1}>
+                    {p.context.join(' · ')}
+                  </Text>
+                )}
+              </View>
               <Text style={[styles.tdNum, { color: c.subtext }]}>{p.similarity}%</Text>
               <Text style={[styles.tdNum, { color: c.subtext }]}>{p.recovery ?? '—'}</Text>
               <Text
@@ -210,7 +233,12 @@ const styles = StyleSheet.create({
   tableRow: { flexDirection: 'row', borderBottomWidth: 1, paddingVertical: 8 },
   thDay: { flex: 1.4, fontSize: 9, fontWeight: '700', letterSpacing: 0.6 },
   thNum: { flex: 1, fontSize: 9, fontWeight: '700', letterSpacing: 0.6, textAlign: 'right' },
-  tdDay: { flex: 1.4, fontSize: 13, fontWeight: '600' },
+  tdDayCell: { flex: 1.4 },
+  tdDay: { fontSize: 13, fontWeight: '600' },
+  tdContext: { fontSize: 10, marginTop: 1 },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: spacing.xs },
+  chip: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8 },
+  chipText: { fontSize: 9, fontWeight: '700', letterSpacing: 0.6 },
   tdNum: { flex: 1, fontSize: 13, textAlign: 'right', fontVariant: ['tabular-nums'] },
 });
 

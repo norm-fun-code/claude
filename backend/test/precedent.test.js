@@ -17,6 +17,7 @@ const {
   rankPrecedents,
   splitByLever,
   describeState,
+  contextFlagsByDay,
   addDays,
   MIN_PRECEDENTS,
   MIN_ARM,
@@ -281,4 +282,99 @@ test('buildPrecedent states the gates it applied, so the claim is auditable', ()
   assert.equal(out.evidence.minSimilarity, 0.8);
   assert.equal(out.evidence.baselineDays, 28);
   assert.equal(out.evidence.leverMetric, 'health:active_energy');
+});
+
+// --- life context: what was actually going on that night ------------------
+//
+// Context is what separates "a morning with these numbers" from "a morning
+// like this one". It is also the easiest part of this engine to get subtly
+// wrong, in two specific ways these tests pin: aligning a night to the wrong
+// morning, and letting the overwhelming majority of ordinary nights agree with
+// each other on "none of these things happened" — which would dilute the real
+// physiological differences and quietly inflate every similarity score.
+
+test('a night is aligned to the MORNING it produced, not its own date', () => {
+  // weeklyLedger dates a physical night under its evening. The overnight
+  // readings for morning D come from the night of D-1, so the Aug 5 evening's
+  // drinking is context for the Aug 6 morning.
+  const flags = contextFlagsByDay([{ nightOf: '2026-08-05', concepts: ['alcohol'] }]);
+  assert.deepEqual(flags['2026-08-06'], { 'ctx:alcohol': true });
+  assert.equal(flags['2026-08-05'], undefined, 'the night must not tag its own morning');
+});
+
+test('context flags carry every recognized concept and drop unrecognized ones', () => {
+  const flags = contextFlagsByDay([
+    { nightOf: '2026-08-05', concepts: ['alcohol', 'late_meal', 'not_a_real_concept'] },
+  ]);
+  assert.deepEqual(flags['2026-08-06'], { 'ctx:alcohol': true, 'ctx:late_meal': true });
+});
+
+test('two ordinary nights get NO free agreement from the things that did not happen', () => {
+  // The dilution bug. Both nights are quiet, so every context concept is
+  // absent from both — none may enter the comparison, or eight free zeros
+  // would drag any two unlike days toward looking similar.
+  const a = vec({ hrv: -1.5, rhr: 1.2, sleep: -1.4 });
+  const b = vec({ hrv: 1.5, rhr: -1.2, sleep: 1.4 });
+  const withoutContext = gowerDistance(a, b);
+  const quietA = { ...a };
+  const quietB = { ...b };
+  const withQuietNights = gowerDistance(quietA, quietB);
+  assert.equal(withQuietNights.distance, withoutContext.distance,
+    'quiet nights must not change the distance between two physiologically unlike days');
+});
+
+test('a drinking night and a sober night are pushed apart even with identical numbers', () => {
+  const numbers = vec({ hrv: -1.2, rhr: 0.9, sleep: -1.1 });
+  const drinking = { ...numbers, 'ctx:alcohol': true };
+  const sober = { ...numbers };
+  const g = gowerDistance(drinking, sober);
+  assert.ok(g.distance > 0, 'identical readings from different nights are not the same morning');
+  assert.ok(1 - g.distance < 1);
+});
+
+test('two drinking nights are not penalized for sharing the same context', () => {
+  const numbers = vec({ hrv: -1.2, rhr: 0.9, sleep: -1.1 });
+  const g = gowerDistance({ ...numbers, 'ctx:alcohol': true }, { ...numbers, 'ctx:alcohol': true });
+  assert.equal(g.distance, 0);
+});
+
+test('a context mismatch never counts toward the comparability gate', () => {
+  // sharedCount answers "do we have enough of the same MEASUREMENTS to judge
+  // these days at all". A concept present on one night and absent from the
+  // other is a difference, not a shared measurement — counting it would let a
+  // pair sharing only two real readings clear MIN_SHARED_FEATURES.
+  const a = { 'health:hrv': -1, 'health:resting_hr': 1, 'ctx:alcohol': true };
+  const b = { 'health:hrv': -1, 'health:resting_hr': 1 };
+  assert.equal(gowerDistance(a, b).sharedCount, 2);
+});
+
+test('rankPrecedents will not offer a sober morning as precedent for a heavy one', () => {
+  // Same numbers on every candidate; only the night differs. The sober days
+  // must fall below the similarity gate rather than being served as "you have
+  // been here before" for a morning after drinking.
+  const numbers = vec({ hrv: -1.2, rhr: 0.9, sleep: -1.1 });
+  const todayVector = { ...numbers, 'ctx:alcohol': true };
+  const historyVectors = {
+    '2026-05-02': { ...numbers, 'ctx:alcohol': true },
+    '2026-05-05': { ...numbers },
+    '2026-05-09': { ...numbers },
+  };
+  const days = rankPrecedents({ todayVector, historyVectors }).map((p) => p.day);
+  assert.deepEqual(days, ['2026-05-02']);
+});
+
+test('buildPrecedent reports the context of today and of every precedent', () => {
+  const w = world({ n: 10 });
+  w.vectorsByDay[w.today]['ctx:alcohol'] = true;
+  for (const day of Object.keys(w.leverByDay)) w.vectorsByDay[day]['ctx:alcohol'] = true;
+  const out = buildPrecedent(w);
+  assert.deepEqual(out.context, ['Drinking']);
+  assert.ok(out.precedents.every((p) => p.context.includes('Drinking')));
+  assert.ok(out.evidence.contextConcepts.includes('Drinking'));
+});
+
+test('a night nothing was recorded about reports no context rather than "quiet"', () => {
+  const out = buildPrecedent(world({ n: 10 }));
+  assert.deepEqual(out.context, [], 'absence of information is not a claim that nothing happened');
+  assert.ok(out.precedents.every((p) => Array.isArray(p.context) && p.context.length === 0));
 });
