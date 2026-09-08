@@ -74,6 +74,7 @@ import { CommitmentsCard } from './src/components/CommitmentsCard';
 import { SinceMorningCard } from './src/components/SinceMorningCard';
 import { RadarSection } from './src/components/RadarSection';
 import { PrecedentCard } from './src/components/PrecedentCard';
+import { DisagreementCard } from './src/components/DisagreementCard';
 import { RadarDetailSheet } from './src/components/RadarDetailSheet';
 import { PlanConflictCard } from './src/components/PlanConflictCard';
 import { selectTodayCommandCenter } from './src/lib/todayCommandCenter';
@@ -88,6 +89,7 @@ import { WORKOUT_OVERRIDE_URL, CHIEF_BRIEF_REBUILD_URL, INSIGHT_DISMISS_URL, WEE
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
 import { useCommitments } from './src/hooks/useCommitments';
 import { usePrecedent } from './src/hooks/usePrecedent';
+import { useDisagreement } from './src/hooks/useDisagreement';
 
 // A single stable empty-array reference for `d?.field ?? []`-style fallbacks
 // passed to memoized cards — `?? []` mints a NEW array every render, which
@@ -294,6 +296,11 @@ export default function App() {
   // whenever the server's evidence gates aren't met, so there is no loading
   // or empty state to account for here.
   const precedent = usePrecedent();
+  // The disagreement surface — usually nothing. Fetched independently for the
+  // same reason as precedent, and self-hiding for a stronger one: a card that
+  // appeared daily to say it had no criticism today would be its own kind of
+  // nagging.
+  const disagreement = useDisagreement();
   // Health tab refresh only spins on health-local fetches; other tabs include
   // briefing loading AND any async rebuild in progress.
   const isRefreshing =
@@ -1013,6 +1020,19 @@ export default function App() {
                 still exist for the AI-generated narrative when one's ready. */}
             <AnimatedEntry delay={25}>
               <WeeklyIntentionsCard review={d?.weeklyReview ?? null} />
+            </AnimatedEntry>
+            {/* WORTH A DECISION — a goal set repeatedly and repeatedly marked
+                missed, from the user's own weekly reviews. Sits above
+                Precedent because it asks for a decision rather than offering
+                background, and below the brief/commitments because those are
+                about today while this is about a months-long pattern that will
+                keep until after coffee. Usually renders nothing at all. */}
+            <AnimatedEntry delay={22}>
+              <DisagreementCard
+                disagreement={disagreement.disagreement}
+                onResolve={disagreement.resolve}
+                resolving={disagreement.resolving}
+              />
             </AnimatedEntry>
             {/* YOU'VE BEEN HERE BEFORE — the mornings most like this one out
                 of the metrics spine, and what actually happened after them.

@@ -404,6 +404,39 @@ the LLM-bearing morning build. The Ask block ships its interpretation rule
 alongside its numbers: cite the dates, treat it as an observed association over
 a small sample, never as causation, prediction, or a reason to do something.
 
+**Disagreement (`intelligence/disagreement.js`) — the part that tells you what
+you don't want to hear.** Every other surface is on your side in the easy way:
+it summarizes, explains, encourages. None of them ever held you to something
+you said. This one notices that you have set the same weekly goal six times and
+marked it missed five, and says so — because at that point one of two things is
+true and it matters which: the goal isn't what you want, or the plan for
+reaching it is broken. Both are fixable; quietly rewriting it a seventh time is
+not.
+
+The evidence is `weekly_intentions` and nothing else: goals you wrote, graded
+achieved/missed by you in the Sunday review. It never infers behavior from a
+proxy metric, never scores you against a standard you didn't set, and never
+second-guesses a verdict you recorded. That is what makes the claim
+uncontestable, which is the whole difference between candour and an app being
+rude to you.
+
+The gates are all reasons to stay silent, and silence is the normal output: a
+goal must be repeated (≥3 times) and genuinely graded (≥3 verdicts, ≥60%
+missed); weeks you never reviewed are excluded rather than counted as failures;
+and a **comeback always ends it** — if the recent graded weeks are hits, the
+history is never raised, because collecting on a paid debt is exactly what
+would get the surface muted. Only ONE is ever raised (the most-repeated), since
+three simultaneous confrontations is an intervention. Goals are grouped across
+re-phrasings by the same `overlapScore` the retraction matcher uses.
+
+Answering it is the point. Three legitimate replies — rewrite the goal, keep it
+and fix the plan, or drop it — all resolve it, recorded through
+`dismissed_insights.context` (migration 065's "suppressed until materially new
+evidence appears" rule). The stored statement count is what re-activation is
+measured from, so the confrontation can be answered but not permanently escaped
+by one tap. Served at `GET /api/disagreement`, resolved at
+`POST /api/disagreement/resolve`.
+
 ## Proactive nudges
 
 NormOS doesn't wait to be opened. The nudge layer turns the current findings

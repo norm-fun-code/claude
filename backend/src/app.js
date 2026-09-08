@@ -25,6 +25,7 @@ const { createSpineRouter } = require('./routes/spine');
 const { createDiagnosticsRouter } = require('./routes/diagnostics');
 const { createRecoveryRouter } = require('./routes/recovery');
 const { createPrecedentRouter } = require('./routes/precedent');
+const { createDisagreementRouter } = require('./routes/disagreement');
 const { createBeliefsRouter } = require('./routes/beliefs');
 const { createMemoryRouter } = require('./routes/memory');
 const { createAnomalyContextRouter } = require('./routes/anomalyContext');
@@ -145,6 +146,10 @@ function createApp({ bootTime, port, quiet } = {}) {
   // Standalone (not folded into the briefing build) on purpose; see the
   // module header in src/routes/precedent.js.
   app.use('/api', createPrecedentRouter());
+  // The one surface that tells you what you don't want to hear — a goal you
+  // have set repeatedly and repeatedly marked missed, from your own weekly
+  // reviews. See src/intelligence/disagreement.js.
+  app.use('/api', createDisagreementRouter());
   app.use('/api', createBeliefsRouter());
   app.use('/api', createMemoryRouter());
   app.use('/api', createAnomalyContextRouter());

@@ -131,6 +131,11 @@ export const SOURCES_FRESHNESS_URL = `${API_BASE}/api/sources/freshness`;
 // metrics spine, and what actually happened after them. Standalone (not a
 // briefing field) on purpose; see backend/src/routes/precedent.js.
 export const PRECEDENT_URL = `${API_BASE}/api/precedent`;
+// The disagreement surface — a goal set repeatedly and repeatedly marked
+// missed, drawn from your own weekly reviews. Null (nothing to say) is the
+// normal answer. See backend/src/intelligence/disagreement.js.
+export const DISAGREEMENT_URL = `${API_BASE}/api/disagreement`;
+export const DISAGREEMENT_RESOLVE_URL = `${API_BASE}/api/disagreement/resolve`;
 
 /** Device's IANA timezone — follows the phone when travelling. */
 export function localTz(): string {
