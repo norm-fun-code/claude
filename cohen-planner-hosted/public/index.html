@@ -3,12 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cohen Family — Interactive Financial Planner v5</title>
+<title>Cohen Family — Interactive Financial Planner v6</title>
 <meta name="theme-color" content="#635bff">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%237d76ff'/><stop offset='.55' stop-color='%235048d6'/><stop offset='1' stop-color='%237c3aed'/></linearGradient></defs><rect width='32' height='32' rx='7' fill='url(%23g)'/><path d='M6 21L13 14L17 18L26 8' stroke='%23fff' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/><circle cx='26' cy='8' r='2.4' fill='%23fff'/></svg>">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <script src="/model.js"></script>
+<script src="/decisions.js"></script>
+<script src="/decision-room.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
@@ -425,6 +427,7 @@ body{background:transparent}
   .kpi{transition:none}
 }
 </style>
+<link rel="stylesheet" href="/decision-room.css">
 </head>
 <body>
 <div class="mesh-bg"></div>
@@ -433,7 +436,7 @@ body{background:transparent}
     <div class="brand-mark" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 13.5 L7.5 9 L10.5 12 L17 4.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="17" cy="4.5" r="1.7" fill="#fff"/></svg></div>
     <div class="brand-text">
       <h1>Cohen Family</h1>
-      <div class="brand-sub">Financial Planner <span class="brand-ver">v5</span></div>
+      <div class="brand-sub">Financial Planner <span class="brand-ver">v6</span></div>
     </div>
   </div>
   <div class="hdr-right">
@@ -501,18 +504,28 @@ function setSyncStatus(status){
 
 // ═══ PERSISTENCE — backed by server API ═══
 let _saveTimer=null;
+let _saveQueue=Promise.resolve();
+let _saveRevision=0;
+let _planLoaded=false;
 function savePlannerState(){
+  if(!_planLoaded){setSyncStatus('error');return;}
   setSyncStatus('saving');
+  const revision=++_saveRevision;
+  const payload=JSON.stringify({state:{P,compareMode,activeTab,activeScenarioIdx,monarchSnapshot,experienceVersion:6}});
   clearTimeout(_saveTimer);
-  _saveTimer=setTimeout(async()=>{
-    try{
-      await fetch('/api/planner-state',{
-        method:'PUT',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({state:{P,compareMode,activeTab,activeScenarioIdx,monarchSnapshot}})
-      });
-      setSyncStatus('synced');
-    }catch(e){setSyncStatus('error')}
+  _saveTimer=setTimeout(()=>{
+    // Serialize writes so a slower earlier request cannot overwrite newer state.
+    _saveQueue=_saveQueue.catch(()=>{}).then(async()=>{
+      try{
+        const response=await fetch('/api/planner-state',{
+          method:'PUT',headers:{'Content-Type':'application/json'},body:payload
+        });
+        if(!response.ok)throw new Error('HTTP '+response.status);
+        if(revision===_saveRevision)setSyncStatus('synced');
+      }catch(e){
+        if(revision===_saveRevision)setSyncStatus('error');
+      }
+    });
   },500);
 }
 
@@ -573,9 +586,10 @@ async function loadFromServer(){
       const s=d.state||{};
       if(s.P)P={...D,...migrateP(s.P)};
       if(s.compareMode!==undefined)compareMode=s.compareMode;
-      if(s.activeTab)activeTab=s.activeTab;
+      if(s.experienceVersion>=6&&s.activeTab)activeTab=s.activeTab;
+      _planLoaded=true;
       if(s.activeScenarioIdx!==undefined)activeScenarioIdx=s.activeScenarioIdx;
-      if(s.monarchSnapshot&&!monarchSnapshot)monarchSnapshot=s.monarchSnapshot; // don't clobber a fresh auto-sync
+      if(PlannerDecisions.usableSnapshot(s.monarchSnapshot)&&!monarchSnapshot)monarchSnapshot=s.monarchSnapshot; // don't clobber a fresh auto-sync
     }else{
       showToast('⚠️ Could not load plan state (HTTP '+stRes.status+')','red');
     }
@@ -596,7 +610,13 @@ async function loadFromServer(){
     console.error('loadFromServer error:',e);
     showToast('⚠️ Network error loading data: '+e.message,'red');
   }
+  if(!_planLoaded){
+    document.getElementById('controls').innerHTML='';
+    document.getElementById('chartArea').innerHTML='<div role="alert" style="padding:24px">Could not load your saved plan. Saving is disabled to protect your data. <button class="btn" onclick="location.reload()">Reload saved plan</button></div>';
+    return;
+  }
   buildControls();render();
+  checkMonarchStatus();
 }
 
 function exportJSON(){const b=new Blob([JSON.stringify({P,scenarios:scenarios.map(s=>({name:s.name,params:s.params}))},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='cohen_planner.json';a.click()}
@@ -639,7 +659,7 @@ async function checkMonarchStatus(){
       if(syncBtn)syncBtn.style.display='';
       if(connBtn)connBtn.style.display='none';
       // Auto-sync on open — token is stored server-side and auto-refreshes
-      if(!monarchSnapshot)syncMonarch();
+      syncMonarch();
     }else{
       if(syncBtn)syncBtn.style.display='none';
       if(connBtn)connBtn.style.display='';
@@ -672,22 +692,26 @@ async function syncMonarch(){
       const connBtn=document.getElementById('monarchConnectBtn');
       if(syncBtn)syncBtn.style.display='none';
       if(connBtn)connBtn.style.display='';
+      if(btn)btn.disabled=false;
       showToast('Monarch disconnected — click Connect Monarch','red');
       return;
     }
     if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||'HTTP '+r.status);}
     const d=await r.json();
-    const nw=d.netWorth?.value||0;
-    const ret=d.retirement?.value||0;
-    monarchSnapshot={
+    const nw=d.netWorth?.value;
+    const ret=d.retirement?.value??0;
+    const nextSnapshot={
       netWorth:nw,
       liquid:d.liquid?.value??(nw-ret),
       retirement:ret,
-      assets:d.assets?.value||0,
-      liabilities:d.liabilities?.value||0,
-      syncedAt:d.netWorth?.updatedAt||new Date().toISOString(),
+      assets:d.assets?.value,
+      liabilities:d.liabilities?.value,
+      accountCount:d.accounts?.length||0,
+      syncedAt:d.netWorth?.updatedAt,
     };
-    monarchAccounts=d.accounts||[];
+    if(!nextSnapshot.accountCount||!PlannerDecisions.usableSnapshot(nextSnapshot))throw new Error('No verified balances returned. Previous data retained.');
+    monarchSnapshot=nextSnapshot;
+    monarchAccounts=d.accounts;
     if(btn){btn.textContent='📍 Synced';btn.disabled=false;}
     showToast(`📍 Monarch synced · Liquid ${fmt(monarchSnapshot.liquid)} · 401k ${fmt(monarchSnapshot.retirement)}`,'green');
     savePlannerState(); // persist last sync so it shows instantly next open
@@ -777,7 +801,7 @@ async function confirmSnapshot(overlay){
 }
 
 // ═══ UI ═══
-let activeTab='nw';let charts={};let inflationView=false;let snapshots=[];let overlaySnapId=null;
+let activeTab='home';let charts={};let inflationView=false;let snapshots=[];let overlaySnapId=null;
 let _sensiPreset='all';
 let _sensiDeltas={};
 let monarchSnapshot=null; // {netWorth, retirement, assets, liabilities, syncedAt}
@@ -1369,6 +1393,10 @@ function _introAnimate(){
   document.querySelectorAll('#summaries .sc').forEach((c,i)=>{c.classList.add('reveal');c.style.animationDelay=(480+i*60)+'ms'});
 }
 function render(){
+  if(!_planLoaded)return;
+  document.body.classList.toggle('home-view',activeTab==='home');
+  document.querySelectorAll('.tabs button[role=tab]').forEach(b=>{const on=b.dataset.tab===activeTab;b.classList.toggle('active',on);b.setAttribute('aria-selected',String(on));});
+  if(activeTab!=='income')document.getElementById('flowToggle')?.remove();
   const{R,tT,tC,tTx,tS,dp,mm}=run(P);
   const last=R[R.length-1],pur=R.find(r=>r.yr===P.homePurchaseYear),pliq=pur?pur.liq:0;
   const peak=R.reduce((a,b)=>b.tu>a.tu?b:a),minL=R.reduce((a,b)=>b.liq<a.liq?b:a);
@@ -1411,6 +1439,7 @@ function render(){
   document.getElementById('scenarioBar').innerHTML=sc;
   renderSnapshotBar();
   const labels=R.map(r=>String(r.yr));const newKey=_chartKey();const reuseChart=(newKey===_lastChartKey&&!!charts.main);if(!reuseChart)destroyCharts();_lastChartKey=newKey;const ca=document.getElementById('chartArea');
+  if(activeTab==='home'){renderDecisionRoom(R);return}
   if(activeTab==='advisor'){renderAdvisorTab(R,P);return}
   if(activeTab==='portfolio'){renderPortfolioTab(R,P);return}
   if(activeTab==='goals'){renderGoalsTab(R,P,tT);return}
@@ -1984,7 +2013,7 @@ function renderHousingTab(R,P){
         <tr><td style="padding:8px 4px;color:var(--t2);border-bottom:1px solid var(--bd)">Discretionary buffer needed</td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)">~${kY(buffer)}</td></tr>
         <tr style="background:var(--g-soft)"><td style="padding:8px 4px;color:var(--tx)"><strong>Available for housing (${py})</strong></td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;color:${availHousing>=0?'var(--g)':'var(--r)'}"><strong>${kY(availHousing)}</strong></td></tr>
       </table>
-      ${IB('var(--b)',`<strong style="color:var(--tx)">The hard truth:</strong> ${py} has room, but by peak tuition (<strong style="color:var(--tx)">${peakRow.yr}</strong>) tuition + childcare alone hits <strong style="color:var(--tx)">${kY(peakTuCc)}</strong> — leaving only <strong style="color:${peakAvail>=0?'var(--a)':'var(--r)'}">${kY(Math.max(0,peakAvail))}</strong> for housing that year${peakAvail<0?' (a deficit before housing is even counted)':''}. Housing is fixed, so the crunch years are funded by drawing down savings. Keeping all-in housing modest is what protects those years.`)}
+      ${IB('var(--b)',`<strong style="color:var(--tx)">Peak-cost year:</strong> ${py} has room, but by peak tuition (<strong style="color:var(--tx)">${peakRow.yr}</strong>) tuition + childcare alone hits <strong style="color:var(--tx)">${kY(peakTuCc)}</strong> — leaving only <strong style="color:${peakAvail>=0?'var(--a)':'var(--r)'}">${kY(Math.max(0,peakAvail))}</strong> for housing that year${peakAvail<0?' (a deficit before housing is even counted)':''}. ${peakRow.surp<0?'This year has a modeled cash-flow deficit funded from investments.':'This year still has a modeled cash-flow surplus.'} Mortgage payments are fixed; property taxes and maintenance increase in the model.`)}
     </div>
     <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
       <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">Three Reasonable Targets</div>
@@ -1994,7 +2023,7 @@ function renderHousingTab(R,P){
         <tr><td style="padding:8px 4px;border-bottom:1px solid var(--bd)"><strong style="color:var(--b)">Stretch (28% of net)</strong></td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)"><strong>${mM(priceFor(.28))} → ${kY(netInc*.28)}/yr</strong></td></tr>
         <tr><td style="padding:8px 4px;color:var(--t2)">Current plan (${(curPct*100).toFixed(0)}%)</td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;color:var(--t2)">${mM(P.homePrice)} → ${kY(cur.total)}/yr</td></tr>
       </table>
-      ${IB('var(--g)',`<strong style="color:var(--tx)">Recommendation: ~$1.7M target.</strong> Adds roughly <strong style="color:var(--g)">${mM(recGain)}</strong> to long-term NW vs a $2M home, while staying realistic for a 4-bed home (rather than $1.5M, which may force compromises on size or quality).`)}
+      ${IB('var(--g)',`<strong style="color:var(--tx)">Illustrative comparison: $1.7M.</strong> Adds roughly <strong style="color:var(--g)">${mM(recGain)}</strong> to long-term NW vs a $2M home, under the current model assumptions. Home size, condition and local availability require a separate search.`)}
     </div>
   </div>
 
@@ -2049,19 +2078,20 @@ function renderHousingTab(R,P){
   </div>
 
   <!-- RECOMMENDATION -->
-  <div style="${ST}">🎯 Recommendation</div>
+  <div style="${ST}">🎯 Housing trade-offs</div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:6px">
     <div style="background:var(--s1);border:2px solid var(--g);border-radius:10px;padding:16px">
-      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--g);margin-bottom:8px">Primary Recommendation</div>
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--g);margin-bottom:8px">Illustrative $1.7M alternative</div>
       <div style="font-size:28px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">$1.7M</div>
-      <div style="font-size:13px;color:var(--t2);margin-top:8px;line-height:1.5">50% down at prevailing rate. Total housing ~${kY(calcH(1700000,50,P.mortgageRate).total)}/yr (${Math.round(calcH(1700000,50,P.mortgageRate).total/netInc*100)}% of net). Adds <strong style="color:var(--g)">${mM(recGain)} to NW</strong> vs the $2M plan. Realistic 4BR price.</div>
-      ${IB('var(--g)',`<strong style="color:var(--tx)">Why not lower:</strong> Below $1.5M likely means smaller (3BR), older, or a compromised location. Doesn't fit a growing family long-term.`)}
+      <div style="font-size:13px;color:var(--t2);margin-top:8px;line-height:1.5">${P.downPctg}% down at your assumed ${P.mortgageRate}% rate. Total housing ~${kY(calcH(1700000,P.downPctg,P.mortgageRate).total)}/yr (${Math.round(calcH(1700000,P.downPctg,P.mortgageRate).total/netInc*100)}% of net). Adds <strong style="color:var(--g)">${mM(recGain)} to NW</strong> vs the $2M alternative using the same plan assumptions.</div>
+      ${IB('var(--g)',`<strong style="color:var(--tx)">Scope:</strong> This comparison models a price change. It does not estimate what size, condition or neighborhood that budget will buy.`)}
     </div>
     <div style="background:var(--s1);border:2px solid var(--b);border-radius:10px;padding:16px">
       <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--b);margin-bottom:8px">Secondary Levers</div>
-      <div style="font-size:20px;font-weight:700;color:var(--b)">If $2M is the home…</div>
-      <div style="font-size:13px;color:var(--t2);margin-top:8px;line-height:1.6">Compensate by:<br>1. <strong style="color:var(--tx)">Down payment ≥ 50%</strong> — minimizes monthly cost<br>2. <strong style="color:var(--tx)">Refinance opportunistically</strong> if rates fall to 4–4.5%<br>3. <strong style="color:var(--tx)">Nancy 5 days/wk</strong> — cuts deficits materially<br>4. <strong style="color:var(--tx)">Stripe equity event</strong> covers everything</div>
-      ${IB('var(--b)',`$2M only really works if a Stripe liquidity event happens before ${py} and you have meaningful liquidity beyond the down-payment fund.`)}
+      <div style="font-size:20px;font-weight:700;color:var(--b)">Test the trade-offs together</div>
+      <div style="font-size:13px;color:var(--t2);margin-top:8px;line-height:1.6">Your current plan models <strong>${R.filter(r=>r.surp<0).length} deficit years</strong> and a lowest year-end liquid balance of <strong>${fmt(Math.min(...R.map(r=>r.liq)))}</strong>. Compare purchase timing, childcare costs, Nancy’s workload and lower returns in the Decision Room.</div>
+      ${IB('var(--b)',`A future equity sale or refinance is not guaranteed. Evaluate the plan using the income, liquidity and rate assumptions you have actually entered.`)}
+      <button class="btn btn-g" onclick="setTab('home')">Open What-if Lab</button>
     </div>
   </div>
 
@@ -3009,7 +3039,7 @@ function renderCompareTab(R,P){
   h+=`</tbody></table></div>`;
   // Parameter diffs
   const PKEYS=['homePrice','downPctg','mortgageRate','homePurchaseYear','investReturn','startingLiquid','expenseInflation','nancyHourlyRate','nancyMaxClients','normTCY0','normGrowth','pretax401k','numKids'];
-  const PLABELS={homePrice:'Home Price',downPctg:'Down %',mortgageRate:'Mortgage Rate',homePurchaseYear:'Purchase Year',investReturn:'Return %',startingLiquid:'Starting Liquid',expenseInflation:'Exp Inflation',nancyHourlyRate:'Nancy $/hr',nancyMaxClients:'Nancy Max Clients',normTCY0:'Norm Comp (Y0)',normGrowth:'Comp Growth',pretax401k:'401k Contrib',numKids:'# Kids'};
+  const PLABELS={childcareMonthly:'Childcare / month',homePrice:'Home Price',downPctg:'Down %',mortgageRate:'Mortgage Rate',homePurchaseYear:'Purchase Year',investReturn:'Return %',startingLiquid:'Starting Liquid',expenseInflation:'Exp Inflation',nancyHourlyRate:'Nancy $/hr',nancyMaxClients:'Nancy Max Clients',normTCY0:'Norm Comp (Y0)',normGrowth:'Comp Growth',pretax401k:'401k Contrib',numKids:'# Kids'};
   const fmtPv=(k,v)=>{if(['investReturn','expenseInflation','normGrowth'].includes(k))return(v*100).toFixed(1)+'%';if(['homePrice','startingLiquid','normTCY0','pretax401k'].includes(k))return fmt(v);if(k==='downPctg')return v+'%';if(k==='mortgageRate')return v+'%';return String(v)};
   const diffCols=cols.slice(1).filter(c=>PKEYS.some(k=>c.params[k]!==undefined&&c.params[k]!==P[k]));
   if(diffCols.length){
@@ -3034,7 +3064,8 @@ document.getElementById('main').innerHTML=`
   <div id="heroBand"></div>
   <div class="kpi-grid" id="kpis"></div><div id="scenarioBar"></div><div id="snapshotBar"></div>
   <div class="tabs" role="tablist" aria-label="Plan views">
-    <button role="tab" aria-selected="true" class="active" data-tab="nw" onclick="setTab('nw')">📈 Net Worth</button>
+    <button role="tab" aria-selected="true" class="active" data-tab="home" onclick="setTab('home')">✦ Decision Room</button>
+    <button role="tab" aria-selected="false" data-tab="nw" onclick="setTab('nw')">📈 Net Worth</button>
     <button role="tab" aria-selected="false" data-tab="income" onclick="setTab('income')">💰 Income & Cash Flow</button>
     <button role="tab" aria-selected="false" data-tab="table" onclick="setTab('table')">📋 Table</button>
     <button role="tab" aria-selected="false" data-tab="goals" onclick="setTab('goals')">🎯 Goals</button>
@@ -3051,7 +3082,7 @@ document.getElementById('main').innerHTML=`
     <button aria-label="Save a dated snapshot of this plan" onclick="showSnapshotInput()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid rgba(8,145,178,.3);background:#e0f7fa;color:var(--c);cursor:pointer;font-family:inherit" title="Save a dated copy of this plan">📸 Snapshot</button>
     <button aria-label="Play plan as a story" onclick="openStoryMode()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid rgba(99,91,255,.3);background:var(--accent-soft);color:var(--accent);cursor:pointer;font-family:inherit" title="Walk through your plan's milestones">🎬 Story</button>
   </div>
-  <div class="cc" id="chartArea"><canvas id="cv" style="height:300px"></canvas></div>
+  <div class="cc" id="chartArea"><p role="status" style="padding:24px;color:var(--t2)">Loading your saved plan…</p></div>
   <div class="sg" id="summaries"></div>`;
 
 // ═══ AI ADVISOR ═══
@@ -3117,6 +3148,7 @@ function toggleStressMode(){
 let _paletteState=null;
 function _paletteCommands(){
   const cmds=[
+    {icon:'✦',label:'Decision Room',hint:'Home',run:()=>setTab('home')},
     {icon:'📈',label:'Net Worth',hint:'View',run:()=>setTab('nw')},
     {icon:'💰',label:'Income & Cash Flow',hint:'View',run:()=>setTab('income')},
     {icon:'📋',label:'Table',hint:'View',run:()=>setTab('table')},
@@ -3500,7 +3532,7 @@ INVESTING PRINCIPLES NORM OPERATES BY
 function renderAdvisorTab(R,P){
   const ca=document.getElementById('chartArea');
   ca.innerHTML=`<div class="adv-toolbar">
-    <span class="ctx-pill">Context: <strong>LIVE</strong> · ${R.length}yr plan · $${(R[R.length-1].nw/1e6).toFixed(1)}M @ ${R[R.length-1].yr}</span>
+    <span class="ctx-pill">Context: <strong>YOUR PLAN</strong> · ${R.length}yr plan · $${(R[R.length-1].nw/1e6).toFixed(1)}M @ ${R[R.length-1].yr}</span>
     <button class="adv-tb-new" onclick="advNewChat()" title="Start a new conversation">＋ New chat</button>
     <button class="adv-tb-chats" onclick="advToggleRailMobile()" title="Switch or delete conversations">🗂 Chats</button>
     <button onclick="advExportChats()">📥 Export</button>
@@ -4069,7 +4101,6 @@ function advPreviewProposals(){
 
 // ═══ INIT ═══
 loadAdvisorState();
-checkMonarchStatus();
 // Handle OAuth redirect results
 (()=>{
   const p=new URLSearchParams(window.location.search);
