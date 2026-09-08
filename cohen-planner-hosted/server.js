@@ -16,6 +16,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const path = require('path');
 const db = require('./db');
 const { run: runModel } = require('./public/model.js');
+const { extractAccounts } = require('./monarch-accounts.js');
 
 const ADVISOR_TOOLS = [
   {
@@ -236,6 +237,12 @@ app.get('/', requireAuth, (req, res) => {
 app.get('/model.js', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'model.js'));
 });
+// Keep every new planner asset behind the same session gate as the existing UI.
+for (const asset of ['decisions.js', 'decision-room.js', 'decision-room.css']) {
+  app.get('/' + asset, requireAuth, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', asset));
+  });
+}
 
 // ── Planner state ─────────────────────────────────────────────────────────────
 app.get('/api/planner-state', requireAuth, async (req, res) => {
@@ -816,8 +823,7 @@ app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
       return res.status(502).json({ error: 'GetAccounts error: ' + (toolResult.error.message || JSON.stringify(toolResult.error)) });
     }
 
-    const data = unwrapMCPResult(toolResult);
-    const accounts = Array.isArray(data) ? data : (data?.accounts ?? data?.data ?? []);
+    const accounts = extractAccounts(toolResult);
 
     const excludes       = new Set((process.env.MONARCH_EXCLUDE_ACCOUNTS || '').split(',').map(s => s.trim()).filter(Boolean));
     const liquidExcludes = new Set((process.env.MONARCH_LIQUID_EXCLUDE || '').split(',').map(s => s.trim()).filter(Boolean));
@@ -882,6 +888,7 @@ app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
       portfolioAccts.push({ name, institution: inst, type, subtype: sub, category, balance: Math.round(bal), updatedAt: updAt });
     }
 
+    if (!portfolioAccts.length) throw new Error('No included Monarch accounts. Previous snapshot retained.');
     const updatedAt = newestAt ?? new Date().toISOString();
     res.json({
       netWorth:    { value: Math.round(netWorth),    updatedAt },
