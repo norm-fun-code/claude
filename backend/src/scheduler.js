@@ -280,6 +280,36 @@ function runNonEssentialMorningWork(label) {
   })().catch((e) => console.error('[scheduler] post-brief housekeeping error:', e.message));
 }
 
+// Continuous-presence state, at module scope rather than inside start()'s
+// closure so /api/diag/presence can report it. A loop that runs unattended and
+// can send a push notification must be answerable from outside the process —
+// "is it armed, what is pending, when did it last run" should never require
+// reading logs.
+let _presence = null;
+let _presenceLastPass = null;
+
+/** Read-only snapshot of the presence loop for the diagnostic endpoint. */
+function presenceState() {
+  const presence = require('./intelligence/presence');
+  if (!_presence) return { enabled: false, reason: 'not started' };
+  const now = Date.now();
+  return {
+    enabled: true,
+    lastEvaluatedAt: _presence.lastEvaluatedAt ? new Date(_presence.lastEvaluatedAt).toISOString() : null,
+    pendingSince: _presence.firstBumpAt ? new Date(_presence.firstBumpAt).toISOString() : null,
+    lastChangeAt: _presence.lastBumpAt ? new Date(_presence.lastBumpAt).toISOString() : null,
+    pendingTriggers: _presence.triggers || [],
+    decision: presence.shouldEvaluate(_presence, now),
+    lastPass: _presenceLastPass,
+    pacing: {
+      debounceMs: presence.DEBOUNCE_MS,
+      minIntervalMs: presence.MIN_INTERVAL_MS,
+      maxDeferMs: presence.MAX_DEFER_MS,
+      reactiveTriggers: [...presence.REACTIVE_TRIGGERS],
+    },
+  };
+}
+
 async function morningRoutine({ reason = 'scheduled', force = false, asOf = new Date() } = {}) {
   if (_morningRoutineInFlight) {
     console.log(`[scheduler] morning routine already in flight — skipping duplicate trigger (${reason})`);
@@ -794,6 +824,72 @@ function startJobs() {
   setInterval(commitmentTick, commitmentPollMin * 60 * 1000);
   setTimeout(commitmentTick, 20 * 1000); // immediate catch-up shortly after boot
 
+  // ---- Continuous presence -------------------------------------------
+  //
+  // Every job above fires because the CLOCK said so. This one fires because
+  // the STATE moved. The Attention Policy already decides what is worth
+  // interrupting for — with cooldowns, a daily budget and quiet hours — but
+  // until now it was only ever asked once a day, from the post-brief
+  // housekeeping. Anything that happened at 2pm waited until tomorrow.
+  //
+  // Here it is subscribed to the brain's own invalidation bus, so a sync
+  // landing, spending posting, or the day's plan changing re-asks the question
+  // within minutes. All the pacing (burst debounce, floor between passes,
+  // deferral ceiling) lives in intelligence/presence.js and is pure; all the
+  // judgment stays where it already is. Nothing new decides what to say.
+  if (process.env.PRESENCE_ENABLED !== 'false') {
+    const presence = require('./intelligence/presence');
+    const invalidation = require('./brain/invalidation');
+    const { invalidationSet } = require('./brain/registry');
+
+    _presence = { lastEvaluatedAt: Date.now(), lastBumpAt: null, firstBumpAt: null, triggers: [] };
+    let presenceRunning = false;
+
+    // Listeners are per-FIELD, and each receives the trigger that caused the
+    // invalidation. Subscribing to the union of fields the reactive triggers
+    // touch means one bump may call back several times; recordTrigger is
+    // idempotent within a millisecond, so that collapses to a single pending
+    // change rather than several.
+    const reactiveFields = new Set();
+    for (const trigger of presence.REACTIVE_TRIGGERS) {
+      for (const field of invalidationSet(trigger)) reactiveFields.add(field);
+    }
+    for (const field of reactiveFields) {
+      invalidation.on(field, (_meta, _field, trigger) => {
+        _presence = presence.recordTrigger(_presence, trigger, Date.now());
+      });
+    }
+
+    const presenceTick = async () => {
+      // A pass can outlive a tick (dispatch does real work). Overlapping runs
+      // would double-evaluate the same pending change and race the ledger the
+      // Attention Policy's cooldowns depend on.
+      if (presenceRunning) return;
+      const { evaluate } = presence.shouldEvaluate(_presence, Date.now());
+      if (!evaluate) return;
+      const triggers = _presence.triggers || [];
+      // Consume BEFORE running: a change arriving during the pass must count
+      // as new and schedule another, not be swallowed by this one's reset.
+      _presence = presence.afterEvaluation(_presence, Date.now());
+      presenceRunning = true;
+      try {
+        const r = await runNudges({ suppressCheckin: true });
+        const w = await wealthNudgesMod.runWealthNudges({});
+        _presenceLastPass = { at: new Date().toISOString(), triggers, sent: r.sent + w.sent };
+        if (r.sent > 0 || w.sent > 0) {
+          console.log(`[presence] ${triggers.join(',')} → sent=${r.sent + w.sent}`);
+        }
+      } catch (e) {
+        _presenceLastPass = { at: new Date().toISOString(), triggers, error: e.message };
+        console.error('[presence] pass failed:', e.message);
+      } finally {
+        presenceRunning = false;
+      }
+    };
+    setInterval(presenceTick, 60 * 1000);
+    console.log(`[scheduler] continuous presence enabled — watching ${reactiveFields.size} field(s) on the invalidation bus`);
+  }
+
   const hm = (h, m) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   const nextIso = (h, m) => new Date(Date.now() + msUntil(h, m)).toISOString();
   console.log(
@@ -807,7 +903,7 @@ function startJobs() {
 }
 
 module.exports = {
-  start, msUntil, nextScheduledAt, localClock, scheduleDaily, scheduleWeekly,
+  start, msUntil, nextScheduledAt, localClock, scheduleDaily, scheduleWeekly, presenceState,
   morningRoutine, morningRanToday, markMorningRan, localDateKey,
   eightSleepConfigured,
   tryBecomeLeader, releaseLeaderLock, schedulerState,

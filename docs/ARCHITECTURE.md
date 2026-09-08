@@ -443,6 +443,38 @@ NormOS doesn't wait to be opened. The nudge layer turns the current findings
 into a short, ranked, push-based message — the "7am text" that makes it a chief
 of staff rather than a dashboard.
 
+**Continuous presence (`intelligence/presence.js`).** Every scheduled job fires
+because the *clock* said so. Presence fires because the *state moved*. The
+Attention Policy already answers "is this worth interrupting for" — with gates,
+cooldowns, a daily budget and quiet hours — but it was only ever asked once a
+day, from the post-brief housekeeping, so anything that happened at 2pm waited
+until the next morning. The judgment was live; only the asking was on a cron.
+
+Presence subscribes to the brain's own invalidation bus (`brain/invalidation`),
+so a sync landing, spending posting, recovery moving or the day's plan changing
+re-asks the question within minutes. It adds no new judgment: the same
+detectors run, and the Attention Policy decides delivery exactly as before.
+
+The pacing is pure and conservative, and every gate is a reason to do nothing:
+**nothing changed → never evaluate** (a quiet afternoon costs zero passes — the
+entire point is that presence is event-driven, never time-driven); a burst of
+writes is debounced into one change (an Apple Health sync writing 200 rows is
+one event, not 200); a hard floor holds between passes however eventful things
+get; and a deferral ceiling stops a source that dribbles writes forever from
+starving evaluation by keeping the debounce permanently un-settled. An hour of
+constant change yields a handful of passes, not hundreds.
+
+Quiet hours, per-fact cooldowns and the daily interrupt budget are deliberately
+NOT re-implemented here — they belong to the Attention Policy, which already
+gets them right and, crucially, can *defer* a quiet-hours event into the
+morning brief rather than drop it. Reactive triggers are an allowlist:
+recovery, transactions, commitments, workout/training changes, and context
+changes (which can *retire* a question as well as raise one). Goal edits and
+nightly context-tag submissions are excluded — those are the user typing into
+the app while looking at it, and reacting would mean interrupting someone
+mid-sentence. Kill switch: `PRESENCE_ENABLED=false`. State is inspectable at
+`GET /api/diag/presence`.
+
 - `intelligence/nudges.js` — **pure** `buildNudges`: maps open findings to
   candidate nudges (off-track/at-risk **forecasts**, the #1 **leverage action**,
   clearly **worsening trends**), scores their urgency, de-duplicates against

@@ -435,6 +435,14 @@ function createDiagnosticsRouter() {
 
   // Scheduler health check — shows whether the scheduler is enabled and when
   // the morning routine will next fire (helps diagnose missing 8:30am briefings).
+  // Continuous presence — is the event-driven loop armed, what is pending,
+  // and when did it last run? A background loop that can send a push must be
+  // answerable from outside the process without reading logs.
+  //   GET /api/diag/presence
+  router.get('/diag/presence', (req, res) => {
+    res.json(require('../scheduler').presenceState());
+  });
+
   router.get('/diag/scheduler', (req, res) => {
     const scheduler = require('../scheduler');
     const { msUntil } = scheduler;
