@@ -345,6 +345,44 @@ issues a verdict — confirmed / refuted / inconclusive. This closes the
 deadlines) are recorded and fed into chat context so anomalies are explainable
 rather than misread.
 
+**Precedent (`intelligence/precedent.js`) — retrieval over your own past.**
+Every other module here answers "what is true now". Precedent answers the
+question a person actually asks at 7am: *I have felt like this before — what
+happened the last times?* It is the most direct payoff of the persistence-first
+decision at the top of this document, and it is retrieval, not generation:
+nothing in its output is written by a model.
+
+Each past morning becomes a small state vector over overnight-only readings
+(HRV, resting HR, sleep hours/score/deep, breathing rate, plus yesterday's
+active energy as the load carried in). Deliberately overnight-only: the card is
+for the decision made in the *morning*, so same-day check-in mood/energy/focus
+would be leakage from the future of the day being described. Each value is
+z-scored **causally** — against only the 28 days *before* it — so a June
+precedent is scored the way it would have been scored in June. HRV and resting
+HR are read under `recovery.js`'s `RECOVERY_SOURCE_LOCK`, so "a morning like
+today" is measured with the same overnight readings the outcome (recovery) is.
+
+Similarity is **Gower** distance, chosen because the vectors are ragged: any
+morning may be missing a sleep score or a breathing rate, and Gower drops an
+absent feature from both numerator and denominator rather than scoring the gap
+as agreement. Retrieved days are then split by what was actually *done* — the
+day's own active energy, at the median of that precedent set — and compared on
+what happened next (next-day recovery movement).
+
+The gates are the feature. Each one blocks a specific way of being wrong:
+a candidate needs ≥3 shared features to be *comparable* at all; ≥0.8 similarity
+to be a precedent; ≥5 precedents before anything is said; ≥3 days in each arm
+and a ≥3-point gap before the comparison is shown; and a degenerate split (no
+real variation in what was done) withholds it too. Failing any gate returns
+`null` — no card, never a hedge. Insufficient evidence is reported as silence.
+
+Served standalone at `GET /api/precedent` (memoized ~15 min in the engine, so
+the Today card and `chat/ask.js`'s `precedentContext()` share one scan) rather
+than as a briefing field — it is pure retrieval and must never add latency to
+the LLM-bearing morning build. The Ask block ships its interpretation rule
+alongside its numbers: cite the dates, treat it as an observed association over
+a small sample, never as causation, prediction, or a reason to do something.
+
 ## Proactive nudges
 
 NormOS doesn't wait to be opened. The nudge layer turns the current findings

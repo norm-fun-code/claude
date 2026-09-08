@@ -73,6 +73,7 @@ import { LibraryCard } from './src/components/LibraryCard';
 import { CommitmentsCard } from './src/components/CommitmentsCard';
 import { SinceMorningCard } from './src/components/SinceMorningCard';
 import { RadarSection } from './src/components/RadarSection';
+import { PrecedentCard } from './src/components/PrecedentCard';
 import { RadarDetailSheet } from './src/components/RadarDetailSheet';
 import { PlanConflictCard } from './src/components/PlanConflictCard';
 import { selectTodayCommandCenter } from './src/lib/todayCommandCenter';
@@ -86,6 +87,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WORKOUT_OVERRIDE_URL, CHIEF_BRIEF_REBUILD_URL, INSIGHT_DISMISS_URL, WEEKLY_REVIEW_URL, authHeaders, fetchWithTimeout } from './src/config';
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
 import { useCommitments } from './src/hooks/useCommitments';
+import { usePrecedent } from './src/hooks/usePrecedent';
 
 // A single stable empty-array reference for `d?.field ?? []`-style fallbacks
 // passed to memoized cards — `?? []` mints a NEW array every render, which
@@ -101,12 +103,18 @@ const EMPTY_ARRAY: never[] = [];
 // summon sheet from a different entry point).
 function contextStartersFor(
   tab: TabKey,
-  opts: { score?: number | null; band?: string | null; risk?: string | null }
+  opts: { score?: number | null; band?: string | null; risk?: string | null; precedentCount?: number | null }
 ): string[] {
-  const { score, band, risk } = opts;
+  const { score, band, risk, precedentCount } = opts;
+  // Only offered when the precedent engine actually found a set — the starter
+  // quotes the real count, so it must never be shown speculatively.
+  const precedentStarter = precedentCount
+    ? `I've had ${precedentCount} mornings like this one — what happened after them?`
+    : null;
   if (tab === 'health') {
     return [
       score != null ? `Why is my recovery ${score} (${band ?? 'unknown'}) today?` : 'Why is my recovery where it is today?',
+      ...(precedentStarter ? [precedentStarter] : []),
       "What's been moving my HRV lately?",
       "Should I adjust today's workout given my recovery?",
     ];
@@ -126,6 +134,7 @@ function contextStartersFor(
   }
   return [ // today
     "What's the single most important thing right now?",
+    ...(precedentStarter ? [precedentStarter] : []),
     risk ? 'Go deeper on the risk in my brief' : "What am I missing in today's plan?",
     'How are my weekly goals tracking?',
   ];
@@ -279,6 +288,12 @@ export default function App() {
   const [pendingAskQ, setPendingAskQ] = useState('');
   const dailyLog = useDailyLogStatus();
   const commitments = useCommitments();
+  // Precedent ("you've been here before") — its own fast, cache-backed
+  // endpoint, deliberately NOT a briefing field: it is pure retrieval over
+  // the metrics spine and must never queue behind the LLM build. Self-hides
+  // whenever the server's evidence gates aren't met, so there is no loading
+  // or empty state to account for here.
+  const precedent = usePrecedent();
   // Health tab refresh only spins on health-local fetches; other tabs include
   // briefing loading AND any async rebuild in progress.
   const isRefreshing =
@@ -297,7 +312,12 @@ export default function App() {
     // too — it's the same cheap, no-LLM endpoint either way.
     liveRecovery.refetch();
     if (tab !== 'health') briefing.reload();
-  }, [briefing, health, liveRecovery, tab]);
+    // Precedent is served from a 15-minute server memo, so including it here
+    // is cheap; without it, an overnight sync landing after the app opened
+    // would leave the card showing yesterday's match set until the next cold
+    // start. Still nothing LLM-bearing — pull-to-refresh stays cheap.
+    if (tab === 'today') precedent.refetch();
+  }, [briefing, health, liveRecovery, precedent, tab]);
 
   const d = briefing.data;
 
@@ -637,8 +657,9 @@ export default function App() {
       score: liveRecovery.recovery?.score,
       band: liveRecovery.recovery?.band,
       risk: d?.chiefBrief?.risk,
+      precedentCount: precedent.precedent?.count ?? null,
     }),
-    [tab, liveRecovery.recovery?.score, liveRecovery.recovery?.band, d?.chiefBrief?.risk]
+    [tab, liveRecovery.recovery?.score, liveRecovery.recovery?.band, d?.chiefBrief?.risk, precedent.precedent?.count]
   );
 
   // Subtitle under the tab title — shows briefing age on non-Health tabs, and
@@ -993,6 +1014,17 @@ export default function App() {
             <AnimatedEntry delay={25}>
               <WeeklyIntentionsCard review={d?.weeklyReview ?? null} />
             </AnimatedEntry>
+            {/* YOU'VE BEEN HERE BEFORE — the mornings most like this one out
+                of the metrics spine, and what actually happened after them.
+                Placed directly under the brief because that adjacency IS the
+                idea: the brief names today's one action, and this grounds
+                that decision in the user's own measured history rather than
+                in a model's opinion. Self-hides whenever the backend's
+                evidence gates aren't met (see intelligence/precedent.js), so
+                it costs nothing on a day with no real precedent. */}
+            <AnimatedEntry delay={25}>
+              <PrecedentCard precedent={precedent.precedent} />
+            </AnimatedEntry>
             {/* SINCE THIS MORNING — only genuine post-snapshot changes (see
                 todayCommandCenter.sinceMorning); self-hides when empty. */}
             <AnimatedEntry delay={30}>
@@ -1231,6 +1263,7 @@ export default function App() {
               score: liveRecovery.recovery?.score,
               band: liveRecovery.recovery?.band,
               risk: d?.chiefBrief?.risk,
+              precedentCount: precedent.precedent?.count ?? null,
             }));
           }
         }}

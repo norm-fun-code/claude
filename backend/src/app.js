@@ -24,6 +24,7 @@ const { createIngestAdminRouter } = require('./routes/ingest-admin');
 const { createSpineRouter } = require('./routes/spine');
 const { createDiagnosticsRouter } = require('./routes/diagnostics');
 const { createRecoveryRouter } = require('./routes/recovery');
+const { createPrecedentRouter } = require('./routes/precedent');
 const { createBeliefsRouter } = require('./routes/beliefs');
 const { createMemoryRouter } = require('./routes/memory');
 const { createAnomalyContextRouter } = require('./routes/anomalyContext');
@@ -140,6 +141,10 @@ function createApp({ bootTime, port, quiet } = {}) {
   // Recovery routes (live score, history, self-report) live in
   // src/routes/recovery.js — the fourteenth router extraction out of this file.
   app.use('/api', createRecoveryRouter());
+  // "You've been here before" — precedent retrieval over the metrics spine.
+  // Standalone (not folded into the briefing build) on purpose; see the
+  // module header in src/routes/precedent.js.
+  app.use('/api', createPrecedentRouter());
   app.use('/api', createBeliefsRouter());
   app.use('/api', createMemoryRouter());
   app.use('/api', createAnomalyContextRouter());
