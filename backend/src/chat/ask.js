@@ -352,7 +352,50 @@ async function recoveryContext() {
   }
 }
 
-function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [], snapshot = null, experiments = [], pastConversations = [], wealthInsights = null, recoveryInsight = null, dayContext = [], resolvedContextSummary = '', voice = false }) {
+/**
+ * PRECEDENT — the mornings most like today out of the user's own history, and
+ * what actually happened after them (intelligence/precedent.js).
+ *
+ * This is the one block in the prompt that is retrieval over the user's PAST
+ * rather than a description of their present, and it is what lets Ask answer
+ * "have I been here before?" with real dates instead of a generalization. The
+ * engine's own gates decide whether there is anything to say — a null result
+ * means the evidence did not clear them, and nothing is added to the prompt.
+ *
+ * The framing instruction matters as much as the numbers: without it the model
+ * will reliably turn "recovery averaged +7 after the lighter days" into "so
+ * you should take it easy today," which is a causal recommendation the data
+ * does not support. Mirrors recoveryContext()'s pattern of shipping the
+ * interpretation rule alongside the fact.
+ */
+async function precedentContext() {
+  try {
+    const { cachedPrecedent } = require('../intelligence/precedent');
+    const p = await cachedPrecedent({});
+    if (!p) return null;
+    const lines = [
+      'PRECEDENT — SIMILAR PAST MORNINGS (retrieved from the metrics spine; every date below is real and checkable):',
+      `- Today matches ${p.count} past mornings (${p.earliest} to ${p.latest}), each at least ${Math.round(p.evidence.minSimilarity * 100)}% similar on overnight readings.`,
+      `- What makes today distinctive: ${p.state.map((s) => `${s.label} ${s.direction} usual${s.value == null ? '' : ` (${s.value})`}`).join(', ')}.`,
+      `- Closest matches: ${p.precedents.slice(0, 5).map((d) => `${d.day} (${d.similarity}%${d.nextDayDelta == null ? '' : `, next-day recovery ${d.nextDayDelta > 0 ? '+' : ''}${d.nextDayDelta}`})`).join('; ')}.`,
+    ];
+    if (p.comparison) {
+      lines.push(
+        `- After the ${p.comparison.lighter.n} of those days where the day itself was LIGHTER (below ${p.comparison.cutoff} active calories), next-day recovery moved ${p.comparison.lighter.meanNextDayDelta > 0 ? '+' : ''}${p.comparison.lighter.meanNextDayDelta} on average.`,
+        `- After the ${p.comparison.harder.n} where it was HARDER, next-day recovery moved ${p.comparison.harder.meanNextDayDelta > 0 ? '+' : ''}${p.comparison.harder.meanNextDayDelta} on average.`
+      );
+    }
+    lines.push(
+      '- HOW TO USE THIS: cite it as what HAPPENED on specific past days, with the dates. It is an observed association across a small sample, NOT a causal finding and NOT a prediction. Never say a lighter or harder day WILL produce an outcome, and never present this comparison as the reason to do something — offer it as evidence the user can weigh.'
+    );
+    return lines.join('\n');
+  } catch (err) {
+    console.error('[chat] precedentContext failed:', err.message);
+    return null;
+  }
+}
+
+function buildPrompt({ question, findings = [], docs = [], annotations = [], history = [], snapshot = null, experiments = [], pastConversations = [], wealthInsights = null, recoveryInsight = null, precedentInsight = null, dayContext = [], resolvedContextSummary = '', voice = false }) {
   const parts = [];
 
   // Voice replies are spoken aloud and the user is physically waiting on them —
@@ -374,6 +417,11 @@ function buildPrompt({ question, findings = [], docs = [], annotations = [], his
   }
 
   if (recoveryInsight) parts.push(recoveryInsight);
+
+  // Directly after recovery: the precedent block is only meaningful next to
+  // today's actual state, and the two are read together ("you're at 54 — the
+  // last nine mornings like this…").
+  if (precedentInsight) parts.push(precedentInsight);
 
   if (wealthInsights) parts.push(wealthInsights);
 
@@ -704,6 +752,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     rawRecoveryResult,
     spendingMtdResult,
     spendingPaceResult,
+    precedentResult,
   ] = await Promise.allSettled([
     findingsStore.listFindings({ status: 'open' }),
     annotationsStore.listAnnotations({ from: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000), limit: 20 }),
@@ -749,6 +798,13 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     financial
       ? require('../services/wealth-pace').computeDiscretionaryMatchedPace({ asOf: new Date(), tz: process.env.TZ || 'America/New_York' }).catch(() => null)
       : Promise.resolve(null),
+    // Precedent — the mornings most like today and what happened after them.
+    // Gated to personal questions for the same reason recoveryContext is: it
+    // is a real (if cached) scan of the spine, and an impersonal question has
+    // no use for it. Served from the same 15-minute cache the /api/precedent
+    // route fills, so a question asked right after opening the app is a cache
+    // hit rather than a second scan.
+    personal ? precedentContext() : Promise.resolve(null),
   ]);
 
   const findings = findingsResult.status === 'fulfilled' ? findingsResult.value : [];
@@ -777,6 +833,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     : null;
   let dayContext = dayContextResult.status === 'fulfilled' ? (dayContextResult.value || []) : [];
   const recoveryInsight = recoveryResult.status === 'fulfilled' ? recoveryResult.value : null;
+  const precedentInsight = precedentResult.status === 'fulfilled' ? precedentResult.value : null;
   const resolvedContext = resolvedContextResult.status === 'fulfilled' ? resolvedContextResult.value : null;
   const resolvedContextSummary = resolvedContext
     ? require('../intelligence/context-resolver').summarizeResolvedContext(resolvedContext, { purpose: 'general' })
@@ -830,7 +887,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
     dayContext = partitionRawContext(resolvedContext, dayContext, { getId: () => null, getText: (e) => e.text }).unmatched;
   }
 
-  const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations: annotationsForPrompt, history, snapshot, experiments, pastConversations, wealthInsights, recoveryInsight, dayContext, resolvedContextSummary, voice });
+  const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations: annotationsForPrompt, history, snapshot, experiments, pastConversations, wealthInsights, recoveryInsight, precedentInsight, dayContext, resolvedContextSummary, voice });
   let system = selfModelText ? `${baseSystem}\n\n${selfModelText}` : baseSystem;
   if (chaptersText) system += `\n\nLIFE CHAPTERS (standing long-arc facts, auto-updated — never ask the user to re-confirm these):\n${chaptersText}\nThis same fact is already shown elsewhere in the app (the brief, goals, forecasts) — don't just restate it here too. Use it as background that shapes tone and advice on a genuinely related question; if you reference it explicitly, relay something new (a next step, an implication for the actual question asked), not just the bare fact the user already knows.`;
   // Today's planned session (fetched above, alongside factsForValidation) —
@@ -1078,7 +1135,7 @@ function parseAction(text) {
 }
 
 module.exports = {
-  ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot, recoveryContext, wealthContext,
+  ask, buildPrompt, isPersonalQuestion, isFinancialQuestion, personalSnapshot, renderSnapshot, recoveryContext, wealthContext, precedentContext,
   parseAction, parseActions, looksLikeCommand, validateAction,
   // Exported for regression tests (see test/ask-generation.test.js) — not
   // used by any other production call site.

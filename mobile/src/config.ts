@@ -119,6 +119,10 @@ export const GOALS_URL = `${API_BASE}/api/goals`;
 export const METRICS_HISTORY_URL = `${API_BASE}/api/metrics/history`;
 export const RECOVERY_HISTORY_URL = `${API_BASE}/api/recovery/history`;
 export const SOURCES_FRESHNESS_URL = `${API_BASE}/api/sources/freshness`;
+// "You've been here before" — the days most like today, drawn from the
+// metrics spine, and what actually happened after them. Standalone (not a
+// briefing field) on purpose; see backend/src/routes/precedent.js.
+export const PRECEDENT_URL = `${API_BASE}/api/precedent`;
 
 /** Device's IANA timezone — follows the phone when travelling. */
 export function localTz(): string {
