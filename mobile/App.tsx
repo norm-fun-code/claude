@@ -90,6 +90,8 @@ import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
 import { useCommitments } from './src/hooks/useCommitments';
 import { usePrecedent } from './src/hooks/usePrecedent';
 import { useDisagreement } from './src/hooks/useDisagreement';
+import { NextMove, NextMoveCard } from './src/components/NextMove';
+import { useFocusSession } from './src/hooks/useFocusSession';
 
 // A single stable empty-array reference for `d?.field ?? []`-style fallbacks
 // passed to memoized cards — `?? []` mints a NEW array every render, which
@@ -288,6 +290,8 @@ export default function App() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [wealthExploreOpen, setWealthExploreOpen] = useState(false);
   const [pendingAskQ, setPendingAskQ] = useState('');
+  const [nextMoveMode, setNextMoveMode] = useState<'decide' | 'focus' | null>(null);
+  const focusSession = useFocusSession();
   const dailyLog = useDailyLogStatus();
   const commitments = useCommitments();
   // Precedent ("you've been here before") — its own fast, cache-backed
@@ -989,6 +993,7 @@ export default function App() {
                 />
               </AnimatedEntry>
             )}
+            <NextMoveCard session={focusSession.session} onOpen={setNextMoveMode} />
             {/* COMMITMENTS — what you explicitly agreed to do today. Self-
                 hides when nothing is outstanding. */}
             {commitments.commitments.length > 0 && (
@@ -1289,6 +1294,19 @@ export default function App() {
         }}
       />
 
+      <NextMove
+        visible={nextMoveMode !== null}
+        mode={nextMoveMode ?? 'decide'}
+        onClose={() => setNextMoveMode(null)}
+        focus={focusSession}
+        suggestedAction={isContentCurrentDay && !d?.chiefBriefStale && !d?.chiefBriefPending && !d?.chiefBriefGoalsStale && d?.chiefBriefQuality?.status === 'fresh' ? d?.chiefBrief?.action : null}
+        onAsk={(question) => {
+          setNextMoveMode(null);
+          setPendingAskQ(question);
+          setTab('ask');
+        }}
+      />
+
       {/* Cold-open welcome overlay — covers the feed assembly, then slow-dissolves
           into a fully-settled Today tab. Last child + zIndex so it's on top. */}
       {showWelcome && (
@@ -1327,6 +1345,8 @@ const styles = StyleSheet.create({
   heroGlow: { position: 'absolute', top: 0, left: 0, right: 0, height: 440 },
   titleRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    rowGap: spacing.sm,
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: spacing.md,

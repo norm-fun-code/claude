@@ -44,7 +44,10 @@ function createChatRouter() {
     // POST /chat/confirm-action below). The prose already acknowledged
     // immediate ones; this makes them real.
     const actionResults = [];
-    for (const a of (result.actions ?? (result.action ? [result.action] : []))) {
+    // Defense in depth: exploration can never execute an emitted action,
+    // even if a future reasoning path accidentally returns one.
+    const exploring = require('../chat/exploration').isExploration(question);
+    for (const a of (exploring ? [] : (result.actions ?? (result.action ? [result.action] : [])))) {
       if (needsConfirmation(a)) {
         actionResults.push({ action: a, executed: false, result: null });
       } else {
