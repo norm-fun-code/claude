@@ -7,6 +7,8 @@ const { login, getAccounts, getTransactions } = require('../services/monarch-api
 const { mapTransactions, mapBalances, dedupeMetrics } = require('./monarch');
 const { registerSource } = require('../store/sources');
 
+const { makeSnapshot, publishSnapshot } = require('../services/monarch-planner-snapshot');
+
 const DAY = 24 * 60 * 60 * 1000;
 // LOCAL calendar day, not UTC — new Date().toISOString().slice(0,10) is the
 // UTC day, wrong for several hours around each local midnight (same bug class
@@ -116,6 +118,8 @@ module.exports = {
       Balance: a.currentBalance,
     }));
     const balMapped = mapBalances(balRecords);
+
+    await publishSnapshot(makeSnapshot(data.accounts));
 
     const metrics = dedupeMetrics([...txnMapped.metrics, ...balMapped.metrics]);
     const config = mintedToken ? { ...(ctx.config || {}), monarchToken: mintedToken } : undefined;
