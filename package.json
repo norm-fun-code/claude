@@ -1,11 +1,1 @@
-{
-  "name": "morning-dashboard",
-  "version": "1.0.0",
-  "private": true,
-  "scripts": {
-    "backend": "cd backend && node server.js",
-    "get-tokens": "cd backend && node scripts/get-google-tokens.js",
-    "mobile": "cd mobile && npx expo start",
-    "mobile:ios": "cd mobile && npx expo run:ios"
-  }
-}
+{"name":"world-of-wisdom-3d","private":true,"scripts":{"start":"serve -s . -l $PORT"},"dependencies":{"serve":"14.2.4"}}
