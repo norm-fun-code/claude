@@ -86,13 +86,21 @@ export function resolveResumeDecision(
  *  fails either check must be treated as an unverifiable result, never a
  *  success. */
 export function isValidReadyResult(
-  content: { localDate?: string | null; chiefBrief?: unknown } | null | undefined,
-  expectedLocalDay: string
+  content: { localDate?: string | null; snapshotId?: string | null; chiefBrief?: unknown; chiefBriefPending?: boolean; chiefBriefStale?: boolean; chiefBriefQuality?: { status?: string } | null; publishTier?: string | null } | null | undefined,
+  expectedLocalDay: string,
+  expectedSnapshotId?: string | null
 ): boolean {
   if (!content) return false;
   if (content.localDate && content.localDate !== expectedLocalDay) return false;
-  if (!content.chiefBrief) return false;
-  return true;
+  if (expectedSnapshotId && content.snapshotId !== expectedSnapshotId) return false;
+  if (content.chiefBriefPending || content.chiefBriefStale || content.publishTier === 'hard_failed') return false;
+  if (content.publishTier !== 'grounded_usable' && ['degraded', 'failed'].includes(content.chiefBriefQuality?.status ?? '')) return false;
+  const brief = content.chiefBrief;
+  if (!brief || typeof brief !== 'object') return false;
+  return ['synthesis', 'action', 'risk', 'move'].some(key => {
+    const value = (brief as Record<string, unknown>)[key];
+    return typeof value === 'string' && value.trim().length > 0;
+  });
 }
 
 export type TriggerOutcome =

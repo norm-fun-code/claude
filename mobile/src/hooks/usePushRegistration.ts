@@ -63,11 +63,13 @@ async function registerForPush(): Promise<string | null> {
  * notification's data payload so callers can route by type (e.g. open the
  * habits modal on a habits push vs. reload the briefing on a morning push).
  */
-export function usePushRegistration(onNotificationTap?: (data: Record<string, unknown>) => void) {
+export function usePushRegistration(onNotificationTap?: (data: Record<string, unknown>) => void, onNotificationReceived?: (data: Record<string, unknown>) => void) {
   const registered = useRef(false);
   const registrationInFlight = useRef(false);
   const tapCb = useRef(onNotificationTap);
   tapCb.current = onNotificationTap;
+  const receivedCb = useRef(onNotificationReceived);
+  receivedCb.current = onNotificationReceived;
 
   const registerDevice = useCallback(async () => {
     // Critically, `registered` only becomes true AFTER the backend returns a
@@ -115,6 +117,15 @@ export function usePushRegistration(onNotificationTap?: (data: Record<string, un
     });
     return () => sub.remove();
   }, [registerDevice]);
+
+  useEffect(() => {
+    // Receiving a ready push while reading Today must deliver the brief too;
+    // the response listener below only handles an explicit notification tap.
+    const sub = Notifications.addNotificationReceivedListener(notification => {
+      receivedCb.current?.((notification.request.content.data ?? {}) as Record<string, unknown>);
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     const sub = Notifications.addNotificationResponseReceivedListener((response) => {

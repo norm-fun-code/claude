@@ -8,6 +8,8 @@ import { migrateV1Cache, isValidPushSnapshot } from '../lib/briefingMerge';
 import { applyFetchedBriefingResponse, createBriefingDataCoordinator, createImmediateRequestGate } from '../lib/briefingLifecycle';
 import type { RebuildIdentity } from '../lib/rebuildResume';
 import { resolveResumeDecision, isValidReadyResult, classifyTriggerResponse, adoptRecoveryBuildFromResponse } from '../lib/rebuildResume';
+import { createDeliveryGeneration, deliverPublishedBriefing, needsBriefingDelivery } from '../lib/briefingDelivery';
+import { canonicalLocalDate } from '../lib/canonicalDay';
 
 const API_URL = BRIEFING_URL;
 // v2 (Chief Brief regression fix): normos.briefing.v1 used to act as BOTH
@@ -849,6 +851,13 @@ export function useBriefing(): BriefingState {
   const lastOkRef = useRef(0);
   // Poll timer for async rebuild — cleared on unmount and on new rebuild start.
   const rebuildPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const deliveryGeneration = useRef(createDeliveryGeneration()).current;
+  const stopDeliveryPoll = useCallback(() => {
+    deliveryGeneration.next();
+    if (rebuildPollRef.current) clearTimeout(rebuildPollRef.current);
+    rebuildPollRef.current = null;
+    setRebuildingActive(false);
+  }, [deliveryGeneration, setRebuildingActive]);
   // fetchBriefing is declared before pollBuild because pollBuild itself
   // resolves through the fetch/merge primitives below. The ref lets a
   // self-healing GET adopt the already-existing poller without introducing a
@@ -862,22 +871,17 @@ export function useBriefing(): BriefingState {
   // overwrite the push-targeted result — openFromPush itself calls
   // fetchBriefing as its OWN fallback once it's done, so nothing is lost.
   const pushResolvingRef = useRef(false);
+  const rebuildStorageQueue = useRef(Promise.resolve());
 
   // Persist (or clear, when `null`) the durable rebuild identity — the ONE
   // write path every caller below routes through. Returning the Promise lets
   // a newly-adopted self-heal job become durable before polling begins.
   const persistRebuildIdentity = useCallback(async (identity: RebuildIdentity | null) => {
-    try {
-      if (identity) {
-        await AsyncStorage.setItem(REBUILD_STATE_KEY, JSON.stringify(identity));
-      } else {
-        await AsyncStorage.removeItem(REBUILD_STATE_KEY);
-      }
-    } catch {
-      // The in-memory poll remains useful even when local persistence is
-      // temporarily unavailable; foreground fetch can adopt the server's id
-      // again from the canonical response.
-    }
+    rebuildStorageQueue.current = rebuildStorageQueue.current.then(async () => {
+      if (identity) await AsyncStorage.setItem(REBUILD_STATE_KEY, JSON.stringify(identity));
+      else await AsyncStorage.removeItem(REBUILD_STATE_KEY);
+    }).catch(() => { /* in-memory delivery can continue; foreground can rediscover the job */ });
+    await rebuildStorageQueue.current;
   }, []);
 
   // One cheap, best-effort read of today's durable build job — ONLY called
@@ -900,8 +904,16 @@ export function useBriefing(): BriefingState {
       const res = await fetchWithTimeout(BRIEFING_REBUILD_STATUS_URL, { headers: authHeaders() }, 8000);
       if (forReqId !== reqIdRef.current) return;
       if (!res.ok) { setBuildState(null); setBuildFailure(null); return; }
-      const status: { state?: string; reasonCodes?: string[]; errorMessage?: string | null } = await res.json();
+      const status: { buildId?: string; localDay?: string; state?: string; reasonCodes?: string[]; errorMessage?: string | null } = await res.json();
       if (forReqId !== reqIdRef.current) return;
+      // Status is a handoff, not merely diagnostic text. A scheduled build
+      // can finish without this device ever having stored its identity.
+      if (status.buildId && status.localDay === canonicalLocalDate(new Date(), briefingDataCoordinator.current()?.timezone || undefined)
+        && ['ready', 'queued', 'building', 'retry_wait', 'waiting_for_sleep'].includes(status.state ?? '')) {
+        await persistRebuildIdentity({ buildId: status.buildId, localDay: status.localDay, startedAt: Date.now() });
+        if (forReqId === reqIdRef.current) pollBuildRef.current?.(status.buildId, status.localDay);
+        return;
+      }
       setBuildState((status.state as BuildJobState) ?? null);
       setBuildFailure({
         reasonCodes: Array.isArray(status.reasonCodes) ? status.reasonCodes : null,
@@ -914,7 +926,7 @@ export function useBriefing(): BriefingState {
       setBuildState(null);
       setBuildFailure(null);
     }
-  }, []);
+  }, [briefingDataCoordinator, persistRebuildIdentity]);
 
   // Loads the warm server cache — instant, no LLM, no rebuild. The other two
   // refresh mechanisms (triggerRebuild's full async rebuild, refreshChiefBrief's
@@ -972,6 +984,7 @@ export function useBriefing(): BriefingState {
         async (identity) => persistRebuildIdentity(identity),
         pollBuildRef.current
       );
+      if (myReqId !== reqIdRef.current) return;
       // The fetch succeeded but there's no Chief Brief to show (even after
       // merge — i.e. no last-good card existed to protect either). That is
       // either "a build is still running" or "a build finished and failed" —
@@ -981,7 +994,7 @@ export function useBriefing(): BriefingState {
       // exactly once. Any brief present (fresh OR carried-forward) means
       // there's nothing to diagnose, so clear rather than leave a stale
       // verdict on screen.
-      if (!adoptedRecoveryBuild && merged?.chiefBrief == null) {
+      if (!adoptedRecoveryBuild && needsBriefingDelivery(merged, canonicalLocalDate(new Date(), merged?.timezone || undefined))) {
         probeBuildState(myReqId);
       } else if (!adoptedRecoveryBuild) {
         setBuildState(null);
@@ -1034,6 +1047,7 @@ export function useBriefing(): BriefingState {
     const { snapshotId } = identity;
     if (!snapshotId) return fetchBriefing();
 
+    stopDeliveryPoll();
     pushResolvingRef.current = true;
     controllerRef.current?.abort();
     const controller = new AbortController();
@@ -1057,6 +1071,7 @@ export function useBriefing(): BriefingState {
         // else, stop immediately rather than hammer a real error.
         if (res.status !== 404 && res.status !== 409) break;
       } catch (err) {
+        if (myReqId !== reqIdRef.current) return;
         if (err instanceof Error && err.name === 'AbortError') {
           pushResolvingRef.current = false;
           setLoading(false);
@@ -1067,6 +1082,8 @@ export function useBriefing(): BriefingState {
       await new Promise((resolve) => setTimeout(resolve, 1500));
     }
 
+    if (myReqId !== reqIdRef.current) return;
+
     // Compare "is this still today" against the CANONICAL timezone this
     // snapshot's own localDate was computed in (content.timezone), never the
     // phone's raw current clock — a phone in a different timezone than the
@@ -1074,7 +1091,7 @@ export function useBriefing(): BriefingState {
     // midnight, and the two would disagree near either zone's boundary.
     const tzForComparison = content?.timezone || 'America/New_York';
     const todayLocalDate = new Date().toLocaleDateString('en-CA', { timeZone: tzForComparison });
-    if (!isValidPushSnapshot(content, snapshotId, todayLocalDate)) {
+    if (!isValidPushSnapshot(content, snapshotId, todayLocalDate) || !isValidReadyResult(content, todayLocalDate, snapshotId)) {
       pushResolvingRef.current = false;
       setLoading(false);
       return fetchBriefing();
@@ -1090,6 +1107,7 @@ export function useBriefing(): BriefingState {
     // (a generic response that might be WORSE than what's on screen).
     briefingDataCoordinator.replaceVerified(verified);
     await briefingDataCoordinator.flush();
+    if (myReqId !== reqIdRef.current) return;
     if (verified.chiefBrief == null) {
       probeBuildState(myReqId);
     } else {
@@ -1098,7 +1116,7 @@ export function useBriefing(): BriefingState {
     }
     pushResolvingRef.current = false;
     setLoading(false);
-  }, [briefingDataCoordinator, fetchBriefing, probeBuildState]);
+  }, [briefingDataCoordinator, fetchBriefing, probeBuildState, stopDeliveryPoll]);
 
   // On open: hydrate instantly from the last saved briefing (survives app close),
   // then quietly refresh in the background. Pull-to-refresh forces a fresh fetch.
@@ -1189,8 +1207,10 @@ export function useBriefing(): BriefingState {
   // Clean up poll timer on unmount so it can't fire after the component is gone.
   useEffect(() => {
     return () => {
+      deliveryGeneration.next();
       if (rebuildPollRef.current) clearTimeout(rebuildPollRef.current);
       controllerRef.current?.abort();
+      reqIdRef.current++;
     };
   }, []);
 
@@ -1213,29 +1233,28 @@ export function useBriefing(): BriefingState {
   // all (an older server shape), still validated the same way. Returns the
   // merged BriefingData on success, or null if the exact result could not
   // be verified (the caller must NOT treat that as success).
-  const resolveReadyBuild = useCallback(async (status: { snapshotId?: string | null; localDay?: string | null }): Promise<BriefingData | null> => {
-    let content: BriefingData | null = null;
-    if (status.snapshotId) {
-      const res = await fetchWithTimeout(
-        `${BRIEFING_BY_SNAPSHOT_URL}/${encodeURIComponent(status.snapshotId)}`,
-        { headers: authHeaders() },
-        12000
-      ).catch(() => null);
-      if (res?.ok) content = await res.json().catch(() => null);
-    } else {
-      const res = await fetchWithTimeout(BRIEFING_URL, { headers: authHeaders() }, 12000).catch(() => null);
-      if (res?.ok) content = await res.json().catch(() => null);
-    }
+  const resolveReadyBuild = useCallback(async (status: { snapshotId?: string | null; localDay: string }, ownsPoll: () => boolean): Promise<BriefingData | null | undefined> => {
+    if (!ownsPoll() || pushResolvingRef.current) return undefined;
+    controllerRef.current?.abort();
+    const requestId = ++reqIdRef.current;
+    const isCurrent = () => ownsPoll() && requestId === reqIdRef.current && !pushResolvingRef.current;
+    const content = await deliverPublishedBriefing({
+      localDay: status.localDay, snapshotId: status.snapshotId,
+      today: () => canonicalLocalDate(new Date(), briefingDataCoordinator.current()?.timezone || undefined),
+      isCurrent,
+      read: async () => {
+        const url = status.snapshotId ? `${BRIEFING_BY_SNAPSHOT_URL}/${encodeURIComponent(status.snapshotId)}` : BRIEFING_URL;
+        const res = await fetchWithTimeout(url, { headers: authHeaders() }, 12000);
+        return res.ok ? res.json() : null;
+      },
+      accept: incoming => { briefingDataCoordinator.commitIncoming(incoming); },
+      wait: () => new Promise(resolve => setTimeout(resolve, 1500)),
+    });
+    if (!isCurrent()) return undefined;
+    setLoading(false);
     if (!content) return null;
-    // Validate the result actually belongs to this job's day AND carries a
-    // usable Chief Brief — a 'ready' job whose fetched content somehow
-    // fails either check must never be reported as a successful rebuild.
-    const tzForComparison = content.timezone || 'America/New_York';
-    const expectedDay = status.localDay || new Date().toLocaleDateString('en-CA', { timeZone: tzForComparison });
-    if (!isValidReadyResult(content, expectedDay)) return null;
-    const merged = briefingDataCoordinator.commitIncoming(content);
     await briefingDataCoordinator.flush();
-    return merged;
+    return isCurrent() ? content : undefined;
   }, [briefingDataCoordinator]);
 
   // The poll loop itself — parameterized so BOTH a fresh trigger and a
@@ -1252,6 +1271,10 @@ export function useBriefing(): BriefingState {
     // discover the same durable job close together. Keep exactly one poll
     // chain for that identity.
     if (rebuildingRef.current && buildIdIn && activeBuildIdRef.current === buildIdIn) return;
+    if (pushResolvingRef.current) return;
+    if (AppState.currentState === 'background') { setRebuildingActive(false); return; }
+    const ticket = deliveryGeneration.next();
+    const ownsPoll = () => deliveryGeneration.isCurrent(ticket);
     let buildId = buildIdIn;
     activeBuildIdRef.current = buildIdIn;
     let attempts = 0;
@@ -1260,11 +1283,13 @@ export function useBriefing(): BriefingState {
     const MAX_CONSECUTIVE_FAILURES = 3; // ~15-20s of genuinely unreachable status endpoint
 
     const finish = () => {
+      if (!ownsPoll()) return;
       setRebuildingActive(false);
       void persistRebuildIdentity(null);
     };
 
     const poll = async () => {
+      if (!ownsPoll()) return;
       if (attempts++ >= MAX_ATTEMPTS) {
         setRebuildingActive(false);
         // Stop claiming a build is in flight once we've given up watching it
@@ -1285,15 +1310,26 @@ export function useBriefing(): BriefingState {
         if (!res.ok) throw new Error(`status ${res.status}`);
         consecutiveFailures = 0;
         const status: { buildId?: string; localDay?: string; snapshotId?: string; state?: string; reasonCodes?: string[]; errorMessage?: string | null } = await res.json();
+        if (!ownsPoll()) return;
+        if (status.localDay && status.localDay !== localDay) throw new Error('Build day changed');
         if (!buildId && status.buildId) {
           buildId = status.buildId;
           activeBuildIdRef.current = buildId;
           void persistRebuildIdentity({ buildId, localDay, startedAt: Date.now() });
         }
-        setBuildState((status.state as BuildJobState) ?? null);
+        setBuildState(status.state === 'ready' ? 'delivering' : (status.state as BuildJobState) ?? null);
         if (status.state === 'ready') {
-          const merged = await resolveReadyBuild(status);
+          const merged = await resolveReadyBuild({ ...status, localDay }, ownsPoll);
+          if (!ownsPoll()) return;
+          if (merged === undefined) {
+            rebuildPollRef.current = setTimeout(poll, 5000);
+            return;
+          }
           if (merged) {
+            setBuildState('ready');
+            setError(null);
+            setFetched(true);
+            lastOkRef.current = Date.now();
             setBuildFailure(null);
             finish();
             return;
@@ -1303,11 +1339,14 @@ export function useBriefing(): BriefingState {
           // — never report success for an unverified result. Treat as a
           // failed retrieval, distinct from the job's own build failure.
           setBuildFailure({ reasonCodes: ['exact_result_unverifiable'], persistenceFailed: false });
-          setError('The rebuild finished but its result could not be verified — tap to try again.');
-          finish();
+          setBuildState(null);
+          setError('Your brief is built, but could not be downloaded yet. Reopen or refresh to retrieve it.');
+          // Retrieval failure is NOT a build failure. Retain the identity
+          // so foreground resumes the published result without rebuilding.
+          setRebuildingActive(false);
           return;
         }
-        if (status.state === 'failed') {
+        if (status.state === 'failed' || status.state === 'interrupted') {
           // A degraded/failed/unpersisted attempt — the existing `data`
           // (last known good, or none) is left exactly as it was; never
           // rendered as if this attempt had succeeded. The card reads
@@ -1322,6 +1361,7 @@ export function useBriefing(): BriefingState {
         }
         // 'queued' | 'building' | 'retry_wait' | 'waiting_for_sleep' — keep polling.
       } catch {
+        if (!ownsPoll()) return;
         // The POLL REQUEST failed (not "still building") — count a distinct
         // failure streak so a genuinely unreachable server surfaces Retry
         // within seconds, never silently swallowed for the full timeout
@@ -1341,6 +1381,7 @@ export function useBriefing(): BriefingState {
     };
 
     setRebuildingActive(true);
+    setError(null);
     setBuildState((prev) => prev ?? 'building');
     if (rebuildPollRef.current) clearTimeout(rebuildPollRef.current);
     // First poll after 5s — the status row exists immediately (created
@@ -1350,7 +1391,7 @@ export function useBriefing(): BriefingState {
     // no reason to wait 5s to learn about a job that may have already
     // finished while the app was closed.
     if (buildIdIn) { poll(); } else { rebuildPollRef.current = setTimeout(poll, 5000); }
-  }, [persistRebuildIdentity, resolveReadyBuild, setRebuildingActive]);
+  }, [persistRebuildIdentity, resolveReadyBuild, setRebuildingActive, deliveryGeneration]);
   // Always expose the current poller to fetchBriefing's self-heal adoption
   // path before any effects can start a request.
   pollBuildRef.current = pollBuild;
@@ -1437,8 +1478,9 @@ export function useBriefing(): BriefingState {
   // stale/failed state indefinitely even after the server-side build had
   // long since finished successfully.
   const resumePersistedRebuild = useCallback(async () => {
-    if (rebuildingRef.current) return; // already actively polling — nothing to resume
+    if (rebuildingRef.current || pushResolvingRef.current) return;
     try {
+      await rebuildStorageQueue.current;
       const raw = await AsyncStorage.getItem(REBUILD_STATE_KEY);
       if (!raw) return;
       const identity: RebuildIdentity = JSON.parse(raw);
@@ -1478,7 +1520,7 @@ export function useBriefing(): BriefingState {
     adoptedRecoveryRef.current = id;
     void adoptRecoveryBuildFromResponse(
       data as { recoveryBuildId?: string | null; currentLocalDate?: string | null; localDate?: string | null },
-      async (identity) => { persistRebuildIdentity(identity); },
+      async (identity) => { await persistRebuildIdentity(identity); },
       pollBuild
     ).catch(() => { /* best-effort — the bounded re-check below still covers it */ });
   }, [data?.recoveryBuildId, data, persistRebuildIdentity, pollBuild]);
@@ -1490,17 +1532,20 @@ export function useBriefing(): BriefingState {
   // state until they background the app or pull down. This ticks only in that
   // empty state, stops the moment a brief arrives, and gives up after ~15
   // minutes rather than polling forever.
+  const deliveryNeeded = needsBriefingDelivery(data, canonicalLocalDate(new Date(), data?.timezone || undefined));
   useEffect(() => {
-    if (data?.chiefBrief) return;
+    const needsDelivery = () => needsBriefingDelivery(briefingDataCoordinator.current(), canonicalLocalDate(new Date(), briefingDataCoordinator.current()?.timezone || undefined));
+    if (!deliveryNeeded) return;
     let attempts = 0;
     const MAX_ATTEMPTS = 20; // ~15 min at 45s
     const id = setInterval(() => {
       if (attempts++ >= MAX_ATTEMPTS) { clearInterval(id); return; }
+      if (!needsDelivery()) { clearInterval(id); return; }
       if (rebuildingRef.current) return; // the rebuild poller already owns this
       fetchBriefing();
     }, 45_000);
     return () => clearInterval(id);
-  }, [data?.chiefBrief, fetchBriefing]);
+  }, [deliveryNeeded, fetchBriefing, briefingDataCoordinator]);
 
   // Mount-time resume (cold launch / fresh remount). Runs once; deliberately
   // not re-run on every data change — see resumePersistedRebuild's own deps
@@ -1523,15 +1568,18 @@ export function useBriefing(): BriefingState {
   useEffect(() => {
     const FOREGROUND_THROTTLE_MS = 60000;
     const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'background') { stopDeliveryPoll(); return; }
       if (state !== 'active') return;
       resumePersistedRebuild();
       // Skip only if we recently SUCCEEDED. If the last fetch was interrupted
       // (e.g. refreshed then locked the phone), lastOkRef is stale so we recover.
-      if (Date.now() - lastOkRef.current < FOREGROUND_THROTTLE_MS) return;
+      const current = briefingDataCoordinator.current();
+      const needsDelivery = needsBriefingDelivery(current, canonicalLocalDate(new Date(), current?.timezone || undefined));
+      if (!needsDelivery && Date.now() - lastOkRef.current < FOREGROUND_THROTTLE_MS) return;
       fetchBriefing(); // abort-and-replace handles any interrupted request
     });
     return () => sub.remove();
-  }, [fetchBriefing, resumePersistedRebuild]);
+  }, [fetchBriefing, resumePersistedRebuild, stopDeliveryPoll, briefingDataCoordinator]);
 
   const [chiefBriefRefreshing, setChiefBriefRefreshing] = useState(false);
   const chiefBriefRefreshGateRef = useRef(createImmediateRequestGate());
