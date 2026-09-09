@@ -16,7 +16,8 @@ const Anthropic = require('@anthropic-ai/sdk');
 const path = require('path');
 const db = require('./db');
 const { run: runModel } = require('./public/model.js');
-const { extractAccounts } = require('./monarch-accounts.js');
+const { createMonarchLive } = require('./monarch-live');
+const monarchLive = createMonarchLive({ db });
 
 const ADVISOR_TOOLS = [
   {
@@ -579,16 +580,18 @@ app.get('/api/monarch-callback', requireAuth, async (req, res) => {
   }
 });
 
-// Check OAuth connection status
+// Account sync uses the same direct/import source as NormOS; old OAuth is not health.
 app.get('/api/monarch-status', requireAuth, async (req, res) => {
-  const stored = await monarchOAuthRow();
-  res.json({ connected: !!stored?.access_token });
+  try { res.set('Cache-Control', 'no-store').json(await monarchLive.status()); }
+  catch { res.status(503).json({ connected: false, error: 'NormOS connection unavailable' }); }
 });
-
-// Disconnect Monarch
+app.post('/api/monarch-enable', requireAuth, async (req, res) => {
+  try { await monarchLive.setEnabled(true); res.json({ ok: true }); }
+  catch { res.status(503).json({ error: 'Could not enable sync' }); }
+});
 app.post('/api/monarch-disconnect', requireAuth, async (req, res) => {
-  await db.query("DELETE FROM oauth_tokens WHERE key='monarch'");
-  res.json({ ok: true });
+  try { await monarchLive.setEnabled(false); res.json({ ok: true }); }
+  catch { res.status(503).json({ error: 'Could not pause sync' }); }
 });
 
 // Debug: list available MCP tools + schemas
@@ -638,64 +641,8 @@ app.get('/api/monarch-probe-portfolio', requireDebug, async (req, res) => {
 });
 
 // Investment holdings from Monarch GetInvestments MCP tool
-app.get('/api/monarch-investments', requireAuth, async (req, res) => {
-  try {
-    const accessToken = await getMonarchAccessToken();
-    if (!accessToken) return res.status(401).json({ error: 'Monarch not connected', connectUrl: '/api/monarch-connect' });
-    await monarchMCPHandshake(accessToken);
-
-    const now = new Date();
-    const end = req.query.end || now.toISOString().slice(0, 10);
-    // YTD has no fixed day-count — handle it before the lookup so it can't fall through
-    // to the `?? 30` default (periodDays['YTD'] is intentionally null, and `??` treats
-    // null the same as "missing", which previously silently aliased YTD to 1M).
-    const isYTD = req.query.period === 'YTD';
-    const periodDays = { '1W': 7, '1M': 30, '3M': 90, '1Y': 365 };
-    const pd = isYTD ? null : (periodDays[req.query.period] ?? 30);
-    const start = req.query.start || (isYTD
-      ? `${now.getFullYear()}-01-01`
-      : new Date(now.getTime() - pd * 864e5).toISOString().slice(0, 10));
-
-    const result = await callMonarchMCP(accessToken, 'tools/call', {
-      name: 'GetInvestments',
-      arguments: { start_date: start, end_date: end },
-    });
-    const data = unwrapMCPResult(result);
-    if (!data) return res.status(502).json({ error: 'No data returned from GetInvestments' });
-
-    const holdings = (data.investments || []).map(h => ({
-      ticker: h.ticker || '—',
-      value: Math.round(Number(h.value) || 0),
-      securityType: h.security_type || 'other',
-      periodChange: Math.round((Number(h.period_change_dollars) || 0) * 100) / 100,
-      periodChangePct: Math.round((Number(h.period_change_percent) || 0) * 100) / 100,
-      allTimeChange: Math.round((Number(h.variation_dollars) || 0) * 100) / 100,
-      allTimePct: Math.round((Number(h.variation_percent) || 0) * 100) / 100,
-    })).sort((a, b) => b.value - a.value);
-
-    const totalValue = holdings.reduce((s, h) => s + h.value, 0);
-    const periodChange = holdings.reduce((s, h) => s + h.periodChange, 0);
-    const allTimeChange = holdings.reduce((s, h) => s + h.allTimeChange, 0);
-    const priorValue = totalValue - periodChange;
-    const withMoves = holdings.filter(h => h.securityType !== 'cash' && h.periodChange !== 0);
-    const byMove = [...withMoves].sort((a, b) => b.periodChange - a.periodChange);
-
-    res.json({
-      periodStart: start,
-      periodEnd: end,
-      totalValue,
-      periodChange: Math.round(periodChange * 100) / 100,
-      periodChangePct: priorValue > 0 ? Math.round(periodChange / priorValue * 10000) / 100 : 0,
-      allTimeChange: Math.round(allTimeChange * 100) / 100,
-      allTimePct: totalValue - allTimeChange > 0 ? Math.round(allTimeChange / (totalValue - allTimeChange) * 10000) / 100 : 0,
-      holdings,
-      topGainers: byMove.slice(0, 5).filter(h => h.periodChange > 0),
-      topLosers: byMove.slice(-5).reverse().filter(h => h.periodChange < 0),
-    });
-  } catch (err) {
-    console.error('monarch-investments error:', err);
-    res.status(502).json({ error: 'GetInvestments failed: ' + err.message });
-  }
+app.get('/api/monarch-investments', requireAuth, (req, res) => {
+  res.status(503).json({ error: 'Individual holdings and performance are unavailable through the NormOS account sync. Account balances remain available.' });
 });
 
 function num(v) {
@@ -755,75 +702,25 @@ const withTimeout = (p, ms, fallback) =>
 // Expose Monarch's read-only MCP tools (the Get* family) to the advisor so it can
 // query the user's LIVE financial data. Schemas are pulled from Monarch's own
 // tools/list so the model always sees correct argument shapes. Cached briefly.
-let _monarchAdvToolsCache = { ts: 0, tools: null };
-async function getMonarchAdvisorTools(accessToken) {
-  if (!accessToken) return [];
-  const now = Date.now();
-  if (_monarchAdvToolsCache.tools && (now - _monarchAdvToolsCache.ts) < 10 * 60 * 1000) {
-    return _monarchAdvToolsCache.tools;
-  }
-  try {
-    await monarchMCPHandshake(accessToken);
-    const list = await callMonarchMCP(accessToken, 'tools/list');
-    const raw = list?.result?.tools || list?.tools || [];
-    // Anthropic's input_schema only accepts a clean JSON-Schema object — Monarch's schemas
-    // carry extra keys ($schema, additionalProperties, title…) that trigger a 400
-    // "Extra inputs are not permitted". Rebuild a minimal, valid schema.
-    const cleanSchema = (s) => {
-      const props = (s && s.properties && typeof s.properties === 'object') ? s.properties : {};
-      const out = { type: 'object', properties: props };
-      if (Array.isArray(s && s.required) && s.required.length) out.required = s.required;
-      return out;
-    };
-    // Read-only only — the Get* family. Never expose Create/Update/Delete to the advisor.
-    const tools = raw
-      .filter(t => /^Get/.test(t.name || ''))
-      .map(t => ({
-        name: 'monarch_' + t.name,
-        description: ('[Live Monarch data] ' + (t.description || t.name)).slice(0, 900),
-        input_schema: cleanSchema(t.inputSchema),
-      }));
-    _monarchAdvToolsCache = { ts: now, tools };
-    return tools;
-  } catch (e) {
-    console.error('Monarch advisor tools/list failed:', e.message);
-    return [];
-  }
+async function getMonarchAdvisorTools() {
+  const status = await monarchLive.status();
+  return status.connected ? [{
+    name: 'monarch_GetAccounts',
+    description: 'Read the latest Monarch account balances through NormOS. Report the asOf time and stale/warning fields; these are last-observed balances, not real-time bank updates. Account types are not provided. Do not invent holdings or transactions.',
+    input_schema: { type: 'object', properties: {}, required: [] },
+  }] : [];
 }
-// Execute one Monarch read tool call from the advisor; returns a compact string for the model.
-async function runMonarchAdvisorTool(accessToken, toolName, args) {
-  const realName = String(toolName || '').replace(/^monarch_/, '');
-  if (!/^Get/.test(realName)) return { error: 'Only read-only Monarch tools are allowed.' };
-  try {
-    const r = await callMonarchMCP(accessToken, 'tools/call', { name: realName, arguments: args || {} });
-    if (r?.error) return { error: r.error.message || JSON.stringify(r.error) };
-    const data = unwrapMCPResult(r);
-    let out = typeof data === 'string' ? data : JSON.stringify(data);
-    if (out && out.length > 8000) out = out.slice(0, 8000) + ' …[truncated]';
-    return out || '(no data)';
-  } catch (e) {
-    return { error: e.message };
-  }
+async function runMonarchAdvisorTool(_token, toolName) {
+  if (toolName !== 'monarch_GetAccounts') return { error: 'This Monarch tool is no longer available.' };
+  try { return JSON.stringify(await monarchLive.getSnapshot()); }
+  catch (e) { return { error: e.message }; }
 }
 
 app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
   try {
-    const accessToken = await getMonarchAccessToken();
-    if (!accessToken) {
-      return res.status(401).json({ error: 'Monarch not connected', connectUrl: '/api/monarch-connect' });
-    }
-
-    await monarchMCPHandshake(accessToken);
-
-    const toolResult = await callMonarchMCP(accessToken, 'tools/call', {
-      name: 'GetAccounts',
-      arguments: {},
-    });
-    if (toolResult?.error) {
-      return res.status(502).json({ error: 'GetAccounts error: ' + (toolResult.error.message || JSON.stringify(toolResult.error)) });
-    }
-
-    const accounts = extractAccounts(toolResult);
+    const live = await monarchLive.getSnapshot();
+    const accounts = live.accounts;
+    res.set('Cache-Control', 'no-store');
 
     const excludes       = new Set((process.env.MONARCH_EXCLUDE_ACCOUNTS || '').split(',').map(s => s.trim()).filter(Boolean));
     const liquidExcludes = new Set((process.env.MONARCH_LIQUID_EXCLUDE || '').split(',').map(s => s.trim()).filter(Boolean));
@@ -874,7 +771,7 @@ app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
       const type = String(acct.type?.name ?? acct.type ?? '').toLowerCase().replace(/[\s-]/g, '_');
       const sub  = String(acct.subtype?.name ?? acct.subtype ?? '').toLowerCase().replace(/[\s-]/g, '_');
       const inst = acct.institution?.name ?? acct.institutionName ?? acct.institution ?? '';
-      const hay  = `${type} ${sub}`;
+      const hay  = `${type} ${sub} ${name.toLowerCase()}`;
       const isRet = /401|403b|457|pension/.test(`${hay} ${name}`.toLowerCase().replace(/[\s-]/g, '_'));
       let category;
       if (isRet) category = 'retirement';
@@ -889,7 +786,7 @@ app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
     }
 
     if (!portfolioAccts.length) throw new Error('No included Monarch accounts. Previous snapshot retained.');
-    const updatedAt = newestAt ?? new Date().toISOString();
+    const updatedAt = live.asOf;
     res.json({
       netWorth:    { value: Math.round(netWorth),    updatedAt },
       liquid:      { value: Math.round(liquid),      updatedAt },
@@ -897,6 +794,7 @@ app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
       liabilities: { value: Math.round(liabTotal),   updatedAt },
       retirement:  retirement > 0 ? { value: Math.round(retirement), updatedAt } : null,
       accounts: portfolioAccts,
+      source: live.source, stale: live.stale, warning: live.warning, observedAt: live.asOf, bankUpdatedAt: live.bankUpdatedAt,
       _debug: { accountCount: accounts.length, retirement, liquid, netWorth, accounts: debugAccts },
     });
   } catch (err) {
@@ -998,61 +896,8 @@ function extractCashflowTotal(obj) {
 }
 
 // YTD cash flow (Jan 1 → today): income and expense totals
-app.get('/api/monarch-cashflow', requireAuth, async (req, res) => {
-  try {
-    const accessToken = await getMonarchAccessToken();
-    if (!accessToken) return res.status(401).json({ error: 'Monarch not connected', connectUrl: '/api/monarch-connect' });
-
-    const now = new Date();
-    const start = `${now.getFullYear()}-01-01`;
-    const end = now.toISOString().slice(0, 10);
-
-    await monarchMCPHandshake(accessToken);
-
-    // Single call — no category filter — to get the unified income+expense summary
-    const trAll = await callMonarchMCP(accessToken, 'tools/call', {
-      name: 'GetCashFlow',
-      arguments: { start_date: start, end_date: end },
-    });
-    if (trAll?.error) throw new Error(`GetCashFlow: ${trAll.error.message || JSON.stringify(trAll.error)}`);
-    const rawAll = unwrapMCPResult(trAll);
-
-    // Log shape for debugging (visible in Railway logs)
-    console.log('[cashflow] raw type:', Array.isArray(rawAll) ? `array[${rawAll.length}]` : typeof rawAll);
-    if (rawAll && typeof rawAll === 'object') {
-      console.log('[cashflow] top-level keys:', Array.isArray(rawAll) ? `item0 keys: ${Object.keys(rawAll[0]||{}).join(',')}` : Object.keys(rawAll).join(','));
-    }
-
-    const pair = extractCashflowPair(rawAll);
-    console.log('[cashflow] extracted pair:', pair);
-    // Only trust the single unfiltered call if it found BOTH sides — otherwise
-    // fall through to the dual filtered calls (the approach that worked before).
-    if (pair && pair.income > 0 && pair.expense > 0) {
-      return res.json({ start, end, income: Math.round(pair.income), expense: Math.round(pair.expense), _debug: { raw: rawAll } });
-    }
-
-    // Fallback: two separate filtered calls
-    async function flowFor(categoryType) {
-      const tr2 = await callMonarchMCP(accessToken, 'tools/call', {
-        name: 'GetCashFlow',
-        arguments: { start_date: start, end_date: end, filters: JSON.stringify({ category_type: categoryType }) },
-      });
-      if (tr2?.error) throw new Error(`GetCashFlow(${categoryType}): ${tr2.error.message || JSON.stringify(tr2.error)}`);
-      const parsed = unwrapMCPResult(tr2);
-      return { total: extractCashflowTotal(parsed), raw: parsed };
-    }
-
-    const [income, expense] = await Promise.all([flowFor('income'), flowFor('expense')]);
-    res.json({
-      start, end,
-      income:  Math.abs(Math.round(income.total ?? 0)),
-      expense: Math.abs(Math.round(expense.total ?? 0)),
-      _debug: { raw: rawAll, incomeRaw: income.raw, expenseRaw: expense.raw },
-    });
-  } catch (err) {
-    console.error('Monarch cashflow error:', err);
-    res.status(502).json({ error: 'Monarch cashflow error: ' + err.message });
-  }
+app.get('/api/monarch-cashflow', requireAuth, (req, res) => {
+  res.status(503).json({ error: 'YTD cash flow is not available through the NormOS account sync. No estimate has replaced it.' });
 });
 
 // ── Snapshots (annual history) ──────────────────────────────────────────────
@@ -1192,7 +1037,7 @@ app.post('/api/advisor/stream', requireAuth, advisorLimiter, async (req, res) =>
 
   try {
     // Give the advisor live read-only access to Monarch when the user has connected it.
-    const accessToken = await withTimeout(getMonarchAccessToken(), 5000, null);
+    const accessToken = true; // NormOS bridge handles server-side authentication.
     const monarchTools = await withTimeout(getMonarchAdvisorTools(accessToken), 7000, []);
     const sys = systemPrompt + (monarchTools.length ? `
 
@@ -1320,7 +1165,7 @@ Workflow: understand what he's asking → set_param for each change → run_proj
 
   // Live read-only Monarch access (same tools as the normal chat) so the AI can ground
   // its proposals in real balances, spending and holdings — not just plan assumptions.
-  const monarchAccessToken = await withTimeout(getMonarchAccessToken(), 5000, null);
+  const monarchAccessToken = true; // NormOS bridge handles server-side authentication.
   const monarchTools = await withTimeout(getMonarchAdvisorTools(monarchAccessToken), 7000, []);
   const fullSystemPrompt = agenticSystemPrompt + (monarchTools.length ? `
 
