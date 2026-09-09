@@ -704,6 +704,7 @@ async function askAnswer({ system, prompt, route }) {
 }
 
 async function ask(question, { history = [], k = 14, voice = false } = {}) {
+  const exploring = require('./exploration').isExploration(question);
   if (!question || !question.trim()) throw new Error('question is required');
 
   // Clear commands ("log my cold shower", "swap my workout", "remind me at 6",
@@ -717,7 +718,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
   // console.error'd) so a client-visible symptom like "this took 30s" is
   // diagnosable from the response body alone, without server log access.
   let fastPathError = null;
-  if (looksLikeCommand(question)) {
+  if (!exploring && looksLikeCommand(question)) {
     try {
       return await answerCommand(question, { history });
     } catch (err) {
@@ -926,6 +927,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
 
   const { system: baseSystem, prompt } = buildPrompt({ question, findings, docs, annotations: annotationsForPrompt, history, snapshot, experiments, pastConversations, wealthInsights, recoveryInsight, precedentInsight, dayContext, resolvedContextSummary, voice });
   let system = selfModelText ? `${baseSystem}\n\n${selfModelText}` : baseSystem;
+  if (exploring) system += require('./exploration').EXPLORATION_SYSTEM;
   if (chaptersText) system += `\n\nLIFE CHAPTERS (standing long-arc facts, auto-updated — never ask the user to re-confirm these):\n${chaptersText}\nThis same fact is already shown elsewhere in the app (the brief, goals, forecasts) — don't just restate it here too. Use it as background that shapes tone and advice on a genuinely related question; if you reference it explicitly, relay something new (a next step, an implication for the actual question asked), not just the bare fact the user already knows.`;
   // Today's planned session (fetched above, alongside factsForValidation) —
   // so a swap_workout action can be acknowledged accurately ("swapped your
@@ -982,7 +984,7 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
   if (recMatch) {
     const recTitle = recMatch[1].trim();
     answer = answer.replace(/<rec>[\s\S]*?<\/rec>/i, '').trim();
-    if (recTitle && !DATA_QUERY_RE.test(recTitle)) {
+    if (!exploring && recTitle && !DATA_QUERY_RE.test(recTitle)) {
       // Dedup by NUMBER-NORMALIZED title (matches the briefing path), so the same
       // recommendation with a slightly different percentage doesn't double-log.
       // recordRecommendation auto-links a follow-up commitment itself, since a
@@ -1005,8 +1007,8 @@ async function ask(question, { history = [], k = 14, voice = false } = {}) {
   // walk", "log my cold shower") changes real app state in the SAME turn that
   // answers, on both the text and voice paths. The caller executes it (it holds
   // the DB helpers); ask() only detects, validates, and strips the tag.
-  const actions = parseActions(answer);
-  if (actions.length) answer = answer.replace(/<action>[\s\S]*?<\/action>/gi, '').trim();
+  const actions = exploring ? [] : parseActions(answer);
+  if (exploring || actions.length) answer = answer.replace(/<action>[\s\S]*?<\/action>/gi, '').trim();
 
   // EvidenceClaim v1: validate the PROSE only — `actions` above is already
   // independently allowlisted (validateAction's strict enum/shape check), so

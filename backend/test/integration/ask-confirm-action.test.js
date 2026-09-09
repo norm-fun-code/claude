@@ -51,6 +51,28 @@ function mockLlmAnswer(text) {
   axios.post = async () => ({ data: { id: 'msg_confirm_test', content: [{ type: 'text', text }], stop_reason: 'end_turn', usage: {} } });
 }
 
+test('Decision Studio drops action tags and never records a recommendation as a commitment', async () => {
+  const recs = require('../../src/store/recommendations');
+  const originalRecentTitles = recs.recentTitlesAll;
+  let recommendationAttempts = 0;
+  recs.recentTitlesAll = async () => { recommendationAttempts++; return []; };
+  mockLlmAnswer('Consider a walk. <rec>Take a walk after dinner</rec><action>{"type":"log_habit","habit":"exercise"}</action>');
+  const question = 'Decision Studio — explore only\n\nASK-CONFIRM-TEST Option A: log my exercise. Option B: rest. What are the tradeoffs?';
+  let res;
+  try {
+    res = await request(app).post('/api/chat').set(authHeader()).send({ question });
+  } finally {
+    recs.recentTitlesAll = originalRecentTitles;
+    await db.query('DELETE FROM chat_messages WHERE content = $1', [question]);
+  }
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.actions, []);
+  assert.deepEqual(res.body.askResponse.proposedActions, []);
+  assert.ok(!res.body.answer.includes('<action>'));
+  assert.ok(!res.body.answer.includes('<rec>'));
+  assert.equal(recommendationAttempts, 0, 'never enters the asynchronous recommendation-to-commitment path');
+});
+
 test('required: a meaningful action (swap_workout) is PROPOSED but NOT applied by POST /api/chat — no mutation before confirmation', async () => {
   mockLlmAnswer(`Sure — here's the plan for a Zone 2 swap.\n<action>{"type":"swap_workout","workoutId":"zone2"}</action>`);
   const before = await currentOverride();
