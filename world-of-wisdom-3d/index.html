@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"/>
+<meta name="theme-color" content="#07101a"/>
+<title>World of Wisdom — 3D</title>
+<link rel="manifest" href="./manifest.webmanifest"/>
+<link rel="apple-touch-icon" href="./icon.svg"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="World of Wisdom"/>
+<link rel="stylesheet" href="./styles.css"/>
+</head>
+<body>
+<div class="world-app" id="app">
+  <div id="stage" aria-label="Interactive 3D World of Wisdom"></div>
+  <div class="fallback" id="fallback" hidden><div class="fallback-card"><h2>3D engine unavailable</h2><p>This edition uses WebGL and Three.js. Check your connection or open the file in a current Chrome/Safari browser.</p></div></div>
+  <div class="hud">
+    <div class="topbar">
+      <div class="brand"><div class="sigil">W</div><div><b>World of Wisdom</b><small>an explorable mindscape</small></div></div>
+      <div class="top-actions">
+        <button class="glassbtn" id="homeBtn">⌂ <span class="label">World View</span></button>
+        <button class="glassbtn" id="wanderBtn">✦ <span class="label">Wander</span></button>
+        <button class="glassbtn" id="lightBtn">☼ <span class="label">Twilight</span></button>
+        <button class="glassbtn" id="searchBtn">⌕ <span class="label">Search</span></button>
+      </div>
+    </div>
+    <div class="guide" id="guide">Drag to orbit · pinch / scroll to zoom · tap an island or landmark to travel</div>
+    <aside class="realm-card" id="realmCard"></aside>
+    <div class="mode-badge" id="modeBadge">WORLD VIEW</div>
+    <div class="compass-wrap"><nav class="compass" id="compass" aria-label="Wisdom realms"></nav></div>
+  </div>
+
+  <div class="search-sheet" id="searchSheet"><section class="sheet"><div class="sheet-head"><div><div class="sub">SEARCH THE ENTIRE WORLD</div><h2>Find a path</h2></div><button class="x" data-close="searchSheet">×</button></div><input class="searchbox" id="searchInput" placeholder="Try ‘fear’, ‘wealth’, ‘presence’, ‘relationships’…"/><div class="results" id="searchResults"></div></section></div>
+  <div class="landmark-sheet" id="landmarkSheet"><section class="sheet" id="landmarkContent"></section></div>
+  <div class="book-sheet" id="bookSheet"><section class="sheet" id="bookContent"></section></div>
+
+  <div class="intro" id="intro"><div class="intro-card"><div class="intro-mark">◈</div><h1>Enter the world<br/>you’ve been building.</h1><p>Your reading life has been transformed into an explorable 3D landscape. Every island is a realm of wisdom. Every landmark is a theme. Every building contains books and highlights you chose to remember.</p><div class="stats"><span class="pill"><b>247</b> wisdom sources</span><span class="pill"><b>22,660</b> highlights</span><span class="pill"><b>9</b> explorable realms</span></div><button id="enterBtn">Enter World</button><div class="loading" id="loading">awakening the landscape…</div></div></div>
+</div>
+<script src="./data-regions.js"></script>
+<script src="./data-01.js"></script>
+<script src="./data-02.js"></script>
+<script src="./data-03.js"></script>
+<script src="./data-04.js"></script>
+<script src="./data-05.js"></script>
+<script src="./data-06.js"></script>
+<script src="./data-07.js"></script>
+<script src="./data-08.js"></script>
+<script src="./data-09.js"></script>
+<script src="./data-10.js"></script>
+<script src="./data-11.js"></script>
+<script src="./data-12.js"></script>
+<script src="./data-13.js"></script>
+<script src="./data-14.js"></script>
+<script src="./app-1.js"></script>
+<script src="./app-2.js"></script>
+<script src="./app-3.js"></script>
+</body></html>
