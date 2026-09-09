@@ -586,6 +586,8 @@ module.exports = {
       if (days.length > 0) coverage = { source: SOURCE, from: days[0], to: days[days.length - 1] };
     }
 
+    const { fromBalanceRecords, publishSnapshot } = require('../services/monarch-planner-snapshot');
+    await publishSnapshot(fromBalanceRecords(balanceRecords));
     return { metrics, documents, config: { processed }, summary, coverage };
   },
 

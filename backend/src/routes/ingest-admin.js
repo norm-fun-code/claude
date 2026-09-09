@@ -215,6 +215,11 @@ function createIngestAdminRouter() {
     for (const doc of toWrite) {
       if (await documentsStore.upsertDocument(doc)) docs++;
     }
+    if (kind === 'balances') {
+      const { parseCsvObjects } = require('../util/csv');
+      const { fromBalanceRecords, publishSnapshot } = require('../services/monarch-planner-snapshot');
+      await publishSnapshot(fromBalanceRecords(parseCsvObjects(text).records));
+    }
     await sourcesStore.markSync('monarch');
     const summary = await analyze();
     res.json({ kind, rows, metrics: written, documents: docs, skippedDuplicates, analyzed: summary || null });
