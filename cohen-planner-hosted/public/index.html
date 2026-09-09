@@ -661,7 +661,7 @@ async function checkMonarchStatus(){
   try{
     _monarchLastCheck=Date.now();
     const r=await fetch('/api/monarch-status',{cache:'no-store'});
-    if(!r.ok)return;
+    if(!r.ok){const e=document.getElementById('monarchFreshness');if(e)e.textContent='Connection check unavailable';return;}
     const d=await r.json();
     const syncBtn=document.getElementById('monarchSyncBtn');
     const connBtn=document.getElementById('monarchConnectBtn');
@@ -672,8 +672,9 @@ async function checkMonarchStatus(){
     }else{
       if(syncBtn)syncBtn.style.display='none';
       if(connBtn)connBtn.style.display='';
+      const freshness=document.getElementById('monarchFreshness');if(freshness)freshness.textContent='Waiting for NormOS account sync';
     }
-  }catch(e){/* ignore */}
+  }catch(e){const freshness=document.getElementById('monarchFreshness');if(freshness)freshness.textContent='Connection check unavailable';}
 }
 
 async function loadMonarchInvestments(period){
@@ -725,6 +726,8 @@ async function syncMonarch({quiet=false}={}){
     render();
   }catch(e){
     if(btn){btn.textContent='📍 Sync Monarch';btn.disabled=false;}
+    const freshness=document.getElementById('monarchFreshness');
+    if(freshness){freshness.textContent='Sync unavailable · previous balances retained';freshness.title=e.message;}
     if(!quiet)showToast('Monarch sync failed: '+e.message,'red');
   }finally{_monarchSyncInFlight=false;}
 }
