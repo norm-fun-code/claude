@@ -442,7 +442,8 @@ body{background:transparent}
   <div class="hdr-right">
       <button class="cmdk-trigger" onclick="openPalette()" title="Command palette"><span>🔎</span>Jump to… <kbd id="cmdkKbdHint">⌘K</kbd></button>
       <button id="monarchSyncBtn" onclick="syncMonarch()" style="font-size:10px;font-weight:500;padding:5px 11px;background:var(--a-soft);border:1px solid rgba(191,105,0,.3);border-radius:7px;cursor:pointer;font-family:inherit;color:var(--a);transition:all .14s;display:none">📍 Sync Monarch</button>
-      <button id="monarchConnectBtn" onclick="connectMonarch()" style="font-size:10px;font-weight:500;padding:5px 11px;background:var(--accent-soft);border:1px solid rgba(99,91,255,.25);border-radius:7px;cursor:pointer;font-family:inherit;color:var(--accent);transition:all .14s">🔗 Connect Monarch</button>
+      <span id="monarchFreshness" style="font-size:10px;color:var(--t3)" aria-live="polite"></span>
+      <button id="monarchConnectBtn" onclick="connectMonarch()" style="font-size:10px;font-weight:500;padding:5px 11px;background:var(--accent-soft);border:1px solid rgba(99,91,255,.25);border-radius:7px;cursor:pointer;font-family:inherit;color:var(--accent);transition:all .14s">🔗 Enable NormOS Sync</button>
     <span class="sync-pill" id="syncStatus"></span>
     <button class="logout-btn" onclick="doLogout()">Log out</button>
   </div>
@@ -647,19 +648,27 @@ function toggleMobileControls(){
   if(label)label.textContent=open?'Hide Settings':'Settings';
 }
 
-function connectMonarch(){window.location.href='/api/monarch-connect';}
+async function connectMonarch(){
+  try{const r=await fetch('/api/monarch-enable',{method:'POST'});if(!r.ok)throw new Error('Could not enable sync');await syncMonarch();}
+  catch(e){showToast(e.message,'red');}
+}
+let _monarchSyncInFlight=false;
+let _monarchLastCheck=0;
+setInterval(()=>{if(!document.hidden)checkMonarchStatus();},5*60*1000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&Date.now()-_monarchLastCheck>60000)checkMonarchStatus();});
 
 async function checkMonarchStatus(){
   try{
-    const r=await fetch('/api/monarch-status');
+    _monarchLastCheck=Date.now();
+    const r=await fetch('/api/monarch-status',{cache:'no-store'});
+    if(!r.ok)return;
     const d=await r.json();
     const syncBtn=document.getElementById('monarchSyncBtn');
     const connBtn=document.getElementById('monarchConnectBtn');
     if(d.connected){
       if(syncBtn)syncBtn.style.display='';
       if(connBtn)connBtn.style.display='none';
-      // Auto-sync on open — token is stored server-side and auto-refreshes
-      syncMonarch();
+      syncMonarch({quiet:true});
     }else{
       if(syncBtn)syncBtn.style.display='none';
       if(connBtn)connBtn.style.display='';
@@ -681,21 +690,14 @@ async function loadMonarchInvestments(period){
   if(activeTab==='portfolio')render(); // single render once data is ready
 }
 
-async function syncMonarch(){
+async function syncMonarch({quiet=false}={}){
+  if(_monarchSyncInFlight)return;
+  _monarchSyncInFlight=true;
   const btn=document.getElementById('monarchSyncBtn');
   if(btn){btn.textContent='⟳ Syncing…';btn.disabled=true;}
   try{
-    const r=await fetch('/api/monarch-snapshot');
-    if(r.status===401){
-      // Not connected — show connect button
-      const syncBtn=document.getElementById('monarchSyncBtn');
-      const connBtn=document.getElementById('monarchConnectBtn');
-      if(syncBtn)syncBtn.style.display='none';
-      if(connBtn)connBtn.style.display='';
-      if(btn)btn.disabled=false;
-      showToast('Monarch disconnected — click Connect Monarch','red');
-      return;
-    }
+    const r=await fetch('/api/monarch-snapshot',{cache:'no-store'});
+    if(r.status===401)throw new Error('Your planner session expired. Sign in again.');
     if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||'HTTP '+r.status);}
     const d=await r.json();
     const nw=d.netWorth?.value;
@@ -708,18 +710,23 @@ async function syncMonarch(){
       liabilities:d.liabilities?.value,
       accountCount:d.accounts?.length||0,
       syncedAt:d.netWorth?.updatedAt,
+      source:d.source,stale:d.stale,warning:d.warning,
     };
     if(!nextSnapshot.accountCount||!PlannerDecisions.usableSnapshot(nextSnapshot))throw new Error('No verified balances returned. Previous data retained.');
+    if(monarchSnapshot&&Date.parse(nextSnapshot.syncedAt)<Date.parse(monarchSnapshot.syncedAt))throw new Error('Source returned older balances. Previous data retained.');
     monarchSnapshot=nextSnapshot;
     monarchAccounts=d.accounts;
-    if(btn){btn.textContent='📍 Synced';btn.disabled=false;}
-    showToast(`📍 Monarch synced · Liquid ${fmt(monarchSnapshot.liquid)} · 401k ${fmt(monarchSnapshot.retirement)}`,'green');
+    const freshness=document.getElementById('monarchFreshness');
+    if(freshness){freshness.textContent=(d.stale||d.warning?'Older balances · ':'Observed · ')+new Date(nextSnapshot.syncedAt).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});freshness.title=d.warning||'Latest balance observation from NormOS. Bank refresh times may differ.';}
+    if(btn){btn.textContent=d.stale||d.warning?'📍 Check sync':'📍 Refresh balances';btn.disabled=false;btn.style.display='';}
+    const connBtn=document.getElementById('monarchConnectBtn');if(connBtn)connBtn.style.display='none';
+    if(!quiet)showToast(d.warning||(d.stale?'Showing older balances from NormOS. Run the Monarch sync to update them.':`Monarch via NormOS · Liquid ${fmt(monarchSnapshot.liquid)} · 401k ${fmt(monarchSnapshot.retirement)}`),d.stale||d.warning?'red':'green');
     savePlannerState(); // persist last sync so it shows instantly next open
     render();
   }catch(e){
     if(btn){btn.textContent='📍 Sync Monarch';btn.disabled=false;}
-    showToast('Monarch sync failed: '+e.message,'red');
-  }
+    if(!quiet)showToast('Monarch sync failed: '+e.message,'red');
+  }finally{_monarchSyncInFlight=false;}
 }
 
 function anchorToToday(){
@@ -745,7 +752,7 @@ function anchorToToday(){
   ov.style.cssText='position:fixed;inset:0;background:rgba(10,37,64,.4);z-index:9998;display:flex;align-items:center;justify-content:center;padding:20px';
   ov.innerHTML=`<div style="background:#fff;border-radius:12px;padding:22px 24px;max-width:380px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.2)">
     <div style="font-size:15px;font-weight:700;color:var(--tx);margin-bottom:2px">📍 Net Worth as of Today</div>
-    <div style="font-size:10px;color:var(--t3);margin-bottom:16px">Monarch · synced ${syncDate}</div>
+    <div style="font-size:10px;color:var(--t3);margin-bottom:16px">Monarch via NormOS · observed ${syncDate}</div>
     <div style="display:flex;flex-direction:column;gap:8px">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--s2);border:1px solid var(--bd);border-radius:8px">
         <span style="font-size:12px;color:var(--t2)">Liquid</span>
@@ -1409,7 +1416,7 @@ function render(){
     <div class="kpi"><div class="kpi-l">📉 Liquid Floor</div><div class="kpi-v" style="color:${minL.liq>500000?'var(--g)':'var(--a)'}">${fmt(minL.liq)}</div><div class="kpi-s">${minL.yr}</div></div>
     <div class="kpi"><div class="kpi-l">🏁 NW (${last.yr})</div><div class="kpi-v" style="color:var(--g)">${fmt(last.nw)}</div><div class="kpi-s">+${fmt(last.k401)} 401k</div></div>
     <div class="kpi"><div class="kpi-l">🏦 Total w/ 401k</div><div class="kpi-v" style="color:var(--tx)">${fmt(last.nw+last.k401)}</div><div class="kpi-s">incl. retirement</div></div>
-    ${monarchSnapshot?`<div class="kpi" style="border-color:rgba(191,105,0,.3);background:var(--a-soft)"><div class="kpi-l" style="color:var(--a)">📍 Live NW</div><div class="kpi-v" style="color:var(--a);font-size:13px">${fmt(monarchSnapshot.netWorth)}</div><div class="kpi-s">${new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div></div>`:''}`;
+    ${monarchSnapshot?`<div class="kpi" style="border-color:rgba(191,105,0,.3);background:var(--a-soft)"><div class="kpi-l" style="color:var(--a)">📍 Latest NW</div><div class="kpi-v" style="color:var(--a);font-size:13px">${fmt(monarchSnapshot.netWorth)}</div><div class="kpi-s">${new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div></div>`:''}`;
   // ─── Hero net-worth band ───
   const _hb=document.getElementById('heroBand');
   if(_hb){
@@ -1588,7 +1595,7 @@ function renderPortfolioTab(R,P){
       <div style="font-size:32px;margin-bottom:12px">📊</div>
       <div style="font-size:14px;font-weight:600;color:var(--tx);margin-bottom:6px">Portfolio view needs Monarch</div>
       <div style="font-size:11px;color:var(--t3);margin-bottom:16px">Connect Monarch to see your investment holdings here.</div>
-      <button onclick="connectMonarch()" style="padding:8px 18px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:600">🔗 Connect Monarch</button>
+      <button onclick="connectMonarch()" style="padding:8px 18px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:600">🔗 Enable NormOS Sync</button>
     </div>`;
     return;
   }
