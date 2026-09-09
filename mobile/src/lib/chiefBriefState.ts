@@ -29,7 +29,7 @@ export type ChiefBriefState =
  *  which does not mint job rows, so absence here is NOT evidence of a build
  *  being in flight. */
 export type BuildJobState =
-  | 'waiting_for_sleep' | 'queued' | 'building' | 'retry_wait' | 'ready' | 'failed' | 'interrupted' | null;
+  | 'waiting_for_sleep' | 'queued' | 'building' | 'retry_wait' | 'delivering' | 'ready' | 'failed' | 'interrupted' | null;
 
 /** Build-job states that mean work is genuinely still happening server-side. */
 const IN_FLIGHT_BUILD_STATES = new Set<string>(['waiting_for_sleep', 'queued', 'building', 'retry_wait']);
@@ -105,6 +105,9 @@ export function resolveChiefBriefState(
   // the honest state is "still loading". Checked AFTER `error` so a genuine
   // fetch failure this session still surfaces immediately.
   if (awaitingFirstFetch) return 'initial_loading';
+  // The build is already published and its bounded download is in flight.
+  // An hours-old pendingSince must not describe this retrieval as a failure.
+  if (buildState === 'delivering') return 'initial_loading';
 
   // Positive evidence of work in progress is the ONLY thing that earns a
   // skeleton. An in-flight build outranks a stale 'failed' verdict from a

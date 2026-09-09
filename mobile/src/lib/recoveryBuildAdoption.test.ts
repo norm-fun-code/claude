@@ -44,6 +44,6 @@ test('required: an empty-state re-check exists so a brief landing while the app 
   // never picked up.
   assert.match(SRC, /setInterval/, 'expected a bounded re-check timer for the empty state');
   assert.match(SRC, /MAX_ATTEMPTS/, 'the re-check must be bounded, never an unbounded poll');
-  assert.match(SRC, /if \(data\?\.chiefBrief\) return;/,
-    'the re-check must stop as soon as there is a brief to show');
+  assert.match(SRC, /if \(!deliveryNeeded\) return;/,
+    'the re-check must stop once a current usable brief is shown, not merely when an object exists');
 });

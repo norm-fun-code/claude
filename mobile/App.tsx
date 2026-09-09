@@ -92,6 +92,7 @@ import { usePrecedent } from './src/hooks/usePrecedent';
 import { useDisagreement } from './src/hooks/useDisagreement';
 import { NextMove, NextMoveCard } from './src/components/NextMove';
 import { useFocusSession } from './src/hooks/useFocusSession';
+import { needsBriefingDelivery } from './src/lib/briefingDelivery';
 
 // A single stable empty-array reference for `d?.field ?? []`-style fallbacks
 // passed to memoized cards — `?? []` mints a NEW array every render, which
@@ -500,7 +501,13 @@ export default function App() {
     }
   }, [briefing, health, eveningBrief, commitments]);
 
-  usePushRegistration(onNotificationTap);
+  usePushRegistration(onNotificationTap, (notification) => {
+    if (notification.type !== 'morning_briefing') return;
+    // Fetch without navigating away from the screen the user is reading.
+    void briefing.openFromPush({
+      snapshotId: typeof notification.snapshotId === 'string' ? notification.snapshotId : null,
+    });
+  });
 
   // Server-decided destinations from todayCommandCenter's sinceMorning[]
   // (see brain/todayCommandCenter.js) — mobile just navigates where it's
@@ -680,7 +687,12 @@ export default function App() {
       if (!health.lastFetched) return null;
       return `Refreshed at ${health.lastFetched.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
     }
-    if (briefing.rebuilding) return 'Rebuilding... usually 60–90s';
+    if (briefing.rebuilding) return briefing.buildState === 'delivering' ? 'Loading your finished briefing…' : 'Rebuilding... usually 60–90s';
+    if (tab === 'today' && needsBriefingDelivery(d, todayLocalDate)) {
+      if (briefing.loading) return 'Loading your briefing…';
+      if (d?.chiefBrief) return 'Showing your last available brief';
+      return 'Today’s brief has not loaded yet';
+    }
     // Age the tab off snapshotAt (when the STATE was cut), not builtAt (which
     // advances on a text-only Chief Brief rebuild too) — otherwise a scoped
     // rebuild would reset every tab to "Built just now" though its data is
@@ -697,7 +709,7 @@ export default function App() {
       label = ageH < 24 ? `Built ${ageH}h ago` : `Built ${Math.floor(ageH / 24)}d ago`;
     }
     return label;
-  }, [tab, health.lastFetched, d?.snapshotAt, d?.builtAt, d?.stale, briefing.rebuilding]);
+  }, [tab, health.lastFetched, d, todayLocalDate, briefing.rebuilding, briefing.loading, briefing.buildState]);
 
   const renderTab = () => {
     switch (tab) {
@@ -962,7 +974,7 @@ export default function App() {
                     snapshotId={d?.snapshotId}
                     risk={todayCC.risk}
                     error={Boolean(briefing.error)}
-                    buildState={briefing.buildState}
+                    buildState={briefing.loading && !d?.chiefBrief ? 'delivering' : briefing.buildState}
                     buildFailure={briefing.buildFailure}
                     pendingSince={briefing.pendingSince}
                     awaitingFirstFetch={!briefing.fetched}
@@ -983,7 +995,7 @@ export default function App() {
                   snapshotId={d?.snapshotId}
                   risk={todayCC.risk}
                   error={Boolean(briefing.error)}
-                  buildState={briefing.buildState}
+                  buildState={briefing.loading && !d?.chiefBrief ? 'delivering' : briefing.buildState}
                   buildFailure={briefing.buildFailure}
                   pendingSince={briefing.pendingSince}
                   awaitingFirstFetch={!briefing.fetched}
