@@ -20,7 +20,7 @@ function createPlannerAccountsRouter({
     if ((!snapshot || now()-Date.parse(snapshot.asOf) >= ttl) && token && now() >= retryAt) {
       try {
         const accounts = await api.getAccounts(token);
-        const next = makeSnapshot(accounts, {asOf:new Date(now()).toISOString()});
+        const next = makeSnapshot(accounts, {asOf:new Date(now()).toISOString(), allowMissing:true});
         if (!next) throw new Error('invalid_accounts; count=' + accounts.length + '; unnamed=' + accounts.filter(a=>!a.displayName&&!a.name).length + '; missingBalance=' + accounts.filter(a=>a.currentBalance==null).length);
         await db.query("INSERT INTO sources (id,domain,display_name) VALUES ('monarch','wealth','Monarch') ON CONFLICT (id) DO NOTHING");
         await publish(next);
