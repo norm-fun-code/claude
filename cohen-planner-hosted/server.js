@@ -23,6 +23,7 @@ const { createMonarchSync } = require('./monarch-sync');
 const monarchSync = createMonarchSync({ db, live: monarchLive });
 const Spending = require('./public/spending.js');
 const Accounts = require('./public/accounts.js');
+const Snapshots = require('./public/snapshots.js');
 
 // Classification and confirmations, keyed on stable account ids.
 async function loadAccountMeta() {
@@ -265,7 +266,7 @@ app.get('/model.js', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'model.js'));
 });
 // Keep every new planner asset behind the same session gate as the existing UI.
-for (const asset of ['decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js']) {
+for (const asset of ['decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'snapshots.js']) {
   app.get('/' + asset, requireAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', asset));
   });
@@ -822,6 +823,65 @@ app.delete('/api/accounts/:id/confirm-balance', requireAuth, async (req, res) =>
     await db.query('UPDATE account_overrides SET superseded_at = NOW() WHERE account_id = $1', [String(req.params.id)]);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Wealth snapshots and change explanation ────────────────────────────────
+app.post('/api/wealth/snapshot', requireAuth, async (req, res) => {
+  try {
+    const meta = await loadAccountMeta();
+    const snap = await monarchLive.getSnapshot();
+    const MA = require('./monarch-accounts');
+    const accounts = (snap.accounts || []).map(a => ({
+      id: a.id != null ? String(a.id) : null,
+      name: a.displayName || a.name || '', institution: a.institution || '',
+      category: a.category || '', subtype: a.subtype || '',
+      balance: MA.parseBalance(MA.rawBalanceOf(a)), rawBalance: MA.rawBalanceOf(a), asOf: snap.asOf,
+    }));
+    const sum = Accounts.summarize(accounts, meta.merged);
+    const byClass = {};
+    for (const [k, v] of Object.entries(sum.byClass)) byClass[k] = { total: v.total };
+    const { rows } = await db.query(
+      `INSERT INTO wealth_snapshots (net_worth, accessible, by_class, complete, note)
+       VALUES ($1,$2,$3::jsonb,$4,$5) RETURNING id, to_char(as_of,'YYYY-MM-DD"T"HH24:MI:SSZ') AS as_of`,
+      [sum.netWorth, sum.accessible, JSON.stringify(byClass), sum.complete, req.body?.note || null]);
+    res.json({ ok: true, ...rows[0], complete: sum.complete, netWorth: sum.netWorth });
+  } catch (err) { res.status(503).json({ error: err.message }); }
+});
+
+app.get('/api/wealth/history', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT id, to_char(as_of,'YYYY-MM-DD"T"HH24:MI:SSZ') AS as_of, net_worth::float8 AS net_worth,
+              accessible::float8 AS accessible, by_class, complete, note
+         FROM wealth_snapshots ORDER BY as_of DESC LIMIT 24`);
+    const snaps = rows.map(r => ({ id: r.id, asOf: r.as_of, netWorth: r.net_worth,
+      accessible: r.accessible, byClass: r.by_class, complete: r.complete, note: r.note }));
+
+    // Explain the most recent change, but only as far as the transaction ledger reaches.
+    let change = null;
+    if (snaps.length >= 2) {
+      const to = snaps[0], from = snaps[1];
+      const okTo = Snapshots.comparable(to), okFrom = Snapshots.comparable(from);
+      if (!okTo.ok || !okFrom.ok) {
+        change = { blocked: true, reason: (!okFrom.ok ? `earlier snapshot ${okFrom.reason}` : `latest snapshot ${okTo.reason}`) };
+      } else {
+        const st = await monarchSync.status().catch(() => ({}));
+        let flows = null;
+        if (st.firstDate) {
+          const [ledger, cats] = await Promise.all([
+            monarchSync.ledger({ startDate: from.asOf.slice(0, 10), endDate: to.asOf.slice(0, 10) }),
+            monarchSync.localCategories(),
+          ]);
+          const sm = Spending.summarize(ledger, cats);
+          flows = { income: sm.totals.income, spending: sm.totals.expense };
+        }
+        change = Snapshots.explainChange(from, to, flows,
+          st.firstDate ? { firstDate: st.firstDate, lastDate: st.lastDate } : null);
+        change.classDeltas = Snapshots.classDeltas(from, to);
+      }
+    }
+    res.json({ snapshots: snaps, change });
+  } catch (err) { res.status(503).json({ error: err.message }); }
 });
 
 app.get('/api/monarch-diagnostics', requireAuth, async (req, res) => {

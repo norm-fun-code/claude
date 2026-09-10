@@ -12,6 +12,7 @@
 <script src="/plan-migrate.js"></script>
 <script src="/spending.js"></script>
 <script src="/accounts.js"></script>
+<script src="/snapshots.js"></script>
 <script src="/decisions.js"></script>
 <script src="/decision-room.js"></script>
 <style>
@@ -1965,7 +1966,7 @@ function makeDonut(canvasId,labels,data,colors,fmtVal,showLegend){
 // Every figure is labelled with what kind of claim it is. An observed balance, a fact you
 // confirmed, and a model projection are three different things, and rendering them
 // identically is misleading even when each number is right.
-let _ovw=null,_ovwLoading=false;
+let _ovw=null,_ovwLoading=false,_hist=null;
 const PROV={
   observed:{icon:'◉',label:'Observed',color:'var(--b)',hint:'read from your accounts'},
   entered:{icon:'✎',label:'You confirmed',color:'var(--a)',hint:'entered or confirmed by you'},
@@ -1980,11 +1981,19 @@ function provChip(kind,asOf){
 async function loadOverview(){
   if(_ovwLoading)return;_ovwLoading=true;
   try{
-    const r=await fetch('/api/accounts/overview');
+    const [r,hr]=await Promise.all([fetch('/api/accounts/overview'),fetch('/api/wealth/history')]);
     _ovw=r.ok?await r.json():{error:(await r.json().catch(()=>({}))).error||'unavailable'};
+    _hist=hr.ok?await hr.json():null;
   }catch(e){_ovw={error:e.message};}
   _ovwLoading=false;
   if(activeTab==='today'&&_todayView==='overview')render();
+}
+async function takeWealthSnapshot(){
+  const r=await fetch('/api/wealth/snapshot',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){showToast(d.error||'Could not take a snapshot','red');return}
+  showToast(d.complete?'Snapshot saved':'Snapshot saved, but marked incomplete — a balance was unknown','green');
+  _ovw=null;loadOverview();
 }
 async function confirmAccountBalance(id,name,raw){
   const v=prompt(`Confirm the balance for "${name}".\n\nMonarch returned no value for this account. What you enter is recorded as YOUR confirmation, dated today — it will never be shown as an observed balance, and a real balance from Monarch will supersede it automatically.`,'0');
@@ -2110,6 +2119,50 @@ function renderOverviewTab(R,P){
         <div style="font-size:10.5px;font-weight:700;color:var(--r);margin-bottom:5px">Possible double counting</div>
         ${d.doubleCounting.map(i=>`<div style="font-size:10px;color:var(--t2);line-height:1.55">${advEscape(i.name)}: balance ${money(i.balance)} vs holdings ${money(i.holdingsTotal)}. ${advEscape(i.message)}</div>`).join('')}</div>`;
     }
+  }
+
+  // ── What changed since the last snapshot ──
+  // Per-class movement is observation and always safe to show. The decomposition of WHY is
+  // shown only as far as the transaction ledger reaches; beyond that it stays a residual.
+  {
+    const H=_hist||{},snaps=H.snapshots||[],ch=H.change;
+    h+=`<div class="glass-card" style="padding:14px 16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3)">What changed</div>
+        <button onclick="takeWealthSnapshot()" style="font-size:9px;padding:4px 9px;border-radius:5px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">📸 Take a snapshot</button>
+      </div>`;
+    if(snaps.length<2){
+      h+=`<div style="font-size:10.5px;color:var(--t2);line-height:1.6">${snaps.length?'One snapshot recorded. Take another later and the change between them can be explained.':'No snapshots yet. Take one to start a dated history — changes are explained by comparing two of them.'}</div>`;
+    } else if(ch&&ch.blocked){
+      h+=`<div style="font-size:10.5px;color:var(--a);line-height:1.6">Cannot compare: the ${advEscape(ch.reason)}. Differencing it would attribute that gap to something real.</div>`;
+    } else if(ch){
+      const d=ch.delta;
+      h+=`<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:3px">
+        <span style="font-size:20px;font-weight:800;font-family:'SF Mono',monospace;color:${d>=0?'var(--g)':'var(--r)'};letter-spacing:-.5px">${d>=0?'+':'−'}${money(Math.abs(d))}</span>
+        <span style="font-size:10px;color:var(--t3)">since ${new Date(ch.from).toLocaleDateString()}${ch.days?` · ${ch.days} days`:''}</span></div>`;
+      if(!ch.components.length){
+        h+=`<div style="font-size:10.5px;color:var(--t2);line-height:1.6;background:var(--s2);border-radius:6px;padding:9px 11px;margin-top:6px">
+          <strong style="color:var(--tx)">${advEscape(ch.residual.label)}.</strong> ${advEscape(ch.residual.detail)}</div>`;
+      } else {
+        h+=`<div style="margin-top:6px">
+          ${ch.components.filter(c=>c.key!=='netFlow').map(c=>`<div style="display:flex;justify-content:space-between;font-size:10.5px;padding:4px 0;border-bottom:1px solid var(--bd)">
+            <span style="color:var(--t2)">${advEscape(c.label)} <span style="font-size:8.5px;color:var(--t3)">· ${advEscape(c.detail)}</span></span>
+            <span style="font-family:'SF Mono',monospace;color:${c.amount>=0?'var(--g)':'var(--tx)'}">${c.amount>=0?'+':'−'}${money(Math.abs(c.amount))}</span></div>`).join('')}
+          <div style="display:flex;justify-content:space-between;font-size:10.5px;padding:6px 0 0">
+            <span style="color:var(--t2)">${advEscape(ch.residual.label)}</span>
+            <span style="font-family:'SF Mono',monospace;font-weight:700;color:${ch.residual.amount>=0?'var(--g)':'var(--r)'}">${ch.residual.amount>=0?'+':'−'}${money(Math.abs(ch.residual.amount))}</span></div>
+          <div style="font-size:9.5px;color:var(--t3);line-height:1.5;margin-top:4px">${advEscape(ch.residual.detail)}</div>
+        </div>`;
+      }
+      if((ch.classDeltas||[]).length){
+        h+=`<div style="margin-top:9px;padding-top:8px;border-top:1px solid var(--bd)">
+          <div style="font-size:8.5px;color:var(--t3);margin-bottom:4px">Where it landed — an observation, not an explanation</div>
+          ${ch.classDeltas.map(r=>`<div style="display:flex;justify-content:space-between;font-size:10px;padding:2px 0">
+            <span style="color:var(--t2);text-transform:capitalize">${advEscape(r.cls)}</span>
+            <span style="font-family:'SF Mono',monospace;color:${r.delta>=0?'var(--g)':'var(--r)'}">${r.delta>=0?'+':'−'}${money(Math.abs(r.delta))}</span></div>`).join('')}</div>`;
+      }
+    }
+    h+=`</div>`;
   }
 
   // ── Up to three things worth doing ──

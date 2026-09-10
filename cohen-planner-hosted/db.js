@@ -43,6 +43,19 @@ async function initSchema() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
+    -- Dated pictures of the account side, so changes can be explained later. The complete
+    -- flag records whether every balance was known at the time: a snapshot taken with a gap is
+    -- short by an unknown amount and must not be differenced.
+    CREATE TABLE IF NOT EXISTS wealth_snapshots (
+      id          BIGSERIAL PRIMARY KEY,
+      as_of       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      net_worth   NUMERIC NOT NULL,
+      accessible  NUMERIC,
+      by_class    JSONB NOT NULL DEFAULT '{}'::jsonb,
+      complete    BOOLEAN NOT NULL DEFAULT TRUE,
+      note        TEXT
+    );
+    CREATE INDEX IF NOT EXISTS wealth_snapshots_as_of ON wealth_snapshots (as_of DESC);
     -- Account classification, keyed on the provider's STABLE id rather than the display
     -- name, so renaming an account in Monarch cannot silently reclassify net worth.
     CREATE TABLE IF NOT EXISTS account_classes (
