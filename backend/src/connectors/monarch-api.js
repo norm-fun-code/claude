@@ -119,7 +119,7 @@ module.exports = {
     }));
     const balMapped = mapBalances(balRecords);
 
-    await publishSnapshot(makeSnapshot(data.accounts));
+    await publishSnapshot(makeSnapshot(data.accounts, {allowMissing:true}));
 
     const metrics = dedupeMetrics([...txnMapped.metrics, ...balMapped.metrics]);
     const config = mintedToken ? { ...(ctx.config || {}), monarchToken: mintedToken } : undefined;

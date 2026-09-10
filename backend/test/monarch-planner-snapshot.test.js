@@ -15,3 +15,9 @@ test('CSV uses the latest export date, retains liabilities, and does not double-
 test('aggregate-only net worth exports cannot replace account details',()=>{
   assert.equal(fromBalanceRecords([{Date:'2026-09-02','Net Worth':100}]),null);
 });
+
+test('explicit API mode preserves missing accounts without fabricating zeros',()=>{
+ const s=makeSnapshot([{id:'1',displayName:'Cash',currentBalance:100},{id:'2',displayName:'Unlinked',currentBalance:null}],{allowMissing:true});
+ assert.equal(s.partial,true);assert.equal(s.accounts.length,1);assert.deepEqual(s.missingAccounts,[{id:'2',name:'Unlinked'}]);
+ assert.equal(makeSnapshot([{displayName:'Missing',currentBalance:null}],{allowMissing:true}),null);
+});
