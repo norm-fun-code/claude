@@ -23,6 +23,46 @@ const HOLDINGS_QUERY = `query NormOS_Holdings($input: PortfolioInput) {
   }
 }`;
 const ACCOUNT_IDS_QUERY = 'query NormOS_AccountIds { accounts { id } }';
+
+// Transactions. Every field below appears in Monarch's own TransactionOverviewFields
+// fragment — nothing invented. `updatedAt` is the one that matters most: it is what makes
+// incremental sync possible at all, and `id` is what makes it idempotent.
+const TRANSACTIONS_QUERY = `query NormOS_Transactions($offset: Int, $limit: Int, $filters: TransactionFilterInput, $orderBy: TransactionOrdering) {
+  allTransactions(filters: $filters) {
+    totalCount
+    results(offset: $offset, limit: $limit, orderBy: $orderBy) {
+      id amount pending date hideFromReports plaidName notes
+      isRecurring isSplitTransaction createdAt updatedAt
+      category { id name }
+      merchant { id name }
+      account { id displayName }
+      tags { id name }
+    }
+  }
+}`;
+// Categories carry the group `type` (income / expense / transfer) the whole accounting
+// model hangs off, plus systemCategory for Monarch's built-ins like credit-card payment.
+const CATEGORIES_QUERY = `query NormOS_Categories {
+  categories { id order name systemCategory isSystemCategory isDisabled updatedAt group { id name type } }
+}`;
+const BUDGETS_QUERY = `query NormOS_Budgets($startDate: Date!, $endDate: Date!) {
+  budgetData(startMonth: $startDate, endMonth: $endDate) {
+    monthlyAmountsByCategory {
+      category { id }
+      monthlyAmounts { month plannedCashFlowAmount actualAmount remainingAmount cumulativeActualAmount }
+    }
+  }
+  categoryGroups { id name type }
+}`;
+const RECURRING_QUERY = `query NormOS_Recurring($startDate: Date!, $endDate: Date!) {
+  recurringTransactionItems(startDate: $startDate, endDate: $endDate) {
+    stream { id frequency amount isApproximate merchant { id name } }
+    date isPast transactionId amount amountDiff
+    category { id name }
+    account { id displayName }
+  }
+}`;
+const PAGE_SIZE = 100;
 // Monarch's type names vs. the ones the portfolio view already renders.
 const TYPE_ALIASES = { cryptocurrency: 'crypto', mutualfund: 'mutual_fund', fixed_income: 'bond', fixedincome: 'bond' };
 function normaliseType(t) {
@@ -47,6 +87,54 @@ function extractHoldingEdges(payload) {
   };
   return walk(payload?.aggregateHoldings ?? payload, 0) || [];
 }
+// Flatten Monarch's nested transaction into the flat row the accounting model and the
+// database both use. Ids are stringified because they arrive as numbers or strings
+// depending on the field, and a mixed-type primary key breaks idempotent upserts.
+function mapTransaction(t) {
+  const id = t && t.id != null ? String(t.id) : null;
+  if (!id) return null;
+  return {
+    id,
+    date: String(t.date || '').slice(0, 10),
+    amount: numOr0(t.amount),
+    merchant: (t.merchant && t.merchant.name) || '',
+    plaidName: t.plaidName || '',
+    notes: t.notes || '',
+    categoryId: t.category && t.category.id != null ? String(t.category.id) : null,
+    categoryName: (t.category && t.category.name) || '',
+    accountId: t.account && t.account.id != null ? String(t.account.id) : null,
+    accountName: (t.account && t.account.displayName) || '',
+    pending: !!t.pending,
+    hideFromReports: !!t.hideFromReports,
+    isRecurring: !!t.isRecurring,
+    isSplitTransaction: !!t.isSplitTransaction,
+    tags: (t.tags || []).map(x => (x && x.name) || '').filter(Boolean),
+    updatedAt: t.updatedAt || null,
+    createdAt: t.createdAt || null,
+  };
+}
+
+// Budgets arrive as a per-category array of monthly amounts; the cockpit wants one row per
+// (month, category).
+function mapBudgets(d) {
+  const byCat = (d && d.budgetData && d.budgetData.monthlyAmountsByCategory) || [];
+  const rows = [];
+  for (const entry of byCat) {
+    const categoryId = entry && entry.category && entry.category.id != null ? String(entry.category.id) : null;
+    if (!categoryId) continue;
+    for (const m of entry.monthlyAmounts || []) {
+      rows.push({
+        month: String(m.month || '').slice(0, 7),
+        categoryId,
+        planned: numOr0(m.plannedCashFlowAmount),
+        actual: numOr0(m.actualAmount),
+        remaining: numOr0(m.remainingAmount),
+      });
+    }
+  }
+  return { rows, groups: (d && d.categoryGroups) || [] };
+}
+
 function mapHoldings(payload) {
   const rows = extractHoldingEdges(payload).map(e => {
     const n = e?.node ?? e ?? {};
@@ -218,10 +306,76 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
     return mapHoldings(body.data?.portfolio ?? body.data ?? body);
   }
 
+  // ── Transactions, categories, budgets, recurring ────────────────────────
+  // All four ride the same authenticated GraphQL path the balances use. None of them are
+  // reachable through the NormOS bridge, which only publishes /integrations/planner/accounts.
+  async function ask(label, query, variables) {
+    const c = await context();
+    if (c.disabled) throw new Error('Planner sync is paused. Enable NormOS sync to resume.');
+    if (!c.token) throw new Error(`${label} needs a direct Monarch connection. Reconnect Monarch in NormOS.`);
+    let response;
+    try {
+      response = await graphql(c.token, query, variables);
+    } catch (err) {
+      throw new Error(err.name === 'TimeoutError' ? `Monarch timed out returning ${label}.` : `Monarch is unreachable for ${label}.`);
+    }
+    if (!response.ok) {
+      throw new Error(response.status === 401 ? 'Monarch session expired. Reconnect Monarch in NormOS.'
+        : response.status === 429 ? 'Monarch is rate limiting. Try again shortly.'
+        : `Monarch could not return ${label}.`);
+    }
+    const body = await response.json();
+    if (body.errors) { logGraphqlErrors(label, body.errors); throw new Error(`Monarch could not return ${label}.`); }
+    return body.data || {};
+  }
+
+  // One page of transactions. Paging is by offset against a stable date-descending order so
+  // a backfill walks the history deterministically instead of re-reading the same window.
+  async function transactionsPage({ startDate, endDate, offset = 0, limit = PAGE_SIZE }) {
+    const d = await ask('transactions', TRANSACTIONS_QUERY, {
+      offset, limit,
+      filters: { startDate, endDate },
+      orderBy: 'date',
+    });
+    const all = d.allTransactions || {};
+    return { totalCount: Number(all.totalCount || 0), results: (all.results || []).map(mapTransaction) };
+  }
+
+  async function categories() {
+    const d = await ask('categories', CATEGORIES_QUERY, {});
+    if (!Array.isArray(d.categories) || !d.categories.length) throw new Error('Monarch returned no categories.');
+    return d.categories;
+  }
+
+  async function budgets({ startDate, endDate }) {
+    const d = await ask('budgets', BUDGETS_QUERY, { startDate, endDate });
+    return mapBudgets(d);
+  }
+
+  async function recurring({ startDate, endDate }) {
+    const d = await ask('recurring', RECURRING_QUERY, { startDate, endDate });
+    return (d.recurringTransactionItems || []).map(r => ({
+      streamId: r.stream && r.stream.id != null ? String(r.stream.id) : null,
+      merchant: (r.stream && r.stream.merchant && r.stream.merchant.name) || '',
+      frequency: (r.stream && r.stream.frequency) || null,
+      isApproximate: !!(r.stream && r.stream.isApproximate),
+      date: r.date || null,
+      isPast: !!r.isPast,
+      transactionId: r.transactionId != null ? String(r.transactionId) : null,
+      amount: numOr0(r.amount),
+      // How far this occurrence drifted from the stream's usual amount — the signal for
+      // "a recurring charge changed" without having to diff history ourselves.
+      amountDiff: numOr0(r.amountDiff),
+      categoryId: r.category && r.category.id != null ? String(r.category.id) : null,
+      categoryName: (r.category && r.category.name) || '',
+      accountId: r.account && r.account.id != null ? String(r.account.id) : null,
+    }));
+  }
+
   function getSnapshot() {
     if (!pending) pending = pull().finally(() => { pending = null; });
     return pending;
   }
-  return { status, getSnapshot, setEnabled, holdings };
+  return { status, getSnapshot, setEnabled, holdings, transactionsPage, categories, budgets, recurring };
 }
-module.exports = { createMonarchLive, validSnapshot, mapHoldings, normaliseType, extractHoldingEdges };
+module.exports = { createMonarchLive, validSnapshot, mapHoldings, normaliseType, extractHoldingEdges, mapTransaction, mapBudgets, PAGE_SIZE };
