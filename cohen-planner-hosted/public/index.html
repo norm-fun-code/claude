@@ -2330,6 +2330,62 @@ function renderSpendingTab(R,P){
     <div style="font-size:9.5px;color:var(--t3);margin-top:7px">${complete.length} complete month${complete.length===1?'':'s'} of history${cov.partial?` · ${cov.partial} is ${Math.round((cov.fractionElapsed||0)*100)}% elapsed and excluded from every average`:''}.</div>
   </div>`;
 
+  // ── Where the money goes ──
+  // Aggregated across COMPLETE months only. The month in progress is excluded, because a
+  // category two-thirds through its month reads as a fall that has not happened.
+  {
+    const agg=new Map();
+    for(const m of complete){
+      for(const c of (m.categories||[])){
+        if(!agg.has(c.id))agg.set(c.id,{id:c.id,name:c.name,net:0,gross:0,refunds:0,count:0,months:new Set()});
+        const a=agg.get(c.id);
+        a.net+=c.net;a.gross+=c.gross;a.refunds+=c.refunds;a.count+=c.count;a.months.add(m.month);
+      }
+    }
+    const n=complete.length||1;
+    // Trend compares the most recent three complete months against the three before them.
+    // With fewer than six there is nothing to compare, so no trend is claimed at all.
+    const recent=complete.slice(-3),prior=complete.slice(-6,-3);
+    const sumFor=(months,id)=>months.reduce((s,m)=>s+((m.categories||[]).find(c=>c.id===id)?.net||0),0);
+    const canTrend=complete.length>=6;
+    const rows=[...agg.values()].map(a=>{
+      const perMonth=a.net/n;
+      let trend=null;
+      if(canTrend){
+        const r=sumFor(recent,a.id)/3,pr=sumFor(prior,a.id)/3;
+        if(pr>0||r>0)trend={recent:r,prior:pr,delta:r-pr,pct:pr>0?(r-pr)/pr:null};
+      }
+      return{...a,perMonth,share:tot.expense>0?a.net/tot.expense:0,trend};
+    }).sort((x,y)=>y.net-x.net);
+    const shown=rows.slice(0,16),rest=rows.slice(16);
+    const restNet=rest.reduce((s,r)=>s+r.net,0);
+
+    h+=`<div class="glass-card" style="padding:16px 18px">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:3px">Where the money goes</div>
+      <div style="font-size:10px;color:var(--t2);margin-bottom:10px">${n} complete month${n===1?'':'s'}, net of refunds${cov.partial?` · ${cov.partial} excluded as partial`:''}. ${canTrend?'Trend compares the last 3 months with the 3 before.':'Six complete months are needed before a trend can be shown.'}</div>
+      ${rows.length?`<div class="tw" style="max-height:none"><table style="font-size:11px">
+        <thead><tr><th style="text-align:left">Category</th><th>Per month</th><th>Total</th><th>Share</th>${canTrend?'<th>Trend</th>':''}<th>Rows</th></tr></thead>
+        <tbody>${shown.map(r=>{
+          const t=r.trend;
+          const up=t&&t.delta>0;
+          const sig=t&&Math.abs(t.delta)>=Math.max(150,r.perMonth*0.15); // material, not noise
+          return `<tr>
+            <td style="text-align:left;font-weight:600;color:var(--tx)">${advEscape(r.name)}${r.refunds>0?` <span style="font-size:8.5px;color:var(--a)">−${fmtF(Math.round(r.refunds))} refunded</span>`:''}</td>
+            <td style="font-family:'SF Mono',monospace">${fmtF(Math.round(r.perMonth))}</td>
+            <td style="font-family:'SF Mono',monospace;color:var(--t2)">${fmtF(Math.round(r.net))}</td>
+            <td style="color:var(--t2)">${(r.share*100).toFixed(1)}%</td>
+            ${canTrend?`<td style="font-family:'SF Mono',monospace;color:${!sig?'var(--t3)':up?'var(--r)':'var(--g)'}">${t?`${t.delta>=0?'+':'−'}${fmtF(Math.round(Math.abs(t.delta)))}`:'—'}${sig?'':''}</td>`:''}
+            <td style="color:var(--t3)">${r.count}</td></tr>`}).join('')}
+          ${rest.length?`<tr><td style="text-align:left;color:var(--t3)">${rest.length} smaller categories</td>
+            <td style="font-family:'SF Mono',monospace;color:var(--t3)">${fmtF(Math.round(restNet/n))}</td>
+            <td style="font-family:'SF Mono',monospace;color:var(--t3)">${fmtF(Math.round(restNet))}</td>
+            <td style="color:var(--t3)">${tot.expense>0?(restNet/tot.expense*100).toFixed(1):'0'}%</td>${canTrend?'<td></td>':''}<td></td></tr>`:''}
+        </tbody></table></div>
+        <div style="font-size:9.5px;color:var(--t3);margin-top:8px;line-height:1.5">Trend is a change in monthly average, not a verdict — a move can be seasonal, a one-off, or a category that simply had a busy quarter. Nothing here is flagged as waste.</div>`
+      :`<div style="font-size:10.5px;color:var(--t2)">No categorised spending in the window. If transactions imported but categories did not, run Catch up — categories sync separately and the classification depends on them.</div>`}
+    </div>`;
+  }
+
   // ── Month by month ──
   h+=`<div class="tw" style="max-height:none"><table style="font-size:11px">
     <thead><tr><th style="text-align:left">Month</th><th>Spending</th><th>Income</th><th>Net</th><th>Transfers</th><th>Card pmts</th><th>Invested</th><th>Rows</th></tr></thead>
@@ -2974,7 +3030,7 @@ function renderHousingTab(R,P){
             ${[1,2,3,4].map(x=>`<option value="${x}"${quarter===x?' selected':''}>Q${x}</option>`).join('')}</select></label>
         <label style="font-size:10px;color:var(--t2)">Tender cap
           <select onchange="afSet2('cap',this.value)" style="margin-left:5px;font-size:10px;padding:3px 6px;border:1px solid var(--bd);border-radius:5px;background:var(--s1);color:var(--tx);font-family:inherit">
-            ${[['none','Not capped'],[100000,'$100K'],[250000,'$250K'],[500000,'$500K'],[1000000,'$1M']].map(([v,l])=>`<option value="${v}"${String(_afTenderCap??'none')===String(v)?' selected':''}>${l}</option>`).join('')}</select></label>
+            ${[['none','Uncapped (confirmed)'],[100000,'Stress $100K'],[250000,'Stress $250K'],[500000,'Stress $500K'],[1000000,'Stress $1M']].map(([v,l])=>`<option value="${v}"${String(_afTenderCap??'none')===String(v)?' selected':''}>${l}</option>`).join('')}</select></label>
         <label style="font-size:10px;color:var(--t2)">Income pause
           <select onchange="afSet2('pause',this.value)" style="margin-left:5px;font-size:10px;padding:3px 6px;border:1px solid var(--bd);border-radius:5px;background:var(--s1);color:var(--tx);font-family:inherit">
             ${[0,3,6,12].map(m=>`<option value="${m}"${_afPauseMonths===m?' selected':''}>${m?m+' months':'none'}</option>`).join('')}</select></label>
@@ -2996,9 +3052,9 @@ function renderHousingTab(R,P){
     // ── Downside and the assumption that flips it ──
     const scenarios=[
       ['As planned',{},0],
-      ['Tender capped at $250K',{stripeTenderCapPerEvent:250000},0],
+      ['Stress: tender capped at $250K',{stripeTenderCapPerEvent:250000},0],
       ['6 months without income',{},6],
-      ['Both together',{stripeTenderCapPerEvent:250000},6],
+      ['Stress: both together',{stripeTenderCapPerEvent:250000},6],
     ].map(([label,cp,pause])=>{
       const pc=pause>0&&buyRow?buyRow.totE/12*pause:0;
       const oc=Math.max(0,(prev?prev.liq:0)-floor-pc);
@@ -3014,7 +3070,7 @@ function renderHousingTab(R,P){
         <span style="font-weight:700;color:${sc.r.fundable?'var(--g)':'var(--r)'};min-width:96px;text-align:right">${sc.r.fundable?'fundable':'short '+fmtF(Math.round(sc.r.shortfall))}</span>
       </div>`).join('')}
       <div style="font-size:9.5px;color:var(--t3);margin-top:9px;line-height:1.55">
-        <strong style="color:var(--tx)">The assumption that matters most:</strong> whether tenders cap how much you may sell. You have not confirmed one, so none is modelled — but a cap at or below ${fmtF(500000)} turns this purchase from comfortably funded into short. Worth confirming before committing to a date.
+        <strong style="color:var(--tx)">Confirmed:</strong> tenders are uncapped, so participation is limited only by vested stock — which is why this purchase funds comfortably. The capped rows above are a stress test, not a live risk. The assumption still worth watching is <strong style="color:var(--tx)">timing</strong>: a close between the Q1 and Q4 windows leans on cash raised earlier, so the closing quarter matters more than the annual total suggests.
       </div>
     </div>`;
   }

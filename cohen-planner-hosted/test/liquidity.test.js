@@ -27,15 +27,16 @@ describe('sale windows', () => {
     expect(total).toBe(80000);
   });
 
-  it('models no tender cap when none has been confirmed, and says so', () => {
+  it('leaves tenders uncapped, as confirmed, limited only by vested stock', () => {
     const t = L.saleWindows(2030, ctx, P).find(w => w.kind === 'tender');
-    expect(t.cap).toBeGreaterThan(1000000);          // limited only by eligible stock
-    expect(t.note).toMatch(/no participation cap has been confirmed/i);
+    expect(t.cap).toBeGreaterThan(1000000);
+    expect(t.note).toMatch(/uncapped, limited only by vested stock/i);
   });
 
-  it('honours a cap once one is supplied', () => {
+  it('still honours a cap when one is set as a stress test', () => {
     const t = L.saleWindows(2030, ctx, { stripeTenderCapPerEvent: 250000 }).find(w => w.kind === 'tender');
     expect(t.cap).toBe(250000);
+    expect(t.note).toMatch(/stress test/i);
   });
 
   it('opens everything once a liquidity event is modelled', () => {

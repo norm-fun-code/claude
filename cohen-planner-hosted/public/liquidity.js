@@ -11,9 +11,9 @@
 //   • A standing election converts part of the grant to cash at $20K per quarter,
 //     roughly $80K a year, available in every quarter rather than only tender windows.
 //
-// Everything else is modelled as an assumption and labelled as one. In particular the model
-// applies NO cap on how much may be sold into a tender, because the user has not stated one
-// — an invented cap would silently understate what is fundable.
+//   • Tenders are NOT capped — confirmed by the user. Participation is limited only by how
+//     much stock has actually vested, which is what the model enforces.
+// A cap remains settable purely as a stress test; it is not an unknown being papered over.
 
 (function(root){
 
@@ -23,7 +23,7 @@
     tenderQuarters:[1,4],           // confirmed: Q1 and Q4
     electiveCashPerQuarter:20000,   // confirmed: standing quarterly cash election
     electiveCashAnnualCap:80000,    // confirmed: about $80K a year in total
-    tenderCapPerEvent:null,         // unknown — null means "no cap modelled", not "no cap exists"
+    tenderCapPerEvent:null,         // confirmed: no cap. Settable only to stress-test the plan.
     liquidityFromYear:null,         // optional: a year from which stock becomes freely sellable
   };
 
@@ -64,8 +64,8 @@
         const cap=c.tenderCapPerEvent==null?eligible:Math.min(eligible,c.tenderCapPerEvent);
         out.push({quarter:q,kind:'tender',cap,
           note:c.tenderCapPerEvent==null
-            ?'tender window — no participation cap has been confirmed, so none is modelled'
-            :`tender window — capped at ${c.tenderCapPerEvent} per event`});
+            ?'tender window — uncapped, limited only by vested stock'
+            :`tender window — stress test: capped at ${usd(c.tenderCapPerEvent)} per event`});
       }
       // The elective cash-out runs in every quarter, including tender quarters, but the
       // annual cap is shared across all four.
