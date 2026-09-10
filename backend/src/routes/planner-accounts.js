@@ -21,7 +21,7 @@ function createPlannerAccountsRouter({
       try {
         const accounts = await api.getAccounts(token);
         const next = makeSnapshot(accounts, {asOf:new Date(now()).toISOString()});
-        if (!next) throw new Error('invalid_accounts');
+        if (!next) throw new Error('invalid_accounts; count=' + accounts.length + '; unnamed=' + accounts.filter(a=>!a.displayName&&!a.name).length + '; missingBalance=' + accounts.filter(a=>a.currentBalance==null).length);
         await db.query("INSERT INTO sources (id,domain,display_name) VALUES ('monarch','wealth','Monarch') ON CONFLICT (id) DO NOTHING");
         await publish(next);
         snapshot = next; lastFailure = null;
@@ -30,7 +30,8 @@ function createPlannerAccountsRouter({
         const status = e.response?.status;
         warning = status === 401 ? 'Monarch session expired in NormOS.' : status === 429 ? 'Monarch is rate-limiting NormOS. Last-good balances retained.' : 'NormOS could not refresh Monarch accounts.';
         lastFailure = warning; retryAt = now() + ttl;
-        console.warn('[planner-bridge] account refresh failed; status=' + (Number.isInteger(status) ? status : 'unavailable'));
+        const reason = String(e.message || e.code || 'unknown').split(token).join('[redacted]').replace(/Bearer\s+\S+/gi, 'Bearer [redacted]').slice(0,400);
+        console.warn('[planner-bridge] account refresh failed; status=' + (Number.isInteger(status) ? status : 'unavailable') + '; reason=' + reason);
       }
     }
     if (!snapshot) throw new Error(warning || 'Waiting for a successful Monarch account sync in NormOS.');
