@@ -143,9 +143,13 @@ describe('Stripe appreciation', () => {
     const slow = run({ ...P, stripePolicy: 'retain', stripeLongTermReturn: 0.02 }).R;
     const fast = run({ ...P, stripePolicy: 'retain', stripeLongTermReturn: 0.20 }).R;
     expect(fast[fast.length - 1].sEnd).toBeGreaterThan(slow[slow.length - 1].sEnd * 5);
-    // investReturn must not move Stripe when nothing is drawn from the diversified pool
-    const a = run({ ...P, stripePolicy: 'retain', investReturn: 0.03 }).R;
-    const b = run({ ...P, stripePolicy: 'retain', investReturn: 0.09 }).R;
+    // investReturn must not move Stripe in a plan that never reaches the reserve floor
+    // (once it does, the two are legitimately coupled through the funding waterfall).
+    const rich = { ...P, stripePolicy: 'retain', startingLiquid: 9000000 };
+    const a = run({ ...rich, investReturn: 0.03 }).R;
+    const b = run({ ...rich, investReturn: 0.09 }).R;
+    expect(a[10].sHold).toBe(0);
+    expect(b[10].sHold).toBe(0);
     expect(a[10].sEnd).toBe(b[10].sEnd);
   });
 
@@ -202,15 +206,59 @@ describe('cash waterfall', () => {
     expect(r.sold).toBeGreaterThan(0);              // only then the portfolio
   });
 
-  it('pre-existing Stripe is never sold automatically, even in a severe crunch', () => {
-    const broke = { ...P, startingStripeEquity: 3000000, startingLiquid: 50000 };
-    for (let i = 0; i < 11; i++) { broke['normCashY' + i] = 60000; broke['normStockY' + i] = 10000; }
+  it('held Stripe is left alone while the portfolio is above its reserve floor', () => {
+    const { R } = run({ ...P, startingStripeEquity: 3000000, liquidReserveFloor: 500000 });
+    // Early years: the vest covers the gap, the pool is well clear of the floor.
+    for (const r of R.slice(0, 4)) {
+      expect(r.sHold).toBe(0);
+      expect(r.sGainTax).toBe(0);
+      expect(r.liq).toBeGreaterThan(500000);
+    }
+  });
+
+  it('once the floor is reached, held Stripe funds the gap instead of breaching it', () => {
+    const floor = 500000;
+    const buying = { ...P, homePurchaseYear: 2030, startingStripeEquity: 3000000, liquidReserveFloor: floor };
+    const { R } = run(buying);
+    const r = R.find(x => x.yr === 2030);
+    expect(r.sSold).toBe(r.normStock);          // whole vest first
+    expect(r.liq).toBeCloseTo(floor, 0);        // pool stops exactly on the floor
+    expect(r.sHold).toBeGreaterThan(0);         // held shares cover the rest
+    // and the floor holds for the whole projection while shares remain
+    for (const x of R) expect(x.liq).toBeGreaterThanOrEqual(floor - 1);
+  });
+
+  it('selling held shares realises capital gains, unlike selling at vest', () => {
+    const buying = { ...P, homePurchaseYear: 2030, startingStripeEquity: 3000000, liquidReserveFloor: 500000 };
+    const r = run(buying).R.find(x => x.yr === 2030);
+    expect(r.sGainTax).toBeGreaterThan(0);
+    expect(r.sGainTax).toBeLessThan(r.sHold * P.capGainsTaxRate); // only the gain, not the whole sale
+    // A plan with no appreciation to realise owes nothing on the same sale.
+    const flat = { ...buying, stripeLongTermReturn: 0, stripeStartingBasisPct: 1 };
+    for (let i = 0; i < 10; i++) flat['stripeRetY' + i] = 0;
+    const f = run(flat).R.find(x => x.yr === 2030);
+    expect(f.sHold).toBeGreaterThan(0);
+    expect(f.sGainTax).toBe(0);
+  });
+
+  it('a raised floor forces held shares to be sold sooner', () => {
+    const mk = floor => run({ ...P, homePurchaseYear: 2030, startingStripeEquity: 3000000, liquidReserveFloor: floor });
+    expect(mk(1500000).tSHold).toBeGreaterThan(mk(200000).tSHold);
+  });
+
+  it('a negative pool does not compound at the portfolio return', () => {
+    // Everything exhausted: no equity to fall back on and a floor of zero.
+    const broke = { ...P, startingStripeEquity: 0, startingLiquid: 50000, liquidReserveFloor: 0, investReturn: 0.09 };
+    for (let i = 0; i < 11; i++) { broke['normCashY' + i] = 60000; broke['normStockY' + i] = 0; }
     const { R } = run(broke);
-    const sr = broke.stripeLongTermReturn;
-    // The legacy block compounds untouched: year 1 is exactly its full-year return
-    // plus whatever little was retained from that year's vest.
-    expect(R[0].sEnd).toBeGreaterThanOrEqual(Math.round(3000000 * (1 + sr)));
-    expect(R[5].liq).toBeLessThan(0);               // the plan goes underwater instead
+    const under = R.filter(r => r.liq < 0);
+    expect(under.length).toBeGreaterThan(0);
+    // Each year's decline is the funding shortfall alone — never shortfall + interest on
+    // an overdraft that the model would otherwise accrue at the portfolio's own return.
+    for (let i = 1; i < under.length; i++) {
+      const prev = under[i - 1], cur = under[i];
+      expect(Math.abs(cur.liq - (prev.liq - cur.sold * (1 + 0.09 / 2)))).toBeLessThanOrEqual(1.5);
+    }
   });
 
   it('the down payment is part of the cash need, so vesting stock helps fund it', () => {

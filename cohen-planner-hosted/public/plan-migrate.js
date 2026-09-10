@@ -68,6 +68,9 @@
     // Never auto-populate Stripe equity: every existing plan already carries its whole net
     // worth inside startingLiquid, so seeding this from a synced balance would double-count.
     if(out.startingStripeEquity===undefined)out.startingStripeEquity=0;
+    // The floor graduated from a single policy's setting to the reserve the whole funding
+    // waterfall defends, so it is no longer Stripe-specific. Carry the old value forward.
+    if(out.liquidReserveFloor===undefined)out.liquidReserveFloor=out.stripeLiquidFloor??500000;
     if(needsReview)out.normSplitNeedsReview=1;
     return out;
   }

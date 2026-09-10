@@ -1166,10 +1166,10 @@ Beyond Y10 each stream compounds on its own: cash at normGrowth, stock at normSt
 STRIPE EQUITY KEYS — a pool entirely separate from the diversified portfolio:
 • startingStripeEquity — Stripe already owned at the start of the plan. startingLiquid is the diversified, NON-Stripe pool. They never overlap; moving money between them is a reclassification the user performs, not something you should silently assume.
 • stripePolicy — how much of each year's vest is sold for cash. One of: "deficit" (sell only enough to close that year's cash gap — the default), "floor" (sell enough to keep diversified liquid at/above stripeLiquidFloor), "pct" (sell stripeSellPct of every vest), "retain" (keep everything unless the plan would go insolvent), "sell" (treat all vesting stock as pay). This is a STRING value, not a number — pass it as text.
-• stripeLiquidFloor — the diversified balance the "floor" policy defends. stripeSellPct — the share sold under "pct" (0-1).
+• liquidReserveFloor — the diversified balance the funding waterfall defends. When a year's vest can't close the gap, the order is: sell that year's vest → draw the portfolio down to this floor and no further → sell Stripe shares he ALREADY HOLDS → only if all three are exhausted does the portfolio go below the floor. stripeSellPct — the share sold under "pct" (0-1).
 • stripeRetY0 … stripeRetY9 — Stripe's assumed annual return for each of the next 10 years; stripeLongTermReturn applies after that. These are the user's assumptions, not forecasts — if he asks "what if Stripe grows 25% through 2029 then 10%", set the specific years and the long-term rate.
 • investReturn applies ONLY to the diversified portfolio. It never touches Stripe.
-Selling newly vested stock costs no additional tax (basis = vest-date value; the W-2 tax was already paid). Only appreciation above basis could ever be a capital gain, and the model never auto-sells previously retained or pre-existing Stripe. Net worth = diversified liquid + Stripe equity + home equity.
+Selling newly vested stock costs no additional tax (basis = vest-date value; the W-2 tax was already paid). Selling shares held from an earlier year DOES realise a capital gain on appreciation above basis, so defending a higher liquidReserveFloor can cost real tax. Net worth = diversified liquid + Stripe equity + home equity.
 
 Other editable keys: homePrice, downPctg, mortgageRate, homePurchaseYear, propTaxRate, investReturn, startingLiquid, expenseInflation, normGrowth, normStockGrowth, nancyHourlyRate, nancyMaxClients, nancyRampClients, nancyRampYear, nancyRampYears, nancyWeeksPerYear, pretax401k, mcVol, tuitionInflation, homeAppreciation, capGainsTaxRate, numKids, planStartYear.
 
@@ -1250,6 +1250,9 @@ You also have monarch_* tools to read Norm's REAL Monarch Money data (accounts, 
                 lifetimeStripeVested: proj.tSNew,
                 lifetimeStripeSoldForCash: proj.tSSold,
                 lifetimeStripeRetained: proj.tSRet,
+                lifetimeHeldSharesSold: proj.tSHold,
+                lifetimeStripeGainsTax: proj.tSGainTax,
+                minLiquid: Math.min(...R.map(r => r.liq)),
                 worstCashGap: Math.max(...R.map(r => r.gap || 0)),
               };
             } catch (e) {

@@ -197,7 +197,7 @@ function stripeSellAmount(p,newStock,netCash,liqGrown,ret,td){
     // "Retain all" still sells if the diversified pool would otherwise go negative —
     // holding stock while the checking account overdrafts isn't a real-world option.
     case 'retain': return clamp(sellForFloor(0));
-    case 'floor':  return clamp(sellForFloor(p.stripeLiquidFloor??500000));
+    case 'floor':  return clamp(sellForFloor(p.liquidReserveFloor??p.stripeLiquidFloor??500000));
     // Fixed % carries the same solvency backstop, so a low % can't silently bankrupt the
     // plan while a year's worth of sellable stock sits untouched.
     case 'pct':    return clamp(Math.max(newStock*(p.stripeSellPct??0.3),sellForFloor(0)));
@@ -221,7 +221,7 @@ function run(p,rets){
   // taxable gain. Pre-existing holdings default to basis = value for the same reason.
   let stripeVal=p.startingStripeEquity||0;
   let stripeBasis=stripeVal*(p.stripeStartingBasisPct??1);
-  let tSNew=0,tSSold=0,tSRet=0;
+  let tSNew=0,tSSold=0,tSRet=0,tSHold=0,tSGainTax=0;
   const R=[];
   for(let yr=sy;yr<=ey;yr++){
     const nk=kids.filter(k=>yr>=k).length;
@@ -297,25 +297,52 @@ function run(p,rets){
     const netCash=surp-dpThis;
     const sr=stripeReturn(p,yIdx);
     const gp=1-p.costBasisPct,td=gp*p.capGainsTaxRate;
-    const liqGrown=liq*(1+ret);
+    // A negative balance is an unfunded shortfall, not a leveraged position. Compounding it
+    // at the portfolio's expected return would model an unlimited margin loan accruing at
+    // the same rate the portfolio is assumed to earn, so it stays flat instead.
+    const liqGrown=liq>0?liq*(1+ret):liq;
     const stripeSold=Math.max(0,Math.min(normStock,stripeSellAmount(p,normStock,netCash,liqGrown,ret,td)));
     const stripeRetained=Math.max(0,normStock-stripeSold);
-    // Selling at vest is untaxed here by design: basis = vest FMV, and the ordinary W2 tax
-    // on that stock was already assessed above. Only the DIVERSIFIED pool carries the
-    // generic cost-basis/cap-gains gross-up when it has to be drawn down.
-    let txS=0,sold=0,netFlow=netCash+stripeSold;
-    if(netFlow<0){const def=-netFlow,gs=def/(1-td);txS=gs-def;sold=gs;netFlow=-gs}
+    // ── Stripe equity roll-forward (growth only; any forced sale is applied below) ──
+    const stripeBegin=stripeVal;
+    let stripeEnd=stripeBegin*(1+sr)                // held all year → full year's return
+                 +stripeRetained*stripeVestFactor(sr); // quarterly vests → partial year
+    const stripeAppr=stripeEnd-stripeBegin-stripeRetained; // pure growth, before any sale
+    let stripeBasisEnd=stripeBasis+stripeRetained;  // RSU basis is vest-date FMV
+    // ── Funding waterfall for whatever this year's vest could not cover ──
+    // Diversified pool first, but only down to the reserve floor; then Stripe holdings;
+    // and only if those are exhausted too does the pool go below the floor.
+    let txS=0,sold=0,holdSold=0,holdTax=0,netFlow=netCash+stripeSold;
+    if(netFlow<0){
+      let need=-netFlow; // net cash still required after the vest
+      const floor=Math.max(0,p.liquidReserveFloor??p.stripeLiquidFloor??500000);
+      // Gross sale that lands the pool exactly on the floor, under the same half-year
+      // convention applied below. Selling from the pool is grossed up for cap-gains tax.
+      const roomToFloor=Math.max(0,(liqGrown-floor)/(1+ret/2));
+      const fromLiq=Math.min(need/(1-td),roomToFloor);
+      sold=fromLiq;txS=fromLiq*td;need-=fromLiq*(1-td);
+      // Selling shares held from a PRIOR year does realise a gain — unlike a vest-date sale,
+      // where basis equals the sale price. Only appreciation above basis is taxed.
+      if(need>1e-6&&stripeEnd>1e-6){
+        const gainFrac=Math.max(0,(stripeEnd-stripeBasisEnd)/stripeEnd);
+        const rate=gainFrac*p.capGainsTaxRate;
+        const grossS=Math.min(need/(1-rate),stripeEnd);
+        holdSold=grossS;holdTax=grossS*rate;
+        stripeBasisEnd*=Math.max(0,1-grossS/stripeEnd);
+        stripeEnd-=grossS;
+        need-=grossS*(1-rate);
+      }
+      // Nothing left to sell: the pool breaches the floor, and can go negative. That is a
+      // genuinely insolvent plan, and the UI calls it out rather than hiding it.
+      if(need>1e-6){const extra=need/(1-td);sold+=extra;txS+=extra*td;}
+      netFlow=-sold; // Stripe proceeds fund expenses directly; they never enter the pool
+    }
     // Half-year convention: prior balance compounds a full year, this year's net
     // flow (surplus, withdrawals, down payment) earns ~half a year of return.
     liq=liqGrown+netFlow*(1+ret/2);tTx+=txS;tS+=sold;
-    // ── Stripe equity roll-forward ──
-    const stripeBegin=stripeVal;
-    const stripeEnd=stripeBegin*(1+sr)              // held all year → full year's return
-                   +stripeRetained*stripeVestFactor(sr); // quarterly vests → partial year
-    const stripeAppr=stripeEnd-stripeBegin-stripeRetained;
-    stripeVal=stripeEnd;
-    stripeBasis+=stripeRetained; // RSU basis is vest-date FMV
+    stripeVal=stripeEnd;stripeBasis=stripeBasisEnd;
     tSNew+=normStock;tSSold+=stripeSold;tSRet+=stripeRetained;
+    tSHold+=holdSold;tSGainTax+=holdTax;
     let hv=0,mb=0,eq=0;
     // yo = years of ownership elapsed. 0 in the purchase year itself (just closed,
     // no appreciation/paydown yet) — matches the property-tax calc above and the
@@ -334,12 +361,14 @@ function run(p,rets){
       // reported sold + retained always adds back to the reported vest (post-window comp
       // is fractional, and three separate roundings can otherwise drift a dollar apart).
       sRet:Math.round(normStock)-Math.round(stripeSold),
+      sHold:Math.round(holdSold),sGainTax:Math.round(holdTax),
       sAppr:Math.round(stripeAppr),sEnd:Math.round(stripeVal),
       sBasis:Math.round(stripeBasis),sRate:sr,sPct:nw>0?stripeVal/nw:0,
       nw:Math.round(nw),k401:Math.round(k401),kiy,nk});
   }
   return{R,tT:Math.round(tT),tC:Math.round(tC),tTx:Math.round(tTx),tS:Math.round(tS),am,dp,mm:am/12,
     tSNew:Math.round(tSNew),tSSold:Math.round(tSSold),tSRet:Math.round(tSRet),
+    tSHold:Math.round(tSHold),tSGainTax:Math.round(tSGainTax),
     stripeEnd:Math.round(stripeVal),stripeBasis:Math.round(stripeBasis),
     stripeAppr:Math.round(stripeVal-stripeBasis)};
 }

@@ -498,7 +498,7 @@ const D={
   stripeRetY0:.15,stripeRetY1:.15,stripeRetY2:.12,stripeRetY3:.12,stripeRetY4:.10,
   stripeRetY5:.10,stripeRetY6:.09,stripeRetY7:.09,stripeRetY8:.08,stripeRetY9:.08,
   stripeLongTermReturn:.08,
-  stripePolicy:'deficit',stripeLiquidFloor:500000,stripeSellPct:.30,
+  stripePolicy:'deficit',liquidReserveFloor:500000,stripeSellPct:.30,
   pretax401k:23500,pretaxBenefits:11700,
   company401kMatch:8750,
   // Nancy — 4 rolling specific W2 years (ignored once yr >= nancyRampYear)
@@ -851,8 +851,8 @@ function toggleInflation(){inflationView=!inflationView;const b=document.getElem
 // ═══ CSV EXPORT ═══
 function exportCSV(){
   const{R}=run(P);
-  const cols=['Year','Norm Cash','Norm Stripe Stock','Norm Total W2','Nancy Gross','Total Gross','All-in Tax','Eff Rate %','Cash Available','Housing','Living','Childcare','Tuition','Total Expenses','Operating Surplus','Cash Gap','Stripe Vested','Stripe Sold For Cash','Stripe Retained','Stripe Appreciation','Stripe Equity','Portfolio Sold','Tax on Portfolio Sales','Liquid (ex-Stripe)','Home Equity','Net Worth','Stripe % of NW','401k'];
-  const rows=R.map(r=>[r.yr,r.normCash,r.normStock,r.normG,r.nancyG,r.gross,r.tax,(r.effRate*100).toFixed(2),r.inc,r.h,r.liv,r.cc,r.tu,r.totE,r.surp,r.gap,r.sNew,r.sSold,r.sRet,r.sAppr,r.sEnd,r.sold,r.txS,r.liq,r.eq,r.nw,(r.sPct*100).toFixed(1),r.k401]);
+  const cols=['Year','Norm Cash','Norm Stripe Stock','Norm Total W2','Nancy Gross','Total Gross','All-in Tax','Eff Rate %','Cash Available','Housing','Living','Childcare','Tuition','Total Expenses','Operating Surplus','Cash Gap','Stripe Vested','Stripe Sold For Cash','Stripe Retained','Stripe Held Shares Sold','Stripe Gains Tax','Stripe Appreciation','Stripe Equity','Portfolio Sold','Tax on Portfolio Sales','Liquid (ex-Stripe)','Home Equity','Net Worth','Stripe % of NW','401k'];
+  const rows=R.map(r=>[r.yr,r.normCash,r.normStock,r.normG,r.nancyG,r.gross,r.tax,(r.effRate*100).toFixed(2),r.inc,r.h,r.liv,r.cc,r.tu,r.totE,r.surp,r.gap,r.sNew,r.sSold,r.sRet,r.sHold,r.sGainTax,r.sAppr,r.sEnd,r.sold,r.txS,r.liq,r.eq,r.nw,(r.sPct*100).toFixed(1),r.k401]);
   const csv=[cols.join(','),...rows.map(r=>r.join(','))].join('\n');
   const blob=new Blob([csv],{type:'text/csv'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
@@ -1224,8 +1224,9 @@ function buildControls(){
     [['deficit','Cover cash deficit (default)'],['floor','Maintain a liquid floor'],['pct','Sell a fixed %'],['retain','Retain all'],['sell','Sell all at vest']]
       .map(([v,l])=>`<option value="${v}"${(P.stripePolicy||'deficit')===v?' selected':''}>${l}</option>`).join('')}</select>`;
   stripeBody+=`<div style="font-size:7.5px;color:var(--t3);line-height:1.5;margin-bottom:5px">${STRIPE_POLICY_HELP[P.stripePolicy||'deficit']}</div>`;
-  if((P.stripePolicy||'deficit')==='floor')stripeBody+=sTxt('Minimum liquid reserve','stripeLiquidFloor');
   if(P.stripePolicy==='pct')stripeBody+=s('Sell % of each vest','stripeSellPct',0,1,.05,v=>(v*100).toFixed(0)+'%');
+  stripeBody+=sTxt('Liquid reserve floor','liquidReserveFloor');
+  stripeBody+=`<div style="font-size:7.5px;color:var(--t3);line-height:1.5;margin-bottom:5px">If a year's vest can't close the gap, the portfolio is drawn down to here — and no further. Below the floor, Stripe shares you already hold are sold instead (which does realise capital gains on their appreciation).</div>`;
   h+=ST('◆ Stripe Equity','stripe',stripeBody);
 
   // Nancy income
@@ -1317,7 +1318,7 @@ async function confirmRollForward(overlay,curYear,nextYear){
   showToast(`✓ Rolled forward to ${nextYear}`,'green');
 }
 
-const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,childcareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normGrowth:v=>(v*100).toFixed(1)+'%',normStockGrowth:v=>(v*100).toFixed(1)+'%',startingStripeEquity:fmtF,stripeLiquidFloor:fmtF,stripeSellPct:v=>(v*100).toFixed(0)+'%',stripeLongTermReturn:v=>(v*100).toFixed(0)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo'};
+const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,childcareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normGrowth:v=>(v*100).toFixed(1)+'%',normStockGrowth:v=>(v*100).toFixed(1)+'%',startingStripeEquity:fmtF,liquidReserveFloor:fmtF,stripeSellPct:v=>(v*100).toFixed(0)+'%',stripeLongTermReturn:v=>(v*100).toFixed(0)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo'};
 for(let i=0;i<11;i++){SF['normCashY'+i]=fmtF;SF['normStockY'+i]=fmtF}
 for(let i=0;i<10;i++)SF['stripeRetY'+i]=v=>(v*100).toFixed(0)+'%';
 
@@ -1703,7 +1704,7 @@ function renderStripeTab(R,P){
   const yr=(_stripeYear&&R.some(r=>r.yr===_stripeYear))?_stripeYear:sy;
   const row=R.find(r=>r.yr===yr)||R[0];
   const last=R[R.length-1];
-  const tot=R.reduce((a,r)=>({n:a.n+r.sNew,s:a.s+r.sSold,k:a.k+r.sRet}),{n:0,s:0,k:0});
+  const tot=R.reduce((a,r)=>({n:a.n+r.sNew,s:a.s+r.sSold,k:a.k+r.sRet,h:a.h+(r.sHold||0),gt:a.gt+(r.sGainTax||0)}),{n:0,s:0,k:0,h:0,gt:0});
   const basis=last.sBasis,appr=last.sEnd-basis;
   const V='#6772e5';
   const hasAny=tot.n>0||(P.startingStripeEquity||0)>0;
@@ -1746,6 +1747,12 @@ function renderStripeTab(R,P){
     ${tile('Projected value · end '+yr,fmt(row.sEnd),'after '+(row.sRate*100).toFixed(0)+'% assumed return',V)}
     ${tile('Stripe % of net worth',(row.sPct*100).toFixed(0)+'%',fmt(row.sEnd)+' of '+fmt(row.nw),row.sPct>0.5?'#cd3d64':V)}
   </div>`;
+  if(row.sHold>0){
+    h+=`<div class="sc" style="margin-bottom:12px;border-color:rgba(103,114,229,.3)">
+      <h3>◆ Held shares sold in ${yr}</h3>
+      <p style="line-height:1.6">This year's vest and the portfolio (down to its ${fmt(P.liquidReserveFloor??500000)} reserve floor) still left ${fmt(row.gap-row.sSold)} uncovered, so <strong style="color:#6772e5">${fmt(row.sHold)}</strong> of Stripe you already held was sold — realising <strong>${fmt(row.sGainTax)}</strong> of capital-gains tax on its appreciation above basis. Unlike selling at vest, this is a real taxable event.</p>
+    </div>`;
+  }
 
   // ── Waterfall ──
   if(row.sNew>0){
@@ -1774,7 +1781,8 @@ function renderStripeTab(R,P){
     ${tile('Total sold for cash',fmt(tot.s),tot.n>0?(tot.s/tot.n*100).toFixed(0)+'% of everything vested':'—','#cd3d64')}
     ${tile('Total retained',fmt(tot.k),'at vest-date value','#1a8754')}
     ${tile('Cumulative appreciation',fmt(appr),'above '+fmt(basis)+' of basis',V)}
-    ${tile('Tax on Stripe gains',fmt(0),'nothing retained is ever auto-sold','var(--t3)')}
+    ${tile('Sold from holdings',fmt(tot.h),tot.h>0?'to defend the liquid floor':'never needed','#cd3d64')}
+    ${tile('Tax on Stripe gains',fmt(tot.gt),tot.gt>0?'realised on held shares sold':'no held shares ever sold','var(--t3)')}
     ${tile('Stripe at '+last.yr,fmt(last.sEnd),(last.sPct*100).toFixed(0)+'% of net worth',V)}
   </div>`;
 
@@ -1787,8 +1795,8 @@ function renderStripeTab(R,P){
     const worst=R.reduce((a,b)=>b.liq<a.liq?b:a);
     h+=`<div class="sc" style="margin-bottom:12px;border-color:rgba(205,61,100,.45);background:rgba(205,61,100,.06)">
       <h3 style="color:#cd3d64">⚠️ The plan runs out of spendable money</h3>
-      <p style="line-height:1.6">Diversified liquid goes negative in <strong>${broke.length}</strong> ${broke.length===1?'year':'years'}, bottoming at <strong>${fmt(worst.liq)}</strong> in ${worst.yr} — while ${fmt(worst.sEnd)} of Stripe equity sits untouched.
-      <br><br>By design the model only ever sells <em>newly vesting</em> stock; it never liquidates shares you already hold. A real household in this position would sell some. Treat the negative balance as a signal, not a forecast: raise cash comp, cut spending, or switch the retention policy to <em>Sell a fixed %</em> or <em>Sell all at vest</em>.</p>
+      <p style="line-height:1.6">Diversified liquid goes negative in <strong>${broke.length}</strong> ${broke.length===1?'year':'years'}, bottoming at <strong>${fmt(worst.liq)}</strong> in ${worst.yr}.
+      <br><br>This only happens once the vest, the portfolio and every Stripe share you hold have all been exhausted — so it is genuine insolvency, not a modelling artefact. Raise cash comp, cut spending, or move the home purchase.</p>
     </div>`;
   }
 
@@ -1800,12 +1808,14 @@ function renderStripeTab(R,P){
   }
 
   // ── Auditable year-by-year ledger ──
-  h+=`<div class="tw"><table><thead><tr>${['Year','Beginning','New equity','Sold for cash','Appreciation','Ending','% of NW','Return'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${
+  h+=`<div class="tw"><table><thead><tr>${['Year','Beginning','New equity','Vest sold','Held sold','Gains tax','Appreciation','Ending','% of NW','Return'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${
     R.map(r=>`<tr style="background:${r.yr===yr?'rgba(103,114,229,.07)':''}">
       <td style="font-weight:700;color:var(--tx)">${r.yr}</td>
       <td>${fmt(r.sBeg)}</td>
       <td style="color:${V}">${r.sNew>0?fmt(r.sNew):'—'}</td>
       <td style="color:${r.sSold>0?'#cd3d64':'var(--t3)'}">${r.sSold>0?fmt(r.sSold):'—'}</td>
+      <td style="color:${r.sHold>0?'#cd3d64':'var(--t3)'};font-weight:${r.sHold>0?600:400}">${r.sHold>0?fmt(r.sHold):'—'}</td>
+      <td style="color:${r.sGainTax>0?'var(--r)':'var(--t3)'}">${r.sGainTax>0?fmt(r.sGainTax):'—'}</td>
       <td style="color:${r.sAppr>=0?'var(--g)':'var(--r)'}">${r.sAppr>=0?'+':'−'}${fmt(Math.abs(r.sAppr))}</td>
       <td style="color:${V};font-weight:600">${fmt(r.sEnd)}</td>
       <td>${(r.sPct*100).toFixed(0)}%</td>
@@ -3800,13 +3810,14 @@ STRIPE EQUITY — a SEPARATE pool from the diversified portfolio. Never conflate
 • Starting Stripe equity: ${fmt(P.startingStripeEquity||0)}  [key: startingStripeEquity]
 • Starting diversified (non-Stripe) liquid: ${fmt(P.startingLiquid)}  [key: startingLiquid]
 • Retention policy: ${P.stripePolicy||'deficit'} — ${STRIPE_POLICY_HELP[P.stripePolicy||'deficit']}  [key: stripePolicy, one of: deficit | floor | pct | retain | sell]
-${(P.stripePolicy||'deficit')==='floor'?`• Liquid floor being defended: ${fmt(P.stripeLiquidFloor??500000)}  [key: stripeLiquidFloor]`:''}${P.stripePolicy==='pct'?`• Fixed sell share: ${((P.stripeSellPct??.3)*100).toFixed(0)}%  [key: stripeSellPct]`:''}
+• Liquid reserve floor: ${fmt(P.liquidReserveFloor??500000)}  [key: liquidReserveFloor]. Funding order for any year the vest can't cover: sell this year's vest → draw the diversified portfolio down to this floor and NO further → sell Stripe shares he already holds (which DOES realise capital gains on appreciation above basis) → only if all three are exhausted does the portfolio go below the floor.
+${P.stripePolicy==='pct'?`• Fixed sell share: ${((P.stripeSellPct??.3)*100).toFixed(0)}%  [key: stripeSellPct]`:''}
 • Stripe return path ${planSY}-${planSY+9}: ${Array.from({length:10},(_,i)=>((P['stripeRetY'+i]??.08)*100).toFixed(0)+'%').join(' · ')}  [keys: stripeRetY0 .. stripeRetY9]
 • Long-term Stripe return beyond ${planSY+10}: ${((P.stripeLongTermReturn??.08)*100).toFixed(0)}%  [key: stripeLongTermReturn]
 • ${planSY} — vested ${fmt(y26.sNew)}, sold ${fmt(y26.sSold)} for cash, retained ${fmt(y26.sRet)}; ends the year at ${fmt(y26.sEnd)}
 • ${y58.yr} — Stripe equity ${fmt(y58.sEnd)}, which is ${(y58.sPct*100).toFixed(0)}% of net worth
 • Lifetime: ${fmt(totS.tSNew)} vested · ${fmt(totS.tSSold)} sold for cash · ${fmt(totS.tSRet)} retained · ${fmt(totS.stripeAppr)} cumulative appreciation above basis
-• Selling stock AT VEST costs no extra tax (basis = vest-date value; the W-2 tax was already paid). Only appreciation above basis would ever be a capital gain, and the plan never auto-sells previously retained or pre-existing Stripe.
+• Selling stock AT VEST costs no extra tax (basis = vest-date value; the W-2 tax was already paid). Selling shares held from an earlier year DOES realise a gain on the appreciation above basis — lifetime so far: ${fmt(totS.tSHold)} of held shares sold, costing ${fmt(totS.tSGainTax)} in capital-gains tax.
 • Net worth = diversified liquid + Stripe equity + home equity. ${planSY} split: ${fmt(y26.liq)} liquid / ${fmt(y26.sEnd)} Stripe / ${fmt(y26.eq)} home.
 
 HOME PURCHASE PLAN
