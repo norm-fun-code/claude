@@ -140,3 +140,65 @@ describe('holdings transport', () => {
     await expect(live.holdings({ startDate: 'a', endDate: 'b' })).rejects.toThrow(/direct Monarch connection/i);
   });
 });
+
+// ── Diagnostics ──────────────────────────────────────────────────────────
+describe('connection diagnostics', () => {
+  const make = (env, fetchImpl, dbData = {}) => createMonarchLive({
+    db: { query: async () => ({ rows: [{ data: dbData }] }) },
+    fetchImpl, env, now: () => Date.now(),
+  });
+  const find = (d, name) => d.checks.find(c => c.name === name);
+
+  it('names a missing token as the first thing to fix', async () => {
+    const d = await make({}, async () => { throw new Error('should not be called'); }).diagnose();
+    expect(find(d, 'MONARCH_TOKEN present').ok).toBe(false);
+    expect(d.ok).toBe(false);
+    // and stops there rather than reporting a cascade of downstream failures
+    expect(find(d, 'holdings query')).toBeUndefined();
+  });
+
+  it('reports a paused sync distinctly from a missing token', async () => {
+    const d = await make({ MONARCH_TOKEN: 't' }, async () => { throw new Error('nope'); }, { disabled: true }).diagnose();
+    expect(find(d, 'MONARCH_TOKEN present').ok).toBe(true);
+    expect(find(d, 'balance source').kind).toBe('info'); // descriptive, never a red X
+    expect(find(d, 'planner sync enabled').ok).toBe(false);
+    expect(find(d, 'planner sync enabled').detail).toMatch(/paused/i);
+  });
+
+  it('identifies a rejected token by status rather than calling it unreachable', async () => {
+    const d = await make({ MONARCH_TOKEN: 'bad' }, async () => ({ ok: false, status: 401, json: async () => ({}) })).diagnose();
+    const c = find(d, 'Monarch accepts the token');
+    expect(c.ok).toBe(false);
+    expect(c.detail).toMatch(/401/);
+    expect(c.detail).toMatch(/rejected or expired/i);
+  });
+
+  it('surfaces the upstream GraphQL message verbatim so a schema mismatch names its field', async () => {
+    const d = await make({ MONARCH_TOKEN: 't' }, async (u, o) => {
+      const b = JSON.parse(o.body);
+      if (b.query.includes('NormOS_AccountIds')) return { ok: true, status: 200, json: async () => ({ data: { accounts: [{ id: '1' }] } }) };
+      return { ok: true, status: 200, json: async () => ({ errors: [{ message: "Cannot query field 'basis' on type 'AggregateHolding'" }] }) };
+    }).diagnose();
+    expect(find(d, 'Monarch accepts the token').ok).toBe(true);
+    expect(find(d, 'holdings query').ok).toBe(false);
+    expect(find(d, 'holdings query').detail).toBeTruthy();
+  });
+
+  it('passes cleanly when everything works', async () => {
+    const d = await make({ MONARCH_TOKEN: 't' }, async (u, o) => {
+      const b = JSON.parse(o.body);
+      if (b.query.includes('NormOS_AccountIds')) return { ok: true, status: 200, json: async () => ({ data: { accounts: [{ id: '1' }] } }) };
+      if (b.query.includes('NormOS_Categories')) return { ok: true, status: 200, json: async () => ({ data: { categories: [{ id: '1', name: 'Groceries', group: { id: 'g', type: 'expense' } }] } }) };
+      if (b.query.includes('NormOS_Transactions')) return { ok: true, status: 200, json: async () => ({ data: { allTransactions: { totalCount: 42, results: [] } } }) };
+      return { ok: true, status: 200, json: async () => ({ data: { portfolio: { aggregateHoldings: { edges: [{ node: { totalValue: 100, basis: 50, security: { ticker: 'X', type: 'equity' } } }] } } } }) };
+    }).diagnose();
+    expect(d.ok).toBe(true);
+    expect(find(d, 'holdings query').detail).toMatch(/1 position/);
+    expect(find(d, 'transactions query').detail).toMatch(/42 transactions/);
+  });
+
+  it('never returns the token itself', async () => {
+    const d = await make({ MONARCH_TOKEN: 'super-secret-value' }, async () => ({ ok: false, status: 401, json: async () => ({}) })).diagnose();
+    expect(JSON.stringify(d)).not.toContain('super-secret-value');
+  });
+});

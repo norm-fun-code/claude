@@ -686,6 +686,35 @@ async function checkMonarchStatus(){
   }catch(e){const freshness=document.getElementById('monarchFreshness');if(freshness)freshness.textContent='Connection check unavailable';}
 }
 
+// Turns "it isn't populating" into a specific answer without needing server logs. Reports
+// which precondition failed — token, sync toggle, auth, or a rejected query — and shows the
+// upstream message verbatim so a schema mismatch names the field it choked on.
+async function runMonarchDiagnostics(){
+  const el=document.getElementById('monarchDiag');
+  if(el)el.innerHTML='<div style="font-size:11px;color:var(--t3);padding:10px">Checking…</div>';
+  let d;
+  try{
+    const r=await fetch('/api/monarch-diagnostics');
+    d=await r.json();
+  }catch(e){
+    if(el)el.innerHTML=`<div style="font-size:11px;color:var(--r);padding:10px">Diagnostics unreachable: ${advEscape(e.message)}</div>`;
+    return;
+  }
+  if(!el)return;
+  const rows=(d.checks||[]).map(c=>`<div style="display:flex;gap:8px;align-items:flex-start;padding:7px 10px;border-bottom:1px solid var(--bd)">
+    <span style="flex:none;color:${c.kind==='info'?'var(--t3)':c.ok?'var(--g)':'var(--r)'};font-weight:700">${c.kind==='info'?'·':c.ok?'✓':'✗'}</span>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:11px;font-weight:600;color:var(--tx)">${advEscape(c.name)}</div>
+      ${c.detail?`<div style="font-size:10px;color:var(--t2);margin-top:1px;word-break:break-word">${advEscape(String(c.detail))}</div>`:''}
+    </div></div>`).join('');
+  const firstFail=(d.checks||[]).find(c=>c.kind!=='info'&&!c.ok);
+  el.innerHTML=`<div class="glass-card" style="padding:12px 14px">
+    <div style="font-size:11px;font-weight:700;color:var(--tx);margin-bottom:8px">🩺 Monarch connection</div>
+    ${rows||'<div style="font-size:11px;color:var(--t3)">No checks returned.</div>'}
+    ${firstFail?`<div style="margin-top:10px;font-size:10.5px;color:var(--t2);line-height:1.55"><strong style="color:var(--tx)">First thing to fix:</strong> ${advEscape(firstFail.name)}. ${advEscape(String(firstFail.detail||''))}</div>`:'<div style="margin-top:10px;font-size:10.5px;color:var(--g)">Everything checks out — try loading again.</div>'}
+  </div>`;
+}
+
 async function loadMonarchInvestments(period){
   if(_investLoading)return; // prevent concurrent fetches causing jump/flicker
   if(period){_investPeriod=period;monarchInvestments=null;}
@@ -2035,8 +2064,10 @@ function renderPortfolioTab(R,P){
 
   if(monarchInvestments===false){
     ca.innerHTML=`<div style="padding:40px;text-align:center">
+      <div id="monarchDiag" style="max-width:620px;margin:0 auto 16px;text-align:left"></div>
       <div style="font-size:13px;font-weight:600;color:var(--tx);margin-bottom:6px">Couldn't load investments</div>
       <div style="font-size:11px;color:var(--t3);margin-bottom:14px">GetInvestments returned an error. Monarch may not have holdings data for your accounts.</div>
+      <button onclick="runMonarchDiagnostics()" style="padding:7px 14px;background:var(--s2);color:var(--t2);border:1px solid var(--bd);border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px;margin-right:6px">🩺 Diagnose connection</button>
       <button onclick="loadMonarchInvestments()" style="padding:7px 14px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px">Retry</button>
     </div>`;
     return;

@@ -372,10 +372,69 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
     }));
   }
 
+  // ── Diagnostics ─────────────────────────────────────────────────────────
+  // "It isn't populating" is unobservable from outside the server: the failure could be a
+  // missing token, a paused sync, an expired session or a rejected query, and they all look
+  // identical in the UI. This probes each precondition in order and reports which one
+  // actually failed, including the upstream GraphQL message.
+  //
+  // It never returns the token, only whether one is present.
+  async function diagnose() {
+    const out = { checks: [], ok: false };
+    // `info` rows describe the setup without passing judgement on it — having no NormOS
+    // bridge is perfectly fine when a direct token exists, and flagging it red would send
+    // someone chasing a non-problem.
+    const add = (name, ok, detail, kind) => { out.checks.push({ name, ok, detail, kind: kind || 'check' }); return ok; };
+    let c;
+    try {
+      c = await context();
+    } catch (err) {
+      add('read connection settings', false, err.message);
+      return out;
+    }
+    add('MONARCH_TOKEN present', !!c.token, c.token ? 'a direct token is configured' : 'no token — holdings and transactions need one; balances can still come from the NormOS bridge');
+    add('balance source', true, c.remote ? 'NormOS bridge' : 'direct Monarch token', 'info');
+    add('planner sync enabled', !c.disabled, c.disabled ? 'sync is paused — enable it to resume' : 'enabled');
+    if (!c.token || c.disabled) return out;
+
+    // Cheapest possible authenticated call: proves the token and headers, nothing else.
+    let reachable = false;
+    try {
+      const r = await graphql(c.token, ACCOUNT_IDS_QUERY, {});
+      reachable = add('Monarch accepts the token', r.ok,
+        r.ok ? 'authenticated' : `HTTP ${r.status}` + (r.status === 401 ? ' — the token is rejected or expired' : ''));
+      if (r.ok) {
+        const b = await r.json();
+        if (b.errors) reachable = add('accounts query', false, b.errors.map(e => e && e.message).filter(Boolean).join(' | '));
+        else add('accounts query', true, `${(b.data?.accounts || []).length} accounts visible`);
+      }
+    } catch (err) {
+      add('Monarch reachable', false, err.name === 'TimeoutError' ? 'timed out' : err.message);
+      return out;
+    }
+    if (!reachable) return out;
+
+    // Now the queries that actually back the views, each reported separately so a schema
+    // change in one does not read as everything being broken.
+    const today = new Date().toISOString().slice(0, 10);
+    const probe = async (name, fn) => {
+      try { const n = await fn(); add(name, true, n); }
+      catch (err) { add(name, false, err.message); }
+    };
+    await probe('holdings query', async () => `${(await holdings({ startDate: today, endDate: today })).length} positions`);
+    await probe('categories query', async () => `${(await categories()).length} categories`);
+    await probe('transactions query', async () => {
+      const p = await transactionsPage({ startDate: today.slice(0, 8) + '01', endDate: today, limit: 1 });
+      return `${p.totalCount} transactions this month`;
+    });
+    out.ok = out.checks.every(c => c.kind === 'info' || c.ok);
+    return out;
+  }
+
   function getSnapshot() {
     if (!pending) pending = pull().finally(() => { pending = null; });
     return pending;
   }
-  return { status, getSnapshot, setEnabled, holdings, transactionsPage, categories, budgets, recurring };
+  return { status, getSnapshot, setEnabled, holdings, transactionsPage, categories, budgets, recurring, diagnose };
 }
 module.exports = { createMonarchLive, validSnapshot, mapHoldings, normaliseType, extractHoldingEdges, mapTransaction, mapBudgets, PAGE_SIZE };

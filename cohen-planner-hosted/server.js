@@ -641,6 +641,16 @@ app.get('/api/monarch-probe-portfolio', requireDebug, async (req, res) => {
   }
 });
 
+// Which Monarch precondition is actually failing. Booleans and upstream messages only —
+// never the token itself. Exists because every failure mode looks identical in the UI.
+app.get('/api/monarch-diagnostics', requireAuth, async (req, res) => {
+  try {
+    res.json(await monarchLive.diagnose());
+  } catch (err) {
+    res.status(500).json({ ok: false, checks: [{ name: 'diagnostics', ok: false, detail: err.message }] });
+  }
+});
+
 // Individual holdings, read through the same direct Monarch connection the balance bridge
 // already uses. This does NOT go through the Monarch MCP connector, which is paused
 // upstream — the shaping below is the original MCP-era implementation, re-pointed at the
