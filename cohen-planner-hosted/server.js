@@ -641,9 +641,51 @@ app.get('/api/monarch-probe-portfolio', requireDebug, async (req, res) => {
   }
 });
 
-// Investment holdings from Monarch GetInvestments MCP tool
-app.get('/api/monarch-investments', requireAuth, (req, res) => {
-  res.status(503).json({ error: 'Individual holdings and performance are unavailable through the NormOS account sync. Account balances remain available.' });
+// Individual holdings, read through the same direct Monarch connection the balance bridge
+// already uses. This does NOT go through the Monarch MCP connector, which is paused
+// upstream — the shaping below is the original MCP-era implementation, re-pointed at the
+// GraphQL source. If the query fails for any reason the response degrades to the same 503
+// the stub returned, so Holdings falls back to the account-level view rather than erroring.
+app.get('/api/monarch-investments', requireAuth, async (req, res) => {
+  try {
+    const now = new Date();
+    const end = req.query.end || now.toISOString().slice(0, 10);
+    // YTD has no fixed day-count — handle it before the lookup so it can't fall through
+    // to the `?? 30` default (periodDays['YTD'] is intentionally null, and `??` treats
+    // null the same as "missing", which previously silently aliased YTD to 1M).
+    const isYTD = req.query.period === 'YTD';
+    const periodDays = { '1W': 7, '1M': 30, '3M': 90, '1Y': 365 };
+    const pd = isYTD ? null : (periodDays[req.query.period] ?? 30);
+    const start = req.query.start || (isYTD
+      ? `${now.getFullYear()}-01-01`
+      : new Date(now.getTime() - pd * 864e5).toISOString().slice(0, 10));
+
+    const holdings = await monarchLive.holdings({ startDate: start, endDate: end });
+
+    const totalValue = holdings.reduce((s, h) => s + h.value, 0);
+    const periodChange = holdings.reduce((s, h) => s + h.periodChange, 0);
+    const allTimeChange = holdings.reduce((s, h) => s + h.allTimeChange, 0);
+    const priorValue = totalValue - periodChange;
+    const withMoves = holdings.filter(h => h.securityType !== 'cash' && h.periodChange !== 0);
+    const byMove = [...withMoves].sort((a, b) => b.periodChange - a.periodChange);
+
+    res.json({
+      periodStart: start,
+      periodEnd: end,
+      totalValue,
+      periodChange: Math.round(periodChange * 100) / 100,
+      periodChangePct: priorValue > 0 ? Math.round(periodChange / priorValue * 10000) / 100 : 0,
+      allTimeChange: Math.round(allTimeChange * 100) / 100,
+      allTimePct: totalValue - allTimeChange > 0 ? Math.round(allTimeChange / (totalValue - allTimeChange) * 10000) / 100 : 0,
+      holdings,
+      topGainers: byMove.slice(0, 5).filter(h => h.periodChange > 0),
+      topLosers: byMove.slice(-5).reverse().filter(h => h.periodChange < 0),
+    });
+  } catch (err) {
+    // Never surface a raw upstream error: the messages thrown above are already written for
+    // the user, and anything else is an implementation detail.
+    res.status(503).json({ error: err.message || 'Individual holdings are unavailable right now. Account balances remain available.' });
+  }
 });
 
 function num(v) {

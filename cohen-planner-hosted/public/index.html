@@ -2012,7 +2012,7 @@ function renderPortfolioTab(R,P){
 
 
   if(monarchSnapshot?.source){
-    ca.innerHTML=`<div style="padding:12px"><h2 style="font-size:20px">Your accounts, connected</h2><p style="color:var(--t2)">Latest Monarch balances via NormOS · ${new Date(monarchSnapshot.syncedAt).toLocaleString()}. Individual holdings and performance are currently unavailable.</p>${renderMonarchAccountsCard()}</div>`;
+    ca.innerHTML=`<div style="padding:12px"><h2 style="font-size:20px">Your accounts, connected</h2><p style="color:var(--t2)">Latest Monarch balances via NormOS · ${new Date(monarchSnapshot.syncedAt).toLocaleString()}. Individual holdings couldn\u2019t be loaded \u2014 showing account balances instead.</p>${renderMonarchAccountsCard()}</div>`;
     mountAccountDonut();
     return;
   }
