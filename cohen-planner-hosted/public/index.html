@@ -9,6 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <script src="/model.js"></script>
+<script src="/plan-migrate.js"></script>
 <script src="/decisions.js"></script>
 <script src="/decision-room.js"></script>
 <style>
@@ -102,6 +103,19 @@ tr:hover td{background:var(--s2)}
 .scenario-chip.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:600}
 .scenario-chip .x{font-size:8px;opacity:.5;margin-left:3px;cursor:pointer}.scenario-chip .x:hover{opacity:1;color:var(--r)}
 .solo-box{background:var(--g-soft);border:1px solid rgba(26,135,84,.2);border-radius:6px;padding:8px 10px;margin:5px 0 7px;font-size:10px;color:var(--t2)}
+/* Norm's per-year comp grid: year | cash | stripe stock | derived total */
+.comp-grid{display:grid;grid-template-columns:26px 1fr 1fr 46px;gap:3px;align-items:center;margin-bottom:3px}
+.comp-head{font-size:7px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--t3);margin-bottom:4px}
+.comp-head span:last-child{text-align:right}
+.comp-yr{font-size:8.5px;font-weight:600;color:var(--t3);font-variant-numeric:tabular-nums}
+.comp-in{width:100%;min-width:0;padding:4px 5px;border:1px solid var(--bd);border-radius:5px;background:var(--s1);color:var(--tx);font-family:'SF Mono',ui-monospace,monospace;font-size:9.5px;outline:none;transition:border-color .15s,box-shadow .15s}
+.comp-in:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(99,91,255,.12)}
+/* Stripe keeps a distinct violet identity everywhere it appears, so equity never reads
+   as part of the diversified portfolio. */
+.comp-in.comp-stock{border-color:rgba(103,114,229,.35);background:rgba(103,114,229,.05);color:#4c3fd6}
+.comp-in.comp-stock:focus{border-color:#6772e5;box-shadow:0 0 0 2px rgba(103,114,229,.15)}
+.comp-tot{font-size:8.5px;font-weight:600;color:var(--t2);text-align:right;font-variant-numeric:tabular-nums}
+.stripe-chip{display:inline-flex;align-items:center;gap:4px;background:rgba(103,114,229,.08);border:1px solid rgba(103,114,229,.25);border-radius:5px;padding:5px 7px;font-size:8px;line-height:1.45;color:var(--t2);width:100%;margin-bottom:4px}
 @media(max-width:900px){.layout{grid-template-columns:1fr}.kpi-grid{grid-template-columns:repeat(3,1fr)}.sg{grid-template-columns:1fr}}
 @media(max-width:640px){
   body{padding:8px 10px}
@@ -465,13 +479,26 @@ const D={
   childcareMonthly:2800,
   tuitionInflation:.035,yeshivaStartAge:2,yeshivaEndAge:17,kid1YeshivaStartAge:3,
   startingLiquid:1100000,nycRent:5500,
-  // Norm — total comp (cash+stock combined; both are taxed identically as ordinary
-  // W2 income at vest, so the split added complexity with no differentiated treatment).
-  // 11 explicit years, Y0=planStartYear through Y10 (2026-2036); normGrowth compounds
-  // forward from Y10 for any plan years beyond that.
-  normTCY0:477000,normTCY1:422000,normTCY2:428000,normTCY3:423000,
-  normTCY4:427000,normTCY5:432000,normTCY6:436000,normTCY7:440000,
-  normTCY8:445000,normTCY9:449000,normTCY10:454000,normGrowth:.01,
+  // Norm — compensation, split into the two streams that behave differently AFTER tax.
+  // Both are ordinary W2 income at vest (identical tax), but cash is spendable while stock
+  // arrives as a Stripe asset that only becomes spendable if sold. 11 explicit years,
+  // Y0=planStartYear through Y10; each stream compounds at its own growth rate past Y10.
+  // Per-year totals match the previous combined figures exactly, so tax is unchanged.
+  normCashY0:280000,normCashY1:260000,normCashY2:275000,normCashY3:265000,
+  normCashY4:277000,normCashY5:282000,normCashY6:286000,normCashY7:290000,
+  normCashY8:295000,normCashY9:299000,normCashY10:304000,
+  normStockY0:197000,normStockY1:162000,normStockY2:153000,normStockY3:158000,
+  normStockY4:150000,normStockY5:150000,normStockY6:150000,normStockY7:150000,
+  normStockY8:150000,normStockY9:150000,normStockY10:150000,
+  normGrowth:.01,normStockGrowth:.01,
+  // Stripe equity. startingStripeEquity is deliberately 0: every saved plan already holds
+  // its whole net worth inside startingLiquid, so seeding this automatically — from a
+  // migration or a synced balance — would double-count. Reclassifying is an explicit act.
+  startingStripeEquity:0,stripeStartingBasisPct:1,
+  stripeRetY0:.15,stripeRetY1:.15,stripeRetY2:.12,stripeRetY3:.12,stripeRetY4:.10,
+  stripeRetY5:.10,stripeRetY6:.09,stripeRetY7:.09,stripeRetY8:.08,stripeRetY9:.08,
+  stripeLongTermReturn:.08,
+  stripePolicy:'deficit',stripeLiquidFloor:500000,stripeSellPct:.30,
   pretax401k:23500,pretaxBenefits:11700,
   company401kMatch:8750,
   // Nancy — 4 rolling specific W2 years (ignored once yr >= nancyRampYear)
@@ -530,51 +557,9 @@ function savePlannerState(){
   },500);
 }
 
-// Migrate old year-keyed format (normCash2026…) to rolling Y0-Y3 format
-function migrateP(raw){
-  let m=raw;
-  if(raw.normCashY0===undefined&&raw.normTCY0===undefined){
-    const sy=raw.planStartYear||raw.startYear||2026;
-    m={...raw,planStartYear:sy};
-    const oldNormCash={2026:280000,2027:260000,2028:275000,2029:265000};
-    const oldNormStock={2026:197000,2027:162000,2028:153000,2029:158000};
-    const oldNancyW2={2026:130000,2027:80000,2028:100000,2029:75000};
-    for(let i=0;i<4;i++){
-      const yr=sy+i;
-      m['normCashY'+i]=raw['normCash'+yr]??oldNormCash[yr]??275000;
-      m['normStockY'+i]=raw['normStock'+yr]??oldNormStock[yr]??150000;
-      m['nancyW2Y'+i]=raw['nancyW2_'+yr]??oldNancyW2[yr]??100000;
-    }
-    m.normCashBase=raw.normCash2030Base??raw.normCashBase??275000;
-    m.normStockBase=raw.normStock2030??raw.normStockBase??150000;
-  }
-  // Cash/stock split -> single Total Comp per year (Y0-Y10). Both were always taxed
-  // identically as ordinary income at vest, so this just collapses 8 sliders into 11
-  // (extending the explicit window from 4 years to 11) without losing any real fidelity.
-  if(m.normTCY0===undefined){
-    const sy=m.planStartYear||2026;
-    const cashBase=m.normCashBase??275000,stockBase=m.normStockBase??150000,growth=m.normGrowth??0.01;
-    const out={...m};
-    for(let i=0;i<11;i++){
-      // Years 0-3 keep the exact figures the old model used. Years 4-10 reproduce what
-      // the OLD base+growth formula would have projected for those years, so an existing
-      // saved plan's numbers don't shift just from this migration running.
-      out['normTCY'+i]=i<4
-        ? (m['normCashY'+i]??cashBase)+(m['normStockY'+i]??stockBase)
-        : cashBase*(1+growth)**(i-4)+stockBase;
-    }
-    m=out;
-  }
-  // Nanny + daycare -> a single flat childcare rate. Use the old daycareMonthly figure
-  // as the carry-forward value (it's already a monthly rate representing steady-state
-  // ongoing care), rather than the nanny hourly rate which only applied for a shorter
-  // early window — not an exact reproduction of the old 3-phase cost (that's the point
-  // of the simplification), just a reasonable single number to start from.
-  if(m.childcareMonthly===undefined&&(m.daycareMonthly!==undefined||m.nannyHourlyRate!==undefined)){
-    m={...m,childcareMonthly:m.daycareMonthly??Math.round((m.nannyHourlyRate??30)*9*(m.nannyDaysPerWeek??4)*52/12)};
-  }
-  return m;
-}
+// Saved-state migration lives in /plan-migrate.js so it can be unit-tested in Node and
+// shared with roll-forward. See that file for the generation-by-generation chain.
+function migrateP(raw){return PlanMigrate.migrateP(raw)}
 
 async function loadFromServer(){
   try{
@@ -747,10 +732,10 @@ function anchorToToday(){
     const{R}=run(P);
     const row=R.find(x=>x.yr===curYr)||R[0];
     const prev=R.find(x=>x.yr===curYr-1);
-    const jan1=prev?prev.liq:(P.startingLiquid||0);
+    const jan1=prev?planLiquidComparable(prev):((P.startingLiquid||0)+(P.startingStripeEquity||0));
     const _ys=new Date(curYr,0,1),_ye=new Date(curYr+1,0,1);
     const frac=Math.min(1,Math.max(0,(new Date()-_ys)/(_ye-_ys)));
-    if(row)planLiqToday=Math.round(jan1+frac*(row.liq-jan1));
+    if(row)planLiqToday=Math.round(jan1+frac*(planLiquidComparable(row)-jan1));
   }catch(e){}
   const liqDiff=planLiqToday!=null?todayLiq-planLiqToday:null;
   const ov=document.createElement('div');
@@ -846,8 +831,8 @@ function toggleInflation(){inflationView=!inflationView;const b=document.getElem
 // ═══ CSV EXPORT ═══
 function exportCSV(){
   const{R}=run(P);
-  const cols=['Year','Norm Gross','Nancy Gross','Total Gross','All-in Tax','Eff Rate %','Net Income','Housing','Living','Childcare','Tuition','Total Expenses','Surplus','Stock Sold','Tax on Sales','Liquid','Home Equity','Net Worth','401k'];
-  const rows=R.map(r=>[r.yr,r.normG,r.nancyG,r.gross,r.tax,(r.effRate*100).toFixed(2),r.inc,r.h,r.liv,r.cc,r.tu,r.totE,r.surp,r.sold,r.txS,r.liq,r.eq,r.nw,r.k401]);
+  const cols=['Year','Norm Cash','Norm Stripe Stock','Norm Total W2','Nancy Gross','Total Gross','All-in Tax','Eff Rate %','Cash Available','Housing','Living','Childcare','Tuition','Total Expenses','Operating Surplus','Cash Gap','Stripe Vested','Stripe Sold For Cash','Stripe Retained','Stripe Appreciation','Stripe Equity','Portfolio Sold','Tax on Portfolio Sales','Liquid (ex-Stripe)','Home Equity','Net Worth','Stripe % of NW','401k'];
+  const rows=R.map(r=>[r.yr,r.normCash,r.normStock,r.normG,r.nancyG,r.gross,r.tax,(r.effRate*100).toFixed(2),r.inc,r.h,r.liv,r.cc,r.tu,r.totE,r.surp,r.gap,r.sNew,r.sSold,r.sRet,r.sAppr,r.sEnd,r.sold,r.txS,r.liq,r.eq,r.nw,(r.sPct*100).toFixed(1),r.k401]);
   const csv=[cols.join(','),...rows.map(r=>r.join(','))].join('\n');
   const blob=new Blob([csv],{type:'text/csv'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
@@ -900,7 +885,8 @@ function printPDF(){
     const surpColor=r.surp>=0?'#1a8754':'#cd3d64';
     return `<tr style="background:${rowBg}">
       <td style="font-weight:700;color:#0a2540${isHome?';background:#fef3c7':''}">${r.yr}</td>
-      <td style="color:#0073e6">${fmt(r.normG)}</td>
+      <td style="color:#0073e6">${fmt(r.normCash)}</td>
+      <td style="color:#6772e5">${r.normStock>0?fmt(r.normStock):'—'}</td>
       <td style="color:#7c3aed">${fmt(r.nancyG)}</td>
       <td>${fmt(r.gross)}</td>
       <td style="color:#cd3d64">${fmt(r.tax)}</td>
@@ -910,6 +896,7 @@ function printPDF(){
       <td style="color:${surpColor};font-weight:600">${r.surp>=0?'+':''}${fmt(r.surp)}</td>
       <td>${r.tu>0?fmt(r.tu):'—'}</td>
       <td style="color:#0073e6">${fmt(r.liq)}</td>
+      <td style="color:#6772e5">${r.sEnd>0?fmt(r.sEnd):'—'}</td>
       <td style="color:#1a8754;font-weight:600">${fmt(r.nw)}</td>
     </tr>`;
   }).join('');
@@ -996,7 +983,7 @@ tr:hover td{background:#f6f9fc}
     </div>
   </div>
   <div style="text-align:right;font-size:9px;color:#8898aa">
-    <div>Norm: ${fmtK(P.normTCY0||477000)}/yr current</div>
+    <div>Norm: ${fmtK((P.normCashY0||0)+(P.normStockY0||0))}/yr current</div>
     <div>Nancy: ${P.nancyMaxClients} clients max · $${P.nancyHourlyRate}/hr</div>
     <div>${P.numKids} kid${P.numKids!==1?'s':''} · ${P.downPctg}% down in ${P.homePurchaseYear}</div>
   </div>
@@ -1009,10 +996,10 @@ tr:hover td{background:#f6f9fc}
 <table>
   <thead><tr>
     <th style="text-align:left">Year</th>
-    <th>Norm</th><th>Nancy</th><th>Gross</th>
-    <th>Tax</th><th>Eff%</th><th>Net Inc</th>
+    <th>Norm cash</th><th>Stripe</th><th>Nancy</th><th>Gross</th>
+    <th>Tax</th><th>Eff%</th><th>Cash avail</th>
     <th>Tot Exp</th><th>Surplus</th><th>Tuition</th>
-    <th>Liquid</th><th>Net Worth</th>
+    <th>Liquid</th><th>Stripe eq</th><th>Net Worth</th>
   </tr></thead>
   <tbody>${tblRows}</tbody>
 </table>
@@ -1066,7 +1053,67 @@ function renderSnapshotBar(){
   h+='</div>';el.innerHTML=h;
 }
 
-let _collapsedSections=new Set(JSON.parse(localStorage.getItem('plannerCollapsed')||JSON.stringify(['childcare','tuition','plan-start'])));
+const STRIPE_POLICY_HELP={
+  deficit:'Sell only enough of each year’s vest to close that year’s cash gap. Everything else keeps compounding as Stripe.',
+  floor:'Sell enough to keep the diversified portfolio at or above your reserve. Protects liquidity first, retains the rest.',
+  pct:'Sell a fixed share of every vest. Still sells more if a year would otherwise leave you insolvent.',
+  retain:'Keep every share. The diversified portfolio funds your life until it runs dry, then just enough stock is sold.',
+  sell:'Treat vesting stock as pay. Nothing accumulates — this reproduces a plan with no equity at all.',
+};
+const STRIPE_PRESETS={
+  conservative:[.06,.06,.05,.05,.05,.05,.05,.05,.05,.05,.05],
+  base:[.15,.15,.12,.12,.10,.10,.09,.09,.08,.08,.08],
+  bull:[.30,.25,.22,.20,.18,.15,.13,.12,.10,.10,.10],
+};
+function applyStripePreset(k){
+  const v=STRIPE_PRESETS[k];if(!v)return;
+  for(let i=0;i<10;i++)P['stripeRetY'+i]=v[i];
+  P.stripeLongTermReturn=v[10];
+  activeScenarioIdx=-1;buildControls();render();savePlannerState();
+  showToast('Applied the '+k+' return path — every year is still editable','blue');
+}
+function dismissSplitReview(){delete P.normSplitNeedsReview;buildControls();savePlannerState()}
+// Synced Stripe balance vs. the planning assumption. A synced value NEVER overwrites a
+// planning input on its own — this only ever offers the move, and the reclassify itself is
+// value-neutral: it shifts dollars from startingLiquid to startingStripeEquity so total
+// starting net worth is unchanged to the dollar.
+function syncedStripeBalance(){
+  const a=(monarchAccounts||[]).find(x=>x&&typeof x.name==='string'&&x.name.toLowerCase().includes('stripe'));
+  return a&&a.balance>0?Math.round(a.balance):0;
+}
+function renderReclassifyRow(){
+  const actual=syncedStripeBalance();
+  if(!actual)return'';
+  const planned=Math.round(P.startingStripeEquity||0);
+  if(Math.abs(actual-planned)<1000){
+    return`<div class="stripe-chip">✓ Matches your synced Stripe balance of ${fmt(actual)}.</div>`;
+  }
+  const move=actual-planned;
+  const room=Math.round(P.startingLiquid||0);
+  const canMove=move<=0||room>=move;
+  return`<div class="stripe-chip" style="flex-direction:column;align-items:flex-start;gap:3px">
+    <div>Monarch shows <strong style="color:#4c3fd6">${fmt(actual)}</strong> in Stripe; your plan assumes <strong>${fmt(planned)}</strong>.</div>
+    ${canMove
+      ? `<button onclick="reclassifyStripe(${actual})" style="background:#6772e5;color:#fff;border:none;border-radius:5px;padding:4px 8px;font-family:inherit;font-size:8px;font-weight:600;cursor:pointer">${move>0?`Move ${fmtF(move)} from Starting Liquid → Stripe`:`Move ${fmtF(-move)} from Stripe → Starting Liquid`}</button>`
+      : `<span style="color:var(--t3)">Starting Liquid (${fmt(room)}) is too small to reclassify ${fmtF(move)} without inventing wealth — adjust it first.</span>`}
+  </div>`;
+}
+function reclassifyStripe(actual){
+  const planned=Math.round(P.startingStripeEquity||0);
+  const move=actual-planned;
+  const before=Math.round((P.startingLiquid||0)+planned);
+  if(move>0&&(P.startingLiquid||0)<move){showToast('Starting Liquid is too small to reclassify that amount','red');return}
+  if(!showConfirm(`Reclassify ${fmtF(Math.abs(move))} ${move>0?'from Starting Liquid into Stripe equity':'from Stripe equity back into Starting Liquid'}?\n\nYour total starting net worth stays exactly ${fmt(before)} — this only changes which pool it sits in.`))return;
+  P.startingLiquid=Math.round((P.startingLiquid||0)-move);
+  P.startingStripeEquity=actual;
+  activeScenarioIdx=-1;buildControls();render();savePlannerState();
+  showToast(`Reclassified — starting net worth unchanged at ${fmt(before)}`,'green');
+}
+// Compact per-year comp cell. Commits on blur/Enter like the other typed dollar inputs.
+function compCell(key,isStock){
+  return`<input type="text" inputmode="numeric" id="s_${key}" value="${fmtF(P[key]||0)}" onchange="UComp('${key}',this.value,this)" onkeydown="if(event.key==='Enter')this.blur()" class="comp-in${isStock?' comp-stock':''}">`;
+}
+let _collapsedSections=new Set(JSON.parse(localStorage.getItem('plannerCollapsed')||JSON.stringify(['childcare','tuition','plan-start','stripe'])));
 function toggleSection(key){_collapsedSections.has(key)?_collapsedSections.delete(key):_collapsedSections.add(key);localStorage.setItem('plannerCollapsed',JSON.stringify([..._collapsedSections]));buildControls()}
 
 function buildControls(){
@@ -1114,13 +1161,52 @@ function buildControls(){
   const planBody=s('Start year','planStartYear',2026,2035,1)+`<div style="font-size:7.5px;color:var(--t3);margin-bottom:6px">Advance each Jan to roll inputs forward. Update Starting Liquid to reflect actual wealth.</div>`;
   h+=ST('📅 Plan Start Year','plan-start',planBody);
 
-  // Norm income
+  // Norm income — a compact Cash / Stripe Stock / Total grid rather than 22 stacked
+  // sliders. Total is derived, never typed, so cash+stock is always the W2 figure.
   let normBody='';
-  for(let i=0;i<11;i++){const yr=sy+i;normBody+=sTxt(yr+' total comp','normTCY'+i)}
-  normBody+=s('Comp growth ('+(sy+11)+'+)','normGrowth',0,.04,.005,v=>(v*100).toFixed(1)+'%');
+  if(P.normSplitNeedsReview){
+    normBody+=`<div style="background:rgba(245,183,49,.10);border:1px solid rgba(245,183,49,.35);border-radius:6px;padding:6px 8px;margin-bottom:6px;font-size:8px;line-height:1.5;color:var(--t2)">
+      <strong style="color:var(--a)">Check the cash / stock split.</strong> Your plan stored only a combined total for some years. Totals (and therefore your taxes) are unchanged — but the split between them was estimated from your historical ratio.
+      <button onclick="dismissSplitReview()" style="display:block;margin-top:4px;background:none;border:none;padding:0;color:var(--accent);font-family:inherit;font-size:8px;font-weight:600;cursor:pointer;text-decoration:underline">Looks right — dismiss</button>
+    </div>`;
+  }
+  normBody+=`<div class="comp-grid comp-head"><span>Year</span><span>Cash</span><span>Stripe stock</span><span>Total</span></div>`;
+  for(let i=0;i<11;i++){
+    const yr=sy+i,tot=(P['normCashY'+i]||0)+(P['normStockY'+i]||0);
+    normBody+=`<div class="comp-grid">
+      <span class="comp-yr">${yr}</span>
+      ${compCell('normCashY'+i)}
+      ${compCell('normStockY'+i,true)}
+      <span class="comp-tot" id="ct_${i}">${fmtF(tot)}</span>
+    </div>`;
+  }
+  normBody+=`<div style="height:1px;background:var(--bd);margin:7px 0 5px"></div>`;
+  normBody+=s('Cash growth ('+(sy+11)+'+)','normGrowth',0,.10,.005,v=>(v*100).toFixed(1)+'%');
+  normBody+=s('Stock growth ('+(sy+11)+'+)','normStockGrowth',0,.20,.005,v=>(v*100).toFixed(1)+'%');
   normBody+=s('401k employee','pretax401k',0,30500,500,fmtF)+s('Benefits pre-tax','pretaxBenefits',0,15000,200,fmtF);
   normBody+=`<div id="norm_preview" style="font-size:7.5px;color:var(--t3);margin:1px 0 4px;font-style:italic"></div>`;
-  h+=ST('💼 Norm — Total Comp','norm-income',normBody);
+  h+=ST('💼 Norm — Compensation','norm-income',normBody);
+
+  // Stripe equity — existing holdings, the return path, and the retention strategy.
+  let stripeBody=`<div style="font-size:7.5px;color:var(--t3);line-height:1.5;margin-bottom:6px">Stripe is modeled separately from the diversified portfolio: its own return path, its own retention policy, and its own line in net worth.</div>`;
+  stripeBody+=sTxt('Existing Stripe equity','startingStripeEquity');
+  stripeBody+=renderReclassifyRow();
+  stripeBody+=`<div style="height:1px;background:var(--bd);margin:7px 0 5px"></div>`;
+  stripeBody+=`<div style="font-size:7.5px;color:var(--t3);margin-bottom:4px">Annual return assumptions — <em>yours to set, not a forecast</em></div>`;
+  stripeBody+=`<div style="display:flex;gap:3px;margin-bottom:6px">${
+    [['conservative','Conservative'],['base','Base'],['bull','Bull']].map(([k,l])=>
+      `<button onclick="applyStripePreset('${k}')" style="flex:1;font-size:8px;padding:4px 2px;border:1px solid var(--bd);border-radius:5px;background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">${l}</button>`).join('')}</div>`;
+  for(let i=0;i<10;i++)stripeBody+=s(String(sy+i),'stripeRetY'+i,-.30,.60,.01,v=>(v*100).toFixed(0)+'%');
+  stripeBody+=s('Long-term ('+(sy+10)+'+)','stripeLongTermReturn',-.10,.30,.01,v=>(v*100).toFixed(0)+'%');
+  stripeBody+=`<div style="height:1px;background:var(--bd);margin:7px 0 5px"></div>`;
+  stripeBody+=`<div style="font-size:7.5px;color:var(--t3);margin-bottom:4px">When stock vests, how much do you sell?</div>`;
+  stripeBody+=`<select id="s_stripePolicy" onchange="USel('stripePolicy',this.value)" style="width:100%;padding:6px 8px;border:1px solid var(--bd);border-radius:6px;background:var(--s1);color:var(--tx);font-family:inherit;font-size:10px;outline:none;margin-bottom:5px">${
+    [['deficit','Cover cash deficit (default)'],['floor','Maintain a liquid floor'],['pct','Sell a fixed %'],['retain','Retain all'],['sell','Sell all at vest']]
+      .map(([v,l])=>`<option value="${v}"${(P.stripePolicy||'deficit')===v?' selected':''}>${l}</option>`).join('')}</select>`;
+  stripeBody+=`<div style="font-size:7.5px;color:var(--t3);line-height:1.5;margin-bottom:5px">${STRIPE_POLICY_HELP[P.stripePolicy||'deficit']}</div>`;
+  if((P.stripePolicy||'deficit')==='floor')stripeBody+=sTxt('Minimum liquid reserve','stripeLiquidFloor');
+  if(P.stripePolicy==='pct')stripeBody+=s('Sell % of each vest','stripeSellPct',0,1,.05,v=>(v*100).toFixed(0)+'%');
+  h+=ST('◆ Stripe Equity','stripe',stripeBody);
 
   // Nancy income
   let nancyBody='';
@@ -1169,13 +1255,18 @@ function rollForward(){
     <div style="font-size:10.5px;color:#425466;margin-bottom:14px;line-height:1.6">
       This will:<br>
       • Auto-save a snapshot of your ${curYear} plan<br>
-      • Shift income inputs: Y1→Y0, Y2→Y1, Y3→Y2<br>
+      • Shift every rolling window forward: Norm's cash + Stripe grants, Nancy's W2, the Stripe return curve<br>
       • Advance plan start year to ${nextYear}
     </div>
-    <label style="display:block;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:#8898aa;margin-bottom:5px">Starting Liquid Jan ${nextYear} (actual current wealth)</label>
+    <label style="display:block;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:#8898aa;margin-bottom:5px">Diversified liquid Jan ${nextYear} <span style="text-transform:none;letter-spacing:0;font-weight:400">(excludes Stripe)</span></label>
     <input id="rfLiqInput" type="text" value="${P.startingLiquid.toLocaleString()}"
-      style="width:100%;padding:9px 11px;border:1px solid #635bff;border-radius:7px;font-size:13px;font-family:'SF Mono',monospace;color:#0a2540;outline:none;margin-bottom:14px"
+      style="width:100%;padding:9px 11px;border:1px solid #635bff;border-radius:7px;font-size:13px;font-family:'SF Mono',monospace;color:#0a2540;outline:none;margin-bottom:10px"
       onkeydown="if(event.key==='Enter')confirmRollForward(this.closest('div[style*=fixed]'),${curYear},${nextYear});if(event.key==='Escape')this.closest('div[style*=fixed]').remove()">
+    <label style="display:block;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:#8898aa;margin-bottom:5px">Stripe equity Jan ${nextYear}</label>
+    <input id="rfStripeInput" type="text" value="${(P.startingStripeEquity||0).toLocaleString()}"
+      style="width:100%;padding:9px 11px;border:1px solid rgba(103,114,229,.55);border-radius:7px;font-size:13px;font-family:'SF Mono',monospace;color:#4c3fd6;outline:none;margin-bottom:6px"
+      onkeydown="if(event.key==='Enter')confirmRollForward(this.closest('div[style*=fixed]'),${curYear},${nextYear});if(event.key==='Escape')this.closest('div[style*=fixed]').remove()">
+    ${(()=>{const a=syncedStripeBalance();return a?`<div style="font-size:9.5px;color:#425466;margin-bottom:12px">Monarch shows <strong style="color:#4c3fd6">${fmt(a)}</strong> — <button type="button" onclick="document.getElementById('rfStripeInput').value=(${a}).toLocaleString()" style="background:none;border:none;padding:0;color:#635bff;font-family:inherit;font-size:9.5px;font-weight:600;cursor:pointer;text-decoration:underline">use actual</button></div>`:'<div style="margin-bottom:12px"></div>'})()}
     <div style="display:flex;gap:8px">
       <button onclick="confirmRollForward(this.closest('div[style*=fixed]'),${curYear},${nextYear})"
         style="flex:1;background:#0891b2;color:#fff;border:none;padding:10px;border-radius:7px;cursor:pointer;font-weight:600;font-size:13px;font-family:inherit">Roll Forward</button>
@@ -1190,38 +1281,43 @@ function rollForward(){
 async function confirmRollForward(overlay,curYear,nextYear){
   const inp=document.getElementById('rfLiqInput');
   const liqStr=inp?inp.value:'';
+  const stripeEl=document.getElementById('rfStripeInput');
+  const stripeStr=stripeEl?stripeEl.value:'';
   if(overlay)overlay.remove();
   await saveSnapshot(true,`${curYear} plan · rolled forward ${new Date().toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`);
-  // Norm's TC window shifts forward one year; the new Y10 is exactly what the model's own
-  // growth formula would already project for that year (no ambiguity here, unlike Nancy's
-  // W2 field below — Norm's post-window growth is single-track and well-defined).
-  {const oldY10=P.normTCY10;for(let i=0;i<10;i++)P['normTCY'+i]=P['normTCY'+(i+1)];P.normTCY10=Math.round(oldY10*(1+(P.normGrowth??0.01)));}
-  // Nancy W2 years shift forward. Y3 has no separate steady-state base field (unlike Norm's
-  // cash/stock), so there's no real "new" value to pull in. Two things that DON'T work:
-  //  - Leaving Y3 untouched (original bug): after the first roll Y2(new)=Y3(old), and Y3
-  //    stays pinned at that same pre-roll value forever on every subsequent roll — it never
-  //    updates again.
-  //  - A flat carry-forward (Y3=new Y2) is mathematically identical to the above over
-  //    repeated rolls, since new Y2 is already old Y3 — so it's a no-op in disguise, not a fix.
-  //  - Backfilling via model.js's ramp-client formula: that formula is mathematically 0
-  //    clients whenever yr<nancyRampYear, which is the ONLY regime model.js ever reads
-  //    nancyW2Y3 in — so it injects a spurious $0 income instead of a plausible figure.
-  // Apply modest ongoing growth instead (using the same inflation assumption as everything
-  // else in the plan) so Y3 keeps moving instead of permanently freezing at one figure.
-  P.nancyW2Y0=P.nancyW2Y1;P.nancyW2Y1=P.nancyW2Y2;P.nancyW2Y2=P.nancyW2Y3;P.nancyW2Y3=Math.round(P.nancyW2Y2*(1+(P.expenseInflation??0.03)));
-  P.planStartYear=nextYear;
+  // Every rolling window (Norm's two comp streams, the Stripe return curve, Nancy's W2
+  // years) shifts together — see /plan-migrate.js, which is unit-tested for exactly this.
+  P=PlanMigrate.rollForwardParams(P);
   const v=parseFloat(String(liqStr).replace(/[,$\s]/g,''));
   if(!isNaN(v)&&v>0)P.startingLiquid=v;
+  // Stripe accepts 0 (unlike liquid) — "I hold none" is a legitimate answer here.
+  const sv=parseFloat(String(stripeStr).replace(/[,$\s]/g,''));
+  if(!isNaN(sv)&&sv>=0)P.startingStripeEquity=sv;
   buildControls();render();savePlannerState();
   showToast(`✓ Rolled forward to ${nextYear}`,'green');
 }
 
-const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,childcareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normTCY0:fmtF,normTCY1:fmtF,normTCY2:fmtF,normTCY3:fmtF,normTCY4:fmtF,normTCY5:fmtF,normTCY6:fmtF,normTCY7:fmtF,normTCY8:fmtF,normTCY9:fmtF,normTCY10:fmtF,normGrowth:v=>(v*100).toFixed(1)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo'};
+const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,childcareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normGrowth:v=>(v*100).toFixed(1)+'%',normStockGrowth:v=>(v*100).toFixed(1)+'%',startingStripeEquity:fmtF,stripeLiquidFloor:fmtF,stripeSellPct:v=>(v*100).toFixed(0)+'%',stripeLongTermReturn:v=>(v*100).toFixed(0)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo'};
+for(let i=0;i<11;i++){SF['normCashY'+i]=fmtF;SF['normStockY'+i]=fmtF}
+for(let i=0;i<10;i++)SF['stripeRetY'+i]=v=>(v*100).toFixed(0)+'%';
 
 function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'+key);const fn=SF[key];if(el&&fn)el.textContent=fn(P[key]);else if(el)el.textContent=P[key];if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear')buildControls();activeScenarioIdx=-1;render();savePlannerState()}
 function UTxt(key,val,el){const num=Math.max(0,parseFloat(String(val).replace(/[^0-9.-]/g,''))||0);P[key]=num;if(el)el.value=fmtF(num);activeScenarioIdx=-1;render();savePlannerState()}
+function USel(key,val){P[key]=val;activeScenarioIdx=-1;buildControls();render();savePlannerState()}
+// Comp cells additionally refresh their row's derived total, which isn't a P value.
+function UComp(key,val,el){
+  const num=Math.max(0,parseFloat(String(val).replace(/[^0-9.-]/g,''))||0);
+  P[key]=num;if(el)el.value=fmtF(num);
+  const i=key.replace(/^norm(Cash|Stock)Y/,'');
+  const tot=document.getElementById('ct_'+i);
+  if(tot)tot.textContent=fmtF((P['normCashY'+i]||0)+(P['normStockY'+i]||0));
+  activeScenarioIdx=-1;render();savePlannerState();
+}
 
-function loadScenario(i){P={...D,...scenarios[i].params};activeScenarioIdx=i;buildControls();render();savePlannerState()}
+// Scenarios saved before a schema change still carry the old keys, so migrate the
+// scenario's OWN params before letting D fill in the gaps — merging D first would leave
+// current-generation defaults sitting alongside the scenario's superseded keys.
+function loadScenario(i){P={...D,...migrateP(scenarios[i].params)};activeScenarioIdx=i;buildControls();render();savePlannerState()}
 
 function showSaveInput(){
   const area=document.getElementById('scenarioSaveArea');
@@ -1431,7 +1527,7 @@ function render(){
       <div class="hero-main">
         <div class="hero-eyebrow"><span class="dot"></span>Projected net worth · ${last.yr}</div>
         <div class="hero-v">${fmt(last.nw)}</div>
-        <div class="hero-sub"><b>${fmt(last.liq)}</b> liquid · <b>${fmt(last.eq)}</b> home equity${liveLiq!=null?` · today <b>${fmt(liveLiq)}</b> liquid`:''}</div>
+        <div class="hero-sub"><b>${fmt(last.liq)}</b> liquid${last.sEnd>0?` · <b style="color:#6772e5">${fmt(last.sEnd)}</b> Stripe`:''} · <b>${fmt(last.eq)}</b> home equity${liveLiq!=null?` · today <b>${fmt(liveLiq)}</b> liquid+Stripe`:''}</div>
       </div>
       <div class="hero-spark">${spark}</div>
     </div>`;
@@ -1442,7 +1538,8 @@ function render(){
   if(_firstPaint){_firstPaint=false;if(!_reduceMotion())requestAnimationFrame(_introAnimate);}
   const np=document.getElementById('norm_preview');
   const _sy=P.planStartYear||2026;const _lastY=_sy+10;
-  if(np){const _y10=P.normTCY10??454000;np.textContent=`${_lastY}: ${fmtF(_y10)} · ${_lastY+10}: ${fmtF(Math.round(_y10*(1+(P.normGrowth??0.01))**10))} (at ${((P.normGrowth??0.01)*100).toFixed(1)}%/yr growth)`;}
+  if(np){const _c=P.normCashY10??304000,_s=P.normStockY10??150000,_cg=P.normGrowth??0.01,_sg=P.normStockGrowth??_cg;
+    np.textContent=`${_lastY}: ${fmtF(_c+_s)} (${fmtF(_c)} cash + ${fmtF(_s)} stock) · ${_lastY+10}: ${fmtF(Math.round(_c*(1+_cg)**10+_s*(1+_sg)**10))} at ${(_cg*100).toFixed(1)}% / ${(_sg*100).toFixed(1)}% growth`;}
   const nap=document.getElementById('nancy_preview');
   if(nap){const matYr=P.nancyRampYear+P.nancyRampYears;const nc=Math.min(P.nancyMaxClients,P.nancyRampClients+(P.nancyMaxClients-P.nancyRampClients)*Math.max(0,Math.min(1,(matYr-P.nancyRampYear)/P.nancyRampYears)));nap.textContent=`${matYr}: ~${Math.round(nc)} clients → ${fmtF(Math.round(nc*P.nancyHourlyRate*P.nancyWeeksPerYear))} gross`}
   let sc='';if(scenarios.length>0){sc='<div class="scenario-bar"><span style="font-size:7px;color:var(--t3);font-weight:600">SAVED:</span>';
@@ -1458,18 +1555,42 @@ function render(){
   if(activeTab==='housing'){renderHousingTab(R,P);return}
   if(activeTab==='sensitivity'){window._lastR=R;window._lastP=P;renderSensitivityTab(R,P);return}
   if(activeTab==='compare'){renderCompareTab(R,P);return}
+  if(activeTab==='stripe'){renderStripeTab(R,P);return}
   if(activeTab==='table'){
-    ca.innerHTML=`<div class="tw"><table><thead><tr>${['Yr','Norm','Nancy','Gross','Tax','Eff%','Net','Housing','Living','CC','Tuition','TotExp','Surplus','Liquid','Eq','NW'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{const bg=r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';return `<tr style="background:${bg}"><td style="font-weight:700;color:var(--tx)">${r.yr}</td><td style="color:var(--b)">${fmt(r.normG)}</td><td style="color:var(--p)">${fmt(r.nancyG)}</td><td>${fmt(r.gross)}</td><td style="color:var(--r)">${fmt(r.tax)}</td><td style="color:var(--a)">${(r.effRate*100).toFixed(1)}%</td><td style="color:var(--g)">${fmt(r.inc)}</td><td>${fmt(r.h)}</td><td>${fmt(r.liv)}</td><td style="color:${r.cc>0?'var(--a)':'var(--t3)'}">${r.cc>0?fmt(r.cc):'—'}</td><td style="color:${r.tu>100000?'var(--r)':r.tu>0?'var(--a)':'var(--t3)'}">${r.tu>0?fmt(r.tu):'—'}</td><td>${fmt(r.totE)}</td><td style="color:${r.surp>=0?'var(--g)':'var(--r)'};font-weight:600">${r.surp>=0?'+':''}${fmt(r.surp)}</td><td style="color:var(--b)">${fmt(r.liq)}</td><td style="color:var(--p)">${r.eq>0?fmt(r.eq):'—'}</td><td style="color:var(--g);font-weight:600">${fmt(r.nw)}</td></tr>`}).join('')}</tbody></table></div>`;return}
+    // Wide by necessity — this is the audit view. The .tw wrapper scrolls horizontally.
+    const cols=['Yr','Norm cash','Norm stock','Nancy','Gross','Tax','Eff%','Cash avail','Expenses','Cash gap','Stripe sold','Stripe kept','Liquid','Stripe eq','Home eq','NW'];
+    ca.innerHTML=`<div class="tw"><table><thead><tr>${cols.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{
+      const bg=r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';
+      const dash=v=>v>0?fmt(v):'—';
+      return `<tr style="background:${bg}">`+
+        `<td style="font-weight:700;color:var(--tx)">${r.yr}</td>`+
+        `<td style="color:var(--b)">${fmt(r.normCash)}</td>`+
+        `<td style="color:#6772e5">${dash(r.normStock)}</td>`+
+        `<td style="color:var(--p)">${fmt(r.nancyG)}</td>`+
+        `<td>${fmt(r.gross)}</td>`+
+        `<td style="color:var(--r)">${fmt(r.tax)}</td>`+
+        `<td style="color:var(--a)">${(r.effRate*100).toFixed(1)}%</td>`+
+        `<td style="color:var(--g)">${fmt(r.inc)}</td>`+
+        `<td>${fmt(r.totE)}</td>`+
+        `<td style="color:${r.gap>0?'var(--r)':'var(--t3)'};font-weight:${r.gap>0?600:400}">${r.gap>0?'−'+fmt(r.gap):'—'}</td>`+
+        `<td style="color:#6772e5">${dash(r.sSold)}</td>`+
+        `<td style="color:#6772e5;font-weight:600">${dash(r.sRet)}</td>`+
+        `<td style="color:var(--b)">${fmt(r.liq)}</td>`+
+        `<td style="color:#6772e5;font-weight:600">${dash(r.sEnd)}</td>`+
+        `<td style="color:var(--p)">${dash(r.eq)}</td>`+
+        `<td style="color:var(--g);font-weight:600">${fmt(r.nw)}</td>`+
+      `</tr>`}).join('')}</tbody></table></div>`;return}
   if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';
   const ctx=document.getElementById('cv').getContext('2d');const opts=chartOpts();
   // Prepend planStartYear-1 as a synthetic starting point showing initial liquid
   const sy0=P.planStartYear||2026;
   const nwLabels=[String(sy0-1),...labels];
   const startLiqK=Math.round(P.startingLiquid/1000);
+  const startLiqPlusStripeK=Math.round(((P.startingLiquid||0)+(P.startingStripeEquity||0))/1000);
   // Monarch actual dot — added to each chart dataset array below
   const _mSnap=monarchSnapshot;
   const _mDotIdx=_mSnap?nwLabels.indexOf(String(new Date().getFullYear())):-1;
-  const _mImpliedLiqK=_mSnap?Math.round(_mSnap.liquid/1000):0;
+  const _mImpliedLiqK=_mSnap?Math.round(_mSnap.liquid/1000):0; // includes Stripe — compare to liquid+Stripe, not the ex-Stripe line
   const _mTotalK=_mSnap?Math.round(_mSnap.netWorth/1000):0;
   const _mRetK=_mSnap?Math.round(_mSnap.retirement/1000):0;
   function _mDotDs(yK,label){
@@ -1482,7 +1603,7 @@ function render(){
   }
   if(activeTab==='nw'){
     const po=posOpts();
-    const ds=[{label:'Total NW'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.nw,r.yr))],borderColor:'#635bff',backgroundColor:_areaGrad('#635bff',.24,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#635bff',pointBorderColor:'#fff',borderWidth:2.5,borderCapStyle:'round'},{label:'Liquid'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.liq,r.yr))],borderColor:'#0073e6',backgroundColor:_areaGrad('#0073e6',.14,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#0073e6',pointBorderColor:'#fff',borderWidth:2,borderCapStyle:'round'},{label:'Equity'+(inflationView?' (real)':''),data:[0,...R.map(r=>deflK(r.eq,r.yr))],borderColor:'#7c3aed',fill:false,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#7c3aed',pointBorderColor:'#fff',borderWidth:1.5,borderDash:[4,3]}];
+    const ds=[{label:'Total NW'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.nw,r.yr))],borderColor:'#635bff',backgroundColor:_areaGrad('#635bff',.24,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#635bff',pointBorderColor:'#fff',borderWidth:2.5,borderCapStyle:'round'},{label:'Liquid (ex-Stripe)'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.liq,r.yr))],borderColor:'#0073e6',backgroundColor:_areaGrad('#0073e6',.14,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#0073e6',pointBorderColor:'#fff',borderWidth:2,borderCapStyle:'round'},{label:'Stripe'+(inflationView?' (real)':''),data:[Math.round((P.startingStripeEquity||0)/1000),...R.map(r=>deflK(r.sEnd,r.yr))],borderColor:'#6772e5',backgroundColor:_areaGrad('#6772e5',.16,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#6772e5',pointBorderColor:'#fff',borderWidth:2,borderCapStyle:'round'},{label:'Home equity'+(inflationView?' (real)':''),data:[0,...R.map(r=>deflK(r.eq,r.yr))],borderColor:'#7c3aed',fill:false,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#7c3aed',pointBorderColor:'#fff',borderWidth:1.5,borderDash:[4,3]},{label:'401(k)'+(inflationView?' (real)':''),data:[Math.round((P.k401Start||0)/1000),...R.map(r=>deflK(r.k401,r.yr))],borderColor:'#0f9b6c',fill:false,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#0f9b6c',pointBorderColor:'#fff',borderWidth:1.5,borderDash:[2,3],hidden:true}];
     if(_stressMode){
       const bear=run({...P,investReturn:Math.max(.02,P.investReturn-.02),expenseInflation:Math.min(.06,P.expenseInflation+.01)});
       const bull=run({...P,investReturn:Math.min(.12,P.investReturn+.02),expenseInflation:Math.max(.01,P.expenseInflation-.005)});
@@ -1521,7 +1642,10 @@ function render(){
         ds.push({label:'📸 '+sn.label+' (NW)',data:snData,borderColor:'#bf6900',fill:false,tension:.3,pointRadius:0,borderWidth:2,borderDash:[6,3],spanGaps:false});
       }
     }
-    const _mNwDot=_mDotDs(_mImpliedLiqK,'📍 Actual NW (Monarch)');if(_mNwDot)ds.push(_mNwDot);
+    // The dot is Monarch's liquid total (which includes Stripe), so pair it with a
+    // matching plan series rather than leaving it hovering next to the ex-Stripe line.
+    if(_mSnap)ds.push({label:'Liquid + Stripe'+(inflationView?' (real)':''),data:[startLiqPlusStripeK,...R.map(r=>deflK(planLiquidComparable(r),r.yr))],borderColor:'#8b93f0',fill:false,tension:.35,pointRadius:0,pointHoverRadius:5,borderWidth:1.5,borderDash:[5,4]});
+    const _mNwDot=_mDotDs(_mImpliedLiqK,'📍 Actual liquid + Stripe (Monarch)');if(_mNwDot)ds.push(_mNwDot);
     if(!reuseChart||!_updateChart(ds,nwLabels)){if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';const ctx2=document.getElementById('cv').getContext('2d');charts.main=new Chart(ctx2,{type:'line',data:{labels:nwLabels,datasets:ds},options:po})}
   } else if(activeTab==='income'){
     // Sub-toggle bar — injected before chart
@@ -1546,6 +1670,158 @@ function render(){
     <div class="sc"><h3>📊 Tax Engine</h3><p>Fed MFJ 2026 + NYS + NYC + FICA<br>SALT $40.4K w/ phaseout above $505K<br>CTC $2.2K/kid w/ AGI phaseout<br>${P.nancySoloPractice?'Nancy: QBI + home office + SE':'Nancy: W2'}</p></div>
     <div class="sc"><h3>💡 Per-Kid Costs</h3><p>Infant +$9K · School +$10K · Teen +$14K/yr<br><em style="font-size:7.5px;color:var(--t3)">${(P.expenseInflation*100).toFixed(1)}%/yr inflation · ${P.numKids} kids</em></p></div>`;
 }
+
+let _stripeYear=null;
+function setStripeYear(y){_stripeYear=parseInt(y,10);render()}
+// ── Stripe equity dashboard ──────────────────────────────────────────────
+// The private-company CFO view: what vested, what became cash, what compounded, and how
+// concentrated the household has become as a result.
+function renderStripeTab(R,P){
+  const ca=document.getElementById('chartArea');
+  const sy=P.planStartYear||2026;
+  const yr=(_stripeYear&&R.some(r=>r.yr===_stripeYear))?_stripeYear:sy;
+  const row=R.find(r=>r.yr===yr)||R[0];
+  const last=R[R.length-1];
+  const tot=R.reduce((a,r)=>({n:a.n+r.sNew,s:a.s+r.sSold,k:a.k+r.sRet}),{n:0,s:0,k:0});
+  const basis=last.sBasis,appr=last.sEnd-basis;
+  const V='#6772e5';
+  const hasAny=tot.n>0||(P.startingStripeEquity||0)>0;
+
+  // Waterfall proportions for the selected year
+  const newEq=row.sNew,soldPct=newEq>0?row.sSold/newEq*100:0,keptPct=100-soldPct;
+  // What this year's retained stock is worth at the end of the plan, compounding forward
+  // at each year's own assumed rate.
+  let fv=row.sRet;
+  for(let i=R.indexOf(row)+1;i<R.length;i++)fv*=(1+R[i].sRate);
+
+  const tile=(lbl,val,sub,col)=>`<div class="kpi" style="border-color:${col?'rgba(103,114,229,.25)':'var(--bd)'}">
+    <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t3);margin-bottom:3px">${lbl}</div>
+    <div style="font-size:17px;font-weight:800;font-family:'SF Mono',ui-monospace,monospace;color:${col||'var(--tx)'};letter-spacing:-.4px">${val}</div>
+    ${sub?`<div style="font-size:8.5px;color:var(--t3);margin-top:2px">${sub}</div>`:''}
+  </div>`;
+
+  let h='';
+  if(!hasAny){
+    h+=`<div class="sc" style="margin-bottom:12px;border-color:rgba(103,114,229,.25)">
+      <h3>◆ No Stripe equity in this plan</h3>
+      <p style="line-height:1.6">Your plan currently models no existing Stripe holdings and no stock grants. Add a grant under <strong>Norm — Compensation</strong>, or set <strong>Existing Stripe equity</strong> in the Stripe panel.<br>
+      <em style="font-size:8px;color:var(--t3)">If your Stripe balance is already inside Starting Liquid, use the reclassify action in that panel — it moves the money without changing your net worth.</em></p>
+    </div>`;
+  }
+
+  h+=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+    <span style="font-size:11px;font-weight:700;color:var(--tx)">◆ Stripe Equity</span>
+    <span style="font-size:9px;color:var(--t3)">Year</span>
+    <select onchange="setStripeYear(this.value)" style="padding:4px 8px;border:1px solid var(--bd);border-radius:6px;background:var(--s1);color:var(--tx);font-family:inherit;font-size:10px;outline:none">
+      ${R.map(r=>`<option value="${r.yr}"${r.yr===yr?' selected':''}>${r.yr}</option>`).join('')}
+    </select>
+  </div>`;
+
+  h+=`<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
+    ${tile('Stripe equity · start of '+yr,fmt(row.sBeg),'carried in from '+(yr>sy?yr-1:'today'),V)}
+    ${tile('New equity in '+yr,fmt(row.sNew),'vests in 4 quarterly lots',V)}
+    ${tile('Cash taken',fmt(row.sSold),row.sNew>0?soldPct.toFixed(0)+'% of the year’s vest':'—','#cd3d64')}
+    ${tile('Equity retained',fmt(row.sRet),row.sNew>0?keptPct.toFixed(0)+'% kept':'—','#1a8754')}
+    ${tile('Projected value · end '+yr,fmt(row.sEnd),'after '+(row.sRate*100).toFixed(0)+'% assumed return',V)}
+    ${tile('Stripe % of net worth',(row.sPct*100).toFixed(0)+'%',fmt(row.sEnd)+' of '+fmt(row.nw),row.sPct>0.5?'#cd3d64':V)}
+  </div>`;
+
+  // ── Waterfall ──
+  if(row.sNew>0){
+    h+=`<div class="sc" style="margin-bottom:12px">
+      <h3>💧 Where ${yr}’s vest went</h3>
+      <div style="display:flex;height:34px;border-radius:7px;overflow:hidden;margin:10px 0 6px;border:1px solid var(--bd)">
+        ${row.sSold>0?`<div style="width:${soldPct}%;background:linear-gradient(135deg,#e0577f,#cd3d64);display:flex;align-items:center;justify-content:center;color:#fff;font-size:9.5px;font-weight:700;min-width:0;overflow:hidden;white-space:nowrap">${soldPct>16?fmt(row.sSold)+' → cash':''}</div>`:''}
+        ${row.sRet>0?`<div style="width:${keptPct}%;background:linear-gradient(135deg,#7c85ea,#6772e5);display:flex;align-items:center;justify-content:center;color:#fff;font-size:9.5px;font-weight:700;min-width:0;overflow:hidden;white-space:nowrap">${keptPct>16?fmt(row.sRet)+' retained':''}</div>`:''}
+      </div>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:7px;font-size:10.5px;color:var(--t2);line-height:1.7">
+        <strong style="color:${V};font-family:'SF Mono',monospace">${fmt(row.sNew)}</strong> vested
+        <span style="color:var(--t3)">→</span>
+        <strong style="color:#cd3d64;font-family:'SF Mono',monospace">${fmt(row.sSold)}</strong> covered ${row.gap>0?`a ${fmt(row.gap)} cash gap`:'cash needs'}
+        <span style="color:var(--t3)">→</span>
+        <strong style="color:#1a8754;font-family:'SF Mono',monospace">${fmt(row.sRet)}</strong> kept
+        ${row.sRet>0&&R.indexOf(row)<R.length-1?`<span style="color:var(--t3)">→</span> worth <strong style="color:${V};font-family:'SF Mono',monospace">${fmt(Math.round(fv))}</strong> by ${last.yr}`:''}
+      </div>
+      ${row.dpOut>0?`<div style="font-size:8.5px;color:var(--t3);margin-top:6px;font-style:italic">Includes the ${fmt(row.dpOut)} down payment — a real cash outflow, so vesting stock helps fund it.</div>`:''}
+      ${row.sold>0?`<div style="font-size:8.5px;color:var(--a);margin-top:4px">The year’s vest wasn’t enough — a further ${fmt(row.sold)} came out of the diversified portfolio.</div>`:''}
+    </div>`;
+  }
+
+  // ── Cumulative ──
+  h+=`<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
+    ${tile('Total stock received',fmt(tot.n),sy+'–'+last.yr,V)}
+    ${tile('Total sold for cash',fmt(tot.s),tot.n>0?(tot.s/tot.n*100).toFixed(0)+'% of everything vested':'—','#cd3d64')}
+    ${tile('Total retained',fmt(tot.k),'at vest-date value','#1a8754')}
+    ${tile('Cumulative appreciation',fmt(appr),'above '+fmt(basis)+' of basis',V)}
+    ${tile('Tax on Stripe gains',fmt(0),'nothing retained is ever auto-sold','var(--t3)')}
+    ${tile('Stripe at '+last.yr,fmt(last.sEnd),(last.sPct*100).toFixed(0)+'% of net worth',V)}
+  </div>`;
+
+  // The waterfall never auto-sells previously retained or pre-existing Stripe. That is
+  // deliberate, but it means a plan CAN drive the diversified pool below zero while a large
+  // Stripe balance sits untouched — an implicit unlimited overdraft. Say so plainly rather
+  // than letting a negative "liquid floor" sit quietly next to an eight-figure equity line.
+  const broke=R.filter(r=>r.liq<0);
+  if(broke.length){
+    const worst=R.reduce((a,b)=>b.liq<a.liq?b:a);
+    h+=`<div class="sc" style="margin-bottom:12px;border-color:rgba(205,61,100,.45);background:rgba(205,61,100,.06)">
+      <h3 style="color:#cd3d64">⚠️ The plan runs out of spendable money</h3>
+      <p style="line-height:1.6">Diversified liquid goes negative in <strong>${broke.length}</strong> ${broke.length===1?'year':'years'}, bottoming at <strong>${fmt(worst.liq)}</strong> in ${worst.yr} — while ${fmt(worst.sEnd)} of Stripe equity sits untouched.
+      <br><br>By design the model only ever sells <em>newly vesting</em> stock; it never liquidates shares you already hold. A real household in this position would sell some. Treat the negative balance as a signal, not a forecast: raise cash comp, cut spending, or switch the retention policy to <em>Sell a fixed %</em> or <em>Sell all at vest</em>.</p>
+    </div>`;
+  }
+
+  if(row.sPct>0.5){
+    h+=`<div class="sc" style="margin-bottom:12px;border-color:rgba(205,61,100,.3);background:rgba(205,61,100,.04)">
+      <h3 style="color:#cd3d64">⚠️ Concentration</h3>
+      <p style="line-height:1.6">Stripe is <strong>${(row.sPct*100).toFixed(0)}%</strong> of net worth in ${yr}. That is a single private position you cannot freely sell, priced off assumptions you set yourself — not a diversified holding. Compare a <em>Sell a fixed %</em> or <em>Maintain a liquid floor</em> policy to see the tradeoff.</p>
+    </div>`;
+  }
+
+  // ── Auditable year-by-year ledger ──
+  h+=`<div class="tw"><table><thead><tr>${['Year','Beginning','New equity','Sold for cash','Appreciation','Ending','% of NW','Return'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${
+    R.map(r=>`<tr style="background:${r.yr===yr?'rgba(103,114,229,.07)':''}">
+      <td style="font-weight:700;color:var(--tx)">${r.yr}</td>
+      <td>${fmt(r.sBeg)}</td>
+      <td style="color:${V}">${r.sNew>0?fmt(r.sNew):'—'}</td>
+      <td style="color:${r.sSold>0?'#cd3d64':'var(--t3)'}">${r.sSold>0?fmt(r.sSold):'—'}</td>
+      <td style="color:${r.sAppr>=0?'var(--g)':'var(--r)'}">${r.sAppr>=0?'+':'−'}${fmt(Math.abs(r.sAppr))}</td>
+      <td style="color:${V};font-weight:600">${fmt(r.sEnd)}</td>
+      <td>${(r.sPct*100).toFixed(0)}%</td>
+      <td style="color:var(--t3)">${(r.sRate*100).toFixed(0)}%</td>
+    </tr>`).join('')}</tbody></table></div>`;
+
+  ca.innerHTML=h;
+  document.getElementById('summaries').innerHTML=`
+    <div class="sc"><h3>◆ How this is modeled</h3><p style="line-height:1.6">Each year’s grant vests in four equal quarterly lots, so a lot vesting in Q4 earns none of that year’s return. Pre-existing holdings earn the full year.</p></div>
+    <div class="sc"><h3>🧾 Tax</h3><p style="line-height:1.6">Vesting stock is ordinary W-2 income — already taxed above. Selling at vest adds no capital gain, because basis is the vest-date price.</p></div>
+    <div class="sc"><h3>📉 Not the portfolio</h3><p style="line-height:1.6">Stripe uses its own return path, which you set. Portfolio return (${((P.investReturn||0)*100).toFixed(1)}%) applies only to diversified assets, and Monte Carlo varies only those.</p></div>`;
+}
+
+// Actual synced Stripe balance vs. the plan's assumption. Synced values are shown, never
+// silently written — the planning input stays under the user's control.
+function renderStripeReconcile(actual){
+  actual=Math.round(actual);
+  const planned=Math.round(P.startingStripeEquity||0);
+  if(!actual)return'';
+  if(Math.abs(actual-planned)<1000){
+    return`<div style="font-size:8.5px;color:var(--g);padding:0 10px 5px">✓ Plan matches this balance.</div>`;
+  }
+  const move=actual-planned;
+  const affordable=move<=0||(P.startingLiquid||0)>=move;
+  return`<div style="padding:6px 10px 7px;margin:-2px 0 5px;background:rgba(103,114,229,.05);border:1px solid rgba(103,114,229,.18);border-top:none;border-radius:0 0 6px 6px;font-size:8.5px;line-height:1.5;color:var(--t2)">
+    Plan assumes <strong>${fmt(planned)}</strong> of Stripe equity ${planned===0?'(your Stripe balance is probably still counted inside Starting Liquid)':''}.
+    ${affordable
+      ? `<button onclick="reclassifyStripe(${actual})" style="display:inline-block;margin-top:3px;background:#6772e5;color:#fff;border:none;border-radius:5px;padding:3px 7px;font-family:inherit;font-size:8px;font-weight:600;cursor:pointer">Reclassify ${fmtF(Math.abs(move))} ${move>0?'Liquid → Stripe':'Stripe → Liquid'}</button>`
+      : `<span style="color:var(--t3)">Starting Liquid is too small to reclassify this without inventing wealth.</span>`}
+  </div>`;
+}
+
+// Monarch's "liquid" total sums every non-retirement account, which INCLUDES the Stripe
+// brokerage account. The plan now splits that same money into a diversified pool and a
+// Stripe pool, so the like-for-like plan figure is the two added back together. Comparing
+// against r.liq alone would show the household as wildly ahead of plan.
+function planLiquidComparable(r){return (r?r.liq:0)+(r?r.sEnd:0)}
 
 function renderMonarchAccountsCard(){
   if(!monarchAccounts||monarchAccounts.length===0)return'';
@@ -1576,7 +1852,8 @@ function renderMonarchAccountsCard(){
             ${a.institution?`<span style="font-size:8px;color:var(--t3);margin-left:5px">${advEscape(a.institution)}</span>`:''}
           </div>
           <span style="font-size:11px;font-weight:600;font-family:'SF Mono',monospace;color:${a.balance<0?'var(--r)':catColor[c]}">${a.balance<0?'−':''}${fmt(Math.abs(a.balance||0))}</span>
-        </div>`;
+        </div>
+        ${isStripe?renderStripeReconcile(a.balance||0):''}`;
       }).join('')}
     </div>`;
   }).join('');
@@ -2210,7 +2487,9 @@ function renderSensitivityTab(R,P){
 
   const ALL_PARAMS=[
     {key:'investReturn',label:'Portfolio Return',delta:0.01,hi:'+1%',lo:'−1%',fmtV:v=>(v*100).toFixed(1)+'%',better:1},
-    {key:'normTC',label:'Norm Total Comp',delta:25000,hi:'+$25K/yr',lo:'−$25K/yr',fmtV:v=>fmt(v),better:1},
+    {key:'normCash',label:'Norm Cash Comp',delta:25000,hi:'+$25K/yr',lo:'−$25K/yr',fmtV:v=>fmt(v),better:1},
+    {key:'normStock',label:'Norm Stripe Grant',delta:25000,hi:'+$25K/yr',lo:'−$25K/yr',fmtV:v=>fmt(v),better:1},
+    {key:'stripeRet',label:'Stripe Return',delta:.03,hi:'+3%/yr',lo:'−3%/yr',fmtV:v=>(v*100).toFixed(0)+'%',better:1},
     {key:'nancyHourlyRate',label:'Nancy Rate',delta:25,hi:'+$25/hr',lo:'−$25/hr',fmtV:v=>'$'+v+'/hr',better:1},
     {key:'nancyMaxClients',label:'Nancy Clients',delta:5,hi:'+5',lo:'−5',fmtV:v=>v+' clients',better:1},
     {key:'pretax401k',label:'401k Contribution',delta:5000,hi:'+$5K/yr',lo:'−$5K/yr',fmtV:v=>fmt(v),better:1},
@@ -2225,7 +2504,7 @@ function renderSensitivityTab(R,P){
 
   const PRESETS={
     all:{label:'All factors',keys:ALL_PARAMS.map(p=>p.key)},
-    income:{label:'Income levers',keys:['investReturn','normTC','nancyHourlyRate','nancyMaxClients','pretax401k']},
+    income:{label:'Income levers',keys:['investReturn','normCash','normStock','stripeRet','nancyHourlyRate','nancyMaxClients','pretax401k']},
     housing:{label:'Housing',keys:['homePrice','downPctg','startingLiquid','homeAppreciation']},
     costs:{label:'Cost control',keys:['expenseInflation','taxInflation','nancyRampYears','pretax401k']},
   };
@@ -2236,13 +2515,17 @@ function renderSensitivityTab(R,P){
   const results=PARAMS.map(p=>{
     const delta=_sensiDeltas[p.key]??p.delta;
     let vBase,hiP,loP;
-    if(p.key==='normTC'){
-      // Synthetic multi-field param: shift ALL 11 explicit comp years by the same flat
-      // amount (a single P.key perturbation can't represent "Norm's comp is $25K higher
-      // across the board" since that's spread across normTCY0..Y10).
-      vBase=P.normTCY0;
+    // Synthetic multi-field levers: a single P.key perturbation can't express "this runs
+    // $25K higher across the board" when the value is spread over an 11-year window.
+    if(p.key==='normCash'||p.key==='normStock'){
+      const f=p.key==='normCash'?'normCashY':'normStockY';
+      vBase=P[f+'0'];
       hiP={...P};loP={...P};
-      for(let i=0;i<11;i++){hiP['normTCY'+i]=P['normTCY'+i]+delta;loP['normTCY'+i]=Math.max(0,P['normTCY'+i]-delta)}
+      for(let i=0;i<11;i++){hiP[f+i]=(P[f+i]||0)+delta;loP[f+i]=Math.max(0,(P[f+i]||0)-delta)}
+    } else if(p.key==='stripeRet'){
+      vBase=P.stripeLongTermReturn??.08;
+      hiP={...P,stripeLongTermReturn:vBase+delta};loP={...P,stripeLongTermReturn:vBase-delta};
+      for(let i=0;i<10;i++){const v=P['stripeRetY'+i]??vBase;hiP['stripeRetY'+i]=v+delta;loP['stripeRetY'+i]=v-delta}
     } else {
       vBase=P[p.key];
       const hiV=vBase+delta;
@@ -2551,9 +2834,9 @@ function renderGoalsTab(R,P,tT){
     // Jan-1 baseline: always use P.startingLiquid (the user's slider input).
     // For the growth increment, use the model's prior-year row if available (multi-year plan),
     // so we capture only this year's projected change, not a stale absolute.
-    const jan1Liq=P.startingLiquid||0;
-    const jan1LiqBase=prevRow?prevRow.liq:jan1Liq;
-    const annualLiqGrowth=projRow.liq-jan1LiqBase;
+    const jan1Liq=(P.startingLiquid||0)+(P.startingStripeEquity||0);
+    const jan1LiqBase=prevRow?planLiquidComparable(prevRow):jan1Liq;
+    const annualLiqGrowth=planLiquidComparable(projRow)-jan1LiqBase;
     // Pro-rated plan target: user's starting liquid + this year's pro-rated growth
     const planLiq=Math.round(jan1Liq+yrFrac*annualLiqGrowth);
     // 401k: informational only (not used in headline comparison)
@@ -3062,9 +3345,11 @@ function renderCompareTab(R,P){
   });
   h+=`</tbody></table></div>`;
   // Parameter diffs
-  const PKEYS=['homePrice','downPctg','mortgageRate','homePurchaseYear','investReturn','startingLiquid','expenseInflation','nancyHourlyRate','nancyMaxClients','normTCY0','normGrowth','pretax401k','numKids'];
-  const PLABELS={childcareMonthly:'Childcare / month',homePrice:'Home Price',downPctg:'Down %',mortgageRate:'Mortgage Rate',homePurchaseYear:'Purchase Year',investReturn:'Return %',startingLiquid:'Starting Liquid',expenseInflation:'Exp Inflation',nancyHourlyRate:'Nancy $/hr',nancyMaxClients:'Nancy Max Clients',normTCY0:'Norm Comp (Y0)',normGrowth:'Comp Growth',pretax401k:'401k Contrib',numKids:'# Kids'};
-  const fmtPv=(k,v)=>{if(['investReturn','expenseInflation','normGrowth'].includes(k))return(v*100).toFixed(1)+'%';if(['homePrice','startingLiquid','normTCY0','pretax401k'].includes(k))return fmt(v);if(k==='downPctg')return v+'%';if(k==='mortgageRate')return v+'%';return String(v)};
+  const PKEYS=['homePrice','downPctg','mortgageRate','homePurchaseYear','investReturn','startingLiquid','expenseInflation','nancyHourlyRate','nancyMaxClients','normCashY0','normStockY0','startingStripeEquity','stripePolicy','stripeLongTermReturn','normGrowth','pretax401k','numKids'];
+  const PLABELS={childcareMonthly:'Childcare / month',homePrice:'Home Price',downPctg:'Down %',mortgageRate:'Mortgage Rate',homePurchaseYear:'Purchase Year',investReturn:'Return %',startingLiquid:'Starting Liquid',expenseInflation:'Exp Inflation',nancyHourlyRate:'Nancy $/hr',nancyMaxClients:'Nancy Max Clients',normCashY0:'Norm Cash (Y0)',normStockY0:'Stripe Grant (Y0)',startingStripeEquity:'Starting Stripe',stripePolicy:'Stripe Policy',stripeLongTermReturn:'Stripe LT Return',normGrowth:'Cash Growth',pretax401k:'401k Contrib',numKids:'# Kids'};
+  const fmtPv=(k,v)=>{if(['investReturn','expenseInflation','normGrowth'].includes(k))return(v*100).toFixed(1)+'%';if(['homePrice','startingLiquid','normCashY0','normStockY0','startingStripeEquity','pretax401k'].includes(k))return fmt(v);
+  if(k==='stripeLongTermReturn')return(v*100).toFixed(0)+'%';
+  if(k==='stripePolicy')return String(v);if(k==='downPctg')return v+'%';if(k==='mortgageRate')return v+'%';return String(v)};
   const diffCols=cols.slice(1).filter(c=>PKEYS.some(k=>c.params[k]!==undefined&&c.params[k]!==P[k]));
   if(diffCols.length){
     h+=`<div style="margin-top:16px"><div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:8px">Parameter differences vs. current plan</div>`;
@@ -3091,6 +3376,7 @@ document.getElementById('main').innerHTML=`
     <button role="tab" aria-selected="true" class="active" data-tab="home" onclick="setTab('home')">✦ Decision Room</button>
     <button role="tab" aria-selected="false" data-tab="nw" onclick="setTab('nw')">📈 Net Worth</button>
     <button role="tab" aria-selected="false" data-tab="income" onclick="setTab('income')">💰 Income & Cash Flow</button>
+    <button role="tab" aria-selected="false" data-tab="stripe" onclick="setTab('stripe')">◆ Stripe</button>
     <button role="tab" aria-selected="false" data-tab="table" onclick="setTab('table')">📋 Table</button>
     <button role="tab" aria-selected="false" data-tab="goals" onclick="setTab('goals')">🎯 Goals</button>
     <button role="tab" aria-selected="false" data-tab="housing" onclick="setTab('housing')">🏠 Housing</button>
@@ -3173,6 +3459,7 @@ let _paletteState=null;
 function _paletteCommands(){
   const cmds=[
     {icon:'✦',label:'Decision Room',hint:'Home',run:()=>setTab('home')},
+    {icon:'◆',label:'Stripe Equity',hint:'Tab',run:()=>setTab('stripe')},
     {icon:'📈',label:'Net Worth',hint:'View',run:()=>setTab('nw')},
     {icon:'💰',label:'Income & Cash Flow',hint:'View',run:()=>setTab('income')},
     {icon:'📋',label:'Table',hint:'View',run:()=>setTab('table')},
@@ -3448,7 +3735,8 @@ function advMarkdown(text){
   return h;
 }
 
-function buildLiveContext(R,P){
+function buildLiveContext(R,P,totS){
+  totS=totS||run(P);
   const y26=R[0];
   const y30=R.find(r=>r.yr===P.homePurchaseYear)||R[4];
   const peakTuition=R.reduce((a,b)=>b.tu>a.tu?b:a);
@@ -3465,16 +3753,17 @@ function buildLiveContext(R,P){
 ═══ LIVE PLANNER STATE (auto-updated from his current inputs) ═══
 
 INCOME (${planSY} base year)
-• Norm gross: ${fmt(y26.normG)} (total comp — cash + RSU/stock combined; both are taxed identically as ordinary income at vest, so the plan doesn't split them)
+• Norm gross: ${fmt(y26.normG)} = ${fmt(y26.normCash)} CASH + ${fmt(y26.normStock)} Stripe stock. Both are ordinary W-2 income at vest (identical tax), but ONLY the cash is spendable — vesting stock arrives as a Stripe asset.
 • Nancy gross: ${fmt(y26.nancyG)} (W2 currently, solo practice ${P.nancyRampYear}+)
 • Combined gross: ${fmt(y26.gross)}
 • Effective tax rate: ${(y26.effRate*100).toFixed(1)}% all-in (Fed + NYS + NYC + FICA)
-• Net take-home: ${fmt(y26.inc)}
+• Spendable cash after tax: ${fmt(y26.inc)} — this is cash comp + Nancy − all household tax − pretax − practice overhead. It EXCLUDES stock he retains. (Take-home if he sold every vesting share: ${fmt(y26.netTC)}.)
 • Pre-tax deductions: 401k ${fmt(P.pretax401k)} + benefits ${fmt(P.pretaxBenefits)} = ${fmt(P.pretax401k+P.pretaxBenefits)}
 
 PER-YEAR INCOME INPUTS (editable via set_param)
-• Norm total comp, Y0-Y10 (${planSY}-${planSY+10}): ${Array.from({length:11},(_,i)=>fmt(P['normTCY'+i])).join(' · ')}  [keys: normTCY0 .. normTCY10]
-• Beyond ${planSY+10}, Norm's comp compounds forward from Y10 at normGrowth (currently ${((P.normGrowth??0.01)*100).toFixed(1)}%/yr) — no year-specific key needed, just change normGrowth or normTCY10.
+• Norm CASH comp, Y0-Y10 (${planSY}-${planSY+10}): ${Array.from({length:11},(_,i)=>fmt(P['normCashY'+i])).join(' · ')}  [keys: normCashY0 .. normCashY10]
+• Norm STRIPE STOCK grant, Y0-Y10: ${Array.from({length:11},(_,i)=>fmt(P['normStockY'+i])).join(' · ')}  [keys: normStockY0 .. normStockY10]
+• Beyond ${planSY+10} each stream compounds on its own: cash at normGrowth (${((P.normGrowth??0.01)*100).toFixed(1)}%/yr), stock at normStockGrowth (${((P.normStockGrowth??P.normGrowth??0.01)*100).toFixed(1)}%/yr).
 • Nancy W2 (only used while yr<nancyRampYear=${P.nancyRampYear}): Y0 ${fmt(P.nancyW2Y0)} · Y1 ${fmt(P.nancyW2Y1)} · Y2 ${fmt(P.nancyW2Y2)} · Y3 ${fmt(P.nancyW2Y3)}  [keys: nancyW2Y0, nancyW2Y1, nancyW2Y2, nancyW2Y3]
 
 SAVED SCENARIOS (${scenarios.length}) — reference these by name if he asks to update one
@@ -3490,6 +3779,19 @@ LIFECYCLE PROJECTIONS (current plan)
 • Total cumulative deficit: ${fmt(totalDef)}
 • Total stock sold to fund deficits: ${fmt(totSold)}
 • Total tax on those sales: ${fmt(totTaxSale)} (at ${(P.capGainsTaxRate*100).toFixed(1)}% all-in NYC cap gains)
+
+STRIPE EQUITY — a SEPARATE pool from the diversified portfolio. Never conflate the two.
+• Starting Stripe equity: ${fmt(P.startingStripeEquity||0)}  [key: startingStripeEquity]
+• Starting diversified (non-Stripe) liquid: ${fmt(P.startingLiquid)}  [key: startingLiquid]
+• Retention policy: ${P.stripePolicy||'deficit'} — ${STRIPE_POLICY_HELP[P.stripePolicy||'deficit']}  [key: stripePolicy, one of: deficit | floor | pct | retain | sell]
+${(P.stripePolicy||'deficit')==='floor'?`• Liquid floor being defended: ${fmt(P.stripeLiquidFloor??500000)}  [key: stripeLiquidFloor]`:''}${P.stripePolicy==='pct'?`• Fixed sell share: ${((P.stripeSellPct??.3)*100).toFixed(0)}%  [key: stripeSellPct]`:''}
+• Stripe return path ${planSY}-${planSY+9}: ${Array.from({length:10},(_,i)=>((P['stripeRetY'+i]??.08)*100).toFixed(0)+'%').join(' · ')}  [keys: stripeRetY0 .. stripeRetY9]
+• Long-term Stripe return beyond ${planSY+10}: ${((P.stripeLongTermReturn??.08)*100).toFixed(0)}%  [key: stripeLongTermReturn]
+• ${planSY} — vested ${fmt(y26.sNew)}, sold ${fmt(y26.sSold)} for cash, retained ${fmt(y26.sRet)}; ends the year at ${fmt(y26.sEnd)}
+• ${y58.yr} — Stripe equity ${fmt(y58.sEnd)}, which is ${(y58.sPct*100).toFixed(0)}% of net worth
+• Lifetime: ${fmt(totS.tSNew)} vested · ${fmt(totS.tSSold)} sold for cash · ${fmt(totS.tSRet)} retained · ${fmt(totS.stripeAppr)} cumulative appreciation above basis
+• Selling stock AT VEST costs no extra tax (basis = vest-date value; the W-2 tax was already paid). Only appreciation above basis would ever be a capital gain, and the plan never auto-sells previously retained or pre-existing Stripe.
+• Net worth = diversified liquid + Stripe equity + home equity. ${planSY} split: ${fmt(y26.liq)} liquid / ${fmt(y26.sEnd)} Stripe / ${fmt(y26.eq)} home.
 
 HOME PURCHASE PLAN
 • Target: ${fmt(P.homePrice)} (${(P.downPctg)}% down) in ${P.homePurchaseYear}
@@ -3521,7 +3823,7 @@ PORTFOLIO ASSUMPTIONS
 
 ═══ HOUSEHOLD CONTEXT (static) ═══
 
-• Norm: Stripe IR, NYC. W-2 with cash + RSUs.
+• Norm: Stripe IR, NYC. W-2 comp is part cash, part Stripe stock — the plan models these as two separate streams (see the Stripe section above for the live figures).
 • Nancy: Family therapist. Plans solo practice ~2030.
 • Currently UES (Pavilion, 500 E 77th, 2-year lease through 2029)
 • Planning Brooklyn move (Midwood, near Barkai)
@@ -3529,13 +3831,13 @@ PORTFOLIO ASSUMPTIONS
 CURRENT HOLDINGS (recent snapshot from his portfolio)
 • Fidelity ~$509K: FXAIX $347K, MU $44K, MSFT $35K, GOOG $31K, TSM $30K, CRWV $13K, SPAXX $9K
 • Coinbase ~$36K: SOL $15.5K, ETH $10.5K, LINK $10.3K (no BTC by choice)
-• Stripe RSUs ~$555K (earmarked for Brooklyn down payment)
+• Stripe RSUs (this snapshot predates the plan's own Stripe modeling — treat the STRIPE EQUITY section above as authoritative, since the plan tracks startingStripeEquity explicitly and it may still be sitting inside startingLiquid if he hasn't reclassified it)
 • Private investments ~$42K
 • 401k ~${fmt(P.k401Start||210000)} (starting balance)
 
 INVESTING PRINCIPLES NORM OPERATES BY
 • Core/satellite: ~65% FXAIX index, ~35% high-conviction names
-• Stripe RSUs = down payment capital, NOT investable
+• Stripe RSUs are down-payment capital, not part of the diversified portfolio — the model reflects this: the down payment counts as a cash need, so vesting stock funds it before the portfolio is touched
 • Wash sale rules don't apply to crypto (TLH freely)
 • Pre-establish post-IPO diversification plan before liquidity arrives
 • Skeptical of 10% historical equity return; uses 6% nominal in plan
@@ -3651,7 +3953,7 @@ async function advOptimize(){
   const prompt=`Optimize my financial plan. Follow these exact steps using your tools:
 
 1. Call run_projection() to lock in the baseline (final NW, deficit years, worst surplus).
-2. Systematically test the levers I can actually control: investReturn, normTCY0, normGrowth, nancyHourlyRate, nancyMaxClients, pretax401k, homePrice, downPctg, homePurchaseYear, expenseInflation. For each, use set_param() then run_projection() to measure the impact on final NW vs baseline.
+2. Systematically test the levers I can actually control: investReturn, normCashY0, normStockY0, stripeLongTermReturn, normGrowth, nancyHourlyRate, nancyMaxClients, pretax401k, homePrice, downPctg, homePurchaseYear, expenseInflation. For each, use set_param() then run_projection() to measure the impact on final NW vs baseline.
 3. Pick the top 2-3 changes with the biggest positive impact AND that are realistically achievable given my situation.
 4. Apply all those changes together with set_param() calls, then run_projection() one final time to show the combined effect.
 5. Call save_scenario() with a descriptive name like "Optimized: lower home + higher 401k".
@@ -3667,8 +3969,8 @@ async function advAutoBrief(){
   const msgs=document.getElementById('advMsgs');
   if(!msgs)return;
   const thinking=advAddMessage('ai','',true);
-  const{R}=run(P);
-  const liveContext=buildLiveContext(R,P);
+  const _res=run(P);const R=_res.R;
+  const liveContext=buildLiveContext(R,P,_res);
   const briefPrompt='Give me a concise quarterly check-in on my financial plan: 3-4 specific things to flag right now. Mix of what\'s on track, what needs attention, and any quick wins. Be direct and specific to my actual numbers — no generic advice.';
   const chat=advisorChats[advisorActiveChatId];
   try{
@@ -3860,8 +4162,8 @@ async function advSend(){
   chat.updatedAt=Date.now();
   advRenderRail();
   const thinking=advAddMessage('ai','',true);
-  const{R}=run(P);
-  const liveContext=buildLiveContext(R,P);
+  const _res=run(P);const R=_res.R;
+  const liveContext=buildLiveContext(R,P,_res);
   if(advAgenticMode){
     await advSendAgentic(text,chat,liveContext,thinking);
   } else {
@@ -3992,8 +4294,8 @@ function advShowProposals(proposals,chatTitle,suggestedName){
   const msgs=document.getElementById('advMsgs');if(!msgs)return;
   const el=document.createElement('div');el.className='adv-proposals';el.id='advProposalsPanel';
   const fmtVal=(key,v)=>{
-    if(['investReturn','expenseInflation','tuitionInflation','homeAppreciation','normGrowth','capGainsTaxRate'].includes(key))return(v*100).toFixed(1)+'%';
-    if(['homePrice','startingLiquid','pretax401k'].includes(key)||/^(normTCY|nancyW2Y)\d+$/.test(key))return fmt(v);
+    if(['investReturn','expenseInflation','tuitionInflation','homeAppreciation','normGrowth','normStockGrowth','capGainsTaxRate','stripeLongTermReturn','stripeSellPct'].includes(key)||/^stripeRetY\d+$/.test(key))return(v*100).toFixed(1)+'%';
+    if(['homePrice','startingLiquid','pretax401k','startingStripeEquity','stripeLiquidFloor'].includes(key)||/^(normCashY|normStockY|nancyW2Y)\d+$/.test(key))return fmt(v);
     return String(v);
   };
   const rows=proposals.changes.map(c=>`<div class="adv-proposal-row">

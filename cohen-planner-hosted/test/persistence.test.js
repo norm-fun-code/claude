@@ -2,7 +2,7 @@ import { describe,it,expect } from 'vitest';
 import fs from 'node:fs';
 import vm from 'node:vm';
 const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
-const source=html.slice(html.indexOf('let _saveTimer=null;'),html.indexOf('// Migrate old year-keyed'));
+const source=html.slice(html.indexOf('let _saveTimer=null;'),html.indexOf('// Saved-state migration lives in'));
 function harness(fetch){
   const statuses=[];let timer;
   const ctx=vm.createContext({fetch,JSON,Promise,Error,P:{homePrice:2000000},compareMode:false,activeTab:'home',activeScenarioIdx:-1,monarchSnapshot:null,

@@ -16,6 +16,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const path = require('path');
 const db = require('./db');
 const { run: runModel } = require('./public/model.js');
+const { migrateP } = require('./public/plan-migrate.js');
 const { createMonarchLive } = require('./monarch-live');
 const monarchLive = createMonarchLive({ db });
 
@@ -26,8 +27,8 @@ const ADVISOR_TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        key: { type: 'string', description: 'Exact parameter key (e.g. homePrice, investReturn, startingLiquid, normTCY1)' },
-        value: { type: 'number', description: 'New numeric value' },
+        key: { type: 'string', description: 'Exact parameter key (e.g. homePrice, investReturn, startingLiquid, normCashY1, normStockY1, startingStripeEquity, stripeRetY2, stripePolicy)' },
+        value: { type: ['number', 'string'], description: 'New value. Numeric for every key except stripePolicy, which takes one of: deficit, floor, pct, retain, sell' },
         reason: { type: 'string', description: 'One sentence: why this change improves the plan' },
       },
       required: ['key', 'value', 'reason'],
@@ -239,7 +240,7 @@ app.get('/model.js', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'model.js'));
 });
 // Keep every new planner asset behind the same session gate as the existing UI.
-for (const asset of ['decisions.js', 'decision-room.js', 'decision-room.css']) {
+for (const asset of ['decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js']) {
   app.get('/' + asset, requireAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', asset));
   });
@@ -1136,7 +1137,10 @@ app.post('/api/advisor/agentic', requireAuth, advisorLimiter, async (req, res) =
 
   const send = (payload) => res.write(`data: ${JSON.stringify(payload)}\n\n`);
 
-  let aiParams = { ...(currentParams || {}) };
+  // A cached client can still POST a previous-generation param shape. Migrating here means
+  // runModel() never silently falls back to placeholder comp figures and quietly returns a
+  // projection for a plan the user does not have.
+  let aiParams = migrateP({ ...(currentParams || {}) });
   const proposedChanges = [];
   let conversationMsgs = (Array.isArray(messages) && messages.length) ? [...messages] : [{ role: 'user', content: message }];
   let fullReply = '';
@@ -1153,13 +1157,23 @@ Tools available:
 
 ═══ PARAMETER KEY REFERENCE ═══
 Per-year income (Y0=the plan's start year, Y1=+1yr, … Y10=+10yr — see "PER-YEAR INCOME INPUTS" above in the live state for the actual years and current values):
-• normTCY0 through normTCY10 — Norm's TOTAL comp (cash + stock/RSU combined — they're taxed identically as ordinary income at vest, so there's no separate cash/stock split) for each of the next 11 years.
+• normCashY0 through normCashY10 — Norm's CASH compensation for each of the next 11 years.
+• normStockY0 through normStockY10 — Norm's STRIPE STOCK grant for each of those years.
+  Cash and stock are both ordinary W-2 income at vest, so moving a dollar between them does not change his tax by a cent. What it changes is CASH FLOW and ASSETS: cash is spendable, stock arrives as Stripe equity and is only spendable if sold. Never treat retained stock as available cash, and never treat Stripe equity as part of the diversified portfolio.
 • nancyW2Y0, nancyW2Y1, nancyW2Y2, nancyW2Y3 — Nancy's W2 income in each of the next 4 years (only actually used for years before nancyRampYear — see below)
-Beyond Y10, Norm's income instead compounds forward automatically from Y10's value at normGrowth (no year-specific key needed — change normGrowth or normTCY10 itself). Nancy's income beyond nancyRampYear is computed from nancyHourlyRate × client ramp (nancyRampClients→nancyMaxClients over nancyRampYears), not from a per-year field.
+Beyond Y10 each stream compounds on its own: cash at normGrowth, stock at normStockGrowth (no year-specific key needed). Nancy's income beyond nancyRampYear is computed from nancyHourlyRate × client ramp (nancyRampClients→nancyMaxClients over nancyRampYears), not from a per-year field.
 
-Other editable keys: homePrice, downPctg, mortgageRate, homePurchaseYear, propTaxRate, investReturn, startingLiquid, expenseInflation, normGrowth, nancyHourlyRate, nancyMaxClients, nancyRampClients, nancyRampYear, nancyRampYears, nancyWeeksPerYear, pretax401k, mcVol, tuitionInflation, homeAppreciation, capGainsTaxRate, numKids, planStartYear.
+STRIPE EQUITY KEYS — a pool entirely separate from the diversified portfolio:
+• startingStripeEquity — Stripe already owned at the start of the plan. startingLiquid is the diversified, NON-Stripe pool. They never overlap; moving money between them is a reclassification the user performs, not something you should silently assume.
+• stripePolicy — how much of each year's vest is sold for cash. One of: "deficit" (sell only enough to close that year's cash gap — the default), "floor" (sell enough to keep diversified liquid at/above stripeLiquidFloor), "pct" (sell stripeSellPct of every vest), "retain" (keep everything unless the plan would go insolvent), "sell" (treat all vesting stock as pay). This is a STRING value, not a number — pass it as text.
+• stripeLiquidFloor — the diversified balance the "floor" policy defends. stripeSellPct — the share sold under "pct" (0-1).
+• stripeRetY0 … stripeRetY9 — Stripe's assumed annual return for each of the next 10 years; stripeLongTermReturn applies after that. These are the user's assumptions, not forecasts — if he asks "what if Stripe grows 25% through 2029 then 10%", set the specific years and the long-term rate.
+• investReturn applies ONLY to the diversified portfolio. It never touches Stripe.
+Selling newly vested stock costs no additional tax (basis = vest-date value; the W-2 tax was already paid). Only appreciation above basis could ever be a capital gain, and the model never auto-sells previously retained or pre-existing Stripe. Net worth = diversified liquid + Stripe equity + home equity.
 
-If a request is genuinely ambiguous about WHICH income he means (e.g. just "update my income" with no further context — could be Norm, Nancy, cash vs stock, or a specific year), ask him to clarify rather than guessing which key to change. If he names a year and a person, or the context makes it clear, just do it.
+Other editable keys: homePrice, downPctg, mortgageRate, homePurchaseYear, propTaxRate, investReturn, startingLiquid, expenseInflation, normGrowth, normStockGrowth, nancyHourlyRate, nancyMaxClients, nancyRampClients, nancyRampYear, nancyRampYears, nancyWeeksPerYear, pretax401k, mcVol, tuitionInflation, homeAppreciation, capGainsTaxRate, numKids, planStartYear.
+
+If a request is genuinely ambiguous about WHICH income he means (e.g. just "update my income" with no further context — could be Norm's cash, Norm's stock, Nancy, or a specific year), ask him to clarify rather than guessing which key to change. "A raise" with no further detail usually means cash comp; "more equity"/"a bigger grant" means stock. If he names a year and a person, or the context makes it clear, just do it.
 
 Workflow: understand what he's asking → set_param for each change → run_projection → interpret results → optionally save_scenario if it's worth naming. Be specific and quantitative in your analysis.`;
 
@@ -1202,11 +1216,22 @@ You also have monarch_* tools to read Norm's REAL Monarch Money data (accounts, 
 
           if (block.name === 'set_param') {
             const { key, value, reason } = block.input;
-            const old = aiParams[key];
-            aiParams[key] = value;
-            proposedChanges.push({ key, oldValue: old, value, reason });
-            send({ tool_call: { name: 'set_param', key, oldValue: old, value, reason } });
-            result = { ok: true, key, value };
+            // stripePolicy is the one non-numeric parameter. Validate rather than letting a
+            // bad string reach the model, where the switch would silently fall back to the
+            // default and the user would see a proposal that doesn't do what it claims.
+            const STRIPE_POLICIES = ['deficit', 'floor', 'pct', 'retain', 'sell'];
+            if (key === 'stripePolicy' && !STRIPE_POLICIES.includes(value)) {
+              result = { error: `stripePolicy must be one of: ${STRIPE_POLICIES.join(', ')}` };
+            } else if (key !== 'stripePolicy' && !Number.isFinite(Number(value))) {
+              result = { error: `${key} expects a numeric value` };
+            } else {
+              const next = key === 'stripePolicy' ? value : Number(value);
+              const old = aiParams[key];
+              aiParams[key] = next;
+              proposedChanges.push({ key, oldValue: old, value: next, reason });
+              send({ tool_call: { name: 'set_param', key, oldValue: old, value: next, reason } });
+              result = { ok: true, key, value: next };
+            }
 
           } else if (block.name === 'run_projection') {
             try {
@@ -1220,6 +1245,12 @@ You also have monarch_* tools to read Norm's REAL Monarch Money data (accounts, 
                 worstSurplus: Math.min(...R.map(r => r.surp)),
                 totalTuition: proj.tT,
                 finalLiquid: last.liq,
+                finalStripeEquity: last.sEnd,
+                stripePctOfNetWorth: Math.round((last.sPct || 0) * 1000) / 10,
+                lifetimeStripeVested: proj.tSNew,
+                lifetimeStripeSoldForCash: proj.tSSold,
+                lifetimeStripeRetained: proj.tSRet,
+                worstCashGap: Math.max(...R.map(r => r.gap || 0)),
               };
             } catch (e) {
               result = { error: e.message };

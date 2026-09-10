@@ -16,7 +16,9 @@ describe('Decision Room calculations',()=>{
     const R=run(params).R;
     const summary=summarize(params,R,params.planStartYear);
     expect(JSON.stringify(defaults)).toBe(original);
-    expect(summary.total).toBe(R.at(-1).liq+R.at(-1).eq+R.at(-1).k401);
+    // Net worth now carries Stripe equity as its own component alongside the diversified
+    // pool and home equity, so the grand total picks it up too.
+    expect(summary.total).toBe(R.at(-1).liq+R.at(-1).sEnd+R.at(-1).eq+R.at(-1).k401);
     expect(summary.floor.liq).toBe(Math.min(...R.map(r=>r.liq)));
     expect(summary.current.surp).toBe(R[0].inc-R[0].totE);
   });

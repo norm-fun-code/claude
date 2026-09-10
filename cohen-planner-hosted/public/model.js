@@ -132,7 +132,79 @@ function kidCost(a){
 function mPmt(pr,r,y=30){if(pr<=0||r<=0)return 0;const m=r/12,n=y*12;return pr*(m*(1+m)**n)/((1+m)**n-1)*12}
 function mBal(pr,r,yp,ty=30){if(yp>=ty||pr<=0)return 0;const m=r/12,n=ty*12,pp=yp*12;return pr*((1+m)**n-(1+m)**pp)/((1+m)**n-1)}
 
-const NORM_TC_YEARS=11; // explicit per-year comp inputs: Y0 (planStartYear) through Y10
+const NORM_COMP_YEARS=11; // explicit per-year comp inputs: Y0 (planStartYear) through Y10
+const STRIPE_RET_YEARS=10; // explicit per-year Stripe return assumptions: Y0 through Y9
+
+// ── Norm's compensation ────────────────────────────────────────────────────
+// Cash and stock are tracked separately because they behave completely differently AFTER
+// tax: cash lands in the checking account and is spendable; stock lands as an ASSET that
+// only becomes spendable if it is sold. For TAX purposes they are identical — both are
+// ordinary W2 income at vest — so calcTax() still sees one combined normW2 figure.
+// Past the explicit window each stream compounds at its own growth rate.
+function normComp(p,yIdx){
+  const last=NORM_COMP_YEARS-1;
+  const cashAt=i=>p['normCashY'+i]??275000;
+  const stockAt=i=>p['normStockY'+i]??150000;
+  if(yIdx<NORM_COMP_YEARS)return{cash:cashAt(yIdx),stock:stockAt(yIdx)};
+  const n=yIdx-last;
+  return{
+    cash:cashAt(last)*(1+(p.normGrowth??0.01))**n,
+    stock:stockAt(last)*(1+(p.normStockGrowth??p.normGrowth??0.01))**n,
+  };
+}
+
+// ── Stripe equity ──────────────────────────────────────────────────────────
+// Stripe is a single concentrated private-company position, NOT the diversified
+// portfolio, so it gets its own explicit return path rather than p.investReturn.
+function stripeReturn(p,yIdx){
+  if(yIdx<STRIPE_RET_YEARS){
+    const v=p['stripeRetY'+yIdx];
+    if(typeof v==='number'&&isFinite(v))return v;
+  }
+  return p.stripeLongTermReturn??0.08;
+}
+
+// Average in-year growth factor for ONE year's grant, vesting in 4 equal quarterly lots.
+// A lot vesting at the end of quarter q has (4-q)/4 of the year left to appreciate, so the
+// Q4 lot earns nothing this year and the Q1 lot earns 9 months' worth. Without this, a
+// grant that mostly vests in December would be credited a full year of appreciation.
+function stripeVestFactor(sr){
+  let f=0;
+  for(let q=1;q<=4;q++)f+=(1+sr)**((4-q)/4);
+  return f/4;
+}
+
+// How much of this year's NEWLY VESTED stock to sell for cash, per the retention policy.
+// Always returns a vest-date dollar amount within [0, newStock]; legacy/previously-retained
+// Stripe is never sold automatically under any policy.
+//   netCash  — the year's cash flow before any stock sale (negative = shortfall)
+//   liqGrown — the diversified pool after a full year of return, before this year's flows
+//   td       — effective tax drag on liquidating diversified assets
+function stripeSellAmount(p,newStock,netCash,liqGrown,ret,td){
+  const need=Math.max(0,-netCash);
+  const clamp=x=>Math.max(0,Math.min(newStock,x));
+  // Minimum sale that leaves the diversified pool at or above `floor` at year end.
+  // Solved in closed form off the same half-year-convention arithmetic used below, so the
+  // policies stay deterministic instead of needing a search.
+  const sellForFloor=floor=>{
+    const depositNeeded=(floor-liqGrown)/(1+ret/2);
+    if(depositNeeded>=0)return depositNeeded-netCash; // pool is short: cash must go IN
+    const maxDraw=(liqGrown-floor)*(1-td)/(1+ret/2);  // pool can absorb this much
+    return need-maxDraw;
+  };
+  switch(p.stripePolicy||'deficit'){
+    case 'sell':   return newStock;                    // treat all vesting stock as cash
+    // "Retain all" still sells if the diversified pool would otherwise go negative —
+    // holding stock while the checking account overdrafts isn't a real-world option.
+    case 'retain': return clamp(sellForFloor(0));
+    case 'floor':  return clamp(sellForFloor(p.stripeLiquidFloor??500000));
+    // Fixed % carries the same solvency backstop, so a low % can't silently bankrupt the
+    // plan while a year's worth of sellable stock sits untouched.
+    case 'pct':    return clamp(Math.max(newStock*(p.stripeSellPct??0.3),sellForFloor(0)));
+    case 'deficit':
+    default:       return clamp(need); // sell only enough to close this year's cash gap
+  }
+}
 
 function run(p,rets){
   const sy=p.planStartYear||2026;
@@ -143,21 +215,19 @@ function run(p,rets){
   if(p.numKids>=4)kids.push(p.kid4Birth);
   const dp=p.homePrice*(p.downPctg/100),ma=p.homePrice-dp,am=mPmt(ma,p.mortgageRate/100);
   let liq=p.startingLiquid,k401=p.k401Start||210000,tT=0,tC=0,tTx=0,tS=0;
+  // Stripe equity is a wholly separate pool from the diversified `liq`. Basis matters
+  // because RSU cost basis IS the vest-date FMV — selling at vest produces essentially no
+  // capital gain (the W2 tax was already paid), and only post-vest appreciation is ever a
+  // taxable gain. Pre-existing holdings default to basis = value for the same reason.
+  let stripeVal=p.startingStripeEquity||0;
+  let stripeBasis=stripeVal*(p.stripeStartingBasisPct??1);
+  let tSNew=0,tSSold=0,tSRet=0;
   const R=[];
   for(let yr=sy;yr<=ey;yr++){
     const nk=kids.filter(k=>yr>=k).length;
     const yIdx=yr-sy;
-    // Total comp (single figure — cash vs. stock/RSU split was removed since both were
-    // always taxed identically as ordinary W2 income at vest; the split added 8 sliders'
-    // worth of UI with no differentiated treatment anywhere). Explicit per-year inputs run
-    // Y0 (planStartYear) through Y10; beyond that, compounds forward from Y10's own value
-    // at normGrowth so there's no discontinuity at the edge of the explicit window.
-    let normW2;
-    if(yIdx<NORM_TC_YEARS){normW2=p['normTCY'+yIdx]??425000}
-    else{
-      const lastTC=p['normTCY'+(NORM_TC_YEARS-1)]??425000;
-      normW2=lastTC*(1+(p.normGrowth??0.01))**(yr-(sy+NORM_TC_YEARS-1));
-    }
+    const {cash:normCash,stock:normStock}=normComp(p,yIdx);
+    const normW2=normCash+normStock; // identical treatment for tax; split matters for cash
     let nancyGross,nancyIsSolo=false,nancySENet=0,nancyOH=0;
     if(yIdx<4&&yr<p.nancyRampYear){nancyGross=p['nancyW2Y'+yIdx]??100000}
     else{
@@ -171,7 +241,16 @@ function run(p,rets){
     const ctcKids=kids.filter(k=>yr>=k&&(yr-k)<17).length;
     const taxP={...p,_normW2:normW2,_nancyW2:nancyIsSolo?0:nancyGross,_nancySE:nancyIsSolo?nancySENet:0,_nancyOverhead:nancyIsSolo?nancyOH:0};
     const tax=calcTax(grossIncome,taxP,yr,ctcKids);
-    const inc=tax.net;
+    // tax.net nets ALL household tax out of ALL comp (cash + stock). Backing the stock
+    // straight out leaves exactly the spendable figure:
+    //   normCash + nancyGross − taxes − pretax − practice overhead
+    // This is equivalent to real sell-to-cover withholding — charging the grant's
+    // withholding against cash and receiving the grant gross nets out identically once the
+    // resulting shortfall is closed by selling that same stock in the waterfall below.
+    const cashAvail=tax.net-normStock;
+    const inc=cashAvail;
+    // rets[] (Monte Carlo) perturbs only the DIVERSIFIED portfolio. Stripe follows its own
+    // explicit return path — we have no basis for claiming to know its volatility.
     const ret=rets?rets[yIdx]:p.investReturn;
     // Half-year convention: prior balance compounds a full year, this year's
     // contributions (deposited throughout the year) earn ~half a year of return.
@@ -209,24 +288,60 @@ function run(p,rets){
       if(a>=startAge&&a<=p.yeshivaEndAge)tu+=baseTuit(a)*(1+p.tuitionInflation)**(yr-sy); // C4 fix: yr-sy not yr-2026
     }
     tT+=tu;
-    const totE=h+liv+cc+tu,surp=inc-totE;
-    // Net within-year cash flow to/from the liquid pool. Deficits are funded by
-    // selling taxable assets, grossed up for cap-gains tax on the gain fraction.
-    let txS=0,sold=0,netFlow=surp;
-    if(surp<0){const def=Math.abs(surp),gp=1-p.costBasisPct,td=gp*p.capGainsTaxRate,gs=def/(1-td);txS=gs-def;sold=gs;netFlow=-gs}
-    if(yr===p.homePurchaseYear)netFlow-=dp;
+    const totE=h+liv+cc+tu;
+    const surp=cashAvail-totE; // operating cash flow — retained stock is NOT spendable
+    // ── Stripe cash waterfall ──
+    // Cash comp funds life first. Whatever it can't cover (including the down payment, a
+    // real cash outflow) is the gap the retention policy decides how to close.
+    const dpThis=(yr===p.homePurchaseYear)?dp:0;
+    const netCash=surp-dpThis;
+    const sr=stripeReturn(p,yIdx);
+    const gp=1-p.costBasisPct,td=gp*p.capGainsTaxRate;
+    const liqGrown=liq*(1+ret);
+    const stripeSold=Math.max(0,Math.min(normStock,stripeSellAmount(p,normStock,netCash,liqGrown,ret,td)));
+    const stripeRetained=Math.max(0,normStock-stripeSold);
+    // Selling at vest is untaxed here by design: basis = vest FMV, and the ordinary W2 tax
+    // on that stock was already assessed above. Only the DIVERSIFIED pool carries the
+    // generic cost-basis/cap-gains gross-up when it has to be drawn down.
+    let txS=0,sold=0,netFlow=netCash+stripeSold;
+    if(netFlow<0){const def=-netFlow,gs=def/(1-td);txS=gs-def;sold=gs;netFlow=-gs}
     // Half-year convention: prior balance compounds a full year, this year's net
     // flow (surplus, withdrawals, down payment) earns ~half a year of return.
-    liq=liq*(1+ret)+netFlow*(1+ret/2);tTx+=txS;tS+=sold;
+    liq=liqGrown+netFlow*(1+ret/2);tTx+=txS;tS+=sold;
+    // ── Stripe equity roll-forward ──
+    const stripeBegin=stripeVal;
+    const stripeEnd=stripeBegin*(1+sr)              // held all year → full year's return
+                   +stripeRetained*stripeVestFactor(sr); // quarterly vests → partial year
+    const stripeAppr=stripeEnd-stripeBegin-stripeRetained;
+    stripeVal=stripeEnd;
+    stripeBasis+=stripeRetained; // RSU basis is vest-date FMV
+    tSNew+=normStock;tSSold+=stripeSold;tSRet+=stripeRetained;
     let hv=0,mb=0,eq=0;
     // yo = years of ownership elapsed. 0 in the purchase year itself (just closed,
     // no appreciation/paydown yet) — matches the property-tax calc above and the
     // mortgage-interest amortization in calcTax(), both of which start at 0 elapsed years.
     if(sub){const yo=yr-p.homePurchaseYear;hv=p.homePrice*(1+p.homeAppreciation)**yo;mb=mBal(ma,p.mortgageRate/100,yo);eq=hv-mb}
     const kiy=kids.filter((k,ki)=>{const a=yr-k;const sa=ki===0?p.kid1YeshivaStartAge:p.yeshivaStartAge;return a>=sa&&a<=p.yeshivaEndAge}).length;
-    R.push({yr,normG:Math.round(normW2),nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,inc,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),liv:Math.round(liv),cc:Math.round(cc),tu:Math.round(tu),totE:Math.round(totE),surp:Math.round(surp),txS:Math.round(txS),sold:Math.round(sold),liq:Math.round(liq),eq:Math.round(eq),nw:Math.round(liq+eq),k401:Math.round(k401),kiy,nk});
+    const nw=liq+stripeVal+eq;
+    R.push({yr,normG:Math.round(normW2),normCash:Math.round(normCash),normStock:Math.round(normStock),
+      nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,
+      inc:Math.round(inc),netTC:tax.net,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
+      liv:Math.round(liv),cc:Math.round(cc),tu:Math.round(tu),totE:Math.round(totE),
+      surp:Math.round(surp),gap:Math.round(Math.max(0,-netCash)),dpOut:Math.round(dpThis),
+      txS:Math.round(txS),sold:Math.round(sold),liq:Math.round(liq),eq:Math.round(eq),
+      sBeg:Math.round(stripeBegin),sNew:Math.round(normStock),sSold:Math.round(stripeSold),
+      // Derived from the two rounded figures rather than rounded independently, so the
+      // reported sold + retained always adds back to the reported vest (post-window comp
+      // is fractional, and three separate roundings can otherwise drift a dollar apart).
+      sRet:Math.round(normStock)-Math.round(stripeSold),
+      sAppr:Math.round(stripeAppr),sEnd:Math.round(stripeVal),
+      sBasis:Math.round(stripeBasis),sRate:sr,sPct:nw>0?stripeVal/nw:0,
+      nw:Math.round(nw),k401:Math.round(k401),kiy,nk});
   }
-  return{R,tT:Math.round(tT),tC:Math.round(tC),tTx:Math.round(tTx),tS:Math.round(tS),am,dp,mm:am/12};
+  return{R,tT:Math.round(tT),tC:Math.round(tC),tTx:Math.round(tTx),tS:Math.round(tS),am,dp,mm:am/12,
+    tSNew:Math.round(tSNew),tSSold:Math.round(tSSold),tSRet:Math.round(tSRet),
+    stripeEnd:Math.round(stripeVal),stripeBasis:Math.round(stripeBasis),
+    stripeAppr:Math.round(stripeVal-stripeBasis)};
 }
 
 function randNorm(mean,sd){
@@ -301,6 +416,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
   module.exports={bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
+    normComp,stripeReturn,stripeVestFactor,stripeSellAmount,NORM_COMP_YEARS,STRIPE_RET_YEARS,
     FED_BR_2026,NYS_BR_2026,NYC_BR_2026,SS_CAP_2026,SALT_BASE_2026,STD_DEDUCT_2026,
     HIST_SP500_RETURNS};
 }

@@ -3,6 +3,18 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { calcTax, run, runMonteCarlo, bracketTax } = require('../public/model.js');
 
+// Norm's comp, split into the two streams that behave differently after tax.
+// Totals per year match the pre-split total-comp figures exactly, so tax expectations
+// carry over unchanged: 280+197=477, 260+162=422, 275+153=428, 265+158=423, then ~425+ea.
+const COMP = {
+  normCashY0: 280000, normCashY1: 260000, normCashY2: 275000, normCashY3: 265000,
+  normCashY4: 277000, normCashY5: 282000, normCashY6: 286000, normCashY7: 290000,
+  normCashY8: 295000, normCashY9: 299000, normCashY10: 304000,
+  normStockY0: 197000, normStockY1: 162000, normStockY2: 153000, normStockY3: 158000,
+  normStockY4: 150000, normStockY5: 150000, normStockY6: 150000, normStockY7: 150000,
+  normStockY8: 150000, normStockY9: 150000, normStockY10: 150000,
+};
+
 // Minimal base params shared by most tests
 const BASE = {
   planStartYear: 2026,
@@ -158,9 +170,8 @@ describe('run()', () => {
     childcareMonthly: 2800,
     tuitionInflation: 0.035, yeshivaStartAge: 2, yeshivaEndAge: 17, kid1YeshivaStartAge: 3,
     startingLiquid: 1100000, nycRent: 5500,
-    normTCY0: 477000, normTCY1: 422000, normTCY2: 428000, normTCY3: 423000,
-    normTCY4: 427000, normTCY5: 432000, normTCY6: 436000, normTCY7: 440000,
-    normTCY8: 445000, normTCY9: 449000, normTCY10: 454000, normGrowth: 0.01,
+    ...COMP, normGrowth: 0.01, normStockGrowth: 0.01,
+    startingStripeEquity: 0, stripeLongTermReturn: 0.08, stripePolicy: 'deficit',
     company401kMatch: 8750, k401Start: 210000,
     nancyW2Y0: 130000, nancyW2Y1: 80000, nancyW2Y2: 100000, nancyW2Y3: 75000,
     nancyHourlyRate: 300, nancyRampYear: 2030, nancyRampClients: 5,
@@ -189,10 +200,10 @@ describe('run()', () => {
     expect(R.length).toBe(25); // 2026-2050 inclusive
   });
 
-  it('net worth = liquid + equity (within $1 rounding tolerance)', () => {
-    const { R } = run(P_FULL);
+  it('net worth = diversified liquid + Stripe equity + home equity', () => {
+    const { R } = run({ ...P_FULL, startingStripeEquity: 400000 });
     for (const r of R) {
-      expect(Math.abs(r.nw - (r.liq + r.eq))).toBeLessThanOrEqual(1);
+      expect(Math.abs(r.nw - (r.liq + r.sEnd + r.eq))).toBeLessThanOrEqual(1);
     }
   });
 
@@ -239,9 +250,8 @@ describe('runMonteCarlo()', () => {
     childcareMonthly: 2800,
     tuitionInflation: 0.035, yeshivaStartAge: 2, yeshivaEndAge: 17, kid1YeshivaStartAge: 3,
     startingLiquid: 1100000, nycRent: 5500,
-    normTCY0: 477000, normTCY1: 422000, normTCY2: 428000, normTCY3: 423000,
-    normTCY4: 427000, normTCY5: 432000, normTCY6: 436000, normTCY7: 440000,
-    normTCY8: 445000, normTCY9: 449000, normTCY10: 454000, normGrowth: 0.01,
+    ...COMP, normGrowth: 0.01, normStockGrowth: 0.01,
+    startingStripeEquity: 0, stripeLongTermReturn: 0.08, stripePolicy: 'deficit',
     pretax401k: 23500, pretaxBenefits: 11700, company401kMatch: 8750, k401Start: 210000,
     nancyW2Y0: 130000, nancyW2Y1: 80000, nancyW2Y2: 100000, nancyW2Y3: 75000,
     nancyHourlyRate: 300, nancyRampYear: 2030, nancyRampClients: 5,
