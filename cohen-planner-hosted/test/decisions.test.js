@@ -69,3 +69,7 @@ describe('Monarch snapshot trust',()=>{
     expect(usableSnapshot({...zero,assets:100,netWorth:100,liquid:100})).toBe(true);
   });
 });
+
+it('does not use an incomplete account subtotal as verified net worth',()=>{
+  expect(usableSnapshot({netWorth:100,liquid:100,retirement:0,assets:100,liabilities:0,accountCount:1,syncedAt:'2026-09-10T00:00:00Z',partial:true})).toBe(false);
+});

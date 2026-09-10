@@ -61,7 +61,7 @@
     return presets[key];
   }
   function usableSnapshot(s){
-    if(!s||!['netWorth','liquid','retirement','assets','liabilities'].every(k=>Number.isFinite(s[k])))return false;
+    if(!s||s.partial||!['netWorth','liquid','retirement','assets','liabilities'].every(k=>Number.isFinite(s[k])))return false;
     if(!Number.isFinite(Date.parse(s.syncedAt)))return false;
     // Legacy empty responses were stored as all-zero balances. Require evidence for zero.
     return s.accountCount>0||s.assets!==0||s.liabilities!==0;

@@ -31,7 +31,7 @@ function renderDecisionRoom(R){
   const upcoming=events.filter(e=>e.yr>=todayYear).slice(0,4);
   const synced=PlannerDecisions.usableSnapshot(monarchSnapshot);
   const age=synced?Math.max(0,Math.floor((Date.now()-Date.parse(monarchSnapshot.syncedAt))/86400000)):null;
-  const source=synced?`Monarch · ${new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}${age>7?' · refresh recommended':''}`:'Plan assumptions · live balances unavailable';
+  const source=synced?`Monarch · ${new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}${age>7?' · refresh recommended':''}`:(monarchSnapshot?.partial?'Plan assumptions · account totals incomplete (see Portfolio)':(monarchSnapshot?.partial?'Plan assumptions · account totals incomplete (see Portfolio)':'Plan assumptions · live balances unavailable'));
   document.getElementById('summaries').innerHTML='';
   document.getElementById('chartArea').innerHTML=`<div class="decision-room">
     <section class="dr-intro">
