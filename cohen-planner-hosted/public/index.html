@@ -77,7 +77,7 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 .snap-chip .x{font-size:8px;opacity:.6;margin-left:3px}.snap-chip .x:hover{opacity:1;color:var(--r)}
 @media print{
   body{padding:0;font-size:11px}
-  .panel,.tabs button#inflBtn,.logout-btn,.sync-pill,.adv-input-area,.scenario-bar,.snap-bar{display:none!important}
+  .panel,#subToggle,#moreBtn,#moreMenu,.logout-btn,.sync-pill,.adv-input-area,.scenario-bar,.snap-bar{display:none!important}
   .tabs button:not(.active){display:none}
   .layout{grid-template-columns:1fr;display:block}
   .cc,.kpi,.sc{box-shadow:none;border-color:#ccc}
@@ -559,7 +559,7 @@ function savePlannerState(){
   if(!_planLoaded){setSyncStatus('error');return;}
   setSyncStatus('saving');
   const revision=++_saveRevision;
-  const payload=JSON.stringify({state:{P,compareMode,activeTab,_projView,_todayView,activeScenarioIdx,scenarioDirty,monarchSnapshot,experienceVersion:6}});
+  const payload=JSON.stringify({state:{P,compareMode,activeTab,_projView,_todayView,_homeView,activeScenarioIdx,scenarioDirty,monarchSnapshot,experienceVersion:6}});
   clearTimeout(_saveTimer);
   _saveTimer=setTimeout(()=>{
     // Serialize writes so a slower earlier request cannot overwrite newer state.
@@ -596,6 +596,7 @@ async function loadFromServer(){
       _planLoaded=true;
       if(s._projView!==undefined)_projView=s._projView;
       if(s._todayView!==undefined)_todayView=s._todayView;
+      if(s._homeView!==undefined)_homeView=s._homeView;
       if(s.activeScenarioIdx!==undefined)activeScenarioIdx=s.activeScenarioIdx;
       if(s.scenarioDirty!==undefined)scenarioDirty=!!s.scenarioDirty;
       if(PlannerDecisions.usableSnapshot(s.monarchSnapshot)&&!monarchSnapshot)monarchSnapshot=s.monarchSnapshot; // don't clobber a fresh auto-sync
@@ -848,7 +849,7 @@ function _updateChart(datasets,labels){
   charts.main.update();return true;
 }
 function deflK(v,yr){if(!inflationView)return Math.round(v/1000);const sy=P.planStartYear||2026;return Math.round(v/Math.pow(1+(P.expenseInflation||.03),yr-sy)/1000)}
-function toggleInflation(){inflationView=!inflationView;const b=document.getElementById('inflBtn');if(b)b.textContent=inflationView?'Nominal $':'Real $';render()}
+function toggleInflation(){inflationView=!inflationView;render();savePlannerState()}
 
 // ═══ CSV EXPORT ═══
 function exportCSV(){
@@ -1578,21 +1579,33 @@ function render(){
   // dispatch below, since every other branch returns early and would leave it stale.
   {
     const tg=document.getElementById('subToggle'),cfg=SUB_VIEWS[activeTab];
-    if(tg)tg.innerHTML=!cfg?'':`<div style="display:flex;gap:4px;margin-bottom:9px;flex-wrap:wrap">`+
-      cfg.views.map(([k,ic,lb])=>{const on=cfg.get()===k;
+    // Real $, Range and Bands only ever affected the projection charts, so they sit beside
+    // them rather than in the global nav where they read as navigation.
+    const opt=(id,lbl,fn,on,title)=>`<button id="${id}" title="${title}" aria-pressed="${on}" onclick="${fn}" style="font-size:9.5px;padding:4px 9px;border-radius:5px;border:1px solid ${on?'transparent':'var(--bd)'};cursor:pointer;font-family:inherit;background:${on?'var(--accent)':'var(--s2)'};color:${on?'#fff':'var(--t2)'}">${lbl}</button>`;
+    let chartOpts='';
+    if(activeTab==='projection'&&_projView!=='table'){
+      chartOpts=opt('inflBtn',inflationView?'Real $':'Nominal $','toggleInflation()',inflationView,'Show future dollars in today\u2019s purchasing power');
+      if(_projView==='nw')chartOpts+=opt('stressBtn','⚡ Range','toggleStressMode()',_stressMode,'Overlay a bear and bull path')
+        +opt('bandBtn','🎲 Bands','toggleBandMode()',_bandMode,'Overlay the Monte Carlo confidence band');
+    }
+    if(tg)tg.innerHTML=(!cfg&&!chartOpts)?'':`<div style="display:flex;gap:4px;margin-bottom:9px;flex-wrap:wrap;align-items:center">`+
+      (cfg?cfg.views.map(([k,ic,lb])=>{const on=cfg.get()===k;
         return `<button onclick="setSubView('${k}')" aria-pressed="${on}" style="font-size:10px;padding:5px 11px;border-radius:6px;border:1px solid ${on?'transparent':'var(--bd)'};cursor:pointer;font-family:inherit;font-weight:${on?600:500};background:${on?'var(--accent)':'var(--s2)'};color:${on?'#fff':'var(--t2)'}">${ic} ${lb}</button>`;
-      }).join('')+`</div>`;
+      }).join(''):'')+
+      (chartOpts?`<span style="margin-left:auto;display:flex;gap:4px">${chartOpts}</span>`:'')+`</div>`;
   }
-  if(activeTab==='home'){renderDecisionRoom(R);return}
+  if(activeTab==='home'){
+    if(_homeView==='housing'){renderHousingTab(R,P);return}
+    if(_homeView==='levers'){window._lastR=R;window._lastP=P;renderSensitivityTab(R,P);return}
+    if(_homeView==='compare'){renderCompareTab(R,P);return}
+    renderDecisionRoom(R);return;
+  }
   if(activeTab==='advisor'){renderAdvisorTab(R,P);return}
   if(activeTab==='today'){
     if(_todayView==='holdings')renderPortfolioTab(R,P);
     else renderGoalsTab(R,P,tT);
     return;
   }
-  if(activeTab==='housing'){renderHousingTab(R,P);return}
-  if(activeTab==='sensitivity'){window._lastR=R;window._lastP=P;renderSensitivityTab(R,P);return}
-  if(activeTab==='compare'){renderCompareTab(R,P);return}
   if(activeTab==='stripe'){renderStripeTab(R,P);return}
   if(activeTab==='projection'&&_projView==='table'){
     // Wide by necessity — this is the audit view. The .tw wrapper scrolls horizontally.
@@ -3407,12 +3420,43 @@ function renderCompareTab(R,P){
   ca.innerHTML=diffHtml+h;
   document.getElementById('summaries').innerHTML='';
 }
+const MORE_ACTIONS=[
+  ['⬇','Download CSV','exportCSV()'],
+  ['🖨','Print / save PDF','printPDF()'],
+  ['📸','Save a snapshot','showSnapshotInput()'],
+  ['🎬','Play as a story','openStoryMode()'],
+];
+function toggleMoreMenu(e){
+  if(e)e.stopPropagation();
+  const m=document.getElementById('moreMenu'),b=document.getElementById('moreBtn');
+  if(!m||!b)return;
+  if(!m.hidden){closeMoreMenu();return}
+  m.innerHTML=MORE_ACTIONS.map(([ic,lb,fn])=>
+    `<button onclick="closeMoreMenu();${fn}" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:7px 9px;border:none;border-radius:6px;background:none;color:var(--tx);font-family:inherit;font-size:11px;cursor:pointer" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='none'"><span style="width:14px">${ic}</span>${lb}</button>`).join('');
+  const r=b.getBoundingClientRect();
+  m.style.top=(r.bottom+window.scrollY+6)+'px';
+  // Right-align to the button, clamped so it can't run off a narrow screen.
+  m.style.left=Math.max(8,Math.min(r.right-186,window.innerWidth-194))+'px';
+  m.hidden=false;b.setAttribute('aria-expanded','true');
+}
+function closeMoreMenu(){
+  const m=document.getElementById('moreMenu'),b=document.getElementById('moreBtn');
+  if(m)m.hidden=true;
+  if(b)b.setAttribute('aria-expanded','false');
+}
+document.addEventListener('click',e=>{
+  const m=document.getElementById('moreMenu');
+  if(m&&!m.hidden&&!m.contains(e.target))closeMoreMenu();
+});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeMoreMenu()});
+
 function setSubView(v){const c=SUB_VIEWS[activeTab];if(c){c.set(v);render();savePlannerState()}}
 function setTab(t){
   // Retired top-level tabs now address a view within Projection. Saved plan state, the
   // command palette and any in-app link can keep using the old names.
   if(t==='nw'||t==='income'||t==='cashflow'||t==='table'){_projView=t;t='projection';}
   if(t==='goals'){_todayView='plan';t='today';}
+  if(t==='housing'||t==='sensitivity'||t==='compare'){_homeView=(t==='sensitivity'?'levers':t);t='home';}
   if(t==='portfolio'){_todayView='holdings';t='today';}
   activeTab=t;document.querySelectorAll('.tabs button[role=tab]').forEach(b=>{const on=b.dataset.tab===t;b.classList.toggle('active',on);b.setAttribute('aria-selected',on?'true':'false');});render();if(!_reduceMotion())requestAnimationFrame(()=>{['chartArea','summaries'].forEach(id=>{const e=document.getElementById(id);if(e){e.classList.remove('tab-fade');void e.offsetWidth;e.classList.add('tab-fade')}})});savePlannerState()}
 document.getElementById('main').innerHTML=`
@@ -3423,18 +3467,10 @@ document.getElementById('main').innerHTML=`
     <button role="tab" aria-selected="false" data-tab="projection" onclick="setTab('projection')">📈 Projection</button>
     <button role="tab" aria-selected="false" data-tab="stripe" onclick="setTab('stripe')">◆ Stripe</button>
     <button role="tab" aria-selected="false" data-tab="today" onclick="setTab('today')">🎯 Today</button>
-    <button role="tab" aria-selected="false" data-tab="housing" onclick="setTab('housing')">🏠 Housing</button>
-    <button role="tab" aria-selected="false" data-tab="sensitivity" onclick="setTab('sensitivity')">🎚️ Sensitivity</button>
-    <button role="tab" aria-selected="false" data-tab="compare" onclick="setTab('compare')">⚖ Compare</button>
     <button role="tab" aria-selected="false" data-tab="advisor" onclick="setTab('advisor')">🤖 AI Advisor</button>
-    <button id="inflBtn" aria-label="Toggle real vs nominal dollars" onclick="toggleInflation()" style="margin-left:auto;font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit">Real $</button>
-    <button id="stressBtn" aria-label="Toggle bear/bull range overlay" onclick="toggleStressMode()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Show bear/bull range">⚡ Range</button>
-    <button id="bandBtn" aria-label="Toggle Monte Carlo confidence band" onclick="toggleBandMode()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Show P10/P50/P90 confidence band">🎲 Bands</button>
-    <button aria-label="Download projection as CSV" onclick="exportCSV()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Download projection table as CSV">⬇ CSV</button>
-    <button aria-label="Print or save as PDF" onclick="printPDF()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Print / Save as PDF">🖨 PDF</button>
-    <button aria-label="Save a dated snapshot of this plan" onclick="showSnapshotInput()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid rgba(8,145,178,.3);background:#e0f7fa;color:var(--c);cursor:pointer;font-family:inherit" title="Save a dated copy of this plan">📸 Snapshot</button>
-    <button aria-label="Play plan as a story" onclick="openStoryMode()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid rgba(99,91,255,.3);background:var(--accent-soft);color:var(--accent);cursor:pointer;font-family:inherit" title="Walk through your plan's milestones">🎬 Story</button>
+    <button id="moreBtn" aria-label="More actions" aria-haspopup="true" aria-expanded="false" onclick="toggleMoreMenu(event)" style="margin-left:auto;font-size:11px;padding:4px 10px;border-radius:5px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit;line-height:1">⋯</button>
   </div>
+  <div id="moreMenu" hidden style="position:absolute;z-index:60;background:var(--s1);border:1px solid var(--bd);border-radius:9px;box-shadow:0 10px 30px rgba(10,37,64,.16);padding:5px;min-width:186px"></div>
   <div id="subToggle"></div>
   <div class="cc" id="chartArea"><p role="status" style="padding:24px;color:var(--t2)">Loading your saved plan…</p></div>
   <div class="sg" id="summaries"></div>`;
@@ -3453,7 +3489,13 @@ let _projView='nw';
 // Two surfaces answered the same question from different angles, so each became one tab
 // with a view switch rather than several competing for space in the nav.
 let _todayView='plan';
+// The Decision Room already leads with "Explore a what-if", and Housing, the tornado and the
+// scenario diff are all the same activity at different resolutions: pick a lever, see which
+// levers matter, save and diff. One tab, four depths — not four destinations.
+let _homeView='explore';
 const SUB_VIEWS={
+  home:{get:()=>_homeView,set:v=>{_homeView=v},
+    views:[['explore','✦','Explore'],['housing','🏠','Housing'],['levers','🎚️','Which levers matter'],['compare','⚖','Compare saved']]},
   projection:{get:()=>_projView,set:v=>{_projView=v},
     views:[['nw','📈','Net worth'],['income','💰','Income & tax'],['cashflow','💸','Cash flow'],['table','📋','Table']]},
   today:{get:()=>_todayView,set:v=>{_todayView=v},
@@ -3493,9 +3535,7 @@ function _scheduleBandRefresh(){
 }
 function toggleBandMode(){
   _bandMode=!_bandMode;
-  if(_stressMode&&_bandMode){_stressMode=false;const sb=document.getElementById('stressBtn');if(sb){sb.style.background='var(--s2)';sb.style.color='var(--t2)';sb.style.borderColor='var(--bd)'}}
-  const btn=document.getElementById('bandBtn');
-  if(btn){btn.style.background=_bandMode?'rgba(99,91,255,.15)':'var(--s2)';btn.style.color=_bandMode?'var(--accent)':'var(--t2)';btn.style.borderColor=_bandMode?'rgba(99,91,255,.3)':'var(--bd)'}
+  if(_stressMode&&_bandMode)_stressMode=false;
   if(!(_bandMode&&_recomputeBandIfStale()))render();
 }
 // Mirrors toggleBandMode()'s mutual exclusion in the other direction — without this,
@@ -3504,9 +3544,7 @@ function toggleBandMode(){
 // on whichever dataset the stress-mode lines pushed into that slot, shading the wrong span.
 function toggleStressMode(){
   _stressMode=!_stressMode;
-  if(_bandMode&&_stressMode){_bandMode=false;const bb=document.getElementById('bandBtn');if(bb){bb.style.background='var(--s2)';bb.style.color='var(--t2)';bb.style.borderColor='var(--bd)'}}
-  const btn=document.getElementById('stressBtn');
-  if(btn){btn.style.background=_stressMode?'rgba(205,61,100,.15)':'var(--s2)';btn.style.color=_stressMode?'var(--r)':'var(--t2)';btn.style.borderColor=_stressMode?'rgba(205,61,100,.3)':'var(--bd)'}
+  if(_bandMode&&_stressMode)_bandMode=false;
   render();
 }
 
@@ -3514,16 +3552,16 @@ function toggleStressMode(){
 let _paletteState=null;
 function _paletteCommands(){
   const cmds=[
-    {icon:'✦',label:'Decision Room',hint:'Home',run:()=>setTab('home')},
+    {icon:'✦',label:'Explore a what-if',hint:'Decisions',run:()=>{_homeView='explore';setTab('home')}},
     {icon:'◆',label:'Stripe Equity',hint:'Tab',run:()=>setTab('stripe')},
     {icon:'📈',label:'Net worth',hint:'Projection',run:()=>setTab('nw')},
     {icon:'💰',label:'Income & tax',hint:'Projection',run:()=>setTab('income')},
     {icon:'💸',label:'Cash flow',hint:'Projection',run:()=>setTab('cashflow')},
     {icon:'📋',label:'Table',hint:'Projection',run:()=>setTab('table')},
     {icon:'🎯',label:'Plan vs actual',hint:'Today',run:()=>setTab('goals')},
-    {icon:'🏠',label:'Housing',hint:'View',run:()=>setTab('housing')},
-    {icon:'🎚️',label:'Sensitivity',hint:'View',run:()=>setTab('sensitivity')},
-    {icon:'⚖',label:'Compare',hint:'View',run:()=>setTab('compare')},
+    {icon:'🏠',label:'Housing',hint:'Decisions',run:()=>setTab('housing')},
+    {icon:'🎚️',label:'Which levers matter',hint:'Decisions',run:()=>setTab('sensitivity')},
+    {icon:'⚖',label:'Compare saved',hint:'Decisions',run:()=>setTab('compare')},
     {icon:'📊',label:'Holdings & accounts',hint:'Today',run:()=>setTab('portfolio')},
     {icon:'🤖',label:'AI Advisor',hint:'View',run:()=>setTab('advisor')},
     {icon:'🎬',label:'Play plan as a story',hint:'Story mode',run:()=>openStoryMode()},

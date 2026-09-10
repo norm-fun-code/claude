@@ -5,7 +5,13 @@ const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8
 const source=html.slice(html.indexOf('let _saveTimer=null;'),html.indexOf('// Saved-state migration lives in'));
 function harness(fetch){
   const statuses=[];let timer;
-  const ctx=vm.createContext({fetch,JSON,Promise,Error,P:{homePrice:2000000},compareMode:false,activeTab:'home',activeScenarioIdx:-1,scenarioDirty:false,_projView:'nw',_todayView:'plan',monarchSnapshot:null,
+  // Everything savePlannerState() serialises has to exist here or the payload throws before
+  // the status handling under test ever runs. Keep this in step with the payload's state
+  // object — a missing view-state global surfaces as "X is not defined", not a save failure.
+  const planState={P:{homePrice:2000000},compareMode:false,activeTab:'home',
+    _projView:'nw',_todayView:'plan',_homeView:'explore',
+    activeScenarioIdx:-1,scenarioDirty:false,monarchSnapshot:null};
+  const ctx=vm.createContext({fetch,JSON,Promise,Error,...planState,
     setSyncStatus:s=>statuses.push(s),setTimeout:fn=>{timer=fn;return 1;},clearTimeout:()=>{timer=null;}});
   vm.runInContext(source,ctx);
   return{ctx,statuses,call:code=>vm.runInContext(code,ctx),flush:()=>timer?.()};
