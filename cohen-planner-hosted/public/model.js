@@ -386,6 +386,13 @@ function run(p,rets){
       inc:Math.round(inc),netTC:tax.net,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
       liv:Math.round(liv),cc:Math.round(cc),tu:Math.round(tu),totE:Math.round(totE),
       surp:Math.round(surp),
+      // `flow` is the household's actual net cash flow: everything earned after tax, minus
+      // everything spent. It is the figure that answers "am I living within my income", and
+      // it is the one to headline. `surp` answers a narrower question — whether the CASH
+      // half of the package alone covers the year — and with a stock-heavy grant that is
+      // negative almost every year even when the household is comfortably ahead. Leading
+      // with surp reads as a deficit that does not exist.
+      flow:Math.round(tax.net-totE),
       // Two different questions, and reporting only one of them was misleading.
       //   gap    — shortfall against CASH pay alone. Says how much of the year's vest has to
       //            be sold. Closing it consumes no accumulated wealth.

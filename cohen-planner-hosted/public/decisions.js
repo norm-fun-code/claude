@@ -27,7 +27,10 @@
     if(!R.length)throw new Error('No projection years');
     const current=R.find(r=>r.yr===year)||R[0];
     const floor=R.reduce((a,b)=>b.liq<a.liq?b:a);
-    const tightest=R.reduce((a,b)=>b.surp<a.surp?b:a);
+    // Tightest by NET FLOW (all after-tax income less spending), not by the cash-pay-only
+    // surplus. With a stock-heavy package the latter is negative in nearly every year, so it
+    // picks a "tightest year" that has nothing to do with how tight the year actually is.
+    const tightest=R.reduce((a,b)=>b.flow<a.flow?b:a);
     const purchase=R.find(r=>r.yr===p.homePurchaseYear)||null;
     const before=R.find(r=>r.yr===p.homePurchaseYear-1);
     // Assets on hand the moment before closing. Stripe belongs here: the funding waterfall
@@ -41,7 +44,12 @@
     const last=R[R.length-1];
     return{current,floor,tightest,purchase,beforeAssets,down,
       closingBuffer:beforeAssets===null?null:beforeAssets-down,
-      peak,last,total:last.nw+last.k401,
+      // `netWorth` is the SAME measure the projection table, the net-worth chart and the
+      // scenario comparison all report, so the Decision Room's headline reconciles with them
+      // line for line. `total` adds the 401k on top; it is a real part of the household's
+      // wealth, but folding it into a figure labelled "net worth" made the Decision Room
+      // disagree with every other view by exactly the retirement balance.
+      peak,last,netWorth:last.nw,retirement:last.k401,total:last.nw+last.k401,
       // Years that genuinely reach for savings. Counting r.surp<0 instead would count every
       // year cash pay alone falls short — which, with a stock-heavy package, is nearly all
       // of them even when that year's vest closes the gap and nothing is liquidated.

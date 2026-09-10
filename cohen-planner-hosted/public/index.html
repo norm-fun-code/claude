@@ -904,8 +904,8 @@ function toggleInflation(){inflationView=!inflationView;render();savePlannerStat
 // ═══ CSV EXPORT ═══
 function exportCSV(){
   const{R}=run(P);
-  const cols=['Year','Norm Cash','Norm Stripe Stock','Norm Total W2','Nancy Gross','Total Gross','All-in Tax','Eff Rate %','Cash Available','Housing','Living','Childcare','Tuition','Total Expenses','Operating Surplus','Cash Gap','Income Gap','Total Cash Need','Stripe Vested','Stripe Sold For Cash','Stripe Retained','Stripe Held Shares Sold','Stripe Gains Tax','Stripe Appreciation','Stripe Equity','Portfolio Sold','Tax on Portfolio Sales','Liquid (ex-Stripe)','Home Equity','Net Worth','Stripe % of NW','401k'];
-  const rows=R.map(r=>[r.yr,r.normCash,r.normStock,r.normG,r.nancyG,r.gross,r.tax,(r.effRate*100).toFixed(2),r.inc,r.h,r.liv,r.cc,r.tu,r.totE,r.surp,r.gap,r.incGap,r.need,r.sNew,r.sSold,r.sRet,r.sHold,r.sGainTax,r.sAppr,r.sEnd,r.sold,r.txS,r.liq,r.eq,r.nw,(r.sPct*100).toFixed(1),r.k401]);
+  const cols=['Year','Norm Cash','Norm Stripe Stock','Norm Total W2','Nancy Gross','Total Gross','All-in Tax','Eff Rate %','Cash Available','Housing','Living','Childcare','Tuition','Total Expenses','Net Flow (all income)','Cash-Pay-Only Surplus','Cash Gap','Income Gap','Total Cash Need','Stripe Vested','Stripe Sold For Cash','Stripe Retained','Stripe Held Shares Sold','Stripe Gains Tax','Stripe Appreciation','Stripe Equity','Portfolio Sold','Tax on Portfolio Sales','Liquid (ex-Stripe)','Home Equity','Net Worth','Stripe % of NW','401k'];
+  const rows=R.map(r=>[r.yr,r.normCash,r.normStock,r.normG,r.nancyG,r.gross,r.tax,(r.effRate*100).toFixed(2),r.inc,r.h,r.liv,r.cc,r.tu,r.totE,r.flow,r.surp,r.gap,r.incGap,r.need,r.sNew,r.sSold,r.sRet,r.sHold,r.sGainTax,r.sAppr,r.sEnd,r.sold,r.txS,r.liq,r.eq,r.nw,(r.sPct*100).toFixed(1),r.k401]);
   const csv=[cols.join(','),...rows.map(r=>r.join(','))].join('\n');
   const blob=new Blob([csv],{type:'text/csv'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
@@ -955,7 +955,7 @@ function printPDF(){
     const isHome=r.yr===P.homePurchaseYear;
     const hasTu=r.tu>0;
     const rowBg=isHome?'#fffbf0':hasTu&&r.tu>150000?'#fff5f7':'#fff';
-    const surpColor=r.surp>=0?'#1a8754':'#cd3d64';
+    const surpColor=r.flow>=0?'#1a8754':'#cd3d64';
     return `<tr style="background:${rowBg}">
       <td style="font-weight:700;color:#0a2540${isHome?';background:#fef3c7':''}">${r.yr}</td>
       <td style="color:#0073e6">${fmt(r.normCash)}</td>
@@ -966,7 +966,7 @@ function printPDF(){
       <td style="color:#bf6900">${(r.effRate*100).toFixed(1)}%</td>
       <td style="color:#1a8754">${fmt(r.inc)}</td>
       <td>${fmt(r.totE)}</td>
-      <td style="color:${surpColor};font-weight:600">${r.surp>=0?'+':''}${fmt(r.surp)}</td>
+      <td style="color:${surpColor};font-weight:600">${r.flow>=0?'+':'−'}${fmt(Math.abs(r.flow))}</td>
       <td>${r.tu>0?fmt(r.tu):'—'}</td>
       <td style="color:#0073e6">${fmt(r.liq)}</td>
       <td style="color:#6772e5">${r.sEnd>0?fmt(r.sEnd):'—'}</td>
@@ -1071,7 +1071,7 @@ tr:hover td{background:#f6f9fc}
     <th style="text-align:left">Year</th>
     <th>Norm cash</th><th>Stripe</th><th>Nancy</th><th>Gross</th>
     <th>Tax</th><th>Eff%</th><th>Cash avail</th>
-    <th>Tot Exp</th><th>Surplus</th><th>Tuition</th>
+    <th>Tot Exp</th><th>Net flow</th><th>Tuition</th>
     <th>Liquid</th><th>Stripe eq</th><th>Net Worth</th>
   </tr></thead>
   <tbody>${tblRows}</tbody>
@@ -1661,7 +1661,7 @@ function render(){
   if(activeTab==='stripe'){renderStripeTab(R,P);return}
   if(activeTab==='projection'&&_projView==='table'){
     // Wide by necessity — this is the audit view. The .tw wrapper scrolls horizontally.
-    const cols=['Yr','Norm cash','Norm stock','Norm total','Nancy','Gross','Tax','Eff%','Cash avail','Expenses','Cash gap','Income gap','Stripe sold','Stripe kept','Liquid','Stripe eq','Home eq','NW'];
+    const cols=['Yr','Norm cash','Norm stock','Norm total','Nancy','Gross','Tax','Eff%','Cash avail','Expenses','Cash gap','Net flow','Stripe sold','Stripe kept','Liquid','Stripe eq','Home eq','NW'];
     ca.innerHTML=`<div class="tw"><table><thead><tr>${cols.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{
       const bg=r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';
       const dash=v=>v>0?fmt(v):'—';
@@ -1676,7 +1676,7 @@ function render(){
         `<td style="color:var(--a)">${(r.effRate*100).toFixed(1)}%</td>`+
         `<td style="color:var(--g)">${fmt(r.inc)}</td>`+
         `<td>${fmt(r.totE)}</td>`+
-        `<td style="color:${r.gap>0?'var(--a)':'var(--t3)'}" title="Shortfall against cash pay alone — how much of the year's vest must be sold">${r.gap>0?'−'+fmt(r.gap):'—'}</td>`+`<td style="color:${r.incGap>0?'var(--r)':'var(--t3)'};font-weight:${r.incGap>0?600:400}" title="Still short after selling every vesting share — this is what draws on savings">${r.incGap>0?'−'+fmt(r.incGap):'—'}</td>`+
+        `<td style="color:${r.gap>0?'var(--a)':'var(--t3)'}" title="Shortfall against cash pay alone — how much of the year's vest must be sold">${r.gap>0?'−'+fmt(r.gap):'—'}</td>`+`<td style="color:${r.flow>=0?'var(--g)':'var(--r)'};font-weight:600" title="Total after-tax pay minus total spending. Negative means the year genuinely draws on savings or held Stripe.">${(r.flow>=0?'+':'−')+fmt(Math.abs(r.flow))}</td>`+
         `<td style="color:#6772e5">${dash(r.sSold)}</td>`+
         `<td style="color:#6772e5;font-weight:600">${dash(r.sRet)}</td>`+
         `<td style="color:var(--b)">${fmt(r.liq)}</td>`+
@@ -1753,8 +1753,12 @@ function render(){
     if(!reuseChart||!_updateChart(ds,nwLabels)){if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';const ctx2=document.getElementById('cv').getContext('2d');charts.main=new Chart(ctx2,{type:'line',data:{labels:nwLabels,datasets:ds},options:po})}
   } else {
     if(_projView==='cashflow'){
-      const dsCF=[{label:'Surplus',data:R.map(r=>Math.round(r.surp/1000)),backgroundColor:R.map(r=>r.surp>=0?'rgba(26,135,84,.78)':'rgba(205,61,100,.78)'),borderRadius:4,borderSkipped:false,maxBarThickness:26}];
-      if(compareMode)scenarios.forEach(s=>{dsCF.push({label:s.name,data:s.results.R.map(r=>Math.round(r.surp/1000)),type:'line',borderColor:s.color,fill:false,tension:.3,pointRadius:2,pointBackgroundColor:s.color,borderWidth:3})});
+      // Bars are net flow against TOTAL after-tax pay — the honest "did the year pay for
+      // itself". The cash-pay-only line sits behind it so the vest's contribution is still
+      // visible, but it no longer masquerades as the household's cash flow.
+      const dsCF=[{label:'Net flow (all income)',data:R.map(r=>Math.round(r.flow/1000)),backgroundColor:R.map(r=>r.flow>=0?'rgba(26,135,84,.78)':'rgba(205,61,100,.78)'),borderRadius:4,borderSkipped:false,maxBarThickness:26},
+        {label:'Cash pay only',data:R.map(r=>Math.round(r.surp/1000)),type:'line',borderColor:'#8898aa',borderDash:[5,4],fill:false,tension:.3,pointRadius:0,borderWidth:1.5}];
+      if(compareMode)scenarios.forEach(s=>{dsCF.push({label:s.name,data:s.results.R.map(r=>Math.round(r.flow/1000)),type:'line',borderColor:s.color,fill:false,tension:.3,pointRadius:2,pointBackgroundColor:s.color,borderWidth:3})});
       if(!reuseChart||!_updateChart(dsCF,labels))charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:dsCF},options:opts});
     } else {
       const dsInc=[{label:'Norm Gross',data:R.map(r=>Math.round(r.normG/1000)),backgroundColor:_barGrad('#0073e6',.85,.5),borderRadius:4,borderSkipped:false},{label:'Nancy Gross',data:R.map(r=>Math.round(r.nancyG/1000)),backgroundColor:_barGrad('#7c3aed',.85,.5),borderRadius:4,borderSkipped:false},{label:'Tax',data:R.map(r=>-Math.round(r.tax/1000)),backgroundColor:_barGrad('#cd3d64',.7,.4),borderRadius:4,borderSkipped:false}];
@@ -2065,7 +2069,7 @@ function renderOverviewTab(R,P){
       ${tile('Accessible today',money(sum.accessible),provChip('observed',d.asOf),'cash + taxable — spendable without penalty','var(--g)')}
       ${tile('Retirement',money((cls.retirement||{}).total),provChip('observed',d.asOf),'locked until retirement age')}
       ${tile('Stripe equity',money(sum.stripeVested),provChip('observed',d.asOf),'vested only — grants are future pay','#6772e5')}
-      ${tile(`Cash flow ${y0.yr}`,(y0.surp>=0?'+':'−')+money(Math.abs(y0.surp)),provChip('projected'),y0.gap>0?`${money(y0.gap)} covered by selling vest`:'cash pay covers the year')}
+      ${tile(`Cash flow ${y0.yr}`,(y0.flow>=0?'+':'−')+money(Math.abs(y0.flow)),provChip('projected'),y0.flow>=0?(y0.gap>0?`total pay covers the year · ${money(y0.gap)} of it comes from vest`:'cash pay alone covers the year'):'spending exceeds total after-tax pay',y0.flow>=0?'var(--g)':'var(--r)')}
       ${tile(`Net worth ${last.yr}`,money(last.nw),provChip('projected'),'if the plan holds')}
     </div>`;
 
@@ -3453,7 +3457,7 @@ function renderGoalsTab(R,P,tT){
   }
 
   // ── surplus years liquid ladder (condensed view) ──
-  const surpYrs=R.filter(r=>r.surp>=0).length;
+  const surpYrs=R.filter(r=>r.flow>=0).length;
   const defYrs=drawYears(R);
 
   // ── build HTML ──
@@ -3882,7 +3886,7 @@ function renderGoalsTab(R,P,tT){
     </div>
     <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--t3);margin-top:3px"><span>${sy}</span><span>${P.planEndYear||2058}</span></div>
     <div style="margin-top:6px;display:flex;gap:10px;font-size:8.5px">
-      <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--g);border-radius:2px;opacity:.75"></span>Surplus year</span>
+      <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--g);border-radius:2px;opacity:.75"></span>Positive net flow</span>
       <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--a);border-radius:2px;opacity:.75"></span>Deficit (selling stock)</span>
       <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--r);border-radius:2px;opacity:.75"></span>Below $500K</span>
     </div>
@@ -3920,7 +3924,7 @@ function renderCompareTab(R,P){
     {sep:true,label:'Risk'},
     {label:'Liquid Floor',get:(r,p)=>Math.min(...r.R.map(x=>x.liq)),fmt:fmt,b:1},
     {label:'Years Drawing On Savings',get:(r,p)=>r.drawYears,fmt:n=>n+' yrs',b:-1},
-    {label:'Worst Year Surplus',get:(r,p)=>Math.min(...r.R.map(x=>x.surp)),fmt:fmt,b:1},
+    {label:'Worst Year Net Flow',get:(r,p)=>Math.min(...r.R.map(x=>x.flow)),fmt:fmt,b:1},
     {sep:true,label:'Milestones'},
     {label:'Liquid After Home Purchase',get:(r,p)=>{const row=r.R.find(x=>x.yr===p.homePurchaseYear);return row?row.liq:0},fmt:fmt,b:1},
     {label:'Total Tuition',get:(r,p)=>r.tT,fmt:fmt,b:-1},
@@ -4460,8 +4464,8 @@ function buildLiveContext(R,P,totS){
   const y58=R[R.length-1];
   const deficitYrs=totS.drawYears;
   const vestOnlyYrs=totS.vestOnlyYears;
-  const totalDef=R.filter(r=>r.surp<0).reduce((a,b)=>a+Math.abs(b.surp),0);
-  const worst=Math.min(...R.map(r=>r.surp));
+  const totalDef=R.filter(r=>r.flow<0).reduce((a,b)=>a+Math.abs(b.flow),0);
+  const worst=Math.min(...R.map(r=>r.flow));
   const totTuit=R.reduce((a,b)=>a+b.tu,0);
   const totSold=R.reduce((a,b)=>a+(b.sold||0),0);
   const totTaxSale=R.reduce((a,b)=>a+(b.txS||0),0);
@@ -4495,8 +4499,9 @@ LIFECYCLE PROJECTIONS (current plan)
 • Years that actually draw on savings or held Stripe: ${deficitYrs} of ${R.length}
 • Years where cash pay alone falls short but that year's VEST covers it entirely (nothing liquidated): ${vestOnlyYrs}. Do not describe these as deficit years or as drawing down savings — they aren't.
 • Two distinct gap measures per year, both in the projection table. CASH GAP = expenses minus cash pay, i.e. how much of that year's vest must be sold; ${R.filter(r=>r.gap>0).length} of ${R.length} years have one, and closing it costs no accumulated wealth. INCOME GAP = what is still short after selling EVERY vesting share; only ${R.filter(r=>r.incGap>0).length} years have one, and that is the figure that forces a draw on savings or held Stripe. Worst cash gap ${fmt(Math.max(...R.map(r=>r.gap)))}, worst income gap ${fmt(Math.max(...R.map(r=>r.incGap)))}. Quoting the cash gap as if it were a deficit overstates the problem.
-• Worst single year: ${fmt(worst)} (peak crunch)
-• Total cumulative deficit: ${fmt(totalDef)}
+• NET FLOW is the headline cash-flow figure: total after-tax pay minus total spending. ${R.filter(r=>r.flow>=0).length} of ${R.length} years are positive. Never describe a year as a cash deficit unless its NET FLOW is negative — the cash-pay-only surplus is negative in most years by construction and means nothing on its own.
+• Worst single year by net flow: ${fmt(worst)}
+• Total cumulative shortfall across negative-net-flow years: ${fmt(totalDef)}
 • Total stock sold to fund deficits: ${fmt(totSold)}
 • Total tax on those sales: ${fmt(totTaxSale)} (at ${(P.capGainsTaxRate*100).toFixed(1)}% all-in NYC cap gains)
 
@@ -4673,7 +4678,7 @@ async function advOptimize(){
   if(!advisorActiveChatId)return;
   const prompt=`Optimize my financial plan. Follow these exact steps using your tools:
 
-1. Call run_projection() to lock in the baseline (final NW, deficit years, worst surplus).
+1. Call run_projection() to lock in the baseline (final NW, deficit years, worst net flow).
 2. Systematically test the levers I can actually control: investReturn, normCashY0, normStockY0, stripeLongTermReturn, normGrowth, nancyHourlyRate, nancyMaxClients, pretax401k, homePrice, downPctg, homePurchaseYear, expenseInflation. For each, use set_param() then run_projection() to measure the impact on final NW vs baseline.
 3. Pick the top 2-3 changes with the biggest positive impact AND that are realistically achievable given my situation.
 4. Apply all those changes together with set_param() calls, then run_projection() one final time to show the combined effect.

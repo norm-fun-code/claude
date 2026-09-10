@@ -96,3 +96,45 @@ describe('Monarch snapshot trust',()=>{
 it('does not use an incomplete account subtotal as verified net worth',()=>{
   expect(usableSnapshot({netWorth:100,liquid:100,retirement:0,assets:100,liabilities:0,accountCount:1,syncedAt:'2026-09-10T00:00:00Z',partial:true})).toBe(false);
 });
+
+// Two things the Decision Room got wrong, both of which made a healthy plan look sick.
+describe('Cash flow is measured against income, and net worth means one thing',()=>{
+  const R=run(defaults).R;
+
+  it('reports net flow as all after-tax pay less all spending',()=>{
+    for(const r of R)expect(r.flow).toBe(Math.round(r.netTC-r.totE));
+  });
+
+  it('does not call a year a deficit just because cash pay alone falls short',()=>{
+    // The whole complaint: with a stock-heavy grant, surp is negative in years the household
+    // is comfortably ahead. flow has to be the headline, and it has to be the kinder number.
+    const cashShort=R.filter(r=>r.surp<0);
+    expect(cashShort.length).toBeGreaterThan(0);
+    expect(cashShort.some(r=>r.flow>0)).toBe(true);
+    for(const r of R)expect(r.flow).toBeGreaterThanOrEqual(r.surp);
+  });
+
+  it('still says how much vest has to be sold in a cash-short year',()=>{
+    const r=R.find(x=>x.gap>0);
+    expect(r).toBeDefined();
+    expect(r.gap).toBe(Math.round(-r.surp));
+  });
+
+  it('keeps incGap as exactly the negative half of net flow',()=>{
+    for(const r of R)expect(r.incGap).toBe(Math.max(0,-r.flow));
+  });
+
+  it('headlines the same net worth the projection table and scenario cases report',()=>{
+    const s=summarize(defaults,R,R[0].yr);
+    const last=R[R.length-1];
+    expect(s.netWorth).toBe(last.nw);          // identical to the table's NW column
+    expect(s.retirement).toBe(last.k401);      // 401k reported beside it, never folded in
+    expect(s.total).toBe(last.nw+last.k401);
+    expect(s.netWorth).not.toBe(s.total);      // the exact gap that made the views disagree
+  });
+
+  it('picks the tightest year by net flow rather than by cash pay alone',()=>{
+    const s=summarize(defaults,R,R[0].yr);
+    expect(s.tightest.flow).toBe(Math.min(...R.map(r=>r.flow)));
+  });
+});
