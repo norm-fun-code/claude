@@ -559,7 +559,7 @@ function savePlannerState(){
   if(!_planLoaded){setSyncStatus('error');return;}
   setSyncStatus('saving');
   const revision=++_saveRevision;
-  const payload=JSON.stringify({state:{P,compareMode,activeTab,activeScenarioIdx,scenarioDirty,monarchSnapshot,experienceVersion:6}});
+  const payload=JSON.stringify({state:{P,compareMode,activeTab,_projView,_todayView,activeScenarioIdx,scenarioDirty,monarchSnapshot,experienceVersion:6}});
   clearTimeout(_saveTimer);
   _saveTimer=setTimeout(()=>{
     // Serialize writes so a slower earlier request cannot overwrite newer state.
@@ -594,6 +594,8 @@ async function loadFromServer(){
       if(s.compareMode!==undefined)compareMode=s.compareMode;
       if(s.experienceVersion>=6&&s.activeTab)activeTab=s.activeTab;
       _planLoaded=true;
+      if(s._projView!==undefined)_projView=s._projView;
+      if(s._todayView!==undefined)_todayView=s._todayView;
       if(s.activeScenarioIdx!==undefined)activeScenarioIdx=s.activeScenarioIdx;
       if(s.scenarioDirty!==undefined)scenarioDirty=!!s.scenarioDirty;
       if(PlannerDecisions.usableSnapshot(s.monarchSnapshot)&&!monarchSnapshot)monarchSnapshot=s.monarchSnapshot; // don't clobber a fresh auto-sync
@@ -694,7 +696,7 @@ async function loadMonarchInvestments(period){
     else{monarchInvestments=await r.json();}
   }catch(e){monarchInvestments=false;showToast('Investments fetch error: '+e.message,'red');}
   _investLoading=false;
-  if(activeTab==='portfolio')render(); // single render once data is ready
+  if(activeTab==='today')render(); // single render once data is ready
 }
 
 async function syncMonarch({quiet=false}={}){
@@ -828,11 +830,11 @@ let _investPeriod='1M';
 let _investLoading=false;
 let _lastChartKey='';
 function destroyCharts(){Object.values(charts).forEach(c=>c&&c.destroy());charts={};_lastChartKey=''}
-// _flowView must be in the key: income vs cash-flow are both activeTab==='income' but use
+// _projView must be in the key: the projection views share one activeTab but use
 // different Chart.js `options` (stacked scales vs not) — and _updateChart() only syncs
 // datasets/labels on reuse, never options, so omitting it left stale stacked-axis config
 // applied to whichever view was rendered second.
-function _chartKey(){return activeTab+'|'+inflationView+'|'+compareMode+'|'+(overlaySnapId||'')+'|'+_flowView}
+function _chartKey(){return activeTab+'|'+inflationView+'|'+compareMode+'|'+(overlaySnapId||'')+'|'+_projView}
 function _updateChart(datasets,labels){
   if(!charts.main)return false;
   charts.main.data.labels=labels;
@@ -1572,15 +1574,27 @@ function render(){
   document.getElementById('scenarioBar').innerHTML=sc;
   renderSnapshotBar();
   const labels=R.map(r=>String(r.yr));const newKey=_chartKey();const reuseChart=(newKey===_lastChartKey&&!!charts.main);if(!reuseChart)destroyCharts();_lastChartKey=newKey;const ca=document.getElementById('chartArea');
+  // Sub-view switcher for tabs that hold more than one view. Painted before the tab
+  // dispatch below, since every other branch returns early and would leave it stale.
+  {
+    const tg=document.getElementById('subToggle'),cfg=SUB_VIEWS[activeTab];
+    if(tg)tg.innerHTML=!cfg?'':`<div style="display:flex;gap:4px;margin-bottom:9px;flex-wrap:wrap">`+
+      cfg.views.map(([k,ic,lb])=>{const on=cfg.get()===k;
+        return `<button onclick="setSubView('${k}')" aria-pressed="${on}" style="font-size:10px;padding:5px 11px;border-radius:6px;border:1px solid ${on?'transparent':'var(--bd)'};cursor:pointer;font-family:inherit;font-weight:${on?600:500};background:${on?'var(--accent)':'var(--s2)'};color:${on?'#fff':'var(--t2)'}">${ic} ${lb}</button>`;
+      }).join('')+`</div>`;
+  }
   if(activeTab==='home'){renderDecisionRoom(R);return}
   if(activeTab==='advisor'){renderAdvisorTab(R,P);return}
-  if(activeTab==='portfolio'){renderPortfolioTab(R,P);return}
-  if(activeTab==='goals'){renderGoalsTab(R,P,tT);return}
+  if(activeTab==='today'){
+    if(_todayView==='holdings')renderPortfolioTab(R,P);
+    else renderGoalsTab(R,P,tT);
+    return;
+  }
   if(activeTab==='housing'){renderHousingTab(R,P);return}
   if(activeTab==='sensitivity'){window._lastR=R;window._lastP=P;renderSensitivityTab(R,P);return}
   if(activeTab==='compare'){renderCompareTab(R,P);return}
   if(activeTab==='stripe'){renderStripeTab(R,P);return}
-  if(activeTab==='table'){
+  if(activeTab==='projection'&&_projView==='table'){
     // Wide by necessity — this is the audit view. The .tw wrapper scrolls horizontally.
     const cols=['Yr','Norm cash','Norm stock','Nancy','Gross','Tax','Eff%','Cash avail','Expenses','Cash gap','Stripe sold','Stripe kept','Liquid','Stripe eq','Home eq','NW'];
     ca.innerHTML=`<div class="tw"><table><thead><tr>${cols.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{
@@ -1625,7 +1639,7 @@ function render(){
       pointHoverRadius:12,borderWidth:0,fill:false,tension:0,spanGaps:false,
       pointStyle:'circle'};
   }
-  if(activeTab==='nw'){
+  if(_projView==='nw'){
     const po=posOpts();
     const ds=[{label:'Total NW'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.nw,r.yr))],borderColor:'#635bff',backgroundColor:_areaGrad('#635bff',.24,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#635bff',pointBorderColor:'#fff',borderWidth:2.5,borderCapStyle:'round'},{label:'Liquid (ex-Stripe)'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.liq,r.yr))],borderColor:'#0073e6',backgroundColor:_areaGrad('#0073e6',.14,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#0073e6',pointBorderColor:'#fff',borderWidth:2,borderCapStyle:'round'},{label:'Stripe'+(inflationView?' (real)':''),data:[Math.round((P.startingStripeEquity||0)/1000),...R.map(r=>deflK(r.sEnd,r.yr))],borderColor:'#6772e5',backgroundColor:_areaGrad('#6772e5',.16,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#6772e5',pointBorderColor:'#fff',borderWidth:2,borderCapStyle:'round'},{label:'Home equity'+(inflationView?' (real)':''),data:[0,...R.map(r=>deflK(r.eq,r.yr))],borderColor:'#7c3aed',fill:false,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#7c3aed',pointBorderColor:'#fff',borderWidth:1.5,borderDash:[4,3]},{label:'401(k)'+(inflationView?' (real)':''),data:[Math.round((P.k401Start||0)/1000),...R.map(r=>deflK(r.k401,r.yr))],borderColor:'#0f9b6c',fill:false,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#0f9b6c',pointBorderColor:'#fff',borderWidth:1.5,borderDash:[2,3],hidden:true}];
     if(_stressMode){
@@ -1671,16 +1685,8 @@ function render(){
     if(_mSnap)ds.push({label:'Liquid + Stripe'+(inflationView?' (real)':''),data:[startLiqPlusStripeK,...R.map(r=>deflK(planLiquidComparable(r),r.yr))],borderColor:'#8b93f0',fill:false,tension:.35,pointRadius:0,pointHoverRadius:5,borderWidth:1.5,borderDash:[5,4]});
     const _mNwDot=_mDotDs(_mImpliedLiqK,'📍 Actual liquid + Stripe (Monarch)');if(_mNwDot)ds.push(_mNwDot);
     if(!reuseChart||!_updateChart(ds,nwLabels)){if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';const ctx2=document.getElementById('cv').getContext('2d');charts.main=new Chart(ctx2,{type:'line',data:{labels:nwLabels,datasets:ds},options:po})}
-  } else if(activeTab==='income'){
-    // Sub-toggle bar — injected before chart
-    if(!reuseChart||!document.getElementById('flowToggle')){
-      const toggleEl=document.createElement('div');
-      toggleEl.id='flowToggle';
-      toggleEl.style.cssText='display:flex;gap:4px;margin-bottom:8px';
-      toggleEl.innerHTML=`<button onclick="_flowView='income';render()" style="font-size:10px;padding:4px 10px;border-radius:5px;border:1px solid var(--bd);cursor:pointer;font-family:inherit;background:${_flowView==='income'?'var(--accent)':'var(--s2)'};color:${_flowView==='income'?'#fff':'var(--t2)'}">📊 Income & Tax</button><button onclick="_flowView='cashflow';render()" style="font-size:10px;padding:4px 10px;border-radius:5px;border:1px solid var(--bd);cursor:pointer;font-family:inherit;background:${_flowView==='cashflow'?'var(--accent)':'var(--s2)'};color:${_flowView==='cashflow'?'#fff':'var(--t2)'}">💸 Cash Flow</button>`;
-      ca.insertAdjacentElement('beforebegin',toggleEl);
-    }
-    if(_flowView==='cashflow'){
+  } else {
+    if(_projView==='cashflow'){
       const dsCF=[{label:'Surplus',data:R.map(r=>Math.round(r.surp/1000)),backgroundColor:R.map(r=>r.surp>=0?'rgba(26,135,84,.78)':'rgba(205,61,100,.78)'),borderRadius:4,borderSkipped:false,maxBarThickness:26}];
       if(compareMode)scenarios.forEach(s=>{dsCF.push({label:s.name,data:s.results.R.map(r=>Math.round(r.surp/1000)),type:'line',borderColor:s.color,fill:false,tension:.3,pointRadius:2,pointBackgroundColor:s.color,borderWidth:3})});
       if(!reuseChart||!_updateChart(dsCF,labels))charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:dsCF},options:opts});
@@ -3401,21 +3407,25 @@ function renderCompareTab(R,P){
   ca.innerHTML=diffHtml+h;
   document.getElementById('summaries').innerHTML='';
 }
-function setTab(t){if(t==='cashflow'){t='income';_flowView='cashflow';}activeTab=t;document.querySelectorAll('.tabs button[role=tab]').forEach(b=>{const on=b.dataset.tab===t;b.classList.toggle('active',on);b.setAttribute('aria-selected',on?'true':'false');});render();if(!_reduceMotion())requestAnimationFrame(()=>{['chartArea','summaries'].forEach(id=>{const e=document.getElementById(id);if(e){e.classList.remove('tab-fade');void e.offsetWidth;e.classList.add('tab-fade')}})});savePlannerState()}
+function setSubView(v){const c=SUB_VIEWS[activeTab];if(c){c.set(v);render();savePlannerState()}}
+function setTab(t){
+  // Retired top-level tabs now address a view within Projection. Saved plan state, the
+  // command palette and any in-app link can keep using the old names.
+  if(t==='nw'||t==='income'||t==='cashflow'||t==='table'){_projView=t;t='projection';}
+  if(t==='goals'){_todayView='plan';t='today';}
+  if(t==='portfolio'){_todayView='holdings';t='today';}
+  activeTab=t;document.querySelectorAll('.tabs button[role=tab]').forEach(b=>{const on=b.dataset.tab===t;b.classList.toggle('active',on);b.setAttribute('aria-selected',on?'true':'false');});render();if(!_reduceMotion())requestAnimationFrame(()=>{['chartArea','summaries'].forEach(id=>{const e=document.getElementById(id);if(e){e.classList.remove('tab-fade');void e.offsetWidth;e.classList.add('tab-fade')}})});savePlannerState()}
 document.getElementById('main').innerHTML=`
   <div id="heroBand"></div>
   <div class="kpi-grid" id="kpis"></div><div id="scenarioBar"></div><div id="snapshotBar"></div>
   <div class="tabs" role="tablist" aria-label="Plan views">
     <button role="tab" aria-selected="true" class="active" data-tab="home" onclick="setTab('home')">✦ Decision Room</button>
-    <button role="tab" aria-selected="false" data-tab="nw" onclick="setTab('nw')">📈 Net Worth</button>
-    <button role="tab" aria-selected="false" data-tab="income" onclick="setTab('income')">💰 Income & Cash Flow</button>
+    <button role="tab" aria-selected="false" data-tab="projection" onclick="setTab('projection')">📈 Projection</button>
     <button role="tab" aria-selected="false" data-tab="stripe" onclick="setTab('stripe')">◆ Stripe</button>
-    <button role="tab" aria-selected="false" data-tab="table" onclick="setTab('table')">📋 Table</button>
-    <button role="tab" aria-selected="false" data-tab="goals" onclick="setTab('goals')">🎯 Goals</button>
+    <button role="tab" aria-selected="false" data-tab="today" onclick="setTab('today')">🎯 Today</button>
     <button role="tab" aria-selected="false" data-tab="housing" onclick="setTab('housing')">🏠 Housing</button>
     <button role="tab" aria-selected="false" data-tab="sensitivity" onclick="setTab('sensitivity')">🎚️ Sensitivity</button>
     <button role="tab" aria-selected="false" data-tab="compare" onclick="setTab('compare')">⚖ Compare</button>
-    <button role="tab" aria-selected="false" data-tab="portfolio" onclick="setTab('portfolio')">📊 Portfolio</button>
     <button role="tab" aria-selected="false" data-tab="advisor" onclick="setTab('advisor')">🤖 AI Advisor</button>
     <button id="inflBtn" aria-label="Toggle real vs nominal dollars" onclick="toggleInflation()" style="margin-left:auto;font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit">Real $</button>
     <button id="stressBtn" aria-label="Toggle bear/bull range overlay" onclick="toggleStressMode()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit" title="Show bear/bull range">⚡ Range</button>
@@ -3425,6 +3435,7 @@ document.getElementById('main').innerHTML=`
     <button aria-label="Save a dated snapshot of this plan" onclick="showSnapshotInput()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid rgba(8,145,178,.3);background:#e0f7fa;color:var(--c);cursor:pointer;font-family:inherit" title="Save a dated copy of this plan">📸 Snapshot</button>
     <button aria-label="Play plan as a story" onclick="openStoryMode()" style="font-size:9.5px;padding:4px 8px;border-radius:4px;border:1px solid rgba(99,91,255,.3);background:var(--accent-soft);color:var(--accent);cursor:pointer;font-family:inherit" title="Walk through your plan's milestones">🎬 Story</button>
   </div>
+  <div id="subToggle"></div>
   <div class="cc" id="chartArea"><p role="status" style="padding:24px;color:var(--t2)">Loading your saved plan…</p></div>
   <div class="sg" id="summaries"></div>`;
 
@@ -3435,7 +3446,19 @@ let advisorConversation=[];
 let advAgenticMode=false;
 let _advBriefedChats=new Set();
 let advPendingProposals=null; // {changes:[...], aiParams:{...}} from last agentic response
-let _flowView='income';
+// Which view of the projection is showing. Net worth, income, cash flow and the raw table
+// are four renderings of ONE dataset, so they are a view switch inside a single tab rather
+// than four top-level destinations competing in the nav.
+let _projView='nw';
+// Two surfaces answered the same question from different angles, so each became one tab
+// with a view switch rather than several competing for space in the nav.
+let _todayView='plan';
+const SUB_VIEWS={
+  projection:{get:()=>_projView,set:v=>{_projView=v},
+    views:[['nw','📈','Net worth'],['income','💰','Income & tax'],['cashflow','💸','Cash flow'],['table','📋','Table']]},
+  today:{get:()=>_todayView,set:v=>{_todayView=v},
+    views:[['plan','🎯','Plan vs actual'],['holdings','📊','Holdings & accounts']]},
+};
 let _stressMode=false;
 // ── Monte Carlo confidence band overlay (NW chart) ──
 let _bandMode=false;
@@ -3493,14 +3516,15 @@ function _paletteCommands(){
   const cmds=[
     {icon:'✦',label:'Decision Room',hint:'Home',run:()=>setTab('home')},
     {icon:'◆',label:'Stripe Equity',hint:'Tab',run:()=>setTab('stripe')},
-    {icon:'📈',label:'Net Worth',hint:'View',run:()=>setTab('nw')},
-    {icon:'💰',label:'Income & Cash Flow',hint:'View',run:()=>setTab('income')},
-    {icon:'📋',label:'Table',hint:'View',run:()=>setTab('table')},
-    {icon:'🎯',label:'Goals',hint:'View',run:()=>setTab('goals')},
+    {icon:'📈',label:'Net worth',hint:'Projection',run:()=>setTab('nw')},
+    {icon:'💰',label:'Income & tax',hint:'Projection',run:()=>setTab('income')},
+    {icon:'💸',label:'Cash flow',hint:'Projection',run:()=>setTab('cashflow')},
+    {icon:'📋',label:'Table',hint:'Projection',run:()=>setTab('table')},
+    {icon:'🎯',label:'Plan vs actual',hint:'Today',run:()=>setTab('goals')},
     {icon:'🏠',label:'Housing',hint:'View',run:()=>setTab('housing')},
     {icon:'🎚️',label:'Sensitivity',hint:'View',run:()=>setTab('sensitivity')},
     {icon:'⚖',label:'Compare',hint:'View',run:()=>setTab('compare')},
-    {icon:'📊',label:'Portfolio',hint:'View',run:()=>setTab('portfolio')},
+    {icon:'📊',label:'Holdings & accounts',hint:'Today',run:()=>setTab('portfolio')},
     {icon:'🤖',label:'AI Advisor',hint:'View',run:()=>setTab('advisor')},
     {icon:'🎬',label:'Play plan as a story',hint:'Story mode',run:()=>openStoryMode()},
     {icon:inflationView?'🔢':'💵',label:inflationView?'Show nominal dollars':'Show real (inflation-adjusted) dollars',hint:'Toggle',run:()=>toggleInflation()},
