@@ -155,20 +155,31 @@
   // the world is.
   function reconcile(summary,P){
     const lines=[];
-    const push=(key,label,planValue,actual,note)=>lines.push({
-      key,label,planValue,actual,delta:actual-planValue,note,
-      // Both sides are labelled, so a projection is never mistaken for an observation.
-      planSource:SOURCE.MODEL,actualSource:SOURCE.PROVIDER});
+    const push=(key,label,planValue,actual,note,backing)=>{
+      // An actual of zero means two very different things. If accounts ARE classified into
+      // this bucket and they total zero, that is an observation. If NOTHING is classified
+      // into it, the zero is an absence of evidence — and applying it would wipe a real plan
+      // value on the strength of a classification gap. The two must not look alike.
+      const unbacked=actual===0&&planValue!==0&&backing===0;
+      lines.push({
+        key,label,planValue,actual,delta:actual-planValue,note,
+        accountsBacking:backing,applicable:!unbacked,
+        blockedReason:unbacked?'No account is classified into this bucket, so this zero is a gap in classification rather than an observed balance. Classify the right account first — applying now would erase your plan value.':null,
+        planSource:SOURCE.MODEL,actualSource:SOURCE.PROVIDER});
+    };
 
     // The diversified pool in the plan excludes Stripe by construction, so the comparable
     // observed figure is accessible assets MINUS anything classified as vested Stripe.
     const accessibleExStripe=summary.accessible;
+    const nAccessible=summary.byClass[CLASS.CASH].accounts.length+summary.byClass[CLASS.TAXABLE].accounts.length;
+    const nStripe=Object.values(summary.byClass).reduce((n,g)=>n+g.accounts.filter(a=>a.stripeKind==='vested').length,0);
     push('startingLiquid','Diversified liquid',Number(P.startingLiquid||0),accessibleExStripe,
-      'cash + taxable brokerage, excluding Stripe and retirement');
+      'cash + taxable brokerage, excluding Stripe and retirement',nAccessible);
     push('startingStripeEquity','Stripe equity',Number(P.startingStripeEquity||0),summary.stripeVested,
-      'vested Stripe holdings only — unvested grants are future compensation, not an asset');
+      'vested Stripe holdings only — unvested grants are future compensation, not an asset',nStripe);
     push('k401Start','Retirement',Number(P.k401Start||0),summary.byClass[CLASS.RETIREMENT].total,
-      'includes any Stripe 401(k), which is retirement money rather than company stock');
+      'includes any Stripe 401(k), which is retirement money rather than company stock',
+      summary.byClass[CLASS.RETIREMENT].accounts.length);
     return{lines,complete:summary.complete,
       blocked:summary.unknownBalance.map(a=>a.name||a.id)};
   }

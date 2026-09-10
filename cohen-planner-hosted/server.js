@@ -719,12 +719,30 @@ app.get('/api/monarch/spending', requireAuth, async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
     const endDate = req.query.end || today;
     const startDate = req.query.start || new Date(Date.now() - (Number(req.query.months) || 12) * 30.44 * 864e5).toISOString().slice(0, 10);
-    const [ledger, categories, status] = await Promise.all([
+    const [ledger, categories, status, meta] = await Promise.all([
       monarchSync.ledger({ startDate, endDate }),
       monarchSync.localCategories(),
       monarchSync.status(),
+      loadAccountMeta(),
     ]);
-    const summary = Spending.summarize(ledger, categories);
+    // Account classes let the classifier see the DESTINATION of a transfer. Money arriving
+    // in a non-cash account is saving; without this every contribution filed under a generic
+    // "Transfer" category vanishes into the transfer bucket.
+    const accountClasses = {};
+    try {
+      const snap = await monarchLive.getSnapshot();
+      const MA = require('./monarch-accounts');
+      for (const a of snap.accounts || []) {
+        const id = a.id != null ? String(a.id) : null;
+        if (!id) continue;
+        accountClasses[id] = Accounts.classifyAccount({
+          id, name: a.displayName || a.name || '', institution: a.institution || '',
+          category: a.category || '', subtype: a.subtype || '',
+          balance: MA.parseBalance(MA.rawBalanceOf(a)),
+        }, meta.merged).cls;
+      }
+    } catch (e) { /* balances unavailable: fall back to name-based classification only */ }
+    const summary = Spending.summarize(ledger, categories, { accountClasses });
     const cov = Spending.coverage(summary.months, endDate);
     res.json({
       startDate, endDate, status, coverage: cov,

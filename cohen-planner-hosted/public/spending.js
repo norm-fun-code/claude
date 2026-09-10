@@ -75,6 +75,17 @@
     // Investment moves read as transfers in Monarch, so check them first — otherwise every
     // brokerage contribution disappears into the transfer bucket and the cockpit can't tell
     // "we saved $4K" from "we shuffled $4K".
+    //
+    // The reliable signal is the destination, not the category name: money ARRIVING in a
+    // non-cash account is saving. Naming rules miss it whenever the provider files a
+    // contribution under a generic "Transfer", which is the common case — a real ledger came
+    // back with $344K of transfers and $0 of investment.
+    //
+    // Only the inflow leg counts. The matching outflow from checking stays a transfer, so
+    // the same dollars are not recorded twice.
+    const acctCls=o.accountClasses&&txn.accountId!=null?o.accountClasses[String(txn.accountId)]:null;
+    const intoNonCash=acctCls&&acctCls!=='cash'&&acctCls!=='debt'&&acctCls!=='unknown';
+    if(intoNonCash&&txn.amount>0)return KIND.INVESTMENT;
     const toInvestment=o.investmentAccountIds&&txn.accountId!=null&&o.investmentAccountIds.has(String(txn.accountId));
     if(toInvestment||NAME_INVESTMENT.test(name))return KIND.INVESTMENT;
 
@@ -146,7 +157,10 @@
       } else if(kind===KIND.INCOME){
         m.income+=amt;totals.income+=amt;
       } else if(kind===KIND.INVESTMENT){
-        m.investment+=-amt;totals.investment+=-amt;
+        // Recorded as the amount SAVED, always positive. The sign of the underlying row
+        // depends on which leg was seen — a contribution leaving checking is negative, while
+        // the same money arriving in a brokerage is positive — and both mean money set aside.
+        m.investment+=Math.abs(amt);totals.investment+=Math.abs(amt);
       } else if(kind===KIND.TRANSFER){
         m.transfer+=Math.abs(amt);totals.transfer+=Math.abs(amt);
       } else if(kind===KIND.CARD_PAYMENT){

@@ -226,3 +226,45 @@ describe('month bucketing', () => {
     expect(months[0].count).toBe(2);
   });
 });
+
+// ── Destination-based investment detection ───────────────────────────────
+describe('money arriving in a non-cash account is saving', () => {
+  const classes = { brk: 'taxable', ret: 'retirement', chk: 'cash', card: 'debt', priv: 'private' };
+  const opts = { accountClasses: classes };
+
+  it('counts an inflow to a brokerage as investment even when filed as a plain Transfer', () => {
+    // The real case: Monarch categorises the contribution as "Transfer", so a name rule
+    // misses it entirely and it disappears into the transfer bucket.
+    expect(S.classify(tx({ categoryId: '4', accountId: 'brk', amount: 4000 }), cats, opts)).toBe(S.KIND.INVESTMENT);
+    expect(S.classify(tx({ categoryId: '4', accountId: 'ret', amount: 2000 }), cats, opts)).toBe(S.KIND.INVESTMENT);
+    expect(S.classify(tx({ categoryId: '4', accountId: 'priv', amount: 9000 }), cats, opts)).toBe(S.KIND.INVESTMENT);
+  });
+
+  it('does not count the matching outflow, so the dollars are not recorded twice', () => {
+    const { totals } = S.summarize([
+      tx({ id: 'out', categoryId: '4', accountId: 'chk', amount: -4000 }), // leaves checking
+      tx({ id: 'in', categoryId: '4', accountId: 'brk', amount: 4000 }),   // lands in brokerage
+    ], CATS, opts);
+    expect(totals.investment).toBe(4000);   // counted once
+    expect(totals.transfer).toBe(4000);     // the cash leg, still not spending
+    expect(totals.expense).toBe(0);
+  });
+
+  it('leaves an inflow to a cash account as a transfer, not saving', () => {
+    expect(S.classify(tx({ categoryId: '4', accountId: 'chk', amount: 4000 }), cats, opts)).toBe(S.KIND.TRANSFER);
+  });
+
+  it('does not treat a card payment as investment just because the card is non-cash', () => {
+    expect(S.classify(tx({ categoryId: '5', accountId: 'card', amount: 3000 }), cats, opts)).toBe(S.KIND.CARD_PAYMENT);
+  });
+
+  it('falls back to name matching when no account classes are supplied', () => {
+    expect(S.classify(tx({ categoryId: '6', accountId: 'brk', amount: -2000 }), cats, {})).toBe(S.KIND.INVESTMENT);
+    expect(S.classify(tx({ categoryId: '4', accountId: 'brk', amount: 4000 }), cats, {})).toBe(S.KIND.TRANSFER);
+  });
+
+  it('still lets a user override win', () => {
+    expect(S.classify(tx({ categoryId: '4', accountId: 'brk', amount: 4000, userKind: S.KIND.TRANSFER }), cats, opts))
+      .toBe(S.KIND.TRANSFER);
+  });
+});

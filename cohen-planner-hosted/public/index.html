@@ -2009,15 +2009,25 @@ async function confirmAccountBalance(id,name,raw){
   _ovw=null;loadOverview();
 }
 async function setAccountClass(id,cls){
+  // "Vested Stripe equity" is a private holding with a marker, so the reconciliation can
+  // find it without the account happening to have "Stripe" in its name.
+  const stripeKind=cls==='private:stripe'?'vested':null;
+  if(cls==='private:stripe')cls='private';
   const r=await fetch(`/api/accounts/${encodeURIComponent(id)}/class`,{method:'POST',
-    headers:{'Content-Type':'application/json'},body:JSON.stringify({class:cls})});
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({class:cls,stripeKind})});
   if(!r.ok){showToast('Could not save classification','red');return}
   _ovw=null;loadOverview();
 }
 // Reconciliation applies one line at a time, on an explicit click, and marks the plan edited
 // so it is never mistaken for something the plan always said.
 function applyReconcileLine(key,value){
-  if(!showConfirm(`Set ${key} to ${fmt(value)} in your plan?\n\nThis changes a planning assumption to match what your accounts currently show. Nothing else is altered.`))return;
+  const current=Number(P[key]||0);
+  // Replacing a real figure with zero is almost never what someone means to do from a
+  // reconciliation screen — it usually means the matching account was never classified.
+  // It gets its own, blunter confirmation rather than the routine one.
+  if(value===0&&current>0){
+    if(!showConfirm(`This would set ${key} to ZERO, replacing ${fmt(current)}.\n\nYour accounts show nothing in this bucket. That is usually because the right account has not been classified yet, not because the money is gone.\n\nErase ${fmt(current)} from your plan?`))return;
+  } else if(!showConfirm(`Set ${key} to ${fmt(value)} in your plan?\n\nThis changes a planning assumption to match what your accounts currently show. Nothing else is altered.`))return;
   P[key]=value;markDirty();buildControls();render();savePlannerState();
   showToast(`Plan updated: ${key} → ${fmt(value)}`,'green');
 }
@@ -2085,7 +2095,8 @@ function renderOverviewTab(R,P){
             ${a.balanceMissing?'<span style="font-size:8.5px;color:var(--a)">unknown</span>'
               :`${provChip(a.balanceSource==='user'?'entered':'observed',a.balanceAsOf)}<span style="font-family:'SF Mono',monospace;font-size:10px;font-weight:600;color:var(--tx);min-width:62px;text-align:right">${money(a.balance)}</span>`}
             <select onchange="setAccountClass('${advEscape(a.id)}',this.value)" title="Classification is stored against this account's stable id" style="font-size:8.5px;padding:2px 4px;border:1px solid var(--bd);border-radius:4px;background:var(--s1);color:var(--t3);font-family:inherit;max-width:100%;flex:0 1 auto">
-              ${order.map(c=>`<option value="${c}"${a.cls===c?' selected':''}>${LBL[c]}</option>`).join('')}
+              ${order.map(c=>`<option value="${c}"${a.cls===c&&a.stripeKind!=='vested'?' selected':''}>${LBL[c]}</option>`).join('')}
+              <option value="private:stripe"${a.stripeKind==='vested'?' selected':''}>Vested Stripe equity</option>
             </select>
           </div>`).join('')}
         </div>`).join('')}
@@ -2109,8 +2120,12 @@ function renderOverviewTab(R,P){
           <div style="font-family:'SF Mono',monospace;font-size:10.5px;color:var(--b)">${money(l.actual)}</div></div>
         <div style="text-align:right;min-width:78px"><div style="font-size:8px;color:var(--t3)">difference</div>
           <div style="font-family:'SF Mono',monospace;font-size:10.5px;font-weight:700;color:${Math.abs(l.delta)>1000?(l.delta>0?'var(--g)':'var(--r)'):'var(--t3)'}">${l.delta>=0?'+':'−'}${money(Math.abs(l.delta))}</div></div>
-        ${Math.abs(l.delta)>1000?`<button onclick="applyReconcileLine('${l.key}',${l.actual})" style="font-size:9px;padding:4px 9px;border-radius:5px;border:none;background:var(--accent);color:#fff;font-family:inherit;cursor:pointer">Apply</button>`:'<span style="font-size:9px;color:var(--g)">matches</span>'}
-      </div>`).join('')}
+        ${l.applicable===false
+          ? `<span title="${advEscape(l.blockedReason||'')}" style="font-size:9px;color:var(--a);max-width:170px;text-align:right;line-height:1.35">⚠ nothing classified here</span>`
+          : Math.abs(l.delta)>1000
+            ? `<button onclick="applyReconcileLine('${l.key}',${l.actual})" style="font-size:9px;padding:4px 9px;border-radius:5px;border:none;background:var(--accent);color:#fff;font-family:inherit;cursor:pointer">Apply</button>`
+            : '<span style="font-size:9px;color:var(--g)">matches</span>'}
+      </div>${l.applicable===false?`<div style="font-size:9.5px;color:var(--a);padding:0 0 7px;line-height:1.5">${advEscape(l.blockedReason)}</div>`:''}`).join('')}
       ${!rec.complete?`<div style="font-size:9.5px;color:var(--a);margin-top:8px">Incomplete: ${rec.blocked.map(advEscape).join(', ')} ${rec.blocked.length===1?'has':'have'} no balance, so these comparisons are missing that amount.</div>`:''}
     </div>`;
 

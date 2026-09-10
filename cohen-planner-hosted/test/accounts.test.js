@@ -221,3 +221,56 @@ describe('capabilities', () => {
     expect(needs).not.toContain('transactions'); // available, so nothing about it is blocked
   });
 });
+
+// ── Absence of classification must not erase a plan value ────────────────
+describe('reconciliation refuses to apply a zero it cannot back', () => {
+  const P = { startingLiquid: 693000, startingStripeEquity: 614000, k401Start: 300000 };
+  // The real case: a Stripe equity account exists but is named something the rules do not
+  // recognise, so it classifies as taxable. Stripe equity then reads $0 — not because the
+  // money is gone, but because nothing was classified into that bucket.
+  const accounts = [
+    acct({ id: '1', name: 'Chase Checking', category: 'cash', balance: 60000 }),
+    acct({ id: '2', name: 'Shareworks', category: 'investment', balance: 614000 }), // really Stripe
+    acct({ id: '3', name: 'Fidelity 401k', category: 'retirement', balance: 300000 }),
+  ];
+
+  it('marks the Stripe line inapplicable rather than offering to zero it', () => {
+    const r = A.reconcile(A.summarize(accounts, {}), P);
+    const stripe = r.lines.find(l => l.key === 'startingStripeEquity');
+    expect(stripe.actual).toBe(0);
+    expect(stripe.applicable).toBe(false);              // Apply must not be offered
+    expect(stripe.accountsBacking).toBe(0);
+    expect(stripe.blockedReason).toMatch(/classification/i);
+  });
+
+  it('becomes applicable once the account is marked as vested Stripe', () => {
+    const overrides = { 2: { class: A.CLASS.PRIVATE, stripeKind: 'vested' } };
+    const r = A.reconcile(A.summarize(accounts, overrides), P);
+    const stripe = r.lines.find(l => l.key === 'startingStripeEquity');
+    expect(stripe.actual).toBe(614000);
+    expect(stripe.applicable).toBe(true);
+    expect(stripe.delta).toBe(0);                      // and it now matches the plan
+  });
+
+  it('stops counting that money as accessible once it is marked private', () => {
+    const before = A.summarize(accounts, {});
+    const after = A.summarize(accounts, { 2: { class: A.CLASS.PRIVATE, stripeKind: 'vested' } });
+    expect(before.accessible).toBe(674000);            // Stripe wrongly counted as spendable
+    expect(after.accessible).toBe(60000);              // …corrected
+    expect(after.netWorth).toBe(before.netWorth);      // net worth unchanged — only access
+  });
+
+  it('leaves a genuine zero applicable when accounts DO back it', () => {
+    // An account classified into the bucket that really holds nothing is an observation.
+    const withEmpty = [...accounts, acct({ id: '4', name: 'Old equity', balance: 0 })];
+    const r = A.reconcile(A.summarize(withEmpty, { 4: { class: A.CLASS.PRIVATE, stripeKind: 'vested' } }), P);
+    const stripe = r.lines.find(l => l.key === 'startingStripeEquity');
+    expect(stripe.actual).toBe(0);
+    expect(stripe.applicable).toBe(true);              // backed by a real, empty account
+  });
+
+  it('does not block a line whose plan value is already zero', () => {
+    const r = A.reconcile(A.summarize(accounts, {}), { ...P, startingStripeEquity: 0 });
+    expect(r.lines.find(l => l.key === 'startingStripeEquity').applicable).toBe(true);
+  });
+});
