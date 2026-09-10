@@ -647,8 +647,12 @@ describe('affordability', () => {
     const cheap = housingCostPerDollar({ ...BUY, mortgageRate: 3 });
     const dear = housingCostPerDollar({ ...BUY, mortgageRate: 8 });
     expect(dear).toBeGreaterThan(cheap);
+    // All cash: no P&I, so what remains is property tax, maintenance and insurance.
+    // Insurance joined the carrying cost when closing costs were added — leaving it out
+    // overstated affordability, so it belongs in this identity too.
+    const insRate = 0.0035; // default when no explicit premium is supplied
     expect(housingCostPerDollar({ ...BUY, downPctg: 100 }))
-      .toBeCloseTo((BUY.propTaxRate) + BUY.maintBase / BUY.homePrice, 9); // all cash: no P&I
+      .toBeCloseTo((BUY.propTaxRate) + BUY.maintBase / BUY.homePrice + insRate, 9);
   });
 
   it('flags a plan priced above what it can afford', () => {

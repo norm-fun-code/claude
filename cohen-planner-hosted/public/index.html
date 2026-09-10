@@ -13,6 +13,7 @@
 <script src="/spending.js"></script>
 <script src="/accounts.js"></script>
 <script src="/snapshots.js"></script>
+<script src="/liquidity.js"></script>
 <script src="/decisions.js"></script>
 <script src="/decision-room.js"></script>
 <style>
@@ -2788,6 +2789,8 @@ function renderPortfolioTab(R,P){
 // Levers here are exploratory: they do not touch the plan until explicitly applied, so you
 // can test a rate you have been quoted without disturbing your saved assumptions.
 let _afRate=null,_afDown=null,_afShare=0.28;
+let _afQuarter=null,_afTenderCap=null,_afPauseMonths=0;
+function afSet2(k,v){if(k==='q')_afQuarter=parseInt(v,10);else if(k==='cap')_afTenderCap=v===''||v==='none'?null:Number(v);else _afPauseMonths=Number(v);render()}
 function afSet(k,v){
   if(k==='rate')_afRate=parseFloat(v);
   else if(k==='down')_afDown=parseFloat(v);
@@ -2925,6 +2928,96 @@ function renderHousingTab(R,P){
       <div style="font-size:9.5px;color:var(--t3);margin-top:5px">${(atMax.all*12/buyRow.netTC*100).toFixed(0)}% of ${py} after-tax income · down payment ${fmt(a.max*q.downPctg/100)}</div>
     </div>
   </div>`;
+
+  // ── Getting in: what closing actually costs, and whether the cash can be there ──
+  // The affordability maths above is about the ONGOING cost. This is the separate question
+  // of the day itself: a purchase can be affordable for thirty years and still fail to close
+  // because the money is in stock that cannot be sold that month.
+  {
+    const L=window.PlannerLiquidity;
+    const cash=cashToClose(q.homePrice,q);
+    const cc=cash.breakdown;
+    const prev=R.find(r=>r.yr===py-1),buyRow=R.find(r=>r.yr===py);
+    const quarter=_afQuarter||L.purchaseQuarter(q);
+    const floor=q.liquidReserveFloor??500000;
+    const held=prev?prev.sEnd:(q.startingStripeEquity||0);
+    const vestQ=(buyRow?buyRow.sNew:0)/4;
+    const pauseCost=_afPauseMonths>0&&buyRow?buyRow.totE/12*_afPauseMonths:0;
+    const otherCash=Math.max(0,(prev?prev.liq:q.startingLiquid||0)-floor-pauseCost);
+    const capP=_afTenderCap!=null?{stripeTenderCapPerEvent:_afTenderCap}:{};
+    const check=L.fundingCheck({year:py,quarter,need:cash.total,heldValue:held,vestPerQuarter:vestQ,otherCash},capP);
+
+    const row=(l,v,note)=>`<div style="display:flex;justify-content:space-between;font-size:10.5px;padding:4px 0;border-bottom:1px solid var(--bd)">
+      <span style="color:var(--t2)">${l}${note?` <span style="font-size:8.5px;color:var(--t3)">· ${note}</span>`:''}</span>
+      <span style="font-family:'SF Mono',monospace;color:var(--tx)">${fmtF(Math.round(v))}</span></div>`;
+    h+=`<div class="glass-card" style="padding:16px 18px">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:3px">Cash to close</div>
+      <div style="font-size:10px;color:var(--t2);margin-bottom:9px">One-time, due on the day. Separate from whether you can carry the house afterwards.</div>
+      ${row('Down payment',cash.down,`${q.downPctg}%`)}
+      ${row('Mansion tax',cc.mansion,'NYC band')}
+      ${row('Mortgage recording tax',cc.recording,'on the loan')}
+      ${row('Title insurance',cc.title)}
+      ${row('Legal & other',cc.legal+cc.other)}
+      ${row('Moving',cash.moving)}
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:8px 0 0"><strong style="color:var(--tx)">Total</strong>
+        <strong style="font-family:'SF Mono',monospace;color:var(--tx)">${fmtF(Math.round(cash.total))}</strong></div>
+      <div style="font-size:9.5px;color:var(--t3);margin-top:4px">${fmtF(Math.round(cash.total-cash.down))} beyond the deposit — ${(cc.pctOfPrice*100).toFixed(2)}% of price in closing costs.</div>
+    </div>`;
+
+    // ── Can the money be there, in that quarter? ──
+    h+=`<div class="glass-card" style="padding:16px 18px;border-color:${check.fundable?'var(--bd)':'rgba(205,61,100,.4)'}">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:3px">Can the cash be there?</div>
+      <div style="font-size:10px;color:var(--t2);margin-bottom:10px">Stripe sells in <strong>Q1 and Q4 tenders</strong>, plus a standing <strong>$20K/quarter</strong> cash election (about $80K a year). An annual total can look ample while the money is unreachable in the month you close.</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:11px">
+        <label style="font-size:10px;color:var(--t2)">Closing quarter
+          <select onchange="afSet2('q',this.value)" style="margin-left:5px;font-size:10px;padding:3px 6px;border:1px solid var(--bd);border-radius:5px;background:var(--s1);color:var(--tx);font-family:inherit">
+            ${[1,2,3,4].map(x=>`<option value="${x}"${quarter===x?' selected':''}>Q${x}</option>`).join('')}</select></label>
+        <label style="font-size:10px;color:var(--t2)">Tender cap
+          <select onchange="afSet2('cap',this.value)" style="margin-left:5px;font-size:10px;padding:3px 6px;border:1px solid var(--bd);border-radius:5px;background:var(--s1);color:var(--tx);font-family:inherit">
+            ${[['none','Not capped'],[100000,'$100K'],[250000,'$250K'],[500000,'$500K'],[1000000,'$1M']].map(([v,l])=>`<option value="${v}"${String(_afTenderCap??'none')===String(v)?' selected':''}>${l}</option>`).join('')}</select></label>
+        <label style="font-size:10px;color:var(--t2)">Income pause
+          <select onchange="afSet2('pause',this.value)" style="margin-left:5px;font-size:10px;padding:3px 6px;border:1px solid var(--bd);border-radius:5px;background:var(--s1);color:var(--tx);font-family:inherit">
+            ${[0,3,6,12].map(m=>`<option value="${m}"${_afPauseMonths===m?' selected':''}>${m?m+' months':'none'}</option>`).join('')}</select></label>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:9px">
+        ${[['Needed',cash.total,'var(--tx)'],['Reachable from Stripe',check.fromStripe,'#6772e5'],
+           ['Portfolio above floor',otherCash,'var(--b)'],
+           [check.fundable?'Surplus':'Short by',Math.abs(check.available-cash.total),check.fundable?'var(--g)':'var(--r)']]
+          .map(([l,v,c])=>`<div style="background:var(--s2);border-radius:7px;padding:9px 11px">
+            <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t3)">${l}</div>
+            <div style="font-size:15px;font-weight:800;font-family:'SF Mono',monospace;color:${c}">${fmtF(Math.round(v))}</div></div>`).join('')}
+      </div>
+      ${check.fundable
+        ? `<div style="font-size:10px;color:var(--g);margin-top:9px">✓ A Q${quarter} close is fundable${_afPauseMonths?` even with ${_afPauseMonths} months of no income`:''}, leaving the ${fmtF(floor)} reserve intact.</div>`
+        : `<div style="font-size:10px;color:var(--r);margin-top:9px">✗ A Q${quarter} close falls ${fmtF(Math.round(check.shortfall))} short. ${advEscape(check.remedy||'')}</div>`}
+      <div style="font-size:9px;color:var(--t3);margin-top:7px;line-height:1.5">Windows reachable by Q${quarter}: ${check.windowsUsed.map(w=>`Q${w.quarter} ${w.kind}`).join(' · ')||'none'}. Money raised in an earlier quarter is still available later.</div>
+    </div>`;
+
+    // ── Downside and the assumption that flips it ──
+    const scenarios=[
+      ['As planned',{},0],
+      ['Tender capped at $250K',{stripeTenderCapPerEvent:250000},0],
+      ['6 months without income',{},6],
+      ['Both together',{stripeTenderCapPerEvent:250000},6],
+    ].map(([label,cp,pause])=>{
+      const pc=pause>0&&buyRow?buyRow.totE/12*pause:0;
+      const oc=Math.max(0,(prev?prev.liq:0)-floor-pc);
+      const r=L.fundingCheck({year:py,quarter,need:cash.total,heldValue:held,vestPerQuarter:vestQ,otherCash:oc},cp);
+      return{label,r};
+    });
+    h+=`<div class="glass-card" style="padding:16px 18px">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:3px">Downside, and what would change the answer</div>
+      <div style="font-size:10px;color:var(--t2);margin-bottom:9px">Each row is the same purchase under a different assumption. Ranges, not probabilities — none of these is claimed to be likely.</div>
+      ${scenarios.map(sc=>`<div style="display:flex;justify-content:space-between;align-items:center;gap:9px;font-size:10.5px;padding:6px 0;border-top:1px solid var(--bd)">
+        <span style="color:var(--t2);flex:1">${sc.label}</span>
+        <span style="font-family:'SF Mono',monospace;color:var(--t3)">${fmtF(Math.round(sc.r.available))} available</span>
+        <span style="font-weight:700;color:${sc.r.fundable?'var(--g)':'var(--r)'};min-width:96px;text-align:right">${sc.r.fundable?'fundable':'short '+fmtF(Math.round(sc.r.shortfall))}</span>
+      </div>`).join('')}
+      <div style="font-size:9.5px;color:var(--t3);margin-top:9px;line-height:1.55">
+        <strong style="color:var(--tx)">The assumption that matters most:</strong> whether tenders cap how much you may sell. You have not confirmed one, so none is modelled — but a cap at or below ${fmtF(500000)} turns this purchase from comfortably funded into short. Worth confirming before committing to a date.
+      </div>
+    </div>`;
+  }
 
   // ── Refi calculator: a different question, kept but folded away ──
   h+=`<details class="glass-card" style="padding:14px 18px">

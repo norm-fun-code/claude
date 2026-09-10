@@ -421,6 +421,52 @@ function run(p,rets){
     stripeAppr:Math.round(lotsValue(lots)-lotsBasis(lots))};
 }
 
+// ── One-time and recurring costs of buying ─────────────────────────────────
+// The affordability maths previously counted only the down payment and the carrying cost of
+// principal, interest, tax and maintenance. A New York purchase carries several thousand to
+// six figures of costs beyond that, and they land as CASH at closing — precisely when
+// reserves are thinnest.
+//
+// Rates below are the statutory New York City ones, which are formulaic rather than guessed:
+// mansion tax bands from 1% at $1M, mortgage recording tax on loans over $500K, plus title
+// and legal. Every one is overridable, and each is stated so the total can be checked.
+// [upper bound, rate] — the rate applies from the previous bound up to (not including) this
+// one. $1M–$2M is 1.00%, $2M–$3M is 1.25%, and so on. Getting the alignment wrong overcharges
+// an entire band, which a test caught: a $1.5M purchase is 1.00%, not 1.25%.
+const NYC_MANSION_BANDS=[[2e6,.01],[3e6,.0125],[5e6,.015],[10e6,.0225],[15e6,.0325],[20e6,.035],[25e6,.0375],[Infinity,.039]];
+function mansionTax(price,p){
+  if(p&&p.mansionTaxRate!=null)return price*Number(p.mansionTaxRate);
+  if(price<1e6)return 0;
+  for(const [top,rate] of NYC_MANSION_BANDS)if(price<top)return price*rate;
+  return price*0.039;
+}
+function closingCosts(price,p){
+  const loan=price*(1-(p.downPctg||0)/100);
+  const mansion=mansionTax(price,p);
+  // NYC mortgage recording tax: 1.925% on loans of $500K+, 1.8% below. Buyer-paid.
+  const recording=loan>0?loan*(loan>=5e5?0.01925:0.018):0;
+  const titleRate=p.titleInsuranceRate!=null?Number(p.titleInsuranceRate):0.0045;
+  const title=price*titleRate;
+  const legal=p.closingLegalFees!=null?Number(p.closingLegalFees):5000;
+  const other=p.closingOtherFees!=null?Number(p.closingOtherFees):3500; // inspection, appraisal, recording
+  const total=mansion+recording+title+legal+other;
+  return{mansion,recording,title,legal,other,total,pctOfPrice:price>0?total/price:0};
+}
+// Cash needed at the table: deposit plus every one-time cost of getting in.
+function cashToClose(price,p){
+  const down=price*((p.downPctg||0)/100);
+  const cc=closingCosts(price,p);
+  const moving=p.movingCosts!=null?Number(p.movingCosts):12000;
+  return{down,closing:cc.total,moving,total:down+cc.total+moving,breakdown:cc};
+}
+// Annual carrying cost per $1 of price now includes insurance, which is a real recurring
+// obligation the ratio test previously ignored.
+function insuranceFor(price,p){
+  if(p.homeInsuranceAnnual!=null)return Number(p.homeInsuranceAnnual);
+  const rate=p.homeInsuranceRate!=null?Number(p.homeInsuranceRate):0.0035;
+  return price*rate;
+}
+
 // ── Affordability ──────────────────────────────────────────────────────────
 // Two independent limits, because "what can I afford" has two honest answers and they bind
 // under different conditions.
@@ -445,7 +491,12 @@ function housingCostPerDollar(p){
     ? loanFrac*(mr*(1+mr)**360)/((1+mr)**360-1)*12
     : loanFrac/30; // 0% mortgage: straight amortisation over the term
   const maintPerDollar=p.homePrice>0?(p.maintBase||0)/p.homePrice:0;
-  return piPerDollar+(p.propTaxRate??0.012)+maintPerDollar;
+  // Insurance scales with the insured value, so it belongs in the per-dollar rate rather
+  // than being bolted on afterwards — leaving it out overstated affordability.
+  const insPerDollar=p.homeInsuranceAnnual!=null
+    ?(p.homePrice>0?Number(p.homeInsuranceAnnual)/p.homePrice:0)
+    :(p.homeInsuranceRate!=null?Number(p.homeInsuranceRate):0.0035);
+  return piPerDollar+(p.propTaxRate??0.012)+maintPerDollar+insPerDollar;
 }
 
 function comfortAffordablePrice(p,targetShare,R){
@@ -557,6 +608,7 @@ if(typeof module!=='undefined'&&module.exports){
   module.exports={bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
     normComp,stripeReturn,stripeVestFactor,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
     housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
+    mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,
     FED_BR_2026,NYS_BR_2026,NYC_BR_2026,SS_CAP_2026,SALT_BASE_2026,STD_DEDUCT_2026,
     HIST_SP500_RETURNS};
