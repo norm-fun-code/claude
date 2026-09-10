@@ -696,7 +696,7 @@ async function syncMonarch({quiet=false}={}){
       liabilities:d.liabilities?.value,
       accountCount:d.accounts?.length||0,
       syncedAt:d.netWorth?.updatedAt,
-      source:d.source,stale:d.stale,warning:d.warning,partial:!!d.partial,missingAccounts:d.missingAccounts||[],partial:!!d.partial,missingAccounts:d.missingAccounts||[],
+      source:d.source,stale:d.stale,warning:d.warning,partial:!!d.partial,missingAccounts:d.missingAccounts||[],
     };
     if(!nextSnapshot.accountCount||!PlannerDecisions.usableSnapshot({...nextSnapshot,partial:false}))throw new Error('No verified balances returned. Previous data retained.');
     if(monarchSnapshot&&Date.parse(nextSnapshot.syncedAt)<Date.parse(monarchSnapshot.syncedAt))throw new Error('Source returned older balances. Previous data retained.');
@@ -719,7 +719,6 @@ async function syncMonarch({quiet=false}={}){
 
 function anchorToToday(){
   if(!monarchSnapshot){showToast('Sync Monarch first','red');return;}
-  if(monarchSnapshot.partial){showToast('Totals are incomplete. Review the missing account in Portfolio before comparing with your plan.','red');return;}
   if(monarchSnapshot.partial){showToast('Totals are incomplete. Review the missing account in Portfolio before comparing with your plan.','red');return;}
   const curYr=new Date().getFullYear();
   const todayLiq=monarchSnapshot.liquid;
@@ -1864,7 +1863,6 @@ function renderMonarchAccountsCard(){
       <span style="font-size:13px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">${fmt(totalNw)} ${monarchSnapshot?.partial?'known subtotal':'NW'}</span>
     </div>
     ${monarchSnapshot?.partial?`<div role="status" style="padding:12px;margin-bottom:12px;background:var(--a-soft);border-radius:8px"><strong>Incomplete totals</strong><br>${monarchAccounts.length} accounts have balances. Monarch returned no balance for: ${(monarchSnapshot.missingAccounts||[]).map(a=>advEscape(a.name)).join(', ')}. Subtotals below exclude these accounts; no $0 balance has been substituted.</div>`:''}
-    ${monarchSnapshot?.partial?`<div role="status" style="padding:12px;margin-bottom:12px;background:var(--a-soft);border-radius:8px"><strong>Incomplete totals</strong><br>${monarchAccounts.length} accounts have balances. Monarch returned no balance for: ${(monarchSnapshot.missingAccounts||[]).map(a=>advEscape(a.name)).join(', ')}. Subtotals below exclude these accounts; no $0 balance has been substituted.</div>`:''}
     ${rows}
   </div>`;
 }
@@ -1884,10 +1882,6 @@ function renderPortfolioTab(R,P){
     return;
   }
 
-  if(monarchSnapshot?.source){
-    ca.innerHTML=`<div style="padding:12px"><h2 style="font-size:20px">Your accounts, connected</h2><p style="color:var(--t2)">Latest Monarch balances via NormOS · ${new Date(monarchSnapshot.syncedAt).toLocaleString()}. Individual holdings and performance are currently unavailable.</p>${renderMonarchAccountsCard()}</div>`;
-    return;
-  }
 
   if(monarchSnapshot?.source){
     ca.innerHTML=`<div style="padding:12px"><h2 style="font-size:20px">Your accounts, connected</h2><p style="color:var(--t2)">Latest Monarch balances via NormOS · ${new Date(monarchSnapshot.syncedAt).toLocaleString()}. Individual holdings and performance are currently unavailable.</p>${renderMonarchAccountsCard()}</div>`;
