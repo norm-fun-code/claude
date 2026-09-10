@@ -220,6 +220,34 @@ function stripeVestRemaining(p){
   return Math.max(0,(months.length-landed)/months.length);
 }
 
+// ── Tax withheld on a vest ─────────────────────────────────────────────────
+// What lands in the brokerage account is NOT the grant. Shares are withheld at vest to
+// cover the income tax, and what remains — the after-tax position — is the number a person
+// reads off their equity portal. Adding a GROSS grant to an AFTER-TAX opening balance
+// overstates the holding by the entire withholding, every single year.
+//
+// Two ways to price it, and the difference matters:
+//   • The household's MARGINAL rate. Exact, self-consistent with the rest of the engine,
+//     and the right answer for the tax ultimately owed. This is the default because it is
+//     derived rather than assumed.
+//   • The actual SUPPLEMENTAL WITHHOLDING rate the employer applies (a flat federal rate
+//     plus flat state and city rates). This is what determines how many shares are really
+//     withheld, and it is usually not the marginal rate. Supply it from a paystub as
+//     `stripeVestWithholdingRate` and the model uses it instead.
+// Either way the identity holds: cash + after-tax equity = total after-tax compensation.
+// Over- or under-withholding simply moves the difference between the two, which is exactly
+// what it does in life when the return is filed.
+function vestTaxRate(p,taxAll,taxParams,grossIncome,yr,ctcKids,normStock){
+  const override=p.stripeVestWithholdingRate;
+  if(override!=null&&override>=0&&override<1)return override;
+  if(normStock<=0)return 0;
+  // Marginal: what the household's whole tax bill would be without the grant. The stock is
+  // the top slice of income, so its incremental tax is the difference.
+  const without=calcTax(grossIncome-normStock,
+    {...taxParams,_normW2:Math.max(0,(taxParams._normW2||0)-normStock)},yr,ctcKids);
+  return Math.min(0.9,Math.max(0,(taxAll.allInTax-without.allInTax)/normStock));
+}
+
 // ── Stripe lot ledger ──────────────────────────────────────────────────────
 // Holdings are kept as dated lots {v: value, b: cost basis, yr: vest year} rather than one
 // blended pool, because a forced sale picks lots by specific identification: the ones with
@@ -327,7 +355,12 @@ function run(p,rets){
     // This is equivalent to real sell-to-cover withholding — charging the grant's
     // withholding against cash and receiving the grant gross nets out identically once the
     // resulting shortfall is closed by selling that same stock in the waterfall below.
-    const cashAvail=tax.net-normStock;
+    // The grant arrives net of withholding; the cash side keeps everything else. Defining
+    // cash as the residual means the two always sum to total after-tax compensation, so a
+    // change in the withholding rate moves dollars between them and never creates any.
+    const vestRate=vestTaxRate(p,tax,taxP,grossIncome,yr,ctcKids,normStock);
+    const normStockNet=normStock*(1-vestRate);
+    const cashAvail=tax.net-normStockNet;
     const inc=cashAvail;
     // rets[] (Monte Carlo) perturbs only the DIVERSIFIED portfolio. Stripe follows its own
     // explicit return path — we have no basis for claiming to know its volatility.
@@ -381,8 +414,10 @@ function run(p,rets){
     // at the portfolio's expected return would model an unlimited margin loan accruing at
     // the same rate the portfolio is assumed to earn, so it stays flat instead.
     const liqGrown=liq>0?liq*(1+ret):liq;
-    const stripeSold=Math.max(0,Math.min(normStock,stripeSellAmount(p,normStock,netCash,liqGrown,ret,td)));
-    const stripeRetained=Math.max(0,normStock-stripeSold);
+    // The waterfall trades the AFTER-TAX grant: withheld shares never reach the account, so
+    // they can be neither sold for cash nor retained as equity.
+    const stripeSold=Math.max(0,Math.min(normStockNet,stripeSellAmount(p,normStockNet,netCash,liqGrown,ret,td)));
+    const stripeRetained=Math.max(0,normStockNet-stripeSold);
     // ── Stripe equity roll-forward, on the tender calendar ──
     // Everything below happens AT the Feb-yr mark. No growth is credited yet: the year's
     // sales have to execute at the price the shares are actually marked at, and this year's
@@ -430,7 +465,7 @@ function run(p,rets){
     // Drop emptied lots so the ledger stays small across a 33-year Monte Carlo.
     for(let i=lots.length-1;i>=0;i--)if(lots[i].v<=1e-6)lots.splice(i,1);
     const stripeEnd=lotsValue(lots);
-    tSNew+=normStock;tSSold+=stripeSold;tSRet+=stripeRetained;
+    tSNew+=normStockNet;tSSold+=stripeSold;tSRet+=stripeRetained;
     tSHold+=holdSold;tSGainTax+=holdTax;
     let hv=0,mb=0,eq=0;
     // yo = years of ownership elapsed. 0 in the purchase year itself (just closed,
@@ -463,11 +498,17 @@ function run(p,rets){
       // outflow, not an operating shortfall, which is why it is kept separate from both gaps.
       need:Math.round(Math.max(0,-netCash)),dpOut:Math.round(dpThis),
       txS:Math.round(txS),sold:Math.round(sold),liq:Math.round(liq),eq:Math.round(eq),
-      sBeg:Math.round(stripeBegin),sNew:Math.round(normStock),sSold:Math.round(stripeSold),
+      // sNew is the AFTER-TAX grant — what actually reaches the account — so it is directly
+      // comparable to sBeg, which is an after-tax balance. sGross and sVestTax show the
+      // withholding that separates them rather than leaving the reader to wonder why the
+      // grant on the offer letter and the shares in the portal disagree.
+      sBeg:Math.round(stripeBegin),sNew:Math.round(normStockNet),
+      sGross:Math.round(normStock),sVestTax:Math.round(normStock-normStockNet),
+      sVestRate:vestRate,sSold:Math.round(stripeSold),
       // Derived from the two rounded figures rather than rounded independently, so the
       // reported sold + retained always adds back to the reported vest (post-window comp
       // is fractional, and three separate roundings can otherwise drift a dollar apart).
-      sRet:Math.round(normStock)-Math.round(stripeSold),
+      sRet:Math.round(normStockNet)-Math.round(stripeSold),
       // What actually ENTERED the equity ledger this year, versus what the opening balance
       // was already carrying. These differ only in the observation year, and stating both is
       // the difference between a reconcilable dashboard and one that appears to double-count.

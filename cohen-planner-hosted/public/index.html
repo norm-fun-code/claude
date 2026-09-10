@@ -503,6 +503,9 @@ const D={
   // Month (1-12) the Stripe balance above was observed, or null for the start of the year.
   // Vests that had already landed by then are inside that number and must not be added again.
   stripeObservedMonth:null,
+  // Blank means "derive the marginal rate from the tax engine". Set it from a vest paystub
+  // to model the employer's actual flat supplemental withholding instead.
+  stripeVestWithholdingRate:null,
   stripeRetY0:.15,stripeRetY1:.15,stripeRetY2:.12,stripeRetY3:.12,stripeRetY4:.10,
   stripeRetY5:.10,stripeRetY6:.09,stripeRetY7:.09,stripeRetY8:.08,stripeRetY9:.08,
   stripeLongTermReturn:.08,
@@ -1280,6 +1283,15 @@ function buildControls(){
     (()=>{const rem=stripeVestRemaining(P);return rem<1
       ?`<strong>${((1-rem)*100).toFixed(0)}%</strong> of this year’s grant is already inside the balance above.`
       :'The whole of this year’s grant is still to come.';})()}</div>`;
+  stripeBody+=`<div style="font-size:7.5px;color:var(--t3);line-height:1.5;margin-bottom:6px">Vested equity is held <strong>after tax</strong>: shares are withheld at vest. The model withholds at your ${
+    P.stripeVestWithholdingRate!=null
+      ?`entered rate of <strong>${(P.stripeVestWithholdingRate*100).toFixed(1)}%</strong>`
+      :'<strong>derived marginal rate</strong>'}, so the grant on your offer letter and the shares in your portal differ by that much. Your employer withholds at a flat supplemental rate, which is usually not your marginal rate — enter the rate from a vest paystub to model it exactly.</div>`;
+  stripeBody+=`<div class="sr"><div class="sh"><span class="sl">Vest withholding rate</span></div>
+    <input type="text" inputmode="decimal" placeholder="blank = use marginal rate"
+      value="${P.stripeVestWithholdingRate!=null?(P.stripeVestWithholdingRate*100).toFixed(2)+'%':''}"
+      onchange="setVestWithholding(this.value)" onkeydown="if(event.key==='Enter')this.blur()"
+      style="width:100%;padding:6px 9px;border:1px solid var(--bd);border-radius:6px;background:var(--s1);color:var(--tx);font-family:'SF Mono',monospace;font-size:11px;outline:none"></div>`;
   stripeBody+=renderReclassifyRow();
   stripeBody+=`<div style="height:1px;background:var(--bd);margin:7px 0 5px"></div>`;
   stripeBody+=`<div style="font-size:7.5px;color:var(--t3);margin-bottom:4px">Annual return assumptions — <em>yours to set, not a forecast</em></div>`;
@@ -1791,6 +1803,17 @@ function render(){
 let _stripeYear=null;
 function setStripeYear(y){_stripeYear=parseInt(y,10);render()}
 // Blank means "start of year": the balance predates any of this year's vesting.
+// Blank restores the derived marginal rate rather than silently keeping a stale entry.
+function setVestWithholding(v){
+  const t=String(v).replace(/[%\s,]/g,'');
+  if(t===''){delete P.stripeVestWithholdingRate}
+  else{
+    const n=parseFloat(t);
+    if(isNaN(n)||n<0||n>=100){showToast('Enter a withholding rate between 0% and 100%.','red');return}
+    P.stripeVestWithholdingRate=n/100;
+  }
+  savePlannerState();render();
+}
 function setStripeObserved(v){
   const m=parseInt(v,10);
   if(isNaN(m))delete P.stripeObservedMonth;else P.stripeObservedMonth=m;
@@ -1856,7 +1879,7 @@ function renderStripeTab(R,P){
   }
   h+=`<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
     ${tile('Stripe equity · '+(yr>sy?'start of '+yr:'as observed'),fmt(row.sBeg),yr>sy?'carried in from '+(yr-1):'at the '+obsLabel+' mark',V)}
-    ${tile('New equity in '+yr,fmt(row.sNew),'vests in 4 quarterly lots',V)}
+    ${tile('New equity in '+yr,fmt(row.sNew),fmt(row.sGross)+' granted, less '+fmt(row.sVestTax)+' withheld ('+(row.sVestRate*100).toFixed(0)+'%)',V)}
     ${tile('Cash taken',fmt(row.sSold),row.sNew>0?soldPct.toFixed(0)+'% of the year’s vest':'—','#cd3d64')}
     ${tile('Added to holdings',fmt(row.sAdded??row.sRet),row.sInOpening>0?fmt(row.sInOpening)+' of the vest is already in the balance above':(row.sNew>0?keptPct.toFixed(0)+'% of the vest kept':'—'),'#1a8754')}
     ${tile('Projected value · next tender',fmt(row.sEnd),'after '+(row.sRate*100).toFixed(0)+'% assumed return, marked '+(yr+1===sy?'':'Feb ')+(yr+1),V)}

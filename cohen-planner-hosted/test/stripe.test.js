@@ -63,7 +63,11 @@ describe('taxable compensation', () => {
 describe('cash-flow treatment', () => {
   it('cash available excludes stock: = cash comp + Nancy − tax − pretax − overhead', () => {
     const r = y0(P);
-    expect(r.inc).toBe(r.netTC - r.normStock);
+    // Shares are withheld at vest, so what reaches the account is the after-tax grant and
+    // the cash side keeps the rest. The two still sum to total after-tax compensation.
+    expect(r.inc).toBe(r.netTC - r.sNew);
+    expect(r.sGross).toBe(r.normStock);
+    expect(r.sNew + r.sVestTax).toBeCloseTo(r.sGross, 0);
     expect(r.inc).toBeLessThan(r.netTC);
   });
 
@@ -221,15 +225,20 @@ describe('Stripe appreciation', () => {
 
 // ── 6/8/9. The cash waterfall ────────────────────────────────────────────
 describe('cash waterfall', () => {
+  // Cash comp no longer carries the tax on the stock — that is withheld from the shares —
+  // so a gap now requires cash comp to genuinely fall short of the year's spending.
+  const cashShort = { ...P };
+  for (let i = 0; i < 11; i++) { cashShort['normCashY' + i] = 150000; cashShort['normStockY' + i] = 400000; }
+
   it('the default policy sells only enough new stock to close the gap', () => {
-    const r = y0(P);
+    const r = y0(cashShort);
     expect(r.gap).toBeGreaterThan(0);
     expect(r.sSold).toBe(r.gap);                    // exactly the gap, not a dollar more
-    expect(r.sRet).toBe(r.normStock - r.gap);
+    expect(r.sRet).toBe(r.sNew - r.gap);
   });
 
   it('new Stripe is sold BEFORE the diversified portfolio is touched', () => {
-    const r = y0(P);
+    const r = y0(cashShort);
     expect(r.sSold).toBeGreaterThan(0);
     expect(r.sold).toBe(0);                         // portfolio untouched
     expect(r.liq).toBeGreaterThan(P.startingLiquid); // and still growing
@@ -239,7 +248,7 @@ describe('cash waterfall', () => {
     const lean = { ...P };
     for (let i = 0; i < 11; i++) { lean['normCashY' + i] = 90000; lean['normStockY' + i] = 60000; }
     const r = y0(lean);
-    expect(r.sSold).toBe(r.normStock);              // all new stock exhausted first
+    expect(r.sSold).toBe(r.sNew);              // all new stock exhausted first
     expect(r.sRet).toBe(0);
     expect(r.sold).toBeGreaterThan(0);              // only then the portfolio
   });
@@ -259,7 +268,7 @@ describe('cash waterfall', () => {
     const buying = { ...P, homePurchaseYear: 2030, startingStripeEquity: 3000000, liquidReserveFloor: floor };
     const { R } = run(buying);
     const r = R.find(x => x.yr === 2030);
-    expect(r.sSold).toBe(r.normStock);          // whole vest first
+    expect(r.sSold).toBe(r.sNew);          // whole vest first
     expect(r.liq).toBeCloseTo(floor, 0);        // pool stops exactly on the floor
     expect(r.sHold).toBeGreaterThan(0);         // held shares cover the rest
     // and the floor holds for the whole projection while shares remain
@@ -303,22 +312,31 @@ describe('cash waterfall', () => {
     const buying = { ...P, homePurchaseYear: 2030 };
     const r = run(buying).R.find(x => x.yr === 2030);
     expect(r.dpOut).toBe(1000000);
-    expect(r.sSold).toBe(r.normStock);              // whole year's vest goes to the house
+    expect(r.sSold).toBe(r.sNew);              // whole year's vest goes to the house
     expect(r.sRet).toBe(0);
   });
 });
 
 // ── 7. Retention policies ────────────────────────────────────────────────
 describe('retention policies', () => {
-  const at = pol => run({ ...P, stripePolicy: pol }).R;
+  // Policies only diverge in a year that actually needs cash, so the fixture is deliberately
+  // cash-light and stock-heavy. Cash comp no longer absorbs the tax withheld on the grant.
+  const POLICY_BASE = (() => {
+    const p = { ...P };
+    for (let i = 0; i < 11; i++) { p['normCashY' + i] = 150000; p['normStockY' + i] = 400000; }
+    return p;
+  })();
+  const at = pol => run({ ...POLICY_BASE, stripePolicy: pol }).R;
 
   it('sell-all ≤ cover-deficit ≤ retain-all in stock retained', () => {
     expect(at('sell')[0].sRet).toBe(0);
     expect(at('deficit')[0].sRet).toBeLessThanOrEqual(at('retain')[0].sRet);
-    expect(at('retain')[0].sRet).toBe(at('retain')[0].normStock); // liquid covers year 1
+    expect(at('retain')[0].sRet).toBe(at('retain')[0].sNew); // liquid covers year 1
   });
 
   it('retain-all drains the portfolio first, cover-deficit protects it', () => {
+    // Needs a year where cash comp actually falls short, otherwise the two policies have
+    // nothing to disagree about.
     const retain = at('retain'), deficit = at('deficit');
     expect(retain[0].liq).toBeLessThan(deficit[0].liq);
     expect(retain[0].sEnd).toBeGreaterThan(deficit[0].sEnd);
@@ -326,7 +344,7 @@ describe('retention policies', () => {
 
   it('fixed-% sells that share of the vest when cash needs are smaller', () => {
     const r = run({ ...P, stripePolicy: 'pct', stripeSellPct: 0.5, startingLiquid: 6000000 }).R[0];
-    expect(r.sSold).toBe(Math.round(r.normStock * 0.5));
+    expect(r.sSold).toBe(Math.round(r.sNew * 0.5));
   });
 
   it('maintain-floor keeps the diversified pool at or above the floor', () => {
@@ -360,7 +378,7 @@ describe('retention policies', () => {
   it('every policy conserves the vest: sold + retained = new stock', () => {
     for (const pol of ['deficit', 'retain', 'floor', 'pct', 'sell']) {
       for (const r of run({ ...P, stripePolicy: pol }).R) {
-        expect(r.sSold + r.sRet).toBe(r.normStock);
+        expect(r.sSold + r.sRet).toBe(r.sNew);
         expect(r.sSold).toBeGreaterThanOrEqual(0);
         expect(r.sRet).toBeGreaterThanOrEqual(0);
       }
@@ -697,5 +715,54 @@ describe('affordability', () => {
     const a = affordability({ ...BUY, homePrice: 6000000 }, 0.28);
     expect(a.withinBudget).toBe(false);
     expect(affordability({ ...BUY, homePrice: 500000 }, 0.28).withinBudget).toBe(true);
+  });
+});
+
+// ── Vested equity is held AFTER tax ──────────────────────────────────────
+// A grant is quoted gross; shares are withheld at vest; what lands in the portal is the
+// remainder. Adding a gross grant to an after-tax opening balance overstates the position
+// by the whole withholding, compounding for every year of the projection.
+describe('vest withholding', () => {
+  const p = { ...P, startingStripeEquity: 614000, stripeObservedMonth: 8 };
+
+  it('adds the vest to holdings net of tax, and says what was withheld', () => {
+    const r = y0(p);
+    expect(r.sGross).toBe(r.normStock);
+    expect(r.sNew).toBeLessThan(r.sGross);
+    expect(r.sNew + r.sVestTax).toBeCloseTo(r.sGross, 0);
+    expect(r.sVestRate).toBeGreaterThan(0.3);   // a NYC household at this income
+    expect(r.sVestRate).toBeLessThan(0.6);
+  });
+
+  it('conserves total after-tax compensation however the rate moves', () => {
+    // Withholding shifts dollars between cash and equity. It must never create or destroy
+    // any: cash available plus the after-tax grant is always total after-tax comp.
+    for (const rate of [null, 0, 0.22, 0.403, 0.5]) {
+      const r = y0(rate == null ? p : { ...p, stripeVestWithholdingRate: rate });
+      expect(r.inc + r.sNew, `rate ${rate}`).toBe(r.netTC);
+    }
+  });
+
+  it('withholding less leaves more equity and less cash, dollar for dollar', () => {
+    const low = y0({ ...p, stripeVestWithholdingRate: 0.22 });
+    const high = y0({ ...p, stripeVestWithholdingRate: 0.45 });
+    expect(low.sNew).toBeGreaterThan(high.sNew);
+    expect(low.inc).toBeLessThan(high.inc);
+    expect(low.sNew - high.sNew).toBeCloseTo(high.inc - low.inc, 0);
+  });
+
+  it('takes an entered paystub rate over the derived marginal rate', () => {
+    expect(y0({ ...p, stripeVestWithholdingRate: 0.403 }).sVestRate).toBe(0.403);
+    // A nonsense rate is ignored rather than obeyed.
+    expect(y0({ ...p, stripeVestWithholdingRate: 1.5 }).sVestRate).not.toBe(1.5);
+  });
+
+  it('charges no vest tax in a year with no grant', () => {
+    const none = { ...p };
+    for (let i = 0; i < 11; i++) none['normStockY' + i] = 0;
+    const r = y0(none);
+    expect(r.sVestTax).toBe(0);
+    expect(r.sVestRate).toBe(0);
+    expect(r.inc).toBe(r.netTC);
   });
 });
