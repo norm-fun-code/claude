@@ -11,6 +11,7 @@
 <script src="/model.js"></script>
 <script src="/plan-migrate.js"></script>
 <script src="/spending.js"></script>
+<script src="/accounts.js"></script>
 <script src="/decisions.js"></script>
 <script src="/decision-room.js"></script>
 <style>
@@ -1651,6 +1652,7 @@ function render(){
   if(activeTab==='today'){
     if(_todayView==='holdings')renderPortfolioTab(R,P);
     else if(_todayView==='spending')renderSpendingTab(R,P);
+    else if(_todayView==='overview')renderOverviewTab(R,P);
     else renderGoalsTab(R,P,tT);
     return;
   }
@@ -1959,6 +1961,193 @@ function makeDonut(canvasId,labels,data,colors,fmtVal,showLegend){
 // and the server can never disagree about what counts as spending. Everything here leads
 // with coverage: a number computed over four months of history is not the same claim as one
 // computed over twelve, and the view says which it is making.
+// ── Overview: the two-minute read ────────────────────────────────────────
+// Every figure is labelled with what kind of claim it is. An observed balance, a fact you
+// confirmed, and a model projection are three different things, and rendering them
+// identically is misleading even when each number is right.
+let _ovw=null,_ovwLoading=false;
+const PROV={
+  observed:{icon:'◉',label:'Observed',color:'var(--b)',hint:'read from your accounts'},
+  entered:{icon:'✎',label:'You confirmed',color:'var(--a)',hint:'entered or confirmed by you'},
+  projected:{icon:'◇',label:'Projected',color:'var(--p)',hint:'produced by the plan model'},
+};
+function provChip(kind,asOf){
+  const p=PROV[kind];if(!p)return'';
+  const when=asOf?new Date(asOf).toLocaleDateString(undefined,{month:'short',day:'numeric'}):null;
+  return `<span title="${p.hint}${when?' · '+when:''}" style="display:inline-flex;align-items:center;gap:3px;font-size:8px;font-weight:600;color:${p.color};background:color-mix(in srgb, ${p.color} 10%, transparent);border-radius:4px;padding:1px 5px;white-space:nowrap">${p.icon} ${p.label}${when?' · '+when:''}</span>`;
+}
+
+async function loadOverview(){
+  if(_ovwLoading)return;_ovwLoading=true;
+  try{
+    const r=await fetch('/api/accounts/overview');
+    _ovw=r.ok?await r.json():{error:(await r.json().catch(()=>({}))).error||'unavailable'};
+  }catch(e){_ovw={error:e.message};}
+  _ovwLoading=false;
+  if(activeTab==='today'&&_todayView==='overview')render();
+}
+async function confirmAccountBalance(id,name,raw){
+  const v=prompt(`Confirm the balance for "${name}".\n\nMonarch returned no value for this account. What you enter is recorded as YOUR confirmation, dated today — it will never be shown as an observed balance, and a real balance from Monarch will supersede it automatically.`,'0');
+  if(v===null)return;
+  const num=parseFloat(String(v).replace(/[^0-9.\-]/g,''));
+  if(!isFinite(num)){showToast('That is not a number','red');return}
+  const r=await fetch(`/api/accounts/${encodeURIComponent(id)}/confirm-balance`,{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({balance:num,accountName:name,rawMissing:raw==null?null:String(raw),note:'confirmed in the planner'})});
+  if(!r.ok){showToast('Could not save confirmation','red');return}
+  showToast(`Recorded ${fmtF(num)} for ${name}, dated today`,'green');
+  _ovw=null;loadOverview();
+}
+async function setAccountClass(id,cls){
+  const r=await fetch(`/api/accounts/${encodeURIComponent(id)}/class`,{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({class:cls})});
+  if(!r.ok){showToast('Could not save classification','red');return}
+  _ovw=null;loadOverview();
+}
+// Reconciliation applies one line at a time, on an explicit click, and marks the plan edited
+// so it is never mistaken for something the plan always said.
+function applyReconcileLine(key,value){
+  if(!showConfirm(`Set ${key} to ${fmt(value)} in your plan?\n\nThis changes a planning assumption to match what your accounts currently show. Nothing else is altered.`))return;
+  P[key]=value;markDirty();buildControls();render();savePlannerState();
+  showToast(`Plan updated: ${key} → ${fmt(value)}`,'green');
+}
+
+function renderOverviewTab(R,P){
+  const ca=document.getElementById('chartArea');
+  destroyCharts();
+  if(_ovw===null&&!_ovwLoading)loadOverview();
+  const d=_ovw||{};
+  const last=R[R.length-1],y0=R[0];
+  let h=`<div style="display:flex;flex-direction:column;gap:13px;padding:2px">`;
+
+  if(_ovw===null){h+=`<div class="glass-card" style="padding:26px;text-align:center;font-size:11px;color:var(--t3)">Reading your accounts…</div></div>`;
+    ca.innerHTML=h;document.getElementById('summaries').innerHTML='';return;}
+
+  const sum=d.summary||{},caps=d.capabilities||{},cls=sum.byClass||{};
+  const money=v=>fmt(Math.round(v||0));
+
+  // ── Wealth and access ──
+  const tile=(lbl,val,chip,sub,col)=>`<div class="kpi">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-bottom:3px">
+      <span style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t3)">${lbl}</span>${chip||''}
+    </div>
+    <div style="font-size:19px;font-weight:800;font-family:'SF Mono',monospace;color:${col||'var(--tx)'};letter-spacing:-.5px">${val}</div>
+    ${sub?`<div style="font-size:8.5px;color:var(--t3);margin-top:2px">${sub}</div>`:''}</div>`;
+
+  if(d.error){
+    h+=`<div class="glass-card" style="padding:18px;text-align:center">
+      <div style="font-size:12px;color:var(--tx);margin-bottom:5px">Account data unavailable</div>
+      <div style="font-size:10.5px;color:var(--t2);margin-bottom:10px">${advEscape(d.error)}</div>
+      <button onclick="openMonarchDiagnostics()" style="font-size:10px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">🩺 Diagnose connection</button></div>`;
+  } else {
+    h+=`<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(158px,1fr))">
+      ${tile('Net worth',money(sum.netWorth),provChip('observed',d.asOf),`${money(sum.assets)} assets − ${money(sum.debt)} debt`)}
+      ${tile('Accessible today',money(sum.accessible),provChip('observed',d.asOf),'cash + taxable — spendable without penalty','var(--g)')}
+      ${tile('Retirement',money((cls.retirement||{}).total),provChip('observed',d.asOf),'locked until retirement age')}
+      ${tile('Stripe equity',money(sum.stripeVested),provChip('observed',d.asOf),'vested only — grants are future pay','#6772e5')}
+      ${tile(`Cash flow ${y0.yr}`,(y0.surp>=0?'+':'−')+money(Math.abs(y0.surp)),provChip('projected'),y0.gap>0?`${money(y0.gap)} covered by selling vest`:'cash pay covers the year')}
+      ${tile(`Net worth ${last.yr}`,money(last.nw),provChip('projected'),'if the plan holds')}
+    </div>`;
+
+    // ── Anything unknown, said out loud ──
+    if((sum.unknownBalance||[]).length){
+      h+=`<div class="glass-card" style="padding:13px 15px;border-color:rgba(245,183,49,.4);background:rgba(245,183,49,.05)">
+        <div style="font-size:10.5px;font-weight:700;color:var(--a);margin-bottom:6px">${sum.unknownBalance.length} account${sum.unknownBalance.length===1?'':'s'} with no balance from Monarch</div>
+        <div style="font-size:10px;color:var(--t2);line-height:1.55;margin-bottom:8px">These are counted <strong>nowhere</strong> above — not as zero. Totals are short by an unknown amount until each is resolved. Confirming a balance records it as your dated statement, and a real balance from Monarch supersedes it.</div>
+        ${sum.unknownBalance.map(a=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--bd)">
+          <span style="flex:1;font-size:10.5px;color:var(--tx)">${advEscape(a.name||a.id)}</span>
+          <button onclick="confirmAccountBalance('${advEscape(a.id)}','${advEscape((a.name||'').replace(/'/g,''))}',${JSON.stringify(a.rawMissing==null?null:String(a.rawMissing))})" style="font-size:9px;padding:4px 9px;border-radius:5px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">Confirm balance</button>
+        </div>`).join('')}</div>`;
+    }
+
+    // ── Accounts, with their class and where the number came from ──
+    const order=['cash','taxable','retirement','private','debt','unknown'];
+    const LBL={cash:'Cash',taxable:'Taxable investments',retirement:'Retirement',private:'Private assets',debt:'Debt',unknown:'Unclassified'};
+    h+=`<div class="glass-card" style="padding:14px 16px">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:9px">Where the money sits</div>
+      ${order.filter(k=>(cls[k]||{accounts:[]}).accounts.length).map(k=>`
+        <div style="margin-bottom:9px">
+          <div style="display:flex;justify-content:space-between;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t3);margin-bottom:3px">
+            <span>${LBL[k]}</span><span style="font-family:'SF Mono',monospace;color:var(--tx)">${money(cls[k].total)}</span></div>
+          ${cls[k].accounts.map(a=>`<div style="display:flex;align-items:center;gap:7px;padding:4px 8px;background:var(--s2);border-radius:5px;margin-bottom:2px;flex-wrap:wrap">
+            <span style="flex:1;font-size:10px;color:var(--tx)">${advEscape(a.name||a.id)}
+              <span style="color:var(--t3);font-size:8.5px">· ${advEscape(a.clsReason||'')}</span></span>
+            ${a.balanceMissing?'<span style="font-size:8.5px;color:var(--a)">unknown</span>'
+              :`${provChip(a.balanceSource==='user'?'entered':'observed',a.balanceAsOf)}<span style="font-family:'SF Mono',monospace;font-size:10px;font-weight:600;color:var(--tx);min-width:62px;text-align:right">${money(a.balance)}</span>`}
+            <select onchange="setAccountClass('${advEscape(a.id)}',this.value)" title="Classification is stored against this account's stable id" style="font-size:8.5px;padding:2px 4px;border:1px solid var(--bd);border-radius:4px;background:var(--s1);color:var(--t3);font-family:inherit;max-width:100%;flex:0 1 auto">
+              ${order.map(c=>`<option value="${c}"${a.cls===c?' selected':''}>${LBL[c]}</option>`).join('')}
+            </select>
+          </div>`).join('')}
+        </div>`).join('')}
+      <div style="font-size:9px;color:var(--t3);line-height:1.5;margin-top:4px">Classification is saved against each account's stable id, so renaming an account in Monarch will not move it. A Stripe 401(k) is retirement money, not company stock.</div>
+    </div>`;
+
+    // ── Reconciliation: proposed, never applied ──
+    const rec=(window.PlannerAccounts?PlannerAccounts.reconcile(sum,P):{lines:[]});
+    const material=rec.lines.filter(l=>Math.abs(l.delta)>1000);
+    h+=`<div class="glass-card" style="padding:14px 16px">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:3px">Plan vs. your accounts</div>
+      <div style="font-size:10px;color:var(--t2);margin-bottom:9px">Nothing here changes your plan until you click Apply. Each line is one assumption.</div>
+      ${rec.lines.map(l=>`<div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-top:1px solid var(--bd);flex-wrap:wrap">
+        <div style="flex:1;min-width:150px">
+          <div style="font-size:10.5px;color:var(--tx);font-weight:600">${l.label}</div>
+          <div style="font-size:9px;color:var(--t3)">${advEscape(l.note)}</div>
+        </div>
+        <div style="text-align:right"><div style="font-size:8px;color:var(--t3)">plan ${PROV.projected.icon}</div>
+          <div style="font-family:'SF Mono',monospace;font-size:10.5px">${money(l.planValue)}</div></div>
+        <div style="text-align:right"><div style="font-size:8px;color:var(--t3)">actual ${PROV.observed.icon}</div>
+          <div style="font-family:'SF Mono',monospace;font-size:10.5px;color:var(--b)">${money(l.actual)}</div></div>
+        <div style="text-align:right;min-width:78px"><div style="font-size:8px;color:var(--t3)">difference</div>
+          <div style="font-family:'SF Mono',monospace;font-size:10.5px;font-weight:700;color:${Math.abs(l.delta)>1000?(l.delta>0?'var(--g)':'var(--r)'):'var(--t3)'}">${l.delta>=0?'+':'−'}${money(Math.abs(l.delta))}</div></div>
+        ${Math.abs(l.delta)>1000?`<button onclick="applyReconcileLine('${l.key}',${l.actual})" style="font-size:9px;padding:4px 9px;border-radius:5px;border:none;background:var(--accent);color:#fff;font-family:inherit;cursor:pointer">Apply</button>`:'<span style="font-size:9px;color:var(--g)">matches</span>'}
+      </div>`).join('')}
+      ${!rec.complete?`<div style="font-size:9.5px;color:var(--a);margin-top:8px">Incomplete: ${rec.blocked.map(advEscape).join(', ')} ${rec.blocked.length===1?'has':'have'} no balance, so these comparisons are missing that amount.</div>`:''}
+    </div>`;
+
+    // ── Double counting ──
+    if((d.doubleCounting||[]).length){
+      h+=`<div class="glass-card" style="padding:13px 15px;border-color:rgba(205,61,100,.35);background:rgba(205,61,100,.04)">
+        <div style="font-size:10.5px;font-weight:700;color:var(--r);margin-bottom:5px">Possible double counting</div>
+        ${d.doubleCounting.map(i=>`<div style="font-size:10px;color:var(--t2);line-height:1.55">${advEscape(i.name)}: balance ${money(i.balance)} vs holdings ${money(i.holdingsTotal)}. ${advEscape(i.message)}</div>`).join('')}</div>`;
+    }
+  }
+
+  // ── Up to three things worth doing ──
+  const actions=[];
+  if((sum.unknownBalance||[]).length)actions.push({t:`Confirm ${sum.unknownBalance.length} missing balance${sum.unknownBalance.length===1?'':'s'}`,w:'Totals are short by an unknown amount until you do.',c:'var(--a)'});
+  if((cls.unknown||{accounts:[]}).accounts.length)actions.push({t:`Classify ${cls.unknown.accounts.length} account${cls.unknown.accounts.length===1?'':'s'}`,w:'Unclassified accounts are excluded from accessible assets.',c:'var(--a)'});
+  const recL=(window.PlannerAccounts&&!d.error)?PlannerAccounts.reconcile(sum,P).lines.filter(l=>Math.abs(l.delta)>25000):[];
+  if(recL.length)actions.push({t:`Reconcile ${recL[0].label.toLowerCase()}`,w:`Your plan assumes ${money(recL[0].planValue)}; your accounts show ${money(recL[0].actual)}.`,c:'var(--accent)'});
+  if(y0.gap>0&&actions.length<3)actions.push({t:`${money(y0.gap)} of ${y0.yr} spending needs stock sold`,w:'Cash pay alone does not cover the year. That is by design, not a shortfall.',c:'var(--t2)'});
+  if(actions.length){
+    h+=`<div class="glass-card" style="padding:14px 16px">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:8px">Worth doing next</div>
+      ${actions.slice(0,3).map((a,i)=>`<div style="display:flex;gap:9px;padding:6px 0;${i?'border-top:1px solid var(--bd)':''}">
+        <span style="color:${a.c};font-weight:700;font-size:11px">${i+1}</span>
+        <div><div style="font-size:11px;color:var(--tx);font-weight:600">${advEscape(a.t)}</div>
+          <div style="font-size:9.5px;color:var(--t2);margin-top:1px">${advEscape(a.w)}</div></div></div>`).join('')}</div>`;
+  }
+
+  // ── What the connection can and cannot do ──
+  const capRow=(k,lbl)=>{const c=caps[k]||{available:false,detail:''};
+    return `<div style="display:flex;align-items:center;gap:7px;font-size:9.5px;padding:3px 0">
+      <span style="color:${c.available?'var(--g)':'var(--t3)'};font-weight:700">${c.available?'✓':'—'}</span>
+      <span style="color:var(--tx);min-width:92px">${lbl}</span>
+      <span style="color:var(--t3);flex:1">${advEscape(String(c.detail||''))}</span></div>`;};
+  h+=`<div class="glass-card" style="padding:13px 15px">
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:6px">What this connection provides</div>
+    ${capRow('balances','Balances')}${capRow('holdings','Holdings')}${capRow('transactions','Transactions')}${capRow('taxLots','Tax lots')}
+    ${(d.blocked||[]).length?`<div style="font-size:9.5px;color:var(--t3);margin-top:6px;line-height:1.5">Unavailable data disables only what depends on it: ${d.blocked.map(b=>advEscape(b.feature)).join(' · ')}.</div>`:''}
+  </div>`;
+
+  h+=`<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:9px;color:var(--t3);padding:0 2px">
+    ${Object.keys(PROV).map(k=>`<span>${provChip(k)} ${PROV[k].hint}</span>`).join('')}</div>`;
+
+  h+=`</div>`;
+  ca.innerHTML=h;
+  document.getElementById('summaries').innerHTML='';
+}
+
 let _spend=null,_spendLoading=false,_syncStatus=null,_syncPoll=null;
 
 async function loadSpending(){
@@ -3701,7 +3890,7 @@ let advPendingProposals=null; // {changes:[...], aiParams:{...}} from last agent
 let _projView='nw';
 // Two surfaces answered the same question from different angles, so each became one tab
 // with a view switch rather than several competing for space in the nav.
-let _todayView='plan';
+let _todayView='overview';
 // The Decision Room already leads with "Explore a what-if", and Housing, the tornado and the
 // scenario diff are all the same activity at different resolutions: pick a lever, see which
 // levers matter, save and diff. One tab, four depths — not four destinations.
@@ -3712,7 +3901,7 @@ const SUB_VIEWS={
   projection:{get:()=>_projView,set:v=>{_projView=v},
     views:[['nw','📈','Net worth'],['income','💰','Income & tax'],['cashflow','💸','Cash flow'],['table','📋','Table']]},
   today:{get:()=>_todayView,set:v=>{_todayView=v},
-    views:[['plan','🎯','Plan vs actual'],['holdings','📊','Holdings & accounts'],['spending','💳','Spending']]},
+    views:[['overview','◎','Overview'],['plan','🎯','Plan vs actual'],['holdings','📊','Holdings & accounts'],['spending','💳','Spending']]},
 };
 let _stressMode=false;
 // ── Monte Carlo confidence band overlay (NW chart) ──
@@ -3776,6 +3965,7 @@ function _paletteCommands(){
     {icon:'🎚️',label:'Which levers matter',hint:'Decisions',run:()=>setTab('sensitivity')},
     {icon:'⚖',label:'Compare saved',hint:'Decisions',run:()=>setTab('compare')},
     {icon:'📊',label:'Holdings & accounts',hint:'Today',run:()=>setTab('portfolio')},
+    {icon:'◎',label:'Overview',hint:'Today',run:()=>{_todayView='overview';setTab('today')}},
     {icon:'💳',label:'Spending & cash flow',hint:'Today',run:()=>{_todayView='spending';setTab('today')}},
     {icon:'🩺',label:'Diagnose Monarch connection',hint:'Support',run:()=>{setTab('portfolio');setTimeout(()=>openMonarchDiagnostics(),350)}},
     {icon:'🤖',label:'AI Advisor',hint:'View',run:()=>setTab('advisor')},

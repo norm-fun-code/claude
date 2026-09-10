@@ -43,6 +43,28 @@ async function initSchema() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
+    -- Account classification, keyed on the provider's STABLE id rather than the display
+    -- name, so renaming an account in Monarch cannot silently reclassify net worth.
+    CREATE TABLE IF NOT EXISTS account_classes (
+      account_id  TEXT PRIMARY KEY,
+      class       TEXT NOT NULL,
+      stripe_kind TEXT,
+      note        TEXT,
+      set_by      TEXT NOT NULL DEFAULT 'user',
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    -- Dated, per-account confirmations. The ONLY thing permitted to turn a missing provider
+    -- balance into a number. raw_missing preserves what the provider actually returned so
+    -- the gap stays visible after the override is applied.
+    CREATE TABLE IF NOT EXISTS account_overrides (
+      account_id   TEXT PRIMARY KEY,
+      account_name TEXT,
+      balance      NUMERIC,
+      raw_missing  TEXT,
+      note         TEXT,
+      confirmed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      superseded_at TIMESTAMPTZ
+    );
     CREATE TABLE IF NOT EXISTS oauth_tokens (
       key TEXT PRIMARY KEY,
       data JSONB NOT NULL DEFAULT '{}',

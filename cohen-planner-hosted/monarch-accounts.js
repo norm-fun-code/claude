@@ -1,13 +1,30 @@
 'use strict';
 // Reject incomplete upstream responses instead of converting missing balances to $0.
-function readBalance(acct){
-  const raw=acct?.currentBalance??acct?.balance??acct?.current_balance??acct?.displayBalance;
+//
+// The one exception is a per-account, dated confirmation from the user. Nothing else may
+// turn a missing balance into a number: not a default, not a heuristic, and never a blanket
+// rule across accounts. An account the user has confirmed is empty stops poisoning the whole
+// snapshot; every OTHER account with a missing balance still rejects it, because a total
+// that is quietly short by an unknown amount is worse than no total.
+function parseBalance(raw){
   const cleaned=typeof raw==='string'?raw.trim().replace(/[$,\s]/g,''):raw;
   const value=typeof cleaned==='number'?cleaned:typeof cleaned==='string'&&/^-?\d+(\.\d+)?$/.test(cleaned)?Number(cleaned):NaN;
-  if(!Number.isFinite(value))throw new Error('Monarch returned an account without a readable balance. Last good snapshot retained.');
-  return value;
+  return Number.isFinite(value)?value:null;
 }
-function extractAccounts(response){
+function rawBalanceOf(acct){
+  return acct?.currentBalance??acct?.balance??acct?.current_balance??acct?.displayBalance;
+}
+function readBalance(acct,overrides){
+  const raw=rawBalanceOf(acct);
+  const value=parseBalance(raw);
+  if(value!==null)return value;
+  // Missing. Only a confirmation naming THIS account's stable id may supply a value.
+  const id=acct?.id!=null?String(acct.id):null;
+  const ov=id&&overrides?overrides[id]:null;
+  if(ov&&ov.balance!=null&&Number.isFinite(Number(ov.balance)))return Number(ov.balance);
+  throw new Error('Monarch returned an account without a readable balance. Last good snapshot retained.');
+}
+function extractAccounts(response,overrides){
   const result=response?.result??response;
   if(response?.error||result?.isError)throw new Error('Monarch could not return account balances.');
   let data=result?.structuredContent??result;
@@ -21,7 +38,7 @@ function extractAccounts(response){
     }
     if(Array.isArray(data)){
       if(!data.length)throw new Error('Monarch returned no accounts. Last good snapshot retained.');
-      data.forEach(readBalance);
+      data.forEach(a=>readBalance(a,overrides));
       return data;
     }
     if(data&&typeof data==='object'){
@@ -31,4 +48,4 @@ function extractAccounts(response){
   }
   throw new Error('Monarch returned an unrecognized account response. Last good snapshot retained.');
 }
-module.exports={extractAccounts,readBalance};
+module.exports={extractAccounts,readBalance,parseBalance,rawBalanceOf};

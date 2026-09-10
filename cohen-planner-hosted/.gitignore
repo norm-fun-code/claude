@@ -2,3 +2,9 @@ node_modules/
 .env
 *.log
 .DS_Store
+
+# Personal financial data — real balances, compensation and scenarios. The import scripts
+# read these locally; they must not be committed.
+cohen_planner_1.json
+cohen-planner-backup.json
+*.planner-export.json

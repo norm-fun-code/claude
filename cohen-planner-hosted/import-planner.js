@@ -4,7 +4,15 @@ const db = require('./db');
 
 const COLORS = ['#ff6b6b','#ffd43b','#ff922b','#e64980','#20c997','#845ef7','#339af0','#f783ac'];
 
-const data = require('./cohen_planner_1.json');
+// Local-only export, deliberately untracked (see .gitignore) — it holds real balances and
+// compensation. Fail with an explanation rather than a module-not-found stack.
+const fs = require('fs');
+const SRC = process.env.PLANNER_EXPORT || './cohen_planner_1.json';
+if (!fs.existsSync(SRC)) {
+  console.error(`No planner export at ${SRC}. Point PLANNER_EXPORT at your exported JSON.`);
+  process.exit(1);
+}
+const data = JSON.parse(fs.readFileSync(SRC, 'utf8'));
 
 function advUuid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
 

@@ -22,6 +22,28 @@ const monarchLive = createMonarchLive({ db });
 const { createMonarchSync } = require('./monarch-sync');
 const monarchSync = createMonarchSync({ db, live: monarchLive });
 const Spending = require('./public/spending.js');
+const Accounts = require('./public/accounts.js');
+
+// Classification and confirmations, keyed on stable account ids.
+async function loadAccountMeta() {
+  const [cls, ovr] = await Promise.all([
+    db.query('SELECT account_id, class, stripe_kind, note FROM account_classes'),
+    db.query('SELECT account_id, account_name, balance::float8 AS balance, raw_missing, note, confirmed_at, superseded_at FROM account_overrides WHERE superseded_at IS NULL'),
+  ]);
+  const classes = {}, overrides = {};
+  for (const r of cls.rows) classes[r.account_id] = { class: r.class, stripeKind: r.stripe_kind, note: r.note };
+  for (const r of ovr.rows) overrides[r.account_id] = {
+    balance: r.balance, note: r.note, confirmedAt: r.confirmed_at, rawMissing: r.raw_missing,
+    accountName: r.account_name,
+  };
+  // Classification overrides and balance confirmations are separate concerns that happen to
+  // key on the same id, so they are merged only at the point of use.
+  const merged = {};
+  for (const id of new Set([...Object.keys(classes), ...Object.keys(overrides)])) {
+    merged[id] = { ...(classes[id] || {}), ...(overrides[id] || {}) };
+  }
+  return { classes, overrides, merged };
+}
 
 const ADVISOR_TOOLS = [
   {
@@ -243,7 +265,7 @@ app.get('/model.js', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'model.js'));
 });
 // Keep every new planner asset behind the same session gate as the existing UI.
-for (const asset of ['decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js']) {
+for (const asset of ['decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js']) {
   app.get('/' + asset, requireAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', asset));
   });
@@ -714,6 +736,92 @@ app.get('/api/monarch/spending', requireAuth, async (req, res) => {
       },
     });
   } catch (err) { res.status(503).json({ error: err.message }); }
+});
+
+// ── Accounts: classification, confirmations, reconciliation ─────────────────
+app.get('/api/accounts/overview', requireAuth, async (req, res) => {
+  try {
+    const meta = await loadAccountMeta();
+    let accounts = [], balancesOk = false, snapshotAsOf = null, warning = null;
+    try {
+      const snap = await monarchLive.getSnapshot();
+      accounts = (snap.accounts || []).map(a => ({
+        id: a.id != null ? String(a.id) : null,
+        name: a.displayName || a.name || '',
+        institution: a.institution || '',
+        category: a.category || '',
+        subtype: a.subtype || '',
+        balance: require('./monarch-accounts').parseBalance(require('./monarch-accounts').rawBalanceOf(a)),
+        rawBalance: require('./monarch-accounts').rawBalanceOf(a),
+        asOf: snap.asOf || null,
+      }));
+      balancesOk = true; snapshotAsOf = snap.asOf || null; warning = snap.warning || null;
+    } catch (err) { warning = err.message; }
+
+    const summary = Accounts.summarize(accounts, meta.merged);
+    const syncStatus = await monarchSync.status().catch(() => ({ transactions: 0 }));
+    const caps = Accounts.capabilities({
+      balances: balancesOk, balancesAsOf: snapshotAsOf,
+      holdings: false, // set below only if holdings actually return
+      transactions: (syncStatus.transactions || 0) > 0, transactionsAsOf: syncStatus.lastSyncAt,
+    });
+    let holdings = [];
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      holdings = await monarchLive.holdings({ startDate: today, endDate: today });
+      caps.holdings = { available: true, detail: `${holdings.length} positions`, asOf: today };
+    } catch (err) { caps.holdings = { available: false, detail: err.message, asOf: null }; }
+
+    res.json({
+      asOf: snapshotAsOf, warning,
+      summary: { ...summary, byClass: summary.byClass },
+      overrides: meta.overrides,
+      capabilities: caps,
+      blocked: Accounts.blockedBy(caps),
+      doubleCounting: Accounts.detectDoubleCounting(accounts, holdings),
+      syncStatus,
+    });
+  } catch (err) { res.status(503).json({ error: err.message }); }
+});
+
+// Classify an account. Stored against the stable id and never inferred again.
+app.post('/api/accounts/:id/class', requireAuth, async (req, res) => {
+  const { class: cls, stripeKind = null, note = null } = req.body || {};
+  if (!Object.values(Accounts.CLASS).includes(cls)) {
+    return res.status(400).json({ error: `class must be one of: ${Object.values(Accounts.CLASS).join(', ')}` });
+  }
+  try {
+    await db.query(
+      `INSERT INTO account_classes (account_id, class, stripe_kind, note, set_by, updated_at)
+       VALUES ($1,$2,$3,$4,'user',NOW())
+       ON CONFLICT (account_id) DO UPDATE SET class=EXCLUDED.class, stripe_kind=EXCLUDED.stripe_kind,
+         note=EXCLUDED.note, set_by='user', updated_at=NOW()`,
+      [String(req.params.id), cls, stripeKind, note]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Confirm a balance the provider could not return. Dated, per-account, and it records what
+// the provider actually returned so the gap is not erased by the confirmation.
+app.post('/api/accounts/:id/confirm-balance', requireAuth, async (req, res) => {
+  const { balance, note = null, accountName = null, rawMissing = null } = req.body || {};
+  if (!Number.isFinite(Number(balance))) return res.status(400).json({ error: 'balance must be a number' });
+  try {
+    await db.query(
+      `INSERT INTO account_overrides (account_id, account_name, balance, raw_missing, note, confirmed_at, superseded_at)
+       VALUES ($1,$2,$3,$4,$5,NOW(),NULL)
+       ON CONFLICT (account_id) DO UPDATE SET balance=EXCLUDED.balance, account_name=EXCLUDED.account_name,
+         raw_missing=EXCLUDED.raw_missing, note=EXCLUDED.note, confirmed_at=NOW(), superseded_at=NULL`,
+      [String(req.params.id), accountName, Number(balance), rawMissing == null ? null : String(rawMissing), note]);
+    res.json({ ok: true, confirmedAt: new Date().toISOString() });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/accounts/:id/confirm-balance', requireAuth, async (req, res) => {
+  try {
+    await db.query('UPDATE account_overrides SET superseded_at = NOW() WHERE account_id = $1', [String(req.params.id)]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/api/monarch-diagnostics', requireAuth, async (req, res) => {
