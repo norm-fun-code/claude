@@ -34,7 +34,11 @@
     const last=R[R.length-1];
     return{current,floor,tightest,purchase,beforeLiquid,down,
       closingBuffer:beforeLiquid===null?null:beforeLiquid-down,
-      peak,last,total:last.nw+last.k401,deficitYears:R.filter(r=>r.surp<0).length};
+      peak,last,total:last.nw+last.k401,
+      // Years that genuinely reach for savings. Counting r.surp<0 instead would count every
+      // year cash pay alone falls short — which, with a stock-heavy package, is nearly all
+      // of them even when that year's vest closes the gap and nothing is liquidated.
+      deficitYears:R.filter(r=>r.sold>0||r.sHold>0).length};
   }
   function milestones(p,R){
     const events=[];const add=(yr,label,kind)=>{if(R.some(r=>r.yr===yr))events.push({yr,label,kind});};

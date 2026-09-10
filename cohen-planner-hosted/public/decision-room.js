@@ -92,7 +92,7 @@ function decisionUpdatePreview(){
     <table class="dr-comparison"><thead><tr><th>Measure</th><th>Current</th><th>Preview</th></tr></thead><tbody>
     <tr><th>${decisionYear} margin / mo</th><td>${decisionMoney(decisionDollars(a.current.surp,decisionYear)/12)}</td><td>${decisionMoney(decisionDollars(b.current.surp,decisionYear)/12)}</td></tr>
     <tr><th>Lowest liquid assets</th><td>${fmt(decisionDollars(a.floor.liq,a.floor.yr))}<small>${a.floor.yr}</small></td><td>${fmt(decisionDollars(b.floor.liq,b.floor.yr))}<small>${b.floor.yr}</small></td></tr>
-    <tr><th>Deficit years</th><td>${a.deficitYears}</td><td>${b.deficitYears}</td></tr>
+    <tr><th>Years drawing on savings</th><td>${a.deficitYears}</td><td>${b.deficitYears}</td></tr>
     <tr><th>Before-closing buffer</th><td>${a.closingBuffer===null?'Outside horizon':fmt(decisionDollars(a.closingBuffer,P.homePurchaseYear))}<small>${P.homePurchaseYear}</small></td><td>${b.closingBuffer===null?'Outside horizon':fmt(decisionDollars(b.closingBuffer,params.homePurchaseYear))}<small>${params.homePurchaseYear}</small></td></tr>
     </tbody></table><div class="dr-changes">${changed.length?changed.map(k=>`<div>${decisionEsc(PlannerDecisions.fields[k]?.label||'Nancy’s starting clients')} <strong>${PlannerDecisions.fields[k]?decisionValue(k,P[k])+' → '+decisionValue(k,params[k]):P[k]+' → '+params[k]}</strong></div>`).join(''):'Move a slider or choose a starting point to compare the impact.'}</div>`;
   document.getElementById('decisionSave').disabled=!changed.length||decisionSaving;

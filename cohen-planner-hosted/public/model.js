@@ -234,6 +234,10 @@ function stripeSellAmount(p,newStock,netCash,liqGrown,ret,td){
   }
 }
 
+// Years the plan actually reaches for savings — see the note at the return of run().
+// Exported so UI code holding only the rows asks exactly the same question the engine does.
+function drawYears(R){return R.filter(r=>r.sold>0||r.sHold>0).length}
+
 function run(p,rets){
   const sy=p.planStartYear||2026;
   const ey=p.planEndYear||2058;
@@ -393,7 +397,13 @@ function run(p,rets){
       sBasis:Math.round(lotsBasis(lots)),sLots:lots.length,sRate:sr,sPct:nw>0?stripeEnd/nw:0,
       nw:Math.round(nw),k401:Math.round(k401),kiy,nk});
   }
-  return{R,tT:Math.round(tT),tC:Math.round(tC),tTx:Math.round(tTx),tS:Math.round(tS),am,dp,mm:am/12,
+  // Years the plan actually reaches for savings. `surp<0` is NOT this: with a stock-heavy
+  // package, cash comp alone rarely covers a year, so surp is negative almost always even
+  // when that year's vest closes the gap entirely and nothing is liquidated. Counting surp
+  // reads as "33 deficit years, drawing down savings heavily" for a plan that never touches
+  // the portfolio — the distinction the cash/stock split exists to make.
+  return{R,drawYears:drawYears(R),tT:Math.round(tT),tC:Math.round(tC),tTx:Math.round(tTx),tS:Math.round(tS),am,dp,mm:am/12,
+    vestOnlyYears:R.filter(r=>r.surp<0&&r.sold===0&&r.sHold===0).length,
     tSNew:Math.round(tSNew),tSSold:Math.round(tSSold),tSRet:Math.round(tSRet),
     tSHold:Math.round(tSHold),tSGainTax:Math.round(tSGainTax),
     stripeEnd:Math.round(lotsValue(lots)),stripeBasis:Math.round(lotsBasis(lots)),
@@ -472,7 +482,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
   module.exports={bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
-    normComp,stripeReturn,stripeVestFactor,stripeSellAmount,sellLots,lotsValue,lotsBasis,
+    normComp,stripeReturn,stripeVestFactor,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,
     FED_BR_2026,NYS_BR_2026,NYC_BR_2026,SS_CAP_2026,SALT_BASE_2026,STD_DEDUCT_2026,
     HIST_SP500_RETURNS};

@@ -864,7 +864,7 @@ function printPDF(){
   const{R,tT,tTx,tS}=run(P);
   const last=R[R.length-1],r0=R[0];
   const minL=R.reduce((a,b)=>b.liq<a.liq?b:a);
-  const defYrs=R.filter(r=>r.surp<0).length;
+  const defYrs=drawYears(R);
   const pur=R.find(r=>r.yr===P.homePurchaseYear);
   const pliq=pur?pur.liq:0;
   const today=new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
@@ -924,7 +924,7 @@ function printPDF(){
   // Scenario comparison (if any saved)
   let scenHtml='';
   if(scenarios.length>0){
-    const allRes=scenarios.map(s=>{const{R:sR}=run({...D,...migrateP(s.params)});const sl=sR[sR.length-1];const sm=sR.reduce((a,b)=>b.liq<a.liq?b:a);return{name:s.name,color:s.color,finalNW:sl.nw,finalTotal:sl.nw+sl.k401,liqFloor:sm.liq,defYrs:sR.filter(r=>r.surp<0).length};});
+    const allRes=scenarios.map(s=>{const sRes=run({...D,...migrateP(s.params)});const sR=sRes.R;const sl=sR[sR.length-1];const sm=sR.reduce((a,b)=>b.liq<a.liq?b:a);return{name:s.name,color:s.color,finalNW:sl.nw,finalTotal:sl.nw+sl.k401,liqFloor:sm.liq,defYrs:sRes.drawYears};});
     scenHtml=`
     <div style="page-break-before:always">
     <h2 style="font-size:13px;font-weight:600;color:#0a2540;margin:0 0 12px;border-bottom:1px solid #e6ebf1;padding-bottom:6px">Scenario Comparison</h2>
@@ -1042,8 +1042,8 @@ async function loadSnapshots(){
   try{const res=await fetch('/api/snapshots');if(res.ok)snapshots=await res.json()}catch(e){snapshots=[]}
 }
 async function saveSnapshot(silent,labelOverride){
-  const{R,tT}=run(P);const last=R[R.length-1];
-  const def=R.filter(r=>r.surp<0).length;
+  const RES=run(P);const{R,tT}=RES;const last=R[R.length-1];
+  const def=RES.drawYears;
   const dflt=`${P.planStartYear||2026} plan · ${new Date().toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`;
   const label=labelOverride||dflt;
   const summary={finalNW:last.nw,final401k:last.k401,totalTuition:tT,deficitYears:def,startingLiquid:P.startingLiquid,liqFloor:Math.min(...R.map(r=>r.liq))};
@@ -2218,7 +2218,11 @@ function renderHousingTab(R,P){
   const endYr=P.planEndYear||2058;
 
   const pyRow=R.find(r=>r.yr===py)||R[0];
-  const netInc=pyRow?.inc||0;
+  // Total after-tax compensation, INCLUDING that year's vesting stock. Using cash-only
+  // income here understated affordability by the entire grant — it reported $159K of 2026
+  // income against $309K of actual after-tax pay and concluded the house was unaffordable.
+  // Vesting stock is sellable at vest for no additional tax, so it genuinely funds housing.
+  const netInc=pyRow?.netTC||0;
 
   // All-in annual housing cost for any price/down/rate
   function calcH(hp,dp,mr){
@@ -2232,7 +2236,7 @@ function renderHousingTab(R,P){
   }
   // Run the live model with overrides → final NW+401k and deficit count
   function proj(ov){
-    try{const r=run({...P,...ov});const l=r.R[r.R.length-1];return{nw:l.nw,k401:l.k401,total:l.nw+l.k401,defYrs:r.R.filter(x=>x.surp<0).length};}catch(e){return null;}
+    try{const r=run({...P,...ov});const l=r.R[r.R.length-1];return{nw:l.nw,k401:l.k401,total:l.nw+l.k401,defYrs:r.drawYears};}catch(e){return null;}
   }
 
   const cur=calcH(P.homePrice,P.downPctg,P.mortgageRate);
@@ -2343,7 +2347,7 @@ function renderHousingTab(R,P){
         <tr><td style="padding:8px 4px;color:var(--t2);border-bottom:1px solid var(--bd)">Discretionary buffer needed</td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)">~${kY(buffer)}</td></tr>
         <tr style="background:var(--g-soft)"><td style="padding:8px 4px;color:var(--tx)"><strong>Available for housing (${py})</strong></td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;color:${availHousing>=0?'var(--g)':'var(--r)'}"><strong>${kY(availHousing)}</strong></td></tr>
       </table>
-      ${IB('var(--b)',`<strong style="color:var(--tx)">Peak-cost year:</strong> ${py} has room, but by peak tuition (<strong style="color:var(--tx)">${peakRow.yr}</strong>) tuition + childcare alone hits <strong style="color:var(--tx)">${kY(peakTuCc)}</strong> — leaving only <strong style="color:${peakAvail>=0?'var(--a)':'var(--r)'}">${kY(Math.max(0,peakAvail))}</strong> for housing that year${peakAvail<0?' (a deficit before housing is even counted)':''}. ${peakRow.surp<0?'This year has a modeled cash-flow deficit funded from investments.':'This year still has a modeled cash-flow surplus.'} Mortgage payments are fixed; property taxes and maintenance increase in the model.`)}
+      ${IB('var(--b)',`<strong style="color:var(--tx)">Peak-cost year:</strong> ${py} has room, but by peak tuition (<strong style="color:var(--tx)">${peakRow.yr}</strong>) tuition + childcare alone hits <strong style="color:var(--tx)">${kY(peakTuCc)}</strong> — leaving only <strong style="color:${peakAvail>=0?'var(--a)':'var(--r)'}">${kY(Math.max(0,peakAvail))}</strong> for housing that year${peakAvail<0?' (a deficit before housing is even counted)':''}. ${(peakRow.sold>0||peakRow.sHold>0)?'This year draws on savings or held Stripe.':peakRow.surp<0?'Cash pay alone doesn\u2019t cover this year, but that year\u2019s vest closes the gap \u2014 nothing is liquidated.':'This year still has a modeled cash surplus on cash pay alone.'} Mortgage payments are fixed; property taxes and maintenance increase in the model.`)}
     </div>
     <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
       <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">Three Reasonable Targets</div>
@@ -2419,7 +2423,7 @@ function renderHousingTab(R,P){
     <div style="background:var(--s1);border:2px solid var(--b);border-radius:10px;padding:16px">
       <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--b);margin-bottom:8px">Secondary Levers</div>
       <div style="font-size:20px;font-weight:700;color:var(--b)">Test the trade-offs together</div>
-      <div style="font-size:13px;color:var(--t2);margin-top:8px;line-height:1.6">Your current plan models <strong>${R.filter(r=>r.surp<0).length} deficit years</strong> and a lowest year-end liquid balance of <strong>${fmt(Math.min(...R.map(r=>r.liq)))}</strong>. Compare purchase timing, childcare costs, Nancy’s workload and lower returns in the Decision Room.</div>
+      <div style="font-size:13px;color:var(--t2);margin-top:8px;line-height:1.6">Your current plan models <strong>${drawYears(R)} ${drawYears(R)===1?'year':'years'}</strong> that draw on savings, and a lowest year-end liquid balance of <strong>${fmt(Math.min(...R.map(r=>r.liq)))}</strong>. Compare purchase timing, childcare costs, Nancy’s workload and lower returns in the Decision Room.</div>
       ${IB('var(--b)',`A future equity sale or refinance is not guaranteed. Evaluate the plan using the income, liquidity and rate assumptions you have actually entered.`)}
       <button class="btn btn-g" onclick="setTab('home')">Open What-if Lab</button>
     </div>
@@ -2812,7 +2816,7 @@ function renderGoalsTab(R,P,tT){
 
   // ── surplus years liquid ladder (condensed view) ──
   const surpYrs=R.filter(r=>r.surp>=0).length;
-  const defYrs=R.filter(r=>r.surp<0).length;
+  const defYrs=drawYears(R);
 
   // ── build HTML ──
   let h=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px">`;
@@ -2831,8 +2835,8 @@ function renderGoalsTab(R,P,tT){
   if(minLiqRow.liq<500000){_actions.push({icon:'⚠️',color:'var(--r)',text:`Liquid hits floor of ${fmt(minLiqRow.liq)} in ${minLiqRow.yr} — consider increasing savings rate or deferring home purchase`});}
   else{_actions.push({icon:'💧',color:'var(--g)',text:`Liquid floor ${fmt(minLiqRow.liq)} in ${minLiqRow.yr} — above $500K safety cushion`});}
   // 4. Deficit years
-  const defCount=R.filter(r=>r.surp<0).length;
-  if(defCount>5){_actions.push({icon:'📉',color:'var(--r)',text:`${defCount} deficit years — plan draws down savings heavily; sensitivity to return assumptions is high`});}
+  const defCount=drawYears(R);
+  if(defCount>5){_actions.push({icon:'📉',color:'var(--r)',text:`${defCount} of ${R.length} years draw on savings or held Stripe — the rest are covered by that year's vest. Return assumptions matter a lot here`});}
 
   h+=`<div style="background:linear-gradient(135deg,var(--s1),var(--s2));border:1px solid var(--bd);border-radius:10px;padding:14px 16px">
     <div style="font-size:11px;font-weight:700;color:var(--tx);margin-bottom:10px;display:flex;align-items:center;gap:6px"><span>🎯</span><span>Priority Action Items</span></div>
@@ -2996,7 +3000,7 @@ function renderGoalsTab(R,P,tT){
     {ic:'🎓',co:'var(--b)',ti:'529 for tuition',
      bd:`You're projected to pay <b>${fmt(totalTuition)}</b> in yeshiva tuition over the plan. NY 529 contributions are state-tax deductible up to <b>${fmt(ny529Deduct)}/yr</b> (~${fmt(ny529Save)}/yr saved) and grow tax-free; K-12 tuition withdrawals up to $10k/yr are federally qualified. Even short-hold 529 routing of tuition dollars captures the deduction.`},
     {ic:'📉',co:'var(--g)',ti:'Tax-loss harvesting',
-     bd:`Your taxable account funds every deficit year by realizing gains (taxed at ~${Math.round((P.capGainsTaxRate||.345)*100)}%). Harvesting losses in down years banks carryforwards that offset those future gains — directly lowering the drag modeled in your deficit years.`},
+     bd:`Your taxable account funds the years that draw on savings by realizing gains (taxed at ~${Math.round((P.capGainsTaxRate||.345)*100)}%). Harvesting losses in down years banks carryforwards that offset those future gains — directly lowering the drag in those years.`},
     {ic:'🛡️',co:'var(--r)',ti:'Insurance gaps',
      bd:`Two dependents + a self-employed earner (Nancy) and a future suburban home argue for: <b>term life</b> on both incomes, <b>own-occupation disability</b> for Nancy's practice, and an <b>umbrella liability</b> policy. None are in the expense model — add the premiums so the plan reflects true cash flow.`},
     {ic:'🛬',co:'var(--a)',ti:'De-risk before the home purchase',
@@ -3236,7 +3240,7 @@ function renderGoalsTab(R,P,tT){
     <div style="font-size:13px;font-weight:700;color:var(--tx);margin-bottom:4px">💧 Liquid Health Over Time</div>
     <div style="font-size:10px;color:var(--t2);margin-bottom:12px">${surpYrs} surplus yrs · ${defYrs} deficit yrs · floor ${fmt(R.reduce((a,b)=>b.liq<a.liq?b:a).liq)} in ${R.reduce((a,b)=>b.liq<a.liq?b:a).yr}</div>
     <div style="display:flex;gap:2px;align-items:flex-end;height:60px">
-      ${(()=>{const maxL=Math.max(...R.map(r=>r.liq),1);return R.map(r=>{const pct=r.liq/maxL*100;const isSurp=r.surp>=0;const color=r.liq<500000?'var(--r)':isSurp?'var(--g)':'var(--a)';return`<div title="${r.yr}: ${fmt(r.liq)} liquid${r.surp<0?' ⚠ deficit':''}" style="flex:1;background:${color};height:${Math.max(2,pct)}%;border-radius:2px 2px 0 0;opacity:.75"></div>`}).join('')})()}
+      ${(()=>{const maxL=Math.max(...R.map(r=>r.liq),1);return R.map(r=>{const pct=r.liq/maxL*100;const draws=r.sold>0||r.sHold>0;const color=r.liq<(P.liquidReserveFloor??500000)?'var(--r)':draws?'var(--a)':'var(--g)';return`<div title="${r.yr}: ${fmt(r.liq)} liquid${draws?' \u2014 draws on savings':''}" style="flex:1;background:${color};height:${Math.max(2,pct)}%;border-radius:2px 2px 0 0;opacity:.75"></div>`}).join('')})()}
     </div>
     <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--t3);margin-top:3px"><span>${sy}</span><span>${P.planEndYear||2058}</span></div>
     <div style="margin-top:6px;display:flex;gap:10px;font-size:8.5px">
@@ -3277,7 +3281,7 @@ function renderCompareTab(R,P){
     {label:'Grand Total (NW + 401k)',get:(r,p)=>{const l=r.R[r.R.length-1];return l.nw+l.k401},fmt:fmt,b:1},
     {sep:true,label:'Risk'},
     {label:'Liquid Floor',get:(r,p)=>Math.min(...r.R.map(x=>x.liq)),fmt:fmt,b:1},
-    {label:'Deficit Years',get:(r,p)=>r.R.filter(x=>x.surp<0).length,fmt:n=>n+' yrs',b:-1},
+    {label:'Years Drawing On Savings',get:(r,p)=>r.drawYears,fmt:n=>n+' yrs',b:-1},
     {label:'Worst Year Surplus',get:(r,p)=>Math.min(...r.R.map(x=>x.surp)),fmt:fmt,b:1},
     {sep:true,label:'Milestones'},
     {label:'Liquid After Home Purchase',get:(r,p)=>{const row=r.R.find(x=>x.yr===p.homePurchaseYear);return row?row.liq:0},fmt:fmt,b:1},
@@ -3770,7 +3774,8 @@ function buildLiveContext(R,P,totS){
   const y30=R.find(r=>r.yr===P.homePurchaseYear)||R[4];
   const peakTuition=R.reduce((a,b)=>b.tu>a.tu?b:a);
   const y58=R[R.length-1];
-  const deficitYrs=R.filter(r=>r.surp<0).length;
+  const deficitYrs=totS.drawYears;
+  const vestOnlyYrs=totS.vestOnlyYears;
   const totalDef=R.filter(r=>r.surp<0).reduce((a,b)=>a+Math.abs(b.surp),0);
   const worst=Math.min(...R.map(r=>r.surp));
   const totTuit=R.reduce((a,b)=>a+b.tu,0);
@@ -3803,7 +3808,8 @@ LIFECYCLE PROJECTIONS (current plan)
 • Net worth at ${y58.yr}: ${fmt(y58.nw)} ($${(y58.nw/1e6).toFixed(2)}M)
 • 401k at ${y58.yr}: ${fmt(y58.k401)}
 • Grand total at 65: ${fmt(y58.nw+y58.k401)}
-• Deficit years over lifecycle: ${deficitYrs}
+• Years that actually draw on savings or held Stripe: ${deficitYrs} of ${R.length}
+• Years where cash pay alone falls short but that year's VEST covers it entirely (nothing liquidated): ${vestOnlyYrs}. Do not describe these as deficit years or as drawing down savings — they aren't.
 • Worst single year: ${fmt(worst)} (peak crunch)
 • Total cumulative deficit: ${fmt(totalDef)}
 • Total stock sold to fund deficits: ${fmt(totSold)}
