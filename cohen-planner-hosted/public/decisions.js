@@ -28,12 +28,17 @@
     const tightest=R.reduce((a,b)=>b.surp<a.surp?b:a);
     const purchase=R.find(r=>r.yr===p.homePurchaseYear)||null;
     const before=R.find(r=>r.yr===p.homePurchaseYear-1);
-    const beforeLiquid=before?before.liq:p.homePurchaseYear===R[0].yr?p.startingLiquid:null;
+    // Assets on hand the moment before closing. Stripe belongs here: the funding waterfall
+    // sells held shares for the down payment once the portfolio reaches its reserve floor, so
+    // measuring readiness against the diversified pool alone understated it by the entire
+    // Stripe position — and reported a shortfall for a purchase the model completes.
+    const beforeAssets=before?before.liq+before.sEnd
+      :p.homePurchaseYear===R[0].yr?(p.startingLiquid||0)+(p.startingStripeEquity||0):null;
     const down=p.homePrice*p.downPctg/100;
     const peak=R.reduce((a,b)=>b.tu+b.cc>a.tu+a.cc?b:a);
     const last=R[R.length-1];
-    return{current,floor,tightest,purchase,beforeLiquid,down,
-      closingBuffer:beforeLiquid===null?null:beforeLiquid-down,
+    return{current,floor,tightest,purchase,beforeAssets,down,
+      closingBuffer:beforeAssets===null?null:beforeAssets-down,
       peak,last,total:last.nw+last.k401,
       // Years that genuinely reach for savings. Counting r.surp<0 instead would count every
       // year cash pay alone falls short — which, with a stock-heavy package, is nearly all

@@ -28,6 +28,27 @@ describe('Decision Room calculations',()=>{
     expect(s.closingBuffer).toBe(p.startingLiquid-p.homePrice*p.downPctg/100);
     expect(s.closingBuffer).not.toBe(s.purchase.liq);
   });
+  it('counts Stripe equity toward the down payment, since the waterfall sells it to close',()=>{
+    // Same total wealth, split differently. Readiness must not change just because the money
+    // is labelled Stripe — the funding waterfall reaches it once the portfolio hits its floor.
+    const liquidOnly={...defaults,homePurchaseYear:defaults.planStartYear,
+      startingLiquid:1100000,startingStripeEquity:0};
+    const split={...liquidOnly,startingLiquid:600000,startingStripeEquity:500000};
+    const a=summarize(liquidOnly,run(liquidOnly).R,liquidOnly.planStartYear);
+    const b=summarize(split,run(split).R,split.planStartYear);
+    expect(b.beforeAssets).toBe(a.beforeAssets);
+    expect(b.closingBuffer).toBe(a.closingBuffer);
+    expect(b.closingBuffer).toBe(1100000-liquidOnly.homePrice*liquidOnly.downPctg/100);
+  });
+  it('carries Stripe into the buffer in later purchase years too',()=>{
+    const p={...defaults,homePurchaseYear:defaults.planStartYear+4,startingStripeEquity:400000};
+    const R=run(p).R;
+    const before=R.find(r=>r.yr===p.homePurchaseYear-1);
+    const s=summarize(p,R,p.planStartYear);
+    expect(before.sEnd).toBeGreaterThan(0);
+    expect(s.beforeAssets).toBe(before.liq+before.sEnd);
+    expect(s.beforeAssets).toBeGreaterThan(before.liq); // not the portfolio alone
+  });
   it('does not invent a closing buffer for a purchase outside the projection',()=>{
     const p={...defaults,homePurchaseYear:2090};
     expect(summarize(p,run(p).R,2026).closingBuffer).toBeNull();
