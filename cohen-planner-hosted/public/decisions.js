@@ -5,6 +5,8 @@
   const fields={
     homePrice:{label:'Home budget',min:100000,max:6000000,step:50000,format:'money'},
     homePurchaseYear:{label:'Purchase year',min:2026,max:2099,step:1,format:'year'},
+    mortgageRate:{label:'Mortgage rate',min:0,max:15,step:0.125,format:'rate'},
+    downPctg:{label:'Down payment',min:0,max:100,step:5,format:'pct'},
     childcareMonthly:{label:'Childcare / child / month',min:0,max:12000,step:100,format:'money'},
     nancyMaxClients:{label:'Nancy’s clients / week',min:0,max:40,step:1,format:'number'},
     investReturn:{label:'Annual portfolio return',min:0,max:0.12,step:0.005,format:'percent'},
@@ -62,6 +64,8 @@
     const presets={
       smaller:{homePrice:clamp(p.homePrice-200000,100000,6000000)},
       later:{homePurchaseYear:clamp(p.homePurchaseYear+2,p.planStartYear,2099)},
+      rate:{mortgageRate:clamp(p.mortgageRate+1,0,15)},
+      down:{downPctg:clamp(p.downPctg+10,0,100)},
       care:{childcareMonthly:clamp((p.childcareMonthly??2800)+1000,0,12000)},
       time:{nancyMaxClients:clamp(p.nancyMaxClients-3,0,40)},
       returns:{investReturn:clamp(p.investReturn-.02,0,.12)},

@@ -9,7 +9,9 @@ const decisionMoney=n=>new Intl.NumberFormat('en-US',{style:'currency',currency:
 const decisionEsc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function decisionValue(key,value){
   const f=PlannerDecisions.fields[key];
-  return f.format==='money'?decisionMoney(value):f.format==='percent'?(value*100).toFixed(1)+'%':String(value);
+  return f.format==='money'?decisionMoney(value):f.format==='percent'?(value*100).toFixed(1)+'%'
+    :f.format==='rate'?value.toFixed(3).replace(/0+$/,'').replace(/\.$/,'')+'%'
+    :f.format==='pct'?value+'%':String(value);
 }
 function decisionDelta(n){return (n>0?'+':'')+fmt(n);}
 function decisionDollars(n,year){return inflationView?n/(1+P.expenseInflation)**(year-P.planStartYear):n;}
@@ -49,7 +51,7 @@ function renderDecisionRoom(R){
       <div class="dr-milestones">${upcoming.map(e=>`<button onclick="decisionSelectYear(${e.yr})"><span>${e.yr}</span>${decisionEsc(e.label)}<b aria-hidden="true">↗</b></button>`).join('')||'<p>No upcoming milestones within this horizon.</p>'}</div>
     </section>
     <section class="dr-card" id="decisionLab"><div class="dr-section-head"><div><div class="dr-kicker">WHAT-IF LAB</div><h3>One choice. A different future.</h3><p>Try a starting point, then combine changes. Your current plan stays intact.</p></div><button class="dr-secondary" onclick="decisionReset()">Reset preview</button></div>
-      <div class="dr-presets">${[['smaller','A $200K smaller home'],['later','Buy 2 years later'],['care','An extra $1K in childcare'],['time','3 fewer clients / week'],['returns','Returns 2 points lower']].map(([key,label])=>`<button onclick="decisionPreset('${key}')">${label}</button>`).join('')}</div>
+      <div class="dr-presets">${[['smaller','A $200K smaller home'],['later','Buy 2 years later'],['rate','Mortgage rate +1%'],['down','10% more down'],['care','An extra $1K in childcare'],['time','3 fewer clients / week'],['returns','Returns 2 points lower']].map(([key,label])=>`<button onclick="decisionPreset('${key}')">${label}</button>`).join('')}</div>
       <div class="dr-lab-layout"><div class="dr-sliders">${Object.entries(PlannerDecisions.fields).map(([key,f])=>{
         const value=decisionOverrides[key]??P[key];
         const min=key==='homePurchaseYear'?Math.min(P.planStartYear,value):Math.min(f.min,value);

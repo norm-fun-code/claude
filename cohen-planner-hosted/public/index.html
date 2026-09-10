@@ -1609,7 +1609,7 @@ function render(){
   if(activeTab==='stripe'){renderStripeTab(R,P);return}
   if(activeTab==='projection'&&_projView==='table'){
     // Wide by necessity — this is the audit view. The .tw wrapper scrolls horizontally.
-    const cols=['Yr','Norm cash','Norm stock','Nancy','Gross','Tax','Eff%','Cash avail','Expenses','Cash gap','Income gap','Stripe sold','Stripe kept','Liquid','Stripe eq','Home eq','NW'];
+    const cols=['Yr','Norm cash','Norm stock','Norm total','Nancy','Gross','Tax','Eff%','Cash avail','Expenses','Cash gap','Income gap','Stripe sold','Stripe kept','Liquid','Stripe eq','Home eq','NW'];
     ca.innerHTML=`<div class="tw"><table><thead><tr>${cols.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{
       const bg=r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';
       const dash=v=>v>0?fmt(v):'—';
@@ -1617,6 +1617,7 @@ function render(){
         `<td style="font-weight:700;color:var(--tx)">${r.yr}</td>`+
         `<td style="color:var(--b)">${fmt(r.normCash)}</td>`+
         `<td style="color:#6772e5">${dash(r.normStock)}</td>`+
+        `<td style="font-weight:600" title="Cash + stock — the W-2 figure taxes are computed on">${fmt(r.normG)}</td>`+
         `<td style="color:var(--p)">${fmt(r.nancyG)}</td>`+
         `<td>${fmt(r.gross)}</td>`+
         `<td style="color:var(--r)">${fmt(r.tax)}</td>`+
@@ -2333,229 +2334,157 @@ function renderPortfolioTab(R,P){
   }
 }
 
+// ── Housing: an affordability tool, not a report ───────────────────────────
+// The tab answered "is my current plan sensible" across three charts, three tables and a
+// five-path comparison. The question actually being asked is "how much can I afford, and how
+// does that move when the rate or the down payment moves" — so it leads with one number and
+// the levers that change it.
+//
+// Levers here are exploratory: they do not touch the plan until explicitly applied, so you
+// can test a rate you have been quoted without disturbing your saved assumptions.
+let _afRate=null,_afDown=null,_afShare=0.28;
+function afSet(k,v){
+  if(k==='rate')_afRate=parseFloat(v);
+  else if(k==='down')_afDown=parseFloat(v);
+  else _afShare=parseFloat(v);
+  render();
+}
+function afReset(){_afRate=null;_afDown=null;_afShare=0.28;render()}
+function afApply(){
+  const q=afParams();
+  if(!showConfirm(`Set your plan's mortgage rate to ${q.mortgageRate}% and down payment to ${q.downPctg}%?`))return;
+  P.mortgageRate=q.mortgageRate;P.downPctg=q.downPctg;
+  _afRate=null;_afDown=null;
+  markDirty();buildControls();render();savePlannerState();
+  showToast('Applied to your plan','green');
+}
+function afParams(){
+  return{...P,mortgageRate:_afRate??P.mortgageRate,downPctg:_afDown??P.downPctg};
+}
+
 function renderHousingTab(R,P){
   const ca=document.getElementById('chartArea');
   destroyCharts();
+  const q=afParams();
+  const dirty=(_afRate!==null&&_afRate!==P.mortgageRate)||(_afDown!==null&&_afDown!==P.downPctg);
+  const a=affordability(q,_afShare);
+  const py=q.homePurchaseYear;
+  const perDollar=housingCostPerDollar(q);
+  const buyRow=R.find(r=>r.yr===py)||R[R.length-1];
 
-  const py=P.homePurchaseYear||2030;
-  const ptRate=P.propTaxRate??0.012;
-  const maintAnn=P.maintBase||10000;
-  const endYr=P.planEndYear||2058;
+  const money=v=>v>=1e6?'$'+(v/1e6).toFixed(2)+'M':fmt(v);
+  const over=q.homePrice-a.max;
 
-  const pyRow=R.find(r=>r.yr===py)||R[0];
-  // Total after-tax compensation, INCLUDING that year's vesting stock. Using cash-only
-  // income here understated affordability by the entire grant — it reported $159K of 2026
-  // income against $309K of actual after-tax pay and concluded the house was unaffordable.
-  // Vesting stock is sellable at vest for no additional tax, so it genuinely funds housing.
-  const netInc=pyRow?.netTC||0;
+  // What the CURRENT price actually costs each month
+  const cost=price=>{
+    const loan=price*(1-q.downPctg/100);
+    const mr=q.mortgageRate/100/12;
+    const pi=loan>0&&mr>0?loan*(mr*(1+mr)**360)/((1+mr)**360-1):0;
+    const tax=(q.propTaxRate??.012)*price/12;
+    const maint=(q.maintBase||0)*(price/q.homePrice)/12;
+    return{pi,tax,maint,all:pi+tax+maint};
+  };
+  const cur=cost(q.homePrice),atMax=cost(a.max);
 
-  // All-in annual housing cost for any price/down/rate
-  function calcH(hp,dp,mr){
-    const loan=hp*(1-dp/100);
-    const moR=mr/100/12;
-    const moPI=loan>0&&moR>0?loan*(moR*(1+moR)**360)/((1+moR)**360-1):0;
-    const annTax=ptRate*hp;
-    const annM=Math.round(maintAnn*(hp/P.homePrice));
-    const total=moPI*12+annTax+annM;
-    return{loan,moPI,annPI:moPI*12,annTax,annM,total,moTotal:total/12};
-  }
-  // Run the live model with overrides → final NW+401k and deficit count
-  function proj(ov){
-    try{const r=run({...P,...ov});const l=r.R[r.R.length-1];return{nw:l.nw,k401:l.k401,total:l.nw+l.k401,defYrs:r.drawYears};}catch(e){return null;}
-  }
+  let h=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px">`;
 
-  const cur=calcH(P.homePrice,P.downPctg,P.mortgageRate);
-  const curPct=netInc>0?cur.total/netInc:0;
-  const K=cur.total/P.homePrice;               // housing $/yr per $ of home (current dp & rate)
-  const priceFor=f=>K>0?netInc*f/K:0;          // home price that lands housing at f of net
-  const target25=netInc*0.25;
-
-  // Purchase-year snapshot — keep everything in the SAME year's dollars.
-  // (Averaging nominal expenses across the whole horizon would inflate them
-  // ~3%/yr and unfairly dwarf a single year's income.) Model fields: liv is
-  // living ex-housing/ex-tuition/ex-childcare; cc childcare; tu tuition; h housing.
-  const pyLiv=pyRow.liv||0;
-  const pyTuCc=(pyRow.tu||0)+(pyRow.cc||0);
-  const buffer=30000;
-  const availHousing=netInc-pyLiv-pyTuCc-buffer;
-  // Peak crunch year (max tuition+childcare) for the warning
-  const peakRow=R.reduce((a,b)=>((b.tu+b.cc)>(a.tu+a.cc)?b:a),R[0]);
-  const peakTuCc=peakRow.tu+peakRow.cc;
-  const peakAvail=peakRow.inc-peakRow.liv-peakTuCc-buffer;
-
-  const kY=v=>'$'+Math.round(v/1000)+'K';
-  const kMo=v=>'$'+(v/12/1000).toFixed(1)+'K';
-  const mM=v=>'$'+(v/1e6).toFixed(2)+'M';
-  const fmtM=v=>v>=1e6?'$'+(v/1e6).toFixed(2)+'M':fmt(v);
-
-  // ── Tradeoff data (live model at 7 price points) ──
-  const tPrices=[1000000,1200000,1400000,1600000,1700000,1800000,2000000];
-  const tNW=tPrices.map(hp=>{const p=proj({homePrice:hp});return p?+(p.total/1e6).toFixed(2):0;});
-  const tCost=tPrices.map(hp=>+(calcH(hp,P.downPctg,P.mortgageRate).total/1000).toFixed(1));
-  const tColors=tPrices.map(hp=>hp===P.homePrice?'rgba(99,91,255,.75)':(hp===1700000?'rgba(26,135,84,.65)':'rgba(0,115,230,.4)'));
-
-  // ── Five paths (exact combos from the analysis), live NW ──
-  const PATHS=[
-    {label:'A · Smaller home, low down', hp:1300000,dp:30,mr:5.5,col:'#1a8754',note:'Most NW upside, smallest home'},
-    {label:'B · Smaller home, low rate', hp:1400000,dp:25,mr:4.0,col:'#1a8754',note:'Best NW, requires low-rate environment'},
-    {label:'C · Mid-size, big down',     hp:1600000,dp:50,mr:6.0,col:'#0073e6',note:'Solid balance · likely scenario',hi:true},
-    {label:'D · Larger home, low rate',  hp:1800000,dp:50,mr:4.5,col:'#bf6900',note:'Bigger home, more $ tied up'},
-    {label:'E · Original $2M, huge down',hp:2000000,dp:60,mr:5.0,col:'#cd3d64',note:'Largest home, most capital locked up'},
-  ];
-  const pathData=PATHS.map(pd=>{const h=calcH(pd.hp,pd.dp,pd.mr);const p=proj({homePrice:pd.hp,downPctg:pd.dp,mortgageRate:pd.mr});return{...pd,...h,finalNW:p?p.total:0,defYrs:p?p.defYrs:0};});
-  const bestNW=Math.max(...pathData.map(d=>d.finalNW));
-
-  // Recommendation deltas (live)
-  const nw17=proj({homePrice:1700000})?.total||0;
-  const nw20=proj({homePrice:2000000})?.total||0;
-  const recGain=nw17-nw20;
-
-  let pathRows='';
-  pathData.forEach((pd,i)=>{
-    const rowBg=pd.hi?'background:var(--g-soft)':(i%2===0?'background:var(--s1)':'background:var(--s2)');
-    const nwCol=pd.finalNW>=bestNW?'var(--g)':pd.finalNW>=bestNW*.92?'var(--tx)':'var(--r)';
-    pathRows+=`<tr style="${rowBg}${pd.hi?';outline:1px solid var(--g)':''}">
-      <td style="padding:9px 10px;font-size:11px;color:var(--tx);font-weight:600">${pd.label}</td>
-      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${mM(pd.hp)}</td>
-      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${pd.dp}%</td>
-      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtM(pd.hp*pd.dp/100)}</td>
-      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace;color:${pd.mr<=4.5?'var(--g)':pd.mr>=6?'var(--r)':'var(--a)'}">${pd.mr.toFixed(1)}%</td>
-      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtM(pd.loan)}</td>
-      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtF(Math.round(pd.moPI))}</td>
-      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtF(Math.round(pd.annTax))}</td>
-      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace">${fmtF(Math.round(pd.annM))}</td>
-      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace;font-weight:700;color:var(--g)">${kY(pd.total)}</td>
-      <td style="padding:9px 10px;font-size:11px;font-family:'SF Mono',monospace;font-weight:700;color:${nwCol}">${mM(pd.finalNW)}</td>
-      <td style="padding:9px 10px;font-size:10px;color:var(--t2)">${pd.note}</td>
-    </tr>`;
-  });
-
-  const ST='font-size:14px;font-weight:600;color:var(--tx);margin:8px 0 2px';
-  const IB=(border,html)=>`<div style="background:var(--s2);border-left:3px solid ${border};padding:12px 14px;border-radius:0 7px 7px 0;margin-top:10px;font-size:12px;line-height:1.5;color:var(--t2)">${html}</div>`;
-
-  ca.innerHTML=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px">
-
-  <!-- Header -->
-  <div style="display:flex;align-items:baseline;justify-content:space-between;border-bottom:1px solid var(--bd);padding-bottom:12px">
-    <div style="font-size:18px;font-weight:700;color:var(--tx)">🏠 Ideal Housing Budget Analysis</div>
-    <div style="font-size:11px;color:var(--t3);font-family:'SF Mono',monospace">Cohen Family · ${py} Purchase</div>
-  </div>
-
-  <!-- THE FRAMING -->
-  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
-    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
-      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">📊 ${py} Net Income</div>
-      <div style="font-size:28px;font-weight:700;font-family:'SF Mono',monospace;letter-spacing:-1px;color:var(--c)">${kY(netInc)}</div>
-      <div style="font-size:11px;color:var(--t2);margin-top:3px">Combined household after taxes</div>
+  // ── The answer ──
+  h+=`<div class="glass-card" style="padding:22px 24px;background:linear-gradient(135deg,rgba(99,91,255,.07),rgba(103,114,229,.03))">
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--t3)">How much house can you afford?</div>
+    <div style="font-size:40px;font-weight:800;letter-spacing:-1.5px;color:var(--tx);font-family:'SF Mono',ui-monospace,monospace;margin:4px 0 2px">${money(a.max)}</div>
+    <div style="font-size:12px;color:var(--t2);line-height:1.6">
+      at <strong>${q.mortgageRate}%</strong> with <strong>${q.downPctg}%</strong> down — about <strong>${fmtF(Math.round(atMax.all))}/mo</strong> all-in.<br>
+      ${a.binding==='comfort'
+        ? `Limited by <strong>carrying cost</strong>: above this, housing eats more than ${(_afShare*100).toFixed(0)}% of your after-tax income in ${py}. Your balance sheet could actually fund up to ${money(a.plan)}.`
+        : `Limited by your <strong>balance sheet</strong>: above this, funding the purchase would break your ${fmt(q.liquidReserveFloor??500000)} reserve floor. Cash flow alone could carry up to ${money(a.comfort)}.`}
     </div>
-    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
-      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">🎯 Housing Target (25%)</div>
-      <div style="font-size:28px;font-weight:700;font-family:'SF Mono',monospace;letter-spacing:-1px;color:var(--g)">${kY(target25)}/yr</div>
-      <div style="font-size:11px;color:var(--t2);margin-top:3px">${kMo(target25)}/mo all-in (mortgage + tax + maint)</div>
-    </div>
-    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
-      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">${curPct>0.28?'⚠️':'✅'} Current Plan (${mM(P.homePrice)})</div>
-      <div style="font-size:28px;font-weight:700;font-family:'SF Mono',monospace;letter-spacing:-1px;color:${curPct>0.28?'var(--a)':curPct>0.25?'var(--a)':'var(--g)'}">${kY(cur.total)}/yr</div>
-      <div style="font-size:11px;color:var(--t2);margin-top:3px">${kMo(cur.total)}/mo · ~${(curPct*100).toFixed(0)}% of net income</div>
-    </div>
-  </div>
+    ${dirty?`<div style="margin-top:12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <span style="font-size:9.5px;color:var(--a)">● Exploring — your plan still says ${P.mortgageRate}% / ${P.downPctg}% down</span>
+      <button onclick="afApply()" style="font-size:9.5px;padding:4px 10px;border-radius:5px;border:none;background:var(--accent);color:#fff;font-family:inherit;cursor:pointer">Apply to my plan</button>
+      <button onclick="afReset()" style="font-size:9.5px;padding:4px 10px;border-radius:5px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">Reset</button>
+    </div>`:''}
+  </div>`;
 
-  <!-- WHY 25% -->
-  <div style="${ST}">📐 What's an "ideal" housing cost?</div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
-      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">The Math</div>
-      <table style="width:100%;border-collapse:collapse;font-size:12px">
-        <tr><td style="padding:8px 4px;color:var(--t2);border-bottom:1px solid var(--bd)">${py} Net income</td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)"><strong>${kY(netInc)}</strong></td></tr>
-        <tr><td style="padding:8px 4px;color:var(--t2);border-bottom:1px solid var(--bd)">${py} Living expenses (ex-housing, ex-tuition, ex-childcare)</td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)">${kY(pyLiv)}</td></tr>
-        <tr><td style="padding:8px 4px;color:var(--t2);border-bottom:1px solid var(--bd)">${py} Tuition + childcare</td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)">${kY(pyTuCc)}</td></tr>
-        <tr><td style="padding:8px 4px;color:var(--t2);border-bottom:1px solid var(--bd)">Discretionary buffer needed</td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)">~${kY(buffer)}</td></tr>
-        <tr style="background:var(--g-soft)"><td style="padding:8px 4px;color:var(--tx)"><strong>Available for housing (${py})</strong></td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;color:${availHousing>=0?'var(--g)':'var(--r)'}"><strong>${kY(availHousing)}</strong></td></tr>
-      </table>
-      ${IB('var(--b)',`<strong style="color:var(--tx)">Peak-cost year:</strong> ${py} has room, but by peak tuition (<strong style="color:var(--tx)">${peakRow.yr}</strong>) tuition + childcare alone hits <strong style="color:var(--tx)">${kY(peakTuCc)}</strong> — leaving only <strong style="color:${peakAvail>=0?'var(--a)':'var(--r)'}">${kY(Math.max(0,peakAvail))}</strong> for housing that year${peakAvail<0?' (a deficit before housing is even counted)':''}. ${(peakRow.sold>0||peakRow.sHold>0)?'This year draws on savings or held Stripe.':peakRow.surp<0?'Cash pay alone doesn\u2019t cover this year, but that year\u2019s vest closes the gap \u2014 nothing is liquidated.':'This year still has a modeled cash surplus on cash pay alone.'} Mortgage payments are fixed; property taxes and maintenance increase in the model.`)}
-    </div>
-    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
-      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">Three Reasonable Targets</div>
-      <table style="width:100%;border-collapse:collapse;font-size:12px">
-        <tr><td style="padding:8px 4px;border-bottom:1px solid var(--bd)"><strong style="color:var(--g)">Conservative (22% of net)</strong></td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)"><strong>${mM(priceFor(.22))} → ${kY(netInc*.22)}/yr</strong></td></tr>
-        <tr><td style="padding:8px 4px;border-bottom:1px solid var(--bd)"><strong style="color:var(--a)">Moderate (25% of net)</strong></td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)"><strong>${mM(priceFor(.25))} → ${kY(netInc*.25)}/yr</strong></td></tr>
-        <tr><td style="padding:8px 4px;border-bottom:1px solid var(--bd)"><strong style="color:var(--b)">Stretch (28% of net)</strong></td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;border-bottom:1px solid var(--bd)"><strong>${mM(priceFor(.28))} → ${kY(netInc*.28)}/yr</strong></td></tr>
-        <tr><td style="padding:8px 4px;color:var(--t2)">Current plan (${(curPct*100).toFixed(0)}%)</td><td style="padding:8px 4px;text-align:right;font-family:'SF Mono',monospace;color:var(--t2)">${mM(P.homePrice)} → ${kY(cur.total)}/yr</td></tr>
-      </table>
-      ${IB('var(--g)',`<strong style="color:var(--tx)">Illustrative comparison: $1.7M.</strong> Adds roughly <strong style="color:var(--g)">${mM(recGain)}</strong> to long-term NW vs a $2M home, under the current model assumptions. Home size, condition and local availability require a separate search.`)}
-    </div>
-  </div>
+  // ── The two limits vs. where you are ──
+  const limitCard=(lbl,val,sub,binds,warn)=>`<div class="glass-card" style="padding:14px 16px;border-color:${binds?'rgba(99,91,255,.4)':warn?'rgba(205,61,100,.35)':'var(--bd)'}">
+    <div style="font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--t3);margin-bottom:4px">${lbl}${binds?' <span style="color:var(--accent)">· binds</span>':''}</div>
+    <div style="font-size:21px;font-weight:800;font-family:'SF Mono',monospace;color:${warn?'var(--r)':binds?'var(--accent)':'var(--tx)'};letter-spacing:-.5px">${money(val)}</div>
+    <div style="font-size:9.5px;color:var(--t2);margin-top:3px;line-height:1.45">${sub}</div>
+  </div>`;
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">
+    ${limitCard('Carrying-cost limit',a.comfort,`All-in housing stays under ${(_afShare*100).toFixed(0)}% of ${py} after-tax income (${fmt(buyRow.netTC)})`,a.binding==='comfort',false)}
+    ${limitCard('Balance-sheet limit',a.plan,`The most you can fund with the ${fmt(q.liquidReserveFloor??500000)} reserve floor still intact, selling Stripe as needed`,a.binding==='plan',false)}
+    ${limitCard('Your current plan',q.homePrice,over>0?`${money(over)} above what you can afford — ${fmtF(Math.round(cur.all))}/mo, ${(cur.all*12/buyRow.netTC*100).toFixed(0)}% of income`:`Within budget — ${fmtF(Math.round(cur.all))}/mo, ${(cur.all*12/buyRow.netTC*100).toFixed(0)}% of income`,false,over>0)}
+  </div>`;
 
-  <!-- TRADEOFF CHART -->
-  <div style="${ST}">📈 The Tradeoff: Home Price vs Lifecycle NW</div>
-  <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
-    <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">Lower home price → more compounding capital → bigger lifetime NW</div>
-    <div style="position:relative;width:100%;height:300px"><canvas id="housingTradeoff"></canvas></div>
-    ${IB('var(--bd2)',`<strong style="color:var(--tx)">Reading the chart:</strong> Each ~$100K reduction in home price adds roughly ${mM(Math.abs((tNW[6]-tNW[2])/6)*1e6)} to your final NW (NW + 401k at ${endYr}). Roughly linear because the saved capital compounds at ${(P.investReturn*100).toFixed(0)}%/yr for decades.`)}
-  </div>
+  // ── Levers ──
+  const lever=(id,label,val,min,max,step,fmtv,key)=>`<div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:10px;color:var(--t2)">${label}</span><span style="font-size:11px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${fmtv}</span></div>
+    <input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${val}" oninput="afSet('${key}',this.value)" style="width:100%">
+  </div>`;
+  h+=`<div class="glass-card" style="padding:16px 18px">
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:12px">Move a lever — the number above updates</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px">
+      ${lever('afRate','Mortgage rate',q.mortgageRate,3,9,.125,q.mortgageRate+'%','rate')}
+      ${lever('afDown','Down payment',q.downPctg,10,80,5,q.downPctg+'%','down')}
+      ${lever('afShare','Max share of income',_afShare,.15,.45,.01,(_afShare*100).toFixed(0)+'%','share')}
+    </div>
+  </div>`;
 
-  <!-- FIVE PATHS -->
-  <div style="${ST}">🛤️ Five Paths to ~$80K/yr All-In Housing</div>
-  <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px;overflow-x:auto">
-    <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">Same housing cost, very different financial outcomes</div>
-    <table style="width:100%;border-collapse:collapse">
-      <thead><tr>
-        ${['Path','Home Price','Down %','Down $','Mort Rate','Loan','P&I/mo','Property Tax','Maint','Total/yr','NW @ '+endYr,'Trade-off'].map(h=>`<th style="text-align:left;padding:8px 10px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);border-bottom:1px solid var(--bd);white-space:nowrap">${h}</th>`).join('')}
-      </tr></thead>
-      <tbody>${pathRows}</tbody>
-    </table>
-  </div>
+  // ── The matrix: the artefact that actually answers "what if rates move" ──
+  const RATES=[q.mortgageRate-1,q.mortgageRate-0.5,q.mortgageRate,q.mortgageRate+0.5,q.mortgageRate+1,q.mortgageRate+2]
+    .filter(r=>r>=1).map(r=>Math.round(r*1000)/1000);
+  const DOWNS=[20,30,40,50,60].filter(d=>d<=80);
+  const cellMax=(r,d)=>{
+    const pp={...q,mortgageRate:r,downPctg:d};
+    return Math.min(planAffordablePrice(pp),comfortAffordablePrice(pp,_afShare));
+  };
+  const grid=RATES.map(r=>({r,cells:DOWNS.map(d=>cellMax(r,d))}));
+  const allVals=grid.flatMap(g=>g.cells);
+  const gMin=Math.min(...allVals),gMax=Math.max(...allVals);
+  const shade=v=>{const t=gMax>gMin?(v-gMin)/(gMax-gMin):0.5;return `rgba(99,91,255,${(0.05+t*0.22).toFixed(3)})`};
+  h+=`<div class="glass-card" style="padding:16px 18px">
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:3px">What you can afford, by rate and down payment</div>
+    <div style="font-size:10px;color:var(--t2);margin-bottom:11px">Each cell is the lower of the two limits, run through the full model.</div>
+    <div class="tw" style="max-height:none"><table style="font-size:11px">
+      <thead><tr><th style="text-align:left">Rate</th>${DOWNS.map(d=>`<th>${d}% down</th>`).join('')}</tr></thead>
+      <tbody>${grid.map(g=>`<tr>
+        <td style="font-weight:700;color:${g.r===q.mortgageRate?'var(--accent)':'var(--tx)'}">${g.r}%${g.r===q.mortgageRate?' ←':''}</td>
+        ${g.cells.map((v,i)=>{const here=g.r===q.mortgageRate&&DOWNS[i]===q.downPctg;
+          return `<td style="background:${shade(v)};font-family:'SF Mono',monospace;font-weight:${here?800:500};color:${here?'var(--accent)':'var(--tx)'};${here?'outline:1.5px solid var(--accent);outline-offset:-2px':''}">${money(v)}</td>`;}).join('')}
+      </tr>`).join('')}</tbody>
+    </table></div>
+    <div style="font-size:9.5px;color:var(--t3);margin-top:9px;line-height:1.5">
+      ${(()=>{const base=cellMax(q.mortgageRate,q.downPctg),up=cellMax(Math.round((q.mortgageRate+1)*1000)/1000,q.downPctg);
+        return `A 1-point rise in rates costs you about <strong style="color:var(--tx)">${money(Math.max(0,base-up))}</strong> of purchasing power at ${q.downPctg}% down.`})()}
+    </div>
+  </div>`;
 
-  <!-- VISUALIZE PATHS -->
-  <div style="${ST}">🎨 Visualizing the Five Paths</div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
-      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">Down Payment Required</div>
-      <div style="position:relative;width:100%;height:260px"><canvas id="housingDown"></canvas></div>
+  // ── What the current price costs, month by month ──
+  const line=(lbl,v,col)=>`<div style="display:flex;justify-content:space-between;font-size:11px;padding:5px 0;border-bottom:1px solid var(--bd)"><span style="color:var(--t2)">${lbl}</span><span style="font-family:'SF Mono',monospace;font-weight:600;color:${col||'var(--tx)'}">${fmtF(Math.round(v))}/mo</span></div>`;
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">
+    <div class="glass-card" style="padding:16px 18px">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:9px">Monthly cost at ${money(q.homePrice)}</div>
+      ${line('Principal &amp; interest',cur.pi)}
+      ${line('Property tax',cur.tax)}
+      ${line('Maintenance',cur.maint)}
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:9px 0 0"><strong style="color:var(--tx)">All-in</strong><strong style="font-family:'SF Mono',monospace;color:${over>0?'var(--r)':'var(--g)'}">${fmtF(Math.round(cur.all))}/mo</strong></div>
+      <div style="font-size:9.5px;color:var(--t3);margin-top:5px">${(cur.all*12/buyRow.netTC*100).toFixed(0)}% of ${py} after-tax income · down payment ${fmt(q.homePrice*q.downPctg/100)}</div>
     </div>
-    <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px">
-      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin-bottom:10px">Final NW (NW + 401k @ ${endYr})</div>
-      <div style="position:relative;width:100%;height:260px"><canvas id="housingNW"></canvas></div>
+    <div class="glass-card" style="padding:16px 18px">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:9px">Monthly cost at ${money(a.max)}</div>
+      ${line('Principal &amp; interest',atMax.pi)}
+      ${line('Property tax',atMax.tax)}
+      ${line('Maintenance',atMax.maint)}
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:9px 0 0"><strong style="color:var(--tx)">All-in</strong><strong style="font-family:'SF Mono',monospace;color:var(--g)">${fmtF(Math.round(atMax.all))}/mo</strong></div>
+      <div style="font-size:9.5px;color:var(--t3);margin-top:5px">${(atMax.all*12/buyRow.netTC*100).toFixed(0)}% of ${py} after-tax income · down payment ${fmt(a.max*q.downPctg/100)}</div>
     </div>
-  </div>
+  </div>`;
 
-  <!-- HOW TO READ -->
-  <div style="${ST}">🧠 What These Paths Tell You</div>
-  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
-    <div style="background:var(--s1);border:1px solid var(--bd);border-left:3px solid var(--g);border-radius:10px;padding:16px">
-      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--g);margin-bottom:8px">📌 Capital Locked vs Compounding</div>
-      <div style="font-size:13px;line-height:1.6;color:var(--t2)">Path A ($390K down) leaves <strong style="color:var(--g)">$810K more in your portfolio</strong> than Path E ($1.2M down). At ${(P.investReturn*100).toFixed(0)}%/yr for ${endYr-py} years, that's an extra <strong style="color:var(--g)">${mM(810000*Math.pow(1+P.investReturn,endYr-py))}</strong> by ${endYr}.<br><br>The biggest variable here isn't your monthly payment — it's <strong style="color:var(--tx)">how much capital you tie up at closing</strong>.</div>
-    </div>
-    <div style="background:var(--s1);border:1px solid var(--bd);border-left:3px solid var(--a);border-radius:10px;padding:16px">
-      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--a);margin-bottom:8px">📌 Property Tax & Maintenance Scale</div>
-      <div style="font-size:13px;line-height:1.6;color:var(--t2)">A $2M home costs <strong style="color:var(--tx)">${kY(2000000*ptRate+maintAnn*(2000000/P.homePrice))}/yr in fixed costs</strong> before you even pay the mortgage. A $1.4M home costs ${kY(1400000*ptRate+maintAnn*(1400000/P.homePrice))}. That difference compounds too.<br><br>Property tax doesn't go down — and unlike a mortgage, it grows with your home value forever.</div>
-    </div>
-    <div style="background:var(--s1);border:1px solid var(--bd);border-left:3px solid var(--b);border-radius:10px;padding:16px">
-      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--b);margin-bottom:8px">📌 Rate vs Price Tradeoff</div>
-      <div style="font-size:13px;line-height:1.6;color:var(--t2)">Going from ${P.mortgageRate}% to 4.0% saves <strong style="color:var(--tx)">~${fmtF(Math.round(calcH(P.homePrice,P.downPctg,P.mortgageRate).moPI-calcH(P.homePrice,P.downPctg,4.0).moPI))}/mo</strong> on P&I.<br><br>But locking in a low rate matters less than people think — your goal is to free up <strong style="color:var(--tx)">capital that can compound</strong>, not minimize the monthly payment.</div>
-    </div>
-  </div>
-
-  <!-- RECOMMENDATION -->
-  <div style="${ST}">🎯 Housing trade-offs</div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:6px">
-    <div style="background:var(--s1);border:2px solid var(--g);border-radius:10px;padding:16px">
-      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--g);margin-bottom:8px">Illustrative $1.7M alternative</div>
-      <div style="font-size:28px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">$1.7M</div>
-      <div style="font-size:13px;color:var(--t2);margin-top:8px;line-height:1.5">${P.downPctg}% down at your assumed ${P.mortgageRate}% rate. Total housing ~${kY(calcH(1700000,P.downPctg,P.mortgageRate).total)}/yr (${Math.round(calcH(1700000,P.downPctg,P.mortgageRate).total/netInc*100)}% of net). Adds <strong style="color:var(--g)">${mM(recGain)} to NW</strong> vs the $2M alternative using the same plan assumptions.</div>
-      ${IB('var(--g)',`<strong style="color:var(--tx)">Scope:</strong> This comparison models a price change. It does not estimate what size, condition or neighborhood that budget will buy.`)}
-    </div>
-    <div style="background:var(--s1);border:2px solid var(--b);border-radius:10px;padding:16px">
-      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--b);margin-bottom:8px">Secondary Levers</div>
-      <div style="font-size:20px;font-weight:700;color:var(--b)">Test the trade-offs together</div>
-      <div style="font-size:13px;color:var(--t2);margin-top:8px;line-height:1.6">Your current plan models <strong>${drawYears(R)} ${drawYears(R)===1?'year':'years'}</strong> that draw on savings, and a lowest year-end liquid balance of <strong>${fmt(Math.min(...R.map(r=>r.liq)))}</strong>. Compare purchase timing, childcare costs, Nancy’s workload and lower returns in the Decision Room.</div>
-      ${IB('var(--b)',`A future equity sale or refinance is not guaranteed. Evaluate the plan using the income, liquidity and rate assumptions you have actually entered.`)}
-      <button class="btn btn-g" onclick="setTab('home')">Open What-if Lab</button>
-    </div>
-  </div>
-
-  <!-- REFINANCE BREAK-EVEN CALCULATOR -->
-  <div style="${ST}">🔄 Refinance Break-Even Calculator</div>
+  // ── Refi calculator: a different question, kept but folded away ──
+  h+=`<details class="glass-card" style="padding:14px 18px">
+    <summary style="cursor:pointer;font-size:11px;font-weight:700;color:var(--tx)">🔄 Refinance break-even calculator</summary>
+    <div style="margin-top:12px">
   <div class="glass-card" style="padding:16px 18px">
     <div style="font-size:11px;color:var(--t2);line-height:1.5;margin-bottom:12px">At your current ${P.mortgageRate}% rate on a ${fmt(P.homePrice*(1-P.downPctg/100))} loan, how many months until a lower rate pays for its own closing costs?</div>
     <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:4px">
@@ -2570,44 +2499,15 @@ function renderHousingTab(R,P){
     </div>
     <div id="refiResult" style="margin-top:10px"></div>
   </div>
+    </div>
+  </details>`;
 
+  h+=`<div style="font-size:9.5px;color:var(--t3);line-height:1.6;padding:0 2px">
+    Both limits run your full projection, so they already include tuition, childcare, Nancy's practice and the Stripe waterfall. Neither includes closing costs, and the balance-sheet limit spends Stripe equity down to your reserve floor — affordable is not the same as advisable.
   </div>`;
 
-  // ── Charts (planner light theme) ──
-  const tick='#8898aa',grid='rgba(10,37,64,.05)',leg='#425466';
-  const baseOpts=(yFmt,y1Fmt)=>({responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},animations:{colors:false},
-    plugins:{legend:{align:'end',labels:{color:leg,font:{size:10.5,family:'Inter',weight:'500'},usePointStyle:true,pointStyle:'circle',boxWidth:7,boxHeight:7,padding:15}},
-      tooltip:_GLASS_TOOLTIP},
-    scales:{x:{ticks:{color:tick,font:{size:10,family:'Inter'}},grid:{display:false},border:{display:false}},
-      y:{position:'left',ticks:{color:tick,font:{size:10},callback:yFmt,padding:6},grid:{color:grid,drawTicks:false},border:{display:false}}}});
-
-  const tCtx=document.getElementById('housingTradeoff');
-  if(tCtx)charts.housingTradeoff=new Chart(tCtx.getContext('2d'),{
-    data:{labels:tPrices.map(p=>'$'+(p/1e6).toFixed(1)+'M'),
-      datasets:[
-        {type:'bar',label:'NW @ '+endYr+' ($M)',data:tNW,backgroundColor:tColors,borderRadius:4,yAxisID:'y'},
-        {type:'line',label:'Annual Housing ($K)',data:tCost,borderColor:'#bf6900',backgroundColor:'rgba(191,105,0,.1)',tension:.3,pointRadius:4,borderWidth:2,yAxisID:'y1'}
-      ]},
-    options:{...baseOpts(v=>'$'+v+'M'),
-      scales:{x:{ticks:{color:tick,font:{size:10}},grid:{display:false}},
-        y:{position:'left',ticks:{color:tick,callback:v=>'$'+v+'M'},grid:{color:grid},title:{display:true,text:'NW @ '+endYr,color:tick,font:{size:10}}},
-        y1:{position:'right',ticks:{color:'#bf6900',callback:v=>'$'+v+'K'},grid:{display:false},title:{display:true,text:'Annual Housing',color:'#bf6900',font:{size:10}}}}}
-  });
-
-  const dCtx=document.getElementById('housingDown');
-  if(dCtx)charts.housingDown=new Chart(dCtx.getContext('2d'),{type:'bar',
-    data:{labels:pathData.map(p=>p.label.split(' · ')[0]),
-      datasets:[{label:'Down Payment ($K)',data:pathData.map(p=>Math.round(p.hp*p.dp/100/1000)),backgroundColor:pathData.map(p=>p.col),borderRadius:4}]},
-    options:{...baseOpts(v=>'$'+v+'K'),plugins:{legend:{display:false},tooltip:{..._GLASS_TOOLTIP,callbacks:{label:c=>'$'+c.raw+'K down'}}}}
-  });
-
-  const nCtx=document.getElementById('housingNW');
-  if(nCtx)charts.housingNW=new Chart(nCtx.getContext('2d'),{type:'bar',
-    data:{labels:pathData.map(p=>p.label.split(' · ')[0]),
-      datasets:[{label:'NW @ '+endYr+' ($M)',data:pathData.map(p=>+(p.finalNW/1e6).toFixed(2)),backgroundColor:pathData.map(p=>p.col),borderRadius:4}]},
-    options:{...baseOpts(v=>'$'+v+'M'),plugins:{legend:{display:false},tooltip:{..._GLASS_TOOLTIP,callbacks:{label:c=>'$'+c.raw.toFixed(2)+'M total'}}}}
-  });
-
+  h+=`</div>`;
+  ca.innerHTML=h;
   updateRefiCalc();
   document.getElementById('summaries').innerHTML='';
 }

@@ -421,6 +421,68 @@ function run(p,rets){
     stripeAppr:Math.round(lotsValue(lots)-lotsBasis(lots))};
 }
 
+// ── Affordability ──────────────────────────────────────────────────────────
+// Two independent limits, because "what can I afford" has two honest answers and they bind
+// under different conditions.
+//
+//  planLimit    — the most expensive house where the plan still HOLDS: the diversified pool
+//                 never breaks its reserve floor across the whole horizon. This runs the real
+//                 waterfall, so it already accounts for Stripe funding the down payment, the
+//                 capital gains that forced sales realise, tuition, everything.
+//  comfortLimit — the most expensive house whose all-in carrying cost stays within a target
+//                 share of after-tax income in the purchase year. The classic ratio test.
+//
+// Neither dominates. A big balance sheet with thin cash flow is comfort-limited; strong cash
+// flow with little saved is plan-limited. Reporting only one hides the constraint that binds.
+
+// Annual all-in housing cost per $1 of purchase price, holding down %, rate and tax rate
+// fixed. Every component is proportional to price, which is what makes the ratio test a
+// division rather than a search.
+function housingCostPerDollar(p){
+  const loanFrac=1-(p.downPctg||0)/100;
+  const mr=(p.mortgageRate||0)/100/12;
+  const piPerDollar=mr>0
+    ? loanFrac*(mr*(1+mr)**360)/((1+mr)**360-1)*12
+    : loanFrac/30; // 0% mortgage: straight amortisation over the term
+  const maintPerDollar=p.homePrice>0?(p.maintBase||0)/p.homePrice:0;
+  return piPerDollar+(p.propTaxRate??0.012)+maintPerDollar;
+}
+
+function comfortAffordablePrice(p,targetShare,R){
+  const rows=R||run(p).R;
+  const row=rows.find(r=>r.yr===p.homePurchaseYear)||rows[rows.length-1];
+  const perDollar=housingCostPerDollar(p);
+  if(!(perDollar>0))return 0;
+  // netTC is total after-tax comp: vesting stock is sellable at vest for no extra tax, so it
+  // funds a mortgage payment like any other dollar.
+  return Math.max(0,row.netTC*targetShare/perDollar);
+}
+
+// Feasibility is monotone in price — a more expensive house is never easier to fund — so
+// bisection converges exactly to the step size.
+function planAffordablePrice(p,opts){
+  const o=opts||{};
+  const floor=Math.max(0,p.liquidReserveFloor??500000);
+  const step=o.step||10000;
+  let lo=o.lo||100000,hi=o.hi||8000000;
+  const holds=price=>{
+    try{return run({...p,homePrice:price}).R.every(r=>r.liq>=floor-1)}
+    catch(e){return false}
+  };
+  if(!holds(lo))return 0;
+  if(holds(hi))return hi;
+  while(hi-lo>step){const mid=(lo+hi)/2;if(holds(mid))lo=mid;else hi=mid}
+  return Math.floor(lo/step)*step;
+}
+
+function affordability(p,targetShare,R){
+  const plan=planAffordablePrice(p);
+  const comfort=comfortAffordablePrice(p,targetShare??0.28,R);
+  const max=Math.min(plan,comfort);
+  return{plan,comfort,max,binding:plan<=comfort?'plan':'comfort',
+    current:p.homePrice,withinBudget:p.homePrice<=max};
+}
+
 function randNorm(mean,sd){
   let u=0,v=0;while(u===0)u=Math.random();while(v===0)v=Math.random();
   return mean+sd*Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
@@ -494,6 +556,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 if(typeof module!=='undefined'&&module.exports){
   module.exports={bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
     normComp,stripeReturn,stripeVestFactor,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
+    housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,
     FED_BR_2026,NYS_BR_2026,NYC_BR_2026,SS_CAP_2026,SALT_BASE_2026,STD_DEDUCT_2026,
     HIST_SP500_RETURNS};

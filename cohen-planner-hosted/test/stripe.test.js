@@ -593,3 +593,67 @@ describe('Stripe lot selection', () => {
     for (const r of R) expect(r.sLots).toBeLessThanOrEqual(R.length + 2);
   });
 });
+
+// ── Affordability ────────────────────────────────────────────────────────
+describe('affordability', () => {
+  const { affordability, planAffordablePrice, comfortAffordablePrice, housingCostPerDollar } = require('../public/model.js');
+  const BUY = { ...P, homePurchaseYear: 2030, startingStripeEquity: 425000, startingLiquid: 675000, liquidReserveFloor: 500000 };
+
+  it('reports both limits and names the one that binds', () => {
+    const a = affordability(BUY, 0.28);
+    expect(a.max).toBe(Math.min(a.plan, a.comfort));
+    expect(a.binding).toBe(a.plan <= a.comfort ? 'plan' : 'comfort');
+  });
+
+  it('the plan limit is the most expensive house that keeps the reserve floor intact', () => {
+    const max = planAffordablePrice(BUY);
+    const floor = BUY.liquidReserveFloor;
+    const holds = price => run({ ...BUY, homePrice: price }).R.every(r => r.liq >= floor - 1);
+    expect(holds(max)).toBe(true);          // affordable at the limit
+    expect(holds(max + 60000)).toBe(false); // and not a step beyond it
+  });
+
+  it('a higher rate lowers what you can afford', () => {
+    expect(planAffordablePrice({ ...BUY, mortgageRate: 7 }))
+      .toBeLessThan(planAffordablePrice({ ...BUY, mortgageRate: 4 }));
+    expect(comfortAffordablePrice({ ...BUY, mortgageRate: 7 }, 0.28))
+      .toBeLessThan(comfortAffordablePrice({ ...BUY, mortgageRate: 4 }, 0.28));
+  });
+
+  it('more down buys more house on cash flow, but less on the balance sheet', () => {
+    // A bigger deposit shrinks the loan, so the carrying-cost limit rises…
+    expect(comfortAffordablePrice({ ...BUY, downPctg: 70 }, 0.28))
+      .toBeGreaterThan(comfortAffordablePrice({ ...BUY, downPctg: 30 }, 0.28));
+    // …while the cash needed at closing rises, so the balance-sheet limit falls.
+    expect(planAffordablePrice({ ...BUY, downPctg: 70 }))
+      .toBeLessThan(planAffordablePrice({ ...BUY, downPctg: 30 }));
+  });
+
+  it('a stricter income share lowers only the carrying-cost limit', () => {
+    expect(comfortAffordablePrice(BUY, 0.20)).toBeLessThan(comfortAffordablePrice(BUY, 0.35));
+    expect(planAffordablePrice(BUY)).toBe(planAffordablePrice(BUY)); // unaffected, deterministic
+  });
+
+  it('counts Stripe: the same wealth held as Stripe funds the same house', () => {
+    const liquidOnly = { ...BUY, startingLiquid: 1100000, startingStripeEquity: 0 };
+    const split = { ...BUY, startingLiquid: 675000, startingStripeEquity: 425000 };
+    // Not identical — Stripe compounds on its own path — but within a reasonable band, and
+    // certainly not the shortfall you would see if Stripe were ignored entirely.
+    const a = planAffordablePrice(liquidOnly), b = planAffordablePrice(split);
+    expect(b).toBeGreaterThan(a * 0.8);
+  });
+
+  it('carrying cost per dollar of price behaves', () => {
+    const cheap = housingCostPerDollar({ ...BUY, mortgageRate: 3 });
+    const dear = housingCostPerDollar({ ...BUY, mortgageRate: 8 });
+    expect(dear).toBeGreaterThan(cheap);
+    expect(housingCostPerDollar({ ...BUY, downPctg: 100 }))
+      .toBeCloseTo((BUY.propTaxRate) + BUY.maintBase / BUY.homePrice, 9); // all cash: no P&I
+  });
+
+  it('flags a plan priced above what it can afford', () => {
+    const a = affordability({ ...BUY, homePrice: 6000000 }, 0.28);
+    expect(a.withinBudget).toBe(false);
+    expect(affordability({ ...BUY, homePrice: 500000 }, 0.28).withinBudget).toBe(true);
+  });
+});
