@@ -97,8 +97,42 @@ describe('holdings transport', () => {
   });
 
   it('treats GraphQL errors on a 200 as unavailable, not as an empty portfolio', async () => {
+    // Rejected unscoped, no account ids come back either → genuinely unavailable.
     const live = withToken(ok({ errors: [{ message: 'Cannot query field' }] }));
     await expect(live.holdings({ startDate: 'a', endDate: 'b' })).rejects.toThrow(/could not return holdings/i);
+  });
+
+  it('never asks for `value` on the holdings sub-object', async () => {
+    // Not a field on Monarch's Holding type — selecting it fails the entire query, which is
+    // exactly how the first version of this broke.
+    let sent;
+    const live = withToken(async (u, o) => { sent = JSON.parse(o.body); return { ok: true, status: 200, json: async () => ({ data: { portfolio: payload([node()]) } }) }; });
+    await live.holdings({ startDate: 'a', endDate: 'b' });
+    const sub = sent.query.slice(sent.query.indexOf('holdings {'));
+    expect(sub.slice(0, sub.indexOf('}'))).not.toMatch(/\bvalue\b/);
+    expect(sent.query).toContain('totalValue'); // the aggregate does carry it
+  });
+
+  it('retries scoped to account ids when the unscoped query is rejected', async () => {
+    const calls = [];
+    const live = withToken(async (u, o) => {
+      const b = JSON.parse(o.body); calls.push(b);
+      if (b.query.includes('NormOS_AccountIds')) return { ok: true, status: 200, json: async () => ({ data: { accounts: [{ id: 11 }, { id: 22 }] } }) };
+      if (!b.variables.input.accountIds) return { ok: true, status: 200, json: async () => ({ errors: [{ message: 'accountIds required' }] }) };
+      return { ok: true, status: 200, json: async () => ({ data: { portfolio: payload([node()]) } }) };
+    });
+    const rows = await live.holdings({ startDate: 'a', endDate: 'b' });
+    expect(rows[0].ticker).toBe('FXAIX');
+    expect(calls).toHaveLength(3); // unscoped → ids → scoped
+    expect(calls[2].variables.input.accountIds).toEqual(['11', '22']);
+  });
+
+  it('does not make the extra round trip when the unscoped query works', async () => {
+    const calls = [];
+    const live = withToken(async (u, o) => { calls.push(JSON.parse(o.body)); return { ok: true, status: 200, json: async () => ({ data: { portfolio: payload([node()]) } }) }; });
+    await live.holdings({ startDate: 'a', endDate: 'b' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].variables.input.accountIds).toBeUndefined();
   });
 
   it('says so plainly when there is no direct Monarch connection', async () => {

@@ -5,18 +5,24 @@ const TTL = 5 * 60 * 1000;
 // Reuse the exact account query already used by NormOS. Credentials never leave the server.
 const QUERY = 'query NormOS_Accounts { accounts { id displayName currentBalance } }';
 // Individual holdings. Monarch's own Investments page reads them through `portfolio`, and
-// aggregateHoldings rolls the same security held in several accounts into one position,
+// aggregateHoldings rolls the same security held across several accounts into one position,
 // which is what the portfolio view wants. `basis` is what makes an all-time return possible.
+//
+// The selection set is deliberately a subset of Monarch's own Web_GetHoldings operation —
+// every field here is one that query is known to request. Notably `value` is NOT selected on
+// the holdings sub-object: it isn't a field on that type, and asking for it fails the whole
+// query. Position value comes from the aggregate's totalValue instead.
 const HOLDINGS_QUERY = `query NormOS_Holdings($input: PortfolioInput) {
   portfolio(input: $input) {
     aggregateHoldings { edges { node {
       id quantity basis totalValue
       securityPriceChangeDollars securityPriceChangePercent
       security { id name ticker type typeDisplay }
-      holdings { id name ticker type typeDisplay value }
+      holdings { id name ticker type typeDisplay }
     } } }
   }
 }`;
+const ACCOUNT_IDS_QUERY = 'query NormOS_AccountIds { accounts { id } }';
 // Monarch's type names vs. the ones the portfolio view already renders.
 const TYPE_ALIASES = { cryptocurrency: 'crypto', mutualfund: 'mutual_fund', fixed_income: 'bond', fixedincome: 'bond' };
 function normaliseType(t) {
@@ -141,6 +147,22 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
     const stale = now() - Date.parse(snapshot.asOf) > 24 * 60 * 60 * 1000;
     return { ...snapshot, stale, warning, bankUpdatedAt: null };
   }
+  // A GraphQL 200 can still carry errors, and this schema is undocumented, so log the
+  // upstream detail. "Cannot query field X on type Y" is the difference between a fix and
+  // a guess, and it never reaches the user.
+  function logGraphqlErrors(label, errors) {
+    try { console.warn(`Monarch ${label} query rejected:`, errors.map(e => e && e.message).filter(Boolean).join(' | ')); } catch {}
+  }
+
+  async function accountIds(token) {
+    try {
+      const r = await graphql(token, ACCOUNT_IDS_QUERY, {});
+      if (!r.ok) return [];
+      const b = await r.json();
+      return (b.data?.accounts || []).map(a => String(a.id)).filter(Boolean);
+    } catch { return []; }
+  }
+
   // One request path for every Monarch GraphQL call, so headers and auth can't drift.
   function graphql(token, query, variables) {
     return fetchImpl('https://api.monarch.com/graphql', {
@@ -162,25 +184,35 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
     const c = await context();
     if (c.disabled) throw new Error('Planner sync is paused. Enable NormOS sync to resume.');
     if (!c.token) throw new Error('Individual holdings need a direct Monarch connection. Reconnect Monarch in NormOS.');
-    let response;
-    try {
-      response = await graphql(c.token, HOLDINGS_QUERY, { input: { startDate, endDate, includeHiddenHoldings: false } });
-    } catch (err) {
-      throw new Error(err.name === 'TimeoutError' ? 'Monarch timed out returning holdings.' : 'Monarch is unreachable for holdings.');
-    }
-    if (!response.ok) {
-      throw new Error(response.status === 401 ? 'Monarch session expired. Reconnect Monarch in NormOS.'
-        : response.status === 429 ? 'Monarch is rate limiting. Try again shortly.'
-        : 'Monarch could not return holdings.');
-    }
-    const body = await response.json();
-    // A GraphQL 200 can still carry errors, and the schema here is undocumented — surface
-    // that as "unavailable" rather than rendering an empty portfolio as though it were real.
-    // Log the upstream detail: this query was written against Monarch's web API without a
-    // token to verify it, so a field-name mismatch is the most likely first failure and
-    // "Cannot query field X on type Y" is the difference between a fix and a guess.
+    const ask = async (input) => {
+      let response;
+      try {
+        response = await graphql(c.token, HOLDINGS_QUERY, { input });
+      } catch (err) {
+        throw new Error(err.name === 'TimeoutError' ? 'Monarch timed out returning holdings.' : 'Monarch is unreachable for holdings.');
+      }
+      if (!response.ok) {
+        throw new Error(response.status === 401 ? 'Monarch session expired. Reconnect Monarch in NormOS.'
+          : response.status === 429 ? 'Monarch is rate limiting. Try again shortly.'
+          : 'Monarch could not return holdings.');
+      }
+      return response.json();
+    };
+
+    const window = { startDate, endDate, includeHiddenHoldings: false };
+    // Monarch's own call always scopes to explicit accountIds. Omitting it *should* return
+    // the whole portfolio, which is what we want and one fewer round trip — but that is an
+    // assumption about an undocumented schema, so if it is rejected, fetch the ids and ask
+    // again the way Monarch itself does rather than reporting the portfolio unavailable.
+    let body = await ask(window);
     if (body.errors) {
-      try { console.warn('Monarch holdings query rejected:', body.errors.map(e => e && e.message).filter(Boolean).join(' | ')); } catch {}
+      logGraphqlErrors('holdings (unscoped)', body.errors);
+      const ids = await accountIds(c.token);
+      if (!ids.length) throw new Error('Monarch could not return holdings for this account.');
+      body = await ask({ ...window, accountIds: ids });
+    }
+    if (body.errors) {
+      logGraphqlErrors('holdings (scoped)', body.errors);
       throw new Error('Monarch could not return holdings for this account.');
     }
     return mapHoldings(body.data?.portfolio ?? body.data ?? body);
