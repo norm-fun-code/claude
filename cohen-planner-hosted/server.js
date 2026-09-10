@@ -795,7 +795,7 @@ app.get('/api/monarch-snapshot', requireAuth, async (req, res) => {
       liabilities: { value: Math.round(liabTotal),   updatedAt },
       retirement:  retirement > 0 ? { value: Math.round(retirement), updatedAt } : null,
       accounts: portfolioAccts,
-      source: live.source, stale: live.stale, warning: live.warning, partial: !!live.partial, missingAccounts: live.missingAccounts || [], partial: !!live.partial, missingAccounts: live.missingAccounts || [], observedAt: live.asOf, bankUpdatedAt: live.bankUpdatedAt,
+      source: live.source, stale: live.stale, warning: live.warning, partial: !!live.partial, missingAccounts: live.missingAccounts || [], observedAt: live.asOf, bankUpdatedAt: live.bankUpdatedAt,
       _debug: { accountCount: accounts.length, retirement, liquid, netWorth, accounts: debugAccts },
     });
   } catch (err) {
