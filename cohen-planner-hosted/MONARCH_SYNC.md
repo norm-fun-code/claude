@@ -14,3 +14,5 @@ Production supports a dedicated server-to-server bridge: set the same random `PL
 - The old MCP holdings/performance and YTD cashflow endpoints now return explicit unavailable responses instead of waiting for the retired service. The advisor can read dated account balances; it cannot invent transaction or holding details.
 
 Validation: `npm test` in this directory. NormOS publisher tests are in `backend/test/monarch-planner-snapshot.test.js` on main.
+
+API accounts without a balance are retained as named missing accounts, never converted to zero. Available balances populate Portfolio with an explicit incomplete subtotal label. Incomplete snapshots are excluded from plan-pace comparisons and milestone detection. CSV imports remain strict.

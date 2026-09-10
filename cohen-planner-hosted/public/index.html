@@ -711,17 +711,17 @@ async function syncMonarch({quiet=false}={}){
       liabilities:d.liabilities?.value,
       accountCount:d.accounts?.length||0,
       syncedAt:d.netWorth?.updatedAt,
-      source:d.source,stale:d.stale,warning:d.warning,
+      source:d.source,stale:d.stale,warning:d.warning,partial:!!d.partial,missingAccounts:d.missingAccounts||[],partial:!!d.partial,missingAccounts:d.missingAccounts||[],
     };
-    if(!nextSnapshot.accountCount||!PlannerDecisions.usableSnapshot(nextSnapshot))throw new Error('No verified balances returned. Previous data retained.');
+    if(!nextSnapshot.accountCount||!PlannerDecisions.usableSnapshot({...nextSnapshot,partial:false}))throw new Error('No verified balances returned. Previous data retained.');
     if(monarchSnapshot&&Date.parse(nextSnapshot.syncedAt)<Date.parse(monarchSnapshot.syncedAt))throw new Error('Source returned older balances. Previous data retained.');
     monarchSnapshot=nextSnapshot;
     monarchAccounts=d.accounts;
     const freshness=document.getElementById('monarchFreshness');
-    if(freshness){freshness.textContent=(d.stale||d.warning?'Older balances · ':'Observed · ')+new Date(nextSnapshot.syncedAt).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});freshness.title=d.warning||'Latest balance observation from NormOS. Bank refresh times may differ.';}
-    if(btn){btn.textContent=d.stale||d.warning?'📍 Check sync':'📍 Refresh balances';btn.disabled=false;btn.style.display='';}
+    if(freshness){freshness.textContent=(d.partial?'Incomplete totals · ':d.stale||d.warning?'Older balances · ':'Observed · ')+new Date(nextSnapshot.syncedAt).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});freshness.title=d.partial?`${d.missingAccounts.length} account(s) have no balance in Monarch. Totals include available balances only.`:d.warning||'Latest balance observation from NormOS. Bank refresh times may differ.';}
+    if(btn){btn.textContent=d.partial?'📍 Refresh available balances':d.partial?'📍 Refresh available balances':d.stale||d.warning?'📍 Check sync':'📍 Refresh balances';btn.disabled=false;btn.style.display='';}
     const connBtn=document.getElementById('monarchConnectBtn');if(connBtn)connBtn.style.display='none';
-    if(!quiet)showToast(d.warning||(d.stale?'Showing older balances from NormOS. Run the Monarch sync to update them.':`Monarch via NormOS · Liquid ${fmt(monarchSnapshot.liquid)} · 401k ${fmt(monarchSnapshot.retirement)}`),d.stale||d.warning?'red':'green');
+    if(!quiet)showToast((d.partial?`${d.accounts.length} accounts synced; ${d.missingAccounts.length} balance unavailable. Totals are incomplete.`:null)||d.warning||(d.stale?'Showing older balances from NormOS. Run the Monarch sync to update them.':`Monarch via NormOS · Liquid ${fmt(monarchSnapshot.liquid)} · 401k ${fmt(monarchSnapshot.retirement)}`),d.stale||d.warning?'red':'green');
     savePlannerState(); // persist last sync so it shows instantly next open
     render();
   }catch(e){
@@ -734,6 +734,8 @@ async function syncMonarch({quiet=false}={}){
 
 function anchorToToday(){
   if(!monarchSnapshot){showToast('Sync Monarch first','red');return;}
+  if(monarchSnapshot.partial){showToast('Totals are incomplete. Review the missing account in Portfolio before comparing with your plan.','red');return;}
+  if(monarchSnapshot.partial){showToast('Totals are incomplete. Review the missing account in Portfolio before comparing with your plan.','red');return;}
   const curYr=new Date().getFullYear();
   const todayLiq=monarchSnapshot.liquid;
   const totalNw=monarchSnapshot.netWorth;
@@ -1419,11 +1421,11 @@ function render(){
     <div class="kpi"><div class="kpi-l">📉 Liquid Floor</div><div class="kpi-v" style="color:${minL.liq>500000?'var(--g)':'var(--a)'}">${fmt(minL.liq)}</div><div class="kpi-s">${minL.yr}</div></div>
     <div class="kpi"><div class="kpi-l">🏁 NW (${last.yr})</div><div class="kpi-v" style="color:var(--g)">${fmt(last.nw)}</div><div class="kpi-s">+${fmt(last.k401)} 401k</div></div>
     <div class="kpi"><div class="kpi-l">🏦 Total w/ 401k</div><div class="kpi-v" style="color:var(--tx)">${fmt(last.nw+last.k401)}</div><div class="kpi-s">incl. retirement</div></div>
-    ${monarchSnapshot?`<div class="kpi" style="border-color:rgba(191,105,0,.3);background:var(--a-soft)"><div class="kpi-l" style="color:var(--a)">📍 Latest NW</div><div class="kpi-v" style="color:var(--a);font-size:13px">${fmt(monarchSnapshot.netWorth)}</div><div class="kpi-s">${new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div></div>`:''}`;
+    ${monarchSnapshot?`<div class="kpi" style="border-color:rgba(191,105,0,.3);background:var(--a-soft)"><div class="kpi-l" style="color:var(--a)">📍 ${monarchSnapshot.partial?'Known balances':'Latest NW'}</div><div class="kpi-v" style="color:var(--a);font-size:13px">${fmt(monarchSnapshot.netWorth)}</div><div class="kpi-s">${new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div></div>`:''}`;
   // ─── Hero net-worth band ───
   const _hb=document.getElementById('heroBand');
   if(_hb){
-    const liveLiq=monarchSnapshot?monarchSnapshot.liquid:null;
+    const liveLiq=monarchSnapshot&&!monarchSnapshot.partial?monarchSnapshot.liquid:null;
     const spark=_sparkSVG(R.map(r=>r.nw),190,66,'#635bff');
     _hb.innerHTML=`<div class="hero">
       <div class="hero-main">
@@ -1436,7 +1438,7 @@ function render(){
   }
   // Celebrate real net-worth milestones (Monarch's actual synced value — not the
   // projected/plan figure, which changes on every slider drag and would fire constantly).
-  if(monarchSnapshot)_checkMilestone(monarchSnapshot.netWorth);
+  if(monarchSnapshot&&!monarchSnapshot.partial)_checkMilestone(monarchSnapshot.netWorth);
   if(_firstPaint){_firstPaint=false;if(!_reduceMotion())requestAnimationFrame(_introAnimate);}
   const np=document.getElementById('norm_preview');
   const _sy=P.planStartYear||2026;const _lastY=_sy+10;
@@ -1582,8 +1584,10 @@ function renderMonarchAccountsCard(){
   return`<div style="margin-top:12px;background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <span style="font-size:13px;font-weight:700;color:var(--tx)">All Accounts · Monarch</span>
-      <span style="font-size:13px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">${fmt(totalNw)} NW</span>
+      <span style="font-size:13px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">${fmt(totalNw)} ${monarchSnapshot?.partial?'known subtotal':'NW'}</span>
     </div>
+    ${monarchSnapshot?.partial?`<div role="status" style="padding:12px;margin-bottom:12px;background:var(--a-soft);border-radius:8px"><strong>Incomplete totals</strong><br>${monarchAccounts.length} accounts have balances. Monarch returned no balance for: ${(monarchSnapshot.missingAccounts||[]).map(a=>advEscape(a.name)).join(', ')}. Subtotals below exclude these accounts; no $0 balance has been substituted.</div>`:''}
+    ${monarchSnapshot?.partial?`<div role="status" style="padding:12px;margin-bottom:12px;background:var(--a-soft);border-radius:8px"><strong>Incomplete totals</strong><br>${monarchAccounts.length} accounts have balances. Monarch returned no balance for: ${(monarchSnapshot.missingAccounts||[]).map(a=>advEscape(a.name)).join(', ')}. Subtotals below exclude these accounts; no $0 balance has been substituted.</div>`:''}
     ${rows}
   </div>`;
 }
@@ -1600,6 +1604,16 @@ function renderPortfolioTab(R,P){
       <div style="font-size:11px;color:var(--t3);margin-bottom:16px">Connect Monarch to see your investment holdings here.</div>
       <button onclick="connectMonarch()" style="padding:8px 18px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:600">🔗 Enable NormOS Sync</button>
     </div>`;
+    return;
+  }
+
+  if(monarchSnapshot?.source){
+    ca.innerHTML=`<div style="padding:12px"><h2 style="font-size:20px">Your accounts, connected</h2><p style="color:var(--t2)">Latest Monarch balances via NormOS · ${new Date(monarchSnapshot.syncedAt).toLocaleString()}. Individual holdings and performance are currently unavailable.</p>${renderMonarchAccountsCard()}</div>`;
+    return;
+  }
+
+  if(monarchSnapshot?.source){
+    ca.innerHTML=`<div style="padding:12px"><h2 style="font-size:20px">Your accounts, connected</h2><p style="color:var(--t2)">Latest Monarch balances via NormOS · ${new Date(monarchSnapshot.syncedAt).toLocaleString()}. Individual holdings and performance are currently unavailable.</p>${renderMonarchAccountsCard()}</div>`;
     return;
   }
 
@@ -2518,8 +2532,8 @@ function renderGoalsTab(R,P,tT){
     </div>
   </div>`;
 
-  // GOAL 0: Monarch live snapshot
-  if(monarchSnapshot){
+  // GOAL 0: Compare only complete totals.
+  if(monarchSnapshot&&!monarchSnapshot.partial){
     const curYr=new Date().getFullYear();
     const projRow=R.find(r=>r.yr===curYr)||R[0];
     const prevRow=R.find(r=>r.yr===curYr-1);
