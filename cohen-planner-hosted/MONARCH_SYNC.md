@@ -2,6 +2,8 @@
 
 The planner no longer uses the retired MCP for balance sync or advisor account reads.
 
+Production supports a dedicated server-to-server bridge: set the same random `PLANNER_BRIDGE_TOKEN` on NormOS and the planner, and set planner `NORMOS_URL` to the HTTPS NormOS origin. The credential grants only GET `/integrations/planner/accounts`; it cannot access the general NormOS API. NormOS uses its existing Monarch credential to refresh and publish account snapshots, retaining old data on failure. This path works with separate databases and takes priority over planner direct Monarch access. Redirects are refused to protect the integration credential.
+
 - NormOS publishes validated account snapshots to `sources.config.plannerAccounts` under source `monarch` after direct API sync, balance CSV upload (including the Mac sync script), or balance file import.
 - The planner reads this snapshot from the shared Railway PostgreSQL database. Deploy the companion NormOS change on main; the first successful account sync populates the bridge. No new credential is needed for this path. Separate databases require configuration before this path can work.
 - If a direct API token is available as planner `MONARCH_TOKEN` or cached NormOS `sources.config.monarchToken`, the planner can retrieve fresh balances using NormOS's existing account query. It never exposes the token to the browser or advisor.
