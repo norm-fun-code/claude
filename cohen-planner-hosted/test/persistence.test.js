@@ -47,3 +47,18 @@ describe('Plan persistence',()=>{
     expect(called).toBe(false);expect(h.statuses.at(-1)).toBe('error');
   });
 });
+
+// Every <script src> in index.html must have a matching authenticated route in server.js.
+// liquidity.js shipped with a script tag and no route, so it 404'd in production while
+// working locally under the preview server's plain static handler.
+describe('Every front-end asset the page asks for is actually served',()=>{
+  it('has a route for each local script and stylesheet',()=>{
+    const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+    const server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
+    const refs=[...html.matchAll(/(?:src|href)="\/([\w.-]+\.(?:js|css))"/g)].map(m=>m[1]);
+    expect(refs.length).toBeGreaterThan(5);
+    for(const ref of refs)
+      expect(server,`${ref} is referenced by index.html but has no route in server.js`)
+        .toContain(`'${ref}'`);
+  });
+});

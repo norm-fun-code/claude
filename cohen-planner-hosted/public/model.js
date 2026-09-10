@@ -4,8 +4,13 @@
 // No DOM dependencies. No global state.
 
 // ── 2026 base tax constants (MFJ, OBBBA rules) ──
-const FED_BR_2026=[[24800,.10],[100800,.12],[211400,.22],[403550,.24],[512450,.32],[731200,.35],[1e15,.37]];
-const NYS_BR_2026=[[17150,.04],[23600,.045],[27900,.0525],[161550,.0585],[323200,.0625],[2155350,.0685],[5e6,.0965],[25e6,.103],[1e15,.109]];
+// Rev. Proc. 2025-32 § 3.01 Table 1 (MFJ, tax year 2026). Verified against the source by
+// tax-rules.js — the 35% band previously ended at 731,200, which is not a 2026 figure.
+const FED_BR_2026=[[24800,.10],[100800,.12],[211400,.22],[403550,.24],[512450,.32],[768700,.35],[1e15,.37]];
+// NY Tax Law § 601 thresholds with the rates enacted by Chapter 59 of the Laws of 2025
+// (Part A), which cut each of the five lowest rates by 0.1 point for 2026 (a further 0.1
+// point lands in 2027). Confirmed against NYS-50-T-NYS (1/26).
+const NYS_BR_2026=[[17150,.0390],[23600,.0440],[27900,.0515],[161550,.0540],[323200,.0590],[2155350,.0685],[5e6,.0965],[25e6,.103],[1e15,.109]];
 const NYC_BR_2026=[[21600,.03078],[45000,.03762],[90000,.03819],[1e15,.03876]];
 const SS_CAP_2026=184500;
 const SALT_BASE_2026=40400;
@@ -27,8 +32,15 @@ function calcTax(grossIncome,p,yr,numKids){
   const f=(1+taxInf)**(yr-sy);
 
   const FED_BR=_scaleBr(FED_BR_2026,f);
-  const NYS_BR=_scaleBr(NYS_BR_2026,f);
-  const NYC_BR=_scaleBr(NYC_BR_2026,f);
+  // The federal schedule is indexed by statute. New York's is NOT: § 601 and the NYC
+  // Administrative Code set fixed dollar thresholds that only move when the legislature
+  // moves them. Escalating them alongside nominal income cancels out real bracket creep
+  // that a New York filer actually experiences, understating state and city tax in every
+  // later year. `indexStateBrackets` exists only so a saved plan can reproduce the old
+  // behaviour on request; the default follows the law.
+  const sf=(p.indexStateBrackets??false)?f:1;
+  const NYS_BR=_scaleBr(NYS_BR_2026,sf);
+  const NYC_BR=_scaleBr(NYC_BR_2026,sf);
   const ssCap=Math.round(SS_CAP_2026*f);
   const saltBase=Math.round(SALT_BASE_2026*f);
   const stdDeduct=Math.round(STD_DEDUCT_2026*f);
@@ -80,13 +92,16 @@ function calcTax(grossIncome,p,yr,numKids){
   let qbi=0;
   if(nancySE>0){
     const qbiBase=Math.max(0,nancySE-seTaxHalf)*p.nancyQBIRate;
-    const qbiPhaseBase=383900*f; // also index QBI phaseout thresholds
-    const qbiPhaseTop=483900*f;
+    // Rev. Proc. 2025-32 § 3.26: the 2026 MFJ band runs 403,500 → 553,500. The previous
+    // 383,900 → 483,900 was the 2024 band, and it was $150K wide, not $100K.
+    const qbiPhaseBase=403500*f;
+    const qbiPhaseTop=553500*f;
+    const qbiBandWidth=(553500-403500)*f;
     if(agi<qbiPhaseBase)qbi=qbiBase;
     // Phaseout band width must scale with `f` too (qbiPhaseTop-qbiPhaseBase), not stay
     // flat at $100K — otherwise the phaseout runs too fast in later (inflated) years and
     // can drive qbi negative, which would perversely *increase* taxable income.
-    else if(agi<qbiPhaseTop)qbi=Math.max(0,qbiBase*(1-(agi-qbiPhaseBase)/(100000*f)));
+    else if(agi<qbiPhaseTop)qbi=Math.max(0,qbiBase*(1-(agi-qbiPhaseBase)/qbiBandWidth));
   }
 
   const fedTaxable=Math.max(0,agi-deduction-qbi);
