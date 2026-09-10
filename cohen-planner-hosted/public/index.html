@@ -1752,7 +1752,8 @@ function renderStripeTab(R,P){
   if(row.sHold>0){
     h+=`<div class="sc" style="margin-bottom:12px;border-color:rgba(103,114,229,.3)">
       <h3>◆ Held shares sold in ${yr}</h3>
-      <p style="line-height:1.6">This year's vest and the portfolio (down to its ${fmt(P.liquidReserveFloor??500000)} reserve floor) still left ${fmt(row.gap-row.sSold)} uncovered, so <strong style="color:#6772e5">${fmt(row.sHold)}</strong> of Stripe you already held was sold — realising <strong>${fmt(row.sGainTax)}</strong> of capital-gains tax on its appreciation above basis. Unlike selling at vest, this is a real taxable event.</p>
+      <p style="line-height:1.6">This year's vest and the portfolio (down to its ${fmt(P.liquidReserveFloor??500000)} reserve floor) still left ${fmt(row.gap-row.sSold)} uncovered, so <strong style="color:#6772e5">${fmt(row.sHold)}</strong> of Stripe you already held was sold — realising <strong>${fmt(row.sGainTax)}</strong> of capital-gains tax, just <strong>${(row.sGainTax/row.sHold*100).toFixed(1)}%</strong> of the proceeds.
+      <br><br>That rate is low because the sale takes your <em>least appreciated</em> lots first: the newest shares carry almost no gain above their vest price, so they cost almost nothing in tax to sell. Selling at vest is still free; this is the next cheapest thing.</p>
     </div>`;
   }
 

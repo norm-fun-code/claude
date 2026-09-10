@@ -174,6 +174,34 @@ function stripeVestFactor(sr){
   return f/4;
 }
 
+// ── Stripe lot ledger ──────────────────────────────────────────────────────
+// Holdings are kept as dated lots {v: value, b: cost basis, yr: vest year} rather than one
+// blended pool, because a forced sale picks lots by specific identification: the ones with
+// the SMALLEST unrealised gain go first, since tax per dollar raised is (gain/value) × rate.
+// Averaging basis across every lot would overstate the tax on every forced sale — the newest
+// shares have barely appreciated and are exactly what you would sell in practice.
+function lotsValue(lots){let t=0;for(const L of lots)t+=L.v;return t}
+function lotsBasis(lots){let t=0;for(const L of lots)t+=L.b;return t}
+
+// Raise `netNeeded` in after-tax cash from `lots`, cheapest-to-sell first. Mutates the lots.
+function sellLots(lots,netNeeded,capRate){
+  let gross=0,tax=0,need=netNeeded;
+  // Ascending unrealised-gain fraction. Ties and zero-value lots fall out harmlessly.
+  const order=[...lots].sort((a,b)=>
+    (a.v>0?(a.v-a.b)/a.v:0)-(b.v>0?(b.v-b.b)/b.v:0));
+  for(const L of order){
+    if(need<=1e-6||L.v<=1e-6)continue;
+    const gainFrac=Math.max(0,(L.v-L.b)/L.v);
+    const rate=gainFrac*capRate;
+    const take=Math.min(need/(1-rate),L.v);
+    const frac=take/L.v;              // capture before mutating
+    L.b*=Math.max(0,1-frac);          // basis leaves proportionally with the shares sold
+    L.v-=take;
+    gross+=take;tax+=take*rate;need-=take*(1-rate);
+  }
+  return{gross,tax,shortfall:Math.max(0,need)};
+}
+
 // How much of this year's NEWLY VESTED stock to sell for cash, per the retention policy.
 // Always returns a vest-date dollar amount within [0, newStock]; legacy/previously-retained
 // Stripe is never sold automatically under any policy.
@@ -219,8 +247,10 @@ function run(p,rets){
   // because RSU cost basis IS the vest-date FMV — selling at vest produces essentially no
   // capital gain (the W2 tax was already paid), and only post-vest appreciation is ever a
   // taxable gain. Pre-existing holdings default to basis = value for the same reason.
-  let stripeVal=p.startingStripeEquity||0;
-  let stripeBasis=stripeVal*(p.stripeStartingBasisPct??1);
+  // Pre-existing holdings start as a single lot. Basis defaults to full value because these
+  // are vested RSUs, whose basis IS the vest-date price.
+  const lots=[];
+  if((p.startingStripeEquity||0)>0)lots.push({v:p.startingStripeEquity,b:p.startingStripeEquity*(p.stripeStartingBasisPct??1),yr:sy-1});
   let tSNew=0,tSSold=0,tSRet=0,tSHold=0,tSGainTax=0;
   const R=[];
   for(let yr=sy;yr<=ey;yr++){
@@ -304,11 +334,11 @@ function run(p,rets){
     const stripeSold=Math.max(0,Math.min(normStock,stripeSellAmount(p,normStock,netCash,liqGrown,ret,td)));
     const stripeRetained=Math.max(0,normStock-stripeSold);
     // ── Stripe equity roll-forward (growth only; any forced sale is applied below) ──
-    const stripeBegin=stripeVal;
-    let stripeEnd=stripeBegin*(1+sr)                // held all year → full year's return
-                 +stripeRetained*stripeVestFactor(sr); // quarterly vests → partial year
-    const stripeAppr=stripeEnd-stripeBegin-stripeRetained; // pure growth, before any sale
-    let stripeBasisEnd=stripeBasis+stripeRetained;  // RSU basis is vest-date FMV
+    const stripeBegin=lotsValue(lots);
+    for(const L of lots)L.v*=(1+sr);                 // held all year → full year's return
+    const vf=stripeVestFactor(sr);
+    if(stripeRetained>0)lots.push({v:stripeRetained*vf,b:stripeRetained,yr}); // partial year
+    const stripeAppr=stripeBegin*sr+stripeRetained*(vf-1); // pure growth, before any sale
     // ── Funding waterfall for whatever this year's vest could not cover ──
     // Diversified pool first, but only down to the reserve floor; then Stripe holdings;
     // and only if those are exhausted too does the pool go below the floor.
@@ -323,14 +353,9 @@ function run(p,rets){
       sold=fromLiq;txS=fromLiq*td;need-=fromLiq*(1-td);
       // Selling shares held from a PRIOR year does realise a gain — unlike a vest-date sale,
       // where basis equals the sale price. Only appreciation above basis is taxed.
-      if(need>1e-6&&stripeEnd>1e-6){
-        const gainFrac=Math.max(0,(stripeEnd-stripeBasisEnd)/stripeEnd);
-        const rate=gainFrac*p.capGainsTaxRate;
-        const grossS=Math.min(need/(1-rate),stripeEnd);
-        holdSold=grossS;holdTax=grossS*rate;
-        stripeBasisEnd*=Math.max(0,1-grossS/stripeEnd);
-        stripeEnd-=grossS;
-        need-=grossS*(1-rate);
+      if(need>1e-6){
+        const r=sellLots(lots,need,p.capGainsTaxRate);
+        holdSold=r.gross;holdTax=r.tax;need=r.shortfall;
       }
       // Nothing left to sell: the pool breaches the floor, and can go negative. That is a
       // genuinely insolvent plan, and the UI calls it out rather than hiding it.
@@ -340,7 +365,9 @@ function run(p,rets){
     // Half-year convention: prior balance compounds a full year, this year's net
     // flow (surplus, withdrawals, down payment) earns ~half a year of return.
     liq=liqGrown+netFlow*(1+ret/2);tTx+=txS;tS+=sold;
-    stripeVal=stripeEnd;stripeBasis=stripeBasisEnd;
+    // Drop emptied lots so the ledger stays small across a 33-year Monte Carlo.
+    for(let i=lots.length-1;i>=0;i--)if(lots[i].v<=1e-6)lots.splice(i,1);
+    const stripeEnd=lotsValue(lots);
     tSNew+=normStock;tSSold+=stripeSold;tSRet+=stripeRetained;
     tSHold+=holdSold;tSGainTax+=holdTax;
     let hv=0,mb=0,eq=0;
@@ -349,7 +376,7 @@ function run(p,rets){
     // mortgage-interest amortization in calcTax(), both of which start at 0 elapsed years.
     if(sub){const yo=yr-p.homePurchaseYear;hv=p.homePrice*(1+p.homeAppreciation)**yo;mb=mBal(ma,p.mortgageRate/100,yo);eq=hv-mb}
     const kiy=kids.filter((k,ki)=>{const a=yr-k;const sa=ki===0?p.kid1YeshivaStartAge:p.yeshivaStartAge;return a>=sa&&a<=p.yeshivaEndAge}).length;
-    const nw=liq+stripeVal+eq;
+    const nw=liq+stripeEnd+eq;
     R.push({yr,normG:Math.round(normW2),normCash:Math.round(normCash),normStock:Math.round(normStock),
       nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,
       inc:Math.round(inc),netTC:tax.net,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
@@ -362,15 +389,15 @@ function run(p,rets){
       // is fractional, and three separate roundings can otherwise drift a dollar apart).
       sRet:Math.round(normStock)-Math.round(stripeSold),
       sHold:Math.round(holdSold),sGainTax:Math.round(holdTax),
-      sAppr:Math.round(stripeAppr),sEnd:Math.round(stripeVal),
-      sBasis:Math.round(stripeBasis),sRate:sr,sPct:nw>0?stripeVal/nw:0,
+      sAppr:Math.round(stripeAppr),sEnd:Math.round(stripeEnd),
+      sBasis:Math.round(lotsBasis(lots)),sLots:lots.length,sRate:sr,sPct:nw>0?stripeEnd/nw:0,
       nw:Math.round(nw),k401:Math.round(k401),kiy,nk});
   }
   return{R,tT:Math.round(tT),tC:Math.round(tC),tTx:Math.round(tTx),tS:Math.round(tS),am,dp,mm:am/12,
     tSNew:Math.round(tSNew),tSSold:Math.round(tSSold),tSRet:Math.round(tSRet),
     tSHold:Math.round(tSHold),tSGainTax:Math.round(tSGainTax),
-    stripeEnd:Math.round(stripeVal),stripeBasis:Math.round(stripeBasis),
-    stripeAppr:Math.round(stripeVal-stripeBasis)};
+    stripeEnd:Math.round(lotsValue(lots)),stripeBasis:Math.round(lotsBasis(lots)),
+    stripeAppr:Math.round(lotsValue(lots)-lotsBasis(lots))};
 }
 
 function randNorm(mean,sd){
@@ -445,7 +472,8 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
   module.exports={bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
-    normComp,stripeReturn,stripeVestFactor,stripeSellAmount,NORM_COMP_YEARS,STRIPE_RET_YEARS,
+    normComp,stripeReturn,stripeVestFactor,stripeSellAmount,sellLots,lotsValue,lotsBasis,
+    NORM_COMP_YEARS,STRIPE_RET_YEARS,
     FED_BR_2026,NYS_BR_2026,NYC_BR_2026,SS_CAP_2026,SALT_BASE_2026,STD_DEDUCT_2026,
     HIST_SP500_RETURNS};
 }

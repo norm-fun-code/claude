@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const { run, runMonteCarlo, calcTax, stripeVestFactor, stripeSellAmount, normComp } = require('../public/model.js');
+const { run, runMonteCarlo, calcTax, stripeVestFactor, stripeSellAmount, sellLots, lotsValue, lotsBasis, normComp } = require('../public/model.js');
 const { migrateP, rollForwardParams } = require('../public/plan-migrate.js');
 
 // A complete, realistic plan. Cash + stock per year sum to the pre-split total-comp
@@ -510,5 +510,86 @@ describe('post-window growth', () => {
   it('there is no discontinuity at the window edge', () => {
     const a = normComp(P, 10), b = normComp(P, 11);
     expect(b.cash / a.cash).toBeCloseTo(1 + P.normGrowth, 10);
+  });
+});
+
+// ── Specific-lot identification on forced sales ──────────────────────────
+describe('Stripe lot selection', () => {
+  const RATE = 0.345;
+  // One heavily appreciated lot and one barely appreciated one, same market value.
+  const twoLots = () => [
+    { v: 100000, b: 20000, yr: 2020 },   // 80% gain
+    { v: 100000, b: 95000, yr: 2029 },   //  5% gain
+  ];
+
+  it('sells the lowest-gain lot first', () => {
+    const lots = twoLots();
+    sellLots(lots, 50000, RATE);
+    expect(lots[0].v).toBe(100000);       // the 80%-gain lot is untouched
+    expect(lots[1].v).toBeLessThan(100000); // the 5%-gain lot funded it
+  });
+
+  it('costs far less tax than blending basis across every lot', () => {
+    const lots = twoLots();
+    const picked = sellLots(lots, 50000, RATE);
+    // What a single averaged pool would have charged for the same $50K of cash
+    const pool = [{ v: 200000, b: 115000, yr: 2020 }];
+    const blended = sellLots(pool, 50000, RATE);
+    expect(picked.tax).toBeLessThan(blended.tax / 5);
+    expect(picked.tax).toBeCloseTo(50000 / (1 - 0.05 * RATE) * 0.05 * RATE, 2);
+  });
+
+  it('moves on to the next-cheapest lot once one is exhausted', () => {
+    const lots = twoLots();
+    // $140K net is reachable; $180K would not be, since the 80%-gain lot yields only
+            // 72.4c on the dollar once its tax is paid.
+    const r = sellLots(lots, 140000, RATE);
+    expect(lots[1].v).toBeCloseTo(0, 6);   // cheap lot fully consumed
+    expect(lots[0].v).toBeLessThan(100000); // then into the expensive one
+    expect(r.shortfall).toBe(0);
+  });
+
+  it('conserves value: what is sold plus what remains equals what was held', () => {
+    const lots = twoLots();
+    const before = lotsValue(lots);
+    const r = sellLots(lots, 120000, RATE);
+    expect(r.gross + lotsValue(lots)).toBeCloseTo(before, 4);
+  });
+
+  it('basis leaves proportionally with the shares sold', () => {
+    const lots = [{ v: 100000, b: 40000, yr: 2020 }];
+    sellLots(lots, 30000, RATE);
+    expect(lots[0].b / lots[0].v).toBeCloseTo(0.4, 6); // basis ratio unchanged
+  });
+
+  it('a zero-gain lot raises cash with no tax at all', () => {
+    const lots = [{ v: 100000, b: 100000, yr: 2029 }];
+    const r = sellLots(lots, 50000, RATE);
+    expect(r.tax).toBe(0);
+    expect(r.gross).toBeCloseTo(50000, 6);
+  });
+
+  it('reports a shortfall rather than overselling', () => {
+    const lots = [{ v: 10000, b: 10000, yr: 2029 }];
+    const r = sellLots(lots, 50000, RATE);
+    expect(r.gross).toBeCloseTo(10000, 6);
+    expect(r.shortfall).toBeCloseTo(40000, 6);
+    expect(lotsValue(lots)).toBeCloseTo(0, 6);
+  });
+
+  it('in a real projection, forced sales take the newest (cheapest) equity first', () => {
+    const buying = { ...P, homePurchaseYear: 2030, startingStripeEquity: 3000000,
+                     liquidReserveFloor: 500000, stripeStartingBasisPct: 0.3 };
+    const r = run(buying).R.find(x => x.yr === 2030);
+    expect(r.sHold).toBeGreaterThan(0);
+    // The legacy block carries a 70% embedded gain; recently retained vests carry almost
+    // none. Selection must land well under the legacy lot's own rate.
+    const effective = r.sGainTax / r.sHold;
+    expect(effective).toBeLessThan(0.7 * P.capGainsTaxRate);
+  });
+
+  it('the ledger stays bounded — emptied lots are pruned', () => {
+    const { R } = run({ ...P, homePurchaseYear: 2030, startingStripeEquity: 500000 });
+    for (const r of R) expect(r.sLots).toBeLessThanOrEqual(R.length + 2);
   });
 });
