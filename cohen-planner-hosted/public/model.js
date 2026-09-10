@@ -183,10 +183,41 @@ function stripeReturn(p,yIdx){
 // A lot vesting at the end of quarter q has (4-q)/4 of the year left to appreciate, so the
 // Q4 lot earns nothing this year and the Q1 lot earns 9 months' worth. Without this, a
 // grant that mostly vests in December would be credited a full year of appreciation.
+// SUPERSEDED by the tender calendar below, and kept only so an older saved analysis can
+// still be reproduced. It modelled Stripe as appreciating continuously through the year, so
+// a Q1 vest earned nine months of growth and a Q4 vest earned none. A private company with
+// discrete tender marks does not work that way: every share is worth the same February mark
+// regardless of which quarter it vested in. stripeVestFactor is no longer used by run().
 function stripeVestFactor(sr){
   let f=0;
   for(let q=1;q<=4;q++)f+=(1+sr)**((4-q)/4);
   return f/4;
+}
+
+// ── The tender calendar ────────────────────────────────────────────────────
+// Stripe is private, so there is no continuous price. The only number anything transacts at
+// is the mark set at the February tender, and it holds until the NEXT February tender. Two
+// consequences run through the whole model:
+//
+//   1. A sale during year Y executes at the Feb-Y mark. Year Y's return is not realisable
+//      until Feb Y+1. So growth is credited at year END, after that year's sales.
+//   2. A position observed mid-year is stated at the Feb mark and ALREADY CONTAINS every
+//      vest that has landed so far this year.
+//
+// Vest months default to Feb/May/Aug/Nov. That is an assumption, stated openly rather than
+// buried: it is what makes a position observed in August contain three of the year's four
+// quarterly vests, and it puts the first vest on the same month as the tender.
+const STRIPE_VEST_MONTHS=[2,5,8,11];
+
+// The fraction of a year's grant that has NOT yet vested as of `month` (1-12). In the year
+// the opening balance was observed, only this fraction is new equity — the rest is already
+// inside the observed number, and adding it again would count it twice.
+function stripeVestRemaining(p){
+  const months=p.stripeVestMonths||STRIPE_VEST_MONTHS;
+  const asOf=p.stripeObservedMonth;
+  if(asOf==null)return 1;                       // no observation date given: assume Jan 1
+  const landed=months.filter(m=>m<=asOf).length;
+  return Math.max(0,(months.length-landed)/months.length);
 }
 
 // ── Stripe lot ledger ──────────────────────────────────────────────────────
@@ -352,12 +383,18 @@ function run(p,rets){
     const liqGrown=liq>0?liq*(1+ret):liq;
     const stripeSold=Math.max(0,Math.min(normStock,stripeSellAmount(p,normStock,netCash,liqGrown,ret,td)));
     const stripeRetained=Math.max(0,normStock-stripeSold);
-    // ── Stripe equity roll-forward (growth only; any forced sale is applied below) ──
+    // ── Stripe equity roll-forward, on the tender calendar ──
+    // Everything below happens AT the Feb-yr mark. No growth is credited yet: the year's
+    // sales have to execute at the price the shares are actually marked at, and this year's
+    // return only becomes real at the Feb yr+1 tender, applied after the waterfall.
     const stripeBegin=lotsValue(lots);
-    for(const L of lots)L.v*=(1+sr);                 // held all year → full year's return
-    const vf=stripeVestFactor(sr);
-    if(stripeRetained>0)lots.push({v:stripeRetained*vf,b:stripeRetained,yr}); // partial year
-    const stripeAppr=stripeBegin*sr+stripeRetained*(vf-1); // pure growth, before any sale
+    // In the observation year the opening balance was measured part-way through, so the
+    // vests that had already landed are inside it. Only the remainder is new equity.
+    const vestShareNew=(yr===sy)?stripeVestRemaining(p):1;
+    const alreadyInOpening=stripeRetained*(1-vestShareNew);
+    const newVest=stripeRetained*vestShareNew;
+    // Basis of a vesting lot is its vest-date fair market value, which is the same mark.
+    if(newVest>0)lots.push({v:newVest,b:newVest,yr});
     // ── Funding waterfall for whatever this year's vest could not cover ──
     // Diversified pool first, but only down to the reserve floor; then Stripe holdings;
     // and only if those are exhausted too does the pool go below the floor.
@@ -381,6 +418,12 @@ function run(p,rets){
       if(need>1e-6){const extra=need/(1-td);sold+=extra;txS+=extra*td;}
       netFlow=-sold; // Stripe proceeds fund expenses directly; they never enter the pool
     }
+    // ── The next February tender re-marks whatever is still held ──
+    // Everything that survived this year's sales appreciates once, together, because a
+    // private position has one price and it moves on one date.
+    const stripePreGrowth=lotsValue(lots);
+    for(const L of lots)L.v*=(1+sr);
+    const stripeAppr=lotsValue(lots)-stripePreGrowth;
     // Half-year convention: prior balance compounds a full year, this year's net
     // flow (surplus, withdrawals, down payment) earns ~half a year of return.
     liq=liqGrown+netFlow*(1+ret/2);tTx+=txS;tS+=sold;
@@ -425,6 +468,10 @@ function run(p,rets){
       // reported sold + retained always adds back to the reported vest (post-window comp
       // is fractional, and three separate roundings can otherwise drift a dollar apart).
       sRet:Math.round(normStock)-Math.round(stripeSold),
+      // What actually ENTERED the equity ledger this year, versus what the opening balance
+      // was already carrying. These differ only in the observation year, and stating both is
+      // the difference between a reconcilable dashboard and one that appears to double-count.
+      sAdded:Math.round(newVest),sInOpening:Math.round(alreadyInOpening),
       sHold:Math.round(holdSold),sGainTax:Math.round(holdTax),
       sAppr:Math.round(stripeAppr),sEnd:Math.round(stripeEnd),
       sBasis:Math.round(lotsBasis(lots)),sLots:lots.length,sRate:sr,sPct:nw>0?stripeEnd/nw:0,
@@ -628,7 +675,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
   module.exports={bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
-    normComp,stripeReturn,stripeVestFactor,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
+    normComp,stripeReturn,stripeVestFactor,stripeVestRemaining,STRIPE_VEST_MONTHS,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
     housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,

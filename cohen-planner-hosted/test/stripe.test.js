@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const { run, runMonteCarlo, calcTax, stripeVestFactor, stripeSellAmount, sellLots, lotsValue, lotsBasis, normComp } = require('../public/model.js');
+const { run, runMonteCarlo, calcTax, stripeVestFactor, stripeVestRemaining, stripeSellAmount, sellLots, lotsValue, lotsBasis, normComp } = require('../public/model.js');
 const { migrateP, rollForwardParams } = require('../public/plan-migrate.js');
 
 // A complete, realistic plan. Cash + stock per year sum to the pre-split total-comp
@@ -171,13 +171,51 @@ describe('Stripe appreciation', () => {
     expect(f).toBeCloseTo(expected, 10);
   });
 
-  it('pre-existing Stripe earns the full year, unlike stock vesting during it', () => {
+  it('marks every share at the same tender price, whichever quarter it vested in', () => {
+    // Stripe is private: there is one price, set at the February tender, and it holds until
+    // the next one. A share that vested in November is worth exactly what a share carried in
+    // from last year is worth, so both earn the same single re-mark at the next tender.
     const sr = 0.20;
     const legacy = run({ ...P, stripePolicy: 'retain', startingStripeEquity: 1000000, stripeLongTermReturn: sr });
     const r0 = legacy.R[0];
-    const fromLegacy = 1000000 * (1 + sr);              // full year
-    const fromNew = r0.sRet * stripeVestFactor(sr);     // partial year
-    expect(Math.abs(r0.sEnd - (fromLegacy + fromNew))).toBeLessThanOrEqual(1);
+    expect(Math.abs(r0.sEnd - (1000000 + r0.sRet) * (1 + sr))).toBeLessThanOrEqual(1);
+  });
+
+  it('does not count the part of this year\'s vest that is already in the opening balance', () => {
+    // The reported position is observed mid-year, so it already contains the vests that have
+    // landed. Adding the whole year's grant on top counts those dollars twice.
+    const base = { ...P, stripePolicy: 'retain', startingStripeEquity: 614000, stripeLongTermReturn: 0 };
+    const asOfJan = run(base).R[0];
+    const asOfAug = run({ ...base, stripeObservedMonth: 8 }).R[0];
+
+    // Feb / May / Aug have landed by August; only the November lot is still to come.
+    expect(stripeVestRemaining({ ...base, stripeObservedMonth: 8 })).toBe(0.25);
+    expect(asOfAug.sAdded).toBeCloseTo(asOfAug.sRet * 0.25, 0);
+    expect(asOfAug.sInOpening).toBeCloseTo(asOfAug.sRet * 0.75, 0);
+    // The whole year's vest is still reported as income — only the ASSET was double-counted.
+    expect(asOfAug.sNew).toBe(asOfJan.sNew);
+    expect(asOfAug.sEnd).toBeLessThan(asOfJan.sEnd);
+    expect(asOfJan.sEnd - asOfAug.sEnd).toBeCloseTo(asOfAug.sRet * 0.75, 0);
+  });
+
+  it('reconciles: opening + newly added, re-marked once, is the closing balance', () => {
+    const sr = 0.15;
+    const r = run({ ...P, stripePolicy: 'retain', startingStripeEquity: 614000,
+      stripeObservedMonth: 8, stripeLongTermReturn: sr }).R[0];
+    // Within a dollar: sBeg/sAdded are rounded for display, sEnd is computed from the lots.
+    expect(Math.abs(r.sEnd - (r.sBeg + r.sAdded) * (1 + sr))).toBeLessThanOrEqual(1);
+    expect(Math.abs(r.sAppr - (r.sBeg + r.sAdded) * sr)).toBeLessThanOrEqual(1);
+  });
+
+  it('sells at the mark the shares are actually priced at, not a marked-up one', () => {
+    // A sale during the year executes at the February mark. Crediting the year's return
+    // first would let the plan sell shares at a price no tender has yet offered.
+    const sr = 0.50;   // a big move, so a within-year mark-up would be unmistakable
+    const p = { ...P, startingStripeEquity: 1000000, stripeLongTermReturn: sr,
+      stripePolicy: 'sell', startingLiquid: 0, liquidReserveFloor: 0 };
+    const r = run(p).R[0];
+    // Whatever was sold from holdings came out of the opening balance at the opening mark.
+    expect(r.sHold).toBeLessThanOrEqual(r.sBeg + r.sAdded + 1);
   });
 });
 
