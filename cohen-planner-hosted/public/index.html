@@ -10,6 +10,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <script src="/model.js"></script>
 <script src="/plan-migrate.js"></script>
+<script src="/spending.js"></script>
 <script src="/decisions.js"></script>
 <script src="/decision-room.js"></script>
 <style>
@@ -1649,6 +1650,7 @@ function render(){
   if(activeTab==='advisor'){renderAdvisorTab(R,P);return}
   if(activeTab==='today'){
     if(_todayView==='holdings')renderPortfolioTab(R,P);
+    else if(_todayView==='spending')renderSpendingTab(R,P);
     else renderGoalsTab(R,P,tT);
     return;
   }
@@ -1950,6 +1952,163 @@ function makeDonut(canvasId,labels,data,colors,fmtVal,showLegend){
     },
     plugins:[ChartDataLabels]
   });
+}
+
+// ── Spending & cash flow ─────────────────────────────────────────────────
+// Reads the synced transaction ledger through the shared accounting model, so the browser
+// and the server can never disagree about what counts as spending. Everything here leads
+// with coverage: a number computed over four months of history is not the same claim as one
+// computed over twelve, and the view says which it is making.
+let _spend=null,_spendLoading=false,_syncStatus=null,_syncPoll=null;
+
+async function loadSpending(){
+  if(_spendLoading)return;
+  _spendLoading=true;
+  try{
+    const [a,b]=await Promise.all([
+      fetch('/api/monarch/spending?months=12').then(r=>r.ok?r.json():r.json().then(e=>({error:e.error||'unavailable'}))),
+      fetch('/api/monarch/sync/status').then(r=>r.ok?r.json():({error:'unavailable'})),
+    ]);
+    _spend=a;_syncStatus=b;
+  }catch(e){_spend={error:e.message};}
+  _spendLoading=false;
+  if(activeTab==='today'&&_todayView==='spending')render();
+}
+
+async function startBackfill(months){
+  const r=await fetch('/api/monarch/sync/backfill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({months})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){showToast(d.error||'Could not start import','red');return}
+  showToast(`Importing ${months} months of history…`,'blue');
+  pollSync();
+}
+// A backfill runs detached on the server, so the only honest progress signal is polling the
+// status it writes as each month completes.
+function pollSync(){
+  clearInterval(_syncPoll);
+  _syncPoll=setInterval(async()=>{
+    try{
+      const r=await fetch('/api/monarch/sync/status');
+      _syncStatus=await r.json();
+      if(activeTab==='today'&&_todayView==='spending')render();
+      if(!_syncStatus.running){clearInterval(_syncPoll);_syncPoll=null;loadSpending();}
+    }catch(e){clearInterval(_syncPoll);_syncPoll=null;}
+  },2500);
+}
+async function runIncremental(){
+  showToast('Catching up…','blue');
+  const r=await fetch('/api/monarch/sync/incremental',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  const d=await r.json().catch(()=>({}));
+  showToast(d.error?('Sync: '+d.error):`Synced ${d.written||0} transactions`,d.error?'red':'green');
+  loadSpending();
+}
+
+function renderSpendingTab(R,P){
+  const ca=document.getElementById('chartArea');
+  destroyCharts();
+  if(_spend===null&&!_spendLoading){loadSpending();}
+  const st=_syncStatus||{},d=_spend||{};
+  const running=!!st.running;
+  const money=v=>fmt(Math.round(v||0));
+  const exact=v=>fmtF(Math.round(v||0));
+
+  let h=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px">`;
+
+  // ── Freshness and coverage, before any number that depends on them ──
+  const nTx=st.transactions||0;
+  h+=`<div class="glass-card" style="padding:14px 16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:11px;font-weight:700;color:var(--tx)">💳 Spending & cash flow</div>
+        <div style="font-size:10px;color:var(--t2);margin-top:3px">
+          ${nTx?`${nTx.toLocaleString()} transactions · ${st.firstDate||'—'} → ${st.lastDate||'—'}${st.pending?` · ${st.pending} still pending`:''}`
+               :'No transaction history imported yet.'}
+          ${st.lastSyncAt?` · synced ${new Date(st.lastSyncAt).toLocaleString()}`:''}
+        </div>
+      </div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap">
+        ${running?`<span style="font-size:10px;color:var(--a);padding:5px 9px">⏳ Importing… ${(st.monthsImported||[]).length} months done</span>`
+          :`${[12,24,36].map(m=>`<button onclick="startBackfill(${m})" style="font-size:9.5px;padding:5px 10px;border-radius:5px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">Import ${m}mo</button>`).join('')}
+             ${nTx?`<button onclick="runIncremental()" style="font-size:9.5px;padding:5px 10px;border-radius:5px;border:none;background:var(--accent);color:#fff;font-family:inherit;cursor:pointer">↻ Catch up</button>`:''}`}
+      </div>
+    </div>
+    ${st.lastError?`<div style="margin-top:9px;font-size:10px;color:var(--r);background:rgba(205,61,100,.06);border-radius:6px;padding:7px 9px">Last import stopped at ${advEscape(st.lastError.window||'')}: ${advEscape(st.lastError.message||'')}. Everything imported before that point was kept.</div>`:''}
+  </div>`;
+
+  if(d.error){
+    h+=`<div class="glass-card" style="padding:18px;text-align:center">
+      <div style="font-size:12px;color:var(--tx);margin-bottom:5px">Spending data unavailable</div>
+      <div style="font-size:10.5px;color:var(--t2);margin-bottom:10px">${advEscape(d.error)}</div>
+      <button onclick="openMonarchDiagnostics()" style="font-size:10px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">🩺 Diagnose connection</button>
+    </div></div>`;
+    ca.innerHTML=h;document.getElementById('summaries').innerHTML='';return;
+  }
+  if(!nTx){
+    h+=`<div class="glass-card" style="padding:26px;text-align:center">
+      <div style="font-size:13px;font-weight:600;color:var(--tx);margin-bottom:6px">Import your history to begin</div>
+      <div style="font-size:11px;color:var(--t2);line-height:1.6;max-width:520px;margin:0 auto">Transactions are read through the same Monarch connection your balances use. Nothing is written back — the import is read-only, and your own categorisations are never overwritten by a later sync.</div>
+    </div></div>`;
+    ca.innerHTML=h;document.getElementById('summaries').innerHTML='';return;
+  }
+
+  const months=d.months||[],cov=d.coverage||{},tot=d.totals||{},cnt=d.counts||{};
+  const complete=months.filter(m=>m.month!==cov.partial);
+
+  // ── What the ledger actually contained ──
+  // This is the check that spending is not being double counted, shown rather than asserted:
+  // transfers and card payments are large and they are deliberately not in the expense total.
+  const bucket=(lbl,v,n,col,note)=>`<div class="kpi" style="border-color:var(--bd)">
+    <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t3);margin-bottom:3px">${lbl}</div>
+    <div style="font-size:16px;font-weight:800;font-family:'SF Mono',monospace;color:${col};letter-spacing:-.4px">${money(v)}</div>
+    <div style="font-size:8.5px;color:var(--t3);margin-top:2px">${n||0} rows${note?' · '+note:''}</div></div>`;
+  h+=`<div>
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:7px">How the ledger classified — ${cov.first||'—'} to ${cov.last||'—'}</div>
+    <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+      ${bucket('Spending',tot.expense,cnt.expense,'var(--tx)','net of refunds')}
+      ${bucket('Income',tot.income,cnt.income,'var(--g)')}
+      ${bucket('Transfers',tot.transfer,cnt.transfer,'var(--t3)','not spending')}
+      ${bucket('Card payments',tot.cardPayment,cnt.cardPayment,'var(--t3)','not spending')}
+      ${bucket('Investments',tot.investment,cnt.investment,'#6772e5','saved, not spent')}
+      ${bucket('Refunds',tot.refund,cnt.refund,'var(--a)','netted into categories')}
+    </div>
+    <div style="font-size:9.5px;color:var(--t3);margin-top:7px;line-height:1.5">Transfers and card payments are excluded from spending on purpose — moving money between your own accounts is not consumption, and the purchases a card payment settles are already counted. ${cnt.excluded?`${cnt.excluded} rows were hidden from reports or are split parents whose children are counted instead.`:''}</div>
+  </div>`;
+
+  // ── Rolling averages, only where coverage permits ──
+  const roll=d.rolling||{};
+  const rollCard=(lbl,v,n)=>`<div class="kpi"><div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t3);margin-bottom:3px">${lbl}</div>
+    <div style="font-size:16px;font-weight:800;font-family:'SF Mono',monospace;color:${v==null?'var(--t3)':'var(--tx)'};letter-spacing:-.4px">${v==null?'—':fmtF(Math.round(v))}</div>
+    <div style="font-size:8.5px;color:var(--t3);margin-top:2px">${v==null?`needs ${n} complete months`:'per month'}</div></div>`;
+  h+=`<div>
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:7px">Average monthly spending</div>
+    <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+      ${rollCard('Rolling 3-month',roll.m3,3)}${rollCard('Rolling 6-month',roll.m6,6)}${rollCard('Rolling 12-month',roll.m12,12)}
+    </div>
+    <div style="font-size:9.5px;color:var(--t3);margin-top:7px">${complete.length} complete month${complete.length===1?'':'s'} of history${cov.partial?` · ${cov.partial} is ${Math.round((cov.fractionElapsed||0)*100)}% elapsed and excluded from every average`:''}.</div>
+  </div>`;
+
+  // ── Month by month ──
+  h+=`<div class="tw" style="max-height:none"><table style="font-size:11px">
+    <thead><tr><th style="text-align:left">Month</th><th>Spending</th><th>Income</th><th>Net</th><th>Transfers</th><th>Card pmts</th><th>Invested</th><th>Rows</th></tr></thead>
+    <tbody>${months.map(m=>{
+      const partial=m.month===cov.partial;
+      const net=(m.income||0)-(m.expense||0);
+      return `<tr style="${partial?'opacity:.65':''}">
+        <td style="font-weight:700;color:var(--tx);text-align:left">${m.month}${partial?' <span style="font-weight:400;color:var(--a);font-size:9px">partial</span>':''}</td>
+        <td style="font-family:'SF Mono',monospace">${exact(m.expense)}</td>
+        <td style="font-family:'SF Mono',monospace;color:var(--g)">${exact(m.income)}</td>
+        <td style="font-family:'SF Mono',monospace;color:${net>=0?'var(--g)':'var(--r)'};font-weight:600">${net>=0?'+':'−'}${exact(Math.abs(net))}</td>
+        <td style="font-family:'SF Mono',monospace;color:var(--t3)">${exact(m.transfer)}</td>
+        <td style="font-family:'SF Mono',monospace;color:var(--t3)">${exact(m.cardPayment)}</td>
+        <td style="font-family:'SF Mono',monospace;color:#6772e5">${exact(m.investment)}</td>
+        <td style="color:var(--t3)">${m.count}${m.pending?` <span style="color:var(--a)">+${m.pending}p</span>`:''}</td>
+      </tr>`}).join('')}</tbody></table></div>`;
+
+  h+=`<div style="font-size:9.5px;color:var(--t3);line-height:1.6;padding:0 2px">Budget-vs-actual by category, recurring commitments and overrun flags come next — they are deliberately behind this reconciliation view, so the classification above can be checked against what you know before anything alerts on it.</div>`;
+
+  h+=`</div>`;
+  ca.innerHTML=h;
+  document.getElementById('summaries').innerHTML='';
 }
 
 let _acctDonutSpec=null;
@@ -3553,7 +3712,7 @@ const SUB_VIEWS={
   projection:{get:()=>_projView,set:v=>{_projView=v},
     views:[['nw','📈','Net worth'],['income','💰','Income & tax'],['cashflow','💸','Cash flow'],['table','📋','Table']]},
   today:{get:()=>_todayView,set:v=>{_todayView=v},
-    views:[['plan','🎯','Plan vs actual'],['holdings','📊','Holdings & accounts']]},
+    views:[['plan','🎯','Plan vs actual'],['holdings','📊','Holdings & accounts'],['spending','💳','Spending']]},
 };
 let _stressMode=false;
 // ── Monte Carlo confidence band overlay (NW chart) ──
@@ -3617,6 +3776,7 @@ function _paletteCommands(){
     {icon:'🎚️',label:'Which levers matter',hint:'Decisions',run:()=>setTab('sensitivity')},
     {icon:'⚖',label:'Compare saved',hint:'Decisions',run:()=>setTab('compare')},
     {icon:'📊',label:'Holdings & accounts',hint:'Today',run:()=>setTab('portfolio')},
+    {icon:'💳',label:'Spending & cash flow',hint:'Today',run:()=>{_todayView='spending';setTab('today')}},
     {icon:'🩺',label:'Diagnose Monarch connection',hint:'Support',run:()=>{setTab('portfolio');setTimeout(()=>openMonarchDiagnostics(),350)}},
     {icon:'🤖',label:'AI Advisor',hint:'View',run:()=>setTab('advisor')},
     {icon:'🎬',label:'Play plan as a story',hint:'Story mode',run:()=>openStoryMode()},

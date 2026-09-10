@@ -19,6 +19,9 @@ const { run: runModel } = require('./public/model.js');
 const { migrateP } = require('./public/plan-migrate.js');
 const { createMonarchLive } = require('./monarch-live');
 const monarchLive = createMonarchLive({ db });
+const { createMonarchSync } = require('./monarch-sync');
+const monarchSync = createMonarchSync({ db, live: monarchLive });
+const Spending = require('./public/spending.js');
 
 const ADVISOR_TOOLS = [
   {
@@ -240,7 +243,7 @@ app.get('/model.js', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'model.js'));
 });
 // Keep every new planner asset behind the same session gate as the existing UI.
-for (const asset of ['decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js']) {
+for (const asset of ['decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js']) {
   app.get('/' + asset, requireAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', asset));
   });
@@ -643,6 +646,76 @@ app.get('/api/monarch-probe-portfolio', requireDebug, async (req, res) => {
 
 // Which Monarch precondition is actually failing. Booleans and upstream messages only —
 // never the token itself. Exists because every failure mode looks identical in the UI.
+// ── Transaction sync ────────────────────────────────────────────────────────
+// A backfill walks months of history and can run far longer than a request should stay open,
+// so it runs detached and reports through /status. One at a time: two concurrent backfills
+// would interleave writes over the same windows for no benefit.
+let backfillJob = null;
+app.post('/api/monarch/sync/backfill', requireAuth, async (req, res) => {
+  if (backfillJob) return res.status(409).json({ error: 'A history import is already running.', running: true });
+  const today = new Date().toISOString().slice(0, 10);
+  const months = Math.min(60, Math.max(1, Number(req.body?.months) || 24));
+  const start = new Date(Date.now() - months * 30.44 * 864e5).toISOString().slice(0, 10);
+  const startDate = req.body?.startDate || start;
+  const endDate = req.body?.endDate || today;
+
+  backfillJob = (async () => {
+    try {
+      // Categories first: without group.type every transaction classifies as an expense,
+      // which would silently count transfers and card payments as spending.
+      await monarchSync.syncCategories();
+      const r = await monarchSync.backfill({ startDate, endDate });
+      try { await monarchSync.syncBudgets({ startDate, endDate }); } catch (e) { /* budgets are optional */ }
+      return r;
+    } finally { backfillJob = null; }
+  })();
+  backfillJob.catch(() => {}); // errors are reported through status, not an unhandled rejection
+
+  res.status(202).json({ started: true, startDate, endDate });
+});
+
+app.post('/api/monarch/sync/incremental', requireAuth, async (req, res) => {
+  try {
+    await monarchSync.syncCategories().catch(() => {});
+    res.json(await monarchSync.incremental({ lookbackDays: Number(req.body?.lookbackDays) || 45 }));
+  } catch (err) { res.status(503).json({ error: err.message }); }
+});
+
+app.get('/api/monarch/sync/status', requireAuth, async (req, res) => {
+  try {
+    const st = await monarchSync.status();
+    res.json({ ...st, running: !!backfillJob });
+  } catch (err) { res.status(503).json({ error: err.message, running: !!backfillJob }); }
+});
+
+// Classified, aggregated spending. The accounting lives in public/spending.js and runs the
+// same code the browser would, so server and client can never disagree about what a
+// transfer is.
+app.get('/api/monarch/spending', requireAuth, async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const endDate = req.query.end || today;
+    const startDate = req.query.start || new Date(Date.now() - (Number(req.query.months) || 12) * 30.44 * 864e5).toISOString().slice(0, 10);
+    const [ledger, categories, status] = await Promise.all([
+      monarchSync.ledger({ startDate, endDate }),
+      monarchSync.localCategories(),
+      monarchSync.status(),
+    ]);
+    const summary = Spending.summarize(ledger, categories);
+    const cov = Spending.coverage(summary.months, endDate);
+    res.json({
+      startDate, endDate, status, coverage: cov,
+      months: summary.months.map(m => ({ ...m, byCategory: undefined })),
+      totals: summary.totals, counts: summary.counts,
+      rolling: {
+        m3: Spending.rollingAverage(summary.months, 3, null, endDate),
+        m6: Spending.rollingAverage(summary.months, 6, null, endDate),
+        m12: Spending.rollingAverage(summary.months, 12, null, endDate),
+      },
+    });
+  } catch (err) { res.status(503).json({ error: err.message }); }
+});
+
 app.get('/api/monarch-diagnostics', requireAuth, async (req, res) => {
   try {
     res.json(await monarchLive.diagnose());
