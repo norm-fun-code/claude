@@ -150,6 +150,7 @@
         keyOf(KIND.HOME_FUNDING,'stockDependent',buyYear),
         `${pct(stripeShare)} of the ${buyYear} down payment depends on selling Stripe`,
         [ev('Cash needed at closing',usd(need),'projection dpOut'),
+         ev('Closing quarter',`Q${quarter}`+(P.homePurchaseQuarter==null?' (assumed)':''),'plan setting homePurchaseQuarter'),
          ev('From the portfolio',usd(Math.min(need,otherCash)),'projection'),
          ev('From Stripe',usd(Math.max(0,need-otherCash)),'computed'),
          ev(`Raisable from Stripe by Q${quarter}`,usd(check.fromStripe),'tender and elective windows'),
