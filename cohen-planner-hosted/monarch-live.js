@@ -19,11 +19,11 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
       sources = r.rows;
     } catch (e) { if (e.code !== '42P01') throw e; } // Standalone planner DB.
     const snapshots = [local.snapshot, ...sources.map(s => s.snapshot)].map(validSnapshot).filter(Boolean).sort((a,b) => Date.parse(b.asOf)-Date.parse(a.asOf));
-    return { disabled: !!local.disabled, snapshot: snapshots[0] || null, token: env.MONARCH_TOKEN || sources.find(s => s.token)?.token || null };
+    return { disabled: !!local.disabled, snapshot: snapshots[0] || null, token: env.MONARCH_TOKEN || sources.find(s => s.token)?.token || null, remote: !!(env.NORMOS_URL && env.PLANNER_BRIDGE_TOKEN) };
   }
   async function status() {
     const c = await context();
-    return { connected: !c.disabled && !!(c.snapshot || c.token), source: c.snapshot?.source || 'normos-api', asOf: c.snapshot?.asOf || null };
+    return { connected: !c.disabled && !!(c.snapshot || c.token || c.remote), source: c.snapshot?.source || 'normos-api', asOf: c.snapshot?.asOf || null };
   }
   async function setEnabled(enabled) {
     await db.query(`INSERT INTO oauth_tokens (key,data) VALUES ('monarch_bridge',$1::jsonb)
@@ -33,7 +33,34 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
     const c = await context();
     if (c.disabled) throw new Error('Planner sync is paused. Enable NormOS sync to resume.');
     let snapshot = c.snapshot, warning = now() < retryAfter ? lastWarning : null;
-    if (c.token && (!snapshot || now() - Date.parse(snapshot.asOf) >= TTL) && now() >= retryAfter) {
+    if (c.remote) {
+      if ((!snapshot || now()-Date.parse(snapshot.asOf)>=TTL) && now()>=retryAfter) {
+        try {
+          const base = new URL(env.NORMOS_URL);
+          if(base.protocol!=='https:' || base.username || base.password)throw new Error('Invalid NormOS connection URL.');
+          const response = await fetchImpl(new URL('/integrations/planner/accounts',base).href, {
+            headers:{Authorization:`Bearer ${env.PLANNER_BRIDGE_TOKEN}`},
+            signal:AbortSignal.timeout(30000), redirect:'error',
+          });
+          if(!response.ok)throw new Error('NormOS account source is unavailable.');
+          const data=await response.json();
+          if(!validSnapshot(data))throw new Error('NormOS returned incomplete account data.');
+          warning = data.warning ? 'NormOS could not refresh Monarch; showing its last successful observation.' : null;
+          if(!snapshot || Date.parse(data.asOf)>=Date.parse(snapshot.asOf)) {
+            snapshot={...data,source:'normos-bridge'};
+            await db.query(`INSERT INTO oauth_tokens (key,data) VALUES ('monarch_bridge',$1::jsonb)
+              ON CONFLICT (key) DO UPDATE SET data = oauth_tokens.data || EXCLUDED.data`, [JSON.stringify({snapshot})]);
+          }
+          lastWarning=warning;
+          // Even a stale-but-valid imported snapshot should not cause repeated network calls.
+          retryAfter=now()+TTL;
+        } catch(e) {
+          warning='NormOS account sync unavailable. Previous balances retained.';
+          lastWarning=warning;retryAfter=now()+TTL;
+        }
+      }
+    }
+    if (!c.remote && c.token && (!snapshot || now() - Date.parse(snapshot.asOf) >= TTL) && now() >= retryAfter) {
       try {
         const response = await fetchImpl('https://api.monarch.com/graphql', {
           method: 'POST', headers: {
@@ -60,6 +87,7 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
         if (!snapshot) throw new Error(warning);
       }
     }
+    if (!snapshot && warning) throw new Error(warning);
     if (!snapshot) throw new Error('Waiting for the next NormOS Monarch account sync. Run the existing Monarch sync in NormOS.');
     const stale = now() - Date.parse(snapshot.asOf) > 24 * 60 * 60 * 1000;
     return { ...snapshot, stale, warning, bankUpdatedAt: null };
