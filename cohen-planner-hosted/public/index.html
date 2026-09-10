@@ -517,7 +517,27 @@ const D={
   taxInflation:.025,
   planEndYear:2058,
 };
-let P={...D};let scenarios=[];let compareMode=false;let activeScenarioIdx=-1;
+let P={...D};let scenarios=[];let compareMode=false;
+// Which saved case is loaded, and whether it has been edited since. These are deliberately
+// separate: editing a case must NOT eject you from it, or there is no way to save back into
+// the case you are working in — the only offer left would be "save as new".
+let activeScenarioIdx=-1;let scenarioDirty=false;
+// Called by every input handler. Cheap on the hot path: only touches the DOM on the first
+// edit after a clean load, since slider drags fire this continuously.
+function markDirty(){
+  if(activeScenarioIdx<0||scenarioDirty)return;
+  scenarioDirty=true;
+  paintUpdateButton();
+}
+function paintUpdateButton(){
+  const b=document.getElementById('updateScenarioBtn');
+  if(!b)return;
+  const name=scenarios[activeScenarioIdx]?.name||'';
+  b.innerHTML=scenarioDirty?`🔄 Update "${advEscape(name)}"`:`✓ "${advEscape(name)}" is up to date`;
+  b.style.borderColor=scenarioDirty?'rgba(245,183,49,.55)':'var(--bd)';
+  b.style.color=scenarioDirty?'var(--a)':'var(--t3)';
+  b.style.background=scenarioDirty?'rgba(245,183,49,.10)':'var(--s2)';
+}
 
 // ═══ SYNC STATUS ═══
 function setSyncStatus(status){
@@ -539,7 +559,7 @@ function savePlannerState(){
   if(!_planLoaded){setSyncStatus('error');return;}
   setSyncStatus('saving');
   const revision=++_saveRevision;
-  const payload=JSON.stringify({state:{P,compareMode,activeTab,activeScenarioIdx,monarchSnapshot,experienceVersion:6}});
+  const payload=JSON.stringify({state:{P,compareMode,activeTab,activeScenarioIdx,scenarioDirty,monarchSnapshot,experienceVersion:6}});
   clearTimeout(_saveTimer);
   _saveTimer=setTimeout(()=>{
     // Serialize writes so a slower earlier request cannot overwrite newer state.
@@ -575,6 +595,7 @@ async function loadFromServer(){
       if(s.experienceVersion>=6&&s.activeTab)activeTab=s.activeTab;
       _planLoaded=true;
       if(s.activeScenarioIdx!==undefined)activeScenarioIdx=s.activeScenarioIdx;
+      if(s.scenarioDirty!==undefined)scenarioDirty=!!s.scenarioDirty;
       if(PlannerDecisions.usableSnapshot(s.monarchSnapshot)&&!monarchSnapshot)monarchSnapshot=s.monarchSnapshot; // don't clobber a fresh auto-sync
     }else{
       showToast('⚠️ Could not load plan state (HTTP '+stRes.status+')','red');
@@ -1068,7 +1089,7 @@ function applyStripePreset(k){
   const v=STRIPE_PRESETS[k];if(!v)return;
   for(let i=0;i<10;i++)P['stripeRetY'+i]=v[i];
   P.stripeLongTermReturn=v[10];
-  activeScenarioIdx=-1;buildControls();render();savePlannerState();
+  markDirty();buildControls();render();savePlannerState();
   showToast('Applied the '+k+' return path — every year is still editable','blue');
 }
 function dismissSplitReview(){delete P.normSplitNeedsReview;buildControls();savePlannerState()}
@@ -1105,7 +1126,7 @@ function reclassifyStripe(actual){
   if(!showConfirm(`Reclassify ${fmtF(Math.abs(move))} ${move>0?'from Starting Liquid into Stripe equity':'from Stripe equity back into Starting Liquid'}?\n\nYour total starting net worth stays exactly ${fmt(before)} — this only changes which pool it sits in.`))return;
   P.startingLiquid=Math.round((P.startingLiquid||0)-move);
   P.startingStripeEquity=actual;
-  activeScenarioIdx=-1;buildControls();render();savePlannerState();
+  markDirty();buildControls();render();savePlannerState();
   showToast(`Reclassified — starting net worth unchanged at ${fmt(before)}`,'green');
 }
 // Compact per-year comp cell. Commits on blur/Enter like the other typed dollar inputs.
@@ -1137,7 +1158,7 @@ function buildControls(){
         <button class="btn" onclick="hideSaveInput()" style="flex:1;font-size:10px">Cancel</button>
       </div>
     </div>
-    ${activeScenarioIdx>=0?`<button class="btn" onclick="updateScenario(${activeScenarioIdx})" style="margin-bottom:3px;border-color:rgba(245,183,49,.3);color:var(--a)">🔄 Update "${advEscape(scenarios[activeScenarioIdx]?.name||'')}"</button>`:''}
+    ${activeScenarioIdx>=0?`<button class="btn" id="updateScenarioBtn" onclick="updateScenario(${activeScenarioIdx})" style="margin-bottom:3px;border-color:${scenarioDirty?'rgba(245,183,49,.55)':'var(--bd)'};color:${scenarioDirty?'var(--a)':'var(--t3)'};background:${scenarioDirty?'rgba(245,183,49,.10)':'var(--s2)'}">${scenarioDirty?`🔄 Update "${advEscape(scenarios[activeScenarioIdx]?.name||'')}"`:`✓ "${advEscape(scenarios[activeScenarioIdx]?.name||'')}" is up to date`}</button>`:''}
     ${scenarios.length>0?`<button class="btn" onclick="toggleCompare()" style="margin-bottom:3px">${compareMode?'Exit Compare':'📊 Compare'}</button>`:''}
     <button class="btn" onclick="rollForward()" style="margin-bottom:3px;border-color:rgba(8,145,178,.3);color:var(--c);background:#e0f7fa">📅 Roll Forward → ${sy+1}</button>
   </div>`;
@@ -1240,7 +1261,7 @@ function buildControls(){
 }
 
 async function resetAll(){
-  P={...D};scenarios=[];compareMode=false;activeScenarioIdx=-1;
+  P={...D};scenarios=[];compareMode=false;activeScenarioIdx=-1;scenarioDirty=false;
   savePlannerState();
   buildControls();render();
 }
@@ -1300,9 +1321,9 @@ const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birt
 for(let i=0;i<11;i++){SF['normCashY'+i]=fmtF;SF['normStockY'+i]=fmtF}
 for(let i=0;i<10;i++)SF['stripeRetY'+i]=v=>(v*100).toFixed(0)+'%';
 
-function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'+key);const fn=SF[key];if(el&&fn)el.textContent=fn(P[key]);else if(el)el.textContent=P[key];if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear')buildControls();activeScenarioIdx=-1;render();savePlannerState()}
-function UTxt(key,val,el){const num=Math.max(0,parseFloat(String(val).replace(/[^0-9.-]/g,''))||0);P[key]=num;if(el)el.value=fmtF(num);activeScenarioIdx=-1;render();savePlannerState()}
-function USel(key,val){P[key]=val;activeScenarioIdx=-1;buildControls();render();savePlannerState()}
+function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'+key);const fn=SF[key];if(el&&fn)el.textContent=fn(P[key]);else if(el)el.textContent=P[key];markDirty();if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear')buildControls();render();savePlannerState()}
+function UTxt(key,val,el){const num=Math.max(0,parseFloat(String(val).replace(/[^0-9.-]/g,''))||0);P[key]=num;if(el)el.value=fmtF(num);markDirty();render();savePlannerState()}
+function USel(key,val){P[key]=val;markDirty();buildControls();render();savePlannerState()}
 // Comp cells additionally refresh their row's derived total, which isn't a P value.
 function UComp(key,val,el){
   const num=Math.max(0,parseFloat(String(val).replace(/[^0-9.-]/g,''))||0);
@@ -1310,13 +1331,13 @@ function UComp(key,val,el){
   const i=key.replace(/^norm(Cash|Stock)Y/,'');
   const tot=document.getElementById('ct_'+i);
   if(tot)tot.textContent=fmtF((P['normCashY'+i]||0)+(P['normStockY'+i]||0));
-  activeScenarioIdx=-1;render();savePlannerState();
+  markDirty();render();savePlannerState();
 }
 
 // Scenarios saved before a schema change still carry the old keys, so migrate the
 // scenario's OWN params before letting D fill in the gaps — merging D first would leave
 // current-generation defaults sitting alongside the scenario's superseded keys.
-function loadScenario(i){P={...D,...migrateP(scenarios[i].params)};activeScenarioIdx=i;buildControls();render();savePlannerState()}
+function loadScenario(i){P={...D,...migrateP(scenarios[i].params)};activeScenarioIdx=i;scenarioDirty=false;buildControls();render();savePlannerState()}
 
 function showSaveInput(){
   const area=document.getElementById('scenarioSaveArea');
@@ -1343,7 +1364,7 @@ async function saveScenario(n){
   const id=advUuid();
   const s={id,name:n,params:{...P},results:run(P),color:COLORS[scenarios.length%COLORS.length]};
   scenarios.push(s);
-  activeScenarioIdx=scenarios.length-1;
+  activeScenarioIdx=scenarios.length-1;scenarioDirty=false;
   buildControls();render();savePlannerState();
   try{
     const r=await fetch('/api/scenarios',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:s.id,name:s.name,color:s.color,params:s.params,results:s.results})});
@@ -1361,7 +1382,7 @@ async function saveScenario(n){
 
 async function updateScenario(i){
   scenarios[i].params={...P};scenarios[i].results=run(P);
-  activeScenarioIdx=i;
+  activeScenarioIdx=i;scenarioDirty=false;
   const s=scenarios[i];
   buildControls();render();savePlannerState();
   try{
@@ -1374,7 +1395,7 @@ async function deleteScenario(i){
   const s=scenarios[i];
   scenarios.splice(i,1);
   if(!scenarios.length)compareMode=false;
-  if(activeScenarioIdx===i)activeScenarioIdx=-1;
+  if(activeScenarioIdx===i){activeScenarioIdx=-1;scenarioDirty=false;}
   else if(activeScenarioIdx>i)activeScenarioIdx--;
   // Compare tab's diff-view selector holds a scenario index too — without this it goes
   // stale after a delete (either points past the end, silently hiding the diff table, or
@@ -1542,8 +1563,9 @@ function render(){
   const nap=document.getElementById('nancy_preview');
   if(nap){const matYr=P.nancyRampYear+P.nancyRampYears;const nc=Math.min(P.nancyMaxClients,P.nancyRampClients+(P.nancyMaxClients-P.nancyRampClients)*Math.max(0,Math.min(1,(matYr-P.nancyRampYear)/P.nancyRampYears)));nap.textContent=`${matYr}: ~${Math.round(nc)} clients → ${fmtF(Math.round(nc*P.nancyHourlyRate*P.nancyWeeksPerYear))} gross`}
   let sc='';if(scenarios.length>0){sc='<div class="scenario-bar"><span style="font-size:7px;color:var(--t3);font-weight:600">SAVED:</span>';
-    scenarios.forEach((s,i)=>{const isA=activeScenarioIdx===i;sc+=`<div class="scenario-chip" onclick="loadScenario(${i})" style="border-color:${isA?s.color:s.color+'40'};color:${s.color};${isA?'background:'+s.color+'15':''}"><span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:${s.color}"></span>${advEscape(s.name)}${isA?' ✓':''}<span class="x" onclick="event.stopPropagation();deleteScenario(${i})">✕</span></div>`});
-    if(activeScenarioIdx===-1)sc+=`<span style="font-size:7px;color:var(--t3);font-style:italic;padding:3px">● Unsaved</span>`;sc+='</div>'}
+    scenarios.forEach((s,i)=>{const isA=activeScenarioIdx===i;sc+=`<div class="scenario-chip" onclick="loadScenario(${i})" style="border-color:${isA?s.color:s.color+'40'};color:${s.color};${isA?'background:'+s.color+'15':''}"><span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:${s.color}"></span>${advEscape(s.name)}${isA?(scenarioDirty?' •':' ✓'):''}<span class="x" onclick="event.stopPropagation();deleteScenario(${i})">✕</span></div>`});
+    if(activeScenarioIdx===-1)sc+=`<span style="font-size:7px;color:var(--t3);font-style:italic;padding:3px">● Unsaved</span>`;
+    else if(scenarioDirty)sc+=`<span style="font-size:7px;color:var(--a);font-style:italic;padding:3px">● Edited \u2014 not yet saved to this case</span>`;sc+='</div>'}
   document.getElementById('scenarioBar').innerHTML=sc;
   renderSnapshotBar();
   const labels=R.map(r=>String(r.yr));const newKey=_chartKey();const reuseChart=(newKey===_lastChartKey&&!!charts.main);if(!reuseChart)destroyCharts();_lastChartKey=newKey;const ca=document.getElementById('chartArea');
@@ -4357,7 +4379,7 @@ async function advAcceptProposals(name){
   const id=advUuid();
   const s={id,name,params:aiP,results:run(aiP),color:COLORS[scenarios.length%COLORS.length]};
   scenarios.push(s);
-  activeScenarioIdx=scenarios.length-1;
+  activeScenarioIdx=scenarios.length-1;scenarioDirty=false;
   fetch('/api/scenarios',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:s.id,name:s.name,color:s.color,params:s.params})}).catch(()=>{});
   savePlannerState();
   document.getElementById('advProposalsPanel')?.remove();
@@ -4378,7 +4400,7 @@ async function advUpdateExistingScenario(i){
   scenarios[i].params=aiP;
   scenarios[i].results=run(aiP);
   const s=scenarios[i];
-  activeScenarioIdx=i;
+  activeScenarioIdx=i;scenarioDirty=false;
   document.getElementById('advProposalsPanel')?.remove();
   advPendingProposals=null;
   showToast('✓ Updated scenario: "'+s.name+'"','green');
@@ -4401,7 +4423,10 @@ function advApplyToLivePlan(){
   // pending, those edits are preserved instead of silently reverted.
   const delta={};advPendingProposals.changes.forEach(c=>{delta[c.key]=c.value});
   P={...D,...migrateP({...P,...delta})};
-  activeScenarioIdx=-1;
+  // Stay inside whatever case is loaded and mark it edited, rather than ejecting. The
+  // changes are applied either way; this just preserves the option to save them back into
+  // the case instead of forcing "save as new".
+  markDirty();
   document.getElementById('advProposalsPanel')?.remove();
   advPendingProposals=null;
   showToast('✓ Applied to your live plan','green');

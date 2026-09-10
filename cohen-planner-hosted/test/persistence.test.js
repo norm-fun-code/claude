@@ -5,7 +5,7 @@ const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8
 const source=html.slice(html.indexOf('let _saveTimer=null;'),html.indexOf('// Saved-state migration lives in'));
 function harness(fetch){
   const statuses=[];let timer;
-  const ctx=vm.createContext({fetch,JSON,Promise,Error,P:{homePrice:2000000},compareMode:false,activeTab:'home',activeScenarioIdx:-1,monarchSnapshot:null,
+  const ctx=vm.createContext({fetch,JSON,Promise,Error,P:{homePrice:2000000},compareMode:false,activeTab:'home',activeScenarioIdx:-1,scenarioDirty:false,monarchSnapshot:null,
     setSyncStatus:s=>statuses.push(s),setTimeout:fn=>{timer=fn;return 1;},clearTimeout:()=>{timer=null;}});
   vm.runInContext(source,ctx);
   return{ctx,statuses,call:code=>vm.runInContext(code,ctx),flush:()=>timer?.()};
