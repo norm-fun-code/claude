@@ -1253,7 +1253,12 @@ You also have monarch_* tools to read Norm's REAL Monarch Money data (accounts, 
                 lifetimeHeldSharesSold: proj.tSHold,
                 lifetimeStripeGainsTax: proj.tSGainTax,
                 minLiquid: Math.min(...R.map(r => r.liq)),
+                // Cash gap = shortfall on cash pay alone (closed by selling that year's
+                // vest). Income gap = what is short even after selling every vesting share,
+                // which is the figure that actually draws down savings.
                 worstCashGap: Math.max(...R.map(r => r.gap || 0)),
+                worstIncomeGap: Math.max(...R.map(r => r.incGap || 0)),
+                yearsWithIncomeGap: R.filter(r => (r.incGap || 0) > 0).length,
               };
             } catch (e) {
               result = { error: e.message };

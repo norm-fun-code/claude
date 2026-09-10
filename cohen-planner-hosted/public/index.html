@@ -854,8 +854,8 @@ function toggleInflation(){inflationView=!inflationView;render();savePlannerStat
 // ═══ CSV EXPORT ═══
 function exportCSV(){
   const{R}=run(P);
-  const cols=['Year','Norm Cash','Norm Stripe Stock','Norm Total W2','Nancy Gross','Total Gross','All-in Tax','Eff Rate %','Cash Available','Housing','Living','Childcare','Tuition','Total Expenses','Operating Surplus','Cash Gap','Stripe Vested','Stripe Sold For Cash','Stripe Retained','Stripe Held Shares Sold','Stripe Gains Tax','Stripe Appreciation','Stripe Equity','Portfolio Sold','Tax on Portfolio Sales','Liquid (ex-Stripe)','Home Equity','Net Worth','Stripe % of NW','401k'];
-  const rows=R.map(r=>[r.yr,r.normCash,r.normStock,r.normG,r.nancyG,r.gross,r.tax,(r.effRate*100).toFixed(2),r.inc,r.h,r.liv,r.cc,r.tu,r.totE,r.surp,r.gap,r.sNew,r.sSold,r.sRet,r.sHold,r.sGainTax,r.sAppr,r.sEnd,r.sold,r.txS,r.liq,r.eq,r.nw,(r.sPct*100).toFixed(1),r.k401]);
+  const cols=['Year','Norm Cash','Norm Stripe Stock','Norm Total W2','Nancy Gross','Total Gross','All-in Tax','Eff Rate %','Cash Available','Housing','Living','Childcare','Tuition','Total Expenses','Operating Surplus','Cash Gap','Income Gap','Total Cash Need','Stripe Vested','Stripe Sold For Cash','Stripe Retained','Stripe Held Shares Sold','Stripe Gains Tax','Stripe Appreciation','Stripe Equity','Portfolio Sold','Tax on Portfolio Sales','Liquid (ex-Stripe)','Home Equity','Net Worth','Stripe % of NW','401k'];
+  const rows=R.map(r=>[r.yr,r.normCash,r.normStock,r.normG,r.nancyG,r.gross,r.tax,(r.effRate*100).toFixed(2),r.inc,r.h,r.liv,r.cc,r.tu,r.totE,r.surp,r.gap,r.incGap,r.need,r.sNew,r.sSold,r.sRet,r.sHold,r.sGainTax,r.sAppr,r.sEnd,r.sold,r.txS,r.liq,r.eq,r.nw,(r.sPct*100).toFixed(1),r.k401]);
   const csv=[cols.join(','),...rows.map(r=>r.join(','))].join('\n');
   const blob=new Blob([csv],{type:'text/csv'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
@@ -1609,7 +1609,7 @@ function render(){
   if(activeTab==='stripe'){renderStripeTab(R,P);return}
   if(activeTab==='projection'&&_projView==='table'){
     // Wide by necessity — this is the audit view. The .tw wrapper scrolls horizontally.
-    const cols=['Yr','Norm cash','Norm stock','Nancy','Gross','Tax','Eff%','Cash avail','Expenses','Cash gap','Stripe sold','Stripe kept','Liquid','Stripe eq','Home eq','NW'];
+    const cols=['Yr','Norm cash','Norm stock','Nancy','Gross','Tax','Eff%','Cash avail','Expenses','Cash gap','Income gap','Stripe sold','Stripe kept','Liquid','Stripe eq','Home eq','NW'];
     ca.innerHTML=`<div class="tw"><table><thead><tr>${cols.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{
       const bg=r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';
       const dash=v=>v>0?fmt(v):'—';
@@ -1623,7 +1623,7 @@ function render(){
         `<td style="color:var(--a)">${(r.effRate*100).toFixed(1)}%</td>`+
         `<td style="color:var(--g)">${fmt(r.inc)}</td>`+
         `<td>${fmt(r.totE)}</td>`+
-        `<td style="color:${r.gap>0?'var(--r)':'var(--t3)'};font-weight:${r.gap>0?600:400}">${r.gap>0?'−'+fmt(r.gap):'—'}</td>`+
+        `<td style="color:${r.gap>0?'var(--a)':'var(--t3)'}" title="Shortfall against cash pay alone — how much of the year's vest must be sold">${r.gap>0?'−'+fmt(r.gap):'—'}</td>`+`<td style="color:${r.incGap>0?'var(--r)':'var(--t3)'};font-weight:${r.incGap>0?600:400}" title="Still short after selling every vesting share — this is what draws on savings">${r.incGap>0?'−'+fmt(r.incGap):'—'}</td>`+
         `<td style="color:#6772e5">${dash(r.sSold)}</td>`+
         `<td style="color:#6772e5;font-weight:600">${dash(r.sRet)}</td>`+
         `<td style="color:var(--b)">${fmt(r.liq)}</td>`+
@@ -1771,7 +1771,7 @@ function renderStripeTab(R,P){
   if(row.sHold>0){
     h+=`<div class="sc" style="margin-bottom:12px;border-color:rgba(103,114,229,.3)">
       <h3>◆ Held shares sold in ${yr}</h3>
-      <p style="line-height:1.6">This year's vest and the portfolio (down to its ${fmt(P.liquidReserveFloor??500000)} reserve floor) still left ${fmt(row.gap-row.sSold)} uncovered, so <strong style="color:#6772e5">${fmt(row.sHold)}</strong> of Stripe you already held was sold — realising <strong>${fmt(row.sGainTax)}</strong> of capital-gains tax, just <strong>${(row.sGainTax/row.sHold*100).toFixed(1)}%</strong> of the proceeds.
+      <p style="line-height:1.6">This year's vest and the portfolio (down to its ${fmt(P.liquidReserveFloor??500000)} reserve floor) still left ${fmt(row.need-row.sSold)} uncovered, so <strong style="color:#6772e5">${fmt(row.sHold)}</strong> of Stripe you already held was sold — realising <strong>${fmt(row.sGainTax)}</strong> of capital-gains tax, just <strong>${(row.sGainTax/row.sHold*100).toFixed(1)}%</strong> of the proceeds.
       <br><br>That rate is low because the sale takes your <em>least appreciated</em> lots first: the newest shares carry almost no gain above their vest price, so they cost almost nothing in tax to sell. Selling at vest is still free; this is the next cheapest thing.</p>
     </div>`;
   }
@@ -1787,7 +1787,7 @@ function renderStripeTab(R,P){
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:7px;font-size:10.5px;color:var(--t2);line-height:1.7">
         <strong style="color:${V};font-family:'SF Mono',monospace">${fmt(row.sNew)}</strong> vested
         <span style="color:var(--t3)">→</span>
-        <strong style="color:#cd3d64;font-family:'SF Mono',monospace">${fmt(row.sSold)}</strong> covered ${row.gap>0?`a ${fmt(row.gap)} cash gap`:'cash needs'}
+        <strong style="color:#cd3d64;font-family:'SF Mono',monospace">${fmt(row.sSold)}</strong> covered ${row.need>0?`a ${fmt(row.need)} cash need`:'cash needs'}
         <span style="color:var(--t3)">→</span>
         <strong style="color:#1a8754;font-family:'SF Mono',monospace">${fmt(row.sRet)}</strong> kept
         ${row.sRet>0&&R.indexOf(row)<R.length-1?`<span style="color:var(--t3)">→</span> worth <strong style="color:${V};font-family:'SF Mono',monospace">${fmt(Math.round(fv))}</strong> by ${last.yr}`:''}
@@ -1876,6 +1876,40 @@ function renderStripeReconcile(actual){
 // against r.liq alone would show the household as wildly ahead of plan.
 function planLiquidComparable(r){return (r?r.liq:0)+(r?r.sEnd:0)}
 
+// Shared donut builder. The portfolio already had one hand-rolled doughnut; every pie added
+// since routes through here so legends, tooltips and in-slice labels stay consistent.
+function makeDonut(canvasId,labels,data,colors,fmtVal,showLegend){
+  const el=document.getElementById(canvasId);
+  if(!el||!data.length)return null;
+  const total=data.reduce((a,b)=>a+b,0);
+  const pctOf=v=>total>0?v/total*100:0;
+  return new Chart(el.getContext('2d'),{
+    type:'doughnut',
+    data:{labels,datasets:[{data,backgroundColor:colors.slice(0,data.length),borderWidth:2,borderColor:'rgba(255,255,255,.85)'}]},
+    options:{
+      responsive:true,maintainAspectRatio:false,cutout:'60%',
+      plugins:{
+        // Off where the card already lists each slice with its dollar value — two legends
+        // for one chart is noise, and the itemised one carries strictly more information.
+        legend:{display:showLegend===true,position:'bottom',labels:{font:{size:9.5,family:"'Inter',sans-serif"},color:'#425466',padding:8,
+          usePointStyle:true,pointStyle:'circle',boxWidth:7,boxHeight:7,
+          generateLabels:chart=>{const ds=chart.data.datasets[0];
+            return chart.data.labels.map((lbl,i)=>({text:`${lbl} ${pctOf(ds.data[i]).toFixed(0)}%`,
+              fillStyle:ds.backgroundColor[i],strokeStyle:'transparent',hidden:false,index:i}));}}},
+        tooltip:{..._GLASS_TOOLTIP,callbacks:{label:ctx=>`  ${ctx.label}: ${(fmtVal||fmt)(ctx.raw)} (${pctOf(ctx.raw).toFixed(1)}%)`}},
+        datalabels:{color:'#fff',font:{size:9.5,weight:'bold',family:"'Inter',sans-serif"},
+          formatter:v=>pctOf(v)>=7?pctOf(v).toFixed(0)+'%':'',anchor:'center',align:'center'},
+      }
+    },
+    plugins:[ChartDataLabels]
+  });
+}
+
+let _acctDonutSpec=null;
+function mountAccountDonut(){
+  if(!_acctDonutSpec||!document.getElementById('acctDonut'))return;
+  charts.acct=makeDonut('acctDonut',_acctDonutSpec.labels,_acctDonutSpec.data,_acctDonutSpec.colors);
+}
 function renderMonarchAccountsCard(){
   if(!monarchAccounts||monarchAccounts.length===0)return'';
   const catOrder=['cash','investment','retirement','other_asset','other','liability'];
@@ -1887,15 +1921,19 @@ function renderMonarchAccountsCard(){
     if(!groups[c])groups[c]=[];
     groups[c].push(a);
   }
+  // Asset side only — a liability share of a pie is meaningless, so debts stay in the list.
+  const assetTotal=monarchAccounts.filter(a=>(a.balance||0)>0).reduce((s,a)=>s+a.balance,0);
   const rows=catOrder.filter(c=>groups[c]).map(c=>{
     const accts=groups[c];
     const total=accts.reduce((s,a)=>s+(a.balance||0),0);
     const isLiab=c==='liability';
+    const share=!isLiab&&assetTotal>0?Math.max(0,total)/assetTotal*100:0;
     return`<div style="margin-bottom:10px">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
-        <span style="font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3)">${catLabel[c]}</span>
+        <span style="font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3)">${catLabel[c]}${!isLiab?` <span style="color:var(--t3);font-weight:600;letter-spacing:0">· ${share.toFixed(0)}%</span>`:''}</span>
         <span style="font-size:11px;font-weight:700;font-family:'SF Mono',monospace;color:${isLiab?'var(--r)':'var(--tx)'}">${isLiab?'−':''}${fmt(Math.abs(total))}</span>
       </div>
+      ${!isLiab?`<div style="height:4px;border-radius:2px;background:var(--s2);margin-bottom:6px;overflow:hidden"><div style="width:${share}%;height:100%;background:${catColor[c]};border-radius:2px"></div></div>`:''}
       ${accts.map(a=>{
         const nm=a.name||'';
         const isStripe=nm.toLowerCase().includes('stripe');
@@ -1910,12 +1948,47 @@ function renderMonarchAccountsCard(){
       }).join('')}
     </div>`;
   }).join('');
+  // Stripe gets its own slice rather than hiding inside Investments — the plan treats it as
+  // a separate asset class, so the picture of where the money sits should too.
+  const isStripeAcct=a=>typeof a.name==='string'&&a.name.toLowerCase().includes('stripe');
+  const stripeTot=monarchAccounts.filter(a=>isStripeAcct(a)&&(a.balance||0)>0).reduce((s,a)=>s+a.balance,0);
+  const acctSeries=[];
+  for(const c of catOrder){
+    if(c==='liability'||!groups[c])continue;
+    const t=groups[c].filter(a=>!isStripeAcct(a)&&(a.balance||0)>0).reduce((s,a)=>s+a.balance,0);
+    // Label the investments slice "ex-Stripe": the account LIST groups by Monarch's own
+    // categories (where Stripe is an investment account), but this donut breaks Stripe out as
+    // its own asset class. Without the qualifier the same word reads 44% here and 78% below.
+    const lbl=c==='investment'&&stripeTot>0?catLabel[c]+' (ex-Stripe)':catLabel[c];
+    // Investments must not sit next to Stripe in near-identical violet — Stripe keeps its
+    // brand colour, so the diversified slice moves to teal.
+    if(t>0)acctSeries.push([lbl,t,{cash:'#0073e6',investment:'#14b8a6',retirement:'#7c3aed',other_asset:'#8898aa',other:'#8898aa'}[c]||'#8898aa']);
+  }
+  if(stripeTot>0)acctSeries.push(['Stripe',stripeTot,'#6772e5']);
+  acctSeries.sort((a,b)=>b[1]-a[1]);
+  const acctDonutLabels=acctSeries.map(x=>x[0]),acctDonutData=acctSeries.map(x=>x[1]),acctDonutColors=acctSeries.map(x=>x[2]);
+  // The card returns markup; the canvas can only be bound once the caller has inserted it.
+  _acctDonutSpec=acctDonutData.length>1?{labels:acctDonutLabels,data:acctDonutData,colors:acctDonutColors}:null;
   const totalNw=monarchAccounts.reduce((s,a)=>s+(a.balance||0),0);
   return`<div style="margin-top:12px;background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <span style="font-size:13px;font-weight:700;color:var(--tx)">All Accounts · Monarch</span>
       <span style="font-size:13px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">${fmt(totalNw)} ${monarchSnapshot?.partial?'known subtotal':'NW'}</span>
     </div>
+    ${acctDonutData.length>1?`<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:center;margin-bottom:14px">
+      <div style="height:190px;position:relative"><canvas id="acctDonut"></canvas></div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${acctDonutData.map((v,i)=>`<div style="display:flex;align-items:center;gap:7px;font-size:10px">
+          <span style="width:9px;height:9px;border-radius:2px;background:${acctDonutColors[i]};flex:none"></span>
+          <span style="color:var(--t2);flex:1">${acctDonutLabels[i]}</span>
+          <span style="font-family:'SF Mono',monospace;font-weight:600;color:var(--tx)">${fmt(v)}</span>
+        </div>`).join('')}
+        <div style="border-top:1px solid var(--bd);margin-top:3px;padding-top:6px;display:flex;font-size:10px">
+          <span style="color:var(--t3);flex:1">Total assets</span>
+          <span style="font-family:'SF Mono',monospace;font-weight:700;color:var(--tx)">${fmt(assetTotal)}</span>
+        </div>
+      </div>
+    </div>`:''}
     ${monarchSnapshot?.partial?`<div role="status" style="padding:12px;margin-bottom:12px;background:var(--a-soft);border-radius:8px"><strong>Incomplete totals</strong><br>${monarchAccounts.length} accounts have balances. Monarch returned no balance for: ${(monarchSnapshot.missingAccounts||[]).map(a=>advEscape(a.name)).join(', ')}. Subtotals below exclude these accounts; no $0 balance has been substituted.</div>`:''}
     ${rows}
   </div>`;
@@ -1939,6 +2012,7 @@ function renderPortfolioTab(R,P){
 
   if(monarchSnapshot?.source){
     ca.innerHTML=`<div style="padding:12px"><h2 style="font-size:20px">Your accounts, connected</h2><p style="color:var(--t2)">Latest Monarch balances via NormOS · ${new Date(monarchSnapshot.syncedAt).toLocaleString()}. Individual holdings and performance are currently unavailable.</p>${renderMonarchAccountsCard()}</div>`;
+    mountAccountDonut();
     return;
   }
 
@@ -2004,6 +2078,22 @@ function renderPortfolioTab(R,P){
     if(stripeIdx>=0)donutColors[stripeIdx]='#6772e5';
   }
 
+  // Asset mix by kind of security. Answers a different question from the per-holding
+  // donut — not "what do I own most of" but "how much of this is index vs single names
+  // vs crypto vs an illiquid private position".
+  const TYPE_META={equity:['Single stocks','#cd3d64'],etf:['ETFs','#14b8a6'],mutual_fund:['Mutual funds','#0073e6'],
+    cash:['Cash','#8898aa'],crypto:['Crypto','#bf6900'],bond:['Bonds','#059669'],option:['Options','#a855f7']};
+  const typeTot={};
+  for(const h of holdings){
+    const t=h.securityType||'other';
+    typeTot[t]=(typeTot[t]||0)+(h.value||0);
+  }
+  const mixSeries=Object.entries(typeTot).filter(([,v])=>v>0)
+    .map(([t,v])=>[(TYPE_META[t]||[t.replace(/_/g,' '),'#94a3b8'])[0],v,(TYPE_META[t]||['','#94a3b8'])[1]]);
+  if(stripeBalance>0)mixSeries.push(['Stripe (private)',stripeBalance,'#6772e5']);
+  mixSeries.sort((a,b)=>b[1]-a[1]);
+  const mixLabels=mixSeries.map(x=>x[0]),mixData=mixSeries.map(x=>x[1]),mixColors=mixSeries.map(x=>x[2]);
+
   function colorPct(v){return v>0?'var(--g)':v<0?'var(--r)':'var(--t3)';}
   function signFmt(v){const s=v>=0?'+':'';return s+fmt(v);}
   function signPct(v){const s=v>=0?'+':'';return s+v.toFixed(2)+'%';}
@@ -2026,6 +2116,20 @@ function renderPortfolioTab(R,P){
       {l:'Holdings',v:holdings.length,s:holdings.filter(h=>h.securityType!=='cash').length+' securities + cash',c:'var(--tx)'},
     ].map(k=>`<div class="kpi"><div class="kpi-l">${k.l}</div><div class="kpi-v" style="color:${k.c};font-size:14px">${k.v}</div><div class="kpi-s">${k.s}</div></div>`).join('')}
   </div>
+
+  ${mixData.length>1?`<div class="glass-card" style="padding:14px;margin-bottom:12px">
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:10px">Asset Mix</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:center">
+      <div style="height:180px;position:relative"><canvas id="mixDonut"></canvas></div>
+      <div style="display:flex;flex-direction:column;gap:5px">
+        ${mixSeries.map(([lb,v,col])=>`<div style="display:flex;align-items:center;gap:7px;font-size:10px">
+          <span style="width:9px;height:9px;border-radius:2px;background:${col};flex:none"></span>
+          <span style="color:var(--t2);flex:1">${lb}</span>
+          <span style="font-family:'SF Mono',monospace;font-weight:600;color:var(--tx)">${fmt(v)}</span>
+        </div>`).join('')}
+      </div>
+    </div>
+  </div>`:''}
 
   <div class="pf-split">
     <div class="glass-card" style="padding:14px">
@@ -2190,6 +2294,8 @@ function renderPortfolioTab(R,P){
 
   ${renderMonarchAccountsCard()}
   </div>`;
+  mountAccountDonut();
+  if(mixData.length>1)charts.mix=makeDonut('mixDonut',mixLabels,mixData,mixColors);
 
   if(donutData.length>0){
     const dCtx=document.getElementById('portfolioDonut').getContext('2d');
@@ -3876,6 +3982,7 @@ LIFECYCLE PROJECTIONS (current plan)
 • Grand total at 65: ${fmt(y58.nw+y58.k401)}
 • Years that actually draw on savings or held Stripe: ${deficitYrs} of ${R.length}
 • Years where cash pay alone falls short but that year's VEST covers it entirely (nothing liquidated): ${vestOnlyYrs}. Do not describe these as deficit years or as drawing down savings — they aren't.
+• Two distinct gap measures per year, both in the projection table. CASH GAP = expenses minus cash pay, i.e. how much of that year's vest must be sold; ${R.filter(r=>r.gap>0).length} of ${R.length} years have one, and closing it costs no accumulated wealth. INCOME GAP = what is still short after selling EVERY vesting share; only ${R.filter(r=>r.incGap>0).length} years have one, and that is the figure that forces a draw on savings or held Stripe. Worst cash gap ${fmt(Math.max(...R.map(r=>r.gap)))}, worst income gap ${fmt(Math.max(...R.map(r=>r.incGap)))}. Quoting the cash gap as if it were a deficit overstates the problem.
 • Worst single year: ${fmt(worst)} (peak crunch)
 • Total cumulative deficit: ${fmt(totalDef)}
 • Total stock sold to fund deficits: ${fmt(totSold)}

@@ -385,7 +385,18 @@ function run(p,rets){
       nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,
       inc:Math.round(inc),netTC:tax.net,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
       liv:Math.round(liv),cc:Math.round(cc),tu:Math.round(tu),totE:Math.round(totE),
-      surp:Math.round(surp),gap:Math.round(Math.max(0,-netCash)),dpOut:Math.round(dpThis),
+      surp:Math.round(surp),
+      // Two different questions, and reporting only one of them was misleading.
+      //   gap    — shortfall against CASH pay alone. Says how much of the year's vest has to
+      //            be sold. Closing it consumes no accumulated wealth.
+      //   incGap — what is still short after selling EVERY vesting share. This is the one
+      //            that actually eats into savings or previously held Stripe.
+      // incGap is always <= gap, and the two differ by exactly that year's grant.
+      gap:Math.round(Math.max(0,-surp)),
+      incGap:Math.round(Math.max(0,totE-tax.net)),
+      // Total cash the funding waterfall must source, including the down payment — a capital
+      // outflow, not an operating shortfall, which is why it is kept separate from both gaps.
+      need:Math.round(Math.max(0,-netCash)),dpOut:Math.round(dpThis),
       txS:Math.round(txS),sold:Math.round(sold),liq:Math.round(liq),eq:Math.round(eq),
       sBeg:Math.round(stripeBegin),sNew:Math.round(normStock),sSold:Math.round(stripeSold),
       // Derived from the two rounded figures rather than rounded independently, so the
