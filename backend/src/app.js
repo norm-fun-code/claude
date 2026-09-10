@@ -85,6 +85,9 @@ function createApp({ bootTime, port, quiet } = {}) {
     if (process.env.NODE_ENV === 'production') console.error(`\n⚠️  ${msg} Set it now.\n`);
     else console.warn(msg);
   }
+  // Separate, fail-closed read-only integration; does not bypass the /api gate.
+  app.use('/integrations/planner', require('./routes/planner-accounts').createPlannerAccountsRouter());
+
   app.use('/api', createTokenGate('NORMOS_API_TOKEN', { skip: (req) => req.path === '/health' || isAdminPath(req.path), failClosedInProd: true }));
 
   // Health-domain routes (server health check, Apple Health + Eight Sleep
