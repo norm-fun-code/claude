@@ -689,6 +689,23 @@ async function checkMonarchStatus(){
 // Turns "it isn't populating" into a specific answer without needing server logs. Reports
 // which precondition failed — token, sync toggle, auth, or a rejected query — and shows the
 // upstream message verbatim so a schema mismatch names the field it choked on.
+// Reachable from the command palette regardless of what the view is currently showing.
+// Renders into a floating panel when the inline slot isn't on screen.
+function openMonarchDiagnostics(){
+  if(!document.getElementById('monarchDiag')){
+    const d=document.createElement('div');
+    d.id='monarchDiagOverlay';
+    d.style.cssText='position:fixed;inset:0;background:rgba(10,37,64,.4);z-index:9998;display:flex;align-items:center;justify-content:center;padding:20px';
+    d.innerHTML=`<div style="background:var(--s1);border-radius:12px;padding:18px;max-width:620px;width:100%;max-height:80vh;overflow:auto">
+      <div id="monarchDiag"></div>
+      <button onclick="this.closest('#monarchDiagOverlay').remove()" style="margin-top:12px;padding:6px 12px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px">Close</button>
+    </div>`;
+    d.addEventListener('click',e=>{if(e.target===d)d.remove()});
+    document.body.appendChild(d);
+  }
+  runMonarchDiagnostics();
+}
+
 async function runMonarchDiagnostics(){
   const el=document.getElementById('monarchDiag');
   if(el)el.innerHTML='<div style="font-size:11px;color:var(--t3);padding:10px">Checking…</div>';
@@ -2040,11 +2057,6 @@ function renderPortfolioTab(R,P){
   }
 
 
-  if(monarchSnapshot?.source){
-    ca.innerHTML=`<div style="padding:12px"><h2 style="font-size:20px">Your accounts, connected</h2><p style="color:var(--t2)">Latest Monarch balances via NormOS · ${new Date(monarchSnapshot.syncedAt).toLocaleString()}. Individual holdings couldn\u2019t be loaded \u2014 showing account balances instead.</p>${renderMonarchAccountsCard()}</div>`;
-    mountAccountDonut();
-    return;
-  }
 
   // Auto-load investments on first visit (guard prevents concurrent re-entry)
   if(monarchInvestments===null){
@@ -2069,7 +2081,8 @@ function renderPortfolioTab(R,P){
       <div style="font-size:11px;color:var(--t3);margin-bottom:14px">GetInvestments returned an error. Monarch may not have holdings data for your accounts.</div>
       <button onclick="runMonarchDiagnostics()" style="padding:7px 14px;background:var(--s2);color:var(--t2);border:1px solid var(--bd);border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px;margin-right:6px">🩺 Diagnose connection</button>
       <button onclick="loadMonarchInvestments()" style="padding:7px 14px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px">Retry</button>
-    </div>`;
+    ${renderMonarchAccountsCard()}</div>`;
+    mountAccountDonut();
     return;
   }
 
@@ -3604,6 +3617,7 @@ function _paletteCommands(){
     {icon:'🎚️',label:'Which levers matter',hint:'Decisions',run:()=>setTab('sensitivity')},
     {icon:'⚖',label:'Compare saved',hint:'Decisions',run:()=>setTab('compare')},
     {icon:'📊',label:'Holdings & accounts',hint:'Today',run:()=>setTab('portfolio')},
+    {icon:'🩺',label:'Diagnose Monarch connection',hint:'Support',run:()=>{setTab('portfolio');setTimeout(()=>openMonarchDiagnostics(),350)}},
     {icon:'🤖',label:'AI Advisor',hint:'View',run:()=>setTab('advisor')},
     {icon:'🎬',label:'Play plan as a story',hint:'Story mode',run:()=>openStoryMode()},
     {icon:inflationView?'🔢':'💵',label:inflationView?'Show nominal dollars':'Show real (inflation-adjusted) dollars',hint:'Toggle',run:()=>toggleInflation()},

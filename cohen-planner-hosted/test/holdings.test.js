@@ -202,3 +202,28 @@ describe('connection diagnostics', () => {
     expect(JSON.stringify(d)).not.toContain('super-secret-value');
   });
 });
+
+// ── The guard that silently disabled the whole feature ───────────────────
+describe('portfolio view reaches the investments fetch', () => {
+  const src = require('fs').readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('function renderPortfolioTab'), src.indexOf('\n}', src.indexOf('function renderPortfolioTab')));
+
+  it('does not short-circuit on a snapshot having a source', () => {
+    // Every snapshot carries source:'normos-bridge' or 'normos-api', so an early return on
+    // `monarchSnapshot?.source` meant loadMonarchInvestments() was never called and holdings
+    // could never populate — regardless of the token. Correct while holdings were a stubbed
+    // 503; silently disabled the feature the moment they worked.
+    expect(fn).not.toMatch(/if\(monarchSnapshot\?\.source\)\{[\s\S]{0,400}?return;/);
+  });
+
+  it('still triggers the load when nothing is cached', () => {
+    expect(fn).toMatch(/monarchInvestments===null/);
+    expect(fn).toMatch(/loadMonarchInvestments\(\)/);
+  });
+
+  it('keeps the accounts card and the diagnostic on the failure path', () => {
+    const fail = fn.slice(fn.indexOf('monarchInvestments===false'));
+    expect(fail).toMatch(/renderMonarchAccountsCard\(\)/); // balances not lost when holdings fail
+    expect(fail).toMatch(/runMonarchDiagnostics\(\)/);
+  });
+});
