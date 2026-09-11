@@ -1627,6 +1627,9 @@ function _introAnimate(){
 }
 function render(){
   if(!_planLoaded)return;
+  document.getElementById('summaries').innerHTML='';
+  document.body.dataset.view=activeTab;
+  document.body.dataset.subview=activeTab==='home'?_homeView:activeTab==='today'?_todayView:activeTab==='projection'?_projView:'';
   document.body.classList.toggle('home-view',activeTab==='home');
   document.body.classList.toggle('cockpit-view',activeTab==='cockpit');
   document.querySelectorAll('.tabs button[role=tab]').forEach(b=>{const on=b.dataset.tab===activeTab;b.classList.toggle('active',on);b.setAttribute('aria-selected',String(on));});
@@ -1694,8 +1697,9 @@ function render(){
     if(tg)tg.innerHTML=(!cfg&&!chartOpts)?'':
       (cfg?cfg.views.map(([k,ic,lb])=>{const on=cfg.get()===k;
         return `<button onclick="setSubView('${k}')" aria-pressed="${on}" class="${on?'active':''}">${UI.icon(ic)}${lb}</button>`;
-      }).join(''):'')+
-      (chartOpts?`<span style="margin-left:auto;display:flex;gap:4px;align-self:center">${chartOpts}</span>`:'');
+      }).join(''):'');
+    const toolbar=document.getElementById('chartOptions');
+    if(toolbar){toolbar.hidden=!chartOpts;toolbar.innerHTML=chartOpts;}
   }
   if(activeTab==='cockpit'){renderCockpit(R);return;}
   if(activeTab==='home'){
@@ -1716,8 +1720,8 @@ function render(){
   if(activeTab==='stripe'){renderStripeTab(R,P);return}
   if(activeTab==='projection'&&_projView==='table'){
     // Wide by necessity — this is the audit view. The .tw wrapper scrolls horizontally.
-    const cols=['Yr','Norm cash','Norm stock','Norm total','Nancy','Gross','Tax','Eff%','Cash avail','Expenses','Cash gap','Net flow','Stripe sold','Stripe kept','Liquid','Stripe eq','Home eq','NW'];
-    ca.innerHTML=`<div class="tw"><table><thead><tr>${cols.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{
+    const cols=['Year','Norm cash','Norm stock','Norm total','Nancy','Gross','Tax','Eff%','Cash avail','Expenses','Cash gap','Net flow','Stripe sold','Stripe kept','Liquid','Stripe eq','Home eq','NW ex-retirement'];
+    ca.innerHTML=`<div class="polish-table-note">Year-end projections · scroll for all columns · net worth excludes retirement</div><div class="tw polish-year-table" tabindex="0" aria-label="Annual projection details"><table><thead><tr>${cols.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{
       const bg=r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';
       const dash=v=>v>0?fmt(v):'—';
       return `<tr style="background:${bg}">`+
@@ -1959,14 +1963,14 @@ function renderStripeTab(R,P){
     </div>`;})()}
   </section>`;
 
-  h+=`<dl class="sq-facts ui-rise ui-rise-3">
+  h+=`<details class="polish-fold"><summary>Vest details · ${yr}</summary><dl class="sq-facts">
     <div><dt>Granted in ${yr}</dt><dd class="ui-num">${UI.money(row.sGross)}</dd></div>
     <div><dt>Withheld at vest</dt><dd class="ui-num">${UI.money(row.sVestTax)} <em>${(row.sVestRate*100).toFixed(0)}%</em></dd></div>
     <div><dt>Reached your account</dt><dd class="ui-num">${UI.money(row.sNew)}</dd></div>
     <div><dt>Taken as cash</dt><dd class="ui-num">${UI.money(row.sSold)}${row.sNew>0?` <em>${soldPct.toFixed(0)}% of the vest</em>`:''}</dd></div>
     <div><dt>Added to holdings</dt><dd class="ui-num">${UI.money(row.sAdded??row.sRet)}</dd></div>
     ${row.sInOpening>0?`<div><dt>Already in the opening balance</dt><dd class="ui-num">${UI.money(row.sInOpening)}</dd></div>`:''}
-  </dl>`;
+  </dl></details>`;
   if(row.sHold>0){
     h+=`<div class="sc" style="margin-bottom:12px;border-color:rgba(103,114,229,.3)">
       <h3>◆ Held shares sold in ${yr}</h3>
@@ -2002,8 +2006,8 @@ function renderStripeTab(R,P){
   // Lifetime totals are reference, not headline. Colour is reserved for the two figures
   // where it means something — appreciation is a gain, tax on it is a cost — so the rest
   // read as the neutral facts they are.
-  h+=`<section class="sq-totals">
-    <span class="ui-eyebrow">Across the plan · ${sy}–${last.yr}</span>
+  h+=`<details class="sq-totals polish-fold">
+    <summary>Lifetime totals · ${sy}–${last.yr}</summary>
     <dl class="sq-facts">
       <div><dt>Stock received</dt><dd class="ui-num">${UI.money(tot.n)}</dd></div>
       <div><dt>Sold for cash</dt><dd class="ui-num">${UI.money(tot.s)}${tot.n>0?` <em>${(tot.s/tot.n*100).toFixed(0)}% of all vesting</em>`:''}</dd></div>
@@ -2013,7 +2017,7 @@ function renderStripeTab(R,P){
       <div><dt>Tax on those gains</dt><dd class="ui-num"${tot.gt>0?' data-tone="cost"':''}>${UI.money(tot.gt)}</dd></div>
       <div><dt>Position at ${last.yr}</dt><dd class="ui-num">${UI.money(last.sEnd)} <em>${UI.pct(last.sPct,0)} of net worth</em></dd></div>
     </dl>
-  </section>`;
+  </details>`;
 
   // The waterfall never auto-sells previously retained or pre-existing Stripe. That is
   // deliberate, but it means a plan CAN drive the diversified pool below zero while a large
@@ -2371,7 +2375,7 @@ function renderWatchTab(R,P){
   h+=`<div class="wl-coverage ui-rise ui-rise-2">
     <span>${d.checksRun} of ${d.checksTotal} checks ran</span>
     <span>${d.counts.open} open${d.counts.suppressed?` · ${d.counts.suppressed} silenced`:''}</span>
-    <span>${advEscape(String(d.generatedAt))}</span>
+    <span title="${advEscape(String(d.generatedAt))}">${Number.isFinite(Date.parse(d.generatedAt))?new Date(d.generatedAt).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'Update time unavailable'}</span>
   </div>`;
   if(!complete)h+=`<div class="wl-banner" data-tone="warning">
       <p><strong>This is a partial picture.</strong> Some checks could not run, so the areas below are unexamined rather than clear.</p></div>`;
@@ -2852,7 +2856,7 @@ function renderSpendingTab(R,P){
       </div>
       <div style="display:flex;gap:5px;flex-wrap:wrap">
         ${running?`<span style="font-size:10px;color:var(--a);padding:5px 9px">⏳ Importing… ${(st.monthsImported||[]).length} months done</span>`
-          :`${[12,24,36].map(m=>`<button onclick="startBackfill(${m})" style="font-size:9.5px;padding:5px 10px;border-radius:5px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">Import ${m}mo</button>`).join('')}
+          :`<label class="polish-import">History <select id="spendImportMonths" aria-label="Months of history to import"><option value="12">12 months</option><option value="24">24 months</option><option value="36">36 months</option></select></label><button class="ui-btn" onclick="startBackfill(Number(document.getElementById('spendImportMonths').value))">Import</button>
              ${nTx?`<button onclick="runIncremental()" style="font-size:9.5px;padding:5px 10px;border-radius:5px;border:none;background:var(--accent);color:#fff;font-family:inherit;cursor:pointer">↻ Catch up</button>`:''}`}
       </div>
     </div>
@@ -3852,15 +3856,15 @@ function renderSensitivityTab(R,P){
   let h=`<div style="padding:2px">
   <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
     <div>
-      <div style="font-size:13px;font-weight:700;color:var(--tx)">🌪 Sensitivity — Tornado Chart</div>
+      <div style="font-size:13px;font-weight:700;color:var(--tx)">Which assumptions matter most?</div>
       <div style="font-size:10px;color:var(--t2);margin-top:2px">Impact on ${ey} NW per one-step change. Base: <strong>${fmt(baseNW)}</strong></div>
     </div>
     <div style="display:flex;gap:5px;flex-wrap:wrap">${presetBtns}</div>
   </div>
-  <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:10px">
-    <canvas id="tornadoChart" style="height:${chartH}px"></canvas>
+  <div class="polish-tornado" style="height:${chartH}px">
+    <canvas id="tornadoChart"></canvas>
   </div>
-  <div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;overflow:hidden">
+  <details class="polish-fold"><summary>Adjust step sizes & inspect amounts</summary><div class="polish-scroll"><div class="polish-lever-table">
     <div style="display:grid;grid-template-columns:148px 56px 1fr 1fr;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);padding:8px 12px;border-bottom:1px solid var(--bd);background:var(--s2)">
       <div>Parameter</div><div style="text-align:center">Step</div><div style="text-align:right">Downside</div><div style="text-align:right">Upside</div>
     </div>`;
@@ -3891,11 +3895,11 @@ function renderSensitivityTab(R,P){
     </div>`;
   });
 
-  h+=`</div>
+  h+=`</div></div></details>
   <div style="margin-top:10px;font-size:9px;color:var(--t3);display:flex;gap:14px;flex-wrap:wrap;padding:0 2px">
     <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:10px;height:6px;background:var(--g);border-radius:2px;opacity:.85"></span>Increases final NW</span>
     <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:10px;height:6px;background:var(--r);border-radius:2px;opacity:.85"></span>Decreases final NW</span>
-    <span>Edit ± column to change step size. Sorted by total swing.</span>
+    <span>Sorted by impact. Open step sizes to adjust the comparison.</span>
   </div>
   </div>`;
 
@@ -4109,7 +4113,7 @@ function renderGoalsTab(R,P,tT){
   if(defCount>5){_actions.push({icon:'📉',color:'var(--r)',text:`${defCount} of ${R.length} years draw on savings or held Stripe — the rest are covered by that year's vest. Return assumptions matter a lot here`});}
 
   h+=`<div style="background:linear-gradient(135deg,var(--s1),var(--s2));border:1px solid var(--bd);border-radius:10px;padding:14px 16px">
-    <div style="font-size:11px;font-weight:700;color:var(--tx);margin-bottom:10px;display:flex;align-items:center;gap:6px"><span>🎯</span><span>Priority Action Items</span></div>
+    <div style="font-size:11px;font-weight:700;color:var(--tx);margin-bottom:10px;display:flex;align-items:center;gap:6px"><span>🎯</span><span>Plan highlights</span></div>
     <div style="display:flex;flex-direction:column;gap:7px">
       ${_actions.map((a,i)=>`<div style="display:flex;align-items:flex-start;gap:8px">
         <span style="font-size:13px;flex-shrink:0;margin-top:1px">${a.icon}</span>
@@ -4276,9 +4280,9 @@ function renderGoalsTab(R,P,tT){
     {ic:'🛬',co:'var(--a)',ti:'De-risk before the home purchase',
      bd:`The plan grows all liquid at a flat ${Math.round((P.investReturn||.06)*100)}% through ${P.homePurchaseYear}. Money needed for the ${fmt(dp)} down payment in ${P.homePurchaseYear} shouldn't ride the market in the final 1–2 years — shift the down-payment slice to cash/short T-bills to avoid a sequence-of-returns shortfall.`},
   ];
-  h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
-    <div style="font-size:13px;font-weight:700;color:var(--tx);margin-bottom:3px">💡 Planning Opportunities</div>
-    <div style="font-size:9.5px;color:var(--t3);margin-bottom:12px">Advisor-grade suggestions. These are guidance only — they don't change your plan or numbers.</div>
+  h+=`<details class="polish-fold">
+    <summary>Planning ideas to review <span>${opps.length} topics</span></summary>
+    <div style="font-size:9.5px;color:var(--t3);margin-bottom:12px">General planning ideas; eligibility and amounts need verification. Your plan is unchanged.</div>
     <div style="display:flex;flex-direction:column;gap:8px">
       ${opps.map(o=>`<div style="display:flex;gap:10px;align-items:flex-start;padding:9px 11px;background:var(--s2);border:1px solid var(--bd);border-left:3px solid ${o.co};border-radius:7px">
         <span style="font-size:15px;flex-shrink:0;line-height:1.3">${o.ic}</span>
@@ -4288,7 +4292,7 @@ function renderGoalsTab(R,P,tT){
         </div>
       </div>`).join('')}
     </div>
-  </div>`;
+  </details>`;
 
   // GOAL 1: Home purchase
   h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
@@ -4530,25 +4534,18 @@ function renderCompareTab(R,P){
   const ca=document.getElementById('chartArea');
   destroyCharts();
   if(scenarios.length===0){
-    ca.innerHTML=`<div style="text-align:center;padding:50px 30px;color:var(--t2)">
-      <div style="font-size:40px;margin-bottom:14px">⚖️</div>
-      <div style="font-size:15px;font-weight:700;color:var(--tx);margin-bottom:8px">No scenarios to compare yet</div>
-      <p style="font-size:12.5px;line-height:1.7;max-width:420px;margin:0 auto;color:var(--t2)">
-        Save a scenario using <strong>💾 Save as New</strong> in the left panel, or use the
-        <strong>🤖 AI Advisor</strong> in agentic mode — it can propose plan changes and save them here automatically.
-      </p>
-    </div>`;
+    ca.innerHTML=`<div class="polish-empty"><h2>No saved scenarios yet</h2><p>Create a what-if in Explore, give it a name, and save it here for comparison.</p><button class="ui-btn ui-btn-primary" onclick="setSubView('explore')">Explore a scenario</button></div>`;
     return;
   }
   const planRes=run(P);
   const cols=[
-    {name:'Current Plan',params:P,res:planRes,color:'#0a2540',isCurrent:true},
+    {name:'Current Plan',params:P,res:planRes,color:'var(--tx)',isCurrent:true},
     ...scenarios.map(s=>({name:s.name,params:s.params,res:run({...D,...migrateP(s.params)}),color:s.color,isCurrent:false}))
   ];
   const METRICS=[
-    {label:'NW @ 2058 (ex-retirement)',get:(r,p)=>r.R[r.R.length-1].nw,fmt:fmt,b:1},
-    {label:'401k @ 2058',get:(r,p)=>r.R[r.R.length-1].k401,fmt:fmt,b:1},
-    {label:'Net worth @ 2058 (all)',get:(r,p)=>r.R[r.R.length-1].netWorth,fmt:fmt,b:1},
+    {label:'Final net worth · ex-retirement',get:(r,p)=>r.R[r.R.length-1].nw,fmt:fmt,b:1},
+    {label:'Final retirement balance',get:(r,p)=>r.R[r.R.length-1].k401,fmt:fmt,b:1},
+    {label:'Final net worth · total',get:(r,p)=>r.R[r.R.length-1].netWorth,fmt:fmt,b:1},
     {sep:true,label:'Risk'},
     {label:'Liquid Floor',get:(r,p)=>Math.min(...r.R.map(x=>x.liq)),fmt:fmt,b:1},
     {label:'Years Drawing On Savings',get:(r,p)=>r.drawYears,fmt:n=>n+' yrs',b:-1},
@@ -4684,11 +4681,13 @@ function toggleMoreMenu(e){
   if(!m.hidden){closeMoreMenu();return}
   m.innerHTML=MORE_ACTIONS.map(([ic,lb,fn])=>
     `<button onclick="closeMoreMenu();${fn}" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:7px 9px;border:none;border-radius:6px;background:none;color:var(--tx);font-family:inherit;font-size:11px;cursor:pointer" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='none'"><span style="width:14px">${ic}</span>${lb}</button>`).join('');
-  const r=b.getBoundingClientRect();
-  m.style.top=(r.bottom+window.scrollY+6)+'px';
-  // Right-align to the button, clamped so it can't run off a narrow screen.
-  m.style.left=Math.max(8,Math.min(r.right-186,window.innerWidth-194))+'px';
   m.hidden=false;b.setAttribute('aria-expanded','true');
+  const r=b.getBoundingClientRect();
+  m.style.position='fixed';
+  m.style.maxHeight='calc(100dvh - 24px)';m.style.overflowY='auto';
+  const menuHeight=m.getBoundingClientRect().height;
+  m.style.top=Math.max(12,Math.min(r.bottom+6,window.innerHeight-menuHeight-12))+'px';
+  m.style.left=Math.max(8,Math.min(r.right-186,window.innerWidth-194))+'px';
 }
 function closeMoreMenu(){
   const m=document.getElementById('moreMenu'),b=document.getElementById('moreBtn');
@@ -4781,7 +4780,8 @@ document.getElementById('main').innerHTML=`
     <div class="nav-live" id="navLive" hidden></div>
   </div>
   <div id="moreMenu" hidden style="position:absolute;z-index:60;background:var(--s1);border:1px solid var(--bd);border-radius:9px;box-shadow:0 10px 30px rgba(10,37,64,.16);padding:5px;min-width:186px"></div>
-  <div id="subToggle"></div>
+  <div id="subToggle" aria-label="Section views"></div>
+  <div id="chartOptions" class="polish-chart-options" role="group" aria-label="Chart display options" hidden></div>
   <div class="cc" id="chartArea"><p role="status" style="padding:24px;color:var(--t2)">Loading your saved plan…</p></div>
   <div class="sg" id="summaries"></div>`;
 
@@ -4813,11 +4813,11 @@ let cockpitExRet=true;
 let _homeView='explore';
 const SUB_VIEWS={
   home:{get:()=>_homeView,set:v=>{_homeView=v},
-    views:[['explore','spark','Explore'],['housing','home','Housing'],['levers','chart','Which levers matter'],['compare','diamond','Compare saved']]},
+    views:[['explore','spark','Explore'],['housing','home','Housing'],['levers','chart','Key levers'],['compare','diamond','Compare']]},
   projection:{get:()=>_projView,set:v=>{_projView=v},
     views:[['nw','chart','Net worth'],['income','circle','Income & tax'],['cashflow','arrow','Cash flow'],['table','doc','Table']]},
   today:{get:()=>_todayView,set:v=>{_todayView=v},
-    views:[['watch','bell','Watchlist'],['overview','circle','Overview'],['plan','target','Plan vs actual'],['holdings','chart','Holdings & accounts'],['spending','card','Spending']]},
+    views:[['overview','circle','Overview'],['spending','card','Spending'],['holdings','chart','Holdings'],['plan','target','Goals'],['watch','bell','Watchlist']]},
 };
 let _stressMode=false;
 // ── Monte Carlo confidence band overlay (NW chart) ──
@@ -4878,9 +4878,9 @@ function _paletteCommands(){
     {icon:'📋',label:'Table',hint:'Projection',run:()=>setTab('table')},
     {icon:'🎯',label:'Plan vs actual',hint:'Today',run:()=>setTab('goals')},
     {icon:'🏠',label:'Housing',hint:'Decisions',run:()=>setTab('housing')},
-    {icon:'🎚️',label:'Which levers matter',hint:'Decisions',run:()=>setTab('sensitivity')},
-    {icon:'⚖',label:'Compare saved',hint:'Decisions',run:()=>setTab('compare')},
-    {icon:'📊',label:'Holdings & accounts',hint:'Today',run:()=>setTab('portfolio')},
+    {icon:'🎚️',label:'Key levers',hint:'Decisions',run:()=>setTab('sensitivity')},
+    {icon:'⚖',label:'Compare',hint:'Decisions',run:()=>setTab('compare')},
+    {icon:'📊',label:'Holdings',hint:'Today',run:()=>setTab('portfolio')},
     {icon:'◎',label:'Overview',hint:'Today',run:()=>{_todayView='overview';setTab('today')}},
     {icon:'💳',label:'Spending & cash flow',hint:'Today',run:()=>{_todayView='spending';setTab('today')}},
     {icon:'🩺',label:'Diagnose Monarch connection',hint:'Support',run:()=>{setTab('portfolio');setTimeout(()=>openMonarchDiagnostics(),350)}},
@@ -5315,8 +5315,7 @@ function renderAdvisorTab(R,P){
     <div class="adv-context ui-rise ui-rise-2">
       ${UI.prov('projected','your plan')}
       <span>${R.length}-year projection · ${UI.money(last.netWorth)} by ${last.yr}</span>
-      <span class="adv-ctx-sep"></span>
-      <span>Every figure it quotes comes from the same engine as the rest of the app.</span>
+
     </div>
 
     <div class="adv-wrap ui-rise ui-rise-3">

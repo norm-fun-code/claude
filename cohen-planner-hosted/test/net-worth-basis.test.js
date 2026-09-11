@@ -183,8 +183,8 @@ describe('every single-figure net worth surface shows the total', () => {
   });
 
   it('labels the component wherever one is still shown on its own', () => {
-    expect(html).toContain("{label:'NW @ 2058 (ex-retirement)'");
-    expect(html).toContain("{label:'Net worth @ 2058 (all)'");
+    expect(html).toContain("{label:'Final net worth · ex-retirement'");
+    expect(html).toContain("{label:'Final net worth · total'");
   });
 
   it('leaves the paired KPI cards alone, because they name the exclusion', () => {

@@ -75,7 +75,8 @@ describe('The advisor speaks the planner\'s language',()=>{
   it('names what it is working from, before anything it says',()=>{
     // The advisor is the one surface where the reader cannot see the underlying data.
     expect(fn).toContain("UI.prov('projected','your plan')");
-    expect(fn).toMatch(/same engine as the rest of the app/);
+    expect(fn).toContain('UI.money(last.netWorth)');
+    expect(fn).toContain('year projection');
   });
 
   it('has exactly one primary action',()=>{
