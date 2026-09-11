@@ -168,10 +168,12 @@ describe('the next-tender figure', () => {
     expect(sq).not.toMatch(/At the next tender<\/span>\s*<strong class="ui-num">\$\{UI\.money\(row\.sEnd\)\}/);
   });
 
-  it('shows both ends of the move, so the bump is legible', () => {
-    expect(sq).toContain('UI.money(row.sEnd)');                  // where it stands today
-    expect(sq).toContain('UI.money(Math.abs(next-row.sEnd))');   // and what the mark adds
-    expect(sq).toMatch(/row\.sRate>=0\?'up':'down'/);            // a negative year reads right
+  it('is the figure alone, with no explanatory line under it', () => {
+    // The derivation sat under the number as a sentence and was asked for by nobody: the
+    // position today is already the first figure in this same row, and the rate is in the
+    // panel above. Stating it a third time under the headline was restatement, not context.
+    const fig = sq.slice(sq.indexOf('At the next tender'));
+    expect(fig.slice(0, fig.indexOf('</div>'))).not.toContain('<small>');
   });
 
   it('lands exactly where the next row opens, before that year vests', () => {
