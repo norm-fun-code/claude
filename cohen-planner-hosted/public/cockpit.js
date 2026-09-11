@@ -1,5 +1,25 @@
 /* Presentation only: reads the existing account cache and shared projection engine. */
 let cockpitYear=null;
+// Retirement is wealth you cannot reach for decades. Some questions are about everything you
+// own; others are about what is actually available before 59½, and a 401(k) that dwarfs the
+// rest drowns those out. `cockpitExRet` toggles the whole cockpit between the two — hero,
+// chart, band, headline and the reconciliation beneath it all move together, because a page
+// showing one figure ex-retirement and another including it is the exact defect this cockpit
+// spent a long time getting rid of.
+//
+// It is declared in index.html alongside the other persisted view state, not here:
+// savePlannerState() writes it, and a save that reaches for a variable owned by a different
+// file breaks the moment that file is not loaded.
+// The one place the choice is applied. Everything on the cockpit reads net worth through
+// here so a new surface cannot quietly pick the wrong field.
+function cpNw(r){return r?(cockpitExRet?r.nw:r.netWorth):0}
+function cpLabel(){return cockpitExRet?'net worth ex-retirement':'net worth'}
+function cockpitToggleExRet(){
+  cockpitExRet=!cockpitExRet;
+  // No re-simulation: both bases come out of the same trials, so switching picks the other
+  // one rather than running 250 more paths that would also disagree with the first set.
+  render();savePlannerState();
+}
 function cockpitGo(view){
   if(['overview','watch','spending','holdings'].includes(view)){_todayView=view;setTab('today');}
   else setTab(view);
@@ -22,6 +42,10 @@ function renderCockpit(R){
   const stale=dated&&Date.now()-date.getTime()>7*86400000;
   const status=!d?'Reading accounts':!available?'Accounts unavailable':partial?'Partial balances':!dated?'Balance date unavailable':stale?'Refresh recommended':'Latest reported balances';
   const money=v=>Number.isFinite(v)?fmt(v):'—';
+  // The observed side has to be excluded the same way the projected side is, or the toggle
+  // would silently compare a figure without retirement against one with it.
+  const obsRetirement=Number(s&&s.byClass&&s.byClass.retirement?s.byClass.retirement.total:0)||0;
+  const obsNw=available?(cockpitExRet?s.netWorth-obsRetirement:s.netWorth):null;
   const current=R.find(r=>r.yr===new Date().getFullYear())||R[0];
   const end=R[R.length-1],floor=R.reduce((a,b)=>a.liq<b.liq?a:b);
   const selected=R.find(r=>r.yr===cockpitYear)||current;cockpitYear=selected.yr;
@@ -29,8 +53,8 @@ function renderCockpit(R){
   // The hero must never render a dash. When accounts are unreachable the PLAN still
   // knows a net worth, so show that and let the provenance chip carry the doubt.
   const hero=UI.heroValue({
-    observed:available?s.netWorth:null,
-    projected:current?deflate(current.netWorth,current.yr):null,
+    observed:obsNw,
+    projected:current?deflate(cpNw(current),current.yr):null,
     complete:available?!partial:undefined,
   });
   const priorities=(_inbox?.priorities||[]).slice(0,3);
@@ -44,7 +68,7 @@ function renderCockpit(R){
       </div>
     <section class="cp-position ui-rise" aria-label="Financial position">
       <div class="cp-wealth">
-        <span class="cp-eyebrow">NET WORTH</span>
+        <span class="cp-eyebrow">NET WORTH${cockpitExRet?' · EX-RETIREMENT':''}</span>
         <strong class="ui-hero-value" id="cp-hero" data-source="${hero.source}">${hero.value==null?'—':UI.money(hero.value)}</strong>
         <div class="cp-hero-meta">${UI.prov(hero.source)}${hero.partial?UI.prov('missing','incomplete'):''}</div>
         <p>${e(hero.note)}</p>
@@ -52,7 +76,7 @@ function renderCockpit(R){
       </div>
       <div class="cp-metrics">${
         metric('Cash + taxable',available?money(s.accessible):money(selected.liq),available?'Spendable without penalty':'Projected · accounts unavailable','overview')
-      }${metric('Retirement',available?money(s.byClass?.retirement?.total):money(selected.k401),available?'Locked until retirement age':'Projected · accounts unavailable','holdings')
+      }${metric('Retirement',available?money(s.byClass?.retirement?.total):money(selected.k401),cockpitExRet?'Locked until 59½ · NOT in the figure above':available?'Locked until retirement age':'Projected · accounts unavailable','holdings')
       }${metric('Vested Stripe',available?money(s.stripeVested):money(selected.sEnd),'Private equity · sale windows apply','stripe')
       }${metric(`${current.yr} monthly margin`,money(current.flowMonthly),'All after-tax pay less all spending','cashflow')}</div>
     </section>
@@ -65,7 +89,8 @@ function renderCockpit(R){
           <span class="cp-register-note">Projected from your plan. Not a forecast.</span>
         </div>
       <section class="cp-card cp-trajectory"><div class="cp-section-head"><div><h3>The path ahead</h3></div><button onclick="cockpitGo('home')">Explore a what-if ↗</button></div>
-      <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end net worth</span><strong id="cp-value">${UI.money(deflate(selected.netWorth,selected.yr))}</strong>${R[0].stubFrac<1?`<small class="cp-stub">${R[0].yr} models only the ${Math.round(R[0].stubFrac*100)}% of the year still ahead of ${e(cockpitObservedLabel(P))}. The months before it are already in your balances.</small>`:''}</div><span id="cp-band-note">Includes retirement<br>Future dollars · assumed returns</span></div>
+      <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end ${cpLabel()}</span><strong id="cp-value">${UI.money(deflate(cpNw(selected),selected.yr))}</strong>${R[0].stubFrac<1?`<small class="cp-stub">${R[0].yr} models only the ${Math.round(R[0].stubFrac*100)}% of the year still ahead of ${e(cockpitObservedLabel(P))}. The months before it are already in your balances.</small>`:''}</div><span id="cp-band-note">Includes retirement<br>Future dollars · assumed returns</span></div>
+      <div class="cp-basis"><button type="button" role="switch" aria-checked="${cockpitExRet}" onclick="cockpitToggleExRet()"><span>${cockpitExRet?'Excluding retirement':'Including retirement'}</span><em>${cockpitExRet?'Showing what you can reach before 59½':'Showing everything you own'}</em></button></div>
       <div class="cp-chart"><canvas id="cockpitTrajectory" aria-label="Projected wealth and liquid investments by year" role="img"></canvas></div>
       <div class="cp-pins" id="cp-pins"></div>
       <label class="cp-scrub" for="cp-year-range">Explore a year<input id="cp-year-range" type="range" min="${R[0].yr}" max="${end.yr}" value="${selected.yr}" oninput="cockpitSelectYear(Number(this.value))"><output id="cp-range-label">${selected.yr}</output></label>
@@ -177,13 +202,13 @@ function cockpitDrawChart(R,P,year){
   const sig=JSON.stringify(P);
   if(_cpBandSig!==sig){
     _cpBand=null;_cpBandSig=sig;
-    try{_cpBand=runMonteCarlo(P,250,'lognormal').band}catch(e){_cpBand=null}
+    try{const mc=runMonteCarlo(P,250,'lognormal');_cpBand={total:mc.band,exRet:mc.bandExRet}}catch(e){_cpBand=null}
   }
-  const band=_cpBand;
+  const band=_cpBand?(cockpitExRet?_cpBand.exRet:_cpBand.total):null;
   const note=document.getElementById('cp-band-note');
   if(note)note.innerHTML=band
     ? `Median of 250 simulated paths<br>Shaded band spans the 10th to 90th percentile${inflationView?`<br>${sy} purchasing power`:''}`
-    : `Includes retirement<br>${inflationView?sy+' purchasing power':'Future dollars'} · assumed returns`;
+    : `${cockpitExRet?'Excludes retirement':'Includes retirement'}<br>${inflationView?sy+' purchasing power':'Future dollars'} · assumed returns`;
 
   const ds=[];
   if(band){
@@ -194,7 +219,8 @@ function cockpitDrawChart(R,P,year){
     ds.push({label:'10th percentile',data:[null,...band.p10.map((v,i)=>deflate(v,R[i].yr))],borderColor:'transparent',
       backgroundColor:'transparent',fill:false,pointRadius:0,borderWidth:0,tension:.25});
   }
-  ds.push({label:'Net worth incl. retirement',data:[opening,...R.map(r=>deflate(r.netWorth,r.yr))],
+  ds.push({label:cockpitExRet?'Net worth ex-retirement':'Net worth incl. retirement',
+    data:[cockpitExRet?opening-Math.abs(Number(P.k401Start||0)):opening,...R.map(r=>deflate(cpNw(r),r.yr))],
     borderColor:'#7ae3c3',backgroundColor:'transparent',fill:false,
     pointRadius:0,pointHoverRadius:5,borderWidth:2.5,tension:.25});
   ds.push({label:'Liquid investments',data:[P.startingLiquid||0,...R.map(r=>deflate(r.liq,r.yr))],
@@ -247,14 +273,14 @@ function cockpitSelectYear(year){
   const R=run(P).R;
   const row=R.find(r=>r.yr===year);if(!row)return;
   const set=(id,text)=>{const el=document.getElementById(id);if(el)el.textContent=text};
-  set('cp-year',year+' year-end net worth');
-  set('cp-value',UI.money(deflate(row.netWorth,row.yr)));
+  set('cp-year',year+' year-end '+cpLabel());
+  set('cp-value',UI.money(deflate(cpNw(row),row.yr)));
   set('cp-range-label',year);
 
   // The hero follows the scrub only while it is showing a PROJECTED figure. An observed
   // balance belongs to today and must not be relabelled as some future year's.
   const hero=document.getElementById('cp-hero');
-  if(hero&&hero.dataset.source==='projected')hero.textContent=UI.money(deflate(row.netWorth,row.yr));
+  if(hero&&hero.dataset.source==='projected')hero.textContent=UI.money(deflate(cpNw(row),row.yr));
 
   const grid=document.getElementById('cp-year-grid');
   if(grid)grid.innerHTML=[['Liquid investments',row.liq],['Vested Stripe',row.sEnd],
@@ -280,7 +306,7 @@ function cockpitRenderBridge(R,year){
   if(!host||!window.PlannerBridge)return;
   const e=advEscape,d=_ovw,s=d?.summary;
   const available=!!s&&!d.error&&d.capabilities?.balances?.available===true;
-  const b=PlannerBridge.bridge({summary:s,R,P,year,accountsAvailable:available});
+  const b=PlannerBridge.bridge({summary:s,R,P,year,accountsAvailable:available,exRetirement:cockpitExRet});
   if(!b.available){host.innerHTML='';return}
 
   // Exact dollars, not $1.58M. This is the one table on the page whose entire claim is that

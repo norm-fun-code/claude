@@ -95,3 +95,14 @@ body,body.home-view{background:radial-gradient(ellipse at 80% -20%,#1a2b47 0,tra
 /* A first year that models three months is not comparable with the twelve-month years after
    it. The chart says so where the figure is, not in a footnote under it. */
 .cp-stub{display:block;font-size:12px;color:var(--a);line-height:1.55;margin-top:6px;max-width:52ch}
+
+/* Which wealth am I looking at? A switch, stated in words, directly above the chart it
+   changes — not a legend the reader has to infer the basis from. */
+.cp-basis{margin:2px 0 10px}
+.cp-basis button{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;width:100%;
+  padding:9px 12px;border:1px solid var(--bd);border-radius:10px;background:var(--s2);
+  color:var(--tx);font-family:inherit;font-size:13px;cursor:pointer;text-align:left}
+.cp-basis button:hover{background:var(--s3)}
+.cp-basis button[aria-checked=true]{border-color:#4a6a7d;background:#16293a}
+.cp-basis button span{font-weight:550}
+.cp-basis button em{font-style:normal;font-size:12px;color:var(--t3)}

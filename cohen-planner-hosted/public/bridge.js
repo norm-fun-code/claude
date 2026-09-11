@@ -37,7 +37,7 @@
   // What the observed accounts hold that the projection actually models. Everything else is
   // named and set aside rather than quietly netted off, because "your plan does not model
   // this" and "your plan disagrees about this" are different problems with different fixes.
-  function comparableObserved(summary){
+  function comparableObserved(summary,exRetirement){
     const s=summary||{};
     const cls=k=>(s.byClass&&s.byClass[k]?Number(s.byClass[k].total)||0:0);
     const accessible=Number(s.accessible)||0;      // cash + taxable
@@ -48,12 +48,16 @@
     const privateOther=cls('private')-stripe;
     const unclassified=cls('unknown');
     const debt=Number(s.debt)||0;
+    // A cockpit showing net worth ex-retirement has to be reconciled ex-retirement, on both
+    // sides. Dropping it from only one would make the bridge fail to close by exactly the
+    // 401(k) — the very error the bridge exists to expose.
+    const counted=exRetirement?0:retirement;
     return{
-      accessible,stripe,retirement,privateOther,unclassified,debt,
+      accessible,stripe,retirement,privateOther,unclassified,debt,exRetirement:!!exRetirement,
       // Debt belongs INSIDE the comparable subset now that the projection carries a flat
       // revolving balance. It was previously added back as something the model simply did
       // not have, which made a real liability look like a difference of definition.
-      comparable:accessible+stripe+retirement+privateOther-debt,
+      comparable:accessible+stripe+counted+privateOther-debt,
       // Signed: this is what has to be added to the comparable subset to get back to the
       // net worth on the hero.
       outside:unclassified,
@@ -63,13 +67,13 @@
   // ── The plan's opening position ──────────────────────────────────────────
   // Where the projection starts the selected year from — the previous row's close, or the
   // typed starting assumptions when the selected year is the first one modelled.
-  function openingPosition(R,year,P){
+  function openingPosition(R,year,P,exRetirement){
     const rows=R||[];
     const prev=rows.find(r=>r.yr===year-1);
-    if(prev)return{value:r0(prev.nw+prev.k401),source:'prior year close',year:year-1};
+    if(prev)return{value:r0(exRetirement?prev.nw:prev.netWorth),source:'prior year close',year:year-1};
     const p=P||{};
-    return{value:r0((p.startingLiquid||0)+(p.startingStripeEquity||0)+(p.k401Start||0)
-      -Math.abs(Number(p.otherDebt||0))),
+    return{value:r0((p.startingLiquid||0)+(p.startingStripeEquity||0)
+      +(exRetirement?0:(p.k401Start||0))-Math.abs(Number(p.otherDebt||0))),
       source:'your starting assumptions',year:null};
   }
 
@@ -84,25 +88,28 @@
     const row=R.find(r=>r.yr===year);
     if(!row)return{available:false,reason:'That year is not in the projection.'};
 
-    const projected=r0(row.nw+row.k401);
+    const ex=!!o.exRetirement;
+    const projected=r0(ex?row.nw:row.netWorth);
     // Without accounts there is nothing to bridge FROM. The projection still stands on its
     // own; it simply has no observation to be reconciled against.
     if(!summary||!o.accountsAvailable)
       return{available:false,projected,
         reason:'Account balances are unavailable, so there is nothing to compare the projection against.'};
 
-    const c=comparableObserved(summary);
-    const observed=r0(summary.netWorth);
-    const opening=openingPosition(R,year,P);
+    const c=comparableObserved(summary,ex);
+    const observed=r0(ex?summary.netWorth-c.retirement:summary.netWorth);
+    const opening=openingPosition(R,year,P,ex);
     const planGap=c.comparable-opening.value;
     const withinYear=projected-opening.value;
 
     const lines=[];
     // The two endpoints carry no delta: they are the numbers already on the page, and a
     // signed step beside them would invite reading the anchor as a movement.
-    lines.push({kind:'observed',key:'observed',label:'Net worth in your accounts',
+    lines.push({kind:'observed',key:'observed',
+      label:ex?'Net worth in your accounts, outside retirement':'Net worth in your accounts',
       value:null,running:observed,
-      note:'Every account you hold, as last reported.'});
+      note:ex?`Every account you hold except retirement, which holds a further ${fmt(c.retirement)}.`
+        :'Every account you hold, as last reported.'});
 
     if(c.unclassified)lines.push({kind:'composition',key:'unclassified',
       label:'Accounts not yet classified',value:-c.unclassified,
@@ -143,7 +150,8 @@
       label:`Saving and assumed return through ${year}`,value:withinYear,running:projected,
       note:'The chart reads 31 December. Today is not.'});
 
-    lines.push({kind:'projected',key:'projected',label:`${year} year-end net worth`,
+    lines.push({kind:'projected',key:'projected',
+      label:`${year} year-end net worth${ex?' ex-retirement':''}`,
       value:null,running:projected,
       note:'Future dollars, at your assumed rates. Not a forecast.'});
 

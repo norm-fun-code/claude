@@ -849,7 +849,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
   const geomMean=isHist
     ? HIST_SP500_RETURNS.reduce((a,b)=>a*(1+b),1)**(1/HIST_SP500_RETURNS.length)-1
     : Math.exp(logDrift)-1; // expected compounded annual growth
-  const nwPaths=[],liqPaths=[],finalNW=[],floorLiq=[];let ruin=0,dpFail=0;
+  const nwPaths=[],liqPaths=[],exRetPaths=[],finalNW=[],floorLiq=[];let ruin=0,dpFail=0;
   const dpYr=p.homePurchaseYear,dpNeed=p.homePrice*(p.downPctg/100),dpIdx=dpYr-sy;
   for(let t=0;t<trials;t++){
     const rets=isHist?drawHistoricalBlock(nYears):Array.from({length:nYears},drawRet);
@@ -858,6 +858,10 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
     // percentiles are presented as "net worth at <horizon>". Simulating `nw` here left both
     // sitting a whole 401(k) below the line they describe.
     nwPaths.push(R.map(r=>r.netWorth));liqPaths.push(R.map(r=>r.liq));
+    // The same paths without retirement, for a view that excludes it. Collected here rather
+    // than re-simulated: a band drawn against one line must come from the same trials that
+    // produced it, or the two disagree for reasons no reader could ever find.
+    exRetPaths.push(R.map(r=>r.nw));
     finalNW.push(R[R.length-1].netWorth);
     const minLiq=Math.min(...R.map(r=>r.liq));floorLiq.push(minLiq);
     if(minLiq<0)ruin++;
@@ -866,13 +870,17 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
     if(dpIdx>=1&&dpIdx<R.length&&R[dpIdx-1].liq<dpNeed)dpFail++;
   }
   const pct=(arr,q)=>{const s=[...arr].sort((a,b)=>a-b);const idx=(s.length-1)*q;const lo=Math.floor(idx),hi=Math.ceil(idx);return s[lo]+(s[hi]-s[lo])*(idx-lo)};
-  const band={p10:[],p50:[],p90:[]};
-  for(let y=0;y<nYears;y++){
-    const col=nwPaths.map(path=>path[y]);
-    band.p10.push(pct(col,.10));band.p50.push(pct(col,.50));band.p90.push(pct(col,.90));
-  }
+  const bandFrom=paths=>{
+    const b={p10:[],p50:[],p90:[]};
+    for(let y=0;y<nYears;y++){
+      const col=paths.map(path=>path[y]);
+      b.p10.push(pct(col,.10));b.p50.push(pct(col,.50));b.p90.push(pct(col,.90));
+    }
+    return b;
+  };
+  const band=bandFrom(nwPaths),bandExRet=bandFrom(exRetPaths);
   finalNW.sort((a,b)=>a-b);
-  return{band,trials,vol,geomMean,mode,
+  return{band,bandExRet,trials,vol,geomMean,mode,
     finalP10:pct(finalNW,.10),finalP50:pct(finalNW,.50),finalP90:pct(finalNW,.90),
     ruinPct:ruin/trials*100,
     dpFailPct:dpIdx>=1?dpFail/trials*100:null,

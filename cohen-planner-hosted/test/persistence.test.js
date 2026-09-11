@@ -10,7 +10,7 @@ function harness(fetch){
   // the status handling under test ever runs. Keep this in step with the payload's state
   // object — a missing view-state global surfaces as "X is not defined", not a save failure.
   const planState={P:{homePrice:2000000},compareMode:false,activeTab:'home',
-    _projView:'nw',_todayView:'plan',_homeView:'explore',
+    _projView:'nw',_todayView:'plan',_homeView:'explore',cockpitExRet:false,
     activeScenarioIdx:-1,scenarioDirty:false,monarchSnapshot:null};
   const ctx=vm.createContext({fetch,JSON,Promise,Error,...planState,
     setSyncStatus:s=>statuses.push(s),setTimeout:fn=>{timer=fn;return 1;},clearTimeout:()=>{timer=null;}});

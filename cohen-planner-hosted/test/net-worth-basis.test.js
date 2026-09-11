@@ -47,7 +47,9 @@ describe('the cockpit and the Trajectory tab plot the same figure', () => {
     const traj = html.match(/label:'Total NW[^']*'\+\(inflationView\?' \(real\)':''\),data:\[(\w+),\.\.\.R\.map\(r=>deflK\((r\.\w+),r\.yr\)\)\]/);
     expect(traj, 'Total NW dataset').toBeTruthy();
     expect(traj[2]).toBe('r.netWorth');
-    expect(cockpit).toContain('...R.map(r=>deflate(r.netWorth,r.yr))');
+    // Routed through one helper now, so a new surface cannot pick the wrong field.
+    expect(cockpit).toContain('function cpNw(r){return r?(cockpitExRet?r.nw:r.netWorth):0}');
+    expect(cockpit).toContain('...R.map(r=>deflate(cpNw(r),r.yr))');
     // Adding k401 to netWorth would double-count retirement.
     expect(cockpit).not.toMatch(/netWorth\s*\+\s*\w*\.?k401/);
     expect(html).not.toMatch(/netWorth\s*\+\s*\w*\.?k401/);
@@ -122,15 +124,15 @@ describe('both charts answer to the same inflation toggle', () => {
   });
 
   it('has the cockpit deflate its series, not just the Trajectory tab', () => {
-    for (const field of ['r.netWorth', 'r.liq'])
+    for (const field of ['cpNw(r)', 'r.liq'])
       expect(cockpit, field).toContain(`deflate(${field},r.yr)`);
   });
 
   it('deflates the cockpit figures printed beside the chart too', () => {
     // A real-dollar line under a nominal headline is the same bug, one element over.
-    expect(cockpit).toContain('deflate(row.netWorth,row.yr)');
+    expect(cockpit).toContain('deflate(cpNw(row),row.yr)');
     expect(cockpit).toContain('deflate(value,row.yr)');
-    expect(cockpit).toContain('deflate(selected.netWorth,selected.yr)');
+    expect(cockpit).toContain('deflate(cpNw(selected),selected.yr)');
   });
 
   it('says which dollars it is showing, rather than always claiming future ones', () => {

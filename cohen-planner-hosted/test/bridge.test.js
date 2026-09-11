@@ -15,7 +15,9 @@ const accounts = [
   { id: '4', name: 'Stripe 401(k)', category: 'retirement', balance: 240000 },
   { id: '5', name: 'Amex', category: 'liability', balance: -9000 },
 ];
-const R = [{ yr: 2026, nw: 1180000, k401: 230000, liq: 900000, sEnd: 280000, eq: 0 }];
+// Real rows always carry netWorth; the fixture has to as well, or it is not a row.
+const row = (o) => ({ ...o, netWorth: o.nw + o.k401 });
+const R = [row({ yr: 2026, nw: 1180000, k401: 230000, liq: 900000, sEnd: 280000, eq: 0 })];
 const P = { startingLiquid: 1100000, startingStripeEquity: 0, k401Start: 210000 };
 const run = (accts = accounts, ov = {}, opts = {}) =>
   B.bridge({ summary: A.summarize(accts, ov), R, P, year: 2026, accountsAvailable: true, ...opts });
@@ -132,7 +134,7 @@ describe('the plan gap — the one worth acting on', () => {
   });
 
   it('reads a later year from the prior year close, not the typed assumptions', () => {
-    const R2 = [...R, { yr: 2027, nw: 1300000, k401: 260000, liq: 980000, sEnd: 320000, eq: 0 }];
+    const R2 = [...R, row({ yr: 2027, nw: 1300000, k401: 260000, liq: 980000, sEnd: 320000, eq: 0 })];
     const b = B.bridge({ summary: A.summarize(accounts, {}), R: R2, P, year: 2027, accountsAvailable: true });
     expect(b.opening).toBe(1410000);          // 2026's close, k401 included
     expect(b.projected).toBe(1560000);
