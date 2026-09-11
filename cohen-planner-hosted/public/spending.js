@@ -240,7 +240,11 @@
       actualTotal:rows.reduce((s,r)=>s+r.actual,0)+uncategorized.reduce((s,c)=>s+c.net,0)};
   }
 
-  const api={KIND,indexCategories,classify,summarize,coverage,rollingAverage,budgetStatus,monthKey,spendOf};
+  // Useful observed averages remain visible without upgrading import coverage to verified.
+  function observedAverage(months,n,today){
+    return rollingAverage((months||[]).map(m=>({...m,coverageVerified:true})),n,null,today);
+  }
+  const api={KIND,indexCategories,classify,summarize,coverage,rollingAverage,observedAverage,budgetStatus,monthKey,spendOf};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.PlannerSpending=api;
 })(typeof window!=='undefined'?window:this);

@@ -32,3 +32,17 @@ body,body.home-view{background:radial-gradient(ellipse at 80% -20%,#1a2b47 0,tra
 #main [style*="background:#fff8"],#main [style*="background:rgba(255,255,255,.45)"]{background:var(--s2)!important}
 .brand-text h1{background:none!important;-webkit-text-fill-color:var(--tx);color:var(--tx)}
 @media(max-width:760px){.tabs button[role=tab],.home-view .tabs button[role=tab]{min-width:0;flex:1 1 0;overflow-wrap:anywhere}.tabs #moreBtn{min-width:26px;flex:0 0 26px}.cp-heading .cp-button{flex:0 0 110px}}
+/* Dark tables retain legibility even when legacy table styles or hover states apply. */
+#main table,#main tbody,#main tbody tr{background:var(--s1)!important}
+#main tbody td{background:transparent!important;color:var(--t2);border-bottom:1px solid var(--bd)!important}
+#main tbody tr:nth-child(even){background:#142135!important}
+#main tbody tr:hover,#main tbody tr:hover td{background:#1b2e43!important}
+.spending-workspace .tw{border:1px solid var(--bd)}
+.spend-visuals{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.35fr);gap:20px}
+.spend-visuals .cp-card{margin:0;min-width:0}.spend-visuals h3{font-size:23px;font-weight:500;letter-spacing:-.5px}
+.spend-visuals p{font-size:13px;color:var(--t2);margin:8px 0 16px;line-height:1.6}
+.spend-donut-wrap{height:230px;position:relative;margin:20px 0}.spend-trend-wrap{height:365px;position:relative;margin-top:26px}
+.spend-legend{display:grid;gap:12px}.spend-legend>div{display:grid;grid-template-columns:9px minmax(0,1fr) auto 48px;align-items:center;gap:10px;font-size:13px;color:var(--t2)}.spend-key{width:8px;height:8px;border-radius:50%}.spend-legend strong{font-size:14px;font-weight:500;color:var(--tx)}.spend-legend small{font-size:12px;text-align:right;color:var(--t3)}
+.spend-details>summary{font-size:15px;font-weight:500;color:var(--tx);cursor:pointer;min-height:32px;list-style-position:inside}.spend-details[open]>summary{margin-bottom:18px}.spend-caption{font-size:12px!important;color:var(--t3)!important}
+@media(max-width:1000px){.spend-visuals{grid-template-columns:1fr}.spend-trend-wrap{height:300px}}
+@media(max-width:760px){.spend-legend>div{grid-template-columns:8px minmax(0,1fr) auto 40px;gap:8px}.spend-details .tw{overflow-x:auto}.spend-trend-wrap{height:280px}.spending-workspace .cp-card{padding:18px 14px}}

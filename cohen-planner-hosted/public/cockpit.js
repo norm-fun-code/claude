@@ -68,3 +68,18 @@ function cockpitSelectYear(year){
   document.getElementById('cp-range-label').textContent=year;
   document.getElementById('cp-year-grid').innerHTML=[['Liquid investments',row.liq],['Vested Stripe',row.sEnd],['Home equity',row.eq]].map(([label,value])=>`<div><span>${label}</span><strong>${fmt(value)}</strong></div>`).join('');
 }
+
+function mountSpendingCharts({rows,months,asOf,verified}){
+  const palette=['#7ae3c3','#a99bff','#78b7ef','#efb873','#ed91b0','#6dcacb','#bbc884','#748db5'];
+  const positive=rows.filter(r=>r.net>0),top=positive.slice(0,7),other=positive.slice(7).reduce((s,r)=>s+r.net,0);
+  const slices=other?[...top,{name:'Other categories',net:other}]:top;
+  const total=slices.reduce((s,r)=>s+r.net,0);
+  const dollars=v=>fmtF(Math.round(v));
+  const legend=document.getElementById('spendCategoryLegend');
+  legend.innerHTML=slices.length?slices.map((r,i)=>`<div><span class="spend-key" style="background:${palette[i]}"></span><span>${advEscape(r.name)}</span><strong>${dollars(r.net)}</strong><small>${(r.net/total*100).toFixed(1)}%</small></div>`).join(''):'<p>No positive category spending in this period.</p>';
+  charts.spendingCategories=new Chart(document.getElementById('spendCategoryChart'),{type:'doughnut',data:{labels:slices.map(r=>r.name),datasets:[{data:slices.map(r=>r.net),backgroundColor:palette,borderColor:'#111b2b',borderWidth:4,hoverOffset:5}]},options:{responsive:true,maintainAspectRatio:false,cutout:'72%',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.label}: ${dollars(c.raw)} (${(c.raw/total*100).toFixed(1)}%)`}}}}});
+  charts.spendingMonths=new Chart(document.getElementById('spendMonthlyChart'),{type:'bar',data:{labels:months.map(m=>m.month+(m.month===asOf.slice(0,7)?' · partial':verified.includes(m.month)?'':' *')),datasets:[{label:'Income',data:months.map(m=>m.income||0),backgroundColor:'#72cbb0',borderRadius:4},{label:'Spending',data:months.map(m=>m.expense||0),backgroundColor:'#a798ef',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{labels:{color:'#bdc9dc',font:{size:13},boxWidth:12}},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${dollars(c.raw)}`}}},scales:{x:{ticks:{color:'#aabbd0',maxRotation:60,font:{size:12}},grid:{display:false}},y:{ticks:{color:'#aabbd0',callback:v=>fmt(v)},grid:{color:'#27364b'}}}}});
+  if(months.some(m=>m.month!==asOf.slice(0,7)&&!verified.includes(m.month))){
+    const note=document.createElement('p');note.className='spend-caption';note.textContent='* Full-month import coverage has not been verified.';document.getElementById('spendMonthlyChart').parentElement.after(note);
+  }
+}
