@@ -30,11 +30,12 @@ const Pace = require('./public/pace.js');
 // Classification and confirmations, keyed on stable account ids.
 async function loadAccountMeta() {
   const [cls, ovr] = await Promise.all([
-    db.query('SELECT account_id, class, stripe_kind, note FROM account_classes'),
+    db.query('SELECT account_id, class, stripe_kind, note, hidden, hidden_at, hidden_name, hidden_reason FROM account_classes'),
     db.query('SELECT account_id, account_name, balance::float8 AS balance, raw_missing, note, confirmed_at, superseded_at FROM account_overrides WHERE superseded_at IS NULL'),
   ]);
   const classes = {}, overrides = {};
-  for (const r of cls.rows) classes[r.account_id] = { class: r.class, stripeKind: r.stripe_kind, note: r.note };
+  for (const r of cls.rows) classes[r.account_id] = { class: r.class, stripeKind: r.stripe_kind, note: r.note,
+    hidden: !!r.hidden, hiddenAt: r.hidden_at, hiddenName: r.hidden_name, hiddenReason: r.hidden_reason };
   for (const r of ovr.rows) overrides[r.account_id] = {
     balance: r.balance, note: r.note, confirmedAt: r.confirmed_at, rawMissing: r.raw_missing,
     accountName: r.account_name,
@@ -815,6 +816,8 @@ app.post('/api/accounts/:id/class', requireAuth, async (req, res) => {
     return res.status(400).json({ error: `class must be one of: ${Object.values(Accounts.CLASS).join(', ')}` });
   }
   try {
+    // `hidden` is deliberately absent from the UPDATE list: reclassifying an account must
+    // not un-hide it, and hiding one must not lose its class.
     await db.query(
       `INSERT INTO account_classes (account_id, class, stripe_kind, note, set_by, updated_at)
        VALUES ($1,$2,$3,$4,'user',NOW())
@@ -822,6 +825,44 @@ app.post('/api/accounts/:id/class', requireAuth, async (req, res) => {
          note=EXCLUDED.note, set_by='user', updated_at=NOW()`,
       [String(req.params.id), cls, stripeKind, note]);
     res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Hide an account, or bring it back. Hiding is cosmetic ONLY when the balance is zero:
+// hide something still holding money and net worth falls, so the response says what was
+// excluded and the caller is expected to show it.
+app.post('/api/accounts/:id/hidden', requireAuth, async (req, res) => {
+  const { hidden, name = null, reason = null } = req.body || {};
+  if (typeof hidden !== 'boolean') return res.status(400).json({ error: 'hidden must be true or false' });
+  const id = String(req.params.id);
+  try {
+    // A row may not exist yet — an account can be hidden without ever being reclassified —
+    // so the insert carries the class the classifier would have given it anyway.
+    await db.query(
+      `INSERT INTO account_classes (account_id, class, set_by, updated_at, hidden, hidden_at, hidden_name, hidden_reason)
+       VALUES ($1, 'unknown', 'user', NOW(), $2, $3, $4, $5)
+       ON CONFLICT (account_id) DO UPDATE SET hidden=$2, hidden_at=$3,
+         hidden_name=COALESCE($4, account_classes.hidden_name),
+         hidden_reason=$5, updated_at=NOW()`,
+      [id, hidden, hidden ? new Date() : null, name, hidden ? reason : null]);
+
+    // Report the consequence rather than leaving the caller to discover it.
+    const meta = await loadAccountMeta();
+    let excluded = null;
+    try {
+      const snap = await monarchLive.getSnapshot();
+      const MA = require('./monarch-accounts');
+      const accounts = (snap.accounts || []).map(a => ({
+        id: a.id != null ? String(a.id) : null,
+        name: a.displayName || a.name || '', institution: a.institution || '',
+        category: a.category || '', subtype: a.subtype || '',
+        balance: MA.parseBalance(MA.rawBalanceOf(a)), rawBalance: MA.rawBalanceOf(a),
+      }));
+      const s = Accounts.summarize(accounts, meta.merged);
+      excluded = { hiddenCount: s.hiddenCount, hiddenNet: s.hiddenNet,
+        hiddenUnknown: s.hiddenUnknown, note: s.hiddenNote, netWorth: s.netWorth };
+    } catch (e) { /* balances unavailable: the flag still saved, the consequence is unknown */ }
+    res.json({ ok: true, hidden, excluded });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

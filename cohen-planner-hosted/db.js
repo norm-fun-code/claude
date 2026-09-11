@@ -66,6 +66,14 @@ async function initSchema() {
       set_by      TEXT NOT NULL DEFAULT 'user',
       updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    -- Hiding is a flag, not a class: a closed 2014 savings account is still cash, and
+    -- folding "hidden" into the class would throw the classification away the moment it is
+    -- hidden. Kept dated and reversible, with the name recorded so a hidden account can be
+    -- listed and restored even if the provider stops returning it at all.
+    ALTER TABLE account_classes ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE account_classes ADD COLUMN IF NOT EXISTS hidden_at TIMESTAMPTZ;
+    ALTER TABLE account_classes ADD COLUMN IF NOT EXISTS hidden_name TEXT;
+    ALTER TABLE account_classes ADD COLUMN IF NOT EXISTS hidden_reason TEXT;
     -- Dated, per-account confirmations. The ONLY thing permitted to turn a missing provider
     -- balance into a number. raw_missing preserves what the provider actually returned so
     -- the gap stays visible after the override is applied.

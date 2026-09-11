@@ -668,3 +668,49 @@
 .adv-tool-detail code{background:var(--s3);border-radius:4px;padding:1px 5px;font-size:12px}
 .adv-tool-detail em{font-style:normal;color:var(--t3)}
 .adv-tool-detail .tc-old{color:var(--t4);text-decoration:line-through}
+
+/* ═══ ACCOUNTS ═══
+   A row is a name, a number, its class and a way to put it away. The × is quiet until
+   the row is hovered: a destructive-looking control on every line makes a list of
+   accounts feel dangerous to read. */
+.accounts-card{border:1px solid var(--bd);border-radius:var(--radius);background:var(--s1);
+  padding:var(--sp-3) var(--sp-4);margin-bottom:var(--sp-2)}
+.acct-group{margin-bottom:var(--sp-3)}
+.acct-group-hdr{display:flex;justify-content:space-between;gap:var(--sp-2);
+  font-size:var(--t-xs);font-weight:650;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--t3);padding-bottom:6px;border-bottom:1px solid var(--bd);margin-bottom:4px}
+.acct-group-hdr span:last-child{color:var(--tx);letter-spacing:0}
+
+.acct{display:flex;align-items:center;gap:var(--sp-1);padding:9px 10px;border-radius:9px;
+  flex-wrap:wrap;transition:background .14s}
+.acct:hover{background:var(--s2)}
+.acct-name{flex:1;min-width:140px;font-size:var(--t-sm);color:var(--tx);line-height:1.4}
+.acct-name small{display:block;font-size:var(--t-xs);color:var(--t3);margin-top:1px}
+.acct-bal{font-family:'SF Mono','Fira Code',monospace;font-size:var(--t-sm);font-weight:600;
+  color:var(--tx);min-width:74px;text-align:right}
+.acct-unknown{font-size:var(--t-xs);color:var(--warn)}
+.acct select{font-size:var(--t-xs);padding:5px 7px;border:1px solid var(--bd);border-radius:7px;
+  background:var(--s2);color:var(--t3);font-family:inherit;max-width:100%;min-height:30px}
+
+/* Quiet until you reach for it. Always reachable by keyboard and on touch. */
+.acct-hide{width:26px;height:26px;flex:0 0 26px;border:0;border-radius:7px;background:none;
+  color:var(--t4);font-size:17px;line-height:1;cursor:pointer;opacity:0;transition:opacity .14s,color .14s,background .14s}
+.acct:hover .acct-hide,.acct-hide:focus-visible{opacity:1}
+.acct-hide:hover{background:var(--s3);color:var(--loss)}
+/* There is no hover on a phone, so the control has to be visible and thumb-sized there.
+   Both conditions are asked independently: `hover:none` is the right question but a
+   narrow viewport is the one that is never wrong. */
+@media(hover:none){.acct-hide{opacity:1}}
+@media(max-width:640px){.acct-hide{opacity:1;width:40px;height:40px;flex:0 0 40px;font-size:19px}}
+
+/* Folded away, never gone. */
+.accounts-hidden{border:1px solid var(--bd);border-radius:var(--radius);background:var(--s1);
+  padding:var(--sp-2) var(--sp-3);margin-bottom:var(--sp-2)}
+.accounts-hidden>summary{cursor:pointer;font-size:var(--t-sm);color:var(--t2);
+  list-style-position:inside;min-height:30px;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.accounts-hidden>summary em{font-style:normal;font-size:var(--t-xs);color:var(--t3)}
+.accounts-hidden>summary em[data-tone=warn]{color:var(--warn)}
+.accounts-hidden[open]>summary{margin-bottom:var(--sp-2)}
+.accounts-hidden .acct{opacity:.72}
+.accounts-hidden .acct:hover{opacity:1}
+.acct-note{font-size:var(--t-xs);color:var(--t3);line-height:1.6;margin:var(--sp-1) 0 0}

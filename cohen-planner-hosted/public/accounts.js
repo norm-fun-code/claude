@@ -38,6 +38,21 @@
 
   const SOURCE={PROVIDER:'provider',USER:'user',MODEL:'model'};
 
+  // ── Hiding ───────────────────────────────────────────────────────────────
+  // Hiding is a FLAG, not a class. What an account IS and whether you want to look at it
+  // are different questions: a closed 2014 savings account is still cash. Folding hiding
+  // into the class would throw away the classification the moment it is hidden, and would
+  // make "hidden" compete with "unknown" in rules that have nothing to do with it.
+  //
+  // The rule that matters: hiding is only cosmetic when the balance is ZERO. Hide an
+  // account that still holds something and net worth falls, so every total below reports
+  // what was excluded rather than quietly shrinking.
+  function isHidden(account,overrides){
+    const id=account&&account.id!=null?String(account.id):null;
+    const ov=id&&overrides?overrides[id]:null;
+    return !!(ov&&ov.hidden);
+  }
+
   const norm=s=>String(s==null?'':s).trim().toLowerCase();
 
   // ── Classification ───────────────────────────────────────────────────────
@@ -127,14 +142,29 @@
   // is never quietly short by an unknown amount.
   function summarize(accounts,overrides){
     const byClass={};for(const k of Object.values(CLASS))byClass[k]={total:0,accounts:[]};
-    const unknownBalance=[];
+    const unknownBalance=[],hidden=[];
     let assets=0,debt=0,accessible=0,stripeVested=0;
+    // What hiding actually costs, tracked separately so it can be reported rather than
+    // absorbed. hiddenUnknown counts accounts that were hidden while their balance was
+    // still unknown — hiding removed them from the "missing balances" list, and that is a
+    // decision the reader made, not a gap that got resolved.
+    let hiddenAssets=0,hiddenDebt=0,hiddenUnknown=0;
     for(const a of accounts||[]){
       const c=classifyAccount(a,overrides);
       const b=resolveBalance(a,overrides);
       const row={...a,cls:c.cls,clsSource:c.source,clsReason:c.reason,stripeKind:c.stripeKind,
         balance:b.value,balanceSource:b.source,balanceAsOf:b.asOf,balanceMissing:b.missing,
-        balanceNote:b.note,rawMissing:b.rawMissing,supersededOverride:b.supersededOverride};
+        balanceNote:b.note,rawMissing:b.rawMissing,supersededOverride:b.supersededOverride,
+        hidden:isHidden(a,overrides)};
+
+      if(row.hidden){
+        hidden.push(row);
+        if(b.missing)hiddenUnknown++;
+        else if(c.cls===CLASS.DEBT)hiddenDebt+=Math.abs(b.value);
+        else hiddenAssets+=b.value;
+        continue;                       // hidden accounts touch no total and no class list
+      }
+
       byClass[c.cls].accounts.push(row);
       if(b.missing){unknownBalance.push(row);continue}
       byClass[c.cls].total+=b.value;
@@ -145,8 +175,19 @@
         if(c.stripeKind==='vested')stripeVested+=b.value;
       }
     }
+    const hiddenNet=hiddenAssets-hiddenDebt;
     return{byClass,assets,debt,netWorth:assets-debt,accessible,stripeVested,
-      unknownBalance,complete:unknownBalance.length===0};
+      unknownBalance,complete:unknownBalance.length===0,
+      hidden,hiddenCount:hidden.length,hiddenAssets,hiddenDebt,hiddenNet,hiddenUnknown,
+      // The distinction the UI needs to tell the truth in one line. Hiding closed accounts
+      // is free; hiding a funded one is a change to the figure everything else is built on.
+      hiddenIsCosmetic:hidden.length>0&&hiddenNet===0&&hiddenUnknown===0,
+      hiddenNote:!hidden.length?null
+        :hiddenNet===0&&hiddenUnknown===0
+          ?`${hidden.length} hidden account${hidden.length===1?'':'s'}, all at zero — totals are unchanged.`
+          :hiddenUnknown>0&&hiddenNet===0
+            ?`${hidden.length} hidden, ${hiddenUnknown} of which had no balance from the provider. Those are no longer counted as missing.`
+            :`${hidden.length} hidden, holding ${hiddenNet<0?'−':''}$${Math.abs(Math.round(hiddenNet)).toLocaleString('en-US')} that is NOT in the totals above.`};
   }
 
   // ── Reconciliation with the plan ─────────────────────────────────────────
@@ -238,7 +279,7 @@
     return out;
   }
 
-  const api={CLASS,SOURCE,ACCESSIBLE,classifyAccount,resolveBalance,summarize,reconcile,
+  const api={CLASS,SOURCE,ACCESSIBLE,classifyAccount,resolveBalance,isHidden,summarize,reconcile,
     detectDoubleCounting,capabilities,blockedBy};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.PlannerAccounts=api;
