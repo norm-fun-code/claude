@@ -46,10 +46,30 @@ describe('every cockpit figure switches together', () => {
     expect(cockpit).toContain('cockpitExRet?opening-Math.abs(Number(P.k401Start||0)):opening');
   });
 
-  it('says which basis it is on, in words, next to the chart', () => {
-    expect(cockpit).toContain("cockpitExRet?'Excluding retirement':'Including retirement'");
+  it('puts BOTH choices on screen rather than captioning one button with its own state', () => {
+    // "Including retirement" on a button reads equally well as the thing it will do, so the
+    // reader could not tell what they were looking at from what they were about to click.
+    expect(cockpit).toContain("role=\"radiogroup\"");
+    expect(cockpit).toContain("opt(true,'Excluding retirement'");
+    expect(cockpit).toContain("opt(false,'Everything you own'");
+    expect(cockpit).toContain('cockpitSetExRet(${ex})');
     expect(cockpit).toContain("cockpitExRet?'Excludes retirement':'Includes retirement'");
     expect(cockpit).toMatch(/NET WORTH\$\{cockpitExRet\?' · EX-RETIREMENT':''\}/);
+  });
+
+  it('leads with what can actually be reached, which is what was asked for', () => {
+    const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+    expect(html).toMatch(/let cockpitExRet=true;/);
+  });
+
+  it('does not let the old auto-saved default override the new one', () => {
+    // The boolean was written on every save while it still defaulted the other way, so a
+    // stored `false` records the old default rather than anyone's decision. A new key means
+    // only a real choice is ever read back.
+    const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+    expect(html).toContain("cockpitNwBasis:cockpitExRet?'exRetirement':'total'");
+    expect(html).toContain("if(s.cockpitNwBasis!==undefined)cockpitExRet=s.cockpitNwBasis!=='total';");
+    expect(html).not.toContain('if(s.cockpitExRet!==undefined)');
   });
 
   it('marks the retirement tile as sitting outside the headline', () => {
@@ -57,8 +77,7 @@ describe('every cockpit figure switches together', () => {
   });
 
   it('persists the choice with the rest of the view state', () => {
-    expect(html).toContain('cockpitExRet,activeScenarioIdx');
-    expect(html).toContain('if(s.cockpitExRet!==undefined)cockpitExRet=!!s.cockpitExRet;');
+    expect(html).toContain("cockpitNwBasis:cockpitExRet?'exRetirement':'total',activeScenarioIdx");
   });
 });
 
@@ -76,7 +95,7 @@ describe('the confidence band follows the basis', () => {
   it('switches without re-running the simulation', () => {
     expect(cockpit).toContain("_cpBand={total:mc.band,exRet:mc.bandExRet}");
     expect(cockpit).toContain('cockpitExRet?_cpBand.exRet:_cpBand.total');
-    const toggle = cockpit.slice(cockpit.indexOf('function cockpitToggleExRet'), cockpit.indexOf('function renderCockpit'));
+    const toggle = cockpit.slice(cockpit.indexOf('function cockpitSetExRet'), cockpit.indexOf('function cockpitGo'));
     expect(toggle).not.toContain('_cpBandSig');
   });
 });

@@ -535,7 +535,7 @@ function savePlannerState(){
   if(!_planLoaded){setSyncStatus('error');return;}
   setSyncStatus('saving');
   const revision=++_saveRevision;
-  const payload=JSON.stringify({state:{P,compareMode,activeTab,_projView,_todayView,_homeView,cockpitExRet,activeScenarioIdx,scenarioDirty,monarchSnapshot,experienceVersion:7}});
+  const payload=JSON.stringify({state:{P,compareMode,activeTab,_projView,_todayView,_homeView,cockpitNwBasis:cockpitExRet?'exRetirement':'total',activeScenarioIdx,scenarioDirty,monarchSnapshot,experienceVersion:7}});
   clearTimeout(_saveTimer);
   _saveTimer=setTimeout(()=>{
     // Serialize writes so a slower earlier request cannot overwrite newer state.
@@ -573,7 +573,7 @@ async function loadFromServer(){
       if(s._projView!==undefined)_projView=s._projView;
       if(s._todayView!==undefined)_todayView=s._todayView;
       if(s._homeView!==undefined)_homeView=s._homeView;
-      if(s.cockpitExRet!==undefined)cockpitExRet=!!s.cockpitExRet;
+      if(s.cockpitNwBasis!==undefined)cockpitExRet=s.cockpitNwBasis!=='total';
       if(s.activeScenarioIdx!==undefined)activeScenarioIdx=s.activeScenarioIdx;
       if(s.scenarioDirty!==undefined)scenarioDirty=!!s.scenarioDirty;
       if(PlannerDecisions.usableSnapshot(s.monarchSnapshot)&&!monarchSnapshot)monarchSnapshot=s.monarchSnapshot; // don't clobber a fresh auto-sync
@@ -4750,7 +4750,12 @@ let _projView='nw';
 let _todayView='overview';
 // Whether the cockpit reports net worth excluding retirement. See the note in cockpit.js;
 // it lives here because savePlannerState() persists it with the rest of the view state.
-let cockpitExRet=false;
+// Retirement is money you cannot reach for decades, so the cockpit leads with what you
+// actually can. Persisted under `cockpitNwBasis` rather than the old boolean: that key was
+// written automatically on every save while it was still defaulting the other way, so a
+// stored `false` records the old default rather than anyone's decision, and honouring it
+// would keep overriding the new one forever.
+let cockpitExRet=true;
 // The Decision Room already leads with "Explore a what-if", and Housing, the tornado and the
 // scenario diff are all the same activity at different resolutions: pick a lever, see which
 // levers matter, save and diff. One tab, four depths — not four destinations.
