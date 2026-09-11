@@ -2017,7 +2017,7 @@ function makeDonut(canvasId,labels,data,colors,fmtVal,showLegend){
       plugins:{
         // Off where the card already lists each slice with its dollar value — two legends
         // for one chart is noise, and the itemised one carries strictly more information.
-        legend:{display:showLegend===true,position:'bottom',labels:{font:{size:9.5,family:"'Inter',sans-serif"},color:'#425466',padding:8,
+        legend:{display:showLegend===true,position:'bottom',labels:{font:{size:9.5,family:"'Inter',sans-serif"},color:'#c8d5e8',padding:12,
           usePointStyle:true,pointStyle:'circle',boxWidth:7,boxHeight:7,
           generateLabels:chart=>{const ds=chart.data.datasets[0];
             return chart.data.labels.map((lbl,i)=>({text:`${lbl} ${pctOf(ds.data[i]).toFixed(0)}%`,
@@ -2046,10 +2046,11 @@ const PROV={
   entered:{icon:'✎',label:'You confirmed',color:'var(--a)',hint:'entered or confirmed by you'},
   projected:{icon:'◇',label:'Projected',color:'var(--p)',hint:'produced by the plan model'},
 };
-function provChip(kind,asOf){
+function provChip(kind,asOf,compact=false){
   const p=PROV[kind];if(!p)return'';
   const when=asOf?new Date(asOf).toLocaleDateString(undefined,{month:'short',day:'numeric'}):null;
-  return `<span title="${p.hint}${when?' · '+when:''}" style="display:inline-flex;align-items:center;gap:3px;font-size:8px;font-weight:600;color:${p.color};background:color-mix(in srgb, ${p.color} 10%, transparent);border-radius:4px;padding:1px 5px;white-space:nowrap">${p.icon} ${p.label}${when?' · '+when:''}</span>`;
+  const text=compact?`${p.icon} ${when||p.label}`:`${p.icon} ${p.label}${when?' · '+when:''}`;
+  return `<span class="overview-provenance" title="${p.hint}${when?' · '+when:''}" style="--prov:${p.color}">${text}</span>`;
 }
 
 async function loadOverview(){
@@ -2347,12 +2348,11 @@ function renderOverviewTab(R,P){
   const money=v=>fmt(Math.round(v||0));
 
   // ── Wealth and access ──
-  const tile=(lbl,val,chip,sub,col)=>`<div class="kpi">
-    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-bottom:3px">
-      <span style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t3)">${lbl}</span>${chip||''}
-    </div>
-    <div style="font-size:19px;font-weight:800;font-family:'SF Mono',monospace;color:${col||'var(--tx)'};letter-spacing:-.5px">${val}</div>
-    ${sub?`<div style="font-size:8.5px;color:var(--t3);margin-top:2px">${sub}</div>`:''}</div>`;
+  const tile=(lbl,val,chip,sub,col)=>`<div class="kpi overview-metric">
+    <div class="overview-metric-label">${lbl}</div>
+    <div class="overview-metric-value" style="color:${col||'var(--tx)'}">${val}</div>
+    ${sub?`<div class="overview-metric-sub">${sub}</div>`:''}
+    <div class="overview-metric-source">${chip||''}</div></div>`;
 
   if(d.error){
     h+=`<div class="glass-card" style="padding:18px;text-align:center">
@@ -2361,12 +2361,12 @@ function renderOverviewTab(R,P){
       <button onclick="openMonarchDiagnostics()" style="font-size:10px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">🩺 Diagnose connection</button></div>`;
   } else {
     h+=`<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(158px,1fr))">
-      ${tile('Net worth',money(sum.netWorth),provChip('observed',d.asOf),`${money(sum.assets)} assets − ${money(sum.debt)} debt`)}
-      ${tile('Accessible today',money(sum.accessible),provChip('observed',d.asOf),'cash + taxable — spendable without penalty','var(--g)')}
-      ${tile('Retirement',money((cls.retirement||{}).total),provChip('observed',d.asOf),'locked until retirement age')}
-      ${tile('Stripe equity',money(sum.stripeVested),provChip('observed',d.asOf),'vested only — grants are future pay','#6772e5')}
-      ${tile(`Cash flow ${y0.yr}`,(y0.flow>=0?'+':'−')+money(Math.abs(y0.flow)),provChip('projected'),y0.flow>=0?(y0.gap>0?`total pay covers the year · ${money(y0.gap)} of it comes from vest`:'cash pay alone covers the year'):'spending exceeds total after-tax pay',y0.flow>=0?'var(--g)':'var(--r)')}
-      ${tile(`Net worth ${last.yr}`,money(last.nw),provChip('projected'),'if the plan holds')}
+      ${tile('Net worth',money(sum.netWorth),provChip('observed',d.asOf,true),`${money(sum.assets)} assets − ${money(sum.debt)} debt`)}
+      ${tile('Accessible today',money(sum.accessible),provChip('observed',d.asOf,true),'cash + taxable — spendable without penalty','var(--g)')}
+      ${tile('Retirement',money((cls.retirement||{}).total),provChip('observed',d.asOf,true),'locked until retirement age')}
+      ${tile('Stripe equity',money(sum.stripeVested),provChip('observed',d.asOf,true),'vested only — grants are future pay','#6772e5')}
+      ${tile(`Cash flow ${y0.yr}`,(y0.flow>=0?'+':'−')+money(Math.abs(y0.flow)),provChip('projected',null,true),y0.flow>=0?(y0.gap>0?`total pay covers the year · ${money(y0.gap)} of it comes from vest`:'cash pay alone covers the year'):'spending exceeds total after-tax pay',y0.flow>=0?'var(--g)':'var(--r)')}
+      ${tile(`Net worth ${last.yr}`,money(last.nw),provChip('projected',null,true),'if the plan holds')}
     </div>`;
 
     // ── Anything unknown, said out loud ──
@@ -3132,7 +3132,7 @@ function renderPortfolioTab(R,P){
         responsive:true,maintainAspectRatio:false,cutout:'62%',
         plugins:{
           legend:{position:'bottom',labels:{
-            font:{size:10,family:"'Inter',sans-serif"},color:'#425466',padding:10,usePointStyle:true,pointStyle:'circle',boxWidth:7,boxHeight:7,
+            font:{size:12,family:"'Inter',sans-serif"},color:'#c8d5e8',padding:12,usePointStyle:true,pointStyle:'circle',boxWidth:7,boxHeight:7,
             generateLabels:chart=>{
               const ds=chart.data.datasets[0];
               return chart.data.labels.map((lbl,i)=>{
