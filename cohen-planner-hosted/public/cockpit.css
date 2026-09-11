@@ -219,3 +219,18 @@ body,body.home-view{background:radial-gradient(ellipse at 80% -20%,#1a2b47 0,tra
 .story-stat-l small{display:block;font-size:10px;font-weight:500;letter-spacing:.2px;
   text-transform:none;color:var(--t3);margin-top:1px}
 .story-stats{align-items:end}
+
+/* "Where the money sits" folds — the list runs long. Collapsed it still states the count and
+   the net figure, so folding it away does not also take the answer with it. */
+.accounts-toggle{display:flex;align-items:center;gap:12px;width:100%;padding:0 0 4px;border:0;
+  background:none;color:var(--tx);font-family:inherit;cursor:pointer;text-align:left}
+.accounts-toggle:hover small{color:var(--t2)}
+.accounts-toggle .ui-eyebrow{margin:0}
+.accounts-toggle small{margin-left:auto;font-size:12px;color:var(--t3);
+  font-variant-numeric:tabular-nums}
+.accounts-toggle em{font-style:normal;font-size:11px;color:var(--t3);width:12px;text-align:center}
+.accounts-toggle:focus-visible{outline:2px solid var(--g);outline-offset:3px;border-radius:6px}
+/* Breathing room between the header and the first group, only when there is a list under
+   it — collapsed, that margin would be trailing space inside an otherwise tight card. */
+#acctList{margin-top:10px}
+@media(max-width:760px){.accounts-toggle{min-height:44px;padding:6px 0}}

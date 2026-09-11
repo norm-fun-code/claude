@@ -114,3 +114,43 @@ describe('completeness is judged on the reading actually shown', () => {
     expect(portfolio).toContain('if(!monarchSnapshot?.partial||!miss.length)return');
   });
 });
+
+// A long list that cannot be folded is a long list you scroll past every time.
+describe('the accounts list folds', () => {
+  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const css = fs.readFileSync(new URL('../public/cockpit.css', import.meta.url), 'utf8');
+
+  it('reuses the collapse set the settings panel already persists', () => {
+    // A second mechanism for the same idea is how two of them end up disagreeing.
+    expect(html).toContain("_collapsedSections.has('acct-list')");
+    expect(html).toContain("toggleSection('acct-list',true)");
+    expect(html).toMatch(/function toggleSection\(key,full\)/);
+    expect(html).toContain('full?render():buildControls()');
+  });
+
+  it('still answers the question when folded', () => {
+    // A section that hides what it was telling you is a section you just have to reopen.
+    const sec = html.slice(html.indexOf('class="accounts-toggle"'), html.indexOf('id="acctList"'));
+    expect(sec).toContain('account${nShown===1?\'\':\'s\'}');
+    expect(sec).toContain('UI.money(sum.netWorth)');
+  });
+
+  it('says its state to a screen reader as well as with a chevron', () => {
+    expect(html).toContain('aria-expanded="${acctOpen}"');
+    expect(html).toContain('aria-controls="acctList"');
+    expect(html).toContain("acctOpen?'▾':'▸'");
+    expect(css).toContain('.accounts-toggle:focus-visible');
+  });
+
+  it('gives the header a thumb-sized target on a phone', () => {
+    const m = css.match(/@media\(max-width:760px\)\{\.accounts-toggle\{min-height:(\d+)px/);
+    expect(Number(m[1])).toBeGreaterThanOrEqual(44);
+  });
+
+  it('opens by default, so nothing vanishes on first sight', () => {
+    // `has()` is false for a fresh set, and 'acct-list' is not in the seeded defaults.
+    expect(html).toContain("const acctOpen=!_collapsedSections.has('acct-list');");
+    const seed = html.match(/JSON\.stringify\(\[([^\]]*)\]\)\)\)/)[1];
+    expect(seed).not.toContain('acct-list');
+  });
+});

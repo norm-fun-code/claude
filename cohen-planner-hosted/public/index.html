@@ -1177,7 +1177,9 @@ function compCell(key,isStock){
   return`<input type="text" inputmode="numeric" id="s_${key}" value="${fmtF(P[key]||0)}" onchange="UComp('${key}',this.value,this)" onkeydown="if(event.key==='Enter')this.blur()" class="comp-in${isStock?' comp-stock':''}">`;
 }
 let _collapsedSections=new Set(JSON.parse(localStorage.getItem('plannerCollapsed')||JSON.stringify(['childcare','tuition','plan-start','stripe'])));
-function toggleSection(key){_collapsedSections.has(key)?_collapsedSections.delete(key):_collapsedSections.add(key);localStorage.setItem('plannerCollapsed',JSON.stringify([..._collapsedSections]));buildControls()}
+// `full` re-renders the whole view rather than just the settings panel, so the same
+// persisted collapse set can drive sections outside it instead of growing a second one.
+function toggleSection(key,full){_collapsedSections.has(key)?_collapsedSections.delete(key):_collapsedSections.add(key);localStorage.setItem('plannerCollapsed',JSON.stringify([..._collapsedSections]));full?render():buildControls()}
 
 function buildControls(){
   const s=(l,k,mn,mx,st,fn)=>`<div class="sr"><div class="sh"><span class="sl">${l}</span><span class="sv" id="v_${k}">${fn?fn(P[k]):P[k]}</span></div><input type="range" id="s_${k}" min="${mn}" max="${mx}" step="${st}" value="${P[k]}" oninput="U('${k}',this.value)"></div>`;
@@ -2500,14 +2502,27 @@ function renderOverviewTab(R,P){
         title="Hide this account" aria-label="Hide ${advEscape(a.name||a.id)}">×</button>
     </div>`;
 
+    // The full account list runs long, so it folds. Collapsed it still carries the count and
+    // the net figure — a section that hides what it was telling you is just a section you
+    // then have to open again.
+    const shownGroups=order.filter(k=>(cls[k]||{accounts:[]}).accounts.length);
+    const nShown=shownGroups.reduce((n,k)=>n+cls[k].accounts.length,0);
+    const acctOpen=!_collapsedSections.has('acct-list');
     h+=`<section class="accounts-card">
-      <span class="ui-eyebrow">Where the money sits</span>
-      ${order.filter(k=>(cls[k]||{accounts:[]}).accounts.length).map(k=>`
+      <button type="button" class="accounts-toggle" aria-expanded="${acctOpen}" aria-controls="acctList"
+        onclick="toggleSection('acct-list',true)">
+        <span class="ui-eyebrow">Where the money sits</span>
+        <small>${nShown} account${nShown===1?'':'s'} · ${UI.money(sum.netWorth)}</small>
+        <em aria-hidden="true">${acctOpen?'▾':'▸'}</em>
+      </button>
+      <div id="acctList"${acctOpen?'':' hidden'}>
+      ${shownGroups.map(k=>`
         <div class="acct-group">
           <div class="acct-group-hdr"><span>${LBL[k]}</span><span class="ui-num">${UI.money(cls[k].total)}</span></div>
           ${cls[k].accounts.map(acctRow).join('')}
         </div>`).join('')}
       <p class="acct-note">Classification is saved against each account's stable id, so renaming an account in Monarch will not move it. A Stripe 401(k) is retirement money, not company stock.</p>
+      </div>
     </section>`;
 
     // ── Hidden accounts ──────────────────────────────────────────────────
