@@ -336,3 +336,35 @@
    chrome, not in front of the headline. */
 #mobileControlsToggle{margin:0 0 var(--sp-3)}
 @media(max-width:760px){.hdr-status{border:0;padding:0}}
+
+/* ═══ THE RAIL, ALIVE ═══
+   Six items and then 70% empty column. Ambient state is what separates an instrument
+   panel from a website, so the rail carries what needs you, how fresh the numbers are,
+   and the shape of the curve — all readable without changing screens. */
+.tabs button[role=tab]{position:relative;display:flex;align-items:center;gap:9px}
+.nav-badge{margin-left:auto;min-width:19px;height:19px;padding:0 6px;border-radius:var(--radius-pill);
+  background:var(--warn);color:#241b0c;font-size:11px;font-weight:700;line-height:19px;
+  text-align:center;font-variant-numeric:tabular-nums;flex:0 0 auto}
+
+.nav-live{margin-top:auto;padding-top:var(--sp-3);border-top:1px solid var(--bd);
+  display:flex;flex-direction:column;gap:var(--sp-2)}
+.nav-fresh{display:flex;align-items:center;gap:7px;font-size:var(--t-xs);color:var(--t3);line-height:1.4}
+.nav-fresh>span{width:6px;height:6px;border-radius:50%;flex:0 0 6px;background:var(--t4)}
+.nav-fresh[data-tone=fresh]>span{background:var(--gain)}
+.nav-fresh[data-tone=stale]>span{background:var(--warn)}
+.nav-fresh[data-tone=missing]>span{background:var(--t4)}
+
+/* Shape only: no axis, no gridlines, no figures on the line itself. At this size any
+   more would be decoration pretending to be data. */
+.nav-spark{display:block;width:100%;padding:0;border:0;background:none;cursor:pointer;
+  color:var(--gain);text-align:left}
+.nav-spark svg{display:block;width:100%;height:30px;opacity:.95}
+.nav-spark polyline{stroke-width:1.8}
+.nav-spark:hover svg{opacity:1}
+.nav-spark>span{display:flex;justify-content:space-between;gap:8px;margin-top:5px;
+  font-size:11px;color:var(--t4);font-variant-numeric:tabular-nums}
+.nav-spark>span i{font-style:normal;color:var(--t3)}
+.nav-spark:hover>span i{color:var(--t2)}
+
+/* On a phone the rail is a bottom bar, so the footer has nowhere to live. */
+@media(max-width:760px){.nav-live{display:none}.nav-badge{min-width:17px;height:17px;line-height:17px;font-size:10px}}

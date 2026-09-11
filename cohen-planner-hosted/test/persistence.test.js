@@ -150,3 +150,34 @@ describe('Trajectory milestones',()=>{
     expect(src).toContain("hero.dataset.source==='projected'");
   });
 });
+
+// The side rail carries ambient state, which is exactly where a reassuring lie is
+// easiest to tell. These lock the two places it could.
+describe('The live nav rail',()=>{
+  const src=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+  const fn=src.slice(src.indexOf('function renderNavLive()'),src.indexOf('function setTab(t){'));
+
+  it('never draws a zero badge, because zero and absent look identical to a reader',()=>{
+    expect(fn).toContain('if(open){badge.hidden=false');
+    expect(fn).toMatch(/only a real count\s*\n?\s*\/\/ is ever drawn/);
+  });
+
+  it('hides the badge entirely until the watchlist has actually loaded',()=>{
+    // `_inbox` null must not become 0 — an unchecked plan is not a clear one.
+    expect(fn).toContain('_inbox&&_inbox.counts?Number(_inbox.counts.open)||0:null');
+  });
+
+  it('states freshness in three honest tones rather than implying a sync',()=>{
+    expect(fn).toContain("'Accounts not connected'");
+    expect(fn).toMatch(/days>7\?'stale'/);
+    expect(fn).toMatch(/Balances \$\{days\} day/);
+  });
+
+  it('hides the rail rather than drawing a curve it could not compute',()=>{
+    expect(fn).toContain('catch(e){rail.hidden=true;return}');
+  });
+
+  it('is redrawn on every render, so a finished sync reaches it',()=>{
+    expect(src).toContain('try{renderNavLive()}catch(e){}');
+  });
+});

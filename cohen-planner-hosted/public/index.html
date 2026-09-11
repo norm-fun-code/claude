@@ -1620,6 +1620,9 @@ function render(){
   document.body.classList.toggle('home-view',activeTab==='home');
   document.body.classList.toggle('cockpit-view',activeTab==='cockpit');
   document.querySelectorAll('.tabs button[role=tab]').forEach(b=>{const on=b.dataset.tab===activeTab;b.classList.toggle('active',on);b.setAttribute('aria-selected',String(on));});
+  // The rail reflects whatever is currently known. It is drawn on every render so a
+  // finished sync or a new watchlist result reaches it without its own refresh path.
+  try{renderNavLive()}catch(e){}
   if(activeTab!=='income')document.getElementById('flowToggle')?.remove();
   const{R,tT,tC,tTx,tS,dp,mm}=run(P);
   const last=R[R.length-1],pur=R.find(r=>r.yr===P.homePurchaseYear),pliq=pur?pur.liq:0;
@@ -4401,6 +4404,60 @@ document.addEventListener('click',e=>{
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeMoreMenu()});
 
 function setSubView(v){const c=SUB_VIEWS[activeTab];if(c){c.set(v);render();savePlannerState()}}
+// ── The rail, alive ─────────────────────────────────────────────────────────
+// Six nav items and then an empty column. Ambient state is what makes something feel
+// like an instrument panel rather than a website, so the rail now carries the three
+// things worth knowing without changing screens: what needs you, how fresh the numbers
+// are, and the shape of the curve.
+//
+// Every figure here is read from state that already exists. Nothing is computed twice,
+// and nothing is invented — when the watchlist has not loaded the badge stays hidden
+// rather than showing a reassuring zero.
+function renderNavLive(){
+  const badge=document.getElementById('navAlertBadge');
+  if(badge){
+    const open=_inbox&&_inbox.counts?Number(_inbox.counts.open)||0:null;
+    // A zero badge and an absent badge look the same to a reader, so only a real count
+    // is ever drawn. An unloaded watchlist shows nothing at all.
+    if(open){badge.hidden=false;badge.textContent=open;
+      badge.setAttribute('aria-label',`${open} item${open===1?'':'s'} need your attention`);}
+    else badge.hidden=true;
+  }
+
+  const rail=document.getElementById('navLive');
+  if(!rail)return;
+  let R;
+  try{R=run(P).R}catch(e){rail.hidden=true;return}
+  if(!R||!R.length){rail.hidden=true;return}
+
+  // Freshness. The dot states which of three things is true, and the text never claims
+  // more than the dot: connected and current, connected and stale, or not connected.
+  const asOf=_ovw&&_ovw.asOf?new Date(_ovw.asOf):null;
+  const dated=asOf&&Number.isFinite(asOf.getTime());
+  const days=dated?Math.round((Date.now()-asOf.getTime())/86400000):null;
+  const tone=!dated?'missing':days>7?'stale':'fresh';
+  const freshness=!dated?'Accounts not connected'
+    :days<=0?'Balances read today'
+    :`Balances ${days} day${days===1?'':'s'} old`;
+
+  // The curve, at the size it can honestly be read: shape only, no axis, no figures.
+  const series=R.map(r=>r.nw+r.k401);
+  const lo=Math.min(...series),hi=Math.max(...series),span=(hi-lo)||1;
+  const pts=series.map((v,i)=>
+    `${(i/(series.length-1)*100).toFixed(1)},${(26-(v-lo)/span*24).toFixed(1)}`).join(' ');
+
+  rail.hidden=false;
+  rail.innerHTML=`
+    <div class="nav-fresh" data-tone="${tone}"><span></span>${advEscape(freshness)}</div>
+    <button class="nav-spark" onclick="setTab('cockpit')" aria-label="Projected wealth through ${R[R.length-1].yr}. Open the cockpit.">
+      <svg viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
+        <polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.6"
+          stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+      </svg>
+      <span>${R[0].yr}<i>${UI.money(series[series.length-1])} by ${R[R.length-1].yr}</i></span>
+    </button>`;
+}
+
 function setTab(t){
   // Retired top-level tabs now address a view within Projection. Saved plan state, the
   // command palette and any in-app link can keep using the old names.
@@ -4417,9 +4474,13 @@ document.getElementById('main').innerHTML=`
     <button role="tab" aria-selected="true" class="active" data-tab="home" onclick="setTab('home')">◇ Decisions</button>
     <button role="tab" aria-selected="false" data-tab="projection" onclick="setTab('projection')">↗ Trajectory</button>
     <button role="tab" aria-selected="false" data-tab="stripe" onclick="setTab('stripe')">◆ Stripe</button>
-    <button role="tab" aria-selected="false" data-tab="today" onclick="setTab('today')">≡ Financial life</button>
+    <button role="tab" aria-selected="false" data-tab="today" onclick="setTab('today')">≡ Financial life<span class="nav-badge" id="navAlertBadge" hidden></span></button>
     <button role="tab" aria-selected="false" data-tab="advisor" onclick="setTab('advisor')">✦ Advisor</button>
     <button id="moreBtn" aria-label="More actions" aria-haspopup="true" aria-expanded="false" onclick="toggleMoreMenu(event)" style="margin-left:auto;font-size:11px;padding:4px 10px;border-radius:5px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit;line-height:1">⋯</button>
+    <!-- The rail carried six items and then 70% empty column. A cockpit's side rail
+         should be alive: what needs you, how fresh the data is, and the shape of the
+         curve — readable without changing screens. -->
+    <div class="nav-live" id="navLive" hidden></div>
   </div>
   <div id="moreMenu" hidden style="position:absolute;z-index:60;background:var(--s1);border:1px solid var(--bd);border-radius:9px;box-shadow:0 10px 30px rgba(10,37,64,.16);padding:5px;min-width:186px"></div>
   <div id="subToggle"></div>
