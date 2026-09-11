@@ -70,11 +70,39 @@
   function openingPosition(R,year,P,exRetirement){
     const rows=R||[];
     const prev=rows.find(r=>r.yr===year-1);
-    if(prev)return{value:r0(exRetirement?prev.nw:prev.netWorth),source:'prior year close',year:year-1};
+    if(prev)return{value:r0(exRetirement?prev.nw:prev.netWorth),source:'prior year close',year:year-1,
+      parts:{liq:prev.liq,stripe:prev.sEnd,home:prev.eq,retirement:prev.k401,debt:prev.otherDebt}};
     const p=P||{};
-    return{value:r0((p.startingLiquid||0)+(p.startingStripeEquity||0)
-      +(exRetirement?0:(p.k401Start||0))-Math.abs(Number(p.otherDebt||0))),
-      source:'your starting assumptions',year:null};
+    const parts={liq:Number(p.startingLiquid)||0,stripe:Number(p.startingStripeEquity)||0,
+      home:0,retirement:Number(p.k401Start)||0,debt:Math.abs(Number(p.otherDebt||0))};
+    return{value:r0(parts.liq+parts.stripe+(exRetirement?0:parts.retirement)-parts.debt),
+      source:'your starting assumptions',year:null,parts};
+  }
+
+  // ── Where a year's change actually comes from ────────────────────────────
+  // "Saving and assumed return through 2026" as one number invites exactly the question it
+  // should answer: a year holding vests, a portfolio return and a month-by-month surplus
+  // reports one figure, and there is no way to tell which of the three is small. These are
+  // the pools themselves, so they sum to the total by construction rather than by estimate.
+  function yearParts(row,opening,exRetirement){
+    const o=opening&&opening.parts;
+    if(!o||!row)return[];
+    const out=[
+      {key:'liquid',label:'Portfolio growth and what you save',
+       value:r0(row.liq-o.liq),
+       note:'Return on the diversified pool, plus after-tax cash left over once spending is paid.'},
+      {key:'stripe',label:'Stripe vests that land',
+       value:r0(row.sEnd-o.stripe),
+       note:'After-tax value of the vests still ahead. A private position only re-prices at the February tender, so nothing here is appreciation.'},
+      {key:'home',label:'Home equity',value:r0(row.eq-o.home),
+       note:'Down payment plus principal paid and appreciation since.'},
+      {key:'debt',label:'Change in what you owe',value:r0(o.debt-(row.otherDebt||0)),
+       note:'The revolving balance the plan carries, held flat unless you change it.'},
+    ];
+    if(!exRetirement)out.splice(3,0,{key:'retirement',label:'Retirement contributions and growth',
+      value:r0(row.k401-o.retirement),
+      note:'Your contributions, the employer match, and return on the balance already there.'});
+    return out.filter(p=>p.value!==0);
   }
 
   // ── The bridge ───────────────────────────────────────────────────────────
@@ -146,9 +174,22 @@
         :carried,
       action:'reconcile'});
 
-    lines.push({kind:'time',key:'withinYear',
-      label:`Saving and assumed return through ${year}`,value:withinYear,running:projected,
-      note:'The chart reads 31 December. Today is not.'});
+    // Broken into the pools it lands in, each summing to the whole, so "how is that only
+    // $20k" is answerable from the screen rather than by trusting the total.
+    const parts=yearParts(row,opening,ex);
+    const partsSum=parts.reduce((n,p)=>n+p.value,0);
+    if(parts.length>1&&partsSum===withinYear){
+      let run=opening.value;
+      for(const p of parts){
+        run+=p.value;
+        lines.push({kind:'time',key:'within:'+p.key,label:p.label,value:p.value,running:run,
+          note:p.note});
+      }
+    } else {
+      lines.push({kind:'time',key:'withinYear',
+        label:`Saving and assumed return through ${year}`,value:withinYear,running:projected,
+        note:'The chart reads 31 December. Today is not.'});
+    }
 
     lines.push({kind:'projected',key:'projected',
       label:`${year} year-end net worth${ex?' ex-retirement':''}`,
@@ -181,7 +222,7 @@
     return (Number(v)<0?'−$':'$')+n.toLocaleString('en-US');
   }
 
-  const api={bridge,comparableObserved,openingPosition};
+  const api={bridge,comparableObserved,openingPosition,yearParts};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.PlannerBridge=api;
 })(typeof window!=='undefined'?window:this);

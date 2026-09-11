@@ -239,3 +239,71 @@ describe('the comparable subtotal', () => {
     expect(sub.running).toBe(b.observed - 35000);
   });
 });
+
+// "Saving and assumed return through 2026" as one number invites exactly the question it
+// should answer: with vests, a portfolio return and a monthly surplus all inside it, there
+// was no way to see which one was small.
+describe('the year\'s change is broken into the pools it lands in', () => {
+  const M = require('../public/model.js');
+  const vm = require('node:vm');
+  const D = vm.runInNewContext('(' + readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')
+    .match(/const D=(\{[\s\S]*?\n\});/)[1] + ')');
+  const plan = { ...D, observedOn: '2026-09-11', startingLiquid: 678000,
+    startingStripeEquity: 614000, k401Start: 297000, otherDebt: 46000 };
+  const rows = M.run(plan).R;
+  const live = [
+    { id: '1', name: 'Cash', category: 'cash', balance: 678000 },
+    { id: '2', name: 'Stripe Equity', category: 'other_asset', balance: 614000 },
+    { id: '3', name: 'Stripe 401(k)', category: 'retirement', balance: 297000 },
+    { id: '4', name: 'Amex', category: 'liability', balance: -46000 },
+  ];
+  const bridged = ex => B.bridge({ summary: A.summarize(live, {}), R: rows, P: plan,
+    year: 2026, accountsAvailable: true, exRetirement: ex });
+
+  it('names the components rather than reporting one lump', () => {
+    const keys = bridged(true).lines.filter(l => l.kind === 'time').map(l => l.key);
+    expect(keys).toContain('within:liquid');
+    expect(keys).toContain('within:stripe');
+    expect(keys).not.toContain('withinYear');
+  });
+
+  it('sums to the same total the single line reported', () => {
+    for (const ex of [false, true]) {
+      const b = bridged(ex);
+      const parts = b.lines.filter(l => l.kind === 'time');
+      expect(parts.reduce((n, p) => n + p.value, 0), String(ex)).toBe(b.withinYear);
+      // …and the walk still closes on the projected figure.
+      const walked = b.lines.reduce((n, l) => n + (l.value == null ? 0 : l.value), 0);
+      expect(b.observed + walked, String(ex)).toBe(b.projected);
+    }
+  });
+
+  it('separates what the vests add from what the portfolio earns', () => {
+    // The two answers a reader is actually weighing, previously added together.
+    const b = bridged(true);
+    const liq = b.lines.find(l => l.key === 'within:liquid');
+    const stripe = b.lines.find(l => l.key === 'within:stripe');
+    expect(liq.value).toBe(rows[0].liq - plan.startingLiquid);
+    expect(stripe.value).toBe(rows[0].sEnd - plan.startingStripeEquity);
+    expect(liq.value + stripe.value).toBe(b.withinYear);
+  });
+
+  it('shows retirement growth only when retirement is being counted', () => {
+    expect(bridged(false).lines.some(l => l.key === 'within:retirement')).toBe(true);
+    expect(bridged(true).lines.some(l => l.key === 'within:retirement')).toBe(false);
+  });
+
+  it('leaves out a pool that did not move, rather than printing a row of zeroes', () => {
+    // No home purchase in 2026 and the revolving balance is held flat.
+    for (const k of ['within:home', 'within:debt'])
+      expect(bridged(true).lines.some(l => l.key === k), k).toBe(false);
+  });
+
+  it('falls back to the single line if the parts ever stop reconciling', () => {
+    // A decomposition that does not add up is worse than no decomposition, so it is only
+    // used when it is provably exact.
+    const src = readFileSync(new URL('../public/bridge.js', import.meta.url), 'utf8');
+    expect(src).toContain('parts.length>1&&partsSum===withinYear');
+    expect(src).toContain("key:'withinYear'");
+  });
+});
