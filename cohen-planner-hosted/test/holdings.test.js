@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const { mapHoldings, normaliseType, extractHoldingEdges, createMonarchLive } = require('../monarch-live.js');
+const { mapHoldings, mapPerformance, normaliseType, extractHoldingEdges, createMonarchLive } = require('../monarch-live.js');
 
 // A Monarch `portfolio` payload as the web API returns it. The query itself is undocumented,
 // so the mapper is deliberately tolerant and these tests pin the shapes it must survive.
 const node = (over = {}) => ({
   id: 'h1', quantity: 10, basis: 20000, totalValue: 30000,
-  securityPriceChangeDollars: 500, securityPriceChangePercent: 1.7,
+  securityPriceChangeDollars: 50, securityPriceChangePercent: 1.7,
   security: { id: 's1', name: 'Fidelity 500 Index', ticker: 'FXAIX', type: 'mutual_fund' },
   holdings: [{ id: 'a1', ticker: 'FXAIX', value: 30000 }],
   ...over,
@@ -19,7 +19,7 @@ describe('holdings mapper', () => {
     const [h] = mapHoldings(payload([node()]));
     expect(h).toMatchObject({
       ticker: 'FXAIX', name: 'Fidelity 500 Index', securityType: 'mutual_fund',
-      value: 30000, periodChange: 500, periodChangePct: 1.7,
+      value: 30000, periodChange: 501.47, periodChangePct: 1.7,
     });
     // all-time return is derived from cost basis, which the MCP feed never exposed
     expect(h.allTimeChange).toBe(10000);
@@ -49,11 +49,23 @@ describe('holdings mapper', () => {
   });
 
   it('survives string numerics and missing basis without producing NaN', () => {
-    const [h] = mapHoldings(payload([node({ totalValue: '$12,500.00', basis: null, securityPriceChangeDollars: '-250' })]));
+    const [h] = mapHoldings(payload([node({ totalValue: '$12,500.00', basis: null, securityPriceChangeDollars: '-25', securityPriceChangePercent: null })]));
     expect(h.value).toBe(12500);
     expect(h.periodChange).toBe(-250);
     expect(h.allTimeChange).toBe(0); // no basis → no claimed all-time return
     expect(h.allTimePct).toBe(0);
+  });
+
+  it('does not mistake a per-share price change for a whole-position change', () => {
+    const [h] = mapHoldings(payload([node({ quantity: 100, totalValue: 12000, securityPriceChangeDollars: 2, securityPriceChangePercent: null })]));
+    expect(h.periodChange).toBe(200);
+    expect(h.periodChangePct).toBeNull();
+  });
+
+  it('keeps missing period movement unknown instead of turning it into zero', () => {
+    const [h] = mapHoldings(payload([node({ securityPriceChangeDollars: null, securityPriceChangePercent: null, quantity: null })]));
+    expect(h.periodChange).toBeNull();
+    expect(h.periodChangePct).toBeNull();
   });
 
   it('drops zero-value positions but keeps real ones', () => {
@@ -74,6 +86,20 @@ describe('holdings mapper', () => {
   });
 });
 
+describe('portfolio performance mapper', () => {
+  it('reads Monarch’s contribution-aware result for the requested portfolio window', () => {
+    expect(mapPerformance({ performance: {
+      totalValue: 675000, totalBasis: 610000, totalChangeDollars: 42123.456,
+      totalChangePercent: 6.731, oneDayChangePercent: -0.2,
+      historicalChart: [{ date: '2026-01-01', returnPercent: 0 }],
+    } })).toMatchObject({ totalChangeDollars: 42123.46, totalChangePercent: 6.73 });
+  });
+
+  it('returns null when Monarch omits performance so the API can label its fallback honestly', () => {
+    expect(mapPerformance(payload([node()]))).toBeNull();
+  });
+});
+
 describe('holdings transport', () => {
   const withToken = (fetchImpl) => createMonarchLive({
     db: { query: async () => ({ rows: [{ data: {} }] }) },
@@ -88,8 +114,18 @@ describe('holdings transport', () => {
     expect(sent.url).toBe('https://api.monarch.com/graphql');
     expect(sent.body.variables.input).toMatchObject({ startDate: '2026-01-01', endDate: '2026-09-10' });
     expect(sent.body.variables.input.topMoversLimit).toBe(100);
+    expect(sent.body.query).toContain('performance {');
     expect(sent.headers.Authorization).toBe('Token tok'); // same auth path as balances
     expect(rows[0].ticker).toBe('FXAIX');
+  });
+
+  it('returns portfolio performance separately from holding price movement', async () => {
+    const live = withToken(async () => ({ ok: true, status: 200, json: async () => ({ data: { portfolio: {
+      ...payload([node()]), performance: { totalValue: 30000, totalBasis: 28000, totalChangeDollars: 2100, totalChangePercent: 7.5 },
+    } } }) }));
+    const out = await live.investmentPortfolio({ startDate: '2026-01-01', endDate: '2026-09-10' });
+    expect(out.performance.totalChangeDollars).toBe(2100);
+    expect(out.holdings[0].periodChange).toBe(501.47);
   });
 
   it('turns an expired session into a message worth showing', async () => {
@@ -226,5 +262,11 @@ describe('portfolio view reaches the investments fetch', () => {
     const fail = fn.slice(fn.indexOf('monarchInvestments===false'));
     expect(fail).toMatch(/renderMonarchAccountsCard\(\)/); // balances not lost when holdings fail
     expect(fail).toMatch(/runMonarchDiagnostics\(\)/);
+  });
+
+  it('renders the account register as a collapsed details panel', () => {
+    expect(src).toMatch(/<details id="monarchAccountsPanel" class="monarch-accounts"/);
+    expect(src).toMatch(/<summary>/);
+    expect(src).not.toMatch(/<details id="monarchAccountsPanel"[^>]*\sopen(?:\s|>)/);
   });
 });

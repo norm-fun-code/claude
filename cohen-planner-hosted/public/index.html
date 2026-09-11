@@ -2852,6 +2852,9 @@ function renderSpendingTab(R,P){
 let _acctDonutSpec=null;
 function mountAccountDonut(){
   if(!_acctDonutSpec||!document.getElementById('acctDonut'))return;
+  const panel=document.getElementById('monarchAccountsPanel');
+  if(panel&&!panel.open)return;
+  if(charts.acct)charts.acct.destroy();
   charts.acct=makeDonut('acctDonut',_acctDonutSpec.labels,_acctDonutSpec.data,_acctDonutSpec.colors);
 }
 function renderMonarchAccountsCard(){
@@ -2914,11 +2917,13 @@ function renderMonarchAccountsCard(){
   // The card returns markup; the canvas can only be bound once the caller has inserted it.
   _acctDonutSpec=acctDonutData.length>1?{labels:acctDonutLabels,data:acctDonutData,colors:acctDonutColors}:null;
   const totalNw=monarchAccounts.reduce((s,a)=>s+(a.balance||0),0);
-  return`<div style="margin-top:12px;background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <span style="font-size:13px;font-weight:700;color:var(--tx)">All Accounts · Monarch</span>
-      <span style="font-size:13px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">${fmt(totalNw)} ${monarchSnapshot?.partial?'known subtotal':'NW'}</span>
-    </div>
+  return`<details id="monarchAccountsPanel" class="monarch-accounts" ontoggle="if(this.open)requestAnimationFrame(mountAccountDonut)">
+    <summary>
+      <span><strong>All Accounts · Monarch</strong><small>${monarchAccounts.length} accounts</small></span>
+      <span class="monarch-accounts-total">${fmt(totalNw)} ${monarchSnapshot?.partial?'known subtotal':'NW'}</span>
+      <span class="accounts-chevron" aria-hidden="true">⌄</span>
+    </summary>
+    <div class="monarch-accounts-body">
     ${acctDonutData.length>1?`<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:center;margin-bottom:14px">
       <div style="height:190px;position:relative"><canvas id="acctDonut"></canvas></div>
       <div style="display:flex;flex-direction:column;gap:6px">
@@ -2934,8 +2939,9 @@ function renderMonarchAccountsCard(){
       </div>
     </div>`:''}
     ${monarchSnapshot?.partial?`<div role="status" style="padding:12px;margin-bottom:12px;background:var(--a-soft);border-radius:8px"><strong>Incomplete totals</strong><br>${monarchAccounts.length} accounts have balances. Monarch returned no balance for: ${(monarchSnapshot.missingAccounts||[]).map(a=>advEscape(a.name)).join(', ')}. Subtotals below exclude these accounts; no $0 balance has been substituted.</div>`:''}
-    ${rows}
-  </div>`;
+      ${rows}
+    </div>
+  </details>`;
 }
 
 function renderPortfolioTab(R,P){
@@ -3037,10 +3043,16 @@ function renderPortfolioTab(R,P){
   const mixLabels=mixSeries.map(x=>x[0]),mixData=mixSeries.map(x=>x[1]),mixColors=mixSeries.map(x=>x[2]);
 
   function colorPct(v){return v>0?'var(--g)':v<0?'var(--r)':'var(--t3)';}
-  function signFmt(v){const s=v>=0?'+':'';return s+fmt(v);}
-  function signPct(v){const s=v>=0?'+':'';return s+v.toFixed(2)+'%';}
+  function signFmt(v){if(!Number.isFinite(v))return'—';const s=v>=0?'+':'';return s+fmt(v);}
+  function signPct(v){if(!Number.isFinite(v))return'—';const s=v>=0?'+':'';return s+v.toFixed(2)+'%';}
 
   const typeLabel={equity:'Equity',etf:'ETF',mutual_fund:'Fund',cash:'Cash',crypto:'Crypto',bond:'Bond',option:'Option'};
+
+  const periodIsReturn=inv.periodMetric!=='current_holdings_growth';
+  const periodLabel=periodIsReturn?'Portfolio Return':'Holdings Growth';
+  const periodSub=periodIsReturn
+    ? signPct(inv.periodChangePct)+' · contribution-aware'
+    : signPct(inv.periodChangePct)+' · current positions repriced';
 
   ca.innerHTML=`<div style="padding:2px">
   <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:6px">
@@ -3053,7 +3065,7 @@ function renderPortfolioTab(R,P){
   <div class="pf-kpis">
     ${[
       {l:'Total Value',v:fmt(totalVal),s:'investment portfolio',c:'var(--accent)'},
-      {l:'Period Return',v:signFmt(inv.periodChange||0),s:signPct(inv.periodChangePct||0)+' this period',c:colorPct(inv.periodChange||0)},
+      {l:periodLabel,v:signFmt(inv.periodChange),s:periodSub,c:colorPct(inv.periodChange)},
       {l:'All-time Return',v:signFmt(inv.allTimeChange||0),s:signPct(inv.allTimePct||0)+' total',c:colorPct(inv.allTimeChange||0)},
       {l:'Holdings',v:holdings.length,s:holdings.filter(h=>h.securityType!=='cash').length+' securities + cash',c:'var(--tx)'},
     ].map(k=>`<div class="kpi"><div class="kpi-l">${k.l}</div><div class="kpi-v" style="color:${k.c};font-size:14px">${k.v}</div><div class="kpi-s">${k.s}</div></div>`).join('')}
@@ -3115,7 +3127,7 @@ function renderPortfolioTab(R,P){
   <div class="pf-scroll glass-card" style="margin-bottom:10px">
    <div style="min-width:620px">
     <div style="display:grid;grid-template-columns:90px 70px 1fr 90px 90px 90px 90px;gap:0;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--t3);padding:7px 12px;border-bottom:1px solid var(--bd);background:rgba(255,255,255,.45)">
-      <div>Ticker</div><div>Type</div><div>Value</div><div style="text-align:right">% Portfolio</div><div style="text-align:right">Period Δ$</div><div style="text-align:right">Period Δ%</div><div style="text-align:right">All-time Δ%</div>
+      <div>Ticker</div><div>Type</div><div>Value</div><div style="text-align:right">% Portfolio</div><div style="text-align:right">Position Δ$</div><div style="text-align:right">Price Δ%</div><div style="text-align:right">All-time Δ%</div>
     </div>
     ${holdings.map((h,i)=>{
       const pct=totalVal>0?(h.value/totalVal*100):0;
@@ -3136,7 +3148,7 @@ function renderPortfolioTab(R,P){
     }).join('')}
    </div>
   </div>
-  <div style="font-size:9px;color:var(--t3);padding:0 2px">Holdings sourced from Monarch via GetInvestments. Period: ${inv.periodStart} → ${inv.periodEnd}. Values are Monarch's last-synced prices.</div>
+  <div style="font-size:9px;color:var(--t3);padding:0 2px">Holdings sourced from Monarch. Period: ${inv.periodStart} → ${inv.periodEnd}. ${periodIsReturn?'Portfolio return is Monarch’s contribution-aware performance for this window.':'Monarch did not provide portfolio performance, so growth reprices today’s positions over the window and does not adjust for deposits or withdrawals.'} Holding movers show price movement applied to today’s position size.</div>
 
   ${(()=>{
     // ── Portfolio analysis blurb ─────────────────────────────────────────────
