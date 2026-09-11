@@ -1884,11 +1884,18 @@ function renderStripeTab(R,P){
       <strong class="ui-num">${UI.pct(row.sPct,0)}</strong>
       <small>${UI.money(row.sEnd)} of ${UI.money(row.nw)}${row.sPct>0.5?' · one company, most of your wealth':''}</small>
     </div>
-    <div class="sq-figure">
+    ${(()=>{
+      // sEnd is the position at THIS February's mark: the year's vests have landed and any
+      // sales have executed, but the year's performance has not been marked yet — a private
+      // position only re-prices at a tender. So the next tender's value is sEnd grown by
+      // this year's return. Showing sEnd here labelled "after X% return" printed the
+      // pre-bump number under a post-bump caption.
+      const next=Math.round(row.sEnd*(1+row.sRate));
+      return `<div class="sq-figure">
       <span class="ui-eyebrow">At the next tender</span>
-      <strong class="ui-num">${UI.money(row.sEnd)}</strong>
-      <small>after ${(row.sRate*100).toFixed(0)}% assumed return, marked Feb ${yr+1}</small>
-    </div>
+      <strong class="ui-num">${UI.money(next)}</strong>
+      <small>${UI.money(row.sEnd)} today, ${row.sRate>=0?'up':'down'} ${UI.money(Math.abs(next-row.sEnd))} when ${yr}'s ${(row.sRate*100).toFixed(0)}% is marked at the Feb ${yr+1} tender</small>
+    </div>`;})()}
   </section>`;
 
   h+=`<dl class="sq-facts ui-rise ui-rise-3">

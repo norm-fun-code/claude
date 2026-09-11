@@ -152,3 +152,39 @@ describe('the cockpit says the first year is a partial one', () => {
     expect(cockpit).toMatch(/stubFrac<1\?`[^`]*`:''/);
   });
 });
+
+// The Stripe tab leads with three figures. The third answers "what is this worth at the
+// next tender", which is the only one of the three that requires applying a return.
+describe('the next-tender figure', () => {
+  const sq = html.slice(html.indexOf('At the next tender') - 900,
+                        html.indexOf('sq-facts'));
+
+  it('applies the year\'s return, rather than printing the pre-bump number', () => {
+    // sEnd is the position at THIS February's mark: vests landed, sales executed, but the
+    // year's performance not yet marked. Showing it under "after 30% assumed return" put a
+    // pre-bump figure beneath a post-bump caption.
+    expect(sq).toContain('const next=Math.round(row.sEnd*(1+row.sRate));');
+    expect(sq).toContain('UI.money(next)');
+    expect(sq).not.toMatch(/At the next tender<\/span>\s*<strong class="ui-num">\$\{UI\.money\(row\.sEnd\)\}/);
+  });
+
+  it('shows both ends of the move, so the bump is legible', () => {
+    expect(sq).toContain('UI.money(row.sEnd)');                  // where it stands today
+    expect(sq).toContain('UI.money(Math.abs(next-row.sEnd))');   // and what the mark adds
+    expect(sq).toMatch(/row\.sRate>=0\?'up':'down'/);            // a negative year reads right
+  });
+
+  it('lands exactly where the next row opens, before that year vests', () => {
+    // The figure is a claim about the following February. It has to agree with what the
+    // engine does at that tender, or the tab and the projection disagree by a year's return.
+    const R = M.run({ ...D, observedOn: '2026-09-11', startingStripeEquity: 614000,
+      stripePolicy: 'retain', stripeRetY0: 0.30 }).R;
+    const shown = Math.round(R[0].sEnd * (1 + R[0].sRate));
+    expect(R[1].sBeg).toBe(R[0].sEnd);                  // next year opens at this year's close
+    expect(R[1].sMarked).toBe(R[0].sRate);              // …and the re-mark carries this rate
+    expect(shown).toBe(Math.round(R[1].sBeg * (1 + R[1].sMarked)));
+    // Everything above that at the next year's close is that year's vest, not the re-mark.
+    // Within a dollar: sEnd, sBeg and sAdded are each rounded for display independently.
+    expect(Math.abs((R[1].sEnd - shown) - R[1].sAdded)).toBeLessThanOrEqual(1);
+  });
+});
