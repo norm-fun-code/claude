@@ -114,3 +114,52 @@ describe('The advisor speaks the planner\'s language',()=>{
     expect(css).toMatch(/\.adv-msg\.ai \.adv-bubble\{max-width:74ch;background:none/);
   });
 });
+
+// On a phone the conversations rail is a sheet. Getting this wrong is invisible in a
+// desktop browser and total on a phone: the drawer opens perfectly, 1,200px below the
+// fold, and the button looks dead.
+describe('The conversations sheet on a phone',()=>{
+  const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+  const css=fs.readFileSync(new URL('../public/ui.css',import.meta.url),'utf8');
+
+  it('anchors the sheet to the screen, not to a container below the fold',()=>{
+    const m=css.slice(css.indexOf('@media(max-width:900px){',css.indexOf('.adv-scrim')));
+    expect(m).toMatch(/\.adv-rail\{position:fixed/);
+    expect(m).not.toMatch(/\.adv-rail\{position:absolute/);
+  });
+
+  it('never leaves an animation transform behind, which would trap position:fixed',()=>{
+    // A finished animation ending on transform:none computes to the identity matrix under
+    // `both`, and an identity matrix DOES create a containing block. `backwards` does not.
+    expect(css).toMatch(/\.ui-rise\{animation:[^}]*backwards\}/);
+    expect(css).not.toMatch(/\.ui-rise\{animation:[^}]*\bboth\b/);
+    expect(html).toMatch(/\.reveal\{animation:[^}]*backwards\}/);
+    expect(html).toMatch(/\.tab-fade\{animation:[^}]*backwards\}/);
+  });
+
+  it('clears the inherited glass blur from the view wrapper',()=>{
+    // backdrop-filter also creates a containing block for fixed children.
+    expect(css).toMatch(/#chartArea\{[^}]*backdrop-filter:none/);
+  });
+
+  it('sits above the bottom navigation rather than under it',()=>{
+    const scrimZ=Number((css.match(/\.adv-scrim\{[^}]*z-index:(\d+)/)||[])[1]);
+    const railZ=Number((css.match(/\.adv-rail\{position:fixed;z-index:(\d+)/)||[])[1]);
+    expect(scrimZ).toBeGreaterThan(60);     // above .tabs and the more-menu
+    expect(railZ).toBeGreaterThan(scrimZ);
+  });
+
+  it('can be dismissed three ways, and locks the page behind it',()=>{
+    expect(html).toContain('onclick="advToggleRail()"');          // the scrim
+    expect(html).toMatch(/e\.key!=='Escape'/);                     // Escape
+    expect(html).toContain("document.body.classList.toggle('adv-sheet-open',open)");
+    expect(css).toContain('body.adv-sheet-open{overflow:hidden}');
+  });
+
+  it('has exactly one advToggleRailMobile, since the later declaration wins',()=>{
+    // A stale copy toggling a .mob-show class that no longer exists silently shadowed the
+    // real one — function declarations hoist, and the last definition is the one that runs.
+    expect((html.match(/function advToggleRailMobile\(/g)||[]).length).toBe(1);
+    expect(html).not.toContain("classList.toggle('mob-show')");
+  });
+});

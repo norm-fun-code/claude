@@ -287,8 +287,11 @@ body{background:transparent}
 /* (4) Motion layer — entrance, count-up, tab cross-fade ─────── */
 @keyframes riseIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
-.reveal{animation:riseIn .6s cubic-bezier(.22,1,.36,1) both}
-.tab-fade{animation:fadeIn .4s ease both}
+/* `backwards`, not `both`: a finished animation whose last keyframe is transform:none
+   still computes to the identity matrix under `both`, and that creates a containing block
+   for every position:fixed descendant. See the same fix on .ui-rise in ui.css. */
+.reveal{animation:riseIn .6s cubic-bezier(.22,1,.36,1) backwards}
+.tab-fade{animation:fadeIn .4s ease backwards}
 
 /* (5) Hero net-worth band ───────────────────────────────────── */
 .hero{position:relative;overflow:hidden;border-radius:18px;padding:22px 26px;margin-bottom:14px;
@@ -5033,6 +5036,7 @@ function renderAdvisorTab(R,P){
     </div>
 
     <div class="adv-wrap ui-rise ui-rise-3">
+      <div class="adv-scrim" id="advScrim" hidden onclick="advToggleRail()"></div>
       <aside class="adv-rail" id="advRail" hidden>
         <div class="adv-rail-hdr"><span class="ui-eyebrow">Conversations</span>
           <button class="ui-btn ui-btn-quiet" onclick="advToggleRail()" aria-label="Close conversations">Close</button></div>
@@ -5071,15 +5075,34 @@ function renderAdvisorTab(R,P){
 
 // The rail is a drawer, not a permanent column. An empty 300px panel saying "no
 // conversations yet" is the most expensive way to say nothing.
-function advToggleRail(){
+//
+// On a phone it is a SHEET fixed to the viewport. It was previously positioned absolutely
+// inside .adv-wrap, whose bottom sits below the fold once the page is taller than the
+// screen — so it opened correctly, 1,200px down, and looked to the reader like the button
+// did nothing at all.
+function advToggleRail(force){
   const rail=document.getElementById('advRail'),btn=document.getElementById('advRailBtn');
+  const scrim=document.getElementById('advScrim');
   if(!rail)return;
-  rail.hidden=!rail.hidden;
-  if(btn)btn.setAttribute('aria-expanded',String(!rail.hidden));
-  if(!rail.hidden)advRenderRail();
+  const open=force!=null?force:rail.hidden;
+  rail.hidden=!open;
+  if(scrim)scrim.hidden=!open;
+  if(btn)btn.setAttribute('aria-expanded',String(open));
+  document.body.classList.toggle('adv-sheet-open',open);
+  if(open){
+    advRenderRail();
+    // Focus moves into the sheet so a keyboard or screen-reader user lands where the
+    // content now is, and Escape closes it from anywhere.
+    const first=rail.querySelector('.adv-rail-item,button');
+    if(first&&typeof first.focus==='function')first.focus({preventScroll:true});
+  } else if(btn&&typeof btn.focus==='function')btn.focus({preventScroll:true});
 }
 function advToggleRailMobile(){advToggleRail()}
-
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Escape')return;
+  const rail=document.getElementById('advRail');
+  if(rail&&!rail.hidden)advToggleRail(false);
+});
 function advRenderMessages(){
   const msgs=document.getElementById('advMsgs');
   if(!msgs)return;
@@ -5221,14 +5244,12 @@ async function advAutoBrief(){
   }
 }
 
-function advToggleRailMobile(){
-  const rail=document.querySelector('.adv-rail');
-  if(rail)rail.classList.toggle('mob-show');
-}
-function _advHideRailMobile(){
-  const rail=document.querySelector('.adv-rail');
-  if(rail)rail.classList.remove('mob-show');
-}
+// Dead since the rail became a sheet: these toggled a .mob-show class that no longer
+// exists in any stylesheet. Worse, `function` declarations hoist and the LAST one wins,
+// so this stale advToggleRailMobile silently shadowed the real one defined above — the
+// button did nothing because it was calling a function that toggled nothing.
+// Closing after a chat switch is still wanted, so that keeps its own name.
+function _advHideRailMobile(){advToggleRail(false)}
 async function advNewChat(){
   _advHideRailMobile();
   const id=advUuid();

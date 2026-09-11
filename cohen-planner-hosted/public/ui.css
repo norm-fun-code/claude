@@ -121,7 +121,12 @@
 
 /* ── Motion. Two things move, once. Nothing else, ever. ── */
 @keyframes ui-rise{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
-.ui-rise{animation:ui-rise .5s cubic-bezier(.2,.7,.3,1) both}
+/* `both` leaves the final keyframe applied forever, and a keyframe of `transform:none`
+   computes to the IDENTITY MATRIX rather than to none — which still creates a containing
+   block for any position:fixed descendant. That is how a sheet inside an animated wrapper
+   ends up anchored to the wrapper instead of the screen. `backwards` gives the same entry
+   effect and leaves nothing behind once it finishes. */
+.ui-rise{animation:ui-rise .5s cubic-bezier(.2,.7,.3,1) backwards}
 .ui-rise-2{animation-delay:.06s}.ui-rise-3{animation-delay:.12s}
 @media(prefers-reduced-motion:reduce){.ui-rise{animation:none}}
 
@@ -237,7 +242,12 @@
 
 /* Sections now carry their own borders, so the page-level card that used to wrap every
    tab just draws a box around a box. Only the legacy views that still rely on it keep it. */
-#chartArea{padding:0;background:transparent;border:0;box-shadow:none}
+/* backdrop-filter and transform both create a containing block for position:fixed, so a
+   blur left on this wrapper quietly re-anchors any sheet inside it to the wrapper instead
+   of the screen — which is exactly how the conversations sheet ended up opening 1,200px
+   below the fold. Clearing the inherited glass here is not cosmetic. */
+#chartArea{padding:0;background:transparent;border:0;box-shadow:none;
+  backdrop-filter:none;-webkit-backdrop-filter:none}
 
 /* ═══ STRIPE ═══
    Three figures lead. Everything else is a definition list, which is what thirteen
@@ -610,9 +620,33 @@
 .adv-rail-foot{display:flex;gap:4px;padding:var(--sp-1);border-top:1px solid var(--bd)}
 .adv-rail-foot .ui-btn{flex:1;justify-content:center;min-height:34px}
 
+/* ── The rail on a phone is a SHEET, fixed to the viewport ────────────────
+   It used to be positioned absolutely inside .adv-wrap. Once the page is taller than the
+   screen — which it always is on a phone — "the bottom of the wrap" is below the fold, so
+   the drawer opened perfectly about 1,200px down and the button looked broken. A sheet is
+   anchored to the SCREEN, which is the only thing the reader can actually see. */
+.adv-scrim{display:none}
 @media(max-width:900px){
-  .adv-rail{position:absolute;z-index:40;inset:auto 0 0 0;width:auto;flex-basis:auto;max-height:60vh}
-  .adv-wrap{position:relative}
+  .adv-scrim{display:block;position:fixed;inset:0;z-index:200;background:#060a12b8;
+    backdrop-filter:blur(2px);animation:adv-fade .2s ease both}
+  .adv-scrim[hidden]{display:none}
+  .adv-rail{position:fixed;z-index:201;inset:auto 0 0 0;width:auto;flex-basis:auto;
+    max-height:min(72vh,560px);border-radius:var(--radius-lg) var(--radius-lg) 0 0;
+    border-bottom:0;padding-bottom:env(safe-area-inset-bottom);
+    box-shadow:0 -18px 44px #0006;animation:adv-sheet .26s cubic-bezier(.2,.7,.3,1) both}
+  /* A grab handle, so it reads as something you can dismiss. */
+  .adv-rail::before{content:"";display:block;width:38px;height:4px;border-radius:2px;
+    background:var(--bd2);margin:9px auto 2px;flex:0 0 auto}
+  .adv-rail-hdr{padding-top:var(--sp-1)}
+  .adv-rail-item{padding:14px 13px}      /* a real tap target */
+  .adv-rail-foot .ui-btn{min-height:42px}
+  /* The page behind a sheet does not scroll. */
+  body.adv-sheet-open{overflow:hidden}
+}
+@keyframes adv-sheet{from{transform:translateY(101%)}to{transform:none}}
+@keyframes adv-fade{from{opacity:0}to{opacity:1}}
+@media(prefers-reduced-motion:reduce){
+  .adv-rail,.adv-scrim{animation:none}
 }
 @media(max-width:760px){
   .adv{height:auto;min-height:0}
