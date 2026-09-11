@@ -146,116 +146,52 @@ tr:hover td{background:var(--s2)}
   .scenario-bar{gap:4px}
 }
 @media(min-width:641px){#mobileControlsToggle{display:none}}
-.adv{display:flex;flex-direction:column;height:calc(100vh - 220px);min-height:500px;background:var(--s1);border:1px solid var(--bd);border-radius:9px;overflow:hidden}
-.adv-msgs{flex:1;overflow-y:auto;padding:18px 22px;display:flex;flex-direction:column;gap:14px}
-.adv-msgs::-webkit-scrollbar{width:6px}.adv-msgs::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:3px}
-.adv-msg{display:flex;gap:10px;max-width:760px}
-.adv-msg.user{flex-direction:row-reverse;align-self:flex-end;max-width:560px}
-.adv-avatar{width:26px;height:26px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;font-family:'SF Mono',monospace}
-.adv-avatar.ai{background:linear-gradient(135deg,#6e66ff,#5048d6);color:#fff;box-shadow:0 3px 8px -2px rgba(80,72,214,.5)}
-.adv-avatar.user{background:var(--s3);color:var(--tx);border:1px solid var(--bd2)}
-.adv-bubble{padding:10px 14px;border-radius:8px;font-size:12.5px;line-height:1.6;color:var(--tx)}
-.adv-msg.user .adv-bubble{background:linear-gradient(135deg,rgba(99,91,255,.12),rgba(99,91,255,.06));border:1px solid rgba(99,91,255,.18);color:var(--tx)}
-.adv-msg.ai .adv-bubble{background:rgba(255,255,255,.72);backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%);border:1px solid rgba(255,255,255,.65);box-shadow:0 1px 1px rgba(10,37,64,.04),0 10px 26px -18px rgba(10,37,64,.3)}
-.adv-bubble p{margin-bottom:8px}.adv-bubble p:last-child{margin-bottom:0}
-.adv-bubble ul,.adv-bubble ol{margin:6px 0 6px 20px}.adv-bubble li{margin-bottom:3px}
-.adv-bubble strong{color:var(--tx);font-weight:600}
-.adv-bubble code{font-family:'SF Mono',monospace;background:var(--accent-soft);padding:1px 5px;border-radius:3px;font-size:11px;color:var(--accent)}
-.adv-bubble pre{background:var(--bg);padding:8px 10px;border-radius:5px;overflow-x:auto;margin:6px 0;font-size:11px;border:1px solid var(--bd)}
-.adv-bubble table{border-collapse:collapse;margin:8px 0;font-size:11px;width:100%}
-.adv-bubble th,.adv-bubble td{padding:5px 9px;border-bottom:1px solid var(--bd);text-align:left}
-.adv-bubble th{font-weight:700;font-size:9.5px;text-transform:uppercase;color:var(--t3);letter-spacing:.5px}
-.adv-bubble h3{font-size:13px;font-weight:700;margin:10px 0 4px;color:var(--tx)}
-.adv-bubble h4{font-size:12px;font-weight:600;margin:8px 0 3px;color:var(--t2)}
-.adv-input-area{padding:12px 18px 14px;border-top:1px solid var(--bd);background:var(--s1)}
-.adv-input-wrap{display:flex;gap:6px;align-items:flex-end;background:var(--s2);border:1px solid var(--bd2);border-radius:8px;padding:6px}
-.adv-input-wrap{transition:border-color .15s ease,box-shadow .15s ease}
-.adv-input-wrap:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px rgba(99,91,255,.14)}
-.adv-input{flex:1;background:transparent;border:none;color:var(--tx);font-family:inherit;font-size:12.5px;resize:none;outline:none;padding:6px;min-height:20px;max-height:140px;line-height:1.5}
-.adv-send{background:linear-gradient(135deg,#6e66ff,#5048d6);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:11.5px;font-family:inherit;height:32px;box-shadow:0 4px 12px -4px rgba(80,72,214,.6);transition:transform .12s ease,box-shadow .12s ease}
-.adv-send:hover{transform:translateY(-1px);box-shadow:0 7px 16px -5px rgba(80,72,214,.7)}.adv-send:disabled{background:var(--bd2);cursor:not-allowed;box-shadow:none;transform:none}
-.adv-agentic-btn{background:var(--s2);border:1px solid var(--bd);color:var(--t2);padding:5px 9px;border-radius:5px;cursor:pointer;font-size:11px;font-family:inherit;height:32px;transition:all .12s;white-space:nowrap}
-.adv-agentic-btn:hover{border-color:var(--p);color:var(--p)}
-.adv-agentic-btn.active{background:var(--p);color:#fff;border-color:var(--p)}
-.adv-tool-call{display:flex;align-items:flex-start;gap:8px;padding:7px 10px;background:#f3f0ff;border:1px solid rgba(124,58,237,.2);border-radius:6px;font-size:10.5px;color:var(--p);margin:4px 0}
-.adv-tool-call .tc-icon{font-size:13px;flex-shrink:0}
-.adv-tool-call .tc-body{flex:1;line-height:1.45}
-.adv-tool-call strong{color:var(--p)}
-.adv-proposals{background:var(--s1);border:1px solid rgba(124,58,237,.3);border-radius:8px;padding:14px 16px;margin:10px 0;box-shadow:0 2px 8px rgba(124,58,237,.08)}
-.adv-proposals-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-.adv-proposals-hdr h4{font-size:11px;font-weight:700;color:var(--p);text-transform:uppercase;letter-spacing:.5px;margin:0}
-.adv-proposals-hdr button{background:transparent;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:0;line-height:1}
+/* The advisor's visual design now lives entirely in ui.css, with the rest of the system.
+   What remains here is only the structure the markdown renderer and the proposal panel
+   need — shapes with no styling opinion of their own. */
+.adv-msgs::-webkit-scrollbar{width:6px}
+.adv-msgs::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:3px}
+.adv-bubble pre{background:var(--bg);padding:10px 12px;border-radius:7px;overflow-x:auto;
+  margin:10px 0;font-size:12px;border:1px solid var(--bd)}
+.adv-bubble table{border-collapse:collapse;margin:12px 0;font-size:13px;width:100%}
+.adv-bubble th,.adv-bubble td{padding:7px 10px;border-bottom:1px solid var(--bd);text-align:left}
+.adv-bubble th{font-weight:650;font-size:11px;text-transform:uppercase;color:var(--t3);letter-spacing:.08em}
+.adv-bubble h3{font-size:16px;font-weight:600;margin:16px 0 6px;color:var(--tx)}
+.adv-bubble h4{font-size:14px;font-weight:600;margin:12px 0 4px;color:var(--t2)}
+
+/* A staged proposal: the one place the advisor produces something you can act on. */
+.adv-proposals{border:1px solid color-mix(in srgb,var(--link) 34%,transparent);
+  border-radius:14px;background:var(--s1);padding:16px 18px;margin:12px 0}
+.adv-proposals-hdr{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.adv-proposals-hdr h4{font-size:11px;font-weight:650;color:var(--link);text-transform:uppercase;
+  letter-spacing:.12em;margin:0}
+.adv-proposals-hdr button{background:none;border:0;color:var(--t3);cursor:pointer;font-size:15px;line-height:1;padding:0}
 .adv-proposals-hdr button:hover{color:var(--tx)}
-.adv-proposal-list{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
-.adv-proposal-row{display:flex;align-items:center;gap:6px;font-size:11px;padding:5px 8px;background:var(--s2);border-radius:5px}
-.adv-proposal-key{font-family:'SF Mono',monospace;color:var(--tx);font-weight:600;min-width:110px}
-.adv-proposal-arrow{color:var(--t3);font-size:9px}
-.adv-proposal-old{color:var(--t3);text-decoration:line-through}
-.adv-proposal-new{color:var(--p);font-weight:600}
-.adv-proposal-reason{color:var(--t2);font-size:9.5px;margin-left:auto;text-align:right;max-width:200px}
-.adv-proposals-target{display:flex;gap:6px;margin-bottom:8px}
-.adv-proposals-target select,.adv-proposals-target input{font-size:11px;padding:6px 8px;border-radius:5px;border:1px solid var(--bd);background:var(--s2);color:var(--tx);font-family:inherit}
-.adv-proposals-target select{flex:0 0 auto;min-width:130px}
+.adv-proposal-list{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
+.adv-proposal-row{display:flex;align-items:center;gap:9px;font-size:13px;padding:8px 11px;
+  background:var(--s2);border-radius:9px;flex-wrap:wrap}
+.adv-proposal-key{font-family:'SF Mono','Fira Code',monospace;color:var(--tx);font-weight:600;min-width:120px}
+.adv-proposal-arrow{color:var(--t4);font-size:11px}
+.adv-proposal-old{color:var(--t4);text-decoration:line-through}
+.adv-proposal-new{color:var(--link);font-weight:600}
+.adv-proposal-reason{color:var(--t3);font-size:12px;margin-left:auto;text-align:right;max-width:230px}
+.adv-proposals-target{display:flex;gap:7px;margin-bottom:10px;flex-wrap:wrap}
+.adv-proposals-target select,.adv-proposals-target input{font-size:13px;padding:8px 10px;
+  border-radius:8px;border:1px solid var(--bd2);background:var(--s2);color:var(--tx);font-family:inherit}
+.adv-proposals-target select{flex:0 0 auto;min-width:140px}
 .adv-proposals-target input{flex:1;min-width:0}
-.adv-proposals-actions{display:flex;gap:6px;flex-wrap:wrap}
-.adv-proposals-actions button{padding:6px 11px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .12s}
-.adv-proposals-apply{background:var(--g);color:#fff;border:none;box-shadow:0 3px 9px -3px rgba(26,135,84,.6)}
-.adv-proposals-apply:hover{background:#158049}
-.adv-proposals-save{background:var(--p);color:#fff;border:none}
-.adv-proposals-save:hover{background:#6d28d9}
-.adv-proposals-view{background:var(--s2);color:var(--tx);border:1px solid var(--bd)}
-.adv-proposals-view:hover{border-color:var(--bd2)}
-.adv-thinking{display:flex;gap:3px;padding:3px 0}
-.adv-thinking span{width:5px;height:5px;border-radius:50%;background:var(--t3);animation:advblink 1.4s infinite}
-.adv-thinking span:nth-child(2){animation-delay:.2s}.adv-thinking span:nth-child(3){animation-delay:.4s}
-@keyframes advblink{0%,80%,100%{opacity:.3}40%{opacity:1}}
-.adv-welcome{padding:20px;text-align:center;color:var(--t2);font-size:13px;line-height:1.6}
-.adv-welcome h3{color:var(--tx);font-size:20px;margin-bottom:8px;font-weight:800;letter-spacing:-.4px}
-.adv-starters{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-top:14px;text-align:left;max-width:600px;margin-left:auto;margin-right:auto}
-.adv-starter{padding:10px 12px;background:var(--s2);border:1px solid var(--bd);border-radius:6px;cursor:pointer;font-size:11.5px;color:var(--t2);line-height:1.4;transition:all .15s}
-.adv-starter{transition:border-color .15s ease,color .15s ease,transform .15s cubic-bezier(.22,1,.36,1),box-shadow .15s ease}
-.adv-starter:hover{border-color:var(--accent);color:var(--tx);transform:translateY(-2px);box-shadow:0 12px 26px -16px rgba(99,91,255,.55)}
-.adv-starter strong{display:block;color:var(--tx);font-size:12px;margin-bottom:2px}
-.adv-toolbar{display:flex;gap:6px;padding:8px 18px;border-bottom:1px solid var(--bd);background:var(--s1);align-items:center}
-.adv-toolbar .ctx-pill{background:var(--s2);border:1px solid var(--bd);padding:3px 8px;border-radius:4px;font-size:9.5px;color:var(--t2);font-family:'SF Mono',monospace}
-.adv-toolbar .ctx-pill strong{color:var(--g)}
-.adv-toolbar button{background:var(--s2);border:1px solid var(--bd);color:var(--t2);padding:4px 9px;border-radius:4px;cursor:pointer;font-size:10px;font-family:inherit;font-weight:500;margin-left:auto}
-.adv-toolbar button:hover{border-color:var(--bd2);color:var(--tx)}
-.adv-toolbar button.adv-tb-new{background:linear-gradient(135deg,#6e66ff,#5048d6);color:#fff;border-color:transparent;font-weight:600;box-shadow:0 3px 9px -3px rgba(80,72,214,.6)}
-.adv-toolbar button.adv-tb-new:hover{color:#fff;transform:translateY(-1px);box-shadow:0 6px 13px -4px rgba(80,72,214,.7)}
-.adv-toolbar button.adv-tb-chats{margin-left:0;display:none}/* only shown on mobile, where the rail is hidden */
-.adv-wrap{display:grid;grid-template-columns:240px 1fr;gap:0;height:calc(100vh - 220px);min-height:500px;border:1px solid var(--bd);border-radius:9px;overflow:hidden;background:var(--s1)}
-.adv-rail{background:var(--s2);border-right:1px solid var(--bd);display:flex;flex-direction:column;overflow:hidden}
-.adv-rail-hdr{padding:12px 14px;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center;background:var(--s2)}
-.adv-rail-hdr h4{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:1.1px;color:var(--t3);margin:0}
-.adv-rail-new{background:linear-gradient(135deg,#6e66ff,#5048d6);color:#fff;border:none;padding:4px 11px;border-radius:6px;cursor:pointer;font-size:10.5px;font-weight:600;font-family:inherit;box-shadow:0 3px 9px -3px rgba(80,72,214,.6);transition:transform .12s ease,box-shadow .12s ease}
-.adv-rail-new:hover{transform:translateY(-1px);box-shadow:0 6px 13px -4px rgba(80,72,214,.7)}
-.adv-rail-list{flex:1;overflow-y:auto;padding:8px}
-.adv-rail-list::-webkit-scrollbar{width:5px}.adv-rail-list::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:3px}
-.adv-rail-item{padding:9px 11px;border-radius:6px;cursor:pointer;margin-bottom:3px;border:1px solid transparent;font-size:11.5px;color:var(--t2);position:relative;transition:all .12s}
-.adv-rail-item:hover{background:var(--s1);border-color:var(--bd)}
-.adv-rail-item{transition:background .12s ease,border-color .12s ease,transform .12s ease}
-.adv-rail-item.active{background:linear-gradient(135deg,rgba(99,91,255,.10),rgba(99,91,255,.04));border-color:rgba(99,91,255,.4)}
-.adv-rail-title{font-weight:600;color:var(--tx);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:22px;font-size:11.5px;line-height:1.3}
-.adv-rail-meta{font-size:9.5px;color:var(--t3);font-family:'SF Mono',monospace;display:flex;justify-content:space-between}
-.adv-rail-actions{position:absolute;top:6px;right:6px;display:none;gap:2px}
-.adv-rail-item:hover .adv-rail-actions{display:flex}
-.adv-rail-actions button{background:var(--s2);border:1px solid var(--bd);width:20px;height:20px;border-radius:3px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:10px;padding:0;color:var(--t2);transition:all .1s}
+.adv-proposals-actions{display:flex;gap:7px;flex-wrap:wrap}
+.adv-proposals-actions button{padding:9px 14px;border-radius:9px;font-size:13px;font-weight:500;
+  cursor:pointer;font-family:inherit;min-height:38px;border:1px solid var(--bd2);
+  background:var(--s2);color:var(--t2);transition:all .15s}
+.adv-proposals-actions button:hover{border-color:var(--bd2);background:var(--s3);color:var(--tx)}
+.adv-proposals-apply{background:var(--link)!important;border-color:var(--link)!important;
+  color:#1b1733!important;font-weight:600!important}
+.adv-proposals-apply:hover{background:var(--link-hover)!important;border-color:var(--link-hover)!important}
+.adv-rail-actions{display:flex;gap:3px}
+.adv-rail-actions button{width:24px;height:24px;border:0;background:none;color:var(--t4);
+  cursor:pointer;border-radius:5px;font-size:12px}
 .adv-rail-actions button:hover{background:var(--s3);color:var(--tx)}
-.adv-rail-actions button.del:hover{color:var(--r);border-color:var(--r)}
-.adv-rail-empty{color:var(--t3);font-size:11px;text-align:center;padding:18px 8px;line-height:1.5}
-.adv-rail-footer{padding:8px;border-top:1px solid var(--bd);display:flex;flex-direction:column;gap:4px}
-.adv-rail-footer button{background:var(--s1);border:1px solid var(--bd);color:var(--t2);padding:6px 9px;border-radius:5px;cursor:pointer;font-size:10.5px;font-family:inherit;font-weight:500;text-align:left;transition:all .12s}
-.adv-rail-footer button:hover{border-color:var(--bd2);color:var(--tx)}
-.adv-main{display:flex;flex-direction:column;overflow:hidden;background:var(--s1)}
-@media(max-width:900px){.adv-wrap{grid-template-columns:1fr}.adv-rail{display:none}
-  .adv-toolbar button.adv-tb-chats{display:inline-block}
-  .adv-rail.mob-show{display:flex;max-height:48vh;border-right:none;border-bottom:1px solid var(--bd)}
-  /* No hover on touch — keep rename/delete always reachable, with larger tap targets */
-  .adv-rail-actions{display:flex}
-  .adv-rail-actions button{width:26px;height:26px;font-size:13px}
-  .adv-rail-title{padding-right:60px}}
-@media(max-width:640px){.adv-wrap{height:auto;min-height:350px}.adv{height:auto;min-height:350px}.adv-starters{grid-template-columns:1fr}}
 /* ── Accessibility: visible keyboard focus everywhere ── */
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
 button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -300,7 +236,10 @@ body{background:transparent}
 @keyframes meshDrift{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(0,-2.2%,0) scale(1.05)}}
 
 /* (2) Glass material — frosted surfaces + layered elevation ──── */
-.panel,.cc,.kpi,.sc,.tabs,.tw,.adv,.adv-wrap{
+/* .adv and .adv-wrap were dropped from this list: they are structural containers now,
+   and the surface lives on .adv-main and .adv-rail. Leaving them here painted a
+   light-theme glass panel over the advisor's own header. */
+.panel,.cc,.kpi,.sc,.tabs,.tw{
   background:rgba(255,255,255,.72);
   backdrop-filter:blur(18px) saturate(165%);
   -webkit-backdrop-filter:blur(18px) saturate(165%);
@@ -4873,10 +4812,14 @@ function advToggleAgentic(){
   advAgenticMode=!advAgenticMode;
   const btn=document.getElementById('advAgenticBtn');
   const lbl=document.getElementById('advAgenticLabel');
-  if(btn){btn.classList.toggle('active',advAgenticMode);btn.textContent=advAgenticMode?'🤖 Propose changes ✓':'🤖 Propose changes'}
-  if(lbl)lbl.style.display=advAgenticMode?'block':'none';
+  if(btn){btn.classList.toggle('active',advAgenticMode);
+    btn.setAttribute('aria-pressed',String(advAgenticMode));
+    btn.innerHTML=UI.icon('spark')+'Draft changes';}
+  if(lbl)lbl.hidden=!advAgenticMode;
   const input=document.getElementById('advInput');
-  if(input)input.placeholder=advAgenticMode?'Try "update my 2027 income to $320K" or "what if we bought a $1.7M home?"...':'Ask anything about your plan, portfolio, scenarios, taxes...';
+  if(input)input.placeholder=advAgenticMode
+    ?'Describe the change — it comes back as a diff…'
+    :'Ask anything about your plan…';
 }
 
 async function loadAdvisorState(){
@@ -5069,62 +5012,119 @@ INVESTING PRINCIPLES NORM OPERATES BY
 
 function renderAdvisorTab(R,P){
   const ca=document.getElementById('chartArea');
-  ca.innerHTML=`<div class="adv-toolbar">
-    <span class="ctx-pill">Context: <strong>YOUR PLAN</strong> · ${R.length}yr plan · $${(R[R.length-1].nw/1e6).toFixed(1)}M @ ${R[R.length-1].yr}</span>
-    <button class="adv-tb-new" onclick="advNewChat()" title="Start a new conversation">＋ New chat</button>
-    <button class="adv-tb-chats" onclick="advToggleRailMobile()" title="Switch or delete conversations">🗂 Chats</button>
-    <button onclick="advExportChats()">📥 Export</button>
-    <button onclick="advImportChats()">📤 Import</button>
-  </div>
-  <div class="adv-wrap">
-    <div class="adv-rail">
-      <div class="adv-rail-hdr">
-        <h4>Conversations</h4>
-        <button class="adv-rail-new" onclick="advNewChat()">+ New</button>
-      </div>
-      <div class="adv-rail-list" id="advRailList"></div>
+  const last=R[R.length-1];
+  const nChats=Object.keys(advisorChats||{}).length;
+  ca.innerHTML=`<div class="adv">
+    <header class="ui-head ui-rise"><div>
+        <span class="ui-eyebrow">ADVISOR</span>
+        <h2>Think it through.</h2>
+      </div><div class="ui-head-actions">
+        ${nChats?`<button class="ui-btn ui-btn-quiet" onclick="advToggleRail()" aria-expanded="false" id="advRailBtn">${UI.icon('doc')}${nChats} conversation${nChats===1?'':'s'}</button>`:''}
+        <button class="ui-btn" onclick="advNewChat()">New</button>
+      </div></header>
+
+    <!-- What it is working from, stated before anything it says. The advisor is the one
+         surface where a reader cannot see the underlying data, so the context is named. -->
+    <div class="adv-context ui-rise ui-rise-2">
+      ${UI.prov('projected','your plan')}
+      <span>${R.length}-year projection · ${UI.money(last.nw+last.k401)} by ${last.yr}</span>
+      <span class="adv-ctx-sep"></span>
+      <span>Every figure it quotes comes from the same engine as the rest of the app.</span>
     </div>
-    <div class="adv-main">
-      <div class="adv-msgs" id="advMsgs"></div>
-      <div class="adv-input-area">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;padding:0 2px;gap:6px">
-          <button class="adv-agentic-btn" id="advAgenticBtn" onclick="advToggleAgentic()" title="Agentic mode: AI computes exact plan changes for you to review and apply">🤖 Propose changes</button>
-          <button class="adv-agentic-btn" onclick="advOptimize()" style="background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600" title="Run full optimization — AI analyzes all levers and saves best scenario">⚡ Optimize</button>
-          <span id="advAgenticLabel" style="display:none;font-size:9px;color:var(--p);font-weight:600;margin-left:auto">AI sandbox active — you'll review the diff, then apply to your plan or a scenario</span>
+
+    <div class="adv-wrap ui-rise ui-rise-3">
+      <aside class="adv-rail" id="advRail" hidden>
+        <div class="adv-rail-hdr"><span class="ui-eyebrow">Conversations</span>
+          <button class="ui-btn ui-btn-quiet" onclick="advToggleRail()" aria-label="Close conversations">Close</button></div>
+        <div class="adv-rail-list" id="advRailList"></div>
+        <div class="adv-rail-foot">
+          <button class="ui-btn ui-btn-quiet" onclick="advExportChats()">Export</button>
+          <button class="ui-btn ui-btn-quiet" onclick="advImportChats()">Import</button>
         </div>
-        <div class="adv-input-wrap">
-          <textarea class="adv-input" id="advInput" placeholder="Ask anything about your plan, portfolio, scenarios, taxes..." rows="1"></textarea>
-          <button class="adv-send" id="advSend" onclick="advSend()">Send</button>
+      </aside>
+      <div class="adv-main">
+        <div class="adv-msgs" id="advMsgs"></div>
+        <div class="adv-composer">
+          <div class="adv-input-wrap">
+            <textarea class="adv-input" id="advInput" rows="1"
+              placeholder="Ask anything about your plan…"></textarea>
+            <button class="ui-btn ui-btn-primary adv-send" id="advSend" onclick="advSend()"
+              aria-label="Send">${UI.icon('arrow')}</button>
+          </div>
+          <div class="adv-composer-foot">
+            <button class="adv-mode" id="advAgenticBtn" onclick="advToggleAgentic()"
+              aria-pressed="false" title="Let the advisor draft plan changes for you to review">
+              ${UI.icon('spark')}Draft changes</button>
+            <span class="adv-hint" id="advAgenticLabel" hidden>Drafts land as a diff you review — nothing is applied.</span>
+            <span class="adv-hint adv-hint-right">Enter to send · Shift+Enter for a new line</span>
+          </div>
         </div>
       </div>
     </div>
   </div>`;
   const input=document.getElementById('advInput');
-  input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,140)+'px'});
+  input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,168)+'px'});
   input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();advSend()}});
   advRenderRail();
   advRenderMessages();
 }
+
+// The rail is a drawer, not a permanent column. An empty 300px panel saying "no
+// conversations yet" is the most expensive way to say nothing.
+function advToggleRail(){
+  const rail=document.getElementById('advRail'),btn=document.getElementById('advRailBtn');
+  if(!rail)return;
+  rail.hidden=!rail.hidden;
+  if(btn)btn.setAttribute('aria-expanded',String(!rail.hidden));
+  if(!rail.hidden)advRenderRail();
+}
+function advToggleRailMobile(){advToggleRail()}
 
 function advRenderMessages(){
   const msgs=document.getElementById('advMsgs');
   if(!msgs)return;
   const visible=advisorConversation.filter(m=>!m.hidden);
   if(visible.length===0){
+    // Grouped by what the advisor actually DOES, not by topic. The old grid was eight
+    // emoji cards of equal weight, which told the reader nothing about which questions
+    // it can answer well and which it can only speculate about.
+    const GROUPS=[
+      {label:'Read my position',icon:'circle',items:[
+        ['What deserves my attention right now? Call get_alerts first, tell me what it found AND what it could not check, then give me the three things that matter most.',
+         'What deserves my attention','Reads the watchlist and says what was not checked'],
+        ['Give me a concise check-in on my plan: what is on track, what needs attention, and one quick win. Use compute for every figure and be specific to my actual numbers.',
+         'Check in on the plan','On track, needs attention, one quick win'],
+      ]},
+      {label:'Compare a decision',icon:'diamond',items:[
+        ['Can we comfortably buy a home? Use compare_alternatives on two or three price points against the current plan, and tell me what the funding actually depends on.',
+         'Can we afford the house','Measured against the plan, at real price points'],
+        ['Compare holding all my Stripe against selling a fixed share each year. Use compare_alternatives and show what each does to concentration, the liquid floor and tax.',
+         'Hold or sell Stripe','Concentration, liquid floor and tax, side by side'],
+        ['What if returns are 3% instead of 6%? Use compare_alternatives and name every assumption that differs between the two.',
+         'Stress the return assumption','3% against 6%, like for like'],
+      ]},
+      {label:'Check the tax position',icon:'doc',items:[
+        ['Call get_tax_position. Tell me where my withholding stands against the safe harbour, what is still owed at filing, and which screened items are worth acting on versus which need my accountant.',
+         'Where does my tax stand','Withholding, safe harbour, and what needs confirming'],
+        ['What is my marginal rate this year, and which bracket am I in? Look up the rule and state the year and jurisdiction.',
+         'My bracket, cited','Year, jurisdiction and source'],
+      ]},
+      {label:'Draft a change',icon:'spark',agentic:true,items:[
+        ['I want to revisit my 2027 income assumptions. Propose the change with propose_changes so I can see the impact before anything is applied.',
+         'Revisit an assumption','Comes back as a diff you accept or discard'],
+      ]},
+    ];
     msgs.innerHTML=`<div class="adv-welcome">
-      <h3>Ask me anything about your plan</h3>
-      <p>I can analyze your saved plan and query connected account balances. Transaction and holding details are available in Financial life; I will flag data I cannot access. Try one of these or ask your own:</p>
-      <button onclick="advOptimize()" style="width:100%;margin-bottom:14px;padding:13px 18px;background:linear-gradient(135deg,var(--accent),var(--p));color:#fff;border:none;border-radius:9px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px;letter-spacing:-.01em;box-shadow:0 3px 12px rgba(99,91,255,.25);transition:opacity .15s" onmouseover="this.style.opacity='.9'" onmouseout="this.style.opacity='1'">⚡ What should I optimize? <span style="font-size:10px;font-weight:400;opacity:.85">— run full analysis, auto-propose best scenario</span></button>
-      <div class="adv-starters">
-        <div class="adv-starter" onclick="advAsk('Give me a concise quarterly check-in on my financial plan: 3-4 specific things to flag right now — what\\'s on track, what needs attention, and any quick wins. Be direct and specific to my actual numbers.')"><strong>📋 Quarterly check-in</strong>What to flag right now</div>
-        <div class="adv-starter" onclick="advAsk('Given my current plan, what should I prioritize in the next 12 months?')"><strong>🎯 Top priority?</strong>Next 12 months</div>
-        <div class="adv-starter" onclick="advAsk('Run a stress test - what if equity returns are only 4% instead of 6%?')"><strong>📉 Stress test returns</strong>4% vs 6% returns</div>
-        <div class="adv-starter" onclick="advAsk('Should I sell some Stripe RSU now to reduce concentration risk, or wait for IPO?')"><strong>⚠️ Stripe concentration</strong>Sell now or wait?</div>
-        <div class="adv-starter" onclick="advAsk('How would moving from a \$2M to \$1.7M home affect my plan? Be specific.')"><strong>🏠 Home tradeoff</strong>\$2M vs \$1.7M</div>
-        <div class="adv-starter" onclick="advAsk('What\\'s the single biggest risk I\\'m underweighting in this plan?')"><strong>🔍 Blind spots</strong>What am I missing?</div>
-        <div class="adv-starter" onclick="advAsk('Using my live Monarch data, what did I actually spend over the last 3 months, broken down by category? Flag anything that looks high.')"><strong>📊 Spending questions</strong>Check available data</div>
-        <div class="adv-starter" onclick="advAskAgentic('Update my 2027 income assumptions')"><strong>✏️ Edit an input</strong>Review a proposed change</div>
-      </div>
+      <p class="adv-welcome-lead">Bring a question. It works from your saved plan and your connected
+      accounts, computes every figure with the same engine as the rest of the app, and tells you
+      what it could not check rather than filling the gap.</p>
+      ${GROUPS.map(g=>`<section class="adv-group">
+        <span class="ui-eyebrow">${UI.icon(g.icon)}${g.label}</span>
+        ${g.items.map(([q,title,sub])=>`<button class="adv-starter"
+          onclick="${g.agentic?'advAskAgentic':'advAsk'}(${JSON.stringify(q).replace(/"/g,'&quot;')})">
+          <strong>${advEscape(title)}</strong><small>${advEscape(sub)}</small>
+        </button>`).join('')}
+      </section>`).join('')}
     </div>`;
     return;
   }
@@ -5403,7 +5403,7 @@ async function advSendStream(text,chat,liveContext,thinking){
         if(payload.error)throw new Error(payload.error);
         if(payload.tool_call){
           const nm=(payload.tool_call.name||'').replace(/^monarch_/,'');
-          toolNote=`<div class="adv-tool-call"><span class="tc-icon">🔍</span><span class="tc-body">Using <strong>${advEscape(nm)}</strong></span></div>`;
+          toolNote=`<div class="adv-tool">${advEscape(nm)}</div>`;
           _renderBubble();
         }
         if(payload.tool_result)structuredResults.push(payload.tool_result);
@@ -5486,7 +5486,7 @@ async function advSendAgentic(text,chat,liveContext,thinking){
 
 function advInsertToolCallBubble(tc){
   const msgs=document.getElementById('advMsgs');if(!msgs)return;
-  const div=document.createElement('div');div.className='adv-tool-call';
+  const div=document.createElement('div');div.className='adv-tool adv-tool-detail';
   let body='';
   if(tc.name==='set_param'){
     const old=tc.oldValue!==undefined?`<span class="tc-old">${advEscape(String(tc.oldValue))}</span> → `:'';
@@ -5497,7 +5497,7 @@ function advInsertToolCallBubble(tc){
   } else if(tc.name==='save_scenario'){
     body=`<strong>save_scenario</strong>: proposing "<em>${advEscape(tc.scenarioName||'')}</em>"`;
   }
-  div.innerHTML=`<span class="tc-icon">🔧</span><span class="tc-body">${body}</span>`;
+  div.innerHTML=body;
   msgs.appendChild(div);msgs.scrollTop=msgs.scrollHeight;
 }
 

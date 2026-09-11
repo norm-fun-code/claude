@@ -58,3 +58,59 @@ describe('The three registers',()=>{
     expect(closes).toBe(sections);
   });
 });
+
+// The advisor was the last screen speaking its own language. These lock the parts of
+// that conversion that are easy to undo by accident.
+describe('The advisor speaks the planner\'s language',()=>{
+  const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+  const css=fs.readFileSync(new URL('../public/ui.css',import.meta.url),'utf8');
+  const fn=html.slice(html.indexOf('function renderAdvisorTab'),html.indexOf('function advRenderMessages'));
+
+  it('opens the way every other screen does',()=>{
+    expect(fn).toContain('class="ui-head');
+    expect(fn).toContain('ADVISOR');
+    expect(fn).toContain('Think it through.');
+  });
+
+  it('names what it is working from, before anything it says',()=>{
+    // The advisor is the one surface where the reader cannot see the underlying data.
+    expect(fn).toContain("UI.prov('projected','your plan')");
+    expect(fn).toMatch(/same engine as the rest of the app/);
+  });
+
+  it('has exactly one primary action',()=>{
+    // It previously had three filled buttons: Send, Optimize and a gradient starter.
+    expect((fn.match(/ui-btn-primary/g)||[]).length).toBe(1);
+    expect(fn).not.toMatch(/linear-gradient\(135deg,var\(--accent\),var\(--p\)\)/);
+  });
+
+  it('keeps no emoji in the advisor chrome',()=>{
+    const shell=html.slice(html.indexOf('function renderAdvisorTab'),
+      html.indexOf('function advAddMessage'));
+    expect(shell).not.toMatch(/[\u{1F300}-\u{1FAFF}]/u);
+  });
+
+  it('drops the legacy light-theme glass from the advisor containers',()=>{
+    // A leftover .adv,.adv-wrap in the glass rule painted a white panel over the header.
+    expect(html).not.toMatch(/\.panel,\.cc,\.kpi,\.sc,\.tabs,\.tw,\.adv,\.adv-wrap\{/);
+    expect(html).not.toMatch(/\.adv-msg\.ai \.adv-bubble\{background:rgba\(255,255,255/);
+  });
+
+  it('shows the conversation rail only once there is a conversation in it',()=>{
+    // An empty 300px column saying "no conversations yet" is the most expensive way to
+    // say nothing.
+    expect(fn).toContain('nChats?');
+    expect(fn).toContain('id="advRail" hidden');
+  });
+
+  it('renders a tool call as evidence rather than chrome',()=>{
+    expect(css).toMatch(/\.adv-tool\{/);
+    expect(html).toContain('class="adv-tool"');
+    expect(html).not.toContain('tc-icon');
+  });
+
+  it('gives the assistant prose room instead of a bubble and an avatar',()=>{
+    expect(css).toContain('.adv-avatar{display:none}');
+    expect(css).toMatch(/\.adv-msg\.ai \.adv-bubble\{max-width:74ch;background:none/);
+  });
+});

@@ -492,3 +492,145 @@
 #subToggle{overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 #subToggle::-webkit-scrollbar{display:none}
 #subToggle button{flex:0 0 auto;white-space:nowrap}
+
+/* ═══ ADVISOR ═══
+   The last screen still speaking its own language. It had three separate "new chat"
+   affordances, a 300px column reserved to say "no conversations yet", eight emoji cards
+   of equal weight, and two competing primary buttons under a third one.
+
+   The shape now matches every other screen: a register head, one primary action, and a
+   quiet body that gets out of the way of the conversation. */
+.adv{display:flex;flex-direction:column;height:calc(100vh - 210px);min-height:520px}
+
+/* What it is working from, said before anything it says. The advisor is the one surface
+   where the reader cannot see the underlying data, so the context is named up front. */
+.adv-context{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap;
+  font-size:var(--t-xs);color:var(--t3);margin-bottom:var(--sp-2);line-height:1.6}
+.adv-ctx-sep{width:1px;height:12px;background:var(--bd2)}
+
+.adv-wrap{display:flex;gap:var(--sp-3);flex:1;min-height:0}
+.adv-main{display:flex;flex-direction:column;flex:1;min-width:0;
+  border:1px solid var(--bd);border-radius:var(--radius-lg);
+  background:linear-gradient(150deg,#141d30,#111a29);overflow:hidden}
+.adv-msgs{flex:1;overflow-y:auto;padding:var(--sp-4);scroll-behavior:smooth}
+@media(prefers-reduced-motion:reduce){.adv-msgs{scroll-behavior:auto}}
+
+/* ── The empty state ──────────────────────────────────────────────────────
+   Grouped by what the advisor DOES, not by topic, so the reader can tell which
+   questions it answers from data and which it can only reason about. */
+.adv-welcome{max-width:680px}
+.adv-welcome-lead{font-size:var(--t-lead);line-height:1.7;color:var(--t2);
+  margin:0 0 var(--sp-4);max-width:58ch}
+.adv-group{margin-bottom:var(--sp-4)}
+.adv-group .ui-eyebrow{display:flex;align-items:center;gap:7px;margin-bottom:var(--sp-1)}
+.adv-starter{display:block;width:100%;text-align:left;border:0;border-top:1px solid var(--bd);
+  background:none;color:var(--tx);padding:13px 0;cursor:pointer;font-family:inherit;
+  transition:padding-left .16s,border-color .16s}
+.adv-starter:hover{padding-left:9px;border-color:var(--bd2)}
+.adv-starter strong{display:block;font-size:15px;font-weight:500;letter-spacing:-.2px;line-height:1.4}
+.adv-starter:hover strong{color:var(--link)}
+.adv-starter small{display:block;font-size:var(--t-sm);color:var(--t3);margin-top:3px;line-height:1.5}
+
+/* ── Messages ─────────────────────────────────────────────────────────────
+   No avatars. A two-party conversation does not need a badge on every turn; alignment
+   and surface already say who is speaking, and the badges were eating the left margin
+   of every line the reader actually wanted to read. */
+.adv-msg{display:block;margin-bottom:var(--sp-3);animation:ui-rise .35s cubic-bezier(.2,.7,.3,1) both}
+@media(prefers-reduced-motion:reduce){.adv-msg{animation:none}}
+.adv-avatar{display:none}
+.adv-msg.user{display:flex;justify-content:flex-end}
+.adv-msg.user .adv-bubble{max-width:min(68ch,82%);background:color-mix(in srgb,var(--link) 15%,transparent);
+  border:1px solid color-mix(in srgb,var(--link) 26%,transparent);border-radius:14px 14px 4px 14px;
+  padding:12px 16px;color:var(--tx)}
+.adv-msg.ai .adv-bubble{max-width:74ch;background:none;border:0;padding:0;color:var(--t2)}
+.adv-bubble{font-size:15px;line-height:1.75}
+.adv-msg.ai .adv-bubble p{margin:0 0 var(--sp-2)}
+.adv-msg.ai .adv-bubble strong{color:var(--tx);font-weight:600}
+.adv-msg.ai .adv-bubble ul,.adv-msg.ai .adv-bubble ol{margin:0 0 var(--sp-2);padding-left:20px}
+.adv-msg.ai .adv-bubble li{margin-bottom:5px}
+.adv-msg.ai .adv-bubble code{background:var(--s3);border-radius:4px;padding:1px 5px;
+  font-size:13px;font-family:'SF Mono','Fira Code',monospace;color:var(--link)}
+
+/* A tool call is evidence, not chrome: it says which instrument produced the number. */
+.adv-tool{display:inline-flex;align-items:center;gap:6px;font-size:var(--t-xs);
+  color:var(--t3);border:1px solid var(--bd);border-radius:var(--radius-pill);
+  padding:3px 10px;margin:0 5px 5px 0;font-family:'SF Mono','Fira Code',monospace}
+.adv-tool::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--link)}
+
+.adv-thinking{display:flex;gap:5px;padding:4px 0}
+.adv-thinking span{width:6px;height:6px;border-radius:50%;background:var(--t4);
+  animation:adv-pulse 1.3s ease-in-out infinite}
+.adv-thinking span:nth-child(2){animation-delay:.16s}
+.adv-thinking span:nth-child(3){animation-delay:.32s}
+@keyframes adv-pulse{0%,60%,100%{opacity:.28;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
+@media(prefers-reduced-motion:reduce){.adv-thinking span{animation:none;opacity:.6}}
+
+/* ── Composer ─────────────────────────────────────────────────────────────
+   One primary action. "Optimize" was a second filled button competing with Send, and
+   "Propose changes" a third — it is a MODE, so it reads as a toggle now. */
+.adv-composer{border-top:1px solid var(--bd);padding:var(--sp-2) var(--sp-3) var(--sp-2);
+  background:color-mix(in srgb,var(--s2) 60%,transparent)}
+.adv-input-wrap{display:flex;align-items:flex-end;gap:var(--sp-1);
+  border:1px solid var(--bd2);border-radius:13px;background:var(--s1);padding:6px 6px 6px 14px;
+  transition:border-color .16s,box-shadow .16s}
+.adv-input-wrap:focus-within{border-color:var(--link);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--link) 14%,transparent)}
+.adv-input{flex:1;border:0;background:none;color:var(--tx);font-family:inherit;font-size:15px;
+  line-height:1.6;padding:8px 0;resize:none;outline:none;max-height:168px}
+.adv-input::placeholder{color:var(--t4)}
+.adv-send{min-height:38px;padding:0 13px;border-radius:9px}
+.adv-send .ui-icon{width:16px;height:16px}
+.adv-composer-foot{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-1)}
+.adv-mode{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--bd);
+  border-radius:var(--radius-pill);padding:5px 12px;background:none;color:var(--t3);
+  font-family:inherit;font-size:var(--t-xs);cursor:pointer;min-height:30px;transition:all .16s}
+.adv-mode:hover{color:var(--t2);border-color:var(--bd2)}
+.adv-mode.active{color:var(--link);border-color:color-mix(in srgb,var(--link) 45%,transparent);
+  background:color-mix(in srgb,var(--link) 12%,transparent)}
+.adv-hint{font-size:var(--t-xs);color:var(--t4)}
+.adv-hint-right{margin-left:auto}
+
+/* ── The rail is a drawer ─────────────────────────────────────────────────
+   An empty 300px column saying "no conversations yet" is the most expensive way to
+   say nothing, so it only exists once there is something in it. */
+.adv-rail{display:flex;flex-direction:column;width:262px;flex:0 0 262px;min-height:0;
+  border:1px solid var(--bd);border-radius:var(--radius-lg);background:var(--s1);overflow:hidden}
+.adv-rail[hidden]{display:none}
+.adv-rail-hdr{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-1);
+  padding:var(--sp-2) var(--sp-2) var(--sp-1) var(--sp-3);border-bottom:1px solid var(--bd)}
+.adv-rail-hdr .ui-eyebrow{margin:0}
+.adv-rail-list{flex:1;overflow-y:auto;padding:var(--sp-1)}
+.adv-rail-item{padding:11px 13px;border-radius:10px;cursor:pointer;transition:background .14s}
+.adv-rail-item:hover{background:var(--s2)}
+.adv-rail-item.active{background:color-mix(in srgb,var(--link) 13%,transparent)}
+.adv-rail-title{font-size:var(--t-sm);color:var(--tx);line-height:1.45;
+  overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.adv-rail-meta{display:flex;gap:8px;font-size:var(--t-xs);color:var(--t4);margin-top:4px}
+.adv-rail-empty{padding:var(--sp-3);font-size:var(--t-sm);color:var(--t3);line-height:1.6}
+.adv-rail-foot{display:flex;gap:4px;padding:var(--sp-1);border-top:1px solid var(--bd)}
+.adv-rail-foot .ui-btn{flex:1;justify-content:center;min-height:34px}
+
+@media(max-width:900px){
+  .adv-rail{position:absolute;z-index:40;inset:auto 0 0 0;width:auto;flex-basis:auto;max-height:60vh}
+  .adv-wrap{position:relative}
+}
+@media(max-width:760px){
+  .adv{height:auto;min-height:0}
+  .adv-msgs{padding:var(--sp-3) var(--sp-2);min-height:46vh}
+  .adv-msg.ai .adv-bubble,.adv-bubble{font-size:var(--t-body)}
+  .adv-hint-right{display:none}
+}
+
+/* The legacy glass material still lists .tw, so a table wrapper paints a light panel
+   behind a dark table. Every scroll wrapper is transparent — the table draws its own. */
+.tw{background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;
+  border-color:var(--bd);box-shadow:none}
+
+/* A tool call with a payload gets room to show it; a bare "using compute" stays a chip. */
+.adv-tool-detail{display:flex;align-items:baseline;gap:8px;max-width:100%;
+  font-family:inherit;font-size:var(--t-sm);color:var(--t2);padding:8px 13px;
+  border-radius:11px;background:var(--s2);white-space:normal}
+.adv-tool-detail strong{color:var(--link);font-family:'SF Mono','Fira Code',monospace;font-weight:600}
+.adv-tool-detail code{background:var(--s3);border-radius:4px;padding:1px 5px;font-size:12px}
+.adv-tool-detail em{font-style:normal;color:var(--t3)}
+.adv-tool-detail .tc-old{color:var(--t4);text-decoration:line-through}
