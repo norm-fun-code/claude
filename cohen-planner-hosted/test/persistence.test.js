@@ -122,3 +122,31 @@ describe('One design system',()=>{
     expect(UI.prov('nonsense')).toContain('data-prov="missing"');
   });
 });
+
+// The trajectory is a control, not a picture. These lock the two judgements in it.
+describe('Trajectory milestones',()=>{
+  const src=fs.readFileSync(new URL('../public/cockpit.js',import.meta.url),'utf8');
+
+  it('only marks a low point when the plan actually breaches its floor',()=>{
+    // With the retention policy holding the pool exactly on its reserve floor, dozens of
+    // years tie at the minimum and "the low point" is whichever one the reduce kept. A
+    // pin there points at nothing.
+    expect(src).toContain('floor.liq<reserve-1');
+    expect(src).toMatch(/Only a genuine breach gets marked/);
+  });
+
+  it('lets the risk pin claim its year rather than being absorbed into a life event',()=>{
+    expect(src).toContain('pins.unshift(');
+  });
+
+  it('caches the confidence band against the plan it was computed from',()=>{
+    // A band drawn over a changed plan is worse than no band.
+    expect(src).toContain('_cpBandSig');
+    expect(src).toMatch(/stale band drawn over a changed plan/);
+  });
+
+  it('moves the hero with the scrub only while the hero is projected',()=>{
+    // An observed balance belongs to today; relabelling it as 2041's would be a lie.
+    expect(src).toContain("hero.dataset.source==='projected'");
+  });
+});

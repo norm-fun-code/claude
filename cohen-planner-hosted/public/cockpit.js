@@ -41,7 +41,7 @@ function renderCockpit(R){
     <section class="cp-position ui-rise" aria-label="Financial position">
       <div class="cp-wealth">
         <span class="cp-eyebrow">NET WORTH</span>
-        <strong class="ui-hero-value" id="cp-hero">${hero.value==null?'—':UI.money(hero.value)}</strong>
+        <strong class="ui-hero-value" id="cp-hero" data-source="${hero.source}">${hero.value==null?'—':UI.money(hero.value)}</strong>
         <div class="cp-hero-meta">${UI.prov(hero.source)}${hero.partial?UI.prov('missing','incomplete'):''}</div>
         <p>${e(hero.note)}</p>
         <button onclick="cockpitGo('overview')">See the composition <span>${UI.icon('arrow')}</span></button>
@@ -54,8 +54,9 @@ function renderCockpit(R){
     </section>
     <div class="cp-workspace"><div class="cp-main-column">
       <section class="cp-card cp-trajectory"><div class="cp-section-head"><div><span class="cp-eyebrow">CURRENT PLAN / PROJECTION</span><h3>The path ahead</h3></div><button onclick="cockpitGo('home')">Explore a what-if ↗</button></div>
-      <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end wealth</span><strong id="cp-value">${money(selected.nw+selected.k401)}</strong></div><span>Includes retirement<br>Future dollars · assumed returns</span></div>
+      <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end wealth</span><strong id="cp-value">${UI.money(selected.nw+selected.k401)}</strong></div><span id="cp-band-note">Includes retirement<br>Future dollars · assumed returns</span></div>
       <div class="cp-chart"><canvas id="cockpitTrajectory" aria-label="Projected wealth and liquid investments by year" role="img"></canvas></div>
+      <div class="cp-pins" id="cp-pins"></div>
       <label class="cp-scrub" for="cp-year-range">Explore a year<input id="cp-year-range" type="range" min="${R[0].yr}" max="${end.yr}" value="${selected.yr}" oninput="cockpitSelectYear(Number(this.value))"><output id="cp-range-label">${selected.yr}</output></label>
       <div class="cp-year-grid" id="cp-year-grid"></div>
       <details class="cp-evidence"><summary>Show me why</summary><p>These are year-end estimates from your saved plan assumptions. Wealth includes modeled liquid investments, Stripe, home equity and retirement. The account balances above are separate observations; this chart is not a historical performance record.</p><button onclick="cockpitGo('table')">Inspect the yearly calculations ↗</button></details></section>
@@ -74,18 +75,162 @@ function renderCockpit(R){
       <form onsubmit="event.preventDefault();cockpitQuestion(this.elements.question.value)"><label for="cp-question">Your question</label><textarea id="cp-question" name="question" required placeholder="What if I changed jobs…" rows="2"></textarea><button class="cp-button" type="submit">Prepare in advisor →</button></form><small>You review the question before sending.</small></section>
       <div class="cp-floor"><span>Lowest projected liquid investments</span><strong>${money(floor.liq)} <small>in ${floor.yr}</small></strong><button onclick="cockpitGo('home')">Explore the pressure point →</button></div>
     </aside></div></div>`;
-  charts.cockpit=new Chart(document.getElementById('cockpitTrajectory'),{type:'line',data:{labels:R.map(r=>r.yr),datasets:[{label:'Total wealth incl. retirement · projected',data:R.map(r=>r.nw+r.k401),borderColor:'#7ae3c3',backgroundColor:'rgba(122,227,195,.08)',fill:true,pointRadius:0,pointHoverRadius:5,borderWidth:2,tension:.25},{label:'Liquid investments · projected',data:R.map(r=>r.liq),borderColor:'#a9a0ff',borderDash:[4,4],pointRadius:0,borderWidth:2,tension:.25}]},options:{responsive:true,maintainAspectRatio:false,animation:false,interaction:{mode:'index',intersect:false},plugins:{legend:{position:'bottom',labels:{color:'#acb9cc',boxWidth:16,font:{size:12}}},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${money(c.raw)}`}}},scales:{x:{grid:{display:false},ticks:{color:'#899ab1',maxTicksLimit:6}},y:{grid:{color:'rgba(167,190,221,.08)'},ticks:{color:'#899ab1',callback:v=>money(v)}}}}});
+  cockpitDrawChart(R,P,selected.yr);
   cockpitSelectYear(selected.yr);
   // One animated number on the page, once. Everything else is still.
   if(hero.value!=null)UI.countUp(document.getElementById('cp-hero'),hero.value);
 }
+// ── The trajectory, as an instrument ─────────────────────────────────────────
+// Three things separate a chart you read from one you use, and the old version had
+// none of them:
+//   1. A BAND. One line implies a precision the model does not have. The p10–p90 of a
+//      Monte Carlo behind the median says "somewhere in here" honestly.
+//   2. MILESTONES. The shape of the curve is meaningless until you can see WHY it bends
+//      — the home purchase, a child starting school, the year the floor is tightest.
+//   3. A SCRUB THAT MOVES EVERYTHING. Dragging the year re-renders the hero and every
+//      figure on the page, so the chart is a control rather than a picture.
+let _cpBand=null,_cpBandSig='';
+
+function cockpitMilestones(R,P){
+  const pins=[];
+  if(typeof PlannerDecisions!=='undefined'&&PlannerDecisions.milestones)
+    for(const m of PlannerDecisions.milestones(P,R))pins.push({yr:m.yr,label:m.label,kind:m.kind});
+  // The tightest year is not a life event, but it is the one the reader most needs to see
+  // — PROVIDED there is a tight year at all. When the retention policy holds the pool
+  // exactly on its reserve floor, dozens of years tie at the minimum and "the low point"
+  // is an artefact of which one the reduce happened to keep. A pin there would point at
+  // nothing. Only a genuine breach gets marked.
+  const reserve=Number(P&&(P.liquidReserveFloor??P.stripeLiquidFloor));
+  const floor=R.reduce((a,b)=>b.liq<a.liq?b:a);
+  const breaches=Number.isFinite(reserve)&&floor.liq<reserve-1;
+  if(breaches)pins.unshift({yr:floor.yr,label:'Liquid low point',kind:'risk'});
+
+  // One pin per year: several events in the same year become one marker, counted. The
+  // risk pin is unshifted above so it claims its year rather than being absorbed.
+  const byYear=new Map();
+  for(const pin of pins){
+    const e=byYear.get(pin.yr);
+    if(e)e.extra=(e.extra||0)+1;else byYear.set(pin.yr,{...pin});
+  }
+  return[...byYear.values()].sort((a,b)=>a.yr-b.yr);
+}
+
+// Vertical rules at the milestone years, drawn under the data so they never obscure it.
+const cpMilestonePlugin={
+  id:'cpMilestones',
+  beforeDatasetsDraw(chart,args,opts){
+    const pins=opts&&opts.pins;if(!pins||!pins.length)return;
+    const{ctx,chartArea:{top,bottom},scales:{x}}=chart;
+    ctx.save();
+    for(const pin of pins){
+      const px=x.getPixelForValue(pin.yr);
+      if(!Number.isFinite(px))continue;
+      ctx.beginPath();
+      ctx.setLineDash([3,5]);
+      ctx.lineWidth=1;
+      ctx.strokeStyle=pin.kind==='risk'?'rgba(236,193,131,.5)':'rgba(167,190,221,.22)';
+      ctx.moveTo(px,top);ctx.lineTo(px,bottom);ctx.stroke();
+    }
+    ctx.restore();
+  },
+};
+
+function cockpitDrawChart(R,P,year){
+  const labels=R.map(r=>r.yr);
+  const pins=cockpitMilestones(R,P);
+
+  // The band is expensive, so it is cached against the plan it was computed from. A
+  // stale band drawn over a changed plan would be worse than no band at all.
+  const sig=JSON.stringify(P);
+  if(_cpBandSig!==sig){
+    _cpBand=null;_cpBandSig=sig;
+    try{_cpBand=runMonteCarlo(P,250,'lognormal').band}catch(e){_cpBand=null}
+  }
+  const band=_cpBand;
+  const note=document.getElementById('cp-band-note');
+  if(note)note.innerHTML=band
+    ? 'Median of 250 simulated paths<br>Shaded band spans the 10th to 90th percentile'
+    : 'Includes retirement<br>Future dollars · assumed returns';
+
+  const ds=[];
+  if(band){
+    // Drawn as a filled region between two invisible lines: the reader should see an
+    // area of uncertainty, not two more curves competing with the median.
+    ds.push({label:'90th percentile',data:band.p90,borderColor:'transparent',
+      backgroundColor:'rgba(122,227,195,.09)',fill:'+1',pointRadius:0,borderWidth:0,tension:.25});
+    ds.push({label:'10th percentile',data:band.p10,borderColor:'transparent',
+      backgroundColor:'transparent',fill:false,pointRadius:0,borderWidth:0,tension:.25});
+  }
+  ds.push({label:'Total wealth incl. retirement',data:R.map(r=>r.nw+r.k401),
+    borderColor:'#7ae3c3',backgroundColor:'transparent',fill:false,
+    pointRadius:0,pointHoverRadius:5,borderWidth:2.5,tension:.25});
+  ds.push({label:'Liquid investments',data:R.map(r=>r.liq),
+    borderColor:'#b6a8ff',borderDash:[4,4],pointRadius:0,borderWidth:1.8,tension:.25});
+
+  charts.cockpit=new Chart(document.getElementById('cockpitTrajectory'),{
+    type:'line',
+    data:{labels,datasets:ds},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      // The line draws itself once, left to right, and never again. Chart.js has no
+      // native left-to-right reveal, so the x scale is animated from 0.
+      animation:_reduceMotion()?false:{x:{from:0,duration:900,easing:'easeOutCubic'},y:{duration:0}},
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{position:'bottom',labels:{color:'#acb9cc',boxWidth:14,font:{size:12},
+          filter:i=>!/percentile/.test(i.text)}},
+        tooltip:{callbacks:{
+          label:c=>/percentile/.test(c.dataset.label)?null:`${c.dataset.label}: ${UI.money(c.raw)}`,
+          afterBody:items=>{
+            const yr=Number(items[0].label);
+            const hit=pins.filter(p=>p.yr===yr);
+            return hit.length?hit.map(p=>p.label):[];
+          },
+        }},
+        cpMilestones:{pins},
+      },
+      scales:{
+        x:{grid:{display:false},ticks:{color:'#899ab1',maxTicksLimit:6}},
+        y:{grid:{color:'rgba(167,190,221,.07)'},ticks:{color:'#899ab1',callback:v=>UI.money(v)}},
+      },
+    },
+    plugins:[cpMilestonePlugin],
+  });
+
+  // The pins are clickable below the axis rather than crowded onto it: a label on a
+  // 240px chart is unreadable, and a target you can hit is more use than one you can see.
+  const rail=document.getElementById('cp-pins');
+  if(rail)rail.innerHTML=pins.map(p=>
+    `<button type="button" data-kind="${p.kind}" onclick="cockpitSelectYear(${p.yr})">
+      <span>${p.yr}</span>${advEscape(p.label)}${p.extra?` +${p.extra}`:''}</button>`).join('');
+}
+
+// ── The scrub moves the whole page ───────────────────────────────────────────
+// This is the difference between a chart and a cockpit. Dragging the year updates the
+// hero, the supporting metrics and the year grid together, so the reader can watch their
+// whole financial life recompute rather than reading one number off a line.
 function cockpitSelectYear(year){
   cockpitYear=year;
-  const row=run(P).R.find(r=>r.yr===year);if(!row)return;
-  document.getElementById('cp-year').textContent=year+' year-end wealth';
-  document.getElementById('cp-value').textContent=fmt(row.nw+row.k401);
-  document.getElementById('cp-range-label').textContent=year;
-  document.getElementById('cp-year-grid').innerHTML=[['Liquid investments',row.liq],['Vested Stripe',row.sEnd],['Home equity',row.eq]].map(([label,value])=>`<div><span>${label}</span><strong>${fmt(value)}</strong></div>`).join('');
+  const R=run(P).R;
+  const row=R.find(r=>r.yr===year);if(!row)return;
+  const set=(id,text)=>{const el=document.getElementById(id);if(el)el.textContent=text};
+  set('cp-year',year+' year-end wealth');
+  set('cp-value',UI.money(row.nw+row.k401));
+  set('cp-range-label',year);
+
+  // The hero follows the scrub only while it is showing a PROJECTED figure. An observed
+  // balance belongs to today and must not be relabelled as some future year's.
+  const hero=document.getElementById('cp-hero');
+  if(hero&&hero.dataset.source==='projected')hero.textContent=UI.money(row.nw+row.k401);
+
+  const grid=document.getElementById('cp-year-grid');
+  if(grid)grid.innerHTML=[['Liquid investments',row.liq],['Vested Stripe',row.sEnd],
+    ['Home equity',row.eq]].map(([label,value])=>
+    `<div><span>${label}</span><strong class="ui-num">${UI.money(value)}</strong></div>`).join('');
+
+  const rail=document.getElementById('cp-pins');
+  if(rail)for(const b of rail.querySelectorAll('button'))
+    b.classList.toggle('is-current',Number(b.firstElementChild.textContent)===year);
 }
 
 function mountSpendingCharts({rows,months,asOf,verified}){

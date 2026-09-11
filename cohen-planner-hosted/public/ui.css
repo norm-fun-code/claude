@@ -294,3 +294,45 @@
 .sc h3{display:flex;align-items:center;gap:8px;font-size:var(--t-sm);font-weight:650;
   letter-spacing:.02em;color:var(--t2);margin:0 0 var(--sp-1)}
 .sc p{font-size:var(--t-sm);line-height:1.65;color:var(--t3);margin:0}
+
+/* ═══ THE TRAJECTORY, AS AN INSTRUMENT ═══
+   Milestone pins sit BELOW the axis as real targets. Labels crowded onto a 240px chart
+   are unreadable, and a thing you can click is worth more than a thing you can see. */
+.cp-chart{height:280px}
+.cp-pins{display:flex;flex-wrap:wrap;gap:6px;margin:var(--sp-2) 0 0}
+.cp-pins button{display:inline-flex;align-items:baseline;gap:7px;border:1px solid var(--bd);
+  border-radius:var(--radius-pill);padding:5px 12px;background:var(--s2);color:var(--t3);
+  font-family:inherit;font-size:var(--t-xs);cursor:pointer;min-height:30px;
+  transition:border-color .15s,color .15s,background .15s}
+.cp-pins button span{font-variant-numeric:tabular-nums;color:var(--t4);font-weight:600}
+.cp-pins button:hover{border-color:var(--bd2);color:var(--t2);background:var(--s3)}
+.cp-pins button[data-kind=risk]{border-color:color-mix(in srgb,var(--warn) 32%,transparent)}
+.cp-pins button[data-kind=risk] span{color:var(--warn)}
+.cp-pins button.is-current{border-color:var(--link);color:var(--tx);
+  background:color-mix(in srgb,var(--link) 14%,transparent)}
+.cp-pins button.is-current span{color:var(--link)}
+
+/* The scrub is the control the whole page hangs off, so it reads as one. */
+.cp-scrub{margin:var(--sp-3) 0 var(--sp-2)}
+.cp-scrub input{accent-color:var(--link);height:22px}
+.cp-scrub output{font-weight:600;min-width:4ch;text-align:right}
+.cp-chart-summary>span{max-width:24ch;line-height:1.5}
+@media(max-width:760px){.cp-chart{height:240px}.cp-pins{gap:5px}}
+
+/* ═══ HEADER ═══
+   It showed "Waiting for NormOS account sync", "Enable NormOS Sync" and "✓ Synced" at the
+   same moment — three contradictory claims about one thing. One status object now, and
+   the buttons beside it recede so the brand and the page headline carry the weight. */
+.hdr-right{align-items:center;gap:var(--sp-1)}
+.hdr-status{display:inline-flex;align-items:center;gap:var(--sp-1);padding:0 var(--sp-1);
+  border-left:1px solid var(--bd);border-right:1px solid var(--bd)}
+#monarchFreshness{font-size:var(--t-xs);color:var(--t3)}
+.sync-pill{font-size:var(--t-xs)!important}
+.cmdk-trigger{gap:8px}
+.cmdk-trigger kbd{font-size:11px;color:var(--t3);background:var(--s3);border-radius:5px;
+  padding:2px 6px;font-family:'SF Mono','Fira Code',monospace}
+.logout-btn,#mobileControlsToggle{font-size:var(--t-sm)!important}
+/* Settings sat above the page eyebrow in a language of its own. It belongs with the other
+   chrome, not in front of the headline. */
+#mobileControlsToggle{margin:0 0 var(--sp-3)}
+@media(max-width:760px){.hdr-status{border:0;padding:0}}

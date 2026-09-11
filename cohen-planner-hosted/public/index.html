@@ -467,15 +467,17 @@ body{background:transparent}
     </div>
   </div>
   <div class="hdr-right">
-      <button class="cmdk-trigger" onclick="openPalette()" title="Command palette"><span>🔎</span>Jump to… <kbd id="cmdkKbdHint">⌘K</kbd></button>
-      <button id="monarchSyncBtn" onclick="syncMonarch()" style="font-size:10px;font-weight:500;padding:5px 11px;background:var(--a-soft);border:1px solid rgba(191,105,0,.3);border-radius:7px;cursor:pointer;font-family:inherit;color:var(--a);transition:all .14s;display:none">📍 Sync Monarch</button>
-      <span id="monarchFreshness" style="font-size:10px;color:var(--t3)" aria-live="polite"></span>
-      <button id="monarchConnectBtn" onclick="connectMonarch()" style="font-size:10px;font-weight:500;padding:5px 11px;background:var(--accent-soft);border:1px solid rgba(99,91,255,.25);border-radius:7px;cursor:pointer;font-family:inherit;color:var(--accent);transition:all .14s">🔗 Enable NormOS Sync</button>
-    <span class="sync-pill" id="syncStatus"></span>
-    <button class="logout-btn" onclick="doLogout()">Log out</button>
+      <button class="cmdk-trigger ui-btn" onclick="openPalette()" title="Command palette">Jump to… <kbd id="cmdkKbdHint">⌘K</kbd></button>
+      <div class="hdr-status">
+        <span id="monarchFreshness" aria-live="polite"></span>
+        <button id="monarchSyncBtn" class="ui-btn ui-btn-quiet" onclick="syncMonarch()" style="display:none">Sync now</button>
+        <button id="monarchConnectBtn" class="ui-btn ui-btn-quiet" onclick="connectMonarch()">Connect accounts</button>
+      </div>
+      <span class="sync-pill" id="syncStatus"></span>
+    <button class="logout-btn ui-btn ui-btn-quiet" onclick="doLogout()">Log out</button>
   </div>
 </div>
-<button id="mobileControlsToggle" onclick="toggleMobileControls()" style="margin-bottom:8px;padding:7px 13px;background:var(--s1);border:1px solid var(--bd);border-radius:7px;font-size:11px;font-weight:500;cursor:pointer;font-family:inherit;color:var(--t2);align-items:center;gap:5px">⚙️ <span id="mobileControlsLabel">Settings</span></button>
+<button id="mobileControlsToggle" class="ui-btn ui-btn-quiet" onclick="toggleMobileControls()"><span id="mobileControlsLabel">Settings</span></button>
 <div class="layout">
   <div class="panel" id="controls"></div>
   <div id="main"></div>
@@ -563,9 +565,9 @@ function setSyncStatus(status){
   const el=document.getElementById('syncStatus');
   if(!el)return;
   el.className='sync-pill '+status;
-  if(status==='saving')el.textContent='Saving…';
-  else if(status==='synced')el.textContent='✓ Synced';
-  else if(status==='error')el.textContent='⚠ Save failed';
+  if(status==='saving')el.textContent='Saving plan…';
+  else if(status==='synced')el.textContent='Plan saved';
+  else if(status==='error')el.textContent='Plan not saved';
   else el.textContent='';
 }
 
@@ -700,7 +702,7 @@ async function checkMonarchStatus(){
     }else{
       if(syncBtn)syncBtn.style.display='none';
       if(connBtn)connBtn.style.display='';
-      const freshness=document.getElementById('monarchFreshness');if(freshness)freshness.textContent='Waiting for NormOS account sync';
+      const freshness=document.getElementById('monarchFreshness');if(freshness)freshness.textContent='Accounts not connected';
     }
   }catch(e){const freshness=document.getElementById('monarchFreshness');if(freshness)freshness.textContent='Connection check unavailable';}
 }
@@ -2858,7 +2860,7 @@ function renderPortfolioTab(R,P){
       <div style="font-size:32px;margin-bottom:12px">📊</div>
       <div style="font-size:14px;font-weight:600;color:var(--tx);margin-bottom:6px">Portfolio view needs Monarch</div>
       <div style="font-size:11px;color:var(--t3);margin-bottom:16px">Connect Monarch to see your investment holdings here.</div>
-      <button onclick="connectMonarch()" style="padding:8px 18px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:600">🔗 Enable NormOS Sync</button>
+      <button class="ui-btn ui-btn-primary" onclick="connectMonarch()">Connect accounts</button>
     </div>`;
     return;
   }
