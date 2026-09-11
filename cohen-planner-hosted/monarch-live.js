@@ -14,6 +14,10 @@ const QUERY = 'query NormOS_Accounts { accounts { id displayName currentBalance 
 // query. Position value comes from the aggregate's totalValue instead.
 const HOLDINGS_QUERY = `query NormOS_Holdings($input: PortfolioInput) {
   portfolio(input: $input) {
+    performance {
+      totalValue totalBasis totalChangePercent totalChangeDollars oneDayChangePercent
+      historicalChart { date returnPercent }
+    }
     aggregateHoldings { edges { node {
       id quantity basis totalValue
       securityPriceChangeDollars securityPriceChangePercent
@@ -73,6 +77,12 @@ const numOr0 = v => {
   if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
   if (typeof v === 'string') { const n = parseFloat(v.replace(/[^0-9.\-]/g, '')); return Number.isFinite(n) ? n : 0; }
   return 0;
+};
+const numOrNull = v => {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v === 'string') { const n = parseFloat(v.replace(/[^0-9.\-]/g, '')); return Number.isFinite(n) ? n : null; }
+  return null;
 };
 // Tolerant of where the edges land: this query shape is Monarch's undocumented web API, so
 // accept the payload whether it arrives nested under data/portfolio or already unwrapped.
@@ -142,19 +152,43 @@ function mapHoldings(payload) {
     const value = numOr0(n.totalValue ?? n.value);
     const basis = numOr0(n.basis);
     const allTimeChange = basis > 0 ? value - basis : 0;
+    const priceChangePct = numOrNull(n.securityPriceChangePercent);
+    const priceChangePerShare = numOrNull(n.securityPriceChangeDollars);
+    const quantity = numOrNull(n.quantity);
+    // securityPriceChangeDollars is the change in one security's price, not this
+    // position's dollar change. Prefer the percentage applied to the current position;
+    // fall back to price change × quantity when Monarch omits the percentage.
+    const positionPriceChange = priceChangePct != null && priceChangePct > -100
+      ? value - value / (1 + priceChangePct / 100)
+      : (priceChangePerShare != null && quantity != null ? priceChangePerShare * quantity : null);
     return {
       ticker: sec.ticker || sec.name || '\u2014',
       name: sec.name || sec.ticker || '',
       value: Math.round(value),
       securityType: normaliseType(sec.type ?? sec.typeDisplay),
-      periodChange: Math.round(numOr0(n.securityPriceChangeDollars) * 100) / 100,
-      periodChangePct: Math.round(numOr0(n.securityPriceChangePercent) * 100) / 100,
+      periodChange: positionPriceChange == null ? null : Math.round(positionPriceChange * 100) / 100,
+      periodChangePct: priceChangePct == null ? null : Math.round(priceChangePct * 100) / 100,
       allTimeChange: Math.round(allTimeChange * 100) / 100,
       allTimePct: basis > 0 ? Math.round(allTimeChange / basis * 10000) / 100 : 0,
     };
   }).filter(h => h.value !== 0);
   if (!rows.length) throw new Error('Monarch returned no holdings.');
   return rows.sort((a, b) => b.value - a.value);
+}
+function mapPerformance(payload) {
+  const p = payload?.performance ?? payload?.portfolio?.performance ?? payload?.data?.portfolio?.performance;
+  if (!p) return null;
+  const dollars = numOrNull(p.totalChangeDollars);
+  const percent = numOrNull(p.totalChangePercent);
+  if (dollars == null || percent == null) return null;
+  return {
+    totalValue: numOrNull(p.totalValue),
+    totalBasis: numOrNull(p.totalBasis ?? p.totalCostBasis),
+    totalChangeDollars: Math.round(dollars * 100) / 100,
+    totalChangePercent: Math.round(percent * 100) / 100,
+    oneDayChangePercent: numOrNull(p.oneDayChangePercent),
+    historicalChart: Array.isArray(p.historicalChart) ? p.historicalChart : [],
+  };
 }
 function validSnapshot(value) {
   if (value?.version !== 1 || !Number.isFinite(Date.parse(value.asOf))) return null;
@@ -269,6 +303,10 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
   // are the plan's anchor and are worth serving stale, whereas holdings are a live view and
   // a stale one is worse than an honest "unavailable".
   async function holdings({ startDate, endDate }) {
+    return (await investmentPortfolio({ startDate, endDate })).holdings;
+  }
+
+  async function investmentPortfolio({ startDate, endDate }) {
     const c = await context();
     if (c.disabled) throw new Error('Planner sync is paused. Enable NormOS sync to resume.');
     if (!c.token) throw new Error('Individual holdings need a direct Monarch connection. Reconnect Monarch in NormOS.');
@@ -308,7 +346,8 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
       logGraphqlErrors('holdings (scoped)', body.errors);
       throw new Error('Monarch could not return holdings for this account.');
     }
-    return mapHoldings(body.data?.portfolio ?? body.data ?? body);
+    const portfolio = body.data?.portfolio ?? body.data ?? body;
+    return { holdings: mapHoldings(portfolio), performance: mapPerformance(portfolio) };
   }
 
   // ── Transactions, categories, budgets, recurring ────────────────────────
@@ -442,6 +481,6 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
     if (!pending) pending = pull().finally(() => { pending = null; });
     return pending;
   }
-  return { status, getSnapshot, setEnabled, holdings, transactionsPage, categories, budgets, recurring, diagnose };
+  return { status, getSnapshot, setEnabled, holdings, investmentPortfolio, transactionsPage, categories, budgets, recurring, diagnose };
 }
-module.exports = { createMonarchLive, validSnapshot, mapHoldings, normaliseType, extractHoldingEdges, mapTransaction, mapBudgets, PAGE_SIZE };
+module.exports = { createMonarchLive, validSnapshot, mapHoldings, mapPerformance, normaliseType, extractHoldingEdges, mapTransaction, mapBudgets, PAGE_SIZE };

@@ -928,13 +928,22 @@ app.get('/api/monarch-investments', requireAuth, async (req, res) => {
       ? `${now.getFullYear()}-01-01`
       : new Date(now.getTime() - pd * 864e5).toISOString().slice(0, 10));
 
-    const holdings = await monarchLive.holdings({ startDate: start, endDate: end });
+    const portfolio = await monarchLive.investmentPortfolio({ startDate: start, endDate: end });
+    const holdings = portfolio.holdings;
 
     const totalValue = holdings.reduce((s, h) => s + h.value, 0);
-    const periodChange = holdings.reduce((s, h) => s + h.periodChange, 0);
+    // Monarch calculates contribution-aware performance for the requested window. The
+    // holding fields describe each security's price movement and cannot be summed into a
+    // portfolio return. If performance is absent, show current-holdings price growth and
+    // label it explicitly rather than fabricating a return.
+    const priceGrowth = holdings.reduce((s, h) => s + (Number.isFinite(h.periodChange) ? h.periodChange : 0), 0);
+    const hasReturn = !!portfolio.performance;
+    const periodChange = hasReturn ? portfolio.performance.totalChangeDollars : priceGrowth;
+    const periodChangePct = hasReturn
+      ? portfolio.performance.totalChangePercent
+      : (totalValue - priceGrowth > 0 ? priceGrowth / (totalValue - priceGrowth) * 100 : 0);
     const allTimeChange = holdings.reduce((s, h) => s + h.allTimeChange, 0);
-    const priorValue = totalValue - periodChange;
-    const withMoves = holdings.filter(h => h.securityType !== 'cash' && h.periodChange !== 0);
+    const withMoves = holdings.filter(h => h.securityType !== 'cash' && Number.isFinite(h.periodChange) && h.periodChange !== 0);
     const byMove = [...withMoves].sort((a, b) => b.periodChange - a.periodChange);
 
     res.json({
@@ -942,7 +951,8 @@ app.get('/api/monarch-investments', requireAuth, async (req, res) => {
       periodEnd: end,
       totalValue,
       periodChange: Math.round(periodChange * 100) / 100,
-      periodChangePct: priorValue > 0 ? Math.round(periodChange / priorValue * 10000) / 100 : 0,
+      periodChangePct: Math.round(periodChangePct * 100) / 100,
+      periodMetric: hasReturn ? 'return' : 'current_holdings_growth',
       allTimeChange: Math.round(allTimeChange * 100) / 100,
       allTimePct: totalValue - allTimeChange > 0 ? Math.round(allTimeChange / (totalValue - allTimeChange) * 10000) / 100 : 0,
       holdings,
