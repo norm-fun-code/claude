@@ -87,6 +87,7 @@ describe('holdings transport', () => {
     const rows = await live.holdings({ startDate: '2026-01-01', endDate: '2026-09-10' });
     expect(sent.url).toBe('https://api.monarch.com/graphql');
     expect(sent.body.variables.input).toMatchObject({ startDate: '2026-01-01', endDate: '2026-09-10' });
+    expect(sent.body.variables.input.topMoversLimit).toBe(100);
     expect(sent.headers.Authorization).toBe('Token tok'); // same auth path as balances
     expect(rows[0].ticker).toBe('FXAIX');
   });

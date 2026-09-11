@@ -3136,17 +3136,7 @@ function renderPortfolioTab(R,P){
       options:{
         responsive:true,maintainAspectRatio:false,cutout:'62%',
         plugins:{
-          legend:{position:'bottom',labels:{
-            font:{size:12,family:"'Inter',sans-serif"},color:'#c8d5e8',padding:12,usePointStyle:true,pointStyle:'circle',boxWidth:7,boxHeight:7,
-            generateLabels:chart=>{
-              const ds=chart.data.datasets[0];
-              return chart.data.labels.map((lbl,i)=>{
-                const val=ds.data[i];
-                const pct=donutTotal>0?(val/donutTotal*100).toFixed(1):'0';
-                return{text:`${lbl} ${pct}%`,fillStyle:ds.backgroundColor[i],strokeStyle:'transparent',hidden:false,index:i};
-              });
-            }
-          }},
+          legend:{display:false},
           tooltip:{..._GLASS_TOOLTIP,callbacks:{label:ctx=>`  ${ctx.label}: ${fmt(ctx.raw)} (${donutTotal>0?(ctx.raw/donutTotal*100).toFixed(1):'0'}%)`}},
           datalabels:{
             color:'#fff',
