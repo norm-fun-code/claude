@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cohen Family — Interactive Financial Planner v6</title>
-<meta name="theme-color" content="#635bff">
+<title>Cohen | Private Office</title>
+<meta name="theme-color" content="#0a101c">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%237d76ff'/><stop offset='.55' stop-color='%235048d6'/><stop offset='1' stop-color='%237c3aed'/></linearGradient></defs><rect width='32' height='32' rx='7' fill='url(%23g)'/><path d='M6 21L13 14L17 18L26 8' stroke='%23fff' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/><circle cx='26' cy='8' r='2.4' fill='%23fff'/></svg>">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
@@ -451,6 +451,8 @@ body{background:transparent}
 }
 </style>
 <link rel="stylesheet" href="/decision-room.css">
+<link rel="stylesheet" href="/cockpit.css">
+<script src="/cockpit.js"></script>
 </head>
 <body>
 <div class="mesh-bg"></div>
@@ -459,7 +461,7 @@ body{background:transparent}
     <div class="brand-mark" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 13.5 L7.5 9 L10.5 12 L17 4.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="17" cy="4.5" r="1.7" fill="#fff"/></svg></div>
     <div class="brand-text">
       <h1>Cohen Family</h1>
-      <div class="brand-sub">Financial Planner <span class="brand-ver">v6</span></div>
+      <div class="brand-sub">PRIVATE OFFICE</div>
     </div>
   </div>
   <div class="hdr-right">
@@ -574,7 +576,7 @@ function savePlannerState(){
   if(!_planLoaded){setSyncStatus('error');return;}
   setSyncStatus('saving');
   const revision=++_saveRevision;
-  const payload=JSON.stringify({state:{P,compareMode,activeTab,_projView,_todayView,_homeView,activeScenarioIdx,scenarioDirty,monarchSnapshot,experienceVersion:6}});
+  const payload=JSON.stringify({state:{P,compareMode,activeTab,_projView,_todayView,_homeView,activeScenarioIdx,scenarioDirty,monarchSnapshot,experienceVersion:7}});
   clearTimeout(_saveTimer);
   _saveTimer=setTimeout(()=>{
     // Serialize writes so a slower earlier request cannot overwrite newer state.
@@ -607,7 +609,7 @@ async function loadFromServer(){
       const s=d.state||{};
       if(s.P)P={...D,...migrateP(s.P)};
       if(s.compareMode!==undefined)compareMode=s.compareMode;
-      if(s.experienceVersion>=6&&s.activeTab)activeTab=s.activeTab;
+      if(s.experienceVersion>=6&&s.activeTab)activeTab=s.experienceVersion>=7?s.activeTab:'cockpit';
       _planLoaded=true;
       if(s._projView!==undefined)_projView=s._projView;
       if(s._todayView!==undefined)_todayView=s._todayView;
@@ -882,7 +884,7 @@ async function confirmSnapshot(overlay){
 }
 
 // ═══ UI ═══
-let activeTab='home';let charts={};let inflationView=false;let snapshots=[];let overlaySnapId=null;
+let activeTab='cockpit';let charts={};let inflationView=false;let snapshots=[];let overlaySnapId=null;
 let _sensiPreset='all';
 let _sensiDeltas={};
 let monarchSnapshot=null; // {netWorth, retirement, assets, liabilities, syncedAt}
@@ -1510,8 +1512,8 @@ function _hexA(hex,a){const n=parseInt(hex.slice(1),16);return `rgba(${n>>16&255
 function _areaGrad(hex,a1,a2){return(ctx)=>{const ch=ctx.chart,area=ch.chartArea;if(!area)return _hexA(hex,a1);const g=ch.ctx.createLinearGradient(0,area.top,0,area.bottom);g.addColorStop(0,_hexA(hex,a1));g.addColorStop(1,_hexA(hex,a2));return g}}
 // Bar gradient (vertical, fades toward baseline)
 function _barGrad(hex,a1,a2){return(ctx)=>{const ch=ctx.chart,area=ch.chartArea;if(!area)return _hexA(hex,a1);const g=ch.ctx.createLinearGradient(0,area.top,0,area.bottom);g.addColorStop(0,_hexA(hex,a1));g.addColorStop(1,_hexA(hex,a2));return g}}
-if(window.Chart&&Chart.defaults){Chart.defaults.font.family='Inter';Chart.defaults.font.size=10;Chart.defaults.color='#8898aa';Chart.defaults.animation={duration:900,easing:'easeOutQuart'};Chart.defaults.animations.colors=false;Chart.defaults.elements.point.hoverBorderWidth=2;Chart.defaults.elements.line.capBezierPoints=true;}
-function chartOpts(){return{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},animations:{colors:false},plugins:{legend:{position:'top',align:'end',labels:{color:'#425466',font:{size:10.5,family:'Inter',weight:'500'},usePointStyle:true,pointStyle:'circle',boxWidth:7,boxHeight:7,padding:15}},tooltip:{..._GLASS_TOOLTIP,callbacks:{label:c=>'  '+c.dataset.label+': $'+(c.raw||0).toLocaleString()+'K'}}},scales:{x:{ticks:{color:'#8898aa',font:{size:10,family:'Inter'},maxRotation:45},grid:{display:false},border:{display:false}},y:{ticks:{color:'#8898aa',font:{size:10,family:'Inter'},stepSize:500,callback:v=>fmtK(v),padding:6},grid:{color:'rgba(10,37,64,.05)',drawTicks:false},border:{display:false}}}}}
+if(window.Chart&&Chart.defaults){Chart.defaults.font.family='Inter';Chart.defaults.font.size=12;Chart.defaults.color='#acb9cc';Chart.defaults.animation={duration:900,easing:'easeOutQuart'};Chart.defaults.animations.colors=false;Chart.defaults.elements.point.hoverBorderWidth=2;Chart.defaults.elements.line.capBezierPoints=true;}
+function chartOpts(){return{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},animations:{colors:false},plugins:{legend:{position:'top',align:'end',labels:{color:'#b6c3d6',font:{size:12,family:'Inter',weight:'500'},usePointStyle:true,pointStyle:'circle',boxWidth:7,boxHeight:7,padding:15}},tooltip:{..._GLASS_TOOLTIP,callbacks:{label:c=>'  '+c.dataset.label+': $'+(c.raw||0).toLocaleString()+'K'}}},scales:{x:{ticks:{color:'#8898aa',font:{size:10,family:'Inter'},maxRotation:45},grid:{display:false},border:{display:false}},y:{ticks:{color:'#8898aa',font:{size:10,family:'Inter'},stepSize:500,callback:v=>fmtK(v),padding:6},grid:{color:'rgba(10,37,64,.05)',drawTicks:false},border:{display:false}}}}}
 function posOpts(){const o=chartOpts();o.scales.y.min=0;return o}
 
 // ═══ MOTION + HERO HELPERS (next-gen visual layer) ═══
@@ -1612,6 +1614,7 @@ function _introAnimate(){
 function render(){
   if(!_planLoaded)return;
   document.body.classList.toggle('home-view',activeTab==='home');
+  document.body.classList.toggle('cockpit-view',activeTab==='cockpit');
   document.querySelectorAll('.tabs button[role=tab]').forEach(b=>{const on=b.dataset.tab===activeTab;b.classList.toggle('active',on);b.setAttribute('aria-selected',String(on));});
   if(activeTab!=='income')document.getElementById('flowToggle')?.remove();
   const{R,tT,tC,tTx,tS,dp,mm}=run(P);
@@ -1677,6 +1680,7 @@ function render(){
       }).join(''):'')+
       (chartOpts?`<span style="margin-left:auto;display:flex;gap:4px">${chartOpts}</span>`:'')+`</div>`;
   }
+  if(activeTab==='cockpit'){renderCockpit(R);return;}
   if(activeTab==='home'){
     if(_homeView==='housing'){renderHousingTab(R,P);return}
     if(_homeView==='levers'){window._lastR=R;window._lastP=P;renderSensitivityTab(R,P);return}
@@ -2051,12 +2055,12 @@ function provChip(kind,asOf){
 async function loadOverview(){
   if(_ovwLoading)return;_ovwLoading=true;
   try{
-    const [r,hr]=await Promise.all([fetch('/api/accounts/overview'),fetch('/api/wealth/history')]);
+    const [r,hr]=await Promise.all([fetch('/api/accounts/overview'),fetch('/api/wealth/history').catch(()=>null)]);
     _ovw=r.ok?await r.json():{error:(await r.json().catch(()=>({}))).error||'unavailable'};
-    _hist=hr.ok?await hr.json():null;
+    _hist=hr?.ok?await hr.json().catch(()=>null):null;
   }catch(e){_ovw={error:e.message};}
   _ovwLoading=false;
-  if(activeTab==='today'&&_todayView==='overview')render();
+  if(activeTab==='cockpit'||(activeTab==='today'&&_todayView==='overview'))render();
 }
 async function takeWealthSnapshot(){
   const r=await fetch('/api/wealth/snapshot',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
@@ -2124,7 +2128,7 @@ async function loadInbox(force){
     // A failed load is reported as a failure. Falling back to an empty list would read as
     // "all clear", which is the one thing it definitely does not mean.
     _inboxError=e.message||'Could not load the watchlist.';_inbox=null;
-  }finally{_inboxLoading=false;if(activeTab==='today'&&_todayView==='watch')render()}
+  }finally{_inboxLoading=false;if(activeTab==='cockpit'||(activeTab==='today'&&_todayView==='watch'))render()}
 }
 
 async function setAlertState(key,state,until){
@@ -4377,11 +4381,12 @@ document.getElementById('main').innerHTML=`
   <div id="heroBand"></div>
   <div class="kpi-grid" id="kpis"></div><div id="scenarioBar"></div><div id="snapshotBar"></div>
   <div class="tabs" role="tablist" aria-label="Plan views">
-    <button role="tab" aria-selected="true" class="active" data-tab="home" onclick="setTab('home')">✦ Decision Room</button>
-    <button role="tab" aria-selected="false" data-tab="projection" onclick="setTab('projection')">📈 Projection</button>
+    <button role="tab" aria-selected="false" data-tab="cockpit" onclick="setTab('cockpit')">◎ Cockpit</button>
+    <button role="tab" aria-selected="true" class="active" data-tab="home" onclick="setTab('home')">◇ Decisions</button>
+    <button role="tab" aria-selected="false" data-tab="projection" onclick="setTab('projection')">↗ Trajectory</button>
     <button role="tab" aria-selected="false" data-tab="stripe" onclick="setTab('stripe')">◆ Stripe</button>
-    <button role="tab" aria-selected="false" data-tab="today" onclick="setTab('today')">🎯 Today</button>
-    <button role="tab" aria-selected="false" data-tab="advisor" onclick="setTab('advisor')">🤖 AI Advisor</button>
+    <button role="tab" aria-selected="false" data-tab="today" onclick="setTab('today')">≡ Financial life</button>
+    <button role="tab" aria-selected="false" data-tab="advisor" onclick="setTab('advisor')">✦ Advisor</button>
     <button id="moreBtn" aria-label="More actions" aria-haspopup="true" aria-expanded="false" onclick="toggleMoreMenu(event)" style="margin-left:auto;font-size:11px;padding:4px 10px;border-radius:5px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit;line-height:1">⋯</button>
   </div>
   <div id="moreMenu" hidden style="position:absolute;z-index:60;background:var(--s1);border:1px solid var(--bd);border-radius:9px;box-shadow:0 10px 30px rgba(10,37,64,.16);padding:5px;min-width:186px"></div>

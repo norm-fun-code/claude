@@ -268,7 +268,7 @@ app.get('/model.js', requireAuth, (req, res) => {
 // Keep every new planner asset behind the same session gate as the existing UI.
 // liquidity.js was referenced by index.html but never listed here, so it 404'd in
 // production while working locally under the preview server's plain static handler.
-for (const asset of ['decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js', 'advisor-tools.js']) {
+for (const asset of ['cockpit.js', 'cockpit.css', 'decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js', 'advisor-tools.js']) {
   app.get('/' + asset, requireAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', asset));
   });
@@ -763,7 +763,7 @@ app.get('/api/monarch/spending', requireAuth, async (req, res) => {
 app.get('/api/accounts/overview', requireAuth, async (req, res) => {
   try {
     const meta = await loadAccountMeta();
-    let accounts = [], balancesOk = false, snapshotAsOf = null, warning = null;
+    let accounts = [], balancesOk = false, snapshotAsOf = null, warning = null, sourcePartial = false;
     try {
       const snap = await monarchLive.getSnapshot();
       accounts = (snap.accounts || []).map(a => ({
@@ -776,7 +776,8 @@ app.get('/api/accounts/overview', requireAuth, async (req, res) => {
         rawBalance: require('./monarch-accounts').rawBalanceOf(a),
         asOf: snap.asOf || null,
       }));
-      balancesOk = true; snapshotAsOf = snap.asOf || null; warning = snap.warning || null;
+      balancesOk = true; snapshotAsOf = snap.asOf || snap.syncedAt || null; warning = snap.warning || null;
+      sourcePartial = snap.partial === true || (snap.missingAccounts || []).length > 0;
     } catch (err) { warning = err.message; }
 
     const summary = Accounts.summarize(accounts, meta.merged);
@@ -794,7 +795,7 @@ app.get('/api/accounts/overview', requireAuth, async (req, res) => {
     } catch (err) { caps.holdings = { available: false, detail: err.message, asOf: null }; }
 
     res.json({
-      asOf: snapshotAsOf, warning,
+      asOf: snapshotAsOf, warning, partial: sourcePartial,
       summary: { ...summary, byClass: summary.byClass },
       overrides: meta.overrides,
       capabilities: caps,
