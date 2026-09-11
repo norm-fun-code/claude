@@ -1685,7 +1685,8 @@ function render(){
   }
   if(activeTab==='advisor'){renderAdvisorTab(R,P);return}
   if(activeTab==='today'){
-    if(_todayView==='holdings')renderPortfolioTab(R,P);
+    if(_todayView==='watch')renderWatchTab(R,P);
+    else if(_todayView==='holdings')renderPortfolioTab(R,P);
     else if(_todayView==='spending')renderSpendingTab(R,P);
     else if(_todayView==='overview')renderOverviewTab(R,P);
     else renderGoalsTab(R,P,tT);
@@ -2098,6 +2099,232 @@ function applyReconcileLine(key,value){
   } else if(!showConfirm(`Set ${key} to ${fmt(value)} in your plan?\n\nThis changes a planning assumption to match what your accounts currently show. Nothing else is altered.`))return;
   P[key]=value;markDirty();buildControls();render();savePlannerState();
   showToast(`Plan updated: ${key} → ${fmt(value)}`,'green');
+}
+
+// ── Watchlist ────────────────────────────────────────────────────────────
+// The proactive surface. Three rules it exists to honour:
+//   1. At most three priorities. Attention is the scarce resource; eleven warnings is zero.
+//   2. Every item shows its evidence, so the headline can be checked rather than trusted.
+//   3. What was NOT checked is as prominent as what was. "Nothing to report" and "nothing
+//      was looked at" are opposite messages, and a panel that renders them identically is
+//      worse than one that renders nothing.
+let _inbox=null,_inboxLoading=false,_inboxError=null,_briefing=null;
+
+async function loadInbox(force){
+  if(_inboxLoading)return;
+  if(_inbox&&!force)return;
+  _inboxLoading=true;_inboxError=null;
+  try{
+    const [i,b]=await Promise.all([
+      fetch('/api/inbox').then(r=>r.ok?r.json():r.json().then(j=>Promise.reject(new Error(j.error||('HTTP '+r.status))))),
+      fetch('/api/briefings/latest').then(r=>r.ok?r.json():null).catch(()=>null),
+    ]);
+    _inbox=i;_briefing=b;
+  }catch(e){
+    // A failed load is reported as a failure. Falling back to an empty list would read as
+    // "all clear", which is the one thing it definitely does not mean.
+    _inboxError=e.message||'Could not load the watchlist.';_inbox=null;
+  }finally{_inboxLoading=false;if(activeTab==='today'&&_todayView==='watch')render()}
+}
+
+async function setAlertState(key,state,until){
+  try{
+    const res=await fetch('/api/alerts/'+encodeURIComponent(key)+'/state',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({state,until,alert:(_inbox&&[..._inbox.priorities,..._inbox.more].find(a=>a.key===key))||null})});
+    if(!res.ok){const j=await res.json().catch(()=>({}));throw new Error(j.error||('HTTP '+res.status))}
+    showToast(state==='snoozed'?'Snoozed until '+String(until).slice(0,10)
+      :state==='open'?'Reopened.':state==='resolved'?'Marked resolved.':'Dismissed.','green');
+    await loadInbox(true);
+  }catch(e){showToast(e.message,'red')}
+}
+function snoozeAlert(key,days){
+  const until=new Date(Date.now()+days*86400000).toISOString();
+  setAlertState(key,'snoozed',until);
+}
+
+const SEV_STYLE={
+  critical:{c:'var(--r)',bg:'rgba(205,61,100,.06)',bd:'rgba(205,61,100,.35)',label:'Critical'},
+  warning:{c:'var(--a)',bg:'rgba(245,183,49,.06)',bd:'rgba(245,183,49,.4)',label:'Worth attention'},
+  info:{c:'var(--b)',bg:'rgba(0,115,230,.05)',bd:'rgba(0,115,230,.3)',label:'For information'},
+};
+
+function alertCard(a){
+  const st=SEV_STYLE[a.severity]||SEV_STYLE.info;
+  return `<div class="glass-card" style="padding:14px 16px;border-color:${st.bd};background:${st.bg};margin-bottom:10px">
+    <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:8px">
+      <span style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:${st.c};border:1px solid ${st.bd};border-radius:4px;padding:2px 6px;white-space:nowrap;margin-top:2px">${st.label}</span>
+      <div style="flex:1"><div style="font-size:12.5px;font-weight:700;color:var(--tx);line-height:1.35">${advEscape(a.title)}</div>
+      ${a.occurrences>1?`<div style="font-size:8.5px;color:var(--t3);margin-top:2px">Detected on ${a.occurrences} checks</div>`:''}</div>
+    </div>
+    <div style="font-size:10.5px;color:var(--t2);line-height:1.6;margin-bottom:9px">${advEscape(a.significance)}</div>
+    <div style="background:var(--s2);border:1px solid var(--bd);border-radius:7px;padding:9px 11px;margin-bottom:9px">
+      <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--t3);margin-bottom:6px">The numbers behind this</div>
+      ${a.evidence.map(e=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:10px;border-top:1px solid var(--bd)">
+        <span style="color:var(--t2)">${advEscape(e.label)}</span>
+        <span style="text-align:right"><span class="mono" style="color:var(--tx);font-weight:600">${advEscape(String(e.value))}</span>
+        <span style="color:var(--t3);font-size:8.5px;display:block">${advEscape(e.source)}</span></span>
+      </div>`).join('')}
+    </div>
+    <div style="font-size:10.5px;color:var(--tx);line-height:1.6;margin-bottom:10px"><strong>What to do:</strong> ${advEscape(a.action)}</div>
+    <div style="display:flex;gap:5px;flex-wrap:wrap">
+      <button onclick="setAlertState('${a.key}','resolved')" style="font-size:9px;padding:5px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--s1);color:var(--g);font-family:inherit;cursor:pointer;font-weight:600">✓ Resolved</button>
+      <button onclick="snoozeAlert('${a.key}',30)" style="font-size:9px;padding:5px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--s1);color:var(--t2);font-family:inherit;cursor:pointer">Snooze 30d</button>
+      <button onclick="snoozeAlert('${a.key}',90)" style="font-size:9px;padding:5px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--s1);color:var(--t2);font-family:inherit;cursor:pointer">Snooze 90d</button>
+      <button onclick="setAlertState('${a.key}','dismissed')" style="font-size:9px;padding:5px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--s1);color:var(--t3);font-family:inherit;cursor:pointer">Dismiss</button>
+      <button onclick="askAboutAlert('${a.key}')" style="font-size:9px;padding:5px 10px;border-radius:6px;border:1px solid rgba(103,114,229,.35);background:var(--s1);color:#6772e5;font-family:inherit;cursor:pointer">Ask the advisor</button>
+    </div>
+  </div>`;
+}
+
+function askAboutAlert(key){
+  const a=(_inbox&&[..._inbox.priorities,..._inbox.more].find(x=>x.key===key));
+  if(!a)return;
+  setTab('advisor');
+  const input=document.getElementById('advInput');
+  if(input){
+    input.value=`Explain this watchlist item and what you would actually do about it: "${a.title}". `+
+      `Call get_alerts to see the detection output and its evidence before answering, and tell me what was NOT checked. `+
+      `If a change to the plan would help, use propose_changes rather than describing it.`;
+    input.style.height='120px';input.focus();
+    input.scrollIntoView({block:'center',behavior:_reduceMotion()?'auto':'smooth'});
+    showToast('Question prepared. Review it, then press Send.','green');
+  }
+}
+
+function renderWatchTab(R,P){
+  const money=v=>fmt(Math.round(v||0));
+  const ca=document.getElementById('chartArea');
+  document.getElementById('summaries').innerHTML='';
+  if(!_inbox&&!_inboxError){loadInbox();ca.innerHTML=`<div class="glass-card" style="padding:22px;text-align:center;color:var(--t2);font-size:11px">Running the checks…</div>`;return}
+
+  let h=`<div style="display:flex;flex-direction:column;gap:12px">`;
+
+  if(_inboxError){
+    h+=`<div class="glass-card" style="padding:15px 17px;border-color:rgba(205,61,100,.4);background:rgba(205,61,100,.05)">
+      <div style="font-size:12px;font-weight:700;color:var(--r);margin-bottom:5px">The checks could not run</div>
+      <div style="font-size:10.5px;color:var(--t2);line-height:1.6;margin-bottom:9px">${advEscape(_inboxError)}
+      <br><strong>This is not an all-clear.</strong> Nothing was checked, so nothing can be said about whether the plan is on track.</div>
+      <button onclick="loadInbox(true)" style="font-size:10px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">Try again</button></div>`;
+    ca.innerHTML=h+`</div>`;return;
+  }
+
+  const d=_inbox;
+  const complete=(d.notChecked||[]).length===0&&(d.checksThatFailed||[]).length===0;
+
+  // Header: what ran, when, and how completely — before any finding.
+  h+=`<div class="glass-card" style="padding:14px 16px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+      <div><div style="font-size:13px;font-weight:700;color:var(--tx)">Watchlist</div>
+      <div style="font-size:9.5px;color:var(--t2);margin-top:3px">
+        ${d.checksRun} of ${d.checksTotal} checks ran · ${d.counts.open} open
+        ${d.counts.suppressed?` · ${d.counts.suppressed} dismissed or snoozed`:''}
+        · generated ${advEscape(String(d.generatedAt))}</div></div>
+      <button onclick="loadInbox(true)" style="font-size:9.5px;padding:5px 11px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">Re-check</button>
+    </div>
+    ${complete?'':`<div style="margin-top:9px;padding:8px 10px;border:1px solid rgba(245,183,49,.4);background:rgba(245,183,49,.06);border-radius:7px;font-size:10px;color:var(--t2);line-height:1.55">
+      <strong style="color:var(--a)">This is a partial picture.</strong> Some checks could not run, so the areas below are unexamined rather than clear.</div>`}
+  </div>`;
+
+  // Priorities — at most three, by construction.
+  if(d.priorities.length){
+    h+=`<div><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:7px">Needs your attention</div>
+      ${d.priorities.map(alertCard).join('')}</div>`;
+  } else {
+    h+=`<div class="glass-card" style="padding:15px 17px;border-color:rgba(26,135,84,.3);background:rgba(26,135,84,.05)">
+      <div style="font-size:12px;font-weight:700;color:var(--g);margin-bottom:4px">${complete?'Nothing needs attention':'Nothing found in the checks that ran'}</div>
+      <div style="font-size:10.5px;color:var(--t2);line-height:1.6">${complete
+        ?`All ${d.checksTotal} checks ran and none of them found a condition worth raising.`
+        :`${d.checksRun} of ${d.checksTotal} checks ran and found nothing. The rest could not run — see below.`}</div></div>`;
+  }
+
+  if(d.more&&d.more.length){
+    h+=`<details class="glass-card" style="padding:12px 15px"><summary style="cursor:pointer;font-size:10.5px;font-weight:600;color:var(--t2)">${d.more.length} more open item${d.more.length===1?'':'s'}, below the top three</summary>
+      <div style="margin-top:10px">${d.more.map(alertCard).join('')}</div></details>`;
+  }
+
+  // What was NOT checked, given the same weight as what was.
+  if((d.notChecked||[]).length){
+    h+=`<div class="glass-card" style="padding:13px 15px;border-color:rgba(245,183,49,.35)">
+      <div style="font-size:10.5px;font-weight:700;color:var(--a);margin-bottom:7px">${d.notChecked.length} thing${d.notChecked.length===1?'':'s'} could not be checked</div>
+      ${d.notChecked.map(s=>`<div style="padding:6px 0;border-top:1px solid var(--bd);font-size:10px;line-height:1.55">
+        <span style="color:var(--tx);font-weight:600">${advEscape(s.kind)}</span>
+        <span style="color:var(--t3)"> — needs ${advEscape(String(s.missing))}</span>
+        ${s.note?`<div style="color:var(--t2);margin-top:2px">${advEscape(s.note)}</div>`:''}</div>`).join('')}
+    </div>`;
+  }
+  if((d.checksThatFailed||[]).length){
+    h+=`<div class="glass-card" style="padding:13px 15px;border-color:rgba(205,61,100,.4)">
+      <div style="font-size:10.5px;font-weight:700;color:var(--r);margin-bottom:6px">${d.checksThatFailed.length} check${d.checksThatFailed.length===1?'':'s'} failed to run</div>
+      ${d.checksThatFailed.map(f=>`<div style="font-size:10px;color:var(--t2);padding:3px 0">${advEscape(f.check)}: ${advEscape(f.error)}</div>`).join('')}</div>`;
+  }
+
+  // ── Tax position ──────────────────────────────────────────────────────
+  if(d.taxPlan&&d.taxPlan.status==='ok'){
+    const t=d.taxPlan;
+    h+=`<div class="glass-card" style="padding:14px 16px">
+      <div style="font-size:11.5px;font-weight:700;color:var(--tx);margin-bottom:8px">Tax paid against tax owed</div>
+      <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));margin-bottom:9px">
+        ${[['Projected liability',money(t.projectedLiability),'var(--tx)'],
+           ['Paid so far',money(t.paidToDate),'var(--b)'],
+           ['Short of safe harbour',money(t.shortfallVsHarbour),t.shortfallVsHarbour>0?'var(--r)':'var(--g)'],
+           ['Still owed at filing',money(t.shortfallVsLiability),t.shortfallVsLiability>0?'var(--a)':'var(--g)']]
+          .map(([l,v,c])=>`<div class="kpi"><div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:var(--t3)">${l}</div>
+            <div class="mono" style="font-size:15px;font-weight:700;color:${c}">${v}</div></div>`).join('')}
+      </div>
+      <div style="font-size:10.5px;color:var(--t2);line-height:1.6">${advEscape(t.interpretation)}</div>
+      ${t.remedy?`<div style="font-size:10.5px;color:var(--tx);line-height:1.6;margin-top:7px"><strong>What to do:</strong> ${advEscape(t.remedy)}</div>`:''}
+      <div style="font-size:8.5px;color:var(--t3);margin-top:7px">Safe harbour per ${advEscape(t.safeHarbour.citation)}${t.safeHarbour.priorAGIAssumed?' · prior-year AGI unknown, so the stricter 110% test is assumed':''}</div>
+    </div>`;
+  }
+
+  if(d.opportunities&&d.opportunities.length){
+    h+=`<details class="glass-card" style="padding:12px 15px"><summary style="cursor:pointer;font-size:10.5px;font-weight:600;color:var(--t2)">${d.opportunities.length} tax item${d.opportunities.length===1?'':'s'} screened</summary>
+      <div style="margin-top:9px">${d.opportunities.map(o=>{
+        const est=o.confidence==='estimate';
+        return `<div style="padding:9px 0;border-top:1px solid var(--bd)">
+          <div style="display:flex;gap:8px;align-items:flex-start">
+            <span style="font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;padding:2px 5px;border-radius:4px;white-space:nowrap;margin-top:2px;color:${est?'var(--g)':'var(--a)'};border:1px solid ${est?'rgba(26,135,84,.35)':'rgba(245,183,49,.4)'}">${est?'Estimate':'Needs confirmation'}</span>
+            <div style="flex:1"><div style="font-size:11px;font-weight:600;color:var(--tx)">${advEscape(o.title)}</div>
+            ${o.estimatedSaving!=null?`<div class="mono" style="font-size:11px;color:var(--g);margin-top:2px">≈ ${money(o.estimatedSaving)} estimated</div>`:''}
+            ${o.liability!=null?`<div class="mono" style="font-size:11px;color:var(--r);margin-top:2px">≈ ${money(o.liability)} additional tax expected</div>`:''}
+            ${o.basis?`<div style="font-size:9.5px;color:var(--t2);margin-top:3px;line-height:1.55">${advEscape(o.basis)}</div>`:''}
+            ${(o.eligibility||[]).length?`<div style="font-size:9.5px;color:var(--t2);margin-top:4px;line-height:1.55"><strong style="color:var(--a)">Only a professional can settle:</strong> ${o.eligibility.map(advEscape).join(' ')}</div>`:''}
+            ${(o.assumptions||[]).length?`<div style="font-size:9px;color:var(--t3);margin-top:3px;line-height:1.5">Assumes: ${o.assumptions.map(advEscape).join(' ')}</div>`:''}
+            ${o.action?`<div style="font-size:9.5px;color:var(--tx);margin-top:4px;line-height:1.55">${advEscape(o.action)}</div>`:''}</div>
+          </div></div>`;
+      }).join('')}</div></details>`;
+  }
+
+  if(d.documentRequests&&d.documentRequests.length){
+    h+=`<div class="glass-card" style="padding:13px 15px;border-color:rgba(103,114,229,.3)">
+      <div style="font-size:10.5px;font-weight:700;color:#6772e5;margin-bottom:7px">To go further, these are needed</div>
+      ${d.documentRequests.map(r=>`<div style="padding:6px 0;border-top:1px solid var(--bd);font-size:10px;line-height:1.55">
+        <div style="color:var(--tx);font-weight:600">${advEscape(r.label)}</div>
+        <div style="color:var(--t2);margin-top:2px">${r.reasons.map(advEscape).join(' ')}</div></div>`).join('')}
+      <div style="font-size:9px;color:var(--t3);margin-top:8px;line-height:1.5">Nothing read off a document is used until you have reviewed each value.</div>
+    </div>`;
+  }
+
+  // ── Where each input came from ────────────────────────────────────────
+  if(d.sources){
+    h+=`<details class="glass-card" style="padding:12px 15px"><summary style="cursor:pointer;font-size:10px;font-weight:600;color:var(--t3)">Where these checks got their data</summary>
+      <div style="margin-top:8px">${Object.entries(d.sources).map(([k,v])=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-top:1px solid var(--bd);font-size:9.5px">
+        <span style="color:var(--t2)">${advEscape(k)}</span><span style="color:${v==='ok'?'var(--g)':'var(--a)'}">${advEscape(String(v))}</span></div>`).join('')}</div></details>`;
+  }
+
+  // ── Briefing ──────────────────────────────────────────────────────────
+  if(_briefing){
+    const c=_briefing.status==='current'?'var(--g)':_briefing.failing?'var(--r)':'var(--a)';
+    h+=`<div class="glass-card" style="padding:13px 15px">
+      <div style="font-size:10.5px;font-weight:700;color:var(--tx);margin-bottom:4px">Latest briefing</div>
+      <div style="font-size:9.5px;color:${c};line-height:1.55;margin-bottom:${_briefing.hasBriefing?'8px':'0'}">${advEscape(_briefing.message||'')}</div>
+      ${_briefing.coverageNote?`<div style="font-size:9.5px;color:var(--a);margin-bottom:7px">${advEscape(_briefing.coverageNote)}</div>`:''}
+      ${_briefing.hasBriefing&&_briefing.briefing.narrative?`<div style="font-size:10.5px;color:var(--t2);line-height:1.65;white-space:pre-wrap">${advEscape(_briefing.briefing.narrative)}</div>`:''}
+    </div>`;
+  }
+
+  ca.innerHTML=h+`</div>`;
 }
 
 function renderOverviewTab(R,P){
@@ -4186,7 +4413,7 @@ const SUB_VIEWS={
   projection:{get:()=>_projView,set:v=>{_projView=v},
     views:[['nw','📈','Net worth'],['income','💰','Income & tax'],['cashflow','💸','Cash flow'],['table','📋','Table']]},
   today:{get:()=>_todayView,set:v=>{_todayView=v},
-    views:[['overview','◎','Overview'],['plan','🎯','Plan vs actual'],['holdings','📊','Holdings & accounts'],['spending','💳','Spending']]},
+    views:[['watch','🔔','Watchlist'],['overview','◎','Overview'],['plan','🎯','Plan vs actual'],['holdings','📊','Holdings & accounts'],['spending','💳','Spending']]},
 };
 let _stressMode=false;
 // ── Monte Carlo confidence band overlay (NW chart) ──
@@ -4493,7 +4720,7 @@ async function advLoadMessages(id){
 
 function advUuid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,8)}
 
-function advEscape(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function advEscape(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 
 function advMarkdown(text){
   // Escape the ENTIRE input first so any raw HTML in the model output or reloaded

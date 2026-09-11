@@ -6,6 +6,13 @@ const fs=require('node:fs');
 const path=require('node:path');
 const vm=require('node:vm');
 const root=path.join(__dirname,'../public');
+const Model=require('../public/model.js');
+const Monitors=require('../public/monitors.js');
+const TaxPlan=require('../public/tax-plan.js');
+const TaxRules=require('../public/tax-rules.js');
+const Liquidity=require('../public/liquidity.js');
+const InboxState=require('../public/inbox-state.js');
+const alertStates={};
 const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
 const P=vm.runInNewContext('('+html.match(/const D=(\{[\s\S]*?\n\});/)[1]+')');
 let state={P,experienceVersion:6,activeTab:'home'};
@@ -28,6 +35,38 @@ const server=http.createServer(async(req,res)=>{
     }
     if(url.pathname==='/api/monarch-status')return json({connected:false});
     if(url.pathname==='/api/snapshots'||url.pathname==='/api/chats')return json([]);
+    if(url.pathname==='/api/alerts/states')return json(alertStates);
+    if(/^\/api\/alerts\/.+\/state$/.test(url.pathname)){
+      const key=decodeURIComponent(url.pathname.split('/')[3]);
+      const body=JSON.parse(data||'{}');
+      const v=InboxState.validateAlertState({state:body.state,until:body.until});
+      if(!v.ok)return json({error:v.error},400);
+      if(body.state==='open')delete alertStates[key];
+      else alertStates[key]={state:body.state,until:v.until,since:new Date().toISOString()};
+      return json({ok:true,state:body.state});
+    }
+    if(url.pathname==='/api/briefings/latest')return json(InboxState.briefingView(null,null));
+    if(url.pathname==='/api/inbox'){
+      // Same detection the server runs, over the offline plan. No accounts, no ledger and no
+      // tax facts, so several monitors report themselves as unchecked — which is exactly the
+      // state this preview is most useful for exercising.
+      const today=url.searchParams.get('today')||new Date().toISOString().slice(0,10);
+      const R=Model.run(state.P).R;
+      const ctx={P:state.P,R,liquidity:Liquidity,taxRules:TaxRules,today,
+        marginalRate:R[0]&&R[0].sVestRate,
+        sources:{plan:'ok',accounts:'unavailable: offline preview',
+          spending:'unavailable: offline preview',taxFacts:'missing withheldToDate',
+          decisions:'ok'}};
+      const detection=Monitors.detect(ctx);
+      const prioritized=Monitors.prioritize(detection.alerts,alertStates,{today,limit:3});
+      const opportunities=TaxPlan.screenOpportunities({P:state.P,R,marginalRate:ctx.marginalRate});
+      const needs=opportunities.flatMap(o=>o.needs||[]);
+      return json({generatedAt:detection.generatedAt,...prioritized,
+        notChecked:detection.skipped,checksThatFailed:detection.failed,
+        checksRun:detection.checksRun,checksTotal:detection.checksTotal,
+        sources:ctx.sources,taxPlan:null,opportunities,
+        documentRequests:TaxPlan.documentRequests(needs)});
+    }
     return json({error:'Not connected in offline preview'},503);
   }
   if(url.pathname==='/qa/mobile'){
@@ -35,7 +74,10 @@ const server=http.createServer(async(req,res)=>{
     return res.end('<!doctype html><html><head><title>Mobile QA · 390px</title></head><body style="margin:0;background:#dbe3ed"><iframe title="390 pixel mobile preview" src="/" style="border:0;width:390px;height:850px"></iframe></body></html>');
   }
   const file=url.pathname==='/'?'index.html':url.pathname.slice(1);
-  if(!['index.html','model.js','decisions.js','decision-room.js','decision-room.css'].includes(file)){res.writeHead(404);return res.end();}
+  // Serve whatever actually lives in public/, rather than a hardcoded list that silently
+  // goes stale every time a module is added — which is how liquidity.js came to 404 here
+  // while the real server had the same gap.
+  if(!/^[\w.-]+\.(js|css|html)$/.test(file)||!fs.existsSync(path.join(root,file))){res.writeHead(404);return res.end();}
   res.writeHead(200,{'Content-Type':file.endsWith('.css')?'text/css':file.endsWith('.js')?'text/javascript':'text/html','Cache-Control':'no-store'});
   const content=file==='index.html'?fs.readFileSync(path.join(root,'index.html'),'utf8').replace('<body>','<body><div style="padding:7px 12px;background:#fff1cc;color:#614b10;font:12px system-ui;margin-bottom:10px">Offline preview · sample assumptions · changes stay in memory</div>'):fs.readFileSync(path.join(root,file));
   res.end(content);
