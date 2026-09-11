@@ -36,7 +36,12 @@ function renderCockpit(R){
   if(!_inbox&&!_inboxLoading&&!_inboxError)loadInbox();
   const e=advEscape,d=_ovw,s=d?.summary;
   const available=!!s&&!d.error&&d.capabilities?.balances?.available===true;
-  const partial=available&&(s.complete!==true||d.partial===true||monarchSnapshot?.partial===true);
+  // Completeness is a fact about THE READING THE HERO IS SHOWING, so it is judged on _ovw
+  // alone. It also consulted monarchSnapshot, which is a different sync down a different
+  // code path, persisted with the plan — so one old partial sync marked every later reading
+  // incomplete forever, with no account to point at and no way to clear it. A stale flag
+  // from a source that contributes nothing to the number cannot say the number is short.
+  const partial=available&&(s.complete!==true||d.partial===true);
   const date=d?.asOf?new Date(d.asOf):null;
   const dated=date&&Number.isFinite(date.getTime());
   const stale=dated&&Date.now()-date.getTime()>7*86400000;
@@ -190,7 +195,8 @@ const cpMilestonePlugin={
 function cockpitGapPanel(summary,overview){
   const e=advEscape;
   const missing=(summary&&summary.unknownBalance)||[];
-  const syncPartial=!!(overview&&overview.partial)||!!(typeof monarchSnapshot!=='undefined'&&monarchSnapshot&&monarchSnapshot.partial);
+  // Same reasoning as the chip that opens this panel: only the reading on screen counts.
+  const syncPartial=!!(overview&&overview.partial);
   const rows=missing.map(a=>`<li>
     <span>${e(a.name||a.id)}</span>
     <button type="button" onclick="confirmAccountBalance('${e(String(a.id))}','${e(String(a.name||'').replace(/'/g,''))}',${JSON.stringify(a.rawMissing==null?null:String(a.rawMissing))})">Enter the balance</button>

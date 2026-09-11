@@ -79,3 +79,38 @@ describe('the panel fits on the screen it opens on', () => {
     expect(css).toContain('.cp-gap>summary:focus-visible');
   });
 });
+
+// A warning has to be about the number it sits next to. Reaching for a second, older source
+// to decide whether the first one is complete produces a flag nobody can clear.
+describe('completeness is judged on the reading actually shown', () => {
+  const cockpit = fs.readFileSync(new URL('../public/cockpit.js', import.meta.url), 'utf8');
+  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+
+  it('does not let a different, persisted sync mark the hero incomplete', () => {
+    // monarchSnapshot is a separate sync down a separate code path, saved with the plan.
+    // One old partial sync marked every later reading incomplete forever, with no account
+    // to point at and no way to clear it — while contributing nothing to the hero's number.
+    expect(cockpit).toContain('const partial=available&&(s.complete!==true||d.partial===true);');
+    // Checked against code only — the comment explaining this names the variable too.
+    const code = cockpit.slice(cockpit.indexOf('function renderCockpit'))
+      .split('\n').filter(l => !l.trim().startsWith('//')).join('\n');
+    expect(code).not.toContain('monarchSnapshot');
+  });
+
+  it('keeps the panel on the same source as the chip that opens it', () => {
+    expect(cockpit).toContain('const syncPartial=!!(overview&&overview.partial);');
+  });
+
+  it('still fires on a genuine gap in the reading on screen', () => {
+    // The chip must survive: an account the provider could not read really does leave the
+    // total short, and that is the whole reason the panel exists.
+    expect(cockpit).toContain('s.complete!==true');
+    expect(cockpit).toContain('d.partial===true');
+  });
+
+  it('never prints a list of missing accounts that is empty', () => {
+    // "Monarch returned no balance for:" followed by nothing reads as a broken page.
+    const portfolio = html.slice(html.indexOf('Only warn about what can actually be named'));
+    expect(portfolio).toContain('if(!monarchSnapshot?.partial||!miss.length)return');
+  });
+});

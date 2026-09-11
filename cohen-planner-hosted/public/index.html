@@ -3025,7 +3025,14 @@ function renderMonarchAccountsCard(){
         </div>
       </div>
     </div>`:''}
-    ${monarchSnapshot?.partial?`<div role="status" style="padding:12px;margin-bottom:12px;background:var(--a-soft);border-radius:8px"><strong>Incomplete totals</strong><br>${monarchAccounts.length} accounts have balances. Monarch returned no balance for: ${(monarchSnapshot.missingAccounts||[]).map(a=>advEscape(a.name)).join(', ')}. Subtotals below exclude these accounts; no $0 balance has been substituted.</div>`:''}
+    ${(()=>{
+      // Only warn about what can actually be named. A partial flag carrying no missing
+      // accounts printed "no balance for:" followed by nothing — a warning with nothing to
+      // point at, which reads as a fault in the page rather than in the data.
+      const miss=(monarchSnapshot&&monarchSnapshot.missingAccounts)||[];
+      if(!monarchSnapshot?.partial||!miss.length)return '';
+      return `<div role="status" style="padding:12px;margin-bottom:12px;background:var(--a-soft);border-radius:8px"><strong>Incomplete totals</strong><br>${monarchAccounts.length} accounts have balances. Monarch returned no balance for: ${miss.map(a=>advEscape(a.name||a)).join(', ')}. Subtotals below exclude these accounts; no $0 balance has been substituted.</div>`;
+    })()}
       ${rows}
     </div>
   </details>`;
