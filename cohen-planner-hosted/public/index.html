@@ -14,6 +14,7 @@
 <script src="/pace.js"></script>
 <script src="/accounts.js"></script>
 <script src="/bridge.js"></script>
+<script src="/opening.js"></script>
 <script src="/snapshots.js"></script>
 <script src="/liquidity.js"></script>
 <script src="/tax-rules.js"></script>
@@ -1179,6 +1180,34 @@ function buildControls(){
   // more than quick relative adjustment. Commits on blur/Enter, not per-keystroke, so
   // partial input while typing ("5","50","500"...) doesn't trigger a render each time.
   const sTxt=(l,k)=>`<div class="sr"><div class="sh"><span class="sl">${l}</span></div><input type="text" inputmode="numeric" id="s_${k}" value="${fmtF(P[k])}" onchange="UTxt('${k}',this.value,this)" onkeydown="if(event.key==='Enter')this.blur()" style="width:100%;padding:6px 9px;border:1px solid var(--bd);border-radius:6px;background:var(--s1);color:var(--tx);font-family:'SF Mono',monospace;font-size:11px;outline:none"></div>`;
+  // A figure that follows the accounts is not an input — it is a reading, and showing it in
+  // an empty box invites typing over it. It shows the value, where it came from, and one
+  // button to take it back by hand. When it is being HELD rather than followed, the reason
+  // is stated in the same place rather than left for the reader to infer from a stale number.
+  const openRows=window.PlannerOpening
+    ? PlannerOpening.observedOpening(P,_ovw&&_ovw.summary,
+        !!(_ovw&&_ovw.summary&&!_ovw.error&&_ovw.capabilities?.balances?.available===true))
+    : [];
+  const sLinked=key=>{
+    const r=openRows.find(x=>x.key===key);
+    if(!r)return sTxt(key,key);
+    const manual=r.mode==='manual';
+    const asOf=_ovw&&_ovw.asOf?new Date(_ovw.asOf):null;
+    const dated=asOf&&Number.isFinite(asOf.getTime());
+    const src=manual?'Your figure — not tracking your accounts'
+      :r.following?`From your accounts${dated?' · '+asOf.toLocaleDateString(undefined,{month:'short',day:'numeric'}):''}`
+      :r.reason;
+    return `<div class="sr">
+      <div class="sh"><span class="sl">${r.label}</span><span class="sv">${fmtF(P[key]||0)}</span></div>
+      ${manual
+        ? `<input type="text" inputmode="numeric" id="s_${key}" value="${fmtF(P[key]||0)}" onchange="UTxt('${key}',this.value,this)" onkeydown="if(event.key==='Enter')this.blur()" style="width:100%;padding:6px 9px;border:1px solid var(--bd);border-radius:6px;background:var(--s1);color:var(--tx);font-family:'SF Mono',monospace;font-size:11px;outline:none">`
+        : ''}
+      <div class="s-src" data-state="${manual?'manual':r.following?'live':'held'}">
+        <span>${advEscape(src)}</span>
+        <button type="button" onclick="setOpeningMode('${key}','${manual?'auto':'manual'}')">${manual?'Follow my accounts':'Set by hand'}</button>
+      </div>
+    </div>`;
+  };
   const ST=(label,key,body)=>{const c=_collapsedSections.has(key);return`<div class="st" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;user-select:none" onclick="toggleSection('${key}')"><span>${label}</span><span style="font-size:9px;color:var(--t3);opacity:.6">${c?'▶':'▼'}</span></div>${c?'':body}`};
   const sy=P.planStartYear||2026;
   let h=`<div style="font-size:10px;font-weight:700;margin-bottom:8px">⚙️ Parameters</div>`;
@@ -1246,7 +1275,7 @@ function buildControls(){
 
   // Stripe equity — existing holdings, the return path, and the retention strategy.
   let stripeBody=`<div style="font-size:7.5px;color:var(--t3);line-height:1.5;margin-bottom:6px">Stripe is modeled separately from the diversified portfolio: its own return path, its own retention policy, and its own line in net worth.</div>`;
-  stripeBody+=sTxt('Existing Stripe equity','startingStripeEquity');
+  stripeBody+=sLinked('startingStripeEquity');
   // WHEN the balance was observed changes what it contains. A figure read in August already
   // holds three of the year's four quarterly vests, so the model must not add them again.
   stripeBody+=`<div style="display:flex;align-items:center;gap:6px;margin:5px 0 6px">
@@ -1256,7 +1285,7 @@ function buildControls(){
       ${['January','February','March','April','May','June','July','August','September','October','November','December']
         .map((m,i)=>`<option value="${i+1}"${P.stripeObservedMonth===i+1?' selected':''}>${m}</option>`).join('')}
     </select></div>`;
-  stripeBody+=`<div style="font-size:7.5px;color:var(--t3);line-height:1.5;margin-bottom:6px">Vests land Feb / May / Aug / Nov, and Stripe re-marks at the February tender. ${
+  stripeBody+=`<div style="font-size:7.5px;color:var(--t3);line-height:1.5;margin-bottom:6px">Vests land 15 Mar / 15 Jun / 15 Sep / 15 Dec, and Stripe re-marks at the February tender. ${
     (()=>{const rem=stripeVestRemaining(P);return rem<1
       ?`<strong>${((1-rem)*100).toFixed(0)}%</strong> of this year’s grant is already inside the balance above.`
       :'The whole of this year’s grant is still to come.';})()}</div>`;
@@ -1313,7 +1342,7 @@ function buildControls(){
   h+=ST('🏠 Home','home',homeBody);
 
   // Returns (cap gains hardcoded for NYC)
-  const retBody=s('Portfolio return','investReturn',.03,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Home appreciation','homeAppreciation',.01,.05,.005,v=>(v*100).toFixed(1)+'%')+s('Starting liquid','startingLiquid',500000,2000000,50000,fmtF)+s('Starting 401k','k401Start',0,500000,10000,fmtF)+s('NYC rent','nycRent',4000,8000,100,v=>'$'+v.toLocaleString()+'/mo')+`<div style="font-size:7.5px;color:var(--t3);margin-top:4px">Cap gains: 34.5% · cost basis: 55% (NYC, hardcoded)</div>`;
+  const retBody=s('Portfolio return','investReturn',.03,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Home appreciation','homeAppreciation',.01,.05,.005,v=>(v*100).toFixed(1)+'%')+sLinked('startingLiquid')+sLinked('k401Start')+sLinked('otherDebt')+s('NYC rent','nycRent',4000,8000,100,v=>'$'+v.toLocaleString()+'/mo')+`<div style="font-size:7.5px;color:var(--t3);margin-top:4px">Cap gains: 34.5% · cost basis: 55% (NYC, hardcoded)</div>`;
   h+=ST('📈 Returns','returns',retBody);
 
   h+=`<div style="height:1px;background:var(--bd);margin:6px 0"></div>`;
@@ -2085,7 +2114,28 @@ async function loadOverview(){
     _hist=hr?.ok?await hr.json().catch(()=>null):null;
   }catch(e){_ovw={error:e.message};}
   _ovwLoading=false;
+  syncOpeningFromAccounts();
   if(activeTab==='cockpit'||(activeTab==='today'&&_todayView==='overview'))render();
+}
+
+// The opening figures follow the accounts rather than being typed twice. This runs whenever
+// a fresh reading arrives; every rule about when it must NOT follow lives in opening.js, so
+// this only has to decide what to do about the answer.
+let _openingHeld=[];
+function syncOpeningFromAccounts(){
+  if(!window.PlannerOpening||!_planLoaded)return;
+  const d=_ovw,sm=d&&d.summary;
+  const available=!!sm&&!d.error&&d.capabilities?.balances?.available===true;
+  const out=PlannerOpening.syncOpening(P,sm,available);
+  _openingHeld=out.held;
+  if(!out.dirty)return;
+  // Writing into P rather than overlaying at render time, so every screen, scenario and
+  // saved snapshot reads one number. It is not silent: each field says where it came from
+  // and when, and any of them can be taken back by hand.
+  P=out.P;
+  markDirty();buildControls();savePlannerState();
+  const names=out.changed.map(c=>c.label).join(', ');
+  showToast(`Opening balances updated from your accounts: ${names}`,'green');
 }
 async function takeWealthSnapshot(){
   const r=await fetch('/api/wealth/snapshot',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
@@ -2093,6 +2143,22 @@ async function takeWealthSnapshot(){
   if(!r.ok){showToast(d.error||'Could not take a snapshot','red');return}
   showToast(d.complete?'Snapshot saved':'Snapshot saved, but marked incomplete — a balance was unknown','green');
   _ovw=null;loadOverview();
+}
+// Taking a figure back by hand, or handing it to the accounts again. Switching to auto does
+// not write on the spot — the next reading does, under all the same guards.
+function setOpeningMode(key,m){
+  if(!window.PlannerOpening)return;
+  P=PlannerOpening.setMode(P,key,m);
+  if(m!=='manual'){
+    const d=_ovw,sm=d&&d.summary;
+    const available=!!sm&&!d.error&&d.capabilities?.balances?.available===true;
+    const out=PlannerOpening.syncOpening(P,sm,available);
+    P=out.P;_openingHeld=out.held;
+    const r=out.rows.find(x=>x.key===key);
+    showToast(r&&r.following?'Now following your accounts':(r&&r.reason)||'Now following your accounts',
+      r&&r.following?'green':'amber');
+  } else showToast('This figure is yours now — it will not track your accounts','green');
+  markDirty();buildControls();render();savePlannerState();
 }
 async function confirmAccountBalance(id,name,raw){
   const v=prompt(`Confirm the balance for "${name}".\n\nMonarch returned no value for this account. What you enter is recorded as YOUR confirmation, dated today — it will never be shown as an observed balance, and a real balance from Monarch will supersede it automatically.`,'0');

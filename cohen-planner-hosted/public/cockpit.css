@@ -174,3 +174,14 @@ body,body.home-view{background:radial-gradient(ellipse at 80% -20%,#1a2b47 0,tra
 .panel::-webkit-scrollbar-thumb{background:rgba(167,190,221,.2)}
 .skel{background:linear-gradient(100deg,rgba(167,190,221,.07) 28%,rgba(167,190,221,.15) 50%,rgba(167,190,221,.07) 72%);background-size:200% 100%}
 .cmdk-input-wrap{border-bottom-color:var(--bd)}
+
+/* A figure that reads itself from the accounts says so, in the same row as the number.
+   "live" is tracking, "held" is tracking but refusing this reading, "manual" is yours. */
+.s-src{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px}
+.s-src>span{flex:1;min-width:120px;font-size:10.5px;line-height:1.5;color:var(--t3)}
+.s-src[data-state=live]>span{color:var(--g)}
+.s-src[data-state=held]>span{color:var(--a)}
+.s-src>button{border:1px solid var(--bd2);border-radius:6px;background:var(--s2);color:var(--t2);
+  font-family:inherit;font-size:10.5px;padding:4px 8px;cursor:pointer;min-height:28px}
+.s-src>button:hover{background:var(--s3);color:var(--tx)}
+@media(max-width:760px){.s-src>button{min-height:36px;font-size:12px}}
