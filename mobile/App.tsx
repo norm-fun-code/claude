@@ -1044,10 +1044,11 @@ export default function App() {
               <RadarSection radar={todayCC.radar} onOpen={openRadarCard} />
             </AnimatedEntry>
             <Text accessibilityRole="header" style={[styles.exploreLabel, { color: c.subtext }]}>EXPLORE YOUR DAY</Text>
-            <CollapsibleSection title="Check in · sleep & context">
-              <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={onSleepLogged} />
-              <NightContextCard />
-            </CollapsibleSection>
+            {/* Both check-in cards already hide themselves when today's input is
+                complete. Render them directly so an all-complete day leaves no
+                empty disclosure that flashes open and appears broken. */}
+            <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={onSleepLogged} />
+            <NightContextCard />
             <AnimatedEntry delay={25}>
               <CollapsibleSection title="This week’s intentions">
                 <WeeklyIntentionsCard review={d?.weeklyReview ?? null} />
