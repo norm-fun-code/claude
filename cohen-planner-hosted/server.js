@@ -268,7 +268,7 @@ app.get('/model.js', requireAuth, (req, res) => {
 // Keep every new planner asset behind the same session gate as the existing UI.
 // liquidity.js was referenced by index.html but never listed here, so it 404'd in
 // production while working locally under the preview server's plain static handler.
-for (const asset of ['decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js']) {
+for (const asset of ['decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js']) {
   app.get('/' + asset, requireAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', asset));
   });
@@ -1248,6 +1248,390 @@ app.delete('/api/snapshots/:id', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('DELETE snapshot error:', err);
     res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
+// ══ Alerts, decisions, tax facts and briefings ════════════════════════════════
+// The monitoring half of the cockpit. Detection itself is pure and lives in
+// public/monitors.js; this is only storage and the state machine around it.
+
+const Monitors = require('./public/monitors.js');
+const TaxPlan = require('./public/tax-plan.js');
+const TaxRules = require('./public/tax-rules.js');
+const Liquidity = require('./public/liquidity.js');
+const InboxState = require('./public/inbox-state.js');
+
+// Alert state is keyed on the monitor's stable CONDITION key, so a dismissal survives the
+// same condition being re-detected tomorrow.
+app.get('/api/alerts/states', requireAuth, async (req, res) => {
+  try {
+    const r = await db.query('SELECT * FROM alert_states');
+    const states = {};
+    for (const row of r.rows) {
+      states[row.alert_key] = {
+        state: row.state,
+        until: row.snooze_until ? row.snooze_until.toISOString() : null,
+        note: row.note,
+        since: row.since ? row.since.toISOString() : null,
+      };
+    }
+    res.json(states);
+  } catch (err) {
+    console.error('GET alert states error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+app.post('/api/alerts/:key/state', requireAuth, async (req, res) => {
+  try {
+    const { state, until, note, alert } = req.body || {};
+    const v = InboxState.validateAlertState({ state, until });
+    if (!v.ok) return res.status(400).json({ error: v.error });
+
+    if (state === 'open') {
+      await db.query('DELETE FROM alert_states WHERE alert_key = $1', [req.params.key]);
+      return res.json({ ok: true, state: 'open' });
+    }
+    await db.query(
+      `INSERT INTO alert_states (alert_key, state, snooze_until, note, since, last_seen)
+       VALUES ($1, $2, $3, $4, NOW(), $5)
+       ON CONFLICT (alert_key) DO UPDATE
+         SET state = $2, snooze_until = $3, note = $4, since = NOW(), last_seen = $5`,
+      [req.params.key, state, v.until, note || null,
+       alert ? JSON.stringify(alert) : null]
+    );
+    res.json({ ok: true, state });
+  } catch (err) {
+    console.error('POST alert state error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// ── Decisions ─────────────────────────────────────────────────────────────────
+app.get('/api/decisions', requireAuth, async (req, res) => {
+  try {
+    const r = await db.query('SELECT * FROM decisions ORDER BY decided_at DESC');
+    res.json(r.rows.map(d => ({
+      id: d.id, title: d.title, choice: d.choice, rationale: d.rationale,
+      alternatives: d.alternatives, assumptions: d.assumptions,
+      reconsiderWhen: d.reconsider_when, reviewBy: d.review_by, status: d.status,
+      supersededBy: d.superseded_by,
+      decidedAt: d.decided_at ? d.decided_at.toISOString() : null,
+    })));
+  } catch (err) {
+    console.error('GET decisions error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+app.post('/api/decisions', requireAuth, async (req, res) => {
+  try {
+    const d = req.body || {};
+    // A decision without its reasoning cannot be reviewed later, only second-guessed, so
+    // the rationale is required rather than optional.
+    if (!d.id || !d.title || !d.rationale)
+      return res.status(400).json({ error: 'id, title and rationale are required' });
+    // Conditions are evaluated by monitors.js, so only metrics it knows how to resolve can
+    // be stored — otherwise the decision would carry a trigger that silently never fires.
+    for (const c of d.reconsiderWhen || []) {
+      if (!Monitors.METRICS[c.metric])
+        return res.status(400).json({ error: `Unknown metric "${c.metric}". Known: ${Object.keys(Monitors.METRICS).join(', ')}` });
+      if (!Monitors.OPS[c.op])
+        return res.status(400).json({ error: `Unknown comparison "${c.op}"` });
+      if (!c.description)
+        return res.status(400).json({ error: 'Each reconsider condition needs a plain-language description' });
+    }
+    await db.query(
+      `INSERT INTO decisions (id, title, choice, rationale, alternatives, assumptions,
+                              reconsider_when, review_by, status, superseded_by, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9,'active'),$10,NOW())
+       ON CONFLICT (id) DO UPDATE SET title=$2, choice=$3, rationale=$4, alternatives=$5,
+         assumptions=$6, reconsider_when=$7, review_by=$8,
+         status=COALESCE($9, decisions.status), superseded_by=$10, updated_at=NOW()`,
+      [d.id, d.title, d.choice || null, d.rationale,
+       JSON.stringify(d.alternatives || []), JSON.stringify(d.assumptions || []),
+       JSON.stringify(d.reconsiderWhen || []), d.reviewBy || null, d.status || null,
+       d.supersededBy || null]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('POST decision error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// ── Tax facts, held unreviewed until confirmed ────────────────────────────────
+app.get('/api/tax-facts/:year', requireAuth, async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT * FROM tax_facts WHERE tax_year = $1 AND superseded_at IS NULL ORDER BY field`,
+      [parseInt(req.params.year, 10)]
+    );
+    const reviewed = {}, pending = [];
+    for (const f of r.rows) {
+      const item = { field: f.field, value: f.value == null ? null : Number(f.value),
+        sourceKind: f.source_kind, sourceName: f.source_name, locator: f.locator,
+        createdAt: f.created_at ? f.created_at.toISOString() : null };
+      if (f.reviewed) reviewed[f.field] = item.value; else pending.push(item);
+    }
+    // The split IS the contract: only `reviewed` may be fed to a calculation.
+    res.json({ taxYear: parseInt(req.params.year, 10), reviewed, pending });
+  } catch (err) {
+    console.error('GET tax facts error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+app.post('/api/tax-facts', requireAuth, async (req, res) => {
+  try {
+    const { taxYear, field, value, sourceKind, sourceName, locator, reviewed } = req.body || {};
+    if (!taxYear || !field || !sourceKind)
+      return res.status(400).json({ error: 'taxYear, field and sourceKind are required' });
+    // A value read out of a document starts UNREVIEWED whatever the caller says. Only a
+    // figure the user typed themselves can arrive already confirmed.
+    const startsReviewed = InboxState.startsReviewed(sourceKind, reviewed);
+    await db.query(
+      `UPDATE tax_facts SET superseded_at = NOW()
+       WHERE tax_year = $1 AND field = $2 AND superseded_at IS NULL`,
+      [taxYear, field]
+    );
+    await db.query(
+      `INSERT INTO tax_facts (tax_year, field, value, source_kind, source_name, locator, reviewed, reviewed_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [taxYear, field, value == null ? null : value, sourceKind, sourceName || null,
+       locator || null, startsReviewed, startsReviewed ? new Date() : null]
+    );
+    res.json({ ok: true, reviewed: startsReviewed });
+  } catch (err) {
+    console.error('POST tax fact error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+app.post('/api/tax-facts/review', requireAuth, async (req, res) => {
+  try {
+    const { taxYear, decisions } = req.body || {};
+    if (!taxYear || !decisions) return res.status(400).json({ error: 'taxYear and decisions required' });
+    // Anything not decided stays pending. Silence is not consent.
+    const review = InboxState.reviewDecisions(Object.keys(decisions), decisions);
+    for (const a of review.accept) {
+      await db.query(
+        `UPDATE tax_facts SET reviewed = TRUE, reviewed_at = NOW(), value = COALESCE($3, value)
+         WHERE tax_year = $1 AND field = $2 AND superseded_at IS NULL`,
+        [taxYear, a.field, a.corrected ? a.value : null]
+      );
+    }
+    for (const field of review.reject) {
+      await db.query(
+        `UPDATE tax_facts SET superseded_at = NOW()
+         WHERE tax_year = $1 AND field = $2 AND superseded_at IS NULL`,
+        [taxYear, field]
+      );
+    }
+    res.json({ ok: true, accepted: review.accept.map(a => a.field), rejected: review.reject });
+  } catch (err) {
+    console.error('POST tax fact review error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// ── Briefings ─────────────────────────────────────────────────────────────────
+// Only a briefing that finished writing is readable as current. A run that fails is stored
+// as failed rather than left to expose the previous one as if it were fresh.
+app.get('/api/briefings/latest', requireAuth, async (req, res) => {
+  try {
+    const ready = await db.query(
+      `SELECT * FROM briefings WHERE status = 'ready' ORDER BY generated_at DESC LIMIT 1`);
+    const last = await db.query(
+      `SELECT * FROM briefings ORDER BY generated_at DESC LIMIT 1`);
+    const shape = row => row && {
+      id: row.id, status: row.status, complete: row.complete,
+      generatedAt: row.generated_at ? row.generated_at.toISOString() : null,
+      completedAt: row.completed_at ? row.completed_at.toISOString() : null,
+      detection: row.detection, narrative: row.narrative, error: row.error,
+    };
+    // Two facts, never merged: the last briefing that SUCCEEDED, and what happened most
+    // recently. briefingView turns them into the single status line the panel shows.
+    const latestReady = shape(ready.rows[0]);
+    const mostRecent = shape(last.rows[0]);
+    res.json({ ...InboxState.briefingView(latestReady, mostRecent),
+      lastAttempt: mostRecent || null });
+  } catch (err) {
+    console.error('GET briefing error:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+app.post('/api/briefings', requireAuth, async (req, res) => {
+  const id = (req.body && req.body.id) || `br_${Date.now()}`;
+  try {
+    const { detection, narrative, complete, error } = req.body || {};
+    if (error) {
+      await db.query(
+        `INSERT INTO briefings (id, status, completed_at, detection, error, complete)
+         VALUES ($1,'failed',NOW(),$2,$3,FALSE)`,
+        [id, detection ? JSON.stringify(detection) : null, String(error).slice(0, 500)]
+      );
+      return res.json({ ok: true, status: 'failed' });
+    }
+    if (!detection || !narrative)
+      return res.status(400).json({ error: 'A briefing needs both its detection output and its narrative' });
+    // Written in one statement, landing directly in 'ready'. There is no window in which a
+    // half-written briefing is visible as finished.
+    await db.query(
+      `INSERT INTO briefings (id, status, completed_at, detection, narrative, complete)
+       VALUES ($1,'ready',NOW(),$2,$3,$4)`,
+      [id, JSON.stringify(detection), narrative, !!complete]
+    );
+    res.json({ ok: true, status: 'ready', id });
+  } catch (err) {
+    console.error('POST briefing error:', err);
+    try {
+      await db.query(
+        `INSERT INTO briefings (id, status, completed_at, error, complete)
+         VALUES ($1,'failed',NOW(),$2,FALSE) ON CONFLICT (id) DO NOTHING`,
+        [id, String(err.message || err).slice(0, 500)]
+      );
+    } catch (e) { /* the original error is the one worth reporting */ }
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
+// ── The inbox: assemble a context, run detection, apply stored state ──────────
+// Every number the monitors see is gathered here, so the detection itself stays pure and
+// the same context can be replayed in a test. Where a source is unavailable it is left
+// ABSENT rather than defaulted — an absent input makes a monitor report "not checked",
+// and a defaulted one would make it report a clean result it never actually verified.
+async function buildMonitorContext(today) {
+  const ctx = { today: today || new Date().toISOString().slice(0, 10), liquidity: Liquidity,
+    taxRules: TaxRules, sources: {} };
+
+  const planRes = await db.query('SELECT state FROM planner_state WHERE id = 1');
+  const state = planRes.rows[0] && planRes.rows[0].state;
+  if (!state || !state.P) { ctx.sources.plan = 'missing'; return ctx; }
+  ctx.P = migrateP(state.P);
+  try {
+    const out = runModel(ctx.P);
+    ctx.R = out.R;
+    ctx.marginalRate = out.R[0] && out.R[0].sVestRate ? out.R[0].sVestRate : null;
+    ctx.sources.plan = 'ok';
+  } catch (err) { ctx.sources.plan = `projection failed: ${err.message}`; }
+
+  // Accounts. `complete` is what decides whether divergence may difference anything, so a
+  // partial snapshot has to stay marked partial rather than quietly becoming a total.
+  try {
+    const meta = await loadAccountMeta();
+    const snap = await monarchLive.getSnapshot();
+    const mAcc = require('./monarch-accounts');
+    const accounts = (snap.accounts || []).map(a => ({
+      id: a.id != null ? String(a.id) : null,
+      name: a.displayName || a.name || '',
+      institution: a.institution || '', category: a.category || '', subtype: a.subtype || '',
+      balance: mAcc.parseBalance(mAcc.rawBalanceOf(a)), rawBalance: mAcc.rawBalanceOf(a),
+    }));
+    const summary = Accounts.summarize(accounts, meta.merged);
+    ctx.accounts = { ...summary, asOf: snap.asOf || null,
+      complete: (summary.unknownBalance || []).length === 0 };
+    ctx.sources.accounts = ctx.accounts.complete ? 'ok' : 'partial';
+  } catch (err) { ctx.sources.accounts = `unavailable: ${err.message}`; }
+
+  // Spending, from the transaction ledger only. No ledger, no spending comparison.
+  try {
+    const startDate = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
+    const [ledger, cats] = await Promise.all([
+      monarchSync.ledger({ startDate, endDate: ctx.today }),
+      monarchSync.localCategories(),
+    ]);
+    const acctClasses = {};
+    if (ctx.accounts) for (const [cls, g] of Object.entries(ctx.accounts.byClass || {}))
+      for (const a of g.accounts || []) if (a && a.id != null) acctClasses[String(a.id)] = cls;
+    const sum = Spending.summarize(ledger, cats, { accountClasses: acctClasses });
+    const cov = Spending.coverage(sum.months, ctx.today);
+    const avg = Spending.rollingAverage(sum.months, Math.min(6, cov.completeMonths.length) || 1,
+      m => m.expense, ctx.today);
+    if (cov.completeMonths.length >= 3 && avg != null) {
+      ctx.spending = { completeMonths: cov.completeMonths.slice(-6), monthlyExpense: avg };
+      ctx.sources.spending = 'ok';
+    } else {
+      ctx.sources.spending = `only ${cov.completeMonths.length} complete months`;
+    }
+  } catch (err) { ctx.sources.spending = `unavailable: ${err.message}`; }
+
+  // Tax facts, REVIEWED ones only. An unreviewed extraction must never reach a calculation.
+  try {
+    const y = new Date(ctx.today).getFullYear();
+    const f = await db.query(
+      `SELECT field, value FROM tax_facts
+       WHERE tax_year = $1 AND superseded_at IS NULL AND reviewed = TRUE`, [y]);
+    const facts = {};
+    for (const row of f.rows) facts[row.field] = row.value == null ? null : Number(row.value);
+    const projected = ctx.R && ctx.R[0] ? ctx.R[0].tax : null;
+    const status = TaxPlan.withholdingStatus({
+      taxYear: y, asOf: ctx.today, projectedLiability: projected,
+      withheldToDate: facts.withheldToDate, estimatedPaid: facts.estimatedPaid,
+      priorYearLiability: facts.priorYearLiability, priorYearAGI: facts.priorYearAGI,
+    });
+    // Only hand the monitors a payment figure when one was actually computable.
+    if (status.status === 'ok') ctx.taxPlan = status;
+    ctx.sources.taxFacts = status.status === 'ok' ? 'ok'
+      : `missing ${status.needs.map(n => n.field).join(', ')}`;
+  } catch (err) { ctx.sources.taxFacts = `unavailable: ${err.message}`; }
+
+  try {
+    const d = await db.query(`SELECT * FROM decisions WHERE status = 'active'`);
+    ctx.decisions = d.rows.map(x => ({
+      id: x.id, title: x.title, rationale: x.rationale, status: x.status,
+      reconsiderWhen: x.reconsider_when, reviewBy: x.review_by,
+      decidedAt: x.decided_at ? x.decided_at.toISOString() : null,
+    }));
+    ctx.sources.decisions = 'ok';
+  } catch (err) { ctx.sources.decisions = `unavailable: ${err.message}`; }
+
+  // What the plan expects to sell at the next tender, for the window reminder.
+  if (ctx.R && ctx.R[0]) ctx.pendingStripeSale = (ctx.R[0].sSold || 0) + (ctx.R[0].sHold || 0);
+  return ctx;
+}
+
+app.get('/api/inbox', requireAuth, async (req, res) => {
+  try {
+    const today = (req.query.today || new Date().toISOString().slice(0, 10)).slice(0, 10);
+    const ctx = await buildMonitorContext(today);
+    const detection = Monitors.detect(ctx);
+
+    const st = await db.query('SELECT * FROM alert_states');
+    const states = {};
+    for (const row of st.rows) states[row.alert_key] = {
+      state: row.state,
+      until: row.snooze_until ? row.snooze_until.toISOString() : null,
+      note: row.note, since: row.since ? row.since.toISOString() : null,
+    };
+
+    const prioritized = Monitors.prioritize(detection.alerts, states, { today, limit: 3 });
+    const opportunities = ctx.P && ctx.R
+      ? TaxPlan.screenOpportunities({ P: ctx.P, R: ctx.R, marginalRate: ctx.marginalRate })
+      : [];
+    const needs = [
+      ...(ctx.taxPlan ? ctx.taxPlan.needs : []),
+      ...opportunities.flatMap(o => o.needs || []),
+    ];
+
+    res.json({
+      generatedAt: detection.generatedAt,
+      ...prioritized,
+      // The three fields that keep "nothing to report" honest.
+      notChecked: detection.skipped,
+      checksThatFailed: detection.failed,
+      checksRun: detection.checksRun, checksTotal: detection.checksTotal,
+      sources: ctx.sources,
+      taxPlan: ctx.taxPlan || null,
+      opportunities,
+      documentRequests: TaxPlan.documentRequests(needs),
+    });
+  } catch (err) {
+    console.error('GET inbox error:', err);
+    res.status(500).json({ error: err.message || 'Inbox error' });
   }
 });
 

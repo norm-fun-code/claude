@@ -78,6 +78,73 @@ async function initSchema() {
       confirmed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       superseded_at TIMESTAMPTZ
     );
+    -- Alert state, keyed on the monitor's STABLE condition key rather than a row id, so a
+    -- dismissal survives the alert being re-detected on the next refresh. Dismissed and
+    -- resolved are permanent; snoozed carries an expiry and reopens on its own.
+    CREATE TABLE IF NOT EXISTS alert_states (
+      alert_key   TEXT PRIMARY KEY,
+      state       TEXT NOT NULL CHECK (state IN ('open','dismissed','snoozed','resolved')),
+      snooze_until TIMESTAMPTZ,
+      note        TEXT,
+      since       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      -- Kept for the record so a resolved alert can still be read back with what it said.
+      last_seen   JSONB
+    );
+
+    -- Decisions, their reasoning, and the conditions that should re-open them. The whole
+    -- point is the rationale and the trigger, not the choice: a decision without its reason
+    -- cannot be reviewed later, only second-guessed.
+    CREATE TABLE IF NOT EXISTS decisions (
+      id          TEXT PRIMARY KEY,
+      title       TEXT NOT NULL,
+      choice      TEXT,
+      rationale   TEXT NOT NULL,
+      alternatives JSONB NOT NULL DEFAULT '[]'::jsonb,
+      assumptions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      -- [{id, metric, op, value, description}] — evaluated by monitors.js, never by a model.
+      reconsider_when JSONB NOT NULL DEFAULT '[]'::jsonb,
+      review_by   DATE,
+      status      TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','superseded','retired')),
+      superseded_by TEXT,
+      decided_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    -- Figures that can only come from a document, held with their provenance. Nothing here
+    -- is used by the model until reviewed = TRUE.
+    CREATE TABLE IF NOT EXISTS tax_facts (
+      id          BIGSERIAL PRIMARY KEY,
+      tax_year    INT NOT NULL,
+      field       TEXT NOT NULL,
+      value       NUMERIC,
+      source_kind TEXT NOT NULL,
+      source_name TEXT,
+      locator     TEXT,
+      reviewed    BOOLEAN NOT NULL DEFAULT FALSE,
+      reviewed_at TIMESTAMPTZ,
+      superseded_at TIMESTAMPTZ,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS tax_facts_current
+      ON tax_facts (tax_year, field) WHERE superseded_at IS NULL;
+
+    -- Briefings. status starts 'pending' and only becomes 'ready' once the whole thing is
+    -- written, so a half-generated briefing can never be read as a finished one. A failure
+    -- is recorded as a failure rather than leaving the last good briefing to look current.
+    CREATE TABLE IF NOT EXISTS briefings (
+      id          TEXT PRIMARY KEY,
+      status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','ready','failed')),
+      generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ,
+      detection   JSONB,
+      narrative   TEXT,
+      error       TEXT,
+      -- Whether every monitor actually ran. A briefing built over a gap says so.
+      complete    BOOLEAN NOT NULL DEFAULT FALSE
+    );
+    CREATE INDEX IF NOT EXISTS briefings_ready
+      ON briefings (generated_at DESC) WHERE status = 'ready';
+
     CREATE TABLE IF NOT EXISTS oauth_tokens (
       key TEXT PRIMARY KEY,
       data JSONB NOT NULL DEFAULT '{}',
