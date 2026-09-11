@@ -46,15 +46,22 @@ describe('every cockpit figure switches together', () => {
     expect(cockpit).toContain('cockpitExRet?opening-Math.abs(Number(P.k401Start||0)):opening');
   });
 
-  it('puts BOTH choices on screen rather than captioning one button with its own state', () => {
-    // "Including retirement" on a button reads equally well as the thing it will do, so the
-    // reader could not tell what they were looking at from what they were about to click.
-    expect(cockpit).toContain("role=\"radiogroup\"");
-    expect(cockpit).toContain("opt(true,'Excluding retirement'");
-    expect(cockpit).toContain("opt(false,'Everything you own'");
-    expect(cockpit).toContain('cockpitSetExRet(${ex})');
+  it('is a checkbox, whose on/off meaning lives in the control rather than the caption', () => {
+    // A button captioned "Including retirement" reads equally well as the thing it will do.
+    // A checkbox cannot be misread that way: ticked is included, and the line beneath says
+    // which side of it you are currently on.
+    expect(cockpit).toContain('type="checkbox" id="cp-inc-ret"');
+    expect(cockpit).toContain('Include retirement');
+    expect(cockpit).toContain('onchange="cockpitSetExRet(!this.checked)"');
+    // Ticked when retirement is IN, which is the opposite of the flag it drives.
+    expect(cockpit).toContain("${cockpitExRet?'':' checked'}");
     expect(cockpit).toContain("cockpitExRet?'Excludes retirement':'Includes retirement'");
     expect(cockpit).toMatch(/NET WORTH\$\{cockpitExRet\?' · EX-RETIREMENT':''\}/);
+  });
+
+  it('starts unticked, because the default is what you can actually reach', () => {
+    const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+    expect(html).toMatch(/let cockpitExRet=true;/);   // true = excluding = box unticked
   });
 
   it('leads with what can actually be reached, which is what was asked for', () => {

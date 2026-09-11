@@ -96,22 +96,19 @@ body,body.home-view{background:radial-gradient(ellipse at 80% -20%,#1a2b47 0,tra
    it. The chart says so where the figure is, not in a footnote under it. */
 .cp-stub{display:block;font-size:12px;color:var(--a);line-height:1.55;margin-top:6px;max-width:52ch}
 
-/* Which wealth am I looking at? Both options on screen with the active one marked, above
-   the chart they change. A single button captioned with its own current state reads just as
-   naturally as the action it performs, so the reader could not tell what they were looking
-   at from what they were about to do. */
-.cp-basis{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:2px 0 12px}
-.cp-basis button{display:block;padding:9px 12px;border:1px solid var(--bd);border-radius:10px;
-  background:var(--s2);color:var(--t2);font-family:inherit;font-size:13px;cursor:pointer;
-  text-align:left;min-height:44px}
-.cp-basis button:hover{background:var(--s3);color:var(--tx)}
-.cp-basis button.is-on{border-color:#5a7f91;background:#16293a;color:var(--tx);
-  box-shadow:inset 0 0 0 1px #5a7f9155}
-.cp-basis button span{display:block;font-weight:600}
-.cp-basis button.is-on span::before{content:'● ';color:var(--g)}
-.cp-basis button em{display:block;font-style:normal;font-size:11.5px;color:var(--t3);margin-top:2px}
-.cp-basis button:focus-visible{outline:2px solid var(--g);outline-offset:2px}
-@media(max-width:760px){.cp-basis{grid-template-columns:1fr}}
+/* Which wealth am I looking at? A checkbox: unlike a button captioned with its own state,
+   a checkbox carries the on/off meaning in the control itself, so "Include retirement" can
+   only be read one way. The line underneath says which side of it you are currently on. */
+.cp-basis{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:2px 0 12px;
+  padding:10px 12px;border:1px solid var(--bd);border-radius:10px;background:var(--s2);
+  cursor:pointer;min-height:44px;font-size:13px;color:var(--tx);user-select:none}
+.cp-basis:hover{background:var(--s3)}
+.cp-basis input{width:16px;height:16px;accent-color:var(--g);cursor:pointer;flex:0 0 auto;
+  align-self:center;margin:0}
+.cp-basis span{font-weight:600}
+.cp-basis em{font-style:normal;font-size:11.5px;color:var(--t3);flex:1 1 100%}
+.cp-basis:focus-within{outline:2px solid var(--g);outline-offset:2px}
+@media(max-width:760px){.cp-basis input{width:20px;height:20px}}
 
 /* "Incomplete" is a word, not information. The chip opens into what is actually missing and
    the two ways out of it. Anchored to the chip, above everything, and it must not stretch

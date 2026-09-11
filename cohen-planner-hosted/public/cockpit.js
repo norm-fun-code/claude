@@ -96,16 +96,11 @@ function renderCockpit(R){
         </div>
       <section class="cp-card cp-trajectory"><div class="cp-section-head"><div><h3>The path ahead</h3></div><button onclick="cockpitGo('home')">Explore a what-if ↗</button></div>
       <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end ${cpLabel()}</span><strong id="cp-value">${UI.money(deflate(cpNw(selected),selected.yr))}</strong>${R[0].stubFrac<1?`<small class="cp-stub">${R[0].yr} models only the ${Math.round(R[0].stubFrac*100)}% of the year still ahead of ${e(cockpitObservedLabel(P))}. The months before it are already in your balances.</small>`:''}</div><span id="cp-band-note">${cockpitExRet?'Excludes retirement':'Includes retirement'}<br>${inflationView?(P.planStartYear||2026)+' purchasing power':'Future dollars'} · assumed returns</span></div>
-      ${(()=>{
-        // Both choices on screen, with the active one marked. A single button captioned
-        // with its CURRENT state reads equally well as the action it performs — "Including
-        // retirement" looks like an instruction to include it — so there was no way to tell
-        // what you were looking at from what you were about to do.
-        const opt=(ex,label,detail)=>`<button type="button" role="radio" aria-checked="${cockpitExRet===ex}"${cockpitExRet===ex?' class="is-on"':''} onclick="cockpitSetExRet(${ex})"><span>${label}</span><em>${detail}</em></button>`;
-        return `<div class="cp-basis" role="radiogroup" aria-label="What this net worth includes">
-          ${opt(true,'Excluding retirement','What you can reach before 59½')}
-          ${opt(false,'Everything you own','Retirement included')}
-        </div>`;})()}
+      <label class="cp-basis"><input type="checkbox" id="cp-inc-ret"${cockpitExRet?'':' checked'}
+        onchange="cockpitSetExRet(!this.checked)">
+        <span>Include retirement</span>
+        <em>${cockpitExRet?'Off — showing what you can reach before 59½':'On — showing everything you own'}</em>
+      </label>
       <div class="cp-chart"><canvas id="cockpitTrajectory" aria-label="Projected wealth and liquid investments by year" role="img"></canvas></div>
       <div class="cp-pins" id="cp-pins"></div>
       <label class="cp-scrub" for="cp-year-range">Explore a year<input id="cp-year-range" type="range" min="${R[0].yr}" max="${end.yr}" value="${selected.yr}" oninput="cockpitSelectYear(Number(this.value))"><output id="cp-range-label">${selected.yr}</output></label>
