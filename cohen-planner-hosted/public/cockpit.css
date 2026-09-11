@@ -148,3 +148,29 @@ body,body.home-view{background:radial-gradient(ellipse at 80% -20%,#1a2b47 0,tra
   .cp-gap-body{left:0;right:0;width:auto;max-width:none}
   .cp-gap-body li>button{flex:1 1 auto;min-height:36px}
 }
+
+/* ── The last light-theme surfaces ───────────────────────────────────────────
+   Found by removing the blanket .panel,.cc,.kpi,.sc,.tabs,.tw glass rule: these were
+   never given dark values because that rule was painting over them anyway. The command
+   palette and the story cards are both reachable, and both rendered as white sheets with
+   dark-theme grey text on them. */
+.cmdk-panel{background:#16222f;border-color:var(--bd2);
+  backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:0 24px 60px rgba(0,0,0,.6)}
+.cmdk-panel input{background:transparent;color:var(--tx)}
+.story-card{background:linear-gradient(150deg,#172433,#121c2a);border-color:var(--bd2);
+  backdrop-filter:none;-webkit-backdrop-filter:none;color:var(--tx)}
+.story-close,.story-nav button{background:var(--s2);color:var(--t2);border-color:var(--bd2)}
+.story-close:hover,.story-nav button:hover{background:var(--s3);color:var(--tx)}
+/* .glass-card already has a dark background above; the inherited blur only remains as a
+   containing block, which is what trapped position:fixed and broke the phone sheet. */
+.glass-card{backdrop-filter:none;-webkit-backdrop-filter:none}
+
+/* Scrollbars and skeletons were also drawn in near-black for a white page, which on the
+   dark one means an invisible scrollbar on every scrolling surface — the settings panel
+   included — and a loading shimmer nobody can see. */
+*{scrollbar-color:rgba(167,190,221,.22) transparent}
+::-webkit-scrollbar-thumb{background:rgba(167,190,221,.2)}
+::-webkit-scrollbar-thumb:hover{background:rgba(167,190,221,.34)}
+.panel::-webkit-scrollbar-thumb{background:rgba(167,190,221,.2)}
+.skel{background:linear-gradient(100deg,rgba(167,190,221,.07) 28%,rgba(167,190,221,.15) 50%,rgba(167,190,221,.07) 72%);background-size:200% 100%}
+.cmdk-input-wrap{border-bottom-color:var(--bd)}

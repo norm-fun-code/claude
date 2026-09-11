@@ -237,16 +237,17 @@ body{background:transparent}
 @keyframes meshDrift{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(0,-2.2%,0) scale(1.05)}}
 
 /* (2) Glass material — frosted surfaces + layered elevation ──── */
-/* .adv and .adv-wrap were dropped from this list: they are structural containers now,
-   and the surface lives on .adv-main and .adv-rail. Leaving them here painted a
-   light-theme glass panel over the advisor's own header. */
-.panel,.cc,.kpi,.sc,.tabs,.tw{
-  background:rgba(255,255,255,.72);
-  backdrop-filter:blur(18px) saturate(165%);
-  -webkit-backdrop-filter:blur(18px) saturate(165%);
-  border:1px solid rgba(255,255,255,.65);
-  box-shadow:0 1px 1px rgba(10,37,64,.04), 0 14px 32px -20px rgba(10,37,64,.28);
-}
+/* The last of the light-theme glass is gone. This rule painted rgba(255,255,255,.72) on
+   .panel, .cc, .kpi, .sc, .tabs and .tw. Dark overrides had been added for most of them one
+   at a time — .adv and .adv-wrap were pulled out of it when it covered the advisor header —
+   but .panel never got one, so the settings panel stayed a white sheet with dark-theme grey
+   text on it: legible only as a smear.
+   Every selector here already carries token-based styling of its own (.panel at the top of
+   this file, .cc/.kpi/.sc and .tabs in cockpit.css), so removing the override is the whole
+   fix rather than the start of another round of patches.
+   It also takes a backdrop-filter off six containers. That is not cosmetic: backdrop-filter
+   creates a containing block, which is what trapped position:fixed inside #chartArea and
+   broke the conversations sheet on a phone. */
 .kpi{transition:transform .2s cubic-bezier(.22,1,.36,1), box-shadow .2s ease, border-color .2s ease}
 .kpi:hover{transform:translateY(-3px);
   box-shadow:0 1px 1px rgba(10,37,64,.04), 0 22px 44px -22px rgba(99,91,255,.45);
@@ -316,8 +317,10 @@ body{background:transparent}
 
 /* (6) Premium range sliders — the whole control rail ────────── */
 .sr input[type=range]{-webkit-appearance:none;appearance:none;background:transparent;height:16px;width:100%;cursor:pointer;margin:2px 0}
-.sr input[type=range]::-webkit-slider-runnable-track{height:5px;border-radius:6px;background:rgba(10,37,64,.11)}
-.sr input[type=range]::-moz-range-track{height:5px;border-radius:6px;background:rgba(10,37,64,.11)}
+/* A near-black track at 11% opacity was drawn for a white panel. On the dark one it is
+   invisible, which is why the sliders read as thumbs floating in empty space. */
+.sr input[type=range]::-webkit-slider-runnable-track{height:5px;border-radius:6px;background:rgba(167,190,221,.18)}
+.sr input[type=range]::-moz-range-track{height:5px;border-radius:6px;background:rgba(167,190,221,.18)}
 .sr input[type=range]::-moz-range-progress{height:5px;border-radius:6px;background:linear-gradient(90deg,#6e66ff,#5048d6)}
 .sr input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:15px;height:15px;margin-top:-5px;border-radius:50%;
   background:radial-gradient(circle at 35% 30%,#8079ff,#5048d6);
