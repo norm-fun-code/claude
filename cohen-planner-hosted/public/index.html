@@ -602,6 +602,10 @@ async function loadFromServer(){
     document.getElementById('chartArea').innerHTML='<div role="alert" style="padding:24px">Could not load your saved plan. Saving is disabled to protect your data. <button class="btn" onclick="location.reload()">Reload saved plan</button></div>';
     return;
   }
+  // migrateP only runs on a SAVED plan, so a plan that has never been saved — a first run,
+  // or one whose state came back empty — never got an observation date and silently modelled
+  // its first year as a full twelve months. The stamp belongs on whatever P we ended up with.
+  if(window.PlanMigrate&&PlanMigrate.migrateObservedOn)P=PlanMigrate.migrateObservedOn(P);
   buildControls();render();
   checkMonarchStatus();
 }
@@ -1197,7 +1201,10 @@ function buildControls(){
     : [];
   const sLinked=key=>{
     const r=openRows.find(x=>x.key===key);
-    if(!r)return sTxt(key,key);
+    // opening.js did not load. Fall back to a plain typed field under its proper name
+    // rather than printing the variable name at the reader.
+    if(!r){const F=(window.PlannerOpening&&PlannerOpening.FIELDS||[]).find(f=>f.key===key);
+      return sTxt(F?F.label:key,key);}
     const manual=r.mode==='manual';
     const asOf=_ovw&&_ovw.asOf?new Date(_ovw.asOf):null;
     const dated=asOf&&Number.isFinite(asOf.getTime());
@@ -2142,19 +2149,28 @@ async function loadOverview(){
 // The opening figures follow the accounts rather than being typed twice. This runs whenever
 // a fresh reading arrives; every rule about when it must NOT follow lives in opening.js, so
 // this only has to decide what to do about the answer.
-let _openingHeld=[];
 function syncOpeningFromAccounts(){
   if(!window.PlannerOpening||!_planLoaded)return;
   const d=_ovw,sm=d&&d.summary;
   const available=!!sm&&!d.error&&d.capabilities?.balances?.available===true;
   const out=PlannerOpening.syncOpening(P,sm,available);
-  _openingHeld=out.held;
   if(!out.dirty)return;
   // Writing into P rather than overlaying at render time, so every screen, scenario and
   // saved snapshot reads one number. It is not silent: each field says where it came from
   // and when, and any of them can be taken back by hand.
   P=out.P;
-  markDirty();buildControls();savePlannerState();
+  // The balances were true on the date the accounts were READ, which is not necessarily
+  // today — a week-old snapshot stamped with today would claim currency it does not have,
+  // and would shorten the stub year by the days in between.
+  if(d&&d.asOf){
+    const iso=String(d.asOf).slice(0,10);
+    if(/^\d{4}-\d{2}-\d{2}$/.test(iso)&&Number(iso.slice(0,4))===(P.planStartYear||2026))P.observedOn=iso;
+  }
+  // Deliberately NOT markDirty(). This is an observation refreshing itself, not an edit to
+  // the case's assumptions — and since the opening figures now re-read on every load,
+  // marking dirty here would leave "unsaved edits" showing permanently, for a change the
+  // reader never made. That is how an indicator stops meaning anything.
+  buildControls();savePlannerState();
   const names=out.changed.map(c=>c.label).join(', ');
   showToast(`Opening balances updated from your accounts: ${names}`,'green');
 }
@@ -2174,7 +2190,7 @@ function setOpeningMode(key,m){
     const d=_ovw,sm=d&&d.summary;
     const available=!!sm&&!d.error&&d.capabilities?.balances?.available===true;
     const out=PlannerOpening.syncOpening(P,sm,available);
-    P=out.P;_openingHeld=out.held;
+    P=out.P;
     const r=out.rows.find(x=>x.key===key);
     showToast(r&&r.following?'Now following your accounts':(r&&r.reason)||'Now following your accounts',
       r&&r.following?'green':'amber');

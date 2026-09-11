@@ -217,11 +217,12 @@ function stripeReturn(p,yIdx){
 // a Q1 vest earned nine months of growth and a Q4 vest earned none. A private company with
 // discrete tender marks does not work that way: every share is worth the same February mark
 // regardless of which quarter it vested in. stripeVestFactor is no longer used by run().
-function stripeVestFactor(sr){
-  let f=0;
-  for(let q=1;q<=4;q++)f+=(1+sr)**((4-q)/4);
-  return f/4;
-}
+// stripeVestFactor is gone. It grew each quarterly vest by a partial year of return, which
+// is what a PUBLIC position does. Stripe is private: every share sits at the February mark
+// until the next tender, whenever in the year it vested, so the engine credits no intra-year
+// growth at all. The helper had been dead since that rewrite, but it was still exported and
+// still tested — a function asserting the opposite of what the model does, waiting to be
+// picked up by someone who trusted it.
 
 // ── The tender calendar ────────────────────────────────────────────────────
 // Stripe is private, so there is no continuous price. The only number anything transacts at
@@ -508,7 +509,11 @@ function run(p,rets){
     }
     if(stub<1)tu*=stub;
     tT+=tu;
-    const totE=h+liv+cc+tu;
+    // Rounded components, summed — not the raw sum, rounded. h, liv, cc and tu are each
+    // displayed, and on a third of the plan's years the four of them did not add up to the
+    // total printed beneath them. Same fault as `nw` and `netWorth`, same fix: the number on
+    // screen is the sum of the numbers on screen.
+    const totE=Math.round(h)+Math.round(liv)+Math.round(cc)+Math.round(tu);
     const surp=cashAvail-totE; // operating cash flow — retained stock is NOT spendable
     // ── Stripe cash waterfall ──
     // Cash comp funds life first. Whatever it can't cover (including the down payment, a
@@ -607,11 +612,16 @@ function run(p,rets){
     // A car note or a student loan is NOT this. Term debt carries interest and a payoff
     // schedule, and modelling it as a flat offset would understate early years and overstate
     // late ones. If one is ever added it needs its own amortisation, not this field.
-    const nw=liq+stripeEnd+eq-otherDebt;
+    // Summed from the ROUNDED components, for the same reason netWorth is summed from its
+    // rounded parts: liq, sEnd, eq and otherDebt are each rounded before they are shown, so
+    // rounding the raw sum instead left the total up to a dollar off the parts printed
+    // beside it. That dollar is not cosmetic — it silently disabled the bridge's
+    // year-by-year breakdown, which only renders when its parts reconcile exactly.
+    const nw=Math.round(liq)+Math.round(stripeEnd)+Math.round(eq)-Math.round(otherDebt);
     R.push({yr,normG:Math.round(normW2),normCash:Math.round(normCash),normStock:Math.round(normStock),
       nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,
       inc:Math.round(inc),netTC:tax.net,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
-      liv:Math.round(liv),cc:Math.round(cc),tu:Math.round(tu),totE:Math.round(totE),
+      liv:Math.round(liv),cc:Math.round(cc),tu:Math.round(tu),totE,
       surp:Math.round(surp),
       // `flow` is the household's actual net cash flow: everything earned after tax, minus
       // everything spent. It is the figure that answers "am I living within my income", and
@@ -674,7 +684,7 @@ function run(p,rets){
       // independently leaves netWorth up to a dollar off nw + k401, and in an app whose
       // whole claim is that its figures reconcile, a reader who adds the two numbers on
       // screen and gets a third is right to distrust all of them.
-      nw:Math.round(nw),k401:Math.round(k401),netWorth:Math.round(nw)+Math.round(k401),
+      nw,k401:Math.round(k401),netWorth:nw+Math.round(k401),
       // Net worth with BOTH the locked pools removed: no retirement, no home equity. What is
       // left is the money that is actually yours to move — the diversified pool and vested
       // Stripe, less what you owe. Defined here rather than assembled at each call site,
@@ -895,7 +905,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
   module.exports={bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
-    normComp,stripeReturn,stripeVestFactor,stripeVestRemaining,yearRemaining,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
+    normComp,stripeReturn,stripeVestRemaining,yearRemaining,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
     housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,

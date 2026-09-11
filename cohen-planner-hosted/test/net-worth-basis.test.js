@@ -22,12 +22,16 @@ describe('what the engine means by net worth', () => {
     expect(R[R.length - 1].k401).toBeGreaterThan(0);   // so the two are really different
   });
 
-  it('reports netWorth as everything the plan models, net of what it owes', () => {
-    // Within a dollar per component: liq, sEnd and eq are each rounded before they are
-    // shown, so the displayed parts can drift from the displayed total by rounding alone.
-    for (const r of R)
-      expect(Math.abs(r.netWorth - (r.liq + r.sEnd + r.eq - r.otherDebt + r.k401)), String(r.yr))
-        .toBeLessThanOrEqual(3);
+  it('reports netWorth as everything the plan models, net of what it owes — exactly', () => {
+    // EXACTLY, not within a dollar. Every component is rounded before it is shown and the
+    // totals are summed from those rounded parts, so a reader adding up what is on screen
+    // gets the number that is on screen. The tolerance this test used to allow was hiding a
+    // real defect: a $1 gap silently disabled the bridge's year-by-year breakdown, which
+    // only renders when its parts reconcile.
+    for (const r of R) {
+      expect(r.liq + r.sEnd + r.eq - r.otherDebt, String(r.yr)).toBe(r.nw);
+      expect(r.nw + r.k401, String(r.yr)).toBe(r.netWorth);
+    }
   });
 
   it('sums exactly from the two numbers a reader can see', () => {
@@ -259,5 +263,32 @@ describe('the Overview follows the same retirement basis', () => {
     expect(html).toContain("cockpitExRet?'Net worth ex-retirement':'Net worth'");
     expect(html).toContain('retirement excluded');
     expect(html).toContain('not in net worth above');
+  });
+});
+
+// Every total in a row is summed from the rounded components beside it, not rounded from a
+// raw sum. This is not pedantry: a $1 gap between `nw` and its parts silently disabled the
+// bridge's year-by-year breakdown, which only renders when its parts reconcile exactly.
+describe('the numbers on screen add up to the numbers on screen', () => {
+  const R = M.run({ ...D, observedOn: '2026-09-11' }).R;
+
+  it('sums every displayed expense component to the displayed total', () => {
+    // Ten of this plan's thirty-three years failed this before the fix.
+    for (const r of R) expect(r.h + r.liv + r.cc + r.tu, String(r.yr)).toBe(r.totE);
+  });
+
+  it('sums every displayed asset component to net worth', () => {
+    for (const r of R) {
+      expect(r.liq + r.sEnd + r.eq - r.otherDebt, String(r.yr)).toBe(r.nw);
+      expect(r.nw + r.k401, String(r.yr)).toBe(r.netWorth);
+    }
+  });
+
+  it('builds the totals that way in the engine, not by rounding a raw sum', () => {
+    const src = fs.readFileSync(new URL('../public/model.js', import.meta.url), 'utf8');
+    expect(src).toContain('const totE=Math.round(h)+Math.round(liv)+Math.round(cc)+Math.round(tu);');
+    expect(src).toContain('const nw=Math.round(liq)+Math.round(stripeEnd)+Math.round(eq)-Math.round(otherDebt);');
+    expect(src).not.toContain('const totE=h+liv+cc+tu;');
+    expect(src).not.toContain('const nw=liq+stripeEnd+eq-otherDebt;');
   });
 });

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const { run, runMonteCarlo, calcTax, stripeVestFactor, stripeVestRemaining, stripeSellAmount, sellLots, lotsValue, lotsBasis, normComp } = require('../public/model.js');
+const { run, runMonteCarlo, calcTax, stripeVestRemaining, stripeSellAmount, sellLots, lotsValue, lotsBasis, normComp } = require('../public/model.js');
 const { migrateP, rollForwardParams } = require('../public/plan-migrate.js');
 
 // A complete, realistic plan. Cash + stock per year sum to the pre-split total-comp
@@ -172,15 +172,6 @@ describe('Stripe appreciation', () => {
     expect(flat[1].sEnd).toBeLessThan(R[1].sEnd);
   });
 
-  it('quarterly vesting earns only partial-year growth, never a full year', () => {
-    const sr = 0.20;
-    const f = stripeVestFactor(sr);
-    expect(f).toBeGreaterThan(1);        // some growth — earlier quarters do appreciate
-    expect(f).toBeLessThan(1 + sr);      // but strictly less than a full year
-    // Q4 lot earns nothing, Q1 lot earns 9 months
-    const expected = ((1 + sr) ** 0.75 + (1 + sr) ** 0.5 + (1 + sr) ** 0.25 + 1) / 4;
-    expect(f).toBeCloseTo(expected, 10);
-  });
 
   it('marks every share at the same tender price, whichever quarter it vested in', () => {
     // Stripe is private: there is one price, set at the February tender, and it holds until
