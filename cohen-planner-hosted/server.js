@@ -2100,7 +2100,11 @@ You also have monarch_* tools to read Norm's REAL Monarch Money data (accounts, 
               const R = proj.R;
               const last = R[R.length - 1];
               result = {
-                finalNW: last.nw,
+                // The advisor quotes this as net worth, so it is the TOTAL. `nw` excludes
+                // retirement, and a component quoted under that name understated every
+                // answer by the whole 401(k).
+                finalNW: last.netWorth,
+                finalNWExRetirement: last.nw,
                 finalK401: last.k401,
                 deficitYears: R.filter(r => r.surp < 0).length,
                 worstSurplus: Math.min(...R.map(r => r.surp)),

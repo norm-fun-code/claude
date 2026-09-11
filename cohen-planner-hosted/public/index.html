@@ -757,10 +757,15 @@ async function syncMonarch({quiet=false}={}){
     monarchSnapshot=nextSnapshot;
     monarchAccounts=d.accounts;
     const freshness=document.getElementById('monarchFreshness');
-    if(freshness){freshness.textContent=(d.partial?'Incomplete totals · ':d.stale||d.warning?'Older balances · ':'Observed · ')+new Date(nextSnapshot.syncedAt).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});freshness.title=d.partial?`${d.missingAccounts.length} account(s) have no balance in Monarch. Totals include available balances only.`:d.warning||'Latest balance observation from NormOS. Bank refresh times may differ.';}
-    if(btn){btn.textContent=d.partial?'📍 Refresh available balances':d.partial?'📍 Refresh available balances':d.stale||d.warning?'📍 Check sync':'📍 Refresh balances';btn.disabled=false;btn.style.display='';}
+    // "Incomplete" has to be able to name what is missing. A partial flag carrying no
+    // missing accounts said "Incomplete totals" in the header and "0 account(s) have no
+    // balance" in its own tooltip — a warning that contradicted itself on hover.
+    const missing=(d.missingAccounts||[]).length;
+    const reallyPartial=!!d.partial&&missing>0;
+    if(freshness){freshness.textContent=(reallyPartial?'Incomplete totals · ':d.stale||d.warning?'Older balances · ':'Observed · ')+new Date(nextSnapshot.syncedAt).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});freshness.title=reallyPartial?`${missing} account${missing===1?'':'s'} ${missing===1?'has':'have'} no balance in Monarch. Totals include available balances only.`:d.warning||'Latest balance observation from NormOS. Bank refresh times may differ.';}
+    if(btn){btn.textContent=reallyPartial?'📍 Refresh available balances':d.stale||d.warning?'📍 Check sync':'📍 Refresh balances';btn.disabled=false;btn.style.display='';}
     const connBtn=document.getElementById('monarchConnectBtn');if(connBtn)connBtn.style.display='none';
-    if(!quiet)showToast((d.partial?`${d.accounts.length} accounts synced; ${d.missingAccounts.length} balance unavailable. Totals are incomplete.`:null)||d.warning||(d.stale?'Showing older balances from NormOS. Run the Monarch sync to update them.':`Monarch via NormOS · Liquid ${fmt(monarchSnapshot.liquid)} · 401k ${fmt(monarchSnapshot.retirement)}`),d.stale||d.warning?'red':'green');
+    if(!quiet)showToast((reallyPartial?`${d.accounts.length} accounts synced; ${missing} balance unavailable. Totals are incomplete.`:null)||d.warning||(d.stale?'Showing older balances from NormOS. Run the Monarch sync to update them.':`Monarch via NormOS · Liquid ${fmt(monarchSnapshot.liquid)} · 401k ${fmt(monarchSnapshot.retirement)}`),d.stale||d.warning?'red':'green');
     savePlannerState(); // persist last sync so it shows instantly next open
     render();
   }catch(e){
@@ -1084,7 +1089,7 @@ async function saveSnapshot(silent,labelOverride){
   const def=RES.drawYears;
   const dflt=`${P.planStartYear||2026} plan · ${new Date().toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`;
   const label=labelOverride||dflt;
-  const summary={finalNW:last.nw,final401k:last.k401,totalTuition:tT,deficitYears:def,startingLiquid:P.startingLiquid,liqFloor:Math.min(...R.map(r=>r.liq))};
+  const summary={finalNW:last.netWorth,final401k:last.k401,totalTuition:tT,deficitYears:def,startingLiquid:P.startingLiquid,liqFloor:Math.min(...R.map(r=>r.liq))};
   const snap={id:advUuid(),label,planYear:P.planStartYear||2026,params:{...P},summary};
   try{await fetch('/api/snapshots',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(snap)});}catch(e){}
   snapshots.push({...snap,plan_year:snap.planYear,created_at:new Date().toISOString()});
@@ -2467,7 +2472,7 @@ function renderOverviewTab(R,P){
       ${tile('Retirement',money((cls.retirement||{}).total),provChip('observed',d.asOf,true),'locked until retirement age')}
       ${tile('Stripe equity',money(sum.stripeVested),provChip('observed',d.asOf,true),'vested only — grants are future pay','#6772e5')}
       ${tile(`Cash flow ${y0.yr}`,(y0.flow>=0?'+':'−')+money(Math.abs(y0.flow)),provChip('projected',null,true),y0.flow>=0?(y0.gap>0?`total pay covers the year · ${money(y0.gap)} of it comes from vest`:'cash pay alone covers the year'):'spending exceeds total after-tax pay',y0.flow>=0?'var(--g)':'var(--r)')}
-      ${tile(`Net worth ${last.yr}`,money(last.nw),provChip('projected',null,true),'if the plan holds')}
+      ${tile(`Net worth ${last.yr}`,money(last.netWorth),provChip('projected',null,true),'if the plan holds')}
     </div>`;
 
     // ── Anything unknown, said out loud ──
@@ -3723,7 +3728,9 @@ function updateRefiCalc(){
 function renderSensitivityTab(R,P){
   const ca=document.getElementById('chartArea');
   destroyCharts();
-  const baseNW=R[R.length-1].nw;
+  // Impact is measured on the TOTAL. On the ex-retirement basis a lever that moves
+  // retirement — a contribution rate, say — showed almost no impact at all.
+  const baseNW=R[R.length-1].netWorth;
   const ey=P.planEndYear||2058;
 
   const ALL_PARAMS=[
@@ -3775,8 +3782,8 @@ function renderSensitivityTab(R,P){
       loP={...P,[p.key]:loV};
     }
     const hiR=run(hiP).R;const loR=run(loP).R;
-    const hiNW=hiR[hiR.length-1].nw;
-    const loNW=loR[loR.length-1].nw;
+    const hiNW=hiR[hiR.length-1].netWorth;
+    const loNW=loR[loR.length-1].netWorth;
     const hiDelta=hiNW-baseNW;
     const loDelta=loNW-baseNW;
     const impact=Math.max(Math.abs(hiDelta),Math.abs(loDelta));
@@ -4488,9 +4495,9 @@ function renderCompareTab(R,P){
     ...scenarios.map(s=>({name:s.name,params:s.params,res:run({...D,...migrateP(s.params)}),color:s.color,isCurrent:false}))
   ];
   const METRICS=[
-    {label:'NW @ 2058',get:(r,p)=>r.R[r.R.length-1].nw,fmt:fmt,b:1},
+    {label:'NW @ 2058 (ex-retirement)',get:(r,p)=>r.R[r.R.length-1].nw,fmt:fmt,b:1},
     {label:'401k @ 2058',get:(r,p)=>r.R[r.R.length-1].k401,fmt:fmt,b:1},
-    {label:'Grand Total (NW + 401k)',get:(r,p)=>{const l=r.R[r.R.length-1];return l.nw+l.k401},fmt:fmt,b:1},
+    {label:'Net worth @ 2058 (all)',get:(r,p)=>r.R[r.R.length-1].netWorth,fmt:fmt,b:1},
     {sep:true,label:'Risk'},
     {label:'Liquid Floor',get:(r,p)=>Math.min(...r.R.map(x=>x.liq)),fmt:fmt,b:1},
     {label:'Years Drawing On Savings',get:(r,p)=>r.drawYears,fmt:n=>n+' yrs',b:-1},
@@ -4681,7 +4688,7 @@ function renderNavLive(){
     :`Balances ${days} day${days===1?'':'s'} old`;
 
   // The curve, at the size it can honestly be read: shape only, no axis, no figures.
-  const series=R.map(r=>r.nw+r.k401);
+  const series=R.map(r=>r.netWorth);
   const lo=Math.min(...series),hi=Math.max(...series),span=(hi-lo)||1;
   const pts=series.map((v,i)=>
     `${(i/(series.length-1)*100).toFixed(1)},${(26-(v-lo)/span*24).toFixed(1)}`).join(' ');
@@ -5142,9 +5149,9 @@ ${scenarios.length?scenarios.map(s=>`• "${s.name}"`).join('\n'):'• none save
 
 LIFECYCLE PROJECTIONS (current plan)
 • Starting liquid NW: ${fmt(P.startingLiquid)}
-• Net worth at ${y58.yr}: ${fmt(y58.nw)} ($${(y58.nw/1e6).toFixed(2)}M)
-• 401k at ${y58.yr}: ${fmt(y58.k401)}
-• Grand total at 65: ${fmt(y58.nw+y58.k401)}
+• Net worth at ${y58.yr}: ${fmt(y58.netWorth)} ($${(y58.netWorth/1e6).toFixed(2)}M) — everything, retirement included
+• of which 401k: ${fmt(y58.k401)}
+• excluding retirement: ${fmt(y58.nw)}
 • Years that actually draw on savings or held Stripe: ${deficitYrs} of ${R.length}
 • Years where cash pay alone falls short but that year's VEST covers it entirely (nothing liquidated): ${vestOnlyYrs}. Do not describe these as deficit years or as drawing down savings — they aren't.
 • Two distinct gap measures per year, both in the projection table. CASH GAP = expenses minus cash pay, i.e. how much of that year's vest must be sold; ${R.filter(r=>r.gap>0).length} of ${R.length} years have one, and closing it costs no accumulated wealth. INCOME GAP = what is still short after selling EVERY vesting share; only ${R.filter(r=>r.incGap>0).length} years have one, and that is the figure that forces a draw on savings or held Stripe. Worst cash gap ${fmt(Math.max(...R.map(r=>r.gap)))}, worst income gap ${fmt(Math.max(...R.map(r=>r.incGap)))}. Quoting the cash gap as if it were a deficit overstates the problem.
@@ -5221,7 +5228,7 @@ INVESTING PRINCIPLES NORM OPERATES BY
 ═══ HOW TO RESPOND ═══
 
 • Be direct and unhedged. He hates sycophancy.
-• Use specific live numbers from his current plan (e.g. "your current $${fmt(y58.nw+y58.k401)} projection")
+• Use specific live numbers from his current plan (e.g. "your current $${fmt(y58.netWorth)} projection")
 • Push back on flawed thinking. Don't validate just to be nice.
 • If he's adjusting sliders/scenarios, reference what's currently set
 • Tax/legal: give your professional take without excessive caveats
@@ -5247,7 +5254,7 @@ function renderAdvisorTab(R,P){
          surface where a reader cannot see the underlying data, so the context is named. -->
     <div class="adv-context ui-rise ui-rise-2">
       ${UI.prov('projected','your plan')}
-      <span>${R.length}-year projection · ${UI.money(last.nw+last.k401)} by ${last.yr}</span>
+      <span>${R.length}-year projection · ${UI.money(last.netWorth)} by ${last.yr}</span>
       <span class="adv-ctx-sep"></span>
       <span>Every figure it quotes comes from the same engine as the rest of the app.</span>
     </div>

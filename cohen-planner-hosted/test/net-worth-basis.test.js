@@ -152,3 +152,52 @@ describe('both charts answer to the same inflation toggle', () => {
     expect(cockpit).toContain('data:[null,...band.p10');
   });
 });
+
+// The rule, stated once: a surface showing ONE figure and calling it net worth shows the
+// total. A surface showing the component may only do so beside the retirement balance it
+// excludes, so the reader can see what is missing. Two screens disagreeing by exactly the
+// 401(k) is the signature of this being broken, and it has now happened three times.
+describe('every single-figure net worth surface shows the total', () => {
+  const server = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+
+  it('agrees between the Overview tile and the nav rail', () => {
+    // These read $31.62M and $38.06M on the same screen — the tile on `nw`, the rail on the
+    // total. The difference was the whole 2058 retirement balance.
+    expect(html).toContain('${tile(`Net worth ${last.yr}`,money(last.netWorth)');
+    expect(html).toContain('const series=R.map(r=>r.netWorth);');
+    expect(html).not.toContain('const series=R.map(r=>r.nw+r.k401);');
+  });
+
+  it('quotes the total wherever the advisor is given a net worth', () => {
+    expect(server).toContain('finalNW: last.netWorth,');
+    expect(html).toContain('${fmt(y58.netWorth)}');
+    expect(html).toMatch(/of which 401k/);
+  });
+
+  it('measures sensitivity on the total, so a retirement lever is not flattened', () => {
+    expect(html).toContain('const baseNW=R[R.length-1].netWorth;');
+    expect(html).toContain('const hiNW=hiR[hiR.length-1].netWorth;');
+  });
+
+  it('labels the component wherever one is still shown on its own', () => {
+    expect(html).toContain("{label:'NW @ 2058 (ex-retirement)'");
+    expect(html).toContain("{label:'Net worth @ 2058 (all)'");
+  });
+
+  it('leaves the paired KPI cards alone, because they name the exclusion', () => {
+    // "Final NW … +$X in 401k" beside "Total w/ 401k" is honest: nothing is hidden.
+    expect(html).toContain('in 401k');
+    expect(html).toContain('Total w/ 401k');
+  });
+});
+
+// Three separate code paths could each say "incomplete", and each could say it while naming
+// nothing at all.
+describe('nothing claims incomplete without naming an account', () => {
+  it('will not print a header warning it cannot substantiate', () => {
+    expect(html).toContain('const reallyPartial=!!d.partial&&missing>0;');
+    expect(html).not.toMatch(/d\.partial\?'Incomplete totals · '/);
+    // …and the tooltip that used to read "0 account(s) have no balance".
+    expect(html).not.toMatch(/\$\{d\.missingAccounts\.length\} account\(s\) have no balance/);
+  });
+});
