@@ -42,7 +42,10 @@ function calcTax(grossIncome,p,yr,numKids){
   const NYS_BR=_scaleBr(NYS_BR_2026,sf);
   const NYC_BR=_scaleBr(NYC_BR_2026,sf);
   const ssCap=Math.round(SS_CAP_2026*f);
-  const saltBase=Math.round(SALT_BASE_2026*f);
+  // F4. The OBBBA cap is NOT indexed to general inflation: it grows 1%/yr through 2029 and
+  // reverts to $10,000 from 2030 (IRC § 164(b)(6)(B)-(C), P.L. 119-21 § 70120). Escalating
+  // it at the tax-inflation rate forever overstated the deduction in every year from 2030.
+  const saltBase=yr>=2030?10000:Math.round(SALT_BASE_2026*1.01**Math.max(0,yr-2026));
   const stdDeduct=Math.round(STD_DEDUCT_2026*f);
 
   const pretax=p.pretax401k+p.pretaxBenefits;
@@ -69,23 +72,46 @@ function calcTax(grossIncome,p,yr,numKids){
   // ── AGI ──
   const agi=Math.max(0,(normW2+nancyW2+nancySE)-pretax-seTaxHalf);
 
+  // ── State and city tax, computed BEFORE the federal deduction ──
+  // New York's taxable income comes from AGI and its own standard deduction, never from the
+  // federal itemised total, so there is no circularity in computing it first — and it has to
+  // be first, because the SALT deduction is a deduction for taxes actually PAID.
+  const nysTaxable=Math.max(0,agi-16050);
+  const stateT=bracketTax(nysTaxable,NYS_BR);
+  const cityT=bracketTax(nysTaxable,NYC_BR);
+
   // ── Itemized deductions ──
   const saltPhaseout=Math.max(0,(agi-505000)*0.30);
   const saltCap=Math.max(10000,saltBase-saltPhaseout);
+  // F4. § 164(a) allows a deduction for eligible taxes PAID OR ACCRUED, and § 164(b)(6) then
+  // LIMITS it. Deducting the cap itself handed a household with $2,154 of state and city tax
+  // a $40,400 deduction. Eligible taxes here are state and city income tax plus real property
+  // tax; the deduction is the lesser of what was paid and the cap.
+  const propertyTaxPaid=yr>=p.homePurchaseYear
+    ?(p.propTaxRate??(p.propTaxBase&&p.homePrice?p.propTaxBase/p.homePrice:0.012))
+      *p.homePrice*(1+p.homeAppreciation)**(yr-p.homePurchaseYear)
+    :0;
+  const saltPaid=stateT+cityT+propertyTaxPaid;
+  const saltDeduction=Math.min(saltPaid,saltCap);
   let mortInt=0,deductibleMortInt=0;
   if(yr>=p.homePurchaseYear){
     const mortAmt=p.homePrice*(1-p.downPctg/100);
     const mr=p.mortgageRate/100/12;const n=360;
-    const pmt=mortAmt*(mr*(1+mr)**n)/((1+mr)**n-1);
-    let bal=mortAmt;
-    for(let y=0;y<yr-p.homePurchaseYear;y++){for(let m=0;m<12;m++){bal-=(pmt-bal*mr)}}
-    for(let m=0;m<12;m++){mortInt+=bal*mr;bal-=(pmt-bal*mr)}
+    // F3. At a zero rate the annuity formula divides by zero and every downstream figure
+    // becomes NaN. A 0% loan amortises in a straight line and pays no interest at all —
+    // an unusual input, but a legitimate one (a family loan, a developer incentive).
+    if(mr>0){
+      const pmt=mortAmt*(mr*(1+mr)**n)/((1+mr)**n-1);
+      let bal=mortAmt;
+      for(let y=0;y<yr-p.homePurchaseYear;y++){for(let m=0;m<12;m++){bal-=(pmt-bal*mr)}}
+      for(let m=0;m<12;m++){mortInt+=bal*mr;bal-=(pmt-bal*mr)}
+    }
     const mortCap=750000;
-    deductibleMortInt=mortInt*Math.min(1,mortCap/mortAmt);
+    deductibleMortInt=mortAmt>0?mortInt*Math.min(1,mortCap/mortAmt):0;
   }
   const charityPaid=(p.baseCharity||0)*(1+(p.expenseInflation||0))**(yr-sy);
   const deductibleCharity=Math.max(0,charityPaid-0.005*agi);
-  const itemized=saltCap+deductibleMortInt+deductibleCharity;
+  const itemized=saltDeduction+deductibleMortInt+deductibleCharity;
   const deduction=Math.max(stdDeduct,itemized);
 
   // ── QBI ──
@@ -114,9 +140,6 @@ function calcTax(grossIncome,p,yr,numKids){
     federal=Math.max(0,federal-ctc);
   }
 
-  const nysTaxable=Math.max(0,agi-16050);
-  const stateT=bracketTax(nysTaxable,NYS_BR);
-  const cityT=bracketTax(nysTaxable,NYC_BR);
   const incomeTax=federal+stateT+cityT;
   const allInTax=incomeTax+Math.max(0,totalFICA);
   const effRate=grossIncome>0?allInTax/grossIncome:0;
@@ -127,6 +150,10 @@ function calcTax(grossIncome,p,yr,numKids){
     state:Math.round(stateT),city:Math.round(cityT),effRate,
     net:Math.round(net),gross:Math.round(grossIncome),agi:Math.round(agi),
     deduction:Math.round(deduction),qbi:Math.round(qbi),saltCap:Math.round(saltCap),
+    // What was actually deducted, and what was eligible — reporting only the cap made it
+    // impossible to see that the cap was being deducted regardless of taxes paid.
+    saltPaid:Math.round(saltPaid),saltDeduction:Math.round(saltDeduction),
+    propertyTax:Math.round(propertyTaxPaid),
     mortInt:Math.round(mortInt),itemizing:itemized>stdDeduct
   };
 }
@@ -144,8 +171,10 @@ function kidCost(a){
   if(a<13)return{g:3500,d:0,s:2500,m:1000,x:3000,e:500,v:1000};
   return{g:4500,d:500,s:3500,m:1000,x:4000,e:500,v:1000};
 }
-function mPmt(pr,r,y=30){if(pr<=0||r<=0)return 0;const m=r/12,n=y*12;return pr*(m*(1+m)**n)/((1+m)**n-1)*12}
-function mBal(pr,r,yp,ty=30){if(yp>=ty||pr<=0)return 0;const m=r/12,n=ty*12,pp=yp*12;return pr*((1+m)**n-(1+m)**pp)/((1+m)**n-1)}
+// A zero rate is a legitimate loan, not an absent one: it amortises in a straight line.
+// Returning 0 for the payment made a 0% mortgage look free, and the balance never fall.
+function mPmt(pr,r,y=30){if(pr<=0)return 0;if(r<=0)return pr/y;const m=r/12,n=y*12;return pr*(m*(1+m)**n)/((1+m)**n-1)*12}
+function mBal(pr,r,yp,ty=30){if(yp>=ty||pr<=0)return 0;if(r<=0)return pr*(1-yp/ty);const m=r/12,n=ty*12,pp=yp*12;return pr*((1+m)**n-(1+m)**pp)/((1+m)**n-1)}
 
 const NORM_COMP_YEARS=11; // explicit per-year comp inputs: Y0 (planStartYear) through Y10
 const STRIPE_RET_YEARS=10; // explicit per-year Stripe return assumptions: Y0 through Y9
@@ -320,7 +349,9 @@ function run(p,rets){
   if(p.numKids>=3)kids.push(p.kid3Birth);
   if(p.numKids>=4)kids.push(p.kid4Birth);
   const dp=p.homePrice*(p.downPctg/100),ma=p.homePrice-dp,am=mPmt(ma,p.mortgageRate/100);
-  let liq=p.startingLiquid,k401=p.k401Start||210000,tT=0,tC=0,tTx=0,tS=0;
+  // F3. `||` treats a deliberate zero as absent, so a household with no retirement balance
+  // was silently given $210,000 of it. Nullish coalescing preserves an explicit zero.
+  let liq=p.startingLiquid,k401=p.k401Start??210000,tT=0,tC=0,tTx=0,tS=0;
   // Stripe equity is a wholly separate pool from the diversified `liq`. Basis matters
   // because RSU cost basis IS the vest-date FMV — selling at vest produces essentially no
   // capital gain (the W2 tax was already paid), and only post-vest appreciation is ever a

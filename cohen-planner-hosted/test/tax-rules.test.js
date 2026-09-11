@@ -151,17 +151,19 @@ describe('Sanity of the corrected engine against hand-computed figures',()=>{
     baseCharity:0,nancySoloPractice:0,_normW2:400000,_nancyW2:0,_nancySE:0,_nancyOverhead:0};
   const t=M.calcTax(400000,p,2026,0);
 
-  it('deducts the greater of the standard deduction and the capped SALT',()=>{
-    // AGI $400K is below the $505K phase-down, so the SALT cap is the full $40,400 —
-    // which beats the $32,200 standard deduction.
+  it('deducts the taxes paid, limited by the cap, against the standard deduction',()=>{
+    // AGI $400K is below the $505K phase-down, so the cap is the full $40,400 — and New
+    // York tax at this income is under it, so what is deducted is what was PAID.
     expect(t.saltCap).toBe(40400);
-    expect(t.deduction).toBe(40400);
-    expect(t.itemizing).toBe(true);
+    expect(t.saltPaid).toBe(t.state+t.city);
+    expect(t.saltDeduction).toBe(Math.min(t.saltPaid,t.saltCap));
+    expect(t.deduction).toBe(Math.max(32200,t.saltDeduction));
+    expect(t.itemizing).toBe(t.saltDeduction>32200);
   });
 
   it('computes federal tax straight off the bracket table',()=>{
     expect(t.agi).toBe(400000);
-    expect(Math.round(t.federal)).toBe(Math.round(M.bracketTax(400000-40400,M.FED_BR_2026)));
+    expect(Math.round(t.federal)).toBe(Math.round(M.bracketTax(400000-t.deduction,M.FED_BR_2026)));
   });
 
   it('caps Social Security at the wage base and never caps Medicare',()=>{

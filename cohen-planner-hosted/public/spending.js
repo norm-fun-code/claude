@@ -178,8 +178,12 @@
   // every consumer asks this first rather than inferring completeness from row counts.
   function coverage(months,today){
     if(!months||!months.length)return{monthsCovered:0,first:null,last:null,completeMonths:[],partial:null};
+    // F3. A date-only string parses as UTC midnight, but getDate()/getMonth() read the LOCAL
+    // calendar. West of Greenwich that lands on the previous day, so month progress was off
+    // by one and the month key could name the wrong month entirely. One calendar throughout.
     const now=today?new Date(today):new Date();
     const currentKey=now.toISOString().slice(0,7);
+    const daysInMonth=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()+1,0)).getUTCDate();
     const complete=months.filter(m=>m.month!==currentKey);
     return{
       monthsCovered:months.length,
@@ -187,7 +191,7 @@
       completeMonths:complete.map(m=>m.month),
       // The month in progress is never a data point — it is a fraction of one.
       partial:months.some(m=>m.month===currentKey)?currentKey:null,
-      fractionElapsed:+(now.getDate()/new Date(now.getFullYear(),now.getMonth()+1,0).getDate()).toFixed(4),
+      fractionElapsed:+(now.getUTCDate()/daysInMonth).toFixed(4),
     };
   }
 

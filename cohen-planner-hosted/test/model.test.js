@@ -39,11 +39,37 @@ describe('bracketTax', () => {
 // ── calcTax: pure W2 household ────────────────────────────────────────────
 describe('calcTax — W2 only', () => {
   const yr = 2026;
-  it('itemizes when SALT alone ($40400) exceeds standard deduction ($32200)', () => {
+  // This test used to assert the CAP was deducted regardless of taxes paid, which is what
+  // § 164 does not say: the cap limits a deduction for taxes actually paid or accrued. An
+  // $80K household pays a few thousand of New York tax, so it takes the standard deduction.
+  it('deducts the taxes actually paid, so a modest household does not itemize', () => {
     const p = { ...BASE, _normW2: 80000, _nancyW2: 0, _nancySE: 0, _nancyOverhead: 0 };
     const t = calcTax(80000, p, yr, 0);
-    expect(t.deduction).toBe(40400); // SALT > std deduct → itemize
+    expect(t.saltPaid).toBe(t.state + t.city);
+    expect(t.saltDeduction).toBe(t.saltPaid);
+    expect(t.saltDeduction).toBeLessThan(t.saltCap);
+    expect(t.deduction).toBe(32200);
+    expect(t.itemizing).toBe(false);
+  });
+
+  it('itemizes once taxes paid actually exceed the standard deduction', () => {
+    const p = { ...BASE, _normW2: 400000, _nancyW2: 0, _nancySE: 0, _nancyOverhead: 0 };
+    const t = calcTax(400000, p, yr, 0);
+    expect(t.saltPaid).toBeGreaterThan(32200);
+    expect(t.saltDeduction).toBe(t.saltPaid);  // still under the cap at this income
     expect(t.itemizing).toBe(true);
+  });
+
+  // The phase-down is what actually decides this household, not the headline cap: above
+  // roughly $606K of AGI the cap is $10,000, so the standard deduction wins outright.
+  it('lets the standard deduction win once the phase-down has bitten', () => {
+    const p = { ...BASE, _normW2: 900000, _nancyW2: 0, _nancySE: 0, _nancyOverhead: 0 };
+    const t = calcTax(900000, p, yr, 0);
+    expect(t.saltPaid).toBeGreaterThan(t.saltCap);
+    expect(t.saltCap).toBe(10000);
+    expect(t.saltDeduction).toBe(10000);
+    expect(t.deduction).toBe(32200);
+    expect(t.itemizing).toBe(false);
   });
 
   it('AGI = normW2 - pretax', () => {
@@ -155,9 +181,11 @@ describe('calcTax — bracket inflation', () => {
   it('taxInflation=0 → identical brackets across years', () => {
     const income = 400000;
     const p = { ...BASE, _normW2: income, _nancyW2: 0, _nancySE: 0, _nancyOverhead: 0 };
-    const t2026 = calcTax(income, p, 2026, 0);
-    const t2030 = calcTax(income, p, 2030, 0);
-    expect(t2026.deduction).toBe(t2030.deduction);
+    // Brackets and the standard deduction are frozen at taxInflation=0. The SALT cap is NOT
+    // — it follows its own statutory schedule, so 2030 is genuinely different.
+    expect(calcTax(income, p, 2026, 0).deduction).toBe(calcTax(income, p, 2027, 0).deduction);
+    expect(calcTax(income, p, 2030, 0).saltCap).toBe(10000);
+    expect(calcTax(income, p, 2030, 0).deduction).toBeLessThan(calcTax(income, p, 2026, 0).deduction);
   });
 });
 
