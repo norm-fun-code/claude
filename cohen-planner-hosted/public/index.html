@@ -1866,13 +1866,15 @@ function renderStripeTab(R,P){
     </div>`;
   }
 
-  h+=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
-    <span style="font-size:11px;font-weight:700;color:var(--tx)">◆ Stripe Equity</span>
-    <span style="font-size:9px;color:var(--t3)">Year</span>
-    <select onchange="setStripeYear(this.value)" style="padding:4px 8px;border:1px solid var(--bd);border-radius:6px;background:var(--s1);color:var(--tx);font-family:inherit;font-size:10px;outline:none">
-      ${R.map(r=>`<option value="${r.yr}"${r.yr===yr?' selected':''}>${r.yr}</option>`).join('')}
-    </select>
-  </div>`;
+  h+=`<header class="ui-head ui-rise"><div>
+      <span class="ui-eyebrow">CONCENTRATED POSITION</span>
+      <h2>Your Stripe equity.</h2>
+    </div><div class="ui-head-actions">
+      <label class="sq-year">Year
+        <select onchange="setStripeYear(this.value)">
+          ${R.map(r=>`<option value="${r.yr}"${r.yr===yr?' selected':''}>${r.yr}</option>`).join('')}
+        </select></label>
+    </div></header>`;
 
   // Stripe has no continuous price: it is marked at the February tender and holds that mark
   // until the next one. Saying so on the dashboard is what makes the arithmetic add up in
@@ -1888,14 +1890,35 @@ function renderStripeTab(R,P){
       would double-count what you already hold. The full grant is still taxed as ${sy} income.</p>
     </div>`;
   }
-  h+=`<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
-    ${tile('Stripe equity · '+(yr>sy?'start of '+yr:'as observed'),fmt(row.sBeg),yr>sy?'carried in from '+(yr-1):'at the '+obsLabel+' mark',V)}
-    ${tile('New equity in '+yr,fmt(row.sNew),fmt(row.sGross)+' granted, less '+fmt(row.sVestTax)+' withheld ('+(row.sVestRate*100).toFixed(0)+'%)',V)}
-    ${tile('Cash taken',fmt(row.sSold),row.sNew>0?soldPct.toFixed(0)+'% of the year’s vest':'—','#cd3d64')}
-    ${tile('Added to holdings',fmt(row.sAdded??row.sRet),row.sInOpening>0?fmt(row.sInOpening)+' of the vest is already in the balance above':(row.sNew>0?keptPct.toFixed(0)+'% of the vest kept':'—'),'#1a8754')}
-    ${tile('Projected value · next tender',fmt(row.sEnd),'after '+(row.sRate*100).toFixed(0)+'% assumed return, marked '+(yr+1===sy?'':'Feb ')+(yr+1),V)}
-    ${tile('Stripe % of net worth',(row.sPct*100).toFixed(0)+'%',fmt(row.sEnd)+' of '+fmt(row.nw),row.sPct>0.5?'#cd3d64':V)}
-  </div>`;
+  // Thirteen figures of equal weight is a spreadsheet, not a dashboard. Three lead —
+  // what you hold, how concentrated that makes you, and what the next tender marks it at
+  // — and the rest becomes the definition list it always was underneath.
+  h+=`<section class="sq-lead ui-rise ui-rise-2">
+    <div class="sq-figure">
+      <span class="ui-eyebrow">Position${yr>sy?' · start of '+yr:' · as observed'}</span>
+      <strong class="ui-num">${UI.money(row.sBeg)}</strong>
+      <small>${yr>sy?'carried in from '+(yr-1):'at the '+obsLabel+' mark'}</small>
+    </div>
+    <div class="sq-figure"${row.sPct>0.5?' data-tone="warn"':''}>
+      <span class="ui-eyebrow">Share of net worth</span>
+      <strong class="ui-num">${UI.pct(row.sPct,0)}</strong>
+      <small>${UI.money(row.sEnd)} of ${UI.money(row.nw)}${row.sPct>0.5?' · one company, most of your wealth':''}</small>
+    </div>
+    <div class="sq-figure">
+      <span class="ui-eyebrow">At the next tender</span>
+      <strong class="ui-num">${UI.money(row.sEnd)}</strong>
+      <small>after ${(row.sRate*100).toFixed(0)}% assumed return, marked Feb ${yr+1}</small>
+    </div>
+  </section>`;
+
+  h+=`<dl class="sq-facts ui-rise ui-rise-3">
+    <div><dt>Granted in ${yr}</dt><dd class="ui-num">${UI.money(row.sGross)}</dd></div>
+    <div><dt>Withheld at vest</dt><dd class="ui-num">${UI.money(row.sVestTax)} <em>${(row.sVestRate*100).toFixed(0)}%</em></dd></div>
+    <div><dt>Reached your account</dt><dd class="ui-num">${UI.money(row.sNew)}</dd></div>
+    <div><dt>Taken as cash</dt><dd class="ui-num">${UI.money(row.sSold)}${row.sNew>0?` <em>${soldPct.toFixed(0)}% of the vest</em>`:''}</dd></div>
+    <div><dt>Added to holdings</dt><dd class="ui-num">${UI.money(row.sAdded??row.sRet)}</dd></div>
+    ${row.sInOpening>0?`<div><dt>Already in the opening balance</dt><dd class="ui-num">${UI.money(row.sInOpening)}</dd></div>`:''}
+  </dl>`;
   if(row.sHold>0){
     h+=`<div class="sc" style="margin-bottom:12px;border-color:rgba(103,114,229,.3)">
       <h3>◆ Held shares sold in ${yr}</h3>
@@ -1906,35 +1929,43 @@ function renderStripeTab(R,P){
 
   // ── Waterfall ──
   if(row.sNew>0){
-    h+=`<div class="sc" style="margin-bottom:12px">
-      <h3>💧 Where ${yr}’s vest went</h3>
-      <div style="display:flex;height:34px;border-radius:7px;overflow:hidden;margin:10px 0 6px;border:1px solid var(--bd)">
-        ${row.sSold>0?`<div style="width:${soldPct}%;background:linear-gradient(135deg,#e0577f,#cd3d64);display:flex;align-items:center;justify-content:center;color:#fff;font-size:9.5px;font-weight:700;min-width:0;overflow:hidden;white-space:nowrap">${soldPct>16?fmt(row.sSold)+' → cash':''}</div>`:''}
-        ${row.sRet>0?`<div style="width:${keptPct}%;background:linear-gradient(135deg,#7c85ea,#6772e5);display:flex;align-items:center;justify-content:center;color:#fff;font-size:9.5px;font-weight:700;min-width:0;overflow:hidden;white-space:nowrap">${keptPct>16?fmt(row.sRet)+' retained':''}</div>`:''}
-      </div>
-      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:7px;font-size:10.5px;color:var(--t2);line-height:1.7">
-        <strong style="color:${V};font-family:'SF Mono',monospace">${fmt(row.sNew)}</strong> vested
-        <span style="color:var(--t3)">→</span>
-        <strong style="color:#cd3d64;font-family:'SF Mono',monospace">${fmt(row.sSold)}</strong> covered ${row.need>0?`a ${fmt(row.need)} cash need`:'cash needs'}
-        <span style="color:var(--t3)">→</span>
-        <strong style="color:#1a8754;font-family:'SF Mono',monospace">${fmt(row.sRet)}</strong> kept
-        ${row.sRet>0&&R.indexOf(row)<R.length-1?`<span style="color:var(--t3)">→</span> worth <strong style="color:${V};font-family:'SF Mono',monospace">${fmt(Math.round(fv))}</strong> by ${last.yr}`:''}
-      </div>
-      ${row.dpOut>0?`<div style="font-size:8.5px;color:var(--t3);margin-top:6px;font-style:italic">Includes the ${fmt(row.dpOut)} down payment — a real cash outflow, so vesting stock helps fund it.</div>`:''}
-      ${row.sold>0?`<div style="font-size:8.5px;color:var(--a);margin-top:4px">The year’s vest wasn’t enough — a further ${fmt(row.sold)} came out of the diversified portfolio.</div>`:''}
-    </div>`;
+    // The bar this replaces had one segment in most years, and a chart of a single value
+    // is decoration rather than information. The sentence was always the better artefact:
+    // it reads as arithmetic, and every figure in it is checkable. The strip beneath it
+    // carries the proportion without pretending to be a chart of its own.
+    h+=`<section class="sq-flow">
+      <span class="ui-eyebrow">Where ${yr}’s vest went</span>
+      <p class="sq-sentence">
+        <b class="ui-num">${UI.money(row.sNew)}</b> reached your account
+        <i>→</i> <b class="ui-num" data-tone="spend">${UI.money(row.sSold)}</b> covered ${row.need>0?`a ${UI.money(row.need)} cash need`:'cash needs'}
+        <i>→</i> <b class="ui-num" data-tone="keep">${UI.money(row.sRet)}</b> kept
+        ${row.sRet>0&&R.indexOf(row)<R.length-1?`<i>→</i> worth <b class="ui-num">${UI.money(Math.round(fv))}</b> by ${last.yr}`:''}
+      </p>
+      ${row.sSold>0||row.sRet>0?`<div class="sq-split" role="img" aria-label="${soldPct.toFixed(0)} per cent taken as cash, ${keptPct.toFixed(0)} per cent retained">
+        ${row.sSold>0?`<span data-tone="spend" style="flex:${soldPct}"></span>`:''}
+        ${row.sRet>0?`<span data-tone="keep" style="flex:${keptPct}"></span>`:''}
+      </div>`:''}
+      ${row.dpOut>0?`<p class="sq-note">Includes the ${UI.money(row.dpOut)} down payment — a real cash outflow, so vesting stock helps fund it.</p>`:''}
+      ${row.sold>0?`<p class="sq-note" data-tone="warn">The year’s vest wasn’t enough — a further ${UI.money(row.sold)} came out of the diversified portfolio.</p>`:''}
+    </section>`;
   }
 
   // ── Cumulative ──
-  h+=`<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
-    ${tile('Total stock received',fmt(tot.n),sy+'–'+last.yr,V)}
-    ${tile('Total sold for cash',fmt(tot.s),tot.n>0?(tot.s/tot.n*100).toFixed(0)+'% of everything vested':'—','#cd3d64')}
-    ${tile('Total retained',fmt(tot.k),'at vest-date value','#1a8754')}
-    ${tile('Cumulative appreciation',fmt(appr),'above '+fmt(basis)+' of basis',V)}
-    ${tile('Sold from holdings',fmt(tot.h),tot.h>0?'to defend the liquid floor':'never needed','#cd3d64')}
-    ${tile('Tax on Stripe gains',fmt(tot.gt),tot.gt>0?'realised on held shares sold':'no held shares ever sold','var(--t3)')}
-    ${tile('Stripe at '+last.yr,fmt(last.sEnd),(last.sPct*100).toFixed(0)+'% of net worth',V)}
-  </div>`;
+  // Lifetime totals are reference, not headline. Colour is reserved for the two figures
+  // where it means something — appreciation is a gain, tax on it is a cost — so the rest
+  // read as the neutral facts they are.
+  h+=`<section class="sq-totals">
+    <span class="ui-eyebrow">Across the plan · ${sy}–${last.yr}</span>
+    <dl class="sq-facts">
+      <div><dt>Stock received</dt><dd class="ui-num">${UI.money(tot.n)}</dd></div>
+      <div><dt>Sold for cash</dt><dd class="ui-num">${UI.money(tot.s)}${tot.n>0?` <em>${(tot.s/tot.n*100).toFixed(0)}% of all vesting</em>`:''}</dd></div>
+      <div><dt>Retained</dt><dd class="ui-num">${UI.money(tot.k)} <em>at vest-date value</em></dd></div>
+      <div><dt>Appreciation</dt><dd class="ui-num" data-tone="gain">${UI.money(appr)} <em>above ${UI.money(basis)} of basis</em></dd></div>
+      <div><dt>Sold from holdings</dt><dd class="ui-num">${UI.money(tot.h)} <em>${tot.h>0?'to defend the liquid floor':'never needed'}</em></dd></div>
+      <div><dt>Tax on those gains</dt><dd class="ui-num"${tot.gt>0?' data-tone="cost"':''}>${UI.money(tot.gt)}</dd></div>
+      <div><dt>Position at ${last.yr}</dt><dd class="ui-num">${UI.money(last.sEnd)} <em>${UI.pct(last.sPct,0)} of net worth</em></dd></div>
+    </dl>
+  </section>`;
 
   // The waterfall never auto-sells previously retained or pre-existing Stripe. That is
   // deliberate, but it means a plan CAN drive the diversified pool below zero while a large
@@ -1974,9 +2005,9 @@ function renderStripeTab(R,P){
 
   ca.innerHTML=h;
   document.getElementById('summaries').innerHTML=`
-    <div class="sc"><h3>◆ How this is modeled</h3><p style="line-height:1.6">Each year’s grant vests in four equal quarterly lots, so a lot vesting in Q4 earns none of that year’s return. Pre-existing holdings earn the full year.</p></div>
-    <div class="sc"><h3>🧾 Tax</h3><p style="line-height:1.6">Vesting stock is ordinary W-2 income — already taxed above. Selling at vest adds no capital gain, because basis is the vest-date price.</p></div>
-    <div class="sc"><h3>📉 Not the portfolio</h3><p style="line-height:1.6">Stripe uses its own return path, which you set. Portfolio return (${((P.investReturn||0)*100).toFixed(1)}%) applies only to diversified assets, and Monte Carlo varies only those.</p></div>`;
+    <div class="sc"><h3>${UI.icon('diamond')}How this is modeled</h3><p>Each year’s grant vests in four equal quarterly lots, so a lot vesting in Q4 earns none of that year’s return. Pre-existing holdings earn the full year.</p></div>
+    <div class="sc"><h3>${UI.icon('doc')}Tax</h3><p>Vesting stock is ordinary W-2 income — already taxed above. Selling at vest adds no capital gain, because basis is the vest-date price.</p></div>
+    <div class="sc"><h3>${UI.icon('chart')}Not the portfolio</h3><p>Stripe uses its own return path, which you set. Portfolio return (${((P.investReturn||0)*100).toFixed(1)}%) applies only to diversified assets, and Monte Carlo varies only those.</p></div>`;
 }
 
 // Actual synced Stripe balance vs. the plan's assumption. Synced values are shown, never
@@ -2150,38 +2181,36 @@ function snoozeAlert(key,days){
   setAlertState(key,'snoozed',until);
 }
 
-const SEV_STYLE={
-  critical:{c:'var(--r)',bg:'rgba(205,61,100,.06)',bd:'rgba(205,61,100,.35)',label:'Critical'},
-  warning:{c:'var(--a)',bg:'rgba(245,183,49,.06)',bd:'rgba(245,183,49,.4)',label:'Worth attention'},
-  info:{c:'var(--b)',bg:'rgba(0,115,230,.05)',bd:'rgba(0,115,230,.3)',label:'For information'},
-};
+// An alert card speaks the cockpit's language: a quiet severity dot, a real headline, the
+// evidence as a ledger, and exactly ONE primary action. The old card gave five buttons
+// equal weight and let a bordered "FOR INFORMATION" badge outshout the title it labelled.
+const SEV_LABEL={critical:'Critical',warning:'Needs attention',info:'For information'};
 
 function alertCard(a){
-  const st=SEV_STYLE[a.severity]||SEV_STYLE.info;
-  return `<div class="glass-card" style="padding:14px 16px;border-color:${st.bd};background:${st.bg};margin-bottom:10px">
-    <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:8px">
-      <span style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:${st.c};border:1px solid ${st.bd};border-radius:4px;padding:2px 6px;white-space:nowrap;margin-top:2px">${st.label}</span>
-      <div style="flex:1"><div style="font-size:12.5px;font-weight:700;color:var(--tx);line-height:1.35">${advEscape(a.title)}</div>
-      ${a.occurrences>1?`<div style="font-size:8.5px;color:var(--t3);margin-top:2px">Detected on ${a.occurrences} checks</div>`:''}</div>
-    </div>
-    <div style="font-size:10.5px;color:var(--t2);line-height:1.6;margin-bottom:9px">${advEscape(a.significance)}</div>
-    <div style="background:var(--s2);border:1px solid var(--bd);border-radius:7px;padding:9px 11px;margin-bottom:9px">
-      <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--t3);margin-bottom:6px">The numbers behind this</div>
-      ${a.evidence.map(e=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:10px;border-top:1px solid var(--bd)">
-        <span style="color:var(--t2)">${advEscape(e.label)}</span>
-        <span style="text-align:right"><span class="mono" style="color:var(--tx);font-weight:600">${advEscape(String(e.value))}</span>
-        <span style="color:var(--t3);font-size:8.5px;display:block">${advEscape(e.source)}</span></span>
+  const e=advEscape;
+  return `<article class="wl-alert" data-sev="${a.severity}">
+    <header>
+      <span class="ui-sev" data-sev="${a.severity}">${e(SEV_LABEL[a.severity]||a.severity)}</span>
+      ${a.occurrences>1?`<span class="wl-repeat">Seen on ${a.occurrences} checks</span>`:''}
+    </header>
+    <h3>${e(a.title)}</h3>
+    <p class="wl-why">${e(a.significance)}</p>
+    <div class="wl-evidence">
+      <span class="ui-eyebrow">The numbers behind this</span>
+      ${a.evidence.map(x=>`<div class="wl-row">
+        <span>${e(x.label)}</span>
+        <span><strong class="ui-num">${e(String(x.value))}</strong><small>${e(x.source)}</small></span>
       </div>`).join('')}
     </div>
-    <div style="font-size:10.5px;color:var(--tx);line-height:1.6;margin-bottom:10px"><strong>What to do:</strong> ${advEscape(a.action)}</div>
-    <div style="display:flex;gap:5px;flex-wrap:wrap">
-      <button onclick="setAlertState('${a.key}','resolved')" style="font-size:9px;padding:5px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--s1);color:var(--g);font-family:inherit;cursor:pointer;font-weight:600">✓ Resolved</button>
-      <button onclick="snoozeAlert('${a.key}',30)" style="font-size:9px;padding:5px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--s1);color:var(--t2);font-family:inherit;cursor:pointer">Snooze 30d</button>
-      <button onclick="snoozeAlert('${a.key}',90)" style="font-size:9px;padding:5px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--s1);color:var(--t2);font-family:inherit;cursor:pointer">Snooze 90d</button>
-      <button onclick="setAlertState('${a.key}','dismissed')" style="font-size:9px;padding:5px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--s1);color:var(--t3);font-family:inherit;cursor:pointer">Dismiss</button>
-      <button onclick="askAboutAlert('${a.key}')" style="font-size:9px;padding:5px 10px;border-radius:6px;border:1px solid rgba(103,114,229,.35);background:var(--s1);color:#6772e5;font-family:inherit;cursor:pointer">Ask the advisor</button>
-    </div>
-  </div>`;
+    <p class="wl-do"><strong>What to do</strong>${e(a.action)}</p>
+    <footer>
+      <button class="ui-btn ui-btn-primary" onclick="askAboutAlert('${a.key}')">${UI.icon('spark')}Ask the advisor</button>
+      <button class="ui-btn" onclick="setAlertState('${a.key}','resolved')">${UI.icon('check')}Resolved</button>
+      <button class="ui-btn ui-btn-quiet" onclick="snoozeAlert('${a.key}',30)">Snooze 30d</button>
+      <button class="ui-btn ui-btn-quiet" onclick="snoozeAlert('${a.key}',90)">Snooze 90d</button>
+      <button class="ui-btn ui-btn-quiet" onclick="setAlertState('${a.key}','dismissed')">Dismiss</button>
+    </footer>
+  </article>`;
 }
 
 function askAboutAlert(key){
@@ -2203,74 +2232,71 @@ function renderWatchTab(R,P){
   const money=v=>fmt(Math.round(v||0));
   const ca=document.getElementById('chartArea');
   document.getElementById('summaries').innerHTML='';
-  if(!_inbox&&!_inboxError){loadInbox();ca.innerHTML=`<div class="glass-card" style="padding:22px;text-align:center;color:var(--t2);font-size:11px">Running the checks…</div>`;return}
+  if(!_inbox&&!_inboxError){loadInbox();ca.innerHTML=`<div class="wl"><header class="ui-head"><div><span class="ui-eyebrow">SIGNALS / REVIEW</span><h2>Running the checks…</h2></div></header></div>`;return}
 
-  let h=`<div style="display:flex;flex-direction:column;gap:12px">`;
+  let h=`<div class="wl">`;
+
+  // Every screen opens the same way: eyebrow, headline, actions.
+  h+=`<header class="ui-head ui-rise"><div>
+      <span class="ui-eyebrow">SIGNALS / REVIEW</span>
+      <h2>${_inboxError?'The checks could not run.':(_inbox.counts.open?'What needs you.':'Nothing needs you.')}</h2>
+    </div><div class="ui-head-actions">
+      <button class="ui-btn" onclick="loadInbox(true)">${UI.icon('clock')}Re-check</button>
+    </div></header>`;
 
   if(_inboxError){
-    h+=`<div class="glass-card" style="padding:15px 17px;border-color:rgba(205,61,100,.4);background:rgba(205,61,100,.05)">
-      <div style="font-size:12px;font-weight:700;color:var(--r);margin-bottom:5px">The checks could not run</div>
-      <div style="font-size:10.5px;color:var(--t2);line-height:1.6;margin-bottom:9px">${advEscape(_inboxError)}
-      <br><strong>This is not an all-clear.</strong> Nothing was checked, so nothing can be said about whether the plan is on track.</div>
-      <button onclick="loadInbox(true)" style="font-size:10px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">Try again</button></div>`;
+    h+=`<div class="wl-banner" data-tone="critical">
+      <p>${advEscape(_inboxError)}</p>
+      <p><strong>This is not an all-clear.</strong> Nothing was checked, so nothing can be said about whether the plan is on track.</p>
+      <button class="ui-btn ui-btn-primary" onclick="loadInbox(true)">Try again</button></div>`;
     ca.innerHTML=h+`</div>`;return;
   }
 
   const d=_inbox;
   const complete=(d.notChecked||[]).length===0&&(d.checksThatFailed||[]).length===0;
 
-  // Header: what ran, when, and how completely — before any finding.
-  h+=`<div class="glass-card" style="padding:14px 16px">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
-      <div><div style="font-size:13px;font-weight:700;color:var(--tx)">Watchlist</div>
-      <div style="font-size:9.5px;color:var(--t2);margin-top:3px">
-        ${d.checksRun} of ${d.checksTotal} checks ran · ${d.counts.open} open
-        ${d.counts.suppressed?` · ${d.counts.suppressed} dismissed or snoozed`:''}
-        · generated ${advEscape(String(d.generatedAt))}</div></div>
-      <button onclick="loadInbox(true)" style="font-size:9.5px;padding:5px 11px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">Re-check</button>
-    </div>
-    ${complete?'':`<div style="margin-top:9px;padding:8px 10px;border:1px solid rgba(245,183,49,.4);background:rgba(245,183,49,.06);border-radius:7px;font-size:10px;color:var(--t2);line-height:1.55">
-      <strong style="color:var(--a)">This is a partial picture.</strong> Some checks could not run, so the areas below are unexamined rather than clear.</div>`}
+  // Coverage first, before any finding — what ran, when, and how completely.
+  h+=`<div class="wl-coverage ui-rise ui-rise-2">
+    <span>${d.checksRun} of ${d.checksTotal} checks ran</span>
+    <span>${d.counts.open} open${d.counts.suppressed?` · ${d.counts.suppressed} silenced`:''}</span>
+    <span>${advEscape(String(d.generatedAt))}</span>
   </div>`;
+  if(!complete)h+=`<div class="wl-banner" data-tone="warning">
+      <p><strong>This is a partial picture.</strong> Some checks could not run, so the areas below are unexamined rather than clear.</p></div>`;
 
   // Priorities — at most three, by construction.
   if(d.priorities.length){
-    h+=`<div><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:7px">Needs your attention</div>
-      ${d.priorities.map(alertCard).join('')}</div>`;
+    h+=`<section class="ui-rise ui-rise-3"><span class="ui-eyebrow">Needs your attention</span>
+      ${d.priorities.map(alertCard).join('')}</section>`;
   } else {
-    h+=`<div class="glass-card" style="padding:15px 17px;border-color:rgba(26,135,84,.3);background:rgba(26,135,84,.05)">
-      <div style="font-size:12px;font-weight:700;color:var(--g);margin-bottom:4px">${complete?'Nothing needs attention':'Nothing found in the checks that ran'}</div>
-      <div style="font-size:10.5px;color:var(--t2);line-height:1.6">${complete
-        ?`All ${d.checksTotal} checks ran and none of them found a condition worth raising.`
-        :`${d.checksRun} of ${d.checksTotal} checks ran and found nothing. The rest could not run — see below.`}</div></div>`;
+    h+=`<div class="wl-banner ui-rise ui-rise-3" data-tone="${complete?'clear':'warning'}">
+      <p><strong>${complete?'Nothing needs attention.':'Nothing found in the checks that ran.'}</strong> ${complete
+        ?`All ${d.checksTotal} checks ran and none found a condition worth raising.`
+        :`${d.checksRun} of ${d.checksTotal} checks ran and found nothing. The rest could not run — see below.`}</p></div>`;
   }
 
   if(d.more&&d.more.length){
-    h+=`<details class="glass-card" style="padding:12px 15px"><summary style="cursor:pointer;font-size:10.5px;font-weight:600;color:var(--t2)">${d.more.length} more open item${d.more.length===1?'':'s'}, below the top three</summary>
-      <div style="margin-top:10px">${d.more.map(alertCard).join('')}</div></details>`;
+    h+=`<details class="wl-fold"><summary>${d.more.length} more open item${d.more.length===1?'':'s'}, below the top three</summary>
+      <div>${d.more.map(alertCard).join('')}</div></details>`;
   }
 
   // What was NOT checked, given the same weight as what was.
   if((d.notChecked||[]).length){
-    h+=`<div class="glass-card" style="padding:13px 15px;border-color:rgba(245,183,49,.35)">
-      <div style="font-size:10.5px;font-weight:700;color:var(--a);margin-bottom:7px">${d.notChecked.length} thing${d.notChecked.length===1?'':'s'} could not be checked</div>
-      ${d.notChecked.map(s=>`<div style="padding:6px 0;border-top:1px solid var(--bd);font-size:10px;line-height:1.55">
-        <span style="color:var(--tx);font-weight:600">${advEscape(s.kind)}</span>
-        <span style="color:var(--t3)"> — needs ${advEscape(String(s.missing))}</span>
-        ${s.note?`<div style="color:var(--t2);margin-top:2px">${advEscape(s.note)}</div>`:''}</div>`).join('')}
-    </div>`;
+    h+=`<section class="wl-gaps"><span class="ui-eyebrow">${d.notChecked.length} thing${d.notChecked.length===1?'':'s'} could not be checked</span>
+      ${d.notChecked.map(s=>`<div class="wl-gap">
+        <strong>${advEscape(s.kind)}</strong><em>needs ${advEscape(String(s.missing))}</em>
+        ${s.note?`<p>${advEscape(s.note)}</p>`:''}</div>`).join('')}
+    </section>`;
   }
   if((d.checksThatFailed||[]).length){
-    h+=`<div class="glass-card" style="padding:13px 15px;border-color:rgba(205,61,100,.4)">
-      <div style="font-size:10.5px;font-weight:700;color:var(--r);margin-bottom:6px">${d.checksThatFailed.length} check${d.checksThatFailed.length===1?'':'s'} failed to run</div>
-      ${d.checksThatFailed.map(f=>`<div style="font-size:10px;color:var(--t2);padding:3px 0">${advEscape(f.check)}: ${advEscape(f.error)}</div>`).join('')}</div>`;
+    h+=`<section class="wl-gaps" data-tone="critical"><span class="ui-eyebrow">${d.checksThatFailed.length} check${d.checksThatFailed.length===1?'':'s'} failed to run</span>
+      ${d.checksThatFailed.map(f=>`<div class="wl-gap"><strong>${advEscape(f.check)}</strong><p>${advEscape(f.error)}</p></div>`).join('')}</section>`;
   }
 
   // ── Tax position ──────────────────────────────────────────────────────
   if(d.taxPlan&&d.taxPlan.status==='ok'){
     const t=d.taxPlan;
-    h+=`<div class="glass-card" style="padding:14px 16px">
-      <div style="font-size:11.5px;font-weight:700;color:var(--tx);margin-bottom:8px">Tax paid against tax owed</div>
+    h+=`<section class="wl-tax"><span class="ui-eyebrow">Tax paid against tax owed</span>
       <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));margin-bottom:9px">
         ${[['Projected liability',money(t.projectedLiability),'var(--tx)'],
            ['Paid so far',money(t.paidToDate),'var(--b)'],
@@ -2286,7 +2312,7 @@ function renderWatchTab(R,P){
   }
 
   if(d.opportunities&&d.opportunities.length){
-    h+=`<details class="glass-card" style="padding:12px 15px"><summary style="cursor:pointer;font-size:10.5px;font-weight:600;color:var(--t2)">${d.opportunities.length} tax item${d.opportunities.length===1?'':'s'} screened</summary>
+    h+=`<details class="wl-fold"><summary>${d.opportunities.length} tax item${d.opportunities.length===1?'':'s'} screened</summary>
       <div style="margin-top:9px">${d.opportunities.map(o=>{
         const est=o.confidence==='estimate';
         return `<div style="padding:9px 0;border-top:1px solid var(--bd)">
@@ -2304,8 +2330,7 @@ function renderWatchTab(R,P){
   }
 
   if(d.documentRequests&&d.documentRequests.length){
-    h+=`<div class="glass-card" style="padding:13px 15px;border-color:rgba(103,114,229,.3)">
-      <div style="font-size:10.5px;font-weight:700;color:#6772e5;margin-bottom:7px">To go further, these are needed</div>
+    h+=`<section class="wl-needs"><span class="ui-eyebrow">To go further, these are needed</span>
       ${d.documentRequests.map(r=>`<div style="padding:6px 0;border-top:1px solid var(--bd);font-size:10px;line-height:1.55">
         <div style="color:var(--tx);font-weight:600">${advEscape(r.label)}</div>
         <div style="color:var(--t2);margin-top:2px">${r.reasons.map(advEscape).join(' ')}</div></div>`).join('')}
@@ -2315,7 +2340,7 @@ function renderWatchTab(R,P){
 
   // ── Where each input came from ────────────────────────────────────────
   if(d.sources){
-    h+=`<details class="glass-card" style="padding:12px 15px"><summary style="cursor:pointer;font-size:10px;font-weight:600;color:var(--t3)">Where these checks got their data</summary>
+    h+=`<details class="wl-fold"><summary>Where these checks got their data</summary>
       <div style="margin-top:8px">${Object.entries(d.sources).map(([k,v])=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-top:1px solid var(--bd);font-size:9.5px">
         <span style="color:var(--t2)">${advEscape(k)}</span><span style="color:${v==='ok'?'var(--g)':'var(--a)'}">${advEscape(String(v))}</span></div>`).join('')}</div></details>`;
   }
@@ -2323,8 +2348,7 @@ function renderWatchTab(R,P){
   // ── Briefing ──────────────────────────────────────────────────────────
   if(_briefing){
     const c=_briefing.status==='current'?'var(--g)':_briefing.failing?'var(--r)':'var(--a)';
-    h+=`<div class="glass-card" style="padding:13px 15px">
-      <div style="font-size:10.5px;font-weight:700;color:var(--tx);margin-bottom:4px">Latest briefing</div>
+    h+=`<section class="wl-brief"><span class="ui-eyebrow">Latest briefing</span>
       <div style="font-size:9.5px;color:${c};line-height:1.55;margin-bottom:${_briefing.hasBriefing?'8px':'0'}">${advEscape(_briefing.message||'')}</div>
       ${_briefing.coverageNote?`<div style="font-size:9.5px;color:var(--a);margin-bottom:7px">${advEscape(_briefing.coverageNote)}</div>`:''}
       ${_briefing.hasBriefing&&_briefing.briefing.narrative?`<div style="font-size:10.5px;color:var(--t2);line-height:1.65;white-space:pre-wrap">${advEscape(_briefing.briefing.narrative)}</div>`:''}

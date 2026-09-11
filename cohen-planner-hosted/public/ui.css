@@ -156,3 +156,141 @@
 .cp-metrics{align-content:start;padding:var(--sp-3) var(--sp-2);gap:var(--sp-1) 0}
 .cp-metric{padding:var(--sp-2) var(--sp-3);border-radius:10px}
 .cp-position{align-items:stretch}
+
+/* ═══ WATCHLIST ═══
+   The screen that used to break the spell. It now opens the same way the Cockpit does
+   — eyebrow, headline, actions — and every block below is a section on the same
+   rhythm rather than a stack of differently-padded boxes. */
+.wl{display:flex;flex-direction:column;gap:var(--sp-3);max-width:1080px}
+.wl-coverage{display:flex;flex-wrap:wrap;gap:var(--sp-1) var(--sp-3);
+  font-size:var(--t-sm);color:var(--t3);margin-top:calc(var(--sp-3) * -1)}
+.wl-coverage span:not(:last-child)::after{content:"·";margin-left:var(--sp-3);color:var(--bd2)}
+
+/* One banner component, three tones. Amber only where something needs you. */
+.wl-banner{border:1px solid var(--tone-bd);background:var(--tone-bg);border-radius:var(--radius);
+  padding:var(--sp-2) var(--sp-3);--tone-bd:var(--bd);--tone-bg:transparent}
+.wl-banner p{font-size:var(--t-body);line-height:1.6;color:var(--t2);margin:0 0 var(--sp-1)}
+.wl-banner p:last-of-type{margin-bottom:0}
+.wl-banner strong{color:var(--tone-fg)}
+.wl-banner[data-tone=warning]{--tone-bd:color-mix(in srgb,var(--warn) 38%,transparent);
+  --tone-bg:color-mix(in srgb,var(--warn) 7%,transparent);--tone-fg:var(--warn)}
+.wl-banner[data-tone=critical]{--tone-bd:color-mix(in srgb,var(--loss) 40%,transparent);
+  --tone-bg:color-mix(in srgb,var(--loss) 7%,transparent);--tone-fg:var(--loss)}
+.wl-banner[data-tone=clear]{--tone-bd:color-mix(in srgb,var(--gain) 30%,transparent);
+  --tone-bg:color-mix(in srgb,var(--gain) 6%,transparent);--tone-fg:var(--gain)}
+.wl-banner .ui-btn{margin-top:var(--sp-2)}
+
+/* The alert. A left rail carries the severity colour so the card itself stays calm —
+   the old version painted the whole card and shouted its own category label louder
+   than the finding. */
+.wl-alert{position:relative;border:1px solid var(--bd);border-left:3px solid var(--rail);
+  border-radius:var(--radius);background:var(--s1);padding:var(--sp-3) var(--sp-4);
+  margin-bottom:var(--sp-2);--rail:var(--neutral)}
+.wl-alert[data-sev=critical]{--rail:var(--loss)}
+.wl-alert[data-sev=warning]{--rail:var(--warn)}
+.wl-alert>header{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-2);margin-bottom:var(--sp-2)}
+.wl-repeat{font-size:var(--t-xs);color:var(--t3)}
+.wl-alert h3{font-size:19px;font-weight:550;letter-spacing:-.4px;line-height:1.35;margin:0 0 var(--sp-1)}
+.wl-why{font-size:var(--t-body);color:var(--t2);line-height:1.65;margin:0 0 var(--sp-3);max-width:72ch}
+
+/* Evidence as a ledger: label left, figure right, source beneath the figure. */
+.wl-evidence{border:1px solid var(--bd);border-radius:11px;background:var(--s2);
+  padding:var(--sp-2) var(--sp-3) var(--sp-1);margin-bottom:var(--sp-3)}
+.wl-row{display:flex;align-items:baseline;justify-content:space-between;gap:var(--sp-3);
+  padding:9px 0;border-top:1px solid var(--bd);font-size:var(--t-sm)}
+.wl-row:first-of-type{border-top:0}
+.wl-row>span:first-child{color:var(--t2)}
+.wl-row>span:last-child{text-align:right}
+.wl-row strong{display:block;color:var(--tx);font-weight:600;font-family:'SF Mono','Fira Code',monospace}
+.wl-row small{display:block;font-size:var(--t-xs);color:var(--t3);margin-top:2px}
+.wl-do{font-size:var(--t-body);color:var(--t2);line-height:1.65;margin:0 0 var(--sp-3);max-width:72ch}
+.wl-do strong{display:block;font-size:var(--t-xs);font-weight:650;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--t3);margin-bottom:5px}
+.wl-alert>footer{display:flex;gap:var(--sp-1);flex-wrap:wrap;align-items:center}
+
+/* Gaps and folds. What was NOT checked reads as a section, not an afterthought. */
+.wl-gaps{border:1px solid color-mix(in srgb,var(--warn) 30%,transparent);
+  border-radius:var(--radius);padding:var(--sp-3) var(--sp-4)}
+.wl-gaps[data-tone=critical]{border-color:color-mix(in srgb,var(--loss) 35%,transparent)}
+.wl-gap{padding:var(--sp-2) 0;border-top:1px solid var(--bd);font-size:var(--t-sm);line-height:1.6}
+.wl-gap:first-of-type{border-top:0;padding-top:var(--sp-1)}
+.wl-gap strong{color:var(--tx);font-weight:600;margin-right:7px}
+.wl-gap em{font-style:normal;color:var(--t3)}
+.wl-gap p{color:var(--t2);margin:4px 0 0;max-width:80ch}
+
+.wl-fold{border:1px solid var(--bd);border-radius:var(--radius);background:var(--s1);
+  padding:var(--sp-2) var(--sp-3)}
+.wl-fold>summary{cursor:pointer;font-size:var(--t-body);font-weight:500;color:var(--t2);
+  list-style-position:inside;min-height:30px;display:flex;align-items:center}
+.wl-fold>summary:hover{color:var(--tx)}
+.wl-fold[open]>summary{margin-bottom:var(--sp-3);color:var(--tx)}
+
+.wl-tax,.wl-needs,.wl-brief{border:1px solid var(--bd);border-radius:var(--radius);
+  background:var(--s1);padding:var(--sp-3) var(--sp-4)}
+.wl-needs{border-color:color-mix(in srgb,var(--link) 32%,transparent)}
+
+@media(max-width:760px){
+  .wl-alert{padding:var(--sp-3) var(--sp-2)}
+  .wl-alert>footer .ui-btn{flex:1 1 auto;justify-content:center}
+  .wl-gaps,.wl-tax,.wl-needs,.wl-brief{padding:var(--sp-3) var(--sp-2)}
+}
+
+/* Sections now carry their own borders, so the page-level card that used to wrap every
+   tab just draws a box around a box. Only the legacy views that still rely on it keep it. */
+#chartArea{padding:0;background:transparent;border:0;box-shadow:none}
+
+/* ═══ STRIPE ═══
+   Three figures lead. Everything else is a definition list, which is what thirteen
+   equal-weight KPI cards always were underneath. */
+.sq-year{display:inline-flex;align-items:center;gap:9px;font-size:var(--t-sm);color:var(--t3)}
+.sq-year select{padding:8px 11px;border:1px solid var(--bd2);border-radius:9px;
+  background:var(--s2);color:var(--tx);font-family:inherit;font-size:var(--t-sm);min-height:40px}
+
+.sq-lead{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--bd);
+  border:1px solid var(--bd);border-radius:var(--radius-lg);overflow:hidden;margin-bottom:var(--sp-3)}
+.sq-figure{background:linear-gradient(150deg,#152134,#111a29);padding:var(--sp-3) var(--sp-4)}
+.sq-figure strong{display:block;font-size:38px;font-weight:450;letter-spacing:-1.6px;
+  line-height:1.2;margin:var(--sp-1) 0 6px}
+.sq-figure small{font-size:var(--t-sm);color:var(--t3);line-height:1.5;display:block}
+.sq-figure[data-tone=warn] strong{color:var(--warn)}
+
+.sq-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+  gap:1px;background:var(--bd);border:1px solid var(--bd);border-radius:var(--radius);
+  overflow:hidden;margin:0 0 var(--sp-3)}
+.sq-facts>div{background:var(--s1);padding:var(--sp-2) var(--sp-3)}
+.sq-facts dt{font-size:var(--t-xs);color:var(--t3);margin-bottom:5px}
+.sq-facts dd{margin:0;font-size:17px;font-weight:550;color:var(--tx)}
+.sq-facts dd em{font-style:normal;font-size:var(--t-xs);font-weight:400;color:var(--t3);margin-left:5px}
+
+/* The sentence is the artefact. The bar underneath is a proportion strip with no labels
+   — it supports the sentence rather than pretending to be a chart of its own. */
+.sq-flow{border:1px solid var(--bd);border-radius:var(--radius);background:var(--s1);
+  padding:var(--sp-3) var(--sp-4);margin-bottom:var(--sp-3)}
+.sq-sentence{font-size:var(--t-lead);line-height:2;color:var(--t2);margin:0}
+.sq-sentence b{font-weight:600;color:var(--link);font-family:'SF Mono','Fira Code',monospace;font-size:15px}
+.sq-sentence b[data-tone=spend]{color:var(--loss)}
+.sq-sentence b[data-tone=keep]{color:var(--gain)}
+.sq-sentence i{font-style:normal;color:var(--t4);margin:0 5px}
+.sq-split{display:flex;height:5px;border-radius:3px;overflow:hidden;margin-top:var(--sp-3);gap:2px}
+.sq-split span[data-tone=spend]{background:var(--loss)}
+.sq-split span[data-tone=keep]{background:var(--gain)}
+.sq-note{font-size:var(--t-sm);color:var(--t3);margin:var(--sp-2) 0 0;line-height:1.6}
+.sq-note[data-tone=warn]{color:var(--warn)}
+
+@media(max-width:1000px){.sq-lead{grid-template-columns:1fr}}
+@media(max-width:760px){
+  .sq-figure{padding:var(--sp-3) var(--sp-2)}.sq-figure strong{font-size:32px}
+  .sq-flow{padding:var(--sp-3) var(--sp-2)}.sq-sentence{font-size:var(--t-body);line-height:1.95}
+}
+
+/* Lifetime totals are reference, not headline — so they get the same definition list as
+   the year's facts, and colour only where it means something. */
+.sq-totals{margin-bottom:var(--sp-3)}
+.sq-totals .sq-facts{margin-top:var(--sp-1)}
+.sq-facts dd[data-tone=gain]{color:var(--gain)}
+.sq-facts dd[data-tone=cost]{color:var(--loss)}
+
+/* Footnote cards: an icon, not an emoji, on the same baseline as the text. */
+.sc h3{display:flex;align-items:center;gap:8px;font-size:var(--t-sm);font-weight:650;
+  letter-spacing:.02em;color:var(--t2);margin:0 0 var(--sp-1)}
+.sc p{font-size:var(--t-sm);line-height:1.65;color:var(--t3);margin:0}
