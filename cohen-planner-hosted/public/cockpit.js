@@ -70,7 +70,7 @@ function renderCockpit(R){
       <div class="cp-wealth">
         <span class="cp-eyebrow">NET WORTH${cockpitExRet?' · EX-RETIREMENT':''}</span>
         <strong class="ui-hero-value" id="cp-hero" data-source="${hero.source}">${hero.value==null?'—':UI.money(hero.value)}</strong>
-        <div class="cp-hero-meta">${UI.prov(hero.source)}${hero.partial?UI.prov('missing','incomplete'):''}</div>
+        <div class="cp-hero-meta">${UI.prov(hero.source)}${hero.partial?cockpitGapPanel(s,d):''}</div>
         <p>${e(hero.note)}</p>
         <button onclick="cockpitGo('overview')">See the composition <span>${UI.icon('arrow')}</span></button>
       </div>
@@ -177,6 +177,40 @@ const cpMilestonePlugin={
     ctx.restore();
   },
 };
+
+// "Incomplete" on its own is a word, not information: it tells the reader something is
+// wrong without saying what, how much, or what to do. This opens into the actual list —
+// which accounts returned nothing, and the two real ways out of it.
+//
+// There is deliberately no "dismiss" that leaves the total short while hiding the warning.
+// The honest ways to stop seeing this are to supply the balance or to exclude the account,
+// and both are offered here. Neither one invents a number: a confirmed balance is recorded
+// as the reader's own dated figure, and an excluded account leaves the totals rather than
+// being counted as zero.
+function cockpitGapPanel(summary,overview){
+  const e=advEscape;
+  const missing=(summary&&summary.unknownBalance)||[];
+  const syncPartial=!!(overview&&overview.partial)||!!(typeof monarchSnapshot!=='undefined'&&monarchSnapshot&&monarchSnapshot.partial);
+  const rows=missing.map(a=>`<li>
+    <span>${e(a.name||a.id)}</span>
+    <button type="button" onclick="confirmAccountBalance('${e(String(a.id))}','${e(String(a.name||'').replace(/'/g,''))}',${JSON.stringify(a.rawMissing==null?null:String(a.rawMissing))})">Enter the balance</button>
+    <button type="button" onclick="setAccountHidden('${e(String(a.id))}',true,${JSON.stringify(a.name||'')})">Exclude it</button>
+  </li>`).join('');
+  return `<details class="cp-gap">
+    <summary aria-label="Why this total is incomplete">${UI.prov('missing','incomplete')}</summary>
+    <div class="cp-gap-body" role="group">
+      <strong>Your net worth is short by an unknown amount.</strong>
+      <p>${missing.length
+        ? `${missing.length} account${missing.length===1?'':'s'} returned no balance. ${missing.length===1?'It is':'They are'} counted <em>nowhere</em> above — not as zero — because a balance nobody could read is not the same as an empty account.`
+        : syncPartial
+          ? 'The last sync did not return every account, so the figure above covers only the accounts that did report.'
+          : 'Some balances could not be read, so the figure above covers only the accounts that did report.'}</p>
+      ${rows?`<ul>${rows}</ul>
+      <p class="cp-gap-fine">Entering a balance records it as <em>your</em> figure, dated today; a real balance from Monarch supersedes it automatically. Excluding an account takes it out of the totals and says so — it is never counted as zero.</p>`:''}
+      <button type="button" class="cp-gap-link" onclick="cockpitGo('overview')">Open accounts ↗</button>
+    </div>
+  </details>`;
+}
 
 // The observation date, written the way a person would say it.
 function cockpitObservedLabel(P){

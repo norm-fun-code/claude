@@ -106,3 +106,45 @@ body,body.home-view{background:radial-gradient(ellipse at 80% -20%,#1a2b47 0,tra
 .cp-basis button[aria-checked=true]{border-color:#4a6a7d;background:#16293a}
 .cp-basis button span{font-weight:550}
 .cp-basis button em{font-style:normal;font-size:12px;color:var(--t3)}
+
+/* "Incomplete" is a word, not information. The chip opens into what is actually missing and
+   the two ways out of it. Anchored to the chip, above everything, and it must not stretch
+   the hero row it lives in. */
+/* The hero card clips to its rounded corners, which also clips this panel. It is released
+   only while the panel is actually open, so the card keeps its clipped edges the rest of
+   the time. */
+.cp-position:has(.cp-gap[open]){overflow:visible}
+.cp-gap{position:relative;display:inline-block}
+.cp-gap>summary{list-style:none;cursor:pointer;display:inline-flex}
+.cp-gap>summary::-webkit-details-marker{display:none}
+.cp-gap>summary:focus-visible{outline:2px solid var(--g);outline-offset:3px;border-radius:6px}
+.cp-gap>summary .ui-prov{cursor:pointer;border-bottom:1px dotted currentColor}
+.cp-gap-body{position:absolute;z-index:70;top:calc(100% + 8px);left:0;width:max-content;
+  max-width:min(360px,78vw);padding:14px 16px;border:1px solid var(--bd2);border-radius:12px;
+  background:#16222f;box-shadow:0 18px 44px rgba(0,0,0,.5);text-align:left}
+.cp-gap-body strong{display:block;font-size:13px;font-weight:600;color:var(--a);margin-bottom:6px}
+.cp-gap-body p{font-size:12px;color:var(--t2);line-height:1.6;margin:0 0 10px}
+.cp-gap-body em{font-style:normal;font-weight:600;color:var(--tx)}
+.cp-gap-body ul{list-style:none;margin:0 0 10px;padding:0;border-top:1px solid var(--bd)}
+.cp-gap-body li{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;
+  border-bottom:1px solid var(--bd)}
+.cp-gap-body li>span{flex:1;min-width:110px;font-size:12px;color:var(--tx)}
+.cp-gap-body li>button{border:1px solid var(--bd2);border-radius:7px;background:var(--s2);
+  color:var(--t2);font-family:inherit;font-size:11px;padding:5px 9px;cursor:pointer;min-height:30px}
+.cp-gap-body li>button:hover{background:var(--s3);color:var(--tx)}
+.cp-gap-fine{font-size:11px!important;color:var(--t3)!important}
+.cp-gap-link{border:0;background:none;color:var(--g);font-family:inherit;font-size:12px;
+  padding:2px 0;cursor:pointer}
+/* The chip sits near the left of the hero, so the panel stays left-anchored and is capped
+   to the viewport instead. Anchoring it right pushed it off the LEFT edge on a phone —
+   the same distance off-screen, in the other direction. */
+@media(max-width:760px){
+  /* Anchored to the hero row rather than to the chip inside it, so the panel spans the
+     available width exactly and cannot run off either edge whatever the chips before it
+     happen to measure. Left-anchoring to the chip pushed it off the right; right-anchoring
+     pushed it the same distance off the left. */
+  .cp-hero-meta{position:relative}
+  .cp-gap{position:static}
+  .cp-gap-body{left:0;right:0;width:auto;max-width:none}
+  .cp-gap-body li>button{flex:1 1 auto;min-height:36px}
+}
