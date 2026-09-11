@@ -870,7 +870,12 @@ function _updateChart(datasets,labels){
   // Normal update — 'active' mode would force every point into its hover state (big dots).
   charts.main.update();return true;
 }
-function deflK(v,yr){if(!inflationView)return Math.round(v/1000);const sy=P.planStartYear||2026;return Math.round(v/Math.pow(1+(P.expenseInflation||.03),yr-sy)/1000)}
+// Real-dollar conversion, in dollars. Every surface that shows a projected figure has to go
+// through this or it silently disagrees with the ones that do: the Trajectory tab honoured
+// `inflationView` and the cockpit did not, so with the toggle on the same plan read 2.6x
+// apart by 2058 — purely because one chart was in real dollars and the other in nominal.
+function deflate(v,yr){if(!inflationView)return v;const sy=P.planStartYear||2026;return v/Math.pow(1+(P.expenseInflation||.03),yr-sy)}
+function deflK(v,yr){return Math.round(deflate(v,yr)/1000)}
 function toggleInflation(){inflationView=!inflationView;render();savePlannerState()}
 
 // ═══ CSV EXPORT ═══
@@ -1817,8 +1822,11 @@ function renderStripeTab(R,P){
   const newEq=row.sNew,soldPct=newEq>0?row.sSold/newEq*100:0,keptPct=100-soldPct;
   // What this year's retained stock is worth at the end of the plan, compounding forward
   // at each year's own assumed rate.
+  // Retained stock sits at the Feb-yr mark. Its first re-mark is Feb yr+1, which carries
+  // THIS row's rate — so the window starts at this row and ends one short of the last,
+  // whose own rate is only marked in the February after the plan ends.
   let fv=row.sRet;
-  for(let i=R.indexOf(row)+1;i<R.length;i++)fv*=(1+R[i].sRate);
+  for(let i=R.indexOf(row);i<R.length-1;i++)fv*=(1+R[i].sRate);
 
   const tile=(lbl,val,sub,col)=>`<div class="kpi" style="border-color:${col?'rgba(103,114,229,.25)':'var(--bd)'}">
     <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t3);margin-bottom:3px">${lbl}</div>

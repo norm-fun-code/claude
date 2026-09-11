@@ -47,7 +47,7 @@ describe('the cockpit and the Trajectory tab plot the same figure', () => {
     const traj = html.match(/label:'Total NW[^']*'\+\(inflationView\?' \(real\)':''\),data:\[(\w+),\.\.\.R\.map\(r=>deflK\((r\.\w+),r\.yr\)\)\]/);
     expect(traj, 'Total NW dataset').toBeTruthy();
     expect(traj[2]).toBe('r.netWorth');
-    expect(cockpit).toContain('data:R.map(r=>r.netWorth)');
+    expect(cockpit).toContain('...R.map(r=>deflate(r.netWorth,r.yr))');
     // Adding k401 to netWorth would double-count retirement.
     expect(cockpit).not.toMatch(/netWorth\s*\+\s*\w*\.?k401/);
     expect(html).not.toMatch(/netWorth\s*\+\s*\w*\.?k401/);
@@ -107,5 +107,46 @@ describe('no screen calls the component "net worth" without saying so', () => {
     // "Final NW … +$X in 401k" next to "Total w/ 401k" is honest: it names what is missing.
     expect(html).toContain('in 401k');
     expect(html).toContain('Total w/ 401k');
+  });
+});
+
+// `inflationView` is a persisted global toggle. A chart that ignores it is not showing a
+// different opinion — it is showing a different unit, with no label saying so.
+describe('both charts answer to the same inflation toggle', () => {
+  const traj = html;
+
+  it('routes every real-dollar conversion through one function', () => {
+    expect(traj).toMatch(/function deflate\(v,yr\)\{if\(!inflationView\)return v;/);
+    // deflK is the thousands wrapper, defined in terms of it rather than repeating the math.
+    expect(traj).toMatch(/function deflK\(v,yr\)\{return Math\.round\(deflate\(v,yr\)\/1000\)\}/);
+  });
+
+  it('has the cockpit deflate its series, not just the Trajectory tab', () => {
+    for (const field of ['r.netWorth', 'r.liq'])
+      expect(cockpit, field).toContain(`deflate(${field},r.yr)`);
+  });
+
+  it('deflates the cockpit figures printed beside the chart too', () => {
+    // A real-dollar line under a nominal headline is the same bug, one element over.
+    expect(cockpit).toContain('deflate(row.netWorth,row.yr)');
+    expect(cockpit).toContain('deflate(value,row.yr)');
+    expect(cockpit).toContain('deflate(selected.netWorth,selected.yr)');
+  });
+
+  it('says which dollars it is showing, rather than always claiming future ones', () => {
+    expect(cockpit).toContain("inflationView?sy+' purchasing power':'Future dollars'");
+  });
+
+  it('anchors the cockpit at the same opening point as the Trajectory tab', () => {
+    expect(cockpit).toContain('const labels=[sy-1,...R.map(r=>r.yr)]');
+    const open = cockpit.match(/const opening=Math\.round\(([\s\S]*?)\);/)[1];
+    for (const part of ['startingLiquid', 'startingStripeEquity', 'k401Start', 'otherDebt'])
+      expect(open, part).toContain(part);
+  });
+
+  it('leaves the confidence band a hole at the anchor instead of inventing one', () => {
+    // There is no simulated percentile for the year before the plan starts.
+    expect(cockpit).toContain('data:[null,...band.p90');
+    expect(cockpit).toContain('data:[null,...band.p10');
   });
 });

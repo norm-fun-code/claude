@@ -30,7 +30,7 @@ function renderCockpit(R){
   // knows a net worth, so show that and let the provenance chip carry the doubt.
   const hero=UI.heroValue({
     observed:available?s.netWorth:null,
-    projected:current?current.netWorth:null,
+    projected:current?deflate(current.netWorth,current.yr):null,
     complete:available?!partial:undefined,
   });
   const priorities=(_inbox?.priorities||[]).slice(0,3);
@@ -65,7 +65,7 @@ function renderCockpit(R){
           <span class="cp-register-note">Projected from your plan. Not a forecast.</span>
         </div>
       <section class="cp-card cp-trajectory"><div class="cp-section-head"><div><h3>The path ahead</h3></div><button onclick="cockpitGo('home')">Explore a what-if ↗</button></div>
-      <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end net worth</span><strong id="cp-value">${UI.money(selected.netWorth)}</strong></div><span id="cp-band-note">Includes retirement<br>Future dollars · assumed returns</span></div>
+      <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end net worth</span><strong id="cp-value">${UI.money(deflate(selected.netWorth,selected.yr))}</strong></div><span id="cp-band-note">Includes retirement<br>Future dollars · assumed returns</span></div>
       <div class="cp-chart"><canvas id="cockpitTrajectory" aria-label="Projected wealth and liquid investments by year" role="img"></canvas></div>
       <div class="cp-pins" id="cp-pins"></div>
       <label class="cp-scrub" for="cp-year-range">Explore a year<input id="cp-year-range" type="range" min="${R[0].yr}" max="${end.yr}" value="${selected.yr}" oninput="cockpitSelectYear(Number(this.value))"><output id="cp-range-label">${selected.yr}</output></label>
@@ -154,7 +154,14 @@ const cpMilestonePlugin={
 };
 
 function cockpitDrawChart(R,P,year){
-  const labels=R.map(r=>r.yr);
+  // Same x-axis and same opening anchor as the Trajectory tab: a prior-year point holding
+  // the plan's whole opening position. Starting at R[0] instead made the two charts begin
+  // at different places on different values, which is most of what "they don't line up"
+  // looked like even before the figures were compared.
+  const sy=P.planStartYear||2026;
+  const opening=Math.round((P.startingLiquid||0)+(P.startingStripeEquity||0)+(P.k401Start||0)
+    -Math.abs(Number(P.otherDebt||0)));
+  const labels=[sy-1,...R.map(r=>r.yr)];
   const pins=cockpitMilestones(R,P);
 
   // The band is expensive, so it is cached against the plan it was computed from. A
@@ -167,22 +174,22 @@ function cockpitDrawChart(R,P,year){
   const band=_cpBand;
   const note=document.getElementById('cp-band-note');
   if(note)note.innerHTML=band
-    ? 'Median of 250 simulated paths<br>Shaded band spans the 10th to 90th percentile'
-    : 'Includes retirement<br>Future dollars · assumed returns';
+    ? `Median of 250 simulated paths<br>Shaded band spans the 10th to 90th percentile${inflationView?`<br>${sy} purchasing power`:''}`
+    : `Includes retirement<br>${inflationView?sy+' purchasing power':'Future dollars'} · assumed returns`;
 
   const ds=[];
   if(band){
     // Drawn as a filled region between two invisible lines: the reader should see an
     // area of uncertainty, not two more curves competing with the median.
-    ds.push({label:'90th percentile',data:band.p90,borderColor:'transparent',
+    ds.push({label:'90th percentile',data:[null,...band.p90.map((v,i)=>deflate(v,R[i].yr))],borderColor:'transparent',
       backgroundColor:'rgba(122,227,195,.09)',fill:'+1',pointRadius:0,borderWidth:0,tension:.25});
-    ds.push({label:'10th percentile',data:band.p10,borderColor:'transparent',
+    ds.push({label:'10th percentile',data:[null,...band.p10.map((v,i)=>deflate(v,R[i].yr))],borderColor:'transparent',
       backgroundColor:'transparent',fill:false,pointRadius:0,borderWidth:0,tension:.25});
   }
-  ds.push({label:'Net worth incl. retirement',data:R.map(r=>r.netWorth),
+  ds.push({label:'Net worth incl. retirement',data:[opening,...R.map(r=>deflate(r.netWorth,r.yr))],
     borderColor:'#7ae3c3',backgroundColor:'transparent',fill:false,
     pointRadius:0,pointHoverRadius:5,borderWidth:2.5,tension:.25});
-  ds.push({label:'Liquid investments',data:R.map(r=>r.liq),
+  ds.push({label:'Liquid investments',data:[P.startingLiquid||0,...R.map(r=>deflate(r.liq,r.yr))],
     borderColor:'#b6a8ff',borderDash:[4,4],pointRadius:0,borderWidth:1.8,tension:.25});
 
   charts.cockpit=new Chart(document.getElementById('cockpitTrajectory'),{
@@ -233,18 +240,18 @@ function cockpitSelectYear(year){
   const row=R.find(r=>r.yr===year);if(!row)return;
   const set=(id,text)=>{const el=document.getElementById(id);if(el)el.textContent=text};
   set('cp-year',year+' year-end net worth');
-  set('cp-value',UI.money(row.netWorth));
+  set('cp-value',UI.money(deflate(row.netWorth,row.yr)));
   set('cp-range-label',year);
 
   // The hero follows the scrub only while it is showing a PROJECTED figure. An observed
   // balance belongs to today and must not be relabelled as some future year's.
   const hero=document.getElementById('cp-hero');
-  if(hero&&hero.dataset.source==='projected')hero.textContent=UI.money(row.netWorth);
+  if(hero&&hero.dataset.source==='projected')hero.textContent=UI.money(deflate(row.netWorth,row.yr));
 
   const grid=document.getElementById('cp-year-grid');
   if(grid)grid.innerHTML=[['Liquid investments',row.liq],['Vested Stripe',row.sEnd],
     ['Home equity',row.eq]].map(([label,value])=>
-    `<div><span>${label}</span><strong class="ui-num">${UI.money(value)}</strong></div>`).join('');
+    `<div><span>${label}</span><strong class="ui-num">${UI.money(deflate(value,row.yr))}</strong></div>`).join('');
 
   const rail=document.getElementById('cp-pins');
   if(rail)for(const b of rail.querySelectorAll('button'))

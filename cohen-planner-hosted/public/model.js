@@ -456,10 +456,22 @@ function run(p,rets){
     const stripeSold=Math.max(0,Math.min(saleBudget,normStockNet,stripeSellAmount(p,normStockNet,netCash,liqGrown,ret,td)));
     const stripeRetained=Math.max(0,normStockNet-stripeSold);
     // ── Stripe equity roll-forward, on the tender calendar ──
-    // Everything below happens AT the Feb-yr mark. No growth is credited yet: the year's
-    // sales have to execute at the price the shares are actually marked at, and this year's
-    // return only becomes real at the Feb yr+1 tender, applied after the waterfall.
+    // A private position has ONE price and it moves on ONE date: the February tender. So a
+    // calendar year's performance is not visible in that year — it is the step between the
+    // Feb yr mark and the Feb yr+1 mark, and it becomes real only at the later one.
+    //
+    // The rate the reader typed against "2026" is 2026's performance. It therefore lands on
+    // the position in February 2027, and belongs to the 2027 row. This previously applied
+    // stripeReturn(yIdx) at the END of year yIdx, which credited 2026's gain to the 2026
+    // year-end figure — months before any tender had marked it.
     const stripeBegin=lotsValue(lots);
+    // The Feb-yr tender: everything carried in from last year is re-marked by LAST year's
+    // return. Year 0 gets none — the opening balance is already the most recent mark, and
+    // the next tender falls in the following row.
+    const marked=yIdx>0?stripeReturn(p,yIdx-1):0;
+    const stripePreGrowth=lotsValue(lots);
+    if(marked)for(const L of lots)L.v*=(1+marked);
+    const stripeAppr=lotsValue(lots)-stripePreGrowth;
     // In the observation year the opening balance was measured part-way through, so the
     // vests that had already landed are inside it. Only the remainder is new equity.
     const vestShareNew=(yr===sy)?stripeVestRemaining(p):1;
@@ -490,12 +502,9 @@ function run(p,rets){
       if(need>1e-6){const extra=need/(1-td);sold+=extra;txS+=extra*td;}
       netFlow=-sold; // Stripe proceeds fund expenses directly; they never enter the pool
     }
-    // ── The next February tender re-marks whatever is still held ──
-    // Everything that survived this year's sales appreciates once, together, because a
-    // private position has one price and it moves on one date.
-    const stripePreGrowth=lotsValue(lots);
-    for(const L of lots)L.v*=(1+sr);
-    const stripeAppr=lotsValue(lots)-stripePreGrowth;
+    // No growth is credited here. This year's vests landed at the Feb-yr mark and this
+    // year's sales executed at it; the next move in the price is the Feb yr+1 tender, which
+    // is the row below.
     // Half-year convention: prior balance compounds a full year, this year's net
     // flow (surplus, withdrawals, down payment) earns ~half a year of return.
     liq=liqGrown+netFlow*(1+ret/2);tTx+=txS;tS+=sold;
@@ -564,7 +573,12 @@ function run(p,rets){
       sAdded:Math.round(newVest),sInOpening:Math.round(alreadyInOpening),
       sHold:Math.round(holdSold),sGainTax:Math.round(holdTax),
       sAppr:Math.round(stripeAppr),sEnd:Math.round(stripeEnd),
-      sBasis:Math.round(lotsBasis(lots)),sLots:lots.length,sRate:sr,sPct:nw>0?stripeEnd/nw:0,
+      sBasis:Math.round(lotsBasis(lots)),sLots:lots.length,
+      // `sRate` is THIS year's performance, which the Feb yr+1 tender marks — that is what
+      // the UI means by "after X% assumed return, marked Feb yr+1". `sMarked` is the rate
+      // that actually moved this row's position, which is last year's. They are one year
+      // apart by construction and confusing them is the bug this block was rewritten for.
+      sRate:sr,sMarked:marked,sPct:nw>0?stripeEnd/nw:0,
       // `nw` EXCLUDES retirement. It is a component, not a total, and the name has caused
       // exactly the confusion it invites: the cockpit added k401 back and called the result
       // net worth, while the Trajectory chart plotted `nw` and labelled it "Total NW" — two

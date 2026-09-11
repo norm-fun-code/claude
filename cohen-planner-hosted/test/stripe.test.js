@@ -135,9 +135,12 @@ describe('tax treatment of Stripe sales', () => {
   });
 
   it('retained stock carries basis equal to vest-date value', () => {
-    const r = run({ ...P, stripePolicy: 'retain' }).R[0];
-    expect(r.sBasis).toBe(r.sRet); // first year: basis is exactly what was retained
-    expect(r.sEnd).toBeGreaterThan(r.sBasis); // appreciation sits above basis, untaxed
+    const R = run({ ...P, stripePolicy: 'retain' }).R;
+    expect(R[0].sBasis).toBe(R[0].sRet); // first year: basis is exactly what was retained
+    // …and in the first year that is ALSO the value: no tender has re-marked it yet, so
+    // there is no appreciation above basis until February of the following year.
+    expect(R[0].sEnd).toBe(R[0].sBasis);
+    expect(R[1].sEnd).toBeGreaterThan(R[1].sBasis); // the Feb yr+1 mark lands here
   });
 });
 
@@ -159,10 +162,14 @@ describe('Stripe appreciation', () => {
 
   it('per-year return overrides beat the long-term rate inside the explicit window', () => {
     const p = { ...P, stripePolicy: 'retain', stripeRetY0: 0.50, stripeLongTermReturn: 0.0 };
-    const r = run(p).R[0];
-    expect(r.sRate).toBe(0.50);
-    expect(run({ ...P, stripePolicy: 'retain', stripeLongTermReturn: 0.0 }).R[0].sEnd)
-      .toBeLessThan(r.sEnd);
+    const R = run(p).R;
+    expect(R[0].sRate).toBe(0.50);        // 2026's performance, as typed
+    expect(R[1].sMarked).toBe(0.50);      // …marked onto the position at the Feb 2027 tender
+    // So the override shows up in the SECOND row, not the first. The first row is still at
+    // the mark the position was already carrying.
+    const flat = run({ ...P, stripePolicy: 'retain', stripeLongTermReturn: 0.0 }).R;
+    expect(flat[0].sEnd).toBe(R[0].sEnd);
+    expect(flat[1].sEnd).toBeLessThan(R[1].sEnd);
   });
 
   it('quarterly vesting earns only partial-year growth, never a full year', () => {
@@ -180,9 +187,11 @@ describe('Stripe appreciation', () => {
     // the next one. A share that vested in November is worth exactly what a share carried in
     // from last year is worth, so both earn the same single re-mark at the next tender.
     const sr = 0.20;
-    const legacy = run({ ...P, stripePolicy: 'retain', startingStripeEquity: 1000000, stripeLongTermReturn: sr });
-    const r0 = legacy.R[0];
-    expect(Math.abs(r0.sEnd - (1000000 + r0.sRet) * (1 + sr))).toBeLessThanOrEqual(1);
+    const R = run({ ...P, stripePolicy: 'retain', startingStripeEquity: 1000000, stripeLongTermReturn: sr }).R;
+    // Everything held at the end of year 0 — carried-in shares and every quarter's vest —
+    // is re-marked together, once, at the next tender. Year 1's own vests land at that new
+    // mark and are NOT re-marked again in the same row.
+    expect(Math.abs(R[1].sEnd - (R[0].sEnd * (1 + sr) + R[1].sAdded))).toBeLessThanOrEqual(2);
   });
 
   it('does not count the part of this year\'s vest that is already in the opening balance', () => {
@@ -204,11 +213,15 @@ describe('Stripe appreciation', () => {
 
   it('reconciles: opening + newly added, re-marked once, is the closing balance', () => {
     const sr = 0.15;
-    const r = run({ ...P, stripePolicy: 'retain', startingStripeEquity: 614000,
-      stripeObservedMonth: 8, stripeLongTermReturn: sr }).R[0];
-    // Within a dollar: sBeg/sAdded are rounded for display, sEnd is computed from the lots.
-    expect(Math.abs(r.sEnd - (r.sBeg + r.sAdded) * (1 + sr))).toBeLessThanOrEqual(1);
-    expect(Math.abs(r.sAppr - (r.sBeg + r.sAdded) * sr)).toBeLessThanOrEqual(1);
+    const R = run({ ...P, stripePolicy: 'retain', startingStripeEquity: 614000,
+      stripeObservedMonth: 8, stripeLongTermReturn: sr }).R;
+    // Year 0 closes at its opening mark plus what vested — no re-mark, so no appreciation.
+    expect(Math.abs(R[0].sEnd - (R[0].sBeg + R[0].sAdded))).toBeLessThanOrEqual(1);
+    expect(R[0].sAppr).toBe(0);
+    // Year 1 opens with the tender: the whole carried position is re-marked once, and only
+    // then does this year's vest land on top of it.
+    expect(Math.abs(R[1].sAppr - R[1].sBeg * sr)).toBeLessThanOrEqual(1);
+    expect(Math.abs(R[1].sEnd - (R[1].sBeg * (1 + sr) + R[1].sAdded))).toBeLessThanOrEqual(2);
   });
 
   it('sells at the mark the shares are actually priced at, not a marked-up one', () => {
