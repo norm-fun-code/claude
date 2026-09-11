@@ -2562,6 +2562,7 @@ async function runIncremental(){
 }
 
 function renderSpendingTab(R,P){
+  let spendingViz=null;
   const ca=document.getElementById('chartArea');
   destroyCharts();
   if(_spend===null&&!_spendLoading){loadSpending();}
@@ -2570,7 +2571,7 @@ function renderSpendingTab(R,P){
   const money=v=>fmt(Math.round(v||0));
   const exact=v=>fmtF(Math.round(v||0));
 
-  let h=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px">`;
+  let h=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px" class="spending-workspace">`;
 
   // ── Freshness and coverage, before any number that depends on them ──
   const nTx=st.transactions||0;
@@ -2610,7 +2611,10 @@ function renderSpendingTab(R,P){
   }
 
   const months=d.months||[],cov=d.coverage||{},tot=d.totals||{},cnt=d.counts||{};
-  const complete=months.filter(m=>m.month!==cov.partial);
+  const asOf=d.endDate||new Date().toISOString().slice(0,10);
+  const complete=months.filter(m=>m.month<asOf.slice(0,7));
+  const verifiedCount=(cov.completeMonths||[]).length;
+  const closedTotal=complete.reduce((n,m)=>n+(m.expense||0),0);
 
   // ── What the ledger actually contained ──
   // This is the check that spending is not being double counted, shown rather than asserted:
@@ -2634,15 +2638,15 @@ function renderSpendingTab(R,P){
 
   // ── Rolling averages, only where coverage permits ──
   const roll=d.rolling||{};
-  const rollCard=(lbl,v,n)=>`<div class="kpi"><div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t3);margin-bottom:3px">${lbl}</div>
+  const rollCard=(lbl,v,n)=>{const verified=v!=null;v=v??PlannerSpending.observedAverage(months,n,asOf);return `<div class="kpi"><div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t3);margin-bottom:3px">${lbl}</div>
     <div style="font-size:16px;font-weight:800;font-family:'SF Mono',monospace;color:${v==null?'var(--t3)':'var(--tx)'};letter-spacing:-.4px">${v==null?'—':fmtF(Math.round(v))}</div>
-    <div style="font-size:8.5px;color:var(--t3);margin-top:2px">${v==null?`needs ${n} complete months`:'per month'}</div></div>`;
+    <div style="font-size:8.5px;color:var(--t3);margin-top:2px">${v==null?`needs ${n} consecutive months of records`:verified?'Per month · verified history':'Per month · imported records; coverage unverified'}</div></div>`;};
   h+=`<div>
     <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:7px">Average monthly spending</div>
     <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
       ${rollCard('Rolling 3-month',roll.m3,3)}${rollCard('Rolling 6-month',roll.m6,6)}${rollCard('Rolling 12-month',roll.m12,12)}
     </div>
-    <div style="font-size:9.5px;color:var(--t3);margin-top:7px">${complete.length} complete month${complete.length===1?'':'s'} of history${cov.partial?` · ${cov.partial} is ${Math.round((cov.fractionElapsed||0)*100)}% elapsed and excluded from every average`:''}.</div>
+    <div style="font-size:9.5px;color:var(--t3);margin-top:7px">${complete.length} past month${complete.length===1?'':'s'} with records · ${verifiedCount} verified full months${cov.partial?` · ${cov.partial} is ${Math.round((cov.fractionElapsed||0)*100)}% elapsed and excluded from every average`:''}.</div>
   </div>`;
 
   // ── Where the money goes ──
@@ -2662,7 +2666,7 @@ function renderSpendingTab(R,P){
     // With fewer than six there is nothing to compare, so no trend is claimed at all.
     const recent=complete.slice(-3),prior=complete.slice(-6,-3);
     const sumFor=(months,id)=>months.reduce((s,m)=>s+((m.categories||[]).find(c=>c.id===id)?.net||0),0);
-    const canTrend=complete.length>=6;
+    const canTrend=PlannerSpending.observedAverage(months,6,asOf)!=null;
     const rows=[...agg.values()].map(a=>{
       const perMonth=a.net/n;
       let trend=null;
@@ -2670,14 +2674,17 @@ function renderSpendingTab(R,P){
         const r=sumFor(recent,a.id)/3,pr=sumFor(prior,a.id)/3;
         if(pr>0||r>0)trend={recent:r,prior:pr,delta:r-pr,pct:pr>0?(r-pr)/pr:null};
       }
-      return{...a,perMonth,share:tot.expense>0?a.net/tot.expense:0,trend};
+      return{...a,perMonth,share:closedTotal>0?a.net/closedTotal:0,trend};
     }).sort((x,y)=>y.net-x.net);
     const shown=rows.slice(0,16),rest=rows.slice(16);
     const restNet=rest.reduce((s,r)=>s+r.net,0);
+    spendingViz={rows,months,asOf,verified:cov.completeMonths||[]};
+    h+=`<div class="spend-visuals"><section class="cp-card"><span class="cp-eyebrow">SPENDING COMPOSITION</span><h3>Where your money goes</h3><p>Imported records for ${complete.length} past months · current month excluded</p><div class="spend-donut-wrap"><canvas id="spendCategoryChart" role="img" aria-label="Spending by category from imported records"></canvas></div><div id="spendCategoryLegend" class="spend-legend"></div><p class="spend-caption">Net of refunds. Categories with net credits appear in the details, outside the donut.</p></section>
+    <section class="cp-card"><span class="cp-eyebrow">MONTHLY RHYTHM</span><h3>Income & spending</h3><p>Imported records · current and unverified months are labeled</p><div class="spend-trend-wrap"><canvas id="spendMonthlyChart" role="img" aria-label="Monthly recorded income and spending"></canvas></div><p class="spend-caption">Transfers and card payments are excluded. These are recorded transactions, not projected amounts.</p></section></div>`;
 
     h+=`<div class="glass-card" style="padding:16px 18px">
-      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:3px">Where the money goes</div>
-      <div style="font-size:10px;color:var(--t2);margin-bottom:10px">${n} complete month${n===1?'':'s'}, net of refunds${cov.partial?` · ${cov.partial} excluded as partial`:''}. ${canTrend?'Trend compares the last 3 months with the 3 before.':'Six complete months are needed before a trend can be shown.'}</div>
+      <details class="spend-details"><summary>Category details · exact amounts & refunds</summary>
+      <div style="font-size:10px;color:var(--t2);margin-bottom:10px">${complete.length} past month${complete.length===1?'':'s'} with imported records, net of refunds${cov.partial?` · ${cov.partial} excluded as partial`:''}. ${canTrend?'Trend compares the last 3 months with the 3 before; unverified coverage can affect the comparison.':'Six consecutive months of records are needed for a trend.'}</div>
       ${rows.length?`<div class="tw" style="max-height:none"><table style="font-size:11px">
         <thead><tr><th style="text-align:left">Category</th><th>Per month</th><th>Total</th><th>Share</th>${canTrend?'<th>Trend</th>':''}<th>Rows</th></tr></thead>
         <tbody>${shown.map(r=>{
@@ -2694,15 +2701,15 @@ function renderSpendingTab(R,P){
           ${rest.length?`<tr><td style="text-align:left;color:var(--t3)">${rest.length} smaller categories</td>
             <td style="font-family:'SF Mono',monospace;color:var(--t3)">${fmtF(Math.round(restNet/n))}</td>
             <td style="font-family:'SF Mono',monospace;color:var(--t3)">${fmtF(Math.round(restNet))}</td>
-            <td style="color:var(--t3)">${tot.expense>0?(restNet/tot.expense*100).toFixed(1):'0'}%</td>${canTrend?'<td></td>':''}<td></td></tr>`:''}
+            <td style="color:var(--t3)">${closedTotal>0?(restNet/closedTotal*100).toFixed(1):'0'}%</td>${canTrend?'<td></td>':''}<td></td></tr>`:''}
         </tbody></table></div>
         <div style="font-size:9.5px;color:var(--t3);margin-top:8px;line-height:1.5">Trend is a change in monthly average, not a verdict — a move can be seasonal, a one-off, or a category that simply had a busy quarter. Nothing here is flagged as waste.</div>`
       :`<div style="font-size:10.5px;color:var(--t2)">No categorised spending in the window. If transactions imported but categories did not, run Catch up — categories sync separately and the classification depends on them.</div>`}
-    </div>`;
+    </details></div>`;
   }
 
   // ── Month by month ──
-  h+=`<div class="tw" style="max-height:none"><table style="font-size:11px">
+  h+=`<details class="cp-card spend-details"><summary>Monthly ledger · inspect the numbers</summary><div class="tw" style="max-height:none"><table style="font-size:11px">
     <thead><tr><th style="text-align:left">Month</th><th>Spending</th><th>Income</th><th>Net</th><th>Transfers</th><th>Card pmts</th><th>Invested</th><th>Rows</th></tr></thead>
     <tbody>${months.map(m=>{
       const partial=m.month===cov.partial;
@@ -2716,12 +2723,13 @@ function renderSpendingTab(R,P){
         <td style="font-family:'SF Mono',monospace;color:var(--t3)">${exact(m.cardPayment)}</td>
         <td style="font-family:'SF Mono',monospace;color:#6772e5">${exact(m.investment)}</td>
         <td style="color:var(--t3)">${m.count}${m.pending?` <span style="color:var(--a)">+${m.pending}p</span>`:''}</td>
-      </tr>`}).join('')}</tbody></table></div>`;
+      </tr>`}).join('')}</tbody></table></div></details>`;
 
   h+=`<div style="font-size:9.5px;color:var(--t3);line-height:1.6;padding:0 2px">Budget-vs-actual by category, recurring commitments and overrun flags come next — they are deliberately behind this reconciliation view, so the classification above can be checked against what you know before anything alerts on it.</div>`;
 
   h+=`</div>`;
   ca.innerHTML=h;
+  if(spendingViz)mountSpendingCharts(spendingViz);
   document.getElementById('summaries').innerHTML='';
 }
 

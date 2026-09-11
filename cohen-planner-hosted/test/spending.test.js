@@ -268,3 +268,15 @@ describe('money arriving in a non-cash account is saving', () => {
       .toBe(S.KIND.TRANSFER);
   });
 });
+
+describe('averages from imported records',()=>{
+  it('shows an observed average without declaring history verified',()=>{
+    const months=['2026-06','2026-07','2026-08','2026-09'].map((month,i)=>({month,expense:100+i*100}));
+    expect(S.observedAverage(months,3,'2026-09-10')).toBe(200);
+    expect(S.coverage(months,'2026-09-10').completeMonths).toEqual([]);
+    expect(S.rollingAverage(months,3,null,'2026-09-10')).toBe(null);
+  });
+  it('leaves an observed average unavailable for a missing calendar month',()=>{
+    expect(S.observedAverage([{month:'2026-06',expense:100},{month:'2026-08',expense:200}],3,'2026-09-10')).toBe(null);
+  });
+});

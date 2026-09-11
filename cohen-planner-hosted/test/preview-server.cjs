@@ -33,6 +33,15 @@ const server=http.createServer(async(req,res)=>{
       if(req.method==='POST')scenarios.push(JSON.parse(data));
       return json(req.method==='GET'?scenarios:{ok:true});
     }
+    if(url.pathname==='/api/monarch/sync/status')return json({transactions:1200,firstDate:'2025-09-01',lastDate:'2026-09-10',lastSyncAt:'2026-09-10T18:00:00Z'});
+    if(url.pathname==='/api/monarch/spending'){
+      const months=Array.from({length:13},(_,i)=>{
+        const month=new Date(Date.UTC(2025,8+i,1)).toISOString().slice(0,7);
+        const categories=['Rent','Travel','Shopping','Restaurants','Groceries','Other'].map((name,j)=>({id:String(j),name,net:(j===0?4000:700+j*50)*(i===12?.3:1),gross:(j===0?4000:700+j*50)*(i===12?.3:1),refunds:0,count:10}));
+        return{month,categories,expense:categories.reduce((n,c)=>n+c.net,0),income:i===12?3000:13000,transfer:2000,cardPayment:1000,investment:500,count:90};
+      });
+      return json({endDate:'2026-09-10',months,coverage:{first:'2025-09',last:'2026-09',completeMonths:[],partial:'2026-09',fractionElapsed:.33},rolling:{m3:null,m6:null,m12:null},totals:{expense:months.reduce((n,m)=>n+m.expense,0),income:159000},counts:{expense:1000}});
+    }
     if(url.pathname==='/api/monarch-status')return json({connected:false});
     if(url.pathname==='/api/snapshots'||url.pathname==='/api/chats')return json([]);
     if(url.pathname==='/api/alerts/states')return json(alertStates);
