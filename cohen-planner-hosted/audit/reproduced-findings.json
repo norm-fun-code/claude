@@ -1,0 +1,112 @@
+{
+  "auditedCommit": "afbbaa19a1fedabb0f2637b4fff0187bfe425006",
+  "reproduced": 12,
+  "findings": [
+    {
+      "id": "F1-short-page-deletes",
+      "evidence": {
+        "before": 2,
+        "after": 1,
+        "reportedError": null,
+        "completedMonths": [
+          "2026-03"
+        ]
+      }
+    },
+    {
+      "id": "F2-closing-insurance-not-projected",
+      "evidence": {
+        "extraClosingCost": 250000,
+        "annualInsuranceOverride": 25000,
+        "projectionChanged": false
+      }
+    },
+    {
+      "id": "F2-liquidity-calendar-not-projected",
+      "evidence": {
+        "calendarA": [],
+        "calendarB": [
+          1,
+          4
+        ],
+        "projectionChanged": false
+      }
+    },
+    {
+      "id": "F3-valid-boundaries-NaN",
+      "evidence": {
+        "allCashTax": "150084",
+        "zeroRateTax": "NaN",
+        "zeroRateAnnualPayment": 0
+      }
+    },
+    {
+      "id": "F4-SALT-deduction-and-sunset",
+      "evidence": {
+        "modeledStateAndCity": 5390,
+        "claimedDeduction": 40400,
+        "modeled2030Cap": 40400,
+        "statutory2030Cap": 10000
+      }
+    },
+    {
+      "id": "F5-tax-payment-timing",
+      "evidence": {
+        "paidWithoutAnyTimingEvidence": 60000,
+        "interpretation": "The safe harbour is met, so no underpayment charge is expected. $40,000 of tax is still projected to be due with the return — set it aside rather than spending it."
+      }
+    },
+    {
+      "id": "F6-partial-snapshot-lost",
+      "evidence": {
+        "upstreamPartial": true,
+        "missingAccounts": 1,
+        "monitorComplete": true
+      }
+    },
+    {
+      "id": "F6-retirement-false-divergence",
+      "evidence": {
+        "sameWealth": true,
+        "planExRetirement": 100000,
+        "planRetirement": 250000,
+        "observedInclusive": 350000,
+        "alert": "Net worth is $250,000 above plan"
+      }
+    },
+    {
+      "id": "F7-false-history-coverage",
+      "evidence": {
+        "oneTransactionPerMonth": [
+          "2026-01",
+          "2026-03",
+          "2026-06"
+        ],
+        "claimedThreeMonthAverage": 100
+      }
+    },
+    {
+      "id": "F8-proposal-not-delivered",
+      "evidence": {
+        "toolRan": true,
+        "proposalDataInSSE": false,
+        "proposalSaved": false
+      }
+    },
+    {
+      "id": "F9-debt-omitted-from-reconciliation",
+      "evidence": {
+        "observedNetWorth": 75000,
+        "proposedStartingLiquid": 100000,
+        "debt": 25000
+      }
+    },
+    {
+      "id": "F3-zero-retirement-default",
+      "evidence": {
+        "enteredRetirement": 0,
+        "modeledRetirement": 210000
+      }
+    }
+  ]
+}
