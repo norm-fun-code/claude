@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cohen Family — Interactive Financial Planner v6</title>
-<meta name="theme-color" content="#635bff">
+<title>Cohen | Private Office</title>
+<meta name="theme-color" content="#0a101c">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%237d76ff'/><stop offset='.55' stop-color='%235048d6'/><stop offset='1' stop-color='%237c3aed'/></linearGradient></defs><rect width='32' height='32' rx='7' fill='url(%23g)'/><path d='M6 21L13 14L17 18L26 8' stroke='%23fff' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/><circle cx='26' cy='8' r='2.4' fill='%23fff'/></svg>">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
@@ -451,6 +451,8 @@ body{background:transparent}
 }
 </style>
 <link rel="stylesheet" href="/decision-room.css">
+<link rel="stylesheet" href="/cockpit.css">
+<script src="/cockpit.js"></script>
 </head>
 <body>
 <div class="mesh-bg"></div>
@@ -459,7 +461,7 @@ body{background:transparent}
     <div class="brand-mark" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 13.5 L7.5 9 L10.5 12 L17 4.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="17" cy="4.5" r="1.7" fill="#fff"/></svg></div>
     <div class="brand-text">
       <h1>Cohen Family</h1>
-      <div class="brand-sub">Financial Planner <span class="brand-ver">v6</span></div>
+      <div class="brand-sub">PRIVATE OFFICE</div>
     </div>
   </div>
   <div class="hdr-right">
@@ -574,7 +576,7 @@ function savePlannerState(){
   if(!_planLoaded){setSyncStatus('error');return;}
   setSyncStatus('saving');
   const revision=++_saveRevision;
-  const payload=JSON.stringify({state:{P,compareMode,activeTab,_projView,_todayView,_homeView,activeScenarioIdx,scenarioDirty,monarchSnapshot,experienceVersion:6}});
+  const payload=JSON.stringify({state:{P,compareMode,activeTab,_projView,_todayView,_homeView,activeScenarioIdx,scenarioDirty,monarchSnapshot,experienceVersion:7}});
   clearTimeout(_saveTimer);
   _saveTimer=setTimeout(()=>{
     // Serialize writes so a slower earlier request cannot overwrite newer state.
@@ -607,7 +609,7 @@ async function loadFromServer(){
       const s=d.state||{};
       if(s.P)P={...D,...migrateP(s.P)};
       if(s.compareMode!==undefined)compareMode=s.compareMode;
-      if(s.experienceVersion>=6&&s.activeTab)activeTab=s.activeTab;
+      if(s.experienceVersion>=6&&s.activeTab)activeTab=s.experienceVersion>=7?s.activeTab:'cockpit';
       _planLoaded=true;
       if(s._projView!==undefined)_projView=s._projView;
       if(s._todayView!==undefined)_todayView=s._todayView;
@@ -882,7 +884,7 @@ async function confirmSnapshot(overlay){
 }
 
 // ═══ UI ═══
-let activeTab='home';let charts={};let inflationView=false;let snapshots=[];let overlaySnapId=null;
+let activeTab='cockpit';let charts={};let inflationView=false;let snapshots=[];let overlaySnapId=null;
 let _sensiPreset='all';
 let _sensiDeltas={};
 let monarchSnapshot=null; // {netWorth, retirement, assets, liabilities, syncedAt}
@@ -1510,8 +1512,8 @@ function _hexA(hex,a){const n=parseInt(hex.slice(1),16);return `rgba(${n>>16&255
 function _areaGrad(hex,a1,a2){return(ctx)=>{const ch=ctx.chart,area=ch.chartArea;if(!area)return _hexA(hex,a1);const g=ch.ctx.createLinearGradient(0,area.top,0,area.bottom);g.addColorStop(0,_hexA(hex,a1));g.addColorStop(1,_hexA(hex,a2));return g}}
 // Bar gradient (vertical, fades toward baseline)
 function _barGrad(hex,a1,a2){return(ctx)=>{const ch=ctx.chart,area=ch.chartArea;if(!area)return _hexA(hex,a1);const g=ch.ctx.createLinearGradient(0,area.top,0,area.bottom);g.addColorStop(0,_hexA(hex,a1));g.addColorStop(1,_hexA(hex,a2));return g}}
-if(window.Chart&&Chart.defaults){Chart.defaults.font.family='Inter';Chart.defaults.font.size=10;Chart.defaults.color='#8898aa';Chart.defaults.animation={duration:900,easing:'easeOutQuart'};Chart.defaults.animations.colors=false;Chart.defaults.elements.point.hoverBorderWidth=2;Chart.defaults.elements.line.capBezierPoints=true;}
-function chartOpts(){return{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},animations:{colors:false},plugins:{legend:{position:'top',align:'end',labels:{color:'#425466',font:{size:10.5,family:'Inter',weight:'500'},usePointStyle:true,pointStyle:'circle',boxWidth:7,boxHeight:7,padding:15}},tooltip:{..._GLASS_TOOLTIP,callbacks:{label:c=>'  '+c.dataset.label+': $'+(c.raw||0).toLocaleString()+'K'}}},scales:{x:{ticks:{color:'#8898aa',font:{size:10,family:'Inter'},maxRotation:45},grid:{display:false},border:{display:false}},y:{ticks:{color:'#8898aa',font:{size:10,family:'Inter'},stepSize:500,callback:v=>fmtK(v),padding:6},grid:{color:'rgba(10,37,64,.05)',drawTicks:false},border:{display:false}}}}}
+if(window.Chart&&Chart.defaults){Chart.defaults.font.family='Inter';Chart.defaults.font.size=12;Chart.defaults.color='#acb9cc';Chart.defaults.animation={duration:900,easing:'easeOutQuart'};Chart.defaults.animations.colors=false;Chart.defaults.elements.point.hoverBorderWidth=2;Chart.defaults.elements.line.capBezierPoints=true;}
+function chartOpts(){return{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},animations:{colors:false},plugins:{legend:{position:'top',align:'end',labels:{color:'#b6c3d6',font:{size:12,family:'Inter',weight:'500'},usePointStyle:true,pointStyle:'circle',boxWidth:7,boxHeight:7,padding:15}},tooltip:{..._GLASS_TOOLTIP,callbacks:{label:c=>'  '+c.dataset.label+': $'+(c.raw||0).toLocaleString()+'K'}}},scales:{x:{ticks:{color:'#8898aa',font:{size:10,family:'Inter'},maxRotation:45},grid:{display:false},border:{display:false}},y:{ticks:{color:'#8898aa',font:{size:10,family:'Inter'},stepSize:500,callback:v=>fmtK(v),padding:6},grid:{color:'rgba(10,37,64,.05)',drawTicks:false},border:{display:false}}}}}
 function posOpts(){const o=chartOpts();o.scales.y.min=0;return o}
 
 // ═══ MOTION + HERO HELPERS (next-gen visual layer) ═══
@@ -1612,6 +1614,7 @@ function _introAnimate(){
 function render(){
   if(!_planLoaded)return;
   document.body.classList.toggle('home-view',activeTab==='home');
+  document.body.classList.toggle('cockpit-view',activeTab==='cockpit');
   document.querySelectorAll('.tabs button[role=tab]').forEach(b=>{const on=b.dataset.tab===activeTab;b.classList.toggle('active',on);b.setAttribute('aria-selected',String(on));});
   if(activeTab!=='income')document.getElementById('flowToggle')?.remove();
   const{R,tT,tC,tTx,tS,dp,mm}=run(P);
@@ -1677,6 +1680,7 @@ function render(){
       }).join(''):'')+
       (chartOpts?`<span style="margin-left:auto;display:flex;gap:4px">${chartOpts}</span>`:'')+`</div>`;
   }
+  if(activeTab==='cockpit'){renderCockpit(R);return;}
   if(activeTab==='home'){
     if(_homeView==='housing'){renderHousingTab(R,P);return}
     if(_homeView==='levers'){window._lastR=R;window._lastP=P;renderSensitivityTab(R,P);return}
@@ -2051,12 +2055,12 @@ function provChip(kind,asOf){
 async function loadOverview(){
   if(_ovwLoading)return;_ovwLoading=true;
   try{
-    const [r,hr]=await Promise.all([fetch('/api/accounts/overview'),fetch('/api/wealth/history')]);
+    const [r,hr]=await Promise.all([fetch('/api/accounts/overview',{signal:AbortSignal.timeout(20000)}),fetch('/api/wealth/history',{signal:AbortSignal.timeout(20000)}).catch(()=>null)]);
     _ovw=r.ok?await r.json():{error:(await r.json().catch(()=>({}))).error||'unavailable'};
-    _hist=hr.ok?await hr.json():null;
+    _hist=hr?.ok?await hr.json().catch(()=>null):null;
   }catch(e){_ovw={error:e.message};}
   _ovwLoading=false;
-  if(activeTab==='today'&&_todayView==='overview')render();
+  if(activeTab==='cockpit'||(activeTab==='today'&&_todayView==='overview'))render();
 }
 async function takeWealthSnapshot(){
   const r=await fetch('/api/wealth/snapshot',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
@@ -2124,7 +2128,7 @@ async function loadInbox(force){
     // A failed load is reported as a failure. Falling back to an empty list would read as
     // "all clear", which is the one thing it definitely does not mean.
     _inboxError=e.message||'Could not load the watchlist.';_inbox=null;
-  }finally{_inboxLoading=false;if(activeTab==='today'&&_todayView==='watch')render()}
+  }finally{_inboxLoading=false;if(activeTab==='cockpit'||(activeTab==='today'&&_todayView==='watch'))render()}
 }
 
 async function setAlertState(key,state,until){
@@ -2331,7 +2335,8 @@ function renderOverviewTab(R,P){
   const ca=document.getElementById('chartArea');
   destroyCharts();
   if(_ovw===null&&!_ovwLoading)loadOverview();
-  const d=_ovw||{};
+  const d={...(_ovw||{})};
+  if(d.capabilities?.balances?.available===false)d.error=d.warning||'Account balances are unavailable.';
   const last=R[R.length-1],y0=R[0];
   let h=`<div style="display:flex;flex-direction:column;gap:13px;padding:2px">`;
 
@@ -3310,7 +3315,7 @@ function renderHousingTab(R,P){
     const vestQ=(buyRow?buyRow.sNew:0)/4;
     const pauseCost=_afPauseMonths>0&&buyRow?buyRow.totE/12*_afPauseMonths:0;
     const otherCash=Math.max(0,(prev?prev.liq:q.startingLiquid||0)-floor-pauseCost);
-    const capP=_afTenderCap!=null?{stripeTenderCapPerEvent:_afTenderCap}:{};
+    const capP={...q,...(_afTenderCap!=null?{stripeTenderCapPerEvent:_afTenderCap}:{})};
     const check=L.fundingCheck({year:py,quarter,need:cash.total,heldValue:held,vestPerQuarter:vestQ,otherCash},capP);
 
     const row=(l,v,note)=>`<div style="display:flex;justify-content:space-between;font-size:10.5px;padding:4px 0;border-bottom:1px solid var(--bd)">
@@ -4377,11 +4382,12 @@ document.getElementById('main').innerHTML=`
   <div id="heroBand"></div>
   <div class="kpi-grid" id="kpis"></div><div id="scenarioBar"></div><div id="snapshotBar"></div>
   <div class="tabs" role="tablist" aria-label="Plan views">
-    <button role="tab" aria-selected="true" class="active" data-tab="home" onclick="setTab('home')">✦ Decision Room</button>
-    <button role="tab" aria-selected="false" data-tab="projection" onclick="setTab('projection')">📈 Projection</button>
+    <button role="tab" aria-selected="false" data-tab="cockpit" onclick="setTab('cockpit')">◎ Cockpit</button>
+    <button role="tab" aria-selected="true" class="active" data-tab="home" onclick="setTab('home')">◇ Decisions</button>
+    <button role="tab" aria-selected="false" data-tab="projection" onclick="setTab('projection')">↗ Trajectory</button>
     <button role="tab" aria-selected="false" data-tab="stripe" onclick="setTab('stripe')">◆ Stripe</button>
-    <button role="tab" aria-selected="false" data-tab="today" onclick="setTab('today')">🎯 Today</button>
-    <button role="tab" aria-selected="false" data-tab="advisor" onclick="setTab('advisor')">🤖 AI Advisor</button>
+    <button role="tab" aria-selected="false" data-tab="today" onclick="setTab('today')">≡ Financial life</button>
+    <button role="tab" aria-selected="false" data-tab="advisor" onclick="setTab('advisor')">✦ Advisor</button>
     <button id="moreBtn" aria-label="More actions" aria-haspopup="true" aria-expanded="false" onclick="toggleMoreMenu(event)" style="margin-left:auto;font-size:11px;padding:4px 10px;border-radius:5px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit;line-height:1">⋯</button>
   </div>
   <div id="moreMenu" hidden style="position:absolute;z-index:60;background:var(--s1);border:1px solid var(--bd);border-radius:9px;box-shadow:0 10px 30px rgba(10,37,64,.16);padding:5px;min-width:186px"></div>
@@ -4918,7 +4924,7 @@ function advRenderMessages(){
   if(visible.length===0){
     msgs.innerHTML=`<div class="adv-welcome">
       <h3>Ask me anything about your plan</h3>
-      <p>I have your live planner state <em>and</em> read-only access to your Monarch data — real balances, transactions, spending, and holdings. Try one of these or ask your own:</p>
+      <p>I can analyze your saved plan and query connected account balances. Transaction and holding details are available in Financial life; I will flag data I cannot access. Try one of these or ask your own:</p>
       <button onclick="advOptimize()" style="width:100%;margin-bottom:14px;padding:13px 18px;background:linear-gradient(135deg,var(--accent),var(--p));color:#fff;border:none;border-radius:9px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px;letter-spacing:-.01em;box-shadow:0 3px 12px rgba(99,91,255,.25);transition:opacity .15s" onmouseover="this.style.opacity='.9'" onmouseout="this.style.opacity='1'">⚡ What should I optimize? <span style="font-size:10px;font-weight:400;opacity:.85">— run full analysis, auto-propose best scenario</span></button>
       <div class="adv-starters">
         <div class="adv-starter" onclick="advAsk('Give me a concise quarterly check-in on my financial plan: 3-4 specific things to flag right now — what\\'s on track, what needs attention, and any quick wins. Be direct and specific to my actual numbers.')"><strong>📋 Quarterly check-in</strong>What to flag right now</div>
@@ -4927,14 +4933,15 @@ function advRenderMessages(){
         <div class="adv-starter" onclick="advAsk('Should I sell some Stripe RSU now to reduce concentration risk, or wait for IPO?')"><strong>⚠️ Stripe concentration</strong>Sell now or wait?</div>
         <div class="adv-starter" onclick="advAsk('How would moving from a \$2M to \$1.7M home affect my plan? Be specific.')"><strong>🏠 Home tradeoff</strong>\$2M vs \$1.7M</div>
         <div class="adv-starter" onclick="advAsk('What\\'s the single biggest risk I\\'m underweighting in this plan?')"><strong>🔍 Blind spots</strong>What am I missing?</div>
-        <div class="adv-starter" onclick="advAsk('Using my live Monarch data, what did I actually spend over the last 3 months, broken down by category? Flag anything that looks high.')"><strong>📊 My real spending</strong>Live from Monarch</div>
-        <div class="adv-starter" onclick="advAskAgentic('Update my 2027 income assumptions')"><strong>✏️ Edit an input</strong>Type a change, I'll apply it</div>
+        <div class="adv-starter" onclick="advAsk('Using my live Monarch data, what did I actually spend over the last 3 months, broken down by category? Flag anything that looks high.')"><strong>📊 Spending questions</strong>Check available data</div>
+        <div class="adv-starter" onclick="advAskAgentic('Update my 2027 income assumptions')"><strong>✏️ Edit an input</strong>Review a proposed change</div>
       </div>
     </div>`;
     return;
   }
   msgs.innerHTML='';
   visible.forEach(m=>advAddMessage(m.role==='assistant'?'ai':'user',m.content,false,msgs));
+  const last=visible[visible.length-1];advRestoreStructured(last?.structuredResults||[]);
 }
 
 function advAddMessage(role,content,isThinking,container){
@@ -5181,11 +5188,7 @@ async function advSend(){
   const thinking=advAddMessage('ai','',true);
   const _res=run(P);const R=_res.R;
   const liveContext=buildLiveContext(R,P,_res);
-  if(advAgenticMode){
-    await advSendAgentic(text,chat,liveContext,thinking);
-  } else {
-    await advSendStream(text,chat,liveContext,thinking);
-  }
+  await advSendStream(text,chat,liveContext+(advAgenticMode?'\nUse propose_changes to return any suggested plan edits for explicit review. Never claim edits are already applied.':''),thinking);
 }
 
 async function advSendStream(text,chat,liveContext,thinking){
@@ -5197,7 +5200,7 @@ async function advSendStream(text,chat,liveContext,thinking){
     });
     if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||`HTTP ${res.status}`)}
     thinking.innerHTML='';
-    let fullReply='';let toolNote='';
+    let fullReply='';let toolNote='';const structuredResults=[];
     const _renderBubble=()=>{thinking.innerHTML=toolNote+advMarkdown(fullReply);const m=document.getElementById('advMsgs');if(m)m.scrollTop=m.scrollHeight;};
     const reader=res.body.getReader();const dec=new TextDecoder();let buf='';
     outer:while(true){
@@ -5211,9 +5214,10 @@ async function advSendStream(text,chat,liveContext,thinking){
         if(payload.error)throw new Error(payload.error);
         if(payload.tool_call){
           const nm=(payload.tool_call.name||'').replace(/^monarch_/,'');
-          toolNote=`<div class="adv-tool-call"><span class="tc-icon">🔍</span><span class="tc-body">Querying live Monarch data · <strong>${advEscape(nm)}</strong></span></div>`;
+          toolNote=`<div class="adv-tool-call"><span class="tc-icon">🔍</span><span class="tc-body">Using <strong>${advEscape(nm)}</strong></span></div>`;
           _renderBubble();
         }
+        if(payload.tool_result)structuredResults.push(payload.tool_result);
         if(payload.delta){
           fullReply+=payload.delta;
           _renderBubble();
@@ -5223,7 +5227,8 @@ async function advSendStream(text,chat,liveContext,thinking){
     }
     const answer=fullReply||'Sorry, no response. Try again?';
     thinking.innerHTML=(fullReply?'':toolNote)+advMarkdown(answer);
-    advisorConversation.push({role:'assistant',content:answer});
+    advisorConversation.push({role:'assistant',content:answer,structuredResults});
+    advRestoreStructured(structuredResults);
     chat.messages=advisorConversation;chat.updatedAt=Date.now();
     advRenderRail();
   }catch(err){
@@ -5307,6 +5312,21 @@ function advInsertToolCallBubble(tc){
   msgs.appendChild(div);msgs.scrollTop=msgs.scrollHeight;
 }
 
+function advRestoreStructured(records){
+  const record=[...records].reverse().find(r=>r.name==='propose_changes'&&r.result?.status==='proposed');
+  if(!record)return;
+  const r=record.result,delta={};
+  const changes=Object.entries(r.applied||{}).map(([key,v])=>{delta[key]=v.to;return{key,oldValue:v.from,value:v.to,reason:r.rationale};});
+  if(!changes.length)return;
+  advPendingProposals={changes,aiParams:{...r.baseline,...delta},baseline:r.baseline,id:record.id};
+  document.getElementById('advProposalsPanel')?.remove();
+  advShowProposals(advPendingProposals,'Reviewed proposal','Advisor scenario');
+}
+function advProposalIsCurrent(){
+  if(advPendingProposals?.baseline&&JSON.stringify(advPendingProposals.baseline)!==JSON.stringify(P)){
+    showToast('Your plan has changed since this proposal. Ask the advisor to recompute it before applying.','red');return false;
+  }return true;
+}
 function advShowProposals(proposals,chatTitle,suggestedName){
   const msgs=document.getElementById('advMsgs');if(!msgs)return;
   const el=document.createElement('div');el.className='adv-proposals';el.id='advProposalsPanel';
@@ -5375,18 +5395,16 @@ function advSaveProposalToTarget(){
 }
 
 async function advAcceptProposals(name){
-  if(!advPendingProposals)return;
+  if(!advPendingProposals||!advProposalIsCurrent())return;
   const aiP={...D,...migrateP({...advPendingProposals.aiParams})};
   const id=advUuid();
   const s={id,name,params:aiP,results:run(aiP),color:COLORS[scenarios.length%COLORS.length]};
-  scenarios.push(s);
-  activeScenarioIdx=scenarios.length-1;scenarioDirty=false;
-  fetch('/api/scenarios',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:s.id,name:s.name,color:s.color,params:s.params})}).catch(()=>{});
-  savePlannerState();
-  document.getElementById('advProposalsPanel')?.remove();
-  advPendingProposals=null;
-  showToast('✓ Saved advisor scenario: "'+name+'" — switch to Charts → Compare to see it','green');
-  buildControls();render();
+  try{
+    const response=await fetch('/api/scenarios',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:s.id,name:s.name,color:s.color,params:s.params})});
+    if(!response.ok)throw new Error('Save failed. Your proposal is still available; please retry.');
+    scenarios.push(s);document.getElementById('advProposalsPanel')?.remove();advPendingProposals=null;
+    showToast('Saved advisor scenario: '+name,'green');buildControls();render();
+  }catch(err){showToast(err.message,'red');}
 }
 
 // Applies just the AI's specific proposed changes onto the TARGET scenario's own params —
@@ -5416,7 +5434,7 @@ async function advUpdateExistingScenario(i){
 // actually changes Norm's real numbers, so it requires an explicit confirm on top of the
 // explicit button click (the diff was already reviewed in the panel above).
 function advApplyToLivePlan(){
-  if(!advPendingProposals)return;
+  if(!advPendingProposals||!advProposalIsCurrent())return;
   const n=advPendingProposals.changes.length;
   if(!showConfirm(`Apply ${n} change${n===1?'':'s'} directly to your live plan? This updates your actual numbers, not just a scenario.`))return;
   // Apply just the specific changed keys onto the CURRENT live plan (not the AI's possibly-

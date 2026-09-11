@@ -234,3 +234,19 @@ describe('transaction sync', () => {
     expect(await sync.syncBudgets({ startDate: '2026-03-01', endDate: '2026-03-31' })).toBe(1);
   });
 });
+
+describe('incomplete imports preserve saved history',()=>{
+  for(const mode of ['early end','duplicate page','page cap'])it(mode,async()=>{
+    const db=fakeDb();let broken=false;
+    const live={async transactionsPage({offset}){
+      if(!broken)return{totalCount:2,results:[raw('one'),raw('two')]};
+      return{totalCount:2,results:offset?(mode==='duplicate page'?[raw('one')]:[]):[raw('one')]};
+    }};
+    const sync=createMonarchSync({db,live});
+    await sync.backfill({startDate:'2026-03-01',endDate:'2026-03-31'});
+    broken=true;
+    const result=await sync.backfill({startDate:'2026-03-01',endDate:'2026-03-31',maxPages:mode==='page cap'?1:200});
+    expect(result.error).toBeTruthy();expect(db.tx.get('two').deleted_at).toBe(null);
+    expect(result.months).toEqual([]);
+  });
+});

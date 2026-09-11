@@ -180,6 +180,11 @@
     push('k401Start','Retirement',Number(P.k401Start||0),summary.byClass[CLASS.RETIREMENT].total,
       'includes any Stripe 401(k), which is retirement money rather than company stock',
       summary.byClass[CLASS.RETIREMENT].accounts.length);
+    // Gross assets cannot replace the opening position while liabilities are omitted.
+    if(summary.debt>0||!summary.complete)for(const line of lines){
+      line.applicable=false;
+      line.blockedReason=summary.debt>0?'Existing liabilities need an explicit repayment plan before balances can be applied. Gross assets alone would overstate the plan.':'Resolve missing balances before applying account totals.';
+    }
     return{lines,complete:summary.complete,
       blocked:summary.unknownBalance.map(a=>a.name||a.id)};
   }

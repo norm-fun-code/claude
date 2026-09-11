@@ -287,7 +287,7 @@ function lotsValue(lots){let t=0;for(const L of lots)t+=L.v;return t}
 function lotsBasis(lots){let t=0;for(const L of lots)t+=L.b;return t}
 
 // Raise `netNeeded` in after-tax cash from `lots`, cheapest-to-sell first. Mutates the lots.
-function sellLots(lots,netNeeded,capRate){
+function sellLots(lots,netNeeded,capRate,grossLimit=Infinity){
   let gross=0,tax=0,need=netNeeded;
   // Ascending unrealised-gain fraction. Ties and zero-value lots fall out harmlessly.
   const order=[...lots].sort((a,b)=>
@@ -296,7 +296,7 @@ function sellLots(lots,netNeeded,capRate){
     if(need<=1e-6||L.v<=1e-6)continue;
     const gainFrac=Math.max(0,(L.v-L.b)/L.v);
     const rate=gainFrac*capRate;
-    const take=Math.min(need/(1-rate),L.v);
+    const take=Math.max(0,Math.min(need/(1-rate),L.v,grossLimit-gross));
     const frac=take/L.v;              // capture before mutating
     L.b*=Math.max(0,1-frac);          // basis leaves proportionally with the shares sold
     L.v-=take;
@@ -405,7 +405,7 @@ function run(p,rets){
     const ptRate=p.propTaxRate??(p.propTaxBase&&p.homePrice?p.propTaxBase/p.homePrice:0.012);
     const homeVal=sub?p.homePrice*(1+p.homeAppreciation)**(yr-p.homePurchaseYear):0;
     const ptax=sub?ptRate*homeVal:0;
-    let h=sub?am+ptax+p.maintBase*1.02**(yr-p.homePurchaseYear):p.nycRent*12;
+    let h=sub?am+ptax+(p.maintBase+insuranceFor(p.homePrice,p))*1.02**(yr-p.homePurchaseYear):p.nycRent*12;
     const inf=(1+p.expenseInflation)**(yr-sy);
     let gr=p.baseGroceries*inf,di=p.baseDining*inf,sh=p.baseShopping*inf,va=(nk>0?p.postKidVacations:p.baseVacations)*inf;
     let au=p.baseAuto*inf,ins=p.baseInsurance*inf,mi=p.baseMisc*inf,en=p.baseEntertainment*inf;
@@ -437,7 +437,7 @@ function run(p,rets){
     // ── Stripe cash waterfall ──
     // Cash comp funds life first. Whatever it can't cover (including the down payment, a
     // real cash outflow) is the gap the retention policy decides how to close.
-    const dpThis=(yr===p.homePurchaseYear)?dp:0;
+    const dpThis=(yr===p.homePurchaseYear)?cashToClose(p.homePrice,p).total:0;
     const netCash=surp-dpThis;
     const sr=stripeReturn(p,yIdx);
     const gp=1-p.costBasisPct,td=gp*p.capGainsTaxRate;
@@ -447,7 +447,9 @@ function run(p,rets){
     const liqGrown=liq>0?liq*(1+ret):liq;
     // The waterfall trades the AFTER-TAX grant: withheld shares never reach the account, so
     // they can be neither sold for cash nor retained as equity.
-    const stripeSold=Math.max(0,Math.min(normStockNet,stripeSellAmount(p,normStockNet,netCash,liqGrown,ret,td)));
+    const liquidityModule=typeof module!=='undefined'&&module.exports?require('./liquidity.js'):window.PlannerLiquidity;
+    const saleBudget=liquidityModule.raisableInYear(yr,{heldValue:lotsValue(lots),vestPerQuarter:normStockNet/4},p);
+    const stripeSold=Math.max(0,Math.min(saleBudget,normStockNet,stripeSellAmount(p,normStockNet,netCash,liqGrown,ret,td)));
     const stripeRetained=Math.max(0,normStockNet-stripeSold);
     // ── Stripe equity roll-forward, on the tender calendar ──
     // Everything below happens AT the Feb-yr mark. No growth is credited yet: the year's
@@ -476,7 +478,7 @@ function run(p,rets){
       // Selling shares held from a PRIOR year does realise a gain — unlike a vest-date sale,
       // where basis equals the sale price. Only appreciation above basis is taxed.
       if(need>1e-6){
-        const r=sellLots(lots,need,p.capGainsTaxRate);
+        const r=sellLots(lots,need,p.capGainsTaxRate,Math.max(0,saleBudget-stripeSold));
         holdSold=r.gross;holdTax=r.tax;need=r.shortfall;
       }
       // Nothing left to sell: the pool breaches the floor, and can go negative. That is a

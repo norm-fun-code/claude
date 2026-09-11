@@ -337,8 +337,10 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
       filters: { startDate, endDate },
       orderBy: 'date',
     });
-    const all = d.allTransactions || {};
-    return { totalCount: Number(all.totalCount || 0), results: (all.results || []).map(mapTransaction) };
+    const all = d.allTransactions;
+    if (!all || !Number.isInteger(all.totalCount) || all.totalCount < 0 || !Array.isArray(all.results))
+      throw new Error('Monarch returned an incomplete transaction response. Saved history was retained.');
+    return { totalCount: all.totalCount, results: all.results.map(mapTransaction) };
   }
 
   async function categories() {

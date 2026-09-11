@@ -312,7 +312,7 @@ describe('What the advisor is handed',()=>{
     for(const a of input.priorities)expect(a.evidence.length).toBeGreaterThan(0);
   });
 
-  it('marks a genuinely complete run as complete',()=>{
+  it('discloses when valuation dates cannot be compared',()=>{
     // A purchase inside the horizon, funded entirely from the portfolio, so the home check
     // genuinely runs and genuinely finds nothing.
     const ctx={...base({liquidReserveFloor:0,homePurchaseYear:2030,homePrice:1200000,
@@ -326,7 +326,7 @@ describe('What the advisor is handed',()=>{
     const det=M0.detect(ctx);
     const input=M0.briefingInput(det,M0.prioritize(det.alerts,{},{today:ctx.today}));
     expect(det.failed).toEqual([]);
-    expect(input.notChecked,JSON.stringify(det.skipped)).toEqual([]);
-    expect(input.complete).toBe(true);
+    expect(input.notChecked.some(s=>s.missing==='matching valuation date and asset scope')).toBe(true);
+    expect(input.complete).toBe(false);
   });
 });

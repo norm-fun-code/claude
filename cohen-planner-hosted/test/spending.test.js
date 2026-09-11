@@ -143,7 +143,7 @@ describe('user categorisation overrides', () => {
 // ── Coverage and averages ────────────────────────────────────────────────
 describe('coverage and rolling averages', () => {
   const months = (n, start = 1) => Array.from({ length: n }, (_, i) => ({
-    month: `2026-${String(start + i).padStart(2, '0')}`, expense: 1000 + i * 100,
+    coverageVerified:true, month: `2026-${String(start + i).padStart(2, '0')}`, expense: 1000 + i * 100,
   }));
 
   it('marks the month in progress as partial and excludes it from complete months', () => {

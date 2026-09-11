@@ -104,6 +104,16 @@
   // only covers the November instalment.
   function withholdingStatus(input){
     const i=input||{};
+    // Payment timing and jurisdiction-specific facts are not collected by this workflow.
+    // An annual reserve can be estimated; an installment or penalty conclusion cannot.
+    if(i.jurisdiction!=='federal'&&num(i.withheldToDate)!=null){
+      const projected=num(i.projectedLiability),withheld=num(i.withheldToDate),paid=num(i.estimatedPaid)??0;
+      return{status:'reserve-only',projectedLiability:projected,needs:[],
+        shortfallVsLiability:projected!=null&&withheld!=null?Math.max(0,projected-withheld-paid):null,
+        quarterlyPayment:null,safeHarbour:null,remaining:[],instalments:[],
+        interpretation:'Annual combined-tax reserve estimate only. Federal, state and city payments must be separated before payment guidance is available. Payment timing and penalties have not been evaluated.',
+        remedy:null};
+    }
     const needs=[];
     const projected=num(i.projectedLiability);
     if(projected==null)needs.push(need('projectedLiability',null,'Run the projection first.'));
@@ -154,21 +164,15 @@
       projectedLiability:projected,withheldToDate:withheld,estimatedPaid,paidToDate:paid,
       safeHarbour:harbour,
       shortfallVsLiability,shortfallVsHarbour,
-      quarterlyPayment,
+      quarterlyPayment:null,
       instalments,remaining,
       nextInstalment:remaining[0]||null,
       fractionElapsed:+fractionElapsed.toFixed(4),
       projectedWithholding,projectedYearEndGap,
       // Two numbers that are routinely confused, kept apart on purpose.
-      interpretation:shortfallVsHarbour>0
-        ?`${usd(shortfallVsHarbour)} short of the safe harbour, which is what stops the § 6654 charge. Separately, ${usd(shortfallVsLiability)} of tax is projected to be outstanding — meeting the safe harbour does not make that go away, it only makes it interest-free until the return is due.`
-        :shortfallVsLiability>0
-          ?`The safe harbour is met, so no underpayment charge is expected. ${usd(shortfallVsLiability)} of tax is still projected to be due with the return — set it aside rather than spending it.`
-          :'Payments to date already cover the projected liability.',
-      remedy:shortfallVsHarbour<=0?null:
-        remaining.length
-          ?`Either pay ${usd(quarterlyPayment)} with each of the ${remaining.length} remaining instalment${remaining.length===1?'':'s'}, or raise payroll withholding by that much in total. Withholding is treated as paid evenly across the year under § 6654(g), so it can still cure a shortfall from an earlier quarter — an estimated payment cannot.`
-          :`No instalments remain for ${y}. The amount is due with the return; a late estimated payment no longer avoids the charge on earlier quarters.`,
+      interpretation:`Annual federal comparison only: ${usd(shortfallVsLiability)} of projected liability remains after reported payments. Payment dates and installment rules have not been evaluated; no penalty conclusion is available.`,
+      remedy:null,
+
     };
   }
 

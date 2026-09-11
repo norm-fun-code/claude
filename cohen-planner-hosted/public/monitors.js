@@ -177,7 +177,7 @@
 
     // Prefer what the accounts actually show over what the plan projects.
     let observed=null;
-    if(accounts&&num(accounts.netWorth)>0&&num(accounts.stripeVested)!=null)
+    if(accounts&&accounts.complete!==false&&num(accounts.netWorth)>0&&num(accounts.stripeVested)!=null)
       observed={share:num(accounts.stripeVested)/num(accounts.netWorth),
         value:num(accounts.stripeVested),base:num(accounts.netWorth),source:'live account balances'};
 
@@ -238,22 +238,9 @@
         accounts&&accounts.complete===false
           ?'Some account balances are missing, so the totals are short by an unknown amount and cannot be differenced against the plan.'
           :'No account snapshot is available.'));
-    } else if(R&&R.length){
-      const planned=num(R[0].nw);
-      const actual=num(accounts.netWorth);
-      const delta=actual-planned;
-      if(planned>0&&Math.abs(delta)>=materialAbs&&Math.abs(delta)/planned>=materialPct){
-        alerts.push(alert(KIND.DIVERGENCE,SEVERITY.WARNING,
-          keyOf(KIND.DIVERGENCE,'netWorth',R[0].yr,delta>0?'above':'below'),
-          `Net worth is ${usd(Math.abs(delta))} ${delta>0?'above':'below'} plan`,
-          [ev(`Plan, ${R[0].yr}`,usd(planned),'projection'),
-           ev('Accounts show',usd(actual),'live account balances'+(accounts.asOf?' as of '+isoDay(accounts.asOf):'')),
-           ev('Difference',usd(delta),'computed'),
-           ev('Your materiality threshold',`${pct(materialPct)} or ${usd(materialAbs)}`,'plan setting')],
-          `Every projection in the planner starts from the plan figure. While the two disagree by this much, so does everything downstream of it — the funding dates, the affordability numbers and the concentration share.`,
-          `Reconcile the balance sheet in Today → Portfolio, then re-run the projection. If the accounts are right, apply them to the plan.`,
-          {delta}));
-      }
+    } else {
+      skipped.push(skip(KIND.DIVERGENCE,SKIP.NO_DATA,'matching valuation date and asset scope',
+        'Current account wealth cannot be compared directly with projected year-end wealth. Review opening assumptions in the account reconciliation.'));
     }
 
     // Spending. Needs enough COMPLETE months to average; a partial month is a fraction of a

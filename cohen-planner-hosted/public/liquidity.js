@@ -101,14 +101,18 @@
 
   // Can a specific need be met by a specific quarter, and if not, what is short?
   function fundingCheck({year,quarter,need,heldValue=0,vestPerQuarter=0,otherCash=0},p){
-    const fromStripe=raisableBy(year,quarter,{heldValue,vestPerQuarter},p);
+    const grossFromStripe=raisableBy(year,quarter,{heldValue,vestPerQuarter},p);
+    // Conservative tax allowance for closing; actual lot selection may improve proceeds.
+    const gainFraction=Math.max(0,Math.min(1,1-(p&&p.costBasisPct!=null?p.costBasisPct:1)));
+    const taxAllowance=grossFromStripe*gainFraction*Math.max(0,p&&p.capGainsTaxRate||0);
+    const fromStripe=grossFromStripe-taxAllowance;
     const available=fromStripe+Number(otherCash||0);
     const shortfall=Math.max(0,Number(need||0)-available);
     const windows=saleWindows(year,{heldValue,vestPerQuarter},p).filter(w=>w.quarter<=quarter);
     const nextWindow=saleWindows(year,{heldValue,vestPerQuarter},p).find(w=>w.quarter>quarter&&w.kind!=='elective');
     return{
       year,quarter,need:Number(need||0),otherCash:Number(otherCash||0),
-      fromStripe,available,shortfall,fundable:shortfall<=0,
+      fromStripe,grossFromStripe,taxAllowance,available,shortfall,fundable:shortfall<=0,
       windowsUsed:windows,
       // What would fix a shortfall, stated rather than left to be inferred.
       nextWindow:nextWindow?{quarter:nextWindow.quarter,kind:nextWindow.kind}:null,
