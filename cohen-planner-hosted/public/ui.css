@@ -1,0 +1,158 @@
+/* ═══ COHEN PRIVATE OFFICE — ONE DESIGN SYSTEM ═══
+   Loaded AFTER cockpit.css so it can settle the questions cockpit.css left open.
+
+   Three rules this file exists to enforce, because breaking any one of them is what
+   made three screens look like three products:
+
+   1. ONE TYPE SCALE. Nothing competes with the hero. There is exactly one number on a
+      page at --t-hero, and everything else is at least two steps below it.
+   2. COLOUR IS SEMANTIC, NOT DECORATIVE. Mint means a gain. Rose means a loss. Amber
+      means something needs you. Lavender means you can click it. A colour that means
+      two things means nothing — mint was previously both "positive" and "interactive",
+      which is why nothing on the old screens read as good news.
+   3. ONE RHYTHM. Every card, gap and section head comes from the same four spacing
+      steps, so unrelated screens still feel built by the same hand. */
+
+:root{
+  /* ── Type scale. Ratios, not arbitrary pixels: 1.32 between adjacent steps. ── */
+  --t-hero:clamp(52px,6.4vw,82px);   /* the one number the product exists to show */
+  --t-display:clamp(27px,3vw,39px);  /* page headline */
+  --t-section:22px;                  /* card headline */
+  --t-metric:30px;                   /* a supporting figure */
+  --t-lead:16px;
+  --t-body:14px;
+  --t-sm:13px;
+  --t-xs:12px;
+  --t-eyebrow:11px;
+
+  /* ── Rhythm. Four steps, everywhere. ── */
+  --sp-1:8px;--sp-2:14px;--sp-3:22px;--sp-4:34px;
+  --radius:14px;--radius-lg:18px;--radius-pill:999px;
+
+  /* ── Semantic colour. Each has exactly one job. ── */
+  --gain:#7ae3c3;      /* a number went up. Nothing else. */
+  --loss:#ff9caf;      /* a number went down, or something is wrong. */
+  --warn:#ecc183;      /* needs your attention */
+  --link:#b6a8ff;      /* interactive — lavender, so mint can keep meaning "up" */
+  --link-hover:#d0c6ff;
+  --neutral:#8ebfff;   /* a fact that is neither good nor bad */
+
+  /* ── Provenance. Where a number came from, which is half its meaning. ── */
+  --prov-observed:#8ebfff;   /* read from a real account */
+  --prov-projected:#b6a8ff;  /* computed by the model */
+  --prov-entered:#9fb0c6;    /* typed by a person */
+  --prov-missing:#ecc183;    /* not available */
+}
+
+/* ── Interactive text is lavender, everywhere, overriding cockpit.css's mint links.
+      This is the single change that gives mint its meaning back. ── */
+.cp-source button,.cp-section-head>button,.cp-text-link,.cp-evidence button,
+.cp-floor button,.cp-wealth button span,.cp-decisions button:hover strong,
+.cp-heading .cp-button:hover{color:var(--link)}
+.cp-button:hover{border-color:var(--link)}
+.cp-scrub output{color:var(--link)}
+.cp-source>span:first-child{color:var(--t2)}   /* status is a fact, not a success */
+.tabs button.active,.home-view .tabs button.active{
+  background:linear-gradient(110deg,#2a2745,#1b1d33);color:#cdc5ff;border-color:#453f70}
+.cp-intelligence>button{color:var(--link)}
+
+/* ── Numbers. Tabular everywhere, so columns of money line up and a changing figure
+      does not make the layout twitch. ── */
+.ui-num,.cp-wealth>strong,.cp-metric strong,.cp-chart-summary strong,
+.cp-year-grid strong,.cp-floor strong,.ui-hero-value{
+  font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;letter-spacing:-.02em}
+
+/* ── Provenance chip. Small, quiet, always present. The number is always shown; THIS
+      is what carries the uncertainty, rather than blanking the figure. ── */
+.ui-prov{display:inline-flex;align-items:center;gap:6px;border-radius:var(--radius-pill);
+  padding:3px 9px 3px 7px;font-size:var(--t-xs);font-weight:600;line-height:1.4;
+  white-space:nowrap;background:color-mix(in srgb,var(--prov) 13%,transparent);color:var(--prov)}
+.ui-prov::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;flex:0 0 6px}
+.ui-prov[data-prov=observed]{--prov:var(--prov-observed)}
+.ui-prov[data-prov=projected]{--prov:var(--prov-projected)}
+.ui-prov[data-prov=entered]{--prov:var(--prov-entered)}
+.ui-prov[data-prov=missing]{--prov:var(--prov-missing)}
+
+/* ── Icons. Inline SVG at currentColor, replacing every emoji in the chrome. Emoji
+      render differently on each platform, cannot be recoloured, and read as a hobby
+      project no matter how good the rest of the page is. ── */
+.ui-icon{width:15px;height:15px;flex:0 0 15px;stroke:currentColor;fill:none;
+  stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;vertical-align:-2px}
+.ui-icon-lg{width:18px;height:18px;flex-basis:18px}
+
+/* ── Eyebrow. One definition, so every screen introduces itself the same way. ── */
+.ui-eyebrow,.cp-eyebrow{display:block;font-size:var(--t-eyebrow);font-weight:650;
+  letter-spacing:.15em;text-transform:uppercase;color:var(--t3);margin-bottom:var(--sp-1)}
+
+/* ── Page head. Every screen gets the same opening move: eyebrow, headline, actions. ── */
+.ui-head{display:flex;align-items:flex-start;justify-content:space-between;
+  gap:var(--sp-3);margin-bottom:var(--sp-2);flex-wrap:wrap}
+.ui-head h2{font-size:var(--t-display);font-weight:550;letter-spacing:-1.4px;line-height:1.12}
+.ui-head-actions{display:flex;gap:var(--sp-1);flex-wrap:wrap}
+
+/* ── Buttons. A page has ONE primary. Everything else recedes. ── */
+.ui-btn{display:inline-flex;align-items:center;gap:7px;border-radius:9px;padding:9px 15px;
+  font-size:var(--t-sm);font-family:inherit;cursor:pointer;min-height:40px;
+  border:1px solid var(--bd2);background:var(--s2);color:var(--t2);transition:border-color .15s,background .15s,color .15s}
+.ui-btn:hover{border-color:var(--bd2);background:var(--s3);color:var(--tx)}
+.ui-btn-primary{background:var(--link);border-color:var(--link);color:#1b1733;font-weight:600}
+.ui-btn-primary:hover{background:var(--link-hover);border-color:var(--link-hover);color:#1b1733}
+.ui-btn-quiet{background:none;border-color:transparent;color:var(--t3);padding:9px 10px}
+.ui-btn-quiet:hover{background:var(--s2);color:var(--t2)}
+
+/* ── Severity. Only these three get colour; everything else stays neutral, so a
+      coloured thing on screen always means something. ── */
+.ui-sev{display:inline-flex;align-items:center;gap:6px;font-size:var(--t-xs);
+  font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--sev)}
+.ui-sev::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.ui-sev[data-sev=critical]{--sev:var(--loss)}
+.ui-sev[data-sev=warning]{--sev:var(--warn)}
+.ui-sev[data-sev=info]{--sev:var(--neutral)}
+
+/* ── Sub-navigation. Text and an icon, not an emoji pill. ── */
+#subToggle{display:flex;gap:2px;margin:0 0 var(--sp-3);border-bottom:1px solid var(--bd);padding:0}
+#subToggle button{display:inline-flex;align-items:center;gap:7px;background:none!important;
+  border:0!important;border-bottom:2px solid transparent!important;border-radius:0!important;
+  padding:11px 14px!important;font-size:var(--t-sm)!important;color:var(--t3)!important;
+  min-height:42px;cursor:pointer;transition:color .15s,border-color .15s}
+#subToggle button:hover{color:var(--t2)!important}
+#subToggle button.active{color:var(--tx)!important;border-bottom-color:var(--link)!important;
+  background:none!important;font-weight:600}
+
+/* ── Motion. Two things move, once. Nothing else, ever. ── */
+@keyframes ui-rise{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+.ui-rise{animation:ui-rise .5s cubic-bezier(.2,.7,.3,1) both}
+.ui-rise-2{animation-delay:.06s}.ui-rise-3{animation-delay:.12s}
+@media(prefers-reduced-motion:reduce){.ui-rise{animation:none}}
+
+/* ═══ HIERARCHY ═══
+   The old page let three numbers shout at once: the hero, the projection card's
+   $1.63M, and the monthly margin — all at similar weight, so the eye landed on the
+   chart card instead of the number the product exists to show. One hero, two steps
+   of clear air, then everything else. */
+.cp-wealth{padding:var(--sp-4) 32px;justify-content:center}
+.cp-wealth>strong,.ui-hero-value{
+  display:block;font-size:var(--t-hero);font-weight:450;letter-spacing:-3px;
+  line-height:1.04;margin:var(--sp-1) 0 var(--sp-2)}
+.cp-hero-meta{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:var(--sp-2)}
+.cp-wealth p{font-size:var(--t-sm);color:var(--t3);margin:0 0 var(--sp-3);max-width:34ch;line-height:1.55}
+.cp-wealth button{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-2);
+  width:100%;border:0;border-top:1px solid var(--bd2);padding:var(--sp-2) 0 0;background:none;
+  color:var(--t2);text-align:left;font-size:var(--t-sm);cursor:pointer}
+.cp-wealth button:hover{color:var(--tx)}
+.cp-wealth button span{float:none;display:inline-flex;color:var(--link)}
+
+/* Supporting figures sit two steps down and never rival the hero. */
+.cp-metric strong{font-size:var(--t-metric);font-weight:500;letter-spacing:-.9px;margin:6px 0}
+.cp-metric>span{font-size:var(--t-sm);color:var(--t2)}
+.cp-metric small{font-size:var(--t-xs);color:var(--t3)}
+.cp-chart-summary strong{font-size:26px;font-weight:500;letter-spacing:-.7px}
+.cp-card h3{font-size:var(--t-section)}
+.cp-year-grid strong{font-size:19px;font-weight:500}
+.cp-floor strong{font-size:22px}
+
+/* The metric grid stretched to the hero's height, which opened a canyon between its
+   two rows. Align the content to the top and let the rhythm control the spacing. */
+.cp-metrics{align-content:start;padding:var(--sp-3) var(--sp-2);gap:var(--sp-1) 0}
+.cp-metric{padding:var(--sp-2) var(--sp-3);border-radius:10px}
+.cp-position{align-items:stretch}

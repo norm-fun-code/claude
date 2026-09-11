@@ -26,14 +26,31 @@ function renderCockpit(R){
   const end=R[R.length-1],floor=R.reduce((a,b)=>a.liq<b.liq?a:b);
   const selected=R.find(r=>r.yr===cockpitYear)||current;cockpitYear=selected.yr;
   const metric=(title,value,detail,action)=>`<button class="cp-metric" onclick="cockpitGo('${action}')"><span>${title}</span><strong>${value}</strong><small>${detail}</small></button>`;
+  // The hero must never render a dash. When accounts are unreachable the PLAN still
+  // knows a net worth, so show that and let the provenance chip carry the doubt.
+  const hero=UI.heroValue({
+    observed:available?s.netWorth:null,
+    projected:current?current.nw+current.k401:null,
+    complete:available?!partial:undefined,
+  });
   const priorities=(_inbox?.priorities||[]).slice(0,3);
   document.getElementById('summaries').innerHTML='';
   document.getElementById('chartArea').innerHTML=`<div class="cockpit">
     <header class="cp-heading"><div><div class="cp-eyebrow">YOUR PRIVATE OFFICE</div><h2>Financial command.</h2></div><button class="cp-button" onclick="cockpitRefresh()" ${_ovwLoading||_inboxLoading?'disabled':''}>Refresh overview ↻</button></header>
     <div class="cp-source" role="status"><span class="${partial||stale||!available?'cp-amber':''}">${e(status)}</span>${dated?`<span>As of ${e(date.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}))}</span>`:''}<button onclick="cockpitGo('overview')">Sources & accounts ↗</button></div>
-    <section class="cp-position" aria-label="Financial position">
-      <div class="cp-wealth"><span class="cp-eyebrow">${partial?'KNOWN NET WORTH':'REPORTED NET WORTH'}</span><strong>${available?money(s.netWorth):'—'}</strong><p>${available?`${money(s.assets)} assets · ${money(s.debt)} liabilities`:'Your plan is available while accounts load or reconnect.'}</p><button onclick="cockpitGo('overview')">See the composition <span>↗</span></button></div>
-      <div class="cp-metrics">${metric('Cash + taxable investments',available?money(s.accessible):'—','Gross assets · before liabilities & sale taxes','overview')}${metric('Retirement',available?money(s.byClass?.retirement?.total):'—','Separate from accessible investments','holdings')}${metric('Vested Stripe',available?money(s.stripeVested):'—','Private equity · sale windows apply','stripe')}${metric(`${current.yr} planned monthly margin`,money(current.flow/12),'Projection · annual net flow ÷ 12','cashflow')}</div>
+    <section class="cp-position ui-rise" aria-label="Financial position">
+      <div class="cp-wealth">
+        <span class="cp-eyebrow">NET WORTH</span>
+        <strong class="ui-hero-value" id="cp-hero">${hero.value==null?'—':UI.money(hero.value)}</strong>
+        <div class="cp-hero-meta">${UI.prov(hero.source)}${hero.partial?UI.prov('missing','incomplete'):''}</div>
+        <p>${e(hero.note)}</p>
+        <button onclick="cockpitGo('overview')">See the composition <span>${UI.icon('arrow')}</span></button>
+      </div>
+      <div class="cp-metrics">${
+        metric('Cash + taxable',available?money(s.accessible):money(selected.liq),available?'Spendable without penalty':'Projected · accounts unavailable','overview')
+      }${metric('Retirement',available?money(s.byClass?.retirement?.total):money(selected.k401),available?'Locked until retirement age':'Projected · accounts unavailable','holdings')
+      }${metric('Vested Stripe',available?money(s.stripeVested):money(selected.sEnd),'Private equity · sale windows apply','stripe')
+      }${metric(`${current.yr} monthly margin`,money(current.flow/12),'All after-tax pay less all spending','cashflow')}</div>
     </section>
     <div class="cp-workspace"><div class="cp-main-column">
       <section class="cp-card cp-trajectory"><div class="cp-section-head"><div><span class="cp-eyebrow">CURRENT PLAN / PROJECTION</span><h3>The path ahead</h3></div><button onclick="cockpitGo('home')">Explore a what-if ↗</button></div>
@@ -59,6 +76,8 @@ function renderCockpit(R){
     </aside></div></div>`;
   charts.cockpit=new Chart(document.getElementById('cockpitTrajectory'),{type:'line',data:{labels:R.map(r=>r.yr),datasets:[{label:'Total wealth incl. retirement · projected',data:R.map(r=>r.nw+r.k401),borderColor:'#7ae3c3',backgroundColor:'rgba(122,227,195,.08)',fill:true,pointRadius:0,pointHoverRadius:5,borderWidth:2,tension:.25},{label:'Liquid investments · projected',data:R.map(r=>r.liq),borderColor:'#a9a0ff',borderDash:[4,4],pointRadius:0,borderWidth:2,tension:.25}]},options:{responsive:true,maintainAspectRatio:false,animation:false,interaction:{mode:'index',intersect:false},plugins:{legend:{position:'bottom',labels:{color:'#acb9cc',boxWidth:16,font:{size:12}}},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${money(c.raw)}`}}},scales:{x:{grid:{display:false},ticks:{color:'#899ab1',maxTicksLimit:6}},y:{grid:{color:'rgba(167,190,221,.08)'},ticks:{color:'#899ab1',callback:v=>money(v)}}}}});
   cockpitSelectYear(selected.yr);
+  // One animated number on the page, once. Everything else is still.
+  if(hero.value!=null)UI.countUp(document.getElementById('cp-hero'),hero.value);
 }
 function cockpitSelectYear(year){
   cockpitYear=year;

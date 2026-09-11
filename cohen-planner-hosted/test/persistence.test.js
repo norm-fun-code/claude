@@ -1,5 +1,6 @@
 import { describe,it,expect } from 'vitest';
 import fs from 'node:fs';
+import { createRequire } from 'module';
 import vm from 'node:vm';
 const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
 const source=html.slice(html.indexOf('let _saveTimer=null;'),html.indexOf('// Saved-state migration lives in'));
@@ -60,5 +61,64 @@ describe('Every front-end asset the page asks for is actually served',()=>{
     for(const ref of refs)
       expect(server,`${ref} is referenced by index.html but has no route in server.js`)
         .toContain(`'${ref}'`);
+  });
+});
+
+// The design system is only a system if there is exactly one of it. These lock the two
+// rules that were actually broken: five money formats on one page, and emoji in chrome.
+describe('One design system',()=>{
+  const UI=createRequire(import.meta.url)('../public/ui.js');
+
+  it('formats money by one rule at every magnitude',()=>{
+    expect(UI.money(1630000)).toBe('$1.63M');
+    expect(UI.money(127000)).toBe('$127K');
+    expect(UI.money(16000)).toBe('$16K');
+    expect(UI.money(4500)).toBe('$4,500');
+    expect(UI.money(2000000)).toBe('$2M');          // trailing .00 is noise
+    expect(UI.money(-250000)).toBe('−$250K');        // true minus, not a hyphen
+    expect(UI.money(1200,{signed:true})).toBe('+$1,200');
+  });
+
+  it('returns a dash for a missing value rather than a readable zero',()=>{
+    for(const v of [null,undefined,NaN,'',{}])expect(UI.money(v)).toBe('—');
+    expect(UI.money(0)).toBe('$0');                  // a real zero still shows
+  });
+
+  it('never blanks the hero: the plan stands in and the chip carries the doubt',()=>{
+    const live=UI.heroValue({observed:1800000,projected:1630000,complete:true});
+    expect(live.value).toBe(1800000);
+    expect(live.source).toBe('observed');
+
+    const down=UI.heroValue({observed:null,projected:1630000});
+    expect(down.value).toBe(1630000);                // a number, not a dash
+    expect(down.source).toBe('projected');
+    expect(down.note).toMatch(/unavailable/);
+
+    const partial=UI.heroValue({observed:900000,projected:1630000,complete:false});
+    expect(partial.partial).toBe(true);
+    expect(partial.note).toMatch(/short by an unknown amount/);
+
+    // Only when nothing at all is known does it give up, and it says so.
+    expect(UI.heroValue({}).value).toBe(null);
+  });
+
+  it('draws icons from a closed set, and nothing for an unknown name',()=>{
+    expect(UI.icon('bell')).toMatch(/^<svg class="ui-icon"/);
+    expect(UI.icon('bell')).toContain('viewBox="0 0 20 20"');
+    expect(UI.icon('no-such-icon')).toBe('');
+  });
+
+  it('keeps emoji out of the interface chrome',()=>{
+    const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+    const nav=html.slice(html.indexOf('const SUB_VIEWS'),html.indexOf('let _stressMode'));
+    // Pictographs in a sub-nav label render differently on every platform and cannot be
+    // recoloured. The geometric glyphs in the main nav are deliberate and stay.
+    expect(nav).not.toMatch(/[\u{1F300}-\u{1FAFF}]/u);
+    expect(nav).toContain("'bell'");
+  });
+
+  it('escapes provenance labels rather than trusting them',()=>{
+    expect(UI.prov('observed','<script>')).toContain('&lt;script&gt;');
+    expect(UI.prov('nonsense')).toContain('data-prov="missing"');
   });
 });

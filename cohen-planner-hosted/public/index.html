@@ -452,6 +452,8 @@ body{background:transparent}
 </style>
 <link rel="stylesheet" href="/decision-room.css">
 <link rel="stylesheet" href="/cockpit.css">
+<link rel="stylesheet" href="/ui.css">
+<script src="/ui.js"></script>
 <script src="/cockpit.js"></script>
 </head>
 <body>
@@ -1671,14 +1673,14 @@ function render(){
     let chartOpts='';
     if(activeTab==='projection'&&_projView!=='table'){
       chartOpts=opt('inflBtn',inflationView?'Real $':'Nominal $','toggleInflation()',inflationView,'Show future dollars in today\u2019s purchasing power');
-      if(_projView==='nw')chartOpts+=opt('stressBtn','⚡ Range','toggleStressMode()',_stressMode,'Overlay a bear and bull path')
-        +opt('bandBtn','🎲 Bands','toggleBandMode()',_bandMode,'Overlay the Monte Carlo confidence band');
+      if(_projView==='nw')chartOpts+=opt('stressBtn','Range','toggleStressMode()',_stressMode,'Overlay a bear and bull path')
+        +opt('bandBtn','Bands','toggleBandMode()',_bandMode,'Overlay the Monte Carlo confidence band');
     }
-    if(tg)tg.innerHTML=(!cfg&&!chartOpts)?'':`<div style="display:flex;gap:4px;margin-bottom:9px;flex-wrap:wrap;align-items:center">`+
+    if(tg)tg.innerHTML=(!cfg&&!chartOpts)?'':
       (cfg?cfg.views.map(([k,ic,lb])=>{const on=cfg.get()===k;
-        return `<button onclick="setSubView('${k}')" aria-pressed="${on}" style="font-size:10px;padding:5px 11px;border-radius:6px;border:1px solid ${on?'transparent':'var(--bd)'};cursor:pointer;font-family:inherit;font-weight:${on?600:500};background:${on?'var(--accent)':'var(--s2)'};color:${on?'#fff':'var(--t2)'}">${ic} ${lb}</button>`;
+        return `<button onclick="setSubView('${k}')" aria-pressed="${on}" class="${on?'active':''}">${UI.icon(ic)}${lb}</button>`;
       }).join(''):'')+
-      (chartOpts?`<span style="margin-left:auto;display:flex;gap:4px">${chartOpts}</span>`:'')+`</div>`;
+      (chartOpts?`<span style="margin-left:auto;display:flex;gap:4px;align-self:center">${chartOpts}</span>`:'');
   }
   if(activeTab==='cockpit'){renderCockpit(R);return;}
   if(activeTab==='home'){
@@ -4418,11 +4420,11 @@ let _todayView='overview';
 let _homeView='explore';
 const SUB_VIEWS={
   home:{get:()=>_homeView,set:v=>{_homeView=v},
-    views:[['explore','✦','Explore'],['housing','🏠','Housing'],['levers','🎚️','Which levers matter'],['compare','⚖','Compare saved']]},
+    views:[['explore','spark','Explore'],['housing','home','Housing'],['levers','chart','Which levers matter'],['compare','diamond','Compare saved']]},
   projection:{get:()=>_projView,set:v=>{_projView=v},
-    views:[['nw','📈','Net worth'],['income','💰','Income & tax'],['cashflow','💸','Cash flow'],['table','📋','Table']]},
+    views:[['nw','chart','Net worth'],['income','circle','Income & tax'],['cashflow','arrow','Cash flow'],['table','doc','Table']]},
   today:{get:()=>_todayView,set:v=>{_todayView=v},
-    views:[['watch','🔔','Watchlist'],['overview','◎','Overview'],['plan','🎯','Plan vs actual'],['holdings','📊','Holdings & accounts'],['spending','💳','Spending']]},
+    views:[['watch','bell','Watchlist'],['overview','circle','Overview'],['plan','target','Plan vs actual'],['holdings','chart','Holdings & accounts'],['spending','card','Spending']]},
 };
 let _stressMode=false;
 // ── Monte Carlo confidence band overlay (NW chart) ──
