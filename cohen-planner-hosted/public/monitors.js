@@ -26,6 +26,7 @@
     CONCENTRATION:'concentration',
     DIVERGENCE:'divergence',
     DEADLINE:'deadline',
+    SPENDING_PACE:'spendingPace',
     DECISION_REVIEW:'decisionReview',
   };
   // Why a check could not run. These are not failures — they are the honest answer to
@@ -269,7 +270,58 @@
     return{alerts,skipped};
   }
 
-  // ── 5. Deadlines ─────────────────────────────────────────────────────────
+  // ── 5. Discretionary pace ────────────────────────────────────────────────
+  // Distinct from the divergence check above, which compares spending to the PLAN. This
+  // compares it to the household's own recent months at the same day — the plan can be
+  // perfectly on track while this month is quietly running away, and the plan's annual
+  // figure will not notice until the year is over.
+  //
+  // Fires only at the top band. "Above" is a normal fluctuation and alerting on it every
+  // other month is how a watchlist teaches someone to ignore it.
+  function spendingPace(ctx){
+    const{pace:p}=ctx;
+    const alerts=[],skipped=[];
+    if(!p){skipped.push(skip(KIND.SPENDING_PACE,SKIP.NO_DATA,'a dated transaction ledger',
+      'Discretionary pace needs per-day transactions, which the monthly totals cannot provide.'));
+      return{alerts,skipped}}
+    if(p.status!=='ok'){
+      skipped.push(skip(KIND.SPENDING_PACE,SKIP.NO_DATA,
+        (p.needs&&p.needs[0]&&p.needs[0].field)||'more complete months',
+        (p.needs&&p.needs[0]&&p.needs[0].why)||'Pace cannot be judged yet.'));
+      return{alerts,skipped};
+    }
+    if(p.tone!=='bad')return{alerts,skipped};
+
+    const drivers=(p.flagged||[]).slice(0,3);
+    alerts.push(alert(KIND.SPENDING_PACE,SEVERITY.WARNING,
+      // Keyed on the MONTH, so it is one alert for this month however often it is
+      // re-detected, and next month's is a new one to decide about.
+      keyOf(KIND.SPENDING_PACE,p.month),
+      `Discretionary spending is ${p.verdict} your usual pace this month`,
+      [ev(`Spent by the ${p.day}${p.day%10===1&&p.day!==11?'st':p.day%10===2&&p.day!==12?'nd':p.day%10===3&&p.day!==13?'rd':'th'}`,usd(p.mtd),'transaction ledger'),
+       ev('Normal for you by this day',`${usd(p.normalLow)}–${usd(p.normalHigh)}`,
+         `same day of ${p.monthsCompared} earlier months`),
+       ev('Above the middle of that range',usd(p.over),'computed'),
+       ...drivers.map(d=>ev(d.category,`${usd(d.mtd)} · ${usd(d.over)} more than usual`,'transaction ledger'))],
+      drivers.length
+        ?`This is outside the range this household actually occupies by this point in a month, and it is concentrated: ${drivers.map(d=>d.category.toLowerCase()).join(' and ')} account for most of the gap. Committed costs are excluded, so this is spending you still control.`
+        :`This is outside the range this household actually occupies by this point in a month. No single category explains it, which usually means the whole month has run a little hot rather than one decision doing it.`,
+      drivers.length
+        ?`There are ${daysLeftIn(p.month,p.day)} days left in the month. Look at ${drivers[0].category.toLowerCase()} first — it is ${usd(drivers[0].over)} above its own usual pace.`
+        :`There are ${daysLeftIn(p.month,p.day)} days left in the month. Check the category breakdown before deciding whether this is a one-off.`,
+      {month:p.month}));
+    return{alerts,skipped};
+  }
+
+  // Days remaining, from the month string rather than today's clock, so a replayed
+  // context produces the same alert text it did when it was generated.
+  function daysLeftIn(month,day){
+    const y=Number(String(month).slice(0,4)),m=Number(String(month).slice(5,7));
+    const inMonth=new Date(Date.UTC(y,m,0)).getUTCDate();
+    return Math.max(0,inMonth-day);
+  }
+
+  // ── 6. Deadlines ─────────────────────────────────────────────────────────
   // Fixed dates, computed rather than remembered. Each fires inside a lead-time window and
   // stops firing once it has passed, so the inbox does not accumulate history.
   function deadlines(ctx){
@@ -436,7 +488,7 @@
   }
 
   // ── Running everything ───────────────────────────────────────────────────
-  const CHECKS=[reserveFloor,homeFunding,concentration,divergence,deadlines,decisionReview];
+  const CHECKS=[reserveFloor,homeFunding,concentration,divergence,spendingPace,deadlines,decisionReview];
 
   function detect(ctx){
     const c=ctx||{};
@@ -528,7 +580,7 @@
   }
 
   const api={SEVERITY,KIND,SKIP,METRICS,OPS,
-    reserveFloor,homeFunding,concentration,divergence,deadlines,decisionReview,
+    reserveFloor,homeFunding,concentration,divergence,spendingPace,deadlines,decisionReview,
     evaluateCondition,detect,applyStates,dedupe,prioritize,briefingInput,keyOf};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.PlannerMonitors=api;

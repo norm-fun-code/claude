@@ -11,6 +11,7 @@
 <script src="/model.js"></script>
 <script src="/plan-migrate.js"></script>
 <script src="/spending.js"></script>
+<script src="/pace.js"></script>
 <script src="/accounts.js"></script>
 <script src="/snapshots.js"></script>
 <script src="/liquidity.js"></script>
@@ -2592,6 +2593,88 @@ async function runIncremental(){
   loadSpending();
 }
 
+// ── Discretionary pace ──────────────────────────────────────────────────────
+// Is this month's controllable spending running hot, and what is driving it?
+//
+// The card leads with a VERDICT rather than a number, because "$4,248" means nothing on
+// its own and "running well above what is normal for you" means something immediately.
+// Underneath it, two bars on a shared scale: this month against the range this household
+// actually occupies by this day of the month.
+function paceCard(p){
+  if(!p)return '';
+  const e=advEscape,m=v=>UI.money(v),M=v=>UI.money(v,{exact:true});
+
+  // Nothing is judged without enough history to judge it against, and the card says what
+  // it is waiting for rather than showing a hedged verdict.
+  if(p.status!=='ok'){
+    return `<section class="pace" data-tone="unknown">
+      <span class="ui-eyebrow">This month</span>
+      <h3>Not enough history to judge the pace yet.</h3>
+      <ul class="pace-needs">${(p.needs||[]).map(n=>`<li>${e(n.why)}</li>`).join('')}</ul>
+      <p class="pace-foot">${e(p.note||'')}</p>
+    </section>`;
+  }
+
+  const TONE={good:'good',neutral:'neutral',warn:'warn',bad:'bad'}[p.tone]||'neutral';
+  const headline=p.tone==='neutral'
+    ? 'Discretionary spending is running about normal'
+    : `Discretionary spending is running ${e(p.verdict)} your usual pace`;
+
+  // Both bars share one scale so their lengths are comparable. The scale is the larger of
+  // the two plus the top of the normal band, so the normal marker always has somewhere
+  // to sit and a big month does not push it off the end.
+  const scale=Math.max(p.mtd,p.normalHigh,1)*1.06;
+  const pctOf=v=>Math.max(0,Math.min(100,v/scale*100));
+  const lastPct=p.lastMonth&&p.lastMonth.deltaPct;
+
+  return `<section class="pace ui-rise" data-tone="${TONE}">
+    <header>
+      <span class="ui-eyebrow">This month · through the ${p.day}${ordinal(p.day)}</span>
+      <h3>${headline}</h3>
+    </header>
+
+    <div class="pace-figure">
+      <strong class="ui-num">${M(p.mtd)}</strong>
+      <span>so far</span>
+    </div>
+    <p class="pace-sub">
+      Normal for you by this day is <b>${m(p.normalLow)}–${m(p.normalHigh)}</b>${
+        p.over>0?`, so you are <b>${m(p.over)}</b> above the middle of that range`
+                :p.over<-1?`, and you are <b>${m(-p.over)}</b> below the middle of it`:''}.
+      ${lastPct!=null?`Last month by the same day: <b>${M(p.lastMonth.atDay)}</b>.`:''}
+    </p>
+
+    <div class="pace-bars">
+      <div class="pace-bar">
+        <span>This month<b class="ui-num">${M(p.mtd)}</b></span>
+        <div><i style="width:${pctOf(p.mtd)}%"></i></div>
+      </div>
+      <div class="pace-bar" data-kind="typical">
+        <span>Typical at this point<b class="ui-num">${M(p.typical)}</b></span>
+        <div>
+          <i style="width:${pctOf(p.typical)}%"></i>
+          <u style="left:${pctOf(p.normalLow)}%;width:${pctOf(p.normalHigh)-pctOf(p.normalLow)}%"></u>
+        </div>
+      </div>
+    </div>
+
+    ${p.flagged.length?`<div class="pace-drivers">
+      <span class="ui-eyebrow">What is driving it</span>
+      ${p.flagged.slice(0,4).map(d=>`<div class="pace-driver">
+        <span>${e(d.category)}</span>
+        <span><b class="ui-num">${M(d.mtd)}</b><small>usually ${M(d.typical)} by now · <em>${m(d.over)} more</em></small></span>
+      </div>`).join('')}
+    </div>`:`<p class="pace-clear">No single category is out of its usual range.</p>`}
+
+    <footer class="pace-foot">
+      Compared against the same day of ${p.monthsCompared} earlier month${p.monthsCompared===1?'':'s'}
+      · committed costs excluded by ${e(p.committedRule)}
+      · ${UI.prov('observed','from your transactions')}
+    </footer>
+  </section>`;
+}
+const ordinal=n=>{const s=['th','st','nd','rd'],v=n%100;return s[(v-20)%10]||s[v]||s[0]};
+
 function renderSpendingTab(R,P){
   let spendingViz=null;
   const ca=document.getElementById('chartArea');
@@ -2603,6 +2686,8 @@ function renderSpendingTab(R,P){
   const exact=v=>fmtF(Math.round(v||0));
 
   let h=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px" class="spending-workspace">`;
+
+  h+=paceCard(d.pace);
 
   // ── Freshness and coverage, before any number that depends on them ──
   const nTx=st.transactions||0;

@@ -25,6 +25,7 @@ const monarchSync = createMonarchSync({ db, live: monarchLive });
 const Spending = require('./public/spending.js');
 const Accounts = require('./public/accounts.js');
 const Snapshots = require('./public/snapshots.js');
+const Pace = require('./public/pace.js');
 
 // Classification and confirmations, keyed on stable account ids.
 async function loadAccountMeta() {
@@ -269,7 +270,7 @@ app.get('/model.js', requireAuth, (req, res) => {
 // Keep every new planner asset behind the same session gate as the existing UI.
 // liquidity.js was referenced by index.html but never listed here, so it 404'd in
 // production while working locally under the preview server's plain static handler.
-for (const asset of ['cockpit.js', 'cockpit.css', 'ui.js', 'ui.css', 'decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js', 'advisor-tools.js']) {
+for (const asset of ['cockpit.js', 'cockpit.css', 'ui.js', 'ui.css', 'decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js', 'advisor-tools.js', 'pace.js']) {
   app.get('/' + asset, requireAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', asset));
   });
@@ -747,8 +748,17 @@ app.get('/api/monarch/spending', requireAuth, async (req, res) => {
     } catch (e) { /* balances unavailable: fall back to name-based classification only */ }
     const summary = Spending.summarize(ledger, categories, { accountClasses });
     const cov = Spending.coverage(summary.months, endDate, status.windows || {});
+    // Discretionary pace. Computed here rather than in the browser because it needs the
+    // raw dated ledger, not the monthly rollup — comparing to "typical at this point"
+    // means comparing to the same DAY of prior months, which a monthly total cannot do.
+    const catIndex = Spending.indexCategories(categories);
+    const pace = Pace.pace(ledger, catIndex, {
+      asOf: endDate,
+      classify: t => Spending.classify(t, catIndex, { accountClasses }),
+      committedCategories: req.query.committed ? String(req.query.committed).split(',') : undefined,
+    });
     res.json({
-      startDate, endDate, status, coverage: cov,
+      startDate, endDate, status, coverage: cov, pace,
       months: summary.months.map(m => ({ ...m, byCategory: undefined })),
       totals: summary.totals, counts: summary.counts,
       rolling: {
@@ -1539,6 +1549,16 @@ async function buildMonitorContext(today) {
     } else {
       ctx.sources.spending = `only ${cov.completeMonths.length} complete months`;
     }
+    // Pace is a different question from the divergence check above: this month against
+    // the household's OWN recent months at the same day, rather than against the plan.
+    // It needs the dated ledger, not the rollup, so it is computed in the same pass.
+    const catIndex = Spending.indexCategories(cats || []);
+    ctx.pace = Pace.pace(ledger, catIndex, {
+      asOf: ctx.today,
+      classify: t => Spending.classify(t, catIndex, { accountClasses: acctClasses }),
+    });
+    ctx.sources.pace = ctx.pace.status === 'ok' ? 'ok'
+      : (ctx.pace.needs || []).map(n => n.field).join(', ') || 'insufficient history';
   } catch (err) { ctx.sources.spending = `unavailable: ${err.message}`; }
 
   // Tax facts, REVIEWED ones only. An unreviewed extraction must never reach a calculation.

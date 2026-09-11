@@ -422,3 +422,73 @@
   .cp-register-head{gap:var(--sp-1)}
   .cp-register-note{width:100%}
 }
+
+/* ═══ DISCRETIONARY PACE ═══
+   Leads with a verdict, not a number: "$4,248" means nothing on its own, and "running
+   well above what is normal for you" means something immediately. The tone is carried by
+   a left rail and the headline only — a whole card washed in red reads as an emergency
+   every month, and then stops reading at all. */
+.pace{position:relative;border:1px solid var(--bd);border-left:3px solid var(--rail);
+  border-radius:var(--radius-lg);background:linear-gradient(150deg,#152134,#111a29);
+  padding:var(--sp-3) var(--sp-4);--rail:var(--bd2);--fg:var(--tx)}
+.pace[data-tone=good]{--rail:var(--gain);--fg:var(--gain)}
+.pace[data-tone=neutral]{--rail:var(--neutral);--fg:var(--tx)}
+.pace[data-tone=warn]{--rail:var(--warn);--fg:var(--warn)}
+.pace[data-tone=bad]{--rail:var(--loss);--fg:var(--loss)}
+.pace[data-tone=unknown]{--rail:var(--bd2);--fg:var(--t2)}
+.pace h3{font-size:var(--t-section);font-weight:550;letter-spacing:-.5px;line-height:1.3;
+  color:var(--fg);margin:0 0 var(--sp-2);max-width:26ch}
+
+.pace-figure{display:flex;align-items:baseline;gap:9px;margin-bottom:var(--sp-1)}
+.pace-figure strong{font-size:40px;font-weight:450;letter-spacing:-1.6px;color:var(--tx)}
+.pace-figure span{font-size:var(--t-sm);color:var(--t3)}
+.pace-sub{font-size:var(--t-body);color:var(--t2);line-height:1.65;margin:0 0 var(--sp-3);max-width:62ch}
+.pace-sub b{color:var(--tx);font-weight:600;font-variant-numeric:tabular-nums}
+
+/* Two bars on ONE scale, so their lengths can honestly be compared. The pale marker on
+   the second is the normal range — the band this household actually occupies by this day,
+   which is the thing "typical" really means. */
+.pace-bars{display:flex;flex-direction:column;gap:var(--sp-2);margin-bottom:var(--sp-3)}
+.pace-bar span{display:flex;justify-content:space-between;gap:var(--sp-2);
+  font-size:var(--t-sm);color:var(--t2);margin-bottom:6px}
+.pace-bar span b{color:var(--tx);font-weight:600}
+.pace-bar>div{position:relative;height:9px;border-radius:5px;background:var(--s3);overflow:hidden}
+.pace-bar i{display:block;height:100%;border-radius:5px;background:var(--rail)}
+.pace-bar[data-kind=typical] i{background:var(--t4)}
+.pace-bar u{position:absolute;top:0;bottom:0;border-radius:5px;
+  background:color-mix(in srgb,var(--t4) 35%,transparent);text-decoration:none}
+
+.pace-drivers{border-top:1px solid var(--bd);padding-top:var(--sp-2)}
+.pace-driver{display:flex;align-items:baseline;justify-content:space-between;gap:var(--sp-3);
+  padding:8px 0;border-top:1px solid var(--bd);font-size:var(--t-sm)}
+.pace-driver:first-of-type{border-top:0}
+.pace-driver>span:first-child{color:var(--tx);font-weight:500}
+.pace-driver>span:last-child{text-align:right}
+.pace-driver b{display:block;color:var(--tx);font-weight:600}
+.pace-driver small{display:block;font-size:var(--t-xs);color:var(--t3);margin-top:2px}
+.pace-driver em{font-style:normal;color:var(--fg)}
+.pace-clear{font-size:var(--t-sm);color:var(--t3);margin:0;padding-top:var(--sp-2);border-top:1px solid var(--bd)}
+
+.pace-needs{margin:0 0 var(--sp-2);padding-left:18px;font-size:var(--t-body);
+  color:var(--t2);line-height:1.7}
+.pace-foot{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:var(--t-xs);
+  color:var(--t3);margin:var(--sp-3) 0 0;line-height:1.6}
+
+@media(max-width:760px){
+  .pace{padding:var(--sp-3) var(--sp-2)}
+  .pace-figure strong{font-size:33px}
+  .pace h3{font-size:19px}
+}
+
+/* A flex item defaults to min-width:auto, so a wide table stretches its own scroll
+   container instead of scrolling inside it. The .tw wrapper was doing its job; the
+   column above it was not letting it. */
+.spending-workspace,.wl{min-width:0}
+.spending-workspace>*,.wl>*{min-width:0;max-width:100%}
+.spend-details,.spend-details>*{min-width:0;max-width:100%}
+
+/* The sub-nav is a single row of tabs. On a narrow screen it scrolls rather than
+   pushing the page sideways. */
+#subToggle{overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+#subToggle::-webkit-scrollbar{display:none}
+#subToggle button{flex:0 0 auto;white-space:nowrap}

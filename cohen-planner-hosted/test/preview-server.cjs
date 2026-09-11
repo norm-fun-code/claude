@@ -12,6 +12,7 @@ const TaxPlan=require('../public/tax-plan.js');
 const TaxRules=require('../public/tax-rules.js');
 const Liquidity=require('../public/liquidity.js');
 const InboxState=require('../public/inbox-state.js');
+const Pace=require('../public/pace.js');
 const alertStates={};
 const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
 const P=vm.runInNewContext('('+html.match(/const D=(\{[\s\S]*?\n\});/)[1]+')');
@@ -40,7 +41,20 @@ const server=http.createServer(async(req,res)=>{
         const categories=['Rent','Travel','Shopping','Restaurants','Groceries','Other'].map((name,j)=>({id:String(j),name,net:(j===0?4000:700+j*50)*(i===12?.3:1),gross:(j===0?4000:700+j*50)*(i===12?.3:1),refunds:0,count:10}));
         return{month,categories,expense:categories.reduce((n,c)=>n+c.net,0),income:i===12?3000:13000,transfer:2000,cardPayment:1000,investment:500,count:90};
       });
-      return json({endDate:'2026-09-10',months,coverage:{first:'2025-09',last:'2026-09',completeMonths:[],partial:'2026-09',fractionElapsed:.33},rolling:{m3:null,m6:null,m12:null},totals:{expense:months.reduce((n,m)=>n+m.expense,0),income:159000},counts:{expense:1000}});
+      // A dated synthetic ledger so the pace card can be exercised offline. Pace needs
+      // per-day transactions; the monthly rollup above cannot supply them.
+      const rows=[];let seq=0;
+      const put=(m,d,amt,cat)=>rows.push({id:'t'+(seq++),date:m+'-'+String(d).padStart(2,'0'),amount:-amt,categoryName:cat});
+      for(const m of ['2026-06','2026-07','2026-08']){
+        put(m,1,5200,'Rent');put(m,2,900,'Tuition');
+        for(let d=1;d<=28;d++){put(m,d,55+(d%5)*12,'Restaurants');put(m,d,40+(d%7)*9,'Groceries');}
+        put(m,8,320,'Shopping');put(m,19,260,'Shopping');put(m,14,180,'Entertainment');
+      }
+      put('2026-09',1,5200,'Rent');put('2026-09',2,900,'Tuition');
+      for(let d=1;d<=10;d++){put('2026-09',d,55+(d%5)*12,'Restaurants');put('2026-09',d,40+(d%7)*9,'Groceries');}
+      put('2026-09',3,1750,'Travel');put('2026-09',6,980,'Shopping');put('2026-09',9,640,'Shopping');
+      const pace=Pace.pace(rows,new Map(),{asOf:'2026-09-10'});
+      return json({endDate:'2026-09-10',months,pace,coverage:{first:'2025-09',last:'2026-09',completeMonths:[],partial:'2026-09',fractionElapsed:.33},rolling:{m3:null,m6:null,m12:null},totals:{expense:months.reduce((n,m)=>n+m.expense,0),income:159000},counts:{expense:1000}});
     }
     if(url.pathname==='/api/monarch-status')return json({connected:false});
     if(url.pathname==='/api/snapshots'||url.pathname==='/api/chats')return json([]);
