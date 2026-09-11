@@ -87,11 +87,13 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     paddingHorizontal: spacing.sm + 2,
     paddingVertical: 3,
-    minWidth: 64,
+    minWidth: 80,
+    minHeight: 44,
+    justifyContent: 'center',
     alignItems: 'center',
   },
-  listenText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.4 },
-  subtext: { fontSize: 12, lineHeight: 17, marginTop: 2 },
+  listenText: { fontSize: 13, fontWeight: '700', letterSpacing: 0.4 },
+  subtext: { fontSize: 13, lineHeight: 21, marginTop: 2 },
 });
 
 const WisdomListenCardMemo = React.memo(WisdomListenCard);

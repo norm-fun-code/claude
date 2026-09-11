@@ -133,25 +133,28 @@ export function NextMove({ visible, onClose, mode: initialMode, suggestedAction,
 }
 
 export function NextMoveCard({ onOpen, session }: { onOpen: (mode: Mode) => void; session: FocusSession | null }) {
-  return <LinearGradient colors={['#272348', '#151A2B']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={s.card}>
-    <View style={s.cardTop}><Text style={s.eyebrow}>ROOM FOR WHAT MATTERS</Text><Ionicons name="sparkles-outline" size={20} color="#BDB5FF" /></View>
-    <Text style={s.cardTitle}>Your next move.</Text>
-    <Text style={s.cardDescription}>Think it through. Then make time for it.</Text>
+  const c = getColors(useColorScheme() === 'dark');
+  return <View style={[s.quickActions, { borderColor: c.border }]}>
     <View style={s.cardActions}>
-      <Pressable accessibilityRole="button" onPress={() => onOpen('decide')} style={({ pressed }) => [s.cardAction, { backgroundColor: pressed ? '#8278ED' : '#BDB5FF' }]}><Ionicons name="git-compare-outline" size={18} color="#1C1638" /><Text style={s.cardActionText}>Think it through</Text></Pressable>
-      <Pressable accessibilityRole="button" onPress={() => onOpen('focus')} style={({ pressed }) => [s.cardAction, s.secondaryAction, { opacity: pressed ? 0.7 : 1 }]}><Ionicons name="scan-outline" size={18} color="#E0DDF8" /><Text style={[s.cardActionText, { color: '#E0DDF8' }]}>{session ? 'Open focus' : 'Make time'}</Text></Pressable>
+      <Pressable accessibilityRole="button" onPress={() => onOpen('decide')} style={({ pressed }) => [s.cardAction, { backgroundColor: c.accentSoft, opacity: pressed ? 0.7 : 1 }]}>
+        <Ionicons name="git-compare-outline" size={18} color={c.accent} /><Text style={[s.cardActionText, { color: c.accent }]}>Think it through</Text>
+      </Pressable>
+      <Pressable accessibilityRole="button" onPress={() => onOpen('focus')} style={({ pressed }) => [s.cardAction, { backgroundColor: c.card, opacity: pressed ? 0.7 : 1 }]}>
+        <Ionicons name="scan-outline" size={18} color={c.text} /><Text style={[s.cardActionText, { color: c.text }]}>{session ? 'Open focus' : 'Make time'}</Text>
+      </Pressable>
     </View>
-    {!!session && <Text style={s.savedSession} numberOfLines={2}>Your focus · {session.title}</Text>}
-  </LinearGradient>;
+    {!!session && <Text style={[s.savedSession, { color: c.subtext }]} numberOfLines={2}>In focus · {session.title}</Text>}
+  </View>;
 }
 
 const s = StyleSheet.create({
+  quickActions: { paddingBottom: 18, marginBottom: 18, borderBottomWidth: StyleSheet.hairlineWidth },
   card: { borderRadius: radius.xl, padding: 22, marginBottom: spacing.md, borderWidth: 1, borderColor: '#443E67' },
   cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   eyebrow: { fontFamily: FONTS.text, fontSize: 10, fontWeight: '700', letterSpacing: 1.7, color: '#BDB5E3', flexShrink: 1 },
   cardTitle: { fontFamily: FONTS.display, fontSize: 27, color: '#F7F6FF', marginTop: 18, letterSpacing: -0.7 },
   cardDescription: { ...typography.body, color: '#C9C5DE', marginTop: 6 },
-  cardActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 20 },
+  cardActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 0 },
   cardAction: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, minHeight: 48, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 14, flexGrow: 1 },
   secondaryAction: { backgroundColor: '#FFFFFF0D', borderWidth: 1, borderColor: '#68627E' },
   cardActionText: { fontFamily: FONTS.text, fontSize: 13, fontWeight: '600', color: '#1C1638' },

@@ -69,9 +69,9 @@ const styles = StyleSheet.create({
   // Icon-only — a quiet 34px circle instead of a labeled pill, so a settings
   // control stops competing with the greeting for prime top-right real estate.
   themeBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',

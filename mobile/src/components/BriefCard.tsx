@@ -4,6 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { getColors, spacing, radius, typography, shadow, glow, accentGradient, withAlpha, FONTS } from '../theme';
+import { useReducedMotion } from '../lib/useReducedMotion';
 import { AnimatedEntry } from './AnimatedEntry';
 import type { ChiefBrief } from '../hooks/useBriefing';
 import { BRIEFING_CONTEXT_URL, BRIEFING_AUDIO_URL, BRIEFING_ACTION_COMMIT_URL, BRIEFING_ACTION_ALTERNATES_URL, VOICE_TRANSCRIBE_URL, authHeaders, fetchWithTimeout } from '../config';
@@ -130,6 +131,7 @@ function HighlightedSynthesis({ text }: { text: string }) {
   // How many upcoming number tokens inherit the band color ("green at 64").
   let bandColor: string | null = null;
   let bandReach = 0;
+  let emphasizedNumbers = 0;
   return (
     <Text style={styles.synthesis}>
       {words.map((w, i) => {
@@ -152,7 +154,8 @@ function HighlightedSynthesis({ text }: { text: string }) {
         }
         const m = w.match(NUM_CORE);
         if (bandReach > 0) bandReach -= 1;
-        if (!m) return w + space;
+        if (!m || emphasizedNumbers >= 2) return w + space;
+        emphasizedNumbers += 1;
         const numColor = bandReach > 0 && bandColor ? bandColor : undefined;
         if (bandReach > 0) { bandReach = 0; bandColor = null; } // one number per band mention
         return (
@@ -218,8 +221,10 @@ const answeredQuestions = new Set<string>();
 // not an empty card and not indefinite italic text. Plain RN Animated (no
 // reanimated/gesture-handler dependency) looping an opacity tween.
 function BriefSkeleton() {
+  const reducedMotion = useReducedMotion();
   const pulse = React.useRef(new Animated.Value(0.35)).current;
   useEffect(() => {
+    if (reducedMotion) { pulse.setValue(0.6); return; }
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, { toValue: 0.75, duration: 700, useNativeDriver: true }),
@@ -228,7 +233,7 @@ function BriefSkeleton() {
     );
     loop.start();
     return () => loop.stop();
-  }, [pulse]);
+  }, [pulse, reducedMotion]);
   return (
     <Animated.View style={{ opacity: pulse }} accessibilityLabel="Preparing today's brief" accessibilityRole="progressbar">
       <View style={[styles.skeletonBar, { width: '88%', height: 22 }]} />

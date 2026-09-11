@@ -54,8 +54,8 @@ function HealthStateCard({ recovery, effectiveWorkout, highlight, onHighlightLay
       onLayout={highlight && onHighlightLayout ? (e) => onHighlightLayout(e.nativeEvent.layout.y) : undefined}
     >
       <View style={styles.topRow}>
-        <View style={{ width: 68, height: 68, alignItems: 'center', justifyContent: 'center' }}>
-          <RecoveryOrb score={score ?? undefined} band={state.isProvisional ? 'neutral' : band} size={68} />
+        <View style={{ width: 80, height: 80, alignItems: 'center', justifyContent: 'center' }}>
+          <RecoveryOrb score={score ?? undefined} band={state.isProvisional ? 'neutral' : band} size={80} />
         </View>
         <View style={styles.headline}>
           <Text style={[styles.stateLabel, { color: tint }]}>{state.stateLabel}</Text>
@@ -74,7 +74,7 @@ function HealthStateCard({ recovery, effectiveWorkout, highlight, onHighlightLay
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
+  card: { borderRadius: radius.lg, padding: spacing.lg, marginBottom: spacing.md },
   topRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   headline: { flex: 1, gap: 2 },
   stateLabel: { fontFamily: FONTS.display, fontSize: 22, fontWeight: '700', letterSpacing: -0.4 },
@@ -82,7 +82,7 @@ const styles = StyleSheet.create({
   sourceRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
   sourceDot: { width: 6, height: 6, borderRadius: 3 },
   sourceText: { ...typography.caption, fontSize: 12 },
-  explanation: { ...typography.body, fontSize: 14, lineHeight: 20, marginTop: spacing.md },
+  explanation: { ...typography.body, fontSize: 15, lineHeight: 23, marginTop: spacing.md },
 });
 
 const HealthStateCardMemo = React.memo(HealthStateCard);

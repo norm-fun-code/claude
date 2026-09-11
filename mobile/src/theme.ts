@@ -1,11 +1,11 @@
 // Apple iOS system palette — off-white grouped background, clean white cards,
 // one brand accent (blurple). Typography and spacing follow SF Pro conventions.
 export const colors = {
-  background: '#F2F2F7',           // iOS systemGroupedBackground
+  background: '#F3F4F8',           // iOS systemGroupedBackground
   card: '#FFFFFF',                  // iOS secondarySystemGroupedBackground
   border: 'rgba(60,60,67,0.12)',    // iOS separator — hairline dividers inside cards
   text: '#1C1C1E',                  // iOS label
-  subtext: '#8E8E93',               // iOS secondaryLabel
+  subtext: '#636879',               // iOS secondaryLabel
   accent: '#635BFF',                // brand blurple
   accentSoft: '#EFEEFF',            // blurple tint for active states
   green: '#34C759',                 // iOS systemGreen
@@ -42,11 +42,11 @@ export const colors = {
   inputBackground: '#F9F8F6',
   inputBackgroundDark: '#1C1C1A',
   // Dark mode
-  backgroundDark: '#000000',
-  cardDark: '#1C1C1E',
+  backgroundDark: '#0B0E16',
+  cardDark: '#151A25',
   borderDark: 'rgba(255,255,255,0.1)',
   textDark: '#FFFFFF',
-  subtextDark: '#8E8E93',
+  subtextDark: '#A4AEC0',
 };
 
 // Signature band gradients for the recovery orb (and future state visuals) —
@@ -218,9 +218,9 @@ export const typography = {
   },
   body: {
     fontFamily: FONTS.text,
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '400' as const,
-    lineHeight: 22,
+    lineHeight: 24,
   },
   caption: {
     fontFamily: FONTS.text,
@@ -246,8 +246,8 @@ export function shadow(isDark: boolean, level: 'card' | 'bar' = 'card') {
     // a hard iOS-default shadow, so the light cards feel of-a-piece with the
     // premium hero cards.
     shadowColor: '#15172B',
-    shadowOpacity: 0.09,
-    shadowRadius: 28,
+    shadowOpacity: 0.045,
+    shadowRadius: 18,
     shadowOffset: { width: 0, height: 10 },
     elevation: 4,
   };
