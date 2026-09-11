@@ -185,3 +185,28 @@ body,body.home-view{background:radial-gradient(ellipse at 80% -20%,#1a2b47 0,tra
   font-family:inherit;font-size:10.5px;padding:4px 8px;cursor:pointer;min-height:28px}
 .s-src>button:hover{background:var(--s3);color:var(--tx)}
 @media(max-width:760px){.s-src>button{min-height:36px;font-size:12px}}
+
+/* ── Story mode ──────────────────────────────────────────────────────────────
+   The last screen still drawn for a white page. The card itself was covered in the previous
+   pass; these are the parts inside it, plus a type pass — 9px uppercase in --t3 on a dark
+   card is technically present and practically unreadable. */
+.story-dot{background:rgba(167,190,221,.22)}
+.story-dot.active{background:#b6a8ff}
+.story-close{background:var(--s2);color:var(--t2);border-color:var(--bd2)}
+.story-close:hover{background:var(--s3);color:var(--tx)}
+.story-year{color:#b6a8ff;font-size:13px}
+.story-title{font-size:24px;font-weight:650;color:var(--tx);letter-spacing:-.3px}
+/* Was 13px in --t2 — the line carrying the actual fact about the year, set lighter than
+   everything around it. */
+.story-sub{font-size:15px;color:var(--t2);line-height:1.6;font-weight:450}
+.story-stat-l{font-size:11px;letter-spacing:.5px;color:var(--t2);font-weight:600}
+.story-stat-v{font-size:21px;color:var(--tx);font-weight:600}
+.story-stats{gap:34px;border-top:1px solid var(--bd);padding-top:16px}
+.story-nav button{font-size:13.5px}
+/* Keeps the two accent washes the overlay was designed with; only the sheet behind them
+   changes from near-white to the app's own ground. */
+#storyOverlay{background:
+  radial-gradient(50% 60% at 15% 10%, rgba(122,227,195,.10), transparent 62%),
+  radial-gradient(45% 55% at 90% 90%, rgba(182,168,255,.12), transparent 60%),
+  rgba(7,12,21,.94)}
+@media(max-width:640px){.story-title{font-size:21px}.story-sub{font-size:14px}.story-stat-v{font-size:19px}}

@@ -4902,7 +4902,10 @@ function _storyMilestones(R,P){
   if(P.numKids>=4)kids.push(P.kid4Birth);
   const ms=[];
   ms.push({yr:sy,icon:'🚀',title:'Today',sub:`Starting liquid: ${fmt(P.startingLiquid)}`});
-  kids.forEach((kb,i)=>{if(kb>=sy)ms.push({yr:kb,icon:'👶',title:`Kid ${i+1} born`,sub:`Family grows to ${i+2} in the household`})});
+  // Two adults plus the children born so far. `i+2` counted the first child as a household
+  // of two, which is the parents' own number with the baby standing in for one of them.
+  kids.forEach((kb,i)=>{if(kb>=sy)ms.push({yr:kb,icon:'👶',title:`Kid ${i+1} born`,
+    sub:`A household of ${i+3} — two of you and ${i+1===1?'a baby':`${i+1} children`}`})});
   if(P.homePurchaseYear>=sy)ms.push({yr:P.homePurchaseYear,icon:'🏠',title:'Home purchase',sub:`${fmt(P.homePrice*(P.downPctg/100))} down on a ${fmt(P.homePrice)} home`});
   const firstTu=R.find(r=>r.tu>0);
   if(firstTu)ms.push({yr:firstTu.yr,icon:'🎓',title:'Tuition begins',sub:`First year of school costs: ${fmt(firstTu.tu)}`});
@@ -4916,9 +4919,14 @@ function _storyMilestones(R,P){
   const seen=new Set();
   return ms.filter(m=>{if(seen.has(m.yr))return false;seen.add(m.yr);return true})
     .sort((a,b)=>a.yr-b.yr)
-    // "Today" (yr===sy) is the true starting point, before any year of growth/spending —
-    // use startingLiquid directly rather than R[0], which is already 2026's year-end value.
-    .map(m=>({...m,row:m.yr===sy?{nw:P.startingLiquid,liq:P.startingLiquid}:(R.find(r=>r.yr===m.yr)||R[0])}));
+    // "Today" (yr===sy) is the true starting point, before any year of growth or spending,
+    // so it uses the opening figures directly rather than R[0], which is already the
+    // year-END value. Net worth is the WHOLE opening position: reading startingLiquid into
+    // both slots printed the same number twice and quietly dropped Stripe and retirement.
+    .map(m=>({...m,row:m.yr===sy
+      ?{netWorth:Math.round((P.startingLiquid||0)+(P.startingStripeEquity||0)+(P.k401Start||0)
+          -Math.abs(Number(P.otherDebt||0))),liq:Math.round(P.startingLiquid||0)}
+      :(R.find(r=>r.yr===m.yr)||R[0])}));
 }
 // Like _sparkSVG, but highlights a specific index (not just the last point) with a guide line.
 function _sparkSVGAt(vals,w,h,color,idx){
@@ -4984,9 +4992,14 @@ function _renderStory(){
   if(!stage)return;
   // Prepend the true starting point (before any year of growth/spending) so "Today"
   // highlights day zero rather than 2026's year-end value, matching the hero chart.
-  const sparkVals=[P.startingLiquid,...R.map(r=>r.nw)];
+  // Same measure as the "Net worth" figure under it, and the same opening anchor as the
+  // "Today" card — a line plotting one thing beneath a number naming another is the defect
+  // the cockpit spent this whole session removing.
+  const open=Math.round((P.startingLiquid||0)+(P.startingStripeEquity||0)+(P.k401Start||0)
+    -Math.abs(Number(P.otherDebt||0)));
+  const sparkVals=[open,...R.map(r=>r.netWorth)];
   const rIdx=m.yr===(P.planStartYear||2026)?0:1+R.findIndex(r=>r.yr===m.yr);
-  const spark=_sparkSVGAt(sparkVals,320,110,'#635bff',rIdx);
+  const spark=_sparkSVGAt(sparkVals,320,110,'#b6a8ff',rIdx);
   stage.innerHTML=`<div class="story-card reveal">
     <div class="story-icon">${m.icon}</div>
     <div class="story-year">${m.yr}</div>
@@ -4994,7 +5007,7 @@ function _renderStory(){
     <div class="story-sub">${advEscape(m.sub)}</div>
     <div class="story-spark">${spark}</div>
     <div class="story-stats">
-      <div><div class="story-stat-l">Net worth</div><div class="story-stat-v">${fmt(m.row.nw)}</div></div>
+      <div><div class="story-stat-l">Net worth</div><div class="story-stat-v">${fmt(m.row.netWorth)}</div></div>
       <div><div class="story-stat-l">Liquid</div><div class="story-stat-v">${fmt(m.row.liq)}</div></div>
     </div>
   </div>`;
