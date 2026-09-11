@@ -76,7 +76,7 @@ function RadarSection({ radar, onOpen }: Props) {
 
 const styles = StyleSheet.create({
   wrap: { marginBottom: spacing.md },
-  header: { fontSize: 11, fontWeight: '700', letterSpacing: 1, marginBottom: spacing.sm },
+  header: { fontSize: 13, fontWeight: '700', letterSpacing: 1, marginBottom: spacing.sm },
   quietWrap: { paddingVertical: spacing.sm, marginBottom: spacing.md, alignItems: 'center' },
   quietText: { ...typography.caption, fontSize: 13 },
   card: {
@@ -87,9 +87,9 @@ const styles = StyleSheet.create({
   },
   topRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
   dot: { width: 7, height: 7, borderRadius: 4, marginRight: 6 },
-  domain: { fontSize: 10, fontWeight: '700', letterSpacing: 0.8 },
+  domain: { fontSize: 12, fontWeight: '700', letterSpacing: 0.8 },
   headline: { ...typography.subtitle, fontSize: 16, lineHeight: 21, marginBottom: 4 },
-  whyNow: { ...typography.body, fontSize: 13, lineHeight: 18, marginBottom: spacing.sm },
+  whyNow: { ...typography.body, fontSize: 15, lineHeight: 22, marginBottom: spacing.sm },
   cta: { fontSize: 13, fontWeight: '700' },
 });
 

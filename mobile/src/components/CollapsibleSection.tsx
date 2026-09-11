@@ -9,6 +9,7 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
+import { useReducedMotion } from '../lib/useReducedMotion';
 import { getColors, spacing, radius, shadow } from '../theme';
 
 interface Props {
@@ -20,6 +21,7 @@ interface Props {
 export function CollapsibleSection({ title, defaultOpen = false, children }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
+  const reducedMotion = useReducedMotion();
   const [open, setOpen] = useState(defaultOpen);
 
   const rotate = useSharedValue(defaultOpen ? 180 : 0);
@@ -36,7 +38,7 @@ export function CollapsibleSection({ title, defaultOpen = false, children }: Pro
   const toggle = () => {
     const next = !open;
     setOpen(next);
-    rotate.value = withTiming(next ? 180 : 0, { duration: 220, easing: Easing.out(Easing.cubic) });
+    rotate.value = withTiming(next ? 180 : 0, { duration: reducedMotion ? 0 : 220, easing: Easing.out(Easing.cubic) });
     Haptics.selectionAsync();
   };
 
@@ -44,8 +46,11 @@ export function CollapsibleSection({ title, defaultOpen = false, children }: Pro
     <View style={styles.wrap}>
       <Pressable
         onPress={toggle}
-        onPressIn={() => { headerScale.value = withSpring(0.97, { damping: 15, stiffness: 400 }); }}
-        onPressOut={() => { headerScale.value = withSpring(1, { damping: 15, stiffness: 400 }); }}
+        accessibilityRole="button"
+        accessibilityLabel={title}
+        accessibilityState={{ expanded: open }}
+        onPressIn={() => { if (!reducedMotion) headerScale.value = withSpring(0.97, { damping: 15, stiffness: 400 }); }}
+        onPressOut={() => { if (!reducedMotion) headerScale.value = withSpring(1, { damping: 15, stiffness: 400 }); }}
       >
         <Animated.View style={[styles.header, { backgroundColor: c.card }, shadow(isDark), headerAnimStyle]}>
           <Text style={[styles.title, { color: c.text }]}>{title}</Text>
@@ -55,7 +60,7 @@ export function CollapsibleSection({ title, defaultOpen = false, children }: Pro
         </Animated.View>
       </Pressable>
       {open && (
-        <Animated.View entering={FadeIn.duration(200)} style={styles.body}>
+        <Animated.View entering={reducedMotion ? undefined : FadeIn.duration(200)} style={styles.body}>
           {children}
         </Animated.View>
       )}
@@ -71,9 +76,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     borderRadius: radius.lg,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 2,
+    paddingVertical: 16,
+    minHeight: 54,
+    gap: 12,
   },
-  title: { fontSize: 14, fontWeight: '600', letterSpacing: 0.2 },
+  title: { flex: 1, fontSize: 15, fontWeight: '600', letterSpacing: 0.2 },
   chevron: { fontSize: 11 },
   body: { marginTop: spacing.md },
 });

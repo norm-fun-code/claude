@@ -10,7 +10,7 @@ interface Props {
   emoji?: string;
 }
 
-function QuoteCard({ quote, insight, title = 'Quote + Insight', emoji = '💡' }: Props) {
+function QuoteCard({ quote, insight, title = 'An idea to sit with', emoji = '💡' }: Props) {
   const isDark = useColorScheme() === 'dark';
   const c = getColors(isDark);
 
@@ -36,7 +36,7 @@ function QuoteCard({ quote, insight, title = 'Quote + Insight', emoji = '💡' }
 const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
-    padding: spacing.md,
+    padding: spacing.lg,
     marginBottom: spacing.md,
   },
   quoteBlock: {
@@ -49,11 +49,12 @@ const styles = StyleSheet.create({
   quoteText: {
     ...typography.body,
     fontStyle: 'italic',
-    lineHeight: 24,
+    fontSize: 21,
+    lineHeight: 32,
   },
   insight: {
     ...typography.body,
-    lineHeight: 23,
+    lineHeight: 26,
   },
 });
 

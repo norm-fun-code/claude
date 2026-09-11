@@ -103,6 +103,21 @@ function WealthPostureCard({ landing, onViewExceptions }: Props) {
                 {mask(paceLine(comparison))}
               </Text>
             ) : null}
+            {!hidden && comparison && comparison.coverageTier === 'typical' && numbers.mtdDiscretionary.amount >= 0 && comparison.medianBaseline > 0 && (
+              <View style={styles.paceChart} accessibilityLabel="Spending compared with typical spending at the same point in the month">
+                {[
+                  { label: 'This month', amount: numbers.mtdDiscretionary.amount, color: c.accent },
+                  { label: 'Typical at this point', amount: comparison.medianBaseline, color: c.subtext },
+                ].map(row => (
+                  <View key={row.label} style={styles.paceChartRow}>
+                    <View style={styles.paceChartLabels}><Text style={[styles.paceChartLabel, { color: secondary }]}>{row.label}</Text><Text style={[styles.paceChartAmount, { color: c.text }]}>{money(row.amount)}</Text></View>
+                    <View style={[styles.paceTrack, { backgroundColor: c.accentSoft }]}>
+                      <View style={[styles.paceFill, { backgroundColor: row.color, width: `${row.amount / Math.max(numbers.mtdDiscretionary!.amount, comparison.medianBaseline) * 100}%` }]} />
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
             {comparison && driverLine(comparison.drivers) ? (
               <Text style={[styles.paceLine, { color: secondary }]} allowFontScaling>{mask(driverLine(comparison.drivers)!)}</Text>
             ) : null}
@@ -141,18 +156,25 @@ function WealthPostureCard({ landing, onViewExceptions }: Props) {
 }
 
 const styles = StyleSheet.create({
+  paceChart: { marginTop: 18, gap: 14 },
+  paceChartRow: { gap: 7 },
+  paceChartLabels: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' },
+  paceChartLabel: { fontSize: 13 },
+  paceChartAmount: { fontSize: 13, fontVariant: ['tabular-nums'], fontWeight: '600' },
+  paceTrack: { height: 7, borderRadius: 4, overflow: 'hidden' },
+  paceFill: { height: 7, borderRadius: 4 },
   card: { borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md },
-  eyebrow: { ...typography.caption, fontSize: 11, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
+  eyebrow: { ...typography.caption, fontSize: 13, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
   postureLabel: { fontFamily: FONTS.display, fontSize: 21, fontWeight: '700', letterSpacing: -0.3, marginTop: 2 },
   qualification: { ...typography.caption, fontSize: 13, marginTop: spacing.xs, fontStyle: 'italic' },
   primaryAmount: { fontFamily: FONTS.display, fontSize: 28, fontWeight: '700', letterSpacing: -0.4, marginTop: spacing.md },
   primaryAmountLabel: { fontSize: 14, fontWeight: '600' },
   privacyToggle: { minHeight: 44, justifyContent: 'center' },
   paceBlock: { gap: 2 },
-  paceLine: { ...typography.caption, fontSize: 12.5, marginTop: 2 },
+  paceLine: { ...typography.caption, fontSize: 14, marginTop: 2 },
   metricsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.md },
-  metricChip: { ...typography.caption, fontSize: 12.5, fontWeight: '600', borderWidth: 1, borderRadius: radius.sm, paddingVertical: 4, paddingHorizontal: 8 },
-  hint: { ...typography.caption, fontSize: 11, marginTop: spacing.sm, textAlign: 'right' },
+  metricChip: { ...typography.caption, fontSize: 14, fontWeight: '600', borderWidth: 1, borderRadius: radius.sm, paddingVertical: 4, paddingHorizontal: 8 },
+  hint: { ...typography.caption, fontSize: 13, marginTop: spacing.sm, textAlign: 'right' },
   exceptionsRow: { marginTop: spacing.sm, minHeight: 44, justifyContent: 'center' },
   exceptionsText: { ...typography.subtitle, fontSize: 14, fontWeight: '600' },
 });

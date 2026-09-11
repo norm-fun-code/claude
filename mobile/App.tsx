@@ -917,18 +917,6 @@ export default function App() {
                 mobile never recomputes risk, resolves the workout, or
                 decides what's important on its own. */}
 
-            {/* Sleep check-in — only when there's no Pod reading to fill the
-                gap. Leads when present so logging sleep is the first action. */}
-            <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={onSleepLogged} />
-            {/* Last night's context (melatonin, alcohol, late meal, TM, stress,
-                etc.) — self-hides once submitted for the day (or on days
-                without anything to log). Distinct from SleepCheckInCard above:
-                that one asks how you slept when there's no device reading;
-                this one asks WHY, every day, regardless of whether there's a
-                Pod reading. Built and wired to the backend but never actually
-                rendered anywhere — restored to lead the Today tab alongside
-                the sleep check-in. */}
-            <NightContextCard />
             {/* Evening wind-down brief — leads in the evening (self-hides
                 during the day and when no brief is built) and already
                 implements the "plan vs. actual, not the morning action
@@ -1025,19 +1013,6 @@ export default function App() {
                 <AlertCard alerts={d.alerts} />
               </AnimatedEntry>
             )}
-            {/* THIS WEEK'S FOCUS — previously reachable only by tapping into
-                the "Weekly review is ready" Radar card / WeeklyReviewModal,
-                which meant checking a goal off required opening a sheet just
-                to see the checklist. Restored to the Today scroll directly
-                (WeeklyIntentionsCard's own saved-state view already leads
-                with "This week's focus" and keeps last week's retrospective
-                as an in-place collapsed toggle — nothing else changed about
-                what it shows or how goals are saved/toggled, only that it's
-                visible without clicking in). The Radar entry point / modal
-                still exist for the AI-generated narrative when one's ready. */}
-            <AnimatedEntry delay={25}>
-              <WeeklyIntentionsCard review={d?.weeklyReview ?? null} />
-            </AnimatedEntry>
             {/* WORTH A DECISION — a goal set repeatedly and repeatedly marked
                 missed, from the user's own weekly reviews. Sits above
                 Precedent because it asks for a decision rather than offering
@@ -1050,17 +1025,6 @@ export default function App() {
                 onResolve={disagreement.resolve}
                 resolving={disagreement.resolving}
               />
-            </AnimatedEntry>
-            {/* YOU'VE BEEN HERE BEFORE — the mornings most like this one out
-                of the metrics spine, and what actually happened after them.
-                Placed directly under the brief because that adjacency IS the
-                idea: the brief names today's one action, and this grounds
-                that decision in the user's own measured history rather than
-                in a model's opinion. Self-hides whenever the backend's
-                evidence gates aren't met (see intelligence/precedent.js), so
-                it costs nothing on a day with no real precedent. */}
-            <AnimatedEntry delay={25}>
-              <PrecedentCard precedent={precedent.precedent} />
             </AnimatedEntry>
             {/* SINCE THIS MORNING — only genuine post-snapshot changes (see
                 todayCommandCenter.sinceMorning); self-hides when empty. */}
@@ -1079,9 +1043,27 @@ export default function App() {
             <AnimatedEntry delay={35}>
               <RadarSection radar={todayCC.radar} onOpen={openRadarCard} />
             </AnimatedEntry>
+            <Text accessibilityRole="header" style={[styles.exploreLabel, { color: c.subtext }]}>EXPLORE YOUR DAY</Text>
+            <CollapsibleSection title="Check in · sleep & context">
+              <SleepCheckInCard visible={liveRecovery.needsSleepCheckIn} onSubmitted={onSleepLogged} />
+              <NightContextCard />
+            </CollapsibleSection>
+            <AnimatedEntry delay={25}>
+              <CollapsibleSection title="This week’s intentions">
+                <WeeklyIntentionsCard review={d?.weeklyReview ?? null} />
+              </CollapsibleSection>
+            </AnimatedEntry>
+            <AnimatedEntry delay={25}>
+              {precedent.precedent && <CollapsibleSection title="You’ve been here before">
+                <PrecedentCard precedent={precedent.precedent} />
+              </CollapsibleSection>}
+            </AnimatedEntry>
+
             {d?.crossContextInsights && d.crossContextInsights.length > 0 && (
               <AnimatedEntry delay={40}>
-                <CrossContextCard insights={d.crossContextInsights.slice(0, 1)} />
+                <CollapsibleSection title="Connections worth exploring">
+                  <CrossContextCard insights={d.crossContextInsights.slice(0, 1)} />
+                </CollapsibleSection>
               </AnimatedEntry>
             )}
             {/* Streak / trend signals (one-question prompts) — kept as its
@@ -1256,13 +1238,10 @@ export default function App() {
         visible={habitsOpen}
         onClose={() => { setHabitsOpen(false); dailyLog.refresh(); }}
       />
-      {/* Quick Ask — summoned by long-pressing the Ask tab, or by the mic FAB
-          (shown on every tab except Ask itself, which already has the input
-          row front and center). Both open the same sheet, seeded with the
-          same context-aware starters. */}
+      {/* Long-press Ask retains contextual conversation; the tab owns the primary entry point. */}
       <AskOverlay
         ref={quickAskRef}
-        hideFab={tab === 'ask'}
+        hideFab
         contextStarters={askContextStarters}
         bottomInset={bottomInset}
         activeTab={tab === 'today' || tab === 'health' || tab === 'wealth' || tab === 'wisdom' ? tab : 'ask'}
@@ -1338,10 +1317,11 @@ function EmptyNote({ c, text }: { c: ReturnType<typeof getColors>; text: string 
 }
 
 const styles = StyleSheet.create({
+  exploreLabel: { fontSize: 12, fontWeight: '700', letterSpacing: 1.2, marginTop: 16, marginBottom: 14 },
   root: { flex: 1 },
   safe: { flex: 1 },
   scroll: { flex: 1 },
-  content: { paddingHorizontal: spacing.md, paddingBottom: spacing.xl },
+  content: { paddingHorizontal: 20, paddingBottom: spacing.xl },
   // Health tab redesign (audit rec #4) — the two focused-destination entry
   // points below Worth Knowing.
   healthDrillInRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
