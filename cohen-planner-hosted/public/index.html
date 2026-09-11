@@ -1737,31 +1737,37 @@ function render(){
   // Prepend planStartYear-1 as a synthetic starting point showing initial liquid
   const sy0=P.planStartYear||2026;
   const nwLabels=[String(sy0-1),...labels];
-  const startLiqK=Math.round(P.startingLiquid/1000);
-  const startLiqPlusStripeK=Math.round(((P.startingLiquid||0)+(P.startingStripeEquity||0))/1000);
   // The prior-year anchor for the TOTAL line is the plan's whole opening position, not just
   // its cash. Anchoring Total NW at startingLiquid dropped Stripe and the entire 401(k) from
   // the left-hand point, so the line began below where the plan actually starts and the
   // first segment showed a jump the model never produced.
   const startNwK=Math.round(((P.startingLiquid||0)+(P.startingStripeEquity||0)+(P.k401Start||0)
     -Math.abs(Number(P.otherDebt||0)))/1000);
-  // Monarch actual dot — added to each chart dataset array below
-  const _mSnap=monarchSnapshot;
-  const _mDotIdx=_mSnap?nwLabels.indexOf(String(new Date().getFullYear())):-1;
-  const _mImpliedLiqK=_mSnap?Math.round(_mSnap.liquid/1000):0; // includes Stripe — compare to liquid+Stripe, not the ex-Stripe line
-  const _mTotalK=_mSnap?Math.round(_mSnap.netWorth/1000):0;
-  const _mRetK=_mSnap?Math.round(_mSnap.retirement/1000):0;
-  function _mDotDs(yK,label){
-    if(!_mSnap||_mDotIdx<0)return null;
-    return{label,data:nwLabels.map((_,i)=>i===_mDotIdx?yK:null),
-      borderColor:'#f59e0b',backgroundColor:'#f59e0b',
-      pointRadius:nwLabels.map((_,i)=>i===_mDotIdx?8:0),
-      pointHoverRadius:12,borderWidth:0,fill:false,tension:0,spanGaps:false,
-      pointStyle:'circle'};
-  }
+  // The Monarch "actual" dot machinery is gone with the pin it drew. It read the legacy
+  // sync — a different source from the accounts every other figure here comes from — so it
+  // marked the chart with a number that agreed with nothing around it.
   if(_projView==='nw'){
     const po=posOpts();
-    const ds=[{label:'Total NW (incl. retirement)'+(inflationView?' (real)':''),data:[startNwK,...R.map(r=>deflK(r.netWorth,r.yr))],borderColor:'#635bff',backgroundColor:_areaGrad('#635bff',.24,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#635bff',pointBorderColor:'#fff',borderWidth:2.5,borderCapStyle:'round'},{label:'Liquid (ex-Stripe)'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.liq,r.yr))],borderColor:'#0073e6',backgroundColor:_areaGrad('#0073e6',.14,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#0073e6',pointBorderColor:'#fff',borderWidth:2,borderCapStyle:'round'},{label:'Stripe'+(inflationView?' (real)':''),data:[Math.round((P.startingStripeEquity||0)/1000),...R.map(r=>deflK(r.sEnd,r.yr))],borderColor:'#6772e5',backgroundColor:_areaGrad('#6772e5',.16,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#6772e5',pointBorderColor:'#fff',borderWidth:2,borderCapStyle:'round'},{label:'Home equity'+(inflationView?' (real)':''),data:[0,...R.map(r=>deflK(r.eq,r.yr))],borderColor:'#7c3aed',fill:false,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#7c3aed',pointBorderColor:'#fff',borderWidth:1.5,borderDash:[4,3]},{label:'401(k)'+(inflationView?' (real)':''),data:[Math.round((P.k401Start||0)/1000),...R.map(r=>deflK(r.k401,r.yr))],borderColor:'#0f9b6c',fill:false,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#0f9b6c',pointBorderColor:'#fff',borderWidth:1.5,borderDash:[2,3],hidden:true}];
+    // Three series, and only three. This chart carried Total NW, Liquid ex-Stripe, Stripe,
+    // Home equity, a hidden 401(k), a Liquid+Stripe companion and a Monarch dot — seven
+    // things competing to answer one question. What is left answers it: what you can reach,
+    // what you own in total, and how much of the difference is the house.
+    const ds=[
+      {label:'Net worth ex-retirement'+(inflationView?' (real)':''),
+       data:[startNwK-Math.round(Math.abs(Number(P.k401Start||0))/1000),...R.map(r=>deflK(r.nw,r.yr))],
+       borderColor:'#7ae3c3',backgroundColor:_areaGrad('#7ae3c3',.20,0),fill:true,tension:.35,
+       pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#7ae3c3',pointBorderColor:'#fff',
+       borderWidth:2.5,borderCapStyle:'round'},
+      {label:'Total net worth'+(inflationView?' (real)':''),
+       data:[startNwK,...R.map(r=>deflK(r.netWorth,r.yr))],
+       borderColor:'#b6a8ff',backgroundColor:'transparent',fill:false,tension:.35,
+       pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#b6a8ff',pointBorderColor:'#fff',
+       borderWidth:2,borderCapStyle:'round'},
+      {label:'Home equity'+(inflationView?' (real)':''),
+       data:[0,...R.map(r=>deflK(r.eq,r.yr))],
+       borderColor:'#78b7ef',fill:false,tension:.35,pointRadius:0,pointHoverRadius:5,
+       pointBackgroundColor:'#78b7ef',pointBorderColor:'#fff',borderWidth:1.5,borderDash:[4,3]},
+    ];
     if(_stressMode){
       const bear=run({...P,investReturn:Math.max(.02,P.investReturn-.02),expenseInflation:Math.min(.06,P.expenseInflation+.01)});
       const bull=run({...P,investReturn:Math.min(.12,P.investReturn+.02),expenseInflation:Math.max(.01,P.expenseInflation-.005)});
@@ -1784,7 +1790,15 @@ function render(){
         _scheduleBandRefresh();
       }
     }
-    if(compareMode)scenarios.forEach(s=>{const sLiq=Math.round((s.params.startingLiquid||P.startingLiquid)/1000);ds.push({label:s.name+' Liquid',data:[sLiq,...s.results.R.map(r=>deflK(r.liq,r.yr))],borderColor:s.color,fill:false,tension:.3,pointRadius:3,pointBackgroundColor:s.color,borderWidth:3.5})});
+    // A saved scenario overlaid on a net-worth chart has to be that scenario's NET WORTH.
+    // It plotted liquid, so a case with more Stripe or a bought house read as worse than the
+    // plan it was drawn over — comparing two different measures and calling it a comparison.
+    if(compareMode)scenarios.forEach(s=>{
+      const sp=s.params||{};
+      const sOpen=Math.round(((sp.startingLiquid||P.startingLiquid)+(sp.startingStripeEquity||0)
+        +(sp.k401Start||0)-Math.abs(Number(sp.otherDebt||0)))/1000);
+      ds.push({label:s.name+' net worth',data:[sOpen,...s.results.R.map(r=>deflK(r.netWorth,r.yr))],
+        borderColor:s.color,fill:false,tension:.3,pointRadius:3,pointBackgroundColor:s.color,borderWidth:3.5})});
     // Snapshot overlay — compare a saved projection against the current plan.
     // Map by calendar year (not array position): the snapshot's own planStartYear can
     // differ from the live plan's (e.g. after any roll-forward since it was saved), and
@@ -1803,10 +1817,11 @@ function render(){
         ds.push({label:'📸 '+sn.label+' (NW)',data:snData,borderColor:'#bf6900',fill:false,tension:.3,pointRadius:0,borderWidth:2,borderDash:[6,3],spanGaps:false});
       }
     }
-    // The dot is Monarch's liquid total (which includes Stripe), so pair it with a
-    // matching plan series rather than leaving it hovering next to the ex-Stripe line.
-    if(_mSnap)ds.push({label:'Liquid + Stripe'+(inflationView?' (real)':''),data:[startLiqPlusStripeK,...R.map(r=>deflK(planLiquidComparable(r),r.yr))],borderColor:'#8b93f0',fill:false,tension:.35,pointRadius:0,pointHoverRadius:5,borderWidth:1.5,borderDash:[5,4]});
-    const _mNwDot=_mDotDs(_mImpliedLiqK,'📍 Actual liquid + Stripe (Monarch)');if(_mNwDot)ds.push(_mNwDot);
+    // The "actual liquid + Stripe" pin and the companion line it needed are both gone. The
+    // pin read monarchSnapshot.liquid — the legacy sync, a different source from the
+    // accounts the rest of this screen is built on — so it drifted from everything around
+    // it, and a pin that disagrees with its own chart is worse than no pin. Today's position
+    // is on the Overview, observed and dated, which is where it belongs.
     if(!reuseChart||!_updateChart(ds,nwLabels)){if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';const ctx2=document.getElementById('cv').getContext('2d');charts.main=new Chart(ctx2,{type:'line',data:{labels:nwLabels,datasets:ds},options:po})}
   } else {
     if(_projView==='cashflow'){
@@ -2467,13 +2482,25 @@ function renderOverviewTab(R,P){
       <div style="font-size:10.5px;color:var(--t2);margin-bottom:10px">${advEscape(d.error)}</div>
       <button onclick="openMonarchDiagnostics()" style="font-size:10px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">🩺 Diagnose connection</button></div>`;
   } else {
-    h+=`<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(158px,1fr))">
-      ${tile('Net worth',money(sum.netWorth),provChip('observed',d.asOf,true),`${money(sum.assets)} assets − ${money(sum.debt)} debt`)}
+    // The SAME basis the cockpit is on. Two screens showing net worth on different bases is
+    // the defect this app keeps rediscovering, so this reads the one flag rather than
+    // keeping a second opinion — and carries the same checkbox, so it can be changed here.
+    const ovRet=Number((cls.retirement||{}).total)||0;
+    const ovNw=cockpitExRet?sum.netWorth-ovRet:sum.netWorth;
+    const ovLast=cockpitExRet?last.nw:last.netWorth;
+    h+=`<label class="cp-basis" style="max-width:420px"><input type="checkbox"${cockpitExRet?'':' checked'}
+      onchange="cockpitSetExRet(!this.checked)">
+      <span>Include retirement</span>
+      <em>${cockpitExRet?'Off — showing what you can reach before 59½':'On — showing everything you own'}</em>
+    </label>
+    <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(158px,1fr))">
+      ${tile(cockpitExRet?'Net worth ex-retirement':'Net worth',money(ovNw),provChip('observed',d.asOf,true),
+        cockpitExRet?`${money(sum.assets-ovRet)} assets − ${money(sum.debt)} debt · retirement excluded`:`${money(sum.assets)} assets − ${money(sum.debt)} debt`)}
       ${tile('Accessible today',money(sum.accessible),provChip('observed',d.asOf,true),'cash + taxable — spendable without penalty','var(--g)')}
       ${tile('Stripe equity',money(sum.stripeVested),provChip('observed',d.asOf,true),'vested only — grants are future pay','#6772e5')}
-      ${tile('Retirement',money((cls.retirement||{}).total),provChip('observed',d.asOf,true),'locked until retirement age')}
+      ${tile('Retirement',money(ovRet),provChip('observed',d.asOf,true),cockpitExRet?'locked until 59½ · not in net worth above':'locked until retirement age')}
       ${tile(`Cash flow ${y0.yr}`,(y0.flow>=0?'+':'−')+money(Math.abs(y0.flow)),provChip('projected',null,true),y0.flow>=0?(y0.gap>0?`total pay covers the year · ${money(y0.gap)} of it comes from vest`:'cash pay alone covers the year'):'spending exceeds total after-tax pay',y0.flow>=0?'var(--g)':'var(--r)')}
-      ${tile(`Net worth ${last.yr}`,money(last.netWorth),provChip('projected',null,true),'if the plan holds')}
+      ${tile(`${cockpitExRet?'Net worth ex-retirement':'Net worth'} ${last.yr}`,money(ovLast),provChip('projected',null,true),'if the plan holds')}
     </div>`;
 
     // ── Anything unknown, said out loud ──

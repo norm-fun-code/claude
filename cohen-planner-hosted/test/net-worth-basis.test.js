@@ -44,9 +44,7 @@ describe('what the engine means by net worth', () => {
 // Both charts plot the same plan from the same engine. They must plot the same field.
 describe('the cockpit and the Trajectory tab plot the same figure', () => {
   it('both read netWorth, and neither re-adds retirement on top of it', () => {
-    const traj = html.match(/label:'Total NW[^']*'\+\(inflationView\?' \(real\)':''\),data:\[(\w+),\.\.\.R\.map\(r=>deflK\((r\.\w+),r\.yr\)\)\]/);
-    expect(traj, 'Total NW dataset').toBeTruthy();
-    expect(traj[2]).toBe('r.netWorth');
+    expect(html).toContain("data:[startNwK,...R.map(r=>deflK(r.netWorth,r.yr))]");
     // Routed through one helper now, so a new surface cannot pick the wrong field.
     expect(cockpit).toContain('function cpNw(r){return r?(cockpitExRet?r.nw:r.netWorth):0}');
     expect(cockpit).toContain('...R.map(r=>deflate(cpNw(r),r.yr))');
@@ -58,8 +56,7 @@ describe('the cockpit and the Trajectory tab plot the same figure', () => {
   it('anchors the total line at the plan opening, not at its cash', () => {
     // The left-hand point used to be startingLiquid alone, dropping Stripe and the whole
     // 401(k), so the first segment showed a jump the model never produced.
-    const [, anchor] = html.match(/label:'Total NW[^']*'\+\(inflationView\?' \(real\)':''\),data:\[(\w+),/);
-    expect(anchor).toBe('startNwK');
+    expect(html).toContain("data:[startNwK,...R.map(r=>deflK(r.netWorth,r.yr))]");
     const def = html.match(/const startNwK=Math\.round\(\(([^;]+)\)\/1000\)/)[1];
     for (const part of ['startingLiquid', 'startingStripeEquity', 'k401Start', 'otherDebt'])
       expect(def, part).toContain(part);
@@ -162,8 +159,10 @@ describe('every single-figure net worth surface shows the total', () => {
 
   it('agrees between the Overview tile and the nav rail', () => {
     // These read $31.62M and $38.06M on the same screen — the tile on `nw`, the rail on the
-    // total. The difference was the whole 2058 retirement balance.
-    expect(html).toContain('${tile(`Net worth ${last.yr}`,money(last.netWorth)');
+    // total. The difference was the whole 2058 retirement balance. The tile now follows the
+    // same ex-retirement flag the cockpit is on, so the two can differ only by that choice.
+    expect(html).toContain('const ovLast=cockpitExRet?last.nw:last.netWorth;');
+    expect(html).toContain('money(ovLast)');
     expect(html).toContain('const series=R.map(r=>r.netWorth);');
     expect(html).not.toContain('const series=R.map(r=>r.nw+r.k401);');
   });
@@ -215,5 +214,50 @@ describe('the position tiles keep one order across screens', () => {
     const cpRet = cockpit.indexOf("metric('Retirement'");
     expect(cpStripe, 'cockpit Stripe metric').toBeGreaterThan(-1);
     expect(cpStripe).toBeLessThan(cpRet);
+  });
+});
+
+// The Trajectory chart carried seven things competing to answer one question.
+describe('the Trajectory chart shows three series', () => {
+  const blk = html.slice(html.indexOf("if(_projView==='nw'){"), html.indexOf('if(_stressMode){'));
+
+  it('plots exactly what you can reach, what you own, and the house', () => {
+    const labels = [...blk.matchAll(/label:'([^']+)'/g)].map(m => m[1]);
+    expect(labels).toEqual(['Net worth ex-retirement', 'Total net worth', 'Home equity']);
+  });
+
+  it('has dropped the Monarch pin and the machinery that drew it', () => {
+    // The pin read the legacy sync — a different source from the accounts every other figure
+    // on the screen comes from — so it marked the chart with a number agreeing with nothing.
+    for (const dead of ['_mDotDs', '_mImpliedLiqK', '_mSnap', 'Actual liquid + Stripe', 'startLiqK'])
+      expect(html, dead).not.toContain(dead);
+  });
+
+  it('overlays a saved scenario as net worth, not as its liquid pool', () => {
+    // Plotted on a net-worth chart, a case with more Stripe or a bought house read as worse
+    // than the plan drawn over it — two different measures, called a comparison.
+    expect(html).toContain("label:s.name+' net worth'");
+    expect(html).toContain('s.results.R.map(r=>deflK(r.netWorth,r.yr))');
+    expect(html).not.toContain("label:s.name+' Liquid'");
+  });
+});
+
+// One basis for the whole app: the Overview cannot hold a second opinion about retirement.
+describe('the Overview follows the same retirement basis', () => {
+  it('reads the cockpit flag rather than always showing the total', () => {
+    expect(html).toContain('const ovNw=cockpitExRet?sum.netWorth-ovRet:sum.netWorth;');
+    expect(html).toContain('money(ovNw)');
+  });
+
+  it('carries the same checkbox, so it can be changed from here', () => {
+    const ov = html.slice(html.indexOf('const ovRet='), html.indexOf('Accessible today'));
+    expect(ov).toContain('Include retirement');
+    expect(ov).toContain('cockpitSetExRet(!this.checked)');
+  });
+
+  it('renames the tile when it is narrowed, rather than quietly showing less', () => {
+    expect(html).toContain("cockpitExRet?'Net worth ex-retirement':'Net worth'");
+    expect(html).toContain('retirement excluded');
+    expect(html).toContain('not in net worth above');
   });
 });
