@@ -1,15 +1,20 @@
 'use strict';
-// ═══ THE BRIDGE: OBSERVED NET WORTH ↔ PROJECTED YEAR-END WEALTH ═══
+// ═══ THE BRIDGE: OBSERVED NET WORTH ↔ PROJECTED YEAR-END NET WORTH ═══
 // Pure and shared by browser and Node, like model.js and accounts.js.
 //
-// The cockpit shows two large numbers and calls both of them wealth. They do not agree, and
-// until now the page never said why. There are three separate reasons, and lumping them
+// The cockpit shows two large numbers and calls both of them net worth. They do not agree,
+// and until now the page never said why. There are three separate reasons, and lumping them
 // together is what makes the mismatch look like a bug in one of them:
 //
-//  1. COMPOSITION. Observed net worth is every account you hold. The projection models four
-//     things — diversified liquid, vested Stripe, retirement, home equity — and nothing
-//     else. A credit-card balance and an unclassified account are both real and both absent
-//     from the projection. Comparing the totals compares different sets of assets.
+//  1. COMPOSITION. Observed net worth is every account you hold. The projection models
+//     diversified liquid, vested Stripe, retirement, home equity and a flat revolving
+//     balance. An account you have not classified is real money the projection still has no
+//     bucket for, so comparing the totals compares different sets of assets.
+//
+//     This was once much worse: the engine carried no debt at all beyond the mortgage, so
+//     the trajectory line was modelled ASSETS while the page called it net worth. That was a
+//     defect, not a difference of perspective, and it is fixed in model.js rather than
+//     explained away here. What remains under composition is only genuinely unmodelled.
 //
 //  2. STARTING POINT. The plan opens from assumptions you typed. Your accounts report what
 //     is actually there. When those disagree, every year of the projection inherits the
@@ -45,10 +50,13 @@
     const debt=Number(s.debt)||0;
     return{
       accessible,stripe,retirement,privateOther,unclassified,debt,
-      comparable:accessible+stripe+retirement+privateOther,
+      // Debt belongs INSIDE the comparable subset now that the projection carries a flat
+      // revolving balance. It was previously added back as something the model simply did
+      // not have, which made a real liability look like a difference of definition.
+      comparable:accessible+stripe+retirement+privateOther-debt,
       // Signed: this is what has to be added to the comparable subset to get back to the
       // net worth on the hero.
-      outside:unclassified-debt,
+      outside:unclassified,
     };
   }
 
@@ -60,7 +68,8 @@
     const prev=rows.find(r=>r.yr===year-1);
     if(prev)return{value:r0(prev.nw+prev.k401),source:'prior year close',year:year-1};
     const p=P||{};
-    return{value:r0((p.startingLiquid||0)+(p.startingStripeEquity||0)+(p.k401Start||0)),
+    return{value:r0((p.startingLiquid||0)+(p.startingStripeEquity||0)+(p.k401Start||0)
+      -Math.abs(Number(p.otherDebt||0))),
       source:'your starting assumptions',year:null};
   }
 
@@ -99,37 +108,48 @@
       label:'Accounts not yet classified',value:-c.unclassified,
       note:'Real money, but the projection has no bucket for it until it is classified.',
       action:'classify'});
-    // Added BACK, which looks wrong until you see what it is for: we are stepping from your
-    // real net worth toward a projection that has no card or loan in it. The projection is
-    // the thing missing the debt, and this line is where that omission is stated.
-    if(c.debt)lines.push({kind:'composition',key:'debt',
-      label:'Debt your projection never carried',value:c.debt,
-      note:'Cards and loans genuinely reduce your net worth. The projection models only a mortgage, so this is added back to reach a figure built the same way.',
-      action:null});
+    // Only worth a row when something was actually set aside above it. With nothing
+    // unclassified it restates the line before it verbatim, and a subtotal that repeats its
+    // own input reads as a rounding error the reader then goes looking for.
+    if(c.unclassified)lines.push({kind:'comparable',key:'comparable',
+      label:'The part your plan models',value:null,running:c.comparable,
+      note:'Cash, taxable, vested Stripe, retirement and any private holding, less what you owe — the things the projection tracks.'});
 
-    lines.push({kind:'comparable',key:'comparable',label:'The part your plan models',
-      value:null,running:c.comparable,
-      note:'Cash, taxable, vested Stripe, retirement and any private holding — the four things the projection tracks.'});
+    // The plan gap splits cleanly into the assets side and the debt side, because they are
+    // reconciled by different controls and one of them is easy to leave at zero forever.
+    const planDebt=Math.abs(Number(P.otherDebt||0));
+    const debtGap=planDebt-c.debt;
+    const assetGap=planGap-debtGap;
+    const fromAssumptions=opening.source==='your starting assumptions';
+    const carried=`Carried forward from the modelled close of ${opening.year}, which was itself built on your starting assumptions.`;
 
-    if(planGap)lines.push({kind:'plan',key:'planGap',
+    if(debtGap)lines.push({kind:'plan',key:'debtGap',
+      label:planDebt?'Revolving balance your plan carries':'Revolving balance your plan is not carrying',
+      value:-debtGap,running:r0(c.comparable-debtGap),
+      note:fromAssumptions
+        ?`You owe ${fmt(c.debt)} today and the projection carries ${fmt(planDebt)}. Cards cleared monthly are float — a permanent offset, not a debt that amortises — so the plan should hold the balance you typically carry.`
+        :carried,
+      action:'reconcile'});
+
+    if(assetGap)lines.push({kind:'plan',key:'planGap',
       label:`What your plan assumes it starts ${year} with`,
-      value:-planGap,running:opening.value,
-      note:opening.source==='your starting assumptions'
+      value:-assetGap,running:opening.value,
+      note:fromAssumptions
         ?'Your typed starting figures differ from what your accounts report. Every year after this one inherits the difference.'
-        :`Carried forward from the modelled close of ${opening.year}, which was itself built on your starting assumptions.`,
+        :carried,
       action:'reconcile'});
 
     lines.push({kind:'time',key:'withinYear',
       label:`Saving and assumed return through ${year}`,value:withinYear,running:projected,
       note:'The chart reads 31 December. Today is not.'});
 
-    lines.push({kind:'projected',key:'projected',label:`${year} year-end wealth`,
+    lines.push({kind:'projected',key:'projected',label:`${year} year-end net worth`,
       value:null,running:projected,
       note:'Future dollars, at your assumed rates. Not a forecast.'});
 
     // The single sentence the chart needs. Composition and time are expected and permanent;
     // only the plan gap is a disagreement anyone can act on.
-    const composition=-c.unclassified+c.debt;
+    const composition=-c.unclassified;
     const headline=Math.abs(planGap)<1000
       ?`Your plan starts ${year} within $1k of what your accounts show. The rest of the difference is ${year} saving and return.`
       :planGap>0

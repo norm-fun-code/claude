@@ -241,7 +241,7 @@
           :'No account snapshot is available.'));
     } else {
       skipped.push(skip(KIND.DIVERGENCE,SKIP.NO_DATA,'matching valuation date and asset scope',
-        'Current account wealth cannot be compared directly with projected year-end wealth. Review opening assumptions in the account reconciliation.'));
+        'Today\'s balances and a 31 December projection are different valuation dates, so they cannot be differenced directly. The observed-vs-projected bridge under the trajectory chart reconciles them line by line; this check stays skipped rather than reporting a difference that is mostly the calendar.'));
     }
 
     // Spending. Needs enough COMPLETE months to average; a partial month is a fraction of a

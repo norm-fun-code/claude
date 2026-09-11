@@ -268,6 +268,54 @@ describe('run()', () => {
     expect(r0.effRate).toBeGreaterThan(0.25);
     expect(r0.effRate).toBeLessThan(0.50);
   });
+
+  // Non-mortgage debt used to be absent from the engine entirely, which meant the trajectory
+  // chart was modelled assets minus a mortgage while the page called it net worth.
+  describe('the revolving balance the plan carries', () => {
+    const base = { ...P_FULL, otherDebt: 0 };
+
+    it('changes nothing for a plan that has never set it', () => {
+      const { otherDebt: _drop, ...unset } = base;
+      const without = run(unset).R;
+      const zero = run(base).R;
+      expect(zero.map(r => r.nw)).toEqual(without.map(r => r.nw));
+    });
+
+    it('reduces net worth by exactly the balance, in every year', () => {
+      const a = run(base).R, b = run({ ...base, otherDebt: 9000 }).R;
+      for (let i = 0; i < a.length; i++) expect(b[i].nw, String(a[i].yr)).toBe(a[i].nw - 9000);
+    });
+
+    it('is held FLAT, never amortised away', () => {
+      // Cards cleared monthly always leave about a month of spending outstanding. No amount
+      // of time pays that off, so the offset must not shrink.
+      const R = run({ ...base, otherDebt: 9000 }).R;
+      expect(R[0].otherDebt).toBe(9000);
+      expect(R[R.length - 1].otherDebt).toBe(9000);
+    });
+
+    it('never touches invested liquid, which would compound a one-month balance for decades', () => {
+      const a = run(base).R, b = run({ ...base, otherDebt: 9000 }).R;
+      // The cash backing the float really is in the account, earning. Only the claim is new.
+      for (let i = 0; i < a.length; i++) expect(b[i].liq, String(a[i].yr)).toBe(a[i].liq);
+      expect(b[b.length - 1].k401).toBe(a[a.length - 1].k401);
+    });
+
+    it('raises measured Stripe concentration, because the base it is measured against shrank', () => {
+      const a = run(base).R[0], b = run({ ...base, otherDebt: 9000 }).R[0];
+      if (a.sEnd > 0) expect(b.sPct).toBeGreaterThan(a.sPct);
+    });
+
+    it('reads a balance entered as negative the same as one entered as positive', () => {
+      // Monarch reports card balances negative; a typed figure will not be.
+      expect(run({ ...base, otherDebt: -9000 }).R[0].nw).toBe(run({ ...base, otherDebt: 9000 }).R[0].nw);
+    });
+
+    it('preserves an explicit zero rather than treating it as absent', () => {
+      expect(run({ ...base, otherDebt: 0 }).R[0].otherDebt).toBe(0);
+    });
+  });
+
 });
 
 // ── runMonteCarlo(): structure checks ─────────────────────────────────────

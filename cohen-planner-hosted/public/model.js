@@ -352,6 +352,10 @@ function run(p,rets){
   // F3. `||` treats a deliberate zero as absent, so a household with no retirement balance
   // was silently given $210,000 of it. Nullish coalescing preserves an explicit zero.
   let liq=p.startingLiquid,k401=p.k401Start??210000,tT=0,tC=0,tTx=0,tS=0;
+  // Non-mortgage debt. Absent means zero, and an explicit zero must survive — same
+  // nullish-coalescing reason as k401Start above. See the note at `nw` for why this is a
+  // flat offset and not a drawdown on liq.
+  const otherDebt=Math.abs(Number(p.otherDebt??0))||0;
   // Stripe equity is a wholly separate pool from the diversified `liq`. Basis matters
   // because RSU cost basis IS the vest-date FMV — selling at vest produces essentially no
   // capital gain (the W2 tax was already paid), and only post-vest appreciation is ever a
@@ -506,7 +510,19 @@ function run(p,rets){
     // mortgage-interest amortization in calcTax(), both of which start at 0 elapsed years.
     if(sub){const yo=yr-p.homePurchaseYear;hv=p.homePrice*(1+p.homeAppreciation)**yo;mb=mBal(ma,p.mortgageRate/100,yo);eq=hv-mb}
     const kiy=kids.filter((k,ki)=>{const a=yr-k;const sa=ki===0?p.kid1YeshivaStartAge:p.yeshivaStartAge;return a>=sa&&a<=p.yeshivaEndAge}).length;
-    const nw=liq+stripeEnd+eq;
+    // Revolving balance carried, held FLAT across every year. This is float, not term debt:
+    // cards cleared in full each month always leave roughly one month of spending
+    // outstanding, so it is a permanent constant offset to net worth rather than something
+    // that amortises away. Holding it flat is the whole point.
+    //
+    // It is therefore deducted from net worth but NOT from `liq`. The cash backing the float
+    // really is in the account, invested and compounding; only the claim against it is new.
+    // Taking it out of `liq` instead would compound a one-month balance for 33 years.
+    //
+    // A car note or a student loan is NOT this. Term debt carries interest and a payoff
+    // schedule, and modelling it as a flat offset would understate early years and overstate
+    // late ones. If one is ever added it needs its own amortisation, not this field.
+    const nw=liq+stripeEnd+eq-otherDebt;
     R.push({yr,normG:Math.round(normW2),normCash:Math.round(normCash),normStock:Math.round(normStock),
       nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,
       inc:Math.round(inc),netTC:tax.net,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
@@ -549,7 +565,7 @@ function run(p,rets){
       sHold:Math.round(holdSold),sGainTax:Math.round(holdTax),
       sAppr:Math.round(stripeAppr),sEnd:Math.round(stripeEnd),
       sBasis:Math.round(lotsBasis(lots)),sLots:lots.length,sRate:sr,sPct:nw>0?stripeEnd/nw:0,
-      nw:Math.round(nw),k401:Math.round(k401),kiy,nk});
+      nw:Math.round(nw),k401:Math.round(k401),otherDebt:Math.round(otherDebt),kiy,nk});
   }
   // Years the plan actually reaches for savings. `surp<0` is NOT this: with a stock-heavy
   // package, cash comp alone rarely covers a year, so surp is negative almost always even

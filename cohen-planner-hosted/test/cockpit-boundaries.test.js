@@ -20,7 +20,22 @@ describe('cockpit financial boundaries',()=>{
   });
   it('never applies gross balances over liabilities',()=>{
     const n=normalize({asOf:'2026-09-11',accounts:[{id:'a',name:'Checking',balance:100},{id:'b',name:'Credit Card',balance:-25}]});
-    const r=Accounts.reconcile(n.summary,P);expect(r.lines.every(l=>!l.applicable)).toBe(true);
+    const r=Accounts.reconcile(n.summary,P);
+    // Every ASSET line stays blocked while a liability is unaccounted for — applying gross
+    // balances over debt is the overstatement this guard exists to prevent.
+    expect(r.lines.filter(l=>l.key!=='otherDebt').every(l=>!l.applicable)).toBe(true);
+    // The one line that is allowed through is the liability itself. It is the remedy, not a
+    // gross balance, and blocking it would leave no way out of the block.
+    const debt=r.lines.find(l=>l.key==='otherDebt');
+    expect(debt.applicable).toBe(true);
+    expect(debt.actual).toBe(25);
+    // …and once it is applied, the DEBT block lifts. Lines still blocked after that are
+    // blocked for their own reasons — here, a $210k retirement assumption that no classified
+    // account backs, which is a separate guard and must survive this one being satisfied.
+    const after=Accounts.reconcile(n.summary,{...P,otherDebt:25});
+    expect(after.lines.some(l=>/revolving balance first/i.test(l.blockedReason||''))).toBe(false);
+    expect(after.lines.find(l=>l.key==='startingLiquid').applicable).toBe(true);
+    expect(after.lines.find(l=>l.key==='k401Start').blockedReason).toMatch(/classification/);
   });
   it('rejects unverified and noncontiguous spending history',()=>{
     const months=['2026-01','2026-03','2026-06'].map(month=>({month,expense:100}));

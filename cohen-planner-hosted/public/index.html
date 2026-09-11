@@ -479,6 +479,10 @@ const D={
   suburbAutoBoost:3500,suburbInsBoost:1500,suburbUtilBoost:2500,
   investReturn:.06,capGainsTaxRate:.345,costBasisPct:.55,
   k401Start:210000,
+  // Revolving (non-mortgage) balance carried, held flat across every year — see the note at
+  // `nw` in model.js. Zero until reconciled against real accounts; never defaulted to an
+  // observed figure, because the projection must not move because a card posted.
+  otherDebt:0,
   taxInflation:.025,
   planEndYear:2058,
 };

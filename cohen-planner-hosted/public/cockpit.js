@@ -65,13 +65,13 @@ function renderCockpit(R){
           <span class="cp-register-note">Projected from your plan. Not a forecast.</span>
         </div>
       <section class="cp-card cp-trajectory"><div class="cp-section-head"><div><h3>The path ahead</h3></div><button onclick="cockpitGo('home')">Explore a what-if ↗</button></div>
-      <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end wealth</span><strong id="cp-value">${UI.money(selected.nw+selected.k401)}</strong></div><span id="cp-band-note">Includes retirement<br>Future dollars · assumed returns</span></div>
+      <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end net worth</span><strong id="cp-value">${UI.money(selected.nw+selected.k401)}</strong></div><span id="cp-band-note">Includes retirement<br>Future dollars · assumed returns</span></div>
       <div class="cp-chart"><canvas id="cockpitTrajectory" aria-label="Projected wealth and liquid investments by year" role="img"></canvas></div>
       <div class="cp-pins" id="cp-pins"></div>
       <label class="cp-scrub" for="cp-year-range">Explore a year<input id="cp-year-range" type="range" min="${R[0].yr}" max="${end.yr}" value="${selected.yr}" oninput="cockpitSelectYear(Number(this.value))"><output id="cp-range-label">${selected.yr}</output></label>
       <div class="cp-year-grid" id="cp-year-grid"></div>
       <div id="cp-bridge"></div>
-      <details class="cp-evidence"><summary>Show me why</summary><p>These are year-end estimates from your saved plan assumptions. Wealth includes modeled liquid investments, Stripe, home equity and retirement. The account balances above are separate observations; this chart is not a historical performance record.</p><button onclick="cockpitGo('table')">Inspect the yearly calculations ↗</button></details></section>
+      <details class="cp-evidence"><summary>Show me why</summary><p>These are year-end estimates from your saved plan assumptions. Net worth here is modeled liquid investments, Stripe, home equity and retirement, less the revolving balance your plan carries. That balance is held flat rather than paid down — right for cards cleared monthly, wrong for a term loan, which would need its own amortisation. The account balances above are separate observations; this chart is not a historical performance record.</p><button onclick="cockpitGo('table')">Inspect the yearly calculations ↗</button></details></section>
       <section class="cp-card"><div class="cp-section-head"><div><span class="cp-eyebrow">DECISION WORKSPACE</span><h3>What are you considering?</h3></div></div><div class="cp-decisions">
       <button onclick="cockpitGo('housing')"><span>01 / HOME</span><strong>Find your buying range</strong><small>Timing, down payment & funding →</small></button>
       <button onclick="cockpitGo('spending')"><span>02 / EVERYDAY LIFE</span><strong>Understand your spending</strong><small>Transactions, categories & history →</small></button>
@@ -179,7 +179,7 @@ function cockpitDrawChart(R,P,year){
     ds.push({label:'10th percentile',data:band.p10,borderColor:'transparent',
       backgroundColor:'transparent',fill:false,pointRadius:0,borderWidth:0,tension:.25});
   }
-  ds.push({label:'Total wealth incl. retirement',data:R.map(r=>r.nw+r.k401),
+  ds.push({label:'Net worth incl. retirement',data:R.map(r=>r.nw+r.k401),
     borderColor:'#7ae3c3',backgroundColor:'transparent',fill:false,
     pointRadius:0,pointHoverRadius:5,borderWidth:2.5,tension:.25});
   ds.push({label:'Liquid investments',data:R.map(r=>r.liq),
@@ -232,7 +232,7 @@ function cockpitSelectYear(year){
   const R=run(P).R;
   const row=R.find(r=>r.yr===year);if(!row)return;
   const set=(id,text)=>{const el=document.getElementById(id);if(el)el.textContent=text};
-  set('cp-year',year+' year-end wealth');
+  set('cp-year',year+' year-end net worth');
   set('cp-value',UI.money(row.nw+row.k401));
   set('cp-range-label',year);
 

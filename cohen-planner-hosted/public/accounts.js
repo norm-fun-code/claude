@@ -221,10 +221,25 @@
     push('k401Start','Retirement',Number(P.k401Start||0),summary.byClass[CLASS.RETIREMENT].total,
       'includes any Stripe 401(k), which is retirement money rather than company stock',
       summary.byClass[CLASS.RETIREMENT].accounts.length);
-    // Gross assets cannot replace the opening position while liabilities are omitted.
-    if(summary.debt>0||!summary.complete)for(const line of lines){
+    // Non-mortgage debt. The plan holds this as a FLAT carried balance — right for a card
+    // cleared monthly, where roughly one month of spending is always outstanding and no
+    // amount of time pays it off. A term loan is a different animal and would need its own
+    // amortisation; see the note at `nw` in model.js.
+    const nDebt=summary.byClass[CLASS.DEBT].accounts.length;
+    push('otherDebt','Revolving balance carried',Math.abs(Number(P.otherDebt||0)),summary.debt,
+      'cards and other non-mortgage debt, held flat across every year rather than paid down',nDebt);
+
+    // Gross assets cannot replace the opening position while liabilities are unaccounted
+    // for. That used to block every line permanently, because the model had nowhere to put
+    // debt at all; now it blocks only until the carried balance above has been applied.
+    // Deliberately exact, not a tolerance. The plan's opening position is overstated by
+    // precisely the debt it is not carrying, and a threshold here would be a safety rule
+    // quietly relaxed. Applying the line above makes the two match to the dollar.
+    const debtUnreflected=summary.debt>0&&Math.abs(Number(P.otherDebt||0))!==summary.debt;
+    if(debtUnreflected||!summary.complete)for(const line of lines){
+      if(line.key==='otherDebt')continue;          // this line IS the fix; never block it
       line.applicable=false;
-      line.blockedReason=summary.debt>0?'Existing liabilities need an explicit repayment plan before balances can be applied. Gross assets alone would overstate the plan.':'Resolve missing balances before applying account totals.';
+      line.blockedReason=debtUnreflected?'Apply the revolving balance first. Until the plan carries what you owe, applying gross assets alone would overstate your opening position.':'Resolve missing balances before applying account totals.';
     }
     return{lines,complete:summary.complete,
       blocked:summary.unknownBalance.map(a=>a.name||a.id)};

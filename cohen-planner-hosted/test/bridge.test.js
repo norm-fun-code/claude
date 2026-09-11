@@ -42,14 +42,17 @@ describe('bridging observed net worth to projected wealth', () => {
     }
   });
 
-  it('separates the three causes, because only one of them is actionable', () => {
-    const b = run();
+  it('separates the causes, and every fixable one offers the fix', () => {
+    const withOdd = [...accounts, { id: '9', name: 'Weird thing', category: 'other', balance: 35000 }];
+    const b = run(withOdd);
     const kinds = b.lines.map(l => l.kind);
-    expect(kinds).toContain('composition');   // the projection models fewer things
+    expect(kinds).toContain('composition');   // unclassified money the plan has no bucket for
     expect(kinds).toContain('plan');          // the plan's opening figures are stale
     expect(kinds).toContain('time');          // today is not 31 December
-    expect(b.lines.find(l => l.kind === 'plan').action).toBe('reconcile');
-    expect(b.lines.find(l => l.key === 'debt').action).toBe(null);
+    // Time is the only difference nobody can act on. Everything else names its remedy.
+    for (const l of b.lines.filter(x => x.kind === 'plan' || x.kind === 'composition'))
+      expect(l.action, l.key).toBeTruthy();
+    expect(b.lines.find(l => l.kind === 'time').action).toBeUndefined();
   });
 });
 
@@ -63,10 +66,27 @@ describe('the composition gap', () => {
     expect(b.comparable).toBe(run().comparable);  // classifying it is the only way in
   });
 
-  it('adds debt back, because the projection carries no card or loan', () => {
+  it('counts debt inside the comparable subset, now that the projection carries it', () => {
+    // It used to be added back as something the model simply did not have, which dressed a
+    // real liability up as a difference of definition.
     const b = run();
-    expect(b.lines.find(l => l.key === 'debt').value).toBe(9000);
-    expect(b.comparable).toBe(b.observed + 9000);
+    expect(b.comparable).toBe(b.observed);            // nothing unclassified here
+    expect(b.lines.find(l => l.key === 'debt')).toBeUndefined();
+  });
+
+  it('reports a plan carrying no float as a gap to reconcile, not a fact of life', () => {
+    const b = run();
+    const line = b.lines.find(l => l.key === 'debtGap');
+    expect(line.kind).toBe('plan');                   // fixable, not structural
+    expect(line.action).toBe('reconcile');
+    expect(line.value).toBe(9000);                    // the plan's opening is 9k lighter
+    expect(line.note).toMatch(/float — a permanent offset, not a debt that amortises/);
+  });
+
+  it('stops mentioning debt once the plan carries the balance you actually hold', () => {
+    const b = B.bridge({ summary: A.summarize(accounts, {}), R, P: { ...P, otherDebt: 9000 },
+      year: 2026, accountsAvailable: true });
+    expect(b.lines.find(l => l.key === 'debtGap')).toBeUndefined();
   });
 
   it('counts a Stripe 401(k) as retirement on both sides of the bridge', () => {
@@ -81,9 +101,9 @@ describe('the composition gap', () => {
 describe('the plan gap — the one worth acting on', () => {
   it('names the direction, and what it does to every later year', () => {
     const b = run();
-    expect(b.planGap).toBe(244000);
+    expect(b.planGap).toBe(235000);
     expect(b.aligned).toBe(false);
-    expect(b.headline).toMatch(/accounts hold \$244,000 MORE/);
+    expect(b.headline).toMatch(/accounts hold \$235,000 MORE/);
     expect(b.headline).toMatch(/understates every year/);
   });
 
@@ -96,12 +116,19 @@ describe('the plan gap — the one worth acting on', () => {
   });
 
   it('stops crying misalignment once the plan is within a thousand dollars', () => {
-    const tuned = { ...P, startingLiquid: 700000, startingStripeEquity: 614000, k401Start: 240000 };
+    // Assets AND the carried balance both have to match. A plan that nails every asset but
+    // carries no float is still off by the float, and should still say so.
+    const tuned = { startingLiquid: 700000, startingStripeEquity: 614000, k401Start: 240000, otherDebt: 9000 };
     const b = B.bridge({ summary: A.summarize(accounts, {}), R, P: tuned, year: 2026, accountsAvailable: true });
-    expect(b.planGap).toBe(9000 - 9000);      // comparable equals the opening position
+    expect(b.planGap).toBe(0);
     expect(b.aligned).toBe(true);
     expect(b.headline).toMatch(/within \$1k/);
     expect(b.lines.find(l => l.kind === 'plan')).toBeUndefined();
+
+    const noFloat = B.bridge({ summary: A.summarize(accounts, {}), R, P: { ...tuned, otherDebt: 0 },
+      year: 2026, accountsAvailable: true });
+    expect(noFloat.aligned).toBe(false);
+    expect(noFloat.lines.find(l => l.key === 'debtGap').value).toBe(9000);
   });
 
   it('reads a later year from the prior year close, not the typed assumptions', () => {
@@ -191,5 +218,22 @@ describe('the bridge is wired into the cockpit', () => {
   it('opens itself only when there is a disagreement to explain', () => {
     const fn = cockpit.slice(cockpit.indexOf('function cockpitRenderBridge'));
     expect(fn).toContain("b.aligned?'':' open'");
+  });
+});
+
+// A subtotal that repeats its own input reads as a rounding error the reader goes hunting
+// for. It earns its row only when something was set aside above it.
+describe('the comparable subtotal', () => {
+  it('is omitted when nothing was set aside', () => {
+    const b = run();
+    expect(b.lines.find(l => l.key === 'comparable')).toBeUndefined();
+    expect(b.comparable).toBe(b.observed);
+  });
+
+  it('appears as soon as there is unclassified money to set aside', () => {
+    const withOdd = [...accounts, { id: '9', name: 'Weird thing', category: 'other', balance: 35000 }];
+    const b = run(withOdd);
+    const sub = b.lines.find(l => l.key === 'comparable');
+    expect(sub.running).toBe(b.observed - 35000);
   });
 });
