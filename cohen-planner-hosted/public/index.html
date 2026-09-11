@@ -4933,7 +4933,8 @@ function _storyMilestones(R,P){
   const nancyRow=R.find(r=>r.yr===nancyMatYr);
   if(nancyRow)ms.push({yr:nancyMatYr,icon:'💼',title:"Nancy's practice matures",sub:`Full client roster reached — ${fmt(nancyRow.nancyG)}/yr gross`});
   const last=R[R.length-1];
-  ms.push({yr:last.yr,icon:'🏁',title:'End of plan',sub:`Projected net worth: ${fmt(last.netWorth)} (incl. ${fmt(last.k401)} retirement)`});
+  ms.push({yr:last.yr,icon:'🏁',title:'End of plan',
+    sub:`${fmt(last.nwExRetHome)} outside retirement and the house — ${fmt(last.k401)} more sits in retirement`});
   const seen=new Set();
   return ms.filter(m=>{if(seen.has(m.yr))return false;seen.add(m.yr);return true})
     .sort((a,b)=>a.yr-b.yr)
@@ -4941,8 +4942,11 @@ function _storyMilestones(R,P){
     // so it uses the opening figures directly rather than R[0], which is already the
     // year-END value. Net worth is the WHOLE opening position: reading startingLiquid into
     // both slots printed the same number twice and quietly dropped Stripe and retirement.
+    // The walkthrough tracks what is actually yours to move: no retirement, no home equity.
+    // `nwExRetHome` is the engine's own name for that, so the card, the sparkline and the
+    // closing milestone cannot drift onto three different definitions of the same word.
     .map(m=>({...m,row:m.yr===sy
-      ?{netWorth:Math.round((P.startingLiquid||0)+(P.startingStripeEquity||0)+(P.k401Start||0)
+      ?{nwExRetHome:Math.round((P.startingLiquid||0)+(P.startingStripeEquity||0)
           -Math.abs(Number(P.otherDebt||0))),liq:Math.round(P.startingLiquid||0)}
       :(R.find(r=>r.yr===m.yr)||R[0])}));
 }
@@ -5013,9 +5017,9 @@ function _renderStory(){
   // Same measure as the "Net worth" figure under it, and the same opening anchor as the
   // "Today" card — a line plotting one thing beneath a number naming another is the defect
   // the cockpit spent this whole session removing.
-  const open=Math.round((P.startingLiquid||0)+(P.startingStripeEquity||0)+(P.k401Start||0)
+  const open=Math.round((P.startingLiquid||0)+(P.startingStripeEquity||0)
     -Math.abs(Number(P.otherDebt||0)));
-  const sparkVals=[open,...R.map(r=>r.netWorth)];
+  const sparkVals=[open,...R.map(r=>r.nwExRetHome)];
   const rIdx=m.yr===(P.planStartYear||2026)?0:1+R.findIndex(r=>r.yr===m.yr);
   const spark=_sparkSVGAt(sparkVals,320,110,'#b6a8ff',rIdx);
   stage.innerHTML=`<div class="story-card reveal">
@@ -5025,7 +5029,7 @@ function _renderStory(){
     <div class="story-sub">${advEscape(m.sub)}</div>
     <div class="story-spark">${spark}</div>
     <div class="story-stats">
-      <div><div class="story-stat-l">Net worth</div><div class="story-stat-v">${fmt(m.row.netWorth)}</div></div>
+      <div><div class="story-stat-l">Net worth<small>ex-retirement &amp; home</small></div><div class="story-stat-v">${fmt(m.row.nwExRetHome)}</div></div>
       <div><div class="story-stat-l">Liquid</div><div class="story-stat-v">${fmt(m.row.liq)}</div></div>
     </div>
   </div>`;

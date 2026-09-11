@@ -25,30 +25,39 @@ describe('story mode counts the household correctly', () => {
 
 describe('story mode reports the right figures for today', () => {
   it('does not print the same number under both labels', () => {
-    // It read startingLiquid into both slots, so "Net worth" and "Liquid" were identical and
-    // Stripe and retirement had silently vanished from the opening position.
+    // It read startingLiquid into both slots, so "Net worth" and "Liquid" were identical.
     expect(ms).not.toContain('{nw:P.startingLiquid,liq:P.startingLiquid}');
     const today = ms.slice(ms.indexOf('m.yr===sy'));
-    for (const part of ['startingLiquid', 'startingStripeEquity', 'k401Start', 'otherDebt'])
+    for (const part of ['startingLiquid', 'startingStripeEquity', 'otherDebt'])
       expect(today, part).toContain(part);
   });
 
-  it('computes an opening net worth well above the liquid figure', () => {
-    const P = { ...D, startingLiquid: 693000, startingStripeEquity: 614000, k401Start: 240000, otherDebt: 9000 };
-    const open = Math.round(P.startingLiquid + P.startingStripeEquity + P.k401Start - Math.abs(P.otherDebt));
-    expect(open).toBe(1538000);
-    expect(open).toBeGreaterThan(P.startingLiquid);
+  it('leaves retirement and the house out of the opening figure', () => {
+    // The walkthrough tracks what is actually yours to move. Retirement is locked for
+    // decades and a house is not spendable, so neither belongs in this particular figure.
+    const today = ms.slice(ms.indexOf('m.yr===sy'), ms.indexOf(':(R.find'));
+    expect(today).not.toContain('k401Start');
+    const P = { ...D, startingLiquid: 678000, startingStripeEquity: 614000, k401Start: 297000, otherDebt: 46000 };
+    expect(Math.round(P.startingLiquid + P.startingStripeEquity - Math.abs(P.otherDebt))).toBe(1246000);
   });
 
-  it('shows the TOTAL under a label that says net worth', () => {
-    expect(render).toContain('${fmt(m.row.netWorth)}');
-    expect(render).not.toContain('${fmt(m.row.nw)}');
+  it('reads the engine\'s own name for the measure rather than assembling it', () => {
+    // Every net-worth figure this app got wrong got wrong by being assembled at the call
+    // site. The definition lives in model.js and each surface asks for it by name.
+    expect(render).toContain('${fmt(m.row.nwExRetHome)}');
+    expect(render).not.toContain('${fmt(m.row.netWorth)}');
+    const model = fs.readFileSync(new URL('../public/model.js', import.meta.url), 'utf8');
+    expect(model).toContain('nwExRetHome:Math.round(liq)+Math.round(stripeEnd)-Math.round(otherDebt)');
+  });
+
+  it('says what the figure leaves out, in its own label', () => {
+    // A narrowed number under the bare word "net worth" is the misreading this session kept
+    // finding; the exclusion belongs in the label, not in a footnote or nowhere.
+    expect(render).toContain('ex-retirement &amp; home');
   });
 
   it('plots the same measure the figure beneath it names', () => {
-    // A line showing one thing under a number naming another is the defect the cockpit
-    // spent this session removing; the walkthrough had the same one.
-    expect(render).toContain('const sparkVals=[open,...R.map(r=>r.netWorth)]');
+    expect(render).toContain('const sparkVals=[open,...R.map(r=>r.nwExRetHome)]');
     expect(render).not.toContain('[P.startingLiquid,...R.map(r=>r.nw)]');
   });
 });

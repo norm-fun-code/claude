@@ -213,3 +213,9 @@ body,body.home-view{background:radial-gradient(ellipse at 80% -20%,#1a2b47 0,tra
   radial-gradient(45% 55% at 90% 90%, rgba(182,168,255,.12), transparent 60%),
   rgba(7,12,21,.94)}
 @media(max-width:640px){.story-title{font-size:21px}.story-sub{font-size:14px}.story-stat-v{font-size:19px}}
+/* A narrowed figure must say what it leaves out, in its own label. The qualifier makes that
+   label two lines tall, so the values are pinned to a common baseline rather than floating
+   at whatever height their own caption happens to end at. */
+.story-stat-l small{display:block;font-size:10px;font-weight:500;letter-spacing:.2px;
+  text-transform:none;color:var(--t3);margin-top:1px}
+.story-stats{align-items:end}

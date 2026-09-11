@@ -675,6 +675,11 @@ function run(p,rets){
       // whole claim is that its figures reconcile, a reader who adds the two numbers on
       // screen and gets a third is right to distrust all of them.
       nw:Math.round(nw),k401:Math.round(k401),netWorth:Math.round(nw)+Math.round(k401),
+      // Net worth with BOTH the locked pools removed: no retirement, no home equity. What is
+      // left is the money that is actually yours to move — the diversified pool and vested
+      // Stripe, less what you owe. Defined here rather than assembled at each call site,
+      // because every net-worth figure this app got wrong got wrong by being assembled.
+      nwExRetHome:Math.round(liq)+Math.round(stripeEnd)-Math.round(otherDebt),
       otherDebt:Math.round(otherDebt),
       // What share of this calendar year the row actually models. Below 1 the row is a
       // STUB — the months before the observation date are already in the opening
