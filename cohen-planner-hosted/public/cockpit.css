@@ -91,3 +91,7 @@ body,body.home-view{background:radial-gradient(ellipse at 80% -20%,#1a2b47 0,tra
   .cp-bridge-row>strong{grid-column:2;grid-row:2;min-width:0}
   .cp-bridge-row>span{grid-row:1}
 }
+
+/* A first year that models three months is not comparable with the twelve-month years after
+   it. The chart says so where the figure is, not in a footnote under it. */
+.cp-stub{display:block;font-size:12px;color:var(--a);line-height:1.55;margin-top:6px;max-width:52ch}

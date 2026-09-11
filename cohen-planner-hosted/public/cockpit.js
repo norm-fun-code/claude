@@ -65,7 +65,7 @@ function renderCockpit(R){
           <span class="cp-register-note">Projected from your plan. Not a forecast.</span>
         </div>
       <section class="cp-card cp-trajectory"><div class="cp-section-head"><div><h3>The path ahead</h3></div><button onclick="cockpitGo('home')">Explore a what-if ↗</button></div>
-      <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end net worth</span><strong id="cp-value">${UI.money(deflate(selected.netWorth,selected.yr))}</strong></div><span id="cp-band-note">Includes retirement<br>Future dollars · assumed returns</span></div>
+      <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end net worth</span><strong id="cp-value">${UI.money(deflate(selected.netWorth,selected.yr))}</strong>${R[0].stubFrac<1?`<small class="cp-stub">${R[0].yr} models only the ${Math.round(R[0].stubFrac*100)}% of the year still ahead of ${e(cockpitObservedLabel(P))}. The months before it are already in your balances.</small>`:''}</div><span id="cp-band-note">Includes retirement<br>Future dollars · assumed returns</span></div>
       <div class="cp-chart"><canvas id="cockpitTrajectory" aria-label="Projected wealth and liquid investments by year" role="img"></canvas></div>
       <div class="cp-pins" id="cp-pins"></div>
       <label class="cp-scrub" for="cp-year-range">Explore a year<input id="cp-year-range" type="range" min="${R[0].yr}" max="${end.yr}" value="${selected.yr}" oninput="cockpitSelectYear(Number(this.value))"><output id="cp-range-label">${selected.yr}</output></label>
@@ -152,6 +152,14 @@ const cpMilestonePlugin={
     ctx.restore();
   },
 };
+
+// The observation date, written the way a person would say it.
+function cockpitObservedLabel(P){
+  if(!P||!P.observedOn)return 'the start of the year';
+  const t=Date.parse(/T/.test(P.observedOn)?P.observedOn:P.observedOn+'T00:00:00Z');
+  if(!Number.isFinite(t))return 'the start of the year';
+  return new Date(t).toLocaleDateString(undefined,{month:'long',day:'numeric',timeZone:'UTC'});
+}
 
 function cockpitDrawChart(R,P,year){
   // Same x-axis and same opening anchor as the Trajectory tab: a prior-year point holding

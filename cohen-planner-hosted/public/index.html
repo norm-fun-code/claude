@@ -457,6 +457,9 @@ const D={
   // Month (1-12) the Stripe balance above was observed, or null for the start of the year.
   // Vests that had already landed by then are inside that number and must not be added again.
   stripeObservedMonth:null,
+  // When the opening balances above were true. Set on first load and whenever they are
+  // reconciled against accounts; the first plan year models only what is still ahead of it.
+  observedOn:null,
   // Blank means "derive the marginal rate from the tax engine". Set it from a vest paystub
   // to model the employer's actual flat supplemental withholding instead.
   stripeVestWithholdingRate:null,

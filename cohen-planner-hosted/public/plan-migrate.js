@@ -84,7 +84,27 @@
 
   function migrateP(raw){
     if(!raw||typeof raw!=='object')return raw;
-    return migrateChildcare(migrateCompSplit(migrateYearKeys(raw)));
+    return migrateObservedOn(migrateChildcare(migrateCompSplit(migrateYearKeys(raw))));
+  }
+
+  // When were these opening balances true? Every plan written before this existed answered
+  // implicitly "1 January", which is what the engine assumed and is almost never right: a
+  // plan built in September then ran a full year of income, spending, saving and return on
+  // top of balances that already contained eight months of it.
+  //
+  // A saved plan keeps whatever date it recorded. One that has never had a date is stamped
+  // with today, because that IS when its figures were last looked at — and the field is
+  // editable, so a plan genuinely built from January statements can say so.
+  function migrateObservedOn(P,today){
+    if(P.observedOn!==undefined)return P;
+    const now=today?new Date(today):new Date();
+    const sy=P.planStartYear||2026;
+    // A date outside the first plan year tells the engine nothing it can use: before it,
+    // the whole year is ahead; after it, the year is already over. Only stamp a date that
+    // actually falls inside the year being stubbed.
+    if(now.getFullYear()!==sy)return{...P,observedOn:null};
+    const iso=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    return{...P,observedOn:iso};
   }
 
   // Advance the plan one year. Every rolling per-year window is indexed off planStartYear,
@@ -109,11 +129,16 @@
     // of freezing it or injecting a spurious $0.
     out.nancyW2Y0=P.nancyW2Y1;out.nancyW2Y1=P.nancyW2Y2;out.nancyW2Y2=P.nancyW2Y3;
     out.nancyW2Y3=Math.round(P.nancyW2Y3*(1+(P.expenseInflation??0.03)));
+    // The observation date belonged to the year just rolled past. Carrying it into the new
+    // start year would leave the engine computing a stub from a date that is now BEFORE the
+    // plan opens — which reads as "the whole year is ahead", silently undoing the roll's
+    // intent for anyone who then re-observes. Cleared, so it is set again deliberately.
+    out.observedOn=null;
     out.planStartYear=(P.planStartYear||2026)+1;
     return out;
   }
 
-  const api={migrateP,rollForwardParams,migrateYearKeys,migrateCompSplit,migrateChildcare,NORM_YEARS,STRIPE_RET_YEARS};
+  const api={migrateP,rollForwardParams,migrateYearKeys,migrateCompSplit,migrateChildcare,migrateObservedOn,NORM_YEARS,STRIPE_RET_YEARS};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.PlanMigrate=api;
 })(typeof window!=='undefined'?window:this);

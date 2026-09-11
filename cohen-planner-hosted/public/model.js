@@ -241,12 +241,47 @@ const STRIPE_VEST_MONTHS=[2,5,8,11];
 // The fraction of a year's grant that has NOT yet vested as of `month` (1-12). In the year
 // the opening balance was observed, only this fraction is new equity — the rest is already
 // inside the observed number, and adding it again would count it twice.
+// ── The stub year ────────────────────────────────────────────────────────────
+// A plan is built from balances observed on a DATE, and that date is usually not 1 January.
+// Everything between the start of the year and that date has already happened and is
+// already inside the opening balances. Running a full year of income, spending, saving and
+// return on top of them counts those months twice — which is how a position observed at
+// $1.59M in September projected to $1.87M by New Year, a $280K gain in fifteen weeks.
+//
+// `observedOn` is an ISO date. Absent, the whole first year is treated as still ahead,
+// which is right for a plan built from 1 January figures and is the engine's default so
+// that nothing moves implicitly.
+function yearRemaining(p){
+  const sy=p.planStartYear||2026;
+  if(!p.observedOn)return 1;
+  const on=Date.parse(/T/.test(p.observedOn)?p.observedOn:p.observedOn+'T00:00:00Z');
+  if(!isFinite(on))return 1;                    // unparseable: assume nothing has happened
+  const y=new Date(on).getUTCFullYear();
+  if(y<sy)return 1;                             // observed before the plan opens
+  if(y>sy)return 0;                             // observed after it closes
+  const start=Date.UTC(sy,0,1),end=Date.UTC(sy+1,0,1);
+  return Math.min(1,Math.max(0,(end-on)/(end-start)));
+}
+
+// Vests are quantised to the dates they actually land on, not to a share of the calendar —
+// a position observed on 11 September has had the February, May and August vests, and only
+// November is still ahead. That is a quarter of the grant, not the 30% of the year that is
+// left. The two fractions are deliberately different and both are right.
 function stripeVestRemaining(p){
   const months=p.stripeVestMonths||STRIPE_VEST_MONTHS;
-  const asOf=p.stripeObservedMonth;
+  const asOf=p.stripeObservedMonth??observedMonth(p);
   if(asOf==null)return 1;                       // no observation date given: assume Jan 1
   const landed=months.filter(m=>m<=asOf).length;
   return Math.max(0,(months.length-landed)/months.length);
+}
+// The observation month, for plans that give a date but no explicit month override.
+function observedMonth(p){
+  const sy=p.planStartYear||2026;
+  if(!p.observedOn)return null;
+  const on=Date.parse(/T/.test(p.observedOn)?p.observedOn:p.observedOn+'T00:00:00Z');
+  if(!isFinite(on))return null;
+  const d=new Date(on);
+  return d.getUTCFullYear()===sy?d.getUTCMonth()+1:null;
 }
 
 // ── Tax withheld on a vest ─────────────────────────────────────────────────
@@ -381,6 +416,9 @@ function run(p,rets){
       if(nancyIsSolo){nancyOH=p.nancyPracticeOverhead+(yr>=p.homePurchaseYear?p.nancyHomeOfficeDeduct:0);nancySENet=Math.max(0,nancyGross-nancyOH)}
     }
     const grossIncome=normW2+nancyGross;
+    // How much of this year is still ahead of the observation date. 1 for every year after
+    // the first, and 1 in the first year too unless the plan says when it was observed.
+    const stub=yIdx===0?yearRemaining(p):1;
     const ctcKids=kids.filter(k=>yr>=k&&(yr-k)<17).length;
     const taxP={...p,_normW2:normW2,_nancyW2:nancyIsSolo?0:nancyGross,_nancySE:nancyIsSolo?nancySENet:0,_nancyOverhead:nancyIsSolo?nancyOH:0};
     const tax=calcTax(grossIncome,taxP,yr,ctcKids);
@@ -395,14 +433,22 @@ function run(p,rets){
     // change in the withholding rate moves dollars between them and never creates any.
     const vestRate=vestTaxRate(p,tax,taxP,grossIncome,yr,ctcKids,normStock);
     const normStockNet=normStock*(1-vestRate);
-    const cashAvail=tax.net-normStockNet;
+    // Tax is computed on the WHOLE year's income, because that is the liability actually
+    // owed for it and the effective rate reflects earnings already booked. Only the share of
+    // the resulting net that is still to be RECEIVED is spendable from here.
+    const cashAvail=(tax.net-normStockNet)*stub;
     const inc=cashAvail;
     // rets[] (Monte Carlo) perturbs only the DIVERSIFIED portfolio. Stripe follows its own
     // explicit return path — we have no basis for claiming to know its volatility.
-    const ret=rets?rets[yIdx]:p.investReturn;
+    const retFull=rets?rets[yIdx]:p.investReturn;
+    // The opening balance already contains this year's market moves up to the observation
+    // date, so only the remainder of the year may be compounded onto it. Compounded, not
+    // scaled: a third of a year at 6% is (1.06)^(1/3)−1, not 2%.
+    const ret=stub>=1?retFull:Math.pow(1+retFull,stub)-1;
     // Half-year convention: prior balance compounds a full year, this year's
     // contributions (deposited throughout the year) earn ~half a year of return.
-    k401=k401*(1+ret)+(p.pretax401k+p.company401kMatch)*(1+ret/2);
+    // Contributions are pro-rated too — the ones already made are inside k401Start.
+    k401=k401*(1+ret)+(p.pretax401k+p.company401kMatch)*stub*(1+ret/2);
     const sub=yr>=p.homePurchaseYear;
     // Property tax = rate × current home value (appreciates each year). Falls back
     // to legacy flat propTaxBase/homePrice for saved states without a rate.
@@ -416,7 +462,7 @@ function run(p,rets){
     let ch=p.baseCharity*inf,md=p.baseMedical*inf,tr=p.baseTransit*inf,ut=p.baseUtilsPhoneNet*inf;
     if(sub){au+=p.suburbAutoBoost*inf;ins+=p.suburbInsBoost*inf;ut+=p.suburbUtilBoost*inf;tr*=.4}
     for(const kb of kids){if(yr<kb)continue;const a=yr-kb,c=kidCost(a);gr+=c.g*inf;di+=c.d*inf;sh+=c.s*inf;md+=c.m*inf;mi+=c.x*inf;en+=c.e*inf;va+=c.v*inf}
-    const liv=gr+di+sh+va+au+ins+mi+en+ch+md+tr+ut;
+    let liv=gr+di+sh+va+au+ins+mi+en+ch+md+tr+ut;
     // Childcare — a single flat monthly rate from birth through the year before yeshiva
     // starts (previously modeled 3 separate phases: nanny hourly rate at birth, nanny
     // hourly through a configurable end-age, then daycare-or-continued-nanny depending on
@@ -428,6 +474,10 @@ function run(p,rets){
       const startAge=ki===0?p.kid1YeshivaStartAge:p.yeshivaStartAge;
       if(a>=0&&a<startAge)cc+=(p.childcareMonthly??2800)*12;
     }
+    // Spending already incurred this year is behind the observation date and is already
+    // reflected in the opening balances, so only the remainder is charged. Every reported
+    // component is scaled, not just the total, so the parts still sum to it.
+    if(stub<1){h*=stub;liv*=stub;cc*=stub}
     tC+=cc;
     let tu=0;
     for(let ki=0;ki<kids.length;ki++){
@@ -435,6 +485,7 @@ function run(p,rets){
       const startAge=ki===0?p.kid1YeshivaStartAge:p.yeshivaStartAge;
       if(a>=startAge&&a<=p.yeshivaEndAge)tu+=baseTuit(a)*(1+p.tuitionInflation)**(yr-sy); // C4 fix: yr-sy not yr-2026
     }
+    if(stub<1)tu*=stub;
     tT+=tu;
     const totE=h+liv+cc+tu;
     const surp=cashAvail-totE; // operating cash flow — retained stock is NOT spendable
@@ -453,8 +504,13 @@ function run(p,rets){
     // they can be neither sold for cash nor retained as equity.
     const liquidityModule=typeof module!=='undefined'&&module.exports?require('./liquidity.js'):window.PlannerLiquidity;
     const saleBudget=liquidityModule.raisableInYear(yr,{heldValue:lotsValue(lots),vestPerQuarter:normStockNet/4},p);
-    const stripeSold=Math.max(0,Math.min(saleBudget,normStockNet,stripeSellAmount(p,normStockNet,netCash,liqGrown,ret,td)));
-    const stripeRetained=Math.max(0,normStockNet-stripeSold);
+    // Only the vests still AHEAD of the observation date are in play. The ones that already
+    // landed were sold or kept months ago, and either way their effect is inside the opening
+    // balances — offering them to the waterfall again would fund the rest of the year twice.
+    const vestShareNew=(yr===sy)?stripeVestRemaining(p):1;
+    const vestAvail=normStockNet*vestShareNew;
+    const stripeSold=Math.max(0,Math.min(saleBudget,vestAvail,stripeSellAmount(p,vestAvail,netCash,liqGrown,ret,td)));
+    const stripeRetained=Math.max(0,vestAvail-stripeSold);
     // ── Stripe equity roll-forward, on the tender calendar ──
     // A private position has ONE price and it moves on ONE date: the February tender. So a
     // calendar year's performance is not visible in that year — it is the step between the
@@ -472,11 +528,10 @@ function run(p,rets){
     const stripePreGrowth=lotsValue(lots);
     if(marked)for(const L of lots)L.v*=(1+marked);
     const stripeAppr=lotsValue(lots)-stripePreGrowth;
-    // In the observation year the opening balance was measured part-way through, so the
-    // vests that had already landed are inside it. Only the remainder is new equity.
-    const vestShareNew=(yr===sy)?stripeVestRemaining(p):1;
-    const alreadyInOpening=stripeRetained*(1-vestShareNew);
-    const newVest=stripeRetained*vestShareNew;
+    // Everything reaching here is already remainder-only, so all of it is new equity. What
+    // the opening balance was already carrying is reported separately, never re-added.
+    const alreadyInOpening=normStockNet-vestAvail;
+    const newVest=stripeRetained;
     // Basis of a vesting lot is its vest-date fair market value, which is the same mark.
     if(newVest>0)lots.push({v:newVest,b:newVest,yr});
     // ── Funding waterfall for whatever this year's vest could not cover ──
@@ -592,7 +647,11 @@ function run(p,rets){
       // whole claim is that its figures reconcile, a reader who adds the two numbers on
       // screen and gets a third is right to distrust all of them.
       nw:Math.round(nw),k401:Math.round(k401),netWorth:Math.round(nw)+Math.round(k401),
-      otherDebt:Math.round(otherDebt),kiy,nk});
+      otherDebt:Math.round(otherDebt),
+      // What share of this calendar year the row actually models. Below 1 the row is a
+      // STUB — the months before the observation date are already in the opening
+      // balances — and any surface comparing it with a full year has to say so.
+      stubFrac:stub,kiy,nk});
   }
   // Years the plan actually reaches for savings. `surp<0` is NOT this: with a stock-heavy
   // package, cash comp alone rarely covers a year, so surp is negative almost always even
@@ -795,7 +854,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
   module.exports={bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
-    normComp,stripeReturn,stripeVestFactor,stripeVestRemaining,STRIPE_VEST_MONTHS,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
+    normComp,stripeReturn,stripeVestFactor,stripeVestRemaining,yearRemaining,observedMonth,STRIPE_VEST_MONTHS,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
     housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,
