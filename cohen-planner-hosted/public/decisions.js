@@ -44,12 +44,18 @@
     const last=R[R.length-1];
     return{current,floor,tightest,purchase,beforeAssets,down,
       closingBuffer:beforeAssets===null?null:beforeAssets-down,
-      // `netWorth` is the SAME measure the projection table, the net-worth chart and the
-      // scenario comparison all report, so the Decision Room's headline reconciles with them
-      // line for line. `total` adds the 401k on top; it is a real part of the household's
-      // wealth, but folding it into a figure labelled "net worth" made the Decision Room
-      // disagree with every other view by exactly the retirement balance.
-      peak,last,netWorth:last.nw,retirement:last.k401,total:last.nw+last.k401,
+      // `netWorth` is the SAME measure the Trajectory chart, the cockpit and the Decision
+      // Room's own chart report, so the headline reconciles with them line for line.
+      //
+      // It previously read `last.nw`, which excludes retirement, on the reasoning that the
+      // other views reported that and consistency mattered more. Consistency did matter —
+      // but those views were the ones in the wrong, labelling a component "net worth". They
+      // are fixed; this follows them up rather than holding them down.
+      //
+      // `exRetirement` keeps the component available for anything that wants to show the
+      // split, under a name that cannot be mistaken for the total.
+      peak,last,netWorth:last.netWorth,exRetirement:last.nw,
+      retirement:last.k401,total:last.netWorth,
       // Years that genuinely reach for savings. Counting r.surp<0 instead would count every
       // year cash pay alone falls short — which, with a stock-heavy package, is nearly all
       // of them even when that year's vest closes the gap and nothing is liquidated.

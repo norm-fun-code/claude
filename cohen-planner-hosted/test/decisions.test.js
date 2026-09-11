@@ -124,13 +124,18 @@ describe('Cash flow is measured against income, and net worth means one thing',(
     for(const r of R)expect(r.incGap).toBe(Math.max(0,-r.flow));
   });
 
-  it('headlines the same net worth the projection table and scenario cases report',()=>{
+  it('headlines the same net worth the Trajectory chart and cockpit report',()=>{
+    // This once asserted the opposite: that the headline matched the ex-retirement figure
+    // the other views showed. Those views were mislabelling a component as the total, and
+    // matching a wrong number is still a mismatch. The headline now IS the total.
     const s=summarize(defaults,R,R[0].yr);
     const last=R[R.length-1];
-    expect(s.netWorth).toBe(last.nw);          // identical to the table's NW column
-    expect(s.retirement).toBe(last.k401);      // 401k reported beside it, never folded in
-    expect(s.total).toBe(last.nw+last.k401);
-    expect(s.netWorth).not.toBe(s.total);      // the exact gap that made the views disagree
+    expect(s.netWorth).toBe(last.netWorth);
+    expect(s.netWorth).toBe(last.nw+last.k401);
+    expect(s.total).toBe(s.netWorth);          // no second, larger "real" total behind it
+    expect(s.retirement).toBe(last.k401);      // still reported, now as a part of the whole
+    expect(s.exRetirement).toBe(last.nw);      // component kept, under a name that says so
+    expect(s.exRetirement).not.toBe(s.netWorth);
   });
 
   it('picks the tightest year by net flow rather than by cash pay alone',()=>{

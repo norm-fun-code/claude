@@ -30,7 +30,7 @@ function renderCockpit(R){
   // knows a net worth, so show that and let the provenance chip carry the doubt.
   const hero=UI.heroValue({
     observed:available?s.netWorth:null,
-    projected:current?current.nw+current.k401:null,
+    projected:current?current.netWorth:null,
     complete:available?!partial:undefined,
   });
   const priorities=(_inbox?.priorities||[]).slice(0,3);
@@ -65,7 +65,7 @@ function renderCockpit(R){
           <span class="cp-register-note">Projected from your plan. Not a forecast.</span>
         </div>
       <section class="cp-card cp-trajectory"><div class="cp-section-head"><div><h3>The path ahead</h3></div><button onclick="cockpitGo('home')">Explore a what-if ↗</button></div>
-      <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end net worth</span><strong id="cp-value">${UI.money(selected.nw+selected.k401)}</strong></div><span id="cp-band-note">Includes retirement<br>Future dollars · assumed returns</span></div>
+      <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end net worth</span><strong id="cp-value">${UI.money(selected.netWorth)}</strong></div><span id="cp-band-note">Includes retirement<br>Future dollars · assumed returns</span></div>
       <div class="cp-chart"><canvas id="cockpitTrajectory" aria-label="Projected wealth and liquid investments by year" role="img"></canvas></div>
       <div class="cp-pins" id="cp-pins"></div>
       <label class="cp-scrub" for="cp-year-range">Explore a year<input id="cp-year-range" type="range" min="${R[0].yr}" max="${end.yr}" value="${selected.yr}" oninput="cockpitSelectYear(Number(this.value))"><output id="cp-range-label">${selected.yr}</output></label>
@@ -179,7 +179,7 @@ function cockpitDrawChart(R,P,year){
     ds.push({label:'10th percentile',data:band.p10,borderColor:'transparent',
       backgroundColor:'transparent',fill:false,pointRadius:0,borderWidth:0,tension:.25});
   }
-  ds.push({label:'Net worth incl. retirement',data:R.map(r=>r.nw+r.k401),
+  ds.push({label:'Net worth incl. retirement',data:R.map(r=>r.netWorth),
     borderColor:'#7ae3c3',backgroundColor:'transparent',fill:false,
     pointRadius:0,pointHoverRadius:5,borderWidth:2.5,tension:.25});
   ds.push({label:'Liquid investments',data:R.map(r=>r.liq),
@@ -233,13 +233,13 @@ function cockpitSelectYear(year){
   const row=R.find(r=>r.yr===year);if(!row)return;
   const set=(id,text)=>{const el=document.getElementById(id);if(el)el.textContent=text};
   set('cp-year',year+' year-end net worth');
-  set('cp-value',UI.money(row.nw+row.k401));
+  set('cp-value',UI.money(row.netWorth));
   set('cp-range-label',year);
 
   // The hero follows the scrub only while it is showing a PROJECTED figure. An observed
   // balance belongs to today and must not be relabelled as some future year's.
   const hero=document.getElementById('cp-hero');
-  if(hero&&hero.dataset.source==='projected')hero.textContent=UI.money(row.nw+row.k401);
+  if(hero&&hero.dataset.source==='projected')hero.textContent=UI.money(row.netWorth);
 
   const grid=document.getElementById('cp-year-grid');
   if(grid)grid.innerHTML=[['Liquid investments',row.liq],['Vested Stripe',row.sEnd],

@@ -1596,12 +1596,12 @@ function render(){
   const _hb=document.getElementById('heroBand');
   if(_hb){
     const liveLiq=monarchSnapshot&&!monarchSnapshot.partial?monarchSnapshot.liquid:null;
-    const spark=_sparkSVG(R.map(r=>r.nw),190,66,'#635bff');
+    const spark=_sparkSVG(R.map(r=>r.netWorth),190,66,'#635bff');
     _hb.innerHTML=`<div class="hero">
       <div class="hero-main">
         <div class="hero-eyebrow"><span class="dot"></span>Projected net worth · ${last.yr}</div>
-        <div class="hero-v">${fmt(last.nw)}</div>
-        <div class="hero-sub"><b>${fmt(last.liq)}</b> liquid${last.sEnd>0?` · <b style="color:#6772e5">${fmt(last.sEnd)}</b> Stripe`:''} · <b>${fmt(last.eq)}</b> home equity${liveLiq!=null?` · today <b>${fmt(liveLiq)}</b> liquid+Stripe`:''}</div>
+        <div class="hero-v">${fmt(last.netWorth)}</div>
+        <div class="hero-sub"><b>${fmt(last.liq)}</b> liquid${last.sEnd>0?` · <b style="color:#6772e5">${fmt(last.sEnd)}</b> Stripe`:''} · <b>${fmt(last.eq)}</b> home equity · <b>${fmt(last.k401)}</b> retirement${liveLiq!=null?` · today <b>${fmt(liveLiq)}</b> liquid+Stripe`:''}</div>
       </div>
       <div class="hero-spark">${spark}</div>
     </div>`;
@@ -1691,6 +1691,12 @@ function render(){
   const nwLabels=[String(sy0-1),...labels];
   const startLiqK=Math.round(P.startingLiquid/1000);
   const startLiqPlusStripeK=Math.round(((P.startingLiquid||0)+(P.startingStripeEquity||0))/1000);
+  // The prior-year anchor for the TOTAL line is the plan's whole opening position, not just
+  // its cash. Anchoring Total NW at startingLiquid dropped Stripe and the entire 401(k) from
+  // the left-hand point, so the line began below where the plan actually starts and the
+  // first segment showed a jump the model never produced.
+  const startNwK=Math.round(((P.startingLiquid||0)+(P.startingStripeEquity||0)+(P.k401Start||0)
+    -Math.abs(Number(P.otherDebt||0)))/1000);
   // Monarch actual dot — added to each chart dataset array below
   const _mSnap=monarchSnapshot;
   const _mDotIdx=_mSnap?nwLabels.indexOf(String(new Date().getFullYear())):-1;
@@ -1707,20 +1713,22 @@ function render(){
   }
   if(_projView==='nw'){
     const po=posOpts();
-    const ds=[{label:'Total NW'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.nw,r.yr))],borderColor:'#635bff',backgroundColor:_areaGrad('#635bff',.24,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#635bff',pointBorderColor:'#fff',borderWidth:2.5,borderCapStyle:'round'},{label:'Liquid (ex-Stripe)'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.liq,r.yr))],borderColor:'#0073e6',backgroundColor:_areaGrad('#0073e6',.14,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#0073e6',pointBorderColor:'#fff',borderWidth:2,borderCapStyle:'round'},{label:'Stripe'+(inflationView?' (real)':''),data:[Math.round((P.startingStripeEquity||0)/1000),...R.map(r=>deflK(r.sEnd,r.yr))],borderColor:'#6772e5',backgroundColor:_areaGrad('#6772e5',.16,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#6772e5',pointBorderColor:'#fff',borderWidth:2,borderCapStyle:'round'},{label:'Home equity'+(inflationView?' (real)':''),data:[0,...R.map(r=>deflK(r.eq,r.yr))],borderColor:'#7c3aed',fill:false,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#7c3aed',pointBorderColor:'#fff',borderWidth:1.5,borderDash:[4,3]},{label:'401(k)'+(inflationView?' (real)':''),data:[Math.round((P.k401Start||0)/1000),...R.map(r=>deflK(r.k401,r.yr))],borderColor:'#0f9b6c',fill:false,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#0f9b6c',pointBorderColor:'#fff',borderWidth:1.5,borderDash:[2,3],hidden:true}];
+    const ds=[{label:'Total NW (incl. retirement)'+(inflationView?' (real)':''),data:[startNwK,...R.map(r=>deflK(r.netWorth,r.yr))],borderColor:'#635bff',backgroundColor:_areaGrad('#635bff',.24,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#635bff',pointBorderColor:'#fff',borderWidth:2.5,borderCapStyle:'round'},{label:'Liquid (ex-Stripe)'+(inflationView?' (real)':''),data:[startLiqK,...R.map(r=>deflK(r.liq,r.yr))],borderColor:'#0073e6',backgroundColor:_areaGrad('#0073e6',.14,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#0073e6',pointBorderColor:'#fff',borderWidth:2,borderCapStyle:'round'},{label:'Stripe'+(inflationView?' (real)':''),data:[Math.round((P.startingStripeEquity||0)/1000),...R.map(r=>deflK(r.sEnd,r.yr))],borderColor:'#6772e5',backgroundColor:_areaGrad('#6772e5',.16,0),fill:true,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#6772e5',pointBorderColor:'#fff',borderWidth:2,borderCapStyle:'round'},{label:'Home equity'+(inflationView?' (real)':''),data:[0,...R.map(r=>deflK(r.eq,r.yr))],borderColor:'#7c3aed',fill:false,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#7c3aed',pointBorderColor:'#fff',borderWidth:1.5,borderDash:[4,3]},{label:'401(k)'+(inflationView?' (real)':''),data:[Math.round((P.k401Start||0)/1000),...R.map(r=>deflK(r.k401,r.yr))],borderColor:'#0f9b6c',fill:false,tension:.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#0f9b6c',pointBorderColor:'#fff',borderWidth:1.5,borderDash:[2,3],hidden:true}];
     if(_stressMode){
       const bear=run({...P,investReturn:Math.max(.02,P.investReturn-.02),expenseInflation:Math.min(.06,P.expenseInflation+.01)});
       const bull=run({...P,investReturn:Math.min(.12,P.investReturn+.02),expenseInflation:Math.max(.01,P.expenseInflation-.005)});
-      ds.push({label:'Upside NW (+2% return, −0.5% spend)',data:[startLiqK,...bull.R.map(r=>deflK(r.nw,r.yr))],borderColor:'rgba(26,135,84,.5)',backgroundColor:'rgba(99,91,255,.08)',fill:'+1',tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[3,3]});
-      ds.push({label:'Downside NW (−2% return, +1% spend)',data:[startLiqK,...bear.R.map(r=>deflK(r.nw,r.yr))],borderColor:'rgba(205,61,100,.5)',fill:false,tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[3,3]});
+      // Same basis as the line they bracket. A stress band on the ex-retirement figure would
+      // sit permanently below the plan it is supposed to straddle.
+      ds.push({label:'Upside NW (+2% return, −0.5% spend)',data:[startNwK,...bull.R.map(r=>deflK(r.netWorth,r.yr))],borderColor:'rgba(26,135,84,.5)',backgroundColor:'rgba(99,91,255,.08)',fill:'+1',tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[3,3]});
+      ds.push({label:'Downside NW (−2% return, +1% spend)',data:[startNwK,...bear.R.map(r=>deflK(r.netWorth,r.yr))],borderColor:'rgba(205,61,100,.5)',fill:false,tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[3,3]});
     }
     if(_bandMode){
       if(_cachedBand&&_cachedBand.sig===_bandParamSig()){
         const{p10,p50,p90}=_cachedBand.band;const toK=v=>Math.round(v/1000);
         const src=_cachedBand.mode==='historical'?'historical':'synthetic';
-        ds.push({label:`P90 upside (${src})`,data:[startLiqK,...p90.map(toK)],borderColor:'rgba(26,135,84,.55)',backgroundColor:'rgba(99,91,255,.06)',fill:'+2',tension:.3,pointRadius:0,borderWidth:1.3,borderDash:[2,2]});
-        ds.push({label:'P50 median',data:[startLiqK,...p50.map(toK)],borderColor:'rgba(10,37,64,.55)',fill:false,tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[5,3]});
-        ds.push({label:'P10 downside',data:[startLiqK,...p10.map(toK)],borderColor:'rgba(205,61,100,.55)',fill:false,tension:.3,pointRadius:0,borderWidth:1.3,borderDash:[2,2]});
+        ds.push({label:`P90 upside (${src})`,data:[startNwK,...p90.map(toK)],borderColor:'rgba(26,135,84,.55)',backgroundColor:'rgba(99,91,255,.06)',fill:'+2',tension:.3,pointRadius:0,borderWidth:1.3,borderDash:[2,2]});
+        ds.push({label:'P50 median',data:[startNwK,...p50.map(toK)],borderColor:'rgba(10,37,64,.55)',fill:false,tension:.3,pointRadius:0,borderWidth:1.5,borderDash:[5,3]});
+        ds.push({label:'P10 downside',data:[startNwK,...p10.map(toK)],borderColor:'rgba(205,61,100,.55)',fill:false,tension:.3,pointRadius:0,borderWidth:1.3,borderDash:[2,2]});
       } else {
         // Cache is stale (a slider moved since the last simulation) — don't render a band
         // that no longer matches the current assumptions; refresh it in the background
@@ -1740,8 +1748,9 @@ function render(){
       if(sn&&sn.params){
         const sr=run({...D,...migrateP(sn.params)});
         const snSy=sn.params.planStartYear||sy0;
-        const byYr={};sr.R.forEach(r=>{byYr[r.yr]=deflK(r.nw,r.yr)});
-        byYr[snSy-1]=Math.round((sn.params.startingLiquid||P.startingLiquid)/1000);
+        const byYr={};sr.R.forEach(r=>{byYr[r.yr]=deflK(r.netWorth,r.yr)});
+        // Same basis and same anchor as the live Total NW line it is overlaid on.
+        byYr[snSy-1]=Math.round(((sn.params.startingLiquid||P.startingLiquid)+(sn.params.startingStripeEquity||0)+(sn.params.k401Start||0)-Math.abs(Number(sn.params.otherDebt||0)))/1000);
         const snData=nwLabels.map(lbl=>{const v=byYr[parseInt(lbl,10)];return v===undefined?null:v});
         ds.push({label:'📸 '+sn.label+' (NW)',data:snData,borderColor:'#bf6900',fill:false,tension:.3,pointRadius:0,borderWidth:2,borderDash:[6,3],spanGaps:false});
       }
@@ -4763,7 +4772,7 @@ function _storyMilestones(R,P){
   const nancyRow=R.find(r=>r.yr===nancyMatYr);
   if(nancyRow)ms.push({yr:nancyMatYr,icon:'💼',title:"Nancy's practice matures",sub:`Full client roster reached — ${fmt(nancyRow.nancyG)}/yr gross`});
   const last=R[R.length-1];
-  ms.push({yr:last.yr,icon:'🏁',title:'End of plan',sub:`Projected net worth: ${fmt(last.nw)} (+${fmt(last.k401)} in 401k)`});
+  ms.push({yr:last.yr,icon:'🏁',title:'End of plan',sub:`Projected net worth: ${fmt(last.netWorth)} (incl. ${fmt(last.k401)} retirement)`});
   const seen=new Set();
   return ms.filter(m=>{if(seen.has(m.yr))return false;seen.add(m.yr);return true})
     .sort((a,b)=>a.yr-b.yr)

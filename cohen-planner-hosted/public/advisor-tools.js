@@ -104,7 +104,7 @@
   // A fixed vocabulary rather than free-form field access, so every answer is a figure the
   // app itself reports and can be checked against the same screen the user is looking at.
   const METRICS={
-    finalNetWorth:{label:'Net worth at plan end',pick:r=>r.R[r.R.length-1].nw,fmt:usd},
+    finalNetWorth:{label:'Net worth at plan end',pick:r=>r.R[r.R.length-1].netWorth,fmt:usd},
     final401k:{label:'401(k) at plan end',pick:r=>r.R[r.R.length-1].k401,fmt:usd},
     liquidFloor:{label:'Lowest projected liquid assets',pick:r=>Math.min(...r.R.map(x=>x.liq)),fmt:usd},
     liquidFloorYear:{label:'Year of the liquid low point',

@@ -122,7 +122,10 @@ describe('Calculation checks against the engine itself',()=>{
   it('every advertised metric reads the value the engine reports',()=>{
     const r=Tools.compute({P,metrics:Object.keys(Tools.METRICS)});
     const truth=M.run(P);
-    expect(r.metrics.finalNetWorth.value).toBe(truth.R[truth.R.length-1].nw);
+    // The advisor quotes this as "Net worth at plan end", so it must be the TOTAL. The
+    // engine's `nw` excludes retirement; reading it here understated the answer by the
+    // whole 401(k) — $4.7M at the end of this plan.
+    expect(r.metrics.finalNetWorth.value).toBe(truth.R[truth.R.length-1].netWorth);
     expect(r.metrics.totalTax.value).toBe(truth.R.reduce((s,x)=>s+x.tax,0));
     expect(r.metrics.totalTuition.value).toBe(truth.tT);
     expect(r.metrics.negativeFlowYears.value).toBe(truth.R.filter(x=>x.flow<0).length);

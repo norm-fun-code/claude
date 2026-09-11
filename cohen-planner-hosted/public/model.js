@@ -565,7 +565,20 @@ function run(p,rets){
       sHold:Math.round(holdSold),sGainTax:Math.round(holdTax),
       sAppr:Math.round(stripeAppr),sEnd:Math.round(stripeEnd),
       sBasis:Math.round(lotsBasis(lots)),sLots:lots.length,sRate:sr,sPct:nw>0?stripeEnd/nw:0,
-      nw:Math.round(nw),k401:Math.round(k401),otherDebt:Math.round(otherDebt),kiy,nk});
+      // `nw` EXCLUDES retirement. It is a component, not a total, and the name has caused
+      // exactly the confusion it invites: the cockpit added k401 back and called the result
+      // net worth, while the Trajectory chart plotted `nw` and labelled it "Total NW" — two
+      // screens, one engine, and a gap that reached $4.7M by 2058.
+      //
+      // `netWorth` is the total. Anything presenting a figure to the reader as their net
+      // worth reads THIS field; `nw` survives only for the ex-retirement component series
+      // and for sPct, whose concentration threshold is calibrated against it.
+      // Summed from the ROUNDED components, not rounded from the raw sum. Rounding each
+      // independently leaves netWorth up to a dollar off nw + k401, and in an app whose
+      // whole claim is that its figures reconcile, a reader who adds the two numbers on
+      // screen and gets a third is right to distrust all of them.
+      nw:Math.round(nw),k401:Math.round(k401),netWorth:Math.round(nw)+Math.round(k401),
+      otherDebt:Math.round(otherDebt),kiy,nk});
   }
   // Years the plan actually reaches for savings. `surp<0` is NOT this: with a stock-heavy
   // package, cash comp alone rarely covers a year, so surp is negative almost always even
@@ -740,8 +753,11 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
   for(let t=0;t<trials;t++){
     const rets=isHist?drawHistoricalBlock(nYears):Array.from({length:nYears},drawRet);
     const{R}=run(p,rets);
-    nwPaths.push(R.map(r=>r.nw));liqPaths.push(R.map(r=>r.liq));
-    finalNW.push(R[R.length-1].nw);
+    // Net worth INCLUDING retirement — the band is drawn against the Total NW line and the
+    // percentiles are presented as "net worth at <horizon>". Simulating `nw` here left both
+    // sitting a whole 401(k) below the line they describe.
+    nwPaths.push(R.map(r=>r.netWorth));liqPaths.push(R.map(r=>r.liq));
+    finalNW.push(R[R.length-1].netWorth);
     const minLiq=Math.min(...R.map(r=>r.liq));floorLiq.push(minLiq);
     if(minLiq<0)ruin++;
     // Sequence-of-returns risk: probability the liquid pool can't cover the down
