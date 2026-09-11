@@ -46,3 +46,10 @@ body,body.home-view{background:radial-gradient(ellipse at 80% -20%,#1a2b47 0,tra
 .spend-details>summary{font-size:15px;font-weight:500;color:var(--tx);cursor:pointer;min-height:32px;list-style-position:inside}.spend-details[open]>summary{margin-bottom:18px}.spend-caption{font-size:12px!important;color:var(--t3)!important}
 @media(max-width:1000px){.spend-visuals{grid-template-columns:1fr}.spend-trend-wrap{height:300px}}
 @media(max-width:760px){.spend-legend>div{grid-template-columns:8px minmax(0,1fr) auto 40px;gap:8px}.spend-details .tw{overflow-x:auto}.spend-trend-wrap{height:280px}.spending-workspace .cp-card{padding:18px 14px}}
+/* Overview metrics keep their label, value and source on separate lines. */
+.overview-metric{position:relative;display:flex;flex-direction:column;min-width:0;min-height:184px;padding:20px!important;overflow:hidden}
+.overview-metric-label{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);line-height:1.45;max-width:100%;overflow-wrap:anywhere}
+.overview-metric-value{font-family:'SF Mono','Fira Code',monospace;font-size:28px;font-weight:700;letter-spacing:-1px;line-height:1.25;margin-top:13px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.overview-metric-sub{font-size:14px;color:var(--t2);line-height:1.5;margin-top:8px;max-width:100%}
+.overview-metric-source{margin-top:auto;padding-top:14px;min-height:30px}.overview-provenance{display:inline-flex;align-items:center;gap:4px;max-width:100%;border-radius:999px;padding:4px 8px;background:color-mix(in srgb,var(--prov) 12%,transparent);color:var(--prov);font-size:12px;font-weight:650;line-height:1;white-space:nowrap}
+@media(max-width:760px){.overview-metric{min-height:166px;padding:17px!important}.overview-metric-value{font-size:25px;margin-top:10px}.overview-metric-sub{font-size:13px}.overview-metric-label{font-size:11px}}
