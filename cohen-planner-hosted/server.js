@@ -268,7 +268,7 @@ app.get('/model.js', requireAuth, (req, res) => {
 // Keep every new planner asset behind the same session gate as the existing UI.
 // liquidity.js was referenced by index.html but never listed here, so it 404'd in
 // production while working locally under the preview server's plain static handler.
-for (const asset of ['decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js']) {
+for (const asset of ['decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js', 'advisor-tools.js']) {
   app.get('/' + asset, requireAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', asset));
   });
@@ -1261,6 +1261,7 @@ const TaxPlan = require('./public/tax-plan.js');
 const TaxRules = require('./public/tax-rules.js');
 const Liquidity = require('./public/liquidity.js');
 const InboxState = require('./public/inbox-state.js');
+const AdvisorTools = require('./public/advisor-tools.js');
 
 // Alert state is keyed on the monitor's stable CONDITION key, so a dismissal survives the
 // same condition being re-detected tomorrow.
@@ -1707,6 +1708,100 @@ app.delete('/api/chats/:id', requireAuth, async (req, res) => {
   }
 });
 
+// ── Planner tools the advisor may call ───────────────────────────────────────
+// Schemas and pure executors live in public/advisor-tools.js so the tools the model is
+// told about and the tools it can actually run cannot drift apart. Everything DB-backed is
+// resolved here; everything computable is delegated there and is covered by tests.
+async function runPlannerTool(name, input) {
+  const planRes = await db.query('SELECT state FROM planner_state WHERE id = 1');
+  const raw = planRes.rows[0] && planRes.rows[0].state;
+  const P = raw && raw.P ? migrateP(raw.P) : null;
+  if (!P && name !== 'lookup_tax_rule')
+    return { error: 'No plan is saved yet, so nothing can be computed against it.' };
+
+  switch (name) {
+    case 'compute':
+      return AdvisorTools.compute({ P, overrides: input.overrides, metrics: input.metrics });
+    case 'compare_alternatives':
+      return AdvisorTools.compareAlternatives({ P, alternatives: input.alternatives, metrics: input.metrics });
+    case 'lookup_tax_rule':
+      return AdvisorTools.lookupTaxRule({ ruleId: input.ruleId });
+    case 'propose_changes':
+      return AdvisorTools.proposeChanges({ P, overrides: input.overrides,
+        rationale: input.rationale, metrics: input.metrics });
+    case 'record_decision':
+      return AdvisorTools.recordDecision(input);
+    case 'get_alerts': {
+      const today = new Date().toISOString().slice(0, 10);
+      const ctx = await buildMonitorContext(today);
+      const detection = Monitors.detect(ctx);
+      const st = await db.query('SELECT * FROM alert_states');
+      const states = {};
+      for (const row of st.rows) states[row.alert_key] = {
+        state: row.state, until: row.snooze_until ? row.snooze_until.toISOString() : null };
+      const prioritized = Monitors.prioritize(detection.alerts, states, { today, limit: 3 });
+      // briefingInput deliberately carries the skips and failures alongside the findings.
+      return { ...Monitors.briefingInput(detection, prioritized), sources: ctx.sources };
+    }
+    case 'get_tax_position': {
+      const today = new Date().toISOString().slice(0, 10);
+      const ctx = await buildMonitorContext(today);
+      const opportunities = ctx.R
+        ? TaxPlan.screenOpportunities({ P: ctx.P, R: ctx.R, marginalRate: ctx.marginalRate })
+        : [];
+      return {
+        withholding: ctx.taxPlan || { status: 'incomplete',
+          note: `Not computable: ${ctx.sources.taxFacts}` },
+        opportunities,
+        documentRequests: TaxPlan.documentRequests([
+          ...(ctx.taxPlan ? ctx.taxPlan.needs : []),
+          ...opportunities.flatMap(o => o.needs || []),
+        ]),
+        ruleTable: TaxRules.staleness(today),
+      };
+    }
+    default:
+      return { error: `Unknown tool "${name}".` };
+  }
+}
+const PLANNER_TOOL_NAMES = new Set(AdvisorTools.TOOLS.map(t => t.name));
+
+// The grounding rules. These are constraints on how the advisor may SPEAK, which is the
+// half that tool schemas cannot enforce: a model with perfect tools can still round a
+// figure it was given, quote a bracket from memory, or describe a projection as a forecast.
+function advisorGrounding(today, staleness) {
+  return `
+═══ HOW YOU MUST WORK ═══
+Today is ${today}.
+
+NUMBERS. Every figure you state comes from a tool call. Do not do arithmetic yourself, do
+not round a number a tool gave you into a different number, and do not carry a figure from
+earlier in the conversation if the plan may have changed since. If you have not called a
+tool for a number, you do not have that number.
+
+TAX. Call lookup_tax_rule before any claim about a bracket, threshold, limit or cap, and
+state the tax year and the jurisdiction when you use one. The rule table covers tax year
+${staleness.taxYear} and was read from primary sources on ${staleness.retrieved}.
+${staleness.coversCurrentYear ? '' : 'IT IS NOW OUT OF DATE — say so before quoting any threshold. '}Never quote a tax figure from memory, including one you are confident about.
+
+ALERTS. get_alerts is the only source of truth about whether something is wrong. Explain
+what it found; never report a condition it did not detect. When it says a check was
+SKIPPED, say that the area was not checked and why — do not let silence imply it is clear.
+
+CHANGES. You never modify the plan. propose_changes and record_decision stage something for
+the user to accept or discard; say plainly that nothing has been changed.
+
+UNCERTAINTY. Give ranges and name the assumption that drives them. Do not attach
+probabilities to outcomes the model does not simulate — "if returns are 4% rather than 6%"
+is honest, "a 70% chance" is not. A projection is not a forecast.
+
+MISSING INPUTS. When a figure you need is missing, ask for it and name the document it
+comes from. Do not substitute a plausible value to make an answer feel complete.
+
+ELIGIBILITY. Items marked requiresConfirmation carry a question only a professional can
+settle. Present those as questions to ask, never as savings to count.`;
+}
+
 // ── Anthropic proxy — SSE streaming ──────────────────────────────────────────
 app.post('/api/advisor/stream', requireAuth, advisorLimiter, async (req, res) => {
   const { chatId, message, systemPrompt, messages } = req.body;
@@ -1737,7 +1832,9 @@ app.post('/api/advisor/stream', requireAuth, advisorLimiter, async (req, res) =>
     // Give the advisor live read-only access to Monarch when the user has connected it.
     const accessToken = true; // NormOS bridge handles server-side authentication.
     const monarchTools = await withTimeout(getMonarchAdvisorTools(accessToken), 7000, []);
-    const sys = systemPrompt + (monarchTools.length ? `
+    const nowISO = new Date().toISOString().slice(0, 10);
+    const grounding = advisorGrounding(nowISO, TaxRules.staleness(nowISO));
+    const sys = systemPrompt + grounding + (monarchTools.length ? `
 
 ═══ LIVE MONARCH ACCESS ═══
 You can query the user's REAL Monarch Money data with the monarch_* tools (accounts & balances, transactions, cash flow, spending by category, investments, recurring, net worth history, and more). When the user asks about actual spending, balances, holdings, budgets, or recent activity, CALL these tools and answer from real data instead of the plan's assumptions. Dates are ISO (YYYY-MM-DD). Today is ${new Date().toISOString().slice(0,10)}. Be specific with real numbers and say when a figure comes from live Monarch data.` : '');
@@ -1751,7 +1848,7 @@ You can query the user's REAL Monarch Money data with the monarch_* tools (accou
         max_tokens: 4000,
         system: [{ type: 'text', text: sys, cache_control: { type: 'ephemeral' } }],
         messages: convo,
-        ...(monarchTools.length ? { tools: monarchTools } : {}),
+        tools: [...AdvisorTools.TOOLS, ...monarchTools],
       });
       stream.on('text', (text) => { fullReply += text; send({ delta: text }); });
       const msg = await stream.finalMessage();
@@ -1762,9 +1859,18 @@ You can query the user's REAL Monarch Money data with the monarch_* tools (accou
         for (const block of msg.content) {
           if (block.type !== 'tool_use') continue;
           send({ tool_call: { name: block.name } });
-          const result = accessToken
-            ? await runMonarchAdvisorTool(accessToken, block.name, block.input)
-            : { error: 'Monarch is not connected.' };
+          let result;
+          try {
+            result = PLANNER_TOOL_NAMES.has(block.name)
+              ? await runPlannerTool(block.name, block.input || {})
+              : accessToken
+                ? await runMonarchAdvisorTool(accessToken, block.name, block.input)
+                : { error: 'Monarch is not connected.' };
+          } catch (toolErr) {
+            // A failed tool must come back as a failure the model can see and report, not
+            // as an absence it might fill in.
+            result = { error: `The ${block.name} tool failed: ${toolErr.message}` };
+          }
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
