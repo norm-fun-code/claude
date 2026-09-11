@@ -2960,7 +2960,7 @@ function renderPortfolioTab(R,P){
   <div class="pf-split">
     <div class="glass-card" style="padding:14px">
       <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:10px">Allocation by Holding</div>
-      <div style="height:280px;position:relative"><canvas id="portfolioDonut"></canvas></div>
+      <div style="height:250px;position:relative"><canvas id="portfolioDonut"></canvas></div><div id="portfolioHoldingLegend" class="portfolio-holding-legend" aria-label="Allocation by holding details"></div>
     </div>
     <div class="glass-card" style="padding:14px">
       <div class="pf-cols2">
@@ -3124,6 +3124,11 @@ function renderPortfolioTab(R,P){
   if(mixData.length>1)charts.mix=makeDonut('mixDonut',mixLabels,mixData,mixColors);
 
   if(donutData.length>0){
+    const legend=document.getElementById('portfolioHoldingLegend');
+    if(legend)legend.innerHTML=donutLabels.map((label,i)=>{
+      const value=donutData[i],pct=donutTotal>0?value/donutTotal*100:0;
+      return `<div class="portfolio-holding-legend-row"><span class="portfolio-holding-swatch" style="background:${donutColors[i]}"></span><span class="portfolio-holding-name">${advEscape(label)}</span><strong>${fmt(value)}</strong><small>${pct.toFixed(1)}%</small></div>`;
+    }).join('');
     const dCtx=document.getElementById('portfolioDonut').getContext('2d');
     charts.main=new Chart(dCtx,{
       type:'doughnut',
