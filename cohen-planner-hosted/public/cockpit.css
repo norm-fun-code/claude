@@ -53,3 +53,8 @@ body,body.home-view{background:radial-gradient(ellipse at 80% -20%,#1a2b47 0,tra
 .overview-metric-sub{font-size:14px;color:var(--t2);line-height:1.5;margin-top:8px;max-width:100%}
 .overview-metric-source{margin-top:auto;padding-top:14px;min-height:30px}.overview-provenance{display:inline-flex;align-items:center;gap:4px;max-width:100%;border-radius:999px;padding:4px 8px;background:color-mix(in srgb,var(--prov) 12%,transparent);color:var(--prov);font-size:12px;font-weight:650;line-height:1;white-space:nowrap}
 @media(max-width:760px){.overview-metric{min-height:166px;padding:17px!important}.overview-metric-value{font-size:25px;margin-top:10px}.overview-metric-sub{font-size:13px}.overview-metric-label{font-size:11px}}
+/* Native legend avoids Chart.js theme inheritance and remains readable on dark surfaces. */
+.portfolio-holding-legend{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px 14px;margin-top:12px}
+.portfolio-holding-legend-row{display:grid;grid-template-columns:9px minmax(0,1fr) auto auto;align-items:center;gap:7px;min-width:0;color:var(--t2);font-size:13px;line-height:1.35}
+.portfolio-holding-swatch{width:9px;height:9px;border-radius:50%}.portfolio-holding-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.portfolio-holding-legend-row strong{font-family:'SF Mono','Fira Code',monospace;color:var(--tx);font-size:12px;font-weight:600}.portfolio-holding-legend-row small{color:var(--t3);font-size:12px;text-align:right}
+@media(max-width:760px){.portfolio-holding-legend{grid-template-columns:1fr}.portfolio-holding-legend-row{font-size:14px}}
