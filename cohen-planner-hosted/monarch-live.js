@@ -287,7 +287,12 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
       return response.json();
     };
 
-    const window = { startDate, endDate, includeHiddenHoldings: false };
+    // Monarch only calculates securityPriceChange* for the number of positions named by
+    // topMoversLimit. When it is omitted those fields come back null, which made every
+    // period return look like $0 even though the date window was sent correctly. Ask for
+    // enough movers to cover the whole household portfolio so every displayed holding can
+    // participate in the period total and gainers/losers lists.
+    const window = { startDate, endDate, includeHiddenHoldings: false, topMoversLimit: 100 };
     // Monarch's own call always scopes to explicit accountIds. Omitting it *should* return
     // the whole portfolio, which is what we want and one fewer round trip — but that is an
     // assumption about an undocumented schema, so if it is rejected, fetch the ids and ask
