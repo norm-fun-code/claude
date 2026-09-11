@@ -37,7 +37,11 @@ function renderCockpit(R){
   document.getElementById('summaries').innerHTML='';
   document.getElementById('chartArea').innerHTML=`<div class="cockpit">
     <header class="cp-heading"><div><div class="cp-eyebrow">YOUR PRIVATE OFFICE</div><h2>Financial command.</h2></div><button class="cp-button" onclick="cockpitRefresh()" ${_ovwLoading||_inboxLoading?'disabled':''}>Refresh overview ↻</button></header>
-    <div class="cp-source" role="status"><span class="${partial||stale||!available?'cp-amber':''}">${e(status)}</span>${dated?`<span>As of ${e(date.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}))}</span>`:''}<button onclick="cockpitGo('overview')">Sources & accounts ↗</button></div>
+    <section class="cp-register" data-tense="now">
+      <div class="cp-register-head">
+        <span class="ui-eyebrow">Where you stand</span>
+        <div class="cp-source" role="status"><span class="${partial||stale||!available?'cp-amber':''}">${e(status)}</span>${dated?`<span>As of ${e(date.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}))}</span>`:''}<button onclick="cockpitGo('overview')">Sources & accounts ↗</button></div>
+      </div>
     <section class="cp-position ui-rise" aria-label="Financial position">
       <div class="cp-wealth">
         <span class="cp-eyebrow">NET WORTH</span>
@@ -52,8 +56,15 @@ function renderCockpit(R){
       }${metric('Vested Stripe',available?money(s.stripeVested):money(selected.sEnd),'Private equity · sale windows apply','stripe')
       }${metric(`${current.yr} monthly margin`,money(current.flow/12),'All after-tax pay less all spending','cashflow')}</div>
     </section>
+    </section>
+
     <div class="cp-workspace"><div class="cp-main-column">
-      <section class="cp-card cp-trajectory"><div class="cp-section-head"><div><span class="cp-eyebrow">CURRENT PLAN / PROJECTION</span><h3>The path ahead</h3></div><button onclick="cockpitGo('home')">Explore a what-if ↗</button></div>
+      <section class="cp-register" data-tense="ahead">
+        <div class="cp-register-head">
+          <span class="ui-eyebrow">Where you are heading</span>
+          <span class="cp-register-note">Projected from your plan. Not a forecast.</span>
+        </div>
+      <section class="cp-card cp-trajectory"><div class="cp-section-head"><div><h3>The path ahead</h3></div><button onclick="cockpitGo('home')">Explore a what-if ↗</button></div>
       <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end wealth</span><strong id="cp-value">${UI.money(selected.nw+selected.k401)}</strong></div><span id="cp-band-note">Includes retirement<br>Future dollars · assumed returns</span></div>
       <div class="cp-chart"><canvas id="cockpitTrajectory" aria-label="Projected wealth and liquid investments by year" role="img"></canvas></div>
       <div class="cp-pins" id="cp-pins"></div>
@@ -64,8 +75,13 @@ function renderCockpit(R){
       <button onclick="cockpitGo('housing')"><span>01 / HOME</span><strong>Find your buying range</strong><small>Timing, down payment & funding →</small></button>
       <button onclick="cockpitGo('spending')"><span>02 / EVERYDAY LIFE</span><strong>Understand your spending</strong><small>Transactions, categories & history →</small></button>
       <button onclick="cockpitGo('holdings')"><span>03 / INVESTMENTS</span><strong>See your exposure</strong><small>Positions, allocation & concentration →</small></button></div></section>
+      </section>
     </div><aside class="cp-advisor">
-      <section class="cp-card cp-attention"><div class="cp-section-head"><div><span class="cp-eyebrow">SIGNALS / REVIEW</span><h3>Your attention</h3></div><span class="cp-count">${priorities.length||'—'}</span></div>
+      <section class="cp-register" data-tense="attention">
+        <div class="cp-register-head">
+          <span class="ui-eyebrow">What needs you</span>
+        </div>
+      <section class="cp-card cp-attention"><div class="cp-section-head"><div><h3>Your attention</h3></div><span class="cp-count">${priorities.length||'—'}</span></div>
       ${_inboxError?'<p>Checks could not load. Open the watchlist to retry.</p>':!_inbox?'<p role="status">Reading your watchlist…</p>':priorities.length?priorities.map((a,i)=>`<button class="cp-signal" onclick="cockpitGo('watch')"><span>0${i+1}</span><div><strong>${e(a.title||a.kind||'Review this signal')}</strong><small>Review evidence & assumptions ↗</small></div></button>`).join(''):'<p>No priorities returned by the checks that ran.</p>'}
       ${_inbox?`<p class="cp-meta">${Number(_inbox.checksRun)||0} of ${Number(_inbox.checksTotal)||0} checks ran; ${(_inbox.notChecked||[]).length} comparisons unavailable. Signals depend on source coverage and model assumptions.</p>`:''}<button class="cp-text-link" onclick="cockpitGo('watch')">Open full watchlist →</button></section>
       <section class="cp-card cp-intelligence"><span class="cp-eyebrow">ADVISOR</span><h3>Think it through.</h3><p>Bring a question. Explore the trade-offs with your plan in view.</p>
@@ -73,6 +89,7 @@ function renderCockpit(R){
       <button onclick="cockpitQuestion('How does a home purchase change my liquidity and long-term wealth? Identify missing closing costs, funding constraints and assumptions before recommending a range.')">Can we comfortably buy a home? ↗</button>
       <button onclick="cockpitQuestion('Review my portfolio concentration using the data you can actually access. Distinguish observed holdings from assumptions and identify any missing coverage.')">Where am I overexposed? ↗</button>
       <form onsubmit="event.preventDefault();cockpitQuestion(this.elements.question.value)"><label for="cp-question">Your question</label><textarea id="cp-question" name="question" required placeholder="What if I changed jobs…" rows="2"></textarea><button class="cp-button" type="submit">Prepare in advisor →</button></form><small>You review the question before sending.</small></section>
+      </section>
       <div class="cp-floor"><span>Lowest projected liquid investments</span><strong>${money(floor.liq)} <small>in ${floor.yr}</small></strong><button onclick="cockpitGo('home')">Explore the pressure point →</button></div>
     </aside></div></div>`;
   cockpitDrawChart(R,P,selected.yr);

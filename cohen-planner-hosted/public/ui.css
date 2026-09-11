@@ -306,8 +306,12 @@
   transition:border-color .15s,color .15s,background .15s}
 .cp-pins button span{font-variant-numeric:tabular-nums;color:var(--t4);font-weight:600}
 .cp-pins button:hover{border-color:var(--bd2);color:var(--t2);background:var(--s3)}
-.cp-pins button[data-kind=risk]{border-color:color-mix(in srgb,var(--warn) 32%,transparent)}
-.cp-pins button[data-kind=risk] span{color:var(--warn)}
+/* The low-point pin marks a PROJECTED pressure point, not something to act on today, so
+   it takes the projected colour and earns its emphasis from weight instead. Amber here
+   would say "this needs you now" about a year two decades out. */
+.cp-pins button[data-kind=risk]{border-color:color-mix(in srgb,var(--prov-projected) 42%,transparent);
+  color:var(--t2)}
+.cp-pins button[data-kind=risk] span{color:var(--prov-projected)}
 .cp-pins button.is-current{border-color:var(--link);color:var(--tx);
   background:color-mix(in srgb,var(--link) 14%,transparent)}
 .cp-pins button.is-current span{color:var(--link)}
@@ -368,3 +372,53 @@
 
 /* On a phone the rail is a bottom bar, so the footer has nowhere to live. */
 @media(max-width:760px){.nav-live{display:none}.nav-badge{min-width:17px;height:17px;line-height:17px;font-size:10px}}
+
+/* ═══ THREE REGISTERS ═══
+   The page answers three different questions and used to blend them into one scroll:
+   where you stand, where you are heading, and what needs you. Those are different KINDS
+   of claim — an observed balance, a projection, and a finding — and a reader who cannot
+   feel the difference will treat a 2051 estimate as a fact about today.
+
+   The separation is semantic, not a re-layout. Same components, same grid; each register
+   states its tense and is given a surface that matches how much it can be trusted.
+
+   NOW is sharp and solid, with a blue edge that matches the "observed" provenance chip.
+   AHEAD is deliberately softer — lower contrast, a lavender edge matching "projected",
+   and the confidence band already doing the same work inside the chart.
+   ATTENTION is the ONLY register where amber and red are allowed, which is what makes
+   them mean something when they appear. */
+.cp-register{position:relative;margin-bottom:var(--sp-4)}
+.cp-register-head{display:flex;align-items:baseline;justify-content:space-between;
+  gap:var(--sp-3);flex-wrap:wrap;padding-left:var(--sp-2);margin-bottom:var(--sp-2);
+  border-left:2px solid var(--tense);}
+.cp-register-head .ui-eyebrow{margin:0;color:var(--tense)}
+.cp-register-note{font-size:var(--t-xs);color:var(--t3)}
+.cp-register .cp-source{margin:0}
+
+.cp-register[data-tense=now]{--tense:var(--prov-observed)}
+.cp-register[data-tense=ahead]{--tense:var(--prov-projected)}
+.cp-register[data-tense=attention]{--tense:var(--warn)}
+
+/* NOW: full contrast. This is what is true right now. */
+.cp-register[data-tense=now] .cp-position{border-color:color-mix(in srgb,var(--prov-observed) 26%,var(--bd))}
+
+/* AHEAD: the same card, quieter. Every surface steps back so the register reads as an
+   estimate before a single number is compared. */
+.cp-register[data-tense=ahead] .cp-card{
+  border-color:color-mix(in srgb,var(--prov-projected) 18%,var(--bd));
+  background:linear-gradient(150deg,#141d30,#111a29)}
+.cp-register[data-tense=ahead] .cp-card h3{color:var(--t2)}
+.cp-register[data-tense=ahead] .cp-chart-summary strong{color:var(--tx)}
+
+/* ATTENTION: the warm register, and the only one. */
+.cp-register[data-tense=attention] .cp-attention{
+  border-color:color-mix(in srgb,var(--warn) 24%,var(--bd))}
+.cp-register[data-tense=attention] .cp-count{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 34%,transparent)}
+.cp-register[data-tense=attention] .cp-signal>span{color:var(--warn)}
+
+/* The register label is a whisper at phone width — the cards below it carry the meaning. */
+@media(max-width:760px){
+  .cp-register{margin-bottom:var(--sp-3)}
+  .cp-register-head{gap:var(--sp-1)}
+  .cp-register-note{width:100%}
+}
