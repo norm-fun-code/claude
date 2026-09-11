@@ -66,7 +66,7 @@ function renderCockpit(R){
   const priorities=(_inbox?.priorities||[]).slice(0,3);
   document.getElementById('summaries').innerHTML='';
   document.getElementById('chartArea').innerHTML=`<div class="cockpit">
-    <header class="cp-heading"><div><div class="cp-eyebrow">YOUR PRIVATE OFFICE</div><h2>Financial command.</h2></div><button class="cp-button" onclick="cockpitRefresh()" ${_ovwLoading||_inboxLoading?'disabled':''}>Refresh overview ↻</button></header>
+    <header class="cp-heading"><div><h2>Financial command.</h2></div><button class="cp-button" onclick="cockpitRefresh()" ${_ovwLoading||_inboxLoading?'disabled':''}>Refresh overview ↻</button></header>
     <section class="cp-register" data-tense="now">
       <div class="cp-register-head">
         <span class="ui-eyebrow">Where you stand</span>
@@ -107,7 +107,7 @@ function renderCockpit(R){
       <div class="cp-year-grid" id="cp-year-grid"></div>
       <div id="cp-bridge"></div>
       <details class="cp-evidence"><summary>Show me why</summary><p>These are year-end estimates from your saved plan assumptions. Net worth here is modeled liquid investments, Stripe, home equity and retirement, less the revolving balance your plan carries. That balance is held flat rather than paid down — right for cards cleared monthly, wrong for a term loan, which would need its own amortisation. The account balances above are separate observations; this chart is not a historical performance record.</p><button onclick="cockpitGo('table')">Inspect the yearly calculations ↗</button></details></section>
-      <section class="cp-card"><div class="cp-section-head"><div><span class="cp-eyebrow">DECISION WORKSPACE</span><h3>What are you considering?</h3></div></div><div class="cp-decisions">
+      <section class="cp-card"><div class="cp-section-head"><div><h3>Explore your plan</h3></div></div><div class="cp-decisions">
       <button onclick="cockpitGo('housing')"><span>01 / HOME</span><strong>Find your buying range</strong><small>Timing, down payment & funding →</small></button>
       <button onclick="cockpitGo('spending')"><span>02 / EVERYDAY LIFE</span><strong>Understand your spending</strong><small>Transactions, categories & history →</small></button>
       <button onclick="cockpitGo('holdings')"><span>03 / INVESTMENTS</span><strong>See your exposure</strong><small>Positions, allocation & concentration →</small></button></div></section>
@@ -117,7 +117,7 @@ function renderCockpit(R){
         <div class="cp-register-head">
           <span class="ui-eyebrow">What needs you</span>
         </div>
-      <section class="cp-card cp-attention"><div class="cp-section-head"><div><h3>Your attention</h3></div><span class="cp-count">${priorities.length||'—'}</span></div>
+      <section class="cp-card cp-attention"><div class="cp-section-head"><div><h3>Priorities</h3></div><span class="cp-count">${priorities.length||'—'}</span></div>
       ${_inboxError?'<p>Checks could not load. Open the watchlist to retry.</p>':!_inbox?'<p role="status">Reading your watchlist…</p>':priorities.length?priorities.map((a,i)=>`<button class="cp-signal" onclick="cockpitGo('watch')"><span>0${i+1}</span><div><strong>${e(a.title||a.kind||'Review this signal')}</strong><small>Review evidence & assumptions ↗</small></div></button>`).join(''):'<p>No priorities returned by the checks that ran.</p>'}
       ${_inbox?`<p class="cp-meta">${Number(_inbox.checksRun)||0} of ${Number(_inbox.checksTotal)||0} checks ran; ${(_inbox.notChecked||[]).length} comparisons unavailable. Signals depend on source coverage and model assumptions.</p>`:''}<button class="cp-text-link" onclick="cockpitGo('watch')">Open full watchlist →</button></section>
       <section class="cp-card cp-intelligence"><span class="cp-eyebrow">ADVISOR</span><h3>Think it through.</h3><p>Bring a question. Explore the trade-offs with your plan in view.</p>
