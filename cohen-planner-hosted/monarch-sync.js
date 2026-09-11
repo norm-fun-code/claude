@@ -131,15 +131,25 @@ function createMonarchSync({ db, live, now = Date.now }) {
     let offset = 0, total = null, pages = 0, written = 0;
     while (pages < maxPages) {
       const page = await live.transactionsPage({ startDate, endDate, offset });
+      if (!page || !Number.isInteger(page.totalCount) || page.totalCount < 0 || !Array.isArray(page.results))
+        throw new Error('Incomplete transaction response; saved history retained.');
       if (total === null) total = page.totalCount;
-      const rows = (page.results || []).filter(Boolean);
-      if (!rows.length) break;
+      if (total !== page.totalCount) throw new Error('Transaction count changed during import; retry required.');
+      const rows = page.results;
+      if (rows.some(r => !r || r.id == null || seen.has(r.id)) || new Set(rows.map(r => r.id)).size !== rows.length)
+        throw new Error('Transaction pagination repeated or omitted IDs; saved history retained.');
+      if (!rows.length) {
+        if (seen.size !== total) throw new Error('Transaction import ended early; saved history retained.');
+        break;
+      }
       for (const r of rows) seen.add(r.id);
+      if (seen.size > total) throw new Error('Transaction count mismatch; saved history retained.');
       written += await upsert(rows);
       offset += rows.length;
       pages++;
-      if (offset >= total) break;
+      if (seen.size === total) break;
     }
+    if (total === null || seen.size !== total) throw new Error('Transaction page limit reached; saved history retained.');
     return { seen, written, pages, total: total || 0 };
   }
 
@@ -160,7 +170,7 @@ function createMonarchSync({ db, live, now = Date.now }) {
         written += r.written;
         done.push(from.slice(0, 7));
         const s = await state();
-        await saveState({ windows: { ...s.windows, [from.slice(0, 7)]: { syncedAt: new Date(now()).toISOString(), count: r.total } },
+        await saveState({ windows: { ...s.windows, [from.slice(0, 7)]: { syncedAt: new Date(now()).toISOString(), count: r.total, startDate: from, endDate: to } },
           firstDate: s.firstDate && s.firstDate < from ? s.firstDate : from });
       } catch (err) {
         // Retain everything already imported and report where it stopped.
@@ -265,6 +275,7 @@ function createMonarchSync({ db, live, now = Date.now }) {
       transactions: r.n || 0, firstDate: r.first_date || null, lastDate: r.last_date || null,
       pending: r.pending || 0, lastSyncAt: s.lastSyncAt || r.last_row_sync || null,
       monthsImported: Object.keys(s.windows || {}).sort(),
+      windows: s.windows || {},
       lastError: s.lastError || null,
     };
   }

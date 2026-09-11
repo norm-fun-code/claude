@@ -47,71 +47,31 @@ describe('Safe harbour is the statutory test, not the tax bill',()=>{
   });
 });
 
-describe('Liability against what has actually been paid',()=>{
-  const base={projectedLiability:420000,priorYearLiability:300000,priorYearAGI:1100000,
-    asOf:'2026-08-15'};
-
-  it('refuses to compare anything without the withholding figure',()=>{
-    const s=TP.withholdingStatus({projectedLiability:420000,asOf:'2026-08-15'});
-    expect(s.status).toBe('incomplete');
-    const n=s.needs.find(x=>x.field==='withheldToDate');
-    expect(n.document).toBe(TP.DOC.PAYSTUB_YTD);
-    expect(s.shortfallVsHarbour).toBe(undefined);   // no number is invented
+describe('Annual tax comparisons are not installment advice',()=>{
+  const base={jurisdiction:'federal',projectedLiability:420000,priorYearLiability:300000,priorYearAGI:1100000,asOf:'2026-08-15'};
+  it('requires withholding before comparing payments',()=>{
+    const s=TP.withholdingStatus(base);expect(s.status).toBe('incomplete');
+    expect(s.needs.some(n=>n.field==='withheldToDate')).toBe(true);
   });
-
-  it('keeps the safe-harbour shortfall and the tax still owed apart',()=>{
-    const s=TP.withholdingStatus({...base,withheldToDate:200000});
-    expect(s.status).toBe('ok');
-    expect(s.safeHarbour.required).toBeCloseTo(330000,6);   // 110% of 300k < 90% of 420k
-    expect(s.shortfallVsHarbour).toBeCloseTo(130000,6);
-    expect(s.shortfallVsLiability).toBeCloseTo(220000,6);
-    // The two must be named separately, because confusing them is the whole trap.
-    expect(s.interpretation).toMatch(/short of the safe harbour/);
-    expect(s.interpretation).toMatch(/does not make that go away/);
+  it('separates combined reserve estimates from federal thresholds',()=>{
+    const s=TP.withholdingStatus({...base,jurisdiction:'combined',withheldToDate:200000});
+    expect(s.status).toBe('reserve-only');expect(s.safeHarbour).toBe(null);
+    expect(s.shortfallVsLiability).toBe(220000);expect(s.quarterlyPayment).toBe(null);
   });
-
-  it('says the safe harbour is met while still flagging what is due in April',()=>{
+  it('keeps an explicitly federal annual comparison without penalty claims',()=>{
     const s=TP.withholdingStatus({...base,withheldToDate:340000});
-    expect(s.shortfallVsHarbour).toBe(0);
-    expect(s.shortfallVsLiability).toBeCloseTo(80000,6);
-    expect(s.interpretation).toMatch(/no underpayment charge/);
-    expect(s.interpretation).toMatch(/set it aside/);
-    expect(s.quarterlyPayment).toBe(0);
+    expect(s.safeHarbour.required).toBeCloseTo(330000);
+    expect(s.shortfallVsLiability).toBe(80000);expect(s.quarterlyPayment).toBe(null);
+    expect(s.interpretation).toMatch(/no penalty conclusion/);expect(s.remedy).toBe(null);
   });
-
-  it('spreads the shortfall over the instalments that are actually left',()=>{
-    // Mid-August: Q1 and Q2 have passed, Q3 and Q4 remain.
-    const s=TP.withholdingStatus({...base,withheldToDate:200000});
-    expect(s.remaining.map(q=>q.label)).toEqual(['Q3','Q4']);
-    expect(s.quarterlyPayment).toBeCloseTo(65000,6);
-    expect(s.nextInstalment.due).toBe('2026-09-15');
+  it('late aggregate payments never establish no penalty',()=>{
+    const s=TP.withholdingStatus({...base,withheldToDate:0,estimatedPaid:500000,asOf:'2026-12-31'});
+    expect(s.interpretation).not.toMatch(/no underpayment charge is expected/);
+    expect(s.quarterlyPayment).toBe(null);
   });
-
-  it('says withholding can still cure an earlier quarter and an estimate cannot',()=>{
-    const s=TP.withholdingStatus({...base,withheldToDate:200000});
-    expect(s.remedy).toMatch(/6654\(g\)/);
-    expect(s.remedy).toMatch(/estimated payment cannot/);
-  });
-
-  it('stops offering instalments once none are left',()=>{
-    // Planning the 2026 year from February 2027: every 2026 instalment date has gone.
-    const s=TP.withholdingStatus({...base,withheldToDate:200000,asOf:'2027-02-01',taxYear:2026});
-    expect(s.remaining).toEqual([]);
-    expect(s.quarterlyPayment).toBe(0);
-    expect(s.remedy).toMatch(/due with the return/);
-  });
-
-  it('projects the year-end gap from the pace of withholding so far',()=>{
-    const s=TP.withholdingStatus({...base,withheldToDate:210000,asOf:'2026-07-02'});
-    // Half the year gone, $210K withheld → about $420K for the year, so no gap.
-    expect(s.projectedWithholding).toBeGreaterThan(400000);
-    expect(s.projectedYearEndGap).toBeLessThan(30000);
-  });
-
-  it('will not extrapolate a run rate from the first week of January',()=>{
-    const s=TP.withholdingStatus({...base,withheldToDate:5000,asOf:'2026-01-05'});
-    expect(s.projectedWithholding).toBe(null);
-    expect(s.projectedYearEndGap).toBe(null);
+  it('only extrapolates federal withholding after enough of the year',()=>{
+    expect(TP.withholdingStatus({...base,withheldToDate:210000,asOf:'2026-07-02'}).projectedWithholding).toBeGreaterThan(400000);
+    expect(TP.withholdingStatus({...base,withheldToDate:5000,asOf:'2026-01-05'}).projectedWithholding).toBe(null);
   });
 });
 

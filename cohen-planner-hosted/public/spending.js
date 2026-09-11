@@ -176,7 +176,7 @@
   // ── Coverage ─────────────────────────────────────────────────────────────
   // Averages over a window that is only partly covered are worse than no average at all, so
   // every consumer asks this first rather than inferring completeness from row counts.
-  function coverage(months,today){
+  function coverage(months,today,windows){
     if(!months||!months.length)return{monthsCovered:0,first:null,last:null,completeMonths:[],partial:null};
     // F3. A date-only string parses as UTC midnight, but getDate()/getMonth() read the LOCAL
     // calendar. West of Greenwich that lands on the previous day, so month progress was off
@@ -184,7 +184,13 @@
     const now=today?new Date(today):new Date();
     const currentKey=now.toISOString().slice(0,7);
     const daysInMonth=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()+1,0)).getUTCDate();
-    const complete=months.filter(m=>m.month!==currentKey);
+    const complete=months.filter(m=>{
+      if(m.month>=currentKey)return false;
+      if(windows===undefined)return m.coverageVerified===true;
+      const w=windows[m.month];
+      const end=new Date(Date.UTC(Number(m.month.slice(0,4)),Number(m.month.slice(5,7)),0)).toISOString().slice(0,10);
+      return !!w&&w.startDate<=m.month+'-01'&&w.endDate>=end;
+    });
     return{
       monthsCovered:months.length,
       first:months[0].month,last:months[months.length-1].month,
@@ -198,11 +204,14 @@
   // Rolling average over COMPLETE months only, and only when the window is fully covered.
   // Returns null rather than a number computed from fewer months than asked for — a
   // "12-month average" built from 4 months is a misleading label, not a useful estimate.
-  function rollingAverage(months,n,pick,today){
-    const cov=coverage(months,today);
-    const complete=months.filter(m=>m.month!==cov.partial);
+  function rollingAverage(months,n,pick,today,windows){
+    const cov=coverage(months,today,windows);
+    const complete=months.filter(m=>cov.completeMonths.includes(m.month));
     if(complete.length<n)return null;
     const window=complete.slice(-n);
+    const end=today?new Date(today):new Date();
+    const expected=Array.from({length:n},(_,i)=>new Date(Date.UTC(end.getUTCFullYear(),end.getUTCMonth()-n+i,1)).toISOString().slice(0,7));
+    if(window.some((m,i)=>m.month!==expected[i]))return null;
     const f=pick||(m=>m.expense);
     return window.reduce((s,m)=>s+f(m),0)/n;
   }

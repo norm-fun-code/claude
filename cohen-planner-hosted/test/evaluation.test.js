@@ -196,9 +196,9 @@ describe('Nothing claims more certainty than it has',()=>{
   });
 
   it('the safe harbour is never described as reducing the bill',()=>{
-    const s=TaxPlan.withholdingStatus({projectedLiability:420000,withheldToDate:340000,
+    const s=TaxPlan.withholdingStatus({jurisdiction:'federal',projectedLiability:420000,withheldToDate:340000,
       priorYearLiability:300000,priorYearAGI:1e6,asOf:'2026-08-15'});
-    expect(s.interpretation).toMatch(/still projected to be due|set it aside/);
+    expect(s.interpretation).toMatch(/projected liability remains/);
     expect(s.safeHarbour.note).toMatch(/does NOT reduce the tax/);
   });
 

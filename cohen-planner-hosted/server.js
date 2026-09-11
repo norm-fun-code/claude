@@ -1,3 +1,4 @@
+const normalizeAccountSnapshot = require('./account-snapshot');
 'use strict';
 require('dotenv').config();
 const crypto = require('crypto');
@@ -745,15 +746,15 @@ app.get('/api/monarch/spending', requireAuth, async (req, res) => {
       }
     } catch (e) { /* balances unavailable: fall back to name-based classification only */ }
     const summary = Spending.summarize(ledger, categories, { accountClasses });
-    const cov = Spending.coverage(summary.months, endDate);
+    const cov = Spending.coverage(summary.months, endDate, status.windows || {});
     res.json({
       startDate, endDate, status, coverage: cov,
       months: summary.months.map(m => ({ ...m, byCategory: undefined })),
       totals: summary.totals, counts: summary.counts,
       rolling: {
-        m3: Spending.rollingAverage(summary.months, 3, null, endDate),
-        m6: Spending.rollingAverage(summary.months, 6, null, endDate),
-        m12: Spending.rollingAverage(summary.months, 12, null, endDate),
+        m3: Spending.rollingAverage(summary.months, 3, null, endDate, status.windows || {}),
+        m6: Spending.rollingAverage(summary.months, 6, null, endDate, status.windows || {}),
+        m12: Spending.rollingAverage(summary.months, 12, null, endDate, status.windows || {}),
       },
     });
   } catch (err) { res.status(503).json({ error: err.message }); }
@@ -763,24 +764,15 @@ app.get('/api/monarch/spending', requireAuth, async (req, res) => {
 app.get('/api/accounts/overview', requireAuth, async (req, res) => {
   try {
     const meta = await loadAccountMeta();
-    let accounts = [], balancesOk = false, snapshotAsOf = null, warning = null, sourcePartial = false;
+    let accounts=[],balancesOk=false,snapshotAsOf=null,warning=null,sourcePartial=true;
+    let summary={...Accounts.summarize([],meta.merged),complete:false};
     try {
-      const snap = await monarchLive.getSnapshot();
-      accounts = (snap.accounts || []).map(a => ({
-        id: a.id != null ? String(a.id) : null,
-        name: a.displayName || a.name || '',
-        institution: a.institution || '',
-        category: a.category || '',
-        subtype: a.subtype || '',
-        balance: require('./monarch-accounts').parseBalance(require('./monarch-accounts').rawBalanceOf(a)),
-        rawBalance: require('./monarch-accounts').rawBalanceOf(a),
-        asOf: snap.asOf || null,
-      }));
-      balancesOk = true; snapshotAsOf = snap.asOf || snap.syncedAt || null; warning = snap.warning || null;
-      sourcePartial = snap.partial === true || (snap.missingAccounts || []).length > 0;
-    } catch (err) { warning = err.message; }
-
-    const summary = Accounts.summarize(accounts, meta.merged);
+      const snap=await monarchLive.getSnapshot();
+      const normalized=normalizeAccountSnapshot(snap,meta.merged);
+      accounts=normalized.accounts;summary=normalized.summary;
+      balancesOk=accounts.length>0;snapshotAsOf=normalized.asOf;sourcePartial=normalized.partial;
+      warning=snap.warning||(normalized.stale?'Balances need a fresh dated observation.':null);
+    }catch(err){warning=err.message;}
     const syncStatus = await monarchSync.status().catch(() => ({ transactions: 0 }));
     const caps = Accounts.capabilities({
       balances: balancesOk, balancesAsOf: snapshotAsOf,
@@ -851,20 +843,14 @@ app.post('/api/wealth/snapshot', requireAuth, async (req, res) => {
   try {
     const meta = await loadAccountMeta();
     const snap = await monarchLive.getSnapshot();
-    const MA = require('./monarch-accounts');
-    const accounts = (snap.accounts || []).map(a => ({
-      id: a.id != null ? String(a.id) : null,
-      name: a.displayName || a.name || '', institution: a.institution || '',
-      category: a.category || '', subtype: a.subtype || '',
-      balance: MA.parseBalance(MA.rawBalanceOf(a)), rawBalance: MA.rawBalanceOf(a), asOf: snap.asOf,
-    }));
-    const sum = Accounts.summarize(accounts, meta.merged);
+    const normalized=normalizeAccountSnapshot(snap,meta.merged);
+    const sum={...normalized.summary,complete:normalized.summary.complete&&!normalized.stale};
     const byClass = {};
     for (const [k, v] of Object.entries(sum.byClass)) byClass[k] = { total: v.total };
     const { rows } = await db.query(
-      `INSERT INTO wealth_snapshots (net_worth, accessible, by_class, complete, note)
-       VALUES ($1,$2,$3::jsonb,$4,$5) RETURNING id, to_char(as_of,'YYYY-MM-DD"T"HH24:MI:SSZ') AS as_of`,
-      [sum.netWorth, sum.accessible, JSON.stringify(byClass), sum.complete, req.body?.note || null]);
+      `INSERT INTO wealth_snapshots (net_worth, accessible, by_class, complete, note, as_of)
+       VALUES ($1,$2,$3::jsonb,$4,$5,COALESCE($6::timestamptz,NOW())) RETURNING id, to_char(as_of,'YYYY-MM-DD"T"HH24:MI:SSZ') AS as_of`,
+      [sum.netWorth, sum.accessible, JSON.stringify(byClass), sum.complete, req.body?.note || null, normalized.asOf]);
     res.json({ ok: true, ...rows[0], complete: sum.complete, netWorth: sum.netWorth });
   } catch (err) { res.status(503).json({ error: err.message }); }
 });
@@ -1526,16 +1512,9 @@ async function buildMonitorContext(today) {
   try {
     const meta = await loadAccountMeta();
     const snap = await monarchLive.getSnapshot();
-    const mAcc = require('./monarch-accounts');
-    const accounts = (snap.accounts || []).map(a => ({
-      id: a.id != null ? String(a.id) : null,
-      name: a.displayName || a.name || '',
-      institution: a.institution || '', category: a.category || '', subtype: a.subtype || '',
-      balance: mAcc.parseBalance(mAcc.rawBalanceOf(a)), rawBalance: mAcc.rawBalanceOf(a),
-    }));
-    const summary = Accounts.summarize(accounts, meta.merged);
-    ctx.accounts = { ...summary, asOf: snap.asOf || null,
-      complete: (summary.unknownBalance || []).length === 0 };
+    const normalized=normalizeAccountSnapshot(snap,meta.merged,Date.parse(ctx.today));
+    ctx.accounts={...normalized.summary,asOf:normalized.asOf,
+      complete:normalized.summary.complete&&!normalized.stale};
     ctx.sources.accounts = ctx.accounts.complete ? 'ok' : 'partial';
   } catch (err) { ctx.sources.accounts = `unavailable: ${err.message}`; }
 
@@ -1550,9 +1529,10 @@ async function buildMonitorContext(today) {
     if (ctx.accounts) for (const [cls, g] of Object.entries(ctx.accounts.byClass || {}))
       for (const a of g.accounts || []) if (a && a.id != null) acctClasses[String(a.id)] = cls;
     const sum = Spending.summarize(ledger, cats, { accountClasses: acctClasses });
-    const cov = Spending.coverage(sum.months, ctx.today);
+    const ledgerStatus = await monarchSync.status();
+    const cov = Spending.coverage(sum.months, ctx.today, ledgerStatus.windows || {});
     const avg = Spending.rollingAverage(sum.months, Math.min(6, cov.completeMonths.length) || 1,
-      m => m.expense, ctx.today);
+      m => m.expense, ctx.today, ledgerStatus.windows || {});
     if (cov.completeMonths.length >= 3 && avg != null) {
       ctx.spending = { completeMonths: cov.completeMonths.slice(-6), monthlyExpense: avg };
       ctx.sources.spending = 'ok';
@@ -1569,14 +1549,15 @@ async function buildMonitorContext(today) {
        WHERE tax_year = $1 AND superseded_at IS NULL AND reviewed = TRUE`, [y]);
     const facts = {};
     for (const row of f.rows) facts[row.field] = row.value == null ? null : Number(row.value);
-    const projected = ctx.R && ctx.R[0] ? ctx.R[0].tax : null;
+    const taxRow = ctx.R && ctx.R.find(r => r.yr === y);
+    const projected = taxRow ? taxRow.tax : null;
     const status = TaxPlan.withholdingStatus({
-      taxYear: y, asOf: ctx.today, projectedLiability: projected,
+      taxYear: y, asOf: ctx.today, projectedLiability: projected, jurisdiction: 'combined',
       withheldToDate: facts.withheldToDate, estimatedPaid: facts.estimatedPaid,
       priorYearLiability: facts.priorYearLiability, priorYearAGI: facts.priorYearAGI,
     });
     // Only hand the monitors a payment figure when one was actually computable.
-    if (status.status === 'ok') ctx.taxPlan = status;
+    if (status.status === 'ok' || status.status === 'reserve-only') ctx.taxPlan = status;
     ctx.sources.taxFacts = status.status === 'ok' ? 'ok'
       : `missing ${status.needs.map(n => n.field).join(', ')}`;
   } catch (err) { ctx.sources.taxFacts = `unavailable: ${err.message}`; }
@@ -1728,8 +1709,8 @@ async function runPlannerTool(name, input) {
     case 'lookup_tax_rule':
       return AdvisorTools.lookupTaxRule({ ruleId: input.ruleId });
     case 'propose_changes':
-      return AdvisorTools.proposeChanges({ P, overrides: input.overrides,
-        rationale: input.rationale, metrics: input.metrics });
+      return { ...AdvisorTools.proposeChanges({ P, overrides: input.overrides,
+        rationale: input.rationale, metrics: input.metrics }), baseline: P };
     case 'record_decision':
       return AdvisorTools.recordDecision(input);
     case 'get_alerts': {
@@ -1817,7 +1798,7 @@ app.post('/api/advisor/stream', requireAuth, advisorLimiter, async (req, res) =>
 
   // Anthropic requires ≥1 message. The auto-brief sends messages:[] with the prompt in `message`,
   // so fall back to a single user turn built from `message` when the array is empty.
-  const apiMessages = (Array.isArray(messages) && messages.length) ? messages : [{ role: 'user', content: message }];
+  const apiMessages = (Array.isArray(messages) && messages.length) ? messages.map(m=>({role:m.role,content:m.content})) : [{ role: 'user', content: message }];
 
   // Warm the SSE connection immediately so the client doesn't see an idle socket
   // dropped ("Load failed") while we set up Monarch access below.
@@ -1828,6 +1809,7 @@ app.post('/api/advisor/stream', requireAuth, advisorLimiter, async (req, res) =>
   // the 2nd tool-use round) — previously the DB write only happened after the whole loop
   // completed, so a reply the user already saw appear on screen was silently never saved.
   let fullReply = '';
+  const structuredResults=[];
 
   try {
     // Give the advisor live read-only access to Monarch when the user has connected it.
@@ -1838,7 +1820,7 @@ app.post('/api/advisor/stream', requireAuth, advisorLimiter, async (req, res) =>
     const sys = systemPrompt + grounding + (monarchTools.length ? `
 
 ═══ LIVE MONARCH ACCESS ═══
-You can query the user's REAL Monarch Money data with the monarch_* tools (accounts & balances, transactions, cash flow, spending by category, investments, recurring, net worth history, and more). When the user asks about actual spending, balances, holdings, budgets, or recent activity, CALL these tools and answer from real data instead of the plan's assumptions. Dates are ISO (YYYY-MM-DD). Today is ${new Date().toISOString().slice(0,10)}. Be specific with real numbers and say when a figure comes from live Monarch data.` : '');
+You can query the user's REAL Monarch Money data with the monarch_* tools (accounts and balances only). When the user asks about actual spending, balances, holdings, budgets, or recent activity, call only the tools actually provided. If no tool supplies the requested transactions or holdings, say that access is unavailable; do not invent it. Dates are ISO (YYYY-MM-DD). Today is ${new Date().toISOString().slice(0,10)}. Be specific with real numbers and say when a figure comes from live Monarch data.` : '');
 
     let convo = apiMessages.slice();
     let lastUsage = null;
@@ -1872,6 +1854,10 @@ You can query the user's REAL Monarch Money data with the monarch_* tools (accou
             // as an absence it might fill in.
             result = { error: `The ${block.name} tool failed: ${toolErr.message}` };
           }
+          if(result&&result.status==='proposed'){
+            const record={id:block.id,name:block.name,result};
+            structuredResults.push(record);send({tool_result:record});
+          }
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
@@ -1887,7 +1873,7 @@ You can query the user's REAL Monarch Money data with the monarch_* tools (accou
     // Persist atomically — only after a successful stream
     const pair = [
       { role: 'user', content: message },
-      { role: 'assistant', content: fullReply },
+      { role: 'assistant', content: fullReply, structuredResults },
     ];
     await db.query(
       `UPDATE advisor_chats SET messages = messages || $1::jsonb, updated_at = NOW() WHERE id = $2`,
@@ -1913,7 +1899,7 @@ You can query the user's REAL Monarch Money data with the monarch_* tools (accou
     if (fullReply) {
       const pair = [
         { role: 'user', content: message },
-        { role: 'assistant', content: fullReply },
+        { role: 'assistant', content: fullReply, structuredResults },
       ];
       try {
         await db.query(
