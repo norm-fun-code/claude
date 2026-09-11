@@ -2928,8 +2928,8 @@ function renderSpendingTab(R,P){
     const shown=rows.slice(0,16),rest=rows.slice(16);
     const restNet=rest.reduce((s,r)=>s+r.net,0);
     spendingViz={rows,months,asOf,verified:cov.completeMonths||[]};
-    h+=`<div class="spend-visuals"><section class="cp-card"><span class="cp-eyebrow">SPENDING COMPOSITION</span><h3>Where your money goes</h3><p>Imported records for ${complete.length} past months · current month excluded</p><div class="spend-donut-wrap"><canvas id="spendCategoryChart" role="img" aria-label="Spending by category from imported records"></canvas></div><div id="spendCategoryLegend" class="spend-legend"></div><p class="spend-caption">Net of refunds. Categories with net credits appear in the details, outside the donut.</p></section>
-    <section class="cp-card"><span class="cp-eyebrow">MONTHLY RHYTHM</span><h3>Income & spending</h3><p>Imported records · current and unverified months are labeled</p><div class="spend-trend-wrap"><canvas id="spendMonthlyChart" role="img" aria-label="Monthly recorded income and spending"></canvas></div><p class="spend-caption">Transfers and card payments are excluded. These are recorded transactions, not projected amounts.</p></section></div>`;
+    h+=`<div class="spend-visuals"><section class="cp-card"><h3>Where your money goes</h3><p>Imported records for ${complete.length} past months · current month excluded</p><div class="spend-donut-wrap"><canvas id="spendCategoryChart" role="img" aria-label="Spending by category from imported records"></canvas></div><div id="spendCategoryLegend" class="spend-legend"></div><p class="spend-caption">Net of refunds. Categories with net credits appear in the details, outside the donut.</p></section>
+    <section class="cp-card"><h3>Income & spending</h3><p>Imported records · current and unverified months are labeled</p><div class="spend-trend-wrap"><canvas id="spendMonthlyChart" role="img" aria-label="Monthly recorded income and spending"></canvas></div><p class="spend-caption">Transfers and card payments are excluded. These are recorded transactions, not projected amounts.</p></section></div>`;
 
     h+=`<div class="glass-card" style="padding:16px 18px">
       <details class="spend-details"><summary>Category details · exact amounts & refunds</summary>
@@ -3135,7 +3135,7 @@ function renderPortfolioTab(R,P){
 
   // Period selector
   const periods=['1W','1M','3M','YTD','1Y'];
-  const periodBtns=periods.map(p=>`<button onclick="loadMonarchInvestments('${p}')" style="font-size:9.5px;padding:3px 10px;border-radius:6px;border:1px solid ${_investPeriod===p?'transparent':'var(--bd)'};background:${_investPeriod===p?'linear-gradient(135deg,#6e66ff,#5048d6)':'rgba(255,255,255,.6)'};color:${_investPeriod===p?'#fff':'var(--t2)'};cursor:pointer;font-family:inherit;font-weight:${_investPeriod===p?600:400};${_investPeriod===p?'box-shadow:0 3px 9px -3px rgba(80,72,214,.6)':''}">${p}</button>`).join('');
+  const periodBtns=periods.map(p=>`<button class="pf-period${_investPeriod===p?' is-active':''}" aria-pressed="${_investPeriod===p}" onclick="loadMonarchInvestments('${p}')">${p}</button>`).join('');
 
   // Stripe account from Monarch accounts list
   const stripeAcct=monarchAccounts.find(a=>a.name.toLowerCase().includes('stripe'));
@@ -3196,34 +3196,26 @@ function renderPortfolioTab(R,P){
 
   ca.innerHTML=`<div style="padding:2px">
   <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:6px">
-    <div style="font-size:13px;font-weight:700;color:var(--tx)">📊 Portfolio · Holdings</div>
+    <div style="font-size:13px;font-weight:700;color:var(--tx)">Portfolio · Holdings</div>
     <div style="display:flex;gap:4px;align-items:center">
       <span style="font-size:9px;color:var(--t3);margin-right:4px">Period:</span>${periodBtns}
     </div>
   </div>
 
-  <div class="pf-kpis">
+  <div class="pf-kpis pf-summary">
     ${[
       {l:'Total Value',v:fmt(totalVal),s:'investment portfolio',c:'var(--accent)'},
       {l:periodLabel,v:signFmt(inv.periodChange),s:periodSub,c:colorPct(inv.periodChange)},
       {l:'All-time Return',v:signFmt(inv.allTimeChange||0),s:signPct(inv.allTimePct||0)+' total',c:colorPct(inv.allTimeChange||0)},
-      {l:'Holdings',v:holdings.length,s:holdings.filter(h=>h.securityType!=='cash').length+' securities + cash',c:'var(--tx)'},
+
     ].map(k=>`<div class="kpi"><div class="kpi-l">${k.l}</div><div class="kpi-v" style="color:${k.c};font-size:14px">${k.v}</div><div class="kpi-s">${k.s}</div></div>`).join('')}
   </div>
 
-  ${mixData.length>1?`<div class="glass-card" style="padding:14px;margin-bottom:12px">
-    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:10px">Asset Mix</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:center">
-      <div style="height:180px;position:relative"><canvas id="mixDonut"></canvas></div>
-      <div style="display:flex;flex-direction:column;gap:5px">
-        ${mixSeries.map(([lb,v,col])=>`<div style="display:flex;align-items:center;gap:7px;font-size:10px">
-          <span style="width:9px;height:9px;border-radius:2px;background:${col};flex:none"></span>
-          <span style="color:var(--t2);flex:1">${lb}</span>
-          <span style="font-family:'SF Mono',monospace;font-weight:600;color:var(--tx)">${fmt(v)}</span>
-        </div>`).join('')}
-      </div>
-    </div>
-  </div>`:''}
+  ${mixData.length>1?`<section class="glass-card pf-mix">
+    <h3>Asset mix</h3>
+    <div class="pf-mix-bar" aria-hidden="true">${mixSeries.map(([,v,col])=>`<span style="flex:${v};background:${col}"></span>`).join('')}</div>
+    <div class="pf-mix-key">${mixSeries.map(([lb,v,col])=>`<div><span class="portfolio-holding-swatch" style="background:${col}"></span><span>${lb}</span><strong>${fmt(v)}</strong></div>`).join('')}</div>
+  </section>`:''}
 
   <div class="pf-split">
     <div class="glass-card" style="padding:14px">
@@ -3264,7 +3256,8 @@ function renderPortfolioTab(R,P){
     </div>
   </div>
 
-  <div class="pf-scroll glass-card" style="margin-bottom:10px">
+  <details class="pf-detail glass-card"><summary>All holdings <span>${holdings.length} positions · values &amp; price changes</span></summary>
+  <div class="pf-scroll">
    <div style="min-width:620px">
     <div style="display:grid;grid-template-columns:90px 70px 1fr 90px 90px 90px 90px;gap:0;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--t3);padding:7px 12px;border-bottom:1px solid var(--bd);background:rgba(255,255,255,.45)">
       <div>Ticker</div><div>Type</div><div>Value</div><div style="text-align:right">% Portfolio</div><div style="text-align:right">Position Δ$</div><div style="text-align:right">Price Δ%</div><div style="text-align:right">All-time Δ%</div>
@@ -3288,6 +3281,7 @@ function renderPortfolioTab(R,P){
     }).join('')}
    </div>
   </div>
+  </details>
   <div style="font-size:9px;color:var(--t3);padding:0 2px">Holdings sourced from Monarch. Period: ${inv.periodStart} → ${inv.periodEnd}. ${periodIsReturn?'Portfolio return is Monarch’s contribution-aware performance for this window.':'Monarch did not provide portfolio performance, so growth reprices today’s positions over the window and does not adjust for deposits or withdrawals.'} Holding movers show price movement applied to today’s position size.</div>
 
   ${(()=>{
@@ -3389,7 +3383,7 @@ function renderPortfolioTab(R,P){
   ${renderMonarchAccountsCard()}
   </div>`;
   mountAccountDonut();
-  if(mixData.length>1)charts.mix=makeDonut('mixDonut',mixLabels,mixData,mixColors);
+
 
   if(donutData.length>0){
     const legend=document.getElementById('portfolioHoldingLegend');

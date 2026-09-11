@@ -234,3 +234,14 @@ body,body.home-view{background:radial-gradient(ellipse at 80% -20%,#1a2b47 0,tra
    it — collapsed, that margin would be trailing space inside an otherwise tight card. */
 #acctList{margin-top:10px}
 @media(max-width:760px){.accounts-toggle{min-height:44px;padding:6px 0}}
+
+/* Focused density cleanup: one allocation chart, details on demand. */
+.pf-summary{grid-template-columns:repeat(3,minmax(0,1fr))}
+.pf-period{min-height:40px;min-width:42px;padding:7px 10px;border:1px solid var(--bd);border-radius:7px;background:var(--s1);color:var(--t2);font-size:14px;cursor:pointer}
+.pf-period.is-active{background:var(--accent-soft);border-color:var(--accent);color:var(--tx);font-weight:600}
+.pf-period:focus-visible,.pf-detail summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.pf-mix{padding:18px;margin-bottom:12px}.pf-mix h3{font-size:14px;font-weight:600;margin:0 0 12px;color:var(--t2)}
+.pf-mix-bar{display:flex;height:10px;gap:3px;border-radius:5px;overflow:hidden;margin-bottom:14px}.pf-mix-bar span{min-width:2px}
+.pf-mix-key{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px 24px}.pf-mix-key>div{display:grid;grid-template-columns:9px minmax(0,1fr) auto;gap:8px;align-items:center;font-size:14px;color:var(--t2)}.pf-mix-key strong{font-size:13px;color:var(--tx);font-variant-numeric:tabular-nums}
+.pf-detail{margin-bottom:12px;overflow:hidden}.pf-detail summary{padding:16px;cursor:pointer;color:var(--tx);font-size:14px;font-weight:600}.pf-detail summary span{color:var(--t3);font-size:12px;font-weight:400;margin-left:10px}.pf-detail[open] summary{border-bottom:1px solid var(--bd)}
+@media(max-width:520px){.pf-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.pf-summary>.kpi:first-child{grid-column:1/-1}.pf-detail summary span{display:block;margin:4px 0 0}.pf-mix-key{grid-template-columns:1fr}}
