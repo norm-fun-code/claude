@@ -201,3 +201,19 @@ describe('nothing claims incomplete without naming an account', () => {
     expect(html).not.toMatch(/\$\{d\.missingAccounts\.length\} account\(s\) have no balance/);
   });
 });
+
+// The same four figures appear on the cockpit and the Overview. If the two screens order
+// them differently, the one the reader saw second looks like it changed.
+describe('the position tiles keep one order across screens', () => {
+  it('puts Stripe before retirement on both', () => {
+    const ov = html.indexOf("tile('Stripe equity'");
+    const ret = html.indexOf("tile('Retirement'", ov - 400);
+    expect(ov, 'overview Stripe tile').toBeGreaterThan(-1);
+    expect(ov).toBeLessThan(ret);
+
+    const cpStripe = cockpit.indexOf("metric('Vested Stripe'");
+    const cpRet = cockpit.indexOf("metric('Retirement'");
+    expect(cpStripe, 'cockpit Stripe metric').toBeGreaterThan(-1);
+    expect(cpStripe).toBeLessThan(cpRet);
+  });
+});

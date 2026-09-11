@@ -2468,8 +2468,8 @@ function renderOverviewTab(R,P){
     h+=`<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(158px,1fr))">
       ${tile('Net worth',money(sum.netWorth),provChip('observed',d.asOf,true),`${money(sum.assets)} assets − ${money(sum.debt)} debt`)}
       ${tile('Accessible today',money(sum.accessible),provChip('observed',d.asOf,true),'cash + taxable — spendable without penalty','var(--g)')}
-      ${tile('Retirement',money((cls.retirement||{}).total),provChip('observed',d.asOf,true),'locked until retirement age')}
       ${tile('Stripe equity',money(sum.stripeVested),provChip('observed',d.asOf,true),'vested only — grants are future pay','#6772e5')}
+      ${tile('Retirement',money((cls.retirement||{}).total),provChip('observed',d.asOf,true),'locked until retirement age')}
       ${tile(`Cash flow ${y0.yr}`,(y0.flow>=0?'+':'−')+money(Math.abs(y0.flow)),provChip('projected',null,true),y0.flow>=0?(y0.gap>0?`total pay covers the year · ${money(y0.gap)} of it comes from vest`:'cash pay alone covers the year'):'spending exceeds total after-tax pay',y0.flow>=0?'var(--g)':'var(--r)')}
       ${tile(`Net worth ${last.yr}`,money(last.netWorth),provChip('projected',null,true),'if the plan holds')}
     </div>`;
