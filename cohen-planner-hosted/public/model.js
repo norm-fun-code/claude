@@ -619,7 +619,14 @@ function run(p,rets){
       // half of the package alone covers the year — and with a stock-heavy grant that is
       // negative almost every year even when the household is comfortably ahead. Leading
       // with surp reads as a deficit that does not exist.
-      flow:Math.round(tax.net-totE),
+      // In a stub year `totE` covers only the months still ahead, so the income side has to
+      // be the matching share or the two describe different periods — full-year pay against
+      // a quarter of the spending reported a $306K margin for fifteen weeks, larger than the
+      // whole year it was a fraction of.
+      flow:Math.round(tax.net*stub-totE),
+      // …and a MONTHLY margin is a rate, so it divides by the months actually modelled, not
+      // by twelve. Computed here once rather than left to each caller to remember.
+      flowMonthly:Math.round(stub>0?(tax.net*stub-totE)/(12*stub):0),
       // Two different questions, and reporting only one of them was misleading.
       //   gap    — shortfall against CASH pay alone. Says how much of the year's vest has to
       //            be sold. Closing it consumes no accumulated wealth.
@@ -627,7 +634,7 @@ function run(p,rets){
       //            that actually eats into savings or previously held Stripe.
       // incGap is always <= gap, and the two differ by exactly that year's grant.
       gap:Math.round(Math.max(0,-surp)),
-      incGap:Math.round(Math.max(0,totE-tax.net)),
+      incGap:Math.round(Math.max(0,totE-tax.net*stub)),
       // Total cash the funding waterfall must source, including the down payment — a capital
       // outflow, not an operating shortfall, which is why it is kept separate from both gaps.
       need:Math.round(Math.max(0,-netCash)),dpOut:Math.round(dpThis),

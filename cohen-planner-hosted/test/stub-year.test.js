@@ -188,3 +188,44 @@ describe('the next-tender figure', () => {
     expect(Math.abs((R[1].sEnd - shown) - R[1].sAdded)).toBeLessThanOrEqual(1);
   });
 });
+
+// Every figure in a stub row has to describe the SAME period. Mixing a full year of income
+// with a quarter of the spending is not a conservative approximation — it is a number that
+// describes no period at all.
+describe('net flow describes the same months as the spending', () => {
+  const full = on(null)[0], stub = on('2026-09-11')[0];
+
+  it('scales with the stub instead of exceeding a whole year', () => {
+    // It previously read $306,243 for fifteen weeks — larger than the $187,714 full year it
+    // was supposed to be a fraction of, because only the expense side had been pro-rated.
+    expect(stub.flow).toBeLessThan(full.flow);
+    expect(stub.flow / full.flow).toBeCloseTo(stub.stubFrac, 3);
+  });
+
+  it('is income and spending over the same window, to the dollar', () => {
+    expect(stub.flow).toBe(Math.round(stub.netTC * stub.stubFrac - stub.totE));
+    expect(full.flow).toBe(Math.round(full.netTC - full.totE));
+  });
+
+  it('reports a monthly margin as a RATE, which the stub must not change', () => {
+    // flow/12 is wrong in a stub year: there are not twelve months left. The rate itself is
+    // unchanged by when you happen to be looking at it.
+    expect(stub.flowMonthly).toBe(full.flowMonthly);
+    expect(stub.flowMonthly).toBeCloseTo(stub.flow / (12 * stub.stubFrac), 0);
+  });
+
+  it('measures the income shortfall over the same window too', () => {
+    const tight = { ...D, observedOn: '2026-09-11', baseShopping: 400000 };
+    const r = M.run(tight).R[0];
+    expect(r.incGap).toBe(Math.round(Math.max(0, r.totE - r.netTC * r.stubFrac)));
+  });
+
+  it('has every monthly-margin surface use the rate, not flow/12', () => {
+    const cockpit = fs.readFileSync(new URL('../public/cockpit.js', import.meta.url), 'utf8');
+    const room = fs.readFileSync(new URL('../public/decision-room.js', import.meta.url), 'utf8');
+    for (const [name, src] of [['cockpit', cockpit], ['decision room', room]]) {
+      expect(src, name).not.toMatch(/flow\/12/);
+      expect(src, name).toContain('flowMonthly');
+    }
+  });
+});
