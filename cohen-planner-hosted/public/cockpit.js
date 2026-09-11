@@ -70,6 +70,7 @@ function renderCockpit(R){
       <div class="cp-pins" id="cp-pins"></div>
       <label class="cp-scrub" for="cp-year-range">Explore a year<input id="cp-year-range" type="range" min="${R[0].yr}" max="${end.yr}" value="${selected.yr}" oninput="cockpitSelectYear(Number(this.value))"><output id="cp-range-label">${selected.yr}</output></label>
       <div class="cp-year-grid" id="cp-year-grid"></div>
+      <div id="cp-bridge"></div>
       <details class="cp-evidence"><summary>Show me why</summary><p>These are year-end estimates from your saved plan assumptions. Wealth includes modeled liquid investments, Stripe, home equity and retirement. The account balances above are separate observations; this chart is not a historical performance record.</p><button onclick="cockpitGo('table')">Inspect the yearly calculations ↗</button></details></section>
       <section class="cp-card"><div class="cp-section-head"><div><span class="cp-eyebrow">DECISION WORKSPACE</span><h3>What are you considering?</h3></div></div><div class="cp-decisions">
       <button onclick="cockpitGo('housing')"><span>01 / HOME</span><strong>Find your buying range</strong><small>Timing, down payment & funding →</small></button>
@@ -248,6 +249,40 @@ function cockpitSelectYear(year){
   const rail=document.getElementById('cp-pins');
   if(rail)for(const b of rail.querySelectorAll('button'))
     b.classList.toggle('is-current',Number(b.firstElementChild.textContent)===year);
+
+  cockpitRenderBridge(R,year);
+}
+
+// ── Why the two big numbers differ ───────────────────────────────────────────
+// The page shows net worth twice: observed at the top, projected on the chart. They do not
+// agree, and a cockpit that presents both without accounting for the distance is asking the
+// reader to assume one of them is broken. This walks from one to the other in lines that
+// add up, and separates the difference that can be fixed (the plan's opening figures are
+// stale) from the two that cannot (the projection models fewer things; today is not 31
+// December).
+function cockpitRenderBridge(R,year){
+  const host=document.getElementById('cp-bridge');
+  if(!host||!window.PlannerBridge)return;
+  const e=advEscape,d=_ovw,s=d?.summary;
+  const available=!!s&&!d.error&&d.capabilities?.balances?.available===true;
+  const b=PlannerBridge.bridge({summary:s,R,P,year,accountsAvailable:available});
+  if(!b.available){host.innerHTML='';return}
+
+  // Exact dollars, not $1.58M. This is the one table on the page whose entire claim is that
+  // the lines reconcile, and rounded steps do not visibly add up.
+  const row=l=>`<div class="cp-bridge-row" data-kind="${l.kind}">
+    <span>${e(l.label)}</span>
+    <em class="ui-num">${l.value==null?'':UI.money(l.value,{exact:true,signed:true})}</em>
+    <strong class="ui-num">${l.running==null?'':UI.money(l.running,{exact:true})}</strong>
+    <small>${e(l.note)}${l.action==='reconcile'?' <button onclick="cockpitGo(\'overview\')">Reconcile with your accounts ↗</button>':l.action==='classify'?' <button onclick="cockpitGo(\'overview\')">Classify them ↗</button>':''}</small>
+  </div>`;
+
+  host.innerHTML=`<details class="cp-bridge"${b.aligned?'':' open'}>
+    <summary><span class="ui-eyebrow">Observed vs. projected</span>
+      <span class="cp-bridge-headline${b.aligned?'':' is-gap'}">${e(b.headline)}</span></summary>
+    <div class="cp-bridge-rows">${b.lines.map(row).join('')}</div>
+    ${b.caveats.length?`<p class="cp-bridge-caveat">${b.caveats.map(e).join(' ')}</p>`:''}
+  </details>`;
 }
 
 function mountSpendingCharts({rows,months,asOf,verified}){

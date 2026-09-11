@@ -271,7 +271,7 @@ app.get('/model.js', requireAuth, (req, res) => {
 // Keep every new planner asset behind the same session gate as the existing UI.
 // liquidity.js was referenced by index.html but never listed here, so it 404'd in
 // production while working locally under the preview server's plain static handler.
-for (const asset of ['cockpit.js', 'cockpit.css', 'ui.js', 'ui.css', 'decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js', 'advisor-tools.js', 'pace.js']) {
+for (const asset of ['cockpit.js', 'cockpit.css', 'ui.js', 'ui.css', 'decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'bridge.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js', 'advisor-tools.js', 'pace.js']) {
   app.get('/' + asset, requireAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', asset));
   });
