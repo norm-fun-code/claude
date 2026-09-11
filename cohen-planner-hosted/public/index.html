@@ -3300,33 +3300,39 @@ function renderPortfolioTab(R,P){
 //
 // Levers here are exploratory: they do not touch the plan until explicitly applied, so you
 // can test a rate you have been quoted without disturbing your saved assumptions.
-let _afRate=null,_afDown=null,_afShare=0.28;
+let _afRate=null,_afDown=null,_afShare=0.28,_afYear=null;
 let _afQuarter=null,_afTenderCap=null,_afPauseMonths=0;
 function afSet2(k,v){if(k==='q')_afQuarter=parseInt(v,10);else if(k==='cap')_afTenderCap=v===''||v==='none'?null:Number(v);else _afPauseMonths=Number(v);render()}
 function afSet(k,v){
   if(k==='rate')_afRate=parseFloat(v);
   else if(k==='down')_afDown=parseFloat(v);
+  else if(k==='year')_afYear=parseInt(v,10);
   else _afShare=parseFloat(v);
   render();
 }
-function afReset(){_afRate=null;_afDown=null;_afShare=0.28;render()}
+function afReset(){_afRate=null;_afDown=null;_afYear=null;_afShare=0.28;render()}
 function afApply(){
   const q=afParams();
-  if(!showConfirm(`Set your plan's mortgage rate to ${q.mortgageRate}% and down payment to ${q.downPctg}%?`))return;
-  P.mortgageRate=q.mortgageRate;P.downPctg=q.downPctg;
-  _afRate=null;_afDown=null;
+  // Moving the purchase year is a bigger change than a rate tweak — it shifts a down
+  // payment, and every year of the plan after it — so it is named in the confirmation
+  // rather than folded in silently with the other two.
+  const moves=q.homePurchaseYear!==P.homePurchaseYear;
+  if(!showConfirm(`Set your plan's mortgage rate to ${q.mortgageRate}% and down payment to ${q.downPctg}%${moves?`, and move your purchase to ${q.homePurchaseYear}`:''}?`))return;
+  P.mortgageRate=q.mortgageRate;P.downPctg=q.downPctg;P.homePurchaseYear=q.homePurchaseYear;
+  _afRate=null;_afDown=null;_afYear=null;
   markDirty();buildControls();render();savePlannerState();
   showToast('Applied to your plan','green');
 }
 function afParams(){
-  return{...P,mortgageRate:_afRate??P.mortgageRate,downPctg:_afDown??P.downPctg};
+  return{...P,mortgageRate:_afRate??P.mortgageRate,downPctg:_afDown??P.downPctg,
+    homePurchaseYear:_afYear??P.homePurchaseYear};
 }
 
 function renderHousingTab(R,P){
   const ca=document.getElementById('chartArea');
   destroyCharts();
   const q=afParams();
-  const dirty=(_afRate!==null&&_afRate!==P.mortgageRate)||(_afDown!==null&&_afDown!==P.downPctg);
+  const dirty=(_afRate!==null&&_afRate!==P.mortgageRate)||(_afDown!==null&&_afDown!==P.downPctg)||(_afYear!==null&&_afYear!==P.homePurchaseYear);
   const a=affordability(q,_afShare);
   const py=q.homePurchaseYear;
   const perDollar=housingCostPerDollar(q);
@@ -3359,7 +3365,7 @@ function renderHousingTab(R,P){
         : `Limited by your <strong>balance sheet</strong>: above this, funding the purchase would break your ${fmt(q.liquidReserveFloor??500000)} reserve floor. Cash flow alone could carry up to ${money(a.comfort)}.`}
     </div>
     ${dirty?`<div style="margin-top:12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-      <span style="font-size:9.5px;color:var(--a)">● Exploring — your plan still says ${P.mortgageRate}% / ${P.downPctg}% down</span>
+      <span style="font-size:9.5px;color:var(--a)">● Exploring — your plan still says ${P.mortgageRate}% / ${P.downPctg}% down, buying in ${P.homePurchaseYear}</span>
       <button onclick="afApply()" style="font-size:9.5px;padding:4px 10px;border-radius:5px;border:none;background:var(--accent);color:#fff;font-family:inherit;cursor:pointer">Apply to my plan</button>
       <button onclick="afReset()" style="font-size:9.5px;padding:4px 10px;border-radius:5px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">Reset</button>
     </div>`:''}
@@ -3378,16 +3384,59 @@ function renderHousingTab(R,P){
   </div>`;
 
   // ── Levers ──
-  const lever=(id,label,val,min,max,step,fmtv,key)=>`<div>
-    <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:10px;color:var(--t2)">${label}</span><span style="font-size:11px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${fmtv}</span></div>
+  // A percentage is not a budget until it is a number of dollars. The share lever now
+  // answers "28% of what?" in the place where it is being moved, rather than leaving the
+  // reader to find the figure in the card above and do the arithmetic.
+  const shareBudget=_afShare*buyRow.netTC;
+  const lever=(id,label,val,min,max,step,fmtv,key,sub)=>`<div>
+    <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:3px"><span style="font-size:10px;color:var(--t2)">${label}</span><span style="font-size:11px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${fmtv}</span></div>
     <input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${val}" oninput="afSet('${key}',this.value)" style="width:100%">
+    ${sub?`<div style="font-size:9.5px;color:var(--t3);margin-top:3px;line-height:1.45">${sub}</div>`:''}
   </div>`;
+  const lastYr=R[R.length-1].yr;
   h+=`<div class="glass-card" style="padding:16px 18px">
     <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:12px">Move a lever — the number above updates</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px">
       ${lever('afRate','Mortgage rate',q.mortgageRate,3,9,.125,q.mortgageRate+'%','rate')}
       ${lever('afDown','Down payment',q.downPctg,10,80,5,q.downPctg+'%','down')}
-      ${lever('afShare','Max share of income',_afShare,.15,.45,.01,(_afShare*100).toFixed(0)+'%','share')}
+      ${lever('afShare','Max share of income',_afShare,.15,.45,.01,(_afShare*100).toFixed(0)+'%','share',
+        `<strong style="color:var(--t2)">${fmtF(Math.round(shareBudget/12))}/mo</strong> · ${fmt(Math.round(shareBudget))}/yr — ${(_afShare*100).toFixed(0)}% of ${fmt(buyRow.netTC)} after-tax income in ${py}`)}
+      ${lever('afYear','Purchase year',py,R[0].yr,lastYr,1,String(py),'year',
+        py===P.homePurchaseYear?`Your plan buys in ${P.homePurchaseYear}`:`Your plan says ${P.homePurchaseYear}`)}
+    </div>
+  </div>`;
+
+  // ── What waiting buys you ──────────────────────────────────────────────
+  // "How much house can I afford" and "what if I buy later" are the same question asked
+  // twice, so they belong on the same screen. Each year is the full model re-run, not the
+  // headline figure grown at a rate.
+  const YEARS=[];
+  for(let y=R[0].yr;y<=Math.min(lastYr,R[0].yr+12);y++)YEARS.push(y);
+  const byYear=YEARS.map(y=>{
+    const py2={...q,homePurchaseYear:y};
+    const row=R.find(r=>r.yr===y)||buyRow;
+    const af=affordability(py2,_afShare);
+    return{y,...af,netTC:row.netTC};
+  });
+  const yMax=Math.max(...byYear.map(v=>v.max));
+  const nowMax=byYear.find(v=>v.y===py);
+  h+=`<div class="glass-card" style="padding:16px 18px">
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:3px">What you can afford, by purchase year</div>
+    <div style="font-size:10px;color:var(--t2);margin-bottom:11px">Each row re-runs the whole plan buying in that year, at ${q.mortgageRate}% with ${q.downPctg}% down. Click a year to explore it.</div>
+    <div class="tw" style="max-height:none"><table style="font-size:11px">
+      <thead><tr><th style="text-align:left">Buy in</th><th>Max price</th><th>vs. ${py}</th><th>What binds</th></tr></thead>
+      <tbody>${byYear.map(v=>{
+        const here=v.y===py;
+        const delta=nowMax?v.max-nowMax.max:0;
+        return `<tr onclick="afSet('year',${v.y})" style="cursor:pointer${here?';outline:1.5px solid var(--accent);outline-offset:-2px':''}">
+          <td style="font-weight:${here?800:600};color:${here?'var(--accent)':'var(--tx)'}">${v.y}${here?' ←':''}</td>
+          <td style="background:rgba(99,91,255,${(0.05+(yMax>0?v.max/yMax:0)*0.2).toFixed(3)});font-family:'SF Mono',monospace;font-weight:${here?800:500};color:${here?'var(--accent)':'var(--tx)'}">${money(v.max)}</td>
+          <td style="font-family:'SF Mono',monospace;color:${delta>0?'var(--g)':delta<0?'var(--r)':'var(--t3)'}">${here?'—':(delta>0?'+':'')+money(Math.abs(delta)).replace('$',delta<0?'−$':'$')}</td>
+          <td style="font-size:10px;color:var(--t2)">${v.binding==='comfort'?'Carrying cost':'Balance sheet'}</td>
+        </tr>`;}).join('')}</tbody>
+    </table></div>
+    <div style="font-size:9.5px;color:var(--t3);margin-top:9px;line-height:1.5">
+      Waiting raises the balance-sheet limit as savings and vests accumulate, and moves the carrying-cost limit with your income. Where the two cross, the binding constraint changes — and buying later stops helping.
     </div>
   </div>`;
 

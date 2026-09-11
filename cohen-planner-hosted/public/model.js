@@ -233,14 +233,28 @@ function stripeVestFactor(sr){
 //   2. A position observed mid-year is stated at the Feb mark and ALREADY CONTAINS every
 //      vest that has landed so far this year.
 //
-// Vest months default to Feb/May/Aug/Nov. That is an assumption, stated openly rather than
-// buried: it is what makes a position observed in August contain three of the year's four
-// quarterly vests, and it puts the first vest on the same month as the tender.
-const STRIPE_VEST_MONTHS=[2,5,8,11];
+// Vest dates, as [month, day]: 15 March, 15 June, 15 September, 15 December.
+//
+// The DAY matters and a month-level schedule got this wrong. A position observed on 11
+// September has NOT had the September vest — it lands four days later — so half the grant
+// is still ahead, not a quarter. Rounding the schedule to months moved a whole quarterly
+// vest into the opening balance that had not happened yet.
+//
+// Note these are vest dates, not the tender. The tender is in February and sets the PRICE;
+// these set when shares arrive. They are different events and the engine keeps them apart.
+const STRIPE_VEST_DATES=[[3,15],[6,15],[9,15],[12,15]];
+// Legacy month-only form, still exported for callers that only need the months.
+const STRIPE_VEST_MONTHS=STRIPE_VEST_DATES.map(([m])=>m);
 
-// The fraction of a year's grant that has NOT yet vested as of `month` (1-12). In the year
-// the opening balance was observed, only this fraction is new equity — the rest is already
-// inside the observed number, and adding it again would count it twice.
+// A plan may override the schedule either way: `stripeVestDates` as [month,day] pairs, or
+// the older `stripeVestMonths`, whose vests are treated as landing on the 1st so that the
+// old "vested if its month has been reached" reading is preserved exactly.
+function vestDates(p){
+  if(Array.isArray(p&&p.stripeVestDates)&&p.stripeVestDates.length)return p.stripeVestDates;
+  if(Array.isArray(p&&p.stripeVestMonths)&&p.stripeVestMonths.length)
+    return p.stripeVestMonths.map(m=>[m,1]);
+  return STRIPE_VEST_DATES;
+}
 // ── The stub year ────────────────────────────────────────────────────────────
 // A plan is built from balances observed on a DATE, and that date is usually not 1 January.
 // Everything between the start of the year and that date has already happened and is
@@ -268,21 +282,28 @@ function yearRemaining(p){
 // November is still ahead. That is a quarter of the grant, not the 30% of the year that is
 // left. The two fractions are deliberately different and both are right.
 function stripeVestRemaining(p){
-  const months=p.stripeVestMonths||STRIPE_VEST_MONTHS;
-  const asOf=p.stripeObservedMonth??observedMonth(p);
-  if(asOf==null)return 1;                       // no observation date given: assume Jan 1
-  const landed=months.filter(m=>m<=asOf).length;
-  return Math.max(0,(months.length-landed)/months.length);
+  const dates=vestDates(p);
+  const obs=observedDay(p);
+  if(obs==null)return 1;                        // no observation date given: assume Jan 1
+  const landed=dates.filter(([m,d])=>m<obs.m||(m===obs.m&&d<=obs.d)).length;
+  return Math.max(0,(dates.length-landed)/dates.length);
 }
-// The observation month, for plans that give a date but no explicit month override.
-function observedMonth(p){
-  const sy=p.planStartYear||2026;
-  if(!p.observedOn)return null;
+// Where in the year the observation falls, as {m,d}. An explicit `stripeObservedMonth` is
+// month-only and keeps its original meaning — "this month has been reached" — which is the
+// last day of it, so a vest anywhere in that month counts as landed.
+function observedDay(p){
+  if(p&&p.stripeObservedMonth!=null)return{m:p.stripeObservedMonth,d:31};
+  const sy=(p&&p.planStartYear)||2026;
+  if(!p||!p.observedOn)return null;
   const on=Date.parse(/T/.test(p.observedOn)?p.observedOn:p.observedOn+'T00:00:00Z');
   if(!isFinite(on))return null;
-  const d=new Date(on);
-  return d.getUTCFullYear()===sy?d.getUTCMonth()+1:null;
+  const dt=new Date(on);
+  if(dt.getUTCFullYear()<sy)return null;        // before the plan opens: nothing has landed
+  if(dt.getUTCFullYear()>sy)return{m:12,d:31};  // after it closes: everything has
+  return{m:dt.getUTCMonth()+1,d:dt.getUTCDate()};
 }
+// The observation month, for callers that only need it.
+function observedMonth(p){const o=observedDay(p);return o?o.m:null}
 
 // ── Tax withheld on a vest ─────────────────────────────────────────────────
 // What lands in the brokerage account is NOT the grant. Shares are withheld at vest to
@@ -854,7 +875,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
   module.exports={bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
-    normComp,stripeReturn,stripeVestFactor,stripeVestRemaining,yearRemaining,observedMonth,STRIPE_VEST_MONTHS,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
+    normComp,stripeReturn,stripeVestFactor,stripeVestRemaining,yearRemaining,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
     housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,

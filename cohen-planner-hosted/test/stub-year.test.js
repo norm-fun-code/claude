@@ -32,7 +32,7 @@ describe('the first year models only what is still ahead', () => {
   it('cuts the first-year gain to something fifteen weeks could produce', () => {
     const full = on(null)[0], stub = on('2026-09-11')[0];
     expect(full.netWorth - OPEN).toBeGreaterThan(300000);   // the complaint
-    expect(stub.netWorth - OPEN).toBeLessThan(100000);      // the fix
+    expect(stub.netWorth - OPEN).toBeLessThan(120000);      // the fix
     expect(stub.stubFrac).toBeCloseTo(112 / 365, 4);
   });
 
@@ -81,14 +81,19 @@ describe('the first year models only what is still ahead', () => {
 describe('vests are quantised to the tender dates they land on', () => {
   it('counts only the vests still to come, not the fraction of the year left', () => {
     const p = { planStartYear: 2026, observedOn: '2026-09-11' };
-    expect(M.stripeVestRemaining(p)).toBe(0.25);        // only November is ahead
-    expect(M.yearRemaining(p)).toBeCloseTo(112 / 365, 4); // ~30% of the days
+    // Vests land 15 Mar / 15 Jun / 15 Sep / 15 Dec. On 11 September the September vest is
+    // four days away, so HALF the grant is still ahead — while only 30% of the days are.
+    expect(M.stripeVestRemaining(p)).toBe(0.5);
+    expect(M.yearRemaining(p)).toBeCloseTo(112 / 365, 4);
+    // Four days later the vest has landed and the two fractions cross over.
+    expect(M.stripeVestRemaining({ ...p, observedOn: '2026-09-15' })).toBe(0.25);
   });
 
   it('adds only the remaining vest to the position, and says what was already in it', () => {
     const stub = on('2026-09-11')[0], full = on(null)[0];
-    expect(stub.sAdded).toBeCloseTo(full.sNew * 0.25, 0);
-    expect(stub.sInOpening).toBeCloseTo(full.sNew * 0.75, 0);
+    // Exactly half, to the dollar the row is rounded to.
+    expect(Math.abs(stub.sAdded - full.sNew * 0.5)).toBeLessThanOrEqual(1);
+    expect(Math.abs(stub.sInOpening - full.sNew * 0.5)).toBeLessThanOrEqual(1);
     // The whole year's vest is still INCOME — it was earned and taxed. Only the ASSET is
     // de-duplicated, because three quarters of it is already in the opening balance.
     expect(stub.sNew).toBe(full.sNew);
@@ -99,7 +104,7 @@ describe('vests are quantised to the tender dates they land on', () => {
     // with shares that were sold or kept back in February.
     const sell = { ...D, stripePolicy: 'sell', observedOn: '2026-09-11' };
     const r = M.run(sell).R[0];
-    expect(r.sSold).toBeLessThanOrEqual(Math.round(r.sNew * 0.25) + 1);
+    expect(r.sSold).toBeLessThanOrEqual(Math.round(r.sNew * 0.5) + 1);
   });
 
   it('lets an explicit month override the date, for a plan that knows better', () => {

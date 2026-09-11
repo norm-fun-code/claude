@@ -201,14 +201,16 @@ describe('Stripe appreciation', () => {
     const asOfJan = run(base).R[0];
     const asOfAug = run({ ...base, stripeObservedMonth: 8 }).R[0];
 
-    // Feb / May / Aug have landed by August; only the November lot is still to come.
-    expect(stripeVestRemaining({ ...base, stripeObservedMonth: 8 })).toBe(0.25);
-    expect(asOfAug.sAdded).toBeCloseTo(asOfAug.sRet * 0.25, 0);
-    expect(asOfAug.sInOpening).toBeCloseTo(asOfAug.sRet * 0.75, 0);
+    // Vests land 15 Mar / 15 Jun / 15 Sep / 15 Dec. By the end of August only March and
+    // June have landed, so half the grant is still ahead.
+    expect(stripeVestRemaining({ ...base, stripeObservedMonth: 8 })).toBe(0.5);
+    expect(Math.abs(asOfAug.sAdded - asOfAug.sRet * 0.5)).toBeLessThanOrEqual(1);
+    expect(Math.abs(asOfAug.sInOpening - asOfAug.sRet * 0.5)).toBeLessThanOrEqual(1);
     // The whole year's vest is still reported as income — only the ASSET was double-counted.
     expect(asOfAug.sNew).toBe(asOfJan.sNew);
     expect(asOfAug.sEnd).toBeLessThan(asOfJan.sEnd);
-    expect(asOfJan.sEnd - asOfAug.sEnd).toBeCloseTo(asOfAug.sRet * 0.75, 0);
+    // The gap between the two is exactly the half of the grant that had already landed.
+    expect(Math.abs((asOfJan.sEnd - asOfAug.sEnd) - asOfAug.sRet * 0.5)).toBeLessThanOrEqual(1);
   });
 
   it('reconciles: opening + newly added, re-marked once, is the closing balance', () => {
