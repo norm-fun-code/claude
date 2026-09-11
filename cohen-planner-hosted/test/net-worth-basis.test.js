@@ -261,3 +261,45 @@ describe('the Overview follows the same retirement basis', () => {
     expect(html).toContain('not in net worth above');
   });
 });
+
+// The old today-pin read a different source and drifted. Its replacement is the chart's own
+// opening point, which — now that opening balances follow the accounts — IS today.
+describe('the Trajectory chart marks today', () => {
+  const plug = html.slice(html.indexOf('const todayTag={'), html.indexOf('if(!reuseChart||!_updateChart(ds,nwLabels))'));
+
+  it('names the leading point Today rather than last calendar year', () => {
+    expect(html).toContain("const nwLabels=['Today',...labels];");
+    expect(html).not.toContain('const nwLabels=[String(sy0-1),...labels];');
+  });
+
+  it('draws a visible marker there and nowhere else on the line', () => {
+    // Every point after the first is a projection; only the first is a position.
+    expect((html.match(/pointRadius:nwLabels\.map\(\(_,i\)=>i===0\?6:0\)/g) || []).length).toBe(2);
+  });
+
+  it('prints the value instead of hiding it behind a hover', () => {
+    expect(plug).toContain('fmtK(t.v*1000)');
+    expect(plug).toContain('afterDatasetsDraw');
+  });
+
+  it('labels BOTH net-worth lines, since one tag between two dots names neither', () => {
+    expect(plug).toContain('for(const i of [0,1])');
+    expect(plug).toContain('color:chart.data.datasets[i].borderColor');
+  });
+
+  it('separates the two labels when the lines nearly touch', () => {
+    // With little retirement the two dots sit on top of each other and the labels would
+    // overlap into an unreadable smear.
+    expect(plug).toMatch(/Math\.abs\(tags\[0\]\.y-tags\[1\]\.y\)<22/);
+    expect(plug).toContain('tags[0].y=mid-12;tags[1].y=mid+12;');
+  });
+
+  it('keeps the label inside the plot area at either edge', () => {
+    expect(plug).toContain('chartArea.right-w-8');
+    expect(plug).toContain('chartArea.top+13');
+  });
+
+  it('skips a dataset the reader has hidden from the legend', () => {
+    expect(plug).toContain('meta.hidden');
+  });
+});

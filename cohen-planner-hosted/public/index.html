@@ -1736,7 +1736,10 @@ function render(){
   const ctx=document.getElementById('cv').getContext('2d');const opts=chartOpts();
   // Prepend planStartYear-1 as a synthetic starting point showing initial liquid
   const sy0=P.planStartYear||2026;
-  const nwLabels=[String(sy0-1),...labels];
+  // The leading point is the plan's OPENING position, and since the opening figures now
+  // follow the accounts, that is today's observed position. So it is labelled Today rather
+  // than with the prior calendar year, which was never what it meant.
+  const nwLabels=['Today',...labels];
   // The prior-year anchor for the TOTAL line is the plan's whole opening position, not just
   // its cash. Anchoring Total NW at startingLiquid dropped Stripe and the entire 401(k) from
   // the left-hand point, so the line began below where the plan actually starts and the
@@ -1756,12 +1759,16 @@ function render(){
       {label:'Net worth ex-retirement'+(inflationView?' (real)':''),
        data:[startNwK-Math.round(Math.abs(Number(P.k401Start||0))/1000),...R.map(r=>deflK(r.nw,r.yr))],
        borderColor:'#7ae3c3',backgroundColor:_areaGrad('#7ae3c3',.20,0),fill:true,tension:.35,
-       pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#7ae3c3',pointBorderColor:'#fff',
+       pointRadius:nwLabels.map((_,i)=>i===0?6:0),pointHoverRadius:5,
+       pointBackgroundColor:'#7ae3c3',pointBorderColor:'#0d1522',pointBorderWidth:2,
        borderWidth:2.5,borderCapStyle:'round'},
       {label:'Total net worth'+(inflationView?' (real)':''),
        data:[startNwK,...R.map(r=>deflK(r.netWorth,r.yr))],
        borderColor:'#b6a8ff',backgroundColor:'transparent',fill:false,tension:.35,
-       pointRadius:0,pointHoverRadius:5,pointBackgroundColor:'#b6a8ff',pointBorderColor:'#fff',
+       // Only the first point is drawn, and it is drawn large: it is where you are now, and
+       // every point after it is a projection. Its value is printed beside it below.
+       pointRadius:nwLabels.map((_,i)=>i===0?6:0),pointHoverRadius:5,
+       pointBackgroundColor:'#b6a8ff',pointBorderColor:'#0d1522',pointBorderWidth:2,
        borderWidth:2,borderCapStyle:'round'},
       {label:'Home equity'+(inflationView?' (real)':''),
        data:[0,...R.map(r=>deflK(r.eq,r.yr))],
@@ -1822,7 +1829,48 @@ function render(){
     // accounts the rest of this screen is built on — so it drifted from everything around
     // it, and a pin that disagrees with its own chart is worse than no pin. Today's position
     // is on the Overview, observed and dated, which is where it belongs.
-    if(!reuseChart||!_updateChart(ds,nwLabels)){if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';const ctx2=document.getElementById('cv').getContext('2d');charts.main=new Chart(ctx2,{type:'line',data:{labels:nwLabels,datasets:ds},options:po})}
+    // The value beside the Today marker, drawn rather than left to a hover. A marker whose
+    // number you have to go looking for is a marker that mostly just raises a question.
+    // The value beside the Today marker, drawn rather than left to a hover. A marker whose
+    // number you have to go looking for is a marker that mostly just raises a question.
+    // BOTH net-worth lines get one: a single tag between two dots does not say which line it
+    // belongs to, which is the ambiguity this chart has spent all session shedding.
+    const todayTag={
+      id:'todayTag',
+      afterDatasetsDraw(chart){
+        const tags=[];
+        for(const i of [0,1]){
+          const meta=chart.getDatasetMeta(i);
+          if(!meta||meta.hidden||!meta.data||!meta.data[0])continue;
+          const v=chart.data.datasets[i].data[0];
+          if(!Number.isFinite(v))continue;
+          tags.push({y:meta.data[0].y,x:meta.data[0].x,v,
+            color:chart.data.datasets[i].borderColor});
+        }
+        if(!tags.length)return;
+        // Two dots this close would have their labels overlap, so they are pushed apart —
+        // the upper one up, the lower one down — around the midpoint between them.
+        if(tags.length===2&&Math.abs(tags[0].y-tags[1].y)<22){
+          const mid=(tags[0].y+tags[1].y)/2;
+          tags.sort((a,b)=>a.y-b.y);
+          tags[0].y=mid-12;tags[1].y=mid+12;
+        }
+        const{ctx,chartArea}=chart;
+        ctx.save();
+        ctx.font='600 12px Inter, system-ui, sans-serif';
+        for(const t of tags){
+          const txt=fmtK(t.v*1000);
+          const w=ctx.measureText(txt).width;
+          const x=Math.min(Math.max(t.x+11,chartArea.left+2),chartArea.right-w-8);
+          const y=Math.min(Math.max(t.y+4,chartArea.top+13),chartArea.bottom-4);
+          ctx.fillStyle='rgba(13,21,34,.88)';
+          ctx.beginPath();ctx.roundRect(x-5,y-13,w+10,19,5);ctx.fill();
+          ctx.fillStyle=t.color;ctx.fillText(txt,x,y);
+        }
+        ctx.restore();
+      },
+    };
+    if(!reuseChart||!_updateChart(ds,nwLabels)){if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';const ctx2=document.getElementById('cv').getContext('2d');charts.main=new Chart(ctx2,{type:'line',data:{labels:nwLabels,datasets:ds},options:po,plugins:[todayTag]})}
   } else {
     if(_projView==='cashflow'){
       // Bars are net flow against TOTAL after-tax pay — the honest "did the year pay for
