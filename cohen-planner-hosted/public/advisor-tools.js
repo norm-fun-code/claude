@@ -89,6 +89,7 @@
     const errors=[],applied={};
     const next={...P};
     for(const[key,value]of Object.entries(overrides||{})){
+      if(P.stripeGrants?.enabled&&/^normCashY\d+$/.test(key)&&(P.planStartYear||2026)+Number(key.slice(9))>(P.stripeGrants.throughYear??Infinity)){errors.push('This year uses manual total compensation. Edit it in Stripe → Compensation.');continue;}
       if(P.stripeGrants?.enabled&&(/^normStockY/.test(key)||key==='normStockGrowth')){errors.push('Stock income is calculated from Stripe grants. Edit award dollars or actual schedules in the Stripe tab.');continue;}
       const v=validateOverride(key,value);
       if(!v.ok){errors.push(v.error);continue}

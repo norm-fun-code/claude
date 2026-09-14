@@ -1272,9 +1272,10 @@ function buildControls(){
       <button onclick="dismissSplitReview()" style="display:block;margin-top:4px;background:none;border:none;padding:0;color:var(--accent);font-family:inherit;font-size:8px;font-weight:600;cursor:pointer;text-decoration:underline">Looks right — dismiss</button>
     </div>`;
   }
-  if(StripeGrants.active(P))normBody+=`<p class="sg-note">Stock is calculated in Stripe → Awards. Cash inputs below exclude the calculated QCA cash; review any existing allowance in Stripe → Compensation. Totals include the net QCA adjustment.</p>`;
+  if(StripeGrants.active(P))normBody+=`<p class="sg-note">${Number.isFinite(StripeGrants.throughYear(P))?'Calculated through '+StripeGrants.throughYear(P)+' · Manual from '+(StripeGrants.throughYear(P)+1):'All years calculated from Stripe awards'}. Grant-year cash inputs are the pre-QCA baseline. Manual-year inputs include all cash and stock compensation.</p>`;
   normBody+=`<div class="comp-grid comp-head"><span>Year</span><span>Cash</span><span>Stripe stock</span><span>Total</span></div>`;
   for(let i=0;i<11;i++){
+    if(StripeGrants.active(P)&&!StripeGrants.usesGrants(P,sy+i)){const c=normComp(P,i);normBody+=`<div class="comp-grid"><span class="comp-yr" title="Manual compensation">${sy+i} · M</span>${['cash','stock'].map(k=>`<input class="comp-in${k==='stock'?' comp-stock':''}" aria-label="${sy+i} manual ${k}" type="number" min="0" step="any" style="min-width:0;width:100%;box-sizing:border-box" value="${Math.round(c[k])}" onchange="stripeManualSet(${sy+i},'${k}',this.value)">`).join('')}<span class="comp-tot" id="ct_${i}">${fmtF(c.cash+c.stock)}</span></div>`;continue;}
     if(StripeGrants.active(P)){const c=normComp(P,i);normBody+=`<div class="comp-grid"><span class="comp-yr">${sy+i}</span>${compCell('normCashY'+i)}<span class="comp-tot" id="sg_compstock_${i}" title="Calculated from Stripe grants">${fmtF(c.stock)}</span><span class="comp-tot" id="ct_${i}">${fmtF(c.cash+c.stock)}</span></div>`;continue;}
     const yr=sy+i,tot=(P['normCashY'+i]||0)+(P['normStockY'+i]||0);
     normBody+=`<div class="comp-grid">
@@ -1286,7 +1287,7 @@ function buildControls(){
   }
   normBody+=`<div style="height:1px;background:var(--bd);margin:7px 0 5px"></div>`;
   normBody+=s('Cash growth ('+(sy+11)+'+)','normGrowth',0,.10,.005,v=>(v*100).toFixed(1)+'%');
-  if(!StripeGrants.active(P))normBody+=s('Stock growth ('+(sy+11)+'+)','normStockGrowth',0,.20,.005,v=>(v*100).toFixed(1)+'%');
+  if(!StripeGrants.active(P)||Number.isFinite(StripeGrants.throughYear(P)))normBody+=s('Stock growth ('+(sy+11)+'+)','normStockGrowth',0,.20,.005,v=>(v*100).toFixed(1)+'%');
   normBody+=s('401k employee','pretax401k',0,30500,500,fmtF)+s('Benefits pre-tax','pretaxBenefits',0,15000,200,fmtF);
   normBody+=`<div id="norm_preview" style="font-size:7.5px;color:var(--t3);margin:1px 0 4px;font-style:italic"></div>`;
   h+=ST('💼 Norm — Compensation','norm-income',normBody);
@@ -1719,7 +1720,7 @@ function render(){
   if(StripeGrants.active(P)){for(let i=0;i<11;i++){const c=normComp(P,i),stock=document.getElementById('sg_compstock_'+i),total=document.getElementById('ct_'+i);if(stock)stock.textContent=fmtF(c.stock);if(total)total.textContent=fmtF(c.cash+c.stock);}}
   const np=document.getElementById('norm_preview');
   const _sy=P.planStartYear||2026;const _lastY=_sy+10;
-  if(np&&StripeGrants.active(P)){const c=normComp(P,10);np.textContent=`${_lastY}: ${fmtF(c.cash)} cash + ${fmtF(c.stock)} stock · calculated from grant schedules`;}
+  if(np&&StripeGrants.active(P)){const c=normComp(P,10);np.textContent=`${_lastY}: ${fmtF(c.cash)} cash + ${fmtF(c.stock)} stock · ${StripeGrants.usesGrants(P,_lastY)?'calculated from grants':'manual compensation'}`;}
   else if(np){const _c=P.normCashY10??304000,_s=P.normStockY10??150000,_cg=P.normGrowth??0.01,_sg=P.normStockGrowth??_cg;
     np.textContent=`${_lastY}: ${fmtF(_c+_s)} (${fmtF(_c)} cash + ${fmtF(_s)} stock) · ${_lastY+10}: ${fmtF(Math.round(_c*(1+_cg)**10+_s*(1+_sg)**10))} at ${(_cg*100).toFixed(1)}% / ${(_sg*100).toFixed(1)}% growth`;}
   const nap=document.getElementById('nancy_preview');
@@ -3847,7 +3848,7 @@ function renderSensitivityTab(R,P){
   const ALL_PARAMS=[
     {key:'investReturn',label:'Portfolio Return',delta:0.01,hi:'+1%',lo:'−1%',fmtV:v=>(v*100).toFixed(1)+'%',better:1},
     {key:'normCash',label:'Norm Cash Comp',delta:25000,hi:'+$25K/yr',lo:'−$25K/yr',fmtV:v=>fmt(v),better:1},
-    {key:'normStock',label:StripeGrants.active(P)?'PEG target dollars':'Norm Stripe Grant',delta:25000,hi:'+$25K/yr',lo:'−$25K/yr',fmtV:v=>fmt(v),better:1},
+    {key:'normStock',label:StripeGrants.active(P)?(Number.isFinite(StripeGrants.throughYear(P))?'Manual stock income':'PEG target dollars'):'Norm Stripe Grant',delta:25000,hi:'+$25K/yr',lo:'−$25K/yr',fmtV:v=>fmt(v),better:1},
     {key:'stripeRet',label:'Stripe Return',delta:.03,hi:'+3%/yr',lo:'−3%/yr',fmtV:v=>(v*100).toFixed(0)+'%',better:1},
     {key:'nancyHourlyRate',label:'Nancy Rate',delta:25,hi:'+$25/hr',lo:'−$25/hr',fmtV:v=>'$'+v+'/hr',better:1},
     {key:'nancyMaxClients',label:'Nancy Clients',delta:5,hi:'+5',lo:'−5',fmtV:v=>v+' clients',better:1},
@@ -3876,9 +3877,15 @@ function renderSensitivityTab(R,P){
     let vBase,hiP,loP;
     // Synthetic multi-field levers: a single P.key perturbation can't express "this runs
     // $25K higher across the board" when the value is spread over an 11-year window.
-    if(p.key==='normStock'&&StripeGrants.active(P)){
+    if(p.key==='normStock'&&StripeGrants.active(P)&&!Number.isFinite(StripeGrants.throughYear(P))){
       vBase=StripeGrants.award(P,P.planStartYear||2026).peg;hiP=structuredClone(P);loP=structuredClone(P);
       for(let y=P.planStartYear||2026;y<=(P.planEndYear||2058);y++){const a=StripeGrants.award(P,y);hiP.stripeGrants.years[y]={...a,...P.stripeGrants.years[y],peg:a.peg+delta};loP.stripeGrants.years[y]={...a,...P.stripeGrants.years[y],peg:Math.max(0,a.peg-delta)};}
+    } else if((p.key==='normCash'||p.key==='normStock')&&StripeGrants.active(P)&&Number.isFinite(StripeGrants.throughYear(P))){
+      const key=p.key==='normCash'?'cash':'stock';vBase=normComp(P,0)[key];hiP=structuredClone(P);loP=structuredClone(P);
+      for(let y=P.planStartYear||2026;y<=(P.planEndYear||2058);y++){
+        if(!StripeGrants.usesGrants(P,y)){const n=StripeGrants.manualComp(P,y);hiP.stripeGrants.manualComp[y]={...n,[key]:n[key]+delta};loP.stripeGrants.manualComp[y]={...n,[key]:Math.max(0,n[key]-delta)};}
+        else if(key==='cash'){const k='normCashY'+(y-(P.planStartYear||2026));hiP[k]=(P[k]??275000)+delta;loP[k]=Math.max(0,(P[k]??275000)-delta);}
+      }
     } else if(p.key==='normCash'||p.key==='normStock'){
       const f=p.key==='normCash'?'normCashY':'normStockY';
       vBase=P[f+'0'];
@@ -5257,7 +5264,7 @@ INCOME (${planSY} base year)
 • Spendable cash after tax: ${fmt(y26.inc)} — this is cash comp + Nancy − all household tax − pretax − practice overhead. It EXCLUDES stock he retains. (Take-home if he sold every vesting share: ${fmt(y26.netTC)}.)
 • Pre-tax deductions: 401k ${fmt(P.pretax401k)} + benefits ${fmt(P.pretaxBenefits)} = ${fmt(P.pretax401k+P.pretaxBenefits)}
 
-${StripeGrants.active(P)?'GRANT MODEL ACTIVE: normStockY inputs are ignored. Stock income comes from actual/estimated ARG and PEG cohorts plus QCA stock; quarterly FMV determines income. normCashY is the pre-QCA baseline with an explicit existing-QCA adjustment. Edit grant schedules in the Stripe tab.':''}
+${StripeGrants.active(P)?'GRANT MODEL ACTIVE: normStockY inputs are ignored; after stripeGrants.throughYear, stripeGrants.manualComp holds total annual cash and stock income. Edit manual years in Stripe → Compensation. Stock income comes from actual/estimated ARG and PEG cohorts plus QCA stock; quarterly FMV determines income. normCashY is the pre-QCA baseline with an explicit existing-QCA adjustment. Edit grant schedules in the Stripe tab.':''}
 PER-YEAR INCOME INPUTS (editable via set_param)
 • Norm CASH comp, Y0-Y10 (${planSY}-${planSY+10}): ${Array.from({length:11},(_,i)=>fmt(P['normCashY'+i])).join(' · ')}  [keys: normCashY0 .. normCashY10]
 • Norm STRIPE STOCK grant, Y0-Y10: ${Array.from({length:11},(_,i)=>fmt(normComp(P,i).stock)).join(' · ')}  [keys: normStockY0 .. normStockY10]

@@ -2081,7 +2081,9 @@ You also have monarch_* tools to read Norm's REAL Monarch Money data (accounts, 
             // bad string reach the model, where the switch would silently fall back to the
             // default and the user would see a proposal that doesn't do what it claims.
             const STRIPE_POLICIES = ['deficit', 'floor', 'pct', 'retain', 'sell'];
-            if(aiParams.stripeGrants?.enabled&&(/^normStockY/.test(key)||key==='normStockGrowth')){
+            if(aiParams.stripeGrants?.enabled&&/^normCashY\d+$/.test(key)&&(aiParams.planStartYear||2026)+Number(key.slice(9))>(aiParams.stripeGrants.throughYear??Infinity)){
+              result={error:'This year uses manual total compensation. Edit it in Stripe → Compensation.'};
+            } else if(aiParams.stripeGrants?.enabled&&(/^normStockY/.test(key)||key==='normStockGrowth')){
               result={error:'Stock compensation is calculated from grant schedules. Edit awards in the Stripe tab; manual stock inputs are inactive.'};
             } else if (key === 'stripePolicy' && !STRIPE_POLICIES.includes(value)) {
               result = { error: `stripePolicy must be one of: ${STRIPE_POLICIES.join(', ')}` };

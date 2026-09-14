@@ -40,3 +40,16 @@ Rolling the plan preserves calendar-year grants and historical price anchors. Sa
 738 automated tests pass, including 23 new grant/math/workspace tests. Independent arithmetic covers fixed May share counts, PEG overlap, price appreciation, annual elections spanning March, quarterly 409A, actual/partial/remaining schedules, scenario isolation, cash allowance reconciliation, vest FMV versus tender value, tax basis, valuation ceiling/dilution, rollover and February eligibility. Existing tests also cover protected static routes for the new scripts.
 
 Browser installation timed out in this environment. Workspace rendering and mutation handlers were exercised in a VM, but desktop/mobile visual verification remains outstanding.
+
+
+## Hybrid compensation option (September 2026)
+
+In Awards & elections or Compensation, select **Use grant model through**. New setups default to the first two plan years. Existing all-year grant plans are preserved until the user selects a cutoff; a one-click two-year option is offered. An absolute year stays fixed during annual roll-forward.
+
+Through that year, actual/estimated grant schedules drive compensation. Later years use editable annual total cash and stock compensation, including all older PEG vests. Their grant schedules are not added again. Those years have no award-entry form; they link directly to manual compensation instead. Position valuation and the sale policy continue over the whole horizon.
+
+On first selecting a cutoff, future annual income is copied from the grant projection into calendar-year manual entries. Subsequent grant/price edits do not change these manual inputs. Extending and shortening the cutoff preserves previously edited manual values. All-years grants and all-years manual options are available. Manual stock income is distributed over the existing quarterly vest dates for timing and translated using vest FMV; it does not require the user to supply shares. If quarterly FMVs differ, this equal-quarter approximation can differ from the old detailed grant timing.
+
+Manual cash already includes salary, bonus and QCA; no extra QCA cash or existing-QCA deduction applies after the cutoff. The sidebar edits the same manual entries as the Stripe compensation table. Saved cases keep manual compensation assumptions while inheriting shared grant facts and the selected cutoff. Older cases without manual entries inherit the live manual schedule.
+
+Nine new hybrid regression tests cover boundary behavior, prefill/reconciliation, price independence, zero inputs, round-trip edits, rollover, saved cases, all/manual options and ineffective legacy advisor edits. These and 25 pre-existing grant/model/scenario tests were executed in an isolated JavaScript runtime, along with seven workspace interaction checks and syntax checks. The normal development environment was unavailable, so the full Vitest suite and browser visual verification were not rerun for this change.
