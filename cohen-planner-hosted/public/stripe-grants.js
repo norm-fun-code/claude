@@ -6,7 +6,7 @@
   const active=p=>p.stripeGrants?.enabled===true;
   const iso=(y,m,d)=>`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
   function dates(p){return (p.stripeVestDates||p.stripeVestMonths?.map(m=>[m,1])||[[3,15],[6,15],[9,15],[12,15]]).slice().sort((a,b)=>a[0]-b[0]||a[1]-b[1]);}
-  function setup(p){return {version:1,enabled:false,priceYear:p.planStartYear||2026,referenceTender:null,reference409a:null,referenceValuation:null,valuationCeiling:null,dilutionRate:0,grantGrowth:0,defaultARG:77800,defaultPEG:50000,defaultMultiplier:1,defaultElection:'arg',cashAlreadyIncluded:0,years:{},prices:{},actualGrants:[]};}
+  function setup(p){return {version:1,enabled:false,throughYear:(p.planStartYear||2026)+1,manualComp:{},priceYear:p.planStartYear||2026,referenceTender:null,reference409a:null,referenceValuation:null,valuationCeiling:null,dilutionRate:0,grantGrowth:0,defaultARG:77800,defaultPEG:50000,defaultMultiplier:1,defaultElection:'arg',cashAlreadyIncluded:0,years:{},prices:{},actualGrants:[]};}
   function award(p,y){
     const c=p.stripeGrants||setup(p), row=c.years?.[y]||{};
     // Carry the most recent explicit dollar inputs forward (promotions persist).
@@ -15,6 +15,45 @@
     const factor=(1+finite(c.grantGrowth))**Math.max(0,y-(prior??c.priceYear));
     return {arg:Math.max(0,finite(row.arg,finite(prev.arg,finite(c.defaultARG,77800))*factor)),peg:Math.max(0,finite(row.peg,finite(prev.peg,finite(c.defaultPEG,50000))*factor)),multiplier:Math.max(0,finite(row.multiplier,finite(prev.multiplier,finite(c.defaultMultiplier,1)))),election:row.election||prev.election||c.defaultElection||'arg',qca:row.qca||prev.qca||['cash','cash','cash','cash'],cashAlreadyIncluded:Math.max(0,finite(row.cashAlreadyIncluded,finite(prev.cashAlreadyIncluded,finite(c.cashAlreadyIncluded))))};
   }
+
+  // Older saved plans without a boundary keep all-year grants. New setups use two years.
+  // An absolute cutoff does not move when the plan's start year rolls forward.
+  function throughYear(p){return p.stripeGrants?.throughYear??Infinity;}
+  function usesGrants(p,year){return active(p)&&year<=throughYear(p);}
+  function manualComp(p,year){
+    const entries=p.stripeGrants?.manualComp||{}, exact=entries[year];
+    const prior=Object.keys(entries).map(Number).filter(y=>y<year).sort((a,b)=>b-a)[0];
+    if(exact)return {cash:Number(exact.cash),stock:Number(exact.stock)};
+    if(prior!=null){const n=year-prior;return {cash:entries[prior].cash*(1+(p.normGrowth??.01))**n,stock:entries[prior].stock*(1+(p.normStockGrowth??p.normGrowth??.01))**n};}
+    const i=year-(p.planStartYear||2026),n=Math.max(0,i-10);
+    return {cash:(p['normCashY'+Math.min(i,10)]??275000)*(1+(p.normGrowth??.01))**n,stock:(p['normStockY'+Math.min(i,10)]??150000)*(1+(p.normStockGrowth??p.normGrowth??.01))**n};
+  }
+  // Freeze future comp once; subsequent award/price edits must not change manual income.
+  // Preserve edited manual years when switching to grants and back again.
+  function prefillManual(p,cutoff){
+    const c=JSON.parse(JSON.stringify(p.stripeGrants||setup(p)));
+    c.throughYear=cutoff;c.manualComp=c.manualComp||{};
+    const next={...p,stripeGrants:c};
+    if(cutoff==null||validate(next).length)return next;
+    const sy=p.planStartYear||2026,ey=p.planEndYear||2058,ledger=compile(next);
+    for(let y=Math.max(sy,cutoff+1);y<=ey;y++){
+      if(c.manualComp[y])continue;
+      const i=y-sy,n=Math.max(0,i-10);
+      const base=(p['normCashY'+Math.min(i,10)]??275000)*(1+(p.normGrowth??.01))**n;
+      c.manualComp[y]={cash:Math.max(0,base-award(next,y).cashAlreadyIncluded)+ledger.years[y].cash,stock:ledger.years[y].stock};
+    }
+    return next;
+  }
+
+
+  // Manual annual stock income covers ALL vests, including older awards. Distribute it
+  // over the existing quarterly dates solely for tax/holding timing, never add grant rows.
+  function manualYear(p,year,prices){
+    const stock=manualComp(p,year).stock, pr=prices[year], ds=dates(p);
+    const events=ds.map(([m,d])=>{const q=Math.floor((m-1)/3),income=stock/ds.length,shares=income/pr.vestFMV[q];return {grantId:'Manual:'+year,type:'Manual',grantYear:year,status:'Manual',date:iso(year,m,d),quarter:q+1,shares,cash:0,stock:income,market:shares*pr.tender,vestPrice:pr.vestFMV[q],tenderPrice:pr.tender};});
+    return {year,stock,cash:0,market:events.reduce((s,e)=>s+e.market,0),shares:events.reduce((s,e)=>s+e.shares,0),events,arg:0,peg:0,qcaStock:0,manual:true};
+  }
+
   function returnFor(p,y){const i=y-(p.planStartYear||2026);return Math.max(-.99,finite(i>=0&&i<10?p['stripeRetY'+i]:null,finite(p.stripeLongTermReturn,.08)));}
   function pricePath(p,from,to){
     const c=p.stripeGrants, base=finite(c.priceYear,p.planStartYear||2026), out={};
@@ -44,6 +83,8 @@
     const c=p.stripeGrants, errors=[];
     if(!c)return ['Set up the grant model first.'];
     for(const k of ['referenceTender','reference409a'])if(!(Number(c[k])>0&&Number.isFinite(Number(c[k]))))errors.push(`Enter a positive ${k==='referenceTender'?'reference tender price':'reference 409A price'}.`);
+    if(c.throughYear!=null&&(!Number.isInteger(c.throughYear)||c.throughYear<2000||c.throughYear>2100))errors.push('Grant-model end year must be a calendar year or all years.');
+    for(const [y,v]of Object.entries(c.manualComp||{}))if(!/^\d{4}$/.test(y)||!v||['cash','stock'].some(k=>v[k]==null||!Number.isFinite(Number(v[k]))||v[k]<0))errors.push('Manual compensation needs non-negative cash and stock amounts.');
     if(c.valuationCeiling>0&&!(c.referenceValuation>0))errors.push('A valuation ceiling requires a reference valuation.');
     for(const k of ['priceYear'])if(!Number.isInteger(c[k])||c[k]<2000||c[k]>2100)errors.push('Reference year must be between 2000 and 2100.');
     for(const k of ['referenceValuation','valuationCeiling','cashAlreadyIncluded','defaultARG','defaultPEG','defaultMultiplier'])if(c[k]!=null&&(!Number.isFinite(Number(c[k]))||c[k]<0))errors.push(`${k} must be a non-negative number.`);
@@ -128,7 +169,7 @@
   //
   // `enabled` is a fact in this sense too: whether you model grants at all is how the plan is
   // built, not one of the futures a case is asking about. It follows the live plan.
-  const FACT_KEYS=['version','enabled','priceYear','referenceTender','reference409a',
+  const FACT_KEYS=['version','enabled','throughYear','priceYear','referenceTender','reference409a',
     'referenceValuation','prices','actualGrants'];
   const clone=v=>v&&typeof v==='object'?JSON.parse(JSON.stringify(v)):v;
 
@@ -149,11 +190,12 @@
     if(!out.stripeGrants){out.stripeGrants=clone(live);return out;}
     const c={...out.stripeGrants};
     for(const k of FACT_KEYS)if(Object.prototype.hasOwnProperty.call(live,k))c[k]=clone(live[k]);
+    if(c.manualComp===undefined&&live.manualComp)c.manualComp=clone(live.manualComp);
     out.stripeGrants=c;
     return out;
   }
 
-  const api={active,setup,award,returnFor,pricePath,validate,compile,dates,
+  const api={active,throughYear,usesGrants,manualComp,manualYear,prefillManual,setup,award,returnFor,pricePath,validate,compile,dates,
     FACT_KEYS,stripFacts,withFacts};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.StripeGrants=api;
 })(typeof window!=='undefined'?window:this);

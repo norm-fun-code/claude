@@ -10,7 +10,7 @@ const L=require('../public/liquidity.js');
 const A=require('../public/advisor-tools.js');
 const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
 const defaults=vm.runInNewContext('('+html.match(/const D=(\{[\s\S]*?\n\});/)[1]+')');
-function plan(){const p={...defaults,planEndYear:2030,observedOn:null,stripeObservedMonth:null,stripeRetY0:.3,stripeRetY1:.2,stripeLongTermReturn:0,startingStripeEquity:0,stripePolicy:'retain',homePurchaseYear:2099};p.stripeGrants={...G.setup(p),enabled:true,referenceTender:100,reference409a:100,referenceValuation:100e9,defaultARG:0,defaultPEG:0,years:{2026:{arg:80000,peg:80000,multiplier:1,election:'arg'},2027:{arg:0,peg:0,multiplier:1,election:'arg'}}};return p;}
+function plan(){const p={...defaults,planEndYear:2030,observedOn:null,stripeObservedMonth:null,stripeRetY0:.3,stripeRetY1:.2,stripeLongTermReturn:0,startingStripeEquity:0,stripePolicy:'retain',homePurchaseYear:2099};p.stripeGrants={...G.setup(p),enabled:true,throughYear:null,referenceTender:100,reference409a:100,referenceValuation:100e9,defaultARG:0,defaultPEG:0,years:{2026:{arg:80000,peg:80000,multiplier:1,election:'arg'},2027:{arg:0,peg:0,multiplier:1,election:'arg'}}};return p;}
 describe('share-based awards',()=>{
   it('locks May shares for four ARG and eight PEG vests; appreciation increases vest income',()=>{
     const p=plan(),l=G.compile(p),arg=l.grants.find(g=>g.id==='ARG:2026'),peg=l.grants.find(g=>g.id==='PEG:2026');

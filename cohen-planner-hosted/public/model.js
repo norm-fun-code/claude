@@ -192,6 +192,7 @@ function normComp(p,yIdx,ledger){
   const stockAt=i=>p['normStockY'+i]??150000;
   if(grantEngine.active(p)){
     const yr=(p.planStartYear||2026)+yIdx;
+    if(!grantEngine.usesGrants(p,yr))return grantEngine.manualComp(p,yr);
     const eq=(ledger||grantEngine.compile({...p,planEndYear:Math.max(p.planEndYear||2058,yr)})).years[yr];
     const base=yIdx<NORM_COMP_YEARS?cashAt(yIdx):cashAt(last)*(1+(p.normGrowth??0.01))**(yIdx-last);
     return {cash:Math.max(0,base-grantEngine.award(p,yr).cashAlreadyIncluded)+eq.cash,stock:eq.stock,qcaCash:eq.cash};
@@ -435,7 +436,7 @@ function run(p,rets,compiledGrants){
     const nk=kids.filter(k=>yr>=k).length;
     const yIdx=yr-sy;
     const {cash:normCash,stock:normStock}=normComp(p,yIdx,grantLedger);
-    const eqYear=grantLedger?.years[yr];
+    const eqYear=grantLedger?(grantEngine.usesGrants(p,yr)?grantLedger.years[yr]:grantEngine.manualYear(p,yr,grantLedger.prices)):null;
     const obs=yIdx===0?observedDay(p):null;
     const futureEvents=eqYear?.events.filter(e=>{const m=Number(e.date.slice(5,7)),d=Number(e.date.slice(8,10));return !obs||m>obs.m||(m===obs.m&&d>obs.d);});
     const normW2=normCash+normStock; // identical treatment for tax; split matters for cash
