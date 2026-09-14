@@ -8,7 +8,9 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%237d76ff'/><stop offset='.55' stop-color='%235048d6'/><stop offset='1' stop-color='%237c3aed'/></linearGradient></defs><rect width='32' height='32' rx='7' fill='url(%23g)'/><path d='M6 21L13 14L17 18L26 8' stroke='%23fff' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/><circle cx='26' cy='8' r='2.4' fill='%23fff'/></svg>">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+<script src="/stripe-grants.js"></script>
 <script src="/model.js"></script>
+<script src="/stripe-grants-ui.js"></script>
 <script src="/plan-migrate.js"></script>
 <script src="/spending.js"></script>
 <script src="/pace.js"></script>
@@ -1050,7 +1052,7 @@ tr:hover td{background:#f6f9fc}
     </div>
   </div>
   <div style="text-align:right;font-size:9px;color:#8898aa">
-    <div>Norm: ${fmtK((P.normCashY0||0)+(P.normStockY0||0))}/yr current</div>
+    <div>Norm: ${fmtK(normComp(P,0).cash+normComp(P,0).stock)}/yr current</div>
     <div>Nancy: ${P.nancyMaxClients} clients max · $${P.nancyHourlyRate}/hr</div>
     <div>${P.numKids} kid${P.numKids!==1?'s':''} · ${P.downPctg}% down in ${P.homePurchaseYear}</div>
   </div>
@@ -1270,8 +1272,10 @@ function buildControls(){
       <button onclick="dismissSplitReview()" style="display:block;margin-top:4px;background:none;border:none;padding:0;color:var(--accent);font-family:inherit;font-size:8px;font-weight:600;cursor:pointer;text-decoration:underline">Looks right — dismiss</button>
     </div>`;
   }
+  if(StripeGrants.active(P))normBody+=`<p class="sg-note">Stock is calculated in Stripe → Awards. Cash inputs below exclude the calculated QCA cash; review any existing allowance in Stripe → Compensation. Totals include the net QCA adjustment.</p>`;
   normBody+=`<div class="comp-grid comp-head"><span>Year</span><span>Cash</span><span>Stripe stock</span><span>Total</span></div>`;
   for(let i=0;i<11;i++){
+    if(StripeGrants.active(P)){const c=normComp(P,i);normBody+=`<div class="comp-grid"><span class="comp-yr">${sy+i}</span>${compCell('normCashY'+i)}<span class="comp-tot" id="sg_compstock_${i}" title="Calculated from Stripe grants">${fmtF(c.stock)}</span><span class="comp-tot" id="ct_${i}">${fmtF(c.cash+c.stock)}</span></div>`;continue;}
     const yr=sy+i,tot=(P['normCashY'+i]||0)+(P['normStockY'+i]||0);
     normBody+=`<div class="comp-grid">
       <span class="comp-yr">${yr}</span>
@@ -1282,7 +1286,7 @@ function buildControls(){
   }
   normBody+=`<div style="height:1px;background:var(--bd);margin:7px 0 5px"></div>`;
   normBody+=s('Cash growth ('+(sy+11)+'+)','normGrowth',0,.10,.005,v=>(v*100).toFixed(1)+'%');
-  normBody+=s('Stock growth ('+(sy+11)+'+)','normStockGrowth',0,.20,.005,v=>(v*100).toFixed(1)+'%');
+  if(!StripeGrants.active(P))normBody+=s('Stock growth ('+(sy+11)+'+)','normStockGrowth',0,.20,.005,v=>(v*100).toFixed(1)+'%');
   normBody+=s('401k employee','pretax401k',0,30500,500,fmtF)+s('Benefits pre-tax','pretaxBenefits',0,15000,200,fmtF);
   normBody+=`<div id="norm_preview" style="font-size:7.5px;color:var(--t3);margin:1px 0 4px;font-style:italic"></div>`;
   h+=ST('💼 Norm — Compensation','norm-income',normBody);
@@ -1668,9 +1672,11 @@ function render(){
   // projected/plan figure, which changes on every slider drag and would fire constantly).
   if(monarchSnapshot&&!monarchSnapshot.partial)_checkMilestone(monarchSnapshot.netWorth);
   if(_firstPaint){_firstPaint=false;if(!_reduceMotion())requestAnimationFrame(_introAnimate);}
+  if(StripeGrants.active(P)){for(let i=0;i<11;i++){const c=normComp(P,i),stock=document.getElementById('sg_compstock_'+i),total=document.getElementById('ct_'+i);if(stock)stock.textContent=fmtF(c.stock);if(total)total.textContent=fmtF(c.cash+c.stock);}}
   const np=document.getElementById('norm_preview');
   const _sy=P.planStartYear||2026;const _lastY=_sy+10;
-  if(np){const _c=P.normCashY10??304000,_s=P.normStockY10??150000,_cg=P.normGrowth??0.01,_sg=P.normStockGrowth??_cg;
+  if(np&&StripeGrants.active(P)){const c=normComp(P,10);np.textContent=`${_lastY}: ${fmtF(c.cash)} cash + ${fmtF(c.stock)} stock · calculated from grant schedules`;}
+  else if(np){const _c=P.normCashY10??304000,_s=P.normStockY10??150000,_cg=P.normGrowth??0.01,_sg=P.normStockGrowth??_cg;
     np.textContent=`${_lastY}: ${fmtF(_c+_s)} (${fmtF(_c)} cash + ${fmtF(_s)} stock) · ${_lastY+10}: ${fmtF(Math.round(_c*(1+_cg)**10+_s*(1+_sg)**10))} at ${(_cg*100).toFixed(1)}% / ${(_sg*100).toFixed(1)}% growth`;}
   const nap=document.getElementById('nancy_preview');
   if(nap){const matYr=P.nancyRampYear+P.nancyRampYears;const nc=Math.min(P.nancyMaxClients,P.nancyRampClients+(P.nancyMaxClients-P.nancyRampClients)*Math.max(0,Math.min(1,(matYr-P.nancyRampYear)/P.nancyRampYears)));nap.textContent=`${matYr}: ~${Math.round(nc)} clients → ${fmtF(Math.round(nc*P.nancyHourlyRate*P.nancyWeeksPerYear))} gross`}
@@ -1877,24 +1883,25 @@ function setStripeObserved(v){
 // The private-company CFO view: what vested, what became cash, what compounded, and how
 // concentrated the household has become as a result.
 function renderStripeTab(R,P){
+  if(stripeWorkspace!=='overview'){renderStripeWorkspace(R);return;}
   const ca=document.getElementById('chartArea');
   const sy=P.planStartYear||2026;
   const yr=(_stripeYear&&R.some(r=>r.yr===_stripeYear))?_stripeYear:sy;
   const row=R.find(r=>r.yr===yr)||R[0];
   const last=R[R.length-1];
-  const tot=R.reduce((a,r)=>({n:a.n+r.sNew,s:a.s+r.sSold,k:a.k+r.sRet,h:a.h+(r.sHold||0),gt:a.gt+(r.sGainTax||0)}),{n:0,s:0,k:0,h:0,gt:0});
+  const tot=R.reduce((a,r)=>({n:a.n+r.sNew,s:a.s+r.sSold,k:a.k+r.sRet,h:a.h+(r.sHold||0),gt:a.gt+(r.sTotalGainTax??r.sGainTax??0)}),{n:0,s:0,k:0,h:0,gt:0});
   const basis=last.sBasis,appr=last.sEnd-basis;
   const V='#6772e5';
   const hasAny=tot.n>0||(P.startingStripeEquity||0)>0;
 
   // Waterfall proportions for the selected year
-  const newEq=row.sNew,soldPct=newEq>0?row.sSold/newEq*100:0,keptPct=100-soldPct;
+  const newEq=P.stripeGrants?.enabled?row.sAvailable:row.sNew,soldPct=newEq>0?row.sSold/newEq*100:0,keptPct=100-soldPct;
   // What this year's retained stock is worth at the end of the plan, compounding forward
   // at each year's own assumed rate.
   // Retained stock sits at the Feb-yr mark. Its first re-mark is Feb yr+1, which carries
   // THIS row's rate — so the window starts at this row and ends one short of the last,
   // whose own rate is only marked in the February after the plan ends.
-  let fv=row.sRet;
+  let fv=P.stripeGrants?.enabled?row.sAdded:row.sRet;
   for(let i=R.indexOf(row);i<R.length-1;i++)fv*=(1+R[i].sRate);
 
   const tile=(lbl,val,sub,col)=>`<div class="kpi" style="border-color:${col?'rgba(103,114,229,.25)':'var(--bd)'}">
@@ -1903,7 +1910,7 @@ function renderStripeTab(R,P){
     ${sub?`<div style="font-size:8.5px;color:var(--t3);margin-top:2px">${sub}</div>`:''}
   </div>`;
 
-  let h='';
+  let h=stripeWorkspaceNav()+stripeGrantIntro();
   if(!hasAny){
     h+=`<div class="sc" style="margin-bottom:12px;border-color:rgba(103,114,229,.25)">
       <h3>◆ No Stripe equity in this plan</h3>
@@ -1931,7 +1938,7 @@ function renderStripeTab(R,P){
   if(yr===sy&&row.sInOpening>0){
     h+=`<div class="sc" style="margin-bottom:10px;border-color:rgba(103,114,229,.3);background:rgba(103,114,229,.04)">
       <p style="line-height:1.6;font-size:10px">Your position was observed in <strong>${obsLabel}</strong>, so it already contains
-      <strong>${fmt(row.sInOpening)}</strong> of ${sy}'s vest — three of the four quarterly lots. Only the
+      <strong>${fmt(row.sInOpening)}</strong> of ${sy}'s vest from vests already received. Only the
       <strong>${fmt(row.sAdded)}</strong> still to vest is added on top; counting the whole ${fmt(row.sNew)} grant again
       would double-count what you already hold. The full grant is still taxed as ${sy} income.</p>
     </div>`;
@@ -1964,10 +1971,10 @@ function renderStripeTab(R,P){
   </section>`;
 
   h+=`<details class="polish-fold"><summary>Vest details · ${yr}</summary><dl class="sq-facts">
-    <div><dt>Granted in ${yr}</dt><dd class="ui-num">${UI.money(row.sGross)}</dd></div>
+    <div><dt>Stock income in ${yr}</dt><dd class="ui-num">${UI.money(row.sGross)}</dd></div>
     <div><dt>Withheld at vest</dt><dd class="ui-num">${UI.money(row.sVestTax)} <em>${(row.sVestRate*100).toFixed(0)}%</em></dd></div>
-    <div><dt>Reached your account</dt><dd class="ui-num">${UI.money(row.sNew)}</dd></div>
-    <div><dt>Taken as cash</dt><dd class="ui-num">${UI.money(row.sSold)}${row.sNew>0?` <em>${soldPct.toFixed(0)}% of the vest</em>`:''}</dd></div>
+    <div><dt>Reached your account</dt><dd class="ui-num">${UI.money(row.sNew)}${P.stripeGrants?.enabled?' <em>tender value</em>':''}</dd></div>
+    <div><dt>Sold at tender value</dt><dd class="ui-num">${UI.money(row.sSold)}${row.sNew>0?` <em>${soldPct.toFixed(0)}% of the vest</em>`:''}</dd></div>
     <div><dt>Added to holdings</dt><dd class="ui-num">${UI.money(row.sAdded??row.sRet)}</dd></div>
     ${row.sInOpening>0?`<div><dt>Already in the opening balance</dt><dd class="ui-num">${UI.money(row.sInOpening)}</dd></div>`:''}
   </dl></details>`;
@@ -1975,7 +1982,7 @@ function renderStripeTab(R,P){
     h+=`<div class="sc" style="margin-bottom:12px;border-color:rgba(103,114,229,.3)">
       <h3>◆ Held shares sold in ${yr}</h3>
       <p style="line-height:1.6">This year's vest and the portfolio (down to its ${fmt(P.liquidReserveFloor??500000)} reserve floor) still left ${fmt(row.need-row.sSold)} uncovered, so <strong style="color:#6772e5">${fmt(row.sHold)}</strong> of Stripe you already held was sold — realising <strong>${fmt(row.sGainTax)}</strong> of capital-gains tax, just <strong>${(row.sGainTax/row.sHold*100).toFixed(1)}%</strong> of the proceeds.
-      <br><br>That rate is low because the sale takes your <em>least appreciated</em> lots first: the newest shares carry almost no gain above their vest price, so they cost almost nothing in tax to sell. Selling at vest is still free; this is the next cheapest thing.</p>
+      <br><br>That rate is low because the sale takes your <em>least appreciated</em> lots first: the newest shares carry almost no gain above their vest price, so they cost almost nothing in tax to sell. A sale at the vest-date FMV has no additional gain; this is the next cheapest thing.</p>
     </div>`;
   }
 
@@ -1988,15 +1995,16 @@ function renderStripeTab(R,P){
     h+=`<section class="sq-flow">
       <span class="ui-eyebrow">Where ${yr}’s vest went</span>
       <p class="sq-sentence">
-        <b class="ui-num">${UI.money(row.sNew)}</b> reached your account
+        <b class="ui-num">${UI.money(row.sNew)}</b> reached your account${P.stripeGrants?.enabled&&row.sInOpening>0?` (${UI.money(row.sAvailable)} still to vest)`:""}
         <i>→</i> <b class="ui-num" data-tone="spend">${UI.money(row.sSold)}</b> covered ${row.need>0?`a ${UI.money(row.need)} cash need`:'cash needs'}
-        <i>→</i> <b class="ui-num" data-tone="keep">${UI.money(row.sRet)}</b> kept
+        <i>→</i> <b class="ui-num" data-tone="keep">${UI.money(P.stripeGrants?.enabled?row.sAdded:row.sRet)}</b> kept
         ${row.sRet>0&&R.indexOf(row)<R.length-1?`<i>→</i> worth <b class="ui-num">${UI.money(Math.round(fv))}</b> by ${last.yr}`:''}
       </p>
       ${row.sSold>0||row.sRet>0?`<div class="sq-split" role="img" aria-label="${soldPct.toFixed(0)} per cent taken as cash, ${keptPct.toFixed(0)} per cent retained">
         ${row.sSold>0?`<span data-tone="spend" style="flex:${soldPct}"></span>`:''}
         ${row.sRet>0?`<span data-tone="keep" style="flex:${keptPct}"></span>`:''}
       </div>`:''}
+      ${row.sNewSaleTax>0?`<p class="sq-note">${UI.money(row.sNewSaleTax)} estimated capital-gains tax on new shares sold; net cash proceeds ${UI.money(row.sSold-row.sNewSaleTax)}.</p>`:''}
       ${row.dpOut>0?`<p class="sq-note">Includes the ${UI.money(row.dpOut)} down payment — a real cash outflow, so vesting stock helps fund it.</p>`:''}
       ${row.sold>0?`<p class="sq-note" data-tone="warn">The year’s vest wasn’t enough — a further ${UI.money(row.sold)} came out of the diversified portfolio.</p>`:''}
     </section>`;
@@ -2048,7 +2056,7 @@ function renderStripeTab(R,P){
       <td style="color:${V}">${r.sNew>0?fmt(r.sNew):'—'}</td>
       <td style="color:${r.sSold>0?'#cd3d64':'var(--t3)'}">${r.sSold>0?fmt(r.sSold):'—'}</td>
       <td style="color:${r.sHold>0?'#cd3d64':'var(--t3)'};font-weight:${r.sHold>0?600:400}">${r.sHold>0?fmt(r.sHold):'—'}</td>
-      <td style="color:${r.sGainTax>0?'var(--r)':'var(--t3)'}">${r.sGainTax>0?fmt(r.sGainTax):'—'}</td>
+      <td style="color:${(r.sTotalGainTax??r.sGainTax)>0?'var(--r)':'var(--t3)'}">${(r.sTotalGainTax??r.sGainTax)>0?fmt(r.sTotalGainTax??r.sGainTax):'—'}</td>
       <td style="color:${r.sAppr>=0?'var(--g)':'var(--r)'}">${r.sAppr>=0?'+':'−'}${fmt(Math.abs(r.sAppr))}</td>
       <td style="color:${V};font-weight:600">${fmt(r.sEnd)}</td>
       <td>${(r.sPct*100).toFixed(0)}%</td>
@@ -3791,7 +3799,7 @@ function renderSensitivityTab(R,P){
   const ALL_PARAMS=[
     {key:'investReturn',label:'Portfolio Return',delta:0.01,hi:'+1%',lo:'−1%',fmtV:v=>(v*100).toFixed(1)+'%',better:1},
     {key:'normCash',label:'Norm Cash Comp',delta:25000,hi:'+$25K/yr',lo:'−$25K/yr',fmtV:v=>fmt(v),better:1},
-    {key:'normStock',label:'Norm Stripe Grant',delta:25000,hi:'+$25K/yr',lo:'−$25K/yr',fmtV:v=>fmt(v),better:1},
+    {key:'normStock',label:StripeGrants.active(P)?'PEG target dollars':'Norm Stripe Grant',delta:25000,hi:'+$25K/yr',lo:'−$25K/yr',fmtV:v=>fmt(v),better:1},
     {key:'stripeRet',label:'Stripe Return',delta:.03,hi:'+3%/yr',lo:'−3%/yr',fmtV:v=>(v*100).toFixed(0)+'%',better:1},
     {key:'nancyHourlyRate',label:'Nancy Rate',delta:25,hi:'+$25/hr',lo:'−$25/hr',fmtV:v=>'$'+v+'/hr',better:1},
     {key:'nancyMaxClients',label:'Nancy Clients',delta:5,hi:'+5',lo:'−5',fmtV:v=>v+' clients',better:1},
@@ -3820,7 +3828,10 @@ function renderSensitivityTab(R,P){
     let vBase,hiP,loP;
     // Synthetic multi-field levers: a single P.key perturbation can't express "this runs
     // $25K higher across the board" when the value is spread over an 11-year window.
-    if(p.key==='normCash'||p.key==='normStock'){
+    if(p.key==='normStock'&&StripeGrants.active(P)){
+      vBase=StripeGrants.award(P,P.planStartYear||2026).peg;hiP=structuredClone(P);loP=structuredClone(P);
+      for(let y=P.planStartYear||2026;y<=(P.planEndYear||2058);y++){const a=StripeGrants.award(P,y);hiP.stripeGrants.years[y]={...a,...P.stripeGrants.years[y],peg:a.peg+delta};loP.stripeGrants.years[y]={...a,...P.stripeGrants.years[y],peg:Math.max(0,a.peg-delta)};}
+    } else if(p.key==='normCash'||p.key==='normStock'){
       const f=p.key==='normCash'?'normCashY':'normStockY';
       vBase=P[f+'0'];
       hiP={...P};loP={...P};
@@ -5198,9 +5209,10 @@ INCOME (${planSY} base year)
 • Spendable cash after tax: ${fmt(y26.inc)} — this is cash comp + Nancy − all household tax − pretax − practice overhead. It EXCLUDES stock he retains. (Take-home if he sold every vesting share: ${fmt(y26.netTC)}.)
 • Pre-tax deductions: 401k ${fmt(P.pretax401k)} + benefits ${fmt(P.pretaxBenefits)} = ${fmt(P.pretax401k+P.pretaxBenefits)}
 
+${StripeGrants.active(P)?'GRANT MODEL ACTIVE: normStockY inputs are ignored. Stock income comes from actual/estimated ARG and PEG cohorts plus QCA stock; quarterly FMV determines income. normCashY is the pre-QCA baseline with an explicit existing-QCA adjustment. Edit grant schedules in the Stripe tab.':''}
 PER-YEAR INCOME INPUTS (editable via set_param)
 • Norm CASH comp, Y0-Y10 (${planSY}-${planSY+10}): ${Array.from({length:11},(_,i)=>fmt(P['normCashY'+i])).join(' · ')}  [keys: normCashY0 .. normCashY10]
-• Norm STRIPE STOCK grant, Y0-Y10: ${Array.from({length:11},(_,i)=>fmt(P['normStockY'+i])).join(' · ')}  [keys: normStockY0 .. normStockY10]
+• Norm STRIPE STOCK grant, Y0-Y10: ${Array.from({length:11},(_,i)=>fmt(normComp(P,i).stock)).join(' · ')}  [keys: normStockY0 .. normStockY10]
 • Beyond ${planSY+10} each stream compounds on its own: cash at normGrowth (${((P.normGrowth??0.01)*100).toFixed(1)}%/yr), stock at normStockGrowth (${((P.normStockGrowth??P.normGrowth??0.01)*100).toFixed(1)}%/yr).
 • Nancy W2 (only used while yr<nancyRampYear=${P.nancyRampYear}): Y0 ${fmt(P.nancyW2Y0)} · Y1 ${fmt(P.nancyW2Y1)} · Y2 ${fmt(P.nancyW2Y2)} · Y3 ${fmt(P.nancyW2Y3)}  [keys: nancyW2Y0, nancyW2Y1, nancyW2Y2, nancyW2Y3]
 
