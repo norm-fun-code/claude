@@ -1466,11 +1466,16 @@ function openingFromLivePlan(){
 }
 // If opening.js ever fails to load, a case should still save and load — degraded to the old
 // behaviour of carrying its own balances, rather than throwing and losing the case entirely.
+// Two kinds of fact get stripped on the way into a case and re-attached on the way out: the
+// opening balances (what you own) and the grant ledger (what you have been awarded, at what
+// prices). Both are the same in every case; only the assumptions around them differ.
 function keepAssumptions(params){
-  return window.PlannerOpening?PlannerOpening.stripObserved(params):params;
+  let out=window.PlannerOpening?PlannerOpening.stripObserved(params):params;
+  return window.StripeGrants?StripeGrants.stripFacts(out):out;
 }
 function attachObserved(params){
-  return window.PlannerOpening?PlannerOpening.withObserved(params,openingFromLivePlan()):params;
+  let out=window.PlannerOpening?PlannerOpening.withObserved(params,openingFromLivePlan()):params;
+  return window.StripeGrants?StripeGrants.withFacts(out,P&&P.stripeGrants):out;
 }
 // A case's assumptions, made runnable against today's balance sheet. Every place that
 // projects a saved case goes through here, so a comparison compares futures rather than

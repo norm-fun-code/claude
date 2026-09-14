@@ -241,7 +241,7 @@ describe('the app routes every case through that rule', () => {
     expect(html).toContain('params:keepAssumptions({...P})');
     expect(html).toContain('scenarios[i].params=keepAssumptions({...P});');
     // …and both degrade rather than throw if the module is missing.
-    expect(html).toContain('return window.PlannerOpening?PlannerOpening.stripObserved(params):params;');
+    expect(html).toContain('window.PlannerOpening?PlannerOpening.stripObserved(params):params;');
   });
 
   it('re-attaches on load', () => {

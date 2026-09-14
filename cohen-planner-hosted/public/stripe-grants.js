@@ -116,6 +116,44 @@
     if(!c.actualGrants?.length)warnings.push('All grants are estimated. Enter actual schedules to anchor existing awards.');
     return {years,grants,prices,warnings:[...new Set(warnings)]};
   }
-  const api={active,setup,award,returnFor,pricePath,validate,compile,dates};
+  // ── What a saved case may and may not keep ───────────────────────────────
+  // Same division opening balances make, applied to the grant model. A case is a set of
+  // ASSUMPTIONS: how big future awards are, how fast they grow, how much dilution to expect.
+  // The grant letters you have actually received, and the prices the tender has actually
+  // printed, are not assumptions — they are facts, and they are the same facts in every case.
+  //
+  // Freezing them into a case meant a case saved before you entered your grants carried an
+  // empty ledger, and loading it switched the whole grant model off. The projection fell back
+  // to the flat-percentage estimate and lost $3.5M by 2058 without saying a word.
+  //
+  // `enabled` is a fact in this sense too: whether you model grants at all is how the plan is
+  // built, not one of the futures a case is asking about. It follows the live plan.
+  const FACT_KEYS=['version','enabled','priceYear','referenceTender','reference409a',
+    'referenceValuation','prices','actualGrants'];
+  const clone=v=>v&&typeof v==='object'?JSON.parse(JSON.stringify(v)):v;
+
+  function stripFacts(params){
+    const out={...(params||{})};
+    if(!out.stripeGrants)return out;
+    const c={...out.stripeGrants};
+    for(const k of FACT_KEYS)delete c[k];
+    out.stripeGrants=c;
+    return out;
+  }
+  // Re-attach today's facts as a case is loaded. A case saved before the grant model existed
+  // has no grant assumptions of its own to honour, so it inherits the live model whole rather
+  // than turning it off.
+  function withFacts(params,live){
+    const out={...(params||{})};
+    if(!live)return out;
+    if(!out.stripeGrants){out.stripeGrants=clone(live);return out;}
+    const c={...out.stripeGrants};
+    for(const k of FACT_KEYS)if(Object.prototype.hasOwnProperty.call(live,k))c[k]=clone(live[k]);
+    out.stripeGrants=c;
+    return out;
+  }
+
+  const api={active,setup,award,returnFor,pricePath,validate,compile,dates,
+    FACT_KEYS,stripFacts,withFacts};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.StripeGrants=api;
 })(typeof window!=='undefined'?window:this);

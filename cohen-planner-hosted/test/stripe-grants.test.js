@@ -114,6 +114,73 @@ describe('prices and projections reconcile',()=>{
     const p=plan();expect(A.applyOverrides(p,{normStockY0:5}).errors.length).toBe(1);
   });
 });
+describe('a saved case keeps the assumptions, not the grant ledger',()=>{
+  const live=()=>{
+    const p=plan();
+    p.stripeGrants.actualGrants=[{type:'ARG',year:2026,vests:[{date:'2026-06-15',shares:300},{date:'2026-09-15',shares:300},{date:'2026-12-15',shares:300},{date:'2027-03-15',shares:300}]}];
+    return p;
+  };
+
+  it('drops the facts on save and leaves the assumptions alone',()=>{
+    const saved=G.stripFacts({...live(),investReturn:.04});
+    for(const k of G.FACT_KEYS)expect(saved.stripeGrants).not.toHaveProperty(k);
+    expect(saved.stripeGrants.years[2026].arg).toBe(80000);
+    expect(saved.stripeGrants.defaultPEG).toBe(0);
+    expect(saved.investReturn).toBe(.04);
+  });
+
+  it('re-attaches the facts on load',()=>{
+    const p=live(), saved=G.stripFacts({...p});
+    saved.stripeGrants.grantGrowth=.10;              // the case's own assumption
+    const loaded=G.withFacts(saved,p.stripeGrants);
+    expect(loaded.stripeGrants.enabled).toBe(true);
+    expect(loaded.stripeGrants.referenceTender).toBe(100);
+    expect(loaded.stripeGrants.actualGrants).toEqual(p.stripeGrants.actualGrants);
+    expect(loaded.stripeGrants.grantGrowth).toBe(.10); // …survives the round trip
+  });
+
+  // The bug this exists to prevent. A case saved before the grants were entered carried an
+  // empty ledger; loading it switched grant mode off and the projection silently fell back
+  // to the flat-percentage estimate.
+  it('a case saved before the grant model existed inherits it rather than switching it off',()=>{
+    const p=live(), legacy={...p};delete legacy.stripeGrants;
+    const loaded=G.withFacts(legacy,p.stripeGrants);
+    expect(G.active(loaded)).toBe(true);
+    expect(run(loaded).R.at(-1).netWorth).toBe(run(p).R.at(-1).netWorth);
+    // …and without the fix, the same case projects a materially different future.
+    expect(run(legacy).R.at(-1).netWorth).not.toBe(run(p).R.at(-1).netWorth);
+  });
+
+  it('a case that predates the split but baked the ledger in is healed, not trusted',()=>{
+    const p=live();
+    const stale={...p,stripeGrants:{...p.stripeGrants,enabled:false,actualGrants:[],referenceTender:1}};
+    const loaded=G.withFacts(stale,p.stripeGrants);
+    expect(loaded.stripeGrants.enabled).toBe(true);
+    expect(loaded.stripeGrants.referenceTender).toBe(100);
+    expect(loaded.stripeGrants.actualGrants).toEqual(p.stripeGrants.actualGrants);
+  });
+
+  it('holds the case unchanged when there is no live grant model to read',()=>{
+    const saved=G.stripFacts({...live()});
+    expect(G.withFacts(saved,null)).toEqual(saved);
+    expect(G.withFacts(saved,undefined)).toEqual(saved);
+  });
+
+  it('never mutates what it is given, and never shares structure with the live plan',()=>{
+    const p=live(), before=JSON.stringify(p);
+    const saved=G.stripFacts(p), loaded=G.withFacts(saved,p.stripeGrants);
+    expect(JSON.stringify(p)).toBe(before);
+    expect(p.stripeGrants.actualGrants).not.toBe(loaded.stripeGrants.actualGrants);
+    loaded.stripeGrants.actualGrants[0].vests[0].shares=1;
+    expect(p.stripeGrants.actualGrants[0].vests[0].shares).toBe(300);
+  });
+
+  it('the app routes every case through both halves of the rule',()=>{
+    expect(html).toContain('StripeGrants.stripFacts(out):out;');
+    expect(html).toContain('StripeGrants.withFacts(out,P&&P.stripeGrants):out;');
+  });
+});
+
 describe('Stripe workspace interactions',()=>{
   function workspace(){
     const p=plan(),elements={chartArea:{innerHTML:''}},messages=[];
