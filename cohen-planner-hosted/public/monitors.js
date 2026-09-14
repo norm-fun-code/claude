@@ -127,8 +127,8 @@
     const held=prev?num(prev.sEnd):num(P.startingStripeEquity)||0;
     const vestPerQuarter=(num(row.sNew)||0)/4;
 
-    const check=liquidity.fundingCheck({year:buyYear,quarter,need,heldValue:held,
-      vestPerQuarter,otherCash},P);
+    const check=liquidity.fundingCheck({year:buyYear,quarter,need,heldValue:held*(P.stripeGrants?.enabled?1+(row.sMarked||0):1),
+      vestPerQuarter,vestByQuarter:row.sVestByQuarter,otherCash},P);
     // How much of the purchase leans on stock rather than cash — the thing that makes the
     // date matter. Fully funded from the portfolio, the tender calendar is irrelevant.
     const stripeShare=need>0?Math.min(1,Math.max(0,(need-otherCash)/need)):0;

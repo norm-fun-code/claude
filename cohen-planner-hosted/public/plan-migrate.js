@@ -111,6 +111,16 @@
   // so each one has to shift in lockstep or it would silently re-point at the wrong year.
   function rollForwardParams(P){
     const out={...P};
+    if(P.stripeGrants?.enabled){
+      const G=typeof module!=='undefined'&&module.exports?require('./stripe-grants.js'):root.StripeGrants;
+      const c=JSON.parse(JSON.stringify(P.stripeGrants)), sy=P.planStartYear||2026;
+      const ledger=G.compile(P), next=ledger.prices[sy+1];
+      for(let y=sy-2;y<=(P.planEndYear||2058)+1;y++)c.years[y]={...G.award(P,y),...c.years[y]};
+      for(let y=sy-2;y<=sy;y++){const pr=ledger.prices[y];c.prices[y]={...c.prices[y],tender:pr.tender,grant:pr.grant,valuation:pr.valuation,q409a:pr.q409a,vestFMV:pr.vestFMV};}
+      c.reference409a=next.tender*(c.reference409a/c.referenceTender);
+      c.referenceTender=next.tender;c.referenceValuation=next.valuation;c.priceYear=sy+1;
+      out.stripeGrants=c;
+    }
     const last=NORM_YEARS-1;
     for(let i=0;i<last;i++){
       out['normCashY'+i]=P['normCashY'+(i+1)];

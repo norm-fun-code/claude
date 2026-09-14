@@ -271,7 +271,7 @@ app.get('/model.js', requireAuth, (req, res) => {
 // Keep every new planner asset behind the same session gate as the existing UI.
 // liquidity.js was referenced by index.html but never listed here, so it 404'd in
 // production while working locally under the preview server's plain static handler.
-for (const asset of ['cockpit.js', 'cockpit.css', 'ui.js', 'ui.css', 'decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'bridge.js', 'opening.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js', 'advisor-tools.js', 'pace.js']) {
+for (const asset of ['stripe-grants.js', 'stripe-grants-ui.js', 'cockpit.js', 'cockpit.css', 'ui.js', 'ui.css', 'decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'bridge.js', 'opening.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js', 'advisor-tools.js', 'pace.js']) {
   app.get('/' + asset, requireAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', asset));
   });
@@ -2019,7 +2019,7 @@ Tools available:
 ═══ PARAMETER KEY REFERENCE ═══
 Per-year income (Y0=the plan's start year, Y1=+1yr, … Y10=+10yr — see "PER-YEAR INCOME INPUTS" above in the live state for the actual years and current values):
 • normCashY0 through normCashY10 — Norm's CASH compensation for each of the next 11 years.
-• normStockY0 through normStockY10 — Norm's STRIPE STOCK grant for each of those years.
+• normStockY0 through normStockY10 — manual stock income estimates. When stripeGrants.enabled is true these are inactive; the shared engine calculates vest-date stock compensation from ARG, PEG and QCA schedules. Use the Stripe tab to change those awards. normCashY inputs are a baseline adjusted for any QCA already included and calculated QCA cash.
   Cash and stock are both ordinary W-2 income at vest, so moving a dollar between them does not change his tax by a cent. What it changes is CASH FLOW and ASSETS: cash is spendable, stock arrives as Stripe equity and is only spendable if sold. Never treat retained stock as available cash, and never treat Stripe equity as part of the diversified portfolio.
 • nancyW2Y0, nancyW2Y1, nancyW2Y2, nancyW2Y3 — Nancy's W2 income in each of the next 4 years (only actually used for years before nancyRampYear — see below)
 Beyond Y10 each stream compounds on its own: cash at normGrowth, stock at normStockGrowth (no year-specific key needed). Nancy's income beyond nancyRampYear is computed from nancyHourlyRate × client ramp (nancyRampClients→nancyMaxClients over nancyRampYears), not from a per-year field.
@@ -2081,7 +2081,9 @@ You also have monarch_* tools to read Norm's REAL Monarch Money data (accounts, 
             // bad string reach the model, where the switch would silently fall back to the
             // default and the user would see a proposal that doesn't do what it claims.
             const STRIPE_POLICIES = ['deficit', 'floor', 'pct', 'retain', 'sell'];
-            if (key === 'stripePolicy' && !STRIPE_POLICIES.includes(value)) {
+            if(aiParams.stripeGrants?.enabled&&(/^normStockY/.test(key)||key==='normStockGrowth')){
+              result={error:'Stock compensation is calculated from grant schedules. Edit awards in the Stripe tab; manual stock inputs are inactive.'};
+            } else if (key === 'stripePolicy' && !STRIPE_POLICIES.includes(value)) {
               result = { error: `stripePolicy must be one of: ${STRIPE_POLICIES.join(', ')}` };
             } else if (key !== 'stripePolicy' && !Number.isFinite(Number(value))) {
               result = { error: `${key} expects a numeric value` };

@@ -185,10 +185,17 @@ const STRIPE_RET_YEARS=10; // explicit per-year Stripe return assumptions: Y0 th
 // only becomes spendable if it is sold. For TAX purposes they are identical — both are
 // ordinary W2 income at vest — so calcTax() still sees one combined normW2 figure.
 // Past the explicit window each stream compounds at its own growth rate.
-function normComp(p,yIdx){
+const grantEngine=typeof module!=='undefined'&&module.exports?require('./stripe-grants.js'):window.StripeGrants;
+function normComp(p,yIdx,ledger){
   const last=NORM_COMP_YEARS-1;
   const cashAt=i=>p['normCashY'+i]??275000;
   const stockAt=i=>p['normStockY'+i]??150000;
+  if(grantEngine.active(p)){
+    const yr=(p.planStartYear||2026)+yIdx;
+    const eq=(ledger||grantEngine.compile({...p,planEndYear:Math.max(p.planEndYear||2058,yr)})).years[yr];
+    const base=yIdx<NORM_COMP_YEARS?cashAt(yIdx):cashAt(last)*(1+(p.normGrowth??0.01))**(yIdx-last);
+    return {cash:Math.max(0,base-grantEngine.award(p,yr).cashAlreadyIncluded)+eq.cash,stock:eq.stock,qcaCash:eq.cash};
+  }
   if(yIdx<NORM_COMP_YEARS)return{cash:cashAt(yIdx),stock:stockAt(yIdx)};
   const n=yIdx-last;
   return{
@@ -398,7 +405,7 @@ function stripeSellAmount(p,newStock,netCash,liqGrown,ret,td){
 // Exported so UI code holding only the rows asks exactly the same question the engine does.
 function drawYears(R){return R.filter(r=>r.sold>0||r.sHold>0).length}
 
-function run(p,rets){
+function run(p,rets,compiledGrants){
   const sy=p.planStartYear||2026;
   const ey=p.planEndYear||2058;
   const kids=[p.kid1Birth];
@@ -423,10 +430,14 @@ function run(p,rets){
   if((p.startingStripeEquity||0)>0)lots.push({v:p.startingStripeEquity,b:p.startingStripeEquity*(p.stripeStartingBasisPct??1),yr:sy-1});
   let tSNew=0,tSSold=0,tSRet=0,tSHold=0,tSGainTax=0;
   const R=[];
+  const grantLedger=grantEngine.active(p)?(compiledGrants||grantEngine.compile(p)):null;
   for(let yr=sy;yr<=ey;yr++){
     const nk=kids.filter(k=>yr>=k).length;
     const yIdx=yr-sy;
-    const {cash:normCash,stock:normStock}=normComp(p,yIdx);
+    const {cash:normCash,stock:normStock}=normComp(p,yIdx,grantLedger);
+    const eqYear=grantLedger?.years[yr];
+    const obs=yIdx===0?observedDay(p):null;
+    const futureEvents=eqYear?.events.filter(e=>{const m=Number(e.date.slice(5,7)),d=Number(e.date.slice(8,10));return !obs||m>obs.m||(m===obs.m&&d>obs.d);});
     const normW2=normCash+normStock; // identical treatment for tax; split matters for cash
     let nancyGross,nancyIsSolo=false,nancySENet=0,nancyOH=0;
     if(yIdx<4&&yr<p.nancyRampYear){nancyGross=p['nancyW2Y'+yIdx]??100000}
@@ -458,7 +469,12 @@ function run(p,rets){
     // Tax is computed on the WHOLE year's income, because that is the liability actually
     // owed for it and the effective rate reflects earnings already booked. Only the share of
     // the resulting net that is still to be RECEIVED is spendable from here.
-    const cashAvail=(tax.net-normStockNet)*stub;
+    const qcaCash=eqYear?.cash||0;
+    const qcaRate=qcaCash>0?vestTaxRate(p,tax,taxP,grossIncome,yr,ctcKids,qcaCash):0;
+    const qcaRemaining=futureEvents?.reduce((s,e)=>s+e.cash,0)||0;
+    const cashAvail=(tax.net-normStockNet-qcaCash*(1-qcaRate))*stub+qcaRemaining*(1-qcaRate);
+    const futureStockIncome=eqYear?futureEvents.reduce((s,e)=>s+e.stock,0):normStock*(yIdx===0?stripeVestRemaining(p):1);
+    const remainingNetComp=eqYear?cashAvail+futureStockIncome*(1-vestRate):tax.net*stub;
     const inc=cashAvail;
     // rets[] (Monte Carlo) perturbs only the DIVERSIFIED portfolio. Stripe follows its own
     // explicit return path — we have no basis for claiming to know its volatility.
@@ -520,7 +536,7 @@ function run(p,rets){
     // real cash outflow) is the gap the retention policy decides how to close.
     const dpThis=(yr===p.homePurchaseYear)?cashToClose(p.homePrice,p).total:0;
     const netCash=surp-dpThis;
-    const sr=stripeReturn(p,yIdx);
+    const sr=grantLedger?grantLedger.prices[yr+1].tender/grantLedger.prices[yr].tender-1:stripeReturn(p,yIdx);
     const gp=1-p.costBasisPct,td=gp*p.capGainsTaxRate;
     // A negative balance is an unfunded shortfall, not a leveraged position. Compounding it
     // at the portfolio's expected return would model an unlimited margin loan accruing at
@@ -529,13 +545,19 @@ function run(p,rets){
     // The waterfall trades the AFTER-TAX grant: withheld shares never reach the account, so
     // they can be neither sold for cash nor retained as equity.
     const liquidityModule=typeof module!=='undefined'&&module.exports?require('./liquidity.js'):window.PlannerLiquidity;
-    const saleBudget=liquidityModule.raisableInYear(yr,{heldValue:lotsValue(lots),vestPerQuarter:normStockNet/4},p);
+    const marketNet=eqYear?eqYear.market*(1-vestRate):normStockNet;
+    const vestByQuarter=eqYear?Array.from({length:4},(_,q)=>futureEvents.filter(e=>e.quarter===q+1).reduce((s,e)=>s+e.market*(1-vestRate),0)):null;
+    const markRate=grantLedger&&yIdx>0?grantLedger.prices[yr].tender/grantLedger.prices[yr-1].tender-1:0;
+    const saleBudget=liquidityModule.raisableInYear(yr,{heldValue:lotsValue(lots)*(1+markRate),vestPerQuarter:normStockNet/4,vestByQuarter},p);
     // Only the vests still AHEAD of the observation date are in play. The ones that already
     // landed were sold or kept months ago, and either way their effect is inside the opening
     // balances — offering them to the waterfall again would fund the rest of the year twice.
     const vestShareNew=(yr===sy)?stripeVestRemaining(p):1;
-    const vestAvail=normStockNet*vestShareNew;
-    const stripeSold=Math.max(0,Math.min(saleBudget,vestAvail,stripeSellAmount(p,vestAvail,netCash,liqGrown,ret,td)));
+    const vestAvail=eqYear?vestByQuarter.reduce((a,b)=>a+b,0):normStockNet*vestShareNew;
+    const vestBasis=eqYear?futureStockIncome*(1-vestRate):vestAvail;
+    const newSaleTaxRate=vestAvail>0?Math.max(0,1-vestBasis/vestAvail)*p.capGainsTaxRate:0;
+    const stripeSold=Math.max(0,Math.min(saleBudget,vestAvail,stripeSellAmount(p,vestAvail*(1-newSaleTaxRate),netCash,liqGrown,ret,td)/(1-newSaleTaxRate)));
+    const newSaleTax=stripeSold*newSaleTaxRate;
     const stripeRetained=Math.max(0,vestAvail-stripeSold);
     // ── Stripe equity roll-forward, on the tender calendar ──
     // A private position has ONE price and it moves on ONE date: the February tender. So a
@@ -550,20 +572,20 @@ function run(p,rets){
     // The Feb-yr tender: everything carried in from last year is re-marked by LAST year's
     // return. Year 0 gets none — the opening balance is already the most recent mark, and
     // the next tender falls in the following row.
-    const marked=yIdx>0?stripeReturn(p,yIdx-1):0;
+    const marked=grantLedger?markRate:(yIdx>0?stripeReturn(p,yIdx-1):0);
     const stripePreGrowth=lotsValue(lots);
     if(marked)for(const L of lots)L.v*=(1+marked);
     const stripeAppr=lotsValue(lots)-stripePreGrowth;
     // Everything reaching here is already remainder-only, so all of it is new equity. What
     // the opening balance was already carrying is reported separately, never re-added.
-    const alreadyInOpening=normStockNet-vestAvail;
+    const alreadyInOpening=marketNet-vestAvail;
     const newVest=stripeRetained;
     // Basis of a vesting lot is its vest-date fair market value, which is the same mark.
-    if(newVest>0)lots.push({v:newVest,b:newVest,yr});
+    if(newVest>0)lots.push({v:newVest,b:vestAvail>0?vestBasis*newVest/vestAvail:newVest,yr});
     // ── Funding waterfall for whatever this year's vest could not cover ──
     // Diversified pool first, but only down to the reserve floor; then Stripe holdings;
     // and only if those are exhausted too does the pool go below the floor.
-    let txS=0,sold=0,holdSold=0,holdTax=0,netFlow=netCash+stripeSold;
+    let txS=0,sold=0,holdSold=0,holdTax=0,netFlow=netCash+stripeSold-newSaleTax;
     if(netFlow<0){
       let need=-netFlow; // net cash still required after the vest
       const floor=Math.max(0,p.liquidReserveFloor??p.stripeLiquidFloor??500000);
@@ -592,8 +614,8 @@ function run(p,rets){
     // Drop emptied lots so the ledger stays small across a 33-year Monte Carlo.
     for(let i=lots.length-1;i>=0;i--)if(lots[i].v<=1e-6)lots.splice(i,1);
     const stripeEnd=lotsValue(lots);
-    tSNew+=normStockNet;tSSold+=stripeSold;tSRet+=stripeRetained;
-    tSHold+=holdSold;tSGainTax+=holdTax;
+    tSNew+=marketNet;tSSold+=stripeSold;tSRet+=stripeRetained;
+    tSHold+=holdSold;tSGainTax+=holdTax+newSaleTax;
     let hv=0,mb=0,eq=0;
     // yo = years of ownership elapsed. 0 in the purchase year itself (just closed,
     // no appreciation/paydown yet) — matches the property-tax calc above and the
@@ -618,7 +640,7 @@ function run(p,rets){
     // beside it. That dollar is not cosmetic — it silently disabled the bridge's
     // year-by-year breakdown, which only renders when its parts reconcile exactly.
     const nw=Math.round(liq)+Math.round(stripeEnd)+Math.round(eq)-Math.round(otherDebt);
-    R.push({yr,normG:Math.round(normW2),normCash:Math.round(normCash),normStock:Math.round(normStock),
+    R.push({yr,normG:Math.round(normCash)+Math.round(normStock),normCash:Math.round(normCash),normStock:Math.round(normStock),
       nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,
       inc:Math.round(inc),netTC:tax.net,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
       liv:Math.round(liv),cc:Math.round(cc),tu:Math.round(tu),totE,
@@ -633,10 +655,10 @@ function run(p,rets){
       // be the matching share or the two describe different periods — full-year pay against
       // a quarter of the spending reported a $306K margin for fifteen weeks, larger than the
       // whole year it was a fraction of.
-      flow:Math.round(tax.net*stub-totE),
+      flow:Math.round(remainingNetComp-totE),
       // …and a MONTHLY margin is a rate, so it divides by the months actually modelled, not
       // by twelve. Computed here once rather than left to each caller to remember.
-      flowMonthly:Math.round(stub>0?(tax.net*stub-totE)/(12*stub):0),
+      flowMonthly:Math.round(stub>0?(remainingNetComp-totE)/(12*stub):0),
       // Two different questions, and reporting only one of them was misleading.
       //   gap    — shortfall against CASH pay alone. Says how much of the year's vest has to
       //            be sold. Closing it consumes no accumulated wealth.
@@ -644,7 +666,7 @@ function run(p,rets){
       //            that actually eats into savings or previously held Stripe.
       // incGap is always <= gap, and the two differ by exactly that year's grant.
       gap:Math.round(Math.max(0,-surp)),
-      incGap:Math.round(Math.max(0,totE-tax.net*stub)),
+      incGap:Math.round(Math.max(0,totE-remainingNetComp)),
       // Total cash the funding waterfall must source, including the down payment — a capital
       // outflow, not an operating shortfall, which is why it is kept separate from both gaps.
       need:Math.round(Math.max(0,-netCash)),dpOut:Math.round(dpThis),
@@ -653,13 +675,16 @@ function run(p,rets){
       // comparable to sBeg, which is an after-tax balance. sGross and sVestTax show the
       // withholding that separates them rather than leaving the reader to wonder why the
       // grant on the offer letter and the shares in the portal disagree.
-      sBeg:Math.round(stripeBegin),sNew:Math.round(normStockNet),
+      sBeg:Math.round(stripeBegin),sNew:Math.round(marketNet),
+      sIncomeNet:Math.round(normStockNet),sAvailable:Math.round(vestAvail),sTotalGainTax:Math.round(holdTax+newSaleTax),sNewSaleTax:Math.round(newSaleTax),sVestByQuarter:vestByQuarter,
+      qcaCash:Math.round(qcaCash),sVestingShares:eqYear?.shares??null,sEndShares:grantLedger?stripeEnd/grantLedger.prices[yr].tender:null,
+      sGrantDetails:eqYear||null,sGrantWarnings:grantLedger?.warnings||[],
       sGross:Math.round(normStock),sVestTax:Math.round(normStock-normStockNet),
       sVestRate:vestRate,sSold:Math.round(stripeSold),
       // Derived from the two rounded figures rather than rounded independently, so the
       // reported sold + retained always adds back to the reported vest (post-window comp
       // is fractional, and three separate roundings can otherwise drift a dollar apart).
-      sRet:Math.round(normStockNet)-Math.round(stripeSold),
+      sRet:Math.round(marketNet)-Math.round(stripeSold),
       // What actually ENTERED the equity ledger this year, versus what the opening balance
       // was already carrying. These differ only in the observation year, and stating both is
       // the difference between a reconcilable dashboard and one that appears to double-count.
@@ -866,9 +891,10 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
     : Math.exp(logDrift)-1; // expected compounded annual growth
   const nwPaths=[],liqPaths=[],exRetPaths=[],finalNW=[],floorLiq=[];let ruin=0,dpFail=0;
   const dpYr=p.homePurchaseYear,dpNeed=p.homePrice*(p.downPctg/100),dpIdx=dpYr-sy;
+  const mcGrants=grantEngine.active(p)?grantEngine.compile(p):null;
   for(let t=0;t<trials;t++){
     const rets=isHist?drawHistoricalBlock(nYears):Array.from({length:nYears},drawRet);
-    const{R}=run(p,rets);
+    const{R}=run(p,rets,mcGrants);
     // Net worth INCLUDING retirement — the band is drawn against the Total NW line and the
     // percentiles are presented as "net worth at <horizon>". Simulating `nw` here left both
     // sitting a whole 401(k) below the line they describe.

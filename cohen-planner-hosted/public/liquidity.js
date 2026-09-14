@@ -46,22 +46,28 @@
   //   elective — the standing quarterly cash election, available every quarter
   // `heldValue` is the stock on hand at the start of the year; `vestPerQuarter` is what
   // lands each quarter and becomes eligible from that quarter onward.
-  function saleWindows(year,{heldValue=0,vestPerQuarter=0}={},p){
+  function saleWindows(year,{heldValue=0,vestPerQuarter=0,vestByQuarter=null}={},p){
     const c=cfg(p);
+    if(p?.stripeGrants?.enabled){c.electiveCashPerQuarter=0;c.electiveCashAnnualCap=0;}
     const free=freelyLiquid(year,p);
     const out=[];
     let eligible=heldValue;          // stock that could be sold, growing as vests land
     let electiveUsed=0;
     for(let q=1;q<=4;q++){
-      eligible+=vestPerQuarter;      // this quarter's vest becomes eligible
+      const beforeVest=eligible;
+      eligible+=vestByQuarter?Number(vestByQuarter[q-1]||0):vestPerQuarter;      // this quarter's vest becomes eligible
       if(free){
         out.push({quarter:q,kind:'open',cap:eligible,
           note:'a liquidity event has occurred, so stock is freely sellable'});
+        if(p?.stripeGrants?.enabled)eligible=0;
         continue;
       }
       const isTender=c.tenderQuarters.includes(q);
       if(isTender){
-        const cap=c.tenderCapPerEvent==null?eligible:Math.min(eligible,c.tenderCapPerEvent);
+        // In grant mode the Q1 tender is February, before the March vest.
+        const available=p?.stripeGrants?.enabled&&q===1?beforeVest:eligible;
+        const cap=c.tenderCapPerEvent==null?available:Math.min(available,c.tenderCapPerEvent);
+        if(p?.stripeGrants?.enabled)eligible-=cap;
         out.push({quarter:q,kind:'tender',cap,
           note:c.tenderCapPerEvent==null
             ?'tender window — uncapped, limited only by vested stock'
@@ -93,23 +99,23 @@
     // Selling the same shares twice is not possible: the cumulative total can never exceed
     // the stock that has actually become eligible by that quarter.
     const c=cfg(p);
-    const eligibleByQ=(ctx&&ctx.heldValue||0)+(ctx&&ctx.vestPerQuarter||0)*quarter;
+    const eligibleByQ=(ctx&&ctx.heldValue||0)+(ctx?.vestByQuarter?ctx.vestByQuarter.slice(0,quarter).reduce((a,b)=>a+b,0):(ctx&&ctx.vestPerQuarter||0)*quarter);
     return Math.min(total,eligibleByQ);
   }
 
   function raisableInYear(year,ctx,p){return raisableBy(year,4,ctx,p)}
 
   // Can a specific need be met by a specific quarter, and if not, what is short?
-  function fundingCheck({year,quarter,need,heldValue=0,vestPerQuarter=0,otherCash=0},p){
-    const grossFromStripe=raisableBy(year,quarter,{heldValue,vestPerQuarter},p);
+  function fundingCheck({year,quarter,need,heldValue=0,vestPerQuarter=0,vestByQuarter=null,otherCash=0},p){
+    const grossFromStripe=raisableBy(year,quarter,{heldValue,vestPerQuarter,vestByQuarter},p);
     // Conservative tax allowance for closing; actual lot selection may improve proceeds.
     const gainFraction=Math.max(0,Math.min(1,1-(p&&p.costBasisPct!=null?p.costBasisPct:1)));
     const taxAllowance=grossFromStripe*gainFraction*Math.max(0,p&&p.capGainsTaxRate||0);
     const fromStripe=grossFromStripe-taxAllowance;
     const available=fromStripe+Number(otherCash||0);
     const shortfall=Math.max(0,Number(need||0)-available);
-    const windows=saleWindows(year,{heldValue,vestPerQuarter},p).filter(w=>w.quarter<=quarter);
-    const nextWindow=saleWindows(year,{heldValue,vestPerQuarter},p).find(w=>w.quarter>quarter&&w.kind!=='elective');
+    const windows=saleWindows(year,{heldValue,vestPerQuarter,vestByQuarter},p).filter(w=>w.quarter<=quarter);
+    const nextWindow=saleWindows(year,{heldValue,vestPerQuarter,vestByQuarter},p).find(w=>w.quarter>quarter&&w.kind!=='elective');
     return{
       year,quarter,need:Number(need||0),otherCash:Number(otherCash||0),
       fromStripe,grossFromStripe,taxAllowance,available,shortfall,fundable:shortfall<=0,
