@@ -293,6 +293,7 @@
     if(p.tone!=='bad')return{alerts,skipped};
 
     const drivers=(p.flagged||[]).slice(0,3);
+    const lead=drivers[0]||null;
     alerts.push(alert(KIND.SPENDING_PACE,SEVERITY.WARNING,
       // Keyed on the MONTH, so it is one alert for this month however often it is
       // re-detected, and next month's is a new one to decide about.
@@ -302,14 +303,28 @@
        ev('Normal for you by this day',`${usd(p.normalLow)}–${usd(p.normalHigh)}`,
          `same day of ${p.monthsCompared} earlier months`),
        ev('Above the middle of that range',usd(p.over),'computed'),
-       ...drivers.map(d=>ev(d.category,`${usd(d.mtd)} · ${usd(d.over)} more than usual`,'transaction ledger'))],
+       ...drivers.map(d=>ev(d.category,
+         `${usd(d.mtd)} · ${usd(d.over)} more than usual${d.explain?` — ${d.explain.sentence}`:''}`,
+         'transaction ledger'))],
+      // A one-off and a habit are the same number and opposite problems. The ledger can
+      // tell them apart, so the alert says which rather than leaving it as homework.
       drivers.length
-        ?`This is outside the range this household actually occupies by this point in a month, and it is concentrated: ${drivers.map(d=>d.category.toLowerCase()).join(' and ')} account for most of the gap. Committed costs are excluded, so this is spending you still control.`
+        ?`This is outside the range this household actually occupies by this point in a month, and it is concentrated: ${drivers.map(d=>d.category.toLowerCase()).join(' and ')} account for most of the gap.${
+            lead&&lead.explain?` In ${lead.category.toLowerCase()}, ${lead.explain.sentence}.`:''} Committed costs are excluded, so this is spending you still control.`
         :`This is outside the range this household actually occupies by this point in a month. No single category explains it, which usually means the whole month has run a little hot rather than one decision doing it.`,
-      drivers.length
-        ?`There are ${daysLeftIn(p.month,p.day)} days left in the month. Look at ${drivers[0].category.toLowerCase()} first — it is ${usd(drivers[0].over)} above its own usual pace.`
-        :`There are ${daysLeftIn(p.month,p.day)} days left in the month. Check the category breakdown before deciding whether this is a one-off.`,
-      {month:p.month}));
+      !drivers.length
+        ?`There are ${daysLeftIn(p.month,p.day)} days left in the month. Check the category breakdown before deciding whether this is a one-off.`
+        :lead&&lead.explain&&lead.explain.kind==='one-off'
+          // A purchase that will not repeat needs no behaviour change — saying otherwise
+          // spends the reader's attention on a decision that does not exist.
+          ?`Nothing to change if that purchase was deliberate: it is a single charge, not a new pattern, and the month should return to its usual range on its own. Worth a look only if you did not expect it.`
+        :lead&&lead.explain&&lead.explain.kind==='more of the same'
+          ?`This one is a pattern rather than a surprise — ${lead.explain.merchant} is a regular, just heavier this month. With ${daysLeftIn(p.month,p.day)} days left, ${lead.category.toLowerCase()} is the lever if you want the month back in range.`
+          :`There are ${daysLeftIn(p.month,p.day)} days left in the month. Look at ${drivers[0].category.toLowerCase()} first — it is ${usd(drivers[0].over)} above its own usual pace, spread across ${lead&&lead.explain?lead.explain.merchantsInvolved:'several'} merchants rather than one purchase.`,
+      {month:p.month,
+       // Carried on the alert so the inbox and the advisor can state the same thing without
+       // re-deriving it from the ledger and risking a different answer.
+       driverExplain:lead&&lead.explain?{category:lead.category,...lead.explain}:null}));
     return{alerts,skipped};
   }
 

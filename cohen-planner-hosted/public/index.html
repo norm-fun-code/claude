@@ -2859,11 +2859,14 @@ function paceCard(p){
       </div>
     </div>
 
+    ${p.headlineDriver?`<p class="pace-headline-driver">${e(p.headlineDriver.label)}</p>`:''}
+
     ${p.flagged.length?`<div class="pace-drivers">
       <span class="ui-eyebrow">What is driving it</span>
       ${p.flagged.slice(0,4).map(d=>`<div class="pace-driver">
         <span>${e(d.category)}</span>
         <span><b class="ui-num">${M(d.mtd)}</b><small>usually ${M(d.typical)} by now · <em>${m(d.over)} more</em></small></span>
+        ${d.explain?`<small class="pace-why" data-kind="${e(d.explain.kind)}">${e(d.explain.sentence)}</small>`:''}
       </div>`).join('')}
     </div>`:`<p class="pace-clear">No single category is out of its usual range.</p>`}
 

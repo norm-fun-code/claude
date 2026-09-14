@@ -77,11 +77,15 @@
       if(isCommitted(name,o))continue;
       const mk=monthOf(t.date),d=dayOf(t.date);
       if(!mk||!d)continue;
-      if(!byMonth.has(mk))byMonth.set(mk,{month:mk,days:new Array(32).fill(0),cats:new Map()});
+      if(!byMonth.has(mk))byMonth.set(mk,{month:mk,days:new Array(32).fill(0),cats:new Map(),items:[]});
       const m=byMonth.get(mk);
       m.days[d]+=spend;
       if(!m.cats.has(name))m.cats.set(name,new Array(32).fill(0));
       m.cats.get(name)[d]+=spend;
+      // Kept so a flagged category can say WHAT moved it. "Clothing is up $330" tells you
+      // where to look; "a single H&M purchase is most of it" tells you whether to care.
+      m.items.push({cat:name,merchant:(t.merchant||t.plaidName||t.name||'').trim(),
+        spend,day:d,date:t.date});
     }
     // Turn per-day into running totals, so "by the 12th" is one lookup.
     for(const m of byMonth.values()){
@@ -102,6 +106,62 @@
     {max:Infinity,verdict:'well above',tone:'bad'},
   ];
   const bandFor=z=>BANDS.find(b=>z<b.max)||BANDS[BANDS.length-1];
+
+  // ── Why a category is up ─────────────────────────────────────────────────
+  // A category name and a dollar figure leave the reader to open their statement. What they
+  // actually want to know is whether it was ONE thing or a pattern — a sofa is not a habit,
+  // and a habit is not a sofa. Those call for opposite responses, and the difference is
+  // visible in the ledger.
+  //
+  // Three honest answers, and the third is the important one:
+  //   one-off   — a single purchase from a merchant with no history here covers most of it
+  //   more of the same — the biggest merchant is one you buy from every month
+  //   spread    — nothing dominates, so no culprit is offered rather than inventing one
+  function explainDriver(name,over,current,priorMonths,day){
+    const items=(current.items||[]).filter(t=>t.cat===name&&t.day<=day&&t.spend>0);
+    if(!items.length||!(over>0))return null;
+    // Merchants seen in this category in any PRIOR month — the test for "new to you".
+    const seen=new Map();
+    for(const m of priorMonths){
+      for(const t of (m.items||[])){
+        if(t.cat!==name||!t.merchant)continue;
+        seen.set(t.merchant.toLowerCase(),(seen.get(t.merchant.toLowerCase())||0)+1);
+      }
+    }
+    const byMerchant=new Map();
+    for(const t of items){
+      const k=t.merchant||'Uncategorised merchant';
+      if(!byMerchant.has(k))byMerchant.set(k,{merchant:k,total:0,count:0,largest:0,date:t.date});
+      const e=byMerchant.get(k);
+      e.total+=t.spend;e.count++;
+      if(t.spend>e.largest){e.largest=t.spend;e.date=t.date}
+    }
+    const ranked=[...byMerchant.values()].sort((a,b)=>b.total-a.total);
+    const top=ranked[0];
+    const share=top.total/over;
+    const priorCount=seen.get((top.merchant||'').toLowerCase())||0;
+    const familiar=priorCount>0;
+    // "Most of it" has to mean something. Two thirds, or it is not most of it.
+    const dominates=share>=0.66;
+    let kind='spread',sentence;
+    const money=v=>'$'+Math.round(v).toLocaleString('en-US');
+    if(dominates&&!familiar&&top.count===1){
+      kind='one-off';
+      sentence=`a one-time ${top.merchant} purchase of ${money(top.largest)} is most of it`;
+    } else if(dominates&&familiar){
+      kind='more of the same';
+      sentence=`${top.merchant}, which you spend on most months, is most of it — ${money(top.total)} across ${top.count} purchase${top.count===1?'':'s'}`;
+    } else if(dominates){
+      kind='one-off';
+      sentence=`${top.count} purchase${top.count===1?'':'s'} at ${top.merchant} totalling ${money(top.total)} is most of it`;
+    } else {
+      sentence=`no single purchase explains it — ${ranked.length} merchant${ranked.length===1?'':'s'}, the largest ${top.merchant} at ${money(top.total)}`;
+    }
+    return{kind,sentence,merchant:top.merchant,amount:top.total,largest:top.largest,
+      count:top.count,date:top.date,shareOfOver:share,merchantsInvolved:ranked.length,
+      seenInPriorMonths:priorCount,newToYou:!familiar,
+      top:ranked.slice(0,3).map(r=>({merchant:r.merchant,total:Math.round(r.total),count:r.count}))};
+  }
 
   // ── The headline ─────────────────────────────────────────────────────────
   function pace(txns,cats,opts){
@@ -173,6 +233,10 @@
       });
     }
     drivers.sort((a,b)=>b.over-a.over);
+    // Only flagged categories get an explanation: the others are noise by construction, and
+    // explaining noise is how a reader learns to skip the explanations.
+    const priorMonths=priors.map(m=>byMonth.get(m));
+    for(const d of drivers)if(d.flagged)d.explain=explainDriver(d.category,d.over,current,priorMonths,day);
 
     return{
       status:'ok',asOf,month:thisMonth,day,
@@ -187,12 +251,21 @@
         deltaPct:lastAtDay>0?(mtd-lastAtDay)/lastAtDay:null},
       monthsCompared:priors.length,monthsUsed:priors,
       drivers,flagged:drivers.filter(d=>d.flagged),
+      // The one line worth putting under the headline figure, when there is one.
+      headlineDriver:(()=>{
+        const f=drivers.filter(d=>d.flagged);
+        if(!f.length)return null;
+        const d=f[0];
+        return{category:d.category,over:d.over,shareOfGap:d.shareOfGap,
+          label:`Driven by ${d.category} +${'$'+Math.round(d.over).toLocaleString('en-US')}`,
+          explain:d.explain};
+      })(),
       committedRule,
       committedKinds:COMMITTED.map(c=>c.key),
     };
   }
 
-  const api={COMMITTED,BANDS,isCommitted,cumulate,pace,bandFor,mean,stdev};
+  const api={COMMITTED,BANDS,isCommitted,cumulate,pace,bandFor,mean,stdev,explainDriver};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.PlannerPace=api;
 })(typeof window!=='undefined'?window:this);

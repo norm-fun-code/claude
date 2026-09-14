@@ -269,3 +269,142 @@ describe('Discretionary pace as a watchlist signal',()=>{
     expect(out.skipped.some(s=>s.kind==='spendingPace')).toBe(true);
   });
 });
+
+// "Clothing is up $330" tells you where to look. Whether it was ONE purchase or a pattern
+// tells you whether to care — a sofa is not a habit, and the two call for opposite
+// responses. The ledger can tell them apart, so the app should not leave it as homework.
+const P=Pace, Monitors=require('../public/monitors.js');
+describe('what is actually driving a category', () => {
+  const t = (date, amount, categoryName, merchant) => ({ date, amount: -amount, categoryName, merchant });
+  const quietPriors = () => {
+    const out = [];
+    for (const m of ['06', '07', '08']) {
+      for (let d = 2; d <= 28; d += 3) out.push(t(`2026-${m}-${String(d).padStart(2, '0')}`, 120, 'Groceries', 'Whole Foods'));
+      out.push(t(`2026-${m}-06`, 150, 'Dining', 'Via Carota'));
+      out.push(t(`2026-${m}-12`, 150, 'Dining', 'Lilia'));
+      out.push(t(`2026-${m}-14`, 60, 'Clothing', 'Uniqlo'));
+    }
+    return out;
+  };
+  const thisMonthBase = () => {
+    const out = [];
+    for (let d = 2; d <= 14; d += 3) out.push(t(`2026-09-${String(d).padStart(2, '0')}`, 120, 'Groceries', 'Whole Foods'));
+    return out;
+  };
+  const run = extra => P.pace([...quietPriors(), ...thisMonthBase(), ...extra], null, { asOf: '2026-09-14' });
+
+  it('names a single purchase from a merchant with no history as a one-off', () => {
+    const r = run([t('2026-09-08', 474, 'Clothing', 'H&M')]);
+    const x = r.headlineDriver.explain;
+    expect(x.kind).toBe('one-off');
+    expect(x.merchant).toBe('H&M');
+    expect(x.newToYou).toBe(true);
+    expect(x.sentence).toMatch(/one-time H&M purchase of \$474 is most of it/);
+  });
+
+  it('calls a familiar merchant more of the same, not a surprise', () => {
+    // Same dollars, opposite meaning: this is a regular you leaned on harder.
+    const r = run([t('2026-09-03', 400, 'Dining', 'Via Carota'), t('2026-09-09', 350, 'Dining', 'Via Carota')]);
+    const x = r.headlineDriver.explain;
+    expect(x.kind).toBe('more of the same');
+    expect(x.newToYou).toBe(false);
+    expect(x.sentence).toMatch(/which you spend on most months/);
+  });
+
+  it('refuses to name a culprit when nothing dominates', () => {
+    // The important one. Picking the largest of five similar charges would read as an
+    // explanation while being an arbitrary choice.
+    const r = run([t('2026-09-02', 200, 'Dining', 'Lilia'), t('2026-09-04', 190, 'Dining', 'Rezdora'),
+      t('2026-09-06', 180, 'Dining', 'Via Carota'), t('2026-09-09', 210, 'Dining', 'Misi'),
+      t('2026-09-12', 200, 'Dining', 'Torrisi')]);
+    const x = r.headlineDriver.explain;
+    expect(x.kind).toBe('spread');
+    expect(x.sentence).toMatch(/no single purchase explains it/);
+    expect(x.merchantsInvolved).toBeGreaterThan(3);
+  });
+
+  it('claims nothing at all in a normal month', () => {
+    const r = run([t('2026-09-06', 150, 'Dining', 'Via Carota'), t('2026-09-12', 150, 'Dining', 'Lilia')]);
+    expect(r.flagged).toHaveLength(0);
+    expect(r.headlineDriver).toBe(null);
+  });
+
+  it('only explains categories that were flagged, never the noise', () => {
+    const r = run([t('2026-09-08', 474, 'Clothing', 'H&M')]);
+    for (const d of r.drivers) {
+      if (d.flagged) expect(d.explain, d.category).toBeTruthy();
+      else expect(d.explain, d.category).toBeUndefined();
+    }
+  });
+
+  it('requires two thirds before it says "most of it"', () => {
+    // The threshold is the whole claim. Below it the wording has to change, or "most"
+    // becomes a word the reader learns to discount.
+    const r = run([t('2026-09-02', 200, 'Dining', 'Lilia'), t('2026-09-04', 190, 'Dining', 'Rezdora'),
+      t('2026-09-06', 180, 'Dining', 'Via Carota'), t('2026-09-09', 210, 'Dining', 'Misi'),
+      t('2026-09-12', 200, 'Dining', 'Torrisi')]);
+    const x = r.headlineDriver.explain;
+    expect(x.shareOfOver).toBeLessThan(0.66);
+    expect(x.sentence).not.toMatch(/most of it/);
+  });
+
+  it('survives transactions with no merchant on them', () => {
+    const r = run([t('2026-09-08', 474, 'Clothing', undefined)]);
+    expect(() => r.headlineDriver.explain.sentence).not.toThrow();
+    expect(r.headlineDriver.explain.merchant).toBe('Uncategorised merchant');
+  });
+});
+
+describe('the spending alert acts on the difference', () => {
+  const t = (date, amount, categoryName, merchant) => ({ date, amount: -amount, categoryName, merchant });
+  const build = extra => {
+    const txns = [];
+    for (const m of ['06', '07', '08']) {
+      for (let d = 2; d <= 28; d += 3) txns.push(t(`2026-${m}-${String(d).padStart(2, '0')}`, 120, 'Groceries', 'Whole Foods'));
+      txns.push(t(`2026-${m}-06`, 150, 'Dining', 'Via Carota'));
+      txns.push(t(`2026-${m}-14`, 60, 'Clothing', 'Uniqlo'));
+    }
+    for (let d = 2; d <= 14; d += 3) txns.push(t(`2026-09-${String(d).padStart(2, '0')}`, 120, 'Groceries', 'Whole Foods'));
+    txns.push(...extra);
+    return Monitors.spendingPace({ pace: P.pace(txns, null, { asOf: '2026-09-14' }) });
+  };
+
+  it('tells you to do nothing when the cause was a single purchase', () => {
+    // A charge that will not repeat needs no behaviour change, and saying otherwise spends
+    // attention on a decision that does not exist.
+    const a = build([t('2026-09-08', 900, 'Clothing', 'H&M')]).alerts.find(x => x.kind === 'spendingPace');
+    expect(a, 'a pace alert').toBeTruthy();
+    expect(a.action).toMatch(/not a new pattern/);
+    expect(a.driverExplain.kind).toBe('one-off');
+    expect(a.significance).toMatch(/one-time H&M purchase/);
+  });
+
+  it('names it a pattern when the merchant is a regular', () => {
+    const a = build([t('2026-09-03', 500, 'Dining', 'Via Carota'), t('2026-09-09', 450, 'Dining', 'Via Carota')])
+      .alerts.find(x => x.kind === 'spendingPace');
+    expect(a.driverExplain.kind).toBe('more of the same');
+    expect(a.action).toMatch(/a pattern rather than a surprise/);
+  });
+
+  it('carries the explanation on the alert so nothing re-derives it', () => {
+    // The inbox and the advisor both quote this. Re-deriving it from the ledger in two
+    // places is how two surfaces end up giving different answers about the same month.
+    const a = build([t('2026-09-08', 900, 'Clothing', 'H&M')]).alerts.find(x => x.kind === 'spendingPace');
+    expect(a.driverExplain).toMatchObject({ category: 'Clothing', merchant: 'H&M' });
+  });
+});
+
+// The headline names WHERE; the row underneath says WHAT. Saying both in both places is how
+// a card starts reading like it is repeating itself.
+describe('the spending card does not say it twice', () => {
+  const html = require('node:fs').readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  it('the headline names the category, the rows explain it', () => {
+    expect(html).toContain('<p class="pace-headline-driver">${e(p.headlineDriver.label)}</p>');
+    expect(html).toContain('d.explain?`<small class="pace-why"');
+  });
+  it('drops the explanation onto its own line rather than a third column', () => {
+    const css = require('node:fs').readFileSync(new URL('../public/cockpit.css', import.meta.url), 'utf8');
+    expect(css).toContain('.pace-driver{flex-wrap:wrap}');
+    expect(css).toMatch(/\.pace-why\{flex:1 1 100%/);
+  });
+});
