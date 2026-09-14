@@ -169,3 +169,107 @@ describe('the plan stops holding a second copy of the accounts', () => {
     expect(html).toContain('Follow my accounts');
   });
 });
+
+// A case is a set of ASSUMPTIONS. What you own today is not an assumption, and freezing it
+// into a case makes the case project from whatever you held the day you saved it — which is
+// how "Conservative" came to show 2026 ending BELOW today, months after Stripe equity had
+// appeared in the accounts.
+describe('a saved case keeps assumptions, not balances', () => {
+  const live = { startingLiquid: 682000, startingStripeEquity: 614000, k401Start: 298000,
+    otherDebt: 0, observedOn: '2026-09-13' };
+
+  it('drops every opening balance on the way into a case', () => {
+    const saved = O.stripObserved({ name: 'Conservative', investReturn: 0.04,
+      startingLiquid: 1100000, startingStripeEquity: 0, k401Start: 210000, otherDebt: 0,
+      observedOn: '2026-01-01' });
+    for (const k of [...O.VALUE_KEYS, 'observedOn']) expect(saved, k).not.toHaveProperty(k);
+    expect(saved).toEqual({ name: 'Conservative', investReturn: 0.04 });
+  });
+
+  it('re-attaches today\'s balances on the way out', () => {
+    const loaded = O.withObserved({ name: 'Conservative', investReturn: 0.04 }, live);
+    for (const k of O.VALUE_KEYS) expect(loaded[k], k).toBe(live[k]);
+    expect(loaded.observedOn).toBe('2026-09-13');
+    expect(loaded.investReturn).toBe(0.04);      // the assumption survives
+  });
+
+  it('heals a legacy case that still has balances baked in', () => {
+    // Existing saved cases predate this rule. Loading overwrites what they carry rather
+    // than trusting it, so they correct themselves without anyone re-saving.
+    const legacy = { investReturn: 0.04, startingLiquid: 1100000, startingStripeEquity: 0 };
+    const loaded = O.withObserved(legacy, live);
+    expect(loaded.startingLiquid).toBe(682000);
+    expect(loaded.startingStripeEquity).toBe(614000);
+  });
+
+  it('KEEPS a figure the reader set by hand, because that IS an assumption', () => {
+    // "Set by hand" exists so a case can ask "what if my Stripe were twice this". Stripping
+    // it would delete the only thing that made the case interesting.
+    const whatIf = { investReturn: 0.04, startingStripeEquity: 1200000,
+      openingSource: { startingStripeEquity: 'manual' } };
+    const saved = O.stripObserved(whatIf);
+    expect(saved.startingStripeEquity).toBe(1200000);
+    expect(saved.openingSource).toEqual({ startingStripeEquity: 'manual' });
+    // …and it is not overwritten when the case is loaded.
+    const loaded = O.withObserved(saved, live);
+    expect(loaded.startingStripeEquity).toBe(1200000);
+    expect(loaded.startingLiquid).toBe(682000);   // its neighbours still follow
+  });
+
+  it('drops an empty openingSource rather than storing a husk', () => {
+    expect(O.stripObserved({ investReturn: 0.04, openingSource: {} })).not.toHaveProperty('openingSource');
+  });
+
+  it('leaves a case alone when there is no live observation to attach', () => {
+    const only = { investReturn: 0.04 };
+    expect(O.withObserved(only, {})).toEqual(only);
+    expect(O.withObserved(only, null)).toEqual(only);
+  });
+
+  it('never mutates what it is given', () => {
+    const src = { investReturn: 0.04, startingLiquid: 1100000 };
+    const before = JSON.stringify(src);
+    O.stripObserved(src); O.withObserved(src, live);
+    expect(JSON.stringify(src)).toBe(before);
+  });
+});
+
+describe('the app routes every case through that rule', () => {
+  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+
+  it('strips on save and on update', () => {
+    expect(html).toContain('params:keepAssumptions({...P})');
+    expect(html).toContain('scenarios[i].params=keepAssumptions({...P});');
+    // …and both degrade rather than throw if the module is missing.
+    expect(html).toContain('return window.PlannerOpening?PlannerOpening.stripObserved(params):params;');
+  });
+
+  it('re-attaches on load', () => {
+    expect(html).toContain('migrateP(attachObserved(scenarios[i].params))');
+    expect(html).toContain('PlannerOpening.withObserved(params,openingFromLivePlan()):params;');
+  });
+
+  it('projects every saved case through one helper', () => {
+    // Rehydrate, the comparison table, the metric list and the diff all ran their own
+    // `run({...D,...migrateP(s.params)})`, each free to drift onto a different basis.
+    expect(html).not.toContain('migrateP(s.params)');
+    expect((html.match(/scenarioPlan\(/g) || []).length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('recomputes stored case results when the balances move', () => {
+    // A case's results are a projection FROM today's balances and go stale the moment they
+    // change; a comparison drawn from stale results is a comparison of two different days.
+    expect(html).toContain('function rebuildScenarioResults()');
+    const sync = html.slice(html.indexOf('function syncOpeningFromAccounts'), html.indexOf('async function takeWealthSnapshot'));
+    expect(sync).toContain('rebuildScenarioResults();');
+  });
+
+  it('re-reads the accounts after a reset or an import', () => {
+    // Both replace the whole plan, and neither used to re-sync — so a reset projected your
+    // real balance sheet as though it were the sample one.
+    const reset = html.slice(html.indexOf('async function resetAll'), html.indexOf('async function resetAll') + 500);
+    expect(reset).toContain('syncOpeningFromAccounts();');
+    expect(html.slice(html.indexOf('function importJSON'), html.indexOf('function importJSON') + 900))
+      .toContain('syncOpeningFromAccounts();');
+  });
+});

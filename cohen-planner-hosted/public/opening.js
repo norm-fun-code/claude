@@ -101,8 +101,42 @@
     return{...P,openingSource:src};
   }
 
-  const api={FIELDS:FIELDS.map(f=>({key:f.key,label:f.label,note:f.note})),
-    observedOpening,syncOpening,setMode,mode};
+  // ── What a saved case may and may not keep ───────────────────────────────
+  // A case is a set of ASSUMPTIONS — returns, spending, when you buy. What you own today is
+  // not an assumption, it is an observation, and freezing it into a case means the case
+  // projects from whatever you happened to hold on the day you saved it. That is how
+  // "Conservative" came to show 2026 ending BELOW today: it was still starting from a
+  // balance sheet with no Stripe equity in it, months after the accounts had reported some.
+  //
+  // Comparing two cases should compare two futures, not two different starting points.
+  //
+  // The exception is a figure the reader took by hand. `Set by hand` exists so a case CAN
+  // ask "what if my Stripe position were twice this" — that is a genuine assumption and it
+  // travels with the case. Only fields still following the accounts are dropped.
+  const VALUE_KEYS=FIELDS.map(f=>f.key);
+  function stripObserved(params){
+    const out={...(params||{})};
+    const src=out.openingSource||{};
+    for(const k of VALUE_KEYS)if(src[k]!=='manual')delete out[k];
+    // When the balances were read is never a choice, so it never travels with a case.
+    delete out.observedOn;
+    if(!Object.keys(out.openingSource||{}).length)delete out.openingSource;
+    return out;
+  }
+  // Re-attach today's observation to a case as it is loaded. Legacy cases that still carry
+  // baked-in balances are healed here too: anything not marked manual is overwritten by the
+  // live figure rather than trusted.
+  function withObserved(params,live){
+    const out={...(params||{})};
+    const src=out.openingSource||{};
+    const l=live||{};
+    for(const k of VALUE_KEYS)if(src[k]!=='manual'&&Object.prototype.hasOwnProperty.call(l,k))out[k]=l[k];
+    if(Object.prototype.hasOwnProperty.call(l,'observedOn'))out.observedOn=l.observedOn;
+    return out;
+  }
+
+  const api={FIELDS:FIELDS.map(f=>({key:f.key,label:f.label,note:f.note})),VALUE_KEYS,
+    observedOpening,syncOpening,setMode,mode,stripObserved,withObserved};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.PlannerOpening=api;
 })(typeof window!=='undefined'?window:this);

@@ -587,7 +587,7 @@ async function loadFromServer(){
       scenarios=sc.map((s,i)=>{
         const params=migrateP(s.params||{});
         let results;
-        try{results=run({...D,...params});}
+        try{results=run(scenarioPlan(params));}
         catch(e){console.warn('scenario rehydrate failed:',s.name,e);results=run({...D});}
         return{id:s.id,name:s.name,color:s.color||COLORS[i%COLORS.length],params,results};
       });
@@ -613,7 +613,7 @@ async function loadFromServer(){
 }
 
 function exportJSON(){const b=new Blob([JSON.stringify({P,scenarios:scenarios.map(s=>({name:s.name,params:s.params}))},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='cohen_planner.json';a.click()}
-function importJSON(){const i=document.createElement('input');i.type='file';i.accept='.json';i.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);if(d.P)P={...D,...d.P};if(d.scenarios)scenarios=d.scenarios.map((s,i)=>({...s,color:COLORS[i%COLORS.length],results:run({...D,...s.params})}));buildControls();render()}catch(err){alert('Invalid file')}};r.readAsText(f)};i.click()}
+function importJSON(){const i=document.createElement('input');i.type='file';i.accept='.json';i.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);if(d.P)P={...D,...d.P};if(d.scenarios)scenarios=d.scenarios.map((s,i)=>({...s,color:COLORS[i%COLORS.length],results:run(scenarioPlan(s.params))}));syncOpeningFromAccounts();buildControls();render()}catch(err){alert('Invalid file')}};r.readAsText(f)};i.click()}
 
 async function doLogout(){
   await fetch('/api/logout',{method:'POST'}).catch(()=>{});
@@ -973,7 +973,7 @@ function printPDF(){
   // Scenario comparison (if any saved)
   let scenHtml='';
   if(scenarios.length>0){
-    const allRes=scenarios.map(s=>{const sRes=run({...D,...migrateP(s.params)});const sR=sRes.R;const sl=sR[sR.length-1];const sm=sR.reduce((a,b)=>b.liq<a.liq?b:a);return{name:s.name,color:s.color,finalNW:sl.nw,finalTotal:sl.nw+sl.k401,liqFloor:sm.liq,defYrs:sRes.drawYears};});
+    const allRes=scenarios.map(s=>{const sRes=run(scenarioPlan(s.params));const sR=sRes.R;const sl=sR[sR.length-1];const sm=sR.reduce((a,b)=>b.liq<a.liq?b:a);return{name:s.name,color:s.color,finalNW:sl.nw,finalTotal:sl.nw+sl.k401,liqFloor:sm.liq,defYrs:sRes.drawYears};});
     scenHtml=`
     <div style="page-break-before:always">
     <h2 style="font-size:13px;font-weight:600;color:#0a2540;margin:0 0 12px;border-bottom:1px solid #e6ebf1;padding-bottom:6px">Scenario Comparison</h2>
@@ -1371,6 +1371,9 @@ function buildControls(){
 
 async function resetAll(){
   P={...D};scenarios=[];compareMode=false;activeScenarioIdx=-1;scenarioDirty=false;
+  // Assumptions reset to defaults; what you own does not. Re-reading the accounts here keeps
+  // a reset from projecting a real balance sheet as though it were the sample one.
+  syncOpeningFromAccounts();
   savePlannerState();
   buildControls();render();
 }
@@ -1446,7 +1449,43 @@ function UComp(key,val,el){
 // Scenarios saved before a schema change still carry the old keys, so migrate the
 // scenario's OWN params before letting D fill in the gaps — merging D first would leave
 // current-generation defaults sitting alongside the scenario's superseded keys.
-function loadScenario(i){P={...D,...migrateP(scenarios[i].params)};activeScenarioIdx=i;scenarioDirty=false;buildControls();render();savePlannerState()}
+// A case supplies assumptions; the opening balances come from the accounts, every time.
+// Loading used to replace them with whatever the case froze on the day it was saved, which
+// is how a case could project 2026 ending BELOW today — it was still starting from a balance
+// sheet months out of date, with the hero beside it reading the live one.
+function loadScenario(i){
+  P={...D,...migrateP(attachObserved(scenarios[i].params))};
+  activeScenarioIdx=i;scenarioDirty=false;buildControls();render();savePlannerState();
+}
+// The observed half of the current plan: what the accounts last reported, and when. Pulled
+// out so every path that swaps the plan re-attaches the same thing.
+function openingFromLivePlan(){
+  const live={observedOn:P.observedOn};
+  for(const k of (window.PlannerOpening?PlannerOpening.VALUE_KEYS:[]))live[k]=P[k];
+  return live;
+}
+// If opening.js ever fails to load, a case should still save and load — degraded to the old
+// behaviour of carrying its own balances, rather than throwing and losing the case entirely.
+function keepAssumptions(params){
+  return window.PlannerOpening?PlannerOpening.stripObserved(params):params;
+}
+function attachObserved(params){
+  return window.PlannerOpening?PlannerOpening.withObserved(params,openingFromLivePlan()):params;
+}
+// A case's assumptions, made runnable against today's balance sheet. Every place that
+// projects a saved case goes through here, so a comparison compares futures rather than
+// the balance sheets each case happened to be saved on.
+function scenarioPlan(params){
+  return{...D,...migrateP(attachObserved(params))};
+}
+// A case's stored results are a projection FROM today's balances, so they go stale the
+// moment those balances move. Recomputed whenever they do.
+function rebuildScenarioResults(){
+  for(const s of scenarios){
+    try{s.results=run(scenarioPlan(s.params));}
+    catch(e){console.warn('scenario recompute failed:',s.name,e);}
+  }
+}
 
 function showSaveInput(){
   const area=document.getElementById('scenarioSaveArea');
@@ -1471,7 +1510,7 @@ async function confirmSaveScenario(){
 async function saveScenario(n){
   if(!n){n='Scenario '+(scenarios.length+1);}
   const id=advUuid();
-  const s={id,name:n,params:{...P},results:run(P),color:COLORS[scenarios.length%COLORS.length]};
+  const s={id,name:n,params:keepAssumptions({...P}),results:run(P),color:COLORS[scenarios.length%COLORS.length]};
   scenarios.push(s);
   activeScenarioIdx=scenarios.length-1;scenarioDirty=false;
   buildControls();render();savePlannerState();
@@ -1490,7 +1529,7 @@ async function saveScenario(n){
 }
 
 async function updateScenario(i){
-  scenarios[i].params={...P};scenarios[i].results=run(P);
+  scenarios[i].params=keepAssumptions({...P});scenarios[i].results=run(P);
   activeScenarioIdx=i;scenarioDirty=false;
   const s=scenarios[i];
   buildControls();render();savePlannerState();
@@ -2182,6 +2221,7 @@ function syncOpeningFromAccounts(){
   // the case's assumptions — and since the opening figures now re-read on every load,
   // marking dirty here would leave "unsaved edits" showing permanently, for a change the
   // reader never made. That is how an indicator stops meaning anything.
+  rebuildScenarioResults();
   buildControls();savePlannerState();
   const names=out.changed.map(c=>c.label).join(', ');
   showToast(`Opening balances updated from your accounts: ${names}`,'green');
@@ -4551,7 +4591,7 @@ function renderCompareTab(R,P){
   const planRes=run(P);
   const cols=[
     {name:'Current Plan',params:P,res:planRes,color:'var(--tx)',isCurrent:true},
-    ...scenarios.map(s=>({name:s.name,params:s.params,res:run({...D,...migrateP(s.params)}),color:s.color,isCurrent:false}))
+    ...scenarios.map(s=>({name:s.name,params:s.params,res:run(scenarioPlan(s.params)),color:s.color,isCurrent:false}))
   ];
   const METRICS=[
     {label:'Final net worth · ex-retirement',get:(r,p)=>r.R[r.R.length-1].nw,fmt:fmt,b:1},
@@ -4584,7 +4624,7 @@ function renderCompareTab(R,P){
       </div>`;
     if(_compareDiffIdx>=0&&scenarios[_compareDiffIdx]){
       const s=scenarios[_compareDiffIdx];
-      const sRes=run({...D,...migrateP(s.params)});
+      const sRes=run(scenarioPlan(s.params));
       diffHtml+=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px">
         <thead><tr>
           <th style="text-align:left;padding:6px 8px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t3);border-bottom:1px solid var(--bd)">Metric</th>
