@@ -585,7 +585,7 @@ async function loadFromServer(){
     if(scRes.ok){
       const sc=await scRes.json();
       scenarios=sc.map((s,i)=>{
-        const params=migrateP(s.params||{});
+        const params=keepAssumptions(migrateP(attachObserved(s.params||{})));
         let results;
         try{results=run(scenarioPlan(params));}
         catch(e){console.warn('scenario rehydrate failed:',s.name,e);results=run({...D});}
@@ -3848,7 +3848,7 @@ function renderSensitivityTab(R,P){
   const ALL_PARAMS=[
     {key:'investReturn',label:'Portfolio Return',delta:0.01,hi:'+1%',lo:'−1%',fmtV:v=>(v*100).toFixed(1)+'%',better:1},
     {key:'normCash',label:'Norm Cash Comp',delta:25000,hi:'+$25K/yr',lo:'−$25K/yr',fmtV:v=>fmt(v),better:1},
-    {key:'normStock',label:StripeGrants.active(P)?(Number.isFinite(StripeGrants.throughYear(P))?'Manual stock income':'PEG target dollars'):'Norm Stripe Grant',delta:25000,hi:'+$25K/yr',lo:'−$25K/yr',fmtV:v=>fmt(v),better:1},
+    {key:'normStock',label:StripeGrants.active(P)?(Number.isFinite(StripeGrants.throughYear(P))?'Manual stock income':'PEG target dollars'):'Norm stock compensation',delta:25000,hi:'+$25K/yr',lo:'−$25K/yr',fmtV:v=>fmt(v),better:1},
     {key:'stripeRet',label:'Stripe Return',delta:.03,hi:'+3%/yr',lo:'−3%/yr',fmtV:v=>(v*100).toFixed(0)+'%',better:1},
     {key:'nancyHourlyRate',label:'Nancy Rate',delta:25,hi:'+$25/hr',lo:'−$25/hr',fmtV:v=>'$'+v+'/hr',better:1},
     {key:'nancyMaxClients',label:'Nancy Clients',delta:5,hi:'+5',lo:'−5',fmtV:v=>v+' clients',better:1},
@@ -3889,7 +3889,8 @@ function renderSensitivityTab(R,P){
     } else if(p.key==='normCash'||p.key==='normStock'){
       const f=p.key==='normCash'?'normCashY':'normStockY';
       vBase=P[f+'0'];
-      hiP={...P};loP={...P};
+      hiP=structuredClone(P);loP=structuredClone(P);
+      for(const [y,n] of Object.entries(P.stripeManualLater||{})){const k=p.key==='normCash'?'cash':'stock';hiP.stripeManualLater[y][k]=n[k]+delta;loP.stripeManualLater[y][k]=Math.max(0,n[k]-delta);}
       for(let i=0;i<11;i++){hiP[f+i]=(P[f+i]||0)+delta;loP[f+i]=Math.max(0,(P[f+i]||0)-delta)}
     } else if(p.key==='stripeRet'){
       vBase=P.stripeLongTermReturn??.08;

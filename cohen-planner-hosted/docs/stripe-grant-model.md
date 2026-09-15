@@ -1,3 +1,24 @@
+# Current Stripe workflow: manual compensation
+
+The Awards and grant-cutoff controls are retired. Stripe now has Position, Compensation,
+and Valuation path. Annual cash includes all cash awards; annual stock is gross vest-date
+compensation, including any pre-vest upside the user estimates. There is no extra income
+multiplier. Retained after-tax stock enters holdings once; existing holdings appreciate
+on the February tender calendar using the same valuation path as the chart.
+
+Migration freezes effective annual cash/stock amounts from enabled grant plans, preserves
+hybrid overrides and the archived grant configuration, and is idempotent. The first eleven
+years use the original normCashY/normStockY fields; later explicit amounts use calendar-year
+stripeManualLater entries. Unspecified later years grow from the latest explicit amount.
+Saved cases are converted after reattaching shared facts, preserving their own assumptions.
+The reference valuation, ceiling, dilution and existing price overrides remain in effect.
+QCA cash belongs in cash compensation, not an assumed sale facility for vested PEG stock.
+
+The remainder documents the archived grant engine for recovery and historical reference;
+it no longer describes the normal user workflow.
+
+---
+
 # Stripe awards and compensation
 
 The Stripe workspace has four sections: Position, Awards & elections, Valuation path, and Compensation. Existing plans continue using manual compensation until the user enters reference tender/409A prices and enables the grant model. No current balances or saved scenarios are overwritten by migration.
