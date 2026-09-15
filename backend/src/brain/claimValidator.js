@@ -1316,12 +1316,17 @@ function assessChiefBriefQuality(result, facts = null, diag = null) {
   const neutralizedFields = Array.isArray(diag?.neutralizedFields) ? diag.neutralizedFields : [];
   const failedAttempt = diag?.failedAttempt ?? null;
   const preViolated = Array.isArray(diag?.preNeutralizationViolatedChecks) ? diag.preNeutralizationViolatedChecks : [];
+  // The sentences behind those check names, captured before neutralization
+  // stripped them (see finalizeSafe in services/briefing-ai.js). Carried
+  // through onto the persisted quality object so a degraded build can be
+  // explained after the fact instead of only counted.
+  const violationDetails = Array.isArray(diag?.violationDetails) ? diag.violationDetails : [];
 
   const cb = result?.chiefBrief;
   if (!cb || typeof cb !== 'object') {
     return {
       status: 'failed', reasonCodes: ['no_chief_brief'], fieldWordCounts: {}, fallbackFields: [],
-      violatedChecks: [...new Set(preViolated)], neutralizedFields, correlationId, failedAttempt,
+      violatedChecks: [...new Set(preViolated)], violationDetails, neutralizedFields, correlationId, failedAttempt,
     };
   }
 
@@ -1348,7 +1353,7 @@ function assessChiefBriefQuality(result, facts = null, diag = null) {
   if (missingRequired) {
     return {
       status: 'failed', reasonCodes, fieldWordCounts, fallbackFields,
-      violatedChecks: [...new Set(preViolated)], neutralizedFields, correlationId, failedAttempt,
+      violatedChecks: [...new Set(preViolated)], violationDetails, neutralizedFields, correlationId, failedAttempt,
     };
   }
 
@@ -1383,7 +1388,7 @@ function assessChiefBriefQuality(result, facts = null, diag = null) {
   // shipped clean.
   const violatedChecks = degraded ? [...new Set([...postViolated, ...preViolated])] : postViolated;
 
-  return { status: degraded ? 'degraded' : 'fresh', reasonCodes, fieldWordCounts, fallbackFields, violatedChecks, neutralizedFields, correlationId, failedAttempt };
+  return { status: degraded ? 'degraded' : 'fresh', reasonCodes, fieldWordCounts, fallbackFields, violatedChecks, violationDetails, neutralizedFields, correlationId, failedAttempt };
 }
 
 /** Build a targeted retry prompt asking specifically for fuller content on the

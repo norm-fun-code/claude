@@ -4099,6 +4099,11 @@ router.get('/briefing/by-snapshot/:snapshotId', asyncHandler(async (req, res) =>
 
 module.exports = {
   createBriefingRouter, buildFreshBriefing, publishBriefingDraft, PublishReadbackError, REBUILD_LOCK_ID,
+  // Exported for /api/diag/chief-brief-dry-run: lets a diagnostic reproduce a
+  // real scoped chief-brief generation (same context, same canonical facts)
+  // without publishing anything, so a run of degraded builds can be explained
+  // on demand rather than only after the next morning's scheduled build.
+  buildQuickChiefBriefContext,
   // Exported for the timestamp-semantics + recovery-materiality regression tests.
   stampFields, recoveryMateriallyChanged, FULL_BUILD_FIELDS,
   // Exported so tests can prove primeNextBuildCycle runs standalone, AFTER

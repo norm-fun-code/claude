@@ -540,6 +540,80 @@ function createDiagnosticsRouter() {
     });
   }));
 
+  // Run a REAL chief-brief generation and report what the quality contract
+  // made of it — without publishing anything.
+  //
+  // Everything else here reads stored state, which is exactly what makes a
+  // systematic generation problem hard to see: by the time a brief is stored,
+  // neutralization has already removed the sentences that caused the
+  // degrade. This reproduces the actual pipeline (same scoped context, same
+  // canonical facts as the real scoped rebuild) and returns the full quality
+  // verdict including the violating sentences, so the loop is explainable on
+  // demand instead of one build per day.
+  //
+  // Costs one real LLM call (sometimes up to three, if the pipeline retries),
+  // so it is admin-gated like everything else in this router and is never
+  // called automatically.
+  //   GET /api/diag/chief-brief-dry-run
+  router.get('/diag/chief-brief-dry-run', asyncHandler(async (req, res) => {
+    const t0 = Date.now();
+    const briefingsStore2 = require('../store/briefings');
+    const { buildQuickChiefBriefContext } = require('./briefing');
+    const { canonicalFactsFrom, canonicalSpendingMtd } = require('../brain/snapshot');
+    const ai = require('../services/briefing-ai');
+    const tz = process.env.TZ || 'America/New_York';
+
+    const rows = await briefingsStore2.listBriefings({ kind: 'daily', limit: 5 });
+    const prior = rows[0];
+    if (!prior) return res.status(404).json({ error: 'no prior daily briefing to build context from' });
+
+    const ctx = await buildQuickChiefBriefContext(prior);
+    const [recovery, effectiveWorkout, commitments, spendingMtd, experiments] = await Promise.all([
+      require('../intelligence/recovery').liveRecovery().catch(() => null),
+      require('../services/workout').getEffectiveWorkout({ tz }).catch(() => null),
+      require('../store/commitments').listActive({ limit: 20 }).catch(() => []),
+      canonicalSpendingMtd(new Date(), tz).catch(() => null),
+      require('../store/experiments').listExperiments().catch(() => []),
+    ]);
+    const facts = canonicalFactsFrom({
+      recovery, effectiveWorkout, commitments, experiments,
+      goals: ctx.liveGoals ?? [],
+      wealth: spendingMtd ? { spendingMtd } : null,
+      localDate: new Date().toLocaleDateString('en-CA', { timeZone: tz }),
+    });
+
+    const result = await ai.generateChiefBrief(
+      ctx.emails, ctx.dayName, ctx.workout, ctx.calendar, ctx.wellbeingContext, ctx.annotationsContext,
+      ctx.recoveryContext, ctx.experimentsContext, ctx.selfModel, ctx.leverageContext, ctx.workBusy,
+      ctx.strengthContext, ctx.spendingContext, ctx.continuityContext, ctx.cashflowContext,
+      ctx.progressContext, ctx.weeklyGoalsContext, ctx.chaptersContext, ctx.dayOffContext,
+      '', ctx.liveGoals, facts, ctx.recoveryDriversContext,
+      { workBusy: true, calendar: true }, '', ctx.nightlyContextHistoryContext
+    );
+
+    const q = result?.chiefBriefQuality ?? null;
+    res.json({
+      ms: Date.now() - t0,
+      published: false,
+      // What the PROMPT told the model about recovery, beside what the
+      // VALIDATOR checks against. A mismatch between these two is the single
+      // most likely cause of a contradiction that repeats every single day.
+      promptRecoveryContext: ctx.recoveryContext ?? null,
+      factsChecked: {
+        recoveryScore: facts.recoveryScore ?? null,
+        recoveryBand: facts.recoveryBand ?? null,
+        spendingMtd: facts.spendingMtd ?? null,
+      },
+      quality: q && {
+        status: q.status, reasonCodes: q.reasonCodes, fallbackFields: q.fallbackFields,
+        violatedChecks: q.violatedChecks, neutralizedFields: q.neutralizedFields,
+        failedAttempt: q.failedAttempt, fieldWordCounts: q.fieldWordCounts,
+        violationDetails: q.violationDetails ?? null,
+      },
+      chiefBrief: result?.chiefBrief ?? null,
+    });
+  }));
+
   // Scheduler health check — shows whether the scheduler is enabled and when
   // the morning routine will next fire (helps diagnose missing 8:30am briefings).
   // Continuous presence — is the event-driven loop armed, what is pending,
@@ -938,6 +1012,7 @@ function createDiagnosticsRouter() {
         qualityFallbackFields: c.chiefBriefQuality?.fallbackFields ?? null,
         qualityNeutralizedFields: c.chiefBriefQuality?.neutralizedFields ?? null,
         qualityViolatedChecks: c.chiefBriefQuality?.violatedChecks ?? null,
+        qualityViolationDetails: c.chiefBriefQuality?.violationDetails ?? null,
         qualityFailedAttempt: c.chiefBriefQuality?.failedAttempt ?? null,
         publishTier: c.publishTier ?? null,
         tierForStoredContent: tierForStoredContent(c),

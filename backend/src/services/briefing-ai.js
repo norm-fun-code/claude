@@ -773,6 +773,17 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
       ...cv.map((v) => v.check),
     ])];
     const neutralizedFields = [...new Set([...gv.map((v) => v.field), ...cv.map((v) => v.field)].filter(Boolean))];
+    // The SENTENCES, not just the check names. A run of degraded builds is
+    // near-undiagnosable from check names alone — "recovery_band fired" does
+    // not tell you what the model actually wrote, and neutralization then
+    // strips the evidence, so re-validating the stored text finds nothing.
+    // These are the model's own words about the user's own canonical state,
+    // stored alongside the quality verdict they explain; nothing here is
+    // third-party or sensitive beyond what the brief itself already contains.
+    const violationDetails = [
+      ...gv.map((v) => ({ check: 'goal_completion', field: v.field, sentence: v.sentence ?? null, expected: v.expected ?? null, actual: v.actual ?? null })),
+      ...cv.map((v) => ({ check: v.check, field: v.field, sentence: v.sentence ?? null, expected: v.expected ?? null, actual: v.actual ?? null })),
+    ].slice(0, 12);
     if (cv.length) {
       console.error(`[briefing-ai] neutralizing ${cv.length} surviving claim contradiction(s) deterministically (${cv.map((v) => v.check).join(', ')}) [correlationId=${correlationId}]`);
       out = neutralizeClaimViolations(out, cv, snapshotFacts);
@@ -787,7 +798,7 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
     if (finalViolations.length) {
       console.error(`[briefing-ai] ${finalViolations.length} claim violation(s) still present after finalization (${finalViolations.map((v) => v.check).join(', ')}) — shipping anyway, no required field is blank. [correlationId=${correlationId}]`);
     }
-    return { out, diag: { correlationId, preNeutralizationViolatedChecks, neutralizedFields, failedAttempt } };
+    return { out, diag: { correlationId, preNeutralizationViolatedChecks, neutralizedFields, violationDetails, failedAttempt } };
   };
 
   if (!goalViolations.length && !claimViolations.length) {
