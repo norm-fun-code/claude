@@ -200,11 +200,11 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
   // reconnect Monarch in NormOS, which does not touch this server's copy of the session —
   // following it would leave them exactly where they started, which is why "I've never had an
   // issue in NormOS" and "the planner says the token is expired" were both true at once.
-  const EXPIRED = 'The planner\'s own Monarch session has expired. It keeps a separate copy from NormOS, so reconnecting there does not refresh this one — paste a fresh token under Diagnose connection.';
-  // The one remedy that actually works, named on every check that fails for want of a
+  const EXPIRED = 'Every Monarch session the planner can reach has expired. NormOS renews its own automatically and the planner follows it, so this usually clears itself at the next NormOS sync — paste a token under Diagnose connection to fix it now instead of waiting.';
+  // The one remedy that works immediately, named on every check that fails for want of a
   // working session, so the panel says what to DO and not only what is wrong.
-  const PASTE = 'Open Monarch in a signed-in browser tab, copy the session token, and paste it below. It is stored here and tried ahead of the deploy-time one.';
-  const NO_TOKEN = 'needs its own Monarch session. Paste a token under Diagnose connection; the NormOS bridge only carries account balances.';
+  const PASTE = 'NormOS renews its Monarch session on its own — this normally clears at its next sync, with nothing to do. To fix it now: open Monarch in a signed-in tab, copy the session token, and paste it below.';
+  const NO_TOKEN = 'needs a Monarch session. NormOS publishes one to the shared database when it syncs; until then, paste a token under Diagnose connection. The NormOS bridge itself carries only account balances.';
   async function context() {
     const { rows } = await db.query("SELECT data FROM oauth_tokens WHERE key = 'monarch_bridge'");
     const local = rows[0]?.data || {};
@@ -214,18 +214,26 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
       sources = r.rows;
     } catch (e) { if (e.code !== '42P01') throw e; } // Standalone planner DB.
     const snapshots = [local.snapshot, ...sources.map(s => s.snapshot)].map(validSnapshot).filter(Boolean).sort((a,b) => Date.parse(b.asOf)-Date.parse(a.asOf));
-    // Every Monarch credential this server can reach, most recently supplied first: one
-    // pasted into the planner, then the deploy's environment variable, then whatever a
-    // sibling source row carries.
+    // Order matters, and it is about which credential can heal itself.
     //
-    // They are candidates rather than a single choice because the planner holds its OWN copy
-    // of the Monarch session. NormOS refreshing its copy does nothing for this one, so the
-    // planner's token expires while NormOS keeps working — and the environment variable that
-    // used to win unconditionally could not be corrected without a redeploy, so a stale one
-    // permanently shadowed a good token sitting in the database. Trying each in turn means a
-    // token pasted in at runtime can rescue an expired deploy-time one.
-    const tokens = [...new Set([local.token, env.MONARCH_TOKEN, ...sources.map(s => s.token)].filter(Boolean))];
+    // NormOS holds the Monarch login. When Monarch rejects its session it signs in again and
+    // caches the new one on the source row in this same database — which is exactly why
+    // nobody ever has to do anything in NormOS. The planner has no login, only copies.
+    //
+    // So the copy NormOS keeps renewing is preferred over the planner's own MONARCH_TOKEN,
+    // which is fixed at deploy time and is the one credential here that can NEVER refresh
+    // itself. With the environment variable winning, as it used to, a stale copy hid the
+    // fresh one sitting beside it and the planner asked to be re-credentialled by hand while
+    // a working session was already in the database. Ahead of both sits a token pasted in
+    // deliberately, because that is someone answering this exact question right now.
+    const fromNormOS = sources.map(s => s.token).filter(Boolean);
+    const tokens = [...new Set([local.token, ...fromNormOS, env.MONARCH_TOKEN].filter(Boolean))];
+    const origin = new Map();
+    if (local.token) origin.set(local.token, 'pasted into the planner');
+    for (const t of fromNormOS) if (!origin.has(t)) origin.set(t, 'published by NormOS');
+    if (env.MONARCH_TOKEN && !origin.has(env.MONARCH_TOKEN)) origin.set(env.MONARCH_TOKEN, 'the planner\'s MONARCH_TOKEN');
     return { disabled: !!local.disabled, snapshot: snapshots[0] || null, tokens, token: tokens[0] || null,
+      origin, normosSyncedAt: snapshots[0]?.asOf || null,
       remote: !!(env.NORMOS_URL && env.PLANNER_BRIDGE_TOKEN) };
   }
   async function status() {
@@ -500,8 +508,16 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
       add('read connection settings', false, err.message);
       return out;
     }
+    const ago = (iso) => {
+      const ms = Date.parse(iso || '');
+      if (!Number.isFinite(ms)) return null;
+      const h = Math.round((Date.now() - ms) / 36e5);
+      return h < 1 ? 'in the last hour' : h < 48 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
+    };
+    const synced = ago(c.normosSyncedAt);
     add('Monarch session', !!c.token,
       c.token ? `${c.tokens.length} stored ${c.tokens.length === 1 ? 'credential' : 'credentials'} to try`
+        + (synced ? ` · NormOS last published ${synced}` : '')
         : 'none stored — holdings and transactions need one; balances can still come from the NormOS bridge',
       'check', c.token ? null : PASTE);
     add('balance source', true, c.remote ? 'NormOS bridge' : 'direct Monarch token', 'info');
@@ -513,10 +529,15 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
     try {
       const r = await authed(c, ACCOUNT_IDS_QUERY, {});
       const ok = !!(r && r.ok);
+      // Name WHICH credential answered. "Published by NormOS" means the planner is following
+      // the session NormOS renews and needs nothing from anyone; the planner's own
+      // MONARCH_TOKEN means it is running on a copy that cannot refresh itself.
       reachable = add('Monarch accepts the session', ok,
-        ok ? 'authenticated' : !r || r.status === 401
-          ? `HTTP 401 — rejected or expired; every stored credential was tried (${c.tokens.length})`
-          : `HTTP ${r.status}`,
+        ok ? `authenticated · using the one ${c.origin.get(goodToken) || 'stored here'}`
+          : !r || r.status === 401
+            ? `HTTP 401 — rejected or expired; every stored credential was tried (${c.tokens.length})`
+              + (synced ? `. NormOS last published one ${synced}` : '')
+            : `HTTP ${r.status}`,
         'check', ok ? null : PASTE);
       if (ok) {
         const b = await r.json();

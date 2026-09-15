@@ -130,7 +130,7 @@ describe('holdings transport', () => {
 
   it('turns an expired session into a message worth showing', async () => {
     const live = withToken(async () => ({ ok: false, status: 401, json: async () => ({}) }));
-    await expect(live.holdings({ startDate: 'a', endDate: 'b' })).rejects.toThrow(/session has expired/i);
+    await expect(live.holdings({ startDate: 'a', endDate: 'b' })).rejects.toThrow(/session.*expired/i);
   });
 
   it('treats GraphQL errors on a 200 as unavailable, not as an empty portfolio', async () => {
@@ -174,7 +174,7 @@ describe('holdings transport', () => {
 
   it('says so plainly when the planner has no Monarch session of its own', async () => {
     const live = createMonarchLive({ db: { query: async () => ({ rows: [{ data: {} }] }) }, fetchImpl: async () => { throw new Error('should not be called'); }, env: {}, now: () => Date.now() });
-    await expect(live.holdings({ startDate: 'a', endDate: 'b' })).rejects.toThrow(/its own Monarch session/i);
+    await expect(live.holdings({ startDate: 'a', endDate: 'b' })).rejects.toThrow(/needs a Monarch session/i);
   });
 });
 
@@ -204,15 +204,19 @@ describe('credentials', () => {
   };
 
   it('falls through a rejected credential to one Monarch still accepts', async () => {
-    const { bridge, sent } = server({ live: ['good'], env: { MONARCH_TOKEN: 'stale' }, dbToken: 'good' });
+    const { bridge, sent } = server({ live: ['normos'], env: { MONARCH_TOKEN: 'stale' }, dbToken: 'normos' });
     const d = await bridge.diagnose();
-    expect(d.checks.find(c => c.name === 'Monarch accepts the session').ok).toBe(true);
-    expect(sent.slice(0, 2)).toEqual(['stale', 'good']);   // in order, stopping at the one that worked
-    expect(sent.slice(2).every(t => t === 'good')).toBe(true); // and the rest never retry the dead one
+    const c = d.checks.find(x => x.name === 'Monarch accepts the session');
+    expect(c.ok).toBe(true);
+    // NormOS's is tried FIRST: it is the only credential here that renews itself, so the
+    // planner follows it rather than the deploy-time copy that cannot.
+    expect(sent[0]).toBe('normos');
+    expect(sent.every(t => t === 'normos')).toBe(true);
+    expect(c.detail).toMatch(/published by NormOS/i);
   });
 
   it('remembers the working credential instead of walking the dead one every call', async () => {
-    const { bridge, sent } = server({ live: ['good'], env: { MONARCH_TOKEN: 'stale' }, dbToken: 'good' });
+    const { bridge, sent } = server({ live: ['good'], env: { MONARCH_TOKEN: 'stale' }, stored: 'dead', dbToken: 'good' });
     await bridge.diagnose();
     sent.length = 0;
     await bridge.diagnose();
@@ -225,6 +229,38 @@ describe('credentials', () => {
     expect(c.ok).toBe(false);
     expect(c.detail).toMatch(/2/);       // says how many were tried
     expect(c.fix).toBeTruthy();
+  });
+
+  // The question this whole arrangement answers: why should anyone have to supply a token to
+  // the planner when NormOS never asks for one? Because NormOS holds the Monarch LOGIN and
+  // signs in again when a session dies, caching the new one on the source row in this same
+  // database. The planner has no login, only copies — so it must follow the copy that renews.
+  it('follows the credential NormOS renews rather than its own fixed one', async () => {
+    const { bridge, sent } = server({ live: ['renewed', 'deploy'], env: { MONARCH_TOKEN: 'deploy' }, dbToken: 'renewed' });
+    await bridge.diagnose();
+    expect(sent[0]).toBe('renewed');
+  });
+
+  it('picks up a newly published NormOS session without being told', async () => {
+    // Everything is dead, then NormOS syncs and writes a fresh one. Nothing is pasted, no
+    // redeploy happens, and the next call simply works.
+    let published = 'dead';
+    const db = { query: async (sql) => {
+      if (sql.startsWith('SELECT data')) return { rows: [{ data: {} }] };
+      if (sql.includes('FROM sources')) return { rows: [{ snapshot: null, token: published }] };
+      return { rows: [] };
+    } };
+    const bridge = createMonarchLive({
+      db, env: { MONARCH_TOKEN: 'stale' }, now: () => Date.now(),
+      fetchImpl: async (u, o) => String(o.headers.Authorization).includes('alive')
+        ? { ok: true, status: 200, json: async () => ({ data: { accounts: [{ id: '1' }] } }) }
+        : { ok: false, status: 401, json: async () => ({}) },
+    });
+    await expect(bridge.holdings({ startDate: 'a', endDate: 'b' })).rejects.toThrow(/expired/i);
+    published = 'alive';   // ← NormOS's 7am sync re-mints and caches it
+    const c = (await bridge.diagnose()).checks.find(x => x.name === 'Monarch accepts the session');
+    expect(c.ok).toBe(true);
+    expect(c.detail).toMatch(/published by NormOS/i);
   });
 
   it('a token pasted in at runtime is preferred over the deploy-time one', async () => {
@@ -258,7 +294,8 @@ describe('credentials', () => {
     // "I have never had an issue in NormOS" and "the planner says the token is expired" were
     // both true at once, and the old copy told them to go and fix the half that worked.
     const { bridge } = server({ live: [], env: { MONARCH_TOKEN: 'stale' } });
-    await expect(bridge.holdings({ startDate: 'a', endDate: 'b' })).rejects.toThrow(/separate copy from NormOS/i);
+    // Says it normally fixes itself, rather than demanding to be re-credentialled by hand.
+    await expect(bridge.holdings({ startDate: 'a', endDate: 'b' })).rejects.toThrow(/NormOS renews its own automatically/i);
     await expect(bridge.holdings({ startDate: 'a', endDate: 'b' })).rejects.not.toThrow(/Reconnect Monarch in NormOS/i);
   });
 });
