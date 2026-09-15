@@ -360,6 +360,18 @@ const RETRACTION_MATCH_MARGIN = 0.15;
  */
 function findRetractionTarget(retractionText, candidates) {
   const scored = (candidates || [])
+    // A retraction is never the target of another retraction. You cannot
+    // withdraw a withdrawal — and leaving them in the pool actively breaks the
+    // mechanism: a retraction annotation stays ACTIVE as an audit record and
+    // quotes the plan it walked back ("I did not end up going for drinks with
+    // friends tonight"), so it scores almost identically to that plan against
+    // any later, similarly-worded retraction. Two near-equal candidates fail
+    // the ambiguity margin below, so the later retraction silently retires
+    // NOTHING and the plan it was meant to withdraw stays eligible for Ask and
+    // the next brief — the exact failure this whole path exists to prevent.
+    // Excluding them removes the ambiguity at its source rather than loosening
+    // the margin, which would make genuinely ambiguous cases start guessing.
+    .filter((c) => !isRetraction(`${c?.label || ''} ${c?.note || ''}`, { category: c?.category ?? null }))
     .map((c) => ({ c, score: overlapScore(retractionText, `${c.label || ''} ${c.note || ''}`) }))
     .filter((s) => s.score >= RETRACTION_MATCH_THRESHOLD)
     .sort((a, b) => b.score - a.score);

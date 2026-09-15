@@ -28,21 +28,28 @@ function responseFor(rawText) {
   };
 }
 
+// Cleanup matches the marker ANYWHERE, not just as a prefix. The retraction
+// this file creates is labelled "I did not end up going for <MARKER> ..." — a
+// prefix LIKE never matched it, so every run left one ACTIVE retraction
+// annotation behind. That leak is not inert: a stale retraction quotes the plan
+// it withdrew, so on the next run it scored almost identically to the fresh
+// plan and tripped findRetractionTarget's ambiguity margin, making run N+1 fail
+// a test that run N passed (verified: pass, then fail, on the same database).
 afterEach(async () => {
   llm.generateText = originalGenerateText;
-  await db.query(`DELETE FROM context_compilation_jobs WHERE raw_text LIKE $1`, [`${MARKER}%`]);
-  await db.query(`DELETE FROM context_relations WHERE source_assertion_id IN (SELECT id FROM context_assertions WHERE raw_text LIKE $1)`, [`${MARKER}%`]);
+  await db.query(`DELETE FROM context_compilation_jobs WHERE raw_text LIKE $1`, [`%${MARKER}%`]);
+  await db.query(`DELETE FROM context_relations WHERE source_assertion_id IN (SELECT id FROM context_assertions WHERE raw_text LIKE $1)`, [`%${MARKER}%`]);
   // A correction/retraction may compile a replacement that points at the
   // original assertion through supersedes_assertion_id. Clear that test-only
   // link before deleting the rows, preserving the FK's real production guard.
   await db.query(
     `UPDATE context_assertions SET supersedes_assertion_id = NULL
       WHERE supersedes_assertion_id IN (SELECT id FROM context_assertions WHERE raw_text LIKE $1)`,
-    [`${MARKER}%`]
+    [`%${MARKER}%`]
   );
-  await db.query(`DELETE FROM context_assertions WHERE raw_text LIKE $1`, [`${MARKER}%`]);
-  await db.query(`DELETE FROM annotations WHERE label LIKE $1`, [`${MARKER}%`]);
-  await db.query(`DELETE FROM day_journal WHERE text LIKE $1`, [`${MARKER}%`]);
+  await db.query(`DELETE FROM context_assertions WHERE raw_text LIKE $1`, [`%${MARKER}%`]);
+  await db.query(`DELETE FROM annotations WHERE label LIKE $1`, [`%${MARKER}%`]);
+  await db.query(`DELETE FROM day_journal WHERE text LIKE $1`, [`%${MARKER}%`]);
 });
 after(async () => { await closeDb(); });
 
