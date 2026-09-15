@@ -29,7 +29,7 @@ function renderDecisionRoom(R){
   const todayYear=Math.max(R[0].yr,Math.min(R[R.length-1].yr,new Date().getFullYear()));
   const today=R.find(r=>r.yr===todayYear);
   const title=summary.floor.liq<0?'Your plan has a funding gap.':summary.deficitYears>0?'Some years draw on savings.':'Your next chapter, in focus.';
-  const detail=summary.floor.liq<0?`Projected liquid assets turn negative. Explore the timing and trade-offs below.`:summary.deficitYears>0?`${summary.deficitYears} years draw on investments to cover spending. Start with the tightest year.`:`Your current assumptions cover annual spending in every modeled year. Explore how your choices change that path.`;
+  const detail=summary.floor.liq<0?`Projected liquid assets turn negative. Explore the timing and trade-offs below.`:summary.deficitYears>0?`${summary.deficitYears} ${summary.deficitYears===1?'year draws':'years draw'} on investments to cover spending. Start with the tightest year.`:`Your current assumptions cover annual spending in every modeled year. Explore how your choices change that path.`;
   const upcoming=events.filter(e=>e.yr>=todayYear).slice(0,4);
   const synced=PlannerDecisions.usableSnapshot(monarchSnapshot);
   const age=synced?Math.max(0,Math.floor((Date.now()-Date.parse(monarchSnapshot.syncedAt))/86400000)):null;
