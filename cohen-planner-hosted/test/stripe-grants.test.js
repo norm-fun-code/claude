@@ -210,6 +210,39 @@ describe('Stripe workspace interactions',()=>{
     ['2026-09-15','2026-12-15','2027-03-15'].forEach((date,i)=>{w.elements['sg-date-ARG-'+i]={value:date};w.elements['sg-shares-ARG-'+i]={value:String(300+i)};});
     w.call("stripeActualSave('ARG',2026,3)");expect(G.compile(w.ctx.saved).years[2026].arg).toBe((123+300+301)*100);
   });
+  it('shows the valuation and the share price for every year of the path',()=>{
+    const w=workspace();w.call("stripeWorkspaceSet('prices')");
+    const html=w.elements.chartArea.innerHTML;
+    // Both halves of the path are drawn, not just the per-share one.
+    expect(html).toContain('Company valuation');
+    expect(html).toContain('Tender price / share');
+    const body=html.slice(html.indexOf('sg-path-table'));
+    for(let y=2026;y<=2030;y++)expect(body).toContain(`<th>${y}</th>`);
+    expect(body).toContain('Anchor');       // the reference year says so
+    expect(body).toContain('Projected');
+    expect(html).not.toMatch(/NaN|undefined/);
+  });
+
+  it('separates valuation growth from per-share growth by the dilution assumed',()=>{
+    const w=workspace();
+    w.ctx.P.stripeGrants={...w.ctx.P.stripeGrants,dilutionRate:.02};
+    w.call("stripeWorkspaceSet('prices')");
+    const row=w.elements.chartArea.innerHTML.split('<tr').find(r=>r.includes('<th>2027</th>'));
+    expect(row).toContain('+30.0%');  // valuation, off 2026's 30% growth
+    expect(row).toContain('+27.5%');  // per share, after 2% dilution
+  });
+
+  it('carries a share price alone when no valuation is set',()=>{
+    const w=workspace();
+    w.ctx.P.stripeGrants={...w.ctx.P.stripeGrants,referenceValuation:null};
+    w.call("stripeWorkspaceSet('prices')");
+    const html=w.elements.chartArea.innerHTML;
+    expect(html).toContain('Tender price / share');
+    expect(html).toContain('No reference valuation is set');
+    expect(html).not.toContain('Valuation change');
+    expect(html).not.toMatch(/NaN|undefined/);
+  });
+
   it('rejects invalid configuration without corrupting active plan',()=>{
     const w=workspace();w.call("stripeGrantSet('referenceTender','0')");expect(w.ctx.P.stripeGrants.referenceTender).toBe(100);expect(w.messages.at(-1)).toMatch(/positive/);
   });

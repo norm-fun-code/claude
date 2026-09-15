@@ -771,3 +771,9 @@ body[data-subview=spending] .spend-details summary{min-height:44px;align-content
 @media(max-width:700px){.sg-two,.sg-stats{grid-template-columns:1fr}.sg-fields{grid-template-columns:1fr 1fr}.sg-workspace .ui-head{align-items:flex-start}.sg-workspace .ui-head h2{font-size:25px}.sg-workspace input,.sg-workspace select{font-size:16px}.sg-chart{padding:12px}.sg-chart svg{min-height:130px}.sg-chart figcaption span{display:block;float:none;margin-top:5px}.sg-stat{padding:16px}.sg-nav button{padding:9px 12px;font-size:12px}.sg-workspace .sc{padding:18px}.sg-workspace .sg-field span{font-size:11px}}
 
 .sg-chart-labels{display:flex;justify-content:space-between;gap:12px;color:var(--t3);font-size:11px}.sg-chart-labels span{display:flex;flex-direction:column;gap:4px}.sg-chart-labels span:nth-child(2){text-align:center}.sg-chart-labels span:last-child{text-align:right}.sg-chart-labels strong{font-size:13px;color:var(--tx);font-variant-numeric:tabular-nums}
+/* The valuation path, year by year. Rows select the year the editor below is showing. */
+.sg-path-table tbody tr{cursor:pointer}
+.sg-path-table tbody tr:hover th,.sg-path-table tbody tr:hover td{background:var(--s2)}
+.sg-path-table td{font-variant-numeric:tabular-nums}
+.sg-path-table tr.sg-row-current th,.sg-path-table tr.sg-row-current td{background:rgba(139,128,255,.16);color:var(--tx)}
+.sg-path-table tr.sg-row-current th:first-child{box-shadow:inset 3px 0 0 #8b80ff}
