@@ -137,10 +137,10 @@ const REBUILD_LOCK_ID = 727002;
 // of N. Single-process by design, same as REBUILD_LOCK_ID's intent.
 const scopedRepairsInFlight = new Map();
 
-function runScopedRepairDeduped(prior, repairReason) {
+function runScopedRepairDeduped(prior, repairReason, repairContextKey = null) {
   const existing = scopedRepairsInFlight.get(repairReason);
   if (existing) return existing;
-  const p = performScopedChiefBriefRebuild(prior, { repairReason })
+  const p = performScopedChiefBriefRebuild(prior, { repairReason, repairContextKey })
     .finally(() => scopedRepairsInFlight.delete(repairReason));
   scopedRepairsInFlight.set(repairReason, p);
   return p;
@@ -892,6 +892,54 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
         }
       } catch (err) {
         console.error('[briefing cache] automatic goals-staleness repair failed:', err.message);
+      }
+    }
+
+    // Automatic repair of a DEGRADED (grounded_usable) card.
+    //
+    // Reported: "I have to hit the refresh button to get the full brief." A
+    // grounded_usable brief is publishable by design — it is real, grounded
+    // and safe to read — so the serve path shipped it and never tried again.
+    // The only two automatic repair triggers were goals_stale and
+    // plan_conflict, neither of which a degraded build sets. The result: once
+    // a morning build came back degraded, the stub card was permanent for the
+    // day and the ONLY way to a real brief was tapping ↻ by hand. Whatever
+    // caused the degrade (a transient refusal, a contradiction the retry
+    // couldn't resolve, a validator false positive) the user should not have
+    // to be the retry mechanism.
+    //
+    // Deliberately reuses the existing machinery rather than adding a second
+    // one: the same runScopedRepairDeduped, the same durable repair ledger,
+    // the same cooldown as the other two triggers. The contextKey is the
+    // briefing row being repaired, so one degraded build gets one attempt per
+    // cooldown window — not one per request.
+    //
+    // Bounded downside: performScopedChiefBriefRebuild already refuses to let
+    // a worse card replace a better one (see the degraded-rebuild guards
+    // covered by DEG 4/DEG 5), so a repair that also comes back degraded
+    // leaves exactly what was already there. The worst case is one extra
+    // scoped LLM call per cooldown window; the best case is the user gets the
+    // brief they were promised without touching anything.
+    const servedTier = cachedContent.publishTier ?? tierForStoredContent(cachedContent);
+    if (servedTier === 'grounded_usable' && !cachedContent.chiefBriefPending) {
+      const REPAIR_COOLDOWN_MS = 10 * 60 * 1000;
+      const repairLedger = require('../store/chiefBriefRepairLedger');
+      try {
+        // One identity, used for BOTH the eligibility check and the recorded
+        // attempt — see the contextKey note in performScopedChiefBriefRebuild.
+        const degradedRepairKey = prior?.id ?? cachedContent.snapshotId ?? null;
+        const eligible = await repairLedger.eligibleForRepair('degraded_quality', {
+          contextKey: degradedRepairKey, cooldownMs: REPAIR_COOLDOWN_MS,
+        });
+        if (eligible) {
+          const repaired = await runScopedRepairDeduped(prior, 'degraded_quality', degradedRepairKey);
+          if (repaired?.content) {
+            Object.assign(cachedContent, repaired.content);
+            chiefBriefGoalsStale = Boolean(cachedContent.chiefBriefGoalsStale);
+          }
+        }
+      } catch (err) {
+        console.error('[briefing cache] automatic degraded-quality repair failed:', err.message);
       }
     }
 
@@ -3478,7 +3526,7 @@ async function primeNextBuildCycle() {
     .catch((e) => console.error('[proactive nudge]', e.message));
 }
 async function performScopedChiefBriefRebuild(prior, opts = {}) {
-  const { repairReason = null } = opts;
+  const { repairReason = null, repairContextKey = null } = opts;
 
   // Stale-day guard (cross-day lifecycle fix) — moved to the very TOP,
   // before any context assembly or the LLM call: this function recuts ONLY
@@ -3773,7 +3821,16 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
       await require('../store/chiefBriefRepairLedger').recordAttempt({
         repairReason,
         succeeded: thisAttemptPublishable,
-        contextKey: repairReason === 'goals_stale' ? (ctx.goalsWeekStart ?? null) : null,
+        // The caller that decided ELIGIBILITY must supply the same identity
+        // recorded here, or the cooldown silently never applies: isEligible
+        // treats a checked key that differs from the stored one as "new
+        // context, go ahead", so checking against a real key while storing
+        // null makes every request eligible — a scoped LLM rebuild per app
+        // open. goals_stale keeps deriving its own key from the build context
+        // (unchanged); any other reason passes one in.
+        contextKey: repairReason === 'goals_stale'
+          ? (ctx.goalsWeekStart ?? null)
+          : (repairContextKey ?? null),
         reasonCodes: chiefResult.chiefBriefQuality?.reasonCodes ?? [],
       });
     } catch (err) {
